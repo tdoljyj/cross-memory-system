@@ -2854,7 +2854,7 @@ export async function independentRepairRerun({ fetchImpl, env, pr, attempt, self
   return { allowed: true, attempts };
 }
 
-async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit, self }) {
+async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self }) {
   const what = `${INDEPENDENT_ADMISSION_CHECK} of App ${INDEPENDENT_ADMISSION_APP_ID} for #${pr.number} on ${pr.head.sha}`;
   outcome.admission_source = INDEPENDENT_GATE_SOURCE;
   outcome.automation_self_hosted = false;
@@ -2886,6 +2886,23 @@ async function independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, in
     outcome.verdict = "ADMITTED";
     outcome.admitted = true;
     if (repair) outcome.repair_rerun = { attempt, earlier_attempts: repair.attempts };
+  }
+  if (outcome.admitted && automationRouteRequested({ env, run: self })) {
+    const route = await qualifyTrustedAutomationRoute({ env, event: { ...event, pull_request: pr }, run: self,
+      currentAdmission: check, read: route => githubJson(fetchImpl, env, route) });
+    outcome.automation_route = route;
+    if (!route.qualified) {
+      outcome.admitted = false;
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push(`trusted_automation_route:${route.reason}`);
+    } else if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
+      repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
+    })) {
+      outcome.automation_route = { ...route, qualified: false, reason: "execution_epoch_changed" };
+      outcome.admitted = false;
+      outcome.verdict = "REJECTED";
+      outcome.reasons.push("work_claim_execution_epoch_stale");
+    } else outcome.automation_self_hosted = true;
   }
   return outcome;
 }
@@ -2927,6 +2944,15 @@ function checkFor(check, head, prNumber) {
     match !== null && match[0] === externalId && positive(prNumber) &&
     Number(match[1]) === prNumber && positive(Number(match[2]));
 }
+// Native admission has no GitHub Actions origin run. Bind its registered App,
+// immutable Native external id, exact head and every named PR instead.
+function nativeCheckFor(check, head, repository, prNumber) {
+  const named = [...String(check?.output?.summary ?? '').matchAll(/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]{1,10})(?![0-9])/g)]
+    .filter(match => match[1].toLowerCase() === repository.toLowerCase()).map(match => Number(match[2]));
+  return positive(check?.id) && check.name === INDEPENDENT_ADMISSION_CHECK && check.app?.id === INDEPENDENT_ADMISSION_APP_ID &&
+    check.head_sha === head && INDEPENDENT_NATIVE_ADMISSION_ID.test(String(check.external_id ?? '')) &&
+    positive(prNumber) && named.length > 0 && named.every(number => number === prNumber);
+}
 function successful(check) { return check.status === 'completed' && check.conclusion === 'success'; }
 function boundedChecks(value) {
   requireProof(Number.isSafeInteger(value?.total_count) && value.total_count >= 0 && value.total_count < 100 &&
@@ -2948,6 +2974,10 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     const repository = env.GITHUB_REPOSITORY;
     requireProof(typeof repository === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) &&
       env.GITHUB_REPOSITORY_OWNER === repository.split('/')[0] && typeof read === 'function', 'repository_identity');
+    const native = env.CLUED_ADMISSION_GATE_SOURCE === INDEPENDENT_GATE_SOURCE &&
+      currentAdmission?.name === INDEPENDENT_ADMISSION_CHECK && currentAdmission?.app?.id === INDEPENDENT_ADMISSION_APP_ID;
+    const admissionName = native ? INDEPENDENT_ADMISSION_CHECK : APP_CHECK_NAME;
+    const validCheck = (check, head, number) => native ? nativeCheckFor(check, head, repository, number) : checkFor(check, head, number);
     const pr = event?.pull_request;
     requireProof(env.GITHUB_EVENT_NAME === 'pull_request' && event?.action === 'synchronize' &&
       positive(pr?.number) && SHA.test(pr.head?.sha ?? '') && SHA.test(pr.base?.sha ?? '') &&
@@ -2961,7 +2991,7 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
       env.GITHUB_BASE_REF === 'main', 'native_run_identity');
     requireProof(identity(run.actor, AUTOMATION_BOT) && env.GITHUB_ACTOR === AUTOMATION_BOT.login,
       'automation_actor_identity');
-    requireProof(checkFor(currentAdmission, pr.head.sha, pr.number) && successful(currentAdmission), 'current_admission_identity');
+    requireProof(validCheck(currentAdmission, pr.head.sha, pr.number) && successful(currentAdmission), 'current_admission_identity');
     const repo = await read(`/repos/${repository}`);
     const owner = repo?.owner;
     requireProof(repo?.full_name === repository && repo.default_branch === 'main' && positive(owner?.id) &&
@@ -2987,26 +3017,38 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
         `tree ${commit.commit.tree.sha}\nparent ${parents[0]}\nparent ${parents[1]}\n`), 'refresh_signature');
     const mergedAt = timestamp(commit.commit?.committer?.date), createdAt = timestamp(run.created_at);
     requireProof(mergedAt !== null && createdAt !== null && mergedAt <= createdAt, 'refresh_time');
-    const checksPath = head => `/repos/${repository}/commits/${head}/check-runs?check_name=${APP_CHECK_NAME}&filter=all&per_page=100`;
+    const checksPath = head => `/repos/${repository}/commits/${head}/check-runs?check_name=${admissionName}&filter=all&per_page=100`;
     const prior = boundedChecks(await read(checksPath(parents[0]))).filter(check => {
       const finished = timestamp(check.completed_at);
-      return checkFor(check, parents[0], pr.number) && successful(check) && finished !== null && finished <= mergedAt;
+      return validCheck(check, parents[0], pr.number) && successful(check) && finished !== null && finished <= mergedAt;
     }).sort((a, b) => b.id - a.id)[0];
     // This earlier successful check proves provenance only. It cannot replace
     // the current head's live admission, epoch or rerun authorization.
     requireProof(prior, 'prior_pr_admission_missing');
-    const priorRunId = Number(EXTERNAL_ID.exec(prior.external_id)?.[2]);
-    requireProof(positive(priorRunId), 'prior_admission_origin');
-    const priorRun = await read(`/repos/${repository}/actions/runs/${priorRunId}`);
-    requireProof(positive(priorRunId) && priorRun?.id === priorRunId && priorRun.event === 'pull_request_target' &&
-      priorRun.path === '.github/workflows/clued-work-admission.yml' && priorRun.status === 'completed' &&
-      priorRun.conclusion === 'success' && priorRun.repository?.full_name === repository &&
-      priorRun.head_repository?.full_name === repository && timestamp(priorRun.created_at) !== null &&
-      timestamp(priorRun.created_at) <= timestamp(prior.completed_at) &&
-      (identity(priorRun.actor, owner) || identity(priorRun.actor, AUTOMATION_BOT)), 'prior_admission_origin');
+    let priorRunId = null;
+    if (native) {
+      // The existing main-only App attests the exact two-parent refresh. A
+      // Native check is not an Actions run and must never be parsed as one.
+      const attestations = boundedChecks(await read(`/repos/${repository}/commits/${pr.head.sha}/check-runs?check_name=${MAIN_MERGE_CHECK}&filter=all&per_page=100`));
+      const attestation = attestations.filter(check => check.name === MAIN_MERGE_CHECK &&
+        check.app?.id === APP_ID && check.head_sha === pr.head.sha).sort((a, b) => b.id - a.id)[0];
+      const subject = parseMainMergeExternalId(attestation?.external_id);
+      requireProof(successful(attestation ?? {}) && subject?.pr === pr.number && subject.from === parents[0] && subject.main === parents[1],
+        'main_refresh_attestation_missing');
+    } else {
+      priorRunId = Number(EXTERNAL_ID.exec(prior.external_id)?.[2]);
+      requireProof(positive(priorRunId), 'prior_admission_origin');
+      const priorRun = await read(`/repos/${repository}/actions/runs/${priorRunId}`);
+      requireProof(positive(priorRunId) && priorRun?.id === priorRunId && priorRun.event === 'pull_request_target' &&
+        priorRun.path === '.github/workflows/clued-work-admission.yml' && priorRun.status === 'completed' &&
+        priorRun.conclusion === 'success' && priorRun.repository?.full_name === repository &&
+        priorRun.head_repository?.full_name === repository && timestamp(priorRun.created_at) !== null &&
+        timestamp(priorRun.created_at) <= timestamp(prior.completed_at) &&
+        (identity(priorRun.actor, owner) || identity(priorRun.actor, AUTOMATION_BOT)), 'prior_admission_origin');
+    }
     const latest = boundedChecks(await read(checksPath(pr.head.sha))).filter(check =>
-      checkFor(check, pr.head.sha, pr.number)).sort((a, b) => b.id - a.id)[0];
-    requireProof(latest?.id === currentAdmission.id && successful(latest), 'current_admission_changed');
+      (native ? check?.name === admissionName && check?.app?.id === INDEPENDENT_ADMISSION_APP_ID && check?.head_sha === pr.head.sha : validCheck(check, pr.head.sha, pr.number))).sort((a, b) => b.id - a.id)[0];
+    requireProof(latest?.id === currentAdmission.id && validCheck(latest, pr.head.sha, pr.number) && successful(latest), 'current_admission_changed');
     requireProof(samePR(await read(`/repos/${repository}/pulls/${pr.number}`), context), 'live_pr_changed');
     return { qualified: true, reason: 'admitted_owner_pr_signed_main_refresh', run_id: run.id, run_attempt: attempt,
       pr_number: pr.number, head_sha: pr.head.sha, previous_head_sha: parents[0], main_sha: parents[1],
@@ -3196,7 +3238,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     // The independent source decides unless the clued-admission App's
     // event-bound check (disaster recovery only) settled first.
     if (independentSource && (independent?.settled || !(found.check && found.check.status === "completed")))
-      return await independentGateOutcome({ env, fetchImpl, outcome, pr, attempt, independent, limit, self });
+      return await independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later
