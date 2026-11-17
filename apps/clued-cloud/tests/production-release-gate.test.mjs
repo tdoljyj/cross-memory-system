@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { builderRunInProgress, onlyProjectionLag, settleProjectionLag, verifyReleaseState }
   from '../scripts/production-release-gate.mjs';
@@ -249,7 +252,7 @@ test('production backup mode encrypts and verifies the dump before removing plai
   const backup = productionWorkflow.split(/\n      - name: /)
     .find((step) => step.startsWith('Create and verify encrypted pre-migration backup\n'));
   const publisher = await readFile(new URL('../scripts/verify-production-backup-scope.mjs', import.meta.url), 'utf8');
-  assert.match(backup, /if: \$\{\{ inputs\.mode == 'backup' \}\}/);
+  assert.match(backup, /if: \$\{\{ inputs\.mode == 'backup' \|\| inputs\.mode == 'migrate' \}\}/);
   assert.match(backup, /secrets\.CLUED_PRODUCTION_BACKUP_KEY/);
   assert.match(backup, /--user \"\$\(id -u\):\$\(id -g\)\"/);
   assert.match(backup, /searchParams\.delete\(\"uselibpqcompat\"\)/);
@@ -466,4 +469,64 @@ test('the release gate evaluates the committed migration ledger against producti
   assert.match(gateSource, /evaluateLedger\(\{ ledger, history,\n\s+migrations: await readSqlDirectory\(migrationsDirectory\),\n\s+historyOnly: await readSqlDirectory\(historyOnlyDirectory\),\n\s+historicalThrough: baselineVersion\(baseline\) \}\)/);
   assert.match(gateSource, /const errors = \[\.\.\.settled\.errors, \.\.\.ledgerReport\.errors\];\n\s+if \(errors\.length\) throw/);
   assert.doesNotMatch(gateSource, /ledgerReport\.warnings[^\n]*errors/);
+});
+
+test('migration cannot consume a grant or apply without a successful verified encrypted backup', async () => {
+  const steps=productionWorkflow.split(/\n      - /).slice(1);
+  const index=name=>steps.findIndex(s=>s.startsWith('name: '+name+'\n'));
+  const encryption=index('Check production backup encryption credential');
+  const target=index('Verify backup and migration database identity');
+  const backup=index('Create and verify encrypted pre-migration backup');
+  const gate=index('Require verified backup before migration');
+  const grant=index('Consume the Owner Grant for the named migrations');
+  const apply=index('Apply the named migrations');
+  assert.ok(encryption>=0&&encryption<target&&target<backup&&backup<gate&&gate<grant&&grant<apply);
+  for(const i of [encryption,backup])assert.match(steps[i],/if: \$\{\{ inputs\.mode == 'backup' \|\| inputs\.mode == 'migrate' \}\}/);
+  assert.match(steps[backup],/id: pre_migration_backup/);
+  assert.match(steps[gate],/BACKUP_OUTCOME: \$\{\{ steps\.pre_migration_backup\.outcome \}\}/);
+  const script=/node -e '([^']+)'/.exec(steps[gate])?.[1]; assert.ok(script);
+  const temp=await mkdtemp(path.join(os.tmpdir(),'clued-backup-gate-'));
+  const root=path.join(temp,'.sites-runtime/release-evidence');await mkdir(root,{recursive:true});
+  const bytes=Buffer.from('synthetic encrypted fixture');
+  const manifest={contract:'clued.production-pre-migration-backup.v1',source_commit:'a'.repeat(40),database_project:'clued-prod',database_identity:'supabase:ccxsikzwxlolxqlosril:postgres',
+    scope_verification:{verified:true},dump_bytes:42,dump_sha256:'b'.repeat(64),encrypted_sha256:createHash('sha256').update(bytes).digest('hex')};
+  const run=outcome=>spawnSync(process.execPath,['-e',script],{cwd:temp,encoding:'utf8',env:{...process.env,GITHUB_SHA:manifest.source_commit,BACKUP_OUTCOME:outcome,CLUED_PRODUCTION_DATABASE_IDENTITY:manifest.database_identity}}).status;
+  const save=m=>writeFile(path.join(root,'production-backup-manifest.json'),JSON.stringify(m));
+  try{
+    await writeFile(path.join(root,'clued-production-pre-migration.dump.enc'),bytes);await save(manifest);
+    assert.equal(run('success'),0);
+    for(const outcome of ['skipped','failure','cancelled',''])assert.notEqual(run(outcome),0,outcome);
+    for(const changed of [{source_commit:'c'.repeat(40)},{scope_verification:{verified:false}},{database_project:'other'},
+      {database_identity:'supabase:other:postgres'},{dump_bytes:0},{encrypted_sha256:'0'.repeat(64)}]){await save({...manifest,...changed});assert.notEqual(run('success'),0,JSON.stringify(changed));}
+    await save(manifest);await writeFile(path.join(root,'clued-production-pre-migration.dump.enc'),'tampered');
+    assert.notEqual(run('success'),0);
+    await rm(path.join(root,'production-backup-manifest.json'));assert.notEqual(run('success'),0);
+  }finally{
+    assert.equal(path.dirname(temp),os.tmpdir());assert.ok(path.basename(temp).startsWith('clued-backup-gate-'));
+    await rm(temp,{recursive:true,force:true});
+  }
+});
+
+test('backup identity checks actual trusted connection routing, not a project label',async()=>{
+  const step=productionWorkflow.split(/\n      - /).find(s=>s.startsWith('name: Verify backup and migration database identity\n'));
+  const script=/node -e '([^']+)'/.exec(step)?.[1];assert.ok(script);
+  const temp=await mkdtemp(path.join(os.tmpdir(),'clued-backup-identity-'));
+  const output=path.join(temp,'github-env');
+  const direct='postgresql://fixture:synthetic@db.ccxsikzwxlolxqlosril.supabase.co:5432/postgres';
+  const pool='postgresql://fixture.ccxsikzwxlolxqlosril:synthetic@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres';
+  const run=(backup,migration)=>spawnSync(process.execPath,['-e',script],{encoding:'utf8',env:{...process.env,GITHUB_ENV:output,
+    CLUED_ATTESTATION_DATABASE_URL:backup,CLUED_MIGRATION_DATABASE_URL:migration,CLUED_PRODUCTION_DATABASE_IDENTITY:'supabase:ccxsikzwxlolxqlosril:postgres'}});
+  try{
+    assert.equal(run(direct,pool).status,0);
+    assert.equal(await readFile(output,'utf8'),'CLUED_PRODUCTION_DATABASE_IDENTITY=supabase:ccxsikzwxlolxqlosril:postgres\n');
+    for(const wrong of [direct.replace('ccxsikzwxlolxqlosril','differentproject'),pool.replace('fixture.ccxsikzwxlolxqlosril','fixture.differentproject'),
+      direct.replace('db.ccxsikzwxlolxqlosril.supabase.co','example.invalid'),direct+'?host=example.invalid',pool+'?user=fixture.differentproject',
+      direct.replace('/postgres','/otherdb'),'invalid synthetic credential']){
+      const result=run(direct,wrong);assert.notEqual(result.status,0);assert.ok(!result.stderr.includes('invalid synthetic credential'));
+      assert.notEqual(run(wrong,pool).status,0);
+    }
+  }finally{
+    assert.equal(path.dirname(temp),os.tmpdir());assert.ok(path.basename(temp).startsWith('clued-backup-identity-'));
+    await rm(temp,{recursive:true,force:true});
+  }
 });
