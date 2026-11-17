@@ -514,9 +514,9 @@
 
     "scripts/ci/merge-admission-r9-collector.test.mjs": "0ad601cdc08925e0dfca2bd3cde7840fd808c8c36ccd2715f0c098105a604221",
 
-    "scripts/ci/merge-admission-r9-reregister.mjs": "e7d21d918ea41e89d419b911b8a6e1c6bddb35dc790a900855538fae44049a54",
+    "scripts/ci/merge-admission-r9-reregister.mjs": "cf48e25ed6a4873445527cde4087194653a93b2a43df34bdf2d914f5968e24d4",
 
-    "scripts/ci/merge-admission-r9-reregister.test.mjs": "d4ae870bb694c5c6a06e35ff10e88232a4748734b7bb5f4d720e1d9f5e2fdeb5",
+    "scripts/ci/merge-admission-r9-reregister.test.mjs": "d371d645a7a324b87c8a129793302a94160899e2d031337eb880ffc0e085aaa5",
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
