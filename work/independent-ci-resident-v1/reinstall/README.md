@@ -349,6 +349,7 @@ python -I linux/first-install.py <config> <commit> <package> <suffix> <in-dir> <
     wsl -d <模板发行版> -u root -- docker save <hex> -o <in-dir 的 WSL 路径>/images/<hex>.tar
     ```
     也可以放 gzip 压缩的 `images/<hex>.tar.gz`。生成器在生成时钉住压缩包的 sha256；B 先核这个 sha，再用 `docker load` 载入，最后核对镜像 id 等于 `sha256:<hex>`。
+    镜像 ID 以源节点 `docker image inspect --format '{{.Id}}'` 的完整值为准：旧存储通常是 config 摘要，containerd 存储是目标 index 或 manifest 摘要。`tools/export-role-image.ps1` 同时支持经典归档与 OCI 布局，核对每级 descriptor 的摘要、大小、config 和所有 layer（含 gzip 解压后的 diff_id）；存在 `manifest.json` 时还核对它与 OCI 链的一致性。B 始终核对原 ID，不把它改成 config ID 或 tag；目标后端不能保持这个 ID 时拒绝，不能据加载成功文本视为已通过。
 
 **6. 现场（Owner，root）：先跑 A，审核其输出后再跑 B。**
 - **A**：不读私钥，只写 `$BASE`。
