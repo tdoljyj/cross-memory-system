@@ -22,6 +22,22 @@ const env = (overrides = {}) => ({
 });
 const prEvent = (base = "main") => JSON.stringify({ pull_request: { number: 9, base: { ref: base }, head: { sha: HEAD } } });
 
+test('bors staging: only the required-tests workflow pushed by App 5368905 may run off main', async () => {
+  const staging = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging',
+    GITHUB_ACTOR: 'clued-ci-checks-turing-20261018[bot]',
+    GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/clued-train/staging' };
+  const check = overrides => decide({ env: env({ ...staging, ...overrides }),
+    fetchImpl: async () => { throw Error('staging admission must not need a credential or network read'); },
+    readFile: () => { throw Error('staging admission must not read credentials'); } });
+  for (const attempt of ['1', '2']) assert.equal((await check({ GITHUB_RUN_ATTEMPT: attempt })).allow, true);
+  for (const changed of [
+    { GITHUB_ACTOR: 'o' }, { GITHUB_ACTOR: 'clued-admission[bot]' }, { GITHUB_ACTOR: '' },
+    { GITHUB_REF: 'refs/heads/clued-train/staging.tmp' }, { GITHUB_REF: 'refs/heads/feature' },
+    { GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/other.yml@refs/heads/clued-train/staging' },
+    { GITHUB_EVENT_NAME: 'schedule' }, { GITHUB_REPOSITORY: 'other/repo' },
+  ]) assert.equal((await check(changed)).allow, false, JSON.stringify(changed));
+});
+
 const proxyRuntime = overrides => ({ env: {}, execArgv: [], argv: ["node", "/protected/hook.mjs"],
   allowedFlags: new Set(["--use-env-proxy"]), ...overrides });
 test("proxy bootstrap: no proxy uses the existing process; an established proxy enables native routing without putting its URL in arguments", () => {

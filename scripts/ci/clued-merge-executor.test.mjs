@@ -152,6 +152,38 @@ test("optInSha: only an exact body line naming a full head sha", () => {
   }
 });
 
+test('bors landing: the exact train-landed App check suppresses both update and merge without writes', async () => {
+  for (const behindBy of [0, 2]) {
+    const fetch = world({ behindBy, extra: rulesRoute([...LEGACY_RULES,
+      { name: 'kooyumi-train-landed', app_id: 5368905 }]) });
+    const result = await run(fetch);
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.actions[0].action, 'none');
+    assert.match(result.actions[0].reason, /列车自己落地/);
+    assert.deepEqual(writes(fetch), []);
+    assert.equal(fetch.calls.some(call => call.route.includes('access_tokens')), false);
+  }
+});
+
+test('bors landing: absent or differently sourced train-landed leaves update and merge unchanged', async () => {
+  for (const check of [null, { name: 'kooyumi-train-landed', app_id: 5164952 },
+    { name: 'kooyumi-train-landed', app_id: null }, { name: 'other-check', app_id: 5368905 }]) {
+    for (const behindBy of [0, 2]) {
+      // Exercise planFor with the parsed live rules without adding unrelated required CI checks.
+      const { planFor } = await import('./clued-merge-executor.mjs');
+      const fetch = world({ behindBy });
+      const result = await planFor({ env: env(), fetchImpl: fetch.fetchImpl, repository: REPO, pr: pull(), tip: TIP,
+        required: [...LEGACY_RULES, ...(check ? [check] : [])], state: 'normal',
+        policy: resolveMode({ env: env(), workspace: ROOT, readFile: fs.readFileSync }).policy,
+        workflows: [], qualifyExecution: async () => fixtureProof(pull()) });
+      // An extra required check may hold the merge, but must never masquerade as train mode.
+      if (behindBy) assert.equal(result.action, 'update_branch');
+      else if (!check) assert.equal(result.action, 'merge_pull_request');
+      assert.doesNotMatch(result.reason, /列车自己落地/);
+    }
+  }
+});
+
 test("a head behind the default branch is brought up to date as the App, bound to the head it read", async () => {
   const fetch = world({ behindBy: 2 });
   const result = await run(fetch);

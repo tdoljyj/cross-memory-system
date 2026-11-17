@@ -10,6 +10,9 @@
 //     dispatch on main. Those workflow files are main's own. A
 //     pull_request_target run counts only for a pull request into main
 //     (re-review 7, m1).
+//   - clued-train/staging: only clued-required-tests.yml pushed by the
+//     App 5368905 bot (ADR 0018). The workflow verifies S^1 against main
+//     before it loads any trusted selection or commands.
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
@@ -61,7 +64,7 @@
 //     The rule for a pull request that changes a workflow applies to every
 //     attempt as to the first; under Native admission a later attempt also
 //     needs every earlier attempt to have run nothing (late admission, below).
-// Everything else is refused: pushes to other branches, pull requests into
+// Everything else is refused: other non-main pushes, pull requests into
 // other branches, other events.
 //
 // HOOK_VERSION is printed in every ALLOW/REFUSE line, so the Owner can see in
@@ -624,6 +627,13 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   result.workflow = workflow;
   if (!workflow) throw new Error(`GITHUB_WORKFLOW_REF is not a workflow path: ${env.GITHUB_WORKFLOW_REF}`);
   const event = result.event;
+  if (event === 'push' && result.ref === 'refs/heads/clued-train/staging' &&
+    workflow === '.github/workflows/clued-required-tests.yml' &&
+    env.GITHUB_ACTOR === 'clued-ci-checks-turing-20261018[bot]') {
+    result.allow = true;
+    result.reason = 'App 5368905 required-tests push on clued-train/staging';
+    return result;
+  }
   const requiredDispatch = event === 'workflow_dispatch' && workflow === '.github/workflows/clued-required-tests.yml';
   if (MAIN_EVENTS.has(event) && result.ref === mainRef && !requiredDispatch) {
     // Re-review 7, m1: pull_request_target runs on the default branch's ref

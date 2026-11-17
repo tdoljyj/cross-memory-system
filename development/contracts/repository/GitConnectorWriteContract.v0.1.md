@@ -21,7 +21,7 @@ Local-worktree Git rules do not map one-to-one onto GitHub Contents/API writes. 
 
 ## Main branch policy
 
-Owner decision for tdoljyj/cross-memory-system#292: every change reaches `main` through a merged PR. There is no exception for trivial documentation. This applies to connector writes, local worktrees (Codex and other endpoints) and automation alike. A local merge commit pushed to `main` is a direct write, even if it merges a PR branch; merge on GitHub instead.
+#292 修订（ADR 0018 §8 第 5 条；Owner 2026-11-17 授权准备启用）：合入 main 只有两条路：一是经 PR 由 GitHub 合并（`train.landing=github-merge` 时）；二是合并列车以 App 5368905 把它测过、并在推送前逐项实时准入过的提交快进推上 main（`train.landing=push` 时）。main 主规则集的 bypass 名单只含 App 5368905；“main 只许快进”规则集的 bypass 名单为空；其它任何人或自动化都不得直接推 main。所有变更仍经 PR 审核；connector 与本地 Agent 不得自行调用列车落地端口。push 仅在 ADR 0018 §8 前提齐备后启用，以下历史读取不证明生产已启用。
 
 GitHub enforces this with repository ruleset `24182890` (`main write policy (#292)`) on the default branch. As read from GitHub on 2026-10-28:
 
@@ -31,17 +31,17 @@ GitHub enforces this with repository ruleset `24182890` (`main write policy (#29
 - `strict_required_status_checks_policy` is `true`: a branch must contain the tip of `main` before it merges;
 - allowed merge methods are merge, squash and rebase; linear history is not required (the repository merges with merge commits);
 - force pushes and branch deletion blocked;
-- empty bypass list. Agents act with the Owner's GitHub identity, so any Owner or Admin bypass would also let Agents bypass.
+- 历史读取时 bypass 为空。push 上线配置：主规则集 bypass 仅 App `5368905`，与必需检查 `kooyumi-train-landed@5368905` 同一次保存；独立“main 只许快进”规则集的 bypass 为空，保留禁止删除、禁止非快进和 S 上三项 Actions 必需检查。Owner/Admin 与其它自动化不得 bypass。
 
 The repository is private and owned by a personal account, so GitHub's native merge queue is not available; repository settings have `allow_auto_merge` on and `allow_update_branch` off.
 
-Planned change (merge train, [MergeAdmission v0.2](../execution-admission/MergeAdmission.v0.2.md), a candidate the Owner has not accepted yet): the Owner sets `strict_required_status_checks_policy` to `false` and the allowed merge methods to merge only once all of these hold (MergeAdmission v0.2 §3.3):
+Historical planned change (merge train, [MergeAdmission v0.2](../execution-admission/MergeAdmission.v0.2.md), a candidate the Owner has not accepted yet): the Owner sets `strict_required_status_checks_policy` to `false` and the allowed merge methods to merge only once all of these hold (MergeAdmission v0.2 §3.3):
 
 - the resident executor's merge train is on;
 - its full sweep in train mode has found no other green `kooyumi-merge-slot`;
 - the step-6 contracts have landed: MergeAdmission v0.2 is accepted, and KooYomi has published the new agent contract after the Owner's acceptance and Grant.
 
-The Owner makes both changes in one save, or changes the merge methods first. The required checks and the empty bypass list do not change. Until then, and whenever the train is off, `strict` stays `true`. Only the Owner changes the ruleset; an Agent never changes `strict`, the merge methods or the required checks, and never asks the Owner to change them for its own pull request.
+该历史计划由 Owner 一次保存或先改合并方式；当时不改必需检查与 bypass。push 后继方案改按 ADR 0018 §8，保持 strict=true，船队统一策略 `FLEET_TRAIN` 随通用包下发，取代一次 UAC 写策略。列车关闭时 strict 同样保持 true。只有 Owner 改规则集；Agent 不为自己的 PR 改 strict、合并方式或必需检查，也不请求 Owner 为自己的 PR 改这些设置。
 
 A second ruleset blocks deletion and force pushes on `model-program/*`, because M1-07/M1-08 evidence exists only on those branches.
 
