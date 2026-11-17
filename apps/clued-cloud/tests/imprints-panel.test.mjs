@@ -890,7 +890,7 @@ test('bulk preview remains read-only and explicit plan confirmation does not run
   assert.equal(f.calls[3].args.p_input.action, 'begin'); assert.equal(f.calls[3].args.p_input.digest, 'a'.repeat(64));
   await f.respond(3, bulkWrite(bulkBatch())); assert.ok(f.text().includes('尚未修改标签')); assert.equal(f.calls.length, 4);
 });
-test('failed rehearsal distinguishes timeout and invalidation without retries or raw database details', async t => {
+test('failed rehearsal bounds timeout retries and rejects invalidation without raw database details', async t => {
   for (const [error, expected] of [
     [{ message: 'canceling statement due to statement timeout', code: '57014' }, '预演超时'],
     [{ message: 'bulk_preview_changed', code: '40001' }, '本轮预演已失效'],
@@ -899,13 +899,84 @@ test('failed rehearsal distinguishes timeout and invalidation without retries or
   ]) {
     const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
     f.click('盘点并预演（不修改内容）'); f.calls[1].resolve({ data: null, error, status: 500 }); await f.settle();
+    if (error.code === '57014') {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const next = f.calls.length; await f.untilCalls(next + 1);
+        assert.deepEqual(plain(f.calls[next].args), plain(f.calls[1].args));
+        f.calls[next].resolve({ data: null, error, status: 500 }); await f.settle();
+      }
+    }
     assert.ok(f.text().includes(expected)); assert.ok(f.text().includes('没有修改标签'));
     assert.ok(!f.text().includes('完整盘点')); assert.ok(!f.text().includes('57014'));
-    assert.ok(!f.text().includes('statement timeout')); assert.equal(f.calls.length, 2);
+    assert.ok(!f.text().includes('statement timeout')); assert.equal(f.calls.length, error.code === '57014' ? 4 : 2);
     assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
-    f.click('读取已保存进度'); await f.respond(2, { status: 'ok', available: false });
+    const next = f.calls.length; f.click('读取已保存进度'); await f.respond(next, { status: 'ok', available: false });
     assert.ok(f.text().includes('尚未建立首批计划'));
   }
+});
+
+test('bulk preview recovers a later timeout using the unchanged signed page and counts each record once', async () => {
+  const { previewBulk } = modules().load('imprint-bulk.ts');
+  const first = bulkPlan(), second = bulkPlan();
+  for (const value of [first, second]) Object.assign(value.inventory_counts, { total: 4, personal: 4, current: 4, classifiable: 2, unmarked: 3, characters: 120 });
+  Object.assign(first.page, { complete: false, next_cursor: 1 });
+  Object.assign(first.proof.payload, { classifiable: 2 });
+  second.items[0].record_id = OTHER;
+  Object.assign(second.page, { cursor: 1, complete: true, next_cursor: null });
+  Object.assign(second.proof.payload, { classifiable: 2, cursor: 2, ready: 2, ready_characters: 40,
+    items: [first.proof.payload.items[0], { ...first.proof.payload.items[0], record_id: OTHER }] });
+  const calls = [], progress = [];
+  const result = await previewBulk(async (name, args) => {
+    calls.push({ name, args });
+    return calls.length === 2 ? { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }
+      : { data: calls.length === 1 ? first : second, error: null };
+  }, { scope: 'all' }, { owner: 'owner', isCurrent: () => true, onProgress: (...values) => progress.push(values) });
+  assert.equal(calls.length, 3); assert.equal(calls[1].args, calls[2].args);
+  assert.deepEqual(plain(calls[1].args.p_input.proof), plain(first.proof));
+  assert.ok(calls.every(call => call.name === 'clued_imprint_bulk_preview_v1'));
+  assert.deepEqual(plain(progress), [[1, 2, 1], [2, 2, 2]]);
+  assert.equal(result.counts.ready, 2); assert.equal(result.counts.ready_characters, 40);
+  assert.deepEqual(plain(result.items.map(item => item.record_id)), [ID, OTHER]);
+});
+
+test('bulk preview limits timeout recovery across the entire scan', async () => {
+  const { previewBulk } = modules().load('imprint-bulk.ts');
+  let calls = 0, scanned = 0;
+  await assert.rejects(previewBulk(async () => {
+    calls++;
+    if (calls % 2) return { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } };
+    const value = bulkPlan({ items: [], review_sample: [{ record_id: webcrypto.randomUUID(), title: 'Review' }] });
+    Object.assign(value.inventory_counts, { total: 10, personal: 10, current: 10, classifiable: 8, unmarked: 9, characters: 200 });
+    Object.assign(value.page, { cursor: scanned, scanned: 1, next_cursor: scanned + 1, complete: false });
+    value.ready_characters = 0; value.review_characters = 1; scanned++;
+    Object.assign(value.proof.payload, { cursor: scanned, classifiable: 8, ready: 0, needs_review: scanned, ready_characters: 0, review_characters: scanned, items: [] });
+    return { data: value, error: null };
+  }, { scope: 'all' }, { owner: 'owner', isCurrent: () => true }), failure => failure.code === 'canceling statement due to statement timeout');
+  assert.equal(calls, 13); assert.equal(scanned, 6);
+});
+
+test('stopping a preview during timeout backoff prevents another request', async t => {
+  const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
+  f.click('盘点并预演（不修改内容）');
+  f.calls[1].resolve({ data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }); await f.settle();
+  f.click('停止预演'); await new Promise(resolve => setTimeout(resolve, 600)); await f.settle();
+  assert.equal(f.calls.length, 2); assert.ok(!f.text().includes('完整盘点'));
+  assert.ok(!f.nodes('button').some(b => f.text(b).includes('保存首批计划')));
+});
+
+test('bulk preview does not retry transport, unrelated serialization or message-only timeouts', async () => {
+  const { previewBulk } = modules().load('imprint-bulk.ts');
+  for (const error of [{ code: '40001', message: 'unrelated_serialization_failure' },
+    { code: 'PT500', message: 'canceling statement due to statement timeout' }, { code: 'PT409', message: 'bulk_proof_expired' }]) {
+    let calls = 0;
+    await assert.rejects(previewBulk(async () => { calls++; return { data: null, error }; },
+      { scope: 'all' }, { owner: 'owner', isCurrent: () => true }));
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  await assert.rejects(previewBulk(async () => { calls++; throw Error('network interrupted'); },
+    { scope: 'all' }, { owner: 'owner', isCurrent: () => true }));
+  assert.equal(calls, 1);
 });
 test('bulk unknown write never retries automatically; resume reconciles durable progress before another step', async t => {
   const f = fixture(); t.after(() => f.unmount()); await f.respond(0, page());
