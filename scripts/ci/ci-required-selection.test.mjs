@@ -265,11 +265,15 @@ test('a migration selects the production-schema check; ordinary documentation se
   // Invariant DB tests on the migrated database: run with every migration change and with their own tests.
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs']).suites,
     ['production-schema']);
+  assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/storage-runtime-authority-db.test.mjs']).suites,
+    ['production-schema']);
+  assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs']).suites,
+    ['production-schema']);
   const scanStart = SUITE_COMMANDS['production-schema'].at(-2);
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   assert.deepEqual(scanStart.argv, ['node', '--test', '--test-concurrency=1',
     'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
-    'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs']);
+    'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs', 'tests/storage-runtime-authority-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs']);
   const docs = selectSuites('migration-verify', ['docs/README.md']);
   assert.deepEqual(docs.suites, []);
   assert.match(docs.reason, /no file this check covers changed/);

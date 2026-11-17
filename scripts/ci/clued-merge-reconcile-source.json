@@ -90,7 +90,7 @@
 
     ".github/workflows/clued-cloud-node22-install.yml": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97",
 
-    ".github/workflows/clued-cloud-production-release.yml": "d836a95e37ba35581ebc41bdf8a4f6d517beeeec433803cff90c833224270d46",
+    ".github/workflows/clued-cloud-production-release.yml": "9626fc1cfe2f83994b65f57bcadd8879c68d50052fdc0a5716abd3ede70673bf",
 
     ".github/workflows/clued-compute-panel.yml": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
 
@@ -204,9 +204,9 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "f3363ba48c52700ccba8b0b79ce45eb0b44b24bb1b5c7900d1815562d31b6549",
+    "scripts/ci/ci-required-selection.mjs": "a9d2d2616ec0ea4e86389e0024e1a91e7cf14a6769215d64b9d7003192ab7812",
 
-    "scripts/ci/ci-required-selection.test.mjs": "118abf3ed8173b391eef74c65a3781f84ae2576ea3c9963c944c0b7d3c48e63c",
+    "scripts/ci/ci-required-selection.test.mjs": "463bc5d39a55bdfef016b6c636335751eb004719c024be9f34a91729c768b5d1",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
@@ -400,7 +400,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "2651debc682b9b4bf263253951e8d35d45be149da8e4a8ed9731b2046ac89611",
+    "scripts/ci/clued-required-applicability.mjs": "c757479aca217a6adabae9c6ecda38c5edf17b90ba1653dbb32c589428b62e2d",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -616,7 +616,7 @@
 
     "scripts/ci/test_validate_runner_budget_policy.py": "bffb1953f4c36f9f577934a91e17722e895b5c1f094e96ccd2e9489f5c743aae",
 
-    "scripts/ci/validate_runner_budget_policy.py": "a915d5d4d2e25a66926928a4abe799088a1a66faa75a4eea24fae1fc90061eb3",
+    "scripts/ci/validate_runner_budget_policy.py": "9b1f9353db56cde8ba346cea0a7d9ee9d36d64438b40964ff3cf8c488c527c40",
 
     "scripts/runner/clued-runner-hook-loader.mjs": "de10d6bc74f8d965ab86190c87949248295896f9bb6fbab0dc774333f0d1c978",
 
