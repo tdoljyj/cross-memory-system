@@ -2,7 +2,7 @@
 // offline checks of the two first-install PowerShell scripts (rollout/fleet/test/test-bootstrap.ps1, windows/test-first-install-host.ps1).
 // No CI suite ran any of them (the resident-fleet-node suite was taken out of the selector again in b596acbc: its selector source is
 // pinned and re-pinning needs the whole registry chain). They run here, in resident-node, which every change under this directory
-// selects (ci-required-selection.mjs RESIDENT_AND_SOURCE). They need Windows (sc.exe, Windows PowerShell 5.1, Windows paths): on Linux
+// selects (ci-required-selection.mjs RESIDENT_AND_SOURCE). They need Windows (Windows PowerShell 5.1, Windows paths): on Linux
 // this file is skipped by name. Each fleet test file runs in a process of its own, as `node --test <dir>` would run it.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -32,8 +32,17 @@ for (const name of files) {
   });
 }
 
-function powershellFile(script, extra = []) {
-  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, ...extra],
+const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;
+function powershellFile(script, extra = [], prelude = '') {
+  const args = extra.map(arg => /^-[A-Za-z]+$/.test(arg) ? arg : psLiteral(arg));
+  const command = `${prelude}\n& ${psLiteral(script)} ${args.join(' ')}
+$testExit = $LASTEXITCODE
+if ($global:HostProbeCalls.Count) { throw ('PURE_TEST_READ_HOST: ' + ($global:HostProbeCalls -join ', ')) }
+exit $testExit`;
+  const invocation = prelude
+    ? ['-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')]
+    : ['-File', script, ...extra];
+  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...invocation],
     { cwd: RES, env: childEnv(), encoding: 'utf8', maxBuffer: 1 << 26, windowsHide: true, timeout: 900_000 });
   assert.ifError(r.error);
   const last = String(r.stdout ?? '').trim().split(/\r?\n/).at(-1) ?? '';
@@ -48,9 +57,36 @@ test('rollout/fleet/test/test-bootstrap.ps1: the bootstrap\'s offline checks pas
   assert.equal(r.verdict?.status, 'BOOTSTRAP_PURE_TESTS_PASSED', r.out);
 });
 
-test('windows/test-first-install-host.ps1: the host preparation\'s offline checks pass, none skipped', { skip, timeout: 900_000 }, () => {
-  const r = powershellFile(path.join(RES, 'windows', 'test-first-install-host.ps1'), ['-Node', process.execPath]);
-  assert.equal(r.status, 0, r.out);
-  assert.equal(r.verdict?.status, 'FIRST_INSTALL_HOST_PURE_TESTS_PASSED', r.out);
-  assert.equal(r.verdict?.skipped, null, r.out);
-});
+// Model both kinds of runner without inspecting or changing the actual host. An installed service's SID and root ACE exist
+// even if sc returns no usable SID (the failure seen on company-win-01). Every attempted probe is recorded and fails the test.
+const residentSid = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629';
+for (const host of ['clean', 'resident-installed', 'resident-installed-sc-unavailable']) {
+  test(`windows/test-first-install-host.ps1: offline checks ignore ${host}, none skipped`, { skip, timeout: 900_000 }, t => {
+    const installed = host !== 'clean';
+    const sddl = 'O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' + (installed ? `(A;;0x120080;;;${residentSid})` : '');
+    const scOutput = host.endsWith('sc-unavailable') ? '[SC] OpenSCManager FAILED 5: Access is denied.'
+      : `NAME: CluedCIResident\nSERVICE SID: ${residentSid}`;
+    const prelude = `
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$global:HostProbeCalls = New-Object Collections.Generic.List[string]
+function global:Invoke-FixtureSc { $global:HostProbeCalls.Add('sc.exe'); ${psLiteral(scOutput)} }
+Set-Alias -Name 'C:\\Windows\\System32\\sc.exe' -Value Invoke-FixtureSc -Scope Global
+Set-Alias -Name sc.exe -Value Invoke-FixtureSc -Scope Global
+if ((Get-Command 'C:\\Windows\\System32\\sc.exe').CommandType -ne 'Alias') { throw 'SC_FIXTURE_NOT_INSTALLED' }
+function global:Get-Acl {
+  [CmdletBinding()] param([string]$LiteralPath, [string]$Path)
+  $global:HostProbeCalls.Add('Get-Acl'); [pscustomobject]@{ Sddl = ${psLiteral(sddl)} }
+}
+function global:Get-Service {
+  [CmdletBinding()] param([string[]]$Name)
+  $global:HostProbeCalls.Add('Get-Service')
+  ${installed ? `[pscustomobject]@{ Name = 'CluedCIResident'; Status = 'Running'; Sid = '${residentSid}' }` : ''}
+}`;
+    const r = powershellFile(path.join(RES, 'windows', 'test-first-install-host.ps1'), ['-Node', process.execPath], prelude);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(r.verdict?.status, 'FIRST_INSTALL_HOST_PURE_TESTS_PASSED', r.out);
+    assert.equal(r.verdict?.skipped, null, r.out);
+    t.diagnostic(JSON.stringify({ host, ...r.verdict, hostProbeCalls: 0 }));
+  });
+}

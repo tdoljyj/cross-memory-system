@@ -134,6 +134,16 @@ const verifyProperties = {
   pr_ref: verifyNormalProperties.pr_ref,
 } as const;
 
+
+// Keep every known field name in every alternative. A Host that removes
+// additional properties while trying an earlier alternative must not erase
+// another command's discriminator, CAS or private proof. False schemas reject
+// mode-inapplicable fields without treating them as removable extra fields.
+// The outer object remains closed; the database remains the authority boundary.
+const verifyAlternativeProperties = (allowed: Readonly<Record<string, unknown>>) =>
+  Object.fromEntries(Object.keys(verifyProperties).map((name) =>
+    [name, Object.hasOwn(allowed, name) ? allowed[name] : false]));
+
 export const workClaimTools = [
   {
     name: "clued_work_claim",
@@ -194,11 +204,11 @@ export const workClaimTools = [
       type: "object", properties: verifyProperties, additionalProperties: false,
       anyOf: [
         { type: "object", required: ["claim_id"], not: { required: ["action"] },
-          properties: verifyNormalProperties, additionalProperties: false },
+          properties: verifyAlternativeProperties(verifyNormalProperties), additionalProperties: false },
         { type: "object", required: ["action", "pr_ref", "head_sha", "base_sha", "target_branch"],
-          properties: verifyResolveProperties, additionalProperties: false },
+          properties: verifyAlternativeProperties(verifyResolveProperties), additionalProperties: false },
         { type: "object", required: ["action", "scope", "claim_id", "fence", "execution_epoch", "lease_version", "changed_paths", "lease_key"],
-          properties: verifyEditProperties, additionalProperties: false },
+          properties: verifyAlternativeProperties(verifyEditProperties), additionalProperties: false },
       ],
     },
   },
