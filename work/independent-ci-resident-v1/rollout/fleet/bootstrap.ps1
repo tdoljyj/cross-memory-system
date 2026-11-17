@@ -21,7 +21,7 @@
     2. the prerequisite manifest (Test-PrereqManifest): every item this run uses pinned (PREREQ_NOT_PINNED otherwise: nothing is fetched
        unpinned). A node with a resident (the reinstall) uses node, python and git only; a first install all seven and the .debs
        (Get-NeededPrereqs). Each file from <dir> when it is there with its pinned hash, else downloaded, then held to sha256 and size;
-       node, python and git expanded once into C:\ProgramData\CluedBootstrap\tools\<name>-<sha256> (complete only with its marker; a
+       node, python and git expanded once into C:\ProgramData\CluedBootstrap\tools\<name>-<sha256-first-16> (complete only with its full-sha256 marker; a
        cut-off expansion is set aside and done again: Get-ExtractState);
     3. the archive's tree/ (Windows' own tar.exe, which cannot write a name outside ASCII: the package builder refuses such a path,
        universal.mjs UNIVERSAL_TREE_PATH_NOT_ASCII; install.mjs checks its own bytes against the archive, so the tool is not trusted);
@@ -135,6 +135,10 @@ function Test-PrereqManifest($m, [string[]]$needed = $PrereqNames, [bool]$debsNe
     if (($pinned -or $null -ne (Get-Key $i 'url')) -and [string](Get-Key $i 'url') -cnotmatch '^https://[A-Za-z0-9.-]+/[^\s"''`]+$') { $codes += ('PREREQ_URL:' + $name) }
     if ([string](Get-Key $i 'fileName') -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$') { $codes += ('PREREQ_FILE_NAME:' + $name) }
     if (@('zip', 'exe', 'msi', 'wsl', 'tar.gz', 'tar.xz') -cnotcontains [string](Get-Key $i 'kind')) { $codes += ('PREREQ_KIND:' + $name) }
+    if ((Get-Key $i 'kind') -ceq 'zip') {
+      $max = Get-Key $i 'maxEntryPathLength'
+      if (-not (($max -is [int] -or $max -is [long]) -and $max -gt 0 -and $max -le [int]::MaxValue)) { $codes += ('PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH:' + $name) }
+    }
     if ($name -ceq 'wsl' -and [string](Get-Key $i 'version') -cnotmatch '^\d+\.\d+\.\d+\.\d+$') { $codes += 'PREREQ_WSL_VERSION' }
   }
   foreach ($n in $PrereqNames) { if (@($names | Where-Object { $_ -ceq $n }).Count -ne 1) { $codes += ('PREREQ_ITEM_NOT_ONCE:' + $n) } }
@@ -335,12 +339,16 @@ function Get-Prereq($item, [string]$dest) {
 }
 # L1: a zip expanded once per sha256 into the tools cache: into a new directory, marked complete, then renamed into place; a directory
 # found incomplete (a cut-off run) is renamed aside, kept, and the expansion done again.
-function Expand-Cached([string]$zip, [string]$name, [string]$sha256) {
-  $dir = Join-Path (Join-Path $WorkParent 'tools') ($name + '-' + $sha256)
+function Expand-Cached([string]$zip, [string]$name, [string]$sha256, $maxEntryPathLength) {
+  if (-not (($maxEntryPathLength -is [int] -or $maxEntryPathLength -is [long]) -and $maxEntryPathLength -gt 0 -and $maxEntryPathLength -le [int]::MaxValue)) { throw ('PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH:' + $name) }
+  $dir = Join-Path (Join-Path $WorkParent 'tools') ($name + '-' + $sha256.Substring(0, 16))
+  $partial = $dir + '.p-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+  # Windows' default MAX_PATH includes the terminating NUL. Count the actual temporary prefix, archive root and completion marker.
+  $longestPathLength = $partial.Length + 1 + [Math]::Max([long]$maxEntryPathLength, '.bootstrap-complete'.Length)
+  if ($longestPathLength -gt 259) { throw ('TOOL_CACHE_PATH_TOO_LONG:' + $name + ':' + $longestPathLength + '>259:' + $partial) }
   $state = Get-ExtractState $dir $sha256
   if ($state -ceq 'complete') { return $dir }
-  if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.incomplete-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')) }
-  $partial = $dir + '.partial-' + [Guid]::NewGuid().ToString('N')
+  if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.i-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)) }
   Expand-Archive -LiteralPath $zip -DestinationPath $partial
   [IO.File]::WriteAllText((Join-Path $partial '.bootstrap-complete'), $sha256)
   [IO.Directory]::Move($partial, $dir)
@@ -454,7 +462,7 @@ function Invoke-Bootstrap {
   $tools = [ordered]@{}
   foreach ($i in @($m['items'] | Where-Object { @($needed) -ccontains [string]$_['name'] })) {
     $file = Get-Prereq $i $pre
-    if (@('node', 'python', 'git') -ccontains [string]$i['name']) { $tools[[string]$i['name']] = Expand-Cached $file ([string]$i['name']) ([string]$i['sha256']) }
+    if (@('node', 'python', 'git') -ccontains [string]$i['name']) { $tools[[string]$i['name']] = Expand-Cached $file ([string]$i['name']) ([string]$i['sha256']) (Get-Key $i 'maxEntryPathLength') }
   }
   if ($firstInstall) { $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir); foreach ($d in @($m['debs'])) { $null = Get-Prereq $d $debDir } }
   $nodeExe = @(Get-ChildItem -LiteralPath $tools['node'] -Recurse -Filter node.exe | ForEach-Object { $_.FullName })
