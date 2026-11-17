@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkScopeIsolation } from '../../../scripts/ci/check-scope-isolation.mjs';
+import { checkScopeIsolation } from './scope-isolation.mjs';
 import { selectSuites, SUITE_COMMANDS } from '../../../scripts/ci/ci-required-selection.mjs';
 
 test('policy scope guard discovers a newly declared per PR limit and refuses missing or detached tests', () => {
@@ -25,7 +25,7 @@ test('scope guard reads the repository policy and real isolation tests', async (
     const bodies = await Promise.all(tests.filter(n => n.endsWith('.test.mjs') && n !== 'scope-isolation-guard.test.mjs').map(n => fs.readFile(new URL(`test/${n}`, root), 'utf8')));
     assert.ok(checkScopeIsolation(await fs.readFile(new URL('src/policy.mjs', root), 'utf8'), bodies.map(body => body.replace(`// scope-isolation: ${key}`, '// removed marker'))).missing.includes(key));
   }
-  for (const changed of ['scripts/ci/check-scope-isolation.mjs', 'work/independent-ci-resident-v1/src/policy.mjs', 'work/independent-ci-resident-v1/test/budget-isolation.test.mjs'])
+  for (const changed of ['work/independent-ci-resident-v1/test/scope-isolation.mjs', 'work/independent-ci-resident-v1/src/policy.mjs', 'work/independent-ci-resident-v1/test/budget-isolation.test.mjs'])
     assert.ok(selectSuites('ci-suites', [changed]).suites.includes('resident-node'));
   assert.ok(SUITE_COMMANDS['resident-node'].some(c => c.argv.includes('{tests:test}')));
 });

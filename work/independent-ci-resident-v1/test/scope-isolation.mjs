@@ -1,4 +1,4 @@
-// Required by resident-node's scope-isolation-guard.test.mjs. Discovery follows policy definitions,
+// Resident test tool, required by resident-node's scope-isolation-guard.test.mjs. Discovery follows policy definitions,
 // including new keys; there is no allow-list of the four historical limits.
 export function checkScopeIsolation(policy, tests) {
   const required = new Set();
