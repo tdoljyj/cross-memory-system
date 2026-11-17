@@ -25,6 +25,8 @@ import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 // 4. ... and only until it has proven itself steady again (migration 20261115120000): a node handed out automatically
 //    that is then heard without a silence and healthy for rejoin_steady_minutes takes the role back when the holder falls
 //    silent; one that keeps dropping out or reporting its service down stays out (no ping-pong).
+// 5. A holder HALTED for halted_minutes is handed out even while its heartbeats keep coming (migration 20261116100000);
+//    its live admissions end at once and the new holder starts only after an answer just given has expired.
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
 const hash = () => crypto.randomBytes(32).toString('hex');
@@ -361,6 +363,42 @@ test('a ci-admission handover lands only on a node fit to take over; the watchdo
       o = await f.holderSilent();
       assert.deepEqual([o.outcome, f.reasonsOf(o, 'a')], ['no_target', ['auto_handed_out']], JSON.stringify(o));
       assert.deepEqual(await f.holders(), ['b']);
+    });
+
+    // 2026-11-14 (production): TURING held ci-admission, HALTed and went on sending healthy heartbeats; neither kind of
+    // lost contact applied and a HALTED holder was never handed out, so CI stood still for about 3 hours.
+    await t.test('a holder HALTED for halted_minutes, still heard and healthy, is handed out; its admissions end at once', async () => {
+      const h = await account('halted-holder', ['a', 'b']); // a holds, b stands by
+      const anchor = await h.receipt();
+      await admin.query(`insert into clued_private.ci_failover_settings_v1(user_id,enabled,enabled_at,version,updated_at,receipt_id)
+        values($1,true,now()-interval '1 day',1,now()-interval '1 day',$2)`, [h.user, anchor]);
+      await admin.query(`insert into clued_private.ci_failover_members_v1(user_id,binding_id,rank,marked_at,receipt_id)
+        values($1,$2,1,now()-interval '1 day',$4),($1,$3,2,now()-interval '1 day',$4)`, [h.user, h.ids.a, h.ids.b, anchor]);
+      const tick = async () => (await admin.query('select clued_private.ci_admission_failover_owner_v1($1) v', [h.user])).rows[0].v;
+      const duty = async (who) => (await admin.query(`select clued_private.binding_role_in_force_v1($1,$2,'ci-admission') in_force,
+        clued_private.ci_duty_admits_v1($1,$2,'duty_role') admits`, [h.user, h.ids[who]])).rows[0];
+      const halted = { mode: 'ACTIVE', probe: 'held', state: 'HALTED', halt: { code: 'STAGE_CHILD_TREE_UNCONFIRMED', at: new Date().toISOString() } };
+      await h.beat('a', halted); await h.beat('b');
+      await h.ago('a', 4); await h.ago('b', 4);
+      // Heard every minute, service running, snapshot fresh, still HALTED: 4 minutes of HALT do not trigger.
+      await h.beat('a', halted); await h.beat('b');
+      let o = await tick();
+      assert.equal(o.outcome, 'holder_alive', JSON.stringify(o));
+      // The executor's last admission came just before the watchdog acts (the case the 5-minute start is for).
+      assert.deepEqual(await duty('a'), { in_force: true, admits: true });
+      await h.ago('a', 1); await h.ago('b', 1);
+      await h.beat('a', halted); await h.beat('b');
+      o = await tick();
+      assert.deepEqual([o.outcome, o.trigger, o.target], ['handed_over', 'halted', h.ids.b], JSON.stringify(o));
+      assert.deepEqual(await h.holders(), ['b']);
+      // No two publishers: the old holder's live admission is refused at once, and the new holder starts only after
+      // the 5 minutes in which an admission answered just before could still land a check.
+      assert.deepEqual(await duty('a'), { in_force: false, admits: false });
+      assert.deepEqual(await duty('b'), { in_force: false, admits: false });
+      const started = (await admin.query(`select extract(epoch from effective_at-granted_at)::integer s from clued_private.binding_roles_v1
+        where binding_id=$1 and role='ci-admission' and revoked_at is null`, [h.ids.b])).rows[0].s;
+      assert.equal(started, 300);
+      assert.equal((await admin.query('select metadata->>\'trigger\' t from public.clued_audit_receipts where id=$1', [o.receipt_id])).rows[0].t, 'halted');
     });
   });
 });

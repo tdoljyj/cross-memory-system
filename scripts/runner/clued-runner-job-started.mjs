@@ -59,7 +59,8 @@
 //         not started or not completed yet is waited for, up to
 //         CLUED_RUNNER_HOOK_WAIT_SECONDS. See rerunVerdict below.
 //     The rule for a pull request that changes a workflow applies to every
-//     attempt as to the first.
+//     attempt as to the first; under Native admission a later attempt also
+//     needs every earlier attempt to have run nothing (late admission, below).
 // Everything else is refused: pushes to other branches, pull requests into
 // other branches, other events.
 //
@@ -100,6 +101,25 @@
 // READ_ALLOWANCE_MS. The Native check is judged at the time its pages were
 // read, never at a time taken before the retries. Fail closed is unchanged:
 // nothing is admitted on a failure.
+//
+// Late Native admission (required-tests-late-admission-v1, component 1.0.3;
+// defect B, 2026-11-15, PR #1121 run 43720693841): Native admits a pull
+// request only once it is the train's front, often long after the push, so
+// every job of attempt 1 of a pull request that changes a workflow waits the
+// limit and is refused in "Set up runner". Attempt 1 alone was admitted, so
+// the companion's one "Re-run all jobs" after the admission was refused too
+// and only a new commit helped. Now the Native rule admits the first attempt
+// that runs anything: a later attempt starts when every job of every earlier
+// attempt ran nothing (skipped, or refused in the runner's setup; see
+// ranNothing). Still one run per admitted head.
+//
+// Loaded from main (runner-hook-loader-v1, component 1.0.4; Owner Decision
+// 2026-11-16): runners keep only clued-runner-hook-loader.mjs, installed under
+// this file's name. At each job start it reads this file from the protected
+// default branch, checks its blob id and imports it from memory, then calls
+// main(env, fetch, { sourceSha256 }). So this file is never the entry point
+// there, and its clued-r9-pre-job source_sha256 is the loader's. Merging this
+// file is its rollout; there are no per-version copies to install any more.
 
 import { createSign,createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -107,8 +127,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "work-handover-native-admission-retry-v1";
-export const COMPONENT_VERSION = "1.0.2";
+export const HOOK_VERSION = "required-tests-dispatch-v1";
+export const COMPONENT_VERSION = "1.0.5";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -478,6 +498,38 @@ async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attem
   return { state: "ok", job: gate };
 }
 
+// Late Native admission (required-tests-late-admission-v1, defect B): a pull
+// request that changes a workflow writes its own admission-gate job, so the
+// gate's re-run rules are its own to forge, and this hook alone bounds how
+// often such a run runs: once per admitted head. That once is the first
+// attempt that runs anything. A job ran nothing when it was skipped, or
+// failed only in the runner's own setup, before any step of the workflow:
+// "Set up job" (the runner) or "Set up runner" (this hook, which always comes
+// right after it, so a workflow step of that name sits later and does not
+// count), with every later step skipped but the closing "Complete job". The
+// whole job list of every earlier attempt must be readable; anything else
+// counts as having run.
+export const RUNNER_SETUP_STEPS = ["Set up job", "Set up runner"];
+export function ranNothing(job) {
+  if (!job || job.status !== "completed") return false;
+  if (job.conclusion === "skipped") return true;
+  const steps = job.conclusion === "failure" && Array.isArray(job.steps) ? job.steps : [];
+  const failed = steps.filter((step) => step && step.conclusion === "failure");
+  return failed.length > 0 && steps.every((step, index) => step && (RUNNER_SETUP_STEPS[index] === step.name
+    || step.conclusion === "skipped" || (index === steps.length - 1 && step.name === "Complete job" && step.conclusion !== "failure")));
+}
+async function earlierAttemptsRanNothing(fetchImpl, token, repository, runId, attempt) {
+  for (let earlier = 1; earlier < attempt; earlier += 1) {
+    const body = await github(fetchImpl, token, `/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs?per_page=100`);
+    const jobs = body && Array.isArray(body.jobs) ? body.jobs : null;
+    if (!jobs || !Number.isInteger(Number(body.total_count)) || Number(body.total_count) > jobs.length)
+      return { ok: false, why: `attempt ${earlier}'s job list is incomplete` };
+    const ran = jobs.filter((job) => !ranNothing(job));
+    if (ran.length) return { ok: false, why: `attempt ${earlier} already ran ${ran.map((job) => `${String(job?.name).slice(0, 40)} ${job?.status}/${job?.conclusion ?? "none"}`).join(", ")}` };
+  }
+  return { ok: true, why: "" };
+}
+
 // Whether a job of attempt `attempt` (2 or later) of this pull request run may
 // start. The workflow-change rule is applied afterwards, as for attempt 1.
 // Every error, and everything that cannot be observed, refuses.
@@ -572,7 +624,8 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   result.workflow = workflow;
   if (!workflow) throw new Error(`GITHUB_WORKFLOW_REF is not a workflow path: ${env.GITHUB_WORKFLOW_REF}`);
   const event = result.event;
-  if (MAIN_EVENTS.has(event) && result.ref === mainRef) {
+  const requiredDispatch = event === 'workflow_dispatch' && workflow === '.github/workflows/clued-required-tests.yml';
+  if (MAIN_EVENTS.has(event) && result.ref === mainRef && !requiredDispatch) {
     // Re-review 7, m1: pull_request_target runs on the default branch's ref
     // whatever the pull request's base, and a workflow may check out that
     // base, which an Agent controls when it is another branch.
@@ -606,6 +659,30 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
       return result;
     }
     const file = workflow.slice(".github/workflows/".length);
+    if (requiredDispatch) {
+      const payload = JSON.parse(String(readFile(env.GITHUB_EVENT_PATH, 'utf8')));
+      const { pr: number, head } = payload?.inputs ?? {};
+      if (!/^[1-9][0-9]{0,9}$/.test(String(number ?? '')) || head !== sha
+        || !env.GITHUB_REPOSITORY_OWNER || env.GITHUB_ACTOR !== env.GITHUB_REPOSITORY_OWNER
+        || run?.run_attempt !== 1) {
+        result.reason = 'required-tests dispatch target, actor or attempt refused';
+        return result;
+      }
+      const pr = await github(fetchImpl, token, `/repos/${repository}/pulls/${number}`);
+      if (pr?.number !== Number(number) || pr.state !== 'open' || pr.head?.sha !== head
+        || pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository
+        || pr.base?.ref !== defaultBranch || result.ref !== `refs/heads/${pr.head.ref}`) {
+        result.reason = 'required-tests dispatch PR is closed, foreign or moved';
+        return result;
+      }
+      // Retain the branch-dispatch rule: workflow bytes must match main.
+      // The unchanged trusted gate then judges the Native PR admission.
+      const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);
+      result.allow = differing.length === 0;
+      result.reason = result.allow ? `required-tests recovery for current PR #${number}` : 'required-tests dispatch workflows differ from main';
+      if (result.allow) result.execution_target = { repository, head_sha: head, pr_ref: `${repository}#${number}`, target_branch: defaultBranch };
+      return result;
+    }
     if (!DISPATCH_GATED_WORKFLOWS.includes(file)) {
       result.reason = `dispatch of ${workflow} on ${result.ref}: only ${DISPATCH_GATED_WORKFLOWS.join(", ")} may be dispatched on another branch; this one runs on ${defaultBranch} only`;
       return result;
@@ -676,9 +753,12 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
       const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
       const live = current?.state === "open" && current.base?.ref === defaultBranch
         && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
-      result.allow = Boolean(native.admitted && live && runnerAttempt === 1);
+      // One run per admitted head: a later attempt only when no earlier attempt of this run ran anything (see ranNothing).
+      const first = !(native.admitted && live) || runnerAttempt === 1 ? { ok: runnerAttempt === 1, why: "" }
+        : await earlierAttemptsRanNothing(fetchImpl, token, repository, runId, runnerAttempt);
+      result.allow = Boolean(native.admitted && live && first.ok);
       result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
-        + `${result.allow ? "succeeded" : "not admitted (binding, current head, conclusion, freshness or rerun)"}${rerun}`;
+        + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${first.why ? `: ${first.why}` : ""})`}${rerun}`;
       return result;
     }
     let found = null;
@@ -725,7 +805,9 @@ export async function decideWithCurrentEpoch(options) {
   const match = /return \{ url: "(https:\/\/[a-z0-9-]+\.supabase\.co)", key: "(sb_publishable_[A-Za-z0-9_-]+)" \};/.exec(source);
   if (!match) throw new Error("Trusted Clued public configuration is invalid");
   let target;
-  if (env.GITHUB_EVENT_NAME === "pull_request") {
+  if (result.execution_target) {
+    target = result.execution_target;
+  } else if (env.GITHUB_EVENT_NAME === "pull_request") {
     const payload = JSON.parse(String(readFile(env.GITHUB_EVENT_PATH, "utf8")));
     target = { repository, head_sha: payload.pull_request.head.sha,
       pr_ref: `${repository}#${payload.pull_request.number}`, target_branch: payload.pull_request.base.ref };
@@ -747,7 +829,9 @@ export async function decideWithCurrentEpoch(options) {
   return result;
 }
 
-export async function main(env = process.env, fetchImpl = globalThis.fetch) {
+// options.sourceSha256: the sha256 of the bytes this hook runs from, given by the loader that read them from main (a hook it runs
+// from memory has no file of its own); without it, this file's own bytes.
+export async function main(env = process.env, fetchImpl = globalThis.fetch, { sourceSha256 = null } = {}) {
   const enforce = /^(1|true|on|enabled)$/i.test((env.CLUED_RUNNER_HOOK_ENFORCE ?? "").trim());
   let result;
   try {
@@ -762,7 +846,7 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
     console.log("clued-r9-pre-job: "+JSON.stringify({schema:"clued.merge-admission-runner-observation/1",
       run_id:positive(env.GITHUB_RUN_ID),attempt:positive(env.GITHUB_RUN_ATTEMPT),logical_job_key:key(env.GITHUB_JOB),
       repository:key(env.GITHUB_REPOSITORY),workflow:key(result.workflow),hook_version:HOOK_VERSION,
-      source_sha256:createHash("sha256").update(fs.readFileSync(fileURLToPath(import.meta.url))).digest("hex"),
+      source_sha256:/^[0-9a-f]{64}$/.test(String(sourceSha256))?sourceSha256:createHash("sha256").update(fs.readFileSync(fileURLToPath(import.meta.url))).digest("hex"),
       observed_at:new Date().toISOString(),allow:result.allow,enforced:enforce,
       phase:"pre_job_permission",native_job_started_at:null,native_job_completed_at:null,
       source_authenticated:false,official_metric:false,t0:null}));
@@ -773,7 +857,11 @@ export async function main(env = process.env, fetchImpl = globalThis.fetch) {
   return enforce ? 1 : 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// The entry point, also behind a link or junction (defect 2102f7e1). An argv[1] that does not exist is not this file
+// (an importer's); this file's own path always resolves.
+// Run from memory by the loader (a data: URL), it is never the entry point.
+const realOrNull = (file) => { try { return fs.realpathSync(file); } catch { return null; } };
+if (import.meta.url.startsWith("file:") && process.argv[1] && realOrNull(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const proxyArguments = proxyBootstrapArguments();
     if (proxyArguments) {

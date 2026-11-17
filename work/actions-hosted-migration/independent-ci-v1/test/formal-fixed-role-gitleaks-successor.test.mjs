@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { batchJobsV2, subjectOfV2 } from '../src/job-v2.mjs';
-import { REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, matchesReviewedHistoryProof, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
+import { IMAGE, SCAN_ARGS, REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, matchesReviewedHistoryProof, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { REVIEWED_COMMITS as LEGACY_COMMITS } from '../worker/formal-gitleaks-v3/required-history/prepare.mjs';
 import { validateCleanupObservation } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { observationFacts } from '../worker/protected-job-bridge-v4/signed-result.mjs';
@@ -146,4 +146,13 @@ test('the self-test git shim admits exactly the cc353e29 and d94cd486 one-commit
   for (const option of ['core.abbrev=8', 'core.abbrev=7', 'core.abbrev=40']) {
     assert.throws(() => safeGitArguments(['-c', option, ...diff(`${d94}^`, d94)], c), { code: 'SELF_TEST_GIT_OPTION_REFUSED' });
   }
+});
+
+// The role command is compared item by item with the node's installed fleet formalRoles (policy.mjs, prepare.mjs).
+// A changed SCAN_ARGS changes formalRoles, which upgrade.mjs refuses in place (FLEET_SOURCE_REFS_CHANGED_NEEDS_REINSTALL).
+// These are the values of the accepted fleet package 2026.11.16-446a7106 (formalRoles.gitleaks.containerCommand);
+// change them only together with a release that reinstalls every node.
+test('gitleaks role command equals the installed fleet formalRoles (446a7106), so the release upgrades in place', () => {
+  assert.deepEqual([...SCAN_ARGS], ['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
+  assert.equal(IMAGE, 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f');
 });

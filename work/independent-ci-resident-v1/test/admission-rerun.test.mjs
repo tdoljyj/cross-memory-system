@@ -8,6 +8,9 @@ import { AdmissionRerunState, AdmissionRerunner, HEAD_RECHECK_MS, REQUIRED_TESTS
 import { withRerunLine } from '../src/pr-status.mjs';
 import { parseDutyStatus } from '../src/node-duty.mjs';
 import { tempRoot } from './helpers.mjs';
+import { gate, resolvePublicSupabaseConfig } from '../../../scripts/ci/clued-work-admission.mjs';
+import { decideWithCurrentEpoch } from '../../../scripts/runner/clued-runner-job-started.mjs';
+import { fileURLToPath } from 'node:url';
 
 const REPO = 'o/r';
 const HEAD = 'a'.repeat(40);
@@ -25,7 +28,7 @@ const attempt = ({ heavy = ['skipped', 'skipped', 'skipped'], notes = [pendingNo
 const run = (id, attempts, o = {}) => ({ id, head_sha: HEAD, event: 'pull_request', status: 'completed', pull_requests: [{ number: 452 }], attempts, ...o });
 
 // A scripted `gh api`: fail(route, method) may return { code } or 'throw' or { timedOut: true } for one call.
-function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null } = {}) {
+function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null, onDispatch = async () => {} } = {}) {
   const st = { pulls, checks, runs, posts: [], dispatches: [], calls: [] };
   const byId = id => st.runs.find(r => r.id === Number(id));
   const jobsOf = (r, n) => r.attempts[n - 1].jobs.map((j, i) => ({ id: r.id * 100 + n * 10 + i, run_attempt: n, ...j }));
@@ -42,9 +45,11 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     const route = target.slice(`repos/${REPO}`.length);
     let m;
     if (method === 'POST' && route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/dispatches`) {
+      st.dispatchFields = argv.flatMap((value, index) => value === '-f' ? [argv[index + 1]] : []);
       const i = argv.indexOf('-f'); assert.ok(i > 0, 'the ref is a field');
       st.dispatches.push(argv[i + 1]);
       if (dispatchCode === 0) st.runs.push(run(900, [attempt({ heavy: ['in_progress', 'in_progress', 'in_progress'], notes: [] })], { event: 'workflow_dispatch', status: 'queued', pull_requests: [] }));
+      if (dispatchCode === 0) await onDispatch(st);
       return { code: dispatchCode, stdout: '', stderr: dispatchCode === 0 ? '' : "gh: Workflow does not have 'workflow_dispatch' trigger (HTTP 422)" };
     }
     if (method === 'POST') {
@@ -101,6 +106,73 @@ test('allowed: one "Re-run all jobs", a receipt written before it, the PR page a
   await again.r.step();
   assert.deepEqual(w.posts, [700]);
   assert.equal(again.r.done(HEAD), true);
+});
+
+test('G3: the lost-run request binds the open PR and exact head, and cannot dispatch an unadmitted head', async t => {
+  const w = world({ runs: [] });
+  const l = await lane(t, w);
+  await l.r.step(); l.advance(LOST_RUN_AFTER_MS); await l.r.step();
+  assert.deepEqual(w.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
+  const denied = world({ runs: [], checks: [nativeCheck({ conclusion: 'failure' })] });
+  assert.notEqual((await decide({ gh: denied.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS })).action, 'redispatch');
+});
+
+test('G3 end-to-end: no push run -> one durable dispatch -> original PR gate and runner epoch -> three checks on the same head', async t => {
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const publicConfig = resolvePublicSupabaseConfig({}, root);
+  const configuration = await fs.readFile(path.join(root, 'apps/clued-cloud/app/supabase-public-config.ts'), 'utf8');
+  const workflow = await fs.readFile(path.join(root, '.github/workflows/clued-required-tests.yml'), 'utf8');
+  assert.match(workflow, /workflow_dispatch:/, 'GitHub accepts this event');
+  const executed = [];
+  let pr = pullRequest({ base: { sha: 'b'.repeat(40), ref: 'main', repo: { full_name: REPO, default_branch: 'main' } } });
+  let epochCurrent = true;
+  const w = world({ runs: [], pulls: [pr], onDispatch: async st => {
+    const fields = Object.fromEntries(st.dispatchFields.map(field => { const at = field.indexOf('='); return [field.slice(0, at), field.slice(at + 1)]; }));
+    const event = { inputs: { pr: fields['inputs[pr]'], head: fields['inputs[head]'] }, repository: { default_branch: 'main' } };
+    const self = { id: 900, event: 'workflow_dispatch', path: '.github/workflows/clued-required-tests.yml', head_sha: HEAD,
+      head_branch: fields.ref, run_attempt: 1, created_at: new Date(T0).toISOString() };
+    const environment = { GITHUB_REPOSITORY: REPO, GITHUB_REPOSITORY_OWNER: 'o', GITHUB_ACTOR: 'o',
+      GITHUB_RUN_ID: '900', GITHUB_RUN_ATTEMPT: '1', GITHUB_SHA: HEAD, GITHUB_REF: `refs/heads/${fields.ref}`,
+      GITHUB_REF_NAME: fields.ref, GITHUB_WORKFLOW_REF: `${REPO}/.github/workflows/clued-required-tests.yml@refs/heads/${fields.ref}`,
+      GITHUB_TOKEN: 'test-only', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_EVENT_PATH: '/fixture-event', GITHUB_WORKSPACE: root,
+      CLUED_ADMISSION_GATE_SOURCE: 'independent-ci-native-work-admission', CLUED_ADMISSION_GATE_WAIT_SECONDS: '0',
+      CLUED_RUNNER_HOOK_REPOSITORY: REPO, CLUED_RUNNER_HOOK_TOKEN_FILE: '/fixture-token' };
+    const fetchImpl = async (url, init = {}) => {
+      const u = new URL(url), route = u.pathname, input = init.body ? JSON.parse(init.body)?.p_input : null;
+      let body;
+      if (u.origin === publicConfig.url && input?.action === 'execution_current') {
+        assert.deepEqual([input.head_sha, input.pr_ref, input.target_branch], [HEAD, 'o/r#452', 'main']);
+        body = { status: 'ok', guard_required: true, epoch_current: epochCurrent };
+      } else if (route.endsWith('/pulls/452')) body = pr;
+      else if (route.endsWith('/actions/runs/900')) body = self;
+      else if (route.endsWith('/clued-required-tests.yml/runs')) body = { total_count: 1, workflow_runs: [self] };
+      else if (route.endsWith('/check-runs')) body = { total_count: st.checks.length, check_runs: st.checks };
+      else if (route.endsWith('/contents/.github/workflows')) body = [{ type: 'file', path: '.github/workflows/clued-required-tests.yml', sha: 'c'.repeat(40) }];
+      else if (route.endsWith('/contents/apps/clued-cloud/app/supabase-public-config.ts')) body = { type: 'file', encoding: 'base64', content: Buffer.from(configuration).toString('base64') };
+      else assert.fail(`unexpected recovery read ${route}`);
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+    const admitted = await gate({ env: environment, event, eventName: 'workflow_dispatch', fetchImpl });
+    assert.equal(admitted.admitted, true);
+    const start = () => decideWithCurrentEpoch({ env: environment, fetchImpl,
+      readFile: p => p === '/fixture-token' ? 'test-only' : JSON.stringify(event) });
+    for (const check of ['clued-cloud-tests', 'ci-suites', 'migration-verify']) {
+      assert.equal((await start()).allow, true);
+      executed.push({ check, head: self.head_sha });
+    }
+    epochCurrent = false;
+    assert.equal((await start()).allow, false, 'a later handover still prevents execution');
+    epochCurrent = true;
+    pr = { ...pr, head: { ...pr.head, sha: 'd'.repeat(40) } };
+    assert.equal((await start()).allow, false, 'a moved head cannot reuse gate outputs');
+  } });
+  const l = await lane(t, w);
+  await l.r.step(); l.advance(LOST_RUN_AFTER_MS); await l.r.step();
+  assert.equal(l.state.record(HEAD).outcome, 'sent');
+  assert.equal(executed.length, 3);
+  assert.ok(executed.every(item => item.head === HEAD));
+  await l.r.step();
+  assert.equal(w.dispatches.length, 1);
 });
 
 test('network cut on the request: every outcome but sent is recorded as what it is, the Owner told once, never clicked again', async t => {
@@ -485,6 +557,14 @@ test('environment failure: a setup death needs no log; a gate job that died in s
   const died = ran([{ conclusion: 'skipped' }, { conclusion: 'skipped' }, { conclusion: 'skipped' }], { gate: { name: 'admission-gate', status: 'completed', conclusion: 'failure', head_sha: HEAD, steps: SETUP_DIED } });
   const d = await decide({ gh: world({ runs: [run(700, [died])] }).gh, headSha: HEAD });
   assert.deepEqual([d.action, d.environment], ['rerun', null]);
+  // Defect B (#1121 run 43720693841): the runner's job-started hook refused the gate in "Set up runner" before the admission came;
+  // once it came, this lane asks for the one re-run (it used to call the head final and a new commit had to be pushed).
+  const hookRefused = [step('Set up job', 'success'), step('Set up runner', 'failure'), step('Run node scripts/ci/clued-work-admission.mjs --mode gate', 'skipped'), step('Complete job', 'success')];
+  const refused = ran([{ conclusion: 'skipped' }, { conclusion: 'skipped' }, { conclusion: 'skipped' }], { gate: { name: 'admission-gate', status: 'completed', conclusion: 'failure', head_sha: HEAD, steps: hookRefused } });
+  const wb = world({ runs: [run(700, [refused])] });
+  const late = await decide({ gh: wb.gh, headSha: HEAD });
+  assert.deepEqual([late.action, late.runId, late.attempt, late.environment], ['rerun', 700, 1, null]);
+  assert.equal(wb.calls.filter(c => /annotations/.test(c.target)).length, 0, 'no verdict is looked for: the gate never ran');
 });
 
 test('environment failure: a failed test, an unproven failure, a cancelled job or a failure of the attempt after a pending one never re-runs', async t => {

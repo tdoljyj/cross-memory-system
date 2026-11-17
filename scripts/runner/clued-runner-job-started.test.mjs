@@ -120,6 +120,27 @@ const nativeScript = (...checks) => ({
   [`${API}/pulls/9`]: { body: { state: "open", base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } } },
 });
 
+test('G3 hook: required-tests dispatch stays bound to its current PR/head', async () => {
+  const pr = { number: 9, state: 'open', head: { sha: HEAD, ref: 'claude/g3', repo: { full_name: 'o/r' } },
+    base: { ref: 'main', repo: { full_name: 'o/r' } } };
+  const overrides = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/claude/g3',
+    GITHUB_REF_NAME: 'claude/g3', GITHUB_SHA: HEAD, GITHUB_ACTOR: 'o', GITHUB_REPOSITORY_OWNER: 'o',
+    GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3' };
+  const payload = JSON.stringify({ inputs: { pr: '9', head: HEAD }, repository: { default_branch: 'main' } });
+  const script = { [`${LIST}${HEAD}`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }),
+    [`${LIST}main`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }), [`${API}/pulls/9`]: { body: pr } };
+  assert.equal((await run(overrides, script, payload)).result.allow, true);
+  for (const changed of [{ state: 'closed' }, { head: { ...pr.head, sha: SHA } }, { head: { ...pr.head, repo: { full_name: 'fork/r' } } }]) {
+    assert.equal((await run(overrides, { ...script, [`${API}/pulls/9`]: { body: { ...pr, ...changed } } }, payload)).result.allow, false);
+  }
+  assert.equal((await run({ ...overrides, GITHUB_ACTOR: 'stranger' }, script, payload)).result.allow, false);
+  assert.equal((await run({ ...overrides, GITHUB_RUN_ATTEMPT: '2' }, script, payload)).result.allow, false);
+  assert.equal((await run({ ...overrides, GITHUB_REF: 'refs/heads/main' }, script, payload)).result.allow, false,
+    'required-tests dispatch cannot use the generic main fast path');
+  assert.equal((await run(overrides, { ...script, [`${LIST}${HEAD}`]: listing({ 'clued-required-tests.yml': '2'.repeat(40) }) }, payload)).result.allow, false,
+    'branch dispatch still requires workflows identical to main');
+});
+
 test("Native hook: manually retired producer reads only the exact App/head/PR Native check; legacy success cannot stand in", async () => {
   const { result, calls } = await run({}, nativeScript(nativeCheck()));
   assert.equal(result.allow, true);
@@ -343,7 +364,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "work-handover-native-admission-retry-v1");
+  assert.equal(HOOK_VERSION, "required-tests-dispatch-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -740,6 +761,65 @@ test("runner hook (re-review 3, N-R1): a re-run of a pull request that changes a
   assert.equal(calls.some((c) => c.url.startsWith(ADMISSION_RUNS) || c.url.startsWith(COMPARE)), false);
 });
 
+// Defect B (2026-11-15, PR #1121 run 43720693841, #1122 run 43720708199): a pull request that changes a workflow is pushed long
+// before it is the train's front; every job of attempt 1 waits the hook's limit and is refused in "Set up runner" ("Native admission
+// absent"). The Native check comes later (14:11:36), the resident's lane asks for "Re-run all jobs" once, and attempt 2 was refused
+// only for being attempt 2 ("Native admission 132838811702: not admitted (... rerun)"), so a new commit had to be pushed by hand.
+// Now the first attempt that runs anything is the run's one run: a later attempt starts when every earlier attempt ran nothing.
+const lateStep = (name, conclusion) => ({ name, status: "completed", conclusion });
+// The measured shape of a job the hook refused (job 132831819306): the runner's "Set up job", then this hook's "Set up runner".
+const refusedInSetup = (overrides = {}) => ({ id: 70, name: "admission-gate", status: "completed", conclusion: "failure", run_attempt: 1,
+  labels: SELF_HOSTED, steps: [lateStep("Set up job", "success"), lateStep("Set up runner", "failure"),
+    lateStep("Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683", "skipped"),
+    lateStep("Run node scripts/ci/clued-work-admission.mjs --mode gate", "skipped"), lateStep("Complete job", "success")], ...overrides });
+const skippedHeavy = (overrides = {}) => ({ id: 71, name: "ci-suites", status: "completed", conclusion: "skipped", run_attempt: 1, steps: [], ...overrides });
+const lateCheck = nativeCheck({ started_at: "2026-10-04T05:30:00Z", completed_at: "2026-10-04T05:30:00Z" });
+const lateRerun = (n, who, earlier, overrides = {}) => run({ GITHUB_RUN_ATTEMPT: String(n), ...who }, {
+  ...nativeScript(lateCheck), [RUN]: rerunOf(n), [JOBS(n)]: jobsOf(gateJob({ run_attempt: n }), heavyJob({ run_attempt: n })),
+  ...Object.fromEntries(earlier.map((jobs, i) => [JOBS(i + 1), jobs])), ...overrides });
+
+test("Native hook (defect B): a re-run of a workflow-changing pull request starts when every earlier attempt ran nothing", async () => {
+  for (const who of [GATE, HEAVY]) {
+    const { result, calls } = await lateRerun(2, who, [jobsOf(refusedInSetup(), skippedHeavy(), skippedHeavy({ id: 72, name: "migration-verify" }))]);
+    assert.equal(result.allow, true, who.GITHUB_JOB);
+    assert.match(result.reason, /Native admission 80: succeeded/);
+    assert.ok(urls(calls).includes(`${JOBS(1)}?per_page=100`), "the earlier attempt's jobs were read");
+  }
+  // Two attempts that ran nothing (the runner itself failed "Set up job" in attempt 2): attempt 3 is still the first real run.
+  const setupJob = refusedInSetup({ id: 73, run_attempt: 2, steps: [lateStep("Set up job", "failure"), lateStep("Complete job", "success")] });
+  assert.equal((await lateRerun(3, HEAVY, [jobsOf(refusedInSetup(), skippedHeavy()), jobsOf(setupJob, skippedHeavy({ run_attempt: 2 }))])).result.allow, true);
+});
+
+test("Native hook (defect B): an earlier attempt that ran anything, or that cannot be read, refuses; one admitted head runs once", async () => {
+  const ranGate = refusedInSetup({ conclusion: "success", steps: [lateStep("Set up job", "success"), lateStep("Set up runner", "success"),
+    lateStep("Run node scripts/ci/clued-work-admission.mjs --mode gate", "success"), lateStep("Complete job", "success")] });
+  const cases = {
+    "the gate ran and succeeded": [jobsOf(ranGate, skippedHeavy())],
+    "the gate ran and failed in its own step": [jobsOf(refusedInSetup({ steps: [lateStep("Set up job", "success"), lateStep("Set up runner", "success"),
+      lateStep("Run node scripts/ci/clued-work-admission.mjs --mode gate", "failure"), lateStep("Complete job", "success")] }), skippedHeavy())],
+    "a workflow step named like the hook": [jobsOf(refusedInSetup({ steps: [lateStep("Set up job", "success"), lateStep("Set up runner", "success"),
+      lateStep("Set up runner", "failure"), lateStep("Complete job", "success")] }), skippedHeavy())],
+    "a heavy job ran": [jobsOf(refusedInSetup(), skippedHeavy({ conclusion: "failure", steps: [lateStep("Set up job", "success"), lateStep("Set up runner", "success"), lateStep("Run tests", "failure")] }))],
+    "a cancelled job": [jobsOf(refusedInSetup(), skippedHeavy({ conclusion: "cancelled" }))],
+    "a job still running": [jobsOf(refusedInSetup({ status: "in_progress", conclusion: null }), skippedHeavy())],
+    "a failed job with no step record": [jobsOf(refusedInSetup({ steps: undefined }), skippedHeavy())],
+    "an incomplete job list": [{ body: { total_count: 3, jobs: [refusedInSetup(), skippedHeavy()] } }],
+    "no job list": [{ body: { message: "nope" } }],
+    "attempt 2 ran, attempt 1 did not": [jobsOf(refusedInSetup(), skippedHeavy()), jobsOf(ranGate, skippedHeavy())],
+  };
+  for (const [label, earlier] of Object.entries(cases)) {
+    const { result } = await lateRerun(earlier.length + 1, HEAVY, earlier);
+    assert.equal(result.allow, false, label);
+    assert.match(result.reason, /Native admission 80: not admitted/, label);
+    assert.match(result.reason, /earlier attempt|attempt \d/, label);
+  }
+  // Not admitted (yet): the earlier attempts are not read at all.
+  const { result, calls } = await run({ GITHUB_RUN_ATTEMPT: "2", ...GATE, CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" },
+    { ...nativeScript(), [RUN]: rerunOf(2), [JOBS(1)]: jobsOf(refusedInSetup(), skippedHeavy()) });
+  assert.equal(result.allow, false);
+  assert.equal(urls(calls).some((u) => u.startsWith(JOBS(1))), false);
+});
+
 test("runner hook (re-review 3 N-R1, re-review 5 n1): only the admission run of this event decides", async () => {
   const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
   const earlier = admissionRun({ created_at: "2026-10-04T04:59:44Z" });
@@ -881,15 +961,16 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
   assert.match((await decideWith({}, { [MINT]: { status: 201, body: {} } })).error, /returned no installation token/);
 });
 
-// The numeric registry binds the immutable source, so the primary copy must match every raw byte.
-test("primary runner matches the exact immutable numeric successor candidate; equality is not deployment acceptance", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.2");
-  const primary = fs.readFileSync(new URL("./clued-runner-job-started.mjs", import.meta.url));
-  const source = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-retry-v1.mjs", import.meta.url));
-  assert.deepEqual(primary, source);
-  // the predecessor stays, byte for byte, for rollback and its own qualifier pin
-  const previous = fs.readFileSync(new URL("./clued-runner-job-started.work-handover-native-admission-v1.mjs", import.meta.url));
-  assert.match(previous.toString("utf8"), /export const COMPONENT_VERSION = "1\.0\.1";/);
+// Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
+test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
+  assert.equal(COMPONENT_VERSION, "1.0.5");
+  const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
+  const component = manifest.components.find((c) => c.id === "hook.runner-job-started");
+  assert.deepEqual([component.version, component.files, component.version_marker.file], [COMPONENT_VERSION, ["clued-runner-job-started.mjs"], "clued-runner-job-started.mjs"]);
+  for (const [name, version] of [["required-tests-late-admission-v1", "1.0.3"], ["work-handover-native-admission-retry-v1", "1.0.2"], ["work-handover-native-admission-v1", "1.0.1"]]) {
+    const earlier = fs.readFileSync(new URL(`./clued-runner-job-started.${name}.mjs`, import.meta.url), "utf8");
+    assert.ok(earlier.includes(`export const COMPONENT_VERSION = "${version}";`), name);
+  }
 });
 
 // ---- Transient reads (work-handover-native-admission-retry-v1, component 1.0.2; Task 5cee3629) ----

@@ -2555,7 +2555,7 @@ STANDBY 不再写备用提醒、不再为此读任何 head（ADR 0028）。原�
 ### 29.9 安装与不变量
 
 - 需要先接受新的 Source（它的 `stage-fact.mjs` 变了），再做一次常驻层 Windows 重装，同一次 UAC 里重签 policy 里的 `residentManifestSha256` 和 `ciSourceManifestSha256`。policy 合同不变（`/7`）。
-- 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`），所以装的 Source 必须带第 11 段。
+- 重装后每个节点从 `UNCERTAIN` 开始，第一个安静 tick 探测。探测用的是 Source 的第 11 段（C2）；按 C2 的实现，探测拿不到有效事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`；清理已证明的子进程超时除外，记 uncertain，见 §56.2），所以装的 Source 必须带第 11 段。
 - 单节点、没有做过 parking 的部署：服务端对所有 Binding 开放，探测得到 held，节点变 `ACTIVE`，行为和以前一样，只多了启动时的一次探测。重启时有批次停在 A、B 也一样：探测不等它们结束（§29.2 第 5 条）。
 - 不增加发布路径，不增加 GitHub 读写，不碰 App 凭据；模式只会让执行器少做事，从不让它多做事。
 
@@ -3436,7 +3436,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
   - 第 11 段探测在 ACTIVE 上 30 分钟一次（`role-probe.mjs:7`），要求没有 HALT、没有 PAUSE、没有未结束的批次（`executor.mjs:1158`），暂停接新时被挡（`:1112`），字节漂移时先 HALT 返回（`:1161-1162`），代理忙时推迟（`:1170`）；
   - 第 10 段在列车关着时不跑（`executor.mjs:1316`、`train.mjs:18`），间隔可设到 60 分钟（`policy.mjs:132`）；
   - 批次的独占区里不插任何段（§18.1）。
-- **触发只有一种：失联**（Decision `199cf3de`）。HALT 不再触发接班。
+- **触发：失联，或当班 HALT 满 5 分钟**（Decision `199cf3de`；HALT 一条由迁移 `20261116100000` 加入，待 Owner 批准）。HALT 本身不立即触发：要连续 HALT 满 `halted_minutes`（5 分钟）。
 - **专用心跳**：
   - 谁发：companion（Owner 登录会话里的计划任务，§8.4，本来就能出网），每 10 分钟一次，与列车模式、PAUSE、HALT、批次进行与否都无关。它不经代理、不跑任何段，没有 GitHub 副作用。companion 本来就要在线，节点才能干活（打 bundle、轮询，§3 的表），所以它的心跳就是“这个节点还能工作”。
   - 用什么：每个节点一个只能发心跳的连接（新 scope，只能调心跳函数，读不了 context，也做不了别的），由 Owner 在 `/bindings` 上建，挂到该节点的 CI 连接名下（两步确认）。服务端把令牌绑定到这个节点，载荷里的节点名一律不用。
@@ -3456,7 +3456,10 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
     - 心跳还在来，但连续 30 分钟每一条都报“服务没在运行”或“快照超过 30 分钟”（机器开着、服务进程不在了）；中间只要有一条报服务在运行且快照新鲜，计时就重来；
   - X 在被标资格之后、并且在总开关打开之后，至少发过一次心跳。从没发过心跳的持有者（旧包、刚标资格、心跳连接还没建）不算失联，只告警；
   - 接收端当时在工作：X 沉默的这 30 分钟里，Y 至少有 2 次心跳到达服务端。否则可能是服务端或网络中断了 30 分钟以上，恢复后 Y 的心跳先到；这种情况只告警，不交接。第二种失联不受这一条限制（X 自己的心跳在来）；
-  - X 最近一条**读得出的**自报不是 `HALTED`（任何码）、`PAUSED`，也不是未到期的 `INTAKE_PAUSED`：`UNKNOWN` 不算读得出，往前找最近一条读得出的。这样的持有者永不被自动交出，两种失联都一样。暂停是 Owner 或兜底的决定：树不同时的自动 PAUSE（41.4）、companion 兜底的暂停（41.7）、回退第 1 步（41.9）；
+  - 或者 X 停机：最近一条**读得出的**自报是 `HALTED`（任何码），并且这次 HALT 已连续满 `halted_minutes`（5 分钟，规则 `halted_minutes`，迁移 `20261116100000`）。起点是服务端收到这次 HALT 第一条自报的时刻（`ci_node_liveness_v1.halted_since`，心跳写、服务端时钟；`UNKNOWN` 保留它，其他读得出的状态清空它）。心跳照来、服务在运行也算，不受“接收端两次心跳”限制。
+    - 2026-11-14 生产：TURING 当班时 HALT，心跳照常、服务在运行、快照新鲜，两种失联都不成立，HALTED 持有者又永不交出，CI 停了约 3 小时。
+    - 为何安全（不会两台同时发布）：与任何交接一样由服务端保证——交接核心在同一事务里结束 X 的记录，第 1、8 段每次都实时准入（`ci_duty_admits_v1`，记录结束即拒），Y 的记录只在 X 最近一次肯定答复早于 210 秒时立即生效，否则 5 分钟后生效（ADR 0026）。HALT 的执行器本来不再请求准入；Owner 复位后它下一次实时准入被拒，按 §29 转 STANDBY；它已发、未合入的绿由 Y 的接班清扫撤掉（41.6）。HALT 是节点自己出了未确认的状况（归档、worker、子进程树、companion），节点不可用、整个 CI 不该停。
+  - X 最近一条**读得出的**自报不是 `PAUSED`，也不是未到期的 `INTAKE_PAUSED`：`UNKNOWN` 不算读得出，往前找最近一条读得出的。这样的持有者永不被自动交出，三种触发都一样。暂停是有意的停：Owner 的急停、树不同时的自动 PAUSE（41.4）、companion 兜底的暂停（41.7）、升级与回退（41.9）；
   - 没有冷却（迁移 `20261115100000`，2026-11-15 起；原为 6 小时）：交出过角色的节点只要符合下面的目标条件就可选。原来的 6 小时冷却连 Owner 的计划内移交也算，两节点时每次计划内交接（升级、维护、切回）之后 6 小时没人接班（2026-11-15 生产实测：TURING→DESK→TURING 之后两台都在冷却）。它要防的两件事已有别的规则管：自动交接之间来回抖由“不自动交回”（见下，到被交出的节点重新连续健康满 30 分钟为止）挡；Owner 有意交出、还没修好的节点不健康、不是同一 Source，本来就不是候选。Owner 想让一个健康节点暂不接班，就暂停它或取消它的资格；
   - 存在目标 Y：有资格、不是持有者、20 分钟内有心跳、自报模式是 `STANDBY` 且最近一次探测结果为 `not-held`、自报状态不是 `HALTED`、`PAUSED`、`INTAKE_PAUSED`、`UNKNOWN`、Source 与 X 最近记下的相同，并与其余 24 小时内有心跳的常驻节点都相同（这里的常驻节点指所有发心跳的常驻节点，不只是标了资格的；全部常驻节点同一个 Source，与 41.6 开车条件一致；没有记录的节点不比）。按 Owner 的次序取第一个这样的 Y。这就是“目标节点在线”的核对。
 - **交接**：与一键移交同一条服务端路径：把 `clued_binding_role_handover_v1` 的核心拆成一个私有函数，一键移交和看门狗都调它。核心函数显式接收 owner（`pg_cron` 里没有 `authorization_owner_v12()`），取同一把 advisory 锁（`20261023010000`:457），同样过 `binding_role_handover_check_v1`；X 的记录当场结束，Y 得到用途 `resident-node`、5 分钟后生效的记录；停车位和别的持有者不动；任何时候至多一个常驻节点持有者。
@@ -3472,7 +3475,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **旧节点上跑着的批次**：X 的记录结束后，它下一次实时准入（第 1 段或第 8 段的 Native 准入）被拒，按 §29 转 STANDBY，批次干净结束；X 已发布、还没合入的绿由 Y 的接班清扫撤掉（41.6：水位加增量，加整条流水）。交接后的 5 分钟里没有持有者，第 8 段不会发新绿。
 - **验收**（DB 测试）：
   - 选择：没标资格的连接永远不被选中；按 Owner 的次序选；第一个不健康（心跳过期、不是 STANDBY、探测不是 not-held、HALTED、PAUSED、UNKNOWN、Source 不同）时选下一个；没有可用目标时不交接、只告警且限频；总开关关着时不交接。
-  - 触发：29 分钟没心跳不触发、30 分钟触发；X 沉默期间 Y 只有 0 或 1 次心跳（服务端或网络中断）时只告警不交接，2 次才交接；X 在标资格之后或总开关打开之后从没发过心跳时只告警；心跳照来但连续报“服务没在运行”或“快照超过 30 分钟”，29 分钟不触发、30 分钟触发，中间夹一条正常心跳就重新计时；单独一次 `UNKNOWN` 不触发；自报 HALTED（任何码）、PAUSED 或未到期 INTAKE_PAUSED 的持有者，两种失联都永不被交出；最新一条是 `UNKNOWN` 时按之前最近一条读得出的自报判断（之前是 HALTED 或 PAUSED 就不交出，是 ACTIVE 就照常判断）；`INTAKE_PAUSED` 的 `until` 被截到 200 分钟；只认最新自报；Owner 计划内移交之后不冷却（两节点用例：Owner 手动把 B 交给 A，A 失联，交给 B；`binding-role-single-reader-db.test.mjs`，migration-verify 必跑）；被自动交出的连接不被自动选回，Owner 做过涉及它的手动交接后恢复，且只恢复它自己；候选用完时（A→B，B 失联，只剩被排除的 A）只告警不交接。
+  - 触发：29 分钟没心跳不触发、30 分钟触发；X 沉默期间 Y 只有 0 或 1 次心跳（服务端或网络中断）时只告警不交接，2 次才交接；X 在标资格之后或总开关打开之后从没发过心跳时只告警；心跳照来但连续报“服务没在运行”或“快照超过 30 分钟”，29 分钟不触发、30 分钟触发，中间夹一条正常心跳就重新计时；单独一次 `UNKNOWN` 不触发；自报 PAUSED 或未到期 INTAKE_PAUSED 的持有者永不被交出；心跳照来、服务在运行的 HALTED 持有者 4.9 分钟不交、满 5 分钟交出（trigger `halted`），复位后的一条 NORMAL 让计时重来，HALTED 之后的 `UNKNOWN` 保留起点，沉默的 HALTED 持有者按失联交出，交出后旧持有者的实时准入立即被拒、新持有在旧持有者刚拿到准入时 5 分钟后才生效（`binding-role-single-reader-db.test.mjs`，migration-verify 必跑）；最新一条是 `UNKNOWN` 时按之前最近一条读得出的自报判断（之前是 PAUSED 就不交出，是 ACTIVE 就照常判断）；`INTAKE_PAUSED` 的 `until` 被截到 200 分钟；只认最新自报；Owner 计划内移交之后不冷却（两节点用例：Owner 手动把 B 交给 A，A 失联，交给 B；`binding-role-single-reader-db.test.mjs`，migration-verify 必跑）；被自动交出的连接不被自动选回，Owner 做过涉及它的手动交接后恢复，且只恢复它自己；候选用完时（A→B，B 失联，只剩被排除的 A）只告警不交接。
   - 交接与权限：交接后至多一个常驻节点持有者，停车位不动，新记录 5 分钟后生效；核心函数在 cron 下拿到显式 owner 和同一把锁；回执主体是看门狗；资格、次序、开关、心跳连接都要两步确认；心跳连接调不了心跳以外的任何函数；心跳记到令牌所绑的节点上，载荷里的节点名不起作用；节点改不了心跳时刻；holders 入参不变、不写记录。
   - 常驻层：心跳在 HALT、PAUSE、暂停接新、批次进行中、列车关着时照发；状态变化时立即补发；服务停了时心跳照发、状态 `UNKNOWN`、报服务没在运行；一个 45 分钟的长段里快照照样每 15 秒刷新，不被当成服务进程不在；Owner 注销后心跳停止；自报的 Source 取自 `versions.windows`，改 companion 配置不影响它；HALT 时 PR 与 head 取自 `current`；连续 3 次心跳失败或令牌过期时发 Windows 通知；`-HeartbeatTokenFile` 装进的目录 Owner 只读、别的普通用户读不到；Y 的 companion 在算力面板 Issue 发带标记的 @Owner 评论，每个回执只一次，面板不重复 @；看门狗超过 5 分钟没 tick 时告警；X 在下一次准入被拒后转 STANDBY。
 
@@ -4373,7 +4376,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 有确定答复（held、not-held）时，照常记账并更新节点模式。记账时存成普通的 `ROLE_PROBE_HELD`（`role-probe.mjs#roleBookFact`），所以上一代读回去也认得。
   - 观察的 uncertain 答复不记进角色账：观察比定时探测频繁得多，一次 90 s 的网络抖动不该让 Owner 收到“连续三次无法确认”；定时探测仍照原样计数。但对熔断器，它和别的探测一样算一次失败（只是打断连续成功的计数，不通知 Owner），网络还在抖时不会凑够提前试跑的条件。
   - 探测途中时钟往回跳了，就不记账。
-  - 没有确认事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）；忙时只延期。
+  - 没有确认事实就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）；忙时只延期。唯一例外：第 11 段子进程超时（`STAGE_CHILD_TIMEOUT`）而进程树清零、原 runner 已读回停止（两项证明都成立），按 `ROLE_PROBE_UNCERTAIN` 处理：记账、计入熔断器、退避，模式不变，不 HALT，观察答复为 unknown（TURING 2026-11-15 08:13Z 因此误停）。`BROKER_BUSY`、任一证明不成立、`STAGE_OUTCOME_MISSING` 照旧 HALT。
   - 不带观察的探测如果说“观察到队首”，不算事实。
 - **断流。** holders 读不到时，探测回答 `ROLE_PROBE_UNCERTAIN`：不提前尝试，不 HALT，按 `QUEUE_WATCH_FAIL_MS` 退避，批次照原来的退避重试。
 - **效果。**
@@ -4488,6 +4491,12 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - `scripts/runner/clued-runner-job-started.mjs`：把它列进 `DISPATCH_GATED_WORKFLOWS`，各 runner 重装 hook。
   - 这些都做完之前，丢事件只会被发现、留痕和告知，不会补出运行。
 - **测试**：`test/admission-rerun.test.mjs` 里 `lost run:` 开头的四例。
+
+#### 56.5b 改受保护工作流的 PR：准入晚于 runner 钩子（缺陷 B，2026-11-15）
+
+- **现场。** #1121 run `43720693841`、#1122 run `43720708199`：推送后 attempt 1 的每个作业在 “Set up runner” 等满钩子时限，以 “Native admission absent” 被拒（准入要等 PR 成为车头，14:11:36 才发）；attempt 2 有了准入（check `132838811702`），仍因钩子只认 attempt 1 被拒，只能人工推空提交。gate 在 “Set up runner” 被拒时，`diedInSetup` 只认 “Set up job”，这个 lane 也就把 head 判为 final，不会点补跑。
+- **做法。** `diedInSetup`（gate 与 `src/env-failure.mjs` 同一份）把紧跟 “Set up job” 的钩子步骤 “Set up runner” 也算 runner 自己的准备步骤：被钩子拒的作业什么也没跑。于是准入到达后，这个 lane 照 56.5 的规则点那一次 “Re-run all jobs”，gate 照 #993 放行；钩子后继版本 `required-tests-late-admission-v1`（组件 1.0.3，见 `scripts/runner/README.md`）不再只认 attempt 1，而是认“本运行之前每个尝试都什么也没跑”的那个尝试。同一提交仍只真跑一次。
+- **测试**：`test/env-failure.test.mjs`、`test/admission-rerun.test.mjs` 的 setup 一例，`scripts/ci/clued-work-admission.test.mjs` 的 environment re-run 一例，`scripts/runner/clued-runner-job-started.test.mjs` 的 `defect B` 两例。
 
 ### 56.6 策略、Source 与安装
 
@@ -5194,7 +5203,9 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 - §41.7 兜底里“strict=false 而全量清扫没完成”那一档只在 `gate` 下还有意义。
 - **回退**：一次 UAC 把策略写成 `train.sweep: "gate"`（新策略、新摘要、新职责），即回到 §41/§60–§62 的接管门；Source 不用换代。再往回（关 strict 的列车）仍按 §41.9 的流程，且必须先在 `gate` 下完成一轮真实全量扫描。
 
-### 65.6 车头落后自动更新分支：方案（未实现，需要 Owner 决定）
+### 65.6 车头落后自动更新分支：已获授权，未实现
+
+**更正（2026-11-16，缺陷 C）**：本节原题“需要 Owner 决定”已过时。Owner 决定 `9e2511fe` 第 3 条（机器人自动给落后 main 的车头更新分支）与 `78a3052f` 第 2 条（`clued-merge-executor` 重新启用，范围收窄为列车开时只给 BEHIND 的车头 update-branch、merge 方式；受保护层 PR 暂不自动更新；测过再启用）已授权下文的建议方案，下文“需要 Owner 决定”的 ① 已答，② 答为“暂不”。现状仍是未实现、工作流 `disabled_manually`。另：组件版本规则 v0.4（`development/contracts/components/ComponentVersioning.v0.4.md`）之后合 main 是普通合并、不需重生成，update-branch 产生的 head 本身就是正确的；PR 页面只提示车头合 main，其余落后的 PR 显示“排队中，不必现在合 main”（30 分钟内没有列车给出车头时退回旧提示）。
 
 GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需要有人把 main 合进 PR 分支（update-branch，merge 方式），然后对新 head 走正常流程（第 1 段重新准入、第 10 段重开车头批次）。只读核对（2026-11-07）：
 
@@ -5754,6 +5765,28 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 随之更新：`test/node-mode.test.mjs`（STANDBY 下停在 A、B 的批次不再续跑，而是按规则结束）、`test/scheduler.test.mjs`（等托管的批次在 tick 上按规则结束，安全点名 `waiting`）、`reinstall/test/test_rehearse.py`（卸载计划里的未结批次不是预演发现）。原有的取代、停靠、#1035、排队观察、重启重跑测试照旧通过。
 
+### 72.9 第四条（只对停靠批次）：本节点的升级在排空时，停靠批次不再成立
+
+现场（2026-11-16 北京时间 10:29，DESK 当班原地升级到 fleet-node-2026.11.16-446a7106）：待命 TURING 已先升到新 Source，DESK 的升级停在 `WAITING_DRAIN`、`openBatches=1`，就是 #1130 停在 B 的车头批次。它从 70-parked 起连试 17 次都是 `TRAIN_SINGLE_GREEN_NOT_PROVEN`：两台 Source 不同，第 10 段不证明单绿，要等 DESK 升完；DESK 的升级又在等这个批次收尾。车头在合并队列第 1 位的尝试不计入 `park.stage8MaxTries`，只有 `park.maxMs`（24 小时）能结束它，而排空最多 120 分钟、每 60 分钟重试、Grant 24 小时后作废。11:48 Owner 手工关闭 #1130 才放行。
+
+病根：冻结的升级代理（`upgrader/src/resident-ports.mjs#openBatches`）把账本里所有没有 `90-terminal.json` 的条目都算未结批次，排空要它为 0；§72.6 让重装前的停靠残留由规则结束，原地升级这条路漏了。停靠批次等的是本节点之外的东西（托管、合并队列、列车），而启动它的 Source 正要离开。
+
+- **规则**：停在 A 或 B 的批次，还要求本节点的升级代理没有在为它排空。判定是 `executor.mjs#upgradeDraining()`，两样都是升级代理自己的话、本拍读到的：`upgrade\status.json` 的 op 状态是 `WAITING_DRAIN`（versions 端口；由升级代理写，不是 Owner 会话），而且它的 intake hold（holder `resident-upgrade`，`executor.mjs#UPGRADE_HOLDER`，测试钉住与冻结的 `HOLDER_UPGRADE` 相等）在生效；再加 companion 心跳新鲜（同 `not-on-duty`）。排空超时后升级代理撤 hold，残留的状态文件结束不了任何批次；hold 最长两小时自动失效。
+- **结束**：同一条 `supersededEnd`，`basis: upgrade-drain`；B 上第 8 段终态，A 上第 1 段终态。此类流程性结束按 §72.10 自动重新接纳同一 head/S，不要求空提交；下一拍排空看到 0，往下走暂停。
+- **不判的**：在途批次照旧跑到下一个停靠点（排空本来就等它），到点再按本条结束；Owner 的 hold、只有状态没有 hold、只有 hold 没有 `WAITING_DRAIN`，都不结束。冻结通道不改。
+- **测试**：`test/upgrade-drain-parked.test.mjs` 用冻结升级代理自己的 drain 步骤（`STEPS.drain`）、冻结观察面（`ResidentPort` 的 hold 与 `openBatches`）和升级代理自己的状态文件（`buildStatus`/`writeStatus`），对真实执行器复现 #1130：修复前 120 分钟内排空一直等（`openBatches=1`），修复后一两分钟内通过，终态 `SUPERSEDED_AT_SAFE_POINT`/`upgrade-drain`，不再试第 8 段、不 attempt 2、不 HALT；以及上面四种不结束的情形。
+
+### 72.10 流程在安全点结束，不消耗同一 head/S 的续跑资格
+
+`upgrade-drain` 干净结束后，原实现的三层去重把 head 永久挡住：`supersededEnd` 返回 `burned`，`RunQueue.settle` 把行停为 `STOPPED/burned`，`offer` 忽略已见过的 head；即使重新入队，`precheck` 仍拒绝账本已烧号、已用批次键和 `executed-heads` 中已发布的 head/S。PR 页因此要求推新提交。三层去重对真实失败继续生效，流程性结束通过带前序证据的续跑解决。
+
+- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
+- 账本把这类完整终态整体改名保存到 `state/ledger-flow-ends/`。原始烧号和已发布记录保留；新预留的 `flowFrom` 消耗精确前序，`flowKeys` 只允许其自身发布链通过去重。队列只是投影：每拍从未消费前序恢复同一 PR/H/base/S，重复触发、队列丢失或重启不产生第二份执行。
+- 新批次仍走节点、列车、intake hold、版本一致性、停车容量、熔断、日额度与实时 PR 校验。升级 hold 或 PAUSE 未撤不续跑；读不到 PR 不放行，已关闭或 head 改变则退役该续跑资格。预留之前崩溃可重试，预留之后崩溃仍是原恢复机制的现场，不额外开 attempt 2。
+- A 尚未扫描，重新走准入。B 的 CI Source 未变时，只重派生当前安装版本的控制包，从第 8 段继续；该 CI Source 的原批次绑定与已完成检查仍有效，原扫描不重跑。CI Source 改变时，job ID 和 sticky batch claim 随之改变，必须重新走正常准入和扫描；既有 Native 发布、scan-start 和列车守卫继续决定能否执行。安装文件 Source 与 CI Source 不混用。
+- 同一 head/S 的其他执行、不可读发布记录或空发布目录仍拒绝续跑。历史尝试仍计入日预算；B 续跑的第一次第 8 段也计重试。流程性结束保持熔断中性；续跑后的真实失败照旧烧号，不继续重排。
+- PR 页对流程结束显示 pending、自动续跑、不用推新提交。`test/safe-point-readmit.test.mjs` 覆盖结束→hold→恢复→一次完成、A/B、超时、安装/CI Source、重启和队列丢失、版本错位、发布链、额度、真实失败及状态文案。冻结升级通道不变。
+
 ## 73. 通用包重装停在半途：续装到完成（分支 `claude/installer-half-install`，[ADR 0029](docs/adr/0029-installer-half-install.md)）
 
 现场（2026-11-13，desk-w-591）：启动器在 Linux A、B 之后的 Windows 预检停下（`RUNNER_SERVICE_NOT_AS_REVIEWED`），Linux 是新包、Windows 是旧装；之后既续不了也重新 `prepare` 不了。时间线与根因见 ADR 0029。
@@ -5877,3 +5910,24 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - **不变量。** “同一提交同一检查只真跑一次”不变：中断的那次没有发布任何角色检查，所以不算跑过；准入检查本来就按尝试证明（§7.2）。若旧节点复网后还在推进旧批次，两边在角色检查首次发布前都要回读 GitHub（`ROLE_ALREADY_ON_GITHUB`），控制检查要经 Native 准入，不会各发一份。
 - **测试。** `test/failover-stranded-head.test.mjs`：真实 Source 第 1 段发布器 + 真实阶段事实映射，接两个常驻执行器、一个共享 GitHub。A 跑完第 1 段后断线、B 接班 → B 自动跑 attempt 2 到 `COMPLETED`，gitleaks 只发一次（修复前 B 结束为 `HEAD_PUBLISHED_ON_GITHUB`，失败）；A 已跑完 → B 结束为 `HEAD_PUBLISHED_ON_GITHUB`，不重跑。Source 侧 `resident-v2-github-readback.test.mjs` 相应改为两种情形。
 - **旁注。** 同一现场 TURING 复网后的 attempt 2 被 Native 以 `unknown_reason` 拒（`NATIVE_NOT_ADMITTED`，`unmapped-stage-1`，熔断器计数）。本机记录里没有 Native 原始原因；修复后新当班节点不再依赖旧节点的结局。
+
+## 79. 第 1 段写后核验：与本 PR 无关的变化不撤回，真的变了由 attempt 2 自动重新准入（分支 `claude/admission-revoke`）
+
+- **现场（2026-11-15，PR #1123，head 0ad88499，认领 96373a88，fence 37）。** Native 的执行准入记录：写前一次 10:32:36.12，写后一次 10:32:46.51；`kooyumi-work-admission` 10:32:40 写入成功，随后以 `NATIVE_AUTHORIZATION_BINDING_CHANGED` 撤回（"Work admission authorization changed"）。常驻结束为最终的 `PUBLICATION_REVOKED`，必需作业 skipped，只能推空提交 9d40b1dc。
+- **根因（生产只读证据）。** 第 1 段 binding 绑合并位的 `state`。该认领 08:32:43 入队，`merge_slot_hard_cap_seconds` 7200，`work_claim_merge_queue_v1` 记 `head_left_at` 10:32:43.64：两次观察之间合并位到硬上限出队，写前 `held`、写后 `missing`（`mergeSlotState`：`merge_slot_until` 已早于写后的 `verified_at`）。main 在 09:33–11:00 没动（tip 未变）；fence/epoch 未变；本 head 的授权 56ee43ba 在 10:31:42 签发、未撤销，两次观察之间没有新的 head 授权；DESK 10:30–10:31 的续租与他 PR 的授权都早于写前观察，不在窗口内。
+- **修法一（不该撤回的不撤回）。** `formal-work-admission-check-v2/publisher.mjs#binding` 的合并位只绑 `ref`、`tip`，不绑 `state`（与扫描角色 `slotBindingFor` 同一规则）：第 1 段准入的结论不依赖合并位，合并位由 `kooyumi-merge-slot` 与第 8 段判定（第 8 段不变）。其余字段（认领代、路径、执行策略、head 授权、模式、Owner 审核、tip、ref）照旧绑定。
+- **修法二（真的变了，系统自动重算）。** `stage-fact.mjs#outcomeFailureCode`：只在第 1 段、原因是 `NATIVE_AUTHORIZATION_BINDING_CHANGED` 的 `REVOKED` 映射为新暂时性码 `ADMISSION_AUTHORIZATION_CHANGED`（两边 `TRANSIENT_CODES` 同列；失败表一行：烧 attempt 1、`attempt2`、熔断器不计）。第 1 段是第一段、它的检查按尝试证明，head 没跑过；常驻按现有规则排唯一一次 attempt 2（新 job id，从新观察准入），不写已执行记录。attempt 2 再撤回就是最终（没有 attempt 3），PR 页要新提交。其它段的撤回、读回不符等仍是 `PUBLICATION_REVOKED`。
+- **测试。** `test/admission-binding-revoke.test.mjs`：真实 Source 第 1 段发布器 + 真实阶段事实映射 + 常驻执行器。合并位写后出队 → `COMPLETED`（修复前 `FAILED_CLEAN`/`PUBLICATION_REVOKED`）；模式在写后变化 → attempt 1 `ADMISSION_AUTHORIZATION_CHANGED`、attempt 2 `COMPLETED`（修复前 `PUBLICATION_REVOKED`、无 attempt 2）；attempt 2 也变 → 最终；其余绑定字段变化照旧撤回；PR 页文案。
+
+## 80. 车头自动合 main：机器人更新落后的车头，准入沿用只合了 main 的 head 授权（分支 `claude/front-auto-update`；Owner 决定 `9e2511fe` 第 3 条、`78a3052f` 第 2 条；实现 §65.6）
+
+- **现场（2026-11-15，生产只读）。** strict 下 GitHub 只合入含 main 尖端的 head。#1123 当天三次落后 main（`落后 main 9/7/9 个提交`，10:59Z、11:46Z、13:40Z），每次都由 DESK 手工合 main（6bfea475、a2812a77、ce8705a3）→ 持有者 `authorize_head` → 推送，各等 0.5–2 小时。
+- **为什么一直没自动（实证）。** ①`clued-merge-executor.yml` 自 2026-10-17 起 `disabled_manually`，没有任何东西调 update-branch。②即使启用，它读合并位持有者（`clued_work_merge_slot_holders_v1`）和写 Native 都要 `ci-admission` 角色；该角色是单持有者、随当班节点轮换（`binding_roles_v1`：desk-w-591 与另一绑定 11-15 内交替），GitHub 托管任务的令牌只在碰巧当班时有角色。③update-branch 产生的新 head 没有持有者授权：`work_claim_pr_authorization_v1` 只认精确 head，准入答 `pr_task_binding_head_not_authorized`（`CLAIM_NOT_CURRENT`，每 10 分钟重查，永远等持有者）。④常驻 App 5368905 只有 `contents: read`，第 10 段只能写“请先把 main 合进分支再推送”。
+- **做法（一条链，各环只做一件事）。**
+  1. 信号：当班节点的 companion（`src/front-merge-dispatch.mjs`）看到本节点 status.json 的列车摘要为 mode on、`FRONT_NEEDS_MAIN_MERGE`（10 分钟内），用与面板触发相同的 gh 登录对 `clued-front-main-merge.yml` 发 `workflow_dispatch(pr, head)`；同一 (pr, head, main) 一次，仍如此 15 分钟后再一次，最多 3 次。待命节点不发。只是信号，丢了或重了都不会合错。
+  2. 动作：`scripts/ci/clued-front-main-merge.mjs`（工作流只在 main 上跑、自托管池 `pool-general`（新托管执行被预算策略禁止，与同环境的 `clued-native617-admission-dispatch.yml` 一样），clued-admission 环境，App 5164952 已有的 contents/pull_requests 写权限，外加 checks 写）重读一切：PR 开着、非草稿、合到 main、同仓库、仍是该 head、落后 main、非 frozen、不是受保护层（按 PR 自身改动的文件，列表不全按受保护算；`78a3052f` 第 2 条：受保护层暂由持有者合 main）→ `PUT update-branch(expected_head_sha=该 head)`（GitHub 自己合并，冲突或 head 变了就拒）→ 读新 head：web-flow 签名、父提交恰为 [该 head, main] → 在新 head 上发 App 5164952 的检查 `kooyumi-main-merge`（external_id `main-merge:1:<pr>:<旧 head>:<main>`）。不碰 Native，不需要 Clued 令牌。
+  3. 授权沿用：当班节点第 1 段准入（`clued-work-admission.mjs#evaluateCore`）对 `head_not_authorized` 的 head 查 `mainMergeSource`：App 5164952 的成功 `kooyumi-main-merge` 指名本 PR，提交父为 [from, main]，main 仍含该 main → 调 `clued_work_verify_v1` 的 `carry_main_merge`（迁移 `20261116090000`）→ 重新解析为 bound → 照常核验、计量、发检查。查不到、被拒、读失败都只记 notice，结果与以前相同（辅助不进必经路径）。
+- **安全边界。** 能沿用的只有：当前 CI 签发者（`ci_duty_admits_v1 'issuer_role'`，即当班节点，两个 PR 门同一判断）声明；源 head 必须是该 PR 唯一当前认领、同 epoch/持有者绑定/副本/仓库/分支下的有效授权；新行是同一认领的普通授权（`carried_from` 指向源），认领级撤销（换 epoch、释放、交接）一并失效；fence、版本、租约、硬截止、CI 计量（新 head 仍按新 head 计）、Owner Grant（仍按 a0d93cd0 单独判断，frozen 不沿用）、合并位都不动。准入只为 App 5164952 亲自证明的提交声明：该 App 的私钥只在 clued-admission 环境（部署分支仅 main）；它只在自己调 update-branch 成功、新提交是 GitHub 签名的 [旧 head, main] 合并后才发证明。新增的信任：被攻破的当班签发令牌，配合仓库写权限，可以让一个以已授权 head 为父的任意提交获得授权——与该令牌已能做的 PR→Task 绑定、机械文件证明同级；GitHub 上的必需检查、strict、合并位照旧兜底。
+- **不做的事。** 不改常驻 App 权限；不重新启用旧执行器（它的合并、自动合并、重跑在列车下已无用途，且托管令牌拿不到轮换的角色）；不对非车头 PR 合 main；受保护层 PR 照 `78a3052f` 第 2 条暂不自动更新（dispatcher 仍会问，最多 3 次，每次秒级拒绝）。冲突仍由持有者手工解决（update-branch 422）；main 若改了工作流文件而 App 没有 workflows 权限，update-branch 会被拒（403），同样退回手工。
+- **测试。** `scripts/ci/clued-front-main-merge.test.mjs`：模拟 GitHub 与 Native 的 HTTP，真实执行脚本 + 真实 `evaluate`：落后的车头 → 一次 update-branch（期望 head 绑定）→ 证明检查 → 合并提交 ADMITTED、Native 收到一次 carry、无人授权。修复前（同一测试跑在不含准入改动的代码上）合并提交 `REJECTED pr_task_binding_head_not_authorized`。另测：无证明、他 App 的证明、父提交不符、指名他 PR、源未授权 → 不沿用；frozen、head 已变、已含 main、冲突、草稿、受保护层、非 GitHub 合并 → 不动或不证明。`apps/clued-cloud/tests/work-claims-main-merge-db.test.mjs`（真实迁移链）：签发者沿用后 resolve 为 bound、verify ADMITTED、回执记签发者、fence/版本/硬截止不变、幂等、可链式；持有者/只读绑定不能沿用；源未授权、他 PR、坏输入、已释放认领都拒；`CLUED_MAIN_MERGE_BASELINE=1` 去掉迁移则第一例失败。`test/front-merge-dispatch.test.mjs`：只当班节点、只新鲜的 `FRONT_NEEDS_MAIN_MERGE`、一次/重试/上限/重启不重发。
+- **上线。** 仓库侧（工作流、脚本）合入即生效，可手工 `gh workflow run clued-front-main-merge.yml -f pr=N -f head=SHA` 代替手工合 main；准入沿用要生产迁移（Owner 批）和下一版通用包（第 1 段准入与 companion 都在包里）。

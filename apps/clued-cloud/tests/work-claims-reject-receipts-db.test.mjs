@@ -15,6 +15,8 @@ import './work-claims-lease-key-db.case.mjs';
 import './work-claims-owner-handover-db.case.mjs';
 // The merge slot case (migration 20261006120000) as well.
 import './work-claims-merge-slot-db.case.mjs';
+// A merged PR ends its claim's merge-slot turn (migration 20261115150000) as well.
+import './merge-slot-turn-per-pr-db.case.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 

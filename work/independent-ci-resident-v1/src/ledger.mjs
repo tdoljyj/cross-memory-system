@@ -65,9 +65,9 @@ export const OUTCOMES = Object.freeze(['COMPLETED', 'FAILED_CLEAN', 'FAILED_UNKN
 export const UNEXECUTED_REASONS = Object.freeze(['NOT_ADMITTED', 'BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED', 'TRAIN_FRONT_BOUND']);
 // Releases that never count as an evaluation nor towards a head's release cap (nothing about the PR was decided).
 export const UNCOUNTED_RELEASES = Object.freeze(['BUNDLE_UNAVAILABLE', 'BROKER_NOT_LAUNCHED', 'SUPERSEDED']);
-// Releases that count as an evaluation (a binding run did run stage 1) but never towards a head's release cap: they say nothing
-// against the PR (a supersession, a take-over binding run).
-export const UNCAPPED_RELEASES = Object.freeze(['SUPERSEDED', 'TRAIN_FRONT_BOUND']);
+// A stage-1 admission refusal is still an evaluation, but ran no execution stage and spends neither release cap.
+// Supersessions and take-over binding runs likewise never spend a head's release cap.
+export const UNCAPPED_RELEASES = Object.freeze(['NOT_ADMITTED', 'SUPERSEDED', 'TRAIN_FRONT_BOUND']);
 // Risk tiers of the daily budgets (Task 12ada80e, DESIGN §36): a head burned by a stage-1 ending that proved it published
 // nothing (clean on both hosts, zero side effects, mayHavePublished false) carries quotaTier 'evaluation' in its burn
 // facts. usage() counts it once, as the evaluation its batch entry already is, not as an execution. Every other head
@@ -120,6 +120,7 @@ export class Ledger {
     this.batches = path.join(root, 'ledger');
     this.heads = path.join(root, 'ledger-heads');
     this.unexecuted = path.join(root, 'ledger-unexecuted');
+    this.flowEnds = path.join(root, 'ledger-flow-ends');
     this.halts = path.join(root, 'halts');
     this.attempts2 = path.join(root, 'ledger-attempt2');
   }
@@ -127,14 +128,17 @@ export class Ledger {
   static async open(root, clock = Date.now) {
     const ledger = new Ledger(root, clock);
     await ensureDir(root);
-    for (const d of [ledger.batches, ledger.heads, ledger.unexecuted, ledger.halts, ledger.attempts2]) await ensureDir(d);
+    for (const d of [ledger.batches, ledger.heads, ledger.unexecuted, ledger.flowEnds, ledger.halts, ledger.attempts2]) await ensureDir(d);
     return ledger;
   }
 
   dir(key) { check(HEX64.test(key), 'BATCH_KEY_INVALID'); return path.join(this.batches, key); }
 
   async state(key) {
-    const dir = this.dir(key);
+    return this.readState(this.dir(key));
+  }
+
+  async readState(dir) {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
@@ -161,6 +165,61 @@ export class Ledger {
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
     if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort, selfAbort };
     return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort };
+  }
+
+  // A flow ending is not permission to execute the head again. It carries the exact safe point to continue from;
+  // B has already scanned under its CI Source and continues at stage 8 while that identity holds. Keep the terminal
+  // evidence intact, outside openBatches; a different CI Source must pass its normal admission/execution boundaries.
+  static flowEnd(s) {
+    const f = s?.terminal?.facts;
+    try {
+      if (batchKey(s.reserved.subject) !== s.reserved.key || s.terminal.key !== s.reserved.key || s.selfAbort.key !== s.reserved.key) return false;
+    } catch { return false; }
+    return s?.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && !s.abort && s.started && s.wait
+      && f?.failureCode === 'SUPERSEDED_AT_SAFE_POINT' && f.class === 'clean-final' && f.breaker === 'neutral'
+      && ['upgrade-drain', 'park-max-age'].includes(f.basis) && s.selfAbort?.basis === f.basis && s.selfAbort.safePoint === f.safePoint
+      && typeof f.windows === 'string' && typeof f.linux === 'string'
+      && ((f.safePoint === 'waiting' && f.stage === 1 && !s.planIntent && !s.plan && !s.parked)
+        || (f.safePoint === 'parked' && f.stage === 8 && s.plan && s.parked && s.tries.every(t => t.ended !== null)));
+  }
+
+  async archiveFlowEnd(key) {
+    if (!Ledger.flowEnd(await this.state(key))) return false;
+    await renameToNew(this.dir(key), path.join(this.flowEnds, `${key}-${stamp(this.clock)}-${nonce()}`));
+    return true;
+  }
+
+  // Reservations consume their predecessor by its immutable directory name. No separate queue acknowledgement can be
+  // lost: before reserve nothing ran; a crash during/after reserve is an ordinary crash scene, never a second admission.
+  async pendingFlowEnds() {
+    const ended = [], consumed = new Set();
+    for (const key of await this.keys()) {
+      const s = await this.state(key);
+      if (s.reserved?.flowFrom) consumed.add(s.reserved.flowFrom);
+      await this.archiveFlowEnd(key); // also upgrades legacy upgrade-drain endings, including a lost queue update
+    }
+    for (const name of (await fs.readdir(this.flowEnds)).sort()) {
+      if (!/^[0-9a-f]{64}-[0-9TZ-]+-[0-9a-f]+$/.test(name)) continue;
+      const s = await this.readState(path.join(this.flowEnds, name));
+      if (s.reserved?.flowFrom) consumed.add(s.reserved.flowFrom);
+      if (Ledger.flowEnd(s) && !(await exists(path.join(this.flowEnds, name, '96-flow-retired.json')))
+        && !(await exists(path.join(this.flowEnds, name, '97-flow-consumed.json')))) ended.push({ ...s, key: s.reserved.key, flowFrom: name });
+    }
+    return ended.filter(s => !consumed.has(s.flowFrom));
+  }
+
+  async retireFlow(flow, reason) {
+    const dir = path.join(this.flowEnds, flow.flowFrom);
+    check(Ledger.flowEnd(await this.readState(dir)), 'FLOW_END_INVALID');
+    await writeNew(path.join(dir, '96-flow-retired.json'), { reason, at: isoNow(this.clock) });
+  }
+
+  async flowOwnsHead(hk, flow) {
+    if (!(await this.headBurned(hk))) return true;
+    try {
+      const head = (await readJson(path.join(this.heads, `${hk}.json`))).value;
+      return [flow.key, ...(flow.reserved.flowKeys ?? [])].includes(head.key);
+    } catch { return false; }
   }
 
   // The stage-8 tries of a parked entry, in order: [{ n, begun, ended }] (ended null while a try runs or crashed). A gap
@@ -352,8 +411,12 @@ export class Ledger {
   }
 
   // Reservation decides "this subject runs at most once at a time". origin: how the run queue picked it (usage()).
-  async reserve(key, subject, { origin = 'queued' } = {}) {
+  async reserve(key, subject, { origin = 'queued', flow = null, resumeStage8 = false } = {}) {
     check(RESERVATION_ORIGINS.includes(origin), 'RESERVATION_ORIGIN_INVALID');
+    if (flow) {
+      flow = (await this.pendingFlowEnds()).find(s => s.flowFrom === flow.flowFrom);
+      check(flow && ['repo', 'pr', 'headSha', 'baseSha', 'testSha', 'attempt'].every(k => flow.reserved.subject[k] === subject[k]), 'FLOW_END_ALREADY_CONSUMED');
+    }
     const dir = this.dir(key);
     try {
       await fs.mkdir(dir);
@@ -361,7 +424,12 @@ export class Ledger {
       if (error.code === 'EEXIST') fail('BATCH_KEY_ALREADY_USED_NO_RETRY', key);
       throw error;
     }
-    await writeNew(path.join(dir, '00-reserved.json'), { key, subject, headKey: headKey(subject), reservedAt: isoNow(this.clock), automaticRetryAllowed: false, origin });
+    await writeNew(path.join(dir, '00-reserved.json'), { key, subject, headKey: headKey(subject), reservedAt: isoNow(this.clock), automaticRetryAllowed: false, origin,
+      ...(flow ? { flowFrom: flow.flowFrom, flowKeys: [...new Set([flow.key, ...(flow.reserved.flowKeys ?? [])])],
+        flowStage8: resumeStage8 === true } : {}) });
+    // Before any dispatch: consumption survives a later NOT_ADMITTED release moving the new reservation out of ledger/,
+    // or quarantine. In the preceding crash gap the reservation itself still consumes it and recovery owns the scene.
+    if (flow) await writeNew(path.join(this.flowEnds, flow.flowFrom, '97-flow-consumed.json'), { key, at: isoNow(this.clock) });
   }
 
   // Written right after stage 1 admitted and before any Linux or scanner effect. The head record is
@@ -372,8 +440,10 @@ export class Ledger {
     try {
       await writeNew(path.join(this.heads, `${s.reserved.headKey}.json`), { headKey: s.reserved.headKey, key, subject: s.reserved.subject, startedAt: isoNow(this.clock) });
     } catch (error) {
-      if (error.code === 'CREATE_ONLY_TARGET_EXISTS') fail('BATCH_HEAD_ALREADY_EXECUTED_NO_RETRY', s.reserved.headKey);
-      throw error;
+      if (error.code === 'CREATE_ONLY_TARGET_EXISTS') {
+        const head = (await readJson(path.join(this.heads, `${s.reserved.headKey}.json`))).value;
+        if (!s.reserved.flowFrom || !s.reserved.flowKeys?.includes(head.key)) fail('BATCH_HEAD_ALREADY_EXECUTED_NO_RETRY', s.reserved.headKey);
+      } else throw error;
     }
     await writeNew(path.join(this.dir(key), '10-started.json'), { key, startedAt: isoNow(this.clock), facts });
   }
@@ -482,6 +552,7 @@ export class Ledger {
   // A record that cannot be read counts as one more execution or evaluation (never a wedge, never a free pass).
   // separateNetwork (generation 10, DESIGN 53.3: the policy names breaker.network): a release whose facts say network (classify.mjs
   // #networkFailure) counts in networkReleasesByHead, whatever the breaker's state, and never in releasesByHead.
+  // UNCAPPED_RELEASES (including historical stage-1 refusals) spend neither cap; evaluation budgets stay independent.
   async usage(sinceMs, { separateNetwork = false } = {}) {
     const u = { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(),
       networkReleasesByHead: new Map(), stage8Retries: 0 };
@@ -506,27 +577,32 @@ export class Ledger {
     const count = ({ reserved, started, reason, facts, burned = false }) => {
       const origin = RESERVATION_ORIGINS.includes(reserved.origin) ? reserved.origin : 'queued';
       const s = reserved.subject ?? {};
-      if (origin === 'waiting-retry') u.waitingRetries += 1;
+      // Reclassify historical claim releases too: their old queued/backoff-retry/
+      // new-trigger origins must not keep the real evaluation budget exhausted.
+      // Only a proven unexecuted release qualifies; a burned/unclean ending stays charged.
+      const claimWait = !started && reason === 'NOT_ADMITTED' && CLAIM_REASONS.includes(facts?.failureCode);
+      if (origin === 'waiting-retry' || claimWait) u.waitingRetries += 1;
       const nodeRole = facts?.class === 'node-role';
       if (origin === 'new-trigger' && !nodeRole) bump(u.reevaluations, `${s.pr}:${s.headSha}`);
       const environment = ['environment', 'transient'].includes(facts?.class);
       // A burned entry that never started (a low-risk tier burn among them) is an evaluation whatever its class: it no
       // longer counts as an execution, so it must count somewhere (DESIGN §36).
-      if (!started && origin !== 'waiting-retry' && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
-      if (separateNetwork && facts?.network === true) { if (reason && HEX40.test(s.headSha ?? '')) bump(u.networkReleasesByHead, s.headSha); return; }
+      // A claim wait (G4) spends the waiting budget instead; any other stage-1 refusal stays an evaluation but spends no release cap.
+      if (!started && origin !== 'waiting-retry' && !claimWait && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
+      if (separateNetwork && facts?.network === true) { if (reason && !UNCAPPED_RELEASES.includes(reason) && HEX40.test(s.headSha ?? '')) bump(u.networkReleasesByHead, s.headSha); return; }
       if (reason && !UNCAPPED_RELEASES.includes(reason) && !CLAIM_REASONS.includes(facts?.failureCode) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
-    for (const key of await this.keys()) {
-      const dir = path.join(this.batches, key);
+    const dirs = [...(await this.keys()).map(key => this.dir(key)), ...(await fs.readdir(this.flowEnds)).map(name => path.join(this.flowEnds, name))];
+    for (const dir of dirs) {
       if (await before(dir)) continue;
       try {
         // Every try after the first one of a parked entry is a stage-8 retry (phase 2, step 2), whenever it was reserved.
-        for (const name of (await fs.readdir(dir)).filter(n => /^71-try-(\d{2})\.json$/.test(n) && n !== '71-try-01.json')) {
+        const reserved = await read(path.join(dir, '00-reserved.json'));
+        for (const name of (await fs.readdir(dir)).filter(n => /^71-try-(\d{2})\.json$/.test(n) && (n !== '71-try-01.json' || reserved?.flowStage8 === true))) {
           const at = Date.parse((await read(path.join(dir, name)))?.at);
           if (!(at < sinceMs)) u.stage8Retries += 1;
         }
-        const reserved = await read(path.join(dir, '00-reserved.json'));
         if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         const terminal = await read(path.join(dir, '90-terminal.json'));
         count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null,
@@ -539,7 +615,8 @@ export class Ledger {
         const reserved = (await readJson(path.join(this.unexecuted, name, '00-reserved.json'))).value;
         if (!(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         const terminal = (await readJson(path.join(this.unexecuted, name, '90-terminal.json'))).value;
-        count({ reserved, started: false, reason: UNEXECUTED_REASONS.includes(terminal.reason) ? terminal.reason : 'NOT_ADMITTED', facts: terminal.facts ?? null });
+        // Unknown evidence must keep the conservative counted fallback, never acquire NOT_ADMITTED's exemption.
+        count({ reserved, started: false, reason: UNEXECUTED_REASONS.includes(terminal.reason) ? terminal.reason : 'UNKNOWN_RELEASE', facts: terminal.facts ?? null });
       } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
     }
     return u;

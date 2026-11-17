@@ -338,6 +338,11 @@ def build(prior_launcher, ci_root=CI_ROOT, now=None, services=service_present, p
     source, block, pins, chained = read_launcher(raw, fragment, finish)
     lit = lambda name: pins[name][1:-1] if pins[name].startswith("'") else None
     need(lit('FleetPlanSha256') and pins['DraftOnly'] == '$false', 'PRIOR_LAUNCHER_NOT_A_PACKAGE_LAUNCHER')
+    # a first install's launch is not continued here: it is continued by the same bootstrap command (bootstrap.ps1 -From <dir>; README
+    # section 5.1). Stopped before Linux A it changed nothing; stopped once A had completed (B cut off or failed, or the Windows side stopped),
+    # Linux A of the new prepare finds this commit's completed staging (first-install.py CONT_FLEET: same package, unchanged since A, the
+    # in-directory = the staged inputs), stages nothing, and B goes on from where it stopped; anything else is refused by name
+    need(pins.get('FleetFirstInstall', '$null') == '$null', 'PRIOR_LAUNCHER_IS_A_FIRST_INSTALL_NOT_CONTINUED')
     launcher_sha = sha(raw); root_sha = chained['rootLauncherSha256'] if chained else launcher_sha
     plan_path = os.path.join(os.path.dirname(prior_launcher), 'install-plan.json')
     if os.path.isfile(plan_path):

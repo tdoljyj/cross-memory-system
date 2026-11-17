@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ResidentExecutor, PAUSE_CONTRACT } from '../src/executor.mjs';
+import { parseStageFact } from '../src/engine-windows.mjs';
+import { NATIVE_RECEIPT_CONTRACT_V2, buildStageFact } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { batchKey, headKey } from '../src/ledger.mjs';
 import { ReceiptChain } from '../src/receipts.mjs';
 import { validatePolicy } from '../src/policy.mjs';
@@ -96,8 +98,9 @@ test('an open PR, or no answer from the live read, runs as before', async t => {
   }
 });
 
-test('stage-1 "not admitted" releases the key; the queue retries on its own back-off and stops at the release cap', async t => {
-  const engine = fakeEngine({ stages: { 1: notAdmitted() } });
+test('stage-1 "not admitted" releases the key; the queue retries on its own back-off without spending the release cap', async t => {
+  const stages = { 1: notAdmitted() };
+  const engine = fakeEngine({ stages });
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED');
@@ -107,17 +110,15 @@ test('stage-1 "not admitted" releases the key; the queue retries on its own back
   assert.equal((await f.exec.tick()).state, 'IDLE', 'its 10-minute back-off');
   f.advance(60_001);
   assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED', 'retried without a new trigger (phase 2)');
-  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).stopKind], ['STOPPED', 'release-cap'], 'at most two releases in 24 hours (design v0.5 §4.5)');
-  assert.ok(f.queue.notices.some(n => n.kind === 'stopped' && n.pr === 884));
-  f.advance(3_600_000);
-  assert.equal((await f.exec.tick()).state, 'IDLE');
-  // Only a new commit runs it again: a new trigger of the same commit does not (design v0.5 §4.5).
-  await f.drop(triggerBytes({ contract: 'clued.independent-ci.resident-trigger/2', prUpdatedAt: '2026-10-20T13:30:00Z' }));
-  assert.equal((await f.exec.tick()).state, 'IDLE');
-  engine.runStage = fakeEngine().runStage.bind(engine);
-  await f.drop(triggerBytes({ headSha: '7'.repeat(40) }));
+  assert.deepEqual([f.queue.row(884).state, f.queue.row(884).stopKind], ['BACKOFF', null]);
+  assert.equal(f.queue.notices.some(n => n.kind === 'stopped' && n.pr === 884), false);
+  f.advance(20 * 60_000 + 1);
+  assert.equal((await f.exec.tick()).state, 'NOT_ADMITTED', 'a third evaluation is allowed');
+  delete stages[1];
+  f.advance(40 * 60_000 + 1);
   assert.equal((await f.exec.tick()).state, 'COMPLETED');
-  assert.deepEqual(stagesRun(engine).slice(0, 2), [1, 1]);
+  assert.equal(f.queue.row(884).current.headSha, HEAD, 'no new commit or trigger needed');
+  assert.deepEqual(stagesRun(engine).slice(0, 3), [1, 1, 1]);
 });
 
 test('any other stage-1 failure burns the head even before 10-started (review M4)', async t => {
@@ -304,6 +305,66 @@ test('C2 unproven Native cleanup or malformed outcome always HALTs; interrupted 
   assert.equal((await g.exec.tick()).state, 'HALTED'); assert.equal(calls, 0);
   assert.equal((await g.ledger.halted()).value.code, 'ROLE_PROBE_INTERRUPTED');
   assert.equal((await g.receipts.latest(['role-probe-result'], 1)).length, 1);
+});
+// A real stage-11 ending as the Source's invoker prints it (stage-fact.mjs#buildStageFact) and the engine parses it
+// (engine-windows.mjs#parseStageFact). Default: the probe's child ran past its window, the helper killed it (FIXED_CHILD_TIMEOUT,
+// SCM exit 90), the tree is zero, the broker restored the original runner, and no outcome was written (TURING 2026-11-15 08:13Z).
+const PROBE_M = 'e'.repeat(64), PROBE_JOB = 'f'.repeat(64);
+const probeStageEnding = ({ broker = {}, receipt = {} } = {}) => {
+  const plan = { stage: 11, entryRole: 'role-probe', entrySha256: 'c'.repeat(64), acceptanceSha256: 'd'.repeat(64), sourceManifestSha256: SOURCE };
+  const nonce = '0'.repeat(32), planSha256 = 'b'.repeat(64), controllerSid = 'S-1-5-21-1-2-3-1002';
+  const n = { contract: NATIVE_RECEIPT_CONTRACT_V2, nonce, state: 'FIXED_CHILD_REFUSED', failure_code: 'FIXED_CHILD_TIMEOUT', actual_sid: controllerSid, service_pid: 4242, session_id: 0,
+    node_pid: 77, node_exit_code: 1, timed_out: true, stop_requested: false, tree_cleanup_confirmed: true, tree_cleanup_failure_code: null, tree_active_processes: 0, root_exit_confirmed: true,
+    entry_role: plan.entryRole, stage: 11, entry_sha256: plan.entrySha256, config_sha256: planSha256, acceptance_sha256: plan.acceptanceSha256, source_manifest_sha256: SOURCE,
+    outcome_sha256: null, stdout_captured: false, private_bytes_read_by_helper: false, host_qualification: false,
+    ci_principal_qualification: false, ...receipt };
+  const b = { contract: 'x', requestId: '0a1b2c3d-0000-4000-8000-000000000011', ok: true, code: null, started: true, startCallIssued: true, helperPid: 4242, stoppedInTime: true,
+    restored: true, accountUnchanged: true, stableBefore: true, stableAfter: true, configurationConflict: false, ...broker };
+  const fact = buildStageFact({ stage: 11, nonce, plan, planSha256, workManifestSha256: PROBE_M, broker: b, receipt: n, receiptBytes: Buffer.from(JSON.stringify(n)),
+    outcome: null, outcomeBytes: null, controllerSid, expectedJobIds: [PROBE_JOB] });
+  return { ...parseStageFact(JSON.stringify(fact), PROBE_M), runId: 'r' };
+};
+test('a role probe whose child timed out after a proven cleanup is uncertain: no HALT, mode kept, backed off, Owner told after three', async t => {
+  const ending = probeStageEnding();
+  assert.deepEqual([ending.ok, ending.code, ending.proof, ending.roleProbe], [false, 'STAGE_CHILD_TIMEOUT', { windowsTreeZero: true, serviceOriginalStopped: true }, null]);
+  const f = await executorFixture(t); let calls = 0;
+  f.engine.runRoleProbe = async () => { calls++; return probeStageEnding(); };
+  f.exec.roleProbeMode = 'STANDBY';
+  assert.notEqual((await f.exec.tick()).state, 'HALTED');
+  assert.equal(await f.ledger.halted(), null); assert.equal(f.exec.roleProbeMode, 'STANDBY'); assert.equal(calls, 1);
+  const [result] = await f.receipts.latest(['role-probe-result'], 1);
+  assert.deepEqual(result.value.body.fact, { result: 'uncertain', code: 'ROLE_PROBE_UNCERTAIN' });
+  // backed off like any uncertain answer: 1, then 2 minutes
+  f.advance(60_000 - 1); await f.exec.tick(); assert.equal(calls, 1);
+  f.advance(1); await f.exec.tick(); assert.equal(calls, 2);
+  f.advance(120_000 - 1); await f.exec.tick(); assert.equal(calls, 2);
+  assert.deepEqual(f.exec.roleProbeNotices.map(n => n.kind), []);
+  f.advance(1); await f.exec.tick(); assert.equal(calls, 3);
+  assert.deepEqual(f.exec.roleProbeNotices.map(n => n.kind), ['role-probe-uncertain']);
+  assert.equal(f.exec.roleProbe.snapshot().failures, 3);
+  assert.equal(await f.ledger.halted(), null); assert.equal(f.exec.roleProbeMode, 'STANDBY'); assert.equal((await f.ledger.keys()).length, 0);
+  // a queue watch that ends this way answers 'unknown' and HALTs nothing either
+  const w = await executorFixture(t);
+  w.engine.runRoleProbe = async () => probeStageEnding();
+  assert.equal(await w.exec.roleProbeMaintenance({ watch: { key: 'k', pr: 884, lastEnd: Number.NaN } }), null);
+  assert.equal(await w.ledger.halted(), null); assert.deepEqual(w.exec.queueWatchBook.get('k').failures, 1);
+});
+test('a role probe ending without proven cleanup, busy, or with a missing outcome still HALTs', async t => {
+  const endings = {
+    'a process left in the tree': probeStageEnding({ receipt: { tree_cleanup_confirmed: false, tree_active_processes: 1 } }),
+    'a timeout fact that claims one live process': (() => { const e = probeStageEnding(); return { ...e, proof: { ...e.proof, windowsTreeZero: false } }; })(),
+    'a timeout whose runner was not read back': (() => { const e = probeStageEnding(); return { ...e, proof: { ...e.proof, serviceOriginalStopped: false } }; })(),
+    'the broker busy with the original restored': probeStageEnding({ broker: { ok: false, code: 'BROKER_BUSY', started: false, startCallIssued: false, helperPid: null, stoppedInTime: false } }),
+    'a completed child without an outcome': probeStageEnding({ receipt: { state: 'FIXED_CHILD_COMPLETED', failure_code: null, node_exit_code: 0, timed_out: false } }),
+  };
+  assert.deepEqual([endings['the broker busy with the original restored'].code, endings['the broker busy with the original restored'].proof], ['BROKER_BUSY', { windowsTreeZero: true, serviceOriginalStopped: true }]);
+  assert.equal(endings['a completed child without an outcome'].code, 'STAGE_OUTCOME_MISSING');
+  for (const [name, ending] of Object.entries(endings)) {
+    const f = await executorFixture(t);
+    f.engine.runRoleProbe = async () => ending;
+    assert.equal((await f.exec.tick()).state, 'HALTED', name);
+    assert.equal((await f.ledger.halted()).value.code, 'ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED', name);
+  }
 });
 test('C2 tick serialization refuses overlap while its one controller read is in flight', async t => {
   const f = await executorFixture(t); let release, started;

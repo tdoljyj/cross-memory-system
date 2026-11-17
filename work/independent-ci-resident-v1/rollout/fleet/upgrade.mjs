@@ -3,7 +3,8 @@
 // the installed upgrader's ACCEPT run beforehand (the archive's precheck.mjs), and ONE request file in the installed upgrade inbox,
 // written by the INSTALLED request-upgrade.ps1. Everything after that is the installed upgrader's (CluedCIUpgrader): the Grant, the
 // drain, both sides' switch, the verify, the rollback. NON-elevated, Owner session; no UAC anywhere; writes only under a new work
-// directory and that one inbox file; no Python, no git, no WSL, no network.
+// directory of its own under --work (run-*, one per run that assembles a package: the same --work can be given again) and that one
+// inbox file; no Python, no git, no WSL, no network.
 //
 //   node upgrade.mjs fetch --version <v> --work <new dir> [--from <dir>] [--repo <owner/name>] [--no-request] [--allow-active-upgrade]
 //        the whole node step in ONE command: fetch.mjs takes fleet-node-<v>.tar, its acceptance and SHA256SUMS from the release (resumed
@@ -12,7 +13,7 @@
 //        Run it again with the same --work after a failure: the part file is continued. Any copy of upgrade.mjs + fetch.mjs will do
 //        for this step (the previous unpacked package has them); the package's own copy is what runs the upgrade.
 //   node <unpacked>/tree/work/independent-ci-resident-v1/rollout/fleet/upgrade.mjs
-//        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json> --work <new dir>
+//        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json> --work <dir>
 //        [--no-request] [--allow-active-upgrade]
 //
 // The command is the same on every node and safe to run again: it answers FLEET_NODE_UPGRADE_IN_PROGRESS while the upgrader has an
@@ -151,8 +152,10 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
     ...(pyCanonical(installedRefs.formalRoles) === pyCanonical(acceptance.fleetRefs.formalRoles) ? [] : ['formalRoles'])];
   needUpgradable(changed.length === 0, 'FLEET_SOURCE_REFS_CHANGED_NEEDS_REINSTALL', { changed });
 
-  const work = path.resolve(workDir);
-  await fs.mkdir(work, { recursive: false });
+  // The same --work again (to see where the node is, or after a refusal; field 2026-11-16: EEXIST): every run that assembles a package
+  // does it in a new directory of its own under it, so nothing an earlier run wrote (a package a request names) is touched or reused.
+  await fs.mkdir(path.resolve(workDir), { recursive: true });
+  const work = await fs.mkdtemp(path.join(path.resolve(workDir), 'run-'));
   const x = path.join(work, 'x');
   await extractTar(entries, x);
   const tree = path.join(x, 'tree');

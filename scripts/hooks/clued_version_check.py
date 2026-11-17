@@ -28,7 +28,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -123,7 +123,8 @@ def describe_copy(path: Path, skill: dict, root: Path, newest: str) -> str | Non
         state = "has no version (it predates component versioning)"
     elif older(version, newest):
         state = f"is version {version}, the latest is {newest}"
-    elif cc.content_digest(path, skill["files"]) != skill["content_sha256"] and version == skill["version"]:
+    elif (version == skill["version"]
+          and cc.content_digest(path, skill["files"]) != cc.content_digest(root / skill["root"], skill["files"])):
         source = root / skill["root"]
         missing = [p.as_posix() for p in cc.component_files(source, skill["files"]) if not (path / p).exists()]
         state = (f"is version {version} but its files differ"

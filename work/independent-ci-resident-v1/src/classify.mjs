@@ -21,8 +21,10 @@ export const NOT_ADMITTED_CODES = Object.freeze(['NATIVE_NOT_ADMITTED', 'OWNER_R
 // verified (GitHub or Native unreadable after the bounded re-reads); attempt 2 re-proves it under new job ids instead of a burned head.
 // HEAD_INTERRUPTED_ON_GITHUB (DESIGN §78, field defect PR #1110): stage 1 found only this attempt's own admission check on the head, from
 // a run interrupted by a failover before any role or control check: nothing of the head ran, so attempt 2 runs it, no new commit.
+// ADMISSION_AUTHORIZATION_CHANGED (DESIGN §79, field PR #1123): stage 1 withdrew its own admission check because the authorization read
+// after the write differed from the one before it; nothing of the head ran, so attempt 2 admits it again from a fresh read, no new commit.
 export const TRANSIENT_CODES = Object.freeze(['NATIVE_ADMISSION_UNAVAILABLE', 'GITHUB_TRANSIENT_UNAVAILABLE', 'BRIDGE_TRANSPORT_TIMEOUT',
-  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', 'ADMISSION_VERIFICATION_UNAVAILABLE', 'HEAD_INTERRUPTED_ON_GITHUB']);
+  'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 'ARCHIVE_PRECONDITION_NOT_MET', 'ADMISSION_VERIFICATION_UNAVAILABLE', 'HEAD_INTERRUPTED_ON_GITHUB', 'ADMISSION_AUTHORIZATION_CHANGED']);
 // Why the roles of a train front batch (a subject with testSha) stay local: a relay reason, not a failure (§41.4, §38.8 m1);
 // listed with the codes so every table knows it.
 export const RELAY_TRAIN_FRONT_LOCAL = 'RELAY_TRAIN_FRONT_LOCAL';
@@ -233,13 +235,14 @@ export function failureRow({ code, stage, phase = 'stage', reason = null, diagno
 //   cooldown: the 10-minute cool-down of the batch key (policy.limits.unexecutedCooldownMs) before it is reserved again;
 //   cap: the budget that bounds its retries now that the run queue retries on its own (queue.mjs). Phase 1's daily cap
 //     per key (unexecutedMaxPer24h) is gone with policy /4: a wait (failure-table class waiting) is bounded by the
-//     waits' own budget (waitingRetriesPer24h a day, every PR together), any other release by the head's release cap
+//     waits' own budget (waitingRetriesPer24h a day, every PR together); admission refusals spend evaluations only,
+//     not either release cap. Other releases are bounded by the head's release cap
 //     (releasesPerHeadPer24h counted releases in 24 hours, then STOPPED; an environment release while the breaker is
 //     not closed is not counted), a supersession by nothing (nothing about the PR was decided). Generation 10 (DESIGN 53.3), only
 //     under a policy with breaker.network (/9): a release that networkFailure below says was the network counts towards its own cap
 //     instead (breaker.network.releasesPerHeadPer24h, every 10 minutes: queue.mjs#NETWORK_BACKOFF_MS), never towards this one.
 export const UNEXECUTED_REASON_RULES = Object.freeze({
-  NOT_ADMITTED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: 'waitingRetriesPer24h', other: 'releasesPerHeadPer24h' }), evidence: 'stage-1 outcome safeToRerun' }),
+  NOT_ADMITTED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: 'waitingRetriesPer24h', other: null }), evidence: 'stage-1 outcome safeToRerun' }),
   BUNDLE_UNAVAILABLE: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'bundle failed before stage 1' }),
   BROKER_NOT_LAUNCHED: Object.freeze({ cooldown: true, cap: Object.freeze({ waiting: null, other: 'releasesPerHeadPer24h' }), evidence: 'broker refused before any launch, original restored' }),
   SUPERSEDED: Object.freeze({ cooldown: false, cap: Object.freeze({ waiting: null, other: null }), evidence: 'a newer commit of the PR arrived before stage 1' }),

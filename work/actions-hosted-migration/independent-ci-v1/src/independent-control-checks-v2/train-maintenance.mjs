@@ -48,7 +48,7 @@ import { GreenLedger } from './green-ledger.mjs';
 import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
-import { RULESET_UNREADABLE, rulesetFacts } from './train-rules.mjs';
+import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
 import { decideShadow, frontPullFacts, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
@@ -198,15 +198,17 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
 
   const mainSha = (await github.readBranchHead('main')).sha;
   let rules = null, rulesReason = null;
+  const landability = { rules: null, appId, onFallback: reason => { rulesReason ??= reason; } };
   try {
     const reply = await github.readBranchRules('main');
     if (reply?.complete !== true) fail(RULESET_UNREADABLE);
     rules = rulesetFacts(reply.rules, appId);
+    landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
   const endedBound = [];
   if (holder?.boundPrs?.length > 1) {
-    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, ended: endedBound });
+    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, ended: endedBound, landability });
     holder = selected ?? { ...holder, pr: null, boundPr: null };
     duty = { ...duty, holders: [holder] };
   }
@@ -617,6 +619,13 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           fx.n++; fx.slotTouched = true;
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
+        } else if (front.state === 'open' && typeof native.yieldSlot === 'function' && SHA.test(pull?.head?.sha ?? '')
+          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks }, landability)))) {
+          // A front that cannot land as it stands (draft, auto-merge off, a required check failed) never
+          // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
+          fx.n++;
+          const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
+          if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
         }
       } catch { /* unreadable reply: the write may have happened; counted, and the next run sees the outcome */ }
     }
@@ -697,7 +706,7 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
 // Task/current generation. Several PRs of that Task are normal scheduling choices;
 // contradictory Task/generation projections, unreadable data and deadline fail closed.
 async function findFrontBind({ github, native, fx, job, holder, rows, claimScope, until, clock, readOnly = false,
-  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, ended = null }) {
+  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, ended = null, preferLandable = false, landability }) {
   const matches = [], observed = [];
   for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, maxReads)) {
     if (clock() >= until) return null;
@@ -721,18 +730,44 @@ async function findFrontBind({ github, native, fx, job, holder, rows, claimScope
   // The PR at the holder's CI head; none there (field 2026-11-13, #1087: its author pushed) -> the lowest PR, as with no CI head.
   const atHead = preferredHead === null ? [] : matches.filter(m => m.pull.head.sha === preferredHead);
   if (atHead.length > 1) return null;
-  const eligible = atHead.length ? atHead : matches;
-  const p = eligible.sort((a,b) => a.pull.number - b.pull.number)[0]?.pull ?? null;
+  const ordered = [...atHead, ...matches.filter(m => !atHead.includes(m)).sort((a,b) => a.pull.number - b.pull.number)];
+  let p = ordered[0]?.pull ?? null;
+  // Field 2026-11-15 (#1121): of the holder's PRs, the first one GitHub can merge as it stands is the front (landable); only when none
+  // can is the choice as before. The front never holds the slot for a PR that cannot land while another PR of the claim waits green.
+  if (preferLandable) for (const m of ordered) {
+    if (clock() >= until) break;
+    if (await landable(github, m.pull, null, landability)) { p = m.pull; break; }
+  }
   if (!p || !Number.isSafeInteger(p.number) || p.state !== 'open' || p.draft !== false || p.base?.ref !== 'main' || p.head?.repo?.full_name !== job.repo
     || !SHA.test(p.head?.sha ?? '')) return null;
   return { pr: p.number, headSha: p.head.sha, claimId: holder.claimId };
+}
+
+// Use the main rules already read this round and the shared required-check evaluator (names, App pins, latest rerun).
+// Optional failures cannot rotate two waiting claims forever (#1142/#1143). If the required list cannot be qualified,
+// keep the old all-Actions-failures predicate and record why in rulesReason; never relax that fallback.
+// As before, an unreadable check inventory does not change the scheduling choice. This is never merge authorization.
+const ACTIONS_APP_ID = 15368;
+const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure']);
+async function landable(github, pull, listed = null, { rules = null, appId = APP_ID, onFallback = () => {} } = {}) {
+  if (pull.auto_merge == null) return false;
+  if (listed === null) try { listed = await github.readChecks(pull.head.sha); } catch { return true; }
+  if (listed?.complete !== true || !Array.isArray(listed.checks)) return true;
+  if (rules !== null) {
+    try { return requiredCheckFailure(rules, listed, pull.head.sha, appId).length === 0; }
+    catch (e) { onFallback(e?.code === RULESET_UNREADABLE ? RULESET_UNREADABLE : REQUIRED_CHECKS_UNREADABLE); }
+  } else onFallback(RULESET_UNREADABLE);
+  const latest = new Map();
+  for (const c of listed.checks) if (c?.app?.id === ACTIONS_APP_ID && c.head_sha === pull.head.sha && Number.isSafeInteger(c.id)
+    && !(latest.get(c.name)?.id > c.id)) latest.set(c.name, c);
+  return ![...latest.values()].some(c => c.status === 'completed' && FAILED_CONCLUSIONS.has(c.conclusion));
 }
 
 async function selectProjectedHolder({ holder, ...ports }) {
   if (!Array.isArray(holder.prs) || !holder.prs.length || typeof holder.taskId !== 'string') return null;
   const activeHead = ['running','green'].includes(holder.ciState) && SHA.test(holder.ciHeadSha ?? '') ? holder.ciHeadSha : null;
   const selected = await findFrontBind({ ...ports, holder, rows: holder.prs.map(number => ({ number, state: 'open', baseRef: 'main' })),
-    readOnly: true, preferredHead: activeHead, maxReads: 50 });
+    readOnly: true, preferredHead: activeHead, maxReads: 50, preferLandable: true });
   return selected ? { ...holder, pr: selected.pr, boundPr: `${ports.job.repo}#${selected.pr}` } : null;
 }
 

@@ -97,7 +97,7 @@ const AUTHORIZATION_DB_TESTS = [
   'project-list-authorization-db', 'projection-refresh-pipeline-db', 'record-update-field-merge-db', 'resource-center-authority-db',
   'resume-constraint-index-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
   'task-dependency-guard-db', 'work-claim-exemptions-db', 'work-claims-acceptance-db', 'work-claims-binding-roles-db', 'work-claims-ci-metering-db',
-  'work-claims-continuation-db', 'work-claims-hardening-db', 'work-claims-multi-copy-db', 'work-claims-reject-receipts-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
+  'work-claims-continuation-db', 'work-claims-hardening-db', 'work-claims-main-merge-db', 'work-claims-multi-copy-db', 'work-claims-reject-receipts-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
   'work-claims-resource-kinds-db', 'worker-gateway-db', 'worker-gateway-request-context-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
@@ -116,6 +116,7 @@ const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
   'ci-suites': {
+    'retrigger-counter': ['scripts/ci/retrigger-counter*', 'scripts/ci/fixtures/retrigger-counter/**'],
     'compute-panel': ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml'],
     // Node Resource Governance v1: the renderer, its sweep and installer, the declarations and the standard (whose archive numbers the resident tests hold too).
     'node-governance': ['scripts/ci/self-hosted/node-governance/**', 'scripts/ci/self-hosted/node-profiles.json', 'scripts/ci/self-hosted/validate_node_profiles.py',
@@ -130,6 +131,8 @@ export const SUITES = {
     'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',
+      'scripts/ci/component-version-integration.py', 'scripts/ci/component-version-integration.test.py',
+      'scripts/update_clued_skills.py', 'scripts/test_update_clued_skills.py', 'plugins/kooyumi/**',
       'VERSION', '.claude/settings.json', 'scripts/ci/clued_release_tags.py', 'scripts/ci/test_clued_release_tags.py'],
     'runner-budget-policy': ['.github/workflows/**', 'scripts/ci/validate_runner_budget_policy.py',
       'scripts/ci/test_validate_runner_budget_policy.py'],
@@ -201,6 +204,7 @@ const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
 export const SUITE_COMMANDS = {
+  'retrigger-counter': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/retrigger-counter.test.mjs'] }],
   'compute-panel': [{ cwd: '.', argv: [PYTHON, '-I', '-B', 'tests/test_compute_panel.py'] }],
   'node-governance': [{ cwd: '.', argv: ['node', '--test', '{tests:scripts/ci/self-hosted/node-governance}'] },
     { cwd: '.', argv: [PYTHON, '-I', '-B', 'scripts/ci/self-hosted/validate_node_profiles.py'], quiet: true }],
@@ -215,6 +219,10 @@ export const SUITE_COMMANDS = {
   'components': [
     { cwd: '.', argv: [PYTHON, 'scripts/clued_components.py', 'check', '--base', '{base}'] },
     { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'tests.test_clued_components', 'tests.test_clued_version_check'] },
+    // The integration builder's own tests (they were in no suite before defect C).
+    { cwd: '.', argv: [PYTHON, 'scripts/ci/component-version-integration.test.py'] },
+    // The Skill publishing entries refuse a changed Skill under its released version (ComponentVersioning v0.4).
+    { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'scripts/test_update_clued_skills.py', 'plugins/kooyumi/test_build_bundle.py'] },
     // VERSION and its git tag agree (ComponentVersioning v0.2; the checkout has full history).
     { cwd: '.', argv: [PYTHON, 'scripts/ci/clued_release_tags.py', 'check'] },
     { cwd: '.', argv: [PYTHON, '-m', 'unittest', 'scripts/ci/test_clued_release_tags.py'] },
@@ -226,7 +234,8 @@ export const SUITE_COMMANDS = {
   'admission-self-tests': [{ cwd: '.', known: 'admission-self-tests', argv: ['node', '--test',
     'scripts/ci/clued-work-admission.test.mjs', 'scripts/ci/merge-admission-policy.test.mjs',
     'scripts/ci/merge-admission-policy-file.test.mjs', 'scripts/ci/clued-release-grant.test.mjs',
-    'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs'] }],
+    'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/runner/clued-runner-hook-loader.test.mjs', 'scripts/runner/install-hook-loader.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs',
+    'scripts/ci/clued-front-main-merge.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
   'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
   // Integrates a throwaway worktree. It never installs into the checkout: there
