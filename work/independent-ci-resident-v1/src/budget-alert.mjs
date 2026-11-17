@@ -80,5 +80,5 @@ export function budgetForPull(status, pull, now) {
     && (n.code !== 'QUEUE_DEPTH_EXCEEDED' || status.queue?.live >= status.queue?.depth)
     && (n.code !== 'TRAIN_DAILY_LIMIT' || row?.state === 'PARKED' && row?.deferred === 'TRAIN_SINGLE_GREEN_NOT_PROVEN')
     && (n.budget.resetsAt === null || n.budget.resetsAt >= now)
-    && (n.pr === null || n.pr === pull.pr) && (n.headSha === null || n.headSha === pull.headSha))?.budget ?? null;
+    && (n.budget.scope === 'head' || n.pr === null || n.pr === pull.pr) && (n.headSha === null || n.headSha === pull.headSha))?.budget ?? null;
 }

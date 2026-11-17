@@ -88,3 +88,13 @@ test('a node execution quota does not mask a parked batch that may still retry s
   assert.match(text, /已测通/);
   assert.doesNotMatch(text, /maxBatchesPer24h/);
 });
+
+test('a shared head quota explains every PR on that head, while a different head keeps its own status', () => {
+  const now = Date.parse('2026-11-18T01:00:00Z'), board = new StatusBoard({ clock: () => now });
+  board.update({ backfill: { complete: true }, notices: [{ key: 'budget:head', kind: 'budget', code: 'RELEASE_CAP_REACHED', pr: 884, headSha: HEAD, at: now,
+    budget: { policyKey: 'limits.releasesPerHeadPer24h', scope: 'head', used: 2, limit: 2, resetsAt: now + DAY } }] });
+  board.setPending([{ pr: 885, headSha: HEAD, state: 'QUEUED' }, { pr: 886, headSha: '5'.repeat(40), state: 'QUEUED' }]);
+  const status = parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  assert.match(describe({ pull: { pr: 885, headSha: HEAD, eligible: true }, status, now }).description, /releasesPerHeadPer24h.*每 head.*2\/2/);
+  assert.doesNotMatch(describe({ pull: { pr: 886, headSha: '5'.repeat(40), eligible: true }, status, now }).description, /releasesPerHeadPer24h/);
+});
