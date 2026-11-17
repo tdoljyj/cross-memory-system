@@ -91,7 +91,15 @@ function recoveryExplanation(view: RecoveryView) {
   if (view.resolution === "abandoned_registration") return "已停止管理这个文件；Google 文件没有删除。";
   return view.diagnostic ? `${recoveryReasons[view.diagnostic.reason]}。${recoveryActions[view.diagnostic.automatic_next_action]}` : recoveryLabels[view.status];
 }
-type RefreshStatus = { enabled: boolean; version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
+type RefreshStatus = { enabled: boolean; authorized_enabled?: boolean;
+  pause_reason?: "none" | "reauthorization_required" | "connection_inactive" | "failure_limit" | "backoff";
+  version: number; connection_version: number; failures: number; pending: boolean; next_refresh_at: string | null };
+type RenewalConfirmation = { connection_id: string; action: "enable" | "disable"; epoch: number;
+  connection_version: number; delegation_version: number };
+const renewalAuthorized = (status: RefreshStatus) => status.authorized_enabled ?? status.enabled;
+const renewalPause = { none: "", reauthorization_required: "；连接需重新授权，续签暂时暂停，授权成功后自动恢复",
+  connection_inactive: "；连接当前不可用，续签暂时暂停", failure_limit: "；连续失败已达上限，自动尝试已暂停，重新授权后恢复",
+  backoff: "；续签暂时失败，正在等待有限重试" };
 const probeStages: Record<string, string> = { request: "请求验证", prepare: "账号与目录当前状态", descriptor: "目录配置", credential: "连接凭据与有效期",
   identity: "Google 账号身份", directories: "Google 目录元数据与权限", boundary: "父级与同级目录边界", receipt: "最终状态复核与回执" };
 const probeReasons: Record<string, string> = { DIRECTORY_NOT_APP_AUTHORIZED: "至少一个登记目录尚未通过当前应用的目录管理检查", DIRECTORY_NOT_WRITABLE: "至少一个目录当前不允许新建内容",
@@ -177,6 +185,8 @@ const labels: Record<string, string> = { awaiting_provider: "等待 Google 授�
 export default function StorageConnections() {
   const [connections, setConnections] = useState<Connection[]>([]), [message, setMessage] = useState("正在读取……"), [busy, setBusy] = useState(false);
   const [renewals, setRenewals] = useState<Record<string, RefreshStatus>>({});
+  const [renewalConfirmation, setRenewalConfirmation] = useState<RenewalConfirmation | null>(null);
+  const renewalChoice = useRef<RenewalConfirmation | null>(null);
   const [probeMessages, setProbeMessages] = useState<Record<string, string>>({});
   const [recoveryJobs, setRecoveryJobs] = useState<Record<string, string>>({}), [recoveryViews, setRecoveryViews] = useState<Record<string, RecoveryView>>({});
   const [automaticJobs, setAutomaticJobs] = useState<Record<string, RecoveryView[]>>({});
@@ -247,7 +257,7 @@ export default function StorageConnections() {
     confirmation.current = null; setRecoveryConfirmation(null);
     review.current = null; setReviewObservation(null);
     abandon.current = null; setAbandonConfirmation(null);
-    setRenewals({});
+    setRenewals({}); renewalChoice.current = null; setRenewalConfirmation(null);
     setProbeMessages({});
     setRecoveryJobs({}); setRecoveryViews({});
     recoveryLatest.current = {}; setAutomaticJobs({}); setAutomaticMessages({});
@@ -272,7 +282,7 @@ export default function StorageConnections() {
       // account's refreshed credential does not invalidate its connection/CAS view.
       if (event === "TOKEN_REFRESHED" && nextAccount !== null && nextAccount === accountId.current) return;
       accountId.current = nextAccount;
-      ++revision.current; setConnections([]); setRenewals({}); setProfileId(""); setDecisionId("");
+      ++revision.current; setConnections([]); setRenewals({}); renewalChoice.current = null; setRenewalConfirmation(null); setProfileId(""); setDecisionId("");
       for (const timer of recoveryTimers.current.values()) clearTimeout(timer); recoveryTimers.current.clear();
       confirmation.current = null; setRecoveryConfirmation(null); recoveryLatest.current = {}; setAutomaticJobs({}); setAutomaticMessages({});
       review.current = null; setReviewObservation(null);
@@ -479,12 +489,21 @@ export default function StorageConnections() {
       if (epoch === revision.current) setMessage(error instanceof Error ? error.message : "登记未确认，请刷新核对；再次提交相同目录与授权会沿用同一请求。");
     } finally { registrationBusy.current = false; if (epoch === revision.current) setBusy(false); }
   }
-  async function renewal(c: Connection, action: "status" | "enable" | "disable") {
+  async function renewal(c: Connection, action: "status" | "enable" | "disable", approved?: RenewalConfirmation) {
     if (operationBusy.current || busy) return;
     const previous = renewals[c.id];
     if (action !== "status" && !previous) return;
-    if (action === "enable" && !window.confirm(`允许 BeamingFace 服务端持续续签「${c.root_name}」的 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。`)) return;
-    if (action === "disable" && !window.confirm(`停用「${c.root_name}」的后台续签？停用后不再发起新的后台续签。已经开始的续签需要核对结果，不能靠重新开启跳过。`)) return;
+    if (action !== "status" && !approved) {
+      const choice = { connection_id: c.id, action, epoch: revision.current,
+        connection_version: previous.connection_version, delegation_version: previous.version };
+      renewalChoice.current = choice; setRenewalConfirmation(choice); return;
+    }
+    if (action !== "status" && (renewalChoice.current !== approved || approved?.epoch !== revision.current ||
+      approved.connection_id !== c.id || approved.action !== action ||
+      approved.connection_version !== previous.connection_version || approved.delegation_version !== previous.version)) return;
+    // One use, exact CAS and current account/page. A later query, cancellation
+    // or account change invalidates the inline confirmation before any request.
+    renewalChoice.current = null; setRenewalConfirmation(null);
     const epoch = revision.current; operationBusy.current = true; setBusy(true);
     try {
       if (action !== "status") {
@@ -498,8 +517,11 @@ export default function StorageConnections() {
       if (typeof value.enabled !== "boolean" || !Number.isSafeInteger(value.version) || Number(value.version) < 0 ||
         !Number.isSafeInteger(value.connection_version) || Number(value.connection_version) < 1 ||
         !Number.isSafeInteger(value.failures) || Number(value.failures) < 0 || typeof value.pending !== "boolean" ||
-        !(value.next_refresh_at === null || typeof value.next_refresh_at === "string")) throw new Error("续签状态未确认。");
-      if (action !== "status" && value.enabled !== (action === "enable")) throw new Error("续签设置尚未生效，请重新查询状态；不会自动重试。");
+        !(value.next_refresh_at === null || typeof value.next_refresh_at === "string") ||
+        (value.authorized_enabled !== undefined && typeof value.authorized_enabled !== "boolean") ||
+        (value.pause_reason !== undefined && (typeof value.pause_reason !== "string" || !Object.hasOwn(renewalPause, value.pause_reason))))
+        throw new Error("续签状态未确认。");
+      if (action !== "status" && renewalAuthorized(value as RefreshStatus) !== (action === "enable")) throw new Error("续签设置尚未生效，请重新查询状态；不会自动重试。");
       setRenewals(old => ({ ...old, [c.id]: value as RefreshStatus }));
       setConnections(old => old.map(item => item.id === c.id ? { ...item, version: Number(value.connection_version) } : item));
       setMessage(action === "status" ? "" : "设置已确认。");
@@ -590,11 +612,23 @@ export default function StorageConnections() {
       <div className="mt-4 border-t pt-4"><h3>账号级后台续签</h3>
         <p className="my-2 text-sm">新连接在授权时默认选择自动续签，可取消或随时停用；已有停用设置不会自动恢复。由服务端执行，不依赖任何设备在线，不授予 Agent 整理或写入文件的权限。</p>
         <button disabled={busy} onClick={() => void renewal(c, "status")}>查询续签状态</button>
-        {renewals[c.id] && <><p role="status" className="my-2">{renewals[c.id].enabled ? "后台续签已开启" : "后台续签已关闭"}
+        {renewals[c.id] && <><p role="status" className="my-2">{renewalAuthorized(renewals[c.id]) ? "后台续签已开启" : "后台续签已关闭"}
+          {renewalAuthorized(renewals[c.id]) && renewalPause[renewals[c.id].pause_reason ?? "none"]}
           {renewals[c.id].pending ? "；存在尚未确认的续签。请核对结果，必要时重新授权 Google。" : ""}
           {renewals[c.id].failures > 0 ? `；连续失败 ${renewals[c.id].failures} 次。` : ""}</p>
-          <button disabled={busy || (!renewals[c.id].enabled && (c.state !== "active" || renewals[c.id].pending))}
-            onClick={() => void renewal(c, renewals[c.id].enabled ? "disable" : "enable")}>{renewals[c.id].enabled ? "停用后台续签" : "授权开启后台续签"}</button></>}
+          <button disabled={busy || (!renewalAuthorized(renewals[c.id]) && (c.state !== "active" || renewals[c.id].pending))}
+            onClick={() => void renewal(c, renewalAuthorized(renewals[c.id]) ? "disable" : "enable")}>{renewalAuthorized(renewals[c.id]) ? "停用后台续签" : "授权开启后台续签"}</button></>}
+        {renewalConfirmation?.connection_id === c.id && renewalConfirmation.epoch === revision.current &&
+          <section role="region" aria-label="确认后台续签设置" className="my-3 rounded border p-3">
+            <h4>确认后台续签设置</h4>
+            <p className="my-2">{renewalConfirmation.action === "enable"
+              ? `允许 BeamingFace 服务端持续续签「${c.root_name}」的 Google 连接，直到你主动停用？手机、平板或电脑退出登录不影响续签。仅保留现有授权范围，不新增文件写入权限。`
+              : `停用「${c.root_name}」的后台续签？停用后不再发起新的后台续签。已经开始的续签需要核对结果，不能靠重新开启跳过。`}</p>
+            <div className="my-2 flex gap-4"><button disabled={busy}
+              onClick={() => void renewal(c, renewalConfirmation.action, renewalConfirmation)}>
+              {renewalConfirmation.action === "enable" ? "确认开启后台续签" : "确认停用后台续签"}</button>
+              <button disabled={busy} onClick={() => { renewalChoice.current = null; setRenewalConfirmation(null); }}>取消续签设置</button></div>
+          </section>}
       </div>
     </section>)}
     <div className="mt-6 flex gap-4"><button disabled={busy} onClick={() => void refresh()}>刷新状态</button><Link href="/storage/connections">返回存储连接</Link></div>

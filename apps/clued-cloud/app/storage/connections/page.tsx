@@ -1024,7 +1024,9 @@ export default function StorageConnections() {
               {registeredLocation(c) && <p className="break-all">已登记位置（未核验当前路径）：{registeredLocation(c)}</p>}</div>}
           <p className="break-all text-xs text-gray-500">文件夹标识：{c.root_folder_id}</p>
           <p className="my-2">账号授权上限：{c.policy_active && c.actions.length ? c.actions.map(action => actionName[action]).join("、") : "无当前可用授权"}。实际启用情况见下方权限设置；执行还须通过当前目录、客户端和单次任务准入。</p>
-          <p className="my-2">后台续签：{c.refresh_enabled ? "开启" : "关闭"}。</p>
+          <p className="my-2">后台续签授权：{c.refresh_enabled ? "已开启" : "未开启"}。
+            {c.refresh_enabled && c.state !== "active" && "连接当前不可用，续签暂停。"}
+            <a className="underline" href="/storage/admin">核对续签运行状态</a></p>
           {c.access_digest_missing && c.access_digest_missing.count > (c.access_digest_attention?.count ?? 0) &&
             <p className="my-2">后台正在自动核对 {c.access_digest_missing.count - (c.access_digest_attention?.count ?? 0)} 个目录的共享设置{c.access_digest_attention ? "，无需操作" : ""}。</p>}
         </details>

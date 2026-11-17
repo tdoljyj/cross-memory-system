@@ -11,6 +11,25 @@ import {fileURLToPath} from 'node:url';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const standalone=!!process.env.D01D02_SOURCE_REPO;
+if(standalone&&process.env.GITHUB_ACTIONS==='true')throw new Error('standalone source inspection cannot replace the required migration regressions');
+// The existing required migration entry owns the related storage qualification,
+// original-delivery and renewal regressions. Both fixtures match the accepted
+// selector's fixture input rule, including when only a fixture changes.
+if(!standalone){
+ await import('./task-goal-delivery-db.fixture.mjs');
+ await import('./storage-owner-lifecycle-db.fixture.mjs');
+ const {selectSuites,SUITE_COMMANDS}=await import('../../../scripts/ci/ci-required-selection.mjs');
+ test('required storage entry selects every delivery and renewal regression input',()=>{
+  for(const changed of ['apps/clued-cloud/tests/task-goal-delivery-db.fixture.mjs',
+   'apps/clued-cloud/tests/storage-owner-lifecycle-db.fixture.mjs',
+   'apps/clued-cloud/tests/storage-runtime-authority-db.test.mjs',
+   'apps/clued-cloud/supabase/migrations/20261117102000_task_goal_delivery_reconnect_v1.sql',
+   'apps/clued-cloud/supabase/migrations/20261117113000_storage_refresh_intent_v1.sql'])
+    assert.deepEqual(selectSuites('migration-verify',[changed]).suites,['production-schema'],changed);
+  assert.ok(SUITE_COMMANDS['production-schema'].some(command=>command.cwd==='apps/clued-cloud'
+   &&command.argv.includes('tests/storage-runtime-authority-db.test.mjs')),'the unchanged required command actually runs this entry');
+ });
+}
 const repo=process.env.D01D02_SOURCE_REPO;
 const cloud=standalone?path.join(repo,'apps/clued-cloud'):path.resolve(here,'..');
 const id=()=>randomUUID(),sha=v=>createHash('sha256').update(v).digest('hex');
