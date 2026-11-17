@@ -77,3 +77,14 @@ test('a failed budget notification enqueue is retried, successful enqueue is ded
   assert.ok(store.data.notified[event.key]);
   assert.equal(attempts, 2);
 });
+
+test('a node execution quota does not mask a parked batch that may still retry stage 8', () => {
+  const now = Date.parse('2026-11-18T01:00:00Z'), board = new StatusBoard({ clock: () => now });
+  board.update({ backfill: { complete: true }, notices: [{ key: 'budget:full', kind: 'batch-limit', code: 'DAILY_BATCH_LIMIT', pr: null, headSha: null, at: now,
+    budget: { policyKey: 'limits.maxBatchesPer24h', scope: 'node', used: 72, limit: 72, resetsAt: now + DAY } }] });
+  board.setPending([{ pr: 884, headSha: HEAD, state: 'PARKED', reason: 'RESIDENT_MERGE_QUEUE_NOT_JOINED' }]);
+  const status = parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  const text = describe({ pull: { pr: 884, headSha: HEAD, eligible: true }, status, now }).description;
+  assert.match(text, /已测通/);
+  assert.doesNotMatch(text, /maxBatchesPer24h/);
+});

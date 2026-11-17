@@ -72,6 +72,7 @@ export function budgetForPull(status, pull, now) {
   const row = status.pending?.find(r => r.pr === pull.pr && r.headSha === pull.headSha);
   if (status.recent?.some(r => r.pr === pull.pr && r.headSha === pull.headSha && r.outcome === 'COMPLETED')) return null;
   return status.notices?.find(n => n.budget && n.at <= now && now - n.at <= DAY_MS
+    && (row?.state !== 'PARKED' || ['STAGE8_RETRY_BUDGET_EXHAUSTED', 'STAGE8_TRY_LIMIT', 'TRAIN_DAILY_LIMIT'].includes(n.code))
     && (n.pr !== null || ['QUEUED', 'PARKED', 'WAITING', 'BACKOFF'].includes(row?.state) || n.code === 'QUEUE_DEPTH_EXCEEDED' && !row)
     && (n.code !== 'WAITING_BUDGET_EXHAUSTED' || row?.state === 'WAITING' || row?.deferred === n.code)
     && (n.code !== 'DAILY_EVALUATION_LIMIT' || row?.state !== 'WAITING')
