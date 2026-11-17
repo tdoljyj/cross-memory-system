@@ -12,8 +12,7 @@ import { canonical, digest } from '../../../src/proof.mjs';
 import { TRUSTED_WORKFLOW_PATHS, activeGitleaksWorkflowSha256s } from '../../trusted-workflows.mjs';
 
 export const IMAGE = 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f';
-export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1',
-  '--no-banner', '--log-level', 'error', '--report-format', 'json', '--report-path', '-']);
+export const SCAN_ARGS = Object.freeze(['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
 export const SOURCE_PINS = Object.freeze({
   'scripts/ci/reviewed_gitleaks.py': '66eef4926112636255299592db4cd5bb2e1eef3eecdeca36737a5a31639c8f94',
   '.gitleaks.toml': 'f8f822256f746bb621e99038b616e2b00b4f59c7bb2eb636fb66eeb6b9394d82',
@@ -212,7 +211,7 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   await fsp.mkdir(path.join(dotgit, 'refs'), { mode: 0o755 }); await writeOnce(path.join(dotgit, 'HEAD'), job.headSha + '\n');
   // Reviewed commits are pack tips only, never refs: the scanned ref set stays
   // exactly the fresh remote heads/tags plus the detached current head.
-  const alternate = path.join(cache, 'objects'), tips = [...new Set([...refs.map(ref => ref.objectSha), job.headSha, job.baseSha, ...reviewedCommits])];
+  const alternate = path.join(cache, 'objects'), tips = [...new Set([...refs.map(ref => ref.objectSha), job.headSha, ...reviewedCommits])];
   // A fresh Git directory supplies no source config/hooks/remotes/index/reflogs.
   // The alternate is a Host-only environment value used during packing. It is
   // never written into the prepared repository or mounted in the scanner.
@@ -240,9 +239,6 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   const actual = (await processGit(git, dotgit, ['for-each-ref', '--format=%(refname) %(objectname)'], { maxBytes: 4 * 1024 * 1024 })).text.trim().split('\n').filter(Boolean).map(line => { const [name, objectSha] = line.split(' '); return { name, objectSha }; }).sort((a, b) => a.name.localeCompare(b.name));
   check(canonical(actual) === canonical(refs), 'EXACT_REMOTE_REF_SET_CHANGED');
   await processGit(git, dotgit, ['fsck', '--full', '--strict', '--no-reflogs'], { maxBytes: 65536 });
-  // Derive membership from the actual complete graph, never PR-supplied paths
-  // or the head tree. This retains detection in commits that later delete a key.
-  const prCommits = await prCommitRange({ gitExecutable: git, gitDirectory: dotgit, headSha: job.headSha, baseSha: job.baseSha });
   await writeOnce(path.join(repository, '.gitleaks.toml'), configBytes);
   const safeGitConfig = path.join(control, 'git-safe.config');
   await writeOnce(safeGitConfig, '[safe]\n\tdirectory = /repo\n\tdirectory = /test\n', 0o444);
@@ -251,7 +247,7 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
   await fsp.chmod(safeGitConfig, 0o444);
   const prepared = { contract: 'clued.independent-ci.required-gitleaks-input/2', subject: subjectOf(job),
     sourceSha: manifest.sourceSha, sourceManifestSha256: expectedSourceManifestSha256, remoteSnapshotSha256: digest(remoteSnapshot),
-    refs, refScope: 'fresh-remote-heads-tags-plus-current-head', headSha: job.headSha, baseSha: job.baseSha, prCommits,
+    refs, refScope: 'fresh-remote-heads-tags-plus-current-head', headSha: job.headSha, baseSha: job.baseSha,
     packTipScope: 'refs-plus-current-head-plus-pinned-reviewed-commits', reviewedCommitCount: reviewedCommits.length,
     reviewedCommitsSha256: REVIEWED_COMMITS.sha256,
     reachableObjectCount: objects.length, reachableObjectsSha256: digest(objects), packedHistorySha256: packed.sha256,
@@ -261,14 +257,6 @@ export async function prepareRequiredHistory({ job, sourceManifestBytes, expecte
     sourceCandidateOnly: true, requiredSelfTestComplete: false, requiredScanComplete: false, formalEligible: false };
   await writeOnce(path.join(outputDirectory, 'input.json'), canonical(prepared)); await seal(repository);
   return Object.freeze(prepared);
-}
-
-export async function prCommitRange({ gitExecutable, gitDirectory, headSha, baseSha }) {
-  check(SHA.test(headSha) && SHA.test(baseSha), 'PR_COMMIT_RANGE_UNCONFIRMED');
-  const commits = (await processGit(gitExecutable, gitDirectory, ['rev-list', `${baseSha}..${headSha}`], { maxBytes: 16 * 1024 * 1024 }))
-    .text.trim().split('\n').filter(Boolean).sort();
-  check(commits.every(sha => SHA.test(sha)) && new Set(commits).size === commits.length, 'PR_COMMIT_RANGE_UNCONFIRMED');
-  return Object.freeze(commits);
 }
 
 export async function requiredScannerPlan(prepared, selfTestReport) {
