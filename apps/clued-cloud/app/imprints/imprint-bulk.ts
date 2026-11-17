@@ -37,6 +37,7 @@ export function validBulkBatch(value: unknown): BulkBatch {
 export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, options: {
   owner: string; isCurrent: () => boolean; onProgress?: (scanned: number, total: number, ready: number) => void;
 }): Promise<BulkPreview> {
+  const pageSize = 16;
   let cursor = 0, proof: Json | undefined, baseline = "", inventoryDigest = "", effectiveSelection: Json | null = null;
   let ready = 0, review = 0, readyCharacters = 0, reviewCharacters = 0;
   const seen = new Set<string>(), planned: BulkItem[] = [], samples: { record_id: string; title: string }[] = [];
@@ -44,7 +45,7 @@ export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, opti
   // The bound fails explicitly rather than silently claiming a complete scan.
   for (let page = 0; page < 10000; page++) {
     if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
-    const value = await call(rpc, "clued_imprint_bulk_preview_v1", { p_input: { ...selection, ...(proof ? { proof } : {}) } });
+    const value = await call(rpc, "clued_imprint_bulk_preview_v1", { p_input: { ...selection, page_size: pageSize, ...(proof ? { proof } : {}) } });
     if (!options.isCurrent()) throw new ImprintFailure("unknown", "bulk_selection_changed");
     if (value.status !== "ok" || value.authoritative !== false || value.max_batch_size !== 100 || !digest(value.digest)
       || value.rules_version !== "imprint-explicit-local.v2" || !object(value.selection) || !object(value.page)
@@ -66,9 +67,11 @@ export async function previewBulk(rpc: NativeRpc, selection: BulkSelection, opti
     else if (baseline !== signature || inventoryDigest !== value.digest || JSON.stringify(value.selection) !== JSON.stringify(effectiveSelection)) throw new ImprintFailure("unknown", "bulk_preview_changed");
     const rows = items(value.items);
     if (!Array.isArray(value.review_sample) || value.review_sample.some(row => !object(row) || !uuid(row.record_id) || typeof row.title !== "string")
-      || rows.length + value.review_sample.length > 1 || !integer(value.ready_characters) || !integer(value.review_characters)
+      || rows.length + value.review_sample.length > pageSize || !integer(value.ready_characters) || !integer(value.review_characters)
       || value.page.cursor !== cursor || value.page.scanned !== rows.length + value.review_sample.length
-      || (cursor < Number(base.classifiable) ? value.page.scanned !== 1 : value.page.scanned !== 0)) throw new ImprintFailure("unknown");
+      || !integer(value.page.scanned) || (cursor < Number(base.classifiable)
+        ? Number(value.page.scanned) < 1 || Number(value.page.scanned) > Math.min(pageSize, Number(base.classifiable) - cursor)
+        : value.page.scanned !== 0)) throw new ImprintFailure("unknown");
     const visited = [...rows.map(row => row.record_id), ...value.review_sample.map(row => (row as { record_id: string }).record_id)];
     if (visited.some(id => seen.has(id)) || new Set(visited).size !== visited.length) throw new ImprintFailure("unknown", "bulk_duplicate_page");
     visited.forEach(id => seen.add(id));
