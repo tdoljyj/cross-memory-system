@@ -283,7 +283,7 @@ export async function main(args = process.argv.slice(2)) {
     try {
       const fleetStore = await LocalStore.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-fleet-lag.json'));
       return new FleetLagNotifier({ clock: Date.now, notify, store: fleetStore,
-        read: fleetLagReader({ root: values.root, readStatus: () => readStatus(values.root),
+        read: fleetLagReader({ root: values.root, readStatus: () => readStatus(values.root), observationStore: fleetStore,
           github: githubFleetChanges({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => fleetRunner.run(a, o) }) }) });
     } catch { return null; } // Failure to initialize an advisory store never blocks the companion.
   };

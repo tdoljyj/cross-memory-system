@@ -8,6 +8,8 @@ test('policy scope guard discovers a newly declared per PR limit and refuses mis
   assert.deepEqual(checkScopeIsolation(policy, []).missing, ['limits.examplePer24h']);
   assert.deepEqual(checkScopeIsolation(policy, ['// scope-isolation: limits.examplePer24h']).missing, ['limits.examplePer24h']);
   assert.deepEqual(checkScopeIsolation(policy, ["// scope-isolation: limits.examplePer24h\ntest('other subject full leaves this subject runnable', async () => { assert.equal(1, 1); });"]).missing, []);
+  assert.deepEqual(checkScopeIsolation('// limits.unusualLimit (6 per PR), limits.globalLimit (48 global)\n', []).missing, ['limits.unusualLimit']);
+  assert.deepEqual(checkScopeIsolation('// limits.unusualLimit\n// (6 per PR commit), limits.globalLimit (48 global)\n', []).missing, ['limits.unusualLimit']);
 });
 
 test('scope guard reads the repository policy and real isolation tests', async () => {

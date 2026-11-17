@@ -71,3 +71,17 @@ test('the live adapter binds a manifest digest to the fleet Source and compares 
   assert.equal(calls.length, 2, 'one commit and one compare, independent of the number of changes');
   assert.match(fleetLagEvents({ ...input, now: NOW, fleet: { ...fleet, nodes: [] } })[0].body, /FLEET_STATUS_UNREADABLE/);
 });
+
+test('an old commit newly seen on main waits a full 12 hours, including across a companion restart', async () => {
+  let now = NOW;
+  const store = { data: { notified: {} }, async save() {} };
+  const ports = { root: '/unused', observationStore: store, clock: () => now,
+    github: async () => ({ mainSha: SHA, changes: [{ ...change, at: NOW - 30 * 24 * HOUR }] }),
+    readFile: async () => { throw Error('not locally available'); },
+    readStatus: async () => ({ train: { nodes: { ...fleet, at: new Date(now).toISOString() } } }) };
+  assert.equal((await fleetLagReader(ports)()).changes[0].at, NOW);
+  now += 11 * HOUR;
+  assert.deepEqual(fleetLagEvents({ ...await fleetLagReader(ports)(), now }), []);
+  now += HOUR;
+  assert.equal(fleetLagEvents({ ...await fleetLagReader(ports)(), now }).length, 1);
+});

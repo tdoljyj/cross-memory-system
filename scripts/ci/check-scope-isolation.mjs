@@ -2,10 +2,15 @@
 // including new keys; there is no allow-list of the four historical limits.
 export function checkScopeIsolation(policy, tests) {
   const required = new Set();
-  const aliases = new Map([['p.limits', 'limits'], ['p.park', 'park'], ['n', 'breaker.network']]);
-  for (const line of policy.split(/\r?\n/)) {
-    for (const m of line.matchAll(/\b(p\.limits|p\.park|n)\.(\w+)/g)) {
-      if (/perPr|perHead/i.test(m[2]) || /\bper\s+(?:PR(?:\s+commit)?|head)\b/i.test(line)) required.add(`${aliases.get(m[1])}.${m[2]}`);
+  const lines = policy.split(/\r?\n/);
+  const reference = /\b((?:p\.)?(?:limits|park|breaker\.network)|n)\.(\w+)/g;
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i] + '\n' + (lines[i + 1] ?? '');
+    const refs = [...text.matchAll(reference)];
+    for (let j = 0; j < refs.length && refs[j].index <= lines[i].length; j++) {
+      const m = refs[j], tail = text.slice(m.index + m[0].length, refs[j + 1]?.index ?? text.length);
+      const prefix = m[1] === 'n' ? 'breaker.network' : m[1].replace(/^p\./, '');
+      if (/perPr|perHead/i.test(m[2]) || /\bper\s+(?:PR(?:\s+commit)?|head)\b/i.test(tail)) required.add(`${prefix}.${m[2]}`);
     }
   }
   const covered = new Set();

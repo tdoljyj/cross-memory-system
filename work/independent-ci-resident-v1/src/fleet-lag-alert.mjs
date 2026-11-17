@@ -32,7 +32,7 @@ export function fleetLagEvents({ now, changes = [], fleet, sources = new Map(), 
     if (!missing.length && !unknown.length && !fleet.dropped) continue;
     const qualified = '按 main 时间与 Source 生成时间/提交祖先关系判断；未核验已接受包';
     const body = `${missing.length ? `落后节点：${missing.join('、')}。` : ''}${unknown.length ? `Source 无法核验：${unknown.join('、')}（不能视为已安装）。` : ''}`
-      + `${fleet.dropped ? `节点表截断 ${fleet.dropped} 项。` : ''}缺的改动/待核验改动：${change.sha} ${change.paths.join('、')}，main 时间 ${new Date(change.at).toISOString()}。阻塞原因：${blocker}。${qualified}。`;
+      + `${fleet.dropped ? `节点表截断 ${fleet.dropped} 项。` : ''}缺的改动/待核验改动：${change.sha} ${change.paths.join('、')}，main 观察/提交时间 ${new Date(change.at).toISOString()}。阻塞原因：${blocker}。${qualified}。`;
     // Once per change and affected fleet, across restarts. A newly lagging node gets its own episode.
     const identity = `${change.sha}:${[...missing.map(n => `lag:${n}`), ...unknown.map(n => `unknown:${n}`)].sort().join(',')}:${fleet.dropped ?? 0}`;
     out.push({ key: `fleet-lag:${createHash('sha256').update(identity).digest('hex')}`, title: missing.length ? '节点相关改动超过 12 小时未装齐' : '节点更新超过 12 小时待核验', body });
@@ -87,11 +87,26 @@ export function githubFleetChanges({ ghExe, repo, run }) {
 
 // Only the installed record is locally available. Other Source hashes remain unknown, visibly alerted after 12h;
 // a different digest alone is never evidence of an older Source. No acceptance or upgrader state is fabricated.
-export function fleetLagReader({ root, readStatus, github, clock = Date.now, readFile = fs.readFile }) {
+export function fleetLagReader({ root, readStatus, github, clock = Date.now, readFile = fs.readFile, observationStore = null }) {
   return async () => {
-    const status = await readStatus();
+    let status = null;
+    try { status = await readStatus(); } catch { /* unreadable fleet remains unknown and gets its advisory */ }
     const fleet = status?.train?.nodes;
     const result = await github();
+    // Committer time can predate the merge. First seeing the exact commit reachable from main is an upper bound
+    // on its merge time: wait a full 12h from that bound, persisted across restart, never alert early for an old head.
+    if (observationStore) {
+      let dirty = false;
+      result.changes = result.changes.map(change => {
+        const key = `fleet-main-seen:${change.sha}`;
+        let first = Date.parse(observationStore.data.notified[key]?.at ?? '');
+        if (!Number.isFinite(first) || first > clock()) {
+          first = clock(); observationStore.data.notified[key] = { at: new Date(first).toISOString() }; dirty = true;
+        }
+        return { ...change, at: Math.max(change.at, first) };
+      });
+      if (dirty) await observationStore.save();
+    }
     if (!fleet || clock() - Date.parse(fleet.at) > 30 * 60000) return { ...result, fleet };
     const sources = new Map(), relations = new Map();
     try {
