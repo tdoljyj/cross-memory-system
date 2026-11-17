@@ -3342,7 +3342,7 @@ function workflowFileOf(env) {
   return match ? match[1] : null;
 }
 
-// A missing PR run is a PR admission subject, never a generic hand dispatch.
+// A missing or entirely skipped PR run is a PR admission subject, never a generic hand dispatch.
 // Dispatch on the PR branch so Actions reports its checks on this exact head.
 // No token, App, rerun allowance or automation identity is added here.
 async function requiredTestsDispatchGate({ env, event, fetchImpl, sleep, now, outcome }) {
@@ -3370,11 +3370,31 @@ async function requiredTestsDispatchGate({ env, event, fetchImpl, sleep, now, ou
     return refuse('required_tests_dispatch_run_mismatch');
   const list = await githubJson(fetchImpl, env,
     `/repos/${repository}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&per_page=100`);
-  // A failed/truncated listing is unknown. Another run of any event prevents
-  // this recovery, even if it is only queued. No duplicate real execution.
-  if (!Array.isArray(list?.workflow_runs) || list.total_count !== 1 || list.workflow_runs.length !== 1
-    || list.workflow_runs[0]?.id !== self.id || list.workflow_runs[0]?.head_sha !== head)
+  // The complete head inventory must contain this dispatch exactly once. Older
+  // PR runs may exist only if every attempt completed without running a heavy
+  // job. A prior dispatch still consumes this recovery, whatever its outcome.
+  const runs = list?.workflow_runs;
+  if (!Array.isArray(runs) || list.total_count !== runs.length || runs.length > 100
+    || runs.some(r => !r || typeof r !== 'object')
+    || runs.filter(r => r?.id === self.id && r.head_sha === head).length !== 1
+    || new Set(runs.map(r => r?.id)).size !== runs.length)
     return refuse('required_tests_dispatch_run_not_missing_or_unknown');
+  for (const run of runs.filter(r => r.id !== self.id)) {
+    if (!Number.isSafeInteger(run.id) || run.id <= 0 || run.head_sha !== head || run.event !== 'pull_request'
+      || run.status !== 'completed' || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1 || run.run_attempt > 100)
+      return refuse('required_tests_dispatch_prior_run_not_completed_pr');
+    for (let attempt = 1; attempt <= run.run_attempt; attempt += 1) {
+      const body = await githubJson(fetchImpl, env,
+        `/repos/${repository}/actions/runs/${run.id}/attempts/${attempt}/jobs?per_page=100`);
+      const jobs = body?.jobs;
+      if (!Array.isArray(jobs) || body.total_count !== jobs.length || jobs.length > 100
+        || jobs.some(j => !j || j.head_sha !== head || j.status !== 'completed')
+        || jobs.filter(j => j.name === INDEPENDENT_GATE_JOB_NAME).length !== 1
+        || !jobs.some(j => j.name !== INDEPENDENT_GATE_JOB_NAME)
+        || jobs.some(j => j.name !== INDEPENDENT_GATE_JOB_NAME && j.conclusion !== 'skipped'))
+        return refuse('required_tests_dispatch_prior_jobs_ran_or_unknown');
+    }
+  }
   const admitted = await gate({ env, event: { ...event, pull_request: pr }, eventName: 'pull_request', fetchImpl, sleep, now });
   if (!live(await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${number}`)))
     return refuse('required_tests_dispatch_pr_changed_during_gate');

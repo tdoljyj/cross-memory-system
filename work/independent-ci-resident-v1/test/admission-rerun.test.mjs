@@ -63,8 +63,8 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     if (route === `/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission&filter=all&per_page=100&page=1`) return ok({ total_count: st.checks.length, check_runs: st.checks });
     if (route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?event=pull_request&head_sha=${HEAD}&per_page=100`
       || route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${HEAD}&per_page=100`) return ok({ total_count: st.runs.length, workflow_runs: st.runs.map(shown) });
-    if ((m = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=1$/.exec(route))) { const r = byId(m[1]); return ok({ jobs: r.attempts.flatMap((_, i) => jobsOf(r, i + 1)) }); }
-    if ((m = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs\?per_page=100&page=1$/.exec(route))) return ok({ jobs: jobsOf(byId(m[1]), Number(m[2])) });
+    if ((m = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=1$/.exec(route))) { const r = byId(m[1]); const jobs = r.attempts.flatMap((_, i) => jobsOf(r, i + 1)); return ok({ total_count: jobs.length, jobs }); }
+    if ((m = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs\?per_page=100&page=1$/.exec(route))) { const jobs = jobsOf(byId(m[1]), Number(m[2])); return ok({ total_count: jobs.length, jobs }); }
     if ((m = /^\/check-runs\/(\d+)\/annotations\?per_page=100&page=1$/.exec(route))) { const id = Number(m[1]); const r = byId(Math.floor(id / 100)); return ok(r.attempts[Math.floor((id % 100) / 10) - 1].notes); }
     if ((m = /^\/actions\/jobs\/(\d+)\/logs$/.exec(route))) { st.logReads = (st.logReads ?? 0) + 1; const id = Number(m[1]); const r = byId(Math.floor(id / 100)); const n = Math.floor((id % 100) / 10); return { code: 0, stdout: r.attempts[n - 1].logs?.[id % 10] ?? '' }; }
     if ((m = /^\/pulls\/(\d+)$/.exec(route))) return ok(st.pulls.find(p => p.number === Number(m[1])) ?? null);
@@ -75,6 +75,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
   return st;
 }
 const T0 = Date.parse('2026-11-05T12:00:00Z');
+const botRun = (overrides = {}) => run(700, [attempt({ notes: [] })], { actor: { login: 'clued-admission[bot]', type: 'Bot' }, ...overrides });
 const status = (o = {}) => ({ node: { mode: 'ACTIVE' }, halt: null, current: null, pending: [{ pr: 452, headSha: HEAD, state: 'PARKED' }], recent: [], ...o });
 const pulls = [{ pr: 452, headSha: HEAD }];
 async function lane(t, w, { st = status(), stateFile = null } = {}) {
@@ -106,6 +107,108 @@ test('allowed: one "Re-run all jobs", a receipt written before it, the PR page a
   await again.r.step();
   assert.deepEqual(w.posts, [700]);
   assert.equal(again.r.done(HEAD), true);
+});
+
+test('bot head: admitted gate with skipped heavy jobs dispatches once, persists and explains the recovery', async t => {
+  const w = world({ runs: [botRun()] });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'redispatch');
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.dispatchFields, ['ref=claude/x', 'inputs[pr]=452', `inputs[head]=${HEAD}`]);
+  assert.deepEqual(w.posts, []);
+  assert.equal(l.r.line(HEAD), '必需测试被跳过（推送者非 Owner），已自动补发一次');
+  assert.equal(l.toasts.length, 1);
+  l.advance(HEAD_RECHECK_MS); await l.r.step();
+  const restarted = await lane(t, w, { stateFile: l.file });
+  await restarted.r.step();
+  assert.equal(w.dispatches.length, 1);
+  assert.equal(restarted.r.line(HEAD), l.r.line(HEAD));
+});
+
+test('bot head: refused dispatch stays visible and tells Owner once without retry', async t => {
+  const w = world({ runs: [botRun()], dispatchCode: 422 });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.equal(w.dispatches.length, 1);
+  assert.match(l.r.line(HEAD), /必需测试被跳过且不能自动补跑：.*HTTP 422.*请推新提交或手动 Run workflow/);
+  assert.equal(l.toasts.length, 1);
+  l.advance(HEAD_RECHECK_MS); await l.r.step();
+  const restarted = await lane(t, w, { stateFile: l.file }); await restarted.r.step();
+  assert.equal(w.dispatches.length, 1);
+  assert.equal(l.toasts.length + restarted.toasts.length, 1);
+});
+
+test('skipped head: final repair refusal is visible and tells Owner once across restarts', async t => {
+  const w = world({ runs: [run(700, [attempt({ notes: [otherNote] })])] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.match(l.r.line(HEAD), /必需测试被跳过且不能自动补跑：.*请推新提交或手动 Run workflow/);
+  assert.equal(l.toasts.length, 1);
+  l.advance(HEAD_RECHECK_MS); await l.r.step();
+  const restarted = await lane(t, w, { stateFile: l.file }); await restarted.r.step();
+  assert.equal(restarted.r.line(HEAD), l.r.line(HEAD));
+  assert.equal(l.toasts.length + restarted.toasts.length, 1);
+  assert.deepEqual(w.posts, []); assert.deepEqual(w.dispatches, []);
+});
+
+test('bot head: a legacy silent final is reconsidered once without resetting its watch window', async t => {
+  const w = world({ runs: [botRun()] }); const l = await lane(t, w);
+  l.state.data.heads[HEAD] = { firstSeen: new Date(T0).toISOString(), lookedAt: null, final: 'old repair refusal' };
+  await l.state.save(); await l.r.step();
+  assert.equal(w.dispatches.length, 1);
+  assert.equal(l.state.data.heads[HEAD].firstSeen, new Date(T0).toISOString());
+});
+
+test('skipped head: admitted non-automation gate log also selects dispatch for a non-Bot actor', async () => {
+  const a = attempt({ notes: [] }); a.logs = { 0: '{"admitted":true,"verdict":"ADMITTED","automation_self_hosted":false}' };
+  const w = world({ runs: [run(700, [a], { actor: { login: 'someone', type: 'User' } })] });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'redispatch');
+  a.logs[0] = '{"verdict":"ADMITTED","automation_self_hosted":true}';
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'final');
+});
+
+test('bot head: earlier refused rerun may dispatch, but any earlier heavy execution prevents it', async () => {
+  const w = world({ runs: [botRun({ attempts: [attempt({ notes: [] }), attempt({ notes: [otherNote] })] })] });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'redispatch');
+  w.runs[0].attempts[0].jobs[1].conclusion = 'success';
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'final'); assert.equal(d.neverRan, false);
+});
+
+test('bot head: every event is checked; prior dispatch, push, active run and missing jobs prevent another dispatch', async () => {
+  for (const extra of [
+    run(650, [attempt()], { event: 'workflow_dispatch' }),
+    run(650, [attempt()], { event: 'push' }),
+    run(650, [attempt()], { status: 'queued' }),
+    run(650, [{ jobs: [], notes: [] }]),
+    run(650, [attempt({ heavy: ['success', 'skipped', 'skipped'] })], { event: 'workflow_dispatch' }),
+  ]) {
+    const w = world({ runs: [botRun(), extra] });
+    assert.ok(['final', 'skip', 'error'].includes((await decide({ gh: w.gh, headSha: HEAD })).action));
+  }
+});
+
+test('bot head: moved PR, new run or changed attempt at final read sends nothing', async () => {
+  for (const change of ['pr', 'run', 'attempt']) {
+    let reads = 0;
+    const w = world({ runs: [botRun()], fail: (route, method, st) => {
+      if (change === 'pr' && route.endsWith('/pulls/452')) return { code: 0, stdout: JSON.stringify(pullRequest({ state: 'closed' })) };
+      if (route.includes(`/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?`) && ++reads === 2) {
+        if (change === 'run') st.runs.push(run(900, [attempt()], { status: 'queued' }));
+        if (change === 'attempt') st.runs[0].attempts.push(attempt());
+      }
+      return null;
+    } });
+    assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'skip', change);
+    assert.deepEqual(w.dispatches, []);
+  }
+});
+
+test('bot head: a truncated job inventory is unknown and never permits dispatch', async () => {
+  const w = world({ runs: [botRun()], fail: route => route.includes('/attempts/1/jobs')
+    ? { code: 0, stdout: JSON.stringify({ total_count: 5, jobs: attempt().jobs }) } : null });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'error');
+  assert.deepEqual(w.dispatches, []);
 });
 
 test('G3: the lost-run request binds the open PR and exact head, and cannot dispatch an unadmitted head', async t => {
