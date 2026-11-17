@@ -242,7 +242,7 @@
 
     "scripts/ci/clued-gated-proof-profiles.json": "7d5b00e6e51e314a7dec13cc43cd2ef3a63308b37a00f5e7c46efeffb7fa6194",
 
-    "scripts/ci/clued-gated-proof-role-specs.json": "37966922ac5db868f6afbf7c688ff6a85c299b927167ad6cecaae006e17fc34a",
+    "scripts/ci/clued-gated-proof-role-specs.json": "f856d9f7c530f9498eb35032539c0d647d2508a4ee46f799726b69d8863c656c",
 
     "scripts/ci/clued-gated-proof-runtime.mjs": "ad7b271a0ae0798bb5e5dab21697bc11cc79e10d14db8b9805cb011c93df8dfd",
 
@@ -434,7 +434,7 @@
 
     "scripts/ci/clued-workflow-profile.mjs": "d6646a6f364c440b41e1e961dcb37dc395a280d95b1da73ccabacdf11e635acd",
 
-    "scripts/ci/clued-workflow-profile.test.mjs": "9144aefcfb8b8f911bf3811dac9b1901ca7294b1316843ad94096733fe9ec3d6",
+    "scripts/ci/clued-workflow-profile.test.mjs": "6b15cbfcf0372a6fa21108a1b2b084972870144f9b8f5690596a75b9c1c2067f",
 
     "scripts/ci/clued_release_tags.py": "37dbb708333c8a92647d23144a9b6fe3f0f1021e8801d0a781749138280b835f",
 
@@ -452,7 +452,7 @@
 
     "scripts/ci/fixtures/production-publisher-source-history.v1.json": "4a3fce0d4cf0e5a3a4148853a718dbf7b5fa02222cdd23d5d434eb2b62b0aca7",
 
-    "scripts/ci/fixtures/retired-gated-proof-catalogue.mjs": "d6fd5b900dc67eb33fc7a9dfc260a9a40a092f03cd862851c0cd644bd229717e",
+    "scripts/ci/fixtures/retired-gated-proof-catalogue.mjs": "2bb8ea7a33265c6c379dd9fefe73852ca9408c69f2296dc1c2727f57909d5540",
 
     "scripts/ci/fixtures/retrigger-counter/responses.json": "e999b113e9e9ba9b676a12af3adb0dbac9590bc2f205753fae9e72428c857156",
 
@@ -520,7 +520,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "04ff669b3f6b2728c0833f951fd5146e0fd83f20d04a49172f7a68da8498e99c",
+    "scripts/ci/merge-admission-r9-source.json": "db7e6b733178da8f08eb34446191cdc79cfb57462d0b98c5a114f673cfe9d8b8",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 

@@ -77,7 +77,7 @@
   ],
   "execution_source": {
     "profiles_sha256": "7d5b00e6e51e314a7dec13cc43cd2ef3a63308b37a00f5e7c46efeffb7fa6194",
-    "role_specs_sha256": "37966922ac5db868f6afbf7c688ff6a85c299b927167ad6cecaae006e17fc34a"
+    "role_specs_sha256": "f856d9f7c530f9498eb35032539c0d647d2508a4ee46f799726b69d8863c656c"
   },
   "forward_epoch": {
     "epoch_id": "4197536d-465f-4046-9f11-e573aacc458b",
