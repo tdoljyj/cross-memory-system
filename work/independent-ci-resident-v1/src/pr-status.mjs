@@ -137,7 +137,7 @@ const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败�
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
   TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',
-  TRAIN_SINGLE_GREEN_NOT_PROVEN: '已测通：等第 10 段证明只有车头一个绿', TRAIN_MODE_UNREADABLE: '已测通：读不到本机的列车模式' });
+  TRAIN_SINGLE_GREEN_NOT_PROVEN: '已测通：等开车头批次（第 10 段）', TRAIN_MODE_UNREADABLE: '已测通：读不到本机的列车模式' });
 // The Windows notification of each stage-8 rules notice (step 3a).
 const STAGE8_RULES_TEXT = Object.freeze({
   STRICT_OFF_WITHOUT_TRAIN: () => ({ title: 'main 的 strict 已关，第 8 段停发合并位', body: '列车没有开，常驻执行器不再发合并位。请把 main 规则集的 strict 改回开，或按上线顺序开车。' }),
@@ -288,6 +288,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(row.watched
         ? `已测通：现在加入合并队列，排到队首后几分钟内查第 8 段${latest}${lease}` : `已测通：现在加入合并队列，${at}再查第 8 段${lease}`) };
+      if (row.deferred === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && row.frontOpenOwed) return { state: 'pending',
+        description: clip(`${PARKED_TEXT[row.deferred]}，下一拍优先（仍受安全门禁与每日上限约束）${lease}`) };
       if (PARKED_TEXT[row.deferred]) return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，${at}再查第 8 段${lease}`) };
       // Without a place the Source did not learn whether the claim is in the queue (review of step 2, m13).
       if (!row.queuePosition) return { state: 'pending', description: clip(row.watched ? `已测通：等合并队列，排到队首后几分钟内查第 8 段${latest}${lease}`

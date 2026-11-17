@@ -471,6 +471,7 @@ export class ResidentExecutor {
     this.trainOnSince = null;
     this.trainTakeoverDone = false;
     this.trainUrgent = false;
+    this.trainFrontOwed = new Map(); // reconstructed from parked stage-8 tries, never from a status view
     // Defect b0426896: the mode of this duty's newest stage-10 run (trainResumeOwed).
     this.trainLastMode = null;
     this.trainSweep = null;
@@ -554,6 +555,18 @@ export class ResidentExecutor {
   // every batch gate stay as they are.
   trainResumeOwed() {
     return this.policy.train.enabled === 'on' && this.trainEligible() && this.trainOnSince !== null && this.trainLastMode === 'revoke-only';
+  }
+
+  // PR #1142: ordinary stage 8 cannot prove the train's green. Give its newly proven queue head one stage-10
+  // turn before other batch work. The ledger keeps both the request and its settlement across process restarts.
+  async trainFrontOpenOwed() {
+    const entries = (await this.ledger.parkedEntries()).filter(e => Ledger.frontOpenOwed(e));
+    this.trainFrontOwed = new Map(entries.map(e => [e.key, e.reserved.subject]));
+    return this.trainEligible() && this.trainTakeoverDone && entries.some(e => {
+      const s = e.reserved.subject, row = this.queue.row(s.pr);
+      return row?.running?.key === e.key && row.running.headSha === s.headSha
+        && ![row.current, row.running].some(r => Object.hasOwn(r ?? {}, 'testSha'));
+    });
   }
 
   // Whether the take-over sweep still holds this node (eligible, not done): new batches and parked ones wait (review R3 MINOR 6).
@@ -1949,7 +1962,8 @@ export class ResidentExecutor {
     // Field 2026-11-13 (PR #1085): the stage-10 run a lifted pause owes (trainResumeOwed, defect b0426896) comes before any batch work,
     // so the schedule and the front's yield after stage 1 (§62.6) read the train as it is now, never the revoke-only run under the pause;
     // otherwise the queue head's ordinary batch scanned H and the front batch scanned the same tree again on S.
-    if (!this.betweenBatchesRunning && this.trainResumeOwed()) {
+    // PR #1142: a tested ordinary head at B gets the same priority, once, so a busy queue cannot starve its front batch.
+    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed())) {
       const owed = await this.trainMaintenance();
       if (owed) return owed;
     }
@@ -2390,7 +2404,7 @@ export class ResidentExecutor {
     // Defect b0426896: the first tick that reaches stage 10 with no pause in force after a revoke-only run (the PAUSE was lifted by
     // upgrade-resumed or the Owner, the last intake hold by intake-resumed or its clock) makes the on-mode run due at once. Under an
     // intake hold nothing changes (revoke-only keeps its cadence); the read is the same intake gate the run itself reads below.
-    if (!paused && this.trainUrgent !== true && this.trainResumeOwed()) {
+    if (!paused && this.trainUrgent !== true && (this.trainResumeOwed() || await this.trainFrontOpenOwed())) {
       const held = await this.intakeGate();
       if (held?.state === 'HALTED') return held;
       if (held === null) this.trainUrgent = true;
@@ -2424,6 +2438,7 @@ export class ResidentExecutor {
       return { state: 'HALTED', failureCode: drift };
     }
     const acting = mode !== 'shadow';
+    const frontOpenDebts = mode === 'on' ? (await this.ledger.parkedEntries()).filter(e => Ledger.frontOpenOwed(e)) : [];
     const revokeHead = acting ? this.revokeHeadInForce() : null;
     const frontOutcome = mode === 'on' ? this.trainFrontOutcome : null;
     const input = trainRunInput({ mode, settings: trainSettings(train), sweep: trainSweepMode(train), onSince: mode === 'shadow' ? null : this.trainOnSince, revokeHeadRequestId: revokeHead?.requestId ?? null,
@@ -2483,6 +2498,14 @@ export class ResidentExecutor {
       this.trainLast = summary;
       this.trainSweep = trainSweepView({ summary, previous: this.trainSweep, onSince: this.trainOnSince === null ? null : new Date(this.trainOnSince).toISOString() });
       if (acting && clean) await this.trainActed(summary, { mode, input, frontOutcome, frontCleared, revokeHead });
+      // A real on-mode decision (including no front, a changed front or a refusal) spends this request once.
+      // No settlement on a cadence/cap refusal, revoke-only run, failed read or unconfirmed cleanup/facts.
+      // Enqueue first: a settlement write must never prevent the front Source already opened from reaching the queue.
+      // A successful take-over closed the ordinary entry, which itself retires the debt without another record.
+      if (mode === 'on' && clean) for (const e of frontOpenDebts) {
+        await this.ledger.settleFrontOpen(e.key, { intentSeq: intent.seq, decision: summary.decision, frontPr: summary.front?.pr ?? null });
+        this.trainFrontOwed.delete(e.key);
+      }
       // Any mode: stage 10 read the merge queue's head. A batch parked at B for that PR gets its next try without waiting out its back-off.
       if (clean && summary.front?.pr) await this.hintParkedHead(summary.front);
     }
@@ -2905,7 +2928,13 @@ export class ResidentExecutor {
         return windowsOnly(new StepFailure(8, 'PARKED_OVER_CAPACITY', control.proof, 'stage', relayed));
       }
       await this.ledger.endTry(key, n, { code: control.code, nextAt: new Date(nextAt).toISOString(), position, entered: queueFact?.entered ?? null,
-        claimExpiresAt: this.leaseOf(subject) });
+        claimExpiresAt: this.leaseOf(subject),
+        ...(this.policy.train.enabled === 'on' && !Object.hasOwn(subject, 'testSha') && control.code === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && position === 1
+          ? { frontOpenOwed: true } : {}) });
+      if (Ledger.frontOpenOwed(await this.ledger.state(key))) {
+        this.trainFrontOwed.set(key, subject);
+        this.trainUrgent = true;
+      }
       await this.receipt('stage8-not-ready', { key, try: n, failureCode: control.code, nextAt: new Date(nextAt).toISOString(), position });
       return { state: 'PARKED', key, reason: control.code, until: nextAt, position, tries: n,
         settle: { kind: 'parked', code: control.code, klass: 'queue', breaker: 'neutral', pos: POSITIONS[8], linux: false, nextAt, position } };
@@ -2965,6 +2994,8 @@ export class ResidentExecutor {
         notices: [...(this.versionState?.notices ?? []), ...(this.companionPresence?.notices(now) ?? []), ...this.roleProbeNotices, ...this.queue.notices].slice(0, 50) });
       const watchedNow = Number.isFinite(this.queueWatchViewAt) && now >= this.queueWatchViewAt && now - this.queueWatchViewAt <= QUEUE_WATCH_VIEW_MS;
       s.setPending(view.map(r => ({ ...(atA(r) ? { ...r, reason: PARKED_A_REASON } : r), claimExpiresAt: this.leaseOf(r),
+        frontOpenOwed: r.state === 'PARKED' && this.trainEligible() && this.trainTakeoverDone
+          && [...this.trainFrontOwed.values()].some(o => o.pr === r.pr && o.headSha === r.headSha),
         watched: watchedNow && r.state === 'PARKED' && this.queueWatchView?.has(`${r.pr}:${r.headSha}`) === true })));
     });
   }
