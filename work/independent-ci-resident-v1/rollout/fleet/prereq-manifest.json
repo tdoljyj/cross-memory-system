@@ -1,6 +1,5 @@
 {
   "contract": "clued.independent-ci.fleet-node-prereq-manifest/1",
-  "pending": "node, python, git, actions-runner and linux-node are pinned by the coordinator for each version from the official file (never computed on a node, never guessed); until then bootstrap.ps1 refuses with PREREQ_NOT_PINNED. wsl, ubuntu-rootfs and debs are the set the drill VM installed (D:\\clued-drill\\prereq\\prereq.json, 2026-11-16).",
   "items": [
     {
       "name": "node",
@@ -8,9 +7,9 @@
       "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
       "fileName": "node-v24.21.0-win-x64.zip",
       "kind": "zip",
-      "sha256": null,
-      "bytes": null,
-      "pending": "pin the zip; also confirm its node.exe is the controllerNodeSha256 binary (the MSI-installed one was measured, not the zip's)"
+      "sha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+      "bytes": 37618919,
+      "pinSource": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt; its node.exe is ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32 = controllerNodeSha256 (DESK measured, 2026-11-17)"
     },
     {
       "name": "python",
@@ -18,9 +17,9 @@
       "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
       "fileName": "python-3.12.10-embed-amd64.zip",
       "kind": "zip",
-      "sha256": null,
-      "bytes": null,
-      "pending": "pin; confirm the embeddable distribution runs every package tool under -I (stdlib only, no site)"
+      "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+      "bytes": 11133606,
+      "pinSource": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip.spdx.json (CPython package SHA256)"
     },
     {
       "name": "git",
@@ -28,9 +27,9 @@
       "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/MinGit-2.55.0.3-64-bit.zip",
       "fileName": "MinGit-2.55.0.3-64-bit.zip",
       "kind": "zip",
-      "sha256": null,
-      "bytes": null,
-      "pending": "pin; the asset name follows Git for Windows' MinGit naming for v2.55.0.windows.3 and is to be confirmed on the release page"
+      "sha256": "f48e2d2dc74a24454adc6d8fd0ac25bf9c2386f19cfb06202b9465aaad4f9f05",
+      "bytes": 38791206,
+      "pinSource": "git-for-windows/git release v2.55.0.windows.3 notes (SHA-256 of MinGit-2.55.0.3-64-bit.zip)"
     },
     {
       "name": "ubuntu-rootfs",
@@ -45,22 +44,22 @@
     {
       "name": "actions-runner",
       "use": "the carrier runner binaries at C:\\ProgramData\\CluedControl\\runner (never registered with GitHub by the first install)",
-      "url": null,
+      "url": "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-win-x64-2.337.0.zip",
       "fileName": "actions-runner-win-x64.zip",
       "kind": "zip",
-      "sha256": null,
-      "bytes": null,
-      "pending": "the version the installed nodes run is not known here (their runner-package.zip sha256 is 1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc, host-baseline.ps1); the coordinator names that release (https://github.com/actions/runner/releases/download/v<ver>/actions-runner-win-x64-<ver>.zip) and pins it"
+      "sha256": "1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc",
+      "bytes": 103528051,
+      "pinSource": "actions/runner release v2.337.0 notes (SHA-256 of actions-runner-win-x64-2.337.0.zip); equals the installed nodes runner-package.zip sha256 (host-baseline.ps1)"
     },
     {
       "name": "linux-node",
       "use": "the toolchain node of the resident distribution (/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node): its bin/node must have the role policies' nodeExecutableSha256 (the kit's template roles; bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12 in formal-roles.example.json)",
-      "url": null,
+      "url": "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz",
       "fileName": "node-linux-x64.tar.xz",
       "kind": "tar.xz",
-      "sha256": null,
-      "bytes": null,
-      "pending": "the node version whose linux-x64 bin/node has that sha256 is not known here; the coordinator names the official tarball (https://nodejs.org/dist/v<ver>/node-v<ver>-linux-x64.tar.xz) and pins it"
+      "sha256": "14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b409647",
+      "bytes": 31633904,
+      "pinSource": "https://nodejs.org/dist/v24.19.0/SHASUMS256.txt; its bin/node is bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12 = nodeExecutableSha256 (DESK measured, 2026-11-17)"
     },
     {
       "name": "wsl",
