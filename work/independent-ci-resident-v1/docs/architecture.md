@@ -312,7 +312,7 @@ B 上的第 8 段尝试：
 | 上次在合并队列第 1 位 | 1 分钟后再试（`PARK_HEAD_RETRY_MS`），连续最多 15 分钟（`PARK_HEAD_STREAK_MS`） |
 | 计数的尝试上限 | `park.stage8MaxTries` = 12 |
 | 停留上限 | `park.maxMs` = 24 小时 |
-| 全部停靠批次第 2 次及以后的尝试 | 24 小时 ≤ `park.stage8RetriesPer24h` = 100 |
+| 每个 PR 的停靠批次第 2 次及以后的尝试（含安全点续跑） | 每 PR 滚动 24 小时 ≤ `park.stage8RetriesPer24h` = 100；不同 PR 独立计算 |
 | 名额 | A 加上 B 中前 2 位 ≤ `park.maxParked` = 4；B 中其他 ≤ `maxParkedOutsideTop2` = 8；满了就 `DEFERRED PARKING_FULL` |
 | 第 8 段零副作用的暂时失败（`NATIVE_ADMISSION_UNAVAILABLE`、`GITHUB_TRANSIENT_UNAVAILABLE`） | 停在 B 最多 3 次，间隔 1 / 3 / 10 分钟，第 4 次烧号 |
 | main 移动（`RESIDENT_BASE_MOVED`）、超出上限 | 中性结束 |

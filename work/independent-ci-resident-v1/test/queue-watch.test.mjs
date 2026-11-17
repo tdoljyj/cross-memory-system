@@ -175,6 +175,14 @@ test('no watch while the stage-8 tries of the day are used up', async t => {
   assert.equal(f.exec.queueWatchView.size, 0, 'and the PR page is not told it is watched');
 });
 
+test('#1144: a different PR exhausting stage 8 cannot disable this PR queue watch', async t => {
+  const f = await fx(t);
+  f.advance(QUEUE_WATCH_MS);
+  f.ledger.usage = async (_since, options) => ({ stage8Retries: options?.stage8Pr === 884 ? 0 : 100 });
+  await f.exec.queueWatchMaintenance();
+  assert.deepEqual(watches(f), [{ watchPr: 884 }]);
+});
+
 test('a watch that leaves no confirmed fact HALTs like any role probe (the swap may not be clean); a busy engine only defers', async t => {
   const busy = await fx(t, { answer: o => (o?.watchPr ? () => ({ ok: false, code: 'ROLE_PROBE_BUSY', deferred: true, proof: null, roleProbe: null }) : HELD) });
   busy.advance(QUEUE_WATCH_MS);

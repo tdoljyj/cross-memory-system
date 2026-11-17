@@ -2520,6 +2520,20 @@ export class ResidentExecutor {
     this.trainStrictFrontReadiness = mode === 'on' && input.onSince === onSince && summary.onDuty && summary.strict === true
       && summary.sweep?.unconfirmed === 0 && full?.allPending !== 'TRAIN_MAIN_REWRITTEN'
       && currentFront?.state === 'ready' && currentFront.mainSha === summary.mainSha ? currentFront : null;
+    // #1144: Stage 10 refreshed the running batch's durable timestamp together with this round's proof.
+    // Update only the scheduling view of the same claim/H/T/S; Stage 8 independently reads the durable batch
+    // and live holder again. After restart the next round reconstructs this view from the original receipt.
+    if (summary.decision === 'TRAIN_FRONT_BATCH_RUNNING' && this.trainStrictFrontReadiness) {
+      const r = this.trainStrictFrontReadiness;
+      for (const [key, f] of this.frontBindings) {
+        if (f.pr === r.front.pr && f.headSha === r.front.headSha && f.claimId === r.front.claimId && f.baseSha === r.mainSha) {
+          const updated = { ...f, since: r.front.since };
+          const context = { now: this.clock(), repo: this.policy.repo, sourceManifestSha256: this.policy.ciSourceManifestSha256,
+            settingsDigest: digest(trainSettings(this.policy.train)), onSince, front: updated, sweepFreshMs: trainSettings(this.policy.train).sweepFreshMs };
+          if (strictFrontReadinessMatches(r, context)) this.frontBindings.set(key, updated);
+        }
+      }
+    }
     const rh = summary.actions?.revokeHead;
     if (revokeHead && rh?.requestId === revokeHead.requestId) {
       this.reportRevokeHead({ requestId: rh.requestId, state: rh.done ? 'done' : 'not-done', code: rh.done ? null : summary.decision });
@@ -2620,19 +2634,26 @@ export class ResidentExecutor {
     // The status view first, on every quiet tick (review round 3, MINOR 6): a slow probe never lets it lapse while watches go on.
     let entries;
     try { entries = await this.ledger.parkedEntries(); } catch { return null; }
-    const candidates = this.queueWatchCandidates(entries, now), shown = this.queueWatchCandidates(entries, now, { view: true });
+    let candidates = this.queueWatchCandidates(entries, now), shown = this.queueWatchCandidates(entries, now, { view: true });
     this.queueWatchBook ??= new Map();
     for (const k of [...this.queueWatchBook.keys()]) if (!entries.some(e => e.key === k && Ledger.parkedAt(e))) this.queueWatchBook.delete(k);
     if (shown.length === 0) return off();
     // Only with a Source that knows the watch (engine-windows.mjs#queueWatchSupported); an engine without the check never watches.
     try { if (typeof this.engine.queueWatchSupported !== 'function' || (await this.engine.queueWatchSupported()) !== true) return off(); } catch { return off(); }
-    // Not while the day's stage-8 tries are used up: a nudge could not start one (resumeParked). The ledger's usage is read at most
-    // every QUEUE_WATCH_MS (it walks the day's entries).
-    if (!(Number.isFinite(this.queueWatchBudgetAt) && now >= this.queueWatchBudgetAt && now - this.queueWatchBudgetAt < QUEUE_WATCH_MS)) {
-      try { this.queueWatchBudgetOk = (await this.ledger.usage(now - DAY)).stage8Retries < this.policy.park.stage8RetriesPer24h; } catch { this.queueWatchBudgetOk = false; }
-      this.queueWatchBudgetAt = now;
+    // A different PR cannot exhaust this watch's follow-up retry. Cache each PR's budget for one watch cadence.
+    this.queueWatchBudgets ??= new Map();
+    const prs = new Set([...candidates, ...shown].map(e => e.reserved.subject.pr));
+    for (const pr of this.queueWatchBudgets.keys()) if (!prs.has(pr)) this.queueWatchBudgets.delete(pr);
+    for (const pr of prs) {
+      const old = this.queueWatchBudgets.get(pr);
+      if (old && now >= old.at && now - old.at < QUEUE_WATCH_MS) continue;
+      let ok = false;
+      try { ok = (await this.ledger.usage(now - DAY, { stage8Pr: pr })).stage8Retries < this.policy.park.stage8RetriesPer24h; } catch { /* no proven budget */ }
+      this.queueWatchBudgets.set(pr, { at: now, ok });
     }
-    if (!this.queueWatchBudgetOk) return off();
+    const affordable = e => this.queueWatchBudgets.get(e.reserved.subject.pr)?.ok === true;
+    candidates = candidates.filter(affordable); shown = shown.filter(affordable);
+    if (shown.length === 0) return off();
     // The status: these rows are watched (the PR page says the try follows the slot within minutes), as of now (queueWatchViewAt: a view
     // not renewed by a quiet tick within QUEUE_WATCH_VIEW_MS, as while another batch runs, says nothing).
     this.queueWatchView = new Set(shown.map(e => `${e.reserved.subject.pr}:${e.reserved.subject.headSha}`));
@@ -2759,12 +2780,13 @@ export class ResidentExecutor {
     }
     const due = entries.filter(x => Ledger.parkedAt(x) && this.parkedDueAt(x) <= now).sort((a, b) => this.parkedDueAt(a) - this.parkedDueAt(b));
     if (due.length === 0) return { acted: null, waiting };
-    const usage = await this.ledger.usage(now - DAY);
-    if (usage.stage8Retries >= this.policy.park.stage8RetriesPer24h) {
-      this.queue.notice({ key: `stage8-budget:${dayKey(now)}`, kind: 'stage8-budget', pr: null, headSha: null, code: 'STAGE8_RETRY_BUDGET_EXHAUSTED' });
-      return { acted: null, waiting };
+    for (const e of due) {
+      const pr = e.reserved.subject.pr;
+      const usage = await this.ledger.usage(now - DAY, { stage8Pr: pr });
+      if (usage.stage8Retries < this.policy.park.stage8RetriesPer24h) return { acted: await this.resumeParkedB(e), waiting };
+      this.queue.notice({ key: `stage8-budget:${pr}:${dayKey(now)}`, kind: 'stage8-budget', pr, headSha: e.reserved.subject.headSha, code: 'STAGE8_RETRY_BUDGET_EXHAUSTED' });
     }
-    return { acted: await this.resumeParkedB(due[0]), waiting };
+    return { acted: null, waiting };
   }
 
   // A batch parked at B ends without a try: its time ran out (park.maxMs, the backstop outside the rule of DESIGN §72: a batch that
@@ -3302,7 +3324,7 @@ export class ResidentExecutor {
       if (this.queue.stopAtCap(c.pr, c.headSha, pre.stop, this.clock(), pre.stopClass ?? null)) this.queue.notice({ key: `stopped:${c.pr}:${c.headSha}:${pre.stop}`, kind: 'stopped', pr: c.pr, headSha: c.headSha, code: pre.stop });
       return { state: 'DEFERRED', key, reason: pre.stop, next: true };
     }
-    if (resumeStage8 && usage.stage8Retries >= this.policy.park.stage8RetriesPer24h)
+    if (resumeStage8 && (await this.ledger.usage(this.clock() - DAY, { stage8Pr: subject.pr })).stage8Retries >= this.policy.park.stage8RetriesPer24h)
       return this.deferral({ defer: 'STAGE8_RETRY_BUDGET_EXHAUSTED', perRow: true }, key, c.pr);
     // A merged or closed PR leaves the queue before it is reserved (one live read), not only after a batch of it failed
     // (falsified): on 2026-11-03 merged PR 984 stayed first in the queue and breaker trials ran merged heads again

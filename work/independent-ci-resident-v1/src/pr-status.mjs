@@ -445,7 +445,9 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
         ? { key: `notice:${n.key}`, title: `PR #${n.pr} 认领或授权已更新`, body: `提交 ${head} 上次因认领或授权条件未准入；已确认条件更新，立即重新评估。` }
         : { key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
-      case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
+      case 'stage8-budget': out.push({ key: `notice:${n.key}`,
+        title: n.pr ? `PR #${n.pr} 的第 8 段重试额度已用完` : '今日第 8 段重试额度已用完',
+        body: n.pr ? '这个 PR 在过去 24 小时内的重试已达上限，额度恢复后继续；其他 PR 的额度独立计算。' : '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
       // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end.
       // The end is the one Native said at the last stage 1 or stage-8 try; a renewal since then is not seen (review round 6, MINOR A).
       case 'lease-short': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 的认领${n.code === 'CLAIM_LEASE_EXPIRED' ? '可能已到期' : '快到期'}`,

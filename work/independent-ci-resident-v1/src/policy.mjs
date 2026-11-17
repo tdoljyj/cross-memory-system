@@ -32,7 +32,7 @@
 // Contract /5 (phase 2, step 2: parking, design v0.5 §4.7, §4.9; Owner decision e1e19e2e item 4):
 //   - stage8.mode: 'park' (the Owner's choice; the design's alternative grace15 is not implemented);
 //   - park: maxParked (4: batches at A, or at B in the queue's first two places), maxParkedOutsideTop2 (8), maxMs (24 h
-//     at B), stage8MaxTries (12), stage8RetriesPer24h (100, every parked batch together).
+//     at B), stage8MaxTries (12), stage8RetriesPer24h (100 per PR, across its parked batches).
 // Contract /6 (phase 2, step 3c-1: the merge train in shadow mode, design v0.5 §4.7, §5.5, §6 step 4; Owner decision
 // 2eea28a1; DESIGN §22):
 //   - train: enabled ('off' or 'shadow'; 'on' comes with step 3c-2), nonFrontRuns (only true, today's way: every
