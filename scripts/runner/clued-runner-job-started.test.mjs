@@ -120,6 +120,27 @@ const nativeScript = (...checks) => ({
   [`${API}/pulls/9`]: { body: { state: "open", base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } } },
 });
 
+test('G3 hook: required-tests dispatch stays bound to its current PR/head', async () => {
+  const pr = { number: 9, state: 'open', head: { sha: HEAD, ref: 'claude/g3', repo: { full_name: 'o/r' } },
+    base: { ref: 'main', repo: { full_name: 'o/r' } } };
+  const overrides = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/claude/g3',
+    GITHUB_REF_NAME: 'claude/g3', GITHUB_SHA: HEAD, GITHUB_ACTOR: 'o', GITHUB_REPOSITORY_OWNER: 'o',
+    GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3' };
+  const payload = JSON.stringify({ inputs: { pr: '9', head: HEAD }, repository: { default_branch: 'main' } });
+  const script = { [`${LIST}${HEAD}`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }),
+    [`${LIST}main`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }), [`${API}/pulls/9`]: { body: pr } };
+  assert.equal((await run(overrides, script, payload)).result.allow, true);
+  for (const changed of [{ state: 'closed' }, { head: { ...pr.head, sha: SHA } }, { head: { ...pr.head, repo: { full_name: 'fork/r' } } }]) {
+    assert.equal((await run(overrides, { ...script, [`${API}/pulls/9`]: { body: { ...pr, ...changed } } }, payload)).result.allow, false);
+  }
+  assert.equal((await run({ ...overrides, GITHUB_ACTOR: 'stranger' }, script, payload)).result.allow, false);
+  assert.equal((await run({ ...overrides, GITHUB_RUN_ATTEMPT: '2' }, script, payload)).result.allow, false);
+  assert.equal((await run({ ...overrides, GITHUB_REF: 'refs/heads/main' }, script, payload)).result.allow, false,
+    'required-tests dispatch cannot use the generic main fast path');
+  assert.equal((await run(overrides, { ...script, [`${LIST}${HEAD}`]: listing({ 'clued-required-tests.yml': '2'.repeat(40) }) }, payload)).result.allow, false,
+    'branch dispatch still requires workflows identical to main');
+});
+
 test("Native hook: manually retired producer reads only the exact App/head/PR Native check; legacy success cannot stand in", async () => {
   const { result, calls } = await run({}, nativeScript(nativeCheck()));
   assert.equal(result.allow, true);
@@ -343,7 +364,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "runner-hook-loader-v1");
+  assert.equal(HOOK_VERSION, "required-tests-dispatch-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -942,7 +963,7 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 
 // Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
 test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.4");
+  assert.equal(COMPONENT_VERSION, "1.0.5");
   const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
   const component = manifest.components.find((c) => c.id === "hook.runner-job-started");
   assert.deepEqual([component.version, component.files, component.version_marker.file], [COMPONENT_VERSION, ["clued-runner-job-started.mjs"], "clued-runner-job-started.mjs"]);
