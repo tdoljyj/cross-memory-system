@@ -194,7 +194,7 @@ test('node governance changes select its suite; the standard also selects the re
   assert.ok(SUITE_COMMANDS['node-governance'].some(c => c.argv.includes('{tests:scripts/ci/self-hosted/node-governance}')));
 });
 
-// IntegrationRuntime v0.1.8 搂13.2 P2 (c): 250,000 fixed-seed random facts in CI. The file's default count is the CI
+// IntegrationRuntime v0.1.8 §13.2 P2 (c): 250,000 fixed-seed random facts in CI. The file's default count is the CI
 // obligation; clued-connection-authorization.yml ran it until it was disabled (2026-10-17) and then nothing did.
 test('the Integration Runtime 250,000-sample property test runs in a required check, selected by its own paths', () => {
   const file = 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs';
