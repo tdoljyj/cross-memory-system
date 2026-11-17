@@ -15,6 +15,21 @@ import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporte
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
+test('G3 required-tests exposes pr/head dispatch and keeps all three self-hosted checks gated on that head', async () => {
+  const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8');
+  const { gateFindings } = await import('./clued-work-admission.mjs');
+  assert.deepEqual(gateFindings(text, text), [], 'registered gate and every heavy-job condition remain enforced');
+  assert.match(text, /^  workflow_dispatch:\n    inputs:\n      pr:/m);
+  assert.match(text, /^      head:\n/m);
+  for (const name of ['clued-cloud-tests', 'ci-suites', 'migration-verify']) {
+    const job = text.slice(text.indexOf(`\n  ${name}:\n`) + 1).split(/\n  [a-z][a-z-]+:\n/)[0];
+    assert.match(job, /github.event_name == 'workflow_dispatch'/);
+    assert.match(job, /needs.admission-gate.outputs.admitted == 'true'/);
+    assert.match(job, /runs-on: \[self-hosted, Linux/);
+    assert.match(job, /github.event.repository.default_branch/);
+  }
+});
+
 test('glob patterns match across and within segments', () => {
   assert.ok(globToRegExp('work/independent-ci-resident-v1/**').test('work/independent-ci-resident-v1/src/executor.mjs'));
   assert.ok(globToRegExp('apps/clued-cloud/scripts/production-schema-*.mjs').test('apps/clued-cloud/scripts/production-schema-drift.mjs'));
@@ -648,8 +663,8 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   assert.ok(!existsSync(path.join(ROOT, 'work', 'ci-required-tests-v1', 'clued-required-tests-windows.candidate.yml')), 'one copy: the workflow');
   const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
   const between = (source, from, to) => source.slice(source.indexOf(from), source.indexOf(to));
-  assert.equal(between(text, 'on:\n  pull_request:', '  # One step selects'), between(live, 'on:\n  pull_request:', '  clued-cloud-tests:\n'),
-    'the triggers, permissions, concurrency and the registered gate job are those of clued-required-tests.yml, byte for byte');
+  assert.equal(between(text, '  admission-gate:\n', '  # One step selects'), between(live, '  admission-gate:\n', '  clued-cloud-tests:\n'),
+    'the registered gate job is that of clued-required-tests.yml, byte for byte; only Linux has lost-run dispatch');
   const job = text.slice(text.indexOf('  ci-suites-windows:\n'));
   assert.match(job, /&& 'ci-suites-windows' \|\| 'ci-suites-windows-skipped' \}\}\n {4}needs: admission-gate\n/);
   const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());

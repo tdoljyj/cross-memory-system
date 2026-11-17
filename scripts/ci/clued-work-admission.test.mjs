@@ -3276,6 +3276,46 @@ const independentEvent = () => {
   value.pull_request.base.repo = { full_name: "o/r", default_branch: "main" };
   return value;
 };
+async function requiredDispatch({ inputs = { pr: '452', head: HEAD }, current = {}, checks = [nativeCheck()], overrides = {}, others = [], truncated = false, epoch = true, moveAfterGate = false } = {}) {
+  const pr = independentEvent().pull_request;
+  Object.assign(pr, { state: 'open', head: { ...pr.head, ref: 'claude/g3' } }, current);
+  const self = { id: 9001, head_sha: HEAD, head_branch: 'claude/g3', event: 'workflow_dispatch', run_attempt: 1,
+    path: '.github/workflows/clued-required-tests.yml', created_at: RUN_CREATED, actor: { login: 'o', type: 'User' } };
+  let prReads = 0;
+  const fake = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: self }, [PULL]: () => ({ body:
+    moveAfterGate && ++prReads > 1 ? { ...pr, head: { ...pr.head, sha: BASE } } : pr }),
+    [CHECKS]: { body: { check_runs: checks } },
+    [`POST ${EPOCH_URL}`]: { body: { status: 'ok', guard_required: true, epoch_current: epoch } },
+    [`GET https://api.test/repos/o/r/actions/workflows/clued-required-tests.yml/runs`]: {
+      body: { total_count: truncated ? 101 : others.length + 1, workflow_runs: [self, ...others] } } });
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE,
+    CLUED_ADMISSION_GATE_WAIT_SECONDS: '0', GITHUB_ACTOR: 'o', GITHUB_REPOSITORY_OWNER: 'o',
+    GITHUB_SHA: HEAD, GITHUB_REF: 'refs/heads/claude/g3', GITHUB_REF_NAME: 'claude/g3',
+    GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3', ...overrides }),
+    event: { inputs, repository: { default_branch: 'main' } }, eventName: 'workflow_dispatch', fetchImpl: fake.fetchImpl });
+  return { outcome, calls: fake.calls };
+}
+
+test('G3 dispatch: current open PR/head needs the original Native admission and execution epoch', async () => {
+  const { outcome, calls } = await requiredDispatch();
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.head_sha, outcome.pr_ref], [true, 'ADMITTED', HEAD, 'o/r#452']);
+  assert.ok(calls.some(call => call.url.includes('check_name=kooyumi-work-admission')));
+  assert.ok(calls.some(call => call.body?.p_input?.action === 'execution_current' && call.body.p_input.pr_ref === 'o/r#452'));
+});
+
+test('G3 dispatch: malformed, closed, moved, foreign, duplicate and unauthorized requests fail closed', async () => {
+  for (const opts of [
+    { inputs: {} }, { inputs: { pr: '452;echo', head: HEAD } }, { inputs: { pr: '452', head: BASE } },
+    { current: { state: 'closed' } }, { current: { head: { sha: BASE } } },
+    { current: { base: { ref: 'other', repo: { full_name: 'o/r', default_branch: 'main' } } } },
+    { current: { head: { sha: HEAD, ref: 'claude/g3', repo: { full_name: 'fork/r' } } } },
+    { overrides: { GITHUB_ACTOR: 'stranger' } }, { overrides: { GITHUB_RUN_ATTEMPT: '2' } },
+    { checks: [nativeCheck({ app: { id: 1 } })] }, { checks: [nativeCheck({ conclusion: 'failure' })] },
+    { others: [{ id: 9002, head_sha: HEAD, event: 'pull_request', status: 'queued' }] }, { truncated: true },
+    { epoch: false }, { moveAfterGate: true },
+  ]) assert.equal((await requiredDispatch(opts)).outcome.admitted, false, JSON.stringify(opts));
+});
+
 async function independentGate(checks, { envOverrides = {}, script = {}, eventValue = independentEvent() } = {}) {
   const { fetchImpl, calls } = fakeFetch({ ...SELF_RUN, [CHECKS]: typeof checks === "function" ? checks : { body: { check_runs: checks } }, ...script });
   const slept = [];
@@ -3336,6 +3376,8 @@ test("independent gate: polls about every 30 seconds for at most 10 minutes, the
     reads += 1;
     return { body: { check_runs: reads < 4 ? [] : [nativeCheck()] } };
   };
+
+
   let result = await independentGate(late);
   assert.deepEqual([result.outcome.admitted, result.slept], [true, [30000, 30000, 30000]]);
   result = await independentGate([]);

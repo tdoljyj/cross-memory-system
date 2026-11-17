@@ -3131,6 +3131,8 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   const outcome = emptyOutcome(eventName);
   const retryBudget = { spentMs: 0 };
   fetchImpl = withGithubReadRetry(fetchImpl, env, { sleep, budget: retryBudget });
+  if (eventName === "workflow_dispatch" && workflowFileOf(env) === 'clued-required-tests.yml')
+    return requiredTestsDispatchGate({ env, event, fetchImpl, sleep, now, outcome });
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
@@ -3338,6 +3340,45 @@ export function dispatchTitle(workflow, ref, claimId) {
 function workflowFileOf(env) {
   const match = /\.github\/workflows\/([^@/]+)@/.exec(env.GITHUB_WORKFLOW_REF ?? "");
   return match ? match[1] : null;
+}
+
+// A missing PR run is a PR admission subject, never a generic hand dispatch.
+// Dispatch on the PR branch so Actions reports its checks on this exact head.
+// No token, App, rerun allowance or automation identity is added here.
+async function requiredTestsDispatchGate({ env, event, fetchImpl, sleep, now, outcome }) {
+  const refuse = reason => Object.assign(outcome, { admitted: false, verdict: 'REJECTED', reasons: [reason] });
+  const { pr: number, head } = event?.inputs ?? {};
+  if (!/^[1-9][0-9]{0,9}$/.test(String(number ?? '')) || !/^[a-f0-9]{40}$/.test(head ?? '')
+    || env.GITHUB_ACTOR !== env.GITHUB_REPOSITORY_OWNER || !env.GITHUB_REPOSITORY_OWNER
+    || env.CLUED_ADMISSION_GATE_SOURCE !== INDEPENDENT_GATE_SOURCE
+    || String(env.GITHUB_RUN_ATTEMPT ?? '1') !== '1' || env.GITHUB_SHA !== head)
+    return refuse('required_tests_dispatch_invalid_target_actor_or_attempt');
+  const repository = env.GITHUB_REPOSITORY;
+  const defaultBranch = event?.repository?.default_branch;
+  const live = pr => pr?.number === Number(number) && pr.state === 'open' && pr.head?.sha === head
+    && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
+    && pr.base?.ref === defaultBranch && defaultBranch === 'main'
+    && env.GITHUB_REF === `refs/heads/${pr.head.ref}` && env.GITHUB_REF_NAME === pr.head.ref;
+  const pr = await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${number}`);
+  if (!live(pr)) return refuse('required_tests_dispatch_pr_closed_or_moved');
+  if (!/^[1-9][0-9]{0,19}$/.test(String(env.GITHUB_RUN_ID ?? '')))
+    return refuse('required_tests_dispatch_run_missing');
+  const self = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${env.GITHUB_RUN_ID}`);
+  if (self?.id !== Number(env.GITHUB_RUN_ID) || self.event !== 'workflow_dispatch' || self.head_sha !== head
+    || self.head_branch !== pr.head.ref || self.run_attempt !== 1
+    || self.path?.split('@')[0] !== '.github/workflows/clued-required-tests.yml')
+    return refuse('required_tests_dispatch_run_mismatch');
+  const list = await githubJson(fetchImpl, env,
+    `/repos/${repository}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&per_page=100`);
+  // A failed/truncated listing is unknown. Another run of any event prevents
+  // this recovery, even if it is only queued. No duplicate real execution.
+  if (!Array.isArray(list?.workflow_runs) || list.total_count !== 1 || list.workflow_runs.length !== 1
+    || list.workflow_runs[0]?.id !== self.id || list.workflow_runs[0]?.head_sha !== head)
+    return refuse('required_tests_dispatch_run_not_missing_or_unknown');
+  const admitted = await gate({ env, event: { ...event, pull_request: pr }, eventName: 'pull_request', fetchImpl, sleep, now });
+  if (!live(await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${number}`)))
+    return refuse('required_tests_dispatch_pr_changed_during_gate');
+  return { ...admitted, event: 'workflow_dispatch' };
 }
 
 const DISPATCH_HOWTO = `dispatch ${DISPATCH_ADMISSION_WORKFLOW} on the default branch with workflow, ref and claim_id first, then pass its run id as admission_run_id`;
