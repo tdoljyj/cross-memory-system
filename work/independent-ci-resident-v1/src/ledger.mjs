@@ -142,7 +142,7 @@ export class Ledger {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
-    let reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort, terminal, archived;
+    let reserved, started, wait, planIntent, plan, parked, tries, frontOpenChecked, abort, selfAbort, terminal, archived;
     try {
       const read = async name => (await exists(path.join(dir, name))) ? (await readJson(path.join(dir, name))).value : null;
       reserved = await read('00-reserved.json');
@@ -152,6 +152,7 @@ export class Ledger {
       plan = await read('25-plan.json');
       parked = await read(PARK_RECORD);
       tries = await this.readTries(dir, read);
+      frontOpenChecked = await read('73-front-open-checked.json');
       abort = await read(OWNER_ABORT_RECORD);
       selfAbort = await read(SELF_ABORT_RECORD);
       terminal = await read('90-terminal.json');
@@ -164,7 +165,8 @@ export class Ledger {
     // A crash between mkdir and the reservation record leaves an INCOMPLETE entry; it is open, so
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
     if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort, selfAbort };
-    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort };
+    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort,
+      ...(frontOpenChecked ? { frontOpenChecked } : {}) };
   }
 
   // A flow ending is not permission to execute the head again. It carries the exact safe point to continue from;
@@ -289,6 +291,14 @@ export class Ledger {
   // is still open at a tick start, that end was interrupted (a crash scene).
   static waitingAt(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.parked && !entry.abort && !entry.selfAbort; }
   static parkedAt(entry) { return entry?.state === 'STARTED' && !!entry.plan && !!entry.parked && !entry.abort && !entry.selfAbort && (entry.tries ?? []).every(t => t.ended !== null); }
+  // One durable request per ordinary batch, not one request per stage-8 retry. A confirmed on-mode stage 10 settles it.
+  static frontOpenOwed(entry) { return Ledger.parkedAt(entry) && !entry.frontOpenChecked && !Object.hasOwn(entry.reserved?.subject ?? {}, 'testSha')
+    && entry.tries.some(t => t.ended?.frontOpenOwed === true && t.ended.code === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && t.ended.position === 1); }
+
+  async settleFrontOpen(key, facts) {
+    if (!Ledger.frontOpenOwed(await this.state(key))) return;
+    await writeNew(path.join(this.dir(key), '73-front-open-checked.json'), { key, at: isoNow(this.clock), ...facts });
+  }
   static resumable(entry) { return Ledger.waitingAt(entry) || Ledger.parkedAt(entry); }
 
   // Open entries that are a crash scene (recovery closes them) - everything open except an entry at a parking point.
