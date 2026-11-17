@@ -33,11 +33,10 @@
 // this lane first saw the head, the complete listing of the workflow's runs of the head is empty (total_count 0), read again right
 // before the request together with the pull request (still open on that head, its branch name valid), the lane asks once for
 // "Run workflow" of clued-required-tests.yml on the pull request's branch (gh api --method POST
-// repos/<repo>/actions/workflows/clued-required-tests.yml/dispatches -f ref=<branch>). A failed or truncated listing, a moved head or
+// repos/<repo>/actions/workflows/clued-required-tests.yml/dispatches -f ref=<branch> -f inputs[pr]=<pr> -f inputs[head]=<head>). A failed or truncated listing, a moved head or
 // an unknown age is "not known": nothing is asked, the head is read again later. The same receipt (kind redispatch) makes it once per
-// head whatever the outcome, and the PR page says what came of it. GitHub refuses the dispatch (HTTP 422) until the workflow has a
-// workflow_dispatch trigger that its gate and the runners' job-started hook admit (a protected change, outside this lane): then the
-// refusal is recorded and told once, which still replaces the Owner noticing the missing run.
+// head whatever the outcome, and the PR page says what came of it. The workflow and the installed runner hook independently bind
+// this recovery to the current open PR/head and preserve the ordinary identity, workflow and Native admission gates.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
@@ -145,9 +144,10 @@ export function ghPort({ ghExe, repo, run }) {
       return post([`repos/${repo}/actions/runs/${runId}/rerun`]);
     },
     // The lost-run write: "Run workflow" of the required tests on a pull request's branch. Same outcomes as rerun.
-    async dispatch(ref) {
-      check(BRANCH_REF.test(ref ?? ''), 'ADMISSION_RERUN_ROUTE_REFUSED');
-      return post(['-f', `ref=${ref}`, `repos/${repo}/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/dispatches`]);
+    async dispatch(ref, pr, headSha) {
+      check(BRANCH_REF.test(ref ?? '') && positive(pr) && HEX40.test(headSha ?? ''), 'ADMISSION_RERUN_ROUTE_REFUSED');
+      return post(['-f', `ref=${ref}`, '-f', `inputs[pr]=${pr}`, '-f', `inputs[head]=${headSha}`,
+        `repos/${repo}/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/dispatches`]);
     },
   });
 }
@@ -226,8 +226,9 @@ export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = 
     if (runs.length === 0) {
       if (!(Number.isFinite(headAgeMs) && headAgeMs >= LOST_RUN_AFTER_MS)) return say('skip', `#${pr.number} has no ${REQUIRED_TESTS_WORKFLOW} run on this head (yet)`);
       const now = await gh.get(`/pulls/${pr.number}`);
-      if (!now || now.state !== 'open' || now.head?.sha !== headSha || now.base?.ref !== defaultBranch || now.head?.repo?.full_name !== gh.repo || !BRANCH_REF.test(now.head?.ref ?? '')) return say('skip', `#${pr.number} is no longer open on this head`);
+      if (!now || now.state !== 'open' || now.head?.sha !== headSha || now.base?.ref !== defaultBranch || now.base?.repo?.full_name !== gh.repo || now.head?.repo?.full_name !== gh.repo || !BRANCH_REF.test(now.head?.ref ?? '')) return say('skip', `#${pr.number} is no longer open on this head`);
       if ((await listRuns()).length !== 0) return say('skip', `a ${REQUIRED_TESTS_WORKFLOW} run of this head appeared`);
+      if (!(await admissionOf(gh, headSha, pr.number)).admitted) return say('skip', `the ${ADMISSION_CHECK} check does not admit #${pr.number} (yet)`);
       out.ref = now.head.ref;
       return say('redispatch', `GitHub created no ${REQUIRED_TESTS_WORKFLOW} run of this head: "Run workflow" on ${now.head.ref} for #${pr.number}`);
     }
@@ -389,7 +390,7 @@ export class AdmissionRerunner {
       // No receipt, no request; this step's earlier changes stay to be written at the next step (review round 30, NIT 1).
       try { await this.state.save(); } catch { delete this.state.data.records[headSha]; this.unsaved = true; return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' }; }
       let r;
-      try { r = await (lost ? this.gh.dispatch(d.ref) : this.gh.rerun(d.runId)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
+      try { r = await (lost ? this.gh.dispatch(d.ref, record.pr, headSha) : this.gh.rerun(d.runId)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
       Object.assign(record, { outcome: r.outcome, why: r.outcome === 'sent' ? null : short(r.why), at: new Date(this.clock()).toISOString() });
       // The intent on disk already stops a second request; an unsaved outcome is written again at the end of this step or the next
       // (review round 29, NIT 3).
@@ -398,7 +399,7 @@ export class AdmissionRerunner {
       const text = lost ? {
         sent: [`PR #${record.pr}：必需测试没有运行，已自动补发一次`, `推送 ${LOST_RUN_AFTER_MS / 60_000} 分钟后 GitHub 仍没有创建 ${REQUIRED_TESTS_WORKFLOW} 的运行，已在分支 ${d.ref} 上点了一次“Run workflow”。`],
         unsent: [`PR #${record.pr}：必需测试没有运行，自动补发没有发出`, `${record.why}，请求没有到 GitHub。不会再自动补发；请推一个新提交。`],
-        refused: [`PR #${record.pr}：必需测试没有运行，自动补发被 GitHub 拒绝`, `${record.why}（${REQUIRED_TESTS_WORKFLOW} 还没有可用的 workflow_dispatch 入口时就是这样）。不会再自动补发；请推一个新提交。`],
+        refused: [`PR #${record.pr}：必需测试没有运行，自动补发被 GitHub 拒绝`, `${record.why}。不会再自动补发；请先核对工作流入口和权限。`],
         unknown: [`PR #${record.pr}：必需测试没有运行，自动补发结果不确定`, `${record.why}。请到 PR 页面看是否已有 ${REQUIRED_TESTS_WORKFLOW} 的运行；没有再推一个新提交。不会再自动补发。`],
       }[r.outcome] : {
         sent: d.environment

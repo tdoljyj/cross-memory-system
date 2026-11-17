@@ -58,7 +58,7 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Runner job-started hook, run from the protected default branch by the installed loader at every job start; merging it is its rollout.",
       "root": "scripts/runner",
       "files": [
