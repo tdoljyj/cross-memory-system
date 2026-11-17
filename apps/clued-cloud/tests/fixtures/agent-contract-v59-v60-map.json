@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-holder-preflight-successor/1",
+  "source_version": 59,
+  "target_version": 60,
+  "source_document_normalized_sha256": "4bfce52ba148795dccb8ce95ca22b0ed4affa83315cc244ded09f6acfc4fb15b",
+  "target_document_normalized_sha256": "314358d9c77070f2a3d09b9bb82eb69b7da7df4cfc4703281f1ca96feb8e7151",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 59",
+      "after": "Contract version: 60"
+    },
+    {
+      "id": "holder-preflight",
+      "before": "  Before a repository edit, derive its concrete literal targets, including both paths of a move, and verify the actual holder through the existing `clued_work_verify` RPC with `action: verify_edit`, explicit scope, claim id, fence, execution epoch, lease version, changed paths and the current private lease key. This branch additionally requires current `context:write`, the actual holder, a live Task, exact claim CAS and key, and write-set coverage. Only its successful `holder_edit_authorized: true` proves editing authority; ordinary read-only `ADMITTED` does not. The command makes no PR association, execution admission, renewal, CI-head charge or business Receipt. Normal verification and PR resolution never accept the key. For widening, first check the same holder/CAS with an empty changed-path list, then use the original holder-key renewal with fresh real progress and the union of all existing and new resources. If coverage is already sufficient but readiness is true, make one such ordinary renewal to revoke that intent. After either renewal, reverify the actual targets and require fresh readiness false before writing. Covered targets with false readiness need no renewal. Unknown readiness, a rejected/stale check or renewal, changed target identity, and unstructured shell writes that cannot be bounded mean no file write. Preserve other PRs, planned paths and trigger resources; do not invent progress or replace the Task/claim after a refusal.",
+      "after": "  Before a repository edit, derive its concrete literal targets, including both paths of a move, and verify the actual holder through the existing `clued_work_verify` RPC with `action: verify_edit`, explicit scope, claim id, fence, execution epoch, lease version, changed paths and the current private lease key. This branch additionally requires current `context:write`, the actual holder, a live Task, exact claim CAS and key, and write-set coverage. Only its successful `holder_edit_authorized: true` proves editing authority; ordinary read-only `ADMITTED` does not. The command makes no PR association, execution admission, renewal, CI-head charge or business Receipt. Normal verification and PR resolution never accept the key. For widening, first check the same holder/key/CAS with an empty changed-path list, then use the original holder-key renewal with fresh real progress and the union of all existing and new resources. An empty list is only a holder preflight: it grants no file-path authority. After renewal, reverify every actual target with a nonempty concrete changed-path list and require `holder_edit_authorized: true` before writing. Covered targets need no renewal when that current holder/key/CAS and coverage check succeeds. Terminal admission and its readiness state are retired; do not require or recreate them. An unknown, rejected or stale holder check or renewal, changed target identity, and unstructured shell writes that cannot be bounded mean no file write. Preserve other PRs, planned paths and trigger resources; do not invent progress or replace the Task/claim after a refusal."
+    }
+  ]
+}

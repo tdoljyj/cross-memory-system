@@ -1,9 +1,9 @@
 {
   "contract": "clued.production-migration-ledger.v1",
   "database_project": "clued-prod",
-  "exported_at": "2026-11-13T07:28:49.419Z",
-  "history_through": "20261113070640",
-  "row_count": 319,
+  "exported_at": "2026-11-17T04:54:48.420Z",
+  "history_through": "20261116151052",
+  "row_count": 326,
   "rows": [
     {
       "version": "20260823154017",
@@ -2556,6 +2556,62 @@
       "statements_length": 738,
       "source": "migrations/20261113150000_work_claim_pr_task_bindings_landed_cleanup_v1.sql",
       "transform": "strip_final_newline"
+    },
+    {
+      "version": "20261114122334",
+      "name": "work_claim_terminal_admission_removed_v1",
+      "statements_md5": "81f41a6e876dad101e126501becb69ad",
+      "statements_length": 12395,
+      "source": "migrations/20261113151000_work_claim_terminal_admission_removed_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261114215421",
+      "name": "ci_admission_target_fit_v1",
+      "statements_md5": "cd2d438c88f60c96185781fd86b79e27",
+      "statements_length": 6838,
+      "source": "migrations/20261114120000_ci_admission_target_fit_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261115034533",
+      "name": "ci_failover_no_cooldown_v1",
+      "statements_md5": "783dddfbaf6bbf337fe52e7459c7e37f",
+      "statements_length": 4418,
+      "source": "migrations/20261115100000_ci_failover_no_cooldown_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261115060119",
+      "name": "ci_failover_rejoin_steady_v1",
+      "statements_md5": "e198867ebc9818d8266d714dea1c73bf",
+      "statements_length": 7776,
+      "source": "migrations/20261115120000_ci_failover_rejoin_steady_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261116040107",
+      "name": "merge_slot_turn_per_pr_v1",
+      "statements_md5": "36936d2e0dda922e24326f923ac5dba2",
+      "statements_length": 12876,
+      "source": "migrations/20261115150000_merge_slot_turn_per_pr_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261116085241",
+      "name": "ci_failover_halted_holder_v1",
+      "statements_md5": "5e2ea41b3ed61380d7e3c83ce36274e9",
+      "statements_length": 7835,
+      "source": "migrations/20261116100000_ci_failover_halted_holder_v1.sql",
+      "transform": "identical"
+    },
+    {
+      "version": "20261116151052",
+      "name": "work_claim_main_merge_authorization_v1",
+      "statements_md5": "eaf36c8a0140628c3a520895623ad5f8",
+      "statements_length": 8791,
+      "source": "migrations/20261116090000_work_claim_main_merge_authorization_v1.sql",
+      "transform": "identical"
     }
   ],
   "repository_only": [

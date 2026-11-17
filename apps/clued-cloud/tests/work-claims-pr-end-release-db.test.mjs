@@ -99,6 +99,77 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     const giveBack = n => call('ci','clued_work_merge_slot_return_v1',{scope:'global',pr_ref:repo+'#'+n});
     const binding = async n => (await admin.query('select status from clued_private.work_claim_pr_task_bindings_v1 where repo_id=$1 and pr_number=$2',[repo,n])).rows[0]?.status;
 
+    await t.test('empty edit preflight retains holder authority, path coverage and the original renewal gates',async t=>{
+      const r=await claim(await task());
+      const input={action:'verify_edit',scope:'global',claim_id:r.claim.claim_id,fence:r.claim.fence,
+        execution_epoch:r.claim.execution_epoch,lease_version:r.claim.lease_version,lease_key:r.lease_key,changed_paths:[]};
+      const edit=(extra={},who='holder')=>call(who,'clued_work_verify_v1',{...input,...extra});
+      const denied=async(extra,reason,who='holder')=>{
+        const answer=await edit(extra,who);
+        assert.equal(answer.holder_edit_authorized,false,JSON.stringify(answer));
+        assert.equal(answer.verdict,'REJECTED');assert.ok(answer.reasons.includes(reason),JSON.stringify(answer));
+      };
+      const snapshot=async()=>(await admin.query(`select jsonb_build_object('claim',to_jsonb(c),
+        'receipts',(select count(*) from public.clued_audit_receipts where user_id=$1),
+        'heads',(select count(*) from clued_private.work_claim_head_authorizations_v1 where claim_id=$2),
+        'admissions',(select count(*) from clued_private.work_claim_execution_admissions_v1 where claim_id=$2),
+        'bindings',(select count(*) from clued_private.work_claim_pr_task_bindings_v1 where task_id=$3)) v
+        from clued_private.work_claims_v1 c where c.user_id=$1 and c.claim_id=$2`,[user,r.claim.claim_id,r.claim.task_id])).rows[0].v;
+      await t.test('empty preflight changes no claim, receipt, head authorization, admission or PR binding',async()=>{
+        const before=await snapshot(),answer=await edit();
+        assert.equal(answer.holder_edit_authorized,true,JSON.stringify(answer));noTerminal(answer);
+        assert.equal(answer.execution_authorized,false);assert.equal(answer.task_ci_heads_24h,0);
+        assert.deepEqual(await snapshot(),before);
+        const attr=(await admin.query(`select prosecdef,provolatile,proconfig,proacl::text acl from pg_proc
+          where oid='clued_private.work_claim_verify_before_main_merge_v1(text,jsonb)'::regprocedure`)).rows[0];
+        assert.deepEqual(attr,{prosecdef:true,provolatile:'v',proconfig:['search_path=""'],acl:'{postgres=X/postgres}'});
+        for(const role of ['anon','authenticated','service_role','clued_worker_gateway'])
+          assert.equal((await admin.query('select has_function_privilege($1,$2,\'execute\') allowed',
+            [role,'clued_private.work_claim_verify_before_main_merge_v1(text,jsonb)'])).rows[0].allowed,false);
+      });
+      await t.test('wrong key, fence, epoch, version, claim or scope cannot pass an empty preflight',async()=>{
+        const wrongKey=r.lease_key.slice(0,-1)+(r.lease_key.endsWith('0')?'1':'0');
+        await denied({lease_key:wrongKey},'work_claim_lease_key_invalid');
+        await denied({fence:Number(r.claim.fence)+1},'work_claim_fence_mismatch');
+        await denied({execution_epoch:Number(r.claim.execution_epoch)+1},'work_claim_execution_epoch_mismatch');
+        await denied({lease_version:Number(r.claim.lease_version)+1},'work_claim_version_conflict');
+        await denied({claim_id:uuid()},'work_claim_not_found');
+        await denied({scope:'project:'+uuid()},'work_claim_not_found');
+      });
+      await t.test('read-only and different-holder Bindings cannot turn possession of a key into edit authority',async()=>{
+        await assert.rejects(()=>edit({},'reader'),e=>e.code==='42501');
+        await denied({},'work_claim_not_holder','otherHolder');
+      });
+      await t.test('normal empty checks and malformed paths remain invalid; an empty preflight grants no outside path',async()=>{
+        await assert.rejects(()=>call('holder','clued_work_verify_v1',{scope:'global',claim_id:r.claim.claim_id,changed_paths:[]}),/work_claim_write_set_invalid/);
+        for(const changed_paths of [null,'fixture', ['']])await assert.rejects(()=>edit({changed_paths}),e=>e.code==='22023');
+        const outside=await edit({changed_paths:['fixture/'+r.claim.task_id+'/new.mjs']});
+        assert.equal(outside.holder_edit_authorized,false);assert.equal(outside.verdict,'REJECTED');
+        assert.equal((await edit({changed_paths:r.claim.write_set})).holder_edit_authorized,true);
+      });
+      await t.test('original-key union renewal is still required, then the latest version and actual paths must pass',async()=>{
+        const next='fixture/'+r.claim.task_id+'/new.mjs';
+        const renewed=committed(await call('holder','clued_work_renew_v1',{scope:'global',claim_id:r.claim.claim_id,
+          fence:r.claim.fence,lease_version:r.claim.lease_version,lease_key:r.lease_key,
+          progress_ref:'fixture:'+uuid(),write_set:[...r.claim.write_set,next]}));
+        await denied({},'work_claim_version_conflict');
+        input.lease_version=renewed.claim.lease_version;
+        const answer=await edit({changed_paths:[next]});assert.equal(answer.holder_edit_authorized,true);noTerminal(answer);
+      });
+      await t.test('expired claims and inactive Tasks cannot use the preflight',async()=>{
+        const lease=(await admin.query('select issued_at::text issued,expires_at::text expiry from clued_private.work_claims_v1 where claim_id=$1',[r.claim.claim_id])).rows[0];
+        await admin.query("update clued_private.work_claims_v1 set issued_at=now()-interval '2 seconds',expires_at=now()-interval '1 second' where claim_id=$1",[r.claim.claim_id]);
+        try{await denied({},'work_claim_not_active');}finally{
+          await admin.query('update clued_private.work_claims_v1 set issued_at=$2,expires_at=$3 where claim_id=$1',[r.claim.claim_id,lease.issued,lease.expiry]);
+        }
+        committed(await call('holder','clued_record_mutate',{operation:'close',record_type:'task',record_schema_version:1,
+          id:r.claim.task_id,base_version:1,lifecycle_status:'completed',scope:'global',idempotency_key:uuid(),
+          authority:'observed',confidence_reason:'isolated completed fixture',source_refs:[],source_unavailable_reason:'fixture',
+          mutation:{closed_reason:'fixture completed',closure_summary:'fixture completed'}}));
+        await assert.rejects(()=>edit(),e=>e.code==='22023'&&/work_claim_task/.test(e.message));
+      });
+      committed(await release(r));
+    });
     await t.test('verify, authorize_head and verify_edit answer no terminal admission or readiness; the fields are refused',async()=>{
       const r=await claim(await task()),head='1'.repeat(40),result=await admitted(r,1,head);
       noTerminal(result);noTerminal(await call('holder','clued_work_verify_v1',{scope:'global',claim_id:r.claim.claim_id}));
