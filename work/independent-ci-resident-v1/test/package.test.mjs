@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PACKAGE_CONTRACT, UPGRADER_CONFIG_CONTRACT, buildPackage, importClosure, upgraderCopy } from '../tools/build-package.mjs';
 import { installedIntegrity } from '../src/service-ports.mjs';
-import { validatePolicy } from '../src/policy.mjs';
+import { installedTrainLanding, validatePolicy } from '../src/policy.mjs';
 import { canonicalJson, sha256 } from '../src/canonical.mjs';
 import { nodeProfileSha256 } from '../src/node-profile.mjs';
 import { tempRoot } from './helpers.mjs';
@@ -116,23 +116,25 @@ async function inputs(t) {
 // DESIGN §41.9 step 4: the train mode is one fleet value. The generic upgrade hands each node's installed policy back to build-package
 // unchanged (rollout/fleet/install.mjs#configInputsFor), so the mode a node was first installed with stayed for good (2026-11-14:
 // turing ACTIVE on shadow, desk-w-591 STANDBY on on, one Source). Every /8+ package carries the fleet's train instead.
-test('package: every /8+ policy gets the fleet train (on, nonFrontRuns, audit), whatever the installed node carried; /7 is left alone', async t => {
+test('package: every /8+ policy gets the fleet train (on, nonFrontRuns, audit, push, batchMax 1), whatever the installed node carried; /7 is left alone', async t => {
   const i = await inputs(t);
   const v10 = JSON.parse(await fs.readFile(path.join(HERE, 'config', 'policy.v10.example.json'), 'utf8'));
   Object.assign(v10, { node: i.policyInput.node, nodeProfileSha256: i.policyInput.nodeProfileSha256 });
   v10.companion.userSid = i.policyInput.companion.userSid; v10.linux.distribution = i.policyInput.linux.distribution;
   const built = [];
   for (const [name, train] of [['shadow', { ...v10.train, enabled: 'shadow' }], ['on-other-tuning', { ...v10.train, enabled: 'on', nonFrontRuns: false, maintenanceEveryMs: 1_200_000 }],
-    ['off', { ...v10.train, enabled: 'off', sweep: 'gate' }]]) {
+    ['off', { ...v10.train, enabled: 'off', sweep: 'gate' }], ['push-batch', { ...v10.train, sweep: 'audit', landing: 'push', batchMax: 3 }]]) {
     const policyFile = path.join(i.root, `policy-${name}.json`), out = path.join(i.root, `pkg-${name}`);
     await fs.writeFile(policyFile, JSON.stringify({ ...v10, train }));
     await buildPackage({ out, policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record });
     built.push(JSON.parse(await fs.readFile(path.join(out, 'config', 'policy.json'), 'utf8')).train);
   }
   assert.deepEqual(built[0], { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200, slotHardCapMinutes: 120,
-    frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000, sweep: 'audit' });
-  assert.deepEqual(built[1], built[0]);
-  assert.deepEqual(built[2], built[0]);
+    frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000, sweep: 'audit', landing: 'push' });
+  for (const train of built) {
+    assert.deepEqual(train, built[0]);
+    assert.deepEqual(installedTrainLanding({ train }), { landing: 'push', batchMax: 1 });
+  }
   // a /7 policy cannot carry 'on' (POLICY_TRAIN_ON_NOT_SUPPORTED): its train goes through as it was
   const out7 = path.join(i.root, 'pkg-v7');
   await buildPackage({ out: out7, policyFile: i.policyFile, companionFile: i.companionFile, nodeExe: i.node, recordDir: i.record });
