@@ -47,7 +47,7 @@ import {compileRegisteredWorkflow,selectRegisteredProfiles,roleDefinitionDigest,
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
-import {workflowJobs} from './clued-work-admission.mjs';
+import {workflowJobs,AUTOMATION_BOT} from './clued-work-admission.mjs';
 const SOURCE='name: fake-fixture\non: fixture\njobs: fixture\n';
 const definition={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{name:'Actual tests',run:'node --test'}]}}};
 const fixtureRoles=parsed=>[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
@@ -309,4 +309,33 @@ test('large profile transport uses immutable tree and blob facts only, with ever
   const foreign=fixture();await assert.rejects(completeLargeWorkflowProfile({repository:'other/r',commit,content:foreign.content,read:foreign.read}),/WORKFLOW_PROFILE_BLOB_UNAVAILABLE/);
   const small={type:'file',path:file,sha:workflowBlob('old small'),size:9,encoding:'base64',content:Buffer.from('old small').toString('base64')};
   assert.equal(await completeLargeWorkflowProfile({content:small,read:()=>{throw Error('NO_NEW_SMALL_FILE_READ');}}),small);
+});
+
+
+test('preregistered complete G4 YAML keeps Owner, proven bot, unknown bot, fork and admission routes exclusive',()=>{
+ const bot=AUTOMATION_BOT;
+ const yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
+ const workflow=yaml.parse(parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows['.github/workflows/clued-g4-database.yml'].accepted_sources.find(source=>source.workflow_blob==='9d81933776a2646bdf0ff77f6ee2621cda551ec2').source_yaml);
+ const trusted=workflow.jobs['database-gate-trusted-self-hosted'];
+ const hosted=workflow.jobs['database-gate-untrusted-hosted'];
+ const evaluate=(job,github,needs)=>Function('github','needs','cancelled',`return (${job.if.replaceAll('needs.admission-gate',"needs['admission-gate']").replaceAll('needs.push-reuse',"needs['push-reuse']")});`)(github,needs,()=>false);
+ const expected=[
+  ['owner PR','pull_request','o','o/r',true,false,[true,false]],
+  ['qualified bot PR','pull_request',bot.login,'o/r',true,true,[true,false]],
+  ['unqualified bot PR','pull_request',bot.login,'o/r',false,false,[false,false]],
+  ['stranger proof cannot admit fork','pull_request',bot.login,'fork/r',true,true,[false,true]],
+  ['fork owner name','pull_request','o','fork/r',true,false,[false,true]],
+  ['Owner dispatch','workflow_dispatch','o','o/r',true,false,[true,false]],
+  ['unknown dispatch','workflow_dispatch','other','o/r',true,true,[false,true]],
+  ['Owner main push','push','o','o/r',true,false,[true,false]],
+  ['nonOwner push cannot borrow PR proof','push',bot.login,'o/r',true,true,[false,true]],
+  ['not admitted Owner','pull_request','o','o/r',false,false,[false,false]],
+ ];
+ for(const [label,event_name,actor,repo,admitted,proof,want]of expected){
+  const github={event_name,actor,repository_owner:'o',repository:'o/r',event:{pull_request:{head:{repo:{full_name:repo}}}}};
+  const needs={'admission-gate':{result:'success',outputs:{admitted:String(admitted),automation_self_hosted:String(proof)}},'push-reuse':{result:'skipped',outputs:{}}};
+  assert.deepEqual([evaluate(trusted,github,needs),evaluate(hosted,github,needs)],want,label);
+ }
+ assert.deepEqual(trusted['runs-on'],['self-hosted','Linux','X64','clued','pool-general','trust-internal','cap-docker-linux']);
+ assert.equal(hosted['runs-on'],'ubuntu-24.04');
 });

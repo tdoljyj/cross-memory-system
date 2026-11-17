@@ -32,7 +32,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
-    let previousClassifierBody;
+    let previousClassifierBody, previousPreviewDefinition;
     for (const name of (await fs.readdir(path.join(root, 'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort()) {
       try {
         const successor = name === '20261017142000_imprint_classifier_scan_v1.sql';
@@ -41,10 +41,31 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
           where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure`)).rows[0];
         const before = successor ? await identity() : null;
         if (successor) previousClassifierBody = (await admin.query("select prosrc from pg_proc where oid='clued_private.imprint_auto_domains_v1(text)'::regprocedure")).rows[0].prosrc;
+        const previewSuccessor = name === '20261117060000_imprint_bulk_preview_scope_cache_v1.sql';
+        const previewIdentity = async () => (await admin.query(`select oid::text,pg_get_userbyid(proowner) owner,
+          prosecdef,provolatile,proparallel,proconfig,proacl::text from pg_proc
+          where oid='clued_private.imprint_bulk_preview_v1(uuid,jsonb,integer,boolean)'::regprocedure`)).rows[0];
+        const previewBefore = previewSuccessor ? await previewIdentity() : null;
+        if (previewSuccessor) previousPreviewDefinition = (await admin.query(`select pg_get_functiondef(
+          'clued_private.imprint_bulk_preview_v1(uuid,jsonb,integer,boolean)'::regprocedure) definition`)).rows[0].definition;
         await admin.query(await fs.readFile(path.join(root, 'supabase/migrations', name), 'utf8'));
         if (successor) assert.deepEqual(await identity(), before, 'performance successor preserves function identity and privileges');
+        if (previewSuccessor) assert.deepEqual(await previewIdentity(), previewBefore, 'preview cache preserves function identity and privileges');
       }
       catch (error) { throw new Error(`Migration ${name}: ${error.message}`, { cause: error }); }
+    }
+    assert.equal(typeof previousPreviewDefinition, 'string');
+    await admin.query(previousPreviewDefinition.replace('clued_private.imprint_bulk_preview_v1(', 'clued_private.imprint_bulk_preview_baseline_test_v1('));
+    await admin.query(`revoke all on function clued_private.imprint_bulk_preview_baseline_test_v1(uuid,jsonb,integer,boolean)
+      from public,anon,authenticated,service_role`);
+    async function comparePreview(user, selection = { scope: 'all' }) {
+      for (const classify of [false, true]) for (const cursor of [0, 1, 2]) {
+        const value = (await admin.query(`select clued_private.imprint_bulk_preview_v1($1,$2,$3,$4) actual,
+          clued_private.imprint_bulk_preview_page_v1($1,$2,$3,$4,1) scheduled,
+          clued_private.imprint_bulk_preview_baseline_test_v1($1,$2,$3,$4) previous`, [user, selection, cursor, classify])).rows[0];
+        assert.deepEqual(value.actual, value.previous, JSON.stringify({ selection, cursor, classify }));
+        assert.deepEqual(value.scheduled, value.previous, JSON.stringify({ selection, cursor, classify, scheduler: true }));
+      }
     }
     const owner = uuid(), other = uuid(), project = uuid();
     await admin.query("insert into auth.users(id,email,email_confirmed_at) values($1,'bulk@example.invalid',now()),($2,'bulk-other@example.invalid',now())", [owner, other]);
@@ -105,6 +126,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
     await t.test('preview is complete, read-only, disjoint and protects manual empty choices', async () => {
       const before = (await admin.query('select count(*) n from public.clued_audit_receipts')).rows[0].n;
       plan = await preview();
+      for (const scope of ['all', 'global', 'project:' + project]) await comparePreview(owner, { scope });
       assert.equal(plan.complete, true); assert.equal(plan.authoritative, false);
       assert.equal(plan.counts.total, 5); assert.equal(plan.counts.ready, 2); assert.equal(plan.counts.protected, 2);
       assert.equal(plan.counts.needs_review, 1); assert.equal(plan.items.length, 2);
@@ -216,6 +238,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       await seed(isolated.id, { schema: null, lifecycle: null });
       const result = await preview({}, isolated.client); assert.equal(result.counts.total, 7);
       assert.equal(result.counts.ineligible, 6); assert.equal(result.counts.ready, 1);
+      await comparePreview(isolated.id);
       for (const role of ['authenticated', 'anon', 'service_role', 'clued_worker_gateway']) {
         for (const signature of ['public.clued_imprint_bulk_preview_v1(jsonb)', 'public.clued_imprint_bulk_status_v1()', 'public.clued_imprint_bulk_mutate_v1(jsonb,text)'])
           assert.equal((await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') v", [role, signature])).rows[0].v, role === 'authenticated');
@@ -230,6 +253,7 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
         let saved = (await mutate({ action: 'begin', selection: {}, digest: before.digest }, isolated.client)).supplemental.batch;
         if (undo) saved = (await mutate({ action: 'advance', batch_id: saved.batch_id, base_version: saved.version }, isolated.client)).supplemental.batch;
         await blocker(isolated.id);
+        await comparePreview(isolated.id);
         const result = await mutate({ action: undo ? 'undo' : 'advance', batch_id: saved.batch_id, base_version: saved.version }, isolated.client);
         assert.equal(result.status, 'committed');
         const item = result.supplemental.batch.items[0]; assert.equal(item.state, undo ? 'undo_conflict' : 'conflict');
@@ -266,12 +290,79 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
       assert.equal((await mutate({ action: 'begin', selection: {}, digest: complete.digest, proof: complete.proof, items: wrong }, isolated.client)).error_code, 'bulk_proposal_mismatch');
       assert.equal((await status(isolated.client)).available, false);
       await org(first.items[0].record_id, first.items[0].record_version, 0, [], isolated.client);
-      await assert.rejects(previewPage({ proof: first.proof }, isolated.client), /bulk_preview_changed/);
+      await assert.rejects(previewPage({ proof: first.proof }, isolated.client), error => error.code==='PT409' && error.message==='bulk_preview_changed');
       assert.equal((await mutate({ action: 'begin', selection: {}, digest: complete.digest, proof: complete.proof, items: complete.items }, isolated.client)).error_code, 'bulk_preview_changed');
       for (const role of ['authenticated', 'anon', 'service_role', 'clued_worker_gateway']) {
         assert.equal((await admin.query("select has_table_privilege($1,'clued_private.imprint_bulk_proof_key_v1','select,insert,update,delete') v", [role])).rows[0].v, false);
         for (const signature of ['clued_private.imprint_bulk_seal_v1(jsonb)', 'clued_private.imprint_bulk_unseal_v1(uuid,jsonb)'])
           assert.equal((await admin.query("select has_function_privilege($1,$2::regprocedure,'execute') v", [role, signature])).rows[0].v, false);
+      }
+    });
+    await t.test('public preview reports expired immutable proofs as business conflicts and preserves real serialization failures', async () => {
+      const isolated = await isolatedOwner('bulk-proof-errors');
+      await legacy('用途：我的学习', 'global', isolated.client);
+      await legacy('用途：我的学习', 'global', isolated.client);
+      const first = await previewPage({}, isolated.client);
+      const expiredPayload = { ...first.proof.payload, expires_at: '2000-01-01T00:00:00Z' };
+      const expired = (await admin.query('select clued_private.imprint_bulk_seal_v1($1) v', [expiredPayload])).rows[0].v;
+      await assert.rejects(previewPage({ proof: expired }, isolated.client), error => error.code==='PT409' && error.message==='bulk_proof_expired');
+      const original = (await admin.query(`select pg_get_functiondef('clued_private.imprint_bulk_unseal_v1(uuid,jsonb)'::regprocedure) definition`)).rows[0].definition;
+      try {
+        await admin.query(`create or replace function clued_private.imprint_bulk_unseal_v1(p_owner uuid,p_proof jsonb)
+          returns jsonb language plpgsql security definer set search_path='' as $serialization_test$
+          begin raise exception 'real_serialization_fixture' using errcode='40001'; end $serialization_test$`);
+        await assert.rejects(previewPage({ proof: first.proof }, isolated.client), error => error.code==='40001' && error.message==='real_serialization_fixture');
+      } finally { await admin.query(original); }
+      assert.equal((await status(isolated.client)).available, false, 'error handling never saves a batch');
+    });
+    await t.test('opt-in bounded pages preserve the complete signed first-100 plan and yield on a slow classifier', async () => {
+      const isolated = await isolatedOwner('bulk-bounded-pages');
+      for (let i = 0; i < 35; i++) await legacy(i % 3 ? '用途：我的学习' : '可能学习？', 'global', isolated.client);
+      const baseline = await preview({}, isolated.client);
+      for (const page_size of [0, 17, '16', null, 2.5])
+        await assert.rejects(previewPage({ page_size }, isolated.client), /bulk_selection_invalid/);
+      const original = (await admin.query(`select pg_get_functiondef('clued_private.imprint_bulk_domains_v1(text)'::regprocedure) definition`)).rows[0].definition;
+      let first;
+      try {
+        // Disposable test-only delay: verify yielding before another expensive
+        // classifier without changing the accepted source or request timeout.
+        await admin.query(`create or replace function clued_private.imprint_bulk_domains_v1(p_content text)
+          returns text[] language plpgsql immutable parallel safe set search_path='' as $slow_test$
+          begin perform pg_sleep(0.25); return clued_private.imprint_auto_domains_v1(p_content); end $slow_test$`);
+        await isolated.client.query("set statement_timeout='8s'");
+        first = await previewPage({ page_size: 16 }, isolated.client);
+        assert.ok(first.page.scanned > 0 && first.page.scanned < 16, 'slow pages yield with real progress');
+      } finally { await admin.query(original); }
+      const ids = new Set(), planned = [];
+      let value = first, cursor = 0, ready = 0, review = 0;
+      const expiry = first.proof.payload.expires_at;
+      for (;;) {
+        assert.equal(value.page.cursor, cursor);
+        assert.ok(value.page.scanned >= 1 && value.page.scanned <= 16);
+        for (const row of [...value.items, ...value.review_sample]) {
+          assert.equal(ids.has(row.record_id), false); ids.add(row.record_id);
+          assert.equal(Object.hasOwn(row, 'content'), false, 'private scan bodies never leave the helper');
+        }
+        planned.push(...value.items.map(({ title, ...row }) => row));
+        cursor += value.page.scanned; ready += value.items.length; review += value.review_sample.length;
+        assert.equal(value.proof.payload.cursor, cursor); assert.equal(value.proof.payload.ready, ready);
+        assert.equal(value.proof.payload.needs_review, review); assert.equal(value.proof.payload.expires_at, expiry);
+        assert.equal(value.digest, baseline.digest);
+        if (value.page.complete) { assert.equal(value.page.next_cursor, null); break; }
+        assert.equal(value.page.next_cursor, cursor);
+        value = await previewPage({ proof: value.proof, page_size: 16 }, isolated.client);
+      }
+      assert.equal(cursor, 35); assert.equal(ids.size, 35);
+      assert.equal(ready, baseline.counts.ready); assert.equal(review, baseline.counts.needs_review);
+      assert.deepEqual(planned, baseline.items.map(({ title, ...row }) => row));
+      assert.deepEqual(value.proof.payload.items, planned);
+      assert.equal((await status(isolated.client)).available, false, 'complete preview saves no batch or labels');
+      for (const name of ['imprint_bulk_preview_inventory_v1', 'imprint_bulk_preview_page_v1']) {
+        const signature = 'clued_private.' + name + '(uuid,jsonb,integer,boolean,integer)';
+        assert.equal((await admin.query('select provolatile from pg_proc where oid=$1::regprocedure', [signature])).rows[0].provolatile,
+          name === 'imprint_bulk_preview_inventory_v1' ? 's' : 'v', 'timing must not alter the stable inventory snapshot contract');
+        for (const role of ['authenticated', 'anon', 'service_role', 'clued_worker_gateway'])
+          assert.equal((await admin.query('select has_function_privilege($1,$2::regprocedure,\'execute\') v', [role, signature])).rows[0].v, false);
       }
     });
     await t.test('cached classification preserves prior outputs for quotes, fences, uncertain lines and all existing rule forms', async () => {
@@ -404,6 +495,13 @@ test('bounded Native first batch: preview, eligibility fences, durable receipts 
         assert.equal(next.page.cursor, 1); assert.equal(next.page.scanned, 1);
         console.log('NATIVE_SHORT_LINES_4000', JSON.stringify({ label, characters: [...text].length,
           two_pages_ms: Math.round(performance.now() - start) }));
+        const boundedStart = performance.now(), bounded = await previewPage({ page_size: 16 }, isolated.client);
+        assert.ok(bounded.page.scanned >= 1 && bounded.page.scanned <= 16);
+        assert.equal(bounded.inventory_counts.total, 4000);
+        assert.deepEqual(bounded.items[0]?.domains ?? [], expected);
+        assert.equal(bounded.proof.payload.cursor, bounded.page.scanned);
+        console.log('NATIVE_BOUNDED_PAGE_4000', JSON.stringify({ label, scanned: bounded.page.scanned,
+          page_ms: Math.round(performance.now() - boundedStart) }));
       }
       assert.equal((await status(isolated.client)).available, false, 'large rehearsal has zero saved batches or label writes');
     });
