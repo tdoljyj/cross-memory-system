@@ -37,6 +37,10 @@
 // an unknown age is "not known": nothing is asked, the head is read again later. The same receipt (kind redispatch) makes it once per
 // head whatever the outcome, and the PR page says what came of it. The workflow and the installed runner hook independently bind
 // this recovery to the current open PR/head and preserve the ordinary identity, workflow and Native admission gates.
+// Bot-pushed heads can have an admitted gate but entirely skipped heavy jobs.
+// Recover those through the same one-shot dispatch receipt, after checking all
+// runs and attempts. A terminal refusal with no execution is visible and told
+// to the Owner once, instead of retaining a silent final verdict.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
@@ -49,6 +53,7 @@ export const RERUN_STATE_CONTRACT = 'clued.independent-ci.admission-rerun-state/
 // minutes of the push: the poller's minute, then this lane's).
 export const LOST_RUN_AFTER_MS = 5 * 60_000;
 export const REDISPATCH_KIND = 'redispatch';
+const STUCK_KIND = 'stuck';
 // A pull request's branch name as it goes into the dispatch's argv: no '..', no leading or trailing '/', nothing else.
 const BRANCH_REF = /^(?!.*\.\.)(?!\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
 export const REQUIRED_TESTS_WORKFLOW = 'clued-required-tests.yml';
@@ -80,7 +85,7 @@ const plainObject = v => v !== null && typeof v === 'object' && Object.getProtot
 function validState(v) {
   if (!plainObject(v) || Object.keys(v).sort().join('|') !== 'contract|heads|records' || v.contract !== RERUN_STATE_CONTRACT || !plainObject(v.heads) || !plainObject(v.records)) return false;
   for (const [k, h] of Object.entries(v.heads)) if (!HEX40.test(k) || !plainObject(h) || !Number.isFinite(Date.parse(h.firstSeen))) return false;
-  for (const [k, r] of Object.entries(v.records)) if (!HEX40.test(k) || !plainObject(r) || r.headSha !== k || !RERUN_OUTCOMES.includes(r.outcome) || !Number.isFinite(Date.parse(r.at)) || ![undefined, REDISPATCH_KIND].includes(r.kind)) return false;
+  for (const [k, r] of Object.entries(v.records)) if (!HEX40.test(k) || !plainObject(r) || r.headSha !== k || !RERUN_OUTCOMES.includes(r.outcome) || !Number.isFinite(Date.parse(r.at)) || ![undefined, REDISPATCH_KIND, STUCK_KIND].includes(r.kind)) return false;
   return true;
 }
 const positive = v => Number.isSafeInteger(v) && v > 0;
@@ -125,12 +130,21 @@ export function ghPort({ ghExe, repo, run }) {
     // Every page of a list route (key: the array's field, or null for a bare array).
     async paged(route, key = null) {
       const out = [];
+      let total = null;
       for (let page = 1; page <= MAX_PAGES; page++) {
         const reply = await get(`${route}${route.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
         const items = key === null ? reply : reply?.[key];
         if (!Array.isArray(items) || items.length > 100) unreadable(`${route} is not a list`);
+        if (key !== null) {
+          if (!Number.isSafeInteger(reply.total_count) || reply.total_count < 0 || (total !== null && total !== reply.total_count))
+            unreadable(`${route} has an incomplete or changed count`);
+          total = reply.total_count;
+        }
         out.push(...items);
-        if (items.length < 100) return out;
+        if (items.length < 100) {
+          if (total !== null && out.length !== total) unreadable(`${route} is truncated`);
+          return out;
+        }
       }
       return unreadable(`${route} has more than ${MAX_PAGES} pages`);
     },
@@ -219,7 +233,8 @@ export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = 
     const listRuns = async () => {
       const body = await gh.get(runsRoute);
       const runs = body?.workflow_runs;
-      if (!Array.isArray(runs) || body.total_count !== runs.length || runs.length > 100 || runs.some(r => !r || !positive(r.id) || !positive(r.run_attempt) || typeof r.status !== 'string')) unreadable('the required-tests runs are incomplete');
+      if (!Array.isArray(runs) || body.total_count !== runs.length || runs.length > 100 || new Set(runs.map(r => r?.id)).size !== runs.length
+        || runs.some(r => !r || !positive(r.id) || !positive(r.run_attempt) || typeof r.status !== 'string')) unreadable('the required-tests runs are incomplete');
       return runs;
     };
     const runs = await listRuns();
@@ -238,12 +253,50 @@ export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = 
     if (ofPr.length === 0) return say('skip', `#${pr.number} has no ${REQUIRED_TESTS_WORKFLOW} run on this head`);
     const newest = ofPr.reduce((a, b) => (b.id > a.id ? b : a));
     Object.assign(out, { runId: newest.id, attempt: newest.run_attempt });
-    if (ofHead.some(r => r.status !== 'completed')) return say('skip', 'an attempt is queued or running');
+    if (runs.some(r => r.status !== 'completed')) return say('skip', 'an attempt is queued or running');
+    // Inspect every attempt of every event, including a previous dispatch. A
+    // missing job inventory is unknown, never proof that nothing executed.
+    const jobsByRun = new Map();
+    let allSkipped = true, latestGate = null;
+    for (const r of runs) {
+      if (r.head_sha !== headSha || r.run_attempt > 100) unreadable(`run ${r.id} has an invalid head or attempt`);
+      const all = [];
+      for (let n = 1; n <= r.run_attempt; n += 1) {
+        const jobs = await gh.paged(`/actions/runs/${r.id}/attempts/${n}/jobs`, 'jobs');
+        if (jobs.some(j => !j || typeof j !== 'object' || j.head_sha !== headSha)
+          || jobs.filter(j => j.name === GATE_JOB_NAME).length !== 1 || !jobs.some(j => j.name !== GATE_JOB_NAME))
+          unreadable(`attempt ${n} of run ${r.id} has an incomplete job inventory`);
+        if (jobs.some(j => j.status !== 'completed')) unreadable(`attempt ${n} of run ${r.id} still has unfinished jobs`);
+        if (jobs.some(j => j.name !== GATE_JOB_NAME && j.conclusion !== 'skipped')) allSkipped = false;
+        if (r.id === newest.id && n === r.run_attempt) latestGate = jobs.find(j => j.name === GATE_JOB_NAME);
+        all.push(...jobs);
+      }
+      jobsByRun.set(r.id, all);
+    }
+    out.neverRan = allSkipped;
+    if (allSkipped && runs.some(r => r.event !== 'pull_request')) return say('final', 'a previous dispatch or non-PR run already exists');
+    let skippedByActor = newest.actor?.type === 'Bot';
+    if (allSkipped && !skippedByActor && positive(latestGate?.id)) {
+      const log = await gh.text(`/actions/jobs/${latestGate.id}/logs`);
+      skippedByActor = /"verdict"\s*:\s*"ADMITTED"/.test(log) && /"automation_self_hosted"\s*:\s*false/.test(log);
+    }
+    if (allSkipped && skippedByActor) {
+      const now = await gh.get(`/pulls/${pr.number}`);
+      if (!now || now.state !== 'open' || now.head?.sha !== headSha || now.base?.ref !== defaultBranch
+        || now.base?.repo?.full_name !== gh.repo || now.head?.repo?.full_name !== gh.repo || !BRANCH_REF.test(now.head?.ref ?? ''))
+        return say('skip', `#${pr.number} is no longer open on this head`);
+      const again = await listRuns();
+      if (again.length !== runs.length || again.some(r => !runs.some(old => old.id === r.id && old.head_sha === r.head_sha
+        && old.event === r.event && old.status === r.status && old.run_attempt === r.run_attempt)))
+        return say('skip', 'the required-tests runs changed since they were read');
+      out.ref = now.head.ref;
+      out.skipped = true;
+      return say('redispatch', 'required tests were skipped for a non-Owner actor');
+    }
     // 3. No heavy job of this head ever ran in another run (the newest run's own attempts are judged by step 4, which also allows the one
     // environment failure).
-    for (const r of ofHead.filter(x => x.id !== newest.id)) {
-      const jobs = await gh.paged(`/actions/runs/${r.id}/jobs?filter=all`, 'jobs');
-      if (jobs.some(j => !j || typeof j !== 'object' || j.head_sha !== headSha)) unreadable(`the jobs of run ${r.id} are malformed`);
+    for (const r of runs.filter(x => x.id !== newest.id)) {
+      const jobs = jobsByRun.get(r.id);
       if (jobs.some(j => j.name !== GATE_JOB_NAME && !(j.status === 'completed' && j.conclusion === 'skipped'))) return say('final', `run ${r.id} already ran its heavy jobs`);
     }
     // 4. The gate's own repair rule for the attempt this would start.
@@ -311,10 +364,14 @@ export class AdmissionRerunner {
   //   requests, notify(key, title, body) (a toast for the Owner) }
   constructor(ports) { Object.assign(this, ports); }
   // Whether this lane asked for a re-run of the head and GitHub accepted it.
-  done(headSha) { const r = this.state.record(headSha); return r?.outcome === 'sent' && r.kind !== REDISPATCH_KIND; }
+  done(headSha) { const r = this.state.record(headSha); return r?.outcome === 'sent' && !r.kind; }
   // What the PR page says of this head (pr-status.mjs#withRerunLine): a re-run GitHub accepted, or what came of a lost run's dispatch.
   line(headSha) {
     const r = this.state.record(headSha);
+    if (r?.kind === STUCK_KIND || (r?.skipped && ['unsent', 'refused'].includes(r.outcome)))
+      return `必需测试被跳过且不能自动补跑：${r.why}，请推新提交或手动 Run workflow`;
+    if (r?.kind === REDISPATCH_KIND && r.skipped) return r.outcome === 'sent'
+      ? '必需测试被跳过（推送者非 Owner），已自动补发一次' : '必需测试被跳过，自动补发结果不确定';
     if (r?.kind === REDISPATCH_KIND) return r.outcome === 'sent' ? '必需测试没有运行，已自动补发一次' : ['intent', 'unknown'].includes(r.outcome) ? '必需测试没有运行，自动补发结果不确定' : '必需测试没有运行，自动补发未成功';
     return this.done(headSha) ? '已自动补跑一次必需测试' : null;
   }
@@ -373,6 +430,9 @@ export class AdmissionRerunner {
       if (this.state.record(headSha)) continue; // asked once already, whatever came of it
       if (!this.state.data.heads[headSha]) { this.state.data.heads[headSha] = { firstSeen: new Date(now).toISOString(), lastCandidateAt: new Date(now).toISOString(), lookedAt: null, final: null }; changed = true; }
       const seen = this.state.data.heads[headSha];
+      // Old versions stored silent final verdicts without looking for skipped
+      // execution. Reconcile those once; retain the original watch window.
+      if (seen.final && !seen.skippedRecoveryChecked) { seen.final = null; changed = true; }
       if (seen.final || now - Date.parse(seen.firstSeen) > HEAD_WATCH_MS) continue;
       if (seen.lookedAt && now - Date.parse(seen.lookedAt) < HEAD_RECHECK_MS) continue;
       if (looked >= HEADS_PER_STEP) break;
@@ -380,12 +440,25 @@ export class AdmissionRerunner {
       changed = true;
       seen.lookedAt = new Date(now).toISOString();
       const d = await decide({ gh: this.gh, headSha, headAgeMs: now - Date.parse(seen.firstSeen) });
-      if (d.action === 'final') seen.final = d.reason;
+      if (d.action === 'final') {
+        seen.final = d.reason;
+        seen.skippedRecoveryChecked = true;
+        if (d.neverRan) {
+          this.state.data.records[headSha] = { contract: RERUN_RECORD_CONTRACT, kind: STUCK_KIND, pr: d.pr ?? pr, headSha,
+            runId: d.runId, attempt: d.attempt, outcome: 'refused', at: new Date(now).toISOString(), why: d.reason };
+          try { await this.state.save(); } catch {
+            delete this.state.data.records[headSha]; seen.final = null; this.unsaved = true;
+            return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' };
+          }
+          try { await this.notify(`admission-rerun:${headSha}`, `PR #${d.pr ?? pr}：${this.line(headSha)}`, d.reason); } catch { /* a toast only */ }
+        }
+      }
       if (d.action !== 'rerun' && d.action !== 'redispatch') continue;
       const lost = d.action === 'redispatch';
       // The receipt first, on disk, then the one request. A crash or a lost answer in between leaves the intent: never sent again.
       const record = lost ? { contract: RERUN_RECORD_CONTRACT, kind: REDISPATCH_KIND, pr: d.pr ?? pr, headSha, runId: null, attempt: null, outcome: 'intent', at: new Date(now).toISOString(), why: null }
         : { contract: RERUN_RECORD_CONTRACT, pr: d.pr ?? pr, headSha, runId: d.runId, attempt: d.attempt + 1, outcome: 'intent', at: new Date(now).toISOString(), why: null };
+      if (d.skipped) record.skipped = true;
       this.state.data.records[headSha] = record;
       // No receipt, no request; this step's earlier changes stay to be written at the next step (review round 30, NIT 1).
       try { await this.state.save(); } catch { delete this.state.data.records[headSha]; this.unsaved = true; return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' }; }
@@ -396,7 +469,8 @@ export class AdmissionRerunner {
       // (review round 29, NIT 3).
       try { await this.state.save(); changed = false; } catch { changed = true; this.unsaved = true; }
       acted += 1;
-      const text = lost ? {
+      const text = lost && d.skipped ? [`PR #${record.pr}：${this.line(headSha)}`, record.why ?? `已在分支 ${d.ref} 上点了一次“Run workflow”。`]
+        : lost ? {
         sent: [`PR #${record.pr}：必需测试没有运行，已自动补发一次`, `推送 ${LOST_RUN_AFTER_MS / 60_000} 分钟后 GitHub 仍没有创建 ${REQUIRED_TESTS_WORKFLOW} 的运行，已在分支 ${d.ref} 上点了一次“Run workflow”。`],
         unsent: [`PR #${record.pr}：必需测试没有运行，自动补发没有发出`, `${record.why}，请求没有到 GitHub。不会再自动补发；请推一个新提交。`],
         refused: [`PR #${record.pr}：必需测试没有运行，自动补发被 GitHub 拒绝`, `${record.why}。不会再自动补发；请先核对工作流入口和权限。`],

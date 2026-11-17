@@ -422,9 +422,9 @@
 
     "scripts/ci/clued-standard-runner-actor-sources.json": "40c246c854ef965e5c2922e0ecb0de55e31110cf33eb93bcd4bc12416a8274d5",
 
-    "scripts/ci/clued-work-admission.mjs": "1688e4787b5d824eb22da295e1bdf383c2240b6d842c2786f80547e6c5a377f6",
+    "scripts/ci/clued-work-admission.mjs": "864032d1dd2bebe62f4d875f965b8243d0b24187d7b3f7a7cdbb11a962002d07",
 
-    "scripts/ci/clued-work-admission.test.mjs": "e0c6087597e65802e9e4bd463c1f668537efcff680146409a6c8127590a1deb4",
+    "scripts/ci/clued-work-admission.test.mjs": "41ddfdd53e0226506348af4cc8ce57996738d92d8352daa72d0dc6c369a800e3",
 
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
 
@@ -520,7 +520,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "d43656fa5c9781f651b1f37ec285b5ca434b5309fbd19f38863805ef315aba7d",
+    "scripts/ci/merge-admission-r9-source.json": "72e324c6f901520fba790e923c5bac4d4488947a0cabee09c8082b0a020f10d0",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 
