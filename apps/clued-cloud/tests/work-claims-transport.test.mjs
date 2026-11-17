@@ -122,7 +122,7 @@ test('work claim tools are advertised only behind CLUED_WORK_CLAIMS_V1, with the
     assert.equal(byName[name].inputSchema.properties.lease_key, undefined, name);
   }
   assert.equal(verifySchema.properties.lease_key.pattern,'^clued_lk_[0-9a-f]{64}$');
-  for(const branch of verifySchema.anyOf.slice(0,2)) assert.equal(branch.properties.lease_key,undefined);
+  for(const branch of verifySchema.anyOf.slice(0,2)) assert.equal(branch.properties.lease_key,false);
   assert.ok(byName.clued_work_renew.inputSchema.properties.holder_session_ref);
   // The self-reported holder label (migration 20261005200000) on claim, takeover and renew.
   for (const name of ['clued_work_claim', 'clued_work_takeover', 'clued_work_renew']) {
@@ -163,9 +163,9 @@ test('verify schema keeps complete Host properties and closed normal/resolve/edi
   assert.equal(schema.properties.scope.default,undefined);assert.equal(resolve.properties.scope.default,undefined);
   assert.equal(edit.properties.scope.default,undefined,'editing always requires the actual explicit Task scope');
   assert.equal(normal.properties.scope.default,'global','legacy normal verification keeps its original context semantics');
-  assert.equal(resolve.properties.claim_id,undefined);assert.equal(resolve.properties.changed_paths,undefined);
-  assert.equal(resolve.properties.mechanical_paths_proven,undefined);
-  assert.equal(resolve.properties.mechanical_policy,undefined);
+  assert.equal(resolve.properties.claim_id,false);assert.equal(resolve.properties.changed_paths,false);
+  assert.equal(resolve.properties.mechanical_paths_proven,false);
+  assert.equal(resolve.properties.mechanical_policy,false);
   const published={text:'{}',sha256:'a'.repeat(64),base_sha:'b'.repeat(40),base_committed_at:'2026-11-12T00:00:00Z'};
   assert.equal(validate({...normalInput,mechanical_policy:published}),true,'CI admission publishes the trusted list on normal verification');
   assert.equal(validate({...normalInput,mechanical_policy:{...published,extra:true}}),false);
@@ -194,6 +194,39 @@ test('verify schema keeps complete Host properties and closed normal/resolve/edi
   const hasMechanical=Object.hasOwn(normal.properties,'mechanical_paths_proven');
   assert.equal(validate(mechanical),hasMechanical,'only the mechanical successor advertises normal-only proof');
   if(hasMechanical) assert.deepEqual(schema.properties.mechanical_paths_proven,normal.properties.mechanical_paths_proven);
+});
+
+test('Host destructive projection preserves all verify command inputs and cannot downgrade edit authority',async()=>{
+  const worker=await loadContinuityWorker();
+  const tools=(await (await worker.fetch(list(bindingToken),enabled,ctx)).json()).result.tools;
+  const schema=tools.find(tool=>tool.name==='clued_work_verify').inputSchema;
+  const Ajv=require('ajv');
+  const editing={action:'verify_edit',scope:'project:55555555-5555-4555-8555-555555555555',
+    claim_id:'22222222-2222-4222-8222-222222222222',fence:2,execution_epoch:3,lease_version:4,
+    changed_paths:['source/file.mjs'],lease_key:'clued_lk_'+'e'.repeat(64)};
+  const lookup={action:'resolve_pr_claim',pr_ref:'owner/repository#12',head_sha:'a'.repeat(40),base_sha:'b'.repeat(40),target_branch:'main'};
+  for(const removeAdditional of [true,'all']){
+    const validate=new Ajv({allErrors:true,useDefaults:true,removeAdditional,
+      formats:{uuid:/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i}}).compile(schema);
+    for(const input of [editing,{...editing,changed_paths:[]},lookup,{...lookup,read_only:true},
+      {claim_id:editing.claim_id,changed_paths:['source/file.mjs']}]){
+      const actual=structuredClone(input);
+      assert.equal(validate(actual),true,JSON.stringify(validate.errors));
+      assert.deepEqual(actual,input,'trying earlier alternatives must not delete another command fields');
+    }
+    for(const key of ['scope','claim_id','fence','execution_epoch','lease_version','changed_paths','lease_key']){
+      const input={...editing};delete input[key];
+      assert.equal(validate(input),false,'missing edit '+key);
+      assert.equal(input.action,'verify_edit','failed editing retains its discriminator');
+      assert.equal(validate(input),false,'revalidation must not admit failed editing as normal verify');
+    }
+    for(const extra of [{pr_ref:lookup.pr_ref},{read_only:true},{mechanical_paths_proven:[]},
+      {fence:0},{execution_epoch:0},{lease_version:0},{lease_key:'invalid'}]){
+      const input={...editing,...extra};
+      assert.equal(validate(input),false,JSON.stringify(extra));
+      assert.equal(input.action,'verify_edit');assert.equal(validate(input),false);
+    }
+  }
 });
 
 test('terminal admission removed: no renew command advertises or accepts terminal_release_ready',async()=>{
