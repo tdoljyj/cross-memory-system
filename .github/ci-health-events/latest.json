@@ -1,10 +1,10 @@
 {
   "schema": "clued.ci-health-report/v1",
   "repository": "tdoljyj/cross-memory-system",
-  "observed_at": "2026-11-17T06:27:10.305073Z",
+  "observed_at": "2026-11-17T12:24:30.479940Z",
   "status": "ANOMALY",
   "notify_model": true,
-  "fingerprint": "e80e3d705e8307a3b000c8b823c0ed758d43f6f6de477357e6945ee1edcbf742",
+  "fingerprint": "bd61acf45dc3f6b39e58d939e303a3075e29ddd8397e88e2fd65ca4964474ffb",
   "thresholds": {
     "startup_delay_seconds": 300,
     "minimum_repeats": 2,
@@ -22,10 +22,10 @@
         "occupation_evidence": "sampled_jobs_only",
         "threshold_seconds": 300,
         "minimum_repeats": 2,
-        "occurrences": 4,
+        "occurrences": 9,
         "wait_causes": {
-          "runner_idle_while_work_queued": 2,
-          "unexplained": 2
+          "runner_occupied": 2,
+          "unexplained": 7
         },
         "jobs": [
           {
@@ -61,28 +61,13 @@
             "started_at": "2026-11-17T06:04:57Z",
             "delay_seconds": 1010,
             "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 1010,
-            "queued_eligible_jobs": [
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
               {
-                "job_id": 133851124958,
-                "name": "migration-verify",
-                "overlap_seconds": 570
-              },
-              {
-                "job_id": 133851125015,
-                "name": "clued-cloud-tests",
-                "overlap_seconds": 570
-              },
-              {
-                "job_id": 133848211565,
-                "name": "admission-gate",
-                "overlap_seconds": 418
-              },
-              {
-                "job_id": 133850824414,
-                "name": "admission-gate",
-                "overlap_seconds": 344
+                "job_id": 133847122677,
+                "run_id": 44026187949,
+                "name": "migration-verify"
               }
             ]
           },
@@ -95,15 +80,75 @@
             "started_at": "2026-11-17T05:55:32Z",
             "delay_seconds": 445,
             "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 445,
-            "queued_eligible_jobs": [
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
               {
-                "job_id": 133848211565,
-                "name": "admission-gate",
-                "overlap_seconds": 418
+                "job_id": 133847122640,
+                "run_id": 44026187949,
+                "name": "clued-cloud-tests"
               }
             ]
+          },
+          {
+            "job_id": "133885100124",
+            "run_id": 44037890625,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-17T07:20:08Z",
+            "started_at": "2026-11-17T07:27:09Z",
+            "delay_seconds": 421,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 421
+          },
+          {
+            "job_id": "133885100448",
+            "run_id": 44037890625,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-17T07:20:08Z",
+            "started_at": "2026-11-17T07:27:09Z",
+            "delay_seconds": 421,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 421
+          },
+          {
+            "job_id": "133924734358",
+            "run_id": 44049881977,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-17T08:48:29Z",
+            "started_at": "2026-11-17T08:55:38Z",
+            "delay_seconds": 429,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 429
+          },
+          {
+            "job_id": "133955438670",
+            "run_id": 44058942907,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-17T09:48:26Z",
+            "started_at": "2026-11-17T09:58:59Z",
+            "delay_seconds": 633,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 633
+          },
+          {
+            "job_id": "133980137797",
+            "run_id": 44066122501,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-17T10:34:46Z",
+            "started_at": "2026-11-17T10:44:01Z",
+            "delay_seconds": 555,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 555
           }
         ]
       }
@@ -119,9 +164,10 @@
         "occupation_evidence": "sampled_jobs_only",
         "threshold_seconds": 300,
         "minimum_repeats": 2,
-        "occurrences": 2,
+        "occurrences": 4,
         "wait_causes": {
-          "unexplained": 2
+          "runner_occupied": 1,
+          "unexplained": 3
         },
         "jobs": [
           {
@@ -145,58 +191,39 @@
             "started_at": "2026-11-17T05:57:58Z",
             "delay_seconds": 591,
             "kind": "started",
-            "wait_cause": "unexplained",
-            "idle_seconds": 591
-          }
-        ]
-      }
-    },
-    {
-      "code": "RUNNER_IDLE_WHILE_WORK_QUEUED",
-      "key": "runner:clued-ci-company-linux-01:idle-while-work-queued",
-      "message": "No collected job explains clued-ci-company-linux-01's wait while at least 2 eligible jobs queued; online/idleness and the cause remain unverified.",
-      "details": {
-        "runner": "clued-ci-company-linux-01",
-        "severity": "warning",
-        "occupation_evidence": "sampled_jobs_only",
-        "pool": "linux-docker-wsl2-v1",
-        "threshold_seconds": 300,
-        "minimum_repeats": 2,
-        "queued_eligible_job_count": 4,
-        "probes": [
-          {
-            "job_id": "133848386546",
-            "run_id": 44026619317,
-            "name": "runner-heartbeat / clued-ci-company-linux-01",
-            "runner_name": "clued-ci-company-linux-01",
-            "created_at": "2026-11-17T05:48:07Z",
-            "started_at": "2026-11-17T06:04:57Z",
-            "delay_seconds": 1010,
-            "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 1010,
-            "queued_eligible_jobs": [
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
               {
-                "job_id": 133851124958,
-                "name": "migration-verify",
-                "overlap_seconds": 570
-              },
-              {
-                "job_id": 133851125015,
-                "name": "clued-cloud-tests",
-                "overlap_seconds": 570
-              },
-              {
-                "job_id": 133848211565,
-                "name": "admission-gate",
-                "overlap_seconds": 418
-              },
-              {
-                "job_id": 133850824414,
-                "name": "admission-gate",
-                "overlap_seconds": 344
+                "job_id": 133847111294,
+                "run_id": 44026187965,
+                "name": "ci-suites-windows"
               }
             ]
+          },
+          {
+            "job_id": "133891112383",
+            "run_id": 44039733037,
+            "name": "runner-heartbeat / clued-ci-company-win-01",
+            "runner_name": "clued-ci-company-win-01",
+            "created_at": "2026-11-17T07:34:17Z",
+            "started_at": "2026-11-17T07:41:37Z",
+            "delay_seconds": 440,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 440
+          },
+          {
+            "job_id": "133940806827",
+            "run_id": 44054663430,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-17T09:20:22Z",
+            "started_at": "2026-11-17T09:26:47Z",
+            "delay_seconds": 385,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 385
           }
         ]
       }
@@ -222,7 +249,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-17T06:14:17Z",
+          "last_verified_at": "2026-11-17T12:11:52Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -240,7 +267,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-17T06:14:17Z",
+          "last_verified_at": "2026-11-17T12:11:52Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -293,7 +320,7 @@
             "site-company",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-17T06:14:17Z",
+          "last_verified_at": "2026-11-17T12:11:52Z",
           "slow_queued_probes": [],
           "state": "routable"
         },
@@ -310,7 +337,7 @@
             "site-home",
             "trust-internal"
           ],
-          "last_verified_at": "2026-11-17T06:14:17Z",
+          "last_verified_at": "2026-11-17T12:11:52Z",
           "slow_queued_probes": [],
           "state": "routable"
         }
@@ -356,28 +383,13 @@
             "started_at": "2026-11-17T06:04:57Z",
             "delay_seconds": 1010,
             "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 1010,
-            "queued_eligible_jobs": [
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
               {
-                "job_id": 133851124958,
-                "name": "migration-verify",
-                "overlap_seconds": 570
-              },
-              {
-                "job_id": 133851125015,
-                "name": "clued-cloud-tests",
-                "overlap_seconds": 570
-              },
-              {
-                "job_id": 133848211565,
-                "name": "admission-gate",
-                "overlap_seconds": 418
-              },
-              {
-                "job_id": 133850824414,
-                "name": "admission-gate",
-                "overlap_seconds": 344
+                "job_id": 133847122677,
+                "run_id": 44026187949,
+                "name": "migration-verify"
               }
             ]
           },
@@ -390,15 +402,75 @@
             "started_at": "2026-11-17T05:55:32Z",
             "delay_seconds": 445,
             "kind": "started",
-            "wait_cause": "runner_idle_while_work_queued",
-            "idle_seconds": 445,
-            "queued_eligible_jobs": [
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
               {
-                "job_id": 133848211565,
-                "name": "admission-gate",
-                "overlap_seconds": 418
+                "job_id": 133847122640,
+                "run_id": 44026187949,
+                "name": "clued-cloud-tests"
               }
             ]
+          },
+          {
+            "job_id": "133885100124",
+            "run_id": 44037890625,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-17T07:20:08Z",
+            "started_at": "2026-11-17T07:27:09Z",
+            "delay_seconds": 421,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 421
+          },
+          {
+            "job_id": "133885100448",
+            "run_id": 44037890625,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-17T07:20:08Z",
+            "started_at": "2026-11-17T07:27:09Z",
+            "delay_seconds": 421,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 421
+          },
+          {
+            "job_id": "133924734358",
+            "run_id": 44049881977,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-17T08:48:29Z",
+            "started_at": "2026-11-17T08:55:38Z",
+            "delay_seconds": 429,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 429
+          },
+          {
+            "job_id": "133955438670",
+            "run_id": 44058942907,
+            "name": "runner-heartbeat / clued-ci-company-linux-02",
+            "runner_name": "clued-ci-company-linux-02",
+            "created_at": "2026-11-17T09:48:26Z",
+            "started_at": "2026-11-17T09:58:59Z",
+            "delay_seconds": 633,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 633
+          },
+          {
+            "job_id": "133980137797",
+            "run_id": 44066122501,
+            "name": "runner-heartbeat / clued-ci-company-linux-01",
+            "runner_name": "clued-ci-company-linux-01",
+            "created_at": "2026-11-17T10:34:46Z",
+            "started_at": "2026-11-17T10:44:01Z",
+            "delay_seconds": 555,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 555
           }
         ],
         "windows-general-v1": [
@@ -423,8 +495,39 @@
             "started_at": "2026-11-17T05:57:58Z",
             "delay_seconds": 591,
             "kind": "started",
+            "wait_cause": "runner_occupied",
+            "idle_seconds": 4,
+            "occupied_by": [
+              {
+                "job_id": 133847111294,
+                "run_id": 44026187965,
+                "name": "ci-suites-windows"
+              }
+            ]
+          },
+          {
+            "job_id": "133891112383",
+            "run_id": 44039733037,
+            "name": "runner-heartbeat / clued-ci-company-win-01",
+            "runner_name": "clued-ci-company-win-01",
+            "created_at": "2026-11-17T07:34:17Z",
+            "started_at": "2026-11-17T07:41:37Z",
+            "delay_seconds": 440,
+            "kind": "started",
             "wait_cause": "unexplained",
-            "idle_seconds": 591
+            "idle_seconds": 440
+          },
+          {
+            "job_id": "133940806827",
+            "run_id": 44054663430,
+            "name": "runner-heartbeat / clued-ci-home-win-01",
+            "runner_name": "clued-ci-home-win-01",
+            "created_at": "2026-11-17T09:20:22Z",
+            "started_at": "2026-11-17T09:26:47Z",
+            "delay_seconds": 385,
+            "kind": "started",
+            "wait_cause": "unexplained",
+            "idle_seconds": 385
           }
         ]
       }
