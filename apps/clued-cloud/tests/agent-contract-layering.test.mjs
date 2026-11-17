@@ -17,6 +17,7 @@ const prTaskBinding = JSON.parse(await readFile(new URL('./fixtures/agent-contra
 const terminalRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v56-v57-map.json', import.meta.url), 'utf8'));
 const leasePin = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v57-v58-map.json', import.meta.url), 'utf8'));
 const prEndRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v58-v59-map.json', import.meta.url), 'utf8'));
+const holderPreflight = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v59-v60-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -25,9 +26,39 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // metadata correction, the v53 display-name changes, the v54 resident CI queue assist,
 // the v55 queue participation and explicit holder removal, and the v56 Native
 // PR/Task identity successor, the v57 holder-edit/terminal successor, then the v58 lease pin by authorize_head, and the v59 PR-end release that
-// replaces holder readiness and terminal admission. Undo only these declared
+// replaces holder readiness and terminal admission. The v60 successor corrects
+// only the existing A.4 holder preflight and its retired readiness wording.
+// Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v59Source() {
+  assert.equal(holderPreflight.schema,'clued.agent-contract-holder-preflight-successor/1');
+  assert.equal(holderPreflight.source_version,59);assert.equal(holderPreflight.target_version,60);
+  assert.deepEqual(holderPreflight.edits.map(row=>row.id),['version','holder-preflight']);
+  assert.deepEqual(holderPreflight.edits[0],{id:'version',before:'Contract version: 59',after:'Contract version: 60'});
+  assert.equal(sha256(source),holderPreflight.target_document_normalized_sha256);
+  const edit=holderPreflight.edits[1];
+  for(const text of [edit.before,edit.after]) {
+    assert.ok(text.startsWith('  Before a repository edit, derive its concrete literal targets'));
+    assert.equal(/(?:^|\n)(?:### |<a id=)/.test(text),false,'the edit cannot consume another section');
+  }
+  assert.equal(edit.after.split('For widening,')[0],edit.before.split('For widening,')[0],
+    'the original scope, holder, key, CAS and coverage rules remain exact');
+  const suffix='Preserve other PRs, planned paths and trigger resources; do not invent progress or replace the Task/claim after a refusal.';
+  assert.ok(edit.before.endsWith(suffix));assert.ok(edit.after.endsWith(suffix));
+  assert.ok(edit.after.includes('An empty list is only a holder preflight: it grants no file-path authority.'));
+  assert.ok(edit.after.includes('nonempty concrete changed-path list and require `holder_edit_authorized: true` before writing.'));
+  assert.equal(/fresh readiness false|Covered targets with false readiness|Unknown readiness/.test(source),false,
+    'retired readiness cannot remain a live editing requirement');
+  let restored=source;
+  for(const {id,before,after} of [...holderPreflight.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact holder-preflight successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),holderPreflight.source_document_normalized_sha256);
+  return restored;
+}
 function v58Source() {
+  const source=v59Source();
   assert.equal(prEndRelease.schema,'clued.agent-contract-pr-end-release-successor/1');
   assert.equal(prEndRelease.source_version,58);assert.equal(prEndRelease.target_version,59);
   assert.deepEqual(prEndRelease.edits.map(row=>row.id),['version','no-holder-readiness','pr-end-release']);
@@ -255,7 +286,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v58 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v60 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);

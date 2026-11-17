@@ -137,7 +137,7 @@ const PARKED_TEXT = Object.freeze({ REQUIRED_CHECK_FAILED: '必需检查失败�
   STRICT_OFF_WITHOUT_TRAIN: '已测通：main 的 strict 已关而列车未开，暂不发合并位（已通知 Owner）',
   MERGE_METHODS_NOT_MERGE_ONLY: '已测通：strict 已关，但合并方式不只有 merge，暂不发合并位（已通知 Owner）',
   TRAIN_TEST_MERGE_NOT_READY: '已测通：等 GitHub 算好试合并', GREEN_LEDGER_UNAVAILABLE: '已测通：本机绿色台账暂时写不进',
-  TRAIN_SINGLE_GREEN_NOT_PROVEN: '已测通：等第 10 段证明只有车头一个绿', TRAIN_MODE_UNREADABLE: '已测通：读不到本机的列车模式' });
+  TRAIN_SINGLE_GREEN_NOT_PROVEN: '已测通：等开车头批次（第 10 段）', TRAIN_MODE_UNREADABLE: '已测通：读不到本机的列车模式' });
 // The Windows notification of each stage-8 rules notice (step 3a).
 const STAGE8_RULES_TEXT = Object.freeze({
   STRICT_OFF_WITHOUT_TRAIN: () => ({ title: 'main 的 strict 已关，第 8 段停发合并位', body: '列车没有开，常驻执行器不再发合并位。请把 main 规则集的 strict 改回开，或按上线顺序开车。' }),
@@ -288,6 +288,8 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(row.watched
         ? `已测通：现在加入合并队列，排到队首后几分钟内查第 8 段${latest}${lease}` : `已测通：现在加入合并队列，${at}再查第 8 段${lease}`) };
+      if (row.deferred === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && row.frontOpenOwed) return { state: 'pending',
+        description: clip(`${PARKED_TEXT[row.deferred]}，下一拍优先（仍受安全门禁与每日上限约束）${lease}`) };
       if (PARKED_TEXT[row.deferred]) return { state: 'pending', description: clip(`${PARKED_TEXT[row.deferred]}，${at}再查第 8 段${lease}`) };
       // Without a place the Source did not learn whether the claim is in the queue (review of step 2, m13).
       if (!row.queuePosition) return { state: 'pending', description: clip(row.watched ? `已测通：等合并队列，排到队首后几分钟内查第 8 段${latest}${lease}`
@@ -445,7 +447,9 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
         ? { key: `notice:${n.key}`, title: `PR #${n.pr} 认领或授权已更新`, body: `提交 ${head} 上次因认领或授权条件未准入；已确认条件更新，立即重新评估。` }
         : { key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
       case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
-      case 'stage8-budget': out.push({ key: `notice:${n.key}`, title: '今日第 8 段重试额度已用完', body: '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
+      case 'stage8-budget': out.push({ key: `notice:${n.key}`,
+        title: n.pr ? `PR #${n.pr} 的第 8 段重试额度已用完` : '今日第 8 段重试额度已用完',
+        body: n.pr ? '这个 PR 在过去 24 小时内的重试已达上限，额度恢复后继续；其他 PR 的额度独立计算。' : '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
       // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end.
       // The end is the one Native said at the last stage 1 or stage-8 try; a renewal since then is not seen (review round 6, MINOR A).
       case 'lease-short': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 的认领${n.code === 'CLAIM_LEASE_EXPIRED' ? '可能已到期' : '快到期'}`,

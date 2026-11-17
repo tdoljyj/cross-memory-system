@@ -45,15 +45,15 @@ on:
         required: true
         type: string
   push:
-    branches: [main]
+    branches: [main, clued-train/staging]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
-  # A push to main never cancels a running main run (GitHub still keeps only
-  # the newest queued run of a group).
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr || (github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}
+  # Staging has one group per S, so later batches cannot replace queued CI.
+  # Main pushes never cancel a running main run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -100,6 +100,8 @@ jobs:
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
           ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
            (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -109,6 +111,8 @@ jobs:
       needs.admission-gate.outputs.admitted == 'true' &&
       ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
        (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -118,12 +122,6 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
-          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -131,6 +129,38 @@ jobs:
           # Application tests read pinned historical workflow/role snapshots.
           fetch-depth: 0
           path: candidate
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+          STAGING_SHA: ${{ github.sha }}
+          PUSH_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != push ]; then exit 0; fi
+          base=$(git rev-parse "$STAGING_SHA^1")
+          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            # Checkout fetched full history; no candidate code has run.
+            # The first parent must be an already trusted main ancestor.
+            git merge-base --is-ancestor "$base" origin/main
+          fi
+          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            echo "sha=$base" >> "$GITHUB_OUTPUT"
+          fi
+          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          path: trusted
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
@@ -167,6 +197,8 @@ jobs:
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
           ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
            (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -176,6 +208,8 @@ jobs:
       needs.admission-gate.outputs.admitted == 'true' &&
       ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
        (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -185,18 +219,44 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
-          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
           fetch-depth: 0
           path: candidate
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+          STAGING_SHA: ${{ github.sha }}
+          PUSH_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != push ]; then exit 0; fi
+          base=$(git rev-parse "$STAGING_SHA^1")
+          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            # Checkout fetched full history; no candidate code has run.
+            # The first parent must be an already trusted main ancestor.
+            git merge-base --is-ancestor "$base" origin/main
+          fi
+          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            echo "sha=$base" >> "$GITHUB_OUTPUT"
+          fi
+          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          path: trusted
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0
@@ -218,7 +278,7 @@ jobs:
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
           SUITES: ${{ steps.select.outputs.suites }}
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           failed=""
@@ -240,6 +300,8 @@ jobs:
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
           ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
            (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -249,6 +311,8 @@ jobs:
       needs.admission-gate.outputs.admitted == 'true' &&
       ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
        (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -258,17 +322,44 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
-          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+          fetch-depth: 0
           path: candidate
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+          STAGING_SHA: ${{ github.sha }}
+          PUSH_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != push ]; then exit 0; fi
+          base=$(git rev-parse "$STAGING_SHA^1")
+          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            # Checkout fetched full history; no candidate code has run.
+            # The first parent must be an already trusted main ancestor.
+            git merge-base --is-ancestor "$base" origin/main
+          fi
+          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            echo "sha=$base" >> "$GITHUB_OUTPUT"
+          fi
+          echo "ci_base=$base" >> "$GITHUB_OUTPUT"
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
+          path: trusted
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.19.0

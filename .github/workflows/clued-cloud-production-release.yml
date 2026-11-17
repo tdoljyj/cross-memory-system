@@ -127,28 +127,10 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
       - name: Check production backup encryption credential
-        if: ${{ inputs.mode == 'backup' || (inputs.mode == 'release' && inputs.migrations != '') }}
+        if: ${{ inputs.mode == 'backup' || inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
         env:
           CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
         run: test -n "$CLUED_PRODUCTION_BACKUP_KEY"
-      # It connects once (select 1), so a wrong password or host fails here,
-      # before the grant step uses one of the Owner's grants (trial run
-      # 37155374056 used its grant and then failed to authenticate).
-      - name: Check migration database credential
-        if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
-        env:
-          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
-        run: |
-          set -euo pipefail
-          test -n "$CLUED_MIGRATION_DATABASE_URL"
-          # A malformed URL (for example an unencoded @ or # in the password)
-          # is reported without echoing the value.
-          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
-          connected=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
-            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1') \
-            || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; no grant was used"; exit 1; }
-          [ "$connected" = "1" ] || { echo "::error::Unexpected answer from the migration database; no grant was used"; exit 1; }
-          echo "Migration database connection works"
       - name: Check Cloudflare deployment credential
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         env:
@@ -206,11 +188,19 @@ jobs:
             --out-dir "$RUNNER_TEMP/kooyumi-connect-build" \
             --evidence-out .sites-runtime/release-evidence/connect-build.json
           node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
+      - name: Verify backup and migration database identity
+        if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+        run: |
+          node -e 'const fs=require("node:fs"),ref="ccxsikzwxlolxqlosril"; function identity(raw){let u;try{u=new URL(raw);}catch{throw new Error("Invalid production database URL");} if(!["postgres:","postgresql:"].includes(u.protocol)||u.pathname!=="/postgres"||[...u.searchParams.keys()].some(k=>["host","hostaddr","port","dbname","database","user","service","servicefile"].includes(k.toLowerCase()))) throw new Error("Unsupported production database routing"); const direct=u.hostname==="db."+ref+".supabase.co"&&(!u.port||u.port==="5432"),pool=/^[a-z0-9-]+\.pooler\.supabase\.com$/.test(u.hostname)&&["5432","6543"].includes(u.port)&&decodeURIComponent(u.username).split(".").at(-1)===ref; if(!direct&&!pool) throw new Error("Production backup and migration target mismatch");return "supabase:"+ref+":postgres";} const a=identity(process.env.CLUED_ATTESTATION_DATABASE_URL),b=identity(process.env.CLUED_MIGRATION_DATABASE_URL); if(a!==b) throw new Error("Production backup and migration target mismatch");fs.appendFileSync(process.env.GITHUB_ENV,"CLUED_PRODUCTION_DATABASE_IDENTITY="+a+"\n");'
       # The connection URLs are written for node-postgres, whose sslmode=no-verify
       # (encrypt, do not verify the certificate) libpq rejects; libpq's require
       # means the same, so the libpq tools below get require instead.
       - name: Create and verify encrypted pre-migration backup
-        if: ${{ inputs.mode == 'backup' || (inputs.mode == 'release' && inputs.migrations != '') }}
+        id: pre_migration_backup
+        if: ${{ inputs.mode == 'backup' || inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
           CLUED_PRODUCTION_BACKUP_KEY: ${{ secrets.CLUED_PRODUCTION_BACKUP_KEY }}
@@ -280,9 +270,33 @@ jobs:
             -pass env:CLUED_PRODUCTION_BACKUP_KEY
           test "$(sha256sum "$verified_path" | cut -d' ' -f1)" = "$dump_sha256"
           encrypted_sha256=$(sha256sum "$encrypted_path" | cut -d' ' -f1)
-          node -e 'const fs=require("node:fs"); const proof=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(proof.verified!==true) throw new Error("Unverified backup scope"); process.stdout.write(JSON.stringify({contract:"clued.production-pre-migration-backup.v1",source_commit:process.env.GITHUB_SHA,database_project:"clued-prod",scope:proof.scope,scope_verification:proof,dump_sha256:process.argv[2],dump_bytes:Number(process.argv[3]),encrypted_sha256:process.argv[4],created_at:new Date().toISOString()},null,2)+"\n")' \
+          node -e 'const fs=require("node:fs"); const proof=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(proof.verified!==true) throw new Error("Unverified backup scope"); process.stdout.write(JSON.stringify({contract:"clued.production-pre-migration-backup.v1",source_commit:process.env.GITHUB_SHA,database_project:"clued-prod",database_identity:process.env.CLUED_PRODUCTION_DATABASE_IDENTITY,scope:proof.scope,scope_verification:proof,dump_sha256:process.argv[2],dump_bytes:Number(process.argv[3]),encrypted_sha256:process.argv[4],created_at:new Date().toISOString()},null,2)+"\n")' \
             "$scope_proof" "$dump_sha256" "$dump_bytes" "$encrypted_sha256" \
             > "$evidence_dir/production-backup-manifest.json"
+      - name: Require verified backup before migration
+        if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
+        env:
+          BACKUP_OUTCOME: ${{ steps.pre_migration_backup.outcome }}
+        run: |
+          node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); if(process.env.BACKUP_OUTCOME!=="success") throw new Error("Migration backup did not succeed"); const root=".sites-runtime/release-evidence/",m=JSON.parse(fs.readFileSync(root+"production-backup-manifest.json","utf8")),identity=process.env.CLUED_PRODUCTION_DATABASE_IDENTITY; if(identity!=="supabase:ccxsikzwxlolxqlosril:postgres"||m.database_identity!==identity||m.contract!=="clued.production-pre-migration-backup.v1"||m.source_commit!==process.env.GITHUB_SHA||m.database_project!=="clued-prod"||m.scope_verification?.verified!==true||!Number.isSafeInteger(m.dump_bytes)||m.dump_bytes<1||!/^[0-9a-f]{64}$/.test(m.dump_sha256)) throw new Error("Unverified migration backup manifest"); const digest=crypto.createHash("sha256").update(fs.readFileSync(root+"clued-production-pre-migration.dump.enc")).digest("hex"); if(digest!==m.encrypted_sha256) throw new Error("Encrypted migration backup differs from its manifest");'
+      # It connects once (select 1), so a wrong password or host fails here,
+      # before the grant step uses one of the Owner's grants (trial run
+      # 37155374056 used its grant and then failed to authenticate).
+      - name: Check migration database credential
+        if: ${{ inputs.mode == 'migrate' || (inputs.mode == 'release' && inputs.migrations != '') }}
+        env:
+          CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$CLUED_MIGRATION_DATABASE_URL"
+          # A malformed URL (for example an unencoded @ or # in the password)
+          # is reported without echoing the value.
+          database_url=$(node -e 'let url; try { url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL) } catch { console.error("::error::CLUED_MIGRATION_DATABASE_URL is not a valid URL; URL-encode special characters in the password"); process.exit(1) } url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          connected=$(docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1') \
+            || { echo "::error::Cannot connect with CLUED_MIGRATION_DATABASE_URL; no grant was used"; exit 1; }
+          [ "$connected" = "1" ] || { echo "::error::Unexpected answer from the migration database; no grant was used"; exit 1; }
+          echo "Migration database connection works"
       # OwnerCredential §6.1 (Task 2a31ca2a): before anything changes production,
       # consume one use of the Owner's grant for the named migration files of
       # this commit. Advisory until the Owner sets CLUED_RELEASE_GRANT_ENFORCE=true;

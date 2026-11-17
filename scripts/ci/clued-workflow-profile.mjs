@@ -195,15 +195,15 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'2570781ab5a29d2fa9d09ac72f0ed6118f9e5686',
-  source_sha256:'3ffae8faf3faa90705ef5e7741dd258eb4485b0c6ad33105b40beaf95eec8334',
-  workflow_definition_sha256:'c38d8c2e53ea50e2d5dd178a3c531adbae4ffb47dfdb7850c394c04287d56b12',
-  profile_sha256:'1495ea5ea376476dd584f4827398703491d14e81a458ee2bd81a8d47248c71b2',
+  workflow_blob:'5470897712b63448447b45c86d233b782163960d',
+  source_sha256:'a80a03169e6bd45e2eac29ddfa28d5f5e643ed591eae4e944725b3076d5ea1fb',
+  workflow_definition_sha256:'b4f79abc45fe2113a2551f7c3ba6b4d32ae5e1387c2f266309d710b1786f1e39',
+  profile_sha256:'c2ce96c207f9332c425f2398f2cb600a82731f5f87931582cccefd96663b5dfe',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'a70ad71b3142881ed1ab33fd8e1a10d904d53e111f7f2e93943bd6ce862e5b4b',
-    'ci-suites':'28191dfb8b6c5c0d39f338c0eb8dd6798df852a4fb18a9b2c29c16cdbaabe36a',
-    'migration-verify':'3fdb8b60ba13bb5df9323e9be7fe060061e1d84e9b6956b72658b8bd687b627e',
+    'clued-cloud-tests':'f720a913b3fa098d135a3d9eb49cb4767d6a049822f4de9f0bd182687605a02a',
+    'ci-suites':'b0d7e70eb85cbff52c94e555e7a687027343de0164cfa3d69028f897d8160bdf',
+    'migration-verify':'1019c074dd0be744b74289aa460dfbfc563d1c2c2a4012741e068dd2d342c088',
   }),
 });
 // Earlier exact bytes of the same compound Source, oldest first. Catalogues kept as
@@ -223,6 +223,20 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'clued-cloud-tests':'0bb545587b121538cecd3362d7ff87e5427dc1897190e125fd7f2be14b145910',
       'ci-suites':'c54352dbae19b3a104dc8a7063f04be7500d51d45a7e5b77329e709918e0b7fa',
       'migration-verify':'554f6a340a69a47c3d9f6fe0853ba16c4a62fceb0cc4b970d27d5994562890b1',
+    }),
+  }),
+  // Before ADR 0018 staging push support (main 20edb51c).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'2570781ab5a29d2fa9d09ac72f0ed6118f9e5686',
+    source_sha256:'3ffae8faf3faa90705ef5e7741dd258eb4485b0c6ad33105b40beaf95eec8334',
+    workflow_definition_sha256:'c38d8c2e53ea50e2d5dd178a3c531adbae4ffb47dfdb7850c394c04287d56b12',
+    profile_sha256:'1495ea5ea376476dd584f4827398703491d14e81a458ee2bd81a8d47248c71b2',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'a70ad71b3142881ed1ab33fd8e1a10d904d53e111f7f2e93943bd6ce862e5b4b',
+      'ci-suites':'28191dfb8b6c5c0d39f338c0eb8dd6798df852a4fb18a9b2c29c16cdbaabe36a',
+      'migration-verify':'3fdb8b60ba13bb5df9323e9be7fe060061e1d84e9b6956b72658b8bd687b627e',
     }),
   }),
 ]);

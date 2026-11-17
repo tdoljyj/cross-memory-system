@@ -58,6 +58,28 @@ test('front-only readiness cannot claim coverage and still binds the exact Sourc
     assert.equal(sweepOf({ ...s, ...patch }), null);
 });
 
+test('#1144: fresh running-front readiness refreshes the resident view of the same tested S only', async t => {
+  for (const changed of [null, 'claim', 'head', 'base', 'source', 'stale']) {
+    const f = await executorFixture(t, { policy: policy() });
+    await f.exec.enqueueFront(front);
+    f.advance(MIN);
+    let r = { ...frontReadiness(), writtenAt: iso(NOW + MIN), expiresAt: iso(NOW + 15 * MIN),
+      front: { ...frontReadiness().front, since: iso(NOW + 1000) } };
+    if (changed === 'claim') r.front.claimId = '11111111-2222-4333-8444-555555555555';
+    if (changed === 'head') r.front.headSha = '9'.repeat(40);
+    if (changed === 'base') r.mainSha = '9'.repeat(40);
+    if (changed === 'source') r.sourceManifestSha256 = 'f'.repeat(64);
+    if (changed === 'stale') r.expiresAt = iso(NOW + MIN);
+    const summary = { onDuty: true, strict: true, mainSha: r.mainSha, decision: 'TRAIN_FRONT_BATCH_RUNNING',
+      sweep: { unconfirmed: 0, fullSweep: { state: 'running', sinceOn: false }, strictFrontReadiness: r } };
+    await f.exec.trainActed(summary, { mode: 'on', input: { onSince: iso(NOW) } });
+    const bound = f.exec.frontBindings.get(`${front.pr}:${front.testSha}`);
+    assert.equal(bound.since, changed === null ? r.front.since : front.since, String(changed));
+    assert.equal(bound.testSha, front.testSha, 'S is never substituted');
+    if (changed === null) assert.equal(f.exec.trainGate(front), null);
+  }
+});
+
 test('resident admits only an enqueued S with the same claim; full takeover and other guards stay intact', async t => {
   const f = await executorFixture(t, { policy: policy() });
   f.exec.trainStrictReadiness = coverage();

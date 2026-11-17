@@ -3276,13 +3276,16 @@ const independentEvent = () => {
   value.pull_request.base.repo = { full_name: "o/r", default_branch: "main" };
   return value;
 };
-async function requiredDispatch({ inputs = { pr: '452', head: HEAD }, current = {}, checks = [nativeCheck()], overrides = {}, others = [], truncated = false, epoch = true, moveAfterGate = false } = {}) {
+async function requiredDispatch({ inputs = { pr: '452', head: HEAD }, current = {}, checks = [nativeCheck()], overrides = {}, others = [], jobs = {}, truncated = false, epoch = true, moveAfterGate = false } = {}) {
   const pr = independentEvent().pull_request;
   Object.assign(pr, { state: 'open', head: { ...pr.head, ref: 'claude/g3' } }, current);
   const self = { id: 9001, head_sha: HEAD, head_branch: 'claude/g3', event: 'workflow_dispatch', run_attempt: 1,
     path: '.github/workflows/clued-required-tests.yml', created_at: RUN_CREATED, actor: { login: 'o', type: 'User' } };
   let prReads = 0;
-  const fake = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: self }, [PULL]: () => ({ body:
+  const fake = fakeFetch({ ...SELF_RUN, ...Object.fromEntries(Object.entries(jobs).map(([id, value]) =>
+    [`GET https://api.test/repos/o/r/actions/runs/${id.split(':')[0]}/attempts/${id.split(':')[1] ?? 1}/jobs`,
+      { body: Array.isArray(value) ? { total_count: value.length, jobs: value } : value }])),
+    [THIS_RUN]: { body: self }, [PULL]: () => ({ body:
     moveAfterGate && ++prReads > 1 ? { ...pr, head: { ...pr.head, sha: BASE } } : pr }),
     [CHECKS]: { body: { check_runs: checks } },
     [`POST ${EPOCH_URL}`]: { body: { status: 'ok', guard_required: true, epoch_current: epoch } },
@@ -3301,6 +3304,43 @@ test('G3 dispatch: current open PR/head needs the original Native admission and 
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.head_sha, outcome.pr_ref], [true, 'ADMITTED', HEAD, 'o/r#452']);
   assert.ok(calls.some(call => call.url.includes('check_name=kooyumi-work-admission')));
   assert.ok(calls.some(call => call.body?.p_input?.action === 'execution_current' && call.body.p_input.pr_ref === 'o/r#452'));
+});
+
+const skippedDispatchRun = (overrides = {}) => ({ id: 8001, head_sha: HEAD, event: 'pull_request', status: 'completed', run_attempt: 1,
+  actor: { login: 'clued-admission[bot]', type: 'Bot' }, ...overrides });
+const skippedDispatchJobs = () => [{ id: 80, name: 'admission-gate', head_sha: HEAD, status: 'completed', conclusion: 'success' },
+  ...['ci-suites-skipped', 'clued-cloud-tests-skipped', 'migration-verify-skipped'].map((name, i) =>
+    ({ id: 81 + i, name, head_sha: HEAD, status: 'completed', conclusion: 'skipped' }))];
+
+test('bot head dispatch: Owner recovers completed PR runs whose heavy jobs all skipped', async () => {
+  const { outcome, calls } = await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() } });
+  assert.equal(outcome.admitted, true, JSON.stringify(outcome));
+  assert.equal(outcome.automation_self_hosted, false, 'does not extend automation trust');
+  assert.ok(calls.some(c => c.url.includes('/actions/runs/8001/attempts/1/jobs')));
+});
+
+test('bot head dispatch: active, dispatch, foreign, empty or previously executed jobs stay refused', async () => {
+  const ran = skippedDispatchJobs(); ran[1].conclusion = 'success';
+  const wrongHead = skippedDispatchJobs(); wrongHead[1].head_sha = BASE;
+  for (const opts of [
+    { others: [skippedDispatchRun({ status: 'queued' })] },
+    { others: [skippedDispatchRun({ status: 'in_progress' })] },
+    { others: [skippedDispatchRun({ event: 'workflow_dispatch' })] },
+    { others: [skippedDispatchRun({ event: 'push' })] },
+    { others: [skippedDispatchRun({ head_sha: BASE })] },
+    { jobs: { 8001: [] } }, { jobs: { 8001: ran } }, { jobs: { 8001: wrongHead } },
+  ]) assert.equal((await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() }, ...opts })).outcome.admitted, false, JSON.stringify(opts));
+});
+
+test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse', async () => {
+  const others = [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })];
+  const jobs = { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), 8002: skippedDispatchJobs() };
+  assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true);
+  const ran = skippedDispatchJobs(); ran[1].conclusion = 'failure';
+  for (const changed of [
+    { ...jobs, 8001: ran }, { ...jobs, 8002: ran },
+    { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } },
+  ]) assert.equal((await requiredDispatch({ others, jobs: changed })).outcome.admitted, false);
 });
 
 test('G3 dispatch: malformed, closed, moved, foreign, duplicate and unauthorized requests fail closed', async () => {
@@ -3867,3 +3907,95 @@ test('G4 all-jobs repair requires a current Native admission and every prior hea
   assert.equal((await repairGate([oldHead], { envOverrides })).outcome.verdict, 'RERUN_REFUSED');
   assert.equal((await repairGate([make(1)], { envOverrides, checks: [nativeCheck({ conclusion: 'failure' })] })).outcome.verdict, 'REJECTED');
 });
+
+// Native automation: exact signed main refresh and the preregistered G4 successor.
+{
+const {qualifyTrustedAutomationRoute,gate,AUTOMATION_BOT,INDEPENDENT_GATE_SOURCE,mainMergeExternalId}=admissionModule;
+const repo='o/r',head='a'.repeat(40),base='b'.repeat(40),previous='c'.repeat(40),tree='d'.repeat(40);
+const owner={id:123,login:'o',type:'User'},bot={...AUTOMATION_BOT};
+const when='2026-11-17T07:00:00Z';
+function fixture(){
+ const pr={number:452,state:'open',user:owner,head:{sha:head,ref:'feature',repo:{full_name:repo}},base:{sha:base,ref:'main',repo:{full_name:repo,default_branch:'main'}}};
+ const event={action:'synchronize',pull_request:pr};
+ const run={id:9001,run_attempt:1,event:'pull_request',head_sha:head,head_branch:'feature',repository:{full_name:repo},head_repository:{full_name:repo},path:'.github/workflows/clued-required-tests.yml',actor:bot,triggering_actor:bot,created_at:'2026-11-17T07:01:00Z'};
+ const env={GITHUB_REPOSITORY:repo,GITHUB_REPOSITORY_OWNER:'o',GITHUB_EVENT_NAME:'pull_request',GITHUB_ACTOR:bot.login,GITHUB_TRIGGERING_ACTOR:bot.login,GITHUB_RUN_ID:'9001',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/pull/452/merge',GITHUB_HEAD_REF:'feature',GITHUB_BASE_REF:'main',CLUED_ADMISSION_GATE_SOURCE:INDEPENDENT_GATE_SOURCE,CLUED_ADMISSION_GATE_WAIT_SECONDS:'0',GITHUB_API_URL:'https://api.test',GITHUB_TOKEN:'fixture',GITHUB_WORKSPACE:ROOT};
+ // Resolve the original checkout without ambient credentials.
+ env.GITHUB_WORKSPACE=ROOT;
+ const check=(sha,id)=>({id,name:'kooyumi-work-admission',app:{id:5368905},head_sha:sha,status:'completed',conclusion:'success',completed_at:when,external_id:`independent-ci:native-work-admission:v2:${'e'.repeat(64)}:a1:ca3d3640e:f46:e1`,output:{summary:`Independent Native control check for ${repo}#452; observation sha256 ${'f'.repeat(64)}.`}});
+ const current=check(head,50),prior=check(previous,40),attestation={id:60,name:'kooyumi-main-merge',app:{id:5164952},head_sha:head,status:'completed',conclusion:'success',external_id:mainMergeExternalId({pr:452,from:previous,main:base})};
+ const commit={sha:head,parents:[{sha:previous},{sha:base}],author:bot,committer:{id:19864447,login:'web-flow',type:'User'},commit:{tree:{sha:tree},committer:{date:when},verification:{verified:true,reason:'valid',signature:'fixture-signature',payload:`tree ${tree}\nparent ${previous}\nparent ${base}\nfixture`}}};
+ const f={env,event,run,currentAdmission:current,pr,current,prior,attestation,commit,currentChecks:[current],priorChecks:[prior],attestations:[attestation],epochReads:0,liveReads:0};
+ f.read=async route=>{
+  if(route===`/repos/${repo}`)return {full_name:repo,default_branch:'main',owner};
+  if(route===`/repos/${repo}/pulls/452`){f.liveReads++;return f.liveOverride??pr;}
+  if(route===`/repos/${repo}/branches/main`)return {name:'main',commit:{sha:f.mainTip??base}};
+  if(route===`/repos/${repo}/commits/${head}`)return commit;
+  if(route.includes('check_name=kooyumi-main-merge'))return {total_count:f.attestationTotal??f.attestations.length,check_runs:f.attestations};
+  if(route.includes(`/commits/${previous}/check-runs`))return {total_count:f.priorTotal??f.priorChecks.length,check_runs:f.priorChecks};
+  if(route.includes(`/commits/${head}/check-runs`))return {total_count:f.currentTotal??f.currentChecks.length,check_runs:f.currentChecks};
+  if(route===`/repos/${repo}/actions/runs/9001`)return run;
+  if(route===`/repos/${repo}/actions/runs/77`)return f.legacyOrigin;
+  if(route===`/repos/${repo}/actions/runs/78`)return {...f.legacyOrigin,id:78,created_at:'2026-11-17T06:59:00Z'};
+  if(route.includes('/actions/workflows/clued-work-admission.yml/runs'))return {workflow_runs:[]};
+  throw new Error(`unscripted ${route}`);
+ };
+ f.fetchImpl=async(url,init={})=>{
+  let body;
+  if(init.method==='POST') {f.epochReads++;body={status:'ok',guard_required:true,epoch_current:!(f.staleSecondEpoch&&f.epochReads>1)};}
+  else body=await f.read(String(url).replace('https://api.test',''));
+  return {ok:true,status:200,headers:{get:()=>null},json:async()=>body,text:async()=>JSON.stringify(body)};
+ };
+ return f;
+}
+test('Native signed main refresh qualifies only through current Native and main-only attestation',async()=>{
+ const f=fixture(),r=await qualifyTrustedAutomationRoute(f);assert.equal(r.qualified,true);assert.equal(r.prior_admission_run_id,null);assert.equal(r.current_check_id,50);
+});
+const denials=[
+ ['foreign actor',f=>f.run.actor={...bot,id:1}],['actor name only',f=>f.env.GITHUB_ACTOR='other[bot]'],
+ ['non-synchronize event',f=>f.event.action='opened'],['fork',f=>f.pr.head.repo.full_name='fork/r'],
+ ['wrong Native App',f=>f.current.app.id=5164952],['unbound current id',f=>f.current.external_id='pr:452:run:77'],
+ ['wrong PR',f=>f.current.output.summary='o/r#453'],['mixed PRs',f=>f.current.output.summary='o/r#452 o/r#453'],
+ ['failed admission',f=>f.current.conclusion='failure'],['old head',f=>f.current.head_sha=previous],
+ ['moved main',f=>f.mainTip=previous],['missing signature',f=>f.commit.commit.verification.verified=false],
+ ['different signed tree',f=>f.commit.commit.verification.payload='tree wrong'],['wrong parent',f=>f.commit.parents[1].sha=previous],
+ ['wrong platform committer',f=>f.commit.committer.id=1],['wrong native-run head',f=>f.run.head_sha=previous],
+ ['missing prior proof',f=>f.priorChecks=[]],['late prior proof',f=>f.prior.completed_at='2026-11-17T07:02:00Z'],
+ ['prior proof wrong App',f=>f.prior.app.id=1],['missing attestation',f=>f.attestations=[]],
+ ['attestation wrong App',f=>f.attestation.app.id=5368905],['attestation wrong PR',f=>f.attestation.external_id=mainMergeExternalId({pr:453,from:previous,main:base})],
+ ['newer attestation failure',f=>f.attestations.push({...f.attestation,id:61,conclusion:'failure'})],
+ ['newer malformed current proof',f=>f.currentChecks.push({...f.current,id:51,external_id:'wrong'})],
+ ['truncated checks',f=>f.currentTotal=100],['changed live PR',f=>f.liveOverride={...f.pr,state:'closed'}],
+ ['unsupported retry actor',f=>{f.run.triggering_actor={id:456,login:'other',type:'User'};f.env.GITHUB_TRIGGERING_ACTOR='other';}],
+];
+for(const [label,change]of denials)test(`Native automation refuses ${label}`,async()=>{const f=fixture();change(f);assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,false);});
+test('independent gate wires the exact event through route and rechecks execution epoch',async()=>{
+ const f=fixture();const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.automation_self_hosted],[true,true]);assert.equal(f.epochReads,2);
+ const stale=fixture();stale.staleSecondEpoch=true;const refused=await gate({...stale,eventName:'pull_request'});assert.equal(refused.admitted,false);assert.equal(refused.automation_self_hosted,false);assert.deepEqual(refused.reasons,['work_claim_execution_epoch_stale']);
+});
+test('Native proof cannot qualify through an undeclared source',async()=>{
+ const f=fixture();delete f.env.CLUED_ADMISSION_GATE_SOURCE;assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,false);
+});
+function legacyFixture(){
+ const f=fixture();
+ for(const c of [f.current,f.prior])Object.assign(c,{name:'kooyumi-admission-verified',app:{id:5164952,slug:'clued-admission'},external_id:'pr:452:run:77',output:{title:'normal · code · reruns 1'}});
+ f.prior.external_id='pr:452:run:78';
+ f.legacyOrigin={id:77,event:'pull_request_target',path:'.github/workflows/clued-work-admission.yml',status:'completed',conclusion:'success',repository:{full_name:repo},head_repository:{full_name:repo},created_at:'2026-11-17T06:59:00Z',actor:owner};
+ return f;
+}
+test('Legacy proof remains valid with Native source configured during disaster recovery',async()=>{
+ const f=legacyFixture();assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
+ delete f.env.CLUED_ADMISSION_GATE_SOURCE;assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
+});
+test('Native-source gate preserves actual settled legacy disaster-recovery branch',async()=>{
+ const f=legacyFixture(),read=f.read;
+ f.legacyOrigin.created_at='2026-11-17T07:01:00Z';
+ f.read=async route=>{
+  if(route.includes('check_name=kooyumi-work-admission'))return {total_count:0,check_runs:[]};
+  if(route.includes('/actions/workflows/clued-work-admission.yml/runs'))return {workflow_runs:[f.legacyOrigin]};
+  return read(route);
+ };
+ const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.automation_self_hosted],[true,true],JSON.stringify(r));assert.equal(f.epochReads,2);
+});
+
+
+}

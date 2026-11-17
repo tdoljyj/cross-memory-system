@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { builderRunInProgress, onlyProjectionLag, settleProjectionLag, verifyReleaseState }
   from '../scripts/production-release-gate.mjs';
 
@@ -251,7 +252,7 @@ test('production backup mode encrypts and verifies the dump before removing plai
   const backup = productionWorkflow.split(/\n      - name: /)
     .find((step) => step.startsWith('Create and verify encrypted pre-migration backup\n'));
   const publisher = await readFile(new URL('../scripts/verify-production-backup-scope.mjs', import.meta.url), 'utf8');
-  assert.match(backup, /if: \$\{\{ inputs\.mode == 'backup' \|\| \(inputs\.mode == 'release' && inputs\.migrations != ''\) \}\}/);
+  assert.match(backup, /if: \$\{\{ inputs\.mode == 'backup' \|\| inputs\.mode == 'migrate' \|\| \(inputs\.mode == 'release' && inputs\.migrations != ''\) \}\}/);
   assert.match(backup, /secrets\.CLUED_PRODUCTION_BACKUP_KEY/);
   assert.match(backup, /--user \"\$\(id -u\):\$\(id -g\)\"/);
   assert.match(backup, /searchParams\.delete\(\"uselibpqcompat\"\)/);
@@ -546,9 +547,10 @@ function simulateRelease(inputs, failAt = null) {
 
 const RELEASE_ORDER = [
   'Check production database credential', 'Check production backup encryption credential',
-  'Check migration database credential', 'Check Cloudflare deployment credential',
+  'Check Cloudflare deployment credential',
   'Verify projection and MTPE behavior', 'Build exact Worker source', 'Verify and build Kooyumi Connect release source',
-  'Create and verify encrypted pre-migration backup', 'Consume the Owner Grant for the named migrations',
+  'Verify backup and migration database identity', 'Create and verify encrypted pre-migration backup',
+  'Require verified backup before migration', 'Check migration database credential', 'Consume the Owner Grant for the named migrations',
   'Apply the named migrations', 'Block release unless database and Worker heartbeat are ready',
   'Consume the Owner Grant for this commit', 'Record the Worker versions production serves', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
   'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
@@ -587,7 +589,8 @@ test('release mode without migrations skips backup and migrations and uses the d
   const run = simulateRelease({ mode: 'release' });
   assert.equal(run.conclusion, 'success');
   for (const name of ['Check production backup encryption credential', 'Check migration database credential',
-    'Create and verify encrypted pre-migration backup', 'Consume the Owner Grant for the named migrations', 'Apply the named migrations']) {
+    'Verify backup and migration database identity', 'Create and verify encrypted pre-migration backup',
+  'Require verified backup before migration', 'Check migration database credential', 'Consume the Owner Grant for the named migrations', 'Apply the named migrations']) {
     assert.ok(!run.ran.includes(name), name);
   }
   assert.deepEqual(grantSteps(run).map((step) => step.name), ['Consume the Owner Grant for this commit']);
@@ -723,5 +726,138 @@ test('the rollback restores each changed Worker to its recorded version, last de
   } finally {
     console.log = log; console.error = error;
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('migration cannot consume a grant or apply without a successful verified encrypted backup', async () => {
+  const steps=productionWorkflow.split(/\n      - /).slice(1);
+  const index=name=>steps.findIndex(s=>s.startsWith('name: '+name+'\n'));
+  const encryption=index('Check production backup encryption credential');
+  const target=index('Verify backup and migration database identity');
+  const backup=index('Create and verify encrypted pre-migration backup');
+  const gate=index('Require verified backup before migration');
+  const grant=index('Consume the Owner Grant for the named migrations');
+  const apply=index('Apply the named migrations');
+  assert.ok(encryption>=0&&encryption<target&&target<backup&&backup<gate&&gate<grant&&grant<apply);
+  for(const i of [encryption,backup])assert.match(steps[i],/if: \$\{\{ inputs\.mode == 'backup' \|\| inputs\.mode == 'migrate' \|\| \(inputs\.mode == 'release' && inputs\.migrations != ''\) \}\}/);
+  assert.match(steps[backup],/id: pre_migration_backup/);
+  assert.match(steps[gate],/BACKUP_OUTCOME: \$\{\{ steps\.pre_migration_backup\.outcome \}\}/);
+  const script=/node -e '([^']+)'/.exec(steps[gate])?.[1]; assert.ok(script);
+  const temp=await mkdtemp(path.join(os.tmpdir(),'clued-backup-gate-'));
+  const root=path.join(temp,'.sites-runtime/release-evidence');await mkdir(root,{recursive:true});
+  const bytes=Buffer.from('synthetic encrypted fixture');
+  const manifest={contract:'clued.production-pre-migration-backup.v1',source_commit:'a'.repeat(40),database_project:'clued-prod',database_identity:'supabase:ccxsikzwxlolxqlosril:postgres',
+    scope_verification:{verified:true},dump_bytes:42,dump_sha256:'b'.repeat(64),encrypted_sha256:createHash('sha256').update(bytes).digest('hex')};
+  const run=outcome=>spawnSync(process.execPath,['-e',script],{cwd:temp,encoding:'utf8',env:{...process.env,GITHUB_SHA:manifest.source_commit,BACKUP_OUTCOME:outcome,CLUED_PRODUCTION_DATABASE_IDENTITY:manifest.database_identity}}).status;
+  const save=m=>writeFile(path.join(root,'production-backup-manifest.json'),JSON.stringify(m));
+  try{
+    await writeFile(path.join(root,'clued-production-pre-migration.dump.enc'),bytes);await save(manifest);
+    assert.equal(run('success'),0);
+    for(const outcome of ['skipped','failure','cancelled',''])assert.notEqual(run(outcome),0,outcome);
+    for(const changed of [{source_commit:'c'.repeat(40)},{scope_verification:{verified:false}},{database_project:'other'},
+      {database_identity:'supabase:other:postgres'},{dump_bytes:0},{encrypted_sha256:'0'.repeat(64)}]){await save({...manifest,...changed});assert.notEqual(run('success'),0,JSON.stringify(changed));}
+    await save(manifest);await writeFile(path.join(root,'clued-production-pre-migration.dump.enc'),'tampered');
+    assert.notEqual(run('success'),0);
+    await rm(path.join(root,'production-backup-manifest.json'));assert.notEqual(run('success'),0);
+  }finally{
+    assert.equal(path.dirname(temp),os.tmpdir());assert.ok(path.basename(temp).startsWith('clued-backup-gate-'));
+    await rm(temp,{recursive:true,force:true});
+  }
+});
+
+test('backup identity checks actual trusted connection routing, not a project label',async()=>{
+  const step=productionWorkflow.split(/\n      - /).find(s=>s.startsWith('name: Verify backup and migration database identity\n'));
+  const script=/node -e '([^']+)'/.exec(step)?.[1];assert.ok(script);
+  const temp=await mkdtemp(path.join(os.tmpdir(),'clued-backup-identity-'));
+  const output=path.join(temp,'github-env');
+  const direct='postgresql://fixture:synthetic@db.ccxsikzwxlolxqlosril.supabase.co:5432/postgres';
+  const pool='postgresql://fixture.ccxsikzwxlolxqlosril:synthetic@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres';
+  const run=(backup,migration)=>spawnSync(process.execPath,['-e',script],{encoding:'utf8',env:{...process.env,GITHUB_ENV:output,
+    CLUED_ATTESTATION_DATABASE_URL:backup,CLUED_MIGRATION_DATABASE_URL:migration,CLUED_PRODUCTION_DATABASE_IDENTITY:'supabase:ccxsikzwxlolxqlosril:postgres'}});
+  try{
+    assert.equal(run(direct,pool).status,0);
+    assert.equal(await readFile(output,'utf8'),'CLUED_PRODUCTION_DATABASE_IDENTITY=supabase:ccxsikzwxlolxqlosril:postgres\n');
+    for(const wrong of [direct.replace('ccxsikzwxlolxqlosril','differentproject'),pool.replace('fixture.ccxsikzwxlolxqlosril','fixture.differentproject'),
+      direct.replace('db.ccxsikzwxlolxqlosril.supabase.co','example.invalid'),direct+'?host=example.invalid',pool+'?user=fixture.differentproject',
+      direct.replace('/postgres','/otherdb'),'invalid synthetic credential']){
+      const result=run(direct,wrong);assert.notEqual(result.status,0);assert.ok(!result.stderr.includes('invalid synthetic credential'));
+      assert.notEqual(run(wrong,pool).status,0);
+    }
+  }finally{
+    assert.equal(path.dirname(temp),os.tmpdir());assert.ok(path.basename(temp).startsWith('clued-backup-identity-'));
+    await rm(temp,{recursive:true,force:true});
+  }
+});
+// Regression: process exceptions and transient API failures must not prevent
+// recovery of the remaining Workers. All Cloudflare effects are injected.
+test('rollback isolates command exceptions, retries transient failures and keeps recovering in reverse order', async () => {
+  const { CONTRACT, WORKERS, rollbackVersions } = await import('../scripts/release-worker-versions.mjs');
+  const version = (n) => `${n.repeat(8)}-0000-4000-8000-${n.repeat(12)}`;
+  const recorded = { contract: CONTRACT, source_commit: 'a'.repeat(40),
+    workers: WORKERS.map(({ name }, i) => ({ name, version_id: version(String(i + 1)) })) };
+  const served = Object.fromEntries(WORKERS.map(({ name }) => [name, version('9')]));
+  const attempts = new Map(); const calls = [];
+  const wrangler = async (args) => {
+    const name = args[3];
+    if (args[0] === 'deployments') return { status: 0, stdout: JSON.stringify({ versions: [{ version_id: served[name], percentage: 100 }] }) };
+    calls.push(name); attempts.set(name, (attempts.get(name) ?? 0) + 1);
+    if (name === 'clued-connect') throw new Error('synthetic process launch failure');
+    if (name === 'clued-cloud' && attempts.get(name) === 1) return { status: 1, stderr: 'temporary API failure' };
+    served[name] = args[1]; return { status: 0, stdout: '' };
+  };
+  const result = await rollbackVersions({ recorded, wrangler, wait: async () => {}, env: { GITHUB_SHA: recorded.source_commit } });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.workers.map(({ name, action }) => [name, action]), [
+    ['clued-connect', 'rollback_failed'], ['clued-cloud', 'rolled_back'], ['clued-storage-pdf', 'rolled_back'],
+  ]);
+  assert.equal(attempts.get('clued-connect'), 3);
+  assert.equal(attempts.get('clued-cloud'), 2);
+  assert.deepEqual([...new Set(calls)], ['clued-connect', 'clued-cloud', 'clued-storage-pdf']);
+  assert.match(result.workers[0].error, /synthetic process launch failure/);
+});
+
+test('unreadable Worker status does not abort recovery of the recorded versions', async () => {
+  const { CONTRACT, WORKERS, rollbackVersions } = await import('../scripts/release-worker-versions.mjs');
+  const version_id = '11111111-0000-4000-8000-111111111111';
+  const recorded = { contract: CONTRACT, workers: WORKERS.map(({ name }) => ({ name, version_id })) };
+  const restored = new Set();
+  const result = await rollbackVersions({ recorded, wait: async () => {}, env: {}, wrangler: async (args) => {
+    const name = args[3];
+    if (args[0] === 'rollback') { restored.add(name); return { status: 0 }; }
+    if (!restored.has(name)) throw new Error('synthetic status read failure');
+    return { status: 0, stdout: JSON.stringify({ versions: [{ version_id, percentage: 100 }] }) };
+  } });
+  assert.equal(result.ok, true);
+  assert.equal(restored.size, 3);
+});
+
+test('Wrangler subprocesses have a timeout so a stalled read or rollback cannot exhaust the release job', async () => {
+  const { npxWrangler } = await import('../scripts/release-worker-versions.mjs');
+  assert.equal(typeof npxWrangler, 'function');
+  let options;
+  const result = npxWrangler(['deployments', 'status', '--name', 'clued-cloud', '--json'], {
+    spawn: (file, args, opts) => {
+      assert.equal(file, process.execPath);
+      assert.match(args[0].replaceAll('\\', '/'), /node_modules\/wrangler\/wrangler-dist\/cli\.js$/);
+      assert.deepEqual(args.slice(1), ['deployments', 'status', '--name', 'clued-cloud', '--json']);
+      options = opts; return { status: null, error: new Error('synthetic timeout'), stdout: '', stderr: '' };
+    },
+  });
+  assert.ok(options.timeout > 0 && options.timeout <= 60_000);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /synthetic timeout/);
+});
+
+test('backup failures stop both migration modes before any grant or production mutation', () => {
+  for (const mode of ['migrate', 'release']) {
+    for (const failAt of ['Verify backup and migration database identity',
+      'Create and verify encrypted pre-migration backup', 'Require verified backup before migration']) {
+      const run = simulateRelease({ mode, migrations: MIGRATION }, failAt);
+      assert.equal(run.conclusion, 'failure');
+      assert.deepEqual(grantSteps(run), []);
+      assert.ok(!run.ran.includes('Apply the named migrations'));
+      assert.ok(!run.ran.some((name) => /^Deploy /.test(name)));
+      assert.ok(!run.ran.includes(ROLLBACK_STEP));
+    }
   }
 });

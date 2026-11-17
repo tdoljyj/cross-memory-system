@@ -11,6 +11,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const CONTRACT = 'clued.production-worker-versions.v1';
 /** Deploy order of clued-cloud-production-release.yml; rollback runs in reverse. */
@@ -22,9 +23,16 @@ export const WORKERS = Object.freeze([
 const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ATTEMPTS = 3;
 
-function npxWrangler(args) {
-  const child = spawnSync('npx', ['wrangler', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  return { status: child.status ?? 1, stdout: child.stdout ?? '', stderr: child.stderr ?? '' };
+export function npxWrangler(args, { spawn = spawnSync } = {}) {
+  // Use the lockfile-installed CLI directly: no network installation on the
+  // recovery path, and no Windows .cmd shim. Bound every invocation so one
+  // stalled command cannot consume the job's entire recovery window.
+  const cli = fileURLToPath(new URL('../node_modules/wrangler/wrangler-dist/cli.js', import.meta.url));
+  const child = spawn(process.execPath, [cli, ...args], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000, windowsHide: true,
+  });
+  return { status: child.status ?? 1, stdout: child.stdout ?? '',
+    stderr: [child.stderr, child.error?.message].filter(Boolean).join('\n') };
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,12 +49,20 @@ export function servedVersion(stdout) {
 
 async function readServed(wrangler, name, wait) {
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
-    const result = await wrangler(['deployments', 'status', '--name', name, '--json']);
+    const result = await invoke(wrangler, ['deployments', 'status', '--name', name, '--json']);
     const version = result.status === 0 ? servedVersion(result.stdout) : null;
     if (version) return version;
     if (attempt < ATTEMPTS) await wait(5_000);
   }
   return null;
+}
+
+// A process launch failure is a failed command, not a reason to abandon the
+// remaining Workers. Recording still fails closed when no version is readable.
+async function invoke(wrangler, args) {
+  try { return await wrangler(args); } catch (error) {
+    return { status: 1, stdout: '', stderr: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export async function recordVersions({ wrangler = npxWrangler, wait = pause, env = process.env } = {}) {
@@ -73,11 +89,18 @@ export async function rollbackVersions({ recorded, wrangler = npxWrangler, wait 
       workers.push({ name, recorded: version_id, at_failure: before, action: 'unchanged' });
       continue;
     }
-    const result = await wrangler(['rollback', version_id, '--name', name, '--message', message, '--yes']);
-    const after = await readServed(wrangler, name, wait);
+    let result; let after;
+    for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+      result = await invoke(wrangler, ['rollback', version_id, '--name', name, '--message', message, '--yes']);
+      // A timed-out response may still have changed production. Read back
+      // before retrying, and use the served version as the success criterion.
+      after = await readServed(wrangler, name, wait);
+      if (after === version_id) break;
+      if (attempt < ATTEMPTS) await wait(5_000);
+    }
     workers.push({ name, recorded: version_id, at_failure: before, served_after: after,
       action: after === version_id ? 'rolled_back' : 'rollback_failed',
-      ...(result.status === 0 ? {} : { error: (result.stderr || result.stdout).trim().split('\n').slice(-3).join(' ') }) });
+      ...(result.status === 0 ? {} : { error: (result.stderr || result.stdout || 'Wrangler failed').trim().split('\n').slice(-3).join(' ') }) });
   }
   return { contract: 'clued.production-worker-rollback.v1', source_commit: env.GITHUB_SHA ?? null,
     ok: workers.every((w) => w.action !== 'rollback_failed'), finished_at: new Date().toISOString(), workers };

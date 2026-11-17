@@ -56,6 +56,28 @@ function source(file, blob) {
   assert.equal(result.passed, true, result.reason);
   return result.profile.source_yaml;
 }
+function stripRegisteredG4AutomationSuccessor(profileBefore, rolesBefore) {
+  const file = '.github/workflows/clued-g4-database.yml';
+  const blob = '9d81933776a2646bdf0ff77f6ee2621cda551ec2';
+  assert.equal(profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob === blob).length, 1);
+  const result = registeredWorkflowSource(profileBefore, file, blob);
+  assert.equal(result.passed, true, result.reason);
+  const text = result.profile.source_yaml, definition = parseYaml(text);
+  assert.equal(workflowBlob(text), blob);
+  assert.equal(sha256Hex(text), '989ce56d8c80f1afb6e1dfee8280fd7347cb91398c219b5b65cd36435d75dfde');
+  const roles = rolesForSource(rolesBefore, file, blob);
+  const expected = [
+    ['database-gate-trusted-self-hosted', '0fa93fb5c2971639ab6ce63fcc40e661b6c86242b069513f6bab3b2e14dd5294'],
+    ['database-gate-untrusted-hosted', '5bc34c9167c890b0b1923a82fa546932db1c0dd179265ce851c069ab788cb29d'],
+  ];
+  assert.deepEqual(roles, expected.map(([job_id, definition_sha256]) => ({ job_id, definition_sha256 })));
+  for (const role of roles) assert.equal(roleDefinitionDigest(definition.jobs[role.job_id]), role.definition_sha256);
+  assert.deepEqual(compileRegisteredWorkflow(text, {
+    primary_ids: result.profile.primary_ids, parseYaml, accepted_roles: roles,
+  }), result.profile);
+  profileBefore.workflows[file].accepted_sources = profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob !== blob);
+  delete rolesBefore.workflows[file].sources[blob];
+}
 function stripRegisteredG4Successor(profileBefore, rolesBefore) {
   const file = '.github/workflows/clued-g4-database.yml';
   const blob = 'd7876890a4df616fddae675c4d66737a70eb7045';
@@ -150,6 +172,9 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   delete rolesBefore.workflows[NODE22].sources[NODE22_BLOB];
   // A preregisters this exact later successor without consuming its YAML.
   // Authenticate its full Source and unchanged roles before projecting history.
+  // Verify the later automation route's exact bytes and both complete roles,
+  // then remove only that addition from this older historical projection.
+  stripRegisteredG4AutomationSuccessor(profileBefore, rolesBefore);
   stripRegisteredG4Successor(profileBefore, rolesBefore);
   assert.equal(roleDefinitionDigest(profileBefore), 'ee9f3a94a83bb9dbfa0b02c5c7d2c9daaa7c48019bf98302a9f48877c7130c87');
   assert.equal(roleDefinitionDigest(rolesBefore), 'b884d1473b6aa27a124019f8e4a836a9e861fe7b8b96a970bdd8188d755bf75b');
@@ -164,6 +189,24 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
     gate_sha256: GATE_SHA, roles: [{ job_id: row.job, definition_sha256: row.role }],
   })));
   assert.deepEqual(descriptors[15],HISTORY_732);
+});
+
+test('the G4 automation projection refuses missing, duplicate, altered Source or FullRole', () => {
+  const file = '.github/workflows/clued-g4-database.yml', blob = '9d81933776a2646bdf0ff77f6ee2621cda551ec2';
+  for (const mutate of [
+    (p, r) => { p.workflows[file].accepted_sources = p.workflows[file].accepted_sources.filter(x => x.workflow_blob !== blob); },
+    (p, r) => { p.workflows[file].accepted_sources.push(structuredClone(p.workflows[file].accepted_sources.find(x => x.workflow_blob === blob))); },
+    (p, r) => { p.workflows[file].accepted_sources.find(x => x.workflow_blob === blob).source_yaml += '\n'; },
+    (p, r) => { p.workflows[file].accepted_sources.find(x => x.workflow_blob === blob).routes[0].self_hosted = false; },
+    (p, r) => { delete r.workflows[file].sources[blob]; },
+    (p, r) => { r.workflows[file].sources[blob][0].definition_sha256 = '0'.repeat(64); },
+    (p, r) => { r.workflows[file].sources[blob][0].definition = { permissions: { contents: 'write' } }; },
+    (p, r) => { r.workflows[file].sources[blob].push(structuredClone(r.workflows[file].sources[blob][0])); },
+  ]) {
+    const p = structuredClone(profiles), r = structuredClone(roleSpecs);
+    mutate(p, r);
+    assert.throws(() => stripRegisteredG4AutomationSuccessor(p, r));
+  }
 });
 
 test('the later G4 projection refuses missing, duplicate, altered Source or FullRole', () => {

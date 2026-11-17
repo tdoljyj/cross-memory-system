@@ -256,10 +256,14 @@ export function plan(root,{base='origin/main',oldCheckout=null}={}){
   const baseSha=(()=>{try{return git(root,['rev-parse','--verify',`${base}^{commit}`]);}catch{fail('R9_REREGISTER_BASE_MISSING',`cannot resolve --base ${base}; fetch main first and pass --base FETCH_HEAD (or the ref you fetched)`);}})();
   if(!gitOk(root,['merge-base','--is-ancestor',baseSha,'HEAD']))fail('R9_REREGISTER_BASE_NOT_MERGED',`HEAD does not contain ${baseSha.slice(0,12)}; merge or rebase onto it first`);
   // A base older than a main commit this branch already contains would silently lose the generation registered in between.
+  const head=git(root,['rev-parse','HEAD']),headMainRefs=[];
+  const behind=(ref,sha)=>fail('R9_REREGISTER_BASE_BEHIND',`HEAD contains ${ref} (${sha.slice(0,12)}) which is newer than --base ${base} (${baseSha.slice(0,12)}); use the newer main as --base`);
   for(const ref of knownMainRefs(root)){
     const sha=(()=>{try{return git(root,['rev-parse','--verify',`${ref}^{commit}`]);}catch{return null;}})();
-    if(sha&&sha!==baseSha&&gitOk(root,['merge-base','--is-ancestor',sha,'HEAD'])&&!gitOk(root,['merge-base','--is-ancestor',sha,baseSha]))
-      fail('R9_REREGISTER_BASE_BEHIND',`HEAD contains ${ref} (${sha.slice(0,12)}) which is newer than --base ${base} (${baseSha.slice(0,12)}); use the newer main as --base`);
+    if(sha&&sha!==baseSha&&gitOk(root,['merge-base','--is-ancestor',sha,'HEAD'])&&!gitOk(root,['merge-base','--is-ancestor',sha,baseSha])){
+      if(sha!==head)behind(ref,sha);
+      headMainRefs.push(ref);
+    }
   }
   if(oldCheckout===null&&git(root,['rev-parse','--is-shallow-repository'])==='true')
     fail('R9_REREGISTER_SHALLOW','this is a shallow clone, so the commit that registered the current generation cannot be found; fetch full history or pass --old-checkout');
@@ -283,6 +287,12 @@ export function plan(root,{base='origin/main',oldCheckout=null}={}){
   }
   const result=reregister({baseConfig,workingConfig,read:p=>fs.readFileSync(path.join(root,p)),oldCheckout:registered});
   const text=JSON.stringify(result.config,null,2)+'\n';
+  // On a main push, origin/main already names HEAD while --base is event.before.
+  // Allow only a proven no-op of that committed generation: its complete history
+  // must re-derive unchanged from --base, and both registry and pinned bytes must
+  // still match HEAD. Never rotate a working edit from an obsolete main base.
+  if(headMainRefs.length&&(text!==current||!Buffer.from(current).equals(blobAt(head)(R9_REGISTRY_PATH))||
+      !same(computePins(workingConfig,blobAt(head)),registeredPins(workingConfig))))behind(headMainRefs[0],head);
   return {baseSha,oldCheckout:registered,baseConfig,workingConfig,result,text,current,upToDate:text===current,file};
 }
 

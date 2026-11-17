@@ -33,7 +33,7 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "59",
+      "version": "60",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
@@ -58,7 +58,7 @@
     {
       "id": "hook.runner-job-started",
       "kind": "hook",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "description": "Runner job-started hook, run from the protected default branch by the installed loader at every job start; merging it is its rollout.",
       "root": "scripts/runner",
       "files": [

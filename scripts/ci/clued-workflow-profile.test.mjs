@@ -47,7 +47,7 @@ import {compileRegisteredWorkflow,selectRegisteredProfiles,roleDefinitionDigest,
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
-import {workflowJobs} from './clued-work-admission.mjs';
+import {workflowJobs,AUTOMATION_BOT} from './clued-work-admission.mjs';
 const SOURCE='name: fake-fixture\non: fixture\njobs: fixture\n';
 const definition={on:{pull_request:null},jobs:{main:{'runs-on':'ubuntu-latest',steps:[{name:'Actual tests',run:'node --test'}]}}};
 const fixtureRoles=parsed=>[{job_id:'main',definition_sha256:roleDefinitionDigest(parsed.jobs.main)}];
@@ -115,25 +115,33 @@ test('the compound pin, its registered entry and its three roles are the committ
   assert.deepEqual(roles,ids.map(job_id=>({job_id,definition_sha256:actual.role_sha256[job_id],definition:value.jobs[job_id]})));
   assert.deepEqual(compileRegisteredWorkflow(raw,{primary_ids:ids,parseYaml:yaml.parse,accepted_roles:roles}),entry);
 });
-// Catalogues kept as Git objects (the retired catalogue of main 4a3e0485 and every earlier main) carry the compound
-// entry of the bytes before G3. They must still decode, and that entry must still compile, as exactly those bytes and
-// roles: the earlier pin is history for reading them, never a second current Source.
+// Both retired generations remain Git objects: before G3 (4a3e0485) and before staging push support (20edb51c).
+// Each must decode and compile only as its own exact bytes and roles, never as a second current Source.
 test('the earlier exact compound Source still decodes from its catalogue and compiles only as its own bytes',async()=>{
   const {REQUIRED_TESTS_PREVIOUS_SOURCES:previous}=await import('./clued-workflow-profile.mjs');
   const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
-  const {registry,specs}=retiredCatalogue(),file=REQUIRED_TESTS_SOURCE.file,old=registry.workflows[file];
-  assert.notEqual(old.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the retired catalogue holds the predecessor bytes');
-  assert.deepEqual(previous.map(pin=>pin.workflow_blob),[old.workflow_blob]);
-  assert.equal(isExactAllRequiredPrimariesProfile(old,file),true);
-  assert.equal(registeredWorkflowSource(registry,file,old.workflow_blob).passed,true);
-  const value=yaml.parse(old.source_yaml),roles=rolesForSource(specs,file,old.workflow_blob).map(({job_id,definition_sha256})=>
-    ({job_id,definition_sha256,definition:value.jobs[job_id]}));
-  assert.deepEqual(compileRegisteredWorkflow(old.source_yaml,{primary_ids:old.primary_ids,parseYaml:yaml.parse,accepted_roles:roles}),old);
-  for(const edit of [p=>p.source_yaml+='# changed\n',p=>p.routes[0].required_steps['Select suites']=2,
-    p=>p.workflow_blob=REQUIRED_TESTS_SOURCE.workflow_blob,p=>p.source_sha256=REQUIRED_TESTS_SOURCE.source_sha256]) {
-    const p=structuredClone(old);edit(p);assert.equal(isExactAllRequiredPrimariesProfile(p,file),false);
+  const generations=[
+    {commit:'4a3e048579e766d66285246b7fa93cd545514fb3',blob:'8a22de3a97425d9f85bc9f605dbdbf748b8e0946'},
+    {commit:'20edb51c585beb6c31f97798983b2a5065899fca',blob:'2570781ab5a29d2fa9d09ac72f0ed6118f9e5686'},
+  ],file=REQUIRED_TESTS_SOURCE.file;
+  assert.deepEqual(previous.map(pin=>pin.workflow_blob),generations.map(generation=>generation.blob));
+  for(const {commit,blob} of generations){
+    const {registry,specs}=retiredCatalogue(commit),old=registry.workflows[file];
+    assert.equal(old.workflow_blob,blob,`retired catalogue ${commit} holds its own bytes`);
+    assert.notEqual(old.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the retired catalogue holds the predecessor bytes');
+    assert.equal(isExactAllRequiredPrimariesProfile(old,file),true);
+    assert.equal(registeredWorkflowSource(registry,file,old.workflow_blob).passed,true);
+    const value=yaml.parse(old.source_yaml),roles=rolesForSource(specs,file,old.workflow_blob).map(({job_id,definition_sha256})=>
+      ({job_id,definition_sha256,definition:value.jobs[job_id]}));
+    assert.deepEqual(compileRegisteredWorkflow(old.source_yaml,{primary_ids:old.primary_ids,parseYaml:yaml.parse,accepted_roles:roles}),old);
+    assert.throws(()=>compileRegisteredWorkflow(old.source_yaml+'# changed\n',
+      {primary_ids:old.primary_ids,parseYaml:yaml.parse,accepted_roles:roles}));
+    for(const edit of [p=>p.source_yaml+='# changed\n',p=>p.routes[0].required_steps['Select suites']=2,
+      p=>p.workflow_blob=REQUIRED_TESTS_SOURCE.workflow_blob,p=>p.source_sha256=REQUIRED_TESTS_SOURCE.source_sha256]) {
+      const p=structuredClone(old);edit(p);assert.equal(isExactAllRequiredPrimariesProfile(p,file),false);
+    }
+    assert.equal(isExactAllRequiredPrimariesProfile(old,'.github/workflows/borrowed.yml'),false);
   }
-  assert.equal(isExactAllRequiredPrimariesProfile(old,'.github/workflows/borrowed.yml'),false);
   const current=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows[file];
   assert.equal(current.workflow_blob,REQUIRED_TESTS_SOURCE.workflow_blob,'the live catalogue registers the current bytes');
 });
@@ -309,4 +317,33 @@ test('large profile transport uses immutable tree and blob facts only, with ever
   const foreign=fixture();await assert.rejects(completeLargeWorkflowProfile({repository:'other/r',commit,content:foreign.content,read:foreign.read}),/WORKFLOW_PROFILE_BLOB_UNAVAILABLE/);
   const small={type:'file',path:file,sha:workflowBlob('old small'),size:9,encoding:'base64',content:Buffer.from('old small').toString('base64')};
   assert.equal(await completeLargeWorkflowProfile({content:small,read:()=>{throw Error('NO_NEW_SMALL_FILE_READ');}}),small);
+});
+
+
+test('preregistered complete G4 YAML keeps Owner, proven bot, unknown bot, fork and admission routes exclusive',()=>{
+ const bot=AUTOMATION_BOT;
+ const yaml=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url))('yaml');
+ const workflow=yaml.parse(parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows['.github/workflows/clued-g4-database.yml'].accepted_sources.find(source=>source.workflow_blob==='9d81933776a2646bdf0ff77f6ee2621cda551ec2').source_yaml);
+ const trusted=workflow.jobs['database-gate-trusted-self-hosted'];
+ const hosted=workflow.jobs['database-gate-untrusted-hosted'];
+ const evaluate=(job,github,needs)=>Function('github','needs','cancelled',`return (${job.if.replaceAll('needs.admission-gate',"needs['admission-gate']").replaceAll('needs.push-reuse',"needs['push-reuse']")});`)(github,needs,()=>false);
+ const expected=[
+  ['owner PR','pull_request','o','o/r',true,false,[true,false]],
+  ['qualified bot PR','pull_request',bot.login,'o/r',true,true,[true,false]],
+  ['unqualified bot PR','pull_request',bot.login,'o/r',false,false,[false,false]],
+  ['stranger proof cannot admit fork','pull_request',bot.login,'fork/r',true,true,[false,true]],
+  ['fork owner name','pull_request','o','fork/r',true,false,[false,true]],
+  ['Owner dispatch','workflow_dispatch','o','o/r',true,false,[true,false]],
+  ['unknown dispatch','workflow_dispatch','other','o/r',true,true,[false,true]],
+  ['Owner main push','push','o','o/r',true,false,[true,false]],
+  ['nonOwner push cannot borrow PR proof','push',bot.login,'o/r',true,true,[false,true]],
+  ['not admitted Owner','pull_request','o','o/r',false,false,[false,false]],
+ ];
+ for(const [label,event_name,actor,repo,admitted,proof,want]of expected){
+  const github={event_name,actor,repository_owner:'o',repository:'o/r',event:{pull_request:{head:{repo:{full_name:repo}}}}};
+  const needs={'admission-gate':{result:'success',outputs:{admitted:String(admitted),automation_self_hosted:String(proof)}},'push-reuse':{result:'skipped',outputs:{}}};
+  assert.deepEqual([evaluate(trusted,github,needs),evaluate(hosted,github,needs)],want,label);
+ }
+ assert.deepEqual(trusted['runs-on'],['self-hosted','Linux','X64','clued','pool-general','trust-internal','cap-docker-linux']);
+ assert.equal(hosted['runs-on'],'ubuntu-24.04');
 });

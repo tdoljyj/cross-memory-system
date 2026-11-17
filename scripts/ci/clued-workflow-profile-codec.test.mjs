@@ -38,11 +38,11 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.deepEqual(decoded,semantic);
   assert.equal(wire.schema,'clued.gated-proof-profiles/3');
   assert.equal(decoded.schema,'clued.gated-proof-profiles/2');
-  assert.equal(sources(decoded).length,51);
+  assert.equal(sources(decoded).length,52);
   // The original catalogue still registered the ten workflows deleted later; restore them before comparing it.
   const original=structuredClone(decoded),oldRoles=structuredClone(specs);
   assert.equal(restoreRetiredEntries(original,oldRoles).length,10);
-  assert.equal(sources(original).length,71);
+  assert.equal(sources(original).length,72);
   delete original.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary.
   const WINDOWS='.github/workflows/clued-required-tests-windows.yml',WINDOWS_BLOB='bf46c22f3ff1c9e491d181ca1464f174b4a21d9b';
@@ -51,6 +51,18 @@ test('all original sources and complete successors roundtrip without losing byte
   const G4='.github/workflows/clued-g4-database.yml',G4_BLOB='d7876890a4df616fddae675c4d66737a70eb7045';
   assert.equal(original.workflows[G4].accepted_sources.filter(source=>source.workflow_blob===G4_BLOB).length,1);
   original.workflows[G4].accepted_sources=original.workflows[G4].accepted_sources.filter(source=>source.workflow_blob!==G4_BLOB);
+  // Native automation adds exactly one complete successor, preserving the
+  // immutable original catalogue and its role digest after removing it here.
+  const G4_AUTOMATION='9d81933776a2646bdf0ff77f6ee2621cda551ec2';
+  const automation=original.workflows[G4].accepted_sources.filter(source=>source.workflow_blob===G4_AUTOMATION);
+  assert.equal(automation.length,1);
+  const automationRoles=oldRoles.workflows[G4].sources[G4_AUTOMATION];
+  assert.equal(automationRoles.length,2);
+  const automationDefinition=yaml.parse(automation[0].source_yaml);
+  assert.equal(workflowBlob(automation[0].source_yaml),G4_AUTOMATION);
+  for(const role of automationRoles)assert.equal(roleDefinitionDigest(automationDefinition.jobs[role.job_id]),role.definition_sha256);
+  original.workflows[G4].accepted_sources=original.workflows[G4].accepted_sources.filter(source=>source.workflow_blob!==G4_AUTOMATION);
+  delete oldRoles.workflows[G4].sources[G4_AUTOMATION];
   const successor=original.workflows['.github/workflows/gitleaks.yml'].accepted_sources
     .filter(source=>source.workflow_blob==='6441fc32b084002de697415ea8343af07816c929');
   assert.equal(successor.length,1);
