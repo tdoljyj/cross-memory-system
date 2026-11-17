@@ -121,6 +121,10 @@ export async function planFor({ env, fetchImpl, repository, pr, tip, since, prog
   const stop = reason => ({ action: managed ? 'disable_auto_merge' : 'none', reason });
   if (state === 'frozen') return stop('auto-merge is forbidden in frozen state');
   const branchChecks = required ?? await requiredChecksOf(fetchImpl, env, repository, pr.base.repo.default_branch);
+  // ADR 0018: this never-published, App-pinned check marks push landing.
+  // Updating H would invalidate the train's batch; merging is the train's job.
+  if (branchChecks.some(check => check.name === 'kooyumi-train-landed' && check.app_id === INDEPENDENT_CI_APP_ID))
+    return { action: 'none', reason: '列车自己落地（kooyumi-train-landed@5368905）；不更新或合并车头' };
   let admission = await admissionOf(fetchImpl, env, repository, pr.head.sha, pr.number, branchChecks);
   if (admission.admitted && admission.live)
     admission = { ...admission, mode: typeof admissionMode === "function" ? await admissionMode(pr) : null };

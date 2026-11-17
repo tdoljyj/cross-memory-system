@@ -413,6 +413,50 @@ const untouched = (e, T) => {
   assert.equal([...e.gh.world.checks.values()].filter(c => c.name === 'kooyumi-merge-slot').length, 0, 'no merge-slot green');
 };
 
+test('push: same-tree H with missing or skipped project CI lands using the green checks on S', async t => {
+  for (const headChecks of ['missing', 'skipped']) await t.test(headChecks, async t => {
+    const { e, b } = await opened(t, [910]);
+    assert.notEqual(b.headSha, b.testSha);
+    assert.equal(e.W.commits.get(b.headSha).tree, e.W.commits.get(b.testSha).tree);
+    for (const [id, c] of e.W.checks) if (c.head_sha === b.headSha && c.app.id === ACTIONS) {
+      if (headChecks === 'missing') e.W.checks.delete(id);
+      else c.conclusion = 'skipped';
+    }
+    assert.ok([...e.W.checks.values()].some(c => c.head_sha === b.testSha && c.app.id === ACTIONS && c.conclusion === 'success'));
+    const p = await stage8(t, e, b, { trainLanding: { landing: 'push', batchMax: 1, unreadable: false } });
+    assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+    assert.equal(p.landed.mainSha, b.testSha);
+    assert.deepEqual(e.W.pushes, [b.testSha]);
+    assert.equal(e.main(), b.testSha);
+  });
+});
+
+test('push, fail closed: green checks on same-tree H cannot replace missing, pending or failed checks on S', async t => {
+  for (const testChecks of ['missing', 'pending', 'failed']) await t.test(testChecks, async t => {
+    const { e, b, T } = await opened(t, [910]);
+    assert.equal(e.W.commits.get(b.headSha).tree, e.W.commits.get(b.testSha).tree);
+    for (const [id, c] of e.W.checks) if (c.head_sha === b.testSha && c.app.id === ACTIONS) {
+      if (testChecks === 'missing') e.W.checks.delete(id);
+      else Object.assign(c, { status: testChecks === 'pending' ? 'in_progress' : 'completed', conclusion: testChecks === 'pending' ? null : 'failure' });
+    }
+    const p = await stage8(t, e, b, { trainLanding: { landing: 'push', batchMax: 1, unreadable: false } });
+    assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', testChecks === 'failed' ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_LANDING_CHECKS_PENDING', 0]);
+    untouched(e, T);
+    assert.deepEqual(e.W.pushes, []);
+  });
+});
+
+test('github-merge: same-tree H keeps its publication path when project CI is missing on S', async t => {
+  const { e, b, T } = await opened(t, [910]);
+  assert.equal(e.W.commits.get(b.headSha).tree, e.W.commits.get(b.testSha).tree);
+  for (const [id, c] of e.W.checks) if (c.head_sha === b.testSha && c.app.id === ACTIONS) e.W.checks.delete(id);
+  const p = await stage8(t, e, b, { trainLanding: { landing: 'github-merge', batchMax: 1, unreadable: false } });
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.equal(e.main(), T);
+  assert.deepEqual(e.W.pushes, []);
+  assert.ok([...e.gh.world.checks.values()].some(c => c.head_sha === b.headSha && c.name === 'kooyumi-merge-slot' && c.conclusion === 'success'));
+});
+
 test('push, fail closed: a batch of several PRs never gets a merge-slot green from a stage 8 that does not push (github-merge, or a landing file it cannot read)', async t => {
   const { e, b, T } = await opened(t);
   assert.equal((await e.store.landingBatchByTest(b.testSha)).members.length, 3);

@@ -284,8 +284,16 @@ export class TrainSweepStore {
     return p ? { bad: p.bad, suspect: p.suspect, adopted: p.adopted, handled: p.handled } : { bad: [], suspect: null, adopted: [], handled: [] };
   }
   async appendFrontBatch(r) { return this.write('front', { contract: FRONT_BATCH_CONTRACT, ...r }); }
-  // This node's front batches of one head, newest first.
-  async frontBatches({ pr, headSha }) { return this.read('front', Infinity, r => r.pr === pr && r.headSha === headSha); }
+  // Newest revision of each actual execution, newest first. A timestamp refresh preserves every tested identity
+  // field and the attempt; its append-only record is not another execution or another consumed front attempt.
+  async frontBatches({ pr, headSha }) {
+    const records = await this.read('front', Infinity, r => r.pr === pr && r.headSha === headSha), seen = new Set();
+    return records.filter(r => {
+      const key = JSON.stringify([r.claimId, r.pr, r.headSha, r.baseSha, r.testSha, r.testTree, r.attempt]);
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+  }
   // Generation 28 (resident docs/adr/0016): the newest front batch this node opened, of any PR, or null; a torn front record at or after it
   // refuses (a newer front this node cannot read must not let an older one count as the newest).
   async latestFrontBatch() {

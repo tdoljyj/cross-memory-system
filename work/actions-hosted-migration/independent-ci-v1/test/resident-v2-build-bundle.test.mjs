@@ -149,7 +149,7 @@ test('build-bundle: the receipt and the bundle are unchanged by the seed; the an
   assert.doesNotMatch(receipt, /[Ss]eed/);
   assert.ok(text.includes("'bundle','create','--quiet','--version=2',$Bundle,'--branches','--tags','--glob=refs/reviewed/*','--glob=refs/clued-test/*'"));
   // generation 13 (DESIGN 57.3): the answer also names a failed second generation this run set aside (setAside), never the receipt
-  assert.ok(text.includes('seed=$seedReport;setAside=$setAside}|ConvertTo-Json -Depth 4 -Compress'));
+  assert.ok(text.includes('seed=$seedReport;setAside=$setAside}|ConvertTo-Json -Depth 6 -Compress'));
   const companion = fs.readFileSync(new URL('../../../independent-ci-resident-v1/src/companion.mjs', import.meta.url), 'utf8');
   const bundle = companion.slice(companion.indexOf("case 'build-bundle'"), companion.indexOf("case 'rebuild-bundle'"));
   assert.ok(!bundle.includes('seed'));

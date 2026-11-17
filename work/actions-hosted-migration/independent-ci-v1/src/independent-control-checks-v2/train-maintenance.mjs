@@ -858,7 +858,7 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
   const last = previous[0] ?? null;
   const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
   if (last && !finished && last.claimId === holder.claimId && last.baseSha === mainSha && (last.testSha === front.testMerge.sha || last.testTree === front.testMerge.tree)
-    && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock()) return { refusal: 'TRAIN_FRONT_BATCH_RUNNING' };
+    && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock()) return { refusal: 'TRAIN_FRONT_BATCH_RUNNING', running: last };
   if (used >= MAX_FRONT_BATCHES_PER_HEAD) return { refusal: 'TRAIN_FRONT_ATTEMPTS_USED' };
   // Without the claim's kept-alive lease (keepalive failed or did not name it; review R2 minor 3) the lease bound is the
   // read-back after touch running (openFront): a merge-slot clock never runs past the claim lease (§41.4 "现状").
@@ -885,7 +885,22 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
     used = previous.length;
     if (pushing) { used = 0; for (const r of previous) { const b = await sweepStore.landingBatchByTest(r.testSha); if (!b || b.members.length === 1) used++; } }
   } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
-  const { refusal, since, need } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
+  const { refusal, need, running } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
+  if (running && normal(running.since) !== normal(holder.takenAt)) {
+    // #1144: Native may reset takenAt after the certificate was written. The current round has freshly
+    // proved this holder; reanchor the original tested S, never substitute a regenerated S with the same tree.
+    // Re-read after all keepalive/touch side effects. A racing tenure is retried next round, never guessed.
+    try {
+      const again = await native.holders();
+      let h = again.onDuty && again.holders.length === 1 ? again.holders[0] : null;
+      if (h?.boundPrs?.length > 1) h = await selectProjectedHolder({ github, native, fx, job, holder: h, claimScope, until, clock });
+      const currentSince = normal(holder.takenAt);
+      if (!currentSince || !h || h.claimId !== running.claimId || h.pr !== running.pr || normal(h.takenAt) !== currentSince
+        || h.ciState !== 'running' || h.ciHeadSha !== running.headSha || !(Date.parse(h.mergeSlotUntil) > clock())
+        || Date.parse(currentSince) > clock()) return no('TRAIN_FRONT_BUDGET_SHORT');
+      await sweepStore.appendFrontBatch({ ...running, writtenAt: isoOf(clock()), runId: job.runId, since: currentSince });
+    } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
+  }
   if (refusal) return no(refusal);
   let composed = null;
   if (pushing) {
@@ -904,8 +919,11 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
   if (h?.boundPrs?.length > 1) h = await selectProjectedHolder({ github, native, fx, job, holder: h, claimScope, until, clock });
   if (!h || h.claimId !== holder.claimId || h.pr !== holder.pr || !(Date.parse(h.mergeSlotUntil) > Date.parse(holder.mergeSlotUntil))
     || !(Date.parse(h.mergeSlotUntil) - clock() >= need)) return no('TRAIN_FRONT_BUDGET_SHORT');
+  const currentSince = normal(h.takenAt);
+  if (!currentSince || Date.parse(currentSince) > clock()
+    || Date.parse(currentSince) + job.slotHardCapMinutes * 60_000 - clock() < need) return no('TRAIN_FRONT_BUDGET_SHORT');
   const batch = { pr: holder.pr, headSha: front.headSha, baseSha: mainSha, testSha: composed?.testSha ?? front.testMerge.sha, testTree: composed?.testTree ?? front.testMerge.tree,
-    claimId: holder.claimId, since, attempt: Math.min(used, MAX_FRONT_BATCHES_PER_HEAD - 1) + 1 };
+    claimId: holder.claimId, since: currentSince, attempt: Math.min(used, MAX_FRONT_BATCHES_PER_HEAD - 1) + 1 };
   if (composed) {
     try {
       await sweepStore.appendLandingBatch({ writtenAt: isoOf(clock()), runId: job.runId, frontPr: batch.pr, frontHeadSha: batch.headSha, baseSha: batch.baseSha,

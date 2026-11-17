@@ -150,8 +150,8 @@ export function landingRulesDecision(rules, appId) {
 }
 
 // ---- required checks App 5368905 does not produce, on S (ADR 0018 §2 L2 item 5) ----
-// rules: main's live rules; inventory: { complete, checks } of the commit the checks are read on (S, or H when one member's S has H's
-// tree: the same tree, the same result). Every required context pinned to another App (or to none) must have, as its newest check
+// rules: main's live rules; inventory: { complete, checks } of S itself, even when H has the same tree.
+// Every required context pinned to another App (or to none) must have, as its newest check
 // run by id of the pinned App, a completed success. Newest failed: FAILED. Missing or still running: PENDING. Contexts pinned to
 // appId are the train's own (on H) and are not looked at here.
 export function externalChecksDecision({ rules, inventory, commitSha, appId }) {

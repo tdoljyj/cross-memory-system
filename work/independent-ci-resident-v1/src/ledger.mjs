@@ -142,7 +142,7 @@ export class Ledger {
     if (!(await exists(dir))) return { state: 'ABSENT' };
     // A record that cannot be read (torn write, wrong type, extra hard link) makes the entry
     // UNREADABLE: it is open, recovery closes or quarantines it, and nothing ever throws past here.
-    let reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort, terminal, archived;
+    let reserved, started, wait, planIntent, plan, parked, tries, frontOpenChecked, abort, selfAbort, terminal, archived;
     try {
       const read = async name => (await exists(path.join(dir, name))) ? (await readJson(path.join(dir, name))).value : null;
       reserved = await read('00-reserved.json');
@@ -152,6 +152,7 @@ export class Ledger {
       plan = await read('25-plan.json');
       parked = await read(PARK_RECORD);
       tries = await this.readTries(dir, read);
+      frontOpenChecked = await read('73-front-open-checked.json');
       abort = await read(OWNER_ABORT_RECORD);
       selfAbort = await read(SELF_ABORT_RECORD);
       terminal = await read('90-terminal.json');
@@ -164,7 +165,8 @@ export class Ledger {
     // A crash between mkdir and the reservation record leaves an INCOMPLETE entry; it is open, so
     // recovery terminalises it (FAILED_UNKNOWN) instead of wedging the ledger.
     if (!reserved) return { state: 'INCOMPLETE', reserved: null, started, abort, selfAbort };
-    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort };
+    return { state: started ? 'STARTED' : 'RESERVED', reserved, started, wait, planIntent, plan, parked, tries, abort, selfAbort,
+      ...(frontOpenChecked ? { frontOpenChecked } : {}) };
   }
 
   // A flow ending is not permission to execute the head again. It carries the exact safe point to continue from;
@@ -289,6 +291,14 @@ export class Ledger {
   // is still open at a tick start, that end was interrupted (a crash scene).
   static waitingAt(entry) { return entry?.state === 'STARTED' && !!entry.wait && !entry.planIntent && !entry.plan && !entry.parked && !entry.abort && !entry.selfAbort; }
   static parkedAt(entry) { return entry?.state === 'STARTED' && !!entry.plan && !!entry.parked && !entry.abort && !entry.selfAbort && (entry.tries ?? []).every(t => t.ended !== null); }
+  // One durable request per ordinary batch, not one request per stage-8 retry. A confirmed on-mode stage 10 settles it.
+  static frontOpenOwed(entry) { return Ledger.parkedAt(entry) && !entry.frontOpenChecked && !Object.hasOwn(entry.reserved?.subject ?? {}, 'testSha')
+    && entry.tries.some(t => t.ended?.frontOpenOwed === true && t.ended.code === 'TRAIN_SINGLE_GREEN_NOT_PROVEN' && t.ended.position === 1); }
+
+  async settleFrontOpen(key, facts) {
+    if (!Ledger.frontOpenOwed(await this.state(key))) return;
+    await writeNew(path.join(this.dir(key), '73-front-open-checked.json'), { key, at: isoNow(this.clock), ...facts });
+  }
   static resumable(entry) { return Ledger.waitingAt(entry) || Ledger.parkedAt(entry); }
 
   // Open entries that are a crash scene (recovery closes them) - everything open except an entry at a parking point.
@@ -553,7 +563,8 @@ export class Ledger {
   // separateNetwork (generation 10, DESIGN 53.3: the policy names breaker.network): a release whose facts say network (classify.mjs
   // #networkFailure) counts in networkReleasesByHead, whatever the breaker's state, and never in releasesByHead.
   // UNCAPPED_RELEASES (including historical stage-1 refusals) spend neither cap; evaluation budgets stay independent.
-  async usage(sinceMs, { separateNetwork = false } = {}) {
+  async usage(sinceMs, { separateNetwork = false, stage8Pr = null } = {}) {
+    check(stage8Pr === null || (Number.isSafeInteger(stage8Pr) && stage8Pr > 0), 'STAGE8_BUDGET_PR_INVALID');
     const u = { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(),
       networkReleasesByHead: new Map(), stage8Retries: 0 };
     const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
@@ -597,11 +608,12 @@ export class Ledger {
     for (const dir of dirs) {
       if (await before(dir)) continue;
       try {
-        // Every try after the first one of a parked entry is a stage-8 retry (phase 2, step 2), whenever it was reserved.
+        // Stage-8 retries may be budgeted per PR. Historical rows and flow continuations use their durable reservation;
+        // an unreadable/missing subject stays conservatively charged, never gains a free retry.
         const reserved = await read(path.join(dir, '00-reserved.json'));
         for (const name of (await fs.readdir(dir)).filter(n => /^71-try-(\d{2})\.json$/.test(n) && (n !== '71-try-01.json' || reserved?.flowStage8 === true))) {
           const at = Date.parse((await read(path.join(dir, name)))?.at);
-          if (!(at < sinceMs)) u.stage8Retries += 1;
+          if (!(at < sinceMs) && (stage8Pr === null || !Number.isSafeInteger(reserved?.subject?.pr) || reserved.subject.pr === stage8Pr)) u.stage8Retries += 1;
         }
         if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         const terminal = await read(path.join(dir, '90-terminal.json'));
