@@ -511,12 +511,18 @@ test('real multi-PR holder projection opens a stable front, preserves inflight h
   });
 });
 
-// Field 2026-11-15 (#1121): the front's head had the Native six green but its admission gate failed, so the required ci-suites,
-// clued-cloud-tests and migration-verify never ran and it could never merge; the train kept it as the front (its CI head) while the
-// claim's next PRs waited green, also after its auto-merge was turned off. The front is the first PR of the claim that can land.
+// Required Actions failures and withdrawn auto-merge prefer another eligible PR of the same claim.
+// An optional admission-gate failure alone is not a failed required check.
+function requireActionsSuite(e) {
+  const read = e.gh.readBranchRules;
+  e.gh.readBranchRules = async () => { const reply = await read();
+    reply.rules[1].parameters.required_status_checks.push({ context: 'ci-suites', integration_id: 15368 });
+    return reply; };
+}
 test('multi-PR holder: a front that cannot land (failed GitHub check, auto-merge off) gives way to the claim\'s next PR', async t => {
   for (const mode of ['failed-check', 'auto-merge-off', 'rerun-green', 'none-can-land']) await t.test(mode, async t => {
     const e = await unbound(t), otherHead = sha(0x8000 + 912);
+    requireActionsSuite(e);
     e.gh.pull(912, { updated: iso(NOW) });
     e.native.bindings.set(912, { claimId: CLAIM, taskId: CLAIM, scope: BIND_SCOPE });
     // 910 is the front the claim's CI head names (green, as #1121 was).
@@ -525,8 +531,8 @@ test('multi-PR holder: a front that cannot land (failed GitHub check, auto-merge
     const read = e.gh.readPullRequest;
     e.gh.readPullRequest = async n => ({ ...(await read(n)), auto_merge: autoMerge.get(n) ? { merge_method: 'merge' } : null });
     const actions = (id, name, conclusion) => e.gh.world.checks.set(id, { id, app: { id: 15368 }, name, head_sha: H, status: 'completed', conclusion });
-    if (mode !== 'auto-merge-off') actions(501, 'admission-gate', 'failure');
-    if (mode === 'rerun-green') actions(502, 'admission-gate', 'success');
+    if (mode !== 'auto-merge-off') actions(501, 'ci-suites', 'failure');
+    if (mode === 'rerun-green') actions(502, 'ci-suites', 'success');
     const old = e.native.port.holders;
     e.native.port.holders = async () => {
       await old(); const h = e.native.holder;
@@ -546,10 +552,11 @@ test('a head whose PR cannot land yields the merge slot (Native decides whether 
   for (const mode of ['failed-check', 'auto-merge-off', 'draft', 'landable', 'nobody-waiting', 'not-deployed']) await t.test(mode, async t => {
     // Steady state (the take-over full sweep done): a cold start holds every front until its strict observation, a draft's never comes.
     const e = await setup(t, { strict: true, native: healthy, tick: 1 });
+    requireActionsSuite(e);
     const read = e.gh.readPullRequest;
     e.gh.readPullRequest = async n => ({ ...(await read(n)), draft: mode === 'draft', auto_merge: mode === 'auto-merge-off' ? null : { merge_method: 'merge' } });
     if (mode !== 'landable' && mode !== 'auto-merge-off' && mode !== 'draft')
-      e.gh.world.checks.set(501, { id: 501, app: { id: 15368 }, name: 'admission-gate', head_sha: H, status: 'completed', conclusion: 'failure' });
+      e.gh.world.checks.set(501, { id: 501, app: { id: 15368 }, name: 'ci-suites', head_sha: H, status: 'completed', conclusion: 'failure' });
     e.native.port.yieldSlot = async i => { e.native.calls.push(['yield', i]);
       return mode === 'not-deployed' ? { onDuty: null, yielded: false } : { onDuty: true, yielded: mode !== 'nobody-waiting' }; };
     const r = await e.run();

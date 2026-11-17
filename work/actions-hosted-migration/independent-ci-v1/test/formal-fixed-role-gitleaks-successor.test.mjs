@@ -1,12 +1,11 @@
 // Pure Source-v4 successor gates. These reports/observations never acquire an
 // actual self-test, observation, qualification or signer capability.
 import test from 'node:test';
-import {summarizeGitleaksReport} from '../src/gitleaks-report.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { batchJobsV2, subjectOfV2 } from '../src/job-v2.mjs';
-import { REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, matchesReviewedHistoryProof, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
+import { IMAGE, SCAN_ARGS, REVIEWED_COMMITS, REVIEWED_HISTORY_PROOF, matchesReviewedHistoryProof, validateSelfTestReport, requiredScannerPlan } from '../worker/formal-gitleaks-v4/required-history/prepare.mjs';
 import { REVIEWED_COMMITS as LEGACY_COMMITS } from '../worker/formal-gitleaks-v3/required-history/prepare.mjs';
 import { validateCleanupObservation } from '../worker/formal-fixed-role-policy-v3/policy.mjs';
 import { observationFacts } from '../worker/protected-job-bridge-v4/signed-result.mjs';
@@ -50,7 +49,7 @@ function execution() {
     sourceManifestSha256: 'c'.repeat(64), createdAt: iso(now - 60000), attempt: 1 }).gitleaks;
   const observation = { contract: 'clued.independent-ci.formal-scanner-observation/2', domain: 'production-observation', fixture: false,
     formalEligible: false, qualificationIssued: false, checksWritten: false, subject: subjectOfV2(job), sourceManifestSha256: job.sourceManifestSha256,
-    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 737, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, gitleaksReport: summarizeGitleaksReport('[]', {...job,prCommits:[job.headSha]}, 0), startedAt: iso(now - 5000),
+    profile: 'required-gitleaks-history/1', sourceSha: 'd'.repeat(40), requiredHistoricalExceptions: 737, reviewedHistoryProof: { ...REVIEWED_HISTORY_PROOF }, startedAt: iso(now - 5000),
     finishedAt: iso(now - 1000), exitCode: 0, conclusion: 'success', logs: { stdout: { sha256: 'e'.repeat(64) }, stderr: { sha256: 'f'.repeat(64) } },
     cleanup: { complete: true, wholeContainerTreeStopped: true, containerRemoved: true, observedAt: iso(now - 500) } };
   return { job, observation, issue: { job, expiresAt: iso(now + 60000) }, now };
@@ -147,4 +146,13 @@ test('the self-test git shim admits exactly the cc353e29 and d94cd486 one-commit
   for (const option of ['core.abbrev=8', 'core.abbrev=7', 'core.abbrev=40']) {
     assert.throws(() => safeGitArguments(['-c', option, ...diff(`${d94}^`, d94)], c), { code: 'SELF_TEST_GIT_OPTION_REFUSED' });
   }
+});
+
+// The role command is compared item by item with the node's installed fleet formalRoles (policy.mjs, prepare.mjs).
+// A changed SCAN_ARGS changes formalRoles, which upgrade.mjs refuses in place (FLEET_SOURCE_REFS_CHANGED_NEEDS_REINSTALL).
+// These are the values of the accepted fleet package 2026.11.16-446a7106 (formalRoles.gitleaks.containerCommand);
+// change them only together with a release that reinstalls every node.
+test('gitleaks role command equals the installed fleet formalRoles (446a7106), so the release upgrades in place', () => {
+  assert.deepEqual([...SCAN_ARGS], ['git', '/repo', '--config', '/repo/.gitleaks.toml', '--gitleaks-ignore-path', '/reviewed.ignore', '--redact', '--exit-code', '1']);
+  assert.equal(IMAGE, 'ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f');
 });

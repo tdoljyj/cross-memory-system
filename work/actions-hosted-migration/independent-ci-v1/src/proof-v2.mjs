@@ -5,7 +5,6 @@
 import { verify } from 'node:crypto';
 import { canonical, digest } from './proof.mjs';
 import { SUBJECT_V2, subjectOfV2, validateJobV2 } from './job-v2.mjs';
-import { validateGitleaksReport } from './gitleaks-report.mjs';
 
 export const RESULT_CONTRACT_V2 = 'independent-ci.execution-result.v2';
 export const ENVELOPE_CONTRACT_V2 = 'independent-ci.signed-result.v2';
@@ -34,11 +33,6 @@ export function verifyResultV2({ job, envelope, signers, now = Date.now(), domai
   if (!['success', 'failure'].includes(payload.conclusion) || !Number.isInteger(payload.exitCode)
     || (payload.conclusion === 'success') !== (payload.exitCode === 0)
     || !SHA256.test(payload.stdoutSha256 ?? '') || !SHA256.test(payload.stderrSha256 ?? '') || !SHA256.test(payload.artifactsSha256 ?? '')) deny('invalid_execution_outcome');
-  if (Object.hasOwn(payload, 'gitleaksReport')) {
-    if (job.role !== 'gitleaks') deny('invalid_execution_outcome');
-    validateGitleaksReport(payload.gitleaksReport, job);
-    if (payload.exitCode !== (payload.gitleaksReport.pr.count ? 1 : 0)) deny('invalid_execution_outcome');
-  }
   return Object.freeze({ payload: structuredClone(payload), evidenceSha256: digest(envelope),
     signer: { keyId: envelope.keyId, runtimeId: signer.runtimeId, qualificationRef: signer.qualificationRef, sourceAcceptanceRef: signer.sourceAcceptanceRef },
     domain, productionAuthorized: domain === 'production' });
