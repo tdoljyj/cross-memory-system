@@ -75,6 +75,7 @@ const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test
   'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs',
   'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs',
   'apps/clued-cloud/tests/storage-runtime-authority-db.test.mjs',
+  'apps/clued-cloud/tests/imprint-bulk-backfill-db.test.mjs',
   'apps/clued-cloud/tests/work-claims-pr-end-release-db.test.mjs'];
 // The database tests clued-connection-authorization.yml ran (authorization, context v2, projection refresh, work
 // claims, Information Flow, records, MTPE, invitations, migration chain, Resource Center authority, end-to-end

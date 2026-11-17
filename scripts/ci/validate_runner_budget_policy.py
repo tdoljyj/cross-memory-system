@@ -125,7 +125,7 @@ LEGACY_HOSTED_DEBT = {
         "jobs": {
             # Same exact image pin and coverage test: inspect both caches before
             # network pulls. No trigger, permission, timeout or runner expansion.
-            "database-gate-untrusted-hosted": "43e37eafc1de5b3fb8213484a85210a72941105bbeebf7679fd64d49623f8c8c"
+            "database-gate-untrusted-hosted": "bd4d401f7c70da3cc222e995ecbfabc724b6939516f8763f64738dd52128adfb"
         }
     },
     "clued-information-flow-prod-e2e.yml": {

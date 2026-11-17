@@ -215,6 +215,15 @@ test('the Integration Runtime 250,000-sample property test runs in a required ch
 // The database tests clued-connection-authorization.yml ran, which nothing ran after it was disabled (2026-10-17).
 const productionSchemaFiles = () => SUITE_COMMANDS['production-schema'].flatMap(({ cwd, argv }) =>
   argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => path.posix.join(cwd, arg)));
+
+test('the bounded first-batch database regression runs once in migration-verify on every migration and its own changes', () => {
+  const file = 'apps/clued-cloud/tests/imprint-bulk-backfill-db.test.mjs';
+  assert.equal(productionSchemaFiles().filter(value => value === file).length, 1);
+  for (const changed of [file, 'apps/clued-cloud/tests/cluster-cleanup.mjs',
+    'apps/clued-cloud/supabase/migrations/20261117144210_imprint_bulk_preview_project_cache_v1.sql']) {
+    assert.deepEqual(selectSuites('migration-verify', [changed], 'linux').suites, ['production-schema'], changed);
+  }
+});
 test('the database tests of the retired connection-authorization workflow run in production-schema, selected by what they read', () => {
   const moved = ['authorization-end-to-end', 'connection-authorization-db', 'context-v2-terminal-restore-db', 'projection-refresh-pipeline-db',
     'work-claims-acceptance-db', 'work-claims-continuation-db', 'db-security-hygiene-db', 'information-flow-candidate-store-db',
@@ -273,7 +282,8 @@ test('a migration selects the production-schema check; ordinary documentation se
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   assert.deepEqual(scanStart.argv, ['node', '--test', '--test-concurrency=1',
     'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
-    'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs', 'tests/storage-runtime-authority-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs']);
+    'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs', 'tests/storage-runtime-authority-db.test.mjs',
+    'tests/imprint-bulk-backfill-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs']);
   const docs = selectSuites('migration-verify', ['docs/README.md']);
   assert.deepEqual(docs.suites, []);
   assert.match(docs.reason, /no file this check covers changed/);
