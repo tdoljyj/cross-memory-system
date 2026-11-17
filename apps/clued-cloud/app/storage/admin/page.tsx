@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "../../supabase-browser";
+import StorageExternalRegistrationControl from "./StorageExternalRegistrationControl";
 type Connection = { id: string; provider: string; state: string; version: number; root_name: string };
 type RecoveryDiagnostic = { stage: string; reason: string; observed_at: string; automatic_next_action: string };
 type RecoveryView = { job_id: string; connection_id?: string; read_connection_id?: string; status: string; receipt_id: string; diagnostic?: RecoveryDiagnostic;
@@ -525,6 +526,7 @@ export default function StorageConnections() {
     {connections.map(c => <section className="my-4 rounded-xl border p-4" key={c.id}>
       <h2>{c.root_name}</h2><p className="my-2">{c.provider === "google-drive" ? "Google Drive" : c.provider} · {labels[c.state] ?? "状态待确认"}</p>
       <p className="my-2 break-all text-sm">已登记目录：{c.root_name}</p>
+      {c.state === "active" && <StorageExternalRegistrationControl connectionId={c.id} />}
       <details className="my-2 text-sm"><summary>连接技术信息</summary><p className="break-all">连接：{c.id}</p></details>
       <section className="my-4 rounded border p-3" aria-label="文件操作自动恢复">
         <h3>文件操作自动恢复</h3>
