@@ -406,7 +406,7 @@
 
     "scripts/ci/clued-scan-start-732-successor.test.mjs": "da93ef5cf5a5b9f9a06fec6fae89aee5399e9260f53bca975f9f40bbe3c76499",
 
-    "scripts/ci/clued-scan-start-prereg.test.mjs": "d4d95deda6ce2eaac70d83e3e8740f7c5316352d178dd9ab3c55ef9a838d75f1",
+    "scripts/ci/clued-scan-start-prereg.test.mjs": "b6ddbe1f8527f8bf28387861db4d8f42d801a5b593bb7e7aeaf6a003a163b4eb",
 
     "scripts/ci/clued-scan-start.mjs": "02eea1acaecc39ec179ac4201246509152dbf7bb7119687fb7cf640fb86146e1",
 
@@ -424,7 +424,7 @@
 
     "scripts/ci/clued-work-admission.mjs": "150ffdff27e3cc4ba1c09acaa05a73ee75c983751f314bc29b75b1893ce35221",
 
-    "scripts/ci/clued-work-admission.test.mjs": "5cdf1652d977d43852cc2ca08b0af219eaed26cc1efacced5b9a0a1563298a82",
+    "scripts/ci/clued-work-admission.test.mjs": "016f428c9b36457e0926466b8c72ffc9190275f2b2952cde1c9b461676ecf7dd",
 
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
 
@@ -434,7 +434,7 @@
 
     "scripts/ci/clued-workflow-profile.mjs": "f8087a8eb5175aa753fc1d87ba42f92e3f68f3cf2f56f0396c654196b08152e5",
 
-    "scripts/ci/clued-workflow-profile.test.mjs": "9144aefcfb8b8f911bf3811dac9b1901ca7294b1316843ad94096733fe9ec3d6",
+    "scripts/ci/clued-workflow-profile.test.mjs": "dbea2ef63a1f081fc47f03ff7e377eafddcd2ddb2875aaa73d1f939d045065a3",
 
     "scripts/ci/clued_release_tags.py": "37dbb708333c8a92647d23144a9b6fe3f0f1021e8801d0a781749138280b835f",
 
