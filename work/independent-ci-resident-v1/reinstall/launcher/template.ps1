@@ -172,6 +172,15 @@ function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
   $r
 }
 
+function Assert-CiInstallBaseline([string]$ciRoot) {
+  $file = Join-Path $ciRoot 'secrets\ci-admission.connection.json'
+  try { [void][IO.File]::GetAttributes($file) }
+  catch [IO.FileNotFoundException] { return }
+  catch [IO.DirectoryNotFoundException] { return }
+  catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
+  throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
+}
+
 function Step-Identity {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   if ($id.User.Value -cne $OperatorSid) { throw 'OWNER_ACCOUNT_REQUIRED' }   # M5-b (ADR 0023): the Owner; ownerSid is then the companion's account
@@ -1626,6 +1635,7 @@ function Step-LinuxRoot {
 
 #region main
 Step-Identity
+Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot)
 Step-HostHygiene
 $null = Step-SweepCarry   # token copies a cut-off earlier run left behind: looked at, deleted, recorded (never their content)
 Step-Output

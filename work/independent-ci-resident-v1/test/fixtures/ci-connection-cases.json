@@ -1,0 +1,97 @@
+{
+  "node": "node-b",
+  "bindingId": "97422e7a-250d-46a1-8205-efe28713d117",
+  "bindingGeneration": 2,
+  "rebindReceiptId": "07c17825-c99c-45c8-a6d0-24f8d62708dc",
+  "activatedAt": "2026-11-18T01:02:03.000Z",
+  "cases": [
+    [
+      "安装基线",
+      "absent"
+    ],
+    [
+      "首份记录",
+      "valid"
+    ],
+    [
+      "后续记录",
+      "previous"
+    ],
+    [
+      "多键",
+      "extra"
+    ],
+    [
+      "少键",
+      "missing"
+    ],
+    [
+      "重复键",
+      "duplicate"
+    ],
+    [
+      "非规范空格",
+      "space"
+    ],
+    [
+      "换行",
+      "newline"
+    ],
+    [
+      "UTF-8 签名",
+      "bom"
+    ],
+    [
+      "无效 UTF-8",
+      "bad-utf8"
+    ],
+    [
+      "外机记录",
+      "foreign"
+    ],
+    [
+      "合同",
+      "contract"
+    ],
+    [
+      "编号",
+      "binding"
+    ],
+    [
+      "回执",
+      "receipt"
+    ],
+    [
+      "指纹",
+      "pin"
+    ],
+    [
+      "前代摘要",
+      "previous-format"
+    ],
+    [
+      "零代次",
+      "zero"
+    ],
+    [
+      "非整数",
+      "fraction"
+    ],
+    [
+      "代次越界",
+      "overflow"
+    ],
+    [
+      "字符串代次",
+      "string-generation"
+    ],
+    [
+      "无效日期",
+      "date"
+    ],
+    [
+      "年份超出 Windows 日期范围",
+      "year-zero"
+    ]
+  ]
+}

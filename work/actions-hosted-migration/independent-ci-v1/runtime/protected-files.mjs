@@ -65,7 +65,16 @@ export async function readSignedExchange(spool, filename) {
   try { return JSON.parse(bytes); } catch { stop('exchange_json_invalid'); }
 }
 
-export async function assertProtectedPaths(root, files, state = false) {
+export async function assertProtectedPaths(root, files, state = false, optionalFile = null) {
+  if (optionalFile !== null) {
+    // 先核父目录，只有叶文件缺失才能沿用安装记录。
+    await assertProtectedPaths(root, [...files, path.dirname(optionalFile)], state);
+    try { await fsp.lstat(optionalFile); } catch (error) {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    }
+    files = [optionalFile];
+  }
   const checked = new Set();
   for (const file of [root, ...files]) {
     for (let cursor = file; ; cursor = path.dirname(cursor)) {
@@ -91,4 +100,5 @@ export async function assertProtectedPaths(root, files, state = false) {
       if (stat.uid !== 0 && !(state && stat.uid === process.getuid()) || stat.mode & 0o022) stop('installation_acl_unqualified');
     }
   }
+  if (optionalFile !== null) return true;
 }
