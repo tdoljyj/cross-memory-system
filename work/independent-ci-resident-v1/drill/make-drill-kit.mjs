@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { readTar } from '../rollout/fleet/tar.mjs';
 
@@ -141,7 +141,7 @@ export function prepareFrom({ build, final, images, version, out }) {
   return { from: path.resolve(out), version };
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+if (import.meta.main) {
   try {
     const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'build', 'final', 'images'].map(n => [n, { type: 'string' }])) });
     check(values.version && values.out, 'USAGE: --version <v> --out <new-dir> (--from <release-dir> --prereq <prereq.json> | --build <dir> --final <dir> --images <dir>)');
