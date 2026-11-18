@@ -87,6 +87,7 @@ export async function readWranglerConfig(file) {
 export async function main(argv = process.argv.slice(2), { periodMinutes, runGate, now, sleep,
   configPath = WRANGLER_PRODUCTION, readConfig = readWranglerConfig,
   removeScratch = (directory) => rmSync(directory, { recursive: true, force: true }),
+  writeConclusion = (file, text) => writeFileSync(file, text),
   log = (line) => process.stderr.write(`${line}\n`) } = {}) {
   const out = option(argv, '--evidence-out');
   if (!out) {
@@ -123,13 +124,16 @@ export async function main(argv = process.argv.slice(2), { periodMinutes, runGat
   // The conclusion first; the scratch directory after. A failed clean-up
   // (EBUSY, EACCES) only adds a warning and changes nothing written.
   const record = { contract: 'clued.production-projection-postflight.v1', ...conclusion, finished_at: new Date().toISOString() };
-  writeFileSync(out, `${JSON.stringify(record, null, 2)}\n`);
-  log(`projection postflight ${record.status}${record.reason ? `: ${record.reason}` : ''}`);
-  if (scratch) {
-    try {
-      removeScratch(scratch);
-    } catch (error) {
-      log(`::warning::projection postflight could not remove ${scratch} (${error?.code ?? 'error'}): ${error?.message ?? error}`);
+  try {
+    writeConclusion(out, `${JSON.stringify(record, null, 2)}\n`);
+    log(`projection postflight ${record.status}${record.reason ? `: ${record.reason}` : ''}`);
+  } finally {
+    if (scratch) {
+      try {
+        removeScratch(scratch);
+      } catch (error) {
+        log(`::warning::projection postflight could not remove ${scratch} (${error?.code ?? 'error'}): ${error?.message ?? error}`);
+      }
     }
   }
   return record.status === 'passed' ? 0 : 1;

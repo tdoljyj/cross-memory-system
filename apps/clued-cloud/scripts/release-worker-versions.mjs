@@ -329,7 +329,7 @@ export async function main(argv = process.argv.slice(2), { wrangler, wait, env =
       const line = `## Automatic Worker rollback\n\n**Not restored: ${error.message}. Nothing was rolled back; check production before releasing again.**\n`;
       console.log(line);
       if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, line);
-      console.error(`::error title=Release rolled back::not restored: ${error.message}`);
+      console.error(`::error title=Release not rolled back::not restored: ${error.message}`);
       return 1;
     }
     writeJson(out, result, fileSystem);

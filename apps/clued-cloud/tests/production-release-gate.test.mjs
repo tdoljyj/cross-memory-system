@@ -874,10 +874,10 @@ const noSleep = async () => {};
 test('the rollback restores each changed Worker to its recorded version, last deployed first, and reports it', async () => {
   const { WORKERS, main, recordVersions, rollbackVersions, renderRollbackSummary, servedVersion } =
     await import('../scripts/release-worker-versions.mjs');
-  // The names are the ones the deploy steps' configurations publish.
+  // The names are the ones the deploy steps' configurations publish (read as Wrangler reads them).
+  const { readWranglerConfig } = await import('../scripts/projection-postflight.mjs');
   for (const { name, config } of WORKERS) {
-    const text = await readFile(new URL(`../${config}`, import.meta.url), 'utf8');
-    assert.equal(/"name": "([^"]+)"/.exec(text)[1], name, config);
+    assert.equal((await readWranglerConfig(fileURLToPath(new URL(`../${config}`, import.meta.url)))).name, name, config);
     assert.ok(productionWorkflow.includes(config), config);
   }
   const id = (n) => `${String(n).repeat(8)}-0000-4000-8000-${String(n).repeat(12)}`;
@@ -1417,7 +1417,8 @@ test('the projection postflight writes its conclusion before it cleans up, and a
       let cleaned = 0;
       const result = await postflightMain(['--evidence-out', out], { periodMinutes: 10, now: () => 0, sleep: noSleep,
         log: (line) => lines.push(line), runGate: async () => answer,
-        removeScratch: () => { cleaned += 1; assert.ok(fs.existsSync(out), 'the conclusion is on disk before the clean-up');
+        removeScratch: (directory) => { cleaned += 1; assert.ok(fs.existsSync(out), 'the conclusion is on disk before the clean-up');
+          fs.rmSync(directory, { recursive: true, force: true }); // the test leaves nothing behind
           throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); } });
       assert.equal(cleaned, 1);
       assert.equal(result, code);
@@ -1432,12 +1433,26 @@ test('the projection postflight writes its conclusion before it cleans up, and a
 // Round-4 review: the release's own pre-deploy tests read the production
 // configuration through the same reader as the wrapper, so legal JSONC
 // (comments, trailing commas) in it cannot fail them.
+// Hand-written JSONC: a comment before each key, a trailing comma after every
+// member and element, the last top-level member included.
+function toJsonc(value, pad = '') {
+  if (Array.isArray(value)) {
+    return value.length ? `[\n${value.map((item) => `${pad}  ${toJsonc(item, pad + '  ')},`).join('\n')}\n${pad}]` : '[]';
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    return entries.length ? `{\n${entries.map(([key, item]) =>
+      `${pad}  // ${key}\n${pad}  ${JSON.stringify(key)}: ${toJsonc(item, pad + '  ')}, /* ${key} */`).join('\n')}\n${pad}}` : '{}';
+  }
+  return JSON.stringify(value);
+}
+
 // A JSONC copy of a wrangler configuration: the same settings with comments
-// and trailing commas, as a person might write them.
+// and trailing commas. Built from the configuration as Wrangler reads it, so
+// the original's own punctuation (a trailing comma already there) cannot break it.
 async function jsoncCopyOf(file) {
-  const original = await readFile(file, 'utf8');
-  return '// production configuration\n' + original.replace(/\n\}\s*$/, ',\n}\n')
-    .replace('"triggers": { "crons": ["*/10 * * * *"] }', '"triggers": { /* Builder fallback */ "crons": ["*/10 * * * *",], }');
+  const { readWranglerConfig } = await import('../scripts/projection-postflight.mjs');
+  return `// production configuration\n${toJsonc(await readWranglerConfig(file))}\n`;
 }
 
 test('the release tests read the wrangler configuration with the wrapper\'s JSONC reader', async () => {
@@ -1469,21 +1484,8 @@ test('a production configuration with a top-level trailing comma and comments pa
   const parsed = await postflight.readWranglerConfig(PRODUCTION_WRANGLER);
   const dir = await mkdtemp(path.join(os.tmpdir(), 'wrangler-trailing-'));
   try {
-    // Hand-written JSONC: a comment before each key, a trailing comma after
-    // every member and element, the last top-level member included.
-    const jsonc = (value, pad = '') => {
-      if (Array.isArray(value)) {
-        return value.length ? `[\n${value.map((item) => `${pad}  ${jsonc(item, pad + '  ')},`).join('\n')}\n${pad}]` : '[]';
-      }
-      if (value && typeof value === 'object') {
-        const entries = Object.entries(value);
-        return entries.length ? `{\n${entries.map(([key, item]) =>
-          `${pad}  // ${key}\n${pad}  ${JSON.stringify(key)}: ${jsonc(item, pad + '  ')}, /* ${key} */`).join('\n')}\n${pad}}` : '{}';
-      }
-      return JSON.stringify(value);
-    };
     const configured = path.join(dir, 'wrangler.production.jsonc');
-    const text = `${jsonc(parsed)}\n`;
+    const text = `${toJsonc(parsed)}\n`;
     assert.match(text, /, \/\* observability \*\/\n\}\n$/, 'the last top-level member has a trailing comma');
     await writeFile(configured, text);
     // Wrangler reads it as the same configuration.
