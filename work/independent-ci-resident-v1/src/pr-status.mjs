@@ -154,7 +154,7 @@ const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MA
 // (companion-heartbeat.mjs#watchdogStale), every text this node writes for a PR head ends with this, never clipped away. At
 // the end, so the duty words that start a text (node-duty.mjs) stay where the other nodes read them.
 export const WATCHDOG_STALE_TEXT = '自动接班看门狗未运行';
-// Generation 12 (DESIGN §56.5): the companion re-ran this head's required tests once (admission-rerun.mjs). Applied to the base text
+// DESIGN §56.5: show the companion's latest required-tests recovery receipt (admission-rerun.mjs). Applied to the base text
 // (describe), before the duty word and the other lines are added: at the start of the base, so a clipped text keeps it; never in front
 // of a duty word (当班, 双活停机, 已交班, 停摆), which another node reads at the start of the text. A weak (generic) text gets none.
 // The lost-run lane's line (a head GitHub created no run for, AdmissionRerunner#line) goes in the same place. line: true (the re-run
