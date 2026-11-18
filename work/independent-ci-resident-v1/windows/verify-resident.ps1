@@ -128,16 +128,16 @@ function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes) {
     foreach ($key in @('bindingId','rebindReceiptId')) {
       if ($v.$key -isnot [string] -or $v.$key -cnotmatch $uuid) { throw 'id' }
     }
-    if ($v.contract -isnot [string] -or $v.contract -cne 'clued.independent-ci.ci-connection/1' -or $v.tokenPinSha256 -isnot [string] -or $v.tokenPinSha256 -cnotmatch $hash -or
-        $v.baseNodeIdentitySha256 -isnot [string] -or $v.baseNodeIdentitySha256 -cne (Sha256Text (ConvertTo-NodeIdentityCanonical $identity)) -or $v.activatedAt -isnot [string] -or
+    if ($v.contract -isnot [string] -or -not [string]::Equals($v.contract, 'clued.independent-ci.ci-connection/1', [StringComparison]::Ordinal) -or $v.tokenPinSha256 -isnot [string] -or $v.tokenPinSha256 -cnotmatch $hash -or
+        $v.baseNodeIdentitySha256 -isnot [string] -or -not [string]::Equals($v.baseNodeIdentitySha256, (Sha256Text (ConvertTo-NodeIdentityCanonical $identity)), [StringComparison]::Ordinal) -or $v.activatedAt -isnot [string] -or
         ($null -ne $v.previousSha256 -and ($v.previousSha256 -isnot [string] -or $v.previousSha256 -cnotmatch $hash)) -or
         ($v.bindingGeneration -isnot [int] -and $v.bindingGeneration -isnot [long]) -or $v.bindingGeneration -lt 1 -or $v.bindingGeneration -gt 9007199254740991) { throw 'fields' }
     $format = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'"
     $at = [DateTime]::ParseExact($v.activatedAt, $format, [Globalization.CultureInfo]::InvariantCulture)
-    if ($at.ToString($format, [Globalization.CultureInfo]::InvariantCulture) -cne $v.activatedAt) { throw 'date' }
+    if (-not [string]::Equals($at.ToString($format, [Globalization.CultureInfo]::InvariantCulture), $v.activatedAt, [StringComparison]::Ordinal)) { throw 'date' }
     $ordered = [ordered]@{}
     foreach ($key in $keys) { $ordered[$key] = $v.$key }
-    if (($ordered | ConvertTo-Json -Compress) -cne $text) { throw 'canonical' }
+    if (-not [string]::Equals(($ordered | ConvertTo-Json -Compress), $text, [StringComparison]::Ordinal)) { throw 'canonical' }
     [pscustomobject]@{ bindingId = $v.bindingId; tokenPinSha256 = $v.tokenPinSha256; generation = $v.bindingGeneration; receiptId = $v.rebindReceiptId }
   } catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
 }

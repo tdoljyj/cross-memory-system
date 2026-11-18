@@ -55,6 +55,13 @@ for (const [mode, first] of [['original','Step-WindowsPreflightBeforeLinux'], ['
     assert.deepEqual(r.calls, ['sweep', 'output', 'package', 'stage', first]);
     if (mode !== 'original') assert.deepEqual(r.resumeCalls, []);
   });
+  test(`暂存期间出现轮换记录时在首个重装步骤前拒绝 ${mode}`, windows, t => {
+    const r = launch(t, mode, 'during-stage');
+    assert.equal(r.code, refusal);
+    assert.deepEqual(r.calls, ['sweep', 'output', 'package', 'stage']);
+    assert.deepEqual(r.resumeCalls, mode === 'original' ? ['Resume'] : []);
+    assert.equal(r.pauseSha === null, mode === 'original');
+  });
 }
 
 test('首次安装、重装和直接安装在修改机器之前拒绝已有的当前连接', { skip: process.platform !== 'win32' }, t => {

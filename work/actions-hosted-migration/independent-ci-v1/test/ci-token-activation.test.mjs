@@ -46,11 +46,11 @@ function setup(t, {upgrade, heartbeat, heartbeatFingerprint, generation} = {}) {
 function snapshot(dir) {
   return Object.fromEntries(fs.readdirSync(dir).map(k=>[k,digest(fs.readFileSync(path.join(dir,k),'utf8'))]));
 }
-function run(ctx, {token=fresh, status=200, reply, point='', action='apply', sampleIdentity=null}={}) {
+function run(ctx, {token=fresh, status=200, reply, point='', action='apply', sampleIdentity=null, transcript=false}={}) {
   const tokenFile = ctx.root + '.exercise.token';
   if (['apply','installed-file','installed-host'].includes(action)) fs.writeFileSync(tokenFile,token+'\r\n');
   const p = spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',script],{encoding:'utf8',windowsHide:true,
-    input:JSON.stringify({root:ctx.root,tokenFile,reply:reply===undefined ? sample() : reply,status,point,action,sampleIdentity,publicJwk:pub})});
+    input:JSON.stringify({root:ctx.root,tokenFile,reply:reply===undefined ? sample() : reply,status,point,action,sampleIdentity,publicJwk:pub,transcript})});
   assert.ok(!(p.stdout+p.stderr).includes(token),'输出含凭据');
   assert.equal(p.status,0,p.stderr);
   const result=JSON.parse(p.stdout);
@@ -150,6 +150,14 @@ for(const point of ['', 'staged','record','token']) test('服务端三值、ACL 
   assert.equal(rec.tokenPinSha256,pin(fresh));
   assert.equal(fs.readFileSync(path.join(ctx.dir,tokenName),'utf8'),fresh);
   assert.deepEqual(result.companionCanRead,[false,false]);
+});
+test('成功激活的 Windows PowerShell 会话日志包含结果并隐去令牌',win,t=>{
+  const ctx=setup(t);
+  const transcript=path.join(ctx.root,'activation-transcript.txt');
+  assert.equal(run(ctx,{reply:bound(),transcript:true}).status,'CI_CONNECTION_ACTIVATED');
+  const log=fs.readFileSync(transcript,'utf8');
+  assert.match(log,/CI_CONNECTION_ACTIVATED/);
+  assert.ok(!log.includes(fresh) && !log.includes(old),'会话日志含凭据');
 });
 test('最后读回前由本次应答决定是否完成事务',win,t=>{
   const ctx=setup(t), v=bound();

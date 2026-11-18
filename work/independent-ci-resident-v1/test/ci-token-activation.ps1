@@ -1,6 +1,8 @@
 ﻿$ErrorActionPreference='Stop'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $f = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$capture = $f.PSObject.Properties['transcript'] -and $f.transcript
+if ($capture) { $null = Start-Transcript -LiteralPath (Join-Path $f.root 'activation-transcript.txt') -NoClobber }
 $scriptFile=Join-Path $PSScriptRoot '../windows/replace-ci-token.ps1'
 . $scriptFile
 # 只替换运行身份、安装目录的宿主权限和 HTTP 传输。正式入口使用相同的应用函数。
@@ -68,4 +70,7 @@ try {
   }
 } catch { $r=@{code=$_.Exception.Message;where=$_.InvocationInfo.ScriptLineNumber;trace=$_.ScriptStackTrace} }
 $r.requests=@($requests)
-[Console]::Out.Write(($r | ConvertTo-Json -Compress -Depth 8))
+$resultJson = $r | ConvertTo-Json -Compress -Depth 8
+if ($capture) {
+  try { Write-Host $resultJson } finally { $null = Stop-Transcript }
+} else { [Console]::Out.Write($resultJson) }

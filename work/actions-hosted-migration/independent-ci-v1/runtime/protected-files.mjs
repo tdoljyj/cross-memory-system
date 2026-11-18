@@ -65,15 +65,20 @@ export async function readSignedExchange(spool, filename) {
   try { return JSON.parse(bytes); } catch { stop('exchange_json_invalid'); }
 }
 
+async function optionalFilePresent(file) {
+  try { await fsp.lstat(file); return true; }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+
 export async function assertProtectedPaths(root, files, state = false, optionalFile = null) {
   if (optionalFile !== null) {
-    // 先核父目录，只有叶文件缺失才能沿用安装记录。
-    await assertProtectedPaths(root, [...files, path.dirname(optionalFile)], state);
-    try { await fsp.lstat(optionalFile); } catch (error) {
-      if (error.code === 'ENOENT') return false;
-      throw error;
+    if (!(await optionalFilePresent(optionalFile))) {
+      // 只有在已核验的父目录下再次确认缺失，才能沿用安装记录。
+      await assertProtectedPaths(root, [...files, path.dirname(optionalFile)], state);
+      if (!(await optionalFilePresent(optionalFile))) return false;
     }
-    files = [optionalFile];
+    // 现存叶文件的检查已包含整条父路径。每次内容读取仍由单独核验过的句柄完成。
+    files = [...files, optionalFile];
   }
   const checked = new Set();
   for (const file of [root, ...files]) {

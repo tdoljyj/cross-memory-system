@@ -27,7 +27,7 @@ function unregisteredReads(files, read) {
     const text=read(file);
     // JS 中的对象字面量也会向下游传递有效编号。只查成员读取、下标和解构。
     const member=/\.\s*(?:ciTokenPinSha256|ciPrincipalBindingId)\b|\[\s*["'](?:ciTokenPinSha256|ciPrincipalBindingId)["']\s*\]/g;
-    const destructure=/\{[^{}]*?\b(?:ciTokenPinSha256|ciPrincipalBindingId)\b[^{}]*?\}\s*(?:=|\)\s*(?:=>|\{)|of\b)/g;
+    const destructure=/\{[^{}]*?\b(?:ciTokenPinSha256|ciPrincipalBindingId)\b[^{}]*?\}\s*(?:=|of\b|(?:,[^();{}]*)?\)\s*(?:=>|\{))/g;
     const patterns=/\.[cm]?js$/.test(file)?[member,destructure]:[/\b(?:ciTokenPinSha256|ciPrincipalBindingId)\b/gi];
     for (const pattern of patterns) {
       for (const match of text.matchAll(pattern)) findings.push(file+':'+text.slice(0,match.index).split('\n').length);
