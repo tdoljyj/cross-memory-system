@@ -605,7 +605,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         } catch { return blocked(TRAIN_BATCH_CHANGED); }
       }
       // Push lands S: its required checks must pass on S itself, even when H has the same tree.
-      const outside = externalChecksDecision({ rules: reply.rules, inventory: await github.readChecks(job.testSha), commitSha: job.testSha, appId: APP_ID });
+      const outside = externalChecksDecision({ rules: reply.rules, inventory: await github.readChecks(job.testSha),
+        commitSha: job.testSha, appId: APP_ID, now: clock() });
       if (outside) return blocked(outside);
       mainNow = (await github.readBranchHead('main'))?.sha;
       if (mainNow !== job.baseSha && mainNow !== job.testSha) return blocked('RESIDENT_BASE_MOVED');

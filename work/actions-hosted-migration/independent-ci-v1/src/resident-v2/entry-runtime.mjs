@@ -20,6 +20,7 @@ import { openHeldRecord, takeHeldRecord, assertOwnSourceRoot, sourceRootOfModule
 import { loadStageInputs, parseEntryArgs, writeOutcome } from './stage-inputs.mjs';
 import { STATE_V2 } from './layout.mjs';
 import { FIXED_APP } from './record.mjs';
+import { readCiCredential } from './ci-principal.mjs';
 import { cluedRpc } from '../../../../../scripts/ci/clued-work-admission.mjs';
 import { createIndependentPublicationPortsForJobs, independentControllerId } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { registerIndependentController } from '../../../../../scripts/ci/clued-independent-revoker.mjs';
@@ -35,7 +36,7 @@ const check = (ok, code) => { if (!ok) fail(code); };
 // code/message. Preserve the lifecycle and transport distinctions the resident
 // uses, without invoking accessors, coercion or an exception's prototype.
 const PUBLIC_ENTRY_REASONS = new Set([...ALL_STAGE_CODES,
-  'ENTRY_OPERATION_UNCONFIRMED', 'FIXED_WINDOWS_ENTRY_REQUIRED', 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED',
+  'ENTRY_OPERATION_UNCONFIRMED', 'FIXED_WINDOWS_ENTRY_REQUIRED', 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED', 'CI_CONNECTION_RECORD_REFUSED',
   'NATIVE_PUBLICATION_SCOPE_REFUSED', 'NATIVE_PUBLICATION_UNAVAILABLE', 'independent_revoker_qualification_required',
   'MERGE_SLOT_HOLDERS_PROJECTION_UNSUPPORTED',
   'OBSERVATION_KIND_REFUSED', 'OBSERVATION_LOG_BOUNDARY', 'OBSERVATION_LOG_UNCONFIRMED', 'HELD_SOURCE_PINS_CHANGED',
@@ -109,16 +110,14 @@ export function observationLog(directory, jobId) {
   return log;
 }
 
-export async function controllerPrincipal(record) {
-  const keyFile = APP_KEY_FILE, nativeFile = path.join(INSTALL_ROOT, 'secrets', 'ci-admission.token');
-  await assertProtectedPaths(INSTALL_ROOT, [keyFile, nativeFile]);
-  // The secrets' only non-admin reader is this node's controller account, the one its record pins (acceptance `node`).
-  const controllerSid = record.accepted.node.controllerSid;
-  const appKey = await readProtected(keyFile, { secret: true, secretRoot: path.dirname(keyFile), controllerSid });
-  const nativeToken = (await readProtected(nativeFile, { secret: true, secretRoot: path.join(INSTALL_ROOT, 'secrets'), controllerSid })).trim();
-  check(/^clued_bnd_[A-Za-z0-9_-]{8,480}$/.test(nativeToken) && digest('clued.independent-ci.ci-binding-pin/1\0' + nativeToken) === record.accepted.ciTokenPinSha256
-    && createHash('sha256').update(createPublicKey(appKey).export({ type: 'spki', format: 'der' })).digest('base64') === record.accepted.appPublicKeySha256Base64, 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED');
-  return { appKey, nativeToken };
+export async function controllerPrincipal(record, { tokenFile = path.join(INSTALL_ROOT, 'secrets', 'ci-admission.token'), keyFile = APP_KEY_FILE, protect = assertProtectedPaths, tokenReader = readProtected } = {}) {
+  const root = path.dirname(path.dirname(tokenFile));
+  const credential = await readCiCredential(record, { tokenFile, protect, tokenReader });
+  await protect(root, [keyFile]);
+  const appKey = await tokenReader(keyFile, { secret: true, secretRoot: path.dirname(keyFile), controllerSid: record.accepted.node.controllerSid });
+  check(createHash('sha256').update(createPublicKey(appKey).export({ type: 'spki', format: 'der' })).digest('base64') === record.accepted.appPublicKeySha256Base64,
+    'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED');
+  return { appKey, ...credential };
 }
 
 // readRetry: options of read-retry.mjs#withReadRetry (tests inject sleep and a smaller budget). Reads of GitHub (GET) are
@@ -210,7 +209,7 @@ export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {
   cached.size = () => entries.size;
   return cached;
 }
-export function controllerPorts({ record, appKey, nativeToken, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
+export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
   const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
   // One timing line per network attempt and per cache hit (URL pattern, status, milliseconds), for later re-measurement.
   const timing = (url, data) => { try { log?.timing?.({ url: fetchUrlPattern(url), ...data }); } catch { /* best-effort */ } };
@@ -229,9 +228,9 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
   const fetchImpl = immutableReadCache(retryingFetch, { live, onHit: url => timing(url, { method: 'GET', status: 200, ms: 0, cache: true }) });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
     installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true });
-  const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,
+  const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, ciPrincipalBindingId: bindingId, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,
     modeProvider: () => github.readAdmissionMode(),
-    tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: record.config.ciPrincipalBindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),
+    tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),
     recorderProvider: async () => ({ domain: 'production', kind: 'independent-controller', observedAt: new Date().toISOString(), observationRef: randomUUID(), recorder: { newId: randomUUID, record: log } }) });
   const env = { CLUED_CONTEXT_READ_TOKEN: nativeToken, CLUED_SUPABASE_URL: record.config.supabaseUrl,
     CLUED_SUPABASE_PUBLISHABLE_KEY: record.config.publishableKey };
@@ -279,7 +278,7 @@ export function controllerPorts({ record, appKey, nativeToken, policyText, sourc
   const scanStartRegistrySha256 = createHash('sha256').update(registryBytes).digest('hex');
   const scanStart = createIndependentScanStartPort({ native, github, scope: record.config.scope, live,
     registrySha256: scanStartRegistrySha256 });
-  return { github, admission, fetchImpl, native, scanStart, scanStartRegistrySha256 };
+  return { github, admission, fetchImpl, native, scanStart, scanStartRegistrySha256, bindingId };
 }
 
 // Root-held Source/record verification and the existing protected permanent

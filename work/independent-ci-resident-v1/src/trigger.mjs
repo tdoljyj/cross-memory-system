@@ -1,7 +1,7 @@
 // Trigger intake. A trigger is untrusted data that only *names* a pull request head; it carries no
 // path, command, claim, grant or package. Anyone who can write the inbox can at most ask the executor
 // to look at a real PR head, which the executor then admits or refuses from live facts.
-import { HEX40, REPO, check, exactKeys, parseBoundedJson } from './canonical.mjs';
+import { HEX40, HEX64, REPO, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 
 export const TRIGGER_CONTRACT = 'clued.independent-ci.resident-trigger/1';
 // Contract /2 (resident quota redesign phase 2, step 1: design v0.5 §4.2): an optional prUpdatedAt, the PR's update
@@ -18,7 +18,9 @@ export function parseTrigger(bytes, policy) {
   const value = parseBoundedJson(bytes, TRIGGER_MAX_BYTES, 'TRIGGER_REFUSED');
   check(value.contract === TRIGGER_CONTRACT || value.contract === TRIGGER_CONTRACT_V2, 'TRIGGER_CONTRACT_REFUSED');
   const v2 = value.contract === TRIGGER_CONTRACT_V2;
-  exactKeys(value, ['contract', 'repo', 'pr', 'headSha', 'baseSha', ...(v2 && Object.hasOwn(value, 'prUpdatedAt') ? ['prUpdatedAt'] : [])], 'TRIGGER_KEYS_REFUSED');
+  const parkEvent = v2 && Object.hasOwn(value, 'parkEvent');
+  exactKeys(value, ['contract', 'repo', 'pr', 'headSha', 'baseSha', ...(v2 && Object.hasOwn(value, 'prUpdatedAt') ? ['prUpdatedAt'] : []),
+    ...(parkEvent ? ['parkEvent'] : [])], 'TRIGGER_KEYS_REFUSED');
   check(typeof value.repo === 'string' && REPO.test(value.repo), 'TRIGGER_REPO_REFUSED');
   check(value.repo === policy.repo, 'TRIGGER_REPO_NOT_POLICY_REPO');
   check(Number.isSafeInteger(value.pr) && value.pr > 0 && value.pr < 1e9, 'TRIGGER_PR_REFUSED');
@@ -26,5 +28,7 @@ export function parseTrigger(bytes, policy) {
   check(typeof value.baseSha === 'string' && HEX40.test(value.baseSha), 'TRIGGER_BASE_REFUSED');
   const prUpdatedAt = v2 && Object.hasOwn(value, 'prUpdatedAt') ? value.prUpdatedAt : null;
   check(prUpdatedAt === null || (typeof prUpdatedAt === 'string' && ISO.test(prUpdatedAt) && Number.isFinite(Date.parse(prUpdatedAt))), 'TRIGGER_UPDATED_AT_REFUSED');
-  return { repo: value.repo, pr: value.pr, headSha: value.headSha, baseSha: value.baseSha, prUpdatedAt };
+  check(!parkEvent || HEX64.test(value.parkEvent ?? ''), 'TRIGGER_PARK_EVENT_REFUSED');
+  return { repo: value.repo, pr: value.pr, headSha: value.headSha, baseSha: value.baseSha, prUpdatedAt,
+    ...(parkEvent ? { parkEvent: value.parkEvent } : {}) };
 }

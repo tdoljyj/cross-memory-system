@@ -13,7 +13,9 @@ import { POSITIONS, closedBreaker } from '../src/breaker.mjs';
 import { describe as prPage, events as notificationEvents } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { Ledger, batchKey, headKey } from '../src/ledger.mjs';
+import { Poller } from '../src/poller.mjs';
 import { drainRequest, abortRequest, writeOwnerRequest } from '../tools/rearm-tool.mjs';
+import { restAnswer } from './gh-rest-stub.mjs';
 import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes } from './helpers.mjs';
 
 const MIN = 60_000;
@@ -80,15 +82,57 @@ test('a claim first in the merge queue is tried again in a minute; main moving e
   assert.equal(f.queue.row(884).state, 'STOPPED');
 });
 
-test('the tries and the time are bounded: the last not-ready answer ends the batch neutrally', async t => {
+test('the tries are bounded: the last not-ready answer leaves the batch asleep and neutral', async t => {
   const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
   const f = await executorFixture(t, { engine, policy: rawPolicy({ park: { ...rawPolicy().park, stage8MaxTries: 2 } }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'PARKED');
   f.advance(10 * MIN);
   const end = await f.exec.tick();
-  assert.deepEqual([end.state, end.failureCode], ['FAILED_CLEAN', 'RESIDENT_MERGE_QUEUE_NOT_JOINED']);
+  assert.deepEqual([end.state, end.reason, end.until], ['PARKED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', null]);
   assert.equal(f.queue.breaker?.state ?? 'closed', 'closed', 'neutral');
+  const notice = f.queue.notices.find(n => n.code === 'STAGE8_TRY_LIMIT');
+  const board = new StatusBoard({ clock: f.clock });
+  board.update({ notices: [notice], backfill: { complete: true } });
+  const parked = { pr: 884, headSha: HEAD, state: 'PARKED', deferred: end.reason };
+  board.setPending([{ ...parked, nextAt: null }]);
+  const status = () => parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  const pull = { pr: 884, headSha: HEAD, eligible: true };
+  const description = () => prPage({ pull, status: status(), now: f.clock() }).description;
+  assert.match(description(), /相关变化后再查第 8 段/);
+  assert.match(notificationEvents({ status: status(), now: f.clock() })[0].body, /相关变化后再查第 8 段/);
+  board.setPending([{ ...parked, nextAt: f.clock() + MIN }]);
+  assert.match(description(), /已测通/);
+});
+
+test('failed required checks sleep after the retry budget and a check change resumes the same batch', async t => {
+  const engine = stage8Engine(Array.from({ length: 13 }, () => notReady('REQUIRED_CHECK_FAILED')), KEY);
+  const f = await executorFixture(t, { engine, policy: rawPolicy({ park: { ...rawPolicy().park, stage8MaxTries: 13 } }) });
+  await f.drop(triggerBytes());
+  for (let i = 0; i < 13; i++) {
+    const result = await f.exec.tick();
+    assert.equal(result.state, 'PARKED');
+    if (i < 12) f.advance(result.until - f.clock());
+  }
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)));
+  assert.equal((await f.exec.parkedCounts()).outside, 0);
+  let conclusion = 'failure', events = 0;
+  const poller = new Poller({ repo: subject().repo, ghExe: 'gh', clock: f.clock,
+    run: async argv => restAnswer(argv, { total_count: 1, check_runs: [{ id: 1, name: 'migration-verify', status: 'completed', conclusion }] }),
+    writeTrigger: async trigger => { events++; await f.drop(Buffer.from(JSON.stringify(trigger))); } });
+  poller.lastPass = { mainSha: BASE, pulls: [{ pr: 884, headSha: HEAD }] };
+  const pending = f.queue.view(f.clock(), { etaBatchMs: 20 * MIN });
+  await poller.parkedPass(pending);
+  assert.equal(events, 0, 'the unchanged failed check is a baseline, not a wake');
+  f.advance(180 * MIN);
+  await f.exec.tick();
+  assert.equal(stagesRun(engine).filter(stage => stage === 8).length, 13);
+  conclusion = 'success';
+  await poller.parkedPass(pending);
+  await poller.parkedPass(pending);
+  assert.equal(events, 1);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(engine), [1, 2, 3, 4, 5, 6, 7, ...Array(14).fill(8)]);
 });
 
 test('a stage-8 ending that may have written anything is no try: it is classified as before (UNKNOWN halts)', async t => {
@@ -142,10 +186,21 @@ test('the parking slots: at most maxParked batches rest in the first places; out
   assert.equal((await f.exec.tick()).state, 'PARKED');
   await f.drop(triggerBytes({ pr: 900, headSha: H(4) }));
   assert.deepEqual(await f.exec.tick(), { state: 'DEFERRED', reason: 'PARKING_FULL' });
-  const g = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]), policy: rawPolicy({ park: { ...rawPolicy().park, maxParkedOutsideTop2: 0 } }) });
+  const overEngine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]);
+  const derive = overEngine.derive;
+  overEngine.derive = async (...args) => ({ ...await derive(...args), ciSourceManifestSha256: policy.ciSourceManifestSha256 });
+  const policy = rawPolicy({ park: { ...rawPolicy().park, maxParkedOutsideTop2: 0 } });
+  const g = await executorFixture(t, { engine: overEngine,
+    companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: HEAD }) }),
+    policy });
   await g.drop(triggerBytes());
   const over = await g.exec.tick();
   assert.deepEqual([over.state, over.failureCode], ['FAILED_CLEAN', 'PARKED_OVER_CAPACITY']);
+  await g.exec.tick();
+  assert.equal(stagesRun(g.engine).length, 8, 'the same head observes its release back-off');
+  g.advance(10 * MIN);
+  assert.equal((await g.exec.tick()).state, 'COMPLETED');
+  assert.deepEqual(stagesRun(g.engine), [1, 2, 3, 4, 5, 6, 7, 8, 8]);
 });
 
 test('a nudge (main moved, or the parked PR changed) brings the next try forward; the stage-8 budget bounds the tries', async t => {
@@ -195,6 +250,7 @@ test('#1144: 100 historical retries across PRs cannot block the front PR after r
 
 const isoAt = at => new Date(at).toISOString();
 
+// scope-isolation: park.stage8RetriesPer24h
 test('#1144: an exhausted PR does not block another due parked PR; its own limit still holds', async t => {
   const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]),
     policy: rawPolicy({ park: { ...rawPolicy().park, stage8RetriesPer24h: 1 } }) });
@@ -206,7 +262,8 @@ test('#1144: an exhausted PR does not block another due parked PR; its own limit
   assert.equal((await f.exec.tick()).state, 'COMPLETED', 'skip the exhausted first PR and try the second');
   assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)), 'the exhausted PR still waits');
   assert.equal((await f.ledger.state(batchKey(subject({ pr: 900, headSha: H(4) })))).outcome, 'COMPLETED');
-  assert.ok(f.queue.notices.some(n => n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' && n.pr === 884));
+  const budget = f.queue.notices.find(n => n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' && n.pr === 884)?.budget;
+  assert.deepEqual(budget, { policyKey: 'park.stage8RetriesPer24h', scope: 'pr', used: 1, limit: 1, resetsAt: f.clock() - 10 * MIN + 24 * 60 * MIN });
   const notice = notificationEvents({ status: { pending: [], notices: f.queue.notices }, now: f.clock() }).find(n => /第 8 段重试额度/.test(n.title));
   assert.match(notice.title, /PR #884/);
 });
@@ -403,7 +460,7 @@ test('review m3, m13, m8: the PR page never calls an untested commit tested, nor
   assert.equal(full.description, '排队第 2 位：停靠的批次已满，等它们结束');
 });
 
-test('review m4: park.maxMs ends a parked batch at a tick start even when no try is allowed', async t => {
+test('park.maxMs puts a zero-effect parked batch to sleep even when no try is allowed', async t => {
   const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY), policy: rawPolicy({ park: { ...rawPolicy().park, stage8RetriesPer24h: 0 } }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'PARKED');
@@ -412,10 +469,10 @@ test('review m4: park.maxMs ends a parked batch at a tick start even when no try
   await f.exec.tick();
   assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)));
   f.advance(60 * MIN);
-  const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT']);
-  assert.equal((await f.ledger.state(KEY)).terminal.facts.basis, 'park-max-age');
-  assert.equal(stagesRun(f.engine).filter(n => n === 8).length, 1, 'no stage ran for the ending');
+  await f.exec.tick();
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)));
+  assert.equal(f.exec.parkedDueAt(await f.ledger.state(KEY)), Infinity);
+  assert.equal(stagesRun(f.engine).filter(n => n === 8).length, 1, 'no stage ran to go to sleep');
   assert.equal(await f.ledger.halted(), null);
 });
 
@@ -484,7 +541,7 @@ test('review m9, m11, m12: no new batch while the outside bound is full or a tri
 });
 
 // ---- the confirmatory re-review of step 2 ----
-test('re-review m15: the 99th stage-8 try is the last one, whatever the answer; never a HALT at the ledger cap', async t => {
+test('the 99th stage-8 try ends automatic retries; a later event still runs try 100', async t => {
   const head = notReady('RESIDENT_QUEUE_HEAD_NOT_REACHED', { entered: true, state: 'waiting', position: 1 });
   const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), head], KEY) });
   await f.drop(triggerBytes());
@@ -496,20 +553,21 @@ test('re-review m15: the 99th stage-8 try is the last one, whatever the answer; 
   }
   f.advance(10 * MIN);
   const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'RESIDENT_QUEUE_HEAD_NOT_REACHED']);
+  assert.deepEqual([r.state, r.reason, r.until], ['PARKED', 'RESIDENT_QUEUE_HEAD_NOT_REACHED', null]);
   assert.equal((await f.ledger.state(KEY)).tries.length, 99);
+  await f.exec.nudgeParked([{ t: { ...subject(), prUpdatedAt: null }, seen: false }], f.clock());
+  assert.deepEqual([(await f.exec.tick()).state, (await f.ledger.state(KEY)).tries.length], ['COMPLETED', 100]);
   assert.equal(await f.ledger.halted(), null);
 });
 
 test('re-review m16: drifted bytes end a parked batch UNKNOWN with a HALT, never through the archive tools', async t => {
-  for (const ending of ['time', 'supersede', 'authority']) {
+  for (const ending of ['supersede', 'authority']) {
     const engine = stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')], KEY);
     const f = await executorFixture(t, { engine, policy: rawPolicy(ending === 'authority' ? { validUntil: '2026-10-21T02:00:00Z' } : {}),
       companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: H(7) }) }) });
     await f.drop(triggerBytes());
     assert.equal((await f.exec.tick()).state, 'PARKED');
     const drifted = new ResidentExecutor({ ...f.ports, sourceIntegrity: async () => ({ ok: false }) });
-    if (ending === 'time') f.advance(25 * 60 * MIN);
     if (ending === 'supersede') await f.drop(triggerBytes({ headSha: H(7) }));
     if (ending === 'authority') f.advance(Date.parse('2026-10-20T23:30:00Z') - f.clock());
     const r = await drifted.tick();

@@ -122,7 +122,7 @@ test('stage-1 "not admitted" releases the key; the queue retries on its own back
 });
 
 test('any other stage-1 failure burns the head even before 10-started (review M4)', async t => {
-  const engine = fakeEngine({ stages: { 1: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: WINDOWS_CLEAN } } });
+  const engine = fakeEngine({ stages: { 1: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: WINDOWS_CLEAN } } });
   const f = await executorFixture(t, { engine });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'FAILED_CLEAN');
@@ -132,12 +132,12 @@ test('any other stage-1 failure burns the head even before 10-started (review M4
 });
 
 test('the cleanup proof is gathered fresh: a stage claiming clean while Linux is busy halts (review M5)', async t => {
-  const engine = fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: CLEAN_PROOF } } });
+  const engine = fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: CLEAN_PROOF } } });
   const f = await executorFixture(t, { engine, companion: fakeCompanion({ linux: { linuxUnitsInactive: false, containersZero: true } }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'HALTED');
   assert.equal(engine.calls.some(c => c[0].startsWith('archive')), false);
-  const busyWindows = await executorFixture(t, { engine: fakeEngine({ stages: { 5: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: CLEAN_PROOF } }, windows: { windowsTreeZero: false, serviceOriginalStopped: true } }) });
+  const busyWindows = await executorFixture(t, { engine: fakeEngine({ stages: { 5: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: CLEAN_PROOF } }, windows: { windowsTreeZero: false, serviceOriginalStopped: true } }) });
   await busyWindows.drop(triggerBytes());
   assert.equal((await busyWindows.exec.tick()).state, 'HALTED');
 });
@@ -158,7 +158,7 @@ test('unrecognised codes, engine exceptions and archive failures all halt', asyn
     { stages: { 5: { ok: false, code: 'SOMETHING_NEVER_SEEN', proof: CLEAN_PROOF } } },
     { stages: { 6: { ok: false, code: 'lowercase code', proof: CLEAN_PROOF } } },
     { deriveThrows: true },
-    { stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: CLEAN_PROOF } }, archiveWindows: { verified: false } },
+    { stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: CLEAN_PROOF } }, archiveWindows: { verified: false } },
   ]) {
     const f = await executorFixture(t, { engine: fakeEngine(script) });
     await f.drop(triggerBytes());

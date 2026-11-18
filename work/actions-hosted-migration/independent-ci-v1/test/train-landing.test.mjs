@@ -116,6 +116,21 @@ test('externalChecksDecision: the newest run by id of each other-App required ch
   assert.equal(L.externalChecksDecision({ rules, inventory: { complete: false, checks: [] }, commitSha: S1, appId: APP }), L.TRAIN_LANDING_CHECKS_PENDING);
 });
 
+test('N9: only the newest verdict on S counts; inconclusive checks do not fail the batch', () => {
+  const rules = [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'migration-verify', integration_id: 15368 }] } }];
+  const now = Date.parse('2026-11-18T10:00:00Z');
+  const run = (id, conclusion, completedAt = '2026-11-18T09:00:00Z') => ({
+    id, name: 'migration-verify', head_sha: S1, app: { id: 15368 }, status: 'completed', conclusion, completed_at: completedAt,
+  });
+  const d = checks => L.externalChecksDecision({ rules, inventory: { complete: true, checks }, commitSha: S1, appId: APP, now });
+  for (const conclusion of ['cancelled', 'timed_out', 'stale', 'startup_failure']) {
+    assert.equal(d([run(1, 'success'), run(2, conclusion)]), L.TRAIN_LANDING_CHECKS_PENDING, conclusion);
+    assert.equal(d([run(1, conclusion), run(2, 'success')]), null, conclusion);
+  }
+  assert.equal(d([run(1, 'failure', '2026-11-18T09:55:00.001Z')]), L.TRAIN_LANDING_CHECKS_PENDING);
+  assert.equal(d([run(1, 'failure', '2026-11-18T09:55:00.000Z')]), L.TRAIN_LANDING_CHECK_FAILED);
+});
+
 test('landingRulesDecision and the never-published train-only check', async () => {
   const req = { type: 'required_status_checks', parameters: { required_status_checks: [{ context: L.TRAIN_ONLY_CHECK, integration_id: APP }] } };
   assert.equal(L.landingRulesDecision([{ type: 'non_fast_forward' }, { type: 'deletion' }, req], APP), null);

@@ -32,7 +32,7 @@
 // Phase 2, step 1 (resident quota redesign, design v0.5 §4.4-§4.7, Task 6451a55d): 00-reserved.json also names how the
 // run queue picked the subject (`origin`, queue.mjs#ORIGINS; a record without one was a plain first try), and usage()
 // derives every daily budget of the queue from the ledger itself, so a lost queue file never resets a budget: the
-// executions (10-started heads, per PR too), the evaluations (reservations that did not execute, without the waits'
+// executions (10-started heads), the PR's terminal verdicts, the evaluations (reservations that did not execute, without the waits'
 // own budget, the environment releases and the supersessions), the waiting retries, the new-trigger re-evaluations per
 // (PR, commit), and the counted releases per head (waits never count; an environment release while the breaker was not
 // closed does not either). A new release reason, SUPERSEDED, closes a reservation whose PR got a newer commit before
@@ -53,6 +53,7 @@ import path from 'node:path';
 import { HEX40, HEX64, REPO, ResidentError, check, digest, fail, isoNow } from './canonical.mjs';
 import { ensureDir, exists, nonce, readJson, renameToNew, writeNew } from './store.mjs';
 import { CLAIM_REASONS } from './queue.mjs';
+import { failureRow } from './classify.mjs';
 
 export const BATCH_KEY_CONTRACT = 'clued.independent-ci.resident-batch-key/1';
 export const HEAD_KEY_CONTRACT = 'clued.independent-ci.resident-head-key/1';
@@ -79,7 +80,7 @@ export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json'
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
 export const PARK_RECORD = '70-parked.json';
 export const MAX_TRIES = 99;
-const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2})\.json$/;
+const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2,16})\.json$/;
 const tryName = (begun, n) => `${begun ? '71-try' : '72-tried'}-${String(n).padStart(2, '0')}.json`;
 export const SELF_ABORT_RECORD = '81-self-abort.json';
 
@@ -112,6 +113,21 @@ const stamp = clock => isoNow(clock).replace(/[:.]/g, '');
 // JSON) makes an entry UNREADABLE. Any other I/O error (busy, permission, disk) is transient and
 // propagates, so it can never quarantine a valid entry (third review, MAJOR 2).
 const contentError = error => error instanceof ResidentError || error instanceof SyntaxError;
+
+// PR quota pays only for a verdict about the PR. Clean/final and burned describe execution safety, not blame:
+// a timeout, HALT, withdrawal, stale front or supersession must not spend this quota. Keep all global budgets separate.
+function prVerdict(terminal) {
+  if (terminal?.outcome === 'COMPLETED') return true;
+  if (terminal?.outcome !== 'FAILED_CLEAN') return false;
+  const f = terminal.facts ?? {};
+  // The failure table also calls changed/closed subjects deterministic: the old subject can never pass, but no PR test failed.
+  if (f.failureCode === 'PR_NOT_OPEN_OR_CHANGED'
+    || (f.failureCode === 'STAGE_CHILD_REFUSED' && ['pr_subject_changed', 'pr_files_changed'].includes(f.reason))) return false;
+  // REQUIRED_CHECK_FAILED is a queue ending in the existing table, yet explicitly records a failed required check.
+  // Old terminals without a stored class use the same table and their recorded diagnostic, never a blanket FAILED_CLEAN charge.
+  return f.failureCode === 'REQUIRED_CHECK_FAILED' || (f.class ?? failureRow({ code: f.failureCode, stage: f.stage,
+    reason: f.reason, diagnostic: { reasonCodes: f.reasonCodes, nativeReasonCodes: f.nativeReasonCodes } })?.class) === 'deterministic-pr';
+}
 
 export class Ledger {
   constructor(root, clock) {
@@ -177,9 +193,11 @@ export class Ledger {
     try {
       if (batchKey(s.reserved.subject) !== s.reserved.key || s.terminal.key !== s.reserved.key || s.selfAbort.key !== s.reserved.key) return false;
     } catch { return false; }
+    const safePoint = f?.failureCode === 'SUPERSEDED_AT_SAFE_POINT' && f.class === 'clean-final' && ['upgrade-drain', 'park-max-age'].includes(f.basis);
+    const capacity = f?.failureCode === 'PARKED_OVER_CAPACITY' && f.class === 'queue' && f.basis === 'park-over-capacity'
+      && f.safePoint === 'parked' && s.tries?.at(-1)?.ended?.ending === 'PARKED_OVER_CAPACITY';
     return s?.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && !s.abort && s.started && s.wait
-      && f?.failureCode === 'SUPERSEDED_AT_SAFE_POINT' && f.class === 'clean-final' && f.breaker === 'neutral'
-      && ['upgrade-drain', 'park-max-age'].includes(f.basis) && s.selfAbort?.basis === f.basis && s.selfAbort.safePoint === f.safePoint
+      && (safePoint || capacity) && f.breaker === 'neutral' && s.selfAbort?.basis === f.basis && s.selfAbort.safePoint === f.safePoint
       && typeof f.windows === 'string' && typeof f.linux === 'string'
       && ((f.safePoint === 'waiting' && f.stage === 1 && !s.planIntent && !s.plan && !s.parked)
         || (f.safePoint === 'parked' && f.stage === 8 && s.plan && s.parked && s.tries.every(t => t.ended !== null)));
@@ -227,17 +245,21 @@ export class Ledger {
   // The stage-8 tries of a parked entry, in order: [{ n, begun, ended }] (ended null while a try runs or crashed). A gap
   // (try n+1 without try n, a result without its try) is content that does not fit: UNREADABLE.
   async readTries(dir, read) {
-    const names = (await fs.readdir(dir)).filter(n => TRY.test(n)).sort();
+    const records = (await fs.readdir(dir)).flatMap(name => {
+      const match = TRY.exec(name);
+      return match ? [{ name, begun: match[1] !== undefined, n: Number(match[3]) }] : [];
+    }).sort((a, b) => a.n - b.n);
     const tries = [];
-    for (const name of names) {
-      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
-      const n = Number(nn);
-      if (kind === '1') { check(n === tries.length + 1 && n <= MAX_TRIES, 'PARKED_TRY_SEQUENCE_INVALID'); tries.push({ n, begun: await read(name), ended: null }); }
+    for (const { name, begun, n } of records) {
+      check(Number.isSafeInteger(n) && name === tryName(begun, n), 'PARKED_TRY_SEQUENCE_INVALID');
+      if (begun) {
+        check(n === tries.length + 1, 'PARKED_TRY_SEQUENCE_INVALID');
+        tries.push({ n, begun: await read(name), ended: null });
+      }
     }
-    for (const name of names) {
-      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
-      if (kind !== '2') continue;
-      const t = tries[Number(nn) - 1];
+    for (const { name, begun, n } of records) {
+      if (begun) continue;
+      const t = tries[n - 1];
       check(t && t.ended === null, 'PARKED_TRY_SEQUENCE_INVALID');
       t.ended = await read(name);
     }
@@ -320,7 +342,7 @@ export class Ledger {
   // One stage-8 try of a parked entry: begun right before it runs, ended only when it was not ready (zero side effects).
   async beginTry(key, facts) {
     const s = await this.state(key);
-    check(Ledger.parkedAt(s) && s.tries.length < MAX_TRIES, 'PARKED_TRY_REQUIRES_PARKED_ENTRY', s.state);
+    check(Ledger.parkedAt(s), 'PARKED_TRY_REQUIRES_PARKED_ENTRY', s.state);
     const n = s.tries.length + 1;
     await writeNew(path.join(this.dir(key), tryName(true, n)), { key, contract: 'clued.independent-ci.resident-stage8-try/1', n, at: isoNow(this.clock), ...facts });
     return n;
@@ -563,11 +585,20 @@ export class Ledger {
   // separateNetwork (generation 10, DESIGN 53.3: the policy names breaker.network): a release whose facts say network (classify.mjs
   // #networkFailure) counts in networkReleasesByHead, whatever the breaker's state, and never in releasesByHead.
   // UNCAPPED_RELEASES (including historical stage-1 refusals) spend neither cap; evaluation budgets stay independent.
-  async usage(sinceMs, { separateNetwork = false, stage8Pr = null } = {}) {
+  async usage(sinceMs, { separateNetwork = false, stage8Pr = null, budgetTimes = false } = {}) {
     check(stage8Pr === null || (Number.isSafeInteger(stage8Pr) && stage8Pr > 0), 'STAGE8_BUDGET_PR_INVALID');
     const u = { started: 0, lowRiskBurns: 0, startedByPr: new Map(), evaluations: 0, waitingRetries: 0, reevaluations: new Map(), releasesByHead: new Map(),
       networkReleasesByHead: new Map(), stage8Retries: 0 };
     const bump = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
+    // Optional advisory timestamps follow the SAME counting branches as admission; unknown evidence stays unknown.
+    const times = new Map();
+    const charge = (key, at) => {
+      if (!budgetTimes) return;
+      const ms = typeof at === 'number' ? at : Date.parse(at);
+      const list = times.get(key) ?? [];
+      list.push(Number.isFinite(ms) ? ms : null); times.set(key, list);
+    };
+    if (budgetTimes) u.budgetTimes = times;
     // A file or entry last written before the window (with an hour's margin) cannot hold a record of it: its recorded
     // times are older still. Only a prefilter: every record it lets through is decided by its own recorded time.
     const before = async p => { try { return (await fs.stat(p)).mtimeMs < sinceMs - 3_600_000; } catch { return false; } };
@@ -576,13 +607,13 @@ export class Ledger {
       try {
         const v = (await readJson(path.join(this.heads, name))).value;
         if (Date.parse(v.startedAt) >= sinceMs) {
-          // A low-risk burn still counts against its PR's own daily cap (independent review m4): one PR cannot spend the
-          // whole evaluation budget on commits that stage 1 refuses.
-          if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr);
+          // Global execution/evaluation budgets still charge every burn, including a system ending.
+          // The PR's own budget is derived below from terminal verdicts, not from these once-only head records.
           if (v.burnedBy?.quotaTier === QUOTA_TIER_EVALUATION) { u.lowRiskBurns += 1; continue; }
           u.started += 1;
+          charge('started', v.startedAt);
         }
-      } catch (error) { if (!contentError(error)) throw error; u.started += 1; }
+      } catch (error) { if (!contentError(error)) throw error; u.started += 1; charge('started', null); }
     }
     // One reservation: its origin, whether it executed, and how it ended (a release reason and the failure-table facts).
     const count = ({ reserved, started, reason, facts, burned = false }) => {
@@ -592,16 +623,16 @@ export class Ledger {
       // new-trigger origins must not keep the real evaluation budget exhausted.
       // Only a proven unexecuted release qualifies; a burned/unclean ending stays charged.
       const claimWait = !started && reason === 'NOT_ADMITTED' && CLAIM_REASONS.includes(facts?.failureCode);
-      if (origin === 'waiting-retry' || claimWait) u.waitingRetries += 1;
+      if (origin === 'waiting-retry' || claimWait) { u.waitingRetries += 1; charge('waitingRetries', reserved.reservedAt); }
       const nodeRole = facts?.class === 'node-role';
-      if (origin === 'new-trigger' && !nodeRole) bump(u.reevaluations, `${s.pr}:${s.headSha}`);
+      if (origin === 'new-trigger' && !nodeRole) { bump(u.reevaluations, `${s.pr}:${s.headSha}`); charge(`reevaluation:${s.pr}:${s.headSha}`, reserved.reservedAt); }
       const environment = ['environment', 'transient'].includes(facts?.class);
       // A burned entry that never started (a low-risk tier burn among them) is an evaluation whatever its class: it no
       // longer counts as an execution, so it must count somewhere (DESIGN §36).
       // A claim wait (G4) spends the waiting budget instead; any other stage-1 refusal stays an evaluation but spends no release cap.
-      if (!started && origin !== 'waiting-retry' && !claimWait && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) u.evaluations += 1;
-      if (separateNetwork && facts?.network === true) { if (reason && !UNCAPPED_RELEASES.includes(reason) && HEX40.test(s.headSha ?? '')) bump(u.networkReleasesByHead, s.headSha); return; }
-      if (reason && !UNCAPPED_RELEASES.includes(reason) && !CLAIM_REASONS.includes(facts?.failureCode) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) bump(u.releasesByHead, s.headSha);
+      if (!started && origin !== 'waiting-retry' && !claimWait && !UNCOUNTED_RELEASES.includes(reason) && (burned || (!environment && !nodeRole))) { u.evaluations += 1; charge('evaluations', reserved.reservedAt); }
+      if (separateNetwork && facts?.network === true) { if (reason && !UNCAPPED_RELEASES.includes(reason) && HEX40.test(s.headSha ?? '')) { bump(u.networkReleasesByHead, s.headSha); charge(`network:${s.headSha}`, reserved.reservedAt); } return; }
+      if (reason && !UNCAPPED_RELEASES.includes(reason) && !CLAIM_REASONS.includes(facts?.failureCode) && facts?.class !== 'waiting' && !nodeRole && !(environment && facts?.breakerState && facts.breakerState !== 'closed') && HEX40.test(s.headSha ?? '')) { bump(u.releasesByHead, s.headSha); charge(`release:${s.headSha}`, reserved.reservedAt); }
     };
     const read = async file => (await exists(file)) ? (await readJson(file)).value : null;
     const dirs = [...(await this.keys()).map(key => this.dir(key)), ...(await fs.readdir(this.flowEnds)).map(name => path.join(this.flowEnds, name))];
@@ -611,15 +642,36 @@ export class Ledger {
         // Stage-8 retries may be budgeted per PR. Historical rows and flow continuations use their durable reservation;
         // an unreadable/missing subject stays conservatively charged, never gains a free retry.
         const reserved = await read(path.join(dir, '00-reserved.json'));
-        for (const name of (await fs.readdir(dir)).filter(n => /^71-try-(\d{2})\.json$/.test(n) && (n !== '71-try-01.json' || reserved?.flowStage8 === true))) {
+        for (const name of (await fs.readdir(dir)).filter(n => TRY.exec(n)?.[1] && (n !== '71-try-01.json' || reserved?.flowStage8 === true))) {
           const at = Date.parse((await read(path.join(dir, name)))?.at);
-          if (!(at < sinceMs) && (stage8Pr === null || !Number.isSafeInteger(reserved?.subject?.pr) || reserved.subject.pr === stage8Pr)) u.stage8Retries += 1;
+          if (!(at < sinceMs) && (stage8Pr === null || !Number.isSafeInteger(reserved?.subject?.pr) || reserved.subject.pr === stage8Pr)) { u.stage8Retries += 1; charge('stage8Retries', at); }
         }
-        if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
-        const terminal = await read(path.join(dir, '90-terminal.json'));
+        if (!reserved) continue;
+        const recentReservation = Date.parse(reserved.reservedAt) >= sinceMs;
+        let terminal;
+        try { terminal = await read(path.join(dir, '90-terminal.json')); }
+        catch (error) { if (recentReservation || !contentError(error)) throw error; continue; }
+        if (terminal?.outcome === 'FAILED_CLEAN' && terminal.facts?.basis === 'park-over-capacity' && Date.parse(terminal.at) >= sinceMs
+            && HEX40.test(reserved.subject?.headSha ?? '')) {
+          bump(u.releasesByHead, reserved.subject.headSha);
+          charge(`release:${reserved.subject.headSha}`, terminal.at);
+        }
+        // Include flow continuations: their head record may still point to an archived system ending. A running/parked,
+        // absent or unreadable terminal is not a verdict. Keep the rolling window on the batch's start (or pre-start burn).
+        try {
+          if (Number.isSafeInteger(reserved.subject?.pr) && prVerdict(terminal)) {
+            const started = await read(path.join(dir, '10-started.json'));
+            const verdictAt = started?.startedAt ?? terminal.at;
+            if (Date.parse(verdictAt) >= sinceMs) {
+              bump(u.startedByPr, reserved.subject.pr);
+              charge(`pr:${reserved.subject.pr}`, verdictAt);
+            }
+          }
+        } catch (error) { if (!contentError(error)) throw error; } // optional verdict evidence never changes global accounting
+        if (!recentReservation) continue;
         count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null,
           burned: ['FAILED_CLEAN', 'FAILED_UNKNOWN'].includes(terminal?.outcome) });
-      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
+      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; charge('evaluations', null); }
     }
     for (const name of await fs.readdir(this.unexecuted)) {
       if (await before(path.join(this.unexecuted, name))) continue;
@@ -629,7 +681,7 @@ export class Ledger {
         const terminal = (await readJson(path.join(this.unexecuted, name, '90-terminal.json'))).value;
         // Unknown evidence must keep the conservative counted fallback, never acquire NOT_ADMITTED's exemption.
         count({ reserved, started: false, reason: UNEXECUTED_REASONS.includes(terminal.reason) ? terminal.reason : 'UNKNOWN_RELEASE', facts: terminal.facts ?? null });
-      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }
+      } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; charge('evaluations', null); }
     }
     return u;
   }
