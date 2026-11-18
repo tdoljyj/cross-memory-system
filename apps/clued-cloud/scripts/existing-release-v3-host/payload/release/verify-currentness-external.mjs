@@ -9,7 +9,7 @@ import {pathToFileURL,fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 
 export const ORIGINAL_VERIFIER='apps/clued-cloud/scripts/verify-currentness-transport.mjs';
-export const ORIGINAL_VERIFIER_SHA256='f5c59bdcd09834aa88f466879a072e30318d799ad8ab65c1c4e6337396a5a54a';
+export const ORIGINAL_VERIFIER_SHA256='4784d3c0f3c2099571a18f7c14a8b53a3f85bbed1f2de732a4849bf34ec7c31c';
 export const LIVE_VERIFIER='apps/clued-cloud/scripts/currentness-live-build.mjs';
 export const PRODUCTION_HEALTH_URL='https://kooyumi.pixelgrav.com/healthz';
 const hash=x=>createHash('sha256').update(x).digest('hex');

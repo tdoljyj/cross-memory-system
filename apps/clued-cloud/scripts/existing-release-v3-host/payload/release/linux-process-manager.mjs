@@ -19,7 +19,7 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const ORIGINAL_VERIFIER='apps/clued-cloud/scripts/verify-currentness-transport.mjs';
 function originalTests(root){
   const bytes=fs.readFileSync(path.join(root,ORIGINAL_VERIFIER));
-  if(bytes.length>65536||hash(bytes)!=='f5c59bdcd09834aa88f466879a072e30318d799ad8ab65c1c4e6337396a5a54a')fail('MANAGER_ORIGINAL_SOURCE_PIN');
+  if(bytes.length>65536||hash(bytes)!=='4784d3c0f3c2099571a18f7c14a8b53a3f85bbed1f2de732a4849bf34ec7c31c')fail('MANAGER_ORIGINAL_SOURCE_PIN');
   const matches=[...bytes.toString('utf8').matchAll(/^const TEST_FILES = Object\.freeze\(\[([\s\S]*?)^\]\);/gm)];
   if(matches.length!==1)fail('MANAGER_ORIGINAL_TEST_DECLARATION');
   const pattern=/'(tests\/[a-z0-9-]+\.test\.mjs)'/g,files=[...matches[0][1].matchAll(pattern)].map(m=>m[1]);

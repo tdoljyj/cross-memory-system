@@ -13,7 +13,7 @@
     },
     "payload/release/existing-release-entry-v1/v3/existing-stages.mjs": {
       "bytes": 20467,
-      "sha256": "c8ee412f2e47cf3b7d5085f2ed3a0987aea9e1e50fea20cb9785221a4b9e315e"
+      "sha256": "58d86f64efe685dfd1cd6b377eaf7a8a21079f05fa6f972f6af0ead6f3e22165"
     },
     "payload/release/existing-release-entry-v1/v3-host/host-files.mjs": {
       "bytes": 11068,
@@ -25,17 +25,17 @@
     },
     "payload/release/linux-process-manager.mjs": {
       "bytes": 28776,
-      "sha256": "bc85acde10bc55a0866aac0aa9554d8c5de876b12a12d8faf492fa3d91c44223"
+      "sha256": "4cb9144ee52f6d569ed6985c8d793a366ee818c1c4ade16dbc8089e0f866d8fd"
     },
     "payload/release/verify-currentness-external.mjs": {
       "bytes": 17696,
-      "sha256": "4bb88785021b73783bfe2b37972be11806f2c3b564ced8785dfbda25405106cd"
+      "sha256": "63e2040003e953bb7e8fe8e5f44948a3a588227a53efe0422f594bab9a6541fa"
     }
   },
   "sourceQualifiedByThisManifest": false,
   "hostQualifiedByThisManifest": false,
   "productionAuthorized": false,
-  "revision": 8,
-  "previousPackageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
-  "onlyExecutableDelta": "固定状态制发布门，保留部署前凭据，部署后按投影状态验收"
+  "revision": 9,
+  "previousPackageManifestSha256": "39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3",
+  "onlyExecutableDelta": "只改 pin：发布门按 Cron 周期等待并限时连接，currentness 校验与 G6 证明写入分开（Fable 1121）"
 }

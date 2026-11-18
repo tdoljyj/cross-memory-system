@@ -1,13 +1,13 @@
 {
   "contract": "clued.existing-release-v3-host-source-freeze/1",
-  "revision": 8,
+  "revision": 9,
   "status": "AUTHOR_CHECKED_DISABLED_CANDIDATE_NOT_QUALIFIED_OR_INSTALLED",
-  "predecessorSourceFreezeSha256": "75e8840f76f9a8e6a795b158107d7cce795bd592e9f01e3147722f5ed4801b2f",
-  "packageManifestSha256": "39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3",
+  "predecessorSourceFreezeSha256": "2e875e563fcd78cec4775166e737edc29b457b66bd862eafd7507175a433263e",
+  "packageManifestSha256": "41a8368c6e14d7f704b3dc9fc56d8db73b2c2d20956dde40fc0bc7cae38eef7b",
   "sourceFiles": {
     "README.md": {
-      "bytes": 17871,
-      "sha256": "0e23c5c7aee503f5a98b1f4bef3ec0bb01158e70c97930286d89e571bc2a69ea"
+      "bytes": 18728,
+      "sha256": "f4918d8a160e4b4e89b1e4f14e5849f5fbf3f93ff216e1ede0aebf999e9561fa"
     },
     "build-files.template.json": {
       "bytes": 101,
@@ -15,7 +15,7 @@
     },
     "currentness-manager.template.json": {
       "bytes": 1292,
-      "sha256": "68bb80e113143d483c57cbabc959787e40ed523be86d60a0da05ddd88b14b83b"
+      "sha256": "d4f29aa4d9255b4f6cc2156cd572c0b48475838dc43fda7019b25eff6b8bfafd"
     },
     "existing-release.template.json": {
       "bytes": 634,
@@ -35,15 +35,15 @@
     },
     "offline-checks-v7.mjs": {
       "bytes": 8317,
-      "sha256": "50dd2a9a714387b234138c2f3ab45cd95929b80181c52e6ec95972bb754cbd57"
+      "sha256": "f5dd4a87615fc9db68c99b223e477f404519de91d1c7bc0398cf717f966ad666"
     },
     "offline-source-checks.json": {
       "bytes": 1055,
-      "sha256": "a22d94f67e54515fa49e345a9904fd60d8ee7974b24d331a5d342daf81caf0a0"
+      "sha256": "802eca0946c18d4f068717a83459fa831822eab607b8bfee29d2e31197876549"
     },
     "package-manifest.json": {
-      "bytes": 1811,
-      "sha256": "39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3"
+      "bytes": 1850,
+      "sha256": "41a8368c6e14d7f704b3dc9fc56d8db73b2c2d20956dde40fc0bc7cae38eef7b"
     },
     "payload/release/existing-release-entry-v1/fixed-currentness-ports.mjs": {
       "bytes": 5610,
@@ -59,15 +59,15 @@
     },
     "payload/release/existing-release-entry-v1/v3/existing-stages.mjs": {
       "bytes": 20467,
-      "sha256": "c8ee412f2e47cf3b7d5085f2ed3a0987aea9e1e50fea20cb9785221a4b9e315e"
+      "sha256": "58d86f64efe685dfd1cd6b377eaf7a8a21079f05fa6f972f6af0ead6f3e22165"
     },
     "payload/release/linux-process-manager.mjs": {
       "bytes": 28776,
-      "sha256": "bc85acde10bc55a0866aac0aa9554d8c5de876b12a12d8faf492fa3d91c44223"
+      "sha256": "4cb9144ee52f6d569ed6985c8d793a366ee818c1c4ade16dbc8089e0f866d8fd"
     },
     "payload/release/verify-currentness-external.mjs": {
       "bytes": 17696,
-      "sha256": "4bb88785021b73783bfe2b37972be11806f2c3b564ced8785dfbda25405106cd"
+      "sha256": "63e2040003e953bb7e8fe8e5f44948a3a588227a53efe0422f594bab9a6541fa"
     },
     "required-metadata.json": {
       "bytes": 4056,
@@ -96,6 +96,14 @@
     "v7-to-v8-executable.patch": {
       "bytes": 4376,
       "sha256": "ce5e71a6d6f18ab1e09936ba5158eba7ccbfbc5f457ad9084db0fd982b5d875a"
+    },
+    "prepare-v9.mjs": {
+      "bytes": 6170,
+      "sha256": "becc3ef84436dc5e2a9ae51445900635f7821d18ccda32e9e57d9c65d0192ab0"
+    },
+    "v8-to-v9-executable.patch": {
+      "bytes": 3202,
+      "sha256": "76ae19461b9c82a07b70c198f9a7825ae2e576df7c8a10711c49b78dc15b4b6f"
     }
   }
 }

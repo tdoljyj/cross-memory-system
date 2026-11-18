@@ -28,7 +28,7 @@ const revision8=m.revision===8;
 const manifestHash=hash(fs.readFileSync(path.join(v7,'package-manifest.json')));
 const v7Manifest='c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c';
 check('candidate manifest and predecessor', revision8
- ? manifestHash==='39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3' && m.previousPackageManifestSha256===v7Manifest
+ ? manifestHash==='41a8368c6e14d7f704b3dc9fc56d8db73b2c2d20956dde40fc0bc7cae38eef7b' && m.previousPackageManifestSha256===v7Manifest
  : m.revision===7 && manifestHash===v7Manifest && m.previousPackageManifestSha256==='71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4');
 const stages=fs.readFileSync(path.join(v7,'payload/release/existing-release-entry-v1/v3/existing-stages.mjs'),'utf8');
 check('existing-stages pins the v7 manager',stages.includes(`[MANAGER,'${m.files[MANAGER].sha256}']`));

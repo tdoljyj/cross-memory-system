@@ -26,6 +26,21 @@ as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
 - `source-capture` captures one reviewed nonsecret storage client source and
   requires `source_request_id` and `source_request_digest`.
 - `deploy` builds, gates, deploys `clued-cloud` and runs the post-deploy checks.
+- `release` is the same deploy from one approval, for a commit whose every
+  change a Worker version rollback undoes: it takes no migrations (apply them
+  with `migrate` first) and stops before the grant when the commit changes
+  Cron, routes, queue consumers or Durable Object migrations against the
+  commit the edge serves (publish those with `deploy`). `rollback_drill`
+  fails a fully verified release on purpose, before the G6 attestation.
+
+`deploy` and `release` record the version each Worker serves and the commit
+the edge serves before the grant. Any later failure, a step timeout included,
+rolls the changed Workers back to those versions and waits, in the release's
+propagation window, for the edge to serve the recorded commits again; the
+summary says `restored` only then. The G6 currentness attestation is written
+last (`verify-currentness-transport.mjs --publish`), after every
+verification passed, so a rolled-back Worker never meets an attestation that
+names the failed commit.
 
 The workflow needs the `CLUED_ATTESTATION_DATABASE_URL_V2` secret, a
 `CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2` secret scoped to edit the existing `clued-cloud`
@@ -58,7 +73,7 @@ with repository files.
 
 `--pre-deploy` 在凭据中保留 Builder 服务的 `global.priority_frontier` 和 `global.__aggregate__` 的租户、修订、任务状态、积压起点和摘要比较结果。异常写入 `warnings` 并输出到发布日志，允许修复旧 Worker 的版本继续部署。
 
-`--post-deploy` 要求两个必需键均有服务行，每行的修订已追平、摘要一致。未满五分钟的积压每十秒重读一次，最多等待约三分钟。任务失败、摘要不符、积压已满五分钟或等待结束仍未追平时，验收失败并报告具体投影键。即使 cron 关闭且没有心跳，已追平的快照也能立即通过。
+`--post-deploy` 要求两个必需键均有服务行，每行的修订已追平、摘要一致。积压每十秒重读一次，最多等待生产 Cron 一个周期加两分钟（周期读自 `wrangler.production.jsonc` 的 `triggers.crons`，只接受 `*/N * * * *`，其他写法两种模式都直接阻断）：没被请求侧唤醒的投影要等下一拍才追平。任务失败、摘要不符时立即失败，等待结束仍未追平时失败，并报告具体投影键。即使 cron 关闭且没有心跳，已追平的快照也能立即通过。
 
 Production migration history predates a unified versioning convention. The
 MTPE source file `20260924110000_mtpe_universal_intake_auto_priority.sql` was

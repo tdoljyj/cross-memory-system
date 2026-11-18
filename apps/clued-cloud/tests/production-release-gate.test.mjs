@@ -777,12 +777,15 @@ test('the G6 attestation is written once, last, and only after every verificatio
   const verifyAt = standalone.indexOf('verify-currentness-transport.mjs --production --evidence-out currentness-attestation.json');
   const publishAt = standalone.indexOf('verify-currentness-transport.mjs --publish currentness-attestation.json');
   assert.ok(verifyAt > 0 && publishAt > verifyAt, JSON.stringify({ verifyAt, publishAt }));
-  assert.equal(standalone.split('CLUED_ATTESTATION_DATABASE_URL').length - 1, 1, 'only the publish step holds the credential');
+  assert.equal(standalone.split('secrets.CLUED_ATTESTATION_DATABASE_URL').length - 1, 1, 'only the publish step holds the credential');
+  assert.ok(standalone.indexOf('secrets.CLUED_ATTESTATION_DATABASE_URL') > verifyAt);
 });
 
 test('the rollback drill fails a fully verified release before the attestation and rolls the Workers back', () => {
-  const drill = simulateRelease({ mode: 'release', rollback_drill: true });
+  // The model runs no script: the drill step's `exit 1` (pinned below) is its failure.
+  const drill = simulateRelease({ mode: 'release', rollback_drill: true }, DRILL_STEP);
   assert.equal(drill.conclusion, 'failure');
+  assert.ok(drill.ran.includes(DRILL_STEP));
   const at = (name) => drill.ran.indexOf(name);
   for (const name of [...DEPLOY_STEPS, ...VERIFY_STEPS]) assert.ok(at(name) >= 0 && at(name) < at(DRILL_STEP), name);
   assert.ok(at(DRILL_STEP) < at(ROLLBACK_STEP));
@@ -794,7 +797,8 @@ test('the rollback drill fails a fully verified release before the attestation a
   const step = releaseSteps.find((s) => s.name === DRILL_STEP);
   assert.ok(step, DRILL_STEP);
   assert.doesNotMatch(step.text, /secrets\.|continue-on-error/);
-  assert.match(step.text, /\n {10}exit 1\n?$/);
+  // Its whole script: one message, then exit 1 (the text after it is the next step's comment).
+  assert.match(step.text, /\n {8}run: \|\n {10}echo "[^"\n]*"\n {10}exit 1(?:\n {6}#[^\n]*)*\n?$/);
   assert.match(productionWorkflow, /\n      rollback_drill:\n[\s\S]*?type: boolean\n        default: false\n/);
 });
 
