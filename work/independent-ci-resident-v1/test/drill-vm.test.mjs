@@ -34,6 +34,8 @@ function psCode(expr) {
   return ps(`try { ${expr} | Out-Null; $null } catch { (Get-DrillCode $_).code }`);
 }
 const opts = { skip: !windows };
+const idleHostStatus = (writtenAt = new Date().toISOString()) =>
+  JSON.stringify({ node: { mode: 'STANDBY' }, executor: { state: 'IDLE' }, current: null, writtenAt });
 const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
 const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
 
@@ -204,7 +206,7 @@ test('host duty gate fails closed for active, busy, missing and malformed reside
     (Test-DrillHostSafety $null 64GB), (Test-DrillHostSafety '{broken' 64GB),
     (Test-DrillHostSafety '{}' 64GB),
     (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"}}' 64GB),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}' 64GB))`);
+    (Test-DrillHostSafety ${q(idleHostStatus())} 64GB))`);
   assert.deepEqual(r.map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_CI_BUSY',
     'DRILL_HOST_STATUS_UNREADABLE', 'DRILL_HOST_STATUS_UNREADABLE', 'DRILL_HOST_STATUS_UNREADABLE',
     'DRILL_HOST_STATUS_UNREADABLE', null]);
@@ -213,26 +215,41 @@ test('host duty gate fails closed for active, busy, missing and malformed reside
 });
 
 test('running guard aborts on duty, batch, unreadable status or memory pressure after a safe start', opts, () => {
-  const r = ps(`$idle = '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}'; @(
+  const r = ps(`$idle = ${q(idleHostStatus())}; @(
     (Test-DrillHostSafety $idle 64GB), (Test-DrillHostSafety $idle 64GB -Running),
     (Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB -Running),
     (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"RUNNING"},"current":null}' 64GB -Running),
     (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"WAITING"},"current":{"pr":1153}}' 64GB -Running),
-    (Test-DrillHostSafety $null 64GB -Running), (Test-DrillHostSafety $idle (14GB - 1) -Running),
-    (Test-DrillHostSafety $idle 14GB -Running))`);
+    (Test-DrillHostSafety $null 64GB -Running), (Test-DrillHostSafety $idle (6GB - 1) -Running -MemoryAssigned 8GB),
+    (Test-DrillHostSafety $idle 6GB -Running -MemoryAssigned 8GB))`);
   assert.deepEqual(r.map(x => x.action), ['start', 'continue', 'abort', 'abort', 'abort', 'abort', 'abort', 'continue']);
   assert.deepEqual(r.slice(2, 7).map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', 'DRILL_HOST_CI_BUSY',
     'DRILL_HOST_CI_BUSY', 'DRILL_HOST_STATUS_UNREADABLE', 'DRILL_HOST_MEMORY_SHORT']);
 });
 
-test('memory threshold follows actual VM memory plus the single production reserve at start and runtime', opts, () => {
-  const r = ps(`$idle = '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}'; @(
+test('memory threshold includes the whole VM at start and only its unassigned memory at runtime', opts, () => {
+  const r = ps(`$idle = ${q(idleHostStatus())}; @(
     (Test-DrillHostSafety $idle 14GB -VmMemoryBytes 14GB),
-    (Test-DrillHostSafety $idle 20GB -VmMemoryBytes 14GB),
-    (Test-DrillHostSafety $idle (20GB - 1) -VmMemoryBytes 14GB -Running),
-    (Test-DrillHostSafety $idle 20GB -VmMemoryBytes 14GB -Running))`);
-  assert.deepEqual(r.map(x => x.ok), [false, true, false, true]);
-  assert.ok(r.every(x => x.requiredFreeBytes === 20 * 1024 ** 3));
+    (Test-DrillHostSafety $idle 20GB -VmMemoryBytes 14GB -MemoryAssigned 14GB),
+    (Test-DrillHostSafety $idle (10GB - 1) -VmMemoryBytes 14GB -Running -MemoryAssigned 10GB),
+    (Test-DrillHostSafety $idle 10GB -VmMemoryBytes 14GB -Running -MemoryAssigned 10GB),
+    (Test-DrillHostSafety $idle 6GB -VmMemoryBytes 14GB -Running -MemoryAssigned 15GB))`);
+  assert.deepEqual(r.map(x => x.action), ['refuse', 'start', 'abort', 'continue', 'continue']);
+  assert.deepEqual(r.map(x => x.requiredFreeBytes / 1024 ** 3), [20, 20, 10, 10, 6]);
+});
+
+test('the duty gate refuses stale, missing and invalid status timestamps', opts, () => {
+  const now = Date.now();
+  const stamp = (offset) => new Date(now + offset).toISOString();
+  const statusAt = (writtenAt) => q(idleHostStatus(writtenAt));
+  const r = ps(`$now = [DateTimeOffset]::Parse(${q(stamp(0))}); @(
+    (Test-DrillHostSafety ${statusAt(stamp(-300_000))} 64GB -Now $now),
+    (Test-DrillHostSafety ${statusAt(stamp(-300_001))} 64GB -Now $now),
+    (Test-DrillHostSafety ${statusAt(null)} 64GB -Running -Now $now),
+    (Test-DrillHostSafety ${statusAt('12:00')} 64GB -Running -Now $now),
+    (Test-DrillHostSafety ${statusAt(stamp(60_001))} 64GB -Running -Now $now))`);
+  assert.deepEqual(r.map(x => x.action), ['start', 'refuse', 'abort', 'abort', 'abort']);
+  assert.deepEqual(r.map(x => x.code), [null, ...Array(4).fill('DRILL_HOST_STATUS_STALE')]);
 });
 
 test('host preflight refuses duty before any Hyper-V or memory query', opts, () => {
@@ -270,7 +287,8 @@ test('the real background guard aborts while the foreground is blocked, without 
       param([switch]$Running)
       $script:guardReads++
       $mode = if ($script:guardReads -eq 1) { 'STANDBY' } else { 'ACTIVE' }
-      Test-DrillHostSafety ('{"node":{"mode":"' + $mode + '"},"executor":{"state":"IDLE"},"current":null}') 64GB -Running:$Running
+      $status = @{ node = @{ mode = $mode }; executor = @{ state = 'IDLE' }; current = $null; writtenAt = [DateTimeOffset]::UtcNow.ToString('o') }
+      Test-DrillHostSafety (ConvertTo-DrillJson $status) 64GB -Running:$Running
     }
     function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint)
       [IO.File]::WriteAllText(${q(marker)}, [string]$RestoreCheckpoint); return $true
@@ -294,16 +312,75 @@ test('host reader uses only the pinned status file and accounts for an existing 
   const r = ps(`
     function Get-Content { param($LiteralPath, [switch]$Raw, $Encoding, $ErrorAction)
       $script:readPath = $LiteralPath
-      return '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":null}'
+      return ${q(idleHostStatus())}
     }
-    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 20GB / 1KB } }
-    function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 14GB; MemoryAssigned = 0 } }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = $script:freeBytes / 1KB } }
+    function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 14GB; MemoryAssigned = $script:assignedBytes } }
+    $script:freeBytes = 20GB; $script:assignedBytes = 0
     $safety = Get-DrillHostSafety
-    @{ path = $script:readPath; safety = $safety }
+    $script:freeBytes = 10GB; $script:assignedBytes = 10GB
+    $running = Get-DrillHostSafety -Running
+    @{ path = $script:readPath; safety = $safety; running = $running }
   `);
   assert.equal(r.path, 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json');
   assert.equal(r.safety.requiredFreeBytes, 20 * 1024 ** 3);
   assert.equal(r.safety.ok, true);
+  assert.equal(r.running.requiredFreeBytes, 10 * 1024 ** 3);
+  assert.equal(r.running.action, 'continue');
+});
+
+test('the start gate never calls Start-VM when the guard failed or has not become ready', opts, () => {
+  const r = ps(`
+    $script:starts = 0
+    function Start-VM { param($Name, $ErrorAction) $script:starts++ }
+    function Get-DrillHostSafety { @{ ok = $true } }
+    $state = [hashtable]::Synchronized(@{ ready = $true; armed = $false; failure = @{ code = 'DRILL_HOST_IS_ON_DUTY'; detail = 'test' } })
+    $script:HostGuard = @{ state = $state; pending = @{ IsCompleted = $false } }
+    $failed = try { Start-DrillGuardedVm; $null } catch { (Get-DrillCode $_).code }
+    $state.ready = $false; $state.failure = $null
+    $unready = try { Start-DrillGuardedVm; $null } catch { (Get-DrillCode $_).code }
+    @{ failed = $failed; unready = $unready; starts = $script:starts; armed = $state.armed }`);
+  assert.deepEqual(r, { failed: 'DRILL_HOST_IS_ON_DUTY', unready: 'DRILL_HOST_GUARD_FAILED', starts: 0, armed: false });
+});
+
+test('checkpoint caller discards a result after a guard failure and restores the checkpoint', opts, () => {
+  const r = ps(`
+    $script:restores = 0
+    function Get-DrillHostSafety { @{ ok = $true } }
+    function Get-DrillVmInfo { @{ notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) }
+    function Assert-DrillHost { }
+    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint)
+      $script:HostGuard = @{ state = @{ ready = $true; failure = $null }; pending = @{ IsCompleted = $false } }
+      return $script:HostGuard
+    }
+    function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
+    function Start-DrillGuardedVm { }
+    function Get-DrillCredential { }
+    function Wait-DrillGuest { }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) if ($RestoreCheckpoint) { $script:restores++ }; return $true }
+    $outcome = Invoke-DrillOnCheckpoint {
+      $script:HostGuard.state.failure = @{ code = 'DRILL_HOST_IS_ON_DUTY'; detail = 'test' }
+      'discard this result'
+    } 'unused'
+    @{ outcome = $outcome; restores = $script:restores }`);
+  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true });
+  assert.equal(r.restores, 1);
+});
+
+test('the only Start-VM command is inside Start-DrillGuardedVm', opts, () => {
+  const r = ps(`
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(${q(script)}, [ref]$tokens, [ref]$errors)
+    @{ owners = @($ast.FindAll({
+      param($node)
+      $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Start-VM'
+    }, $true) | ForEach-Object {
+      $parent = $_.Parent
+      while ($parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $parent = $parent.Parent }
+      if ($parent) { $parent.Name } else { '<script>' }
+    }) }`);
+  assert.deepEqual(r.owners, ['Start-DrillGuardedVm']);
 });
 
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
@@ -516,30 +593,66 @@ test('the verdict fails what the plan says fails', opts, () => {
   assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PENDING_PRODUCTION_READBACK');
 });
 
+const startedAt = '2026-11-16T02:00:00Z';
+const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bindings_created: 0, drill_liveness: 0, live_sources: [S] };
+const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });
+function finalize(name, fields) {
+  const receipt = { contract: 'clued.independent-ci.drill-receipt/1', startedAt, evidence: { localSource: S },
+    failure: null, restoredToCheckpoint: true, conclusion: 'PENDING_PRODUCTION_READBACK', ...fields };
+  const receiptFile = path.join(tmp, `${name}.json`);
+  const readback = path.join(tmp, 'readback.json');
+  const original = JSON.stringify(receipt);
+  fs.writeFileSync(receiptFile, original);
+  fs.writeFileSync(readback, JSON.stringify(readbackFor()));
+  const run = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Finalize', receiptFile, '-ProductionReadback', readback], { encoding: 'utf8', timeout: 120000 });
+  const bytes = fs.readFileSync(receiptFile, 'utf8');
+  return { receipt, receiptFile, original, bytes, status: run.status, output: JSON.parse(run.stdout.trim()) };
+}
+
 test('-Finalize judges A5 and A9 from one read-only production read-back and rewrites the receipt', opts, () => {
-  const startedAt = '2026-11-16T02:00:00Z';
   const sql = ps(`Get-DrillReadbackSql ${q(startedAt)}`);
   assert.match(sql, /ci_nodes_v1/); assert.match(sql, /binding_roles_v1/); assert.doesNotMatch(sql, /\b(insert|update|delete)\b\s/i);
   assert.equal(psCode(`Get-DrillReadbackSql ${q("x'; drop table t; --")}`), 'DRILL_STARTED_AT_REFUSED');
   const items = verdictOf(evidence()).items;
-  const receiptFile = path.join(tmp, 'receipt.json');
-  const receipt = { contract: 'clued.independent-ci.drill-receipt/1', startedAt, evidence: { localSource: S }, items, conclusion: 'PENDING_PRODUCTION_READBACK' };
-  fs.writeFileSync(receiptFile, JSON.stringify(receipt));
-  const row = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bindings_created: 0, drill_liveness: 0, live_sources: [S] };
-  const readback = path.join(tmp, 'readback.json');
-  fs.writeFileSync(readback, JSON.stringify({ contract: 'clued.drill.production-readback/1', startedAt, row }));
-  const run = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Finalize', receiptFile, '-ProductionReadback', readback], { encoding: 'utf8', timeout: 120000 });
-  assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.deepEqual(JSON.parse(run.stdout.trim()), { status: 'DRILL_FINALIZED', conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN', receipt: receiptFile });
-  const done = JSON.parse(fs.readFileSync(receiptFile, 'utf8'));
+  const { receipt, receiptFile, status, output, bytes } = finalize('receipt', { items });
+  assert.equal(status, 0);
+  assert.deepEqual(output, { status: 'DRILL_FINALIZED', conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN', receipt: receiptFile });
+  const done = JSON.parse(bytes);
   assert.equal(done.items.find((i) => i.id === 'A9').pass, true);
   assert.equal(done.items.find((i) => i.id === 'A5').pass, true);
   // a touched production table or a Source that differs fails; a read-back of another drill is refused
-  const v = (r, s = startedAt) => ps(`$rc = ${q(JSON.stringify(receipt))} | ConvertFrom-Json; $rb = ${q(JSON.stringify({ contract: 'clued.drill.production-readback/1', startedAt: s, row: r }))} | ConvertFrom-Json;
+  const v = (r, s = startedAt) => ps(`$rc = ${q(JSON.stringify(receipt))} | ConvertFrom-Json; $rb = ${q(JSON.stringify(readbackFor(r, s)))} | ConvertFrom-Json;
     @(Get-DrillProductionVerdict $rc $rb | ForEach-Object { $_.pass })`);
-  assert.deepEqual(v({ ...row, roles_changed: 1 }), [true, false]);
-  assert.deepEqual(v({ ...row, live_sources: [S, '6'.repeat(64)] }), [false, true]);
-  assert.equal(psCode(`Get-DrillProductionVerdict (${q(JSON.stringify(receipt))} | ConvertFrom-Json) (${q(JSON.stringify({ contract: 'clued.drill.production-readback/1', startedAt: '2026-01-01T00:00:00Z', row }))} | ConvertFrom-Json)`), 'DRILL_READBACK_NOT_THIS_DRILL');
+  assert.deepEqual(v({ ...readbackRow, roles_changed: 1 }), [true, false]);
+  assert.deepEqual(v({ ...readbackRow, live_sources: [S, '6'.repeat(64)] }), [false, true]);
+  assert.equal(psCode(`Get-DrillProductionVerdict (${q(JSON.stringify(receipt))} | ConvertFrom-Json) (${q(JSON.stringify(readbackFor(readbackRow, '2026-01-01T00:00:00Z')))} | ConvertFrom-Json)`), 'DRILL_READBACK_NOT_THIS_DRILL');
+});
+
+test('-Finalize refuses an unrestored or failed drill without rewriting the receipt', opts, () => {
+  const items = verdictOf(evidence()).items;
+  const cases = [
+    { name: 'unrestored', fields: { restoredToCheckpoint: false, conclusion: 'FAIL' } },
+    { name: 'unrestored-pending', fields: { restoredToCheckpoint: false } },
+    { name: 'restore-unknown', fields: { restoredToCheckpoint: undefined } },
+    { name: 'failed-run', fields: { failure: { code: 'DRILL_HOST_GUARD_FAILED' } } },
+    { name: 'failed-verdict', fields: { conclusion: 'FAIL' } },
+  ];
+  for (const { name, fields } of cases) {
+    const r = finalize(name, { items, ...fields });
+    assert.equal(r.output.code, 'DRILL_RECEIPT_NOT_FINALIZABLE', JSON.stringify(r.output));
+    assert.equal(r.status, 1);
+    assert.equal(r.bytes, r.original);
+  }
+});
+
+test('empty items and a missing A10 produce FAIL without an unexpected error', opts, () => {
+  const items = verdictOf(evidence()).items;
+  for (const [name, incomplete] of [['empty-items', []], ['missing-a10', items.filter(i => i.id !== 'A10')]]) {
+    const r = finalize(name, { items: incomplete });
+    assert.equal(r.output.conclusion, 'FAIL', JSON.stringify(r.output));
+    assert.equal(r.status, 0);
+    assert.equal(JSON.parse(r.bytes).conclusion, 'FAIL');
+  }
 });
 
 test('the drill without its inputs stops before touching anything', opts, () => {

@@ -19,7 +19,7 @@
 #
 # Host boundary: writes only under D:\clued-drill\; touches only the VM whose name AND notes are ours; never touches the
 # production writes, services, scheduled tasks, the host's WSL distributions, or any process by name. The sole production
-# read is HostStatus below (node.mode / executor.state / current). No elevation: the account
+# read is HostStatus below (writtenAt / node.mode / executor.state / current). No elevation: the account
 # must be in Hyper-V Administrators. Every wait is bounded; nothing is retried; a failed drill still restores the checkpoint.
 # Host duty, CI activity and memory are checked before start and independently every 30 seconds while running.
 [CmdletBinding()]
@@ -59,10 +59,10 @@ $script:Drill = [ordered]@{
   # Microsoft's published generic install key for Windows 11 Pro: it only selects the edition; the VM is never activated.
   ProProductKey = 'VK7JG-NPHTM-C97JM-9MPGT-3V66T'
   MemoryBytes = 8GB
-  # Keep production's workstation low-memory margin (Runner Runbook 2.2: 6 GiB), IN ADDITION to the VM's memory.
-  # Use the larger of the configured and existing VM allocation; an older 14 GiB VM therefore requires 20 GiB free.
+  # Keep production's workstation low-memory margin (Runner Runbook 2.2: 6 GiB) plus any VM memory still to allocate.
   ProductionReserveBytes = 6GB
   HostGuardSeconds = 30
+  HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
   MinDiskFreeBytes = 100GB
   VhdBytes = 80GB
@@ -124,16 +124,34 @@ function Get-Prop($Object, [string]$Path) {
 
 # ---------------------------------------------------------------- pure decisions (unit-tested offline)
 
-function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes) {
-  $required = [Math]::Max($script:Drill.MemoryBytes, $VmMemoryBytes) + $script:Drill.ProductionReserveBytes
+function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0) {
+  $target = [Math]::Max($script:Drill.MemoryBytes, $VmMemoryBytes)
+  $vmFreeRequired = if ($Running) {
+    # Hyper-V's assigned memory has already been deducted from the host's free memory.
+    [Math]::Max(0L, $target - $MemoryAssigned)
+  } else {
+    [Math]::Max($target, $MemoryAssigned)
+  }
+  $required = $vmFreeRequired + $script:Drill.ProductionReserveBytes
   return @{ ok = ($FreeBytes -ge $required); code = $(if ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null });
     freeGB = [Math]::Round($FreeBytes / 1GB, 1); requiredFreeBytes = $required }
 }
 
-# Pure projection: inspect only node.mode, executor.state and current. Absent/invalid/unknown facts never grant a start.
+function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
+  # ConvertFrom-Json can supply a DateTime in PowerShell 7.
+  $timestamp = [DateTimeOffset]::MinValue
+  if ($WrittenAt -is [DateTime]) { $timestamp = [DateTimeOffset]$WrittenAt }
+  elseif ($WrittenAt -isnot [string] -or $WrittenAt -notmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$' -or
+    -not [DateTimeOffset]::TryParse($WrittenAt, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$timestamp)) { return $false }
+  $ageSeconds = ($Now - $timestamp).TotalSeconds
+  return $ageSeconds -le $script:Drill.HostStatusStaleSeconds -and $ageSeconds -ge -60
+}
+
+# Pure projection: inspect only writtenAt, node.mode, executor.state and current. Absent/invalid/unknown facts never grant a start.
 # Any current batch (including WAITING/PARKED) still owns resources, even when executor.state is not RUNNING.
-function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes) {
-  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes
+function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
+  [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow) {
+  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned
   $code = 'DRILL_HOST_STATUS_UNREADABLE'
   try {
     $s = ConvertFrom-Json -InputObject $StatusJson -ErrorAction Stop
@@ -142,7 +160,9 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
     elseif ($executor -cin @('RUNNING', 'PARKED') -or $null -ne (Get-Prop $s 'current')) { $code = 'DRILL_HOST_CI_BUSY' }
     elseif ($mode -ceq 'STANDBY' -and $null -ne $s.PSObject.Properties['current'] -and
       $executor -cin @('IDLE', 'WAITING', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'STOPPED',
-        'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED')) { $code = $memory.code }
+        'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED')) {
+      $code = if (Test-DrillHostStatusFresh (Get-Prop $s 'writtenAt') $Now) { $memory.code } else { 'DRILL_HOST_STATUS_STALE' }
+    }
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
   return @{ ok = ($null -eq $code); code = $code; freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes;
     action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
@@ -584,10 +604,13 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
   return (New-DrillItem $Id (($result -ceq 'PASS') -and $fresh) "selfcheck=$result observedAt=$at")
 }
 
-# Overall: FAIL if any item failed; PASS_A when A1-A9 hold (A10 may not); otherwise PENDING (items left to -Finalize).
+# Overall: FAIL if any required item is missing or a core item failed; PASS_A when A1-A9 hold; otherwise PENDING.
 function Get-DrillConclusion($Items) {
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
   $core = @('A1','A2','A3','A4','A5','A6','A7','A8','A9')
+  foreach ($id in ($core + 'A10')) {
+    if (-not $byId.ContainsKey($id)) { return 'FAIL' }
+  }
   if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
   if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
@@ -696,13 +719,15 @@ function Get-DrillHostSafety([switch]$Running) {
     $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 5 -ErrorAction Stop
     if ($null -eq $os.FreePhysicalMemory) { throw 'missing memory reading' }
     $free = [long]$os.FreePhysicalMemory * 1KB
-    $bytes = $script:Drill.MemoryBytes
+    $target = $script:Drill.MemoryBytes
+    $assigned = 0L
     $vm = Get-VM -ErrorAction Stop | Where-Object { $_.Name -eq $script:Drill.VmName }
     if ($vm) {
       if ($vm.Notes -cne $script:Drill.Marker) { throw (New-DrillError 'DRILL_VM_NAME_TAKEN_NOT_OURS') }
-      $bytes = [Math]::Max($bytes, [Math]::Max([long]$vm.MemoryStartup, [long]$vm.MemoryAssigned))
+      $target = [Math]::Max($target, [long]$vm.MemoryStartup)
+      $assigned = [long]$vm.MemoryAssigned
     }
-    return Test-DrillHostSafety $json $free -VmMemoryBytes $bytes -Running:$Running
+    return Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running
   } catch {
     $c = Get-DrillCode $_
     return @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
@@ -785,7 +810,7 @@ function Assert-DrillGuard {
   if ($script:HostGuard) {
     $guard = $script:HostGuard
     if ($guard.state.failure) { throw (New-DrillError $guard.state.failure.code $guard.state.failure.detail) }
-    if ($guard.pending.IsCompleted) { throw (New-DrillError 'DRILL_HOST_GUARD_FAILED') }
+    if (-not $guard.state.ready -or $guard.pending.IsCompleted) { throw (New-DrillError 'DRILL_HOST_GUARD_FAILED') }
   }
 }
 
@@ -1222,6 +1247,10 @@ function Invoke-DrillMain {
     if (-not $ProductionReadback) { throw (New-DrillError 'DRILL_USAGE' '-Finalize needs -ProductionReadback') }
     $receipt = Read-DrillJson $Finalize
     if ([string](Get-Prop $receipt 'contract') -cne $script:Drill.ReceiptContract) { throw (New-DrillError 'DRILL_RECEIPT_REFUSED') }
+    $restored = Get-Prop $receipt 'restoredToCheckpoint'
+    if ((Get-Prop $receipt 'failure') -or $restored -isnot [bool] -or -not $restored -or (Get-Prop $receipt 'conclusion') -ceq 'FAIL') {
+      throw (New-DrillError 'DRILL_RECEIPT_NOT_FINALIZABLE' 'receipt failed or checkpoint restore was not confirmed')
+    }
     $prod = Get-DrillProductionVerdict $receipt (Read-DrillJson $ProductionReadback)
     $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else { [ordered]@{ id = $i.id; pass = $i.pass; detail = $i.detail } } })
     $receipt.items = $items
