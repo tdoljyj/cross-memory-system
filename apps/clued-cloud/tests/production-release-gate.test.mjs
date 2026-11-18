@@ -4,6 +4,8 @@ import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { settleProjectionLag, verifyReleaseState } from '../scripts/production-release-gate.mjs';
 
@@ -659,6 +661,8 @@ const DEPLOY_STEPS = ['Deploy Clued PDF extractor Worker', 'Deploy Clued product
 const grantSteps = (run) => run.steps.filter((step) => /\n {8}run: node scripts\/ci\/clued-release-grant\.mjs /.test(step.text));
 const writesAttestation = (step) => /verify-currentness-transport\.mjs --production /.test(step.text);
 const MIGRATION = '20261003170000_owner_grants_release_door.sql';
+// The production wrangler configuration, read as Wrangler reads it (JSONC).
+const PRODUCTION_WRANGLER = fileURLToPath(new URL('../wrangler.production.jsonc', import.meta.url));
 
 test('release mode runs preflight, deploy and verification in one run and uses its one grant once', () => {
   const run = simulateRelease({ mode: 'release' });
@@ -848,7 +852,7 @@ test('every deploy and release step has a timeout, and the job timeout covers th
   assert.ok(minutes(step(ROLLBACK_STEP)) * 60_000 >= rollbackMs, String(rollbackMs));
   assert.ok(minutes(step(RECORD_STEP)) * 60_000 >= workers.RECORD_WORST_CASE_MS, String(workers.RECORD_WORST_CASE_MS));
   // Projection: the window (Cron period + 2 minutes) plus five, as Fable 1121 §6.1 sets it.
-  const production = JSON.parse(await readFile(new URL('../wrangler.production.jsonc', import.meta.url), 'utf8'));
+  const production = await postflight.readWranglerConfig(PRODUCTION_WRANGLER);
   const windowMinutes = postflight.windowMs(postflight.cronPeriodMinutes(production)) / 60_000;
   assert.equal(minutes(step('Verify projection currentness after deployment')), windowMinutes + 5);
   assert.ok(windowMinutes * 60_000 + postflight.CALL_TIMEOUT_MS <= (windowMinutes + 5) * 60_000);
@@ -1084,7 +1088,7 @@ test('the edge waits in the same propagation window as the release verification'
 test('the projection postflight waits one Cron period plus two minutes around the unchanged gate', async () => {
   const postflight = await import('../scripts/projection-postflight.mjs');
   const { cronPeriodMinutes, windowMs, runPostflight, main: postflightMain, CALL_TIMEOUT_MS } = postflight;
-  const production = JSON.parse(await readFile(new URL('../wrangler.production.jsonc', import.meta.url), 'utf8'));
+  const production = await postflight.readWranglerConfig(PRODUCTION_WRANGLER);
   assert.equal(cronPeriodMinutes(production), 10);
   assert.equal(windowMs(10), 12 * 60_000);
   for (const triggers of [undefined, {}, { crons: [] }, { crons: ['0 * * * *'] }, { crons: ['*/10 * * * *', '*/5 * * * *'] },
@@ -1344,8 +1348,17 @@ test('the rollback refuses a record without both edge endpoints', async () => {
   const log = console.log; const error = console.error;
   console.log = () => {}; console.error = () => {};
   try {
-    await writeFile(path.join(dir, 'v.json'), JSON.stringify({ ...base, edge: {} }));
-    await assert.rejects(main(['rollback', '--from', path.join(dir, 'v.json'), '--out', path.join(dir, 'r.json')], options), /not a valid record/);
+    // The CLI refuses it, exits non-zero and leaves a not_restored result with the reason.
+    for (const edge of [{}, { 'clued-cloud': servedEdge()['clued-cloud'] }, { ...servedEdge(), 'clued-connect': null }]) {
+      const out = path.join(dir, 'r.json');
+      await rm(out, { force: true });
+      await writeFile(path.join(dir, 'v.json'), JSON.stringify({ ...base, edge }));
+      assert.equal(await main(['rollback', '--from', path.join(dir, 'v.json'), '--out', out], options), 1, JSON.stringify(edge));
+      const written = JSON.parse(await readFile(out, 'utf8'));
+      assert.equal(written.status, 'not_restored', JSON.stringify(edge));
+      assert.equal(written.ok, false);
+      assert.match(written.reason, /not a valid record/);
+    }
   } finally {
     console.log = log; console.error = error;
     await rm(dir, { recursive: true, force: true });
@@ -1385,6 +1398,57 @@ test('the projection postflight reads JSONC as Wrangler does and always writes i
       assert.equal(await postflightMain(['--evidence-out', out], passing), 1, text);
       assert.equal(JSON.parse(await readFile(out, 'utf8')).status, 'failed', text);
     }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Round-4 review: cleaning up the scratch directory (EBUSY, EACCES) must not
+// lose the conclusion. It is written first; a failed clean-up only adds a warning.
+test('the projection postflight writes its conclusion before it cleans up, and a failed clean-up changes nothing', async () => {
+  const { main: postflightMain } = await import('../scripts/projection-postflight.mjs');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'projection-cleanup-'));
+  try {
+    const out = path.join(dir, 'postflight.json');
+    for (const [answer, code, status] of [[{ status: 0, stderr: '' }, 0, 'passed'],
+      [{ status: 1, stderr: 'production_release_blocked:projection_job_failed:global.priority_frontier\n' }, 1, 'failed']]) {
+      await rm(out, { force: true });
+      const lines = [];
+      let cleaned = 0;
+      const result = await postflightMain(['--evidence-out', out], { periodMinutes: 10, now: () => 0, sleep: noSleep,
+        log: (line) => lines.push(line), runGate: async () => answer,
+        removeScratch: () => { cleaned += 1; assert.ok(fs.existsSync(out), 'the conclusion is on disk before the clean-up');
+          throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }); } });
+      assert.equal(cleaned, 1);
+      assert.equal(result, code);
+      assert.equal(JSON.parse(await readFile(out, 'utf8')).status, status);
+      assert.equal(lines.filter((line) => /warning/i.test(line) && /EBUSY/.test(line)).length, 1, lines.join('\n'));
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Round-4 review: the release's own pre-deploy tests read the production
+// configuration through the same reader as the wrapper, so legal JSONC
+// (comments, trailing commas) in it cannot fail them.
+test('the release tests read the wrangler configuration with the wrapper\'s JSONC reader', async () => {
+  const postflight = await import('../scripts/projection-postflight.mjs');
+  const source = await readFile(new URL(import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /JSON\.parse\(await readFile\(new URL\('\.\.\/wrangler\.production\.jsonc'/);
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'wrangler-jsonc-'));
+  try {
+    const original = await readFile(PRODUCTION_WRANGLER, 'utf8');
+    // The same configuration with a comment and trailing commas.
+    const jsonc = '// production configuration\n' + original.replace(/\n\}\s*$/, ',\n}\n')
+      .replace('"triggers": { "crons": ["*/10 * * * *"] }', '"triggers": { /* Builder fallback */ "crons": ["*/10 * * * *",], }');
+    assert.notEqual(jsonc, original);
+    assert.throws(() => JSON.parse(jsonc));
+    const copy = path.join(dir, 'wrangler.production.jsonc');
+    await writeFile(copy, jsonc);
+    const read = await postflight.readWranglerConfig(copy);
+    assert.deepEqual(read, await postflight.readWranglerConfig(PRODUCTION_WRANGLER));
+    assert.equal(postflight.cronPeriodMinutes(read), 10);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
