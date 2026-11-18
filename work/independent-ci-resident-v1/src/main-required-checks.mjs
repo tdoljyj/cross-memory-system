@@ -1,4 +1,5 @@
 // Read the effective main rules, including organization rules, through the caller's paginated GET port.
+// paged receives a repository-relative route with no query and returns the combined array.
 // An unpinned check has integrationId null. A failed, empty or malformed read throws.
 export async function readMainRequiredChecks(paged) {
   const rules = await paged('/rules/branches/main');
