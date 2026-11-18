@@ -570,6 +570,56 @@ test('M5 collects the six public observations and consumes an optional host chec
   assert.deepEqual(present.verdict, { result: 'PASS' });
 });
 
+function m5DrillReceipt(name, renewalPaths) {
+  const root = path.join(tmp, name);
+  const checker = path.join(root, 'test', 'renewal-drill.mjs');
+  fs.mkdirSync(path.dirname(checker), { recursive: true });
+  fs.writeFileSync(checker, `console.log(JSON.stringify({ result: 'FAIL' })); process.exitCode = 1;`);
+  const archive = path.join(root, 'package.tar');
+  const files = ['windows/install-resident.ps1', ...renewalPaths].map(rel => ({
+    path: `tree/work/independent-ci-resident-v1/${rel}`, data: Buffer.from(rel),
+  }));
+  const manifest = { contract: 'clued.independent-ci.fleet-universal/1', version: '1.2.3',
+    files: files.map(({ path, data }) => ({ path, sha256: sha(data), bytes: data.length })) };
+  fs.writeFileSync(archive, writeTar([...files, { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]));
+  const e = JSON.parse(evidence());
+  const run = { first: { ...e, readAt: e.now }, entry: e.entry, reboot: e.reboot, reinstall: e.reinstall,
+    timings: {}, m5: null };
+  const receipt = ps(`
+    $script:Drill.Runs = ${q(root)}
+    $script:DrillScriptPath = ${q(path.join(root, 'drill', 'drill-vm.ps1'))}
+    function Assert-DrillHost { @{ freeGB = 20 } }
+    function Invoke-DrillBaseline { @{ action = 'reuse' } }
+    $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
+    $fixture.m5 = @{ directory = 'm5'; missing = @('probe.json'); collectionCode = $null }
+    function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture } }
+    $package = @{ version = '1.2.3'; tar = ${q(archive)}; tarSha256 = ${q(sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)} }
+    $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
+    Read-DrillJson $out.receipt
+  `);
+  return receipt;
+}
+
+test('a legacy archive stays eligible for A-tier PASS with a renewal checker on the host', opts, () => {
+  const receipt = m5DrillReceipt('m5-legacy', []);
+  assert.equal(receipt.m5.result, 'NOT_EVALUATED');
+  const done = finalize('m5-legacy-finalize', receipt);
+  assert.equal(done.status, 0);
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  assert.equal(JSON.parse(done.bytes).m5.result, 'NOT_EVALUATED');
+});
+
+test('missing renewal observations fail only M5 and still allow A-tier Finalize', opts, () => {
+  const receipt = m5DrillReceipt('m5-renewal', ['windows/SwapBroker.cs', 'windows/ci-connection-renew.contract.json']);
+  assert.equal(receipt.m5.result, 'FAIL');
+  assert.deepEqual(receipt.m5.missing, ['probe.json']);
+  assert.equal(receipt.conclusion, 'PENDING_PRODUCTION_READBACK');
+  const done = finalize('m5-renewal-finalize', receipt);
+  assert.equal(done.status, 0);
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  assert.equal(JSON.parse(done.bytes).m5.result, 'FAIL');
+});
+
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
   const r = ps(`
     $script:events = @(); $script:vm = @{ State = 'Running' }
@@ -832,7 +882,7 @@ function finalize(name, fields) {
   const readback = path.join(tmp, 'readback.json');
   const original = JSON.stringify(receipt);
   fs.writeFileSync(receiptFile, original);
-  fs.writeFileSync(readback, JSON.stringify(readbackFor()));
+  fs.writeFileSync(readback, JSON.stringify(readbackFor(readbackRow, receipt.startedAt)));
   const run = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Finalize', receiptFile, '-ProductionReadback', readback], { encoding: 'utf8', timeout: 120000 });
   const bytes = fs.readFileSync(receiptFile, 'utf8');
   return { receipt, receiptFile, original, bytes, status: run.status, output: JSON.parse(run.stdout.trim()) };
