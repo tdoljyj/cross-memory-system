@@ -333,6 +333,12 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
     assert.deepEqual((await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9' })).merge_slot_returned, [c1.claim_id]);
     assert.deepEqual((await view(c1)).trigger_refs, ['merge:other/repo:main', 'task:race']);
+    assert.equal((await view(c1)).status, 'ACTIVE');
+    const confirmedClose = await agent('ci', 'clued_work_merge_slot_return_v1',
+      { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9', github_state: 'closed' });
+    assert.equal(confirmedClose.returned, false);
+    assert.ok(confirmedClose.binding_receipt_id);
+    assert.equal((await view(c1)).status, 'RELEASED');
 
     // --- Merge Admission step 3 (migration 20261009010000): the slot follows CI. ---
     const slotProfile = (await admin.query('select clued_private.work_claim_profile_v1() v')).rows[0].v;
@@ -347,8 +353,6 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       where operation=$2 and object_id=$1 order by created_at,id`, [c.claim_id, operation])).rows.map((row) => row.metadata);
     const setSlot = (c, column, minutes) => admin.query(`update clued_private.work_claims_v1
       set ${column}=clock_timestamp()-make_interval(mins=>$2) where claim_id=$1`, [c.claim_id, minutes]);
-    // That PR was its Task's only one: the copy that served it is released (20261113151000).
-    assert.equal((await view(c1)).status, 'RELEASED');
     let d = await claim('codex', 'D: final round under CI', { trigger_refs: [SLOT] });
     assert.ok(d.merge_slot_until);
     assert.deepEqual(d.merge_slot_ci, { taken_at: d.merge_slot_ci.taken_at, hard_cap_until: null,
