@@ -24,6 +24,7 @@
 //     (the ci-suites-windows job; resident ADR 0032).
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
+//     Outside CI, waits for a machine-wide local suite slot before running.
 //   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
 //     regenerates that suite's ci-known-failures.json entries from a real run
 //     (--keep also keeps the entries already listed).
@@ -148,7 +149,7 @@ export const SUITES = {
     'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml'],
   },
   // The application suite reads files from across the repository (workflow,
@@ -597,7 +598,13 @@ async function main(argv, env = process.env) {
   const runIndex = argv.indexOf('--run');
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
-    return runSuite(argv[runIndex + 1], { root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env });
+    const id = argv[runIndex + 1];
+    if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
+    const run = () => runSuite(id, { root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env });
+    const ci = [env.GITHUB_ACTIONS, env.CI].some((value) => /^(true|1)$/i.test(value ?? ''));
+    if (ci) return run();
+    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+    return withLocalSuiteSlot(id, run);
   }
   const selectedIndex = argv.indexOf('--run-selected');
   const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');

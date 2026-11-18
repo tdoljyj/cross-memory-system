@@ -135,7 +135,7 @@ test('GitHub Actions and generic CI --run bypass an occupied local queue', async
 test('local --run times out explicitly without starting its suite', async (t) => {
   const start = slotFixture(t);
   await fillSuiteSlots(start);
-  const waiting = start('waiting', { waitMs: 3_000 });
+  const waiting = start('waiting', { waitMs: 5_000 });
   await waitForSlotFixture(waiting, () => waiting.ready() || /LOCAL_SUITE_SLOT_TIMEOUT/.test(waiting.output()));
   assert.equal(waiting.ready(), false, 'a timed-out invocation must never start the suite');
   assert.deepEqual(await waiting.done, [1, null]);
