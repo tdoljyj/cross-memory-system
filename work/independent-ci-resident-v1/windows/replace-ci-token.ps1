@@ -155,7 +155,8 @@ function Get-CiSelf($config,[byte[]]$token) {
     $v=ConvertFrom-Json -InputObject $response.text
     Assert-CiReplyKeys $v @('status','contract','binding_id','connection_expires_at','node')
     $uuid='^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\z'
-    if ($v.status -cne 'ok' -or $v.contract -cne 'clued.ci.connection-self/1' -or $v.binding_id -isnot [string] -or $v.binding_id -cnotmatch $uuid -or
+    if ($v.status -isnot [string] -or $v.status -cne 'ok' -or
+        $v.contract -isnot [string] -or $v.contract -cne 'clued.ci.connection-self/1' -or $v.binding_id -isnot [string] -or $v.binding_id -cnotmatch $uuid -or
         $v.connection_expires_at -isnot [string] -or $v.connection_expires_at -cnotmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)\z') { throw 'shape' }
     [void][DateTimeOffset]::Parse($v.connection_expires_at,[Globalization.CultureInfo]::InvariantCulture)
     $n=$v.node
@@ -165,7 +166,7 @@ function Get-CiSelf($config,[byte[]]$token) {
           $n.name -isnot [string] -or !$n.name.Trim() -or $n.name.Length -gt 100 -or $n.name -match '[\x00-\x1f\x7f]' -or (Test-CiTokenInName $n.name $token) -or
           $n.identity_fingerprint -isnot [string] -or $n.identity_fingerprint -cnotmatch '^[0-9a-f]{64}\z' -or
           ($n.binding_generation -isnot [int] -and $n.binding_generation -isnot [long]) -or $n.binding_generation -lt 1 -or $n.binding_generation -gt 9007199254740991 -or
-          $n.state -cnotin @('active','draining','pending') -or
+          $n.state -isnot [string] -or $n.state -cnotin @('active','draining','pending') -or
           ($null -ne $n.rebind_receipt_id -and ($n.rebind_receipt_id -isnot [string] -or $n.rebind_receipt_id -cnotmatch $uuid))) { throw 'shape' }
     }
     $v

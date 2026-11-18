@@ -111,7 +111,8 @@ test('下一次换绑保留前一份规范记录摘要，完整重复激活在�
 for(const [name,status,change,expected] of [
   ['401',401,()=>{},'TOKEN_REFUSED'],['403',403,()=>{},'TOKEN_REFUSED'],['404',404,()=>{},'SELF_UNAVAILABLE'],
   ['多键',200,v=>v.extra=true,'SELF_UNAVAILABLE'],['缺键',200,v=>delete v.node.state,'SELF_UNAVAILABLE'],
-  ['未知合同',200,v=>v.contract='v2','SELF_UNAVAILABLE'],['尚无节点',200,v=>v.node=null,'NOT_REBOUND'],
+  ['未知合同',200,v=>v.contract='v2','SELF_UNAVAILABLE'],['合同类型错误',200,v=>v.contract=[v.contract],'SELF_UNAVAILABLE'],
+  ['状态类型错误',200,v=>v.status=[],'SELF_UNAVAILABLE'],['尚无节点',200,v=>v.node=null,'NOT_REBOUND'],
   ['首装无回执',200,v=>v.node.rebind_receipt_id=null,'NOT_REBOUND'],['别台节点',200,v=>v.node.identity_fingerprint='f'.repeat(64),'OTHER_NODE'],
   ['代次相等',200,()=>{},'GENERATION_NOT_NEWER'],['代次倒退',200,()=>{},'GENERATION_NOT_NEWER']
 ]) test('激活零写入 '+name,win,t=>{
