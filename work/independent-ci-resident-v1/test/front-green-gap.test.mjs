@@ -132,16 +132,44 @@ test('integration_id -1 (any source, allowed by Source v2) is an unpinned rule, 
   assert.match(await lastText(t, { rules: anySource, runs: GREEN.filter(r => r.name !== 'ci-suites-windows') }), /缺 1 项：ci-suites-windows（未出现）/);
 });
 
-test('an unreadable ruleset writes one clear status instead of nothing', async t => {
+const REPORT_AFTER = prStatus.RULES_UNREADABLE_REPORT_AFTER_MS ?? 10 * 60_000;
+const failingRules = (g, state) => async (argv, o) => (argv.find(a => a.startsWith('repos/')) ?? '').includes('/rules/branches/main') && state.failing ? { code: 1, stdout: '', stderr: 'dial tcp: i/o timeout' } : g.run(argv, o);
+
+test('an unreadable ruleset: a flap is not reported; one that lasts writes one clear status', async t => {
   const now = { v: Date.parse('2026-11-19T04:00:00Z') };
   const g = fake({ runs: GREEN });
-  const run = async (argv, o) => (argv.find(a => a.startsWith('repos/')) ?? '').includes('/rules/branches/main') ? { code: 1, stdout: '', stderr: 'boom' } : g.run(argv, o);
-  const r = await reporter(t, run, now);
-  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 1);
-  const text = texts(g.calls).at(-1);
-  assert.match(text, /无法读取 main 规则集/);
-  assert.ok(!text.includes('已绿'), text);
-  // once: the same words are not written again at the next pass
+  const state = { failing: true };
+  const r = await reporter(t, failingRules(g, state), now);
+  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 0, 'first failure: nothing said');
+  now.v += 5 * 60_000;
+  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 0, 'five minutes: still a flap');
+  now.v += REPORT_AFTER;
+  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 1, 'lasting: said');
+  assert.match(texts(g.calls).at(-1), /无法读取 main 规则集/);
+  assert.ok(!texts(g.calls).at(-1).includes('已绿'));
   now.v += 60_000;
-  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 0);
+  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 0, 'once');
+});
+
+test('a flap after a good read keeps the last known rules; a recovery restarts the clock', async t => {
+  const now = { v: Date.parse('2026-11-19T04:00:00Z') };
+  const g = fake({ runs: GREEN.filter(r => r.name !== 'ci-suites-windows') });
+  const state = { failing: false };
+  const r = await reporter(t, failingRules(g, state), now);
+  await r.pass({ pulls, status: board(now.v, 7) });
+  assert.match(texts(g.calls).at(-1), /缺 1 项：ci-suites-windows/);
+  state.failing = true;
+  now.v += 31 * 60_000; // the cache of the rules is old, the read fails
+  await r.pass({ pulls, status: board(now.v, 7) });
+  assert.match(texts(g.calls).at(-1), /缺 1 项：ci-suites-windows/, 'the last known rules still speak during a flap');
+  assert.ok(!texts(g.calls).some(x => /无法读取/.test(x)));
+  state.failing = false;
+  now.v += 60_000;
+  await r.pass({ pulls, status: board(now.v, 7) });
+  state.failing = true;
+  now.v += 31 * 60_000;
+  await r.pass({ pulls, status: board(now.v, 7) });
+  now.v += 6 * 60_000;
+  await r.pass({ pulls, status: board(now.v, 7) });
+  assert.ok(!texts(g.calls).some(x => /无法读取/.test(x)), 'two spells of 6 minutes are not one of 12');
 });

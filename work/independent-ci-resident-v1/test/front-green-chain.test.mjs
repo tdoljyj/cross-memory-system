@@ -6,6 +6,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AdmissionRerunState, AdmissionRerunner, HEAD_RECHECK_MS, LOST_RUN_AFTER_MS, ghPort } from '../src/admission-rerun.mjs';
 import { LocalStore, PrStatusReporter } from '../src/pr-status.mjs';
+import * as mainRules from '../src/main-required-checks.mjs';
+const { readMainRequiredChecks } = mainRules;
+const RULES_UNREADABLE_REPORT_AFTER_MS = mainRules.RULES_UNREADABLE_REPORT_AFTER_MS ?? 10 * 60_000;
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { trainSummary } from '../src/train.mjs';
 import { tempRoot } from './helpers.mjs';
@@ -218,4 +221,48 @@ test('6be83331 E2 chain: a refused dispatch of the Windows workflow shows with t
   const text = await shown();
   assert.match(text, /缺 1 项：ci-suites-windows（未出现）/);
   assert.match(text, /ci-suites-windows 没有运行，无法自动补发/);
+});
+
+test('R1: integration_id -1 (any source) is an unpinned rule in the shared reader; the lane does not pause for it', async t => {
+  const anySource = { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'extra-any', integration_id: -1 }] } };
+  const rules = await readMainRequiredChecks(async () => [anySource]);
+  assert.deepEqual(rules, [{ context: 'extra-any', integrationId: null }]);
+  const w = world({ rules: [requiredRule(...CHECK_NAMES), anySource] });
+  const l = await lane(t, w);
+  const result = await l.r.step();
+  assert.ok(!result.errors?.length, 'no read error');
+  assert.deepEqual(w.posts, [700]);
+  assert.doesNotMatch(l.r.line(HEAD) ?? '', /无法读取|已暂停/);
+});
+
+test('R3: a network failure reading the main rules is not reported until it lasts; a recovery restarts the clock', async t => {
+  let failing = true;
+  const w = world({ fail: target => failing && target.includes('/rules/branches/main') ? { code: 1, stdout: '', stderr: 'dial tcp: i/o timeout' } : null });
+  const l = await lane(t, w);
+  for (let i = 0; i < 3; i++) {
+    const result = await l.r.step();
+    assert.equal(result.errors.length, 1, 'still logged as a read error');
+    assert.doesNotMatch(l.r.line(HEAD) ?? '', /无法读取|已暂停/, 'no PR words for a flap');
+    l.advance(HEAD_RECHECK_MS);
+  }
+  assert.deepEqual(l.toasts, []);
+  failing = false;
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700], 'recovered: the repair goes ahead');
+  // a new failing spell starts its own clock: 6 minutes more is still a flap, even though the two spells add up past the limit
+  failing = true;
+  w.runs.push(run(701, [workflowAttempt('ci-suites-windows')], { workflow_id: WINDOWS_WORKFLOW }));
+  for (let i = 0; i < 3; i++) { l.advance(HEAD_RECHECK_MS); await l.r.step(); }
+  assert.ok(l.toasts.every(x => !/无法读取/.test(x)), 'no toast about the rules');
+  assert.doesNotMatch(l.r.line(HEAD) ?? '', /无法读取|已暂停/);
+});
+
+test('R3: a failure that lasts past RULES_UNREADABLE_REPORT_AFTER_MS says so on the PR line and tells the Owner once', async t => {
+  const w = world({ fail: target => target.includes('/rules/branches/main') ? { code: 1, stdout: '', stderr: 'dial tcp: i/o timeout' } : null });
+  const l = await lane(t, w);
+  await l.r.step();
+  for (let spent = 0; spent <= RULES_UNREADABLE_REPORT_AFTER_MS + 2 * HEAD_RECHECK_MS; spent += HEAD_RECHECK_MS) { l.advance(HEAD_RECHECK_MS); await l.r.step(); }
+  assert.match(l.r.line(HEAD), /无法读取 main 必需检查规则/);
+  assert.equal(l.toasts.filter(x => /无法读取 main 必需检查规则/.test(x)).length, 1);
 });

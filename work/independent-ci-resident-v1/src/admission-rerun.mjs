@@ -21,7 +21,7 @@ import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
 import { LIVE_STATES } from './queue.mjs';
 import { diedInSetup, failedSteps, jobFailureKind } from './env-failure.mjs';
-import { readMainRequiredChecks } from './main-required-checks.mjs';
+import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 
 export const RERUN_RECORD_CONTRACT = 'clued.independent-ci.admission-rerun/1';
 export const RERUN_STATE_CONTRACT = 'clued.independent-ci.admission-rerun-state/1';
@@ -475,7 +475,7 @@ const newWorkflowMemo = () => ({ byBase: new Map(), byBlob: new Map() });
 // Resolve the whole scope before any POST. Each scoped decision still runs its
 // fresh checks immediately before the lane persists and sends it.
 async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = 'main', headAgeMs = null,
-  canRequest = () => true, canDispatch = () => true, workflowMemo = newWorkflowMemo(), workflowInventory }) {
+  canRequest = () => true, canDispatch = () => true, workflowMemo = newWorkflowMemo(), workflowInventory, rulesRead = () => {} }) {
   const staging = testSha !== undefined;
   const say = (action, reason) => ({ action, reason, pr: frontPr, runId: null, attempt: null });
   const readError = e => say('error', 'nothing re-run: ' + (e instanceof Error ? short(e.message) : 'a read failed'));
@@ -511,9 +511,11 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
     if (!HEX40.test(base ?? '')) unreadable('the pull request base is unreadable');
     let rules;
     try { rules = await readMainRequiredChecks(gh.paged); } catch (e) {
-      yield { ...readError(e), scopeIssue: '无法读取 main 必需检查规则，自动补跑已暂停' };
+      // A failed read (the network) is told apart from an answer of the wrong shape: only the first may be a flap (the step holds its words back).
+      yield { ...readError(e), scopeIssue: '无法读取 main 必需检查规则，自动补跑已暂停', rulesUnreadable: !(e instanceof RulesShapeError) };
       return;
     }
+    rulesRead();
     const required = new Set(rules.filter(c => c.integrationId === ACTIONS_APP_ID).map(c => c.context));
     const missing = staging ? [] : await missingActionsChecks(gh, sha, required);
     const runs = await runsOf(gh, sha);
@@ -787,7 +789,7 @@ export class AdmissionRerunner {
       changed = true;
       seen.lookedAt = new Date(now).toISOString();
       const results = decisions({ gh: this.gh, ...candidate, headAgeMs: now - Date.parse(seen.firstSeen), workflowMemo: this.workflowMemo,
-        workflowInventory: seen.workflowInventory,
+        workflowInventory: seen.workflowInventory, rulesRead: () => { this.rulesFailingSince = null; },
         canDispatch: id => headRecord?.kind !== REDISPATCH_KIND && !this.state.data.records[headRecordKey(headSha, id)],
         canRequest: (runId, attempt) => {
           const prior = this.state.request(runId, attempt);
@@ -800,7 +802,9 @@ export class AdmissionRerunner {
           delete seen.scopeIssue;
           Object.assign(seen, { missing: d.missing, workflowIds: d.workflowIds });
         }
-        if (d.scopeIssue) {
+        if (d.rulesUnreadable) this.rulesFailingSince ??= now;
+        // A network flap on the rules read is logged (errors) and nothing more until it has lasted RULES_UNREADABLE_REPORT_AFTER_MS.
+        if (d.scopeIssue && !(d.rulesUnreadable && now - this.rulesFailingSince < RULES_UNREADABLE_REPORT_AFTER_MS)) {
           const prior = seen.scopeIssue;
           const repeated = prior?.message === d.scopeIssue;
           const alreadyTold = Object.values(this.state.data.heads).some(h => h.scopeIssue?.prHead === candidate.headSha

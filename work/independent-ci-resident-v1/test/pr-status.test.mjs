@@ -299,8 +299,10 @@ test('the reporter writes a status only when it changes, never over a required c
   required = null; now += 31 * 60_000;
   const fresh = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'other.json'), () => now), notifications: false });
+  assert.equal((await fresh.pass({ pulls, status })).posted, 0, 'a first failure is a flap: nothing is said');
+  now += 11 * 60_000;
   const before2 = posts().length;
-  assert.equal((await fresh.pass({ pulls, status })).posted, 2);
+  assert.equal((await fresh.pass({ pulls, status })).posted, 2, 'a lasting failure is said, once per head');
   assert.ok(posts().slice(before2).every(a => a.some(x => x.startsWith('description=无法读取 main 规则集'))));
   assert.equal((await fresh.pass({ pulls, status })).posted, 0, 'said once');
   // Task 9cac75be A3: no default node (the companion names its pinned node profile's)

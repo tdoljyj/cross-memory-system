@@ -35,7 +35,8 @@ import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { FAILURE_TABLE } from './classify.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { ghPort } from './admission-rerun.mjs';
-import { readMainRequiredChecks } from './main-required-checks.mjs';
+import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
+export { RULES_UNREADABLE_REPORT_AFTER_MS };
 import { MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
@@ -49,12 +50,6 @@ export const HEAD_CHECKS_CACHE_MS = 60_000;
 // What the PR page says while main's ruleset cannot be read: a status is auxiliary, so the failure is said, never a silent stop.
 export const RULES_UNREADABLE_TEXT = '无法读取 main 规则集，暂不判断必需检查';
 const RULES_UNREADABLE_WANT = Object.freeze({ state: 'pending', description: RULES_UNREADABLE_TEXT, kind: null });
-// integration_id -1 means "any source" (Source v2 allows it): the same as no pin, which the shared reader's contract calls null.
-const anySourceAsUnpinned = rules => !Array.isArray(rules) ? rules : rules.map(rule => {
-  const list = rule?.parameters?.required_status_checks;
-  if (!Array.isArray(list) || !list.some(e => e?.integration_id === -1)) return rule;
-  return { ...rule, parameters: { ...rule.parameters, required_status_checks: list.map(e => e?.integration_id === -1 ? { ...e, integration_id: null } : e) } };
-});
 // Which of main's required checks (rules: [{ context, integrationId }], the shared reader's answer) are not yet green on a head.
 // seen: [{ name, appId, source: 'run' | 'status', state: 'pass' | 'pending' | 'fail' | 'skipped' }] (headChecks). A rule pinned to an App is met only by
 // that App's check run; an unpinned rule by any run or a commit status. Returns [] when all are green, else words per missing or unfinished one;
@@ -618,7 +613,14 @@ export class PrStatusReporter {
   async requiredChecks() {
     if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
     let list;
-    try { list = await readMainRequiredChecks(async (route, key) => anySourceAsUnpinned(await this.gh().paged(route, key))); } catch { return null; } // an empty or unreadable answer is no answer
+    try { list = await readMainRequiredChecks((route, key) => this.gh().paged(route, key)); } catch (e) {
+      // A failed read is a flap until it has lasted RULES_UNREADABLE_REPORT_AFTER_MS: the last known rules keep speaking meanwhile. An answer of the
+      // wrong shape is not a flap. Either way an empty or unreadable answer is no answer (null).
+      if (e instanceof RulesShapeError) { this.required = null; this.rulesFailingSince = null; return null; }
+      this.rulesFailingSince ??= this.clock();
+      return this.clock() - this.rulesFailingSince >= RULES_UNREADABLE_REPORT_AFTER_MS ? null : (this.required ?? null);
+    }
+    this.rulesFailingSince = null;
     this.required = list; this.requiredAt = this.clock();
     return list;
   }
@@ -715,7 +717,8 @@ export class PrStatusReporter {
       const required = requiredRules ? [...new Set(requiredRules.map(c => c.context))] : null;
       // Both contexts this node may write are checked against main's rules; either one there stops every write.
       if (!this.stalled) this.collision = (Array.isArray(required) ? [context, standbyContext(prep.node.name)].find(c => !contextFree(c, required)) : undefined) ?? false;
-      const rulesUnreadable = !Array.isArray(required) && !this.stalled;
+      // Said only once the failure has lasted (a flap writes nothing, as before); a wrong-shaped answer is said at once.
+      const rulesUnreadable = !Array.isArray(required) && !this.stalled && (this.rulesFailingSince == null || this.clock() - this.rulesFailingSince >= RULES_UNREADABLE_REPORT_AFTER_MS);
       if ((Array.isArray(required) || rulesUnreadable) && !this.collision && !this.stalled) {
         const described = new Set();
         const write = async (headSha, want, ctx, key) => {
