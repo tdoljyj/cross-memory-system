@@ -77,8 +77,9 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // #1106 only dropped the hosted scan-start import and door; C1 audit tool, RPC mapping, error mapping and REST route are unchanged.
     // Prior pin (before the continuity-fold change): d09c61e3ced3d1c919477a0faef8493d310ee186b7801c712e90bbdac8345728.
   // That change only runs the resume/renew inbox-summary read beside the live-claims read (Task 8ba4ef85); C1 audit tool, RPC mapping, error mapping and REST route are unchanged.
-  // #1161 在常规追踪前增加 /v1/github/events 精确分派；其余路径继续经过原 CI 与审计处理。
-  assert.equal(hash(workerSource),'36c04513c6fd0e89ddfb86778e1a1ced9fe7667fee6e707ed6f779c766bac108');
+  // T3 changes scheduled dispatch and post-write projection wakeups; #1161 adds the exact /v1/github/events
+  // dispatch before ordinary tracing. Other paths still go through the original CI and audit handling.
+  assert.equal(hash(workerSource),'eb04c7a77572982d30979c928759c627e1af62fdb8f2f0c183c89621911a7005');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

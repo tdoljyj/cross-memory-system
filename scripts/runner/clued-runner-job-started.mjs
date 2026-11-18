@@ -109,6 +109,169 @@
 // read, never at a time taken before the retries. Fail closed is unchanged:
 // nothing is admitted on a failure.
 //
+// The pinned gate and resident lane carry the same failure classifier.
+export const SETUP_STEPS = ["Set up job", "Set up runner"];
+// A log longer than this is never classified (the tail with the verdict may be missing): not environment.
+export const MAX_LOG_CHARS = 3_500_000;
+const NETWORK_FAILURE = [
+  /\bECONNRESET\b/, /\bETIMEDOUT\b/, /\bEAI_AGAIN\b/, /\bENOTFOUND\b/, /\bECONNREFUSED\b/, /\bEPIPE\b/,
+  /socket hang up/i, /network (?:aborted|timeout|socket disconnected)/i, /connection reset by peer/i, /TLS handshake timeout/i,
+  /could not resolve host/i, /temporary failure in name resolution/i, /unexpected disconnect while reading sideband/i,
+  /RPC failed; curl \d+/, /early EOF/i, /\b429 Too Many Requests\b/i,
+  /npm (?:ERR!|error) network/i, /request to https?:\/\/\S+ failed, reason:/i,
+];
+const TEST_FAILURE = [
+  /\bnot ok \d+/, /# fail [1-9]\d*/, /\bAssertionError\b/, /✖/, /\b[1-9]\d* (?:failed|failing)\b/i, /(?:^|\s)FAIL(?:\s|$)/,
+];
+export function failedSteps(job) {
+  return Array.isArray(job?.steps) ? job.steps.filter((step) => step && step.conclusion === "failure") : null;
+}
+// Did the job die in the runner's own setup, before any workflow step ran?
+export function diedInSetup(job) {
+  if (!job || job.status !== "completed" || job.conclusion !== "failure") return false;
+  const failed = failedSteps(job);
+  return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
+}
+// The timeout annotation is emitted on the cancelled job's check run, independently of its log.
+function hasTimeoutAnnotation(annotations) {
+  return Array.isArray(annotations) && annotations.some(note =>
+    typeof note?.message === "string" && note.message.startsWith("The job has exceeded the maximum execution time of "));
+}
+export function jobFailureKind(job, log = null, annotations = null) {
+  const no = (why) => ({ environment: false, kind: "unknown", why });
+  if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
+  if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
+  const failed = failedSteps(job);
+  const cancelled = job.conclusion === "cancelled";
+  if (cancelled) {
+    if (failed === null || !job.steps.length || failed.length > 0
+      || job.steps.some(step => typeof step?.conclusion !== "string")) return no("the cancelled job lacks a complete record without failed steps");
+    if (!hasTimeoutAnnotation(annotations)) return no("the cancelled job has no timeout annotation");
+  } else if (!failed?.length) return no("the job record names no failed step");
+  if (typeof log !== "string" || log.length === 0 || log.length > MAX_LOG_CHARS) return no("the job log is missing or too long to judge");
+  if (TEST_FAILURE.some((pattern) => pattern.test(log))) return { environment: false, kind: "test", why: "the log shows a failed test" };
+  if (cancelled) return { environment: true, kind: "timeout", why: "the job exceeded its maximum execution time and the log shows no failed test" };
+  const network = NETWORK_FAILURE.find((pattern) => pattern.test(log));
+  return network ? { environment: true, kind: "network", why: `the log shows a network failure (${network.source.slice(0, 40)}) and no failed test` } : no("the log shows no network failure");
+}
+
+// GitHub's earlier attempts are the repair budget. Skipped jobs after a
+// known gate refusal or setup death do not consume it.
+const REPAIR_GATE_JOB = "admission-gate";
+const REPAIR_NOT_ADMITTED = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
+const REPAIR_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+
+async function repairAnnotations(read, repository, jobId) {
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("the job has no check run ID");
+  const notes = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const batch = await read(`/repos/${repository}/check-runs/${jobId}/annotations?per_page=100&page=${page}`);
+    if (!Array.isArray(batch) || batch.length > 100) throw new Error("the job annotations are unreadable");
+    notes.push(...batch);
+    if (batch.length < 100) return notes;
+  }
+  throw new Error("the job annotations are incomplete");
+}
+
+async function repairEnvironmentFailures({ read, readLog, repository, heavy }) {
+  if (heavy.some(job => job.status !== "completed" || !["success", "skipped", "failure", "cancelled"].includes(job.conclusion))) return null;
+  const failures = [];
+  for (const job of heavy) {
+    if (job.conclusion === "success" || job.conclusion === "skipped") continue;
+    const setup = diedInSetup(job);
+    const cancelled = job.conclusion === "cancelled";
+    const steps = failedSteps(job);
+    if (!setup && (!Number.isSafeInteger(job.id) || job.id <= 0 || !steps || (cancelled ? steps.length > 0 : steps.length === 0))) return null;
+    const annotations = cancelled ? await repairAnnotations(read, repository, job.id) : null;
+    if (cancelled && !hasTimeoutAnnotation(annotations)) return null;
+    const log = setup ? null : await readLog(`/repos/${repository}/actions/jobs/${job.id}/logs`);
+    const evidence = jobFailureKind(job, log, annotations);
+    if (!evidence.environment || typeof job.name !== "string" || !job.name) return null;
+    failures.push({ name: job.name, kind: evidence.kind });
+  }
+  return failures.length > 0 ? failures : null;
+}
+
+async function hasRepairRecovery({ read, repository, runId, workflowId, head, after, jobs }) {
+  if (!Number.isSafeInteger(workflowId) || workflowId <= 0 || !Number.isFinite(after)) return false;
+  const needed = new Set(jobs);
+  // Include old attempts of other runs and successes in runs that failed a
+  // different job. A run may have started before the failed attempt ended.
+  for (let page = 1; page <= 50; page += 1) {
+    const listing = await read(`/repos/${repository}/actions/workflows/${workflowId}/runs?per_page=100&page=${page}`);
+    const runs = listing?.workflow_runs;
+    if (!Array.isArray(runs) || runs.length > 100) return false;
+    for (const run of runs) {
+      if (run?.workflow_id !== workflowId || !Number.isSafeInteger(run.id) || run.id <= 0 || String(run.id) === String(runId)
+        || !/^[a-f0-9]{40}$/.test(run.head_sha ?? "") || run.head_sha === head
+        || (run.status === "completed" && Date.parse(run.updated_at) <= after)) continue;
+      for (let jobPage = 1; jobPage <= 50; jobPage += 1) {
+        const { jobs: candidates } = await read(`/repos/${repository}/actions/runs/${run.id}/jobs?filter=all&per_page=100&page=${jobPage}`) ?? {};
+        if (!Array.isArray(candidates) || candidates.length > 100) return false;
+        for (const job of candidates) {
+          if (job?.head_sha === run.head_sha && job.status === "completed" && job.conclusion === "success"
+            && Date.parse(job.completed_at) > after) needed.delete(job.name);
+        }
+        if (needed.size === 0) return true;
+        if (candidates.length < 100) break;
+      }
+    }
+    if (runs.length < 100) break;
+  }
+  return false;
+}
+
+async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
+  const refuse = reason => ({ allowed: false, reason });
+  const attempts = [];
+  let realAttempts = 0;
+  let lastFailures = [];
+  let completedAt;
+  try {
+    for (let earlier = 1; earlier < attempt; earlier += 1) {
+      const body = await read(`/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs?per_page=100`);
+      const jobs = body?.jobs;
+      if (!Array.isArray(jobs) || body.total_count !== jobs.length || jobs.length > 100 || jobs.some(job => !job || typeof job !== "object"))
+        return refuse(`attempt ${earlier}'s job list is incomplete`);
+      const gates = jobs.filter(job => job.name === REPAIR_GATE_JOB);
+      const heavy = jobs.filter(job => job.name !== REPAIR_GATE_JOB);
+      if (gates.length !== 1 || heavy.length === 0)
+        return refuse(`attempt ${earlier} does not list one ${REPAIR_GATE_JOB} job and its heavy jobs`);
+      if (jobs.some(job => job.head_sha !== head))
+        return refuse(`attempt ${earlier} has a job of another head than ${head}`);
+      if (jobs.some(job => job.run_attempt != null && Number(job.run_attempt) !== earlier))
+        return refuse(`attempt ${earlier} has a job of another attempt`);
+      const [gateJob] = gates;
+      const ran = heavy.filter(job => job.status !== "completed" || job.conclusion !== "skipped");
+      if (ran.length > 0) {
+        realAttempts += 1;
+        if (realAttempts === 3) return refuse("three real attempts have already run");
+        const failures = gateJob.status === "completed" && gateJob.conclusion === "success"
+          ? await repairEnvironmentFailures({ read, readLog, repository, heavy }) : null;
+        if (!failures)
+          return refuse(`attempt ${earlier} already ran ${ran.map(job => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; its gate or environment evidence does not allow repair`);
+        lastFailures = failures.map(job => job.name);
+        completedAt = Math.max(...jobs.map(job => Date.parse(job.completed_at)));
+        attempts.push({ attempt: earlier, heavy_jobs: heavy.length, environment_failure: lastFailures,
+          environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
+        continue;
+      }
+      const setup = diedInSetup(gateJob);
+      const notes = !setup && gateJob.status === "completed" ? await repairAnnotations(read, repository, gateJob.id) : [];
+      if (!setup && !notes.some(note =>
+        (note?.title === REPAIR_GATE_JOB && REPAIR_NOT_ADMITTED.test(note.message ?? "")) ||
+        (note?.title === "kooyumi-work-admission" && REPAIR_TRANSIENT_API_ERROR.test(note.message ?? ""))))
+        return refuse(`the ${REPAIR_GATE_JOB} job of attempt ${earlier} did not end in ADMISSION_PENDING, RERUN_REFUSED or a GitHub API outage`);
+      attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
+    }
+    if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
+      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit");
+  } catch (error) {
+    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`);
+  }
+  return { allowed: true, attempts };
+}
+
 // Late Native admission (required-tests-late-admission-v1, component 1.0.3;
 // defect B, 2026-11-15, PR #1121 run 43720693841): Native admits a pull
 // request only once it is the train's front, often long after the push, so
@@ -230,7 +393,7 @@ export function workflowPathOf(env) {
   return match ? match[1] : null;
 }
 
-async function github(fetchImpl, token, url, { allowMissing = false, method = "GET", body, expect = 200, retryRead = false } = {}) {
+async function github(fetchImpl, token, url, { allowMissing = false, method = "GET", body, expect = 200, retryRead = false, asText = false } = {}) {
   const response = await fetchImpl(`https://api.github.com${url}`, {
     method, ...(retryRead ? { retryRead: true } : {}),
     headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "user-agent": "clued-runner-hook",
@@ -243,7 +406,7 @@ async function github(fetchImpl, token, url, { allowMissing = false, method = "G
     error.transient = TRANSIENT_STATUS.has(response.status);
     throw error;
   }
-  return response.json();
+  return asText ? response.text() : response.json();
 }
 
 // Owner Decision d8bc893c: the hook calls GitHub as its own read-only App, on
@@ -403,7 +566,7 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
 // additions in main's policy), changed workflow bytes and unavailable diffs.
 // S carries the heads as second parents of the train's first-parent chain;
 // neither the push payload nor a candidate-authored member list is authority.
-async function stagingAdmission({ env, fetchImpl, readFile, now, repository, defaultBranch, workflow, result }) {
+async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, repository, defaultBranch, workflow, result }) {
   const refuse = reason => ({ ...result, allow: false, reason: `staging: ${reason}` });
   const sha = env.GITHUB_SHA ?? '', runId = env.GITHUB_RUN_ID ?? '';
   if (!/^[a-f0-9]{40}$/.test(sha) || !/^[0-9]{1,20}$/.test(runId)) return refuse('invalid S or run id');
@@ -414,6 +577,12 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, repository, def
     || run.path !== workflow || run.actor?.login !== env.GITHUB_ACTOR
     || attempt === null || run.run_attempt !== attempt || !Number.isFinite(Date.parse(run.created_at)))
     return refuse('run does not bind the workflow, App actor, attempt and S');
+  if (attempt > 1 && env.GITHUB_JOB !== GATE_JOB) {
+    const attemptStarted = Date.parse(run.run_started_at);
+    if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
+    const gate = await waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit: waitLimitSeconds(env), sleep, now });
+    if (gate.state !== "ok") return refuse(`run attempt ${attempt} needs a fresh successful ${GATE_JOB} job: ${gate.detail}`);
+  }
   const mainPath = `/repos/${repository}/git/ref/heads/${encodeURIComponent(defaultBranch)}`;
   const main = await github(fetchImpl, token, mainPath);
   const base = main?.object?.sha;
@@ -580,6 +749,21 @@ async function gateInAttempt(fetchImpl, token, repository, runId, attempt, attem
   return { state: "ok", job: gate };
 }
 
+async function waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit, sleep, now }) {
+  const waitUntil = now() + limit * 1000;
+  for (let waited = 0; ; waited += 10) {
+    let seen;
+    try {
+      seen = await gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted);
+    } catch (error) {
+      if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
+      seen = { state: "pending" };
+    }
+    if (seen.state !== "pending" || waited >= limit || now() >= waitUntil) return seen;
+    await sleep(10_000);
+  }
+}
+
 // Late Native admission (required-tests-late-admission-v1, defect B): a pull
 // request that changes a workflow writes its own admission-gate job, so the
 // gate's re-run rules are its own to forge, and this hook alone bounds how
@@ -649,17 +833,10 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
   // not started or not completed is the API's lag: wait for it, like for the
   // admission run below, and refuse at the end of the wait.
   let seen;
-  // The wait ends by the clock as well as by the count of polls, however long a poll's reads take.
-  const waitUntil = now() + limit * 1000;
-  for (let waited = 0; ; waited += 10) {
-    try {
-      seen = await gateInAttempt(fetchImpl, token, repository, runId, attempt, attemptStarted);
-    } catch (error) {
-      if (!transient(error) || waited >= limit || now() >= waitUntil) return refuse(`cannot read attempt ${attempt}'s jobs (${errorText(error)}); re-run refused`);
-      seen = { state: "pending" };
-    }
-    if (seen.state !== "pending" || waited >= limit || now() >= waitUntil) break;
-    await sleep(10_000);
+  try {
+    seen = await waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit, sleep, now });
+  } catch (error) {
+    return refuse(`cannot read attempt ${attempt}'s jobs (${errorText(error)}); re-run refused`);
   }
   if (seen.state === "ok") {
     return { allow: true, reason: `run attempt ${attempt} on the current head: ${GATE_JOB} job ${seen.job.id} ran again in this attempt and succeeded` };
@@ -709,7 +886,7 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   if (event === 'push' && result.ref === 'refs/heads/clued-train/staging' &&
     workflow === '.github/workflows/clued-required-tests.yml' &&
     env.GITHUB_ACTOR === 'clued-ci-checks-turing-20261018[bot]') {
-    return stagingAdmission({ env, fetchImpl, readFile, now, repository, defaultBranch, workflow, result });
+    return stagingAdmission({ env, fetchImpl, readFile, now, sleep, repository, defaultBranch, workflow, result });
   }
   const requiredDispatch = event === 'workflow_dispatch' && workflow === '.github/workflows/clued-required-tests.yml';
   if (MAIN_EVENTS.has(event) && result.ref === mainRef && !requiredDispatch) {
@@ -840,12 +1017,22 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
       const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
       const live = current?.state === "open" && current.base?.ref === defaultBranch
         && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
-      // One run per admitted head: a later attempt only when no earlier attempt of this run ran anything (see ranNothing).
-      const first = !(native.admitted && live) || runnerAttempt === 1 ? { ok: runnerAttempt === 1, why: "" }
-        : await earlierAttemptsRanNothing(fetchImpl, token, repository, runId, runnerAttempt);
-      result.allow = Boolean(native.admitted && live && first.ok);
+      let repair = { ok: true, why: "" };
+      if (native.admitted && live && runnerAttempt > 1) {
+        if (workflow !== ".github/workflows/clued-required-tests.yml") {
+          repair = await earlierAttemptsRanNothing(fetchImpl, token, repository, runId, runnerAttempt);
+        } else if (run.head_sha !== pr.head.sha || run.path !== workflow || run.event !== "pull_request") {
+          repair = { ok: false, why: "the run does not bind this workflow and PR head" };
+        } else {
+          const history = await requiredTestsRepairHistory({ repository, runId, head: pr.head.sha, attempt: runnerAttempt,
+            workflowId: run.workflow_id, read: route => github(fetchImpl, nativeToken, route),
+            readLog: route => github(fetchImpl, nativeToken, route, { asText: true }) });
+          repair = { ok: history.allowed, why: history.reason };
+        }
+      }
+      result.allow = Boolean(native.admitted && live && repair.ok);
       result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
-        + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${first.why ? `: ${first.why}` : ""})`}${rerun}`;
+        + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
       return result;
     }
     let found = null;

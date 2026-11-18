@@ -299,15 +299,7 @@ export async function githubJson(fetchImpl, env, route, { allowMissing = false }
   return await response.json();
 }
 
-// Environment failures of a required-tests job (Task 1b): a job that died only because of the network or the runner's own setup, with
-// no test failing, may be re-run once ("Re-run all jobs", the only re-run clued-required-tests.yml allows). Evidence only, read from
-// the job record (its steps) and its log; whatever does not prove an environment failure is "not environment" and never re-run:
-//   setup:   every failed step is one of the runner's own steps before the workflow's, in its place: "Set up job", then the job-started
-//            hook's "Set up runner" (defect B: the hook refused the job). It died before the workflow's own steps began; no test ran, no
-//            log needed. A workflow step of either name sits later in the job and does not count;
-//   network: the log names a network failure and shows no failed test, assertion, or "N failed" summary anywhere.
-// Kept inside this file (a new imported file would widen the pinned Source closure). The resident companion's admission-rerun lane
-// keeps a copy (work/independent-ci-resident-v1/src/env-failure.mjs); its test keeps the two identical.
+// Kept in the pinned gate, standalone runner hook and resident lane. The admission self-tests compare all three copies.
 export const SETUP_STEPS = ["Set up job", "Set up runner"];
 // A log longer than this is never classified (the tail with the verdict may be missing): not environment.
 export const MAX_LOG_CHARS = 3_500_000;
@@ -330,15 +322,25 @@ export function diedInSetup(job) {
   const failed = failedSteps(job);
   return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
 }
-// job: the Actions API job record; log: its log text, or null when it was not read. -> { environment, kind, why }
-export function jobFailureKind(job, log = null) {
+// The timeout annotation is emitted on the cancelled job's check run, independently of its log.
+function hasTimeoutAnnotation(annotations) {
+  return Array.isArray(annotations) && annotations.some(note =>
+    typeof note?.message === "string" && note.message.startsWith("The job has exceeded the maximum execution time of "));
+}
+export function jobFailureKind(job, log = null, annotations = null) {
   const no = (why) => ({ environment: false, kind: "unknown", why });
-  if (!job || job.status !== "completed" || job.conclusion !== "failure") return no("the job did not end in failure");
+  if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
   if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
   const failed = failedSteps(job);
-  if (failed === null || failed.length === 0) return no("the job record names no failed step");
+  const cancelled = job.conclusion === "cancelled";
+  if (cancelled) {
+    if (failed === null || !job.steps.length || failed.length > 0
+      || job.steps.some(step => typeof step?.conclusion !== "string")) return no("the cancelled job lacks a complete record without failed steps");
+    if (!hasTimeoutAnnotation(annotations)) return no("the cancelled job has no timeout annotation");
+  } else if (!failed?.length) return no("the job record names no failed step");
   if (typeof log !== "string" || log.length === 0 || log.length > MAX_LOG_CHARS) return no("the job log is missing or too long to judge");
   if (TEST_FAILURE.some((pattern) => pattern.test(log))) return { environment: false, kind: "test", why: "the log shows a failed test" };
+  if (cancelled) return { environment: true, kind: "timeout", why: "the job exceeded its maximum execution time and the log shows no failed test" };
   const network = NETWORK_FAILURE.find((pattern) => pattern.test(log));
   return network ? { environment: true, kind: "network", why: `the log shows a network failure (${network.source.slice(0, 40)}) and no failed test` } : no("the log shows no network failure");
 }
@@ -2765,93 +2767,130 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
   return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
 }
 
-// Repair re-run. The independent CI is slow (a throttled uplink makes its
-// bundling take minutes, or it is busy with another pull request), so the gate
-// can time out with ADMISSION_PENDING, skip every heavy job, and see the
-// admission settle a moment later. A "Re-run all jobs" of that run is then the
-// only way to run the required tests on this head without a new commit, which
-// would start the slow independent CI from scratch. It is admitted only when
-// the run's earlier attempts, read from the Actions API, prove that no heavy
-// job of this head ever ran (rule 41ab823a: one real run of one check on one
-// commit):
-//   - every earlier attempt lists the gate job once and at least one other job,
-//     all of this head;
-//   - every job except the gate job of every earlier attempt has status
-//     completed and conclusion skipped (success, failure, cancelled, anything
-//     else counts as having run);
-//   - the gate job of every earlier attempt ended with a not-admitted verdict:
-//     its admission-gate annotation starts with ADMISSION_PENDING (the reason
-//     this exists) or RERUN_REFUSED (a refused earlier re-run, which ran
-//     nothing either).
-// One exception (Task 1b): the single earlier attempt that did run heavy jobs is
-// repaired too, when the gate job of it succeeded and every heavy job that did
-// not pass failed of the environment alone (the classifier above: the runner's
-// "Set up job" step, or a network failure in the log with no failed test), read
-// from the job records and logs; a gate job that died in "Set up job" counts as
-// having run nothing. Anything else that ran refuses as before.
-// Because the attempt this admits runs the heavy jobs, the next re-run finds
-// them in its history and is refused: the allowance is one, and it is derived
-// from GitHub's record instead of an attempt number. Anything unreadable
-// refuses. The gate job already holds `actions: read` and `checks: read`.
-const INDEPENDENT_NOT_ADMITTED_VERDICT = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
-// A gate that stopped on a GitHub API failure that outlived the bounded retry
-// (main() reports it as an ERROR with title kooyumi-work-admission) ran no heavy
-// job either: only a 5xx answer or an unreachable API counts, not a 4xx.
-const INDEPENDENT_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
-const INDEPENDENT_ERROR_ANNOTATION_TITLE = "kooyumi-work-admission";
-// -> the names of the failed heavy jobs when every one of them is an environment failure (the others passed or were skipped), else null.
-async function environmentFailures({ fetchImpl, env, repository, heavy }) {
-  const failed = heavy.filter((job) => job.conclusion === "failure");
-  if (failed.length === 0 || heavy.some((job) => job.status !== "completed" || !["success", "skipped", "failure"].includes(job.conclusion))) return null;
-  for (const job of failed) {
-    const log = diedInSetup(job) || !(failedSteps(job)?.length > 0) || !Number.isSafeInteger(job.id) ? null : await githubText(fetchImpl, env, `/repos/${repository}/actions/jobs/${job.id}/logs`);
-    if (!jobFailureKind(job, log).environment) return null;
+// GitHub's earlier attempts are the repair budget. Skipped jobs after a
+// known gate refusal or setup death do not consume it.
+const REPAIR_GATE_JOB = "admission-gate";
+const REPAIR_NOT_ADMITTED = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
+const REPAIR_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+
+async function repairAnnotations(read, repository, jobId) {
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("the job has no check run ID");
+  const notes = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const batch = await read(`/repos/${repository}/check-runs/${jobId}/annotations?per_page=100&page=${page}`);
+    if (!Array.isArray(batch) || batch.length > 100) throw new Error("the job annotations are unreadable");
+    notes.push(...batch);
+    if (batch.length < 100) return notes;
   }
-  return failed.map((job) => String(job.name).slice(0, 80));
+  throw new Error("the job annotations are incomplete");
 }
-export async function independentRepairRerun({ fetchImpl, env, pr, attempt, self }) {
-  const repository = env.GITHUB_REPOSITORY;
-  const runId = env.GITHUB_RUN_ID;
-  const refuse = (reason) => ({ allowed: false, reason });
-  if (!self || self.head_sha !== pr.head.sha || Number(self.run_attempt) !== attempt)
-    return refuse(`run ${runId} is not attempt ${attempt} of a run of ${pr.head.sha}`);
+
+async function repairEnvironmentFailures({ read, readLog, repository, heavy }) {
+  if (heavy.some(job => job.status !== "completed" || !["success", "skipped", "failure", "cancelled"].includes(job.conclusion))) return null;
+  const failures = [];
+  for (const job of heavy) {
+    if (job.conclusion === "success" || job.conclusion === "skipped") continue;
+    const setup = diedInSetup(job);
+    const cancelled = job.conclusion === "cancelled";
+    const steps = failedSteps(job);
+    if (!setup && (!Number.isSafeInteger(job.id) || job.id <= 0 || !steps || (cancelled ? steps.length > 0 : steps.length === 0))) return null;
+    const annotations = cancelled ? await repairAnnotations(read, repository, job.id) : null;
+    if (cancelled && !hasTimeoutAnnotation(annotations)) return null;
+    const log = setup ? null : await readLog(`/repos/${repository}/actions/jobs/${job.id}/logs`);
+    const evidence = jobFailureKind(job, log, annotations);
+    if (!evidence.environment || typeof job.name !== "string" || !job.name) return null;
+    failures.push({ name: job.name, kind: evidence.kind });
+  }
+  return failures.length > 0 ? failures : null;
+}
+
+async function hasRepairRecovery({ read, repository, runId, workflowId, head, after, jobs }) {
+  if (!Number.isSafeInteger(workflowId) || workflowId <= 0 || !Number.isFinite(after)) return false;
+  const needed = new Set(jobs);
+  // Include old attempts of other runs and successes in runs that failed a
+  // different job. A run may have started before the failed attempt ended.
+  for (let page = 1; page <= 50; page += 1) {
+    const listing = await read(`/repos/${repository}/actions/workflows/${workflowId}/runs?per_page=100&page=${page}`);
+    const runs = listing?.workflow_runs;
+    if (!Array.isArray(runs) || runs.length > 100) return false;
+    for (const run of runs) {
+      if (run?.workflow_id !== workflowId || !Number.isSafeInteger(run.id) || run.id <= 0 || String(run.id) === String(runId)
+        || !/^[a-f0-9]{40}$/.test(run.head_sha ?? "") || run.head_sha === head
+        || (run.status === "completed" && Date.parse(run.updated_at) <= after)) continue;
+      for (let jobPage = 1; jobPage <= 50; jobPage += 1) {
+        const { jobs: candidates } = await read(`/repos/${repository}/actions/runs/${run.id}/jobs?filter=all&per_page=100&page=${jobPage}`) ?? {};
+        if (!Array.isArray(candidates) || candidates.length > 100) return false;
+        for (const job of candidates) {
+          if (job?.head_sha === run.head_sha && job.status === "completed" && job.conclusion === "success"
+            && Date.parse(job.completed_at) > after) needed.delete(job.name);
+        }
+        if (needed.size === 0) return true;
+        if (candidates.length < 100) break;
+      }
+    }
+    if (runs.length < 100) break;
+  }
+  return false;
+}
+
+async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
+  const refuse = reason => ({ allowed: false, reason });
   const attempts = [];
-  let ranAttempts = 0;
+  let realAttempts = 0;
+  let lastFailures = [];
+  let completedAt;
   try {
     for (let earlier = 1; earlier < attempt; earlier += 1) {
-      const jobs = await githubPaged(fetchImpl, env, `/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs`, "jobs");
-      const listed = jobs.filter((job) => job && typeof job === "object");
-      const gates = listed.filter((job) => job.name === INDEPENDENT_GATE_JOB_NAME);
-      const heavy = listed.filter((job) => job.name !== INDEPENDENT_GATE_JOB_NAME);
-      if (listed.length !== jobs.length || gates.length !== 1 || heavy.length === 0)
-        return refuse(`attempt ${earlier} does not list one ${INDEPENDENT_GATE_JOB_NAME} job and its heavy jobs`);
-      if (listed.some((job) => job.head_sha !== pr.head.sha))
-        return refuse(`attempt ${earlier} has a job of another head than ${pr.head.sha}`);
-      const ran = heavy.filter((job) => !(job.status === "completed" && job.conclusion === "skipped"));
+      const body = await read(`/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs?per_page=100`);
+      const jobs = body?.jobs;
+      if (!Array.isArray(jobs) || body.total_count !== jobs.length || jobs.length > 100 || jobs.some(job => !job || typeof job !== "object"))
+        return refuse(`attempt ${earlier}'s job list is incomplete`);
+      const gates = jobs.filter(job => job.name === REPAIR_GATE_JOB);
+      const heavy = jobs.filter(job => job.name !== REPAIR_GATE_JOB);
+      if (gates.length !== 1 || heavy.length === 0)
+        return refuse(`attempt ${earlier} does not list one ${REPAIR_GATE_JOB} job and its heavy jobs`);
+      if (jobs.some(job => job.head_sha !== head))
+        return refuse(`attempt ${earlier} has a job of another head than ${head}`);
+      if (jobs.some(job => job.run_attempt != null && Number(job.run_attempt) !== earlier))
+        return refuse(`attempt ${earlier} has a job of another attempt`);
+      const [gateJob] = gates;
+      const ran = heavy.filter(job => job.status !== "completed" || job.conclusion !== "skipped");
       if (ran.length > 0) {
-        // Environment re-run (Task 1b): the one earlier attempt that ran may be repaired when every job that did not pass died of the
-        // environment (the runner's setup, or the network with no failed test) and the gate itself admitted it.
-        const envFailed = ranAttempts === 0 && gates[0].status === "completed" && gates[0].conclusion === "success"
-          ? await environmentFailures({ fetchImpl, env, repository, heavy }) : null;
-        if (!envFailed)
-          return refuse(`attempt ${earlier} already ran ${ran.map((job) => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; ` +
-            "one commit's required tests run once");
-        ranAttempts += 1;
-        attempts.push({ attempt: earlier, heavy_jobs: heavy.length, environment_failure: envFailed });
+        realAttempts += 1;
+        if (realAttempts === 3) return refuse("three real attempts have already run");
+        const failures = gateJob.status === "completed" && gateJob.conclusion === "success"
+          ? await repairEnvironmentFailures({ read, readLog, repository, heavy }) : null;
+        if (!failures)
+          return refuse(`attempt ${earlier} already ran ${ran.map(job => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; its gate or environment evidence does not allow repair`);
+        lastFailures = failures.map(job => job.name);
+        completedAt = Math.max(...jobs.map(job => Date.parse(job.completed_at)));
+        attempts.push({ attempt: earlier, heavy_jobs: heavy.length, environment_failure: lastFailures,
+          environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
         continue;
       }
-      // A gate job that died in the runner's setup ran nothing either: it has no verdict annotation.
-      const notes = diedInSetup(gates[0]) ? [] : await githubPaged(fetchImpl, env, `/repos/${repository}/check-runs/${gates[0].id}/annotations`);
-      if (!diedInSetup(gates[0]) && !notes.some((note) => note && (
-        (note.title === INDEPENDENT_GATE_JOB_NAME && INDEPENDENT_NOT_ADMITTED_VERDICT.test(String(note.message ?? ""))) ||
-        (note.title === INDEPENDENT_ERROR_ANNOTATION_TITLE && INDEPENDENT_TRANSIENT_API_ERROR.test(String(note.message ?? ""))))))
-        return refuse(`the ${INDEPENDENT_GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING or a GitHub API outage`);
+      const setup = diedInSetup(gateJob);
+      const notes = !setup && gateJob.status === "completed" ? await repairAnnotations(read, repository, gateJob.id) : [];
+      if (!setup && !notes.some(note =>
+        (note?.title === REPAIR_GATE_JOB && REPAIR_NOT_ADMITTED.test(note.message ?? "")) ||
+        (note?.title === "kooyumi-work-admission" && REPAIR_TRANSIENT_API_ERROR.test(note.message ?? ""))))
+        return refuse(`the ${REPAIR_GATE_JOB} job of attempt ${earlier} did not end in ADMISSION_PENDING, RERUN_REFUSED or a GitHub API outage`);
       attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
     }
+    if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
+      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit");
   } catch (error) {
     return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`);
   }
   return { allowed: true, attempts };
+}
+
+export async function independentRepairRerun({ fetchImpl, env, pr, head = pr?.head.sha, attempt, self }) {
+  const repository = env.GITHUB_REPOSITORY;
+  const runId = env.GITHUB_RUN_ID;
+  if (!/^[0-9a-f]{40}$/.test(head ?? "") || self?.head_sha !== head || Number(self.run_attempt) !== attempt)
+    return { allowed: false, reason: `run ${runId} is not attempt ${attempt} of a run of ${head}` };
+  return requiredTestsRepairHistory({ repository, runId, head, attempt, workflowId: self.workflow_id,
+    read: route => githubJson(fetchImpl, env, route), readLog: route => githubText(fetchImpl, env, route) });
 }
 
 async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self }) {
@@ -2876,7 +2915,7 @@ async function independentGateOutcome({ env, event, fetchImpl, outcome, pr, atte
     outcome.reasons.push("the independent CI admits only pull requests into the default branch");
   } else if (attempt && !(repair = await independentRepairRerun({ fetchImpl, env, pr, attempt, self })).allowed) {
     outcome.verdict = "RERUN_REFUSED";
-    outcome.reasons.push(`run attempt ${attempt}: the independent CI admission allows one repair re-run: when no earlier attempt ran a heavy job, or when the one that ran died of the environment (${repair.reason}); push a new commit`);
+    outcome.reasons.push(`run attempt ${attempt}: required-tests repair refused (${repair.reason})`);
   } else if (!await executionEpochCurrent(fetchImpl, env, env.GITHUB_WORKSPACE, {
     repository: env.GITHUB_REPOSITORY, head_sha: pr.head.sha, pr_ref: outcome.pr_ref, target_branch: pr.base.ref,
   })) {
@@ -3176,6 +3215,10 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   if (eventName === "workflow_dispatch" && workflowFileOf(env) === 'clued-required-tests.yml')
     return requiredTestsDispatchGate({ env, event, fetchImpl, sleep, now, outcome });
   if (eventName === "workflow_dispatch") return dispatchGate({ env, event, fetchImpl, now, outcome });
+  const attempt = rerunAttempt(env);
+  if (attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/clued-train/staging"
+    && workflowFileOf(env) === "clued-required-tests.yml")
+    return stagingRepairGate({ env, fetchImpl, outcome, attempt });
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
@@ -3203,7 +3246,6 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     ? Math.min(waitSeconds, ceiling) : maxWait;
   try {
     if (!env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is not set.");
-    const attempt = rerunAttempt(env);
     if (attempt) {
       const stale = await currentHeadOf(fetchImpl, env, pr);
       if (stale) {
@@ -3382,6 +3424,29 @@ export function dispatchTitle(workflow, ref, claimId) {
 function workflowFileOf(env) {
   const match = /\.github\/workflows\/([^@/]+)@/.exec(env.GITHUB_WORKFLOW_REF ?? "");
   return match ? match[1] : null;
+}
+
+async function stagingRepairGate({ env, fetchImpl, outcome, attempt }) {
+  const refuse = reason => Object.assign(outcome, { verdict: "RERUN_REFUSED", reasons: [`staging run attempt ${attempt}: ${reason}`] });
+  const repository = env.GITHUB_REPOSITORY;
+  const head = env.GITHUB_SHA;
+  const runId = env.GITHUB_RUN_ID;
+  if (!/^[a-f0-9]{40}$/.test(head ?? "") || !/^[0-9]{1,20}$/.test(runId ?? "")
+    || !env.GITHUB_TOKEN || env.GITHUB_ACTOR !== "clued-ci-checks-turing-20261018[bot]")
+    return refuse("the S, run ID, token or train App actor is missing or invalid");
+  let self;
+  try {
+    self = await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs/${runId}`);
+  } catch (error) {
+    return refuse(`the staging run could not be read (${error instanceof Error ? error.message : String(error)})`);
+  }
+  if (String(self?.id) !== runId || self.event !== "push" || self.head_branch !== "clued-train/staging"
+    || self.path !== ".github/workflows/clued-required-tests.yml" || self.actor?.login !== env.GITHUB_ACTOR)
+    return refuse("the run does not bind the staging ref, workflow and train App");
+  const repair = await independentRepairRerun({ fetchImpl, env, head, attempt, self });
+  if (!repair.allowed) return refuse(repair.reason);
+  return Object.assign(outcome, { admitted: true, verdict: "ADMITTED", head_sha: head,
+    repair_rerun: { attempt, earlier_attempts: repair.attempts } });
 }
 
 // A missing or entirely skipped PR run is a PR admission subject, never a generic hand dispatch.

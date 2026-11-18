@@ -100,7 +100,7 @@ function fakeFetch(script) {
     const key = Object.keys(script).filter((k) => String(url).startsWith(k)).sort((a, b) => b.length - a.length)[0];
     const r = key ? (typeof script[key] === "function" ? script[key]() : script[key]) : { status: 500, body: null };
     // a real Response: the hook reads every body with text() (review of 1.0.2, round 2)
-    return new Response(JSON.stringify(r.body ?? null), { status: r.status ?? 200 });
+    return new Response(r.text ?? JSON.stringify(r.body ?? null), { status: r.status ?? 200 });
   };
   return { fetchImpl, calls };
 }
@@ -172,11 +172,22 @@ test('bors staging: admitted current member heads in a chain rooted at live main
   for (const attempt of [1, 2]) {
     const script = stagingScript();
     script[RUN].body.run_attempt = attempt;
-    const { result, calls } = await stagingRun(script, { GITHUB_RUN_ATTEMPT: String(attempt) });
+    script[RUN].body.run_started_at = RUN_STARTED;
+    script[JOBS(attempt)] = jobsOf(gateJob({ run_attempt: attempt }));
+    const { result, calls } = await stagingRun(script, { GITHUB_RUN_ATTEMPT: String(attempt), GITHUB_JOB: 'migration-verify' });
     assert.equal(result.allow, true, result.reason);
     assert.ok(calls.some(call => call.url.startsWith(NATIVE)));
     assert.equal(calls.filter(call => call.url === MAIN_REF).length, 2);
   }
+});
+
+test('bors staging: a heavy job cannot use an admission gate carried over from an earlier attempt', async () => {
+  const script = stagingScript();
+  Object.assign(script[RUN].body, { run_attempt: 2, run_started_at: RUN_STARTED });
+  script[JOBS(2)] = jobsOf(gateJob({ run_attempt: 2, started_at: RUN_CREATED }));
+  const { result } = await stagingRun(script, { GITHUB_RUN_ATTEMPT: '2', GITHUB_JOB: 'migration-verify' });
+  assert.equal(result.allow, false, result.reason);
+  assert.match(result.reason, /was not re-run/);
 });
 
 test('bors staging: a name alone, wrong App/PR/head, malformed binding, pending or newer failed admission never suffices', async () => {
@@ -909,6 +920,37 @@ const lateCheck = nativeCheck({ started_at: "2026-10-04T05:30:00Z", completed_at
 const lateRerun = (n, who, earlier, overrides = {}) => run({ GITHUB_RUN_ATTEMPT: String(n), ...who }, {
   ...nativeScript(lateCheck), [RUN]: rerunOf(n), [JOBS(n)]: jobsOf(gateJob({ run_attempt: n }), heavyJob({ run_attempt: n })),
   ...Object.fromEntries(earlier.map((jobs, i) => [JOBS(i + 1), jobs])), ...overrides });
+
+test("Native hook: workflow-changing required-tests PRs may repair a timeout, but never a test failure", async () => {
+  const incident = JSON.parse(fs.readFileSync(new URL("../ci/fixtures/required-tests-timeout-1159.json", import.meta.url), "utf8"));
+  const workflow = ".github/workflows/clued-required-tests.yml";
+  const failedJob = 134709790262;
+  const annotations = `${API}/check-runs/${failedJob}/annotations`;
+  const logs = `${API}/actions/jobs/${failedJob}/logs`;
+  const recorded = jobs => jobsOf(...jobs.map(job => ({ ...job, head_sha: HEAD })));
+  const past = recorded(incident.first_jobs);
+  const second = recorded(incident.second_jobs);
+  const secondNotes = `${API}/check-runs/134727693143/annotations`;
+  const options = {
+    [RUN]: rerunOf(2, { event: "pull_request", head_sha: HEAD, workflow_id: incident.workflow_id, path: workflow }),
+    [annotations]: { body: incident.timeout_annotations },
+    [logs]: { text: "2026-11-18T10:08:08.8314618Z ##[error]The operation was canceled." },
+    [secondNotes]: { body: incident.refused_annotation },
+  };
+  const target = { GITHUB_JOB: "migration-verify", GITHUB_WORKFLOW_REF: `o/r/${workflow}@refs/pull/9/merge` };
+  for (const who of [GATE, target]) {
+    const { result, calls } = await lateRerun(2, { ...target, ...who }, [past], options);
+    assert.equal(result.allow, true, result.reason);
+    assert.ok(calls.some(call => call.url.startsWith(annotations)));
+    assert.ok(calls.some(call => call.url === logs));
+  }
+  const refused = await lateRerun(2, target, [past], { ...options, [logs]: { text: incident.migration_log_excerpt } });
+  assert.equal(refused.result.allow, false);
+  assert.match(refused.result.reason, /already ran/);
+  const later = await lateRerun(3, target, [past, second], { ...options, [RUN]: rerunOf(3,
+    { event: "pull_request", head_sha: HEAD, workflow_id: incident.workflow_id, path: workflow }) });
+  assert.equal(later.result.allow, true, later.result.reason);
+});
 
 test("Native hook (defect B): a re-run of a workflow-changing pull request starts when every earlier attempt ran nothing", async () => {
   for (const who of [GATE, HEAVY]) {

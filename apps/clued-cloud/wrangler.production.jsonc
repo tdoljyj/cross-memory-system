@@ -51,7 +51,7 @@
       { "queue": "clued-storage-jobs", "max_batch_size": 1, "max_batch_timeout": 0, "max_retries": 0 }
     ]
   },
-  "triggers": { "crons": ["* * * * *"] },
+  "triggers": { "crons": ["*/10 * * * *"] },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,

@@ -12,16 +12,16 @@
       "sha256": "93f95698f359c94585053d4331ae855bc07004245b4429ecaf6470aa40c25f3f"
     },
     "payload/release/existing-release-entry-v1/v3/existing-stages.mjs": {
-      "bytes": 20403,
-      "sha256": "eb4f26f876fb22c692f05c528ec13a718bf26f89f3c75bab0911fb3321f33d85"
+      "bytes": 20467,
+      "sha256": "c8ee412f2e47cf3b7d5085f2ed3a0987aea9e1e50fea20cb9785221a4b9e315e"
     },
     "payload/release/existing-release-entry-v1/v3-host/host-files.mjs": {
       "bytes": 11068,
       "sha256": "5199b7aa04c738224a1f8b90fe0c85cb8afecb18e7e6d9f47930e97c62a4749e"
     },
     "payload/release/existing-release-entry-v1/v3-host/release-once.mjs": {
-      "bytes": 8685,
-      "sha256": "c3e7dff762266b8befa57a780761d8a30159233937c6c581d14a25ed14181817"
+      "bytes": 8322,
+      "sha256": "a82ed5d4c874b0067895bfb9822180fe797eda3d28803b62f05385dbdbc47336"
     },
     "payload/release/linux-process-manager.mjs": {
       "bytes": 28776,
@@ -35,7 +35,7 @@
   "sourceQualifiedByThisManifest": false,
   "hostQualifiedByThisManifest": false,
   "productionAuthorized": false,
-  "revision": 7,
-  "previousPackageManifestSha256": "71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4",
-  "onlyExecutableDelta": "both fixed units make /run/WSL and /dev/shm inaccessible, the manager requires that of the loaded currentness unit, and the manager and release entry stop where either is reachable; v6 PDF config derivation and v5 manager fix kept"
+  "revision": 8,
+  "previousPackageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
+  "onlyExecutableDelta": "固定状态制发布门，保留部署前凭据，部署后按投影状态验收"
 }

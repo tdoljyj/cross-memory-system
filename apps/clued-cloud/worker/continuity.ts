@@ -108,11 +108,12 @@ import { createStorageGoogleRefresh } from "./storage-google-refresh";
 import { createStorageOwnerLifecycle, StorageOwnerLifecycleError, type OwnerReconnectInput, type OwnerDeleteInput } from "./storage-owner-lifecycle";
 import { createStorageCloudWorker } from "./storage-cloud-executor";
 import { createStorageDemandRuntime, runStorageDemandRenewalScheduled } from "./storage-demand-runtime";
+import { storageBinaryEnabled, storageJobsEnabled, storageScheduleEnabled } from "./storage-scheduled-flags";
 import storageDemandPolicy from "../../../development/contracts/storage/StorageDemandRenewal.v0.1.json";
 import { createStorageCloudRecovery, storageRecoveryRefreshReference } from "./storage-cloud-recovery";
 import { createStorageRecoveryReview } from "./storage-recovery-review";
 import { recoveryDiagnostic, storageRecoveryListResult, storageRecoveryOwnerResult, storageRecoveryResolutionResult, type RecoveryDiagnostic, type RecoveryStage } from "./storage-recovery-diagnostics";
-import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentToolsFor, storagePathCode, storagePathMessages,
+import { isStorageAgentTool, storageAgentInput, storageAgentResult, storageAgentTools, storageAgentToolsFor, storagePathCode, storagePathMessages,
   storageDestructiveCode, storageDestructiveMessages, storageAdoptCode, storageAdoptMessages, storageTrashBatchInput,
   storageTrashBatchResult, storageObjectReviewCode, storageObjectReviewRefusal } from "./storage-agent-tools";
 import { createStagingRuntime, handleStagingPut, loadStagedContent, stageInline, stagingErrorCode, storageUploadBeginTool,
@@ -645,15 +646,14 @@ async function supabaseRequest(
   return payload;
 }
 
-function projectionBuilderToken(env: ContinuityEnv) {
+export function projectionBuilderToken(env: ContinuityEnv) {
   const token = env.CLUED_PROJECTION_BUILDER_TOKEN?.trim();
   return token?.startsWith("clued_bnd_") ? token : null;
 }
 
 async function projectionBuilderRpc(
   env: ContinuityEnv,
-  rpc: "clued_mcp_projection_refresh_claim" | "clued_mcp_projection_refresh_apply" |
-    "clued_mcp_projection_refresh_heartbeat",
+  rpc: "clued_mcp_projection_refresh_claim" | "clued_mcp_projection_refresh_apply",
   input: Record<string, unknown>,
 ) {
   const token = projectionBuilderToken(env);
@@ -801,13 +801,6 @@ export async function runStorageCloudJob(env: ContinuityEnv, reference: {connect
   } catch { return {status:"unavailable"}; }
 }
 
-// StorageNormalUse N3: binary upload is available only in account-policy mode, with every
-// deployment piece present; anything missing fails closed.
-function storageBinaryEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1" | "CLUED_STORAGE_JOBS_V2" | "CLUED_STORAGE_GOOGLE_V1" | "CLUED_STORAGE_BINARY_V1">) {
-  return storageJobsEnabled(env) && env.CLUED_STORAGE_GOOGLE_V1 === "true" && env.CLUED_STORAGE_JOBS_V2 === "true" &&
-    env.CLUED_STORAGE_BINARY_V1 === "true";
-}
-
 async function stagingRuntime(env: ContinuityEnv, issuerHash?: string) {
   const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
   if (!issuer || issuer.length < 32) throw new StorageUploadError("storage_upload_unavailable");
@@ -822,7 +815,7 @@ async function stagingRuntime(env: ContinuityEnv, issuerHash?: string) {
 
 // Cron: staging TTLs, 12 h cancellation of unstarted binary jobs, R2 object deletion.
 export async function runStorageStagingScheduled(env: ContinuityEnv) {
-  if (!storageBinaryEnabled(env) || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.staging(env)) return { status: "disabled" };
   try { return await sweepStaging(await stagingRuntime(env)); }
   catch { return { status: "unavailable" }; }
 }
@@ -833,7 +826,7 @@ export async function runStorageStagingScheduled(env: ContinuityEnv) {
 // switching the onboard page off never strands a staged credential; only an
 // unavailable sweep while onboarding is on is reported.
 export async function runStorageOnboardScheduled(env: ContinuityEnv) {
-  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.onboard(env)) return { status: "disabled" };
   try {
     const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
     if (!issuer || issuer.length < 32) return { status: "unavailable" };
@@ -847,7 +840,7 @@ export async function runStorageOnboardScheduled(env: ContinuityEnv) {
 }
 
 export async function runStorageRefreshScheduled(env: ContinuityEnv) {
-  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" || env.CLUED_STORAGE_REFRESH_V1 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.refresh(env)) return { status: "disabled" };
   try {
     const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
     if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) return { status: "unavailable" };
@@ -914,8 +907,7 @@ export async function runStorageJobQueue(batch: { readonly messages: readonly St
 }
 
 export async function runStorageRecoveryScheduled(env: ContinuityEnv) {
-  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" ||
-      env.CLUED_STORAGE_JOBS_V2 !== "true" || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.recovery(env)) return { status: "disabled" };
   try {
     const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
     if (!issuer || issuer.length < 32 || !env.CLUED_STORAGE_VAULT_KEYS) return { status: "unavailable" };
@@ -1039,8 +1031,7 @@ function wakeStorageRecovery(env: ContinuityEnv, ctx?: ContinuityExecutionContex
 // call, no credential, and not gated on the executor switch.
 export async function runStorageUnattemptedReleaseScheduled(env: ContinuityEnv):
     Promise<{ status: "disabled" | "unavailable" } | { status: "ok"; released: number }> {
-  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" ||
-      env.CLUED_STORAGE_JOBS_V2 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.unattemptedRelease(env)) return { status: "disabled" };
   try {
     const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
     if (!issuer || issuer.length < 32) return { status: "unavailable" };
@@ -1055,36 +1046,40 @@ export async function runStorageUnattemptedReleaseScheduled(env: ContinuityEnv):
   } catch { return { status: "unavailable" }; }
 }
 
-export async function runProjectionRefreshScheduled(env: ContinuityEnv) {
-  if (!projectionBuilderToken(env)) return runProjectionRefreshPipeline(env);
-  const runId = crypto.randomUUID();
-  try {
-    await projectionBuilderRpc(env, "clued_mcp_projection_refresh_heartbeat", {
-      run_id: runId, phase: "start",
-    });
-  } catch {
-    console.error(JSON.stringify({ event: "projection_refresh_heartbeat_failure", phase: "start" }));
+export async function fetchWorkerDue(env: ContinuityEnv): Promise<unknown> {
+  const token = databaseGatewayToken(env);
+  if (!token) throw new Error("worker_due_gateway_unconfigured");
+  return supabaseRequest(env, "/rest/v1/rpc/clued_worker_due_v1", {
+    method: "POST", body: JSON.stringify({ p_token_hash: await sha256(token) }),
+    signal: AbortSignal.timeout(10_000), redirect: "manual",
+  });
+}
+
+// One Builder per isolate. Only flags cross request boundaries. The event that
+// started the pipeline owns its I/O and keeps it alive through waitUntil.
+let refreshRunning = false;
+let refreshRequested = false;
+
+export async function wakeProjectionRefresh(env: ContinuityEnv) {
+  if (refreshRunning) {
+    refreshRequested = true;
+    return;
   }
-  let result = "exception";
+  refreshRunning = true;
   try {
-    const outcome = await runProjectionRefreshPipeline(env);
-    result = outcome.status;
-    return outcome;
+    do {
+      refreshRequested = false;
+      await runProjectionRefreshPipeline(env);
+    } while (refreshRequested);
   } finally {
-    try {
-      await projectionBuilderRpc(env, "clued_mcp_projection_refresh_heartbeat", {
-        run_id: runId, phase: "finish", result,
-      });
-    } catch {
-      console.error(JSON.stringify({ event: "projection_refresh_heartbeat_failure", phase: "finish" }));
-    }
+    refreshRunning = false;
   }
 }
 
 function mayInvalidateApprovedProjection(request: Request) {
   if (!["POST", "PATCH", "DELETE"].includes(request.method)) return false;
   const path = new URL(request.url).pathname;
-  return path === "/mcp" || path === "/v1/projects" || path.startsWith("/v1/projects/") ||
+  return path === "/v1/projects" || path.startsWith("/v1/projects/") ||
     path === "/v1/records" || path === "/v1/decisions/supersede" ||
     path === "/v1/events" || path === "/v1/continuity/events" ||
     path === "/v1/continuity/log/import" ||
@@ -1779,6 +1774,17 @@ export const publicToolPolicies = {
   ...modelDomainToolPolicies,
 } as const satisfies Record<PublicToolName, PublicToolPolicy>;
 
+// The same annotations are published by tools/list. callTool has already
+// enforced this deployment's feature and authorization checks before a wake.
+const projectionWriteTools = new Set<string>([
+  ...Object.entries(publicToolPolicies).filter(([, policy]) => !policy.readOnlyHint).map(([name]) => name),
+  ...[...storageAgentTools, storageUploadBeginTool].filter(tool => !tool.annotations.readOnlyHint).map(tool => tool.name),
+]);
+
+export function isProjectionWriteTool(name: unknown) {
+  return typeof name === "string" && projectionWriteTools.has(name);
+}
+
 function publishTool<T extends (typeof tools)[number]>(tool: T) {
   const policy = publicToolPolicies[tool.name];
   const scopeStatement = policy.scopes.length
@@ -1858,10 +1864,6 @@ async function callStorageRead(request: Request, env: ContinuityEnv, args: unkno
     throw new StorageReadError("storage_read_unavailable");
   }
   return agent.run(await sha256(token), args, tool);
-}
-
-function storageJobsEnabled(env: Pick<ContinuityEnv, "CLUED_STORAGE_ACCOUNT_V1" | "CLUED_STORAGE_JOBS_V1">) {
-  return env.CLUED_STORAGE_ACCOUNT_V1 === "true" && env.CLUED_STORAGE_JOBS_V1 === "true";
 }
 
 async function callStorageJob(request: Request, env: ContinuityEnv, input: Record<string, unknown>, ctx?: ContinuityExecutionContext,
@@ -2904,8 +2906,13 @@ async function handleMcp(request: Request, env: ContinuityEnv, ctx?: ContinuityE
         }
         return json(rpcResult(rpc.id, result), 200, { ...corsHeaders(request), "cache-control": "no-store" });
       }
-      const result = withCanonicalMcpError(await callTool(request, env, name, args, ctx));
-      return json(rpcResult(rpc.id, result), 200, {
+      const result = await callTool(request, env, name, args, ctx);
+      const succeeded = result !== null && typeof result === "object" && "content" in result &&
+        (!("isError" in result) || result.isError === false);
+      if (ctx && succeeded && isProjectionWriteTool(name) && projectionBuilderToken(env)) {
+        ctx.waitUntil(wakeProjectionRefresh(env));
+      }
+      return json(rpcResult(rpc.id, withCanonicalMcpError(result)), 200, {
         ...corsHeaders(request), ...(isStorageAgentTool(name) || name === storageUploadBeginTool.name || name === storageReadTool.name || name === storageContentTool.name ||
           name === storageConnectionsTool.name ? { "cache-control": "no-store" } : {}),
       });
@@ -4073,7 +4080,7 @@ export async function handleContinuityRequest(
   if (response) trace?.complete(response);
   if (response?.ok && ctx && projectionBuilderToken(env) &&
     mayInvalidateApprovedProjection(request)) {
-    ctx.waitUntil(runProjectionRefreshPipeline(env));
+    ctx.waitUntil(wakeProjectionRefresh(env));
   }
   if (!response || !p6ReleaseControlEnabled(env)) return response;
   return decorateP6Response(request, response, env);

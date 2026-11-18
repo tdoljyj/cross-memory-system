@@ -6,7 +6,6 @@ import {fileURLToPath} from 'node:url';
 import {BASE,APP,ROOT,RUN,SOURCE,CONNECT,WRANGLER,HASH,hash,fail,readContext,verifyPackage,safeEnv,exactMain,writeOnce,readSecret,verifyBuildFiles,protectedBytes,utf8,interopBoundary} from './host-files.mjs';
 import {main as existingStage} from '../v3/existing-stages.mjs';
 const SCOPE='existing-production-release-v3-host';
-const sleep=ms=>new Promise(done=>setTimeout(done,ms));
 const PDF_CONFIG='apps/clued-cloud/wrangler.pdf-extractor.jsonc',PDF_RELEASE_CONFIG='.wrangler/pdf-extractor.release.json';
 // wrangler 4 has no --no-build and always runs build.command, which would rebuild
 // the root-protected dist. The same verified artifact is deployed through a
@@ -52,7 +51,7 @@ export async function main(argv=[]){
   // GITHUB_SHA is the actual required commit metadata of unchanged original
   // verification CLIs. No Actions/run/attempt/job identity is supplied.
   const cf=()=>({...plain(),CLOUDFLARE_API_TOKEN:cloudflare,CLOUDFLARE_ACCOUNT_ID:account});
-  function run(name,args,{env=plain(),cwd=APP,allowFailure=false,timeout=600000}={}){
+  function run(name,args,{env=plain(),cwd=APP,timeout=600000}={}){
    c=readContext(contextSha);exactMain(c);verifyBuildFiles(c);
    writeOnce(name+'-intent.json',{argv:[c.node.path,...args],cwd,startedAt:new Date().toISOString(),automaticRetryAllowed:false});
    const r=spawnSync(c.node.path,args,{cwd,env,encoding:'utf8',maxBuffer:8*1024*1024,timeout,killSignal:'SIGTERM',windowsHide:true});
@@ -60,7 +59,7 @@ export async function main(argv=[]){
    const result={exitCode:r.status,signal:r.signal??null,error:r.error?.code??null,stdoutSha256:hash(r.stdout??''),stderrSha256:hash(r.stderr??'')};
    writeOnce(name+'-result.json',result);
    if(r.error||r.signal||!Number.isInteger(r.status))fail('COMMAND_TREE_OUTCOME_UNCONFIRMED');
-   if(r.status!==0&&!allowFailure)fail('ORIGINAL_RELEASE_COMMAND_FAILED');return r.status===0;
+   if(r.status!==0)fail('ORIGINAL_RELEASE_COMMAND_FAILED');
   }
   const grant=await existingStage(['--execute-once','--fixed-scope','existing-main-release-grant-and-currentness-v3','--stage','grant-before-deploy','--reviewed-context-sha256',contextSha]);
   writeOnce('release-grant-stage.json',grant);if(grant.status!=='GRANT_CONSUMED')return {status:'BLOCKED_OR_PENDING',grant,automaticRetryAllowed:false};
@@ -78,12 +77,8 @@ export async function main(argv=[]){
   run('pdf-service',['scripts/verify-pdf-extractor.mjs','--evidence-out',RUN+'/pdf-extractor.json']);
   run('connect-deploy',[wr,'deploy',SOURCE+'/'+CONNECT,'--config','../kooyumi-connect/wrangler.production.jsonc','--no-bundle','--keep-vars'],{env:cf()});
   run('connect-postflight',['../kooyumi-connect/verify-production.mjs','--evidence-out',RUN+'/connect-postflight.json']);
-  let healthy=false;
-  for(let attempt=1;attempt<=6;attempt++){
-   healthy=run('heartbeat-'+attempt,['scripts/production-release-gate.mjs','--pre-deploy','--min-heartbeat-at',deployedAt,'--evidence-out',RUN+'/production-postflight.json'],{env:{...plain(),CLUED_ATTESTATION_DATABASE_URL:readSecret('attestation-database-url')},allowFailure:true,timeout:600000});
-   if(healthy)break;if(attempt<6)await sleep(30000);
-  }
-  if(!healthy)fail('ORIGINAL_FRESH_HEARTBEAT_POSTFLIGHT_FAILED');
+  run('projection-postflight',['scripts/production-release-gate.mjs','--post-deploy','--evidence-out',RUN+'/production-postflight.json'],
+   {env:{...plain(),CLUED_ATTESTATION_DATABASE_URL:readSecret('attestation-database-url')}});
   c=readContext(contextSha);exactMain(c);verifyBuildFiles(c);
   const result={status:'COMMAND_CHAIN_COMPLETED_AWAIT_HOST_CLEANUP',sourceCommit:c.sourceCommit,deployedAt,contextSha256:contextSha,packageSha256:packageSha,grantReceiptId:grant.receiptId,currentnessReceiptRef:current.receiptRef,systemdTerminalAndTreeCleanupObserved:false,productionAcceptanceClaimed:false,automaticRetryAllowed:false};
   writeOnce('commands-completed.json',result);return result;
