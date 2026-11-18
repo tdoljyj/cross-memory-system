@@ -527,7 +527,7 @@ test('guest shutdown timer uses the same deadline after a reboot without touchin
   assert.match(r.shutdown, /shutdown\.exe" \/s \/f \/t 0/);
 });
 
-test('M5 collects the six public observations and consumes an optional host checker', opts, () => {
+test('M5 collects the six public observations and requires the host checker for an applicable package', opts, () => {
   const root = path.join(tmp, 'm5-guest');
   const resident = path.join(root, 'resident');
   const runDir = path.join(tmp, 'm5-run');
@@ -558,7 +558,7 @@ test('M5 collects the six public observations and consumes an optional host chec
   `);
   const absent = runM5();
   assert.deepEqual(absent, { directory: 'm5', missing: [], collectionCode: null,
-    result: 'NOT_EVALUATED', detail: 'M5 未评估（renewal-drill 未随包）' });
+    result: 'FAIL', detail: 'DRILL_M5_HOST_CHECKER_MISSING' });
   assert.deepEqual(fs.readdirSync(path.join(runDir, 'm5')).sort(),
     ['companion.json', 'controller.json', 'probe.json', 'profile.json', 'resident.json', 'system.json']);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'profile.json'), 'utf8')), profile);
@@ -603,6 +603,7 @@ function m5DrillReceipt(name, renewalPaths) {
 test('a legacy archive stays eligible for A-tier PASS with a renewal checker on the host', opts, () => {
   const receipt = m5DrillReceipt('m5-legacy', []);
   assert.equal(receipt.m5.result, 'NOT_EVALUATED');
+  assert.equal(receipt.m5.detail, 'M5 未评估（本次包的文件清单无续期组件）');
   const done = finalize('m5-legacy-finalize', receipt);
   assert.equal(done.status, 0);
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');

@@ -1533,28 +1533,46 @@ function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
   return @{ directory = 'm5'; missing = $missing; collectionCode = $code }
 }
 
+function Test-DrillM5Applicable($Package) {
+  # Read only the file list inside the tar that Test-DrillPackageDir bound to the acceptance.
+  $json = & "$env:SystemRoot\System32\tar.exe" -xOf $Package.tar 'universal-manifest.json' 2>$null
+  if ($LASTEXITCODE -ne 0) { throw 'Unable to read the fleet package manifest' }
+  $manifest = ($json -join "`n") | ConvertFrom-Json
+  if ($manifest.contract -cne 'clued.independent-ci.fleet-universal/1' -or $manifest.version -cne $Package.version -or
+      $manifest.files -isnot [Array] -or $manifest.files.Count -eq 0) {
+    throw 'Invalid fleet package manifest'
+  }
+  $paths = $manifest.files.path
+  $windows = 'tree/work/independent-ci-resident-v1/windows'
+  return ($paths -ccontains "$windows/SwapBroker.cs" -or $paths -ccontains "$windows/ci-connection-renew.contract.json")
+}
+
 function Get-DrillM5Verdict([string]$RunDir, $M5) {
+  if (-not $M5) { return @{ result = 'FAIL'; detail = 'DRILL_M5_OBSERVATIONS_MISSING' } }
+  $M5.result = 'FAIL'
+  if ($M5.collectionCode -or $M5.missing.Count -ne 0) {
+    $M5.detail = 'DRILL_M5_OBSERVATIONS_MISSING'
+    return $M5
+  }
   $resident = Split-Path -Parent (Split-Path -Parent $script:DrillScriptPath)
   $checker = Join-Path $resident 'test\renewal-drill.mjs'
   if (-not (Test-Path -LiteralPath $checker -PathType Leaf)) {
-    $M5.result = 'NOT_EVALUATED'
-    $M5.detail = 'M5 未评估（renewal-drill 未随包）'
+    $M5.detail = 'DRILL_M5_HOST_CHECKER_MISSING'
     return $M5
   }
-  $M5.result = 'FAIL'
   try {
     $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $run = Invoke-DrillNode $node @($checker, (Join-Path $RunDir $M5.directory)) 30
     $M5.verdict = ConvertFrom-Json -InputObject $run.stdout
     $M5.exit = $run.exit
-    if ($run.exit -eq 0 -and (Get-Prop $M5.verdict 'result') -ceq 'PASS' -and $M5.missing.Count -eq 0 -and -not $M5.collectionCode) {
+    if ($run.exit -eq 0 -and (Get-Prop $M5.verdict 'result') -ceq 'PASS') {
       $M5.result = 'PASS'
     }
   } catch { $M5.detail = 'DRILL_M5_CHECKER_FAILED' }
   return $M5
 }
 
-function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
+function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred, [bool]$CollectM5) {
   $g = $script:Drill.GuestWork
   $prereqFacts = if ($Interactive -or $KitInfo.prerequisiteMode -ceq 'first-install-host') { @{ mode = 'first-install-host'; preparedByEntry = (-not $Interactive) } } else { Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred }
   $paths = @{ from = "$g\from"; kit = "$g\kit"; fake = "$g\fake"; work = "$g\work"; version = $Package.version }
@@ -1642,7 +1660,10 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   }
 
-  $m5 = Copy-DrillM5 $RunDir $Cred
+  $m5 = if ($CollectM5) {
+    try { Copy-DrillM5 $RunDir $Cred }
+    catch { @{ collectionCode = (Get-DrillCode $_).code } }
+  }
   return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
 }
 
@@ -1706,23 +1727,37 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     return $out
   }
 
+  $collectM5 = $false
+  try {
+    $collectM5 = Test-DrillM5Applicable $Package
+    $detail = if ($collectM5) { 'DRILL_M5_RUN_INCOMPLETE' } else { 'M5 未评估（本次包的文件清单无续期组件）' }
+    $m5 = @{ result = 'NOT_EVALUATED'; detail = $detail }
+  } catch {
+    $m5 = @{ result = 'FAIL'; detail = 'DRILL_M5_PACKAGE_MANIFEST_UNREADABLE' }
+  }
   $startedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $package $kitInfo $prereq $cred } $runDir $Window
+  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $Package $KitInfo $Prereq $cred $collectM5 } $runDir $Window
   $run = $o.result; $failure = $o.failure; $restored = $o.restored
 
   $evidence = [ordered]@{ localSource = $null }
   $items = @()
-  $m5 = $null
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
     $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo }
-    $m5 = Get-DrillM5Verdict $runDir $run.m5
   }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
-  $m5Dir = Join-Path $runDir 'm5'
-  if (Test-Path -LiteralPath $m5Dir -PathType Container) {
-    $files += @(Get-ChildItem -LiteralPath $m5Dir -File | ForEach-Object { [ordered]@{ name = "m5/$($_.Name)"; sha256 = (Get-Sha256Hex $_.FullName) } })
+  if ($collectM5) {
+    try {
+      if ($run) { $m5 = Get-DrillM5Verdict $runDir $run.m5 }
+      $m5Dir = Join-Path $runDir 'm5'
+      if (Test-Path -LiteralPath $m5Dir -PathType Container) {
+        $files += @(Get-ChildItem -LiteralPath $m5Dir -File | ForEach-Object { [ordered]@{ name = "m5/$($_.Name)"; sha256 = (Get-Sha256Hex $_.FullName) } })
+      }
+    } catch {
+      $m5.result = 'FAIL'
+      $m5.detail = 'DRILL_M5_EVIDENCE_UNREADABLE'
+    }
   }
   $receipt = [ordered]@{
     contract = $script:Drill.ReceiptContract
@@ -1734,7 +1769,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = $mem.freeGB
     failure = $failure; restoredToCheckpoint = $restored
     evidence = $evidence; files = $files; items = $items; m5 = $m5
-    conclusion = $(if ($failure -or -not $restored -or ($m5 -and $m5.result -ceq 'FAIL')) { 'FAIL' } else { Get-DrillConclusion $items })
+    conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items })
     productionReadbackSql = (Get-DrillReadbackSql $startedAt)
   }
   $receiptPath = Join-Path $runDir 'receipt.json'

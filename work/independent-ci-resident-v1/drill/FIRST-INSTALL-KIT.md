@@ -77,8 +77,9 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 保持预算为 40 分钟加整轮限时再加 10 分钟，超过 120 分钟会拒绝开机。开机前和运行中均检查宿主状态与内存。
 来宾按同一截止时间自关机，重启后沿用截止时间。脚本确认关机并还原检查点后请求恢复接新，未确认时保持到期自解。
 
-完成 A 档步骤后，`m5/` 保存来宾的六份公开观测中已生成的文件。回执记录缺失项和 M5 判定。
-宿主随包有 `test/renewal-drill.mjs` 时执行离线核验，失败会使整轮失败。旧包会显示“M5 未评估（renewal-drill 未随包）”。
+本次验收包的 `universal-manifest.json` 文件清单列有 `windows/SwapBroker.cs` 或 `windows/ci-connection-renew.contract.json` 时，适用 M5。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的六份文件。
+回执独立记录 `m5.result`。核验通过为 `PASS`，观测缺失、核验器缺失或核验失败为 `FAIL`。文件清单无续期组件时为 `NOT_EVALUATED`，回执说明原因。
+D5 单独检查这份回执的 `m5.result`，只接受 `PASS`。A 档按回执的 `conclusion` 判定，`-Finalize` 继续只处理 A 档回读。
 
 本次未启动/修改 Hyper-V；A1–A10 实机结果、重启、再装、A5/A9 生产只读核验均由 DESK 另做。
 
