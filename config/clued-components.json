@@ -676,7 +676,7 @@
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.8",
+      "version": "1.0.9",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -881,7 +881,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.37",
+      "version": "1.0.38",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [

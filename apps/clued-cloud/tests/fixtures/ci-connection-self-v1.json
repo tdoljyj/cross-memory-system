@@ -1,0 +1,14 @@
+{
+  "status": "ok",
+  "contract": "clued.ci.connection-self/1",
+  "binding_id": "51000000-0000-4000-8000-000000000002",
+  "connection_expires_at": "2026-12-18T12:00:00+00:00",
+  "node": {
+    "node_id": "52000000-0000-4000-8000-000000000001",
+    "name": "fixture-node",
+    "identity_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "binding_generation": 2,
+    "state": "active",
+    "rebind_receipt_id": "53000000-0000-4000-8000-000000000002"
+  }
+}
