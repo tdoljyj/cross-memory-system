@@ -91,6 +91,38 @@ test('坏记录和不可确认的记录必须拒绝，即使盘上的旧令牌�
   await assert.rejects(invoke(), { code: 'CI_CONNECTION_RECORD_REFUSED' });
 });
 
+test('Windows 角色探测在记录存在时只校验一次路径链，每份内容只读一次', { skip: process.platform !== 'win32' }, async t => {
+  const io = await disk(t, canonical(connection), newToken);
+  const module = new URL('../runtime/protected-files.mjs?fixture=probe-calls', import.meta.url);
+  const calls = [];
+  // 只替代最终的操作系统调用；目标选择、路径检查、读取及角色入口都走正式实现。
+  globalThis.ciProbeChild = (exe, args, options, done) => {
+    assert.match(exe, /\\powershell\.exe$/i);
+    const target = args[args.indexOf('-LiteralTarget') + 1];
+    const read = args.includes('-ReadFile');
+    calls.push([path.relative(io.root, target), read]);
+    if (read) {
+      assert.equal(args[args.indexOf('-ControllerSid') + 1], record.accepted.node.controllerSid);
+      fs.readFile(target).then(bytes => done(null, {stdout:bytes.toString('base64')}), done);
+    } else done(null, {stdout:''});
+  };
+  const hook = registerHooks({ resolve(spec, ctx, next) {
+    if (ctx.parentURL === module.href && spec === 'node:child_process') {
+      return {url:'data:text/javascript,export const execFile=globalThis.ciProbeChild',shortCircuit:true};
+    }
+    return next(spec, ctx);
+  } });
+  try {
+    const { assertProtectedPaths:protect, readProtected:tokenReader } = await import(module.href);
+    const result = await probeRole({ record, ...io, protect, tokenReader, live() {}, fetchImpl: async () =>
+      Response.json({status:'ok', holders:[], reason:'admission_binding_required'}) });
+    assert.equal(result.reason, 'ROLE_PROBE_NOT_HELD');
+    const token = path.relative(io.root, io.tokenFile);
+    const current = path.join('secrets', 'ci-admission.connection.json');
+    assert.deepEqual(calls, [['',false], [token,false], [current,false], [current,true], [token,true]]);
+  } finally { hook.deregister(); delete globalThis.ciProbeChild; }
+});
+
 test('缺少记录时角色入口只读安装时的令牌一次', async t => {
   const io = await disk(t, null, oldToken);
   const result = await probeRole({ record, ...io, live() {}, fetchImpl: async (_url, opts) => {

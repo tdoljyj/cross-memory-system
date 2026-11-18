@@ -41,6 +41,8 @@ test('受信 Source 的新增安装连接字段读取者必须登记文件和理
 });
 for(const [file,code] of [
   ['new.mjs','const {\n  ciPrincipalBindingId: id\n} = accepted;'],
+  ['param.mjs','function read({ciPrincipalBindingId: id}, other) { return id; }'],
+  ['arrow.mjs','const read = (ctx, {ciTokenPinSha256}, extra) => ciTokenPinSha256;'],
   ['new.ps1',"$x = $config['ciTokenPinSha256']"],
   ['new.cs','return Text(config,"ciPrincipalBindingId");'],
 ]) test('静态守卫能发现 '+file+' 的读取',()=>{

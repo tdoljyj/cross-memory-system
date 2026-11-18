@@ -16,6 +16,8 @@ const good = { contract: 'clued.independent-ci.ci-connection/1', baseNodeIdentit
 function bytesFor(kind) {
   const changes = { previous: { previousSha256: 'f'.repeat(64) }, extra: { ignored: true }, foreign: { baseNodeIdentitySha256: 'b'.repeat(64) },
     contract: { contract: 'other' }, 'contract-array': { contract: [good.contract] },
+    'contract-soft-hyphen': { contract: good.contract + '\u00ad' },
+    'identity-soft-hyphen': { baseNodeIdentitySha256: good.baseNodeIdentitySha256 + '\u00ad' },
     'identity-array': { baseNodeIdentitySha256: [good.baseNodeIdentitySha256] }, 'date-array': { activatedAt: [activatedAt] },
     binding: { bindingId: null }, receipt: { rebindReceiptId: 'x' }, pin: { tokenPinSha256: 123 },
     'previous-format': { previousSha256: '' }, zero: { bindingGeneration: 0 }, fraction: { bindingGeneration: 1.5 },
