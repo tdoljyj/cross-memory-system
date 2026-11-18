@@ -4,7 +4,7 @@
  *
  * The Worker dispatches a job once after submit. When that dispatch is lost, or
  * the database refuses its load (for example while an unsettled job fences the
- * root), the job used to stay queued for good. Every minute this run calls
+ * root), the job used to stay queued for good. Every ten minutes this run calls
  * `clued_storage_queued_sweep_v1`, which settles text jobs still queued after
  * 2 hours as attention_required (reason DISPATCH_NOT_STARTED) and, with the
  * executor switch on, lists queued jobs of quiet roots with backoff. Each listed

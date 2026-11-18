@@ -3,7 +3,7 @@
  * registered directories that have neither a sharing nor an access digest get
  * their access digest, one directory at a time.
  *
- * Every minute this run asks `clued_storage_access_digest_backfill_v1` for up
+ * Every ten minutes this run asks `clued_storage_access_digest_backfill_v1` for up
  * to five such directories under quiet, undenied roots. For each it loads the
  * connection's credential, reads the folder's version and permissions in one
  * Drive request, and commits the outcome. The database stores the digest only

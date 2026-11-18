@@ -7,7 +7,9 @@ is CURRENT; readers still use KooYomi currentness and fail closed.
 
 ## Components and permissions
 
-- The existing one-minute Worker refresh cron records a start/finish heartbeat
+- The one-minute Worker cron runs projection refresh every two minutes (using
+  the event's scheduled time), within the five-minute heartbeat and unresolved
+  invalidation thresholds. Each refresh records a start/finish heartbeat
   through the existing, independently authorized Projection Builder binding.
   A missing Builder token cannot write a heartbeat.
 - Migration `20260923213200_projection_refresh_watchdog.sql` exposes one bounded
