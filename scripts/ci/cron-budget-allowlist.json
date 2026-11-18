@@ -1,13 +1,5 @@
 {
-  "wrangler": [
-    {
-      "file": "apps/clued-cloud/wrangler.production.jsonc",
-      "config": "triggers.crons",
-      "schedule": "* * * * *",
-      "owner": "T3",
-      "expiresOn": "2026-12-02"
-    }
-  ],
+  "wrangler": [],
   "pgCron": [
     {
       "file": "apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql",
@@ -43,6 +35,11 @@
       "file": "apps/clued-cloud/supabase/migrations/20261008210000_credential_verifier_v1.sql",
       "job": "clued-credential-backup-purge",
       "schedule": "17 3 * * *"
+    },
+    {
+      "file": "apps/clued-cloud/supabase/migrations/20261118080000_cron_run_history_retention.sql",
+      "job": "clued-cron-run-history-retention",
+      "schedule": "37 3 * * *"
     }
   ]
 }
