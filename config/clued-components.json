@@ -47,7 +47,7 @@
     {
       "id": "mcp.server",
       "kind": "service",
-      "version": "0.9.17",
+      "version": "0.9.18",
       "description": "BeamingFace MCP/HTTP service (Cloudflare Worker clued-cloud); serverInfo.version and kernel_version. The deployed build is identified by source_commit.",
       "root": "apps/clued-cloud",
       "files": [
@@ -304,7 +304,7 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [
@@ -676,7 +676,7 @@
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.8",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -881,7 +881,7 @@
     {
       "id": "script.merge-reconciliation",
       "kind": "script",
-      "version": "1.0.35",
+      "version": "1.0.37",
       "description": "Opt-in durable merge wakeup and execution journal; default off, separate Source, Host and cutover acceptance required.",
       "root": ".",
       "files": [

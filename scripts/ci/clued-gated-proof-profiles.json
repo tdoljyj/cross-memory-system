@@ -6521,7 +6521,7 @@
         {
           "command_digests": {
             "Install from lockfile": [
-              "00748c6c6e2381b82667ece10aa5756aa65b2caf29f2523f59de8802847cd55a"
+              "f7430d8896bab674b94c5be5a18a94b4d29f3f9c0296b602599e5893d0718d71"
             ],
             "Lint, ledger, typecheck, build and unit tests": [
               "e4cba6549ca820ef23089afe03eb55ae3f1726c11535a00cdc8184fb9c2763eb"
@@ -6593,7 +6593,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "a80a03169e6bd45e2eac29ddfa28d5f5e643ed591eae4e944725b3076d5ea1fb",
+      "source_sha256": "299d3ff07d8b27be73dfafad94a47da03dde52ea99540af0830b647704133388",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -6782,7 +6782,9 @@
 "        working-directory: candidate/apps/clued-cloud",
 "        env:",
 "          npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}",
-"        run: timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000",
+"        run: |",
+"          timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000",
+"          timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64",
 "      - name: Lint, ledger, typecheck, build and unit tests",
 "        if: steps.select.outputs.run_clued_cloud == 'true'",
 "        env:",
@@ -7005,7 +7007,7 @@
 "        run: echo \"No migration, ledger, snapshot or drift-check file changed; nothing to verify.\" >> \"$GITHUB_STEP_SUMMARY\"",
 ""
       ],
-      "workflow_blob": "5470897712b63448447b45c86d233b782163960d"
+      "workflow_blob": "90018809f94ceb6ba6ffcea8dcfac94a5d23b1e8"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

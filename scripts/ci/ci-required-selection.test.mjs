@@ -272,7 +272,7 @@ test('a migration selects the production-schema check; ordinary documentation se
   const scanStart = SUITE_COMMANDS['production-schema'].at(-2);
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
   assert.deepEqual(scanStart.argv, ['node', '--test', '--test-concurrency=1',
-    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
+    'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/ci-node-binding-rebind-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
     'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs', 'tests/storage-runtime-authority-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs']);
   const docs = selectSuites('migration-verify', ['docs/README.md']);
   assert.deepEqual(docs.suites, []);
@@ -452,6 +452,12 @@ test('the application suite gates lint, ledger, typecheck and build before the u
   const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
   assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
+});
+
+test('same-node rebind database regression runs only in the migration check', () => {
+  const file = 'tests/ci-node-binding-rebind-db.test.mjs';
+  assert.ok(!SUITE_COMMANDS['clued-cloud'].some(c => c.argv.includes(file)));
+  assert.ok(SUITE_COMMANDS['production-schema'].some(c => c.argv.includes(file)));
 });
 
 test('on Windows the entry starts npm and npx through node, not the .cmd shim; elsewhere the command is unchanged', () => {

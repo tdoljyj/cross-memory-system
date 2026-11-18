@@ -73,7 +73,7 @@ function fixture() {
     if (value === null || value === undefined || typeof value === 'boolean') return '';
     return typeof value === 'object' ? text(value.props?.children ?? null) : String(value); }
   const button = label => { const value = nodes('button').find(item => text(item) === label); assert.ok(value, label); return value; };
-  const field = id => { const value = [...nodes('input'), ...nodes('textarea')].find(item => item.props.id === id); assert.ok(value, id); return value; };
+  const field = id => { const value = [...nodes('input'), ...nodes('textarea'), ...nodes('select')].find(item => item.props.id === id); assert.ok(value, id); return value; };
   function change(id, value) { field(id).props.onChange({ target: { value } }); render(); }
   function click(label) { const item = button(label); assert.equal(Boolean(item.props.disabled), false, label + ' enabled'); item.props.onClick(); render(); }
   async function settle() { for (let index = 0; index < 12; index++) await Promise.resolve(); render(); }
@@ -97,6 +97,57 @@ async function preview(f, extra) {
 function fillLimits(f, values = LIMITS) {
   for (const [key, value] of Object.entries(values)) f.change('ci-limit-' + key, String(value));
 }
+
+const REBINDING = '66666666-6666-4666-8666-666666666666';
+async function rebindPreview(f) {
+  await load(f, listed([node({ state: 'active', binding_generation: 1 })], {
+    bindings: [{ id: BINDING, agent_name: '旧连接' }, { id: REBINDING, agent_name: '新连接' }],
+  }));
+  f.change('ci-accepted-ref', 'decision:rebind'); f.change('ci-rebind-' + NODE, REBINDING);
+  f.click('预览更换节点连接');
+  assert.equal(f.calls.at(-1).name, 'clued_ci_node_binding_rebind_confirmation_issue_v1');
+  const choices = f.calls.at(-1).args.p_input;
+  assert.deepEqual([choices.node_id, choices.old_binding_id, choices.new_binding_id, choices.base_version, choices.binding_generation], [NODE, BINDING, REBINDING, 1, 1]);
+  return issued({ confirmation_view: { choices, heartbeat_links: [], roles: [], failover_members: [], effects: { local_activation: 'required' } } });
+}
+
+test('node connection replacement previews exact identities, uses a second confirmation and explains local activation', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const pending = await rebindPreview(f);
+  f.calls.at(-1).resolve(pending); await f.settle();
+  assert.ok(f.text().includes('确认更换节点连接')); assert.ok(!f.text().includes('fixture-token'));
+  f.click('确认修改');
+  assert.deepEqual([f.calls.at(-1).name, f.calls.at(-1).args.p_input], ['clued_ci_node_binding_rebind_apply_v1', {
+    confirmation_token: pending.confirmation_token, view_digest: pending.view_digest }]);
+  f.calls.at(-1).resolve({ status: 'committed', node_id: NODE, project_id: PROJECT, binding_id: REBINDING, binding_generation: 2, version: 2 });
+  await f.settle(); assert.ok(f.text().includes('服务器确认不代表本机切换完成')); assert.equal(f.calls.length, 3);
+});
+
+test('node replacement refuses an unrelated preview and a late preview after an account switch', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const pending = await rebindPreview(f);
+  f.calls.at(-1).resolve({ ...pending, confirmation_view: { choices: { ...pending.confirmation_view.choices, new_binding_id: BINDING } } });
+  await f.settle(); assert.equal(f.nodes('pre').length, 0); assert.ok(f.text().includes('预览与所选节点不一致'));
+  const g = fixture(); t.after(() => g.unmount()); const late = await rebindPreview(g), call = g.calls.at(-1);
+  g.emit(session('second-owner', SECOND_SID)); call.resolve(late); await g.settle();
+  assert.equal(g.nodes('pre').length, 0); assert.ok(!g.text().includes('公司测试节点'));
+});
+
+test('an uncertain node replacement never resubmits and recovers only the exact binding generation', async t => {
+  const f = fixture(); t.after(() => f.unmount()); const pending = await rebindPreview(f);
+  f.calls.at(-1).resolve(pending); await f.settle(); f.click('确认修改');
+  f.calls.at(-1).reject(Error('transport result unknown')); await f.settle();
+  assert.ok(f.text().includes('上次请求结果未知')); assert.equal(f.calls.length, 3);
+  f.click('只读核对状态'); f.calls.at(-1).resolve(listed([node({ version: 3, binding_generation: 3, binding_id: REBINDING })])); await f.settle();
+  assert.ok(f.text().includes('上次请求仍未确认'));
+  f.click('只读核对状态'); f.calls.at(-1).resolve(listed([node({ version: 2, binding_generation: 2, binding_id: REBINDING })])); await f.settle();
+  assert.ok(f.text().includes('已读取当前的新记录')); assert.equal(f.calls.filter(c => c.name.endsWith('rebind_apply_v1')).length, 1);
+});
+
+test('retired/revoked nodes offer no replacement; server connection reminders are visible', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  await load(f, listed([node({ state: 'revoked' })], { connection_reminders: [{ receipt_id: 'reminder', binding_id: BINDING,
+    connection_kind: 'ci', expires_at: '2026-10-24T10:00:00Z' }] }));
+  assert.ok(f.text().includes('连接到期提醒')); assert.ok(!f.nodes('button').some(b => f.text(b) === '预览更换节点连接'));
+});
 
 test('Native CI page makes no protected call while signed out and keeps the phase boundary visible', t => {
   const f = fixture(); t.after(() => f.unmount()); f.emit(null, 'INITIAL_SESSION');
