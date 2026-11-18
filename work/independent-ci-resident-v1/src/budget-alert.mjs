@@ -26,7 +26,7 @@ export function parseBudget(b) {
       || !(b.scope === 'native' && b.limit === null || Number.isSafeInteger(b.limit) && b.limit >= 0)) return null;
   return { policyKey: b.policyKey, scope: b.scope, used: b.used, limit: b.limit,
     resetsAt: Number.isSafeInteger(b.resetsAt) && b.resetsAt > 0 ? b.resetsAt : null,
-    ...(b.recovery === 'capacity' || b.recovery === 'batch' ? { recovery: b.recovery } : {}) };
+    ...(['capacity', 'batch', 'park-event'].includes(b.recovery) ? { recovery: b.recovery } : {}) };
 }
 
 export function boundedNotice({ code, subject = {}, used, limit, now, resetsAt = null, recovery = 'capacity', episode = null }) {
@@ -64,7 +64,11 @@ export async function budgetNotice({ code, subject, policy, ledger, usage, now }
 
 export function budgetText(b) {
   const scope = { node: '全节点', pr: '每 PR', 'pr-head': '每 PR 提交', head: '每 head', batch: '每批次', native: '服务端额度，精确范围未返回' }[b.scope];
-  const recovery = b.recovery === 'capacity' ? '席位释放后恢复（无固定过期时刻）' : b.recovery === 'batch' ? '本批不自动恢复，需新批次并重新准入' : '恢复时刻未知（无可核验过期记录或额度为零）';
+  const recovery = {
+    capacity: '席位释放后恢复（无固定过期时刻）',
+    batch: '本批不自动恢复，需新批次并重新准入',
+    'park-event': '本批休眠，有相关变化后再查第 8 段',
+  }[b.recovery] ?? '恢复时刻未知（无可核验过期记录或额度为零）';
   return `${b.policyKey}（${scope}）${b.used ?? '未知'}/${b.limit ?? '未知'}；${b.resetsAt ? `最早 ${new Date(b.resetsAt).toISOString()} 恢复` : recovery}`;
 }
 
@@ -73,6 +77,7 @@ export function budgetForPull(status, pull, now) {
   if (status.recent?.some(r => r.pr === pull.pr && r.headSha === pull.headSha && r.outcome === 'COMPLETED')) return null;
   return status.notices?.find(n => n.budget && n.at <= now && now - n.at <= DAY_MS
     && (row?.state !== 'PARKED' || ['STAGE8_RETRY_BUDGET_EXHAUSTED', 'STAGE8_TRY_LIMIT', 'TRAIN_DAILY_LIMIT'].includes(n.code))
+    && (n.budget.recovery !== 'park-event' || row?.state === 'PARKED' && row.nextAt === null)
     && (n.pr !== null || ['QUEUED', 'PARKED', 'WAITING', 'BACKOFF'].includes(row?.state) || n.code === 'QUEUE_DEPTH_EXCEEDED' && !row)
     && (n.code !== 'WAITING_BUDGET_EXHAUSTED' || row?.state === 'WAITING' || row?.deferred === n.code)
     && (n.code !== 'DAILY_EVALUATION_LIMIT' || row?.state !== 'WAITING')

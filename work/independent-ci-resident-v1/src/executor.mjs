@@ -2972,11 +2972,14 @@ export class ResidentExecutor {
     const counted = before.filter(t => t.ended.position !== 1).length + (position === 1 ? 0 : 1);
     let streakFrom = now;
     for (let i = before.length - 1; i >= 0 && before[i].ended.position === 1; i--) streakFrom = Date.parse(before[i].ended.at) || streakFrom;
-    if (zero && STAGE8_NOT_READY_CODES.includes(control.code) && counted >= this.policy.park.stage8MaxTries)
-      this.queue.notice(boundedNotice({ code: 'STAGE8_TRY_LIMIT', subject, used: counted, limit: this.policy.park.stage8MaxTries, now, recovery: 'batch', episode: key }));
+    const park = zero && failureRow({ stage: 8, code: control.code })?.disposition === 'park';
+    const tryLimit = counted >= this.policy.park.stage8MaxTries;
+    if (zero && tryLimit && (park || STAGE8_NOT_READY_CODES.includes(control.code)))
+      this.queue.notice(boundedNotice({ code: 'STAGE8_TRY_LIMIT', subject, used: counted, limit: this.policy.park.stage8MaxTries,
+        now, recovery: park ? 'park-event' : 'batch', episode: key }));
     // The absolute retry cap also covers the uncounted head tries. Event-driven tries may follow it.
-    const final = control.code === 'RESIDENT_BASE_MOVED' || counted >= this.policy.park.stage8MaxTries || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
-    if (zero && failureRow({ stage: 8, code: control.code })?.disposition === 'park') {
+    const final = control.code === 'RESIDENT_BASE_MOVED' || tryLimit || n >= MAX_TRIES || now - Date.parse(s.parked.at) >= this.policy.park.maxMs;
+    if (park) {
       const sleeping = final;
       // The back-off follows the counted tries: after a run at the queue's first place the next try is not 2 hours away
       // (re-review N6).

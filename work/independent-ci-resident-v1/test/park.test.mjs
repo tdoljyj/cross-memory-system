@@ -91,6 +91,18 @@ test('the tries are bounded: the last not-ready answer leaves the batch asleep a
   const end = await f.exec.tick();
   assert.deepEqual([end.state, end.reason, end.until], ['PARKED', 'RESIDENT_MERGE_QUEUE_NOT_JOINED', null]);
   assert.equal(f.queue.breaker?.state ?? 'closed', 'closed', 'neutral');
+  const notice = f.queue.notices.find(n => n.code === 'STAGE8_TRY_LIMIT');
+  const board = new StatusBoard({ clock: f.clock });
+  board.update({ notices: [notice], backfill: { complete: true } });
+  const parked = { pr: 884, headSha: HEAD, state: 'PARKED', deferred: end.reason };
+  board.setPending([{ ...parked, nextAt: null }]);
+  const status = () => parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  const pull = { pr: 884, headSha: HEAD, eligible: true };
+  const description = () => prPage({ pull, status: status(), now: f.clock() }).description;
+  assert.match(description(), /相关变化后再查第 8 段/);
+  assert.match(notificationEvents({ status: status(), now: f.clock() })[0].body, /相关变化后再查第 8 段/);
+  board.setPending([{ ...parked, nextAt: f.clock() + MIN }]);
+  assert.match(description(), /已测通/);
 });
 
 test('failed required checks sleep after the retry budget and a check change resumes the same batch', async t => {
