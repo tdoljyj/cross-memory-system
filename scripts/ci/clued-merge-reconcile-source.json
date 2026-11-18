@@ -318,7 +318,7 @@
 
     "scripts/ci/clued-independent-publication-runtime.test.mjs": "4ced446e444c99b55fc1bf98cced0786e584f862c9766ec0bd909718d59344ef",
 
-    "scripts/ci/clued-independent-revocation-controller.mjs": "fa535957331fd4bfca1a5520ea5d6f0bcd629c28c8eec3cfea91116201613085",
+    "scripts/ci/clued-independent-revocation-controller.mjs": "d27209dd965b3dc8723eb85ebc1715dbd08fc41b2f3d64d9b0ac0fa8061ad0a1",
 
     "scripts/ci/clued-independent-revocation-controller.test.mjs": "3de0bce3da4440388c390c0aa249ec04916c28163eff3344b98ac0788eca9023",
 
