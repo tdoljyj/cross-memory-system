@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
   knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, runSuite, selectSuites,
@@ -14,6 +16,131 @@ import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporte
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
+
+// Launch the real CLI in separate processes and use a different checkout for
+// each suite. Only the queue location and wait budget are injected by the test.
+function slotFixture(t) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-suite-slots-test-'));
+  const children = [];
+  const selector = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
+  const slotModule = pathToFileURL(path.join(ROOT, 'scripts/ci/local-suite-slots.mjs')).href;
+  const loader = path.join(dir, 'loader.mjs');
+  writeFileSync(loader, `import { registerHooks } from 'node:module';
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
+      const source = \`import { withLocalSuiteSlot as acquire } from \${JSON.stringify(${JSON.stringify(slotModule)})};
+        export const withLocalSuiteSlot = (id, run) => acquire(id, run, {
+          directory: \${JSON.stringify(process.env.SLOT_FIXTURE_QUEUE)}, waitMs: Number(process.env.SLOT_FIXTURE_WAIT),
+        });\`;
+      return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
+    }});
+  `);
+  const queue = path.join(dir, 'shared-queue');
+  mkdirSync(queue);
+  t.after(async () => {
+    for (const child of children) child.release();
+    await Promise.all(children.map(({ done }) => done));
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return function start(name, { waitMs = 25_000, ci } = {}) {
+    const root = path.join(dir, name);
+    const scripts = path.join(root, 'scripts', 'ci');
+    mkdirSync(scripts, { recursive: true });
+    writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), `
+      import { existsSync, writeFileSync } from 'node:fs';
+      writeFileSync('ready', '');
+      const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
+      setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
+    `);
+    const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs) };
+    delete env.CI;
+    delete env.GITHUB_ACTIONS;
+    delete env.NODE_TEST_CONTEXT;
+    if (ci) env[ci] = 'true';
+    const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, selector,
+      '--run', 'retrigger-counter', '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (data) => { output += data; });
+    child.stderr.on('data', (data) => { output += data; });
+    const done = once(child, 'close');
+    const run = { child, done, output: () => output, ready: () => existsSync(path.join(root, 'ready')),
+      release: () => writeFileSync(path.join(root, 'release'), '') };
+    children.push(run);
+    return run;
+  };
+}
+
+async function waitForSlotFixture(run, condition) {
+  const deadline = performance.now() + 10_000;
+  while (performance.now() < deadline && run.child.exitCode === null && run.child.signalCode === null) {
+    if (condition()) return;
+    await delay(20);
+  }
+  assert.ok(condition(), `fixture never reached the expected state: ${run.output()}`);
+}
+
+async function fillSuiteSlots(start) {
+  const first = start('first');
+  const second = start('second');
+  await waitForSlotFixture(first, first.ready);
+  await waitForSlotFixture(second, second.ready);
+  return [first, second];
+}
+
+async function waitForQueuedSuite(run, holders) {
+  await waitForSlotFixture(run, () => run.ready() || /queue position 1/.test(run.output()));
+  assert.equal(run.ready(), false, 'a third local --run must wait before starting its suite');
+  for (const holder of holders) assert.match(run.output(), new RegExp(`retrigger-counter \\(PID ${holder.child.pid}\\)`));
+}
+
+test('third local --run queues and prints the position and holders until normal exit frees a slot', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  const waiting = start('waiting');
+  await waitForQueuedSuite(waiting, holders);
+  holders[0].release();
+  assert.deepEqual(await holders[0].done, [0, null]);
+  await waitForSlotFixture(waiting, waiting.ready);
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+});
+
+test('local --run reclaims a slot after the holder is killed', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  const waiting = start('waiting');
+  await waitForQueuedSuite(waiting, holders);
+  assert.equal(holders[0].child.kill('SIGKILL'), true);
+  // The synthetic suite child can outlive its CLI, so let it close its own pipes.
+  holders[0].release();
+  assert.equal((await holders[0].done)[1], 'SIGKILL');
+  await waitForSlotFixture(waiting, waiting.ready);
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+});
+
+test('GitHub Actions and generic CI --run bypass an occupied local queue', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  await waitForQueuedSuite(start('local'), holders);
+  for (const ci of ['GITHUB_ACTIONS', 'CI']) {
+    const run = start(ci, { ci });
+    await waitForSlotFixture(run, run.ready);
+    run.release();
+    assert.deepEqual(await run.done, [0, null]);
+    assert.doesNotMatch(run.output(), /queue position/);
+  }
+});
+
+test('local --run times out explicitly without starting its suite', async (t) => {
+  const start = slotFixture(t);
+  await fillSuiteSlots(start);
+  const waiting = start('waiting', { waitMs: 3_000 });
+  await waitForSlotFixture(waiting, () => waiting.ready() || /LOCAL_SUITE_SLOT_TIMEOUT/.test(waiting.output()));
+  assert.equal(waiting.ready(), false, 'a timed-out invocation must never start the suite');
+  assert.deepEqual(await waiting.done, [1, null]);
+  assert.match(waiting.output(), /LOCAL_SUITE_SLOT_TIMEOUT.*queue position 1/);
+});
 
 for (const file of ['apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/supabase/migrations/20261118100000_ci_connection_self_v1.sql',
