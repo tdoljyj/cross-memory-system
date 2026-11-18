@@ -61,9 +61,8 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     assert.equal(method, 'GET');
     if (route === `/commits/${HEAD}/pulls?per_page=100&page=1`) return ok(st.pulls);
     if (route === `/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission&filter=all&per_page=100&page=1`) return ok({ total_count: st.checks.length, check_runs: st.checks });
-    if (route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?event=pull_request&head_sha=${HEAD}&per_page=100`
-      || route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${HEAD}&per_page=100`) {
-      const own = st.runs.filter(r => r.head_sha === HEAD).map(shown);
+    if ((m = /^\/actions\/workflows\/clued-required-tests\.yml\/runs\?(?:event=pull_request&)?head_sha=([a-f0-9]{40})&per_page=100$/.exec(route))) {
+      const own = st.runs.filter(r => r.head_sha === m[1]).map(shown);
       return ok({ total_count: own.length, workflow_runs: own });
     }
     if ((m = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=1$/.exec(route))) { const r = byId(m[1]); const jobs = r.attempts.flatMap((_, i) => jobsOf(r, i + 1)); return ok({ total_count: jobs.length, jobs }); }
@@ -212,6 +211,47 @@ async function lane(t, w, { st = status(), stateFile = null } = {}) {
   const r = new AdmissionRerunner({ gh: w.gh, state, clock: () => now, readStatus: async () => ({ ...st, writtenAt: now }), pulls: () => pulls, notify: async (k, title) => toasts.push(title) });
   return { r, state, toasts, file, advance: ms => { now += ms; } };
 }
+
+test('N9: a live push-mode front offers S to the repair lane before and during parking', () => {
+  const testSha = 'b'.repeat(40);
+  const train = { enabled: 'on', landing: 'push' };
+  const front = { ...pulls[0], testSha, state: 'PARKED', deferred: 'TRAIN_LANDING_CHECKS_PENDING' };
+  const candidates = overrides => candidateHeads(status({ writtenAt: T0, train, pending: [front], ...overrides }), pulls, T0);
+  assert.deepEqual(candidates({}), [{ ...pulls[0], testSha }, pulls[0]]);
+  assert.deepEqual(candidates({ pending: [{ ...front, state: 'RUNNING', deferred: null }] }), [{ ...pulls[0], testSha }, pulls[0]]);
+  assert.deepEqual(candidates({ pending: [{ ...front, state: 'QUEUED', deferred: null }] }), [{ ...pulls[0], testSha }, pulls[0]]);
+  assert.deepEqual(candidates({ train: { ...train, landing: 'github-merge' } }), pulls);
+  assert.deepEqual(candidates({ train: { ...train, notOnDuty: true } }), pulls);
+  assert.deepEqual(candidates({ pending: [{ ...front, state: 'STOPPED' }] }), pulls);
+  assert.deepEqual(candidates({ pending: [{ ...front, testSha: HEAD }] }), pulls);
+  assert.deepEqual(candidates({ pending: [{ ...front, headSha: 'c'.repeat(40) }] }), []);
+});
+
+test('N9: staging waits for recovery before requesting its second repair and retains both receipts across restart', async t => {
+  const testSha = 'b'.repeat(40), staging = 'clued-train/staging';
+  const staged = run(700, [migrationAttempt(testSha)], { head_sha: testSha, head_branch: staging, event: 'push',
+    conclusion: 'cancelled', pull_requests: [] });
+  const w = world({ runs: [staged, run(701, [migrationAttempt(HEAD, 'success')])], fail: target =>
+    target.endsWith(`/git/ref/heads/${staging}`)
+      ? { code: 0, stdout: JSON.stringify({ ref: `refs/heads/${staging}`, object: { sha: testSha } }) } : null });
+  const st = status({ train: { enabled: 'on', landing: 'push' }, pending: [{ ...pulls[0], testSha, state: 'PARKED' }] });
+  const l = await lane(t, w, { st });
+  assert.equal((await l.r.step()).acted, 1);
+  assert.deepEqual(w.posts, [700]);
+  staged.attempts[1] = migrationAttempt(testSha, 'cancelled', '2026-11-05T11:30:00Z');
+  staged.status = 'completed';
+  const restarted = await lane(t, w, { st, stateFile: l.file });
+  restarted.advance(HEAD_RECHECK_MS);
+  assert.equal((await restarted.r.step()).acted, 0);
+  const other = 'c'.repeat(40);
+  w.runs.push(run(702, [migrationAttempt(other, 'success', '2026-11-05T11:31:00Z')], { head_sha: other }));
+  restarted.advance(HEAD_RECHECK_MS);
+  assert.equal((await restarted.r.step()).acted, 1);
+  assert.deepEqual(w.posts, [700, 700]);
+  assert.deepEqual(Object.keys(restarted.state.data.records).sort(), ['700:2', '700:3']);
+  assert.match(restarted.r.line(HEAD), /列车暂存提交，migration-verify timeout，尝试 3/);
+  assert.deepEqual(w.dispatches, []);
+});
 
 test('allowed: one "Re-run all jobs", a receipt written before it, the PR page and the Owner told; never a second one', async t => {
   const w = world();

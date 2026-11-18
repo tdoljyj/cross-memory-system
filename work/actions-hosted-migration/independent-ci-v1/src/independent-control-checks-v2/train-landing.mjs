@@ -150,11 +150,14 @@ export function landingRulesDecision(rules, appId) {
 }
 
 // ---- required checks App 5368905 does not produce, on S (ADR 0018 §2 L2 item 5) ----
+const INCONCLUSIVE_CHECKS = new Set(['cancelled', 'timed_out', 'stale', 'startup_failure']);
+const CHECK_FAILURE_GRACE_MS = 5 * 60_000;
+
 // rules: main's live rules; inventory: { complete, checks } of S itself, even when H has the same tree.
 // Every required context pinned to another App (or to none) must have, as its newest check
-// run by id of the pinned App, a completed success. Newest failed: FAILED. Missing or still running: PENDING. Contexts pinned to
-// appId are the train's own (on H) and are not looked at here.
-export function externalChecksDecision({ rules, inventory, commitSha, appId }) {
+// run by id of the pinned App, a completed success. N9: unusable verdicts park; a fresh failure gives the repair lane time to act.
+// Contexts pinned to appId are the train's own (on H) and are not looked at here.
+export function externalChecksDecision({ rules, inventory, commitSha, appId, now = Date.now() }) {
   if (!Array.isArray(rules) || inventory?.complete !== true || !Array.isArray(inventory.checks)) return TRAIN_LANDING_CHECKS_PENDING;
   const required = [];
   for (const r of rules) if (plain(r) && r.type === 'required_status_checks' && Array.isArray(r.parameters?.required_status_checks))
@@ -165,6 +168,11 @@ export function externalChecksDecision({ rules, inventory, commitSha, appId }) {
     const runs = inventory.checks.filter(k => plain(k) && k.name === c.context && k.head_sha === commitSha && (pin === null || k.app?.id === pin));
     const newest = runs.reduce((a, k) => (!a || k.id > a.id ? k : a), null);
     if (!newest || newest.status !== 'completed') { pending = true; continue; }
+    if (INCONCLUSIVE_CHECKS.has(newest.conclusion)
+      || (newest.conclusion === 'failure' && now - Date.parse(newest.completed_at) < CHECK_FAILURE_GRACE_MS)) {
+      pending = true;
+      continue;
+    }
     if (newest.conclusion !== 'success') return TRAIN_LANDING_CHECK_FAILED;
   }
   return pending ? TRAIN_LANDING_CHECKS_PENDING : null;

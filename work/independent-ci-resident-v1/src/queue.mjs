@@ -602,13 +602,16 @@ export class RunQueue {
     // A queued row's reason is only ever its deferral (defer); once that ran out it says none, as a row that may run (review round 23,
     // MINOR 2).
     const queuedReason = r => (time(r.deferUntil) && r.deferUntil <= now ? null : (r.deferred ?? r.reason ?? null));
+    const testSha = r => parkedHere(r) ? r.running.testSha
+      : LIVE_STATES.includes(r.state) && (!r.running || r.running.testSha === r.current.testSha) ? r.current.testSha : null;
     return this.data.rows.filter(r => r.current).map(r => ({
       pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state === 'PARKED' && !parkedHere(r) ? 'RUNNING' : r.state,
+      // The companion can begin checking the staging run while the executor is still running stages 1-7.
+      ...(testSha(r) ? { testSha: testSha(r) } : {}),
       reason: r.state === 'PARKED' && !parkedHere(r) ? null : own(r) ? (r.reason ?? null) : r.state === 'QUEUED' ? queuedReason(r) : (r.deferred ?? r.reason ?? null),
       heldBy: held(r), since: r.since ?? null,
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
       queuePosition: parkedHere(r) ? (r.parked?.position ?? null) : null,
-      ...(parkedHere(r) && r.running.testSha ? { testSha: r.running.testSha } : {}),
       // Generation 12 (defect 050560ac): a back-off after a network release (the line to GitHub or Native, DESIGN 53.3), for the PR page.
       network: r.state === 'BACKOFF' && r.levelKind === 'network',
       firstAt: r.current.firstAt ?? null, position: ahead.has(r.pr) ? ahead.get(r.pr) + 1 : null,
