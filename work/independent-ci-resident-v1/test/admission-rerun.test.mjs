@@ -19,8 +19,14 @@ const NATIVE_ID = `independent-ci:native-work-admission:${'3'.repeat(64)}:f9:e1:
 const HEAVY = ['clued-cloud-tests-skipped', 'ci-suites-skipped', 'migration-verify-skipped'];
 const LINUX_WORKFLOW = 100;
 const WINDOWS_WORKFLOW = 101;
+const EXTRA_WORKFLOW = 102;
+const HOSTED_WORKFLOW = 104;
 const WORKFLOWS = [{ id: LINUX_WORKFLOW, path: '.github/workflows/clued-required-tests.yml', state: 'active' },
   { id: WINDOWS_WORKFLOW, path: '.github/workflows/clued-required-tests-windows.yml', state: 'active' }];
+const extraWorkflow = { id: EXTRA_WORKFLOW, path: '.github/workflows/additional.yml', state: 'active' };
+const hostedWorkflow = { id: HOSTED_WORKFLOW, path: '.github/workflows/gitleaks.yml', state: 'active' };
+const extraSource = 'jobs:\n  admission-gate:\n  extra:\n    needs: admission-gate\n    name: additional-check\n';
+const readWorkflow = file => fs.readFile(new URL(`../../../${file}`, import.meta.url), 'utf8');
 const CHECK_NAMES = HEAVY.map(name => name.replace(/-skipped$/, ''));
 const actionCheck = (name, o = {}) => ({ name, head_sha: HEAD, app: { id: 15368 }, ...o });
 const requiredRule = (...names) => ({ type: 'required_status_checks', parameters: {
@@ -35,7 +41,8 @@ const pullRequest = (o = {}) => ({ number: 452, state: 'open', head: { sha: HEAD
 const attempt = ({ heavy = ['skipped', 'skipped', 'skipped'], notes = [pendingNote], head = HEAD } = {}) => ({ notes,
   jobs: [{ name: 'admission-gate', status: 'completed', conclusion: 'success', head_sha: head },
     ...heavy.map((c, i) => ({ name: HEAVY[i], head_sha: head, status: c === 'in_progress' ? 'in_progress' : 'completed', conclusion: c === 'in_progress' ? null : c }))] });
-const run = (id, attempts, o = {}) => ({ id, workflow_id: LINUX_WORKFLOW, head_sha: HEAD, event: 'pull_request', status: 'completed', pull_requests: [{ number: 452 }], attempts, ...o });
+const run = (id, attempts, o = {}) => ({ id, workflow_id: LINUX_WORKFLOW, head_sha: HEAD, event: 'pull_request', status: 'completed', pull_requests: [{ number: 452 }], attempts, ...o,
+  path: o.path ?? [...WORKFLOWS, extraWorkflow, hostedWorkflow].find(w => w.id === (o.workflow_id ?? LINUX_WORKFLOW))?.path });
 const workflowAttempt = name => {
   const a = attempt({ heavy: ['skipped'] });
   a.jobs[1].name = `${name}-skipped`;
@@ -43,7 +50,8 @@ const workflowAttempt = name => {
 };
 
 // A scripted `gh api`: fail(route, method) may return { code } or 'throw' or { timedOut: true } for one call.
-function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null, onDispatch = async () => {}, rules = [requiredRule(...CHECK_NAMES)] } = {}) {
+function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null, onDispatch = async () => {},
+  rules = [requiredRule(...CHECK_NAMES)], workflows = WORKFLOWS } = {}) {
   const st = { pulls, checks, runs, rules, posts: [], dispatches: [], calls: [] };
   const byId = id => st.runs.find(r => r.id === Number(id));
   const jobsOf = (r, n) => r.attempts[n - 1].jobs.map((j, i) => ({ id: r.id * 100 + n * 10 + i, run_attempt: n, ...j }));
@@ -76,10 +84,10 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     assert.equal(method, 'GET');
     if (route === '/rules/branches/main?per_page=100&page=1') return ok(st.rules);
     if (/^\/commits\/[a-f0-9]{40}\/check-runs\?filter=all&per_page=100&page=1$/.test(route)) return ok({ total_count: st.checks.length, check_runs: st.checks });
-    if (route === '/actions/workflows?per_page=100&page=1') return ok({ total_count: WORKFLOWS.length, workflows: WORKFLOWS });
+    if (route === '/actions/workflows?per_page=100&page=1') return ok({ total_count: workflows.length, workflows });
     if ((m = /^\/contents\/(\.github\/workflows\/[\w.-]+)\?ref=[a-f0-9]{40}$/.exec(route))) {
-      const content = await fs.readFile(new URL(`../../../${m[1]}`, import.meta.url));
-      return ok({ path: m[1], content: content.toString('base64'), encoding: 'base64', sha: 'c'.repeat(40) });
+      const content = Buffer.from(m[1] === extraWorkflow.path ? extraSource : await readWorkflow(m[1]));
+      return ok({ path: m[1], content: content.toString('base64'), encoding: 'base64', sha: (1 + [...WORKFLOWS, extraWorkflow, hostedWorkflow].findIndex(w => w.path === m[1])).toString().repeat(40) });
     }
     if (route === `/commits/${HEAD}/pulls?per_page=100&page=1`) return ok(st.pulls);
     if (route === `/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission&filter=all&per_page=100&page=1`) return ok({ total_count: st.checks.length, check_runs: st.checks });
@@ -128,6 +136,7 @@ test('6be83331 E1: staging repairs each gated workflow on the bound staging SHA'
   for (const job of windows.jobs) job.head_sha = testSha;
   const w = world({ runs: [run(700, [attempt({ head: testSha })], subject),
     run(701, [windows], { ...subject, workflow_id: WINDOWS_WORKFLOW })],
+    rules: [requiredRule('ci-suites', 'ci-suites-windows')],
     fail: target => target.endsWith(`/git/ref/heads/${staging}`) ? { code: 0, stdout: JSON.stringify({
       ref: `refs/heads/${staging}`, object: { sha: testSha },
     }) } : null });
@@ -140,7 +149,7 @@ test('6be83331 E1: staging repairs each gated workflow on the bound staging SHA'
 test('6be83331 E3: a new Actions requirement keeps the head open and its workflow is repaired', async t => {
   const w = world({ runs: [run(700, [migrationAttempt(HEAD, 'success')])],
     checks: [nativeCheck(), actionCheck('ci-suites'), actionCheck('additional-check', { app: { id: 5368905 } })],
-    rules: [requiredRule('ci-suites', 'additional-check')] });
+    rules: [requiredRule('ci-suites', 'additional-check')], workflows: [...WORKFLOWS, extraWorkflow] });
   const l = await lane(t, w);
   await l.r.step();
   assert.equal(l.state.data.heads[HEAD].final, null);
@@ -163,8 +172,20 @@ test('6be83331 E3: missing or malformed main required-check rules stop mutations
     const l = await lane(t, w);
     const result = await l.r.step();
     assert.match(result.errors[0].reason, /main required status checks are unreadable/);
+    assert.match(withRerunLine({ description: '运行中' }, l.r.line(HEAD)).description, /无法读取 main 必需检查规则/);
     assert.deepEqual(w.calls.filter(c => c.method === 'POST'), []);
     assert.equal(l.state.data.heads[HEAD].final, null);
+    l.advance(HEAD_RECHECK_MS);
+    await l.r.step();
+    assert.equal(l.toasts.length, 1);
+    l.advance(2 * HEAD_RECHECK_MS);
+    await l.r.step();
+    assert.equal(l.toasts.length, 1);
+    w.rules = [requiredRule(...CHECK_NAMES)];
+    l.advance(3 * HEAD_RECHECK_MS);
+    await l.r.step();
+    assert.deepEqual(w.posts, [700]);
+    assert.doesNotMatch(l.r.line(HEAD), /无法读取/);
   }
 });
 
@@ -180,8 +201,75 @@ test('6be83331 E4: missing Windows workflow without a dispatch trigger is tried 
   await restarted.r.step();
   assert.deepEqual(w.calls.filter(call => call.method === 'POST').map(call => call.target),
     [`repos/${REPO}/actions/workflows/${WINDOWS_WORKFLOW}/dispatches`]);
+  assert.equal(w.calls.filter(call => call.target.includes('/actions/workflows?')).length, 1);
+  assert.equal(w.calls.filter(call => call.target.includes('/contents/')).length, 3);
   assert.match(withRerunLine({ description: '运行中' }, restarted.r.line(HEAD)).description,
     /ci-suites-windows 没有运行，无法自动补发/);
+});
+
+test('6be83331 E6: only required Actions workflows are repaired or reported', async t => {
+  for (const hosted of [workflowAttempt('gitleaks'), { ...workflowAttempt('gitleaks'), notes: [otherNote] }]) {
+    const windows = workflowAttempt('ci-suites-windows');
+    windows.jobs[1].name = "${{ needs.admission-gate.outputs.admitted == 'true' && 'ci-suites-windows' || 'ci-suites-windows-skipped' }}";
+    const rules = [requiredRule('ci-suites', 'ci-suites-windows'), { type: 'required_status_checks', parameters: {
+      required_status_checks: [{ context: 'gitleaks', integration_id: 5368905 }],
+    } }];
+    const w = world({ rules, runs: [run(700, [attempt()]), run(701, [windows], { workflow_id: WINDOWS_WORKFLOW,
+      path: `${WORKFLOWS[1].path}@refs/pull/452/merge` }), run(702, [hosted], { workflow_id: HOSTED_WORKFLOW })] });
+    const l = await lane(t, w);
+    await l.r.step();
+    assert.deepEqual(w.posts, [700, 701]);
+    assert.deepEqual(Object.keys(l.state.data.records).sort(), ['700:2', '701:2']);
+    assert.equal(l.toasts.length, 2);
+    assert.match(l.toasts[1], /已自动补跑 ci-suites-windows/);
+    assert.doesNotMatch(l.toasts.join('\n'), /gitleaks/);
+    assert.ok(!w.calls.some(call => call.target.includes('/actions/workflows?')));
+  }
+});
+
+test('6be83331 E7: an unmapped requirement blocks every request and is reported once across restart', async t => {
+  const w = world({ rules: [requiredRule('ci-suites', 'unmapped-check')] });
+  const l = await lane(t, w);
+  const result = await l.r.step();
+  assert.deepEqual(w.posts, []);
+  assert.match(result.errors[0].reason, /必需检查 unmapped-check 找不到对应工作流/);
+  assert.match(withRerunLine({ description: '运行中' }, l.r.line(HEAD)).description, /必需检查 unmapped-check 找不到对应工作流/);
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.equal(l.toasts.length, 1);
+  const restarted = await lane(t, w, { stateFile: l.file });
+  restarted.advance(2 * HEAD_RECHECK_MS);
+  await restarted.r.step();
+  assert.deepEqual(restarted.toasts, []);
+  assert.deepEqual(w.calls.filter(call => call.method === 'POST'), []);
+  assert.equal(w.calls.filter(call => call.target.includes('/actions/workflows?')).length, 1);
+});
+
+test('6be83331 L1: a settled staging run does not wait for workflows absent from staging', async t => {
+  const testSha = 'b'.repeat(40);
+  const w = world({ runs: [run(700, [migrationAttempt(testSha, 'success')], { head_sha: testSha, head_branch: 'clued-train/staging', event: 'push', conclusion: 'success' })],
+    rules: [requiredRule('ci-suites', 'ci-suites-windows')] });
+  const l = await lane(t, w, { st: status({ train: { enabled: 'on', landing: 'push' }, pending: [{ pr: 452, headSha: HEAD, testSha, state: 'PARKED' }] }) });
+  await l.r.step();
+  assert.ok(l.state.data.heads[testSha].final);
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.equal(w.calls.filter(call => call.target.includes(`head_sha=${testSha}`)).length, 1);
+  assert.deepEqual(w.posts, []);
+});
+
+test('6be83331 L3: the real workflows use the required-check naming convention', async () => {
+  const { gatedCheckNames } = await import('../src/admission-rerun.mjs');
+  const sources = await Promise.all(WORKFLOWS.map(w => readWorkflow(w.path)));
+  const required = [...CHECK_NAMES, 'ci-suites-windows'].sort();
+  for (const ending of ['\n', '\r\n']) {
+    assert.deepEqual(sources.flatMap(source => gatedCheckNames(source.replace(/\r?\n/g, ending))).sort(), required);
+  }
+  for (const file of ['gitleaks', 'trivy', 'contract-placement']) {
+    const checks = gatedCheckNames(await readWorkflow(`.github/workflows/${file}.yml`));
+    assert.ok(checks.length);
+    assert.deepEqual(checks.filter(name => required.includes(name)), []);
+  }
 });
 const TIMEOUT_NOTE = { message: 'The job has exceeded the maximum execution time of 30m0s' };
 function migrationAttempt(head = HEAD, conclusion = 'cancelled', completed = '2026-11-05T11:00:00Z') {
@@ -361,7 +449,7 @@ test('allowed: one "Re-run all jobs", a receipt written before it, the PR page a
   const rec = JSON.parse(await fs.readFile(l.file, 'utf8')).records['700:2'];
   assert.deepEqual([rec.contract, rec.pr, rec.runId, rec.attempt, rec.outcome], ['clued.independent-ci.admission-rerun/1', 452, 700, 2, 'sent']);
   assert.equal(l.r.done(HEAD), true);
-  assert.deepEqual(l.toasts, ['PR #452：已自动补跑一次必需测试']);
+  assert.deepEqual(l.toasts, [`PR #452：已自动补跑 ${CHECK_NAMES.join('、')}`]);
   for (let i = 0; i < 5; i++) { l.advance(HEAD_RECHECK_MS); await l.r.step(); }
   assert.deepEqual(w.posts, [700], 'never twice');
   // a restarted companion reads the record back
@@ -398,6 +486,7 @@ test('bot head: refused dispatch stays visible and tells Owner once without retr
   const restarted = await lane(t, w, { stateFile: l.file }); await restarted.r.step();
   assert.equal(w.dispatches.length, 1);
   assert.equal(l.toasts.length + restarted.toasts.length, 1);
+  assert.ok(!w.calls.some(call => call.target.includes('/actions/workflows?')));
 });
 
 test('skipped head: final repair refusal is visible and tells Owner once across restarts', async t => {

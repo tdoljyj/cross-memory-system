@@ -461,7 +461,10 @@ test('N9 E10: the same S parks on timeout, is re-run by the lane, and lands with
   assert.deepEqual(e.W.pushes, []);
 
   const staging = 'clued-train/staging';
-  const run = { id: 712, workflow_id: 100, head_sha: testSha, head_branch: staging, event: 'push', run_attempt: 1, status: 'completed', conclusion: 'cancelled' };
+  const workflow = '.github/workflows/clued-required-tests.yml';
+  const source = await fs.readFile(new URL(`../../../../${workflow}`, import.meta.url));
+  const run = { id: 712, workflow_id: 100, path: workflow, head_sha: testSha, head_branch: staging,
+    event: 'push', run_attempt: 1, status: 'completed', conclusion: 'cancelled' };
   const state = await AdmissionRerunState.open(path.join(await tempDir(t), 'rerun.json'), e.clock);
   const requests = [];
   let annotations = [], log = 'Running migrations\n##[error]The operation was canceled.';
@@ -471,11 +474,12 @@ test('N9 E10: the same S parks on timeout, is re-run by the lane, and lands with
     gh: {
       repo: REPO,
       async get(route) {
+        if (route === `/contents/${workflow}?ref=${T}`) return { path: workflow, sha: '1'.repeat(40), encoding: 'base64', content: source.toString('base64') };
         if (route === `/git/ref/heads/${staging}`) return { ref: `refs/heads/${staging}`, object: { sha: e.W.refs.get(`heads/${staging}`) } };
         if (route === `/actions/runs/${run.id}`) return { ...run };
         if (route === `/pulls/${pr}`) {
           const pull = await e.gh.readPullRequest(pr);
-          return { ...pull, number: pr };
+          return { ...pull, number: pr, base: { ...pull.base, sha: T } };
         }
         if (route === `/actions/workflows/${run.workflow_id}/runs?per_page=100&page=1`)
           return { total_count: 1, workflow_runs: [{ ...run }] };

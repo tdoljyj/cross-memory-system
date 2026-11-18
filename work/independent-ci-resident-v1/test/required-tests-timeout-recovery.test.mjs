@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AdmissionRerunner, AdmissionRerunState } from '../src/admission-rerun.mjs';
 import { executorFixture, fakeEngine, triggerBytes, CI_SOURCE, WINDOWS_CLEAN } from './helpers.mjs';
@@ -40,12 +41,15 @@ test('E9: #1159 recovers from parking B on the same head with one rerun and no p
     p.head.repo = p.base.repo = { full_name: REPO };
     return p;
   };
-  const actions = { id: RUN, workflow_id: WORKFLOW, head_sha: HEAD, event: 'pull_request', status: 'completed', run_attempt: 1, pull_requests: [{ number: PR }] };
+  const workflow = '.github/workflows/clued-required-tests.yml';
+  const source = await fs.readFile(new URL(`../../../${workflow}`, import.meta.url));
+  const actions = { id: RUN, workflow_id: WORKFLOW, path: workflow, head_sha: HEAD, event: 'pull_request', status: 'completed', run_attempt: 1, pull_requests: [{ number: PR }] };
   const mutations = [], pushes = [];
   const gh = {
     repo: REPO,
     async get(route) {
       if (route === `/pulls/${PR}`) return github.readPullRequest(PR);
+      if (route === `/contents/${workflow}?ref=${T}`) return { path: workflow, sha: TREE, encoding: 'base64', content: source.toString('base64') };
       if (route === `/actions/runs/${RUN}`) return { ...actions };
       if (route.startsWith(`/actions/workflows/${WORKFLOW}/runs?`)) return { total_count: 0, workflow_runs: [] };
       assert.fail(route);
