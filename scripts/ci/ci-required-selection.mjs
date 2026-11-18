@@ -41,11 +41,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const RESIDENT_AND_SOURCE = ['work/independent-ci-resident-v1/**', 'work/actions-hosted-migration/independent-ci-v1/**',
   'scripts/ci/**', 'scripts/runner/**', 'config/merge-admission-policy.json', '.gitleaks.toml'];
 
-// Files whose bytes a pinned registry holds (check-pinned-registries.mjs): the R9 registry pins files under
-// scripts/ci, .github/workflows and the admission policy; the reconcile registry pins all of scripts/ci,
-// scripts/runner, .github/workflows, the temporary-storage action and four more files; the component
-// manifest pins its own files. The generated files the same script checks add their generators and inputs: the agent
-// contract, the generated worker modules, the imprint rule source and its migration, and the plugin build script.
+// Select the registry checks for the R9 inputs, the reconcile source closure and
+// the component manifest. Generated outputs also select on their generators and inputs.
 // check-pinned-registries.test.mjs checks that every pinned file matches.
 export const PINNED_REGISTRY_PATHS = ['scripts/ci/**', 'scripts/runner/**', '.github/workflows/**', '.github/actions/ci-temporary-storage/**',
   'config/merge-admission-policy.json', 'apps/clued-cloud/app/supabase-public-config.ts', 'apps/clued-cloud/package.json',
@@ -241,7 +238,10 @@ export const SUITE_COMMANDS = {
     'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/runner/clued-runner-hook-loader.test.mjs', 'scripts/runner/install-hook-loader.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs',
     'scripts/ci/clued-front-main-merge.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
-  'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
+  'pinned-registries': [
+    { cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] },
+    { cwd: '.', argv: ['node', '--test', 'scripts/ci/generated-registry-merge.test.mjs'] },
+  ],
   // Integrates a throwaway worktree. It never installs into the checkout: there
   // node_modules may be a link to a shared store (local-verify), which npm ci would empty.
   // It installs the worktree through ci-deps.mjs (offline from the runner's store).

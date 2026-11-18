@@ -46,10 +46,8 @@ From 2026-11-08 to 2026-11-15, 61 of the 80 merges into `main` changed
 4. `component-version-integration.py` regenerates only the mechanical outputs
    of a PR's own change (registries, pins, the generated version module, the
    plugin copy). It sets no version.
-5. A generated "path -> hash" registry (`clued-merge-reconcile-source.json`)
-   is written with `scripts/ci/registry-layout.mjs`: an empty line after every
-   entry, so changes to two different files are never adjacent lines and git
-   merges them. Its readers parse JSON and are unchanged.
+5. The reconcile registration stores the fixed workflow and Role. The
+   controller verifies the source closure against its checkout's HEAD (§4).
 
 ## 3. Publishing the Skill
 
@@ -68,14 +66,16 @@ person uploading the `skills/clued` folder to claude.ai by hand.
 
 Taking main into a queued PR is a plain merge (what GitHub's update-branch
 does) with nothing to regenerate, except when both sides changed the same real
-input. For the Source pin registries that means the same pinned file: its pin
-line differs on both sides, the merge conflicts and the registry generator has
-to run once. Removing the stored table altogether would change its verifier,
-`scripts/ci/clued-merge-reconcile-source.mjs`, which the registered initial
-control Source pins byte for byte (`MERGE_RECONCILE_CONTROL_SOURCE`); that needs
-a successor control Source and is not part of this change. The same holds for
-`REQUIRED_SELECTOR_SOURCE` in `clued-required-applicability.mjs` (it pins one
-file, `ci-required-selection.mjs`).
+input. R9's historical registrations can still conflict when both branches change
+the same admission inputs. The reconcile verifier compares closure membership
+and raw file bytes with `git ls-tree -r -z HEAD` before the controller loads
+credentials. It rejects a stored `files` field. The fixed workflow and Role
+digests remain independently reviewed. The initial control Source still
+authenticates the historical verifier and test by their original Git objects.
+
+`REQUIRED_SELECTOR_SOURCE` hashes the sibling selector at module load. The
+baseline selector must match both digests before applicability can be issued.
+Ordinary merges, reverts and batch commits need no generated closure or selector pins.
 
 ## 5. Only the front takes main in
 

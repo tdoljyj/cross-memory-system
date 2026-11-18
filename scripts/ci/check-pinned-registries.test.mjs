@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,8 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CHECK_IDS, GENERATED, COMPONENTS_FIX, checkAll, exitCode, render, resolveBase } from './check-pinned-registries.mjs';
 import { PINNED_REGISTRY_PATHS, globToRegExp } from './ci-required-selection.mjs';
-import { SOURCE_FILE, hash, sourceClosure } from './clued-merge-reconcile-source.mjs';
-import { layoutRegistry } from './registry-layout.mjs';
+import { SOURCE_FILE, sourceClosure } from './clued-merge-reconcile-source.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), repo = path.resolve(here, '../..');
 const CLI = path.join(here, 'check-pinned-registries.mjs');
@@ -51,7 +49,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8',
 const commit = (dir, message) => { git(dir, 'add', '-A'); git(dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', message); };
 const cli = (root, ...args) => spawnSync(process.execPath, [CLI, '--root', root, ...args], { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
 // The checks that need no installed dependencies; pdf-cmaps and imprint-rules are "could not check" without npm ci.
-const NO_DEPS = ['r9', 'reconcile', 'components', 'agent-contract', 'plugin', 'selector-pin'].flatMap((id) => ['--only', id]);
+const NO_DEPS = ['r9', 'reconcile', 'components', 'agent-contract', 'plugin'].flatMap((id) => ['--only', id]);
 const matches = (file) => PINNED_REGISTRY_PATHS.some((p) => globToRegExp(p).test(file));
 
 const R9 = 'scripts/ci/merge-admission-r9-source.json';
@@ -71,18 +69,10 @@ function copyOfThisCheckout() {
 const cleanup = (dir) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 const byId = (report, id) => report.results.find((r) => r.id === id);
 
-// What the build script does to the registry (the bytes of every closure file), without needing yaml.
-function refreshReconcile(dir) {
-  const file = path.join(dir, SOURCE_FILE), source = JSON.parse(fs.readFileSync(file, 'utf8'));
-  source.files = Object.fromEntries(sourceClosure(dir).map((name) => [name, hash(fs.readFileSync(path.join(dir, name)))]));
-  fs.writeFileSync(file, layoutRegistry(source));
-}
-// A registered copy: this checkout's files with the reconcile registry brought up to date for the files this
-// change adds, committed as the base.
 // The copy is built once (it holds the whole committed tree); each test starts from its committed state again.
 let shared = null;
 function registeredCopy() {
-  if (shared === null) { shared = copyOfThisCheckout(); refreshReconcile(shared); commit(shared, 'registered'); }
+  if (shared === null) shared = copyOfThisCheckout();
   git(shared, 'reset', '-q', '--hard'); git(shared, 'clean', '-fdq');
   return shared;
 }
@@ -103,55 +93,35 @@ test('an up to date tree passes', () => {
     const r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /ok\s+r9/); assert.match(r.stdout, /ok\s+reconcile/); assert.match(r.stdout, /ok\s+components/);
-    assert.match(r.stdout, /ok\s+agent-contract/); assert.match(r.stdout, /ok\s+plugin/); assert.match(r.stdout, /ok\s+selector-pin/);
+    assert.match(r.stdout, /ok\s+agent-contract/); assert.match(r.stdout, /ok\s+plugin/);
     assert.match(r.stdout, /all pinned registries are up to date/);
   } finally { /* the shared copy is reset by the next test */ }
 });
 
-test('changing a pinned file names the stale registries and the commands that fix them; regenerating clears them', () => {
+test('the R9 registration still requires its own historical pins', () => {
   const dir = registeredCopy();
-  try {
-    // Pinned by R9 and reconcile, and explicitly owned by the Native-publication component.
-    fs.appendFileSync(path.join(dir, 'scripts/ci/merge-admission-source-producer.mjs'), '\n// changed after registration\n');
-
-    let r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
-    assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /STALE\s+r9\s+\(scripts\/ci\/merge-admission-r9-source\.json\)/);
-    assert.match(r.stdout, /regenerate: node scripts\/ci\/merge-admission-r9-reregister\.mjs --write --base HEAD/);
-    assert.match(r.stdout, /STALE\s+reconcile\s+\(scripts\/ci\/clued-merge-reconcile-source\.json\)/);
-    assert.match(r.stdout, /bytes differ from the registry: scripts\/ci\/merge-admission-source-producer\.mjs/);
-    assert.match(r.stdout, /regenerate: node scripts\/ci\/clued-merge-reconcile-source-build\.mjs/);
-    // No component digest is stored and no version has to move, so the source edit makes no component stale
-    // (defect C: the digest/version chase made every queued PR re-run the builder after each merge).
-    assert.match(r.stdout, /ok\s+components/);
-    assert.match(r.stdout, /2 registries are stale/);
-    assert.match(r.stdout, /fix sequence/);
-    assert.match(r.stdout, /clued-merge-reconcile-source-build\.mjs[\s\S]*generate-agent-contract\.mjs[\s\S]*check-pinned-registries\.mjs/);
-    assert.doesNotMatch(r.stdout, /clued_components\.py update/);
-
-    // The printed commands, in the printed order. The reconcile build script needs yaml, which is not
-    // installed everywhere; its effect on the registry is applied directly.
-    const fix = spawnSync(process.execPath, [path.join(dir, 'scripts/ci/merge-admission-r9-reregister.mjs'), '--write', '--base', 'HEAD'], { cwd: dir, encoding: 'utf8' });
-    assert.equal(fix.status, 0, fix.stdout + fix.stderr);
-    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
-    assert.equal(r.status, 1); assert.match(r.stdout, /ok\s+r9/); assert.match(r.stdout, /STALE\s+reconcile/);
-    // One regeneration settles it: the reconcile registry no longer chases a component digest.
-    refreshReconcile(dir);
-    r = cli(dir, '--base', 'HEAD', ...NO_DEPS);
-    assert.equal(r.status, 0, r.stdout + r.stderr);
-  } finally { /* the shared copy is reset by the next test */ }
+  fs.appendFileSync(path.join(dir, 'scripts/ci/merge-admission-source-producer.mjs'), '\n// changed after registration\n');
+  const before = cli(dir, '--base', 'HEAD', ...NO_DEPS);
+  assert.equal(before.status, 1, before.stdout + before.stderr);
+  assert.match(before.stdout, /STALE\s+r9/);
+  assert.match(before.stdout, /regenerate: node scripts\/ci\/merge-admission-r9-reregister\.mjs --write --base HEAD/);
+  assert.match(before.stdout, /ok\s+reconcile/);
+  assert.match(before.stdout, /1 registry is stale/);
+  const fix = spawnSync(process.execPath, ['scripts/ci/merge-admission-r9-reregister.mjs', '--write', '--base', 'HEAD'],
+    { cwd: dir, encoding: 'utf8' });
+  assert.equal(fix.status, 0, fix.stdout + fix.stderr);
+  const after = cli(dir, '--base', 'HEAD', ...NO_DEPS);
+  assert.equal(after.status, 0, after.stdout + after.stderr);
 });
 
-test('a new or removed file under a locked directory makes the reconcile registry stale', () => {
-  const dir = registeredCopy();
-  try {
-    fs.writeFileSync(path.join(dir, 'scripts/ci/brand-new-helper.mjs'), 'export {};\n');
-    fs.rmSync(path.join(dir, 'scripts/ci/clued-push-reuse.mjs'));
-    const r = cli(dir, '--base', 'HEAD', '--only', 'reconcile');
-    assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stdout, /not registered \(new file\): scripts\/ci\/brand-new-helper\.mjs/);
-    assert.match(r.stdout, /registered but gone: scripts\/ci\/clued-push-reuse\.mjs/);
-  } finally { /* the shared copy is reset by the next test */ }
+test('a stored closure table cannot pass the registration check', () => {
+  const dir = registeredCopy(), file = path.join(dir, SOURCE_FILE);
+  const registration = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...registration, files: {} }));
+  const result = cli(dir, '--base', 'HEAD', '--only', 'reconcile');
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stdout, /STALE\s+reconcile/);
+  assert.match(result.stdout, /MERGE_RECONCILE_SOURCE_UNQUALIFIED/);
 });
 
 test('a stale component manifest is reported with the integration command; a stored digest is refused', () => {
@@ -257,26 +227,6 @@ test('generators that need npm ci are "could not check" without it, and stale wh
     assert.match(r.stdout, /STALE\s+pdf-cmaps/); assert.match(r.stdout, /stub says out of date/); assert.match(r.stdout, /ok\s+imprint-rules/);
     assert.match(r.stdout, /fix sequence[\s\S]*generate-pdf-cmaps\.mjs\n/);
   } finally { fs.rmSync(path.join(dir, 'apps/clued-cloud/node_modules'), { recursive: true, force: true }); }
-});
-
-test('changing the selector without re-pinning it in the applicability module is stale; re-pinning clears it', () => {
-  const dir = registeredCopy();
-  try {
-    assert.equal(cli(dir, '--base', 'HEAD', '--only', 'selector-pin').status, 0);
-    fs.appendFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'), '\n// changed after the applicability module pinned it\n');
-    let r = cli(dir, '--base', 'HEAD', '--only', 'selector-pin');
-    assert.equal(r.status, 1, r.stdout + r.stderr);
-    assert.match(r.stdout, /STALE\s+selector-pin\s+\(scripts\/ci\/clued-required-applicability\.mjs\)/);
-    assert.match(r.stdout, /now blob: '[0-9a-f]{40}'/); assert.match(r.stdout, /now sha256: '[0-9a-f]{64}'/);
-    assert.match(r.stdout, /component-version-integration\.py/);
-    // The pin the message asks for.
-    const bytes = fs.readFileSync(path.join(dir, 'scripts/ci/ci-required-selection.mjs'));
-    const blob = execFileSync('git', ['hash-object', '--stdin'], { input: bytes, encoding: 'utf8' }).trim();
-    const sha = createHash('sha256').update(bytes).digest('hex');
-    const file = path.join(dir, 'scripts/ci/clued-required-applicability.mjs');
-    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/blob:'[0-9a-f]{40}'/, `blob:'${blob}'`).replace(/sha256:'[0-9a-f]{64}'/, `sha256:'${sha}'`));
-    r = cli(dir, '--base', 'HEAD', '--only', 'selector-pin'); assert.equal(r.status, 0, r.stdout + r.stderr);
-  } finally { /* the shared copy is reset by the next test */ }
 });
 
 // Regression (main 4b1cc800): a pins change passed against the old main but
