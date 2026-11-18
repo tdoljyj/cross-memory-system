@@ -22,7 +22,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.handover-external-source-check": "1.0.3",
   "script.handover-external-journal": "1.0.2",
   "script.handover-external-register": "1.0.3",
-  "script.workflow-source-profile": "1.0.6",
+  "script.workflow-source-profile": "1.0.7",
   "script.kooyumi-plugin-bundle": "1.0.2",
   "script.storage-google-redirect-cutover": "1.0.1",
   "script.storage-zip": "1.0.0",

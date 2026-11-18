@@ -304,7 +304,7 @@
     {
       "id": "script.workflow-source-profile",
       "kind": "script",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "description": "Independent changed Source3 component; candidate only until exact accepted source placement.",
       "root": "scripts/ci",
       "files": [

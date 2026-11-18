@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-export const COMPONENT_VERSION = "1.0.6";
+export const COMPONENT_VERSION = "1.0.7";
 
 // /3 changes only the on-disk representation. Each original LF-delimited YAML
 // line remains a separate plaintext JSON string on a separate physical line.
@@ -195,13 +195,13 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'5470897712b63448447b45c86d233b782163960d',
-  source_sha256:'a80a03169e6bd45e2eac29ddfa28d5f5e643ed591eae4e944725b3076d5ea1fb',
-  workflow_definition_sha256:'b4f79abc45fe2113a2551f7c3ba6b4d32ae5e1387c2f266309d710b1786f1e39',
-  profile_sha256:'c2ce96c207f9332c425f2398f2cb600a82731f5f87931582cccefd96663b5dfe',
+  workflow_blob:'90018809f94ceb6ba6ffcea8dcfac94a5d23b1e8',
+  source_sha256:'299d3ff07d8b27be73dfafad94a47da03dde52ea99540af0830b647704133388',
+  workflow_definition_sha256:'3e4a4b0402f5eff8659e8f9fe6193208d5a4de567a556dd25edeb15c9e8cd078',
+  profile_sha256:'8f5e17c7639002a33ee97a38b6bca8ff9aa43dea4ecb53c374d0d8f6d7871435',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'f720a913b3fa098d135a3d9eb49cb4767d6a049822f4de9f0bd182687605a02a',
+    'clued-cloud-tests':'69464b220bcb8e531890db01ef6fcfe51954b1a99db2fff0d2e0d69200449ca8',
     'ci-suites':'b0d7e70eb85cbff52c94e555e7a687027343de0164cfa3d69028f897d8160bdf',
     'migration-verify':'1019c074dd0be744b74289aa460dfbfc563d1c2c2a4012741e068dd2d342c088',
   }),
@@ -237,6 +237,20 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'clued-cloud-tests':'a70ad71b3142881ed1ab33fd8e1a10d904d53e111f7f2e93943bd6ce862e5b4b',
       'ci-suites':'28191dfb8b6c5c0d39f338c0eb8dd6798df852a4fb18a9b2c29c16cdbaabe36a',
       'migration-verify':'3fdb8b60ba13bb5df9323e9be7fe060061e1d84e9b6956b72658b8bd687b627e',
+    }),
+  }),
+  // Before the application bootstrap added the PostgreSQL package rebuild (main 7b0b1e24).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'5470897712b63448447b45c86d233b782163960d',
+    source_sha256:'a80a03169e6bd45e2eac29ddfa28d5f5e643ed591eae4e944725b3076d5ea1fb',
+    workflow_definition_sha256:'b4f79abc45fe2113a2551f7c3ba6b4d32ae5e1387c2f266309d710b1786f1e39',
+    profile_sha256:'c2ce96c207f9332c425f2398f2cb600a82731f5f87931582cccefd96663b5dfe',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'f720a913b3fa098d135a3d9eb49cb4767d6a049822f4de9f0bd182687605a02a',
+      'ci-suites':'b0d7e70eb85cbff52c94e555e7a687027343de0164cfa3d69028f897d8160bdf',
+      'migration-verify':'1019c074dd0be744b74289aa460dfbfc563d1c2c2a4012741e068dd2d342c088',
     }),
   }),
 ]);
