@@ -193,6 +193,8 @@ test('M2: persistent identity-probe failure waits for the queue deadline and rep
   { skip: process.platform !== 'win32' }, async (t) => {
     const start = slotFixture(t);
     const waiting = start('waiting', { probeErrors: 1000, waitMs: 1_500 });
+    await waitForSlotFixture(waiting, () => /synthetic identity probe timeout/.test(waiting.output()));
+    assert.equal(waiting.child.exitCode, null, 'the probe error must not exit before the queue deadline');
     assert.deepEqual(await waiting.done, [75, null]);
     assert.ok(!waiting.ready());
     assert.match(waiting.output(), /LOCAL_SUITE_SLOT_TIMEOUT.*synthetic identity probe timeout/);
@@ -235,6 +237,13 @@ test('L1: local --run times out without starting its suite and returns a dedicat
   assert.equal(waiting.ready(), false, 'a timed-out invocation must never start the suite');
   assert.deepEqual(await waiting.done, [75, null]);
   assert.match(waiting.output(), /LOCAL_SUITE_SLOT_TIMEOUT.*queue position 1/);
+});
+
+test('L1: selector help distinguishes suite failure from a local slot timeout', () => {
+  const help = spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', '--help'], { cwd: ROOT, encoding: 'utf8' });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /1 .*suite fail/i);
+  assert.match(help.stdout, /75 .*local suite.*timeout/i);
 });
 
 for (const file of ['apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
