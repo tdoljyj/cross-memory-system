@@ -608,6 +608,7 @@ export class RunQueue {
       heldBy: held(r), since: r.since ?? null,
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,
       queuePosition: parkedHere(r) ? (r.parked?.position ?? null) : null,
+      ...(parkedHere(r) && r.running.testSha ? { testSha: r.running.testSha } : {}),
       // Generation 12 (defect 050560ac): a back-off after a network release (the line to GitHub or Native, DESIGN 53.3), for the PR page.
       network: r.state === 'BACKOFF' && r.levelKind === 'network',
       firstAt: r.current.firstAt ?? null, position: ahead.has(r.pr) ? ahead.get(r.pr) + 1 : null,

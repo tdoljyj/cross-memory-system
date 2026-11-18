@@ -67,7 +67,7 @@ test('main moved under three queued PRs on three old bases: each stops alone (RE
   const now = f.clock();
   const said = describe({ pull: { pr: 1, headSha: H(1), eligible: true }, now,
     status: { writtenAt: now, current: null, pending: [], recent: [{ pr: 1, headSha: H(1), outcome: 'NOT_EXECUTED', code: 'RESIDENT_BASE_MOVED' }] } });
-  assert.deepEqual(said, { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' });
+  assert.deepEqual(said, { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' });
 });
 
 test('main moved under three queued PRs with the same old base: one bundle finds it, all three stop with the same code', async t => {

@@ -353,14 +353,17 @@ export async function main(args = process.argv.slice(2)) {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();
           // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
-          let generation = null;
-          try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
-          try { await poller.pass({ generation }); } catch { /* next pass */ }
+          const status = await readStatus(values.root).catch(() => null);
+          try {
+            await poller.pass({ generation: status?.queue?.generation ?? null });
+            await poller.parkedPass(status?.pending ?? []);
+          } catch { /* next pass */ }
         }
         // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules every five minutes, as before the 60-second poll.
         if (Date.now() - lastBackstop > BACKSTOP_EVERY_MS) {
           lastBackstop = Date.now();
-          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store, notify }); } catch { /* next time */ }
+          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
+            store, notify, observeRules: rules => poller.noteBranchRules(rules) }); } catch { /* next time */ }
         }
         // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
         // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started

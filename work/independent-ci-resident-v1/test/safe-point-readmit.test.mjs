@@ -87,13 +87,15 @@ test('readmission survives restart and a lost queue, and still waits for matchin
   assert.equal(count(f, 8), before + 1);
 });
 
-test('park.maxMs releases the parking place but preserves the same head for one continuation', async t => {
+test('park.maxMs frees the parking place and a PR event wakes the same batch', async t => {
   const f = await fixture(t);
   f.advance(f.exec.policy.park.maxMs + MIN);
   await f.exec.tick();
-  assert.equal((await f.ledger.open()).length, 0);
+  assert.equal((await f.ledger.open()).length, 1);
+  assert.deepEqual(await f.exec.parkedCounts(), { inside: 0, outside: 0 });
   f.ready();
   const before = count(f, 8);
+  await f.drop(triggerBytes({ contract: 'clued.independent-ci.resident-trigger/2', prUpdatedAt: new Date(f.clock()).toISOString() }));
   await finish(f);
   assert.equal(f.exec.queue.row(884).state, 'DONE');
   assert.equal(count(f, 8), before + 1);

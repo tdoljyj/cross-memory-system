@@ -202,6 +202,7 @@ export class StatusBoard {
       level: Number.isSafeInteger(p.level) ? p.level : 0, origin: typeof p.origin === 'string' && /^[a-z0-9-]{1,20}$/.test(p.origin) ? p.origin : null,
       stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null,
       queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null, claimExpiresAt: isoOrNull(p.claimExpiresAt ?? null), watched: p.watched === true, network: p.network === true,
+      ...(HEX40.test(p.testSha ?? '') ? { testSha: p.testSha } : {}),
       heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true })) });
   }
 
@@ -276,6 +277,7 @@ export function parseStatus(bytes) {
         claimExpiresAt: ms(v.current.claimExpiresAt), leaseFrom: ms(v.current.leaseFrom) } : null,
     pending: Array.isArray(v.pending) ? v.pending.filter(p => Number.isSafeInteger(p?.pr) && head(p.headSha)).slice(0, PENDING_MAX)
       .map(p => ({ pr: p.pr, headSha: p.headSha, state: ROW_STATES.includes(p.state) ? p.state : 'QUEUED', position: Number.isSafeInteger(p.position) ? p.position : null,
+        ...(head(p.baseSha) ? { baseSha: p.baseSha } : {}), ...(head(p.testSha) ? { testSha: p.testSha } : {}),
         deferred: codeOrNull(p.deferred), since: ms(p.since), nextAt: ms(p.nextAt), eta: ms(p.eta), level: Number.isSafeInteger(p.level) ? p.level : 0,
         stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null, queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null,
         claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true })) : [],
