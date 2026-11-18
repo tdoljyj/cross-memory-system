@@ -56,6 +56,7 @@ function committedClosure(workspace){
     if(!row)continue;
     const tab=row.indexOf('\t'),name=row.slice(tab+1);
     if(!included(name)&&!individualFiles.includes(name))continue;
+    if(name.includes('\\')||name.split('/').some(part=>!part||part==='.'||part==='..'))fail(name);
     const entry=/^100(?:644|755) blob ([a-f0-9]{40})$/.exec(row.slice(0,tab));
     if(!entry)fail(name);
     entries.set(name,entry[1]);

@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 import {readRequiredApplicability} from './clued-required-applicability.mjs';
+import {verifyReconcileSource} from './clued-merge-reconcile-source.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
 const selector='scripts/ci/ci-required-selection.mjs';
@@ -95,6 +96,10 @@ test('三个分支的改动合成单一提交 S',()=>{
   assert.equal(git(tree,'show','-s','--format=%P','HEAD'),base);
   for(const [file,tip] of tips)assert.equal(git(tree,'rev-parse','HEAD:'+file),git(tree,'rev-parse',tip+':'+file));
   check('批量提交 S');
+});
+
+test('套件实际检出的闭包也与其 HEAD 一致',()=>{
+  verifyReconcileSource(root);
 });
 
 test('闭包成员的未提交修改、额外文件、缺失文件分别被拒绝',async t=>{
