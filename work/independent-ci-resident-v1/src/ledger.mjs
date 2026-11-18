@@ -32,7 +32,7 @@
 // Phase 2, step 1 (resident quota redesign, design v0.5 §4.4-§4.7, Task 6451a55d): 00-reserved.json also names how the
 // run queue picked the subject (`origin`, queue.mjs#ORIGINS; a record without one was a plain first try), and usage()
 // derives every daily budget of the queue from the ledger itself, so a lost queue file never resets a budget: the
-// executions (10-started heads, per PR too), the evaluations (reservations that did not execute, without the waits'
+// executions (10-started heads), the PR's terminal verdicts, the evaluations (reservations that did not execute, without the waits'
 // own budget, the environment releases and the supersessions), the waiting retries, the new-trigger re-evaluations per
 // (PR, commit), and the counted releases per head (waits never count; an environment release while the breaker was not
 // closed does not either). A new release reason, SUPERSEDED, closes a reservation whose PR got a newer commit before
@@ -53,6 +53,7 @@ import path from 'node:path';
 import { HEX40, HEX64, REPO, ResidentError, check, digest, fail, isoNow } from './canonical.mjs';
 import { ensureDir, exists, nonce, readJson, renameToNew, writeNew } from './store.mjs';
 import { CLAIM_REASONS } from './queue.mjs';
+import { failureRow } from './classify.mjs';
 
 export const BATCH_KEY_CONTRACT = 'clued.independent-ci.resident-batch-key/1';
 export const HEAD_KEY_CONTRACT = 'clued.independent-ci.resident-head-key/1';
@@ -112,6 +113,21 @@ const stamp = clock => isoNow(clock).replace(/[:.]/g, '');
 // JSON) makes an entry UNREADABLE. Any other I/O error (busy, permission, disk) is transient and
 // propagates, so it can never quarantine a valid entry (third review, MAJOR 2).
 const contentError = error => error instanceof ResidentError || error instanceof SyntaxError;
+
+// PR quota pays only for a verdict about the PR. Clean/final and burned describe execution safety, not blame:
+// a timeout, HALT, withdrawal, stale front or supersession must not spend this quota. Keep all global budgets separate.
+function prVerdict(terminal) {
+  if (terminal?.outcome === 'COMPLETED') return true;
+  if (terminal?.outcome !== 'FAILED_CLEAN') return false;
+  const f = terminal.facts ?? {};
+  // The failure table also calls changed/closed subjects deterministic: the old subject can never pass, but no PR test failed.
+  if (f.failureCode === 'PR_NOT_OPEN_OR_CHANGED'
+    || (f.failureCode === 'STAGE_CHILD_REFUSED' && ['pr_subject_changed', 'pr_files_changed'].includes(f.reason))) return false;
+  // REQUIRED_CHECK_FAILED is a queue ending in the existing table, yet explicitly records a failed required check.
+  // Old terminals without a stored class use the same table and their recorded diagnostic, never a blanket FAILED_CLEAN charge.
+  return f.failureCode === 'REQUIRED_CHECK_FAILED' || (f.class ?? failureRow({ code: f.failureCode, stage: f.stage,
+    reason: f.reason, diagnostic: { reasonCodes: f.reasonCodes, nativeReasonCodes: f.nativeReasonCodes } })?.class) === 'deterministic-pr';
+}
 
 export class Ledger {
   constructor(root, clock) {
@@ -582,9 +598,8 @@ export class Ledger {
       try {
         const v = (await readJson(path.join(this.heads, name))).value;
         if (Date.parse(v.startedAt) >= sinceMs) {
-          // A low-risk burn still counts against its PR's own daily cap (independent review m4): one PR cannot spend the
-          // whole evaluation budget on commits that stage 1 refuses.
-          if (Number.isSafeInteger(v.subject?.pr)) bump(u.startedByPr, v.subject.pr);
+          // Global execution/evaluation budgets still charge every burn, including a system ending.
+          // The PR's own budget is derived below from terminal verdicts, not from these once-only head records.
           if (v.burnedBy?.quotaTier === QUOTA_TIER_EVALUATION) { u.lowRiskBurns += 1; continue; }
           u.started += 1;
         }
@@ -621,10 +636,22 @@ export class Ledger {
           const at = Date.parse((await read(path.join(dir, name)))?.at);
           if (!(at < sinceMs) && (stage8Pr === null || !Number.isSafeInteger(reserved?.subject?.pr) || reserved.subject.pr === stage8Pr)) u.stage8Retries += 1;
         }
-        const terminal = await read(path.join(dir, '90-terminal.json'));
+        if (!reserved) continue;
+        const recentReservation = Date.parse(reserved.reservedAt) >= sinceMs;
+        let terminal;
+        try { terminal = await read(path.join(dir, '90-terminal.json')); }
+        catch (error) { if (recentReservation || !contentError(error)) throw error; continue; }
         if (terminal?.outcome === 'FAILED_CLEAN' && terminal.facts?.basis === 'park-over-capacity' && Date.parse(terminal.at) >= sinceMs
-            && HEX40.test(reserved?.subject?.headSha ?? '')) bump(u.releasesByHead, reserved.subject.headSha);
-        if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
+            && HEX40.test(reserved.subject?.headSha ?? '')) bump(u.releasesByHead, reserved.subject.headSha);
+        // Include flow continuations: their head record may still point to an archived system ending. A running/parked,
+        // absent or unreadable terminal is not a verdict. Keep the rolling window on the batch's start (or pre-start burn).
+        try {
+          if (Number.isSafeInteger(reserved.subject?.pr) && prVerdict(terminal)) {
+            const started = await read(path.join(dir, '10-started.json'));
+            if (Date.parse(started?.startedAt ?? terminal.at) >= sinceMs) bump(u.startedByPr, reserved.subject.pr);
+          }
+        } catch (error) { if (!contentError(error)) throw error; } // optional verdict evidence never changes global accounting
+        if (!recentReservation) continue;
         count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null,
           burned: ['FAILED_CLEAN', 'FAILED_UNKNOWN'].includes(terminal?.outcome) });
       } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }

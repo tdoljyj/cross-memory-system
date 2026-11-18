@@ -3328,6 +3328,7 @@ export class ResidentExecutor {
       return { defer: 'WAITING_BUDGET_EXHAUSTED', perRow: true, notice: { key: `waiting-budget:${dayKey(now)}`, kind: 'waiting-budget', pr: null, headSha: null, code: 'WAITING_BUDGET_EXHAUSTED' } };
     }
     if (origin === 'new-trigger' && (usage.reevaluations.get(`${subject.pr}:${subject.headSha}`) ?? 0) >= l.reevaluationsPerPrHeadPer24h) return { defer: 'REEVALUATION_CAP', perRow: true, dropPoke: true };
+    // Only terminal PR verdicts spend this cap; system endings still spend the independent global budgets above.
     if ((usage.startedByPr.get(subject.pr) ?? 0) >= l.perPrBatchesPer24h) return { defer: 'PR_DAILY_BATCH_LIMIT', perRow: true };
     // The head's release cap (design v0.5 §4.5: at most releasesPerHeadPer24h releases a day) from the ledger, so a queue
     // that started over never forgets it (independent review m4). A wait, a new trigger and attempt 2 are not bound by it.
