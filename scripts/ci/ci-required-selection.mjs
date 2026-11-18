@@ -149,7 +149,8 @@ export const SUITES = {
     'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+      'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml'],
   },
   // The application suite reads files from across the repository (workflow,
@@ -589,7 +590,15 @@ function writeKnown(id, root, env, keep = false) {
   return unexplained ? 1 : 0;
 }
 
+const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>]';
+const LOCAL_TIMEOUT_EXIT = 75;
+
 async function main(argv, env = process.env) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(USAGE);
+    console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
+    return 0;
+  }
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
@@ -600,17 +609,16 @@ async function main(argv, env = process.env) {
     const rootIndex = argv.indexOf('--root');
     const id = argv[runIndex + 1];
     if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
-    const run = () => runSuite(id, { root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env });
-    const ci = [env.GITHUB_ACTIONS, env.CI].some((value) => /^(true|1)$/i.test(value ?? ''));
-    if (ci) return run();
+    const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
+    if (env.GITHUB_ACTIONS === 'true') return runSuite(id, { root, env });
     const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
-    return withLocalSuiteSlot(id, run);
+    return withLocalSuiteSlot(id, { root, env, timeoutExit: LOCAL_TIMEOUT_EXIT });
   }
   const selectedIndex = argv.indexOf('--run-selected');
   const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');
   const check = index >= 0 ? argv[index + 1] : undefined;
   if (!SUITES[check]) {
-    console.error('usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>]');
+    console.error(USAGE);
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};

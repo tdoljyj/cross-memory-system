@@ -32,7 +32,8 @@ function slotFixture(t) {
       const original = childProcess.execFileSync;
       let calls = 0;
       childProcess.execFileSync = (file, args, options) => {
-        if (file === 'powershell.exe' && args.includes('-Command') && ++calls <= Number(process.env.SLOT_FIXTURE_PROBE_ERROR)) {
+        if (file === 'powershell.exe' && args.includes('-Command') && ++calls > Number(process.env.SLOT_FIXTURE_PROBE_AFTER)
+          && calls <= Number(process.env.SLOT_FIXTURE_PROBE_AFTER) + Number(process.env.SLOT_FIXTURE_PROBE_ERROR)) {
           throw Object.assign(new Error('synthetic identity probe timeout'), { code: 'ETIMEDOUT' });
         }
         return original(file, args, options);
@@ -60,7 +61,7 @@ function slotFixture(t) {
     }
     rmSync(dir, { recursive: true, force: true });
   });
-  return function start(name, { waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0 } = {}) {
+  return function start(name, { waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0 } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
     mkdirSync(scripts, { recursive: true });
@@ -84,7 +85,7 @@ function slotFixture(t) {
       setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
     `);
     const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
-      SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || '') };
+      SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
     delete env.CI;
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
@@ -179,7 +180,7 @@ test('M2: a Windows identity-probe timeout keeps a waiting suite queued until a 
   { skip: process.platform !== 'win32' }, async (t) => {
     const start = slotFixture(t);
     const holders = await fillSuiteSlots(start);
-    const waiting = start('waiting', { probeErrors: 2 });
+    const waiting = start('waiting', { probeErrors: 2, probeAfter: 1 });
     await waitForSlotFixture(waiting, () => /synthetic identity probe timeout/.test(waiting.output()));
     assert.ok(!waiting.ready(), 'a failed probe cannot grant a slot');
     await waitForQueuedSuite(waiting, holders);
@@ -216,17 +217,16 @@ test('L2: a held slot expires, reports the owner, and drains its descendants bef
   assert.deepEqual(await waiting.done, [0, null]);
 });
 
-test('GitHub Actions and generic CI --run bypass an occupied local queue', async (t) => {
+test('only GitHub Actions --run bypasses an occupied local queue', async (t) => {
   const start = slotFixture(t);
   const holders = await fillSuiteSlots(start);
   await waitForQueuedSuite(start('local'), holders);
-  for (const ci of ['GITHUB_ACTIONS', 'CI']) {
-    const run = start(ci, { ci });
-    await waitForSlotFixture(run, run.ready);
-    run.release();
-    assert.deepEqual(await run.done, [0, null]);
-    assert.doesNotMatch(run.output(), /queue position/);
-  }
+  await waitForQueuedSuite(start('CI', { ci: 'CI' }), holders);
+  const run = start('GITHUB_ACTIONS', { ci: 'GITHUB_ACTIONS' });
+  await waitForSlotFixture(run, run.ready);
+  run.release();
+  assert.deepEqual(await run.done, [0, null]);
+  assert.doesNotMatch(run.output(), /queue position/);
 });
 
 test('L1: local --run times out without starting its suite and returns a dedicated exit code', async (t) => {
