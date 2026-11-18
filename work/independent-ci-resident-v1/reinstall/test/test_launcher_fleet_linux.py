@@ -914,7 +914,8 @@ class ProgressRecordsAndCheckedReads(unittest.TestCase):
     def test_the_launcher_sets_the_records_up_and_reads_step_output_only_through_the_checked_read(self):
         template, generator = TEMPLATE.read_text(encoding='utf-8'), GENERATE.read_text(encoding='utf-8')
         output = template.split('function Step-Output', 1)[1].split('\nfunction ', 1)[0]
-        self.assertLess(output.index("$Progress.out = $Out; $Progress.elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)"), output.index("Write-Json 'intent.json'"))
+        self.assertLess(output.index("$elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)"), output.index('$Progress.elevated = $elevated'))
+        self.assertLess(output.index('$Progress.elevated = $elevated'), output.index("Write-Json 'intent.json'"))
         run = template.split('function New-FleetRunDirectory', 1)[1].split('\nfunction ', 1)[0]
         # out\: the account may list it, nothing more; the two redirection targets are made here, the account may only write and append
         self.assertIn("'(A;;0x1200a9;;;' + $OwnerSid + ')'", run); self.assertNotIn('0x1301bf', run)
@@ -1055,7 +1056,8 @@ class OutAclProbeAndW1Restore(unittest.TestCase):
         self.assertEqual((r['stopped'], r['terminal']['w1Pause'], r['children'], r['pausedStill']), ('LINUX_OUT_ACL_PROBE_FAILED', None, [], True))
         template = TEMPLATE.read_text(encoding='utf-8')
         main = template.split('#region main', 1)[1]
-        self.assertLess(main.index('if ($FleetPlanSha256) {'), main.index('$W1Restore.armed = $true')); self.assertLess(main.index('$W1Restore.armed = $true'), main.index('Step-WindowsPreflightBeforeLinux'))
+        staged = main.split('$Stage = Step-Stage', 1)[1]
+        self.assertLess(staged.index('$W1Restore.armed = $preparedW1'), staged.index('Step-WindowsPreflightBeforeLinux'))
         root = template.split('function Step-LinuxRoot', 1)[1].split('#endregion generic', 1)[0]
         order = [root.index(x) for x in ('New-FleetRegistrar', "Step-LinuxOutAclProbe $exe", '$W1Restore.armed = $false', "$a = Invoke-FleetLinuxScript 'A' $exe", "if ($a.outcome -ceq 'REFUSED') { if (Test-FleetRefusedBeforeAnyChange $a.code) { $W1Restore.armed = $true }", "Invoke-FleetLinuxScript 'B'")]
         self.assertEqual(order, sorted(order))

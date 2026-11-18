@@ -25,12 +25,14 @@
 
 `ciPrincipalRoleRef` 与 `ciPrincipalQualificationRef` 保留首次授权的决定编号。服务端决定新连接此刻的角色与资格。自检的 `node-identity` 关联安装身份，`node-secrets-receipt` 核对原始回执，`current-ci-connection` 核对实际令牌并显示当前编号、代次及换绑回执。升级及回滚仍以安装身份摘要核验；已有当前连接的节点进入首装或重装时返回 `CI_CONNECTION_REINSTALL_BASELINE_REQUIRED`。
 
+换绑后的节点使用 v2 控制、v2 one-shot 和 bridge v4。旧版 v1 控制、bridge v2 和 v3 在 Windows 密钥读取时都没有传入控制账号 SID，因而会在指纹比较之前收到 `secret_file_boundary_unconfirmed`。
+
 ## 在节点上激活
 
-`windows/replace-ci-token.ps1` 的普通窗口计划绑定节点名、安装身份摘要、目标路径、目标 ACL 与合同版本。生产令牌经 Windows PowerShell 5.1 凭据窗口输入。演练机可用 `-TokenFile` 提供安装目录外的普通文件，读取该文件的独占句柄关闭时即删除它。
+`windows/replace-ci-token.ps1` 的普通窗口计划绑定节点名、安装身份摘要、目标路径、目标 ACL 与合同版本。正式安装只接受 Windows PowerShell 5.1 凭据窗口输入。无人值守演练在没有正式 CI 安装目录的主机进行，使用独立目录 `ci-activation-drill\resident\resident\<64 位代次摘要>\windows` 内的脚本。其计划和应用都指向该演练树。在那里可用 `-TokenFile` 提供演练安装目录外的普通文件。应用读取该文件的独占句柄关闭时即删除它。正式节点即便运行演练副本，也会在打开输入文件前返回 `CI_CONNECTION_TOKEN_FILE_DRILL_ONLY`。
 
 应用时先核 Owner 身份、计划与令牌指纹，再向安装记录指定的 `clued_ci_connection_self_v1` 发送令牌哈希及准入作用域。服务端的 `binding_id`、`node.binding_generation`、`node.rebind_receipt_id` 是记录三项的来源。工具用本机登记时的 Windows CNG 身份公钥核对 `node.identity_fingerprint`，缺少原密钥或返回外机指纹时停止。
 
-通过全部核验后，先持久化受相同 ACL 保护的临时事务记录，再准备两份 `.new` 文件，依次原子替换记录、令牌。两文件读回成功后删除临时事务记录。中断后重新提供同一枚令牌。两文件已提交而读回尚未完成时，只完成原事务的本地读回。普通重复使用当前令牌会在联网前拒绝。
+通过全部核验后，先持久化受相同 ACL 保护的临时事务记录，再准备两份 `.new` 文件，依次原子替换记录、令牌。中断后重新提供令牌。即使两文件都已替换，恢复也会重新查询服务端，核对节点、连接编号、代次和回执，再读回文件并移除事务标记。拒绝时保留现场。如果服务端已再次换绑，使用新令牌可接替中断的事务，新代次须高于盘上记录和待完成事务。恢复成功输出本次应答中的节点名与到期时间。事务完成后再次提供现用令牌会在联网前拒绝。
 
 HTTP 401/403 返回 `CI_CONNECTION_TOKEN_REFUSED`。缺少函数或应答形状不符返回 `CI_CONNECTION_SELF_UNAVAILABLE`。没有节点或换绑回执返回 `CI_CONNECTION_NOT_REBOUND`。指纹属于其他节点返回 `CI_CONNECTION_OTHER_NODE`。新激活的代次未递增返回 `CI_CONNECTION_GENERATION_NOT_NEWER`。这些拒绝均发生在目标目录写入前。[Owner 操作说明](../rollout/fleet/README.md#更换节点的-ci-连接)

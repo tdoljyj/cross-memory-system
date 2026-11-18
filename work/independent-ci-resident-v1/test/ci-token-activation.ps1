@@ -1,6 +1,8 @@
 ﻿$ErrorActionPreference='Stop'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $f = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$capture = $f.PSObject.Properties['transcript'] -and $f.transcript
+if ($capture) { $null = Start-Transcript -LiteralPath (Join-Path $f.root 'activation-transcript.txt') -NoClobber }
 $scriptFile=Join-Path $PSScriptRoot '../windows/replace-ci-token.ps1'
 . $scriptFile
 # 只替换运行身份、安装目录的宿主权限和 HTTP 传输。正式入口使用相同的应用函数。
@@ -8,6 +10,7 @@ $testSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $testDir=Join-Path $f.root 'secrets'
 $requests=New-Object Collections.ArrayList
 function Get-CiHostAuthority($root,$node) { return $true }
+function Get-CiFormalRoot { Join-Path $f.root 'fixture-formal-install' }
 function Get-LocalCiIdentityFingerprint {
   if ($f.sampleIdentity) { return $f.sampleIdentity }
   Get-CiJwkFingerprint $f.publicJwk
@@ -38,6 +41,12 @@ function Move-CiStage($source,$target) {
 }
 $root=Join-Path $f.root 'resident'
 try {
+  if ($f.action -ceq 'installed-host') { [void][IO.Directory]::CreateDirectory((Get-CiFormalRoot)) }
+  if ($f.action -ceq 'installed-file') {
+    function Get-CiLocalInstall { throw 'FIXTURE_INSTALL_LOOKUP_REACHED' }
+    Invoke-CiTokenReplace -Apply -TokenFile $f.tokenFile -ExpectedPlanSha256 ('0'*64)
+    throw 'FIXTURE_INSTALL_ACCEPTED_FILE'
+  }
   $plan=Invoke-CiTokenReplace -ResidentRoot $root
   if ($f.action -ceq 'fingerprint') {
     $key=[Security.Cryptography.CngKey]::Create([Security.Cryptography.CngAlgorithm]::ECDsaP256)
@@ -61,4 +70,7 @@ try {
   }
 } catch { $r=@{code=$_.Exception.Message;where=$_.InvocationInfo.ScriptLineNumber;trace=$_.ScriptStackTrace} }
 $r.requests=@($requests)
-[Console]::Out.Write(($r | ConvertTo-Json -Compress -Depth 8))
+$resultJson = $r | ConvertTo-Json -Compress -Depth 8
+if ($capture) {
+  try { Write-Host $resultJson } finally { $null = Stop-Transcript }
+} else { [Console]::Out.Write($resultJson) }

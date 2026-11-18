@@ -53,6 +53,11 @@
       "合同",
       "contract"
     ],
+    ["数组合同", "contract-array"],
+    ["数组身份摘要", "identity-array"],
+    ["数组日期", "date-array"],
+    ["合同含软连字符", "contract-soft-hyphen"],
+    ["身份摘要含软连字符", "identity-soft-hyphen"],
     [
       "编号",
       "binding"
