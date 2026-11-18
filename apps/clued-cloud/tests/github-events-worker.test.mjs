@@ -22,7 +22,7 @@ function deliver({ body = bytes, signature = sign(body), event = 'pull_request',
       ...(signature ? { 'x-hub-signature-256': signature } : {}), ...headers } }), environment);
 }
 
-test('原始字节验签后，三个事件字段恰好送达网关一次', async t => {
+test('原始字节验签后，合入和关闭未合入的投递各送达网关一次', async t => {
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (target, init) => {
     calls.push(JSON.parse(init.body));
@@ -38,8 +38,11 @@ test('原始字节验签后，三个事件字段恰好送达网关一次', async
   for (const mergeSha of [sha, null, undefined, '123abcd', 42]) {
     const body = mergeSha === sha ? bytes : JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merge_commit_sha: mergeSha } });
     assert.equal((await deliver({ body }))?.status, 200);
-    assert.deepEqual(calls.splice(0), [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merge_sha: mergeSha === sha ? sha : null } }]);
+    assert.deepEqual(calls.splice(0), [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merged: true, merge_sha: mergeSha === sha ? sha : null } }]);
   }
+  const body = JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: false } });
+  assert.equal((await deliver({ body }))?.status, 200);
+  assert.deepEqual(calls, [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merged: false, merge_sha: null } }]);
 });
 
 test('无效签名、无关事件和关闭的路由都不会调用网关', async t => {
@@ -49,7 +52,8 @@ test('无效签名、无关事件和关闭的路由都不会调用网关', async
     [{ body: Buffer.concat([bytes, Buffer.from(' ')]), signature: sign(bytes) }, 401],
     [{ signature: 'sha256=' + 'a'.repeat(63) }, 401], [{ event: 'ping', signature: null }, 401],
     [{ event: 'ping' }, 204], [{ body: JSON.stringify({ ...merged, action: 'opened' }) }, 204],
-    [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: false } }) }, 204],
+    [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: undefined } }) }, 204],
+    [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: 'false' } }) }, 204],
     [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, base: { ref: 'main' } } }) }, 204],
     [{ body: JSON.stringify({ action: 'closed', pull_request: { merged: true } }) }, 204],
     [{ body: '{' }, 400], [{ environment: { ...env, GITHUB_WEBHOOK_SECRET: undefined } }, 404],

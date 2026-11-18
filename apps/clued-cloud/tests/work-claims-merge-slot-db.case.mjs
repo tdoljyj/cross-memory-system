@@ -276,14 +276,13 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#6', merge_sha: 'd'.repeat(40) }),
     { status: 'ok', adopted: false, reason: 'no_copy_for_pr', pr_ref: 'tdoljyj/cross-memory-system#6', binding_receipt_id: null });
 
-    // --- So does a pull request closed without a merge. ---
+    // 只有让槽这一事实时，同一认领可以继续工作。
     a = committed(await renew('claude', a, { trigger_refs: [SLOT] })).claim;
     assert.ok(a.merge_slot_until, 'the returned slot is free again');
-    const closed = await agent('ci', 'clued_work_merge_slot_return_v1',
+    const returned = await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#5' });
-    assert.deepEqual([closed.status, closed.returned, closed.merge_slot_returned], ['ok', true, [a.claim_id]]);
-    // Its Task's only PR closed: the claim that served it is released too (20261113151000).
-    assert.deepEqual([(await view(a)).merge_slot_until, (await view(a)).status], [null, 'RELEASED']);
+    assert.deepEqual([returned.status, returned.returned, returned.merge_slot_returned], ['ok', true, [a.claim_id]]);
+    assert.deepEqual([(await view(a)).merge_slot_until, (await view(a)).status], [null, 'ACTIVE']);
     assert.equal((await agent('ci', 'clued_work_merge_slot_return_v1',
       { scope: 'global', pr_ref: 'tdoljyj/cross-memory-system#77' })).returned, false);
     await assert.rejects(() => agent('ci', 'clued_work_merge_slot_return_v1',
