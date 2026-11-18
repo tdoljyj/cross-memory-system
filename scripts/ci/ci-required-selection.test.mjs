@@ -257,7 +257,7 @@ test('every file a moved database test imports selects production-schema', () =>
   assert.ok(roots.length > 60 && seen.size > roots.length);
 });
 
-test('a migration selects the production-schema check; ordinary documentation selects only the application check', () => {
+test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
     ['production-schema']);
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/ledger/production-history.json']).suites,
@@ -271,7 +271,8 @@ test('a migration selects the production-schema check; ordinary documentation se
     ['production-schema']);
   const scanStart = SUITE_COMMANDS['production-schema'].at(-2);
   assert.equal(scanStart.cwd, 'apps/clued-cloud');
-  assert.deepEqual(scanStart.argv, ['node', '--test', '--test-concurrency=1',
+  t.mock.method(os, 'availableParallelism', () => 16);
+  assert.deepEqual(expandArgv(scanStart.argv, { cwd: scanStart.cwd }), ['node', '--test', '--test-concurrency=4',
     'tests/ci-scan-start-native-db.test.mjs', 'tests/ci-scan-start-batch-key-db.test.mjs', 'tests/ci-node-binding-rebind-db.test.mjs', 'tests/binding-role-single-reader-db.test.mjs',
     'tests/integration-runtime-derivation-db.test.mjs', 'tests/db-security-hygiene-db.test.mjs', 'tests/storage-runtime-authority-db.test.mjs', 'tests/work-claims-pr-end-release-db.test.mjs']);
   const docs = selectSuites('migration-verify', ['docs/README.md']);
@@ -281,6 +282,20 @@ test('a migration selects the production-schema check; ordinary documentation se
   assert.deepEqual(selectSuites('clued-cloud-tests', ['docs/README.md']).suites, ['clued-cloud']);
   assert.deepEqual(selectSuites('clued-cloud-tests', []).suites, []);
 });
+
+for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
+  test(`production-schema runs both database test commands at concurrency ${concurrency} with ${cpus} CPUs`, (t) => {
+    t.mock.method(os, 'availableParallelism', () => cpus);
+    const calls = [];
+    const spawn = (command, args) => {
+      calls.push([command, ...args]);
+      return { status: 0 };
+    };
+    assert.equal(runSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
+    assert.deepEqual(calls.slice(-2).map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
+      [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
+  });
+}
 
 test('outputs name every suite of the check', () => {
   const lines = outputLines('ci-suites', { suites: ['offline-drill'] });
