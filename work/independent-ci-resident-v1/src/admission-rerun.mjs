@@ -597,12 +597,13 @@ export class AdmissionRerunner {
     const seen = this.state.data.heads[headSha];
     const unavailable = new Set();
     for (const receipt of Object.values(this.state.data.records)) {
-      if (receipt.headSha !== headSha || receipt.kind !== REDISPATCH_KIND || receipt.http !== 422 || receipt.skipped
-        || seen?.workflowIds?.includes(receipt.workflowId)) continue;
+      if (receipt.headSha !== headSha || receipt.kind !== REDISPATCH_KIND || receipt.http !== 422) continue;
+      if (!receipt.skipped && seen?.workflowIds?.includes(receipt.workflowId)) continue;
       for (const name of receipt.checks ?? []) if (!seen?.missing || seen.missing.includes(name)) unavailable.add(name);
     }
     if (unavailable.size) return `${[...unavailable].join('、')} 没有运行，无法自动补发`;
     const r = this.state.record(headSha);
+    if (r?.kind === REDISPATCH_KIND && r.http === 422) return null;
     if (!r) {
       const staging = Object.values(this.state.data.records).filter(rec => rec.frontHeadSha === headSha && rec.outcome === 'sent')
         .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || b.attempt - a.attempt)[0];

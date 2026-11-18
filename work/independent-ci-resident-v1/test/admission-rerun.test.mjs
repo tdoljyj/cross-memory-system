@@ -392,7 +392,7 @@ test('bot head: refused dispatch stays visible and tells Owner once without retr
   const l = await lane(t, w);
   await l.r.step();
   assert.equal(w.dispatches.length, 1);
-  assert.match(l.r.line(HEAD), /必需测试被跳过且不能自动补跑：.*HTTP 422.*请推新提交或手动 Run workflow/);
+  assert.equal(l.r.line(HEAD), `${CHECK_NAMES.join('、')} 没有运行，无法自动补发`);
   assert.equal(l.toasts.length, 1);
   l.advance(HEAD_RECHECK_MS); await l.r.step();
   const restarted = await lane(t, w, { stateFile: l.file }); await restarted.r.step();
