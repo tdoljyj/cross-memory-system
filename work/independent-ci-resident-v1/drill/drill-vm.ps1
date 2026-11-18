@@ -147,7 +147,10 @@ function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:D
 
 function ConvertTo-DrillTimestamp($Value) {
   # ConvertFrom-Json can supply a DateTime in PowerShell 7.
-  if ($Value -is [DateTime]) { return [DateTimeOffset]$Value }
+  if ($Value -is [DateTime]) {
+    if ($Value.Kind -ne [DateTimeKind]::Unspecified) { return [DateTimeOffset]$Value }
+    return
+  }
   $timestamp = [DateTimeOffset]::MinValue
   if ($Value -is [string] -and $Value -cmatch '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$' -and
     [DateTimeOffset]::TryParse($Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$timestamp)) { return $timestamp }
@@ -170,12 +173,14 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
   $code = 'DRILL_HOST_STATUS_UNREADABLE'
   $mode = $null; $since = $null; $until = $null
   try {
+    if (-not $StatusJson.TrimStart().StartsWith('{')) { throw 'expected a status object' }
     $s = ConvertFrom-Json -InputObject $StatusJson -ErrorAction Stop
     $reportedMode = $s.node.mode; $executor = $s.executor.state
     if ($reportedMode -is [string] -and $reportedMode -cin @('ACTIVE', 'STANDBY') -and
         $null -ne $s.PSObject.Properties['current'] -and $executor -is [string]) {
       $code = 'DRILL_HOST_STATUS_STALE'
-      if (Test-DrillHostStatusFresh (Get-Prop $s 'writtenAt') $Now) {
+      $writtenAt = $s.PSObject.Properties['writtenAt']
+      if ($writtenAt -and (Test-DrillHostStatusFresh $writtenAt.Value $Now)) {
         $mode = $reportedMode
         $pause = $s.PSObject.Properties['intakePause']
         $holders = if ($pause -and $pause.Value -is [pscustomobject]) { $pause.Value.PSObject.Properties['holders'] }
@@ -760,10 +765,10 @@ function Read-DrillHostStatus {
   try { Get-Content -LiteralPath $script:Drill.HostStatus -Raw -Encoding UTF8 -ErrorAction Stop } catch { $null }
 }
 
-function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
+function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly) {
   $json = Read-DrillHostStatus
   $duty = Test-DrillHostSafety $json ([long]::MaxValue) -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
-  if (-not $duty.ok) { return $duty }
+  if (-not $duty.ok -or $StatusOnly) { return $duty }
   try {
     $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 5 -ErrorAction Stop
     if ($null -eq $os.FreePhysicalMemory) { throw 'missing memory reading' }
@@ -859,7 +864,7 @@ function Invoke-DrillWithHostHold([int]$Minutes, [scriptblock]$Body, [switch]$St
     } finally { $bootMutex.Dispose() }
     $now = Get-DrillTime
     $initial = Test-DrillHostSafety (Read-DrillHostStatus) ([long]::MaxValue) -Now $now
-    if ($initial.mode -ceq 'ACTIVE' -and -not $StandbyOnly) {
+    if ($initial.mode -ceq 'ACTIVE' -and $initial.code -cin @('DRILL_HOST_IS_ON_DUTY', 'DRILL_HOST_CI_BUSY') -and -not $StandbyOnly) {
       $holdMinutes = $script:Drill.IntakeWaitMinutes + $Minutes + $script:Drill.IntakeMarginMinutes
       if ($holdMinutes -gt $script:Drill.IntakeMaxMinutes) { throw (New-DrillError 'DRILL_HOST_INTAKE_BUDGET_EXCEEDED' @{ minutes = $holdMinutes }) }
       if ($initial.holdUntil -gt $now) { throw (New-DrillError 'DRILL_HOST_CI_BUSY' 'a previous drill hold is still in force') }
@@ -872,7 +877,7 @@ function Invoke-DrillWithHostHold([int]$Minutes, [scriptblock]$Body, [switch]$St
       while ($clock.Elapsed -lt $wait) {
         $deadline = (Get-DrillTime).AddMinutes($Minutes)
         $holdUntil = $deadline.AddMinutes($script:Drill.IntakeMarginMinutes)
-        $safety = Get-DrillHostSafety -HoldUntil $holdUntil
+        $safety = Get-DrillHostSafety -HoldUntil $holdUntil -StatusOnly
         if ($safety.ok -and $safety.holdSince -ge $requestedAt.AddMilliseconds(-1) -and
             $safety.holdUntil -ge $holdUntil -and $clock.Elapsed -lt $wait) {
           $window.deadline = $deadline
@@ -1475,24 +1480,29 @@ $script:GuestM5Files = {
   }
   $readSmall = {
     param($Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
-    $file = Get-Item -LiteralPath $Path
-    if ($file.Length -gt 8192 -or $file.Attributes -band [IO.FileAttributes]::ReparsePoint) { return }
-    $bytes = [IO.File]::ReadAllBytes($file.FullName)
-    if ($bytes.Length -le 8192) { [Convert]::ToBase64String($bytes) }
+    try {
+      if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+      $file = Get-Item -LiteralPath $Path
+      if ($file.Length -gt 8192 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+      $bytes = [IO.File]::ReadAllBytes($file.FullName)
+      if ($bytes.Length -le 8192) { [Convert]::ToBase64String($bytes) }
+    } catch { }
   }
   $public = @{}
   foreach ($name in $files.Keys) {
     if ($files[$name]) { $public[$name] = & $readSmall $files[$name] }
   }
   $acceptance = Join-Path $Root 'record\acceptance.json'
-  if (Test-Path -LiteralPath $acceptance -PathType Leaf) {
-    $node = (Get-Content -LiteralPath $acceptance -Raw -Encoding UTF8 | ConvertFrom-Json).node
-    if ($node -and $node.controllerSid -cmatch '^S-1-5-21-(\d+-){3}\d+$' -and $node.ownerSid -cmatch '^S-1-5-21-(\d+-){3}\d+$') {
-      $profile = @{ controllerSid = $node.controllerSid; ownerSid = $node.ownerSid } | ConvertTo-Json -Compress
-      $public['profile.json'] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($profile))
+  try {
+    if (Test-Path -LiteralPath $acceptance -PathType Leaf) {
+      $node = (Get-Content -LiteralPath $acceptance -Raw -Encoding UTF8 | ConvertFrom-Json).node
+      if ($node -and $node.controllerSid -is [string] -and $node.ownerSid -is [string] -and
+          $node.controllerSid -cmatch '^S-1-5-21-(\d+-){3}\d+$' -and $node.ownerSid -cmatch '^S-1-5-21-(\d+-){3}\d+$') {
+        $profile = @{ controllerSid = $node.controllerSid; ownerSid = $node.ownerSid } | ConvertTo-Json -Compress
+        $public['profile.json'] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($profile))
+      }
     }
-  }
+  } catch { }
   $latest = [DateTimeOffset]::MinValue
   foreach ($name in @('renew-ci.json', 'renew-upgrade.json')) {
     $data = & $readSmall (Join-Path $Root "broker\$name")
@@ -1516,7 +1526,7 @@ function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
   try { $files = Invoke-DrillGuest $Cred $script:GuestM5Files -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'm5-observations' }
   catch { $files = $null; $code = (Get-DrillCode $_).code }
   foreach ($name in $names) {
-    $data = Get-Prop $files $name
+    $data = if ($files -is [System.Collections.IDictionary]) { $files[$name] }
     if (-not $data) { $missing += $name; continue }
     [IO.File]::WriteAllBytes((Join-Path $dir $name), [Convert]::FromBase64String($data))
   }
