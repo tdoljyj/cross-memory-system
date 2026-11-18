@@ -22,7 +22,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.handover-external-source-check": "1.0.3",
   "script.handover-external-journal": "1.0.2",
   "script.handover-external-register": "1.0.3",
-  "script.workflow-source-profile": "1.0.6",
+  "script.workflow-source-profile": "1.0.7",
   "script.kooyumi-plugin-bundle": "1.0.2",
   "script.storage-google-redirect-cutover": "1.0.1",
   "script.storage-zip": "1.0.0",
@@ -34,10 +34,10 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.non-pr-control-source": "1.0.4",
   "script.source-only-workflow": "1.0.1",
   "script.control-workflow-source": "1.0.25",
-  "script.required-applicability": "1.0.8",
+  "script.required-applicability": "1.0.9",
   "script.standard-runner-actor-source": "1.0.1",
   "ci.temporary-storage-lifecycle": "1.0.7",
   "script.archive-retention": "1.0.11",
-  "script.merge-reconciliation": "1.0.36"
+  "script.merge-reconciliation": "1.0.38"
 };
 export const MCP_SERVER_VERSION = "0.9.18";
