@@ -280,10 +280,16 @@ test('PR daily cap: only a terminal verdict counts, including after reopening an
   const s = subject(), key = batchKey(s);
   await ledger.reserve(key, s);
   await ledger.markStarted(key, { batchId: '0123456789abcdef-0123456789ab' });
-  assert.equal((await ledger.usage(0)).startedByPr.size, 0, 'running or parked is not a PR verdict');
+  const running = await ledger.usage(0, { budgetTimes: true });
+  assert.equal(running.startedByPr.size, 0, 'running or parked is not a PR verdict');
+  assert.equal(running.budgetTimes.has(`pr:${s.pr}`), false);
+  const startedAt = now;
+  now += 1_000;
   await ledger.terminal(key, 'COMPLETED', {});
   const reopened = await Ledger.open(root, () => now);
-  assert.equal((await reopened.usage(0)).startedByPr.get(s.pr), 1, 'derived from durable terminal evidence');
+  const completed = await reopened.usage(0, { budgetTimes: true });
+  assert.equal(completed.startedByPr.get(s.pr), 1, 'derived from durable terminal evidence');
+  assert.deepEqual(completed.budgetTimes.get(`pr:${s.pr}`), [startedAt], 'the notice expires from the same window as the charge');
   now += 86_400_001;
   assert.equal((await reopened.usage(now - 86_400_000)).startedByPr.size, 0);
   const released = subject({ headSha: '9'.repeat(40) }), rk = batchKey(released);

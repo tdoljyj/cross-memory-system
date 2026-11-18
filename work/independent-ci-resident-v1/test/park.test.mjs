@@ -238,6 +238,7 @@ test('#1144: 100 historical retries across PRs cannot block the front PR after r
 
 const isoAt = at => new Date(at).toISOString();
 
+// scope-isolation: park.stage8RetriesPer24h
 test('#1144: an exhausted PR does not block another due parked PR; its own limit still holds', async t => {
   const f = await executorFixture(t, { engine: stage8Engine([notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED'), notReady('RESIDENT_MERGE_QUEUE_NOT_JOINED')]),
     policy: rawPolicy({ park: { ...rawPolicy().park, stage8RetriesPer24h: 1 } }) });
@@ -249,7 +250,8 @@ test('#1144: an exhausted PR does not block another due parked PR; its own limit
   assert.equal((await f.exec.tick()).state, 'COMPLETED', 'skip the exhausted first PR and try the second');
   assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)), 'the exhausted PR still waits');
   assert.equal((await f.ledger.state(batchKey(subject({ pr: 900, headSha: H(4) })))).outcome, 'COMPLETED');
-  assert.ok(f.queue.notices.some(n => n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' && n.pr === 884));
+  const budget = f.queue.notices.find(n => n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' && n.pr === 884)?.budget;
+  assert.deepEqual(budget, { policyKey: 'park.stage8RetriesPer24h', scope: 'pr', used: 1, limit: 1, resetsAt: f.clock() - 10 * MIN + 24 * 60 * MIN });
   const notice = notificationEvents({ status: { pending: [], notices: f.queue.notices }, now: f.clock() }).find(n => /第 8 段重试额度/.test(n.title));
   assert.match(notice.title, /PR #884/);
 });

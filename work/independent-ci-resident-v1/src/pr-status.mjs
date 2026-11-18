@@ -1,3 +1,4 @@
+import { budgetForPull, budgetText } from './budget-alert.mjs';
 // The executor's status on the PR page, and Windows notifications for the big events (resident quota redesign v0.6
 // + §9, phase 1, item 7; Owner Decision 38936534). Runs in the companion (the Owner's own session and gh login).
 //
@@ -65,7 +66,7 @@ export function statusSignature(status) {
   return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
     intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true,
-    parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status) });
+    parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status), budgets: status.notices?.filter(n => n.budget).map(n => [n.key, n.budget]) ?? [] });
 }
 // Whether a daily budget of the whole queue is used up (status.limits, written by the scheduling pass that reached the due rows): the
 // executions (every row) or the evaluations (not a wait's retry: it has its own budget). Review round 23, MINOR 1.
@@ -256,6 +257,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   }
   if (!status) return null;
   if (now - status.writtenAt > staleMs) return { state: 'error', description: `执行器状态自 ${hhmm(status.writtenAt)} 起未更新，可能已停止` };
+  const budget = budgetForPull(status, pull, now);
+  if (budget && !status.halt && !status.paused && !(status.current?.pr === pull.pr && status.current?.headSha === pull.headSha))
+    return { state: 'pending', description: clip(budgetText(budget)) };
   const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
   if (mine(status.current)) {
     const stage = status.current.stage;
@@ -448,6 +452,12 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
     const head = n.headSha ? n.headSha.slice(0, 8) : '';
+    if (n.budget) {
+      if (n.at > now || now - n.at > 86400000 || n.budget.resetsAt !== null && n.budget.resetsAt < now) continue;
+      out.push({ key: `notice:${n.key}`, title: n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' ? `PR #${n.pr} 的第 8 段重试额度已用完` : '常驻 CI 额度已用完',
+        body: `${n.pr ? `PR #${n.pr}：` : ''}${budgetText(n.budget)}。额度与所有门禁保持不变。` });
+      continue;
+    }
     switch (n.kind) {
       case 'role-probe-connection': out.push({ key: `notice:${n.key}`, title: '节点角色连接授权已失效', body: '只读探测收到连接授权拒绝，可能已撤销、过期或不再适用。角色状态不确定；请检查连接与角色安排。此通知不启动或重试 CI。' }); break;
       case 'role-probe-interrupted': out.push({ key: `notice:${n.key}`, title: '节点角色探测被中断，已自动恢复', body: '上一次角色探测（或排队观察）进行到一半时执行器重启或断电。已结束那次探测，按上一次完整的结论立即重新探测；如果中断时的进程还占着探测通道，这次探测会停机等你处理。连续中断达到策略上限也会停机。' }); break;
@@ -456,7 +466,10 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'new-trigger': out.push(n.code === 'CLAIM_CHANGED'
         ? { key: `notice:${n.key}`, title: `PR #${n.pr} 认领或授权已更新`, body: `提交 ${head} 上次因认领或授权条件未准入；已确认条件更新，立即重新评估。` }
         : { key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
-      case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
+      case 'stopped':
+        if (status.notices?.some(b => b.budget && b.pr === n.pr && b.headSha === n.headSha
+          && ['RELEASE_CAP_REACHED', 'NETWORK_RELEASE_CAP_REACHED'].includes(b.code))) break;
+        out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`,
         title: n.pr ? `PR #${n.pr} 的第 8 段重试额度已用完` : '今日第 8 段重试额度已用完',
         body: n.pr ? '这个 PR 在过去 24 小时内的重试已达上限，额度恢复后继续；其他 PR 的额度独立计算。' : '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
@@ -594,6 +607,8 @@ export class PrStatusReporter {
     const r = this.notify ? await this.notify(e.key, e.title, e.body).then(() => ({ code: 0 }), () => ({ code: 1 }))
       : await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
     if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; return false; }
+    // Budget alerts retry a failed enqueue. A failure is auxiliary, never a delivered notification.
+    if (e.key.startsWith('notice:budget:') && r.code !== 0) return false;
     this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
     this.dirty = true;
     if (stalledCall(r)) this.stalled = true;
