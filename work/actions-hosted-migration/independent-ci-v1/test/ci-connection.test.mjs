@@ -9,7 +9,7 @@ import { generateKeyPairSync, createHash } from 'node:crypto';
 import { canonical, digest } from '../src/proof.mjs';
 import { probeRole } from '../src/resident-v2/role-probe-entry.mjs';
 import { controllerPrincipal } from '../src/resident-v2/entry-runtime.mjs';
-import { assertProtectedPaths } from '../runtime/protected-files.mjs';
+import { assertProtectedPaths, readProtected } from '../runtime/protected-files.mjs';
 import { fixtureRecord } from './resident-v2-fixtures.mjs';
 import { nodeIdentityOf, nodeIdentitySha256 } from '../../../independent-ci-resident-v1/src/node-identity.mjs';
 
@@ -190,9 +190,9 @@ test('旧版控制消费者用轮换后的令牌拒绝，零外部效果', { ski
   const pins=new Map([['scripts/ci/clued-work-admission.mjs','e'],['config/merge-admission-policy.json','p']]);
   const jobs=roles.map(role=>({role,attempt:1,sourceManifestSha256:config.sourceManifestSha256,repo:selector.repository}));
   const docs={'installation.json':JSON.stringify(config),'acceptance.json':JSON.stringify(accepted),'source-manifest.json':manifest};
-  let effects=0;
+  let effects=0, reader=io.tokenReader;
   globalThis.ciV1Fixture={pins,lease:{data:{documents:Object.fromEntries(Object.entries(docs).map(([k,v])=>[k,Buffer.from(v)])),
-    expiresAt:accepted.expiresAt,sourceHashes:pins},close(){}}, read:async file=>file.endsWith('jobs.json')?JSON.stringify(jobs):io.tokenReader(file),
+    expiresAt:accepted.expiresAt,sourceHashes:pins},close(){}}, read:async (file,options)=>file.endsWith('jobs.json')?JSON.stringify(jobs):reader(file,options),
     effect:()=>{effects++;throw Error('unexpected effect')}};
   const mocks=new Map([
     ['held-source.mjs','export const openHeldSource=async()=>f.lease,takeHeldSource=x=>x;'],
@@ -214,5 +214,37 @@ test('旧版控制消费者用轮换后的令牌拒绝，零外部效果', { ski
     assert.equal(r.reason,'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED');
     assert.equal(r.sideEffects,0); assert.equal(effects,0);
     assert.deepEqual(io.reads,['fixture.pem','ci-admission.token']);
+    reader=(_file,options)=>readProtected(io.keyFile,{...options,secretRoot:io.root});
+    const guarded=await consumeInstalledControlCheck(selector);
+    assert.equal(guarded.reason,'secret_file_boundary_unconfirmed');
+    assert.equal(guarded.sideEffects,0); assert.equal(effects,0);
   } finally { hook.deregister();delete globalThis.ciV1Fixture; }
+});
+
+for (const version of [2,3]) test('旧版 bridge v'+version+' 在 Windows 密钥边界及安装指纹处分别拒绝', {skip:process.platform!=='win32'},async t=>{
+  const io=await disk(t,canonical(connection),newToken);
+  const entry=new URL('../worker/protected-job-bridge-v'+version+'/windows-issuer.mjs?rotation',import.meta.url);
+  let effects=0;
+  const f={root:io.root,key:io.keyFile,read:readProtected,
+    context:{config:record.config,accepted:record.accepted},effect:()=>{effects++;throw Error('unexpected effect')}};
+  globalThis.ciLegacyIssuer=f;
+  const mocks=new Map([
+    ['boundary.mjs','export const loadWindowsContext=async()=>f.context,takeAcceptedBridgeContext=x=>x,assertWindowsContextLive=()=>{},closeWindowsContext=()=>{};'],
+    ['mailbox.mjs','export const openAcceptedMailbox=async()=>({lock:async()=>{},write:f.effect}),takeActualMailbox=x=>x;'],
+    ['protected-files.mjs','export const INSTALL_ROOT=f.root,APP_KEY_FILE=f.key,assertProtectedPaths=()=>{},readProtected=(...args)=>f.read(...args);'],
+    ['github.mjs','export const createGitHubChecksPort=f.effect;'],
+  ]);
+  const hook=registerHooks({resolve(spec,ctx,next){
+    const src=ctx.parentURL===entry.href && mocks.get(spec.split('/').pop());
+    return src?{url:'data:text/javascript,'+encodeURIComponent('const f=globalThis.ciLegacyIssuer;'+src+'\n// bridge '+version),shortCircuit:true}:next(spec,ctx);
+  }});
+  try {
+    const {openWindowsJobIssuer}=await import(entry.href);
+    for (const [reader,reason] of [[readProtected,'secret_file_boundary_unconfirmed'],[io.tokenReader,'ACTUAL_ISSUER_PRINCIPAL_CHANGED']]) {
+      f.read=reader;
+      const r=await openWindowsJobIssuer({});
+      assert.equal(r.reason,reason);
+      assert.equal(r.jobIssued,false); assert.equal(r.checksWritten,false); assert.equal(effects,0);
+    }
+  } finally {hook.deregister();delete globalThis.ciLegacyIssuer;}
 });

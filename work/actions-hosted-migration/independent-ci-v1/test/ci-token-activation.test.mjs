@@ -17,13 +17,15 @@ const script = fileURLToPath(new URL('test/ci-token-activation.ps1', resident));
 const old = 'clued_bnd_previous_fixture';
 const fresh = 'clued_bnd_rebound_fixture';
 const pin = t => digest('clued.independent-ci.ci-binding-pin/1\0' + t);
+const heartbeatPin = t => digest('clued.independent-ci.heartbeat-token-pin/1\0' + t);
 const recordName = 'ci-admission.connection.json';
 const tokenName = 'ci-admission.token';
 const win = { skip: process.platform !== 'win32' };
 const pub = { kty:'EC', crv:'P-256', x:'axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY', y:'T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU' };
-function setup(t, {upgrade, heartbeat, generation} = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-activate-'));
-  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
+function setup(t, {upgrade, heartbeat, heartbeatFingerprint, generation} = {}) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-activate-'));
+  t.after(() => fs.rmSync(parent, {recursive:true, force:true}));
+  const root = path.join(parent, 'ci-activation-drill');
   const dir = path.join(root, 'secrets');
   for (const d of [dir, 'resident/record', 'resident/install'].map(d => path.resolve(root,d))) fs.mkdirSync(d,{recursive:true});
   const { files } = fixtureRecord({ciTokenPinSha256:pin(old)});
@@ -33,7 +35,7 @@ function setup(t, {upgrade, heartbeat, generation} = {}) {
   const receipt = { contract:'clued.independent-ci.resident-install-receipt/6', roleAssumption:'NONE', nodeIdentity:identity,
     nodeIdentitySha256:nodeIdentitySha256(identity), installationSha256:digest(files['installation.json']), acceptanceSha256:config.acceptanceSha256,
     upgradeToken:{placed:true,fingerprint:pin(upgrade ?? 'clued_bnd_upgrade_fixture')},
-    heartbeatToken:{placed:!!heartbeat,fingerprint:heartbeat ? pin(heartbeat) : null,bindingId:null} };
+    heartbeatToken:{placed:!!heartbeat,fingerprint:heartbeatFingerprint ?? (heartbeat ? heartbeatPin(heartbeat) : null),bindingId:null} };
   fs.writeFileSync(path.join(root,'resident/install/install-receipt.json'),JSON.stringify(receipt));
   fs.writeFileSync(path.join(dir,tokenName),old);
   if (generation) fs.writeFileSync(path.join(dir,recordName), canonical({activatedAt:'2026-01-01T00:00:00.000Z',baseNodeIdentitySha256:receipt.nodeIdentitySha256,
@@ -46,7 +48,7 @@ function snapshot(dir) {
 }
 function run(ctx, {token=fresh, status=200, reply, point='', action='apply', sampleIdentity=null}={}) {
   const tokenFile = ctx.root + '.exercise.token';
-  if (action==='apply') fs.writeFileSync(tokenFile,token+'\r\n');
+  if (['apply','installed-file','installed-host'].includes(action)) fs.writeFileSync(tokenFile,token+'\r\n');
   const p = spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',script],{encoding:'utf8',windowsHide:true,
     input:JSON.stringify({root:ctx.root,tokenFile,reply:reply===undefined ? sample() : reply,status,point,action,sampleIdentity,publicJwk:pub})});
   assert.ok(!(p.stdout+p.stderr).includes(token),'输出含凭据');
@@ -122,7 +124,7 @@ for(const [name,status,change,expected] of [
   assert.deepEqual(snapshot(ctx.dir),before);
 });
 for(const kind of ['upgrade','heartbeat','current']) test('重复指纹在联网前拒绝 '+kind,win,t=>{
-  const ctx=setup(t,{[kind]:fresh}), before=snapshot(ctx.dir);
+  const ctx=setup(t,kind==='heartbeat' ? {heartbeat:fresh,heartbeatFingerprint:pin(fresh)} : {[kind]:fresh}), before=snapshot(ctx.dir);
   const r=run(ctx,{token:kind==='current'?old:fresh,reply:bound()});
   assert.match(r.code,/TOKEN.*(SAME|REUSED)/); assert.deepEqual(r.requests,[]); assert.deepEqual(snapshot(ctx.dir),before);
 });
@@ -132,8 +134,15 @@ for(const point of ['', 'staged','record','token']) test('服务端三值、ACL 
     const stopped=run(ctx,{reply:v,point}); assert.equal(stopped.code,'FIXTURE_INTERRUPTED');
     assert.deepEqual(stopped.requests[0].snapshot,before);
   }
+  const atRetry=snapshot(ctx.dir);
+  v.node.name='fresh-name';
+  v.connection_expires_at='2027-01-15T00:00:00Z';
   const result=run(ctx,{reply:v});
   assert.equal(result.status,'CI_CONNECTION_ACTIVATED',JSON.stringify(result));
+  assert.equal(result.requests.length,1);
+  assert.deepEqual(result.requests[0].snapshot,atRetry);
+  assert.equal(result.nodeName,v.node.name);
+  assert.equal(result.expiresAt,v.connection_expires_at);
   if(!point) assert.deepEqual(result.requests[0].snapshot,before);
   assert.deepEqual(fs.readdirSync(ctx.dir).sort(),[recordName,tokenName]);
   const rec=JSON.parse(fs.readFileSync(path.join(ctx.dir,recordName)));
@@ -141,4 +150,84 @@ for(const point of ['', 'staged','record','token']) test('服务端三值、ACL 
   assert.equal(rec.tokenPinSha256,pin(fresh));
   assert.equal(fs.readFileSync(path.join(ctx.dir,tokenName),'utf8'),fresh);
   assert.deepEqual(result.companionCanRead,[false,false]);
+});
+test('最后读回前由本次应答决定是否完成事务',win,t=>{
+  const ctx=setup(t), v=bound();
+  assert.equal(run(ctx,{reply:v,point:'token'}).code,'FIXTURE_INTERRUPTED');
+  const before=snapshot(ctx.dir);
+  for(const [status,change,code] of [
+    [401,()=>{},'TOKEN_REFUSED'],[200,r=>r.node=null,'NOT_REBOUND'],
+    [200,r=>r.node.identity_fingerprint='d'.repeat(64),'OTHER_NODE'],
+    [200,r=>r.node.rebind_receipt_id=r.node.node_id,'PENDING_CHANGED'],
+    [200,r=>r.node.node_id=r.node.rebind_receipt_id,'PENDING_CHANGED'],
+  ]) {
+    const reply=structuredClone(v); change(reply);
+    const r=run(ctx,{status,reply});
+    assert.equal(r.code,'CI_CONNECTION_'+code);
+    assert.equal(r.requests.length,1);
+    assert.deepEqual(snapshot(ctx.dir),before);
+  }
+});
+for(const point of ['staged','record','token']) test('更新代次可接替中断事务 '+point,win,t=>{
+  const ctx=setup(t), v=bound(), token='clued_bnd_next_fixture';
+  assert.equal(run(ctx,{reply:v,point}).code,'FIXTURE_INTERRUPTED');
+  const before=snapshot(ctx.dir);
+  const next=structuredClone(v);
+  next.binding_id='ffffffff-1234-4321-aaaa-123456789012';
+  next.node.rebind_receipt_id='eeeeeeee-1234-4321-aaaa-123456789012';
+  const stale=run(ctx,{reply:next,token});
+  assert.equal(stale.code,'CI_CONNECTION_GENERATION_NOT_NEWER');
+  assert.equal(stale.requests.length,1);
+  assert.deepEqual(snapshot(ctx.dir),before);
+  next.node.binding_generation++;
+  const stopped=run(ctx,{reply:next,token,point:'staged'});
+  assert.equal(stopped.code,'FIXTURE_INTERRUPTED');
+  assert.deepEqual(stopped.requests[0].snapshot,before);
+  const r=run(ctx,{reply:next,token});
+  assert.equal(r.status,'CI_CONNECTION_ACTIVATED',JSON.stringify(r));
+  assert.equal(r.requests.length,1);
+  const record=JSON.parse(fs.readFileSync(path.join(ctx.dir,recordName)));
+  assert.deepEqual([record.bindingId,record.bindingGeneration,record.rebindReceiptId,record.previousSha256,record.tokenPinSha256],
+    [next.binding_id,next.node.binding_generation,next.node.rebind_receipt_id,before[recordName]??null,pin(token)]);
+  assert.deepEqual(Object.keys(snapshot(ctx.dir)).sort(),[recordName,tokenName]);
+  assert.equal(fs.readFileSync(path.join(ctx.dir,tokenName),'utf8'),token);
+});
+test('正式安装入口在接触安装目录和演练文件之前拒绝文件输入',win,t=>{
+  const ctx=setup(t), before=snapshot(ctx.dir);
+  t.after(()=>fs.rmSync(ctx.root+'.exercise.token',{force:true}));
+  const r=run(ctx,{action:'installed-file'});
+  assert.equal(r.code,'CI_CONNECTION_TOKEN_FILE_DRILL_ONLY');
+  assert.deepEqual(r.requests,[]);
+  assert.equal(fs.readFileSync(ctx.root+'.exercise.token','utf8'),fresh+'\r\n');
+  assert.deepEqual(snapshot(ctx.dir),before);
+});
+test('首装格式的心跳令牌与回执在联网前被拒绝',win,t=>{
+  const token='clued_hbt_'+'a'.repeat(43), ctx=setup(t,{heartbeat:token}), before=snapshot(ctx.dir);
+  const receipt=JSON.parse(fs.readFileSync(path.join(ctx.root,'resident/install/install-receipt.json')));
+  assert.equal(receipt.heartbeatToken.fingerprint,heartbeatPin(token));
+  const r=run(ctx,{token,reply:bound()});
+  assert.equal(r.code,'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED');
+  assert.deepEqual(r.requests,[]); assert.deepEqual(snapshot(ctx.dir),before);
+});
+test('已有正式安装的主机也拒绝从隔离副本读取演练文件',win,t=>{
+  const ctx=setup(t), before=snapshot(ctx.dir);
+  const r=run(ctx,{action:'installed-host',reply:bound()});
+  assert.equal(r.code,'CI_CONNECTION_TOKEN_FILE_DRILL_ONLY');
+  assert.deepEqual(r.requests,[]); assert.deepEqual(snapshot(ctx.dir),before);
+  assert.equal(fs.readFileSync(ctx.root+'.exercise.token','utf8'),fresh+'\r\n');
+});
+test('隔离安装树中的脚本从正式命令行生成同一演练目录的计划',win,t=>{
+  const ctx=setup(t), windows=path.join(ctx.root,'resident','resident','a'.repeat(64),'windows');
+  fs.mkdirSync(windows,{recursive:true});
+  for(const name of ['replace-ci-token.ps1','verify-resident.ps1']) {
+    fs.copyFileSync(new URL('windows/'+name,resident),path.join(windows,name));
+  }
+  const input=path.join(path.dirname(ctx.root),'unopened.token');
+  fs.writeFileSync(input,'fixture');
+  const p=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',path.join(windows,'replace-ci-token.ps1')],
+    {windowsHide:true,encoding:'utf8'});
+  assert.equal(p.status,0,p.stderr);
+  const r=JSON.parse(p.stdout);
+  assert.equal(r.status,'CI_CONNECTION_PLAN'); assert.equal(r.plan.recordPath,path.join(ctx.dir,recordName));
+  assert.equal(fs.readFileSync(input,'utf8'),'fixture');
 });

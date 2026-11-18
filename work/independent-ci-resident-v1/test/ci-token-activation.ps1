@@ -8,6 +8,7 @@ $testSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $testDir=Join-Path $f.root 'secrets'
 $requests=New-Object Collections.ArrayList
 function Get-CiHostAuthority($root,$node) { return $true }
+function Get-CiFormalRoot { Join-Path $f.root 'fixture-formal-install' }
 function Get-LocalCiIdentityFingerprint {
   if ($f.sampleIdentity) { return $f.sampleIdentity }
   Get-CiJwkFingerprint $f.publicJwk
@@ -38,6 +39,12 @@ function Move-CiStage($source,$target) {
 }
 $root=Join-Path $f.root 'resident'
 try {
+  if ($f.action -ceq 'installed-host') { [void][IO.Directory]::CreateDirectory((Get-CiFormalRoot)) }
+  if ($f.action -ceq 'installed-file') {
+    function Get-CiLocalInstall { throw 'FIXTURE_INSTALL_LOOKUP_REACHED' }
+    Invoke-CiTokenReplace -Apply -TokenFile $f.tokenFile -ExpectedPlanSha256 ('0'*64)
+    throw 'FIXTURE_INSTALL_ACCEPTED_FILE'
+  }
   $plan=Invoke-CiTokenReplace -ResidentRoot $root
   if ($f.action -ceq 'fingerprint') {
     $key=[Security.Cryptography.CngKey]::Create([Security.Cryptography.CngAlgorithm]::ECDsaP256)

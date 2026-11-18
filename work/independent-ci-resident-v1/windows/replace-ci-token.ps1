@@ -236,9 +236,23 @@ function Get-CiActivationResult($reply,$previous,$recordSha) {
     nodeName=$reply.node.name;expiresAt=$reply.connection_expires_at;recordSha256=$recordSha;
     message=('已写入并读回。服务端确认：此令牌是连接 '+$reply.binding_id+'，已换绑到本节点（代次 '+$reply.node.binding_generation+'）。尚待 DESK 读回：换绑后的心跳已被接受、自检 PASS。')}
 }
+function Get-CiFormalRoot { 'C:\ProgramData\CluedIndependentCI' }
+function Assert-CiDrillInputTarget($ciRoot,$residentRoot) {
+  if ([IO.Path]::GetFileName($ciRoot) -ine 'ci-activation-drill' -or [IO.Path]::GetFileName($residentRoot) -ine 'resident') {
+    throw 'CI_CONNECTION_TOKEN_FILE_DRILL_ONLY'
+  }
+  # 只有确认本机没有正式安装目录，隔离的演练树才可读取文件凭据。
+  try { [void][IO.File]::GetAttributes((Get-CiFormalRoot)) }
+  catch [IO.FileNotFoundException] { return }
+  catch [IO.DirectoryNotFoundException] { return }
+  catch { throw 'CI_CONNECTION_TOKEN_FILE_DRILL_ONLY' }
+  throw 'CI_CONNECTION_TOKEN_FILE_DRILL_ONLY'
+}
 function Invoke-CiTokenReplace {
-  param([string]$ResidentRoot='C:\ProgramData\CluedIndependentCI\resident',[switch]$Apply,[string]$ExpectedPlanSha256,[string]$TokenFile)
+  param([string]$ResidentRoot=(Join-Path (Get-CiFormalRoot) 'resident'),[switch]$Apply,[string]$ExpectedPlanSha256,[string]$TokenFile)
+  $ResidentRoot=[IO.Path]::GetFullPath($ResidentRoot).TrimEnd('\')
   $ciRoot=Split-Path -Parent $ResidentRoot
+  if ($TokenFile) { Assert-CiDrillInputTarget $ciRoot $ResidentRoot }
   $dir=Join-Path $ciRoot 'secrets'
   $tokenPath=Join-Path $dir 'ci-admission.token'
   $recordPath=Join-Path $dir 'ci-admission.connection.json'
@@ -286,35 +300,32 @@ function Invoke-CiTokenReplace {
     $pending=$null
     if ($null -ne $pendingBytes) {
       $pending=([Text.Encoding]::UTF8.GetString($pendingBytes) | ConvertFrom-Json)
-      if ($pending.planSha -cne $planSha -or $pending.tokenPin -cne $pin) { throw 'CI_CONNECTION_PENDING_OTHER_ACTIVATION' }
+      if ($pending.planSha -cne $planSha) { throw 'CI_CONNECTION_PENDING_OTHER_ACTIVATION' }
     }
     $oldHash=if ($null -ne $oldBytes) { Get-CiHash $oldBytes } else { $null }
-    $installedRecord=$null -ne $pending -and $oldHash -ceq $pending.recordSha
-    if ($actualPin -ceq $pin) {
-      if (!$installedRecord) { throw 'CI_CONNECTION_TOKEN_REUSED' }
-      if ($old.tokenPinSha256 -cne $pin -or $old.bindingId -cne $pending.answer.binding_id -or
-          $old.generation -ne $pending.answer.node.binding_generation -or $old.receiptId -cne $pending.answer.node.rebind_receipt_id) {
-        throw 'CI_CONNECTION_PENDING_CHANGED'
-      }
-      # 上次已提交两文件，只欠读回。此处只完成已经确认过的事务，不创建新记录。
-      Assert-CiPlaced $recordPath $oldBytes $sddl
-      Assert-CiPlaced $tokenPath $token $sddl
-      [IO.File]::Delete($pendingPath)
-      return Get-CiActivationResult $pending.answer $pending.before $oldHash
-    }
-    if (!$installedRecord -and ($old.tokenPinSha256 -ceq $pin -or $actualPin -cne $old.tokenPinSha256)) { throw 'CI_CONNECTION_CURRENT_TOKEN_REFUSED' }
+    $pendingRecordPlaced=$null -ne $pending -and $oldHash -ceq $pending.recordSha
+    $resume=$null -ne $pending -and $pending.tokenPin -ceq $pin
+    $installedRecord=$resume -and $pendingRecordPlaced
+    $installedToken=$installedRecord -and $actualPin -ceq $pin
+    if ($actualPin -ceq $pin -and !$installedToken) { throw 'CI_CONNECTION_TOKEN_REUSED' }
+    if ($null -ne $pending -and !$pendingRecordPlaced -and $pending.previousSha -cne $oldHash) { throw 'CI_CONNECTION_PENDING_CHANGED' }
+    # 接替事务也可能在换记录前中断。保留当时盘上令牌的指纹，供下一次核对半提交状态。
+    $priorPin=Get-Field $pending 'previousTokenPin'
+    if (!$pendingRecordPlaced -and $actualPin -cne $old.tokenPinSha256 -and $actualPin -cne $priorPin) { throw 'CI_CONNECTION_CURRENT_TOKEN_REFUSED' }
+    if (!$installedRecord -and $old.tokenPinSha256 -ceq $pin) { throw 'CI_CONNECTION_CURRENT_TOKEN_REFUSED' }
     $reply=Get-CiSelf $local.config $token
     if ($null -eq $reply.node) { throw 'CI_CONNECTION_NOT_REBOUND' }
     if ((Get-LocalCiIdentityFingerprint) -cne $reply.node.identity_fingerprint) { throw 'CI_CONNECTION_OTHER_NODE' }
     if ($null -eq $reply.node.rebind_receipt_id) { throw 'CI_CONNECTION_NOT_REBOUND' }
     if ($null -ne (Get-Field $receipt 'heartbeatToken') -and $reply.binding_id -ceq $receipt.heartbeatToken.bindingId) { throw 'CI_CONNECTION_TOKEN_REUSED' }
     if (!$installedRecord -and $null -ne $old.generation -and $reply.node.binding_generation -le $old.generation) { throw 'CI_CONNECTION_GENERATION_NOT_NEWER' }
-    if ($pending) {
+    if ($resume) {
       if ($pending.answer.binding_id -cne $reply.binding_id -or $pending.answer.node.binding_generation -ne $reply.node.binding_generation -or
-          $pending.answer.node.rebind_receipt_id -cne $reply.node.rebind_receipt_id -or
-          (!$installedRecord -and $oldHash -cne $pending.previousSha)) { throw 'CI_CONNECTION_PENDING_CHANGED' }
+          $pending.answer.node.node_id -cne $reply.node.node_id -or
+          $pending.answer.node.rebind_receipt_id -cne $reply.node.rebind_receipt_id) { throw 'CI_CONNECTION_PENDING_CHANGED' }
       $at=$pending.activatedAt; $previousSha=$pending.previousSha; $before=$pending.before
     } else {
+      if ($null -ne $pending -and $reply.node.binding_generation -le $pending.answer.node.binding_generation) { throw 'CI_CONNECTION_GENERATION_NOT_NEWER' }
       $at=[DateTime]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",[Globalization.CultureInfo]::InvariantCulture)
       $previousSha=$oldHash; $before=@{bindingId=$old.bindingId;generation=$old.generation}
     }
@@ -323,19 +334,19 @@ function Invoke-CiTokenReplace {
     $bytes=[Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Compress))
     $null=Get-EffectiveCiPrincipal $local.identity $bytes
     $recordSha=Get-CiHash $bytes
-    if ($pending -and $pending.recordSha -cne $recordSha) { throw 'CI_CONNECTION_PENDING_CHANGED' }
-    if (!$pending) {
-      $intent=@{planSha=$planSha;recordSha=$recordSha;previousSha=$previousSha;activatedAt=$at;answer=$reply;before=$before;tokenPin=$pin}
+    if ($resume -and $pending.recordSha -cne $recordSha) { throw 'CI_CONNECTION_PENDING_CHANGED' }
+    if (!$resume) {
+      $intent=@{planSha=$planSha;recordSha=$recordSha;previousSha=$previousSha;previousTokenPin=$actualPin;activatedAt=$at;answer=$reply;before=$before;tokenPin=$pin}
       $intentBytes=[Text.Encoding]::UTF8.GetBytes(($intent | ConvertTo-Json -Depth 6 -Compress))
       Write-CiStage ($pendingPath+'.new') $intentBytes $sddl
       Move-CiStage ($pendingPath+'.new') $pendingPath
     }
-    foreach ($stage in @(@($recordPath,$bytes),@($tokenPath,$token))) {
-      if ($installedRecord -and $stage[0] -ceq $recordPath) { continue }
-      Write-CiStage ($stage[0]+'.new') $stage[1] $sddl
+    if (!$installedToken) {
+      if (!$installedRecord) { Write-CiStage ($recordPath+'.new') $bytes $sddl }
+      Write-CiStage ($tokenPath+'.new') $token $sddl
+      if (!$installedRecord) { Move-CiStage ($recordPath+'.new') $recordPath }
+      Move-CiStage ($tokenPath+'.new') $tokenPath
     }
-    if (!$installedRecord) { Move-CiStage ($recordPath+'.new') $recordPath }
-    Move-CiStage ($tokenPath+'.new') $tokenPath
     Assert-CiPlaced $recordPath $bytes $sddl
     Assert-CiPlaced $tokenPath $token $sddl
     [IO.File]::Delete($pendingPath)
@@ -347,7 +358,11 @@ function Invoke-CiTokenReplace {
 }
 if ($MyInvocation.InvocationName -eq '.') { return }
 try {
-  Invoke-CiTokenReplace -Apply:$Apply -ExpectedPlanSha256 $ExpectedPlanSha256 -TokenFile $TokenFile | ConvertTo-Json -Depth 6
+  $target=@{}
+  if ($PSScriptRoot -imatch '^(?<root>[a-z]:\\(?:[^\\]+\\)*ci-activation-drill\\resident)\\resident\\[0-9a-f]{64}\\windows\z') {
+    $target.ResidentRoot=$Matches.root
+  }
+  Invoke-CiTokenReplace @target -Apply:$Apply -ExpectedPlanSha256 $ExpectedPlanSha256 -TokenFile $TokenFile | ConvertTo-Json -Depth 6
 } catch {
   $msg=$_.Exception.Message
   $code=if ($msg -cmatch '^[A-Z][A-Z0-9_]{2,80}\z') { $msg } else { 'CI_CONNECTION_ACTIVATION_FAILED' }

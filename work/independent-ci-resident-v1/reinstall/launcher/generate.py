@@ -124,7 +124,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '735581d66965aadd09b5c71990204f580f4d19c2fd6595663cfd947b08ffeb7c'   # + the first install (all inert unless $FleetFirstInstall is pinned; claude/first-install-entry, NOT YET REVIEWED); before it 51e4a89d (independent review 2026-11-13: PASS-WITH-FIXES)
+TEMPLATE_SHA = 'a3fd0e7150e2868d27dbeb830a69d8b292b4ee3f860c53908aaf0aedf6015ca0'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])

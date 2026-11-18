@@ -53,6 +53,9 @@
       "合同",
       "contract"
     ],
+    ["数组合同", "contract-array"],
+    ["数组身份摘要", "identity-array"],
+    ["数组日期", "date-array"],
     [
       "编号",
       "binding"

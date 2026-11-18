@@ -129,7 +129,8 @@ export const SUITES = {
     // windows/linux/rollout files and the Source v2 resident-v2 record code, so they run on the same paths as the resident suites.
     'reinstall-python': RESIDENT_AND_SOURCE,
     'offline-drill': RESIDENT_AND_SOURCE,
-    'source-v2-node': RESIDENT_AND_SOURCE,
+    'source-v2-node': [...RESIDENT_AND_SOURCE, 'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
+      'apps/clued-cloud/supabase/migrations/*_ci_connection_self_v1.sql', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs'],
     'source-v2-python': RESIDENT_AND_SOURCE,
     'components': ['scripts/clued_components.py', 'scripts/hooks/**', 'skills/**', 'integrations/**',
       'config/clued-components.json', 'tests/test_clued_components.py', 'tests/test_clued_version_check.py',

@@ -1635,7 +1635,9 @@ function Step-LinuxRoot {
 
 #region main
 Step-Identity
-Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot)
+if (!$FleetPlanSha256 -or $FleetFirstInstall) {
+  Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot)
+}
 Step-HostHygiene
 $null = Step-SweepCarry   # token copies a cut-off earlier run left behind: looked at, deleted, recorded (never their content)
 Step-Output
@@ -1645,6 +1647,10 @@ try {
   $fileLocks = $null; $linux = $null
   if ($FleetPlanSha256) {   # the generic node package: Linux A and B inside this run, before anything of the Windows side
     $W1Restore.armed = $true   # until Linux phase A is started, a stop lifts the W1 pause again (Restore-W1Pause)
+    if (!$FleetFirstInstall) {
+      try { Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot) }
+      catch { Stop-Launch $_.Exception.Message $null }
+    }
     Step-WindowsPreflightBeforeLinux   # read-only: what the Windows side would refuse is refused before Linux B, which cannot be undone
     $carried = Step-CarryTokens   # the installed tokens, copied and fingerprint-checked while the old root is still there
     $UpgradeTokenFile = $carried['upgradeToken']; $HeartbeatTokenFile = $(if ($carried.Contains('heartbeatToken')) { $carried['heartbeatToken'] } else { $null })

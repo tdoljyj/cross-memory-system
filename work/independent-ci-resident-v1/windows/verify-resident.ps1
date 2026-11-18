@@ -128,8 +128,8 @@ function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes) {
     foreach ($key in @('bindingId','rebindReceiptId')) {
       if ($v.$key -isnot [string] -or $v.$key -cnotmatch $uuid) { throw 'id' }
     }
-    if ($v.contract -cne 'clued.independent-ci.ci-connection/1' -or $v.tokenPinSha256 -isnot [string] -or $v.tokenPinSha256 -cnotmatch $hash -or
-        $v.baseNodeIdentitySha256 -cne (Sha256Text (ConvertTo-NodeIdentityCanonical $identity)) -or
+    if ($v.contract -isnot [string] -or $v.contract -cne 'clued.independent-ci.ci-connection/1' -or $v.tokenPinSha256 -isnot [string] -or $v.tokenPinSha256 -cnotmatch $hash -or
+        $v.baseNodeIdentitySha256 -isnot [string] -or $v.baseNodeIdentitySha256 -cne (Sha256Text (ConvertTo-NodeIdentityCanonical $identity)) -or $v.activatedAt -isnot [string] -or
         ($null -ne $v.previousSha256 -and ($v.previousSha256 -isnot [string] -or $v.previousSha256 -cnotmatch $hash)) -or
         ($v.bindingGeneration -isnot [int] -and $v.bindingGeneration -isnot [long]) -or $v.bindingGeneration -lt 1 -or $v.bindingGeneration -gt 9007199254740991) { throw 'fields' }
     $format = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'"
