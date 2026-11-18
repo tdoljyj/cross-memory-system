@@ -64,6 +64,7 @@ test('upgrade drain: same head is automatically readmitted once, without a push 
   await finish(f);
   assert.equal(f.exec.queue.row(884).state, 'DONE');
   assert.equal(count(f, 8), before + 1, 'one successful continuation only');
+  assert.equal((await f.ledger.usage(f.clock() - 86_400_000)).startedByPr.get(884), 1, 'the archived flow end spends no PR quota; its completed continuation spends one');
   assert.deepEqual([2, 3, 4, 5, 6, 7].map(n => count(f, n)), scans);
   assert.equal(await f.ledger.halted(), null);
   assert.deepEqual(await f.ledger.pendingAttempts2(), []);
@@ -87,13 +88,15 @@ test('readmission survives restart and a lost queue, and still waits for matchin
   assert.equal(count(f, 8), before + 1);
 });
 
-test('park.maxMs releases the parking place but preserves the same head for one continuation', async t => {
+test('park.maxMs frees the parking place and a PR event wakes the same batch', async t => {
   const f = await fixture(t);
   f.advance(f.exec.policy.park.maxMs + MIN);
   await f.exec.tick();
-  assert.equal((await f.ledger.open()).length, 0);
+  assert.equal((await f.ledger.open()).length, 1);
+  assert.deepEqual(await f.exec.parkedCounts(), { inside: 0, outside: 0 });
   f.ready();
   const before = count(f, 8);
+  await f.drop(triggerBytes({ contract: 'clued.independent-ci.resident-trigger/2', prUpdatedAt: new Date(f.clock()).toISOString() }));
   await finish(f);
   assert.equal(f.exec.queue.row(884).state, 'DONE');
   assert.equal(count(f, 8), before + 1);

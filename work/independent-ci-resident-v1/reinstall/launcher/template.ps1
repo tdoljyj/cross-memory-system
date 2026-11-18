@@ -159,8 +159,10 @@ function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
   $psi.FileName = $PS
   $psi.Arguments = '-NoProfile -NonInteractive -File ' + $file + ' ' + ($argList -join ' ')
   $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
-  if (-not $ChildEnv['TEMP']) { Stop-Launch 'CHILD_BEFORE_STAGING_REFUSED' $name }
-  $psi.WorkingDirectory = $ChildEnv['TEMP']
+  if ($ChildEnv['TEMP']) { $psi.WorkingDirectory = $ChildEnv['TEMP'] }
+  elseif ($name -ceq 'w1-resume') {
+    $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($PS)
+  } else { Stop-Launch 'CHILD_BEFORE_STAGING_REFUSED' $name }
   $psi.EnvironmentVariables.Clear()
   foreach ($k in $ChildEnv.Keys) { $psi.EnvironmentVariables[$k] = $ChildEnv[$k] }
   $p = [Diagnostics.Process]::Start($psi)
@@ -170,6 +172,15 @@ function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
   Write-New (Join-Path $Out ($name + '.stdout.json')) ($U8.GetBytes([string]$r.stdout))
   Write-New (Join-Path $Out ($name + '.stderr.txt')) ($U8.GetBytes([string]$r.stderr))
   $r
+}
+
+function Assert-CiInstallBaseline([string]$ciRoot) {
+  $file = Join-Path $ciRoot 'secrets\ci-admission.connection.json'
+  try { [void][IO.File]::GetAttributes($file) }
+  catch [IO.FileNotFoundException] { return }
+  catch [IO.DirectoryNotFoundException] { return }
+  catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
+  throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
 }
 
 function Step-Identity {
@@ -184,15 +195,18 @@ function Step-HostHygiene {
   $foreign = @(Get-Module | Where-Object { $b = ([string]$_.ModuleBase).TrimEnd('\') + '\'; -not ($b.StartsWith('C:\Windows\System32\WindowsPowerShell\v1.0\', [StringComparison]::OrdinalIgnoreCase) -or $b.StartsWith('C:\Program Files\WindowsPowerShell\Modules\', [StringComparison]::OrdinalIgnoreCase)) } | ForEach-Object { $_.Name + '@' + $_.ModuleBase })
   if ($foreign.Count) { throw ('ELEVATED_HOST_LOADED_USER_MODULE:' + ($foreign -join ',')) }
 }
-function Step-Output {
+function Step-Output([switch]$ForBaselineRefusal) {
+  $id = (Sha256Bytes ($U8.GetBytes($Out.ToLowerInvariant()))).Substring(0, 32)
+  $elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)
+  if ($ForBaselineRefusal -and ((Test-Path -LiteralPath $Out -ErrorAction Stop) -or (Test-Path -LiteralPath $elevated -ErrorAction Stop))) { return $false }
   if ([IO.Directory]::Exists($Out) -or [IO.File]::Exists($Out)) { throw 'EXISTING_EXECUTION_PRESERVED' }
   [void][IO.Directory]::CreateDirectory($Out)
-  $id = (Sha256Bytes ($U8.GetBytes($Out.ToLowerInvariant()))).Substring(0, 32)
   $Progress.pins = [ordered]@{ sourceSha = $SourceSha; packageHead = $PackageHead; packageManifestSha256 = $PackageManifestSha256; planSha256 = $PlanSha256; fleetPlanSha256 = $FleetPlanSha256; installedReceiptSha256 = $InstalledReceiptSha256 }
-  $Progress.out = $Out; $Progress.elevated = Join-Path $CarryParent ('reinstall-progress-' + $id)
+  $Progress.out = $Out; $Progress.elevated = $elevated
   Write-Json 'intent.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-intent/1'; status = 'APPROVED_SOURCE_V2_WINDOWS_INSTALL_INTENT'
     sourceSha = $SourceSha; packageHead = $PackageHead; packageManifestSha256 = $PackageManifestSha256; planSha256 = $PlanSha256; stageParent = $StageParent; archiveReason = $ArchiveReason; at = [DateTimeOffset]::UtcNow.ToString('o') })
   $Done.Add('output')
+  if ($ForBaselineRefusal) { return $true }
 }
 function Step-Package {
   $pkgBytes = [IO.File]::ReadAllBytes((Join-Path $PackageRoot 'package-manifest.json'))
@@ -1624,17 +1638,38 @@ function Step-LinuxRoot {
 }
 #endregion generic
 
+function Test-PreparedW1 {
+  return $FleetPlanSha256 -and -not $FleetFirstInstall -and
+    -not (Test-Path variable:ContinueOriginalLauncherSha256) -and -not (Test-Path variable:ResumeOriginalLauncherSha256)
+}
+
 #region main
 Step-Identity
+$preparedW1 = Test-PreparedW1
+try {
+  Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot)
+} catch {
+  $refusal = $_.Exception.Message
+  if ($preparedW1) {
+    Step-HostHygiene
+    if (Step-Output -ForBaselineRefusal) {
+      $W1Restore.armed = $preparedW1
+      Stop-Launch $refusal $null
+    }
+  }
+  throw
+}
 Step-HostHygiene
 $null = Step-SweepCarry   # token copies a cut-off earlier run left behind: looked at, deleted, recorded (never their content)
 Step-Output
 try {
   $buffers = Step-Package
   $Stage = Step-Stage $buffers $StageSddl
+  $W1Restore.armed = $preparedW1
+  try { Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot) }
+  catch { Stop-Launch $_.Exception.Message $null }
   $fileLocks = $null; $linux = $null
   if ($FleetPlanSha256) {   # the generic node package: Linux A and B inside this run, before anything of the Windows side
-    $W1Restore.armed = $true   # until Linux phase A is started, a stop lifts the W1 pause again (Restore-W1Pause)
     Step-WindowsPreflightBeforeLinux   # read-only: what the Windows side would refuse is refused before Linux B, which cannot be undone
     $carried = Step-CarryTokens   # the installed tokens, copied and fingerprint-checked while the old root is still there
     $UpgradeTokenFile = $carried['upgradeToken']; $HeartbeatTokenFile = $(if ($carried.Contains('heartbeatToken')) { $carried['heartbeatToken'] } else { $null })

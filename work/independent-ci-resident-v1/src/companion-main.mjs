@@ -33,6 +33,7 @@ import { CompanionHeartbeat, ghHandoverPort, readHeartbeatToken, scQueryArgv, se
 import { NotifyQueue, notifyQueueDir, queueNotify } from './notify-queue.mjs';
 import { ReceiptChain } from './receipts.mjs';
 import { RetentionNotifier } from './retention-notify.mjs';
+import { FleetLagNotifier, fleetLagReader, githubFleetChanges } from './fleet-lag-alert.mjs';
 import { pruneArchivedGenerations } from './generation-retention.mjs';
 import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
@@ -276,6 +277,16 @@ export async function main(args = process.argv.slice(2)) {
   const heartbeatStore = await LocalStore.open(path.join(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local'), 'CluedIndependentCI', 'companion-heartbeat.json'));
   const heartbeat = await companionHeartbeat({ root: values.root, nodeName: cfg.node.nodeName, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe,
     run: (a, o) => heartbeatRunner.run(a, o), store: heartbeatStore, notify });
+  const fleetRunner = new Runner({ env: { ...process.env }, jobHost });
+  let fleetLag = null;
+  const openFleetLag = async () => {
+    try {
+      const fleetStore = await LocalStore.open(path.join(cfg.node.ownerProfileDirectory, 'AppData', 'Local', 'CluedIndependentCI', 'companion-fleet-lag.json'));
+      return new FleetLagNotifier({ clock: Date.now, notify, store: fleetStore,
+        read: fleetLagReader({ root: values.root, readStatus: () => readStatus(values.root), observationStore: fleetStore,
+          github: githubFleetChanges({ ghExe: raw.ghExe, repo: raw.repo, run: (a, o) => fleetRunner.run(a, o) }) }) });
+    } catch { return null; } // Failure to initialize an advisory store never blocks the companion.
+  };
   // §41.6a: while the heartbeat's answer shows the failover watchdog stale, the PR page status says so too.
   reporter.watchdogStale = () => heartbeat?.watchdogStale === true;
   // ADR 0026: the last automatic take-over to this node, for the take-over check (node-duty.mjs).
@@ -342,6 +353,7 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner, work: () => companion.step() }),
       lane({ runner: upgradeRunner, work: async () => { const r = await upgradeLane.step(); await upgradeLane.selfcheckStep(); return r; }, everyMs: UPGRADE_LANE_EVERY_MS }),
       ...(heartbeat ? [lane({ runner: heartbeatRunner, work: () => heartbeat.step(), everyMs: HEARTBEAT_LANE_EVERY_MS })] : []),
+      lane({ runner: fleetRunner, work: async () => { fleetLag ??= await openFleetLag(); await fleetLag?.step(); }, everyMs: 60000 }),
       ...(panelDispatch ? [lane({ runner: panelRunner, work: () => panelDispatch.step(), everyMs: PANEL_DISPATCH_LANE_EVERY_MS })] : []),
       ...(mergeReconcile?[lane({runner:mergeRunner,work:()=>mergeReconcile.step(),everyMs:MERGE_RECONCILE_LANE_EVERY_MS})]:[]),
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
@@ -353,14 +365,17 @@ export async function main(args = process.argv.slice(2)) {
         if (Date.now() - lastPoll > POLL_EVERY_MS) {
           lastPoll = Date.now();
           // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
-          let generation = null;
-          try { generation = (await readStatus(values.root)).queue?.generation ?? null; } catch { generation = null; }
-          try { await poller.pass({ generation }); } catch { /* next pass */ }
+          const status = await readStatus(values.root).catch(() => null);
+          try {
+            await poller.pass({ generation: status?.queue?.generation ?? null });
+            await poller.parkedPass(status?.pending ?? []);
+          } catch { /* next pass */ }
         }
         // The ruleset backstop (phase 2 step 3c-1, DESIGN §22.3): main's rules every five minutes, as before the 60-second poll.
         if (Date.now() - lastBackstop > BACKSTOP_EVERY_MS) {
           lastBackstop = Date.now();
-          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o), store, notify }); } catch { /* next time */ }
+          try { await companionBackstop({ root: values.root, ghExe: raw.ghExe, repo: raw.repo, powershellExe: cfg.powershellExe, run: (a, o) => advisory.run(a, o),
+            store, notify, observeRules: rules => poller.noteBranchRules(rules) }); } catch { /* next time */ }
         }
         // Generation 10 (DESIGN 53.5): status.json is read at most every REPORT_MIN_GAP_MS; the PR page is posted every minute as before,
         // and also at once when the batch, its stage, the breaker, the intake pause or HALT/PAUSE changed (a claimed batch or a started

@@ -311,10 +311,11 @@ test('engine: before the first Linux stage, consistent false is UPGRADE_VERSION_
   assert.equal(asked, 0);
 });
 
-test('failure table: UPGRADE_VERSION_SKEW is a clean environment ending at 2, 4 or 6 (burned, never a release, never an attempt 2, breaker neutral)', () => {
+test('failure table: version skew at stage 2 uses attempt 2; at stages 4 and 6 it waits for continuation', () => {
   for (const stage of [2, 4, 6]) {
     const row = failureRow({ code: UPGRADE_VERSION_SKEW, stage });
-    assert.deepEqual([row.stages, row.class, row.disposition, row.retry, row.breaker], [[2, 4, 6], 'environment', 'burn', 'new-commit', 'neutral'], String(stage));
+    assert.deepEqual([row.stages, row.class, row.disposition, row.retry, row.breaker],
+      [stage === 2 ? [2] : [4, 6], 'environment', 'burn', stage === 2 ? 'attempt2' : 'continuation', 'neutral'], String(stage));
     assert.deepEqual([decideFailure({ code: UPGRADE_VERSION_SKEW, stage, proof: CLEAN_PROOF, started: true }).klass], ['CLEAN']);
     assert.equal(decideFailure({ code: UPGRADE_VERSION_SKEW, stage, proof: { windowsTreeZero: true, serviceOriginalStopped: true }, started: true }).klass, 'UNKNOWN', 'without the Linux half of the proof');
   }

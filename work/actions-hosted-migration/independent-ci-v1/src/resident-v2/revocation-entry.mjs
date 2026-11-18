@@ -10,9 +10,9 @@ export async function main(argv=process.argv.slice(2),output=process.stdout) {
   return runEntry({argv,entryRole:'revocation-maintenance',moduleUrl:import.meta.url,output,
     successStatuses:['REVOCATION_MAINTENANCE','PENDING'],body:async({args,inputs,held,live,sourceRoot})=>{
       if(!revocationQualification(inputs.record,{reserveMs:300_000}))return {status:'BLOCKED',reason:'REVOCATION_QUALIFICATION_REQUIRED',sideEffects:0};
-      const {appKey,nativeToken}=await controllerPrincipal(inputs.record);
+      const {appKey,nativeToken,bindingId}=await controllerPrincipal(inputs.record);
       const log=observationLog(STATE_V2.receipts,inputs.jobs[0].id);
-      const ports=controllerPorts({record:inputs.record,appKey,nativeToken,policyText:held.policyText,sourceRoot,live,log});
+      const ports=controllerPorts({record:inputs.record,appKey,nativeToken,bindingId,policyText:held.policyText,sourceRoot,live,log});
       const {runIndependentRevocationMaintenance}=await import('../../../../../scripts/ci/clued-independent-revocation-controller.mjs');
       // Once maintenance may have begun, a thrown/malformed result is UNKNOWN,
       // never runEntry's pre-effect BLOCKED/0 fallback.

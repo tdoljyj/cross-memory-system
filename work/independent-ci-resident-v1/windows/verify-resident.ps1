@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Verification of an installed resident executor (DRAFT). Writes nothing, with one exception: run as SYSTEM (the upgrade channel's
   VERIFY step), on a node whose companion runs as its own account, it first appends the companion's relay-parent ACE if it is missing
@@ -21,9 +21,8 @@
   install's ACL (heartbeat-token-acl), and heartbeat-binding reports the heartbeat connection id the receipt recorded (no network).
   The App key and the ci-admission token files are checked for existence and security (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
   controller); so are the folders that hold them (CluedControl\trusted, CluedIndependentCI\secrets) and every ancestor up to the drive
-  root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners, no other reader of the secret folders, no
-  non-administrator write or replace right on the way. Their content is never read here: the fingerprints were checked at install,
-  and the runtime checks them on every start.
+  root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners and protected ancestors.
+  自检读回 CI 令牌并核验当前指纹。安装时的身份与当前连接分别报告。
   First HALT of 2026-10-29 (DESIGN.md section 33): the companion's relay and bundle scripts (config\companion.json) lie under the installed
   CI Source, source\<SHA-256 of record\source-manifest.json>\, and exist there; and the CI root C:\ProgramData\CluedIndependentCI carries the
   resident service's one READ_CONTROL entry (0x120080, this folder only), read from the live ACL.
@@ -37,16 +36,13 @@
   Prints one JSON verdict; exit 0 only if every check passes. Elevated for the complete check
   (service DACLs need READ_CONTROL); a non-elevated run reports those as unreadable and exits 2.
 #>
-[CmdletBinding()]
-param([Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256,
+[CmdletBinding(DefaultParameterSetName='Verify')]
+param([Parameter(Mandatory,ParameterSetName='Verify')][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInstallReceiptSha256,
+  [Parameter(Mandatory,ParameterSetName='Functions')][switch]$FunctionsOnly,
   [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectPausedSha256,
   [string]$LinuxVersionFactsFile)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
-$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
-Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
-$Root = 'C:\ProgramData\CluedIndependentCI\resident'
-if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
 $Sc = 'C:\Windows\System32\sc.exe'
 # This node's runner service and host: the installed record's node profile (record\acceptance.json `node`, admin-only,
 # validated by the install; design section 9 C1). The name is still held to its fixed shape before it reaches sc.exe.
@@ -116,6 +112,36 @@ function ConvertTo-NodeIdentityCanonical($id) {
   return '{' + ($rows -join ',') + '}'
 }
 
+# 与 Source v2 的解析器使用同一组字节夹具。安装回执始终按安装时的身份核验。
+function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes) {
+  if ($null -eq $bytes) {
+    return [pscustomobject]@{ bindingId = $identity.ciPrincipalBindingId; tokenPinSha256 = $identity.ciTokenPinSha256; generation = $null; receiptId = $null }
+  }
+  try {
+    if ($bytes.Length -eq 0 -or $bytes.Length -gt 4096) { throw 'size' }
+    $text = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes)
+    $v = $text | ConvertFrom-Json
+    $keys = @('activatedAt','baseNodeIdentitySha256','bindingGeneration','bindingId','contract','previousSha256','rebindReceiptId','tokenPinSha256')
+    if ($v -isnot [pscustomobject] -or @($v.PSObject.Properties).Count -ne $keys.Length) { throw 'keys' }
+    foreach ($key in $keys) { if (@($v.PSObject.Properties.Name) -cnotcontains $key) { throw 'keys' } }
+    $uuid = '^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\z'; $hash = '^[0-9a-f]{64}\z'
+    foreach ($key in @('bindingId','rebindReceiptId')) {
+      if ($v.$key -isnot [string] -or $v.$key -cnotmatch $uuid) { throw 'id' }
+    }
+    if ($v.contract -isnot [string] -or -not [string]::Equals($v.contract, 'clued.independent-ci.ci-connection/1', [StringComparison]::Ordinal) -or $v.tokenPinSha256 -isnot [string] -or $v.tokenPinSha256 -cnotmatch $hash -or
+        $v.baseNodeIdentitySha256 -isnot [string] -or -not [string]::Equals($v.baseNodeIdentitySha256, (Sha256Text (ConvertTo-NodeIdentityCanonical $identity)), [StringComparison]::Ordinal) -or $v.activatedAt -isnot [string] -or
+        ($null -ne $v.previousSha256 -and ($v.previousSha256 -isnot [string] -or $v.previousSha256 -cnotmatch $hash)) -or
+        ($v.bindingGeneration -isnot [int] -and $v.bindingGeneration -isnot [long]) -or $v.bindingGeneration -lt 1 -or $v.bindingGeneration -gt 9007199254740991) { throw 'fields' }
+    $format = "yyyy-MM-dd'T'HH:mm:ss.fff'Z'"
+    $at = [DateTime]::ParseExact($v.activatedAt, $format, [Globalization.CultureInfo]::InvariantCulture)
+    if (-not [string]::Equals($at.ToString($format, [Globalization.CultureInfo]::InvariantCulture), $v.activatedAt, [StringComparison]::Ordinal)) { throw 'date' }
+    $ordered = [ordered]@{}
+    foreach ($key in $keys) { $ordered[$key] = $v.$key }
+    if (-not [string]::Equals(($ordered | ConvertTo-Json -Compress), $text, [StringComparison]::Ordinal)) { throw 'canonical' }
+    [pscustomobject]@{ bindingId = $v.bindingId; tokenPinSha256 = $v.tokenPinSha256; generation = $v.bindingGeneration; receiptId = $v.rebindReceiptId }
+  } catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
+}
+
 # ---- Verify-only helpers for the node identity and the two secret files (DESIGN.md section 30) ----
 function Sha256Text([string]$t) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash([Text.Encoding]::UTF8.GetBytes($t)))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Get-Field($o, [string]$k) { if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
@@ -179,6 +205,62 @@ function Get-SecretFileState([string]$target, [string]$controllerSid) {
     if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return 'link-refused' }
     if (Test-SecretFileSecurity (Get-Acl -LiteralPath $target) $controllerSid) { return 'ok' } else { return 'acl-refused' }
   } catch { return 'unreadable' }
+}
+# 先验证目录链，只有叶文件确实不存在才允许使用安装身份。共享读句柄禁止在读回期间替换文件。
+function Read-CiPrivateBytes([string]$file, [string]$controllerSid, [switch]$Optional) {
+  if ((Get-SecretPathState $file $controllerSid) -cne 'ok') { throw 'CI_PRIVATE_PATH_REFUSED' }
+  try { $item = Get-Item -LiteralPath $file -Force -ErrorAction Stop }
+  catch [Management.Automation.ItemNotFoundException] { if ($Optional) { return $null }; throw }
+  if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+      $item.LinkType -eq 'HardLink' -or (Get-SecretFileState $file $controllerSid) -cne 'ok') { throw 'CI_PRIVATE_FILE_REFUSED' }
+  $s = [IO.File]::Open($file, 'Open', 'Read', 'Read')
+  try {
+    if ($s.Length -lt 1 -or $s.Length -gt 4096) { throw 'CI_PRIVATE_FILE_REFUSED' }
+    $b = New-Object byte[] ([int]$s.Length); $at = 0
+    while ($at -lt $b.Length) {
+      $n = $s.Read($b, $at, $b.Length - $at)
+      if ($n -le 0) { throw 'CI_PRIVATE_FILE_REFUSED' }
+      $at += $n
+    }
+    if ($s.ReadByte() -ne -1) { throw 'CI_PRIVATE_FILE_REFUSED' }
+    return ,$b
+  } catch { if ($null -ne (Get-Variable b -ErrorAction SilentlyContinue)) { [Array]::Clear($b, 0, $b.Length) }; throw }
+  finally { $s.Dispose() }
+}
+function Get-CiAdmissionTokenPin([byte[]]$raw) {
+  # 与控制入口相同的令牌前缀、字母表和域分隔串。避免为令牌创建不可清零的字符串。
+  $start = 0; $end = $raw.Length
+  while ($start -lt $end -and $raw[$start] -in @(9,10,11,12,13,32)) { $start++ }
+  while ($end -gt $start -and $raw[$end-1] -in @(9,10,11,12,13,32)) { $end-- }
+  $prefix = [Text.Encoding]::ASCII.GetBytes('clued_bnd_')
+  $size = $end - $start
+  if ($size -lt $prefix.Length + 8 -or $size -gt $prefix.Length + 480) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
+  for ($i = 0; $i -lt $size; $i++) {
+    $c = $raw[$start+$i]
+    if ($i -lt $prefix.Length) { if ($c -ne $prefix[$i]) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' } }
+    elseif (!(($c -ge 48 -and $c -le 57) -or ($c -ge 65 -and $c -le 90) -or ($c -ge 97 -and $c -le 122) -or $c -in @(45,95))) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
+  }
+  $domain = [Text.Encoding]::ASCII.GetBytes('clued.independent-ci.ci-binding-pin/1' + [char]0)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    [void]$sha.TransformBlock($domain,0,$domain.Length,$domain,0)
+    $final = $sha.TransformFinalBlock($raw,$start,$size)
+    [Array]::Clear($final,0,$final.Length)
+    return ([BitConverter]::ToString($sha.Hash)).Replace('-','').ToLowerInvariant()
+  } finally { $sha.Dispose() }
+}
+function Test-CurrentCiConnection($identity, [string]$tokenFile, [string]$controllerSid) {
+  try {
+    $file = Join-Path (Split-Path -Parent $tokenFile) 'ci-admission.connection.json'
+    $connection = Read-CiPrivateBytes $file $controllerSid -Optional
+    $current = Get-EffectiveCiPrincipal $identity $connection
+  } catch { return @{ ok = $false; detail = 'CI_CONNECTION_RECORD_REFUSED' } }
+  try {
+    $token = Read-CiPrivateBytes $tokenFile $controllerSid
+    try { $pin = Get-CiAdmissionTokenPin $token } finally { [Array]::Clear($token,0,$token.Length) }
+    if ($pin -cne $current.tokenPinSha256) { throw 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' }
+    return @{ ok = $true; detail = [ordered]@{ bindingId = $current.bindingId; generation = $current.generation; rebindReceiptId = $current.receiptId } }
+  } catch { return @{ ok = $false; detail = 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' } }
 }
 # ---- DESIGN.md section 33 (first HALT of 2026-10-29): two things the install must leave right and nothing else checked ----
 # Virtual service account SID: S-1-5-80 + SHA-1 of the upper-case service name (UTF-16LE); the same function as install-resident.ps1.
@@ -475,6 +557,14 @@ function Get-VerifyInputFailure([string]$check, [string]$message) {
 }
 # A failed pinned input must still produce a bounded JSON verdict for the frozen upgrade-apply reader.
 # Raw exceptions can contain paths or contents: only fixed check names and fixed failure codes leave this process.
+if ($FunctionsOnly) {
+  if ($MyInvocation.InvocationName -ne '.') { throw 'DOT_SOURCE_REQUIRED' }
+  return
+}
+$Root = 'C:\ProgramData\CluedIndependentCI\resident'
+if (-not ([IO.Path]::GetFullPath($PSCommandPath)).StartsWith((Join-Path $Root 'resident\'), [StringComparison]::OrdinalIgnoreCase)) { throw 'RUN_THE_INSTALLED_COPY' }
+$env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'   # no user module directory (review M1)
+Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
 $script:VerifyInputCheck = 'install-receipt'
 try {
 $receiptFile = Join-Path $Root 'install\install-receipt.json'
@@ -513,6 +603,12 @@ Record 'content-addressed-acl' $contentAcl.ok $contentAcl.detail
 $identityCheck = try { Test-NodeIdentityReceipt $receipt (Read-ReviewedPublicJson (Join-Path $Root 'record\installation.json') ([string](Get-Field $receipt 'installationSha256')) 4MB) $Accepted $receipt.acceptanceSha256 } catch { [pscustomobject]@{ ok = $false; detail = $_.Exception.Message; identity = $null } }
 Record 'node-identity' $identityCheck.ok $identityCheck.detail
 Record 'node-secrets-receipt' (Test-SecretsReceipt $receipt $identityCheck.identity)
+if ($identityCheck.ok -eq $true) {
+  $checks['node-identity']['installationIdentity'] = [ordered]@{ nodeName = $identityCheck.identity.nodeName
+    bindingId = $identityCheck.identity.ciPrincipalBindingId; nodeIdentitySha256 = (Get-Field $receipt 'nodeIdentitySha256') }
+  $currentCi = Test-CurrentCiConnection $identityCheck.identity $SecretTargets.ciToken $Node.controllerSid
+  Record 'current-ci-connection' $currentCi.ok $currentCi.detail
+}
 foreach ($spec in @(@('app-key-file', 'appKey', 'app-key-directories'), @('ci-admission-token-file', 'ciToken', 'ci-admission-token-directories'))) {
   $state = Get-SecretFileState $SecretTargets[$spec[1]] $Node.controllerSid
   Record $spec[0] $(if ($state -ceq 'ok') { $true } elseif ($state -ceq 'unreadable') { 'unreadable' } else { $false }) $state

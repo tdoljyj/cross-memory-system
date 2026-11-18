@@ -111,12 +111,14 @@ export async function writePauseRequest(requestsDir, reason, clock = Date.now) {
 // gh login, the train mode from the executor's status snapshot, the pause request into the user-writable requests\, a
 // Windows notification, and the once-a-day memory in the companion's own store (pr-status.mjs#LocalStore, `backstop:` keys).
 // notify(key, title, body): the companion's notification queue (ADR 0022 §4.3, M5); without it (tests, older wiring) a toast as before.
-export function companionBackstop({ root, ghExe, repo, powershellExe, run, store, clock = Date.now, timeoutMs = 60_000, notify = null }) {
+export function companionBackstop({ root, ghExe, repo, powershellExe, run, store, clock = Date.now, timeoutMs = 60_000, notify = null, observeRules = null }) {
   return backstopPass({
     readRules: async () => {
       const r = await run([ghExe, 'api', '--method', 'GET', '-H', 'Accept: application/vnd.github+json', `repos/${repo}/rules/branches/main?per_page=100`], { timeoutMs });
       if (r.code !== 0) throw new Error('rules unreadable');
-      return JSON.parse(r.stdout);
+      const rules = JSON.parse(r.stdout);
+      try { observeRules?.(rules); } catch { /* wake hints cannot change the backstop reading */ }
+      return rules;
     },
     trainMode: async () => (await readStatus(root)).train?.enabled ?? null,
     trainSweep: async () => (await readStatus(root)).train?.sweep ?? null,

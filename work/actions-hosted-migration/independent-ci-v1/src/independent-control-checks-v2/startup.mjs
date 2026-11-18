@@ -19,9 +19,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
   return runEntry({ argv, entryRole: 'control-checks', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
     const jobs = inputs.jobs;
     const batchClaim = await readBatchClaim(STATE_V2.batchClaims, jobs[0]);
-    const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
+    const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsControl, jobs[0].id);
-    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log });
     const { admission } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });

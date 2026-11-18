@@ -504,10 +504,20 @@ function Get-ObservedResidue([bool]$factsPresent) {
     companionDistribution = (Get-CompanionDistributionState) }
 }
 
+function Assert-CiInstallBaseline([string]$ciRoot) {
+  $file = Join-Path $ciRoot 'secrets\ci-admission.connection.json'
+  try { [void][IO.File]::GetAttributes($file) }
+  catch [IO.FileNotFoundException] { return }
+  catch [IO.DirectoryNotFoundException] { return }
+  catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
+  throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
+}
+
 function Invoke-HostPreparation {
   # the operator: elevated, and the account the bootstrap ran as (M4), before anything else
   $wi = [Security.Principal.WindowsIdentity]::GetCurrent()
   if (-not (New-Object Security.Principal.WindowsPrincipal($wi)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Stop-Host 'RUN_ELEVATED' $null }
+  Assert-CiInstallBaseline $CiRoot
   $operator = $wi.User.Value
   $oc = Test-ExpectedOperator $operator $ExpectedOperatorSid
   if ($oc) { Stop-Host $oc ([ordered]@{ elevatedAs = $operator; bootstrapRanAs = $ExpectedOperatorSid }) }
