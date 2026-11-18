@@ -1490,14 +1490,15 @@
             },
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
+              "if": "steps.trusted-local.outputs.local != 'true'",
               "path": "trusted",
               "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
               "repository": null
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "trusted_worktree_step_sha256": "b0adb1069f04773db38ddbf24835a87fd48b38cd934b1e870c714a204941765c"
         },
         "ci-suites": {
           "mode": "job-temp",
@@ -1513,14 +1514,15 @@
             },
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
+              "if": "steps.trusted-local.outputs.local != 'true'",
               "path": "trusted",
               "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
               "repository": null
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "trusted_worktree_step_sha256": "b0adb1069f04773db38ddbf24835a87fd48b38cd934b1e870c714a204941765c"
         },
         "migration-verify": {
           "mode": "job-temp",
@@ -1536,14 +1538,15 @@
             },
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
+              "if": "steps.trusted-local.outputs.local != 'true'",
               "path": "trusted",
               "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
               "repository": null
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "trusted_worktree_step_sha256": "b0adb1069f04773db38ddbf24835a87fd48b38cd934b1e870c714a204941765c"
         }
       }
     },
@@ -1573,20 +1576,21 @@
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
               "if": "true",
-              "path": "trusted",
-              "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+              "path": "candidate",
+              "ref": null,
               "repository": null
             },
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-              "if": "true",
-              "path": "candidate",
-              "ref": null,
+              "if": "steps.trusted-local.outputs.local != 'true'",
+              "path": "trusted",
+              "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
               "repository": null
             }
           ],
           "retained_artifacts": [],
-          "persistent_action_caches": []
+          "persistent_action_caches": [],
+          "trusted_worktree_step_sha256": "77a796d0fe88a5f617a5b8d2020a86920363111ce35962a60d5f6dcd6b29bf96"
         }
       }
     },
