@@ -12,11 +12,7 @@
 // /run/WSL/*_interop socket, and PrivateDevices=yes still shares the Host's
 // /dev/shm (Note 0b5eb8ca). v7 makes both inaccessible in the two fixed units
 // and stops wherever either is reachable.
-// Revision 8 pins the state-based gate and uses its two modes. Revision 9 only
-// re-pins the gate and the currentness verifier (Fable 1121): the stages pins,
-// the manager's and the external verifier's original-verifier pin, the local
-// pins and the manager template. These tests rebuild v8 from the v8-to-v9
-// patch, then v7 and the
+// Revision 8 pins the state-based gate and uses its two modes. These tests reconstruct v7 and the
 // installed revision 6 from the committed v6-to-v7 patch and, from it, the v4
 // manager and the v5 release entry, and reproduce each fixed failure against
 // those rebuilt bytes.
@@ -38,10 +34,10 @@ const HOST_FILES = 'payload/release/existing-release-entry-v1/v3-host/host-files
 const STAGES = 'payload/release/existing-release-entry-v1/v3/existing-stages.mjs';
 const PDF_CONFIG = 'apps/clued-cloud/wrangler.pdf-extractor.jsonc';
 
-// The source freeze of revision 9, which pins every other file of the package.
-const SOURCE_FREEZE = '8d5d9be06b99d0d3ead72b287c6cd18417ae24fba3bfbac7dbaa247d23f442ab';
-const V8_SOURCE_FREEZE = '2e875e563fcd78cec4775166e737edc29b457b66bd862eafd7507175a433263e';
-const V8_MANIFEST = '39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3';
+// The source freeze of revision 8, which pins every other file of the package.
+const SOURCE_FREEZE = '2e875e563fcd78cec4775166e737edc29b457b66bd862eafd7507175a433263e';
+const V7_SOURCE_FREEZE = '75e8840f76f9a8e6a795b158107d7cce795bd592e9f01e3147722f5ed4801b2f';
+const V7_MANIFEST = 'c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c';
 // Revision 6 as installed on the Host (Note fdfbe464@7): the bytes of its seven files.
 const INSTALLED_FILES = Object.freeze({
   'install-once.mjs': '1a5e18e1258d89fb0c8b631b1688615c09936391e7904c2cb40d642e36fd5e7d',
@@ -150,13 +146,9 @@ async function importBytes(name, bytes) {
 }
 
 // Rebuild both changed v7 executables before applying the earlier patches.
-const EXTERNAL = 'payload/release/verify-currentness-external.mjs';
-const V9_CHANGED = [STAGES, MANAGER, EXTERNAL];
-const v8 = Object.fromEntries(V9_CHANGED.map(file => [file, reverseApply('v8-to-v9-executable.patch', file, read(file))]));
-const bytesV8 = file => v8[file] ?? read(file);
 const v7 = Object.fromEntries([STAGES, RELEASE].map(file =>
-  [file, reverseApply('v7-to-v8-executable.patch', file, bytesV8(file))]));
-const bytesV7 = file => v7[file] ?? bytesV8(file);
+  [file, reverseApply('v7-to-v8-executable.patch', file, read(file))]));
+const bytesV7 = file => v7[file] ?? read(file);
 const v6 = Object.fromEntries(V7_CHANGED.map((file) => [file, reverseApply('v6-to-v7-executable.patch', file, bytesV7(file))]));
 const unitProperties = (source) => JSON.parse(source.toString('utf8').match(/const UNIT_PROPERTIES=(\[[^\]]*\])/)[1].replaceAll("'", '"'));
 const UNIT_PROPERTIES = unitProperties(read(MANAGER));
@@ -232,22 +224,13 @@ function deriveFrom(bytes, pin = sha256(bytes)) {
   return pdfReleaseConfig({ sourcePins: { [PDF_CONFIG]: pin } });
 }
 
-test('the committed package is revision 9 and retains the v8, v7 and installed v6 payloads', () => {
+test('the committed package is revision 8 and retains the v7 and installed v6 payloads', () => {
   const freeze = JSON.parse(read('source-freeze.json'));
   const manifest = JSON.parse(read('package-manifest.json'));
-  assert.equal(freeze.revision, 9);
-  assert.equal(manifest.revision, 9);
-  assert.equal(manifest.previousPackageManifestSha256, V8_MANIFEST);
-  assert.equal(freeze.predecessorSourceFreezeSha256, V8_SOURCE_FREEZE);
-  // The v8 bytes of the three files v9 re-pins, as the v8 manifest lists them.
-  assert.equal(sha256(v8[STAGES]), 'c8ee412f2e47cf3b7d5085f2ed3a0987aea9e1e50fea20cb9785221a4b9e315e');
-  assert.equal(sha256(v8[MANAGER]), 'bc85acde10bc55a0866aac0aa9554d8c5de876b12a12d8faf492fa3d91c44223');
-  assert.equal(sha256(v8[EXTERNAL]), INSTALLED_FILES[EXTERNAL]);
-  // v9 changes pins only: the same lines, other hashes.
-  for (const file of V9_CHANGED) {
-    const strip = (bytes) => bytes.toString('utf8').replace(/[a-f0-9]{64}/g, '');
-    assert.equal(strip(read(file)), strip(v8[file]), file);
-  }
+  assert.equal(freeze.revision, 8);
+  assert.equal(manifest.revision, 8);
+  assert.equal(manifest.previousPackageManifestSha256, V7_MANIFEST);
+  assert.equal(freeze.predecessorSourceFreezeSha256, V7_SOURCE_FREEZE);
   assert.equal(sha256(v7[STAGES]), 'eb4f26f876fb22c692f05c528ec13a718bf26f89f3c75bab0911fb3321f33d85');
   assert.equal(sha256(v7[RELEASE]), 'c3e7dff762266b8befa57a780761d8a30159233937c6c581d14a25ed14181817');
   assert.equal(sha256(read('source-freeze.json')), SOURCE_FREEZE);
@@ -274,7 +257,7 @@ test('the committed package is revision 9 and retains the v8, v7 and installed v
   assert.equal(JSON.parse(read('currentness-manager.template.json')).manager.sha256, sha256(read(MANAGER)));
   // v7 changes four files; the patch gives back revision 6 of all seven.
   for (const [file, installed] of Object.entries(INSTALLED_FILES)) {
-    assert.equal(sha256(v6[file] ?? bytesV7(file)), installed, file);
+    assert.equal(sha256(v6[file] ?? read(file)), installed, file);
   }
 });
 
@@ -282,8 +265,7 @@ test('the committed patches rebuild the exact v6, v4 and v5 predecessors', () =>
   // The git-format patches name the object ids of both sides in their `index`
   // lines; v3-to-v4 is a plain diff without them.
   for (const [patchFile, file, newer] of [
-    ...V9_CHANGED.map(file => ['v8-to-v9-executable.patch', file, read(file)]),
-    ...[STAGES, RELEASE].map(file => ['v7-to-v8-executable.patch', file, bytesV8(file)]),
+    ...[STAGES, RELEASE].map(file => ['v7-to-v8-executable.patch', file, read(file)]),
     ...V7_CHANGED.map((file) => ['v6-to-v7-executable.patch', file, bytesV7(file)]),
     ['v4-to-v5-executable.patch', MANAGER, v6[MANAGER]], ['v4-to-v5-executable.patch', STAGES, v6[STAGES]],
     ['v5-to-v6-executable.patch', RELEASE, v6[RELEASE]]]) {
@@ -292,7 +274,7 @@ test('the committed patches rebuild the exact v6, v4 and v5 predecessors', () =>
     assert.ok(gitBlob(reverseApply(patchFile, file, newer)).startsWith(older), `${patchFile}: ${file} predecessor`);
   }
   assert.ok(read('v6-to-v7-executable.patch').toString('utf8').includes(`- [MANAGER,'${INSTALLED_FILES[MANAGER]}'],`));
-  assert.ok(read('v6-to-v7-executable.patch').toString('utf8').includes(`+ [MANAGER,'${sha256(bytesV7(MANAGER))}'],`));
+  assert.ok(read('v6-to-v7-executable.patch').toString('utf8').includes(`+ [MANAGER,'${sha256(read(MANAGER))}'],`));
   assert.equal(sha256(reverseApply('v4-to-v5-executable.patch', MANAGER, v6[MANAGER])), V4_MANAGER);
   assert.ok(read('v4-to-v5-executable.patch').toString('utf8').includes(`- [MANAGER,'${V4_MANAGER}'],`));
   assert.equal(sha256(Buffer.from(releaseV5)), V5_RELEASE);

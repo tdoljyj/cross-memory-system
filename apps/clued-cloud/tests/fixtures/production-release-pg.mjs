@@ -4,11 +4,8 @@ import { appendFileSync, readFileSync } from 'node:fs';
 let readIndex = 0;
 
 class Client {
-  constructor({ connectionString, connectionTimeoutMillis, query_timeout }) {
+  constructor({ connectionString }) {
     this.fixture = JSON.parse(readFileSync(connectionString, 'utf8'));
-    if (this.fixture.clients) {
-      appendFileSync(this.fixture.clients, JSON.stringify({ connectionTimeoutMillis, query_timeout }) + '\n');
-    }
   }
   async connect() {}
   async end() {}

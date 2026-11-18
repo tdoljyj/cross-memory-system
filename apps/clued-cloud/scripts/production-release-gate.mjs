@@ -81,27 +81,7 @@ export function verifyReleaseState({ baseline, sourceSql, history, changedPaths,
 const snapshotQuery = 'select clued_watchdog.projection_watchdog_snapshot() as snapshot';
 const backlogLimitMs = 5 * 60_000;
 const pollMs = 10_000;
-// Every database client of the gate is bounded, so a stalled connection or
-// query cannot use up the release job's time for the rollback.
-const clientTimeouts = Object.freeze({ connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
-const wranglerProductionConfig = join(appDirectory, 'wrangler.production.jsonc');
-
-// The Builder's fallback wake is the production Cron. Only the "every N
-// minutes" form has a known longest gap between two ticks; any other schedule
-// stops the gate in both modes, so whoever changes the Cron sees it at once.
-export function cronPeriodMinutes(config) {
-  const crons = config?.triggers?.crons;
-  const match = Array.isArray(crons) && crons.length === 1 && typeof crons[0] === 'string'
-    ? /^\*\/([1-9][0-9]?) \* \* \* \*$/.exec(crons[0]) : null;
-  const minutes = match ? Number(match[1]) : NaN;
-  if (!(minutes >= 1 && minutes <= 59)) throw new Error('production_release_blocked:cron_schedule_unsupported');
-  return minutes;
-}
-
-// A projection queued without a request-side wake catches up on the next
-// tick: after a deploy, wait one whole period plus two minutes before calling
-// a backlog a failure (Fable 1121 item 4).
-export const postDeployWaitLimitMs = (periodMinutes) => (periodMinutes + 2) * 60_000;
+const waitLimitMs = 3 * 60_000;
 
 function projectionFinding(row, now) {
   if (typeof row.tenant_key !== 'string' || !/^[a-f0-9]{64}$/.test(row.tenant_key)) return 'projection_not_current';
@@ -147,18 +127,12 @@ function inspectSnapshot(watchdog, now) {
   return { error: null, observedAt: watchdog.observed_at, findings: [...findings], revisions };
 }
 
-// Waits while the only findings are a backlog, pending or older than five
-// minutes, up to waitLimitMs. A failed job, a digest mismatch or an unreadable
-// snapshot ends the wait at once.
-const waitable = reason => reason.startsWith('projection_backlog_pending:') ||
-  reason.startsWith('projection_backlog_overdue:');
-
-export async function settleProjectionLag({ watchdog, readWatchdog, waitLimitMs, now = Date.now,
+export async function settleProjectionLag({ watchdog, readWatchdog, now = Date.now,
   sleep = ms => new Promise(done => setTimeout(done, ms)) }) {
-  if (!Number.isSafeInteger(waitLimitMs) || waitLimitMs <= 0) throw new Error('projection_wait_limit_required');
   const deadline = now() + waitLimitMs;
   let state = inspectSnapshot(watchdog, now());
-  while (!state.error && state.findings.length && state.findings.every(waitable)) {
+  while (!state.error && state.findings.length &&
+      state.findings.every(reason => reason.startsWith('projection_backlog_pending:'))) {
     const remaining = deadline - now();
     if (remaining <= 0) break;
     await sleep(Math.min(pollMs, remaining));
@@ -169,7 +143,7 @@ export async function settleProjectionLag({ watchdog, readWatchdog, waitLimitMs,
 }
 
 async function readWatchdog(dbUrl) {
-  const client = new pg.Client({ connectionString: dbUrl, ...clientTimeouts });
+  const client = new pg.Client({ connectionString: dbUrl, connectionTimeoutMillis: 10_000, query_timeout: 10_000 });
   await client.connect();
   try {
     const result = await client.query(snapshotQuery);
@@ -202,13 +176,6 @@ async function main() {
       git(['branch', '--show-current']) !== 'main') {
     throw new Error('production_source_not_main_checkout');
   }
-  let wranglerConfig;
-  try {
-    wranglerConfig = JSON.parse(await readFile(wranglerProductionConfig, 'utf8'));
-  } catch {
-    throw new Error('production_release_blocked:wrangler_config_unreadable');
-  }
-  const waitLimitMs = postDeployWaitLimitMs(cronPeriodMinutes(wranglerConfig));
   const baseline = JSON.parse(await readFile(join(scriptDirectory,
     'production-release-baseline.json'), 'utf8'));
   if (baseline.contract !== 'clued.production-release-baseline.v1') {
@@ -229,7 +196,7 @@ async function main() {
     return { status: fields[0], path: fields.at(-1) };
   }) : [];
 
-  const client = new pg.Client({ connectionString: dbUrl, ...clientTimeouts });
+  const client = new pg.Client({ connectionString: dbUrl });
   await client.connect();
   let history;
   let frontierDefinition;
@@ -278,7 +245,7 @@ async function main() {
     migrationFiles, migrationSources, frontierDefinition }), ...ledgerReport.errors];
   const requireCurrentProjections = mode === 'post-deploy';
   const state = requireCurrentProjections && errors.length === 0
-    ? await settleProjectionLag({ watchdog, waitLimitMs, readWatchdog: () => readWatchdog(dbUrl) })
+    ? await settleProjectionLag({ watchdog, readWatchdog: () => readWatchdog(dbUrl) })
     : inspectSnapshot(watchdog, Date.now());
   if (state.error) errors.push(state.error);
   if (requireCurrentProjections) errors.push(...state.findings);

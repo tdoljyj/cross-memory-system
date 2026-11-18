@@ -43,14 +43,10 @@ jobs:
           curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
           sudo dpkg -i "$icu_deb"
           ldconfig -p | grep 'libicuuc.so.60'
-      # The same two steps as the production release: verify and write the
-      # evidence without the database credential, then install that evidence.
-      - name: Verify exact deployed source
-        run: node scripts/verify-currentness-transport.mjs --production --evidence-out currentness-attestation.json
-      - name: Install G6 transport attestation
+      - name: Verify exact deployed source and install G6 transport attestation
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
-        run: node scripts/verify-currentness-transport.mjs --publish currentness-attestation.json
+        run: node scripts/verify-currentness-transport.mjs --production --evidence-out currentness-attestation.json
       - name: Preserve verification evidence
         if: always()
         uses: actions/upload-artifact@v4

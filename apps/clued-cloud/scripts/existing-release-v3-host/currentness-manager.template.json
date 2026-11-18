@@ -17,7 +17,7 @@
   },
   "manager": {
     "path": "/opt/clued-production-release-v3/release/linux-process-manager.mjs",
-    "sha256": "4cb9144ee52f6d569ed6985c8d793a366ee818c1c4ade16dbc8089e0f866d8fd"
+    "sha256": "bc85acde10bc55a0866aac0aa9554d8c5de876b12a12d8faf492fa3d91c44223"
   },
   "systemctl": {
     "path": "/usr/bin/systemctl",

@@ -16,16 +16,16 @@ const G6_SOURCE='apps/clued-cloud/supabase/migrations/20260922094719_bug_2026092
 const G6_SIGNATURE='public.clued_mcp_currentness_g6_gate(text,jsonb)';
 const CONSUMER_HEALTH_URL='https://clued.pixelgrav.com/healthz';
 const PINNED=Object.freeze({
- 'apps/clued-cloud/scripts/verify-currentness-transport.mjs':'4784d3c0f3c2099571a18f7c14a8b53a3f85bbed1f2de732a4849bf34ec7c31c',
- 'apps/clued-cloud/scripts/production-release-gate.mjs':'7ce4a6e85c8ad5dea431d0bc44d6ad1c56ebeac9f71e3fd290d100411e8330e2',
+ 'apps/clued-cloud/scripts/verify-currentness-transport.mjs':'f5c59bdcd09834aa88f466879a072e30318d799ad8ab65c1c4e6337396a5a54a',
+ 'apps/clued-cloud/scripts/production-release-gate.mjs':'b94feed3593aedd6526f81acbcd0bc9ba0b12640ec6253c27608190b9ce63768',
  'scripts/ci/clued-release-grant.mjs':'55b587d4e052b0281ce346c68ce1e4fc2c4f74d06287f0af1fa76481ca18c52e',
 });
 const EXTERNAL=new URL('../../verify-currentness-external.mjs',import.meta.url);
 const MANAGER=new URL('../../linux-process-manager.mjs',import.meta.url);
 const PORTS=new URL('../fixed-currentness-ports.mjs',import.meta.url);
 const LOCAL_PINS=new Map([
- [EXTERNAL,'63e2040003e953bb7e8fe8e5f44948a3a588227a53efe0422f594bab9a6541fa'],
- [MANAGER,'4cb9144ee52f6d569ed6985c8d793a366ee818c1c4ade16dbc8089e0f866d8fd'],
+ [EXTERNAL,'4bb88785021b73783bfe2b37972be11806f2c3b564ced8785dfbda25405106cd'],
+ [MANAGER,'bc85acde10bc55a0866aac0aa9554d8c5de876b12a12d8faf492fa3d91c44223'],
  [PORTS,'93f95698f359c94585053d4331ae855bc07004245b4429ecaf6470aa40c25f3f'],
 ]);
 const HASH=/^[a-f0-9]{64}$/,SHA=/^[a-f0-9]{40}$/,UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;

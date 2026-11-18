@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import * as gate from '../scripts/production-release-gate.mjs';
 import { settleProjectionLag, verifyReleaseState } from '../scripts/production-release-gate.mjs';
 
 const baseline = JSON.parse(await readFile(new URL(
@@ -144,8 +143,6 @@ test('release CLI checks projection state before and after deployment', async (t
   const version = '20260101000000', name = 'bootstrap', sql = 'select 1;\n';
   const filename = `${version}_${name}.sql`;
   await writeFile(path.join(migrations, filename), sql);
-  const wranglerConfig = path.join(app, 'wrangler.production.jsonc');
-  await json(wranglerConfig, { name: 'clued-cloud', triggers: { crons: ['*/10 * * * *'] } });
   git('init', '-b', 'main');
   git('add', '--force', '.');
   git('commit', '-qm', 'Create migration fixture');
@@ -163,7 +160,6 @@ test('release CLI checks projection state before and after deployment', async (t
   git('commit', '-qm', 'Record release baseline and ledger');
   const db = path.join(temp, 'fixture.json');
   const reads = path.join(temp, 'reads');
-  const clients = path.join(temp, 'clients');
   const evidence = path.join(temp, 'evidence.json');
   const key = 'global.priority_frontier';
   const history = [{ version, name, statements: [sql] }];
@@ -178,15 +174,13 @@ test('release CLI checks projection state before and after deployment', async (t
   const run = async (mode, snapshots, overrides = {}) => {
     await rm(evidence, { force: true });
     await writeFile(reads, '');
-    await writeFile(clients, '');
-    await json(db, { history, frontier, snapshots, reads, clients, ...overrides });
+    await json(db, { history, frontier, snapshots, reads, ...overrides });
     const result = spawnSync(process.execPath, [path.join(scripts, 'production-release-gate.mjs'),
       mode, '--evidence-out', evidence], { cwd: app, encoding: 'utf8', timeout: 25_000,
       env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: db, GITHUB_ACTIONS: 'true',
         GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_REF: 'refs/heads/main' } });
     assert.ifError(result.error);
     return { ...result, reads: (await readFile(reads, 'utf8')).trim().split('\n').filter(Boolean).map(Number),
-      clients: (await readFile(clients, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)),
       receipt: result.status === 0 ? JSON.parse(await readFile(evidence, 'utf8')) : null };
   };
   const passed = result => assert.equal(result.status, 0, result.stderr);
@@ -221,37 +215,9 @@ test('release CLI checks projection state before and after deployment', async (t
     assert.ok(result.reads[1] - result.reads[0] >= 9900);
     assert.equal(result.receipt.projection_revisions[0].revision, 94);
   });
-  await t.test('部署后积压超过五分钟仍在 Cron 一拍内继续等，下一帧追平即通过', async () => {
-    const result = await run('--post-deploy', [lag(301_000), current()]);
-    passed(result);
-    assert.equal(result.reads.length, 2);
-  });
-  await t.test('数据库连接与查询都有客户端超时，挂起的连接不能耗尽回滚窗口', async () => {
-    for (const mode of ['--pre-deploy', '--post-deploy']) {
-      const result = await run(mode, [lag(30_000), current()]);
-      passed(result);
-      assert.ok(result.clients.length >= 1, mode);
-      for (const options of result.clients) {
-        assert.ok(options.connectionTimeoutMillis > 0 && options.query_timeout > 0, `${mode}: ${JSON.stringify(options)}`);
-      }
-    }
-  });
-  await t.test('Cron 不是 */N * * * * 时两种模式都在读数据库前阻断', async () => {
-    for (const crons of [['0 * * * *'], ['*/10 * * * *', '*/5 * * * *'], [], ['*/0 * * * *']]) {
-      await json(wranglerConfig, { name: 'clued-cloud', triggers: { crons } });
-      git('commit', '-qam', 'Change the schedule');
-      for (const mode of ['--pre-deploy', '--post-deploy']) {
-        const result = await run(mode, [current()]);
-        blocked(result, 'cron_schedule_unsupported');
-        assert.equal(result.reads.length, 0, `${mode} ${JSON.stringify(crons)}`);
-      }
-    }
-    await json(wranglerConfig, { name: 'clued-cloud', triggers: { crons: ['*/10 * * * *'] } });
-    git('commit', '-qam', 'Restore the schedule');
-    passed(await run('--pre-deploy', [current()]));
-  });
-  await t.test('部署后任务失败、摘要不符分别立即阻断', async () => {
+  await t.test('部署后超时、任务失败、摘要不符分别立即阻断', async () => {
     for (const [snapshot, code] of [
+      [lag(301_000), 'projection_backlog_overdue'],
       [lag(30_000, { job_status: 'failed' }), 'projection_job_failed'],
       [current(), 'projection_digest_mismatch'],
     ]) {
@@ -302,60 +268,25 @@ test('release CLI checks projection state before and after deployment', async (t
   });
 });
 
-// Fable 1121 item 4: a projection queued without a request-side wake waits for
-// the next Cron tick, so the post-deploy window covers one whole period plus two
-// minutes. Only a failed job or a digest mismatch blocks at once.
-test('部署后等待上限＝Cron 周期＋2 分钟，周期从 wrangler 生产配置读', async () => {
-  const { cronPeriodMinutes, postDeployWaitLimitMs } = gate;
-  assert.equal(typeof cronPeriodMinutes, 'function');
-  const production = JSON.parse(await readFile(new URL('../wrangler.production.jsonc', import.meta.url), 'utf8'));
-  assert.equal(cronPeriodMinutes(production), 10);
-  assert.equal(postDeployWaitLimitMs(10), 12 * 60_000);
-  assert.equal(cronPeriodMinutes({ triggers: { crons: ['*/1 * * * *'] } }), 1);
-  for (const triggers of [undefined, {}, { crons: [] }, { crons: ['0 * * * *'] }, { crons: ['*/10 * * * *', '*/5 * * * *'] },
-    { crons: ['*/0 * * * *'] }, { crons: ['*/60 * * * *'] }, { crons: ['*/10 */2 * * *'] }, { crons: [' */10 * * * *'] }]) {
-    assert.throws(() => cronPeriodMinutes({ triggers }), /cron_schedule_unsupported/, JSON.stringify(triggers));
-  }
-});
-
-test('Cron 每十分钟：无请求侧唤醒、第 9 分钟追平即通过，12 分钟仍积压才失败，任务失败立即失败', async () => {
+test('积压始终未追平时只等三分钟，最后一帧的过期或失败立即生效', async () => {
   const key = 'global.priority_frontier';
-  const waitLimitMs = gate.postDeployWaitLimitMs?.(10);
-  assert.equal(waitLimitMs, 12 * 60_000);
-  const settle = async ({ caughtUpAt = Infinity, failAt = Infinity }) => {
+  for (const outcome of ['pending', 'overdue', 'failed']) {
     let clock = now.getTime(), reads = 0;
     const snapshot = () => {
       const result = healthy().watchdog;
       result.observed_at = new Date(clock).toISOString();
-      const elapsed = clock - now.getTime();
-      if (elapsed < caughtUpAt) {
-        Object.assign(result.projections[0], { invalidation_revision: 95, source_digest_status: 'not_applicable',
-          job_status: elapsed >= failAt ? 'failed' : 'queued', stale_since: new Date(now.getTime() - 30_000).toISOString() });
-      }
+      Object.assign(result.projections[0], { invalidation_revision: 95, source_digest_status: 'not_applicable',
+        job_status: outcome === 'failed' && reads ? 'failed' : 'queued',
+        stale_since: new Date(now.getTime() - (outcome === 'overdue' ? 290_000 : 30_000)).toISOString() });
       return result;
     };
-    const state = await settleProjectionLag({ watchdog: snapshot(), waitLimitMs, now: () => clock,
-      sleep: async ms => { assert.ok(ms > 0 && ms <= 10_000); clock += ms; },
+    const state = await settleProjectionLag({ watchdog: snapshot(), now: () => clock,
+      sleep: async ms => { assert.equal(ms, 10_000); clock += ms; },
       readWatchdog: async () => { reads++; return snapshot(); } });
-    return { state, reads, waited: clock - now.getTime() };
-  };
-  // The next tick lands at minute 9, long after the backlog turned overdue (5 min).
-  const tick = await settle({ caughtUpAt: 9 * 60_000 });
-  assert.deepEqual(tick.state.findings, []);
-  assert.equal(tick.waited, 9 * 60_000);
-  // Still behind at 12 minutes: blocked, after waiting the whole window.
-  const stuck = await settle({});
-  assert.deepEqual(stuck.state.findings, ['projection_backlog_overdue:' + key]);
-  assert.equal(stuck.waited, 12 * 60_000);
-  assert.equal(stuck.reads, 72);
-  // A failed job blocks at once, before or during the wait.
-  const failed = await settle({ failAt: 0 });
-  assert.deepEqual(failed.state.findings, ['projection_job_failed:' + key]);
-  assert.equal(failed.reads, 0);
-  const failedLater = await settle({ failAt: 60_000 });
-  assert.deepEqual(failedLater.state.findings, ['projection_job_failed:' + key]);
-  assert.equal(failedLater.waited, 60_000);
-  await assert.rejects(settleProjectionLag({ watchdog: healthy().watchdog, readWatchdog: async () => null }), /wait_limit/);
+    const code = outcome === 'failed' ? 'projection_job_failed' : 'projection_backlog_' + outcome;
+    assert.equal(reads, outcome === 'pending' ? 18 : 1);
+    assert.deepEqual(state.findings, [code + ':' + key]);
+  }
 });
 
 test('发布门不依赖心跳，两个发布入口使用部署后状态模式', async () => {
@@ -363,10 +294,13 @@ test('发布门不依赖心跳，两个发布入口使用部署后状态模式',
   assert.doesNotMatch(gate, /heartbeat/i);
   const host = await readFile(new URL('../scripts/existing-release-v3-host/payload/release/' +
     'existing-release-entry-v1/v3-host/release-once.mjs', import.meta.url), 'utf8');
-  for (const caller of [productionWorkflow, host]) {
-    assert.match(caller, /production-release-gate\.mjs[' ,]+--post-deploy/);
-    assert.doesNotMatch(caller, /--min-heartbeat-at/);
-  }
+  const postflight = await readFile(new URL('../scripts/projection-postflight.mjs', import.meta.url), 'utf8');
+  // The workflow reaches the gate's --post-deploy through the projection postflight.
+  assert.match(productionWorkflow, /node scripts\/projection-postflight\.mjs/);
+  assert.match(host, /production-release-gate\.mjs[' ,]+--post-deploy/);
+  assert.match(postflight, /production-release-gate\.mjs/);
+  assert.match(postflight, /'--post-deploy'/);
+  for (const caller of [productionWorkflow, host, postflight]) assert.doesNotMatch(caller, /--min-heartbeat-at/);
 });
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
@@ -707,20 +641,23 @@ const RELEASE_ORDER = [
   'Check production database credential', 'Verify projection and MTPE behavior', 'Build exact Worker source',
   'Verify and build Kooyumi Connect release source', 'Verify database prerequisites and record projection state',
   'Check Cloudflare deployment credential', 'Record the Worker versions production serves',
-  'Consume the Owner Grant for this commit', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
-  'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
-  'Verify the PDF extractor service binding', 'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',
-  'Verify projection currentness after deployment', 'Publish the G6 currentness attestation', 'Preserve release evidence',
+  'Consume the Owner Grant for this commit', 'Ensure Storage job queue exists', 'Deploy Clued PDF extractor Worker',
+  'Deploy Clued production Worker', 'Wait until production serves this commit',
+  'Verify production serves the repository Agent contract', 'Verify the PDF extractor service binding',
+  'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',
+  'Verify projection currentness after deployment', 'Verify exact live commit and currentness transport', 'Preserve release evidence',
 ];
 const ROLLBACK_STEP = 'Roll back the Workers after a failed deploy or verification';
 const DRILL_STEP = 'Fail the rollback drill after every verification passed';
-const PUBLISH_STEP = 'Publish the G6 currentness attestation';
+const G6_STEP = 'Verify exact live commit and currentness transport';
+const G6_REPORT_STEP = 'Report an unconfirmed G6 attestation';
 const RECORD_STEP = 'Record the Worker versions production serves';
-const VERIFY_STEPS = ['Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
+const QUEUE_STEP = 'Ensure Storage job queue exists';
+const VERIFY_STEPS = ['Wait until production serves this commit', 'Verify production serves the repository Agent contract',
   'Verify the PDF extractor service binding', 'Verify Kooyumi Connect production release', 'Verify projection currentness after deployment'];
 const DEPLOY_STEPS = ['Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker', 'Deploy Kooyumi Connect Worker'];
 const grantSteps = (run) => run.steps.filter((step) => /\n {8}run: node scripts\/ci\/clued-release-grant\.mjs /.test(step.text));
-const writesAttestation = (step) => /verify-currentness-transport\.mjs --publish /.test(step.text);
+const writesAttestation = (step) => /verify-currentness-transport\.mjs --production /.test(step.text);
 const MIGRATION = '20261003170000_owner_grants_release_door.sql';
 
 test('release mode runs preflight, deploy and verification in one run and uses its one grant once', () => {
@@ -735,7 +672,7 @@ test('release mode runs preflight, deploy and verification in one run and uses i
     'Check migration database credential', 'Consume the Owner Grant for the named migrations', 'Apply the named migrations']) {
     assert.ok(!run.ran.includes(name), name);
   }
-  assert.ok(!run.ran.includes(ROLLBACK_STEP) && !run.ran.includes(DRILL_STEP));
+  for (const name of [ROLLBACK_STEP, DRILL_STEP, G6_REPORT_STEP]) assert.ok(!run.ran.includes(name), name);
   const [deployGrant] = grantSteps(run);
   assert.match(deployGrant.text, /RELEASE_MODE: \$\{\{ inputs\.mode == 'release' && 'deploy' \|\| inputs\.mode \}\}/);
   assert.match(deployGrant.text, /--mode "\$RELEASE_MODE"/);
@@ -745,43 +682,44 @@ test('release mode runs preflight, deploy and verification in one run and uses i
   run.ran.forEach((name, index) => { if (/^Check .* credentials?$/.test(name)) assert.ok(index < grantAt, name); });
 });
 
-// Fable 1121 item 2: the old Worker a rollback restores asks G6 for its own
-// commit. The run may only replace the production attestation once nothing
-// can roll the Workers back any more.
-test('the G6 attestation is written once, last, and only after every verification passed', async () => {
+// Fable 1121 §6.1, review high 2: the G6 attestation is outside the rollback.
+// It runs (and writes) only when everything before it succeeded, after the
+// rollback step; its own failure does not roll production back.
+test('the G6 attestation runs after the rollback step, only when everything succeeded, and its failure rolls nothing back', () => {
+  const at = (run, name) => run.ran.indexOf(name);
+  const g6 = releaseSteps.find((s) => s.name === G6_STEP);
+  assert.equal(releaseSteps.filter(writesAttestation).length, 1);
+  assert.ok(releaseSteps.indexOf(g6) > releaseSteps.findIndex((s) => s.name === ROLLBACK_STEP));
+  // The step is main's verifier unchanged: verify and write in one.
+  assert.match(g6.text, /\n {8}run: node scripts\/verify-currentness-transport\.mjs --production --evidence-out \.sites-runtime\/release-evidence\/currentness-attestation\.json\n/);
+  assert.match(g6.text, /CLUED_ATTESTATION_DATABASE_URL: \$\{\{ secrets\.CLUED_ATTESTATION_DATABASE_URL_V2 \}\}/);
+  assert.match(g6.text, /\n {8}id: g6\n/);
   for (const mode of ['deploy', 'release']) {
     const ok = simulateRelease({ mode });
     assert.equal(ok.conclusion, 'success');
-    assert.deepEqual(ok.steps.filter(writesAttestation).map((step) => step.name), [PUBLISH_STEP]);
-    const publishAt = ok.ran.indexOf(PUBLISH_STEP);
-    assert.equal(publishAt, ok.ran.length - 2, 'only the evidence upload follows the attestation');
-    for (const name of [...DEPLOY_STEPS, ...VERIFY_STEPS]) assert.ok(ok.ran.indexOf(name) < publishAt, name);
-    for (const failAt of [...DEPLOY_STEPS, ...VERIFY_STEPS]) {
+    assert.equal(at(ok, G6_STEP), ok.ran.length - 2, 'only the evidence upload follows the attestation');
+    // A failed deploy, check, queue or grant: the G6 step never writes.
+    for (const failAt of ['Consume the Owner Grant for this commit', QUEUE_STEP, ...DEPLOY_STEPS, ...VERIFY_STEPS]) {
       const failed = simulateRelease({ mode }, failAt);
       assert.equal(failed.conclusion, 'failure');
       assert.deepEqual(failed.steps.filter(writesAttestation), [], `${mode}: ${failAt} wrote the attestation`);
       assert.ok(failed.ran.includes(ROLLBACK_STEP), `${mode}: ${failAt}`);
+      assert.ok(!failed.ran.includes(G6_REPORT_STEP), `${mode}: ${failAt}`);
     }
-    // A failed attestation write is a failed release too: roll back.
-    assert.ok(simulateRelease({ mode }, PUBLISH_STEP).ran.includes(ROLLBACK_STEP));
+    // The G6 step itself fails: the run fails, nothing rolls back, the summary says so.
+    const g6Failed = simulateRelease({ mode }, G6_STEP);
+    assert.equal(g6Failed.conclusion, 'failure');
+    assert.ok(!g6Failed.ran.includes(ROLLBACK_STEP), `${mode}: a G6 failure rolled back`);
+    assert.ok(at(g6Failed, G6_REPORT_STEP) > at(g6Failed, G6_STEP));
   }
-  assert.equal(releaseSteps.filter(writesAttestation).length, 1);
-  const verify = releaseSteps.find((step) => step.name === 'Verify exact live commit and currentness transport');
-  assert.match(verify.text, /node scripts\/verify-currentness-transport\.mjs --production --evidence-out \.sites-runtime\/release-evidence\/currentness-attestation\.json/);
-  assert.doesNotMatch(verify.text, /CLUED_ATTESTATION_DATABASE_URL/, 'verification runs without the attestation database credential');
-  const publish = releaseSteps.find((step) => step.name === PUBLISH_STEP);
-  assert.match(publish.text, /node scripts\/verify-currentness-transport\.mjs --publish \.sites-runtime\/release-evidence\/currentness-attestation\.json/);
-  assert.match(publish.text, /CLUED_ATTESTATION_DATABASE_URL: \$\{\{ secrets\.CLUED_ATTESTATION_DATABASE_URL_V2 \}\}/);
-  // The standalone attestation workflow takes the same two steps, in order.
-  const standalone = await readFile(new URL('../../../.github/workflows/clued-currentness-post-deploy-attestation.yml', import.meta.url), 'utf8');
-  const verifyAt = standalone.indexOf('verify-currentness-transport.mjs --production --evidence-out currentness-attestation.json');
-  const publishAt = standalone.indexOf('verify-currentness-transport.mjs --publish currentness-attestation.json');
-  assert.ok(verifyAt > 0 && publishAt > verifyAt, JSON.stringify({ verifyAt, publishAt }));
-  assert.equal(standalone.split('secrets.CLUED_ATTESTATION_DATABASE_URL').length - 1, 1, 'only the publish step holds the credential');
-  assert.ok(standalone.indexOf('secrets.CLUED_ATTESTATION_DATABASE_URL') > verifyAt);
+  const report = releaseSteps.find((s) => s.name === G6_REPORT_STEP);
+  assert.match(report.text, /GITHUB_STEP_SUMMARY/);
+  assert.match(report.text, /not rolled back/);
+  assert.match(report.text, /post-deploy attestation workflow/);
+  assert.doesNotMatch(report.text, /secrets\./);
 });
 
-test('the rollback drill fails a fully verified release before the attestation and rolls the Workers back', () => {
+test('the rollback drill fails a fully verified release before the rollback and the attestation', () => {
   // The model runs no script: the drill step's `exit 1` (pinned below) is its failure.
   const drill = simulateRelease({ mode: 'release', rollback_drill: true }, DRILL_STEP);
   assert.equal(drill.conclusion, 'failure');
@@ -822,13 +760,13 @@ test('only deploy and release reach production Workers; the single-step modes ke
 
 test('a failed deploy or post-deploy verification rolls the Workers back and the release still fails', () => {
   for (const mode of ['release', 'deploy']) {
-    for (const failAt of ['Consume the Owner Grant for this commit', ...DEPLOY_STEPS, ...VERIFY_STEPS, PUBLISH_STEP]) {
+    for (const failAt of ['Consume the Owner Grant for this commit', QUEUE_STEP, ...DEPLOY_STEPS, ...VERIFY_STEPS]) {
       const run = simulateRelease({ mode }, failAt);
       assert.equal(run.conclusion, 'failure', failAt);
       assert.ok(run.ran.includes(ROLLBACK_STEP), `${mode}: ${failAt} did not roll back`);
       assert.ok(run.ran.indexOf(ROLLBACK_STEP) > run.ran.indexOf(failAt));
       assert.ok(run.ran.indexOf(ROLLBACK_STEP) < run.ran.indexOf('Preserve release evidence'));
-      if (failAt.startsWith('Verify exact')) assert.ok(!run.ran.includes('Deploy Kooyumi Connect Worker'));
+      if (failAt.startsWith('Wait until')) assert.ok(!run.ran.includes('Deploy Kooyumi Connect Worker'));
     }
     // Nothing was recorded: nothing to roll back to, and no grant was used.
     for (const failAt of ['Verify database prerequisites and record projection state', RECORD_STEP]) {
@@ -836,7 +774,7 @@ test('a failed deploy or post-deploy verification rolls the Workers back and the
       assert.equal(run.conclusion, 'failure');
       assert.ok(!run.ran.includes(ROLLBACK_STEP), failAt);
       assert.deepEqual(grantSteps(run), [], failAt);
-      assert.ok(!run.ran.some((name) => /^Deploy /.test(name)), failAt);
+      assert.ok(!run.ran.some((name) => /^Deploy |^Ensure Storage/.test(name)), failAt);
     }
   }
   const migrated = simulateRelease({ mode: 'migrate', migrations: MIGRATION }, 'Apply the named migrations');
@@ -853,21 +791,55 @@ test('a failed deploy or post-deploy verification rolls the Workers back and the
   }
 });
 
+// Review high 1: creating the queue is not undone by a Worker rollback. In
+// release mode the queue step only reads; a missing queue stops the release.
+test('release never creates the Storage job queue; deploy still creates a missing one', async () => {
+  const step = releaseSteps.find((s) => s.name === QUEUE_STEP);
+  const script = step.text.slice(step.text.indexOf('run: |\n') + 'run: |\n'.length)
+    .split('\n').filter((line) => /^ {10}/.test(line)).map((line) => line.slice(10)).join('\n');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'release-queue-'));
+  try {
+    const calls = path.join(dir, 'calls');
+    // A stand-in npx: `queues info` fails as for a missing queue; every call is logged.
+    await writeFile(path.join(dir, 'npx'), `#!/usr/bin/env bash\necho "$*" >> "${calls.replaceAll('\\', '/')}"\n[ "$3" = info ] && exit 1\nexit 0\n`);
+    const run = async (mode) => {
+      await writeFile(calls, '');
+      const result = spawnSync('bash', ['-c', `chmod +x ./npx; PATH="$PWD:$PATH"; ${script}`], { cwd: dir, encoding: 'utf8',
+        env: { ...process.env, RELEASE_MODE: mode } });
+      return { status: result.status, calls: (await readFile(calls, 'utf8')).trim().split('\n').filter(Boolean) };
+    };
+    const release = await run('release');
+    assert.notEqual(release.status, 0);
+    assert.deepEqual(release.calls, ['wrangler queues info clued-storage-jobs']);
+    const deploy = await run('deploy');
+    assert.equal(deploy.status, 0);
+    assert.deepEqual(deploy.calls, ['wrangler queues info clued-storage-jobs', 'wrangler queues create clued-storage-jobs']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  assert.match(step.text, /RELEASE_MODE: \$\{\{ inputs\.mode \}\}/);
+});
+
 // Fable 1121 item 6: a step timeout is a failure and reaches the rollback; a
 // job timeout is a cancellation and does not. So every step a deploy or
-// release runs has its own timeout, and the job outlasts all of them together.
-test('every deploy and release step has a timeout, and the job timeout covers them all and the rollback', async () => {
+// release runs has its own timeout, and the job outlasts the longest path.
+test('every deploy and release step has a timeout, and the job timeout covers the longest path', async () => {
   const workers = await import('../scripts/release-worker-versions.mjs');
+  const postflight = await import('../scripts/projection-postflight.mjs');
   const jobTimeout = Number(/\n    timeout-minutes: (\d+)\n/.exec(productionWorkflow)?.[1]);
   const minutes = (step) => Number(/\n {8}timeout-minutes: (\d+)\n/.exec(`\n${step.text}\n`)?.[1]);
+  // Every way through: success, the G6 step failing, and a failure at each
+  // step after the record, which runs the rollback.
   const paths = [simulateRelease({ mode: 'deploy' }), simulateRelease({ mode: 'release' }),
-    simulateRelease({ mode: 'release', rollback_drill: true }), simulateRelease({ mode: 'release' }, PUBLISH_STEP)];
-  const steps = [...new Map(paths.flatMap((run) => run.steps).map((step) => [step.text, step])).values()];
-  assert.ok(steps.some((step) => step.name === ROLLBACK_STEP) && steps.some((step) => step.name === DRILL_STEP));
-  for (const step of steps) assert.ok(minutes(step) > 0, `${step.name} has no timeout-minutes`);
-  const total = steps.reduce((sum, step) => sum + minutes(step), 0);
-  // Five minutes for the runner's own set-up and post steps.
-  assert.ok(jobTimeout >= total + 5, JSON.stringify({ jobTimeout, total }));
+    simulateRelease({ mode: 'release' }, G6_STEP),
+    ...[...RELEASE_ORDER.slice(RELEASE_ORDER.indexOf(RECORD_STEP) + 1, -2)].map((name) => simulateRelease({ mode: 'release' }, name)),
+    simulateRelease({ mode: 'release', rollback_drill: true }, DRILL_STEP)];
+  for (const run of paths) {
+    for (const step of run.steps) assert.ok(minutes(step) > 0, `${step.name} has no timeout-minutes`);
+    const total = run.steps.reduce((sum, step) => sum + minutes(step), 0);
+    // Five minutes for the runner's own set-up and post steps.
+    assert.ok(jobTimeout >= total + 5, JSON.stringify({ jobTimeout, total, last: run.ran.at(-1) }));
+  }
   const step = (name) => releaseSteps.find((s) => s.name === name);
   // The edge window is PROPAGATION_WINDOW_MS (Task df6dc467; its own test
   // fails until main carries it); 120 s is its value there.
@@ -875,25 +847,25 @@ test('every deploy and release step has a timeout, and the job timeout covers th
   const rollbackMs = workers.rollbackWorstCaseMs(live.PROPAGATION_WINDOW_MS ?? 120_000);
   assert.ok(minutes(step(ROLLBACK_STEP)) * 60_000 >= rollbackMs, String(rollbackMs));
   assert.ok(minutes(step(RECORD_STEP)) * 60_000 >= workers.RECORD_WORST_CASE_MS, String(workers.RECORD_WORST_CASE_MS));
+  // Projection: the window (Cron period + 2 minutes) plus five, as Fable 1121 §6.1 sets it.
   const production = JSON.parse(await readFile(new URL('../wrangler.production.jsonc', import.meta.url), 'utf8'));
-  assert.ok(minutes(step('Verify projection currentness after deployment')) * 60_000 >=
-    gate.postDeployWaitLimitMs(gate.cronPeriodMinutes(production)) + 60_000);
+  const windowMinutes = postflight.windowMs(postflight.cronPeriodMinutes(production)) / 60_000;
+  assert.equal(minutes(step('Verify projection currentness after deployment')), windowMinutes + 5);
+  assert.ok(windowMinutes * 60_000 + postflight.CALL_TIMEOUT_MS <= (windowMinutes + 5) * 60_000);
 });
 
 const HEAD_COMMIT = 'c'.repeat(40), EDGE_COMMIT = 'e'.repeat(40);
 // What the public edge serves: the main Worker's /healthz and Connect's smoke.
 const servedEdge = (commit = EDGE_COMMIT, revision = 'r1') =>
   ({ 'clued-cloud': { source_commit: commit }, 'clued-connect': { source_commit: commit, revision } });
-// Each production configuration as git shows it at a commit.
 const WRANGLER_FILES = ['apps/clued-cloud/wrangler.pdf-extractor.jsonc', 'apps/clued-cloud/wrangler.production.jsonc',
   'apps/kooyumi-connect/wrangler.production.jsonc'];
-const repositoryConfigs = Object.fromEntries(await Promise.all(WRANGLER_FILES.map(async (file) =>
-  [file, await readFile(new URL(`../../../${file}`, import.meta.url), 'utf8')])));
-const gitShowAt = (changes = {}) => async (commit, file) => {
-  assert.ok(WRANGLER_FILES.includes(file), file);
-  if (commit === EDGE_COMMIT && changes[file]) return JSON.stringify(changes[file](JSON.parse(repositoryConfigs[file])));
-  return repositoryConfigs[file];
+// `git diff --quiet <commit> HEAD -- <files>` as a function: true when identical.
+const gitSame = (differs = []) => async (commit, files) => {
+  assert.deepEqual(files, WRANGLER_FILES);
+  return !differs.includes(commit);
 };
+const noSleep = async () => {};
 
 test('the rollback restores each changed Worker to its recorded version, last deployed first, and reports it', async () => {
   const { WORKERS, main, recordVersions, rollbackVersions, renderRollbackSummary, servedVersion } =
@@ -922,9 +894,9 @@ test('the rollback restores each changed Worker to its recorded version, last de
     };
     return { wrangler, calls, served };
   };
-  const wait = async () => {};
+  const wait = noSleep;
   const env = { GITHUB_SHA: HEAD_COMMIT, GITHUB_RUN_ID: '42' };
-  const edges = { readEdges: async () => servedEdge(), gitShow: gitShowAt(), sleep: wait, windowMs: 120_000 };
+  const edges = { readEdges: async () => servedEdge(), gitSame: gitSame(), sleep: noSleep, windowMs: 120_000 };
   const before = { 'clued-storage-pdf': id(1), 'clued-cloud': id(2), 'clued-connect': id(3) };
   const recorded = await recordVersions({ wrangler: fakeCloudflare({ ...before }).wrangler, wait, env, mode: 'release', ...edges });
   assert.deepEqual(recorded.workers, Object.entries(before).map(([name, version_id]) => ({ name, version_id })));
@@ -947,12 +919,13 @@ test('the rollback restores each changed Worker to its recorded version, last de
   assert.ok(summary.includes(`| \`clued-cloud\` | \`${id(2)}\` | \`${id(5)}\` | rolled_back |`), summary);
   assert.match(summary, /database is forward-only and was not rolled back/);
   assert.match(summary, /Production serves the recorded versions again/);
+  // The declared limit: hand-made changes outside the repository are not restored.
+  assert.match(summary, /not restored by a rollback/);
   // A refused rollback is reported and fails the step.
   const refused = await rollbackVersions({ recorded, wait, env, ...edges,
     wrangler: fakeCloudflare({ ...before, 'clued-cloud': id(5) }, { failRollback: ['clued-cloud'] }).wrangler });
   assert.equal(refused.ok, false);
-  assert.equal(refused.status, 'rollback_failed');
-  assert.match(renderRollbackSummary(refused), /rollback_failed: rollback refused[\s\S]*could not be rolled back/);
+  assert.match(renderRollbackSummary(refused), /rollback_failed: rollback refused[\s\S]*not restored/i);
   await assert.rejects(rollbackVersions({ recorded: { ...recorded, workers: recorded.workers.slice(1) }, wait, env, ...edges }), /not a valid record/);
 
   // The commands the workflow runs: record, then rollback with the summary.
@@ -978,12 +951,13 @@ test('the rollback restores each changed Worker to its recorded version, last de
   }
 });
 
-// Fable 1121 item 5: a version rollback does not undo Cron, routes, queue
-// consumers or Durable Object migrations. A release refuses a commit that
-// changes any of them, before the grant and before any deploy.
-test('a release whose Worker settings a version rollback cannot undo is refused before anything is deployed', async () => {
-  const { recordVersions, UNVERSIONED_KEYS } = await import('../scripts/release-worker-versions.mjs');
-  assert.deepEqual(UNVERSIONED_KEYS, ['triggers', 'routes', 'queues.consumers', 'migrations']);
+// Fable 1121 §6.1, review high 1: a release runs only when the three wrangler
+// production configurations are byte for byte those of the commit the edge
+// serves (git diff, no key list). Otherwise it stops before the grant.
+test('a release whose wrangler configuration differs from the commit the edge serves is refused before anything is deployed', async () => {
+  const { recordVersions } = await import('../scripts/release-worker-versions.mjs');
+  const source = await readFile(new URL('../scripts/release-worker-versions.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /UNVERSIONED_KEYS|triggers|queues\.consumers/, 'no key-by-key comparison');
   const id = (n) => `${String(n).repeat(8)}-0000-4000-8000-${String(n).repeat(12)}`;
   const versions = { 'clued-storage-pdf': id(1), 'clued-cloud': id(2), 'clued-connect': id(3) };
   let deploys = 0;
@@ -991,33 +965,28 @@ test('a release whose Worker settings a version rollback cannot undo is refused 
     if (args[0] === 'deployments') return { status: 0, stdout: JSON.stringify({ versions: [{ version_id: versions[args[3]], percentage: 100 }] }) };
     deploys += 1; return { status: 0, stdout: '' };
   };
-  const base = { wrangler, wait: async () => {}, env: { GITHUB_SHA: HEAD_COMMIT }, readEdges: async () => servedEdge() };
-  const changes = [
-    ['apps/clued-cloud/wrangler.production.jsonc', (c) => ({ ...c, triggers: { crons: ['* * * * *'] } }), /clued-cloud[^\n]*triggers/],
-    ['apps/clued-cloud/wrangler.production.jsonc', (c) => ({ ...c, routes: c.routes.slice(1) }), /clued-cloud[^\n]*routes/],
-    ['apps/clued-cloud/wrangler.production.jsonc', (c) => ({ ...c, queues: { ...c.queues, consumers: [] } }), /queues\.consumers/],
-    ['apps/kooyumi-connect/wrangler.production.jsonc', (c) => ({ ...c, routes: [] }), /clued-connect[^\n]*routes/],
-    ['apps/clued-cloud/wrangler.pdf-extractor.jsonc', (c) => ({ ...c, triggers: { crons: ['*/5 * * * *'] } }), /clued-storage-pdf[^\n]*triggers/],
-  ];
-  for (const [file, change, message] of changes) {
-    await assert.rejects(recordVersions({ ...base, mode: 'release', gitShow: gitShowAt({ [file]: change }) }),
-      (error) => message.test(error.message) && /deploy mode/.test(error.message), file);
-    // deploy mode keeps publishing them, and records what changed.
-    const recorded = await recordVersions({ ...base, mode: 'deploy', gitShow: gitShowAt({ [file]: change }) });
-    assert.equal(recorded.unversioned_changes.length, 1, file);
-  }
-  // Settings that move with a version (vars, bindings, compatibility) are fine.
-  const vars = await recordVersions({ ...base, mode: 'release', gitShow: gitShowAt({
-    'apps/clued-cloud/wrangler.production.jsonc': (c) => ({ ...c, vars: { ...c.vars, EXTRA: 'x' } }) }) });
-  assert.deepEqual(vars.unversioned_changes, []);
-  // Without the commit the edge serves, a release cannot compare and stops.
+  const base = { wrangler, wait: noSleep, env: { GITHUB_SHA: HEAD_COMMIT }, readEdges: async () => servedEdge() };
+  // The edge commits differ from HEAD in any of the three files.
+  await assert.rejects(recordVersions({ ...base, mode: 'release', gitSame: gitSame([EDGE_COMMIT]) }),
+    (error) => /deploy mode/.test(error.message) && /nothing was deployed/.test(error.message));
+  // Connect's edge on another commit than the main Worker's: both are compared.
+  const other = 'f'.repeat(40);
+  const split = { ...servedEdge(), 'clued-connect': { source_commit: other, revision: 'r1' } };
+  await assert.rejects(recordVersions({ ...base, mode: 'release', readEdges: async () => split, gitSame: gitSame([other]) }), /nothing was deployed/);
+  // git cannot compare (unknown commit): refused.
+  await assert.rejects(recordVersions({ ...base, mode: 'release', gitSame: async () => { throw new Error('bad object'); } }), /nothing was deployed/);
+  // The edge commit cannot be read: refused.
   for (const edge of [{ ...servedEdge(), 'clued-cloud': { error: 'timeout' } }, { ...servedEdge(), 'clued-connect': { error: 'http 503' } }]) {
-    await assert.rejects(recordVersions({ ...base, mode: 'release', readEdges: async () => edge, gitShow: gitShowAt() }), /nothing was deployed/);
-    const recorded = await recordVersions({ ...base, mode: 'deploy', readEdges: async () => edge, gitShow: gitShowAt() });
+    await assert.rejects(recordVersions({ ...base, mode: 'release', readEdges: async () => edge, gitSame: gitSame() }), /nothing was deployed/);
+    const recorded = await recordVersions({ ...base, mode: 'deploy', readEdges: async () => edge, gitSame: gitSame() });
     assert.ok(Object.values(recorded.edge).some((value) => value.error));
   }
-  await assert.rejects(recordVersions({ ...base, mode: 'release', gitShow: async () => { throw new Error('bad object'); } }), /nothing was deployed/);
-  await assert.rejects(recordVersions({ ...base, mode: 'preview', gitShow: gitShowAt() }), /mode/);
+  // deploy keeps publishing such commits and records that the files differ.
+  const deployed = await recordVersions({ ...base, mode: 'deploy', gitSame: gitSame([EDGE_COMMIT]) });
+  assert.equal(deployed.config_identical, false);
+  const same = await recordVersions({ ...base, mode: 'release', gitSame: gitSame() });
+  assert.equal(same.config_identical, true);
+  await assert.rejects(recordVersions({ ...base, mode: 'preview', gitSame: gitSame() }), /mode/);
   assert.equal(deploys, 0);
   // In the workflow, a refused record means no grant used and nothing deployed.
   const refused = simulateRelease({ mode: 'release' }, RECORD_STEP);
@@ -1025,67 +994,73 @@ test('a release whose Worker settings a version rollback cannot undo is refused 
   assert.ok(!refused.ran.some((name) => /^Deploy |Ensure Storage/.test(name)));
 });
 
-// Fable 1121 item 5: versions back at 100% is not yet service restored. The
-// rollback waits, within the propagation window, for the public edge to serve
-// the recorded commits again; otherwise it says so and fails.
-test('the rollback reports restored only when the edge serves the recorded commits again', async () => {
+// Fable 1121 §6.1, review medium 1: the conclusion comes from one reading
+// taken a whole propagation window after the last rollback action, never
+// from the first match; each Worker's result is on disk as soon as it is done.
+test('the rollback concludes from one final reading after the propagation window', async () => {
   const { CONTRACT, WORKERS, rollbackVersions, renderRollbackSummary, main } = await import('../scripts/release-worker-versions.mjs');
   const version = (n) => `${n.repeat(8)}-0000-4000-8000-${n.repeat(12)}`;
   const recorded = { contract: CONTRACT, mode: 'release', source_commit: HEAD_COMMIT, edge: servedEdge(),
     workers: WORKERS.map(({ name }, i) => ({ name, version_id: version(String(i + 1)) })) };
   const rollingBack = () => {
     const served = Object.fromEntries(WORKERS.map(({ name }) => [name, version('9')]));
-    return async (args) => {
+    return { served, wrangler: async (args) => {
       if (args[0] === 'rollback') { served[args[3]] = args[1]; return { status: 0, stdout: '' }; }
       return { status: 0, stdout: JSON.stringify({ versions: [{ version_id: served[args[3]], percentage: 100 }] }) };
-    };
+    } };
   };
-  const clockFor = () => {
-    let clock = 0;
-    return { now: () => clock, sleep: async (ms) => { assert.ok(ms > 0 && ms <= 10_000); clock += ms; }, elapsed: () => clock };
-  };
-  // The versions are back, but the edge still serves the failed release.
-  const stuck = clockFor(); let reads = 0;
-  const unconfirmed = await rollbackVersions({ recorded, wrangler: rollingBack(), wait: async () => {}, env: {},
-    readEdges: async () => { reads += 1; return servedEdge(HEAD_COMMIT, 'r2'); }, windowMs: 120_000, now: stuck.now, sleep: stuck.sleep });
-  assert.equal(unconfirmed.ok, false);
-  assert.equal(unconfirmed.status, 'versions_restored_edge_unconfirmed');
-  assert.ok(unconfirmed.workers.every((w) => w.action === 'rolled_back'));
-  assert.equal(stuck.elapsed(), 120_000);
-  assert.ok(reads >= 12);
-  assert.deepEqual(unconfirmed.edge.map((e) => [e.name, e.confirmed]), [['clued-cloud', false], ['clued-connect', false]]);
-  const text = renderRollbackSummary(unconfirmed);
-  assert.doesNotMatch(text, /serves the recorded versions again/);
-  assert.match(text, /edge was not confirmed/i);
-  // Connect back on its commit but on another revision is not restored either.
-  const revision = clockFor();
-  const wrongRevision = await rollbackVersions({ recorded, wrangler: rollingBack(), wait: async () => {}, env: {},
-    readEdges: async () => servedEdge(EDGE_COMMIT, 'r2'), windowMs: 120_000, now: revision.now, sleep: revision.sleep });
-  assert.equal(wrongRevision.status, 'versions_restored_edge_unconfirmed');
-  // The edge catches up after half a minute, read errors in between: restored.
-  const late = clockFor();
-  const restored = await rollbackVersions({ recorded, wrangler: rollingBack(), wait: async () => {}, env: {}, windowMs: 120_000,
-    now: late.now, sleep: late.sleep, readEdges: async () => {
-      if (late.elapsed() < 10_000) throw new Error('synthetic edge timeout');
-      return late.elapsed() >= 30_000 ? servedEdge() : servedEdge(HEAD_COMMIT, 'r2');
+  // The edge serves the recorded commits at first, then the failed release again.
+  let slept = 0;
+  const flipping = await rollbackVersions({ recorded, wrangler: rollingBack().wrangler, wait: noSleep, env: {}, windowMs: 120_000,
+    sleep: async (ms) => { slept += ms; }, readEdges: async () => (slept < 120_000 ? servedEdge() : servedEdge(HEAD_COMMIT, 'r2')) });
+  assert.equal(slept, 120_000, 'one fixed window before the reading');
+  assert.equal(flipping.ok, false);
+  assert.notEqual(flipping.status, 'restored');
+  assert.ok(flipping.mismatches.some((m) => /clued-cloud/.test(m)));
+  assert.doesNotMatch(renderRollbackSummary(flipping), /serves the recorded versions again/);
+  // A version that moves again after its rollback (a late deploy) is caught by the same reading.
+  const cloud = rollingBack();
+  let reads = 0;
+  const late = await rollbackVersions({ recorded, wait: noSleep, env: {}, windowMs: 120_000, sleep: noSleep, readEdges: async () => servedEdge(),
+    wrangler: async (args) => {
+      if (args[0] === 'deployments' && args[3] === 'clued-cloud' && ++reads > 2) return { status: 0, stdout: JSON.stringify({ versions: [{ version_id: version('8'), percentage: 100 }] }) };
+      return cloud.wrangler(args);
     } });
-  assert.equal(restored.ok, true);
-  assert.equal(restored.status, 'restored');
-  assert.equal(late.elapsed(), 30_000);
-  // An edge that could not be read when the versions were recorded cannot be confirmed.
-  const blind = clockFor();
-  const unrecorded = await rollbackVersions({ recorded: { ...recorded, edge: { ...servedEdge(), 'clued-connect': { error: 'timeout' } } },
-    wrangler: rollingBack(), wait: async () => {}, env: {}, readEdges: async () => servedEdge(), windowMs: 120_000, now: blind.now, sleep: blind.sleep });
-  assert.equal(unrecorded.status, 'versions_restored_edge_unconfirmed');
-  // The CLI exits non-zero for an unconfirmed edge.
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'worker-edge-'));
+  assert.equal(late.status, 'not_restored');
+  assert.ok(late.mismatches.some((m) => /clued-cloud/.test(m)));
+  // Versions and edge as recorded in that reading: restored.
+  const fine = await rollbackVersions({ recorded, wrangler: rollingBack().wrangler, wait: noSleep, env: {}, windowMs: 120_000,
+    sleep: noSleep, readEdges: async () => servedEdge() });
+  assert.equal(fine.status, 'restored');
+  assert.deepEqual(fine.mismatches, []);
+  // Connect back on its commit but another revision is not restored.
+  const revision = await rollbackVersions({ recorded, wrangler: rollingBack().wrangler, wait: noSleep, env: {}, windowMs: 120_000,
+    sleep: noSleep, readEdges: async () => servedEdge(EDGE_COMMIT, 'r2') });
+  assert.equal(revision.status, 'not_restored');
+  // An edge that was unreadable when recorded cannot be confirmed.
+  const blind = await rollbackVersions({ recorded: { ...recorded, edge: { ...servedEdge(), 'clued-connect': { error: 'timeout' } } },
+    wrangler: rollingBack().wrangler, wait: noSleep, env: {}, windowMs: 120_000, sleep: noSleep, readEdges: async () => servedEdge() });
+  assert.equal(blind.status, 'not_restored');
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'worker-final-'));
   const log = console.log; const error = console.error;
   console.log = () => {}; console.error = () => {};
   try {
     await writeFile(path.join(dir, 'v.json'), JSON.stringify(recorded));
-    const cli = clockFor();
-    assert.equal(await main(['rollback', '--from', path.join(dir, 'v.json'), '--out', path.join(dir, 'r.json')], { wrangler: rollingBack(),
-      wait: async () => {}, env: {}, readEdges: async () => servedEdge(HEAD_COMMIT), windowMs: 120_000, now: cli.now, sleep: cli.sleep }), 1);
+    // The CLI exits non-zero when the final reading does not match.
+    assert.equal(await main(['rollback', '--from', path.join(dir, 'v.json'), '--out', path.join(dir, 'r.json')], { wrangler: rollingBack().wrangler,
+      wait: noSleep, env: {}, readEdges: async () => servedEdge(HEAD_COMMIT), windowMs: 120_000, sleep: noSleep }), 1);
+    // Killed half way (here: while reading the PDF extractor): the Workers
+    // already handled are in the evidence file.
+    const cloudHalf = rollingBack();
+    await assert.rejects(main(['rollback', '--from', path.join(dir, 'v.json'), '--out', path.join(dir, 'half.json')], {
+      env: {}, readEdges: async () => servedEdge(), windowMs: 120_000, sleep: noSleep,
+      wait: async () => { throw new Error('synthetic kill'); },
+      wrangler: async (args) => (args[0] === 'deployments' && args[3] === 'clued-storage-pdf'
+        ? { status: 1, stdout: '', stderr: 'unreadable' } : cloudHalf.wrangler(args)) }), /synthetic kill/);
+    const half = JSON.parse(await readFile(path.join(dir, 'half.json'), 'utf8'));
+    assert.deepEqual(half.workers.map((w) => [w.name, w.action]), [['clued-connect', 'rolled_back'], ['clued-cloud', 'rolled_back']]);
+    assert.equal(half.status, 'in_progress');
   } finally {
     console.log = log; console.error = error;
     await rm(dir, { recursive: true, force: true });
@@ -1101,6 +1076,74 @@ test('the edge waits in the same propagation window as the release verification'
     'currentness-live-build.mjs exports PROPAGATION_WINDOW_MS (Task df6dc467)');
   assert.equal(propagationWindowMs(), live.PROPAGATION_WINDOW_MS);
   assert.throws(() => propagationWindowMs({}), /PROPAGATION_WINDOW_MS/);
+});
+
+// Fable 1121 §6.1, review medium 2: the gate stays as on main. A wrapper calls
+// its --post-deploy until one Cron period plus two minutes has passed, while
+// its only findings are a backlog, and always leaves a conclusion file.
+test('the projection postflight waits one Cron period plus two minutes around the unchanged gate', async () => {
+  const postflight = await import('../scripts/projection-postflight.mjs');
+  const { cronPeriodMinutes, windowMs, runPostflight, main: postflightMain, CALL_TIMEOUT_MS } = postflight;
+  const production = JSON.parse(await readFile(new URL('../wrangler.production.jsonc', import.meta.url), 'utf8'));
+  assert.equal(cronPeriodMinutes(production), 10);
+  assert.equal(windowMs(10), 12 * 60_000);
+  for (const triggers of [undefined, {}, { crons: [] }, { crons: ['0 * * * *'] }, { crons: ['*/10 * * * *', '*/5 * * * *'] },
+    { crons: ['*/0 * * * *'] }, { crons: ['*/60 * * * *'] }, { crons: ['*/10 */2 * * *'] }]) {
+    assert.throws(() => cronPeriodMinutes({ triggers }), /cron_schedule_unsupported/, JSON.stringify(triggers));
+  }
+  const backlog = 'production_release_blocked:projection_backlog_overdue:global.priority_frontier,projection_backlog_pending:global.__aggregate__\n';
+  // Each gate call takes three minutes of the clock (its own internal wait).
+  const harness = (answer) => {
+    let clock = 0; const calls = [];
+    return { now: () => clock, sleep: async (ms) => { clock += ms; }, calls, elapsed: () => clock,
+      runGate: async () => { calls.push(clock); const result = answer(clock); clock += result.ms ?? 180_000; return result; } };
+  };
+  // No request-side wake; the next tick lands at minute 9: passes.
+  const tick = harness((clock) => (clock >= 9 * 60_000 ? { status: 0, stderr: '', ms: 5_000 } : { status: 1, stderr: backlog }));
+  const passed = await runPostflight({ periodMinutes: 10, ...tick });
+  assert.equal(passed.status, 'passed');
+  assert.ok(tick.elapsed() <= 12 * 60_000 + CALL_TIMEOUT_MS);
+  // Still a backlog when the window ends: fails, after the window, with the last reasons.
+  const stuck = harness(() => ({ status: 1, stderr: backlog }));
+  const failed = await runPostflight({ periodMinutes: 10, ...stuck });
+  assert.equal(failed.status, 'failed');
+  assert.ok(stuck.calls.at(-1) < 12 * 60_000 && stuck.elapsed() >= 12 * 60_000);
+  assert.match(failed.reason, /projection_backlog/);
+  // A failed job (or anything but a backlog) fails at once.
+  for (const stderr of ['production_release_blocked:projection_job_failed:global.priority_frontier\n',
+    'production_release_blocked:projection_backlog_pending:global.priority_frontier,projection_digest_mismatch:global.__aggregate__\n',
+    'production_release_blocked:unexpected_error\n', '']) {
+    const once = harness(() => ({ status: 1, stderr }));
+    const result = await runPostflight({ periodMinutes: 10, ...once });
+    assert.equal(result.status, 'failed', stderr);
+    assert.equal(once.calls.length, 1, stderr);
+  }
+  // A stalled call is cut by the child timeout and counts as a failure.
+  const stalled = harness(() => ({ status: null, timedOut: true, stderr: '', ms: CALL_TIMEOUT_MS }));
+  const cut = await runPostflight({ periodMinutes: 10, ...stalled });
+  assert.equal(cut.status, 'failed');
+  assert.equal(stalled.calls.length, 1);
+  assert.match(cut.reason, /timeout/);
+  // The real call runs the gate's --post-deploy with a child timeout.
+  let options;
+  postflight.spawnGate('/tmp/attempt.json', { spawn: (file, args, opts) => { options = { file, args, opts }; return { status: 0, stdout: '', stderr: '' }; } });
+  assert.equal(options.file, process.execPath);
+  assert.ok(options.args.some((a) => a.replaceAll('\\', '/').endsWith('scripts/production-release-gate.mjs')));
+  assert.ok(options.args.includes('--post-deploy'));
+  assert.equal(options.opts.timeout, CALL_TIMEOUT_MS);
+  // The CLI writes a conclusion file whether it passes or fails.
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'projection-postflight-'));
+  try {
+    const out = path.join(dir, 'postflight.json');
+    const failing = harness(() => ({ status: 1, stderr: backlog }));
+    assert.equal(await postflightMain(['--evidence-out', out], { periodMinutes: 10, ...failing, log: () => {} }), 1);
+    assert.equal(JSON.parse(await readFile(out, 'utf8')).status, 'failed');
+    const passing = harness(() => ({ status: 0, stderr: '', ms: 5_000 }));
+    assert.equal(await postflightMain(['--evidence-out', out], { periodMinutes: 10, ...passing, log: () => {} }), 0);
+    assert.equal(JSON.parse(await readFile(out, 'utf8')).status, 'passed');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('migration cannot consume a grant or apply without a successful verified encrypted backup', async () => {
@@ -1181,11 +1224,12 @@ test('rollback isolates command exceptions, retries transient failures and keeps
   };
   let edgeReads = 0;
   const result = await rollbackVersions({ recorded, wrangler, wait: async () => {}, env: { GITHUB_SHA: recorded.source_commit },
-    readEdges: async () => { edgeReads += 1; return servedEdge(); }, windowMs: 120_000 });
+    readEdges: async () => { edgeReads += 1; return servedEdge(); }, windowMs: 120_000, sleep: noSleep });
   assert.equal(result.ok, false);
-  assert.equal(result.status, 'rollback_failed');
-  // A Worker still on the failed release: no point waiting for the edge.
-  assert.equal(edgeReads, 0);
+  assert.equal(result.status, 'not_restored');
+  // The final reading still happens, once, as evidence.
+  assert.equal(edgeReads, 1);
+  assert.ok(result.mismatches.some((m) => /clued-connect/.test(m)));
   assert.deepEqual(result.workers.map(({ name, action }) => [name, action]), [
     ['clued-connect', 'rollback_failed'], ['clued-cloud', 'rolled_back'], ['clued-storage-pdf', 'rolled_back'],
   ]);
@@ -1200,7 +1244,7 @@ test('unreadable Worker status does not abort recovery of the recorded versions'
   const version_id = '11111111-0000-4000-8000-111111111111';
   const recorded = { contract: CONTRACT, mode: 'deploy', edge: servedEdge(), workers: WORKERS.map(({ name }) => ({ name, version_id })) };
   const restored = new Set();
-  const result = await rollbackVersions({ recorded, wait: async () => {}, env: {}, readEdges: async () => servedEdge(), windowMs: 120_000, wrangler: async (args) => {
+  const result = await rollbackVersions({ recorded, wait: async () => {}, env: {}, readEdges: async () => servedEdge(), windowMs: 120_000, sleep: noSleep, wrangler: async (args) => {
     const name = args[3];
     if (args[0] === 'rollback') { restored.add(name); return { status: 0 }; }
     if (!restored.has(name)) throw new Error('synthetic status read failure');
@@ -1238,65 +1282,5 @@ test('backup failures stop migrate mode before any grant or production mutation'
       assert.ok(!run.ran.some((name) => /^Deploy /.test(name)));
       assert.ok(!run.ran.includes(ROLLBACK_STEP));
     }
-  }
-});
-
-// Fable 1121 item 2: --production verifies and writes its evidence, never the
-// database; --publish installs that run's evidence as the production G6
-// attestation, in one transaction, only for this commit and this run.
-test('verification never writes the attestation; --publish writes it once from this run\'s evidence', async () => {
-  const verifier = await import('../scripts/verify-currentness-transport.mjs');
-  assert.equal(typeof verifier.main, 'function');
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'currentness-publish-'));
-  const commit = 'd'.repeat(40);
-  const env = { GITHUB_ACTIONS: 'true', GITHUB_RUN_ID: '77', GITHUB_SHA: commit, GITHUB_REPOSITORY: 'owner/repo',
-    GITHUB_SERVER_URL: 'https://github.com', CLUED_ATTESTATION_DATABASE_URL: 'postgresql://fixture.invalid/postgres' };
-  const connections = [];
-  const connect = () => {
-    const client = { queries: [], params: [], connect: async () => {}, end: async () => {},
-      query: async (sql, params) => { client.queries.push(sql.trim().split(/\s+/).slice(0, 2).join(' ')); client.params.push(params); return { rows: [] }; } };
-    connections.push(client);
-    return client;
-  };
-  const live = [];
-  const deps = { env, git: (args) => (args[0] === 'rev-parse' ? commit : ''), runTests: () => ({ status: 0, stdout: 'ok 19\n', stderr: '' }),
-    waitLive: async (expected) => { live.push(expected); return expected; }, connect, out: () => {} };
-  const evidence = path.join(dir, 'currentness-attestation.json');
-  try {
-    await verifier.main(['--production', '--evidence-out', evidence], deps);
-    assert.equal(connections.length, 0, '--production opened a database connection');
-    const written = JSON.parse(await readFile(evidence, 'utf8'));
-    assert.equal(written.verification_context, 'production_post_deploy');
-    assert.equal(written.source_commit, commit);
-    assert.equal(written.ci_run, 'https://github.com/owner/repo/actions/runs/77');
-    assert.deepEqual(live, [commit, commit]);
-    // The evidence path is required: --publish has nothing else to read.
-    await assert.rejects(verifier.main(['--production'], deps), /evidence-out/);
-    await assert.rejects(verifier.main(['--production', '--evidence-out', path.join(dir, 'failed.json')],
-      { ...deps, runTests: () => ({ status: 1, stdout: 'not ok', stderr: '' }) }), /verification failed/);
-    assert.equal(connections.length, 0);
-
-    await verifier.main(['--publish', evidence], deps);
-    assert.equal(connections.length, 1);
-    assert.deepEqual(connections[0].queries, ['begin', 'insert into', 'commit']);
-    assert.equal(connections[0].params[1][0], commit);
-    assert.equal(connections[0].params[1][1], written.test_digest);
-    assert.equal(connections[0].params[1][3], 'github-actions:77');
-    assert.deepEqual(live.slice(-1), [commit], 'publish rechecks the live commit');
-
-    // Evidence of another commit, run, context or result is never installed.
-    let variant = 0;
-    for (const [change, envChange] of [[{ source_commit: 'e'.repeat(40) }], [{ deployed_commit: 'e'.repeat(40) }],
-      [{ verification_context: 'author_precheck' }], [{ verification_status: 'failed' }], [{ source_worktree_dirty: true }],
-      [{ test_files: written.test_files.slice(1) }], [{ test_digest: 'x' }], [{}, { GITHUB_RUN_ID: '78' }], [{}, { GITHUB_SHA: 'e'.repeat(40) }]]) {
-      const file = path.join(dir, `variant-${variant += 1}.json`);
-      await writeFile(file, JSON.stringify({ ...written, ...change }));
-      await assert.rejects(verifier.main(['--publish', file], { ...deps, env: { ...env, ...envChange } }), undefined, JSON.stringify(change));
-    }
-    await assert.rejects(verifier.main(['--publish', evidence], { ...deps, waitLive: async () => { throw new Error('live source commit mismatch'); } }));
-    await assert.rejects(verifier.main(['--publish', path.join(dir, 'missing.json')], deps));
-    assert.equal(connections.length, 1, 'a refused publish opened a database connection');
-  } finally {
-    await rm(dir, { recursive: true, force: true });
   }
 });
