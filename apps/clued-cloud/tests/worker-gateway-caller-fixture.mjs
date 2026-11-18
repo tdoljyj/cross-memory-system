@@ -17,6 +17,7 @@ export const CI_SIGNATURES = [
   'clued_work_merge_slot_return_v1(text,jsonb)', 'clued_work_claims_active_v1(text,jsonb)',
   'clued_work_merge_slot_touch_v1(text,jsonb)', 'clued_work_merge_slot_holders_v1(text,jsonb)',
 ].sort();
+export const CONNECTION_SELF_SIGNATURE = 'clued_ci_connection_self_v1(text,jsonb)';
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const transition = await fs.readFile(path.join(cloud,'supabase/migrations/20261009070002_worker_gateway_transition_v1.sql'),'utf8');
 export const WORKER_SIGNATURES = [...transition.matchAll(/'(public\.clued_[a-z0-9_]+\([^']*\))'/g)].map(m=>m[1].replace(/^public\./,'')).sort();
@@ -29,6 +30,7 @@ export const SCAN_START_GATEWAY_SIGNATURES = ['clued_ci_scan_start_hosted_v1(jso
 // Unified scheduling 2B (20261106090000) adds the CI node signature gateway's
 // two serving-Worker doors, again for the Worker gateway only.
 export const CI_NODE_GATEWAY_SIGNATURES = ['clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)', 'clued_ci_node_trust_v1(text,uuid)'].sort();
+export const WORKER_DUE_SIGNATURE = 'clued_worker_due_v1(text)';
 
 export async function findGatewayCloseoutMigration(cloudRoot=cloud) {
   const names=(await fs.readdir(path.join(cloudRoot,'supabase/migrations'))).filter(n=>n.endsWith('_worker_gateway_closeout_v1.sql'));
@@ -60,14 +62,17 @@ export async function snapshotCallerCatalog(db) {
 // The sealed closeout (20261010161848) refuses any caller privilege outside its
 // own manifest, so replaying it after the full chain fails on the privileges
 // that explicit later successors add on purpose: the two scan-start serving
-// doors for the Worker gateway (20261102151506) and the two CI node gateway
-// doors (20261106090000). These are exactly those
+// doors for the Worker gateway (20261102151506), the two CI node gateway
+// doors (20261106090000), the Worker due query (20261118090000), plus the anon
+// connection-self reader (20261118100000). These are exactly those
 // privileges; a later successor that adds one names it here.
 export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ['public.clued_ci_scan_start_hosted_v1(jsonb)', GATEWAY_ROLE],
   ['public.clued_ci_scan_start_policy_v1(jsonb)', GATEWAY_ROLE],
   ['public.clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)', GATEWAY_ROLE],
   ['public.clued_ci_node_trust_v1(text,uuid)', GATEWAY_ROLE],
+  ['public.'+WORKER_DUE_SIGNATURE, GATEWAY_ROLE],
+  ['public.' + CONNECTION_SELF_SIGNATURE, 'anon'],
 ];
 // Replays the sealed closeout SQL unchanged. Where a successor is installed,
 // its own privilege is set aside for the replay and put back afterwards (same
@@ -94,10 +99,14 @@ export async function assertGatewayCloseoutBoundary(db) {
     and ($2::boolean=false or p.prosecdef) and has_function_privilege($1,p.oid,'EXECUTE') order by 1`,[role,definersOnly])).rows.map(r=>r.signature.replace(/^public\./,''));
   const successor = (await db.query("select to_regclass('clued_private.ci_scan_start_keys_v1') is not null present")).rows[0].present;
   const nodeGateway = (await db.query("select to_regclass('clued_private.ci_node_commands_v1') is not null present")).rows[0].present;
-  const expected = [...WORKER_SIGNATURES, ...(successor ? SCAN_START_GATEWAY_SIGNATURES : []), ...(nodeGateway ? CI_NODE_GATEWAY_SIGNATURES : [])].sort();
+  const dueInstalled = (await db.query('select to_regprocedure($1) is not null present', ['public.'+WORKER_DUE_SIGNATURE])).rows[0].present;
+  const expected = [...WORKER_SIGNATURES, ...(successor ? SCAN_START_GATEWAY_SIGNATURES : []),
+    ...(nodeGateway ? CI_NODE_GATEWAY_SIGNATURES : []), ...(dueInstalled ? [WORKER_DUE_SIGNATURE] : [])].sort();
   assert.deepEqual(await signatures(GATEWAY_ROLE,false),expected,
-    'GW is exactly historical 80' + (successor ? ' + the two scan-start successor RPCs' : '') + (nodeGateway ? ' + the two CI node gateway RPCs' : ''));
-  assert.deepEqual(await signatures('anon',true),CI_SIGNATURES,'Clued anon definer surface is exactly CI8');
+    'Gateway grants match the historical closeout and the installed successor RPCs');
+  const self = (await db.query('select to_regprocedure($1) is not null present', ['public.' + CONNECTION_SELF_SIGNATURE])).rows[0].present;
+  const anonymous = self ? [...CI_SIGNATURES, CONNECTION_SELF_SIGNATURE].sort() : CI_SIGNATURES;
+  assert.deepEqual(await signatures('anon',true), anonymous, '匿名角色的函数授权必须与该迁移阶段逐项一致');
 }
 
 // The historical closeout is source-bound and must be proved before successors.
