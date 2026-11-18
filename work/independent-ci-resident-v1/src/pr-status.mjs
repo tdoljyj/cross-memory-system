@@ -46,6 +46,15 @@ export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
 export const REQUIRED_CACHE_MS = 30 * 60_000;
 export const HEAD_CHECKS_CACHE_MS = 60_000;
+// What the PR page says while main's ruleset cannot be read: a status is auxiliary, so the failure is said, never a silent stop.
+export const RULES_UNREADABLE_TEXT = '无法读取 main 规则集，暂不判断必需检查';
+const RULES_UNREADABLE_WANT = Object.freeze({ state: 'pending', description: RULES_UNREADABLE_TEXT, kind: null });
+// integration_id -1 means "any source" (Source v2 allows it): the same as no pin, which the shared reader's contract calls null.
+const anySourceAsUnpinned = rules => !Array.isArray(rules) ? rules : rules.map(rule => {
+  const list = rule?.parameters?.required_status_checks;
+  if (!Array.isArray(list) || !list.some(e => e?.integration_id === -1)) return rule;
+  return { ...rule, parameters: { ...rule.parameters, required_status_checks: list.map(e => e?.integration_id === -1 ? { ...e, integration_id: null } : e) } };
+});
 // Which of main's required checks (rules: [{ context, integrationId }], the shared reader's answer) are not yet green on a head.
 // seen: [{ name, appId, source: 'run' | 'status', state: 'pass' | 'pending' | 'fail' | 'skipped' }] (headChecks). A rule pinned to an App is met only by
 // that App's check run; an unpinned rule by any run or a commit status. Returns [] when all are green, else words per missing or unfinished one;
@@ -609,7 +618,7 @@ export class PrStatusReporter {
   async requiredChecks() {
     if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
     let list;
-    try { list = await readMainRequiredChecks((route, key) => this.gh().paged(route, key)); } catch { return null; } // an empty or unreadable answer is no answer
+    try { list = await readMainRequiredChecks(async (route, key) => anySourceAsUnpinned(await this.gh().paged(route, key))); } catch { return null; } // an empty or unreadable answer is no answer
     this.required = list; this.requiredAt = this.clock();
     return list;
   }
@@ -706,7 +715,8 @@ export class PrStatusReporter {
       const required = requiredRules ? [...new Set(requiredRules.map(c => c.context))] : null;
       // Both contexts this node may write are checked against main's rules; either one there stops every write.
       if (!this.stalled) this.collision = (Array.isArray(required) ? [context, standbyContext(prep.node.name)].find(c => !contextFree(c, required)) : undefined) ?? false;
-      if (Array.isArray(required) && !this.collision && !this.stalled) {
+      const rulesUnreadable = !Array.isArray(required) && !this.stalled;
+      if ((Array.isArray(required) || rulesUnreadable) && !this.collision && !this.stalled) {
         const described = new Set();
         const write = async (headSha, want, ctx, key) => {
           const text = `${want.state}|${clip(want.description)}`;
@@ -731,7 +741,7 @@ export class PrStatusReporter {
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
           const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
-          const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules))),
+          const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules))),
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);
@@ -748,7 +758,7 @@ export class PrStatusReporter {
           if (this.stalled) break;
         }
         let extra = [];
-        if (!this.stalled) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
+        if (!this.stalled && !rulesUnreadable) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
         for (const x of extra) {
           const ok = !this.stalled && await write(x.headSha, x.want, x.context, `${x.context}|${x.headSha}`);
           if (!ok) continue;

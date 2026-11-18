@@ -124,3 +124,24 @@ test('E5: no count or list in the words: rulesets of 9 and 11 checks, a new requ
   const src = await fs.readFile(new URL('../src/train.mjs', import.meta.url), 'utf8');
   assert.ok(!src.includes('六项'), 'train.mjs keeps no hard-coded count of checks');
 });
+
+test('integration_id -1 (any source, allowed by Source v2) is an unpinned rule, not an unreadable ruleset', async t => {
+  const anySource = RULES.map(r => r.context === 'ci-suites-windows' ? { context: r.context, integrationId: -1 } : r);
+  const other = [...GREEN.filter(r => r.name !== 'ci-suites-windows'), { name: 'ci-suites-windows', appId: 9999, status: 'completed', conclusion: 'success' }];
+  assert.match(await lastText(t, { rules: anySource, runs: other }), /全部必需检查已绿，等合并/);
+  assert.match(await lastText(t, { rules: anySource, runs: GREEN.filter(r => r.name !== 'ci-suites-windows') }), /缺 1 项：ci-suites-windows（未出现）/);
+});
+
+test('an unreadable ruleset writes one clear status instead of nothing', async t => {
+  const now = { v: Date.parse('2026-11-19T04:00:00Z') };
+  const g = fake({ runs: GREEN });
+  const run = async (argv, o) => (argv.find(a => a.startsWith('repos/')) ?? '').includes('/rules/branches/main') ? { code: 1, stdout: '', stderr: 'boom' } : g.run(argv, o);
+  const r = await reporter(t, run, now);
+  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 1);
+  const text = texts(g.calls).at(-1);
+  assert.match(text, /无法读取 main 规则集/);
+  assert.ok(!text.includes('已绿'), text);
+  // once: the same words are not written again at the next pass
+  now.v += 60_000;
+  assert.equal((await r.pass({ pulls, status: board(now.v, 7) })).posted, 0);
+});

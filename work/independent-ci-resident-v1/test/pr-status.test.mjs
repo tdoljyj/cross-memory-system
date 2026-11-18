@@ -295,11 +295,14 @@ test('the reporter writes a status only when it changes, never over a required c
   assert.equal(r.toasts, 1, 'the HALT (the notifications run first, before the rules are read)');
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 1, 'the collision, one pass later');
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 0, 'each key once');
-  // unknown rules: nothing is written
+  // unknown rules: the failure is said once per head (a status is auxiliary), nothing else is written
   required = null; now += 31 * 60_000;
   const fresh = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'other.json'), () => now), notifications: false });
-  assert.equal((await fresh.pass({ pulls, status })).posted, 0);
+  const before2 = posts().length;
+  assert.equal((await fresh.pass({ pulls, status })).posted, 2);
+  assert.ok(posts().slice(before2).every(a => a.some(x => x.startsWith('description=无法读取 main 规则集'))));
+  assert.equal((await fresh.pass({ pulls, status })).posted, 0, 'said once');
   // Task 9cac75be A3: no default node (the companion names its pinned node profile's)
   assert.deepEqual(validateStatusConfig(undefined), { prStatus: true, notifications: true, node: null });
   assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false, node: null });
