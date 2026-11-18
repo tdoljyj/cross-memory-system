@@ -27,6 +27,90 @@ const perPr = (per, base = fakeEngine()) => {
   return base;
 };
 
+// Persist old endings through the same ledger API used by the executor. Different heads keep the once-only gate
+// independent of the PR's rolling budget; FAILED_UNKNOWN models the history after a legitimate Owner re-arm.
+async function sixEndings(f, outcome, facts = {}, { started = true, origin = 'queued' } = {}) {
+  for (let n = 1; n <= 6; n++) {
+    const s = subject({ headSha: H(n) }), key = batchKey(s);
+    await f.ledger.reserve(key, s, { origin });
+    if (started) await f.ledger.markStarted(key, { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}` });
+    else await f.ledger.burnHead(key, { failureCode: facts.failureCode, quotaTier: 'evaluation' });
+    await f.ledger.terminal(key, outcome, facts);
+    if (outcome === 'FAILED_UNKNOWN') await f.ledger.markArchived(key, { windows: 'fixture-archive', linux: 'fixture-archive' });
+  }
+}
+
+for (const [code, klass, outcome = 'FAILED_CLEAN', started = true, reason = null] of [
+  ['STAGE_CHILD_TIMEOUT', 'environment'],
+  ['BRIDGE_TRANSPORT_TIMEOUT', 'transient'],
+  ['BRIDGE_CALLBACK_DEADLINE', 'unknown', 'FAILED_UNKNOWN'],
+  ['TRAIN_FRONT_TAKES_OVER', 'clean-final'],
+  ['TRAIN_TEST_COMMIT_GONE', 'clean-final'],
+  ['SUPERSEDED_AT_SAFE_POINT', 'clean-final'],
+  ['PUBLICATION_REVOKED', 'clean-final'],
+  ['OWNER_ABORTED', 'abort'],
+  ['HEAD_PUBLISHED_ON_GITHUB', 'clean-final', 'FAILED_CLEAN', false],
+  ['PR_NOT_OPEN_OR_CHANGED', 'deterministic-pr'],
+  ['STAGE_CHILD_REFUSED', 'deterministic-pr', 'FAILED_CLEAN', false, 'pr_subject_changed'],
+]) {
+  test(`PR daily cap: six system endings (${code}) leave the same PR runnable`, async t => {
+    const f = await executorFixture(t);
+    await sixEndings(f, outcome, { failureCode: code, class: klass, reason, stage: started ? 4 : 1 }, { started });
+    await f.drop(triggerBytes({ headSha: H(9) }));
+    assert.equal((await f.exec.tick()).state, 'COMPLETED');
+    const u = await f.ledger.usage(f.clock() - 86_400_000);
+    assert.equal(u.startedByPr.get(884), 1, 'only the new completed batch spent PR quota');
+    assert.deepEqual([u.started, u.lowRiskBurns, u.evaluations], started ? [7, 0, 0] : [1, 6, 6], 'global budgets still include the system endings');
+  });
+}
+
+for (const [outcome, facts, started = true] of [
+  ['COMPLETED', {}],
+  ['FAILED_CLEAN', { failureCode: 'TRAIN_LANDING_CHECK_FAILED', class: 'deterministic-pr', stage: 8 }],
+  ['FAILED_CLEAN', { failureCode: 'REQUIRED_CHECK_FAILED', class: 'queue', stage: 8 }],
+  ['FAILED_CLEAN', { failureCode: 'STAGE_CHILD_REFUSED', class: 'deterministic-pr', reason: 'pr_files_page_limit', stage: 1 }, false],
+  ['FAILED_CLEAN', { failureCode: 'STAGE_CHILD_REFUSED', reason: 'pr_files_page_limit', stage: 1 }, false],
+]) {
+  test(`PR daily cap: six PR verdicts (${facts.failureCode ?? outcome}, ${facts.class ?? 'legacy'}) refuse a seventh batch`, async t => {
+    const f = await executorFixture(t);
+    await sixEndings(f, outcome, facts, { started });
+    const next = subject({ headSha: H(9) });
+    const usage = await f.ledger.usage(f.clock() - 86_400_000);
+    assert.equal(usage.startedByPr.get(884), 6);
+    assert.equal((await f.exec.precheck(batchKey(next), headKey(next), next, { usage })).defer, 'PR_DAILY_BATCH_LIMIT');
+    await f.drop(triggerBytes({ headSha: H(9) }));
+    await f.exec.tick();
+    assert.equal(f.queue.row(884).reason, 'PR_DAILY_BATCH_LIMIT');
+    assert.equal((await f.ledger.state(batchKey(next))).state, 'ABSENT', 'a quota deferral never reserves');
+    f.advance(86_400_001);
+    assert.equal((await f.ledger.usage(f.clock() - 86_400_000)).startedByPr.size, 0, 'verdicts expire from the rolling window');
+  });
+}
+
+test('PR daily cap: exempt system endings still exhaust the global execution and waiting budgets', async t => {
+  const f = await executorFixture(t, { policy: rawPolicy({ limits: { ...rawPolicy().limits, maxBatchesPer24h: 6 } }) });
+  await sixEndings(f, 'FAILED_UNKNOWN', { failureCode: 'BRIDGE_CALLBACK_DEADLINE' }, { origin: 'waiting-retry' });
+  const s = subject({ headSha: H(9) });
+  const usage = await f.ledger.usage(f.clock() - 86_400_000);
+  assert.equal(usage.startedByPr.get(884) ?? 0, 0);
+  assert.equal((await f.exec.precheck(batchKey(s), headKey(s), s, { usage })).defer, 'DAILY_BATCH_LIMIT');
+  const g = await executorFixture(t, { policy: rawPolicy({ limits: { ...rawPolicy().limits, waitingRetriesPer24h: 6 } }) });
+  await sixEndings(g, 'FAILED_CLEAN', { failureCode: 'STAGE_CHILD_TIMEOUT', class: 'environment' }, { origin: 'waiting-retry' });
+  const waitingUsage = await g.ledger.usage(g.clock() - 86_400_000);
+  assert.equal(waitingUsage.waitingRetries, 6);
+  assert.equal((await g.exec.precheck(batchKey(s), headKey(s), s, { usage: waitingUsage, origin: 'waiting-retry' })).defer, 'WAITING_BUDGET_EXHAUSTED');
+});
+
+test('PR daily cap: exempt system endings never clear the HALT safety latch', async t => {
+  const f = await executorFixture(t);
+  await sixEndings(f, 'FAILED_UNKNOWN', { failureCode: 'BRIDGE_CALLBACK_DEADLINE' });
+  await f.ledger.halt('BRIDGE_CALLBACK_DEADLINE', {});
+  await f.drop(triggerBytes({ headSha: H(9) }));
+  assert.equal((await f.exec.tick()).state, 'HALTED');
+  assert.equal((await f.ledger.usage(f.clock() - 86_400_000)).startedByPr.size, 0);
+  assert.deepEqual(stagesRun(f.engine), [], 'quota exemption is not permission to execute');
+});
+
 test('G4: claim waits spend only the waiting budget, leaving a real evaluation and another PR runnable', async t => {
   const claim = { ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes: ['claim_not_found'] } };
   const engine = perPr({ 1: notAdmitted('CLAIM_NOT_CURRENT', claim), 2: notAdmitted('PATHS_OUTSIDE_WRITE_SET') });

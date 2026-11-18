@@ -244,9 +244,9 @@ export async function main(argv=process.argv.slice(2),output=process.stdout){
   return runEntry({argv,entryRole:'scanner-issuer',moduleUrl:import.meta.url,output,successStatuses:[ISSUER_SUCCESS],body:async({inputs,held,live,sourceRoot})=>{
     const context=createWindowsContext({inputs,policyText:held.policyText,sourceRoot,live}),job=context.job;
     const batchClaim=await readBatchClaim(STATE_V2.batchClaims,job);
-    const {appKey,nativeToken}=await controllerPrincipal(inputs.record);
+    const {appKey,nativeToken,bindingId}=await controllerPrincipal(inputs.record);
     const log=observationLog(STATE_V2.effectsScan,job.id);
-    const {github,admission,fetchImpl,scanStart}=controllerPorts({record:inputs.record,appKey,nativeToken,policyText:held.policyText,sourceRoot,live,log});
+    const {github,admission,fetchImpl,scanStart}=controllerPorts({record:inputs.record,appKey,nativeToken,bindingId,policyText:held.policyText,sourceRoot,live,log});
     const box=takeActualMailbox(await openAcceptedMailbox(context));
     const row=stageByNumber(inputs.plan.stage);
     // The helper's own child deadline is the stage cap; keep the stage margin for the outcome and exit.

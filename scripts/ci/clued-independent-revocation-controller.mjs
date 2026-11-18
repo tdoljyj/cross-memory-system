@@ -99,9 +99,9 @@ export async function runIndependentRevocationMaintenance({record,ports,live,inv
     await assertWindow();
     const reply=await ports.native.command({action:'independent_revocation_heads',scope:record.config.scope,
      outbox_id:subject.outboxId,execution_epoch:subject.beforeExecutionEpoch});
-    if(reply?.status!=='ok'||reply.claimId!==subject.claimId||reply.ciPrincipalBindingId!==record.config.ciPrincipalBindingId
+    if(!ports.bindingId||reply?.status!=='ok'||reply.claimId!==subject.claimId||reply.ciPrincipalBindingId!==ports.bindingId
      ||reply.consumerSourceManifestSha256!==record.config.sourceManifestSha256
-     ||reply.consumerCiPrincipalBindingId!==record.config.ciPrincipalBindingId)fail('independent_revocation_principal_changed');
+     ||reply.consumerCiPrincipalBindingId!==ports.bindingId)fail('independent_revocation_principal_changed');
     return true;
    };
    await current();return callback({assertCurrent:current,readControllerStopBundles:()=>windows.readLegacyControllerStopBundles({

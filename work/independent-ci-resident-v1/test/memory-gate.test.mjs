@@ -258,7 +258,7 @@ test('A: at stages 4 and 6 the refusal runs again twice in the batch (DESIGN 54)
     assert.equal(f.engine.calls.filter(c => c[0] === 'stage' && c[1] === stage).length, 3, 'the run and two runs again');
     assert.equal(await f.ledger.halted(), null);
     const s = await f.ledger.state(KEY);
-    assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry], [stage, 'new-commit']);
+    assert.deepEqual([s.terminal.facts.stage, s.terminal.facts.retry], [stage, 'continuation']);
     assert.equal(mayHavePublished({}, s).published, true);
     assert.equal(await f.executedHeads.published(subject()), true);
   }
@@ -276,7 +276,7 @@ test('A: the new code is resident-side only: a failure-table row per stage, neve
   const mirrored = new Set([...NOT_ADMITTED_CODES, ...TRANSIENT_CODES, ...CLEAN_FINAL_CODES, ...UNKNOWN_CODES]);
   assert.equal(mirrored.has(LINUX_MEMORY_NOT_READY), false);
   assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(s => failureRow({ code: LINUX_MEMORY_NOT_READY, stage: s }).retry),
-    ['new-commit', 'new-commit', 'attempt2', 'new-commit', 'new-commit', 'new-commit', 'new-commit', 'new-commit', 'new-commit', 'new-commit']);
+    ['same-batch', 'same-batch', 'attempt2', 'same-batch', 'same-batch', 'same-batch', 'same-batch', 'same-batch', 'same-batch', 'same-batch']);
   for (const s of [2, 4, 6]) {
     const d = decideFailure({ code: LINUX_MEMORY_NOT_READY, stage: s, proof: CLEAN_PROOF, started: true });
     assert.deepEqual([d.klass, d.row.class, d.row.disposition, d.release], ['CLEAN', 'environment', 'burn', null]);

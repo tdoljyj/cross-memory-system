@@ -15,7 +15,7 @@ import { ATTEMPT2_RESIDENT_CODES, attempt2Decision } from '../src/attempts.mjs';
 
 // Every code the executor can be handed: the Source catalogue, the resident's own clean endings, the companion pump's
 // codes and the engine's and executor's own refusals.
-const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', 'FIXED_PUBLIC_CHILD_REFUSED', 'ACTUAL_ISSUE_NOT_PUBLISHED',
+const RESIDENT_CODES = ['ACTUAL_ISSUE_NOT_PUBLISHED',
   'ISSUE_TRANSFER_UNCONFIRMED', 'FORMAL_BRIDGE_STAGE_DEADLINE', 'REFS_GATE_UNCONFIRMED', 'STAGE_TERMINAL_UNCONFIRMED', 'STAGE_INVOKER_TERMINAL_UNCONFIRMED', 'SCM_READBACK_NOT_ORIGINAL',
   'BETWEEN_ROLES_ARCHIVE_UNCONFIRMED', 'WORKSPACE_PREPARATION_UNCONFIRMED', 'EXECUTED_HEAD_RECORD_UNCONFIRMED', 'BUNDLE_UNAVAILABLE', 'OWNER_ABORTED', 'OWNER_ABORT_REQUESTED',
   'SUPERSEDED_AT_SAFE_POINT',
@@ -27,7 +27,8 @@ const RESIDENT_CODES = ['FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHI
   'UPGRADE_VERSION_SKEW',
   // DESIGN §71: recovery's clean end of a batch a reboot interrupted before any publication stage (resident-side, never Source-mirrored)
   'EXECUTOR_RESTARTED_UNPUBLISHED'];
-const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])];
+// Retained in the pinned Source's catalogue, but the resident no longer runs stage R.
+const ALL = [...new Set([...source.ALL_STAGE_CODES, ...RESIDENT_CODES, ...PUMP_CODES])].filter(code => code !== 'RELAY_STAGE_REFUSED');
 const rowsOf = code => FAILURE_TABLE.rows.filter(r => r.code === code);
 
 test('explicit claim-observation exhaustion is transient only before a possible write; publishing stages still cannot rerun a batch', () => {
@@ -59,8 +60,21 @@ test('explicit claim-observation exhaustion is transient only before a possible 
   }
 });
 
+test('environment and queue failures never require an author to push a new commit', () => {
+  const exceptions = new Map([
+    ['EXECUTOR_RESTARTED_UNPUBLISHED:any', 'Compatibility placeholder outside stages 1 and 2'],
+    ['UPGRADE_VERSION_SKEW:any', 'Compatibility placeholder outside the first Linux stage'],
+    ['RESIDENT_BASE_MOVED:any', 'The merge bot refreshes the head in the existing landing mode'],
+  ]);
+  const unexpected = FAILURE_TABLE.rows.filter(row => ['environment', 'queue'].includes(row.class) && row.retry === 'new-commit'
+    && !exceptions.has(`${row.code}:${row.stages}`));
+  assert.deepEqual(unexpected.map(row => [row.code, row.stages]), []);
+});
+
 test('the table validates, and every code the executor can be handed has a row for every stage (or its phase)', async () => {
   assert.equal(FAILURE_TABLE.contract, 'clued.independent-ci.resident-failure-table/1');
+  for (const retired of ['RELAY_STAGE_REFUSED', 'FULL_NEXT_STAGE_AUTHORITY_WINDOW_REQUIRED', 'FORMAL_CHILD_REFUSED_OR_UNKNOWN_ORIGINAL_STOPPED', 'FIXED_PUBLIC_CHILD_REFUSED'])
+    assert.equal(failureRow({ code: retired, stage: 1 }), null, retired);
   for (const code of ALL) {
     assert.ok(rowsOf(code).length > 0, code);
     if (code === 'BUNDLE_UNAVAILABLE') { assert.ok(failureRow({ code, stage: 0, phase: 'bundle' }), code); continue; }

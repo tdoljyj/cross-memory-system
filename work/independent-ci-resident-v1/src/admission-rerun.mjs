@@ -1,5 +1,4 @@
-// Generation 12 (DESIGN §56.5; Task c9dea57b item 4; Owner Decision 207c0cd0 v2, option C): the companion asks for the one repair
-// re-run of the required tests that the admission gate allows, instead of the Owner clicking it.
+// DESIGN §56.5: the companion requests the repair re-runs allowed by the required-tests admission gate.
 //
 // clued-required-tests.yml's admission-gate waits at most 600 s for App 5368905's kooyumi-work-admission check (this resident's
 // stage 1). When the resident is busy the check comes later: the gate ends ADMISSION_PENDING, every heavy job is skipped, the
@@ -9,23 +8,20 @@
 //
 // It asks GitHub for "Re-run all jobs" (gh api --method POST repos/<repo>/actions/runs/<id>/rerun) of the newest
 // clued-required-tests pull_request run of a head only when all of these hold, and otherwise does nothing:
-//   0. this node is ACTIVE (status.json), it ran or queued that head, and this lane never asked for a re-run of that head before
-//      (its own record, written BEFORE the request: a request whose answer was lost is never sent again, whatever happened);
+//   0. this node is ACTIVE (status.json), it ran or queued that head, and the receipt allows a request for the next attempt;
 //   1. exactly one open pull request into the default branch, from this repository, has exactly that head, and App 5368905's
 //      newest kooyumi-work-admission check of the head admits it (completed, success, bound to that pull request:
 //      independentAdmissionCheck), i.e. stage 1 published the admission;
 //   2. every clued-required-tests pull_request run of the head is completed (no attempt queued or running);
-//   3. no job other than admission-gate of any attempt of any of those runs ever ran (each is completed and skipped);
-//   4. the gate's own repair rule (independentRepairRerun, ported below) allows the next attempt: every earlier attempt ran only the
-//      gate, and the gate ended ADMISSION_PENDING, RERUN_REFUSED or on a GitHub 5xx/unreachable ERROR;
-//   5. read again right before the request, the pull request is still open on that head and the run still completed at the same
+//   3. the other runs of this head skipped every heavy job;
+//   4. the gate's repair rule (independentRepairRerun) allows the attempt, and recent other heads do not show a systemic timeout;
+//   5. on a fresh read before the request, the pull request is still open on that head and the run still completed at the same
 //      attempt.
 // Never "Re-run failed jobs" or a single job (they keep the gate's earlier outputs). The gate of the new attempt judges the re-run
 // again; this lane is never the authority for running the heavy jobs.
 // Every read is `gh api --method GET` with fixed, validated routes; a read that fails or answers something unexpected ends the step
-// without acting (it is asked again at the next step). The one write is never repeated: its outcome is recorded (sent; unsent: gh
-// never ran; refused: GitHub answered 4xx; unknown: timed out, unconfirmed or no HTTP answer) and the head is done for this lane;
-// every outcome is told to the Owner once.
+// without acting (it is asked again at the next step). An intent is saved per run and target attempt before sending. An unsent or
+// unknown result may be retried once after ten minutes only while a fresh read still shows the same completed attempt.
 //
 // Lost run (Task 7067280f, PLAN 1a): GitHub sometimes creates no clued-required-tests run at all for a pushed head (a0122fd9,
 // 2026-11-09: no GitHub Actions check suite either, so there is nothing to re-run or re-request; a user token is refused the
@@ -45,6 +41,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
+import { LIVE_STATES } from './queue.mjs';
 import { diedInSetup, failedSteps, jobFailureKind } from './env-failure.mjs';
 
 export const RERUN_RECORD_CONTRACT = 'clued.independent-ci.admission-rerun/1';
@@ -57,6 +54,7 @@ const STUCK_KIND = 'stuck';
 // A pull request's branch name as it goes into the dispatch's argv: no '..', no leading or trailing '/', nothing else.
 const BRANCH_REF = /^(?!.*\.\.)(?!\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
 export const REQUIRED_TESTS_WORKFLOW = 'clued-required-tests.yml';
+const STAGING_BRANCH = 'clued-train/staging';
 export const ADMISSION_APP_ID = 5368905;
 export const ADMISSION_CHECK = 'kooyumi-work-admission';
 export const GATE_JOB_NAME = 'admission-gate';
@@ -75,20 +73,42 @@ export const READ_TIMEOUT_MS = 30_000;
 export const POST_TIMEOUT_MS = 30_000;
 export const HEADS_PER_STEP = 5;
 export const HEAD_CANDIDATE_MARK_MS = 60 * 60_000;
+const REQUEST_RETRY_MS = 10 * 60_000;
+const RECENT_OTHER_HEADS = 3;
+const MAX_RECOVERY_PAGES = 50;
+const REPAIR_RULE_VERSION = 2;
 const MAX_PAGES = 10;
 const MAX_TEXT = 3_500_000;
 // Runner refusals before any child ran (runner.mjs): nothing reached GitHub.
 const UNSENT_REFUSALS = Object.freeze(['RUNNER_ARGV_REFUSED', 'RUNNER_BUSY_WITH_UNFINISHED_CHILD', 'RUNNER_SPAWN_FAILED', 'RUNNER_TIMEOUT_REFUSED']);
 export const RERUN_OUTCOMES = Object.freeze(['intent', 'sent', 'unsent', 'refused', 'unknown']);
 const plainObject = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+const positive = v => Number.isSafeInteger(v) && v > 0;
+const requestKey = (runId, attempt) => `${runId}:${attempt}`;
 // The memory file's exact shape; anything else is unreadable (a forgotten record could click twice).
 function validState(v) {
   if (!plainObject(v) || Object.keys(v).sort().join('|') !== 'contract|heads|records' || v.contract !== RERUN_STATE_CONTRACT || !plainObject(v.heads) || !plainObject(v.records)) return false;
-  for (const [k, h] of Object.entries(v.heads)) if (!HEX40.test(k) || !plainObject(h) || !Number.isFinite(Date.parse(h.firstSeen))) return false;
-  for (const [k, r] of Object.entries(v.records)) if (!HEX40.test(k) || !plainObject(r) || r.headSha !== k || !RERUN_OUTCOMES.includes(r.outcome) || !Number.isFinite(Date.parse(r.at)) || ![undefined, REDISPATCH_KIND, STUCK_KIND].includes(r.kind)) return false;
+  for (const [k, h] of Object.entries(v.heads)) {
+    if (!HEX40.test(k) || !plainObject(h) || !Number.isFinite(Date.parse(h.firstSeen))) return false;
+    const notice = h.systemicNotice;
+    if (notice !== undefined && (!plainObject(notice) || typeof notice.target !== 'string'
+      || !Array.isArray(notice.jobs) || notice.jobs.some(name => typeof name !== 'string'))) return false;
+  }
+  const keys = new Set();
+  for (const [k, r] of Object.entries(v.records)) {
+    if (!plainObject(r) || !HEX40.test(r.headSha ?? '') || !RERUN_OUTCOMES.includes(r.outcome) || !Number.isFinite(Date.parse(r.at))
+      || ![undefined, REDISPATCH_KIND, STUCK_KIND].includes(r.kind)) return false;
+    if (!r.kind && (!positive(r.runId) || !positive(r.attempt) || r.attempt < 2 || ![undefined, 1, 2].includes(r.requests))) return false;
+    if (r.frontHeadSha !== undefined && (r.kind || !HEX40.test(r.frontHeadSha ?? '') || r.frontHeadSha === r.headSha)) return false;
+    if (r.failures !== undefined && (!Array.isArray(r.failures) || r.failures.some(f =>
+      !plainObject(f) || typeof f.name !== 'string' || !['setup', 'network', 'timeout'].includes(f.kind)))) return false;
+    const key = r.kind ? r.headSha : requestKey(r.runId, r.attempt);
+    // A v1 receipt written by the old companion is still authoritative for its one run/attempt.
+    if ((k !== key && (r.kind || k !== r.headSha)) || keys.has(key)) return false;
+    keys.add(key);
+  }
   return true;
 }
-const positive = v => Number.isSafeInteger(v) && v > 0;
 const short = t => String(t).replace(/[\r\n]+/g, ' ').slice(0, 200);
 class Unreadable extends Error {}
 const unreadable = what => { throw new Unreadable(what); };
@@ -178,28 +198,104 @@ async function admissionOf(gh, headSha, prNumber) {
   return { admitted: bound && newest.conclusion === 'success' };
 }
 
-// clued-work-admission.mjs#independentRepairRerun (#993), over the gh port: may attempt `attempt` of run `runId` be a repair re-run?
-// Task 1b: besides the attempts that ran nothing, the ONE earlier attempt that ran heavy jobs is repaired when every job that did not pass
-// died of the environment alone (env-failure.mjs, the same evidence as the gate's environmentFailures) and its gate job succeeded.
-// -> { allowed: true, environment: names | null } | { allowed: false, reason }
-export async function repairAllowed(gh, runId, headSha, attempt) {
-  let environment = null;
+async function classifyJob(gh, job) {
+  const failed = failedSteps(job);
+  if (job.conclusion === 'cancelled' && positive(job.id) && failed?.length === 0
+    && job.steps.length && job.steps.every(step => typeof step?.conclusion === 'string')) {
+    const notes = await gh.paged(`/check-runs/${job.id}/annotations`);
+    const log = notes.length ? await gh.text(`/actions/jobs/${job.id}/logs`) : null;
+    return jobFailureKind(job, log, notes);
+  }
+  const log = job.conclusion === 'failure' && !diedInSetup(job) && failed?.length > 0 && positive(job.id)
+    ? await gh.text(`/actions/jobs/${job.id}/logs`) : null;
+  return jobFailureKind(job, log);
+}
+
+// Inspect runs newest first, counting at most one completed sample per other head for each timed-out job.
+// Skipped attempts and duplicate heads do not displace a sample. No run status alone proves recovery.
+async function otherJobEvidence(gh, headSha, failures, recoveryAfter) {
+  const samples = new Map(failures.filter(f => f.kind === 'timeout').map(f => [f.name, new Map()]));
+  const needsRecovery = new Set(recoveryAfter === null ? [] : failures.map(f => f.name));
+  const stillSampling = () => [...samples.values()].some(rows => rows.size < RECENT_OTHER_HEADS);
+  if (!stillSampling() && !needsRecovery.size) return { systemic: [], recovered: true };
+  const seen = new Set();
+  let total = null;
+  const pageLimit = needsRecovery.size ? MAX_RECOVERY_PAGES : MAX_PAGES;
+  for (let page = 1; page <= pageLimit && (stillSampling() || needsRecovery.size); page++) {
+    const body = await gh.get(`/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?per_page=100&page=${page}`);
+    const runs = body?.workflow_runs;
+    if (!Array.isArray(runs) || !Number.isSafeInteger(body.total_count) || body.total_count < 0
+      || (total !== null && total !== body.total_count)
+      || runs.length !== Math.min(100, Math.max(0, body.total_count - (page - 1) * 100)))
+      unreadable('recent required-tests runs are incomplete');
+    total = body.total_count;
+    for (const run of runs) {
+      if (!stillSampling() && !needsRecovery.size) break;
+      if (!positive(run?.id) || seen.has(run.id) || !HEX40.test(run.head_sha ?? '') || typeof run.status !== 'string'
+        || !positive(run.run_attempt) || run.run_attempt > 100) unreadable('a recent required-tests run is invalid or changed');
+      seen.add(run.id);
+      if (run.head_sha === headSha) continue;
+      const possiblyRecovered = run.status !== 'completed' || !(Date.parse(run.updated_at) <= recoveryAfter);
+      const wanted = new Set([...(possiblyRecovered ? needsRecovery : []), ...[...samples].filter(([, rows]) =>
+        rows.size < RECENT_OTHER_HEADS && !rows.has(run.head_sha)).map(([name]) => name)]);
+      for (let n = run.run_attempt; n > 0 && wanted.size; n--) {
+        const jobs = await gh.paged(`/actions/runs/${run.id}/attempts/${n}/jobs`, 'jobs');
+        if (jobs.some(j => !j || j.head_sha !== run.head_sha || (j.run_attempt != null && Number(j.run_attempt) !== n)))
+          unreadable(`recent run ${run.id} attempt ${n} has incomplete jobs`);
+        for (const name of wanted) {
+          const matched = jobs.filter(j => j.name === name && j.status === 'completed' && typeof j.conclusion === 'string' && j.conclusion !== 'skipped');
+          if (matched.length > 1) unreadable(`recent run ${run.id} attempt ${n} repeats job ${name}`);
+          const job = matched[0];
+          if (!job) continue;
+          const doneAt = Date.parse(job.completed_at);
+          if (job.conclusion === 'success' && doneAt > recoveryAfter) needsRecovery.delete(name);
+          const rows = samples.get(name);
+          if (rows && rows.size < RECENT_OTHER_HEADS && !rows.has(run.head_sha)) {
+            const timeout = job.conclusion === 'cancelled' && (await classifyJob(gh, job)).kind === 'timeout';
+            rows.set(run.head_sha, { timeout, success: job.conclusion === 'success', doneAt });
+          }
+          // Earlier attempts can still prove recovery if a later attempt of that run failed.
+          if (!needsRecovery.has(name)) wanted.delete(name);
+        }
+      }
+    }
+    if (page * 100 >= total) break;
+  }
+  const systemic = [];
+  for (const failure of failures) {
+    if (!samples.has(failure.name)) continue;
+    const rows = [...samples.get(failure.name).values()];
+    const timeouts = rows.filter(row => row.timeout);
+    const latestTimeout = Math.max(Date.parse(failure.completedAt), ...timeouts.map(row => row.doneAt));
+    if (timeouts.length >= 2 && !rows.some(row => row.success && row.doneAt > latestTimeout)) systemic.push(failure.name);
+  }
+  return { systemic, recovered: !needsRecovery.size };
+}
+
+// Mirror the gate's repair rule over the gh port. Attempts where the heavy jobs were skipped do not use up a repair.
+export async function repairAllowed(gh, runId, headSha, attempt, attempts = []) {
+  let executed = 0, failures = [], previousEnd = null;
   for (let earlier = 1; earlier < attempt; earlier += 1) {
-    const jobs = await gh.paged(`/actions/runs/${runId}/attempts/${earlier}/jobs`, 'jobs');
+    const jobs = attempts[earlier - 1] ?? await gh.paged(`/actions/runs/${runId}/attempts/${earlier}/jobs`, 'jobs');
     const listed = jobs.filter(j => j && typeof j === 'object');
     const gates = listed.filter(j => j.name === GATE_JOB_NAME), heavy = listed.filter(j => j.name !== GATE_JOB_NAME);
     if (listed.length !== jobs.length || gates.length !== 1 || heavy.length === 0) return { allowed: false, reason: `attempt ${earlier} does not list one ${GATE_JOB_NAME} job and its heavy jobs` };
-    if (listed.some(j => j.head_sha !== headSha)) return { allowed: false, reason: `attempt ${earlier} has a job of another head` };
+    if (listed.some(j => j.head_sha !== headSha || (j.run_attempt != null && Number(j.run_attempt) !== earlier)))
+      return { allowed: false, reason: `attempt ${earlier} has a job of another head or attempt` };
     if (heavy.some(j => !(j.status === 'completed' && j.conclusion === 'skipped'))) {
-      const failed = heavy.filter(j => j.conclusion === 'failure');
+      const failed = heavy.filter(j => ['failure', 'cancelled'].includes(j.conclusion));
       const settled = failed.length > 0 && gates[0].status === 'completed' && gates[0].conclusion === 'success'
-        && heavy.every(j => j.status === 'completed' && ['success', 'skipped', 'failure'].includes(j.conclusion));
-      if (environment !== null || !settled) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job` };
+        && heavy.every(j => j.status === 'completed' && ['success', 'skipped', 'failure', 'cancelled'].includes(j.conclusion));
+      executed += 1;
+      if (!settled) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job` };
+      failures = [];
       for (const j of failed) {
-        const log = diedInSetup(j) || !(failedSteps(j)?.length > 0) || !positive(j.id) ? null : await gh.text(`/actions/jobs/${j.id}/logs`);
-        if (!jobFailureKind(j, log).environment) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job (not an environment failure)` };
+        const result = await classifyJob(gh, j);
+        if (!result.environment || typeof j.name !== 'string' || !j.name) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job (not an environment failure)` };
+        failures.push({ name: j.name, kind: result.kind, completedAt: j.completed_at });
       }
-      environment = failed.map(j => String(j.name).slice(0, 80));
+      if (executed === 3) return { allowed: false, exhausted: failures, reason: 'three heavy attempts ended with environment failures' };
+      previousEnd = Math.max(...listed.map(j => Date.parse(j.completed_at)));
       continue;
     }
     if (diedInSetup(gates[0])) continue; // the gate job died in the runner's setup: it ran nothing and left no verdict
@@ -210,17 +306,62 @@ export async function repairAllowed(gh, runId, headSha, attempt) {
       return { allowed: false, reason: `the ${GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING or a GitHub API outage` };
     }
   }
-  return { allowed: true, environment };
+  if (executed === 2 && !Number.isFinite(previousEnd)) return { allowed: false, waiting: true, reason: 'the previous heavy attempt has no proven end time' };
+  const { systemic, recovered } = await otherJobEvidence(gh, headSha, failures, executed === 2 ? previousEnd : null);
+  if (systemic.length) return { allowed: false, waiting: true, systemic, reason: `${systemic.join(', ')} has systemic timeouts` };
+  if (!recovered) return { allowed: false, waiting: true, reason: 'the failed jobs have not succeeded on another head since the previous heavy attempt' };
+  return { allowed: true, environment: failures.length ? failures.map(f => f.name.slice(0, 80)) : null,
+    failures: failures.map(f => ({ name: f.name.slice(0, 80), kind: f.kind })) };
+}
+
+// The executor binds S to a live front. The staging push has its own workflow gate.
+async function decideStaging({ gh, pr, headSha, testSha, defaultBranch, canRequest, out, say }) {
+  const isStagingRun = run => run?.head_sha === testSha && run.event === 'push' && run.head_branch === STAGING_BRANCH;
+  const reply = await gh.get(`/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${testSha}&per_page=100`);
+  const runs = reply?.workflow_runs;
+  if (!Array.isArray(runs) || reply.total_count !== runs.length || runs.length > 100
+    || new Set(runs.map(r => r?.id)).size !== runs.length
+    || runs.some(r => r?.head_sha !== testSha || !positive(r.id) || !positive(r.run_attempt) || r.run_attempt > 100
+      || typeof r.status !== 'string')) return say('skip', 'the staging run inventory is incomplete');
+  const staging = runs.filter(isStagingRun);
+  if (staging.length !== 1 || runs.some(r => r.status !== 'completed')) return say('skip', 'no single settled push run for staging');
+  const [run] = staging;
+  Object.assign(out, { pr, runId: run.id, attempt: run.run_attempt });
+  if (run.conclusion === 'success') return say('final', 'the staging run already passed');
+  const next = run.run_attempt + 1;
+  if (!canRequest(run.id, next)) return say('skip', `run ${run.id} attempt ${next} already has a receipt`);
+  const repair = await repairAllowed(gh, run.id, testSha, next);
+  if (!repair.allowed) {
+    out.systemic = repair.systemic;
+    out.exhausted = repair.exhausted;
+    return say(repair.waiting ? 'skip' : 'final', repair.reason);
+  }
+
+  const pull = await gh.get(`/pulls/${pr}`);
+  if (pull?.number !== pr || pull.state !== 'open' || pull.head?.sha !== headSha || pull.base?.ref !== defaultBranch
+    || pull.head?.repo?.full_name !== gh.repo || pull.base?.repo?.full_name !== gh.repo)
+    return say('skip', 'the train front PR is no longer open on that head');
+  const ref = await gh.get(`/git/ref/heads/${STAGING_BRANCH}`);
+  if (ref?.ref !== `refs/heads/${STAGING_BRANCH}` || ref.object?.sha !== testSha) return say('skip', 'the staging ref moved');
+  const again = await gh.get(`/actions/runs/${run.id}`);
+  if (!isStagingRun(again) || again.id !== run.id || again.status !== 'completed' || again.run_attempt !== run.run_attempt
+    || again.conclusion !== run.conclusion) return say('skip', 'the staging run changed since it was read');
+  Object.assign(out, { environment: repair.environment, failures: repair.failures });
+  return say('rerun', `"Re-run all jobs" of staging run ${run.id} (attempt ${next}) for #${pr}`);
 }
 
 // The decision for one head (rules 1-5, or the lost run). -> { action: 'rerun' | 'redispatch' | 'skip' | 'final' | 'error', reason, pr,
 // runId, attempt, ref }. 'final': this head never needs this lane again (a heavy job ran, the repair rule refused). 'skip': not now.
 // 'error': unreadable. headAgeMs: how long ago this lane first saw the head (null: not known, never old).
-export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = null }) {
+export async function decide({ gh, headSha, pr: frontPr, testSha, defaultBranch = 'main', headAgeMs = null, canRequest = () => true }) {
   const out = { action: 'skip', reason: '', pr: null, runId: null, attempt: null, ref: null, environment: null };
   const say = (action, reason) => Object.assign(out, { action, reason: short(reason) });
   if (!HEX40.test(headSha ?? '')) return say('final', 'no head');
   try {
+    if (testSha !== undefined) {
+      if (!HEX40.test(testSha ?? '') || testSha === headSha || !positive(frontPr)) return say('final', 'invalid staging subject');
+      return await decideStaging({ gh, pr: frontPr, headSha, testSha, defaultBranch, canRequest, out, say });
+    }
     // 1. The open pull request with exactly this head, into the default branch, from this repository, admitted now.
     const listed = await gh.paged(`/commits/${headSha}/pulls`);
     const open = listed.filter(p => p && p.state === 'open' && p.head?.sha === headSha && p.base?.ref === defaultBranch
@@ -269,7 +410,7 @@ export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = 
         if (jobs.some(j => j.status !== 'completed')) unreadable(`attempt ${n} of run ${r.id} still has unfinished jobs`);
         if (jobs.some(j => j.name !== GATE_JOB_NAME && j.conclusion !== 'skipped')) allSkipped = false;
         if (r.id === newest.id && n === r.run_attempt) latestGate = jobs.find(j => j.name === GATE_JOB_NAME);
-        all.push(...jobs);
+        all.push(jobs);
       }
       jobsByRun.set(r.id, all);
     }
@@ -297,26 +438,31 @@ export async function decide({ gh, headSha, defaultBranch = 'main', headAgeMs = 
     // environment failure).
     for (const r of runs.filter(x => x.id !== newest.id)) {
       const jobs = jobsByRun.get(r.id);
-      if (jobs.some(j => j.name !== GATE_JOB_NAME && !(j.status === 'completed' && j.conclusion === 'skipped'))) return say('final', `run ${r.id} already ran its heavy jobs`);
+      if (jobs.some(attempt => attempt.some(j => j.name !== GATE_JOB_NAME && j.conclusion !== 'skipped'))) return say('final', `run ${r.id} already ran its heavy jobs`);
     }
     // 4. The gate's own repair rule for the attempt this would start.
     const next = newest.run_attempt + 1;
-    const repair = await repairAllowed(gh, newest.id, headSha, next);
-    if (!repair.allowed) return say('final', `attempt ${next} of run ${newest.id} would not be a repair re-run: ${repair.reason}`);
+    if (!canRequest(newest.id, next)) return say('skip', `run ${newest.id} attempt ${next} already has a receipt`);
+    const repair = await repairAllowed(gh, newest.id, headSha, next, jobsByRun.get(newest.id));
+    if (!repair.allowed) {
+      out.systemic = repair.systemic;
+      out.exhausted = repair.exhausted;
+      return say(repair.waiting ? 'skip' : 'final', `attempt ${next} of run ${newest.id} would not be a repair re-run: ${repair.reason}`);
+    }
     // 5. Fresh reads right before the one write.
     const now = await gh.get(`/pulls/${pr.number}`);
     if (!now || now.state !== 'open' || now.head?.sha !== headSha || now.base?.ref !== defaultBranch) return say('skip', `#${pr.number} is no longer open on this head`);
     const again = await gh.get(`/actions/runs/${newest.id}`);
-    if (!again || again.head_sha !== headSha || again.status !== 'completed' || again.run_attempt !== newest.run_attempt) return say('skip', `run ${newest.id} changed since it was read`);
+    if (!again || again.id !== newest.id || again.head_sha !== headSha || again.status !== 'completed' || again.run_attempt !== newest.run_attempt) return say('skip', `run ${newest.id} changed since it was read`);
     out.environment = repair.environment;
+    out.failures = repair.failures;
     return say('rerun', `"Re-run all jobs" of run ${newest.id} (attempt ${next}) for #${pr.number}${repair.environment ? ` after an environment failure of ${repair.environment.join(', ')}` : ''}`);
   } catch (e) {
     return say('error', `nothing re-run: ${e instanceof Unreadable ? e.message : 'a read failed'}`);
   }
 }
 
-// The lane's own memory (the Owner's profile, its own file: two lanes never write one file): per head, first seen and last looked
-// at; and the records (receipts) of every re-run asked for, written before the request and completed after it.
+// The lane's own memory: head watch windows, per-attempt rerun receipts and per-head dispatch receipts.
 export class AdmissionRerunState {
   constructor(file, clock) { this.file = file; this.clock = clock; this.data = { contract: RERUN_STATE_CONTRACT, heads: {}, records: {} }; }
   // No file is a fresh memory. A file that exists but cannot be read, is not JSON, or does not have exactly the state's shape is not
@@ -331,10 +477,20 @@ export class AdmissionRerunState {
     let v;
     try { v = JSON.parse(text); } catch { v = null; }
     if (!validState(v)) { s.unreadable = true; s.unreadableCode = 'STATE_SHAPE_REFUSED'; return s; }
-    s.data = { contract: RERUN_STATE_CONTRACT, heads: v.heads, records: v.records };
+    s.data = { contract: RERUN_STATE_CONTRACT, heads: v.heads, records: Object.fromEntries(Object.values(v.records)
+      .map(r => [r.kind ? r.headSha : requestKey(r.runId, r.attempt), r])) };
     return s;
   }
-  record(headSha) { return Object.hasOwn(this.data.records, headSha) ? this.data.records[headSha] : null; }
+  headRecord(headSha) { return this.data.records[headSha] ?? null; }
+  request(runId, attempt) { return this.data.records[requestKey(runId, attempt)] ?? null; }
+  record(headSha) {
+    let newest = this.headRecord(headSha);
+    for (const r of Object.values(this.data.records)) {
+      if (r.headSha === headSha && (!newest || Date.parse(r.at) > Date.parse(newest.at)
+        || (r.runId === newest.runId && r.attempt > newest.attempt && Date.parse(r.at) === Date.parse(newest.at)))) newest = r;
+    }
+    return newest;
+  }
   // Records are kept RECORD_KEEP_MS; a head's entry is dropped by the lane once the head is no longer a candidate (AdmissionRerunner).
   async save() {
     const cut = this.clock() - RECORD_KEEP_MS;
@@ -356,24 +512,39 @@ export function statusFresh(status, now) {
 export function candidateHeads(status, pulls, now) {
   if (!status || status.node?.mode !== 'ACTIVE' || status.halt || !statusFresh(status, now)) return [];
   const mine = new Set([status.current, ...(status.pending ?? []), ...(status.recent ?? [])].filter(x => x && Number.isSafeInteger(x.pr) && HEX40.test(x.headSha ?? '')).map(x => `${x.pr}:${x.headSha}`));
-  return (pulls ?? []).filter(p => p && HEX40.test(p.headSha ?? '') && mine.has(`${p.pr}:${p.headSha}`)).map(p => ({ pr: p.pr, headSha: p.headSha }));
+  const heads = (pulls ?? []).filter(p => p && HEX40.test(p.headSha ?? '') && mine.has(`${p.pr}:${p.headSha}`)).map(p => ({ pr: p.pr, headSha: p.headSha }));
+  if (status.train?.enabled !== 'on' || status.train.landing !== 'push' || status.train.notOnDuty) return heads;
+  const fronts = (status.pending ?? []).filter(p => LIVE_STATES.includes(p?.state) && HEX40.test(p.testSha ?? '')
+    && p.testSha !== p.headSha && heads.some(h => h.pr === p.pr && h.headSha === p.headSha));
+  return [...fronts.map(({ pr, headSha, testSha }) => ({ pr, headSha, testSha })), ...heads];
 }
 
 export class AdmissionRerunner {
   // ports: { gh (ghPort), state (AdmissionRerunState), clock, readStatus() -> parsed status.json, pulls() -> the poller's open pull
   //   requests, notify(key, title, body) (a toast for the Owner) }
   constructor(ports) { Object.assign(this, ports); }
-  // Whether this lane asked for a re-run of the head and GitHub accepted it.
+  // Whether the latest receipt for the head is an accepted re-run.
   done(headSha) { const r = this.state.record(headSha); return r?.outcome === 'sent' && !r.kind; }
-  // What the PR page says of this head (pr-status.mjs#withRerunLine): a re-run GitHub accepted, or what came of a lost run's dispatch.
+  // What the PR page says of this head (pr-status.mjs#withRerunLine).
   line(headSha) {
     const r = this.state.record(headSha);
+    if (!r) {
+      const staging = Object.values(this.state.data.records).filter(rec => rec.frontHeadSha === headSha && rec.outcome === 'sent')
+        .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || b.attempt - a.attempt)[0];
+      if (staging) {
+        const details = ['列车暂存提交', failureLabel(staging.failures), `尝试 ${staging.attempt}`].filter(Boolean);
+        return `已自动补跑一次必需测试（${details.join('，')}）`;
+      }
+    }
     if (r?.kind === STUCK_KIND || (r?.skipped && ['unsent', 'refused'].includes(r.outcome)))
       return `必需测试被跳过且不能自动补跑：${r.why}，请推新提交或手动 Run workflow`;
     if (r?.kind === REDISPATCH_KIND && r.skipped) return r.outcome === 'sent'
       ? '必需测试被跳过（推送者非 Owner），已自动补发一次' : '必需测试被跳过，自动补发结果不确定';
     if (r?.kind === REDISPATCH_KIND) return r.outcome === 'sent' ? '必需测试没有运行，已自动补发一次' : ['intent', 'unknown'].includes(r.outcome) ? '必需测试没有运行，自动补发结果不确定' : '必需测试没有运行，自动补发未成功';
-    return this.done(headSha) ? '已自动补跑一次必需测试' : null;
+    const failures = failureLabel(r?.failures);
+    if (r?.outcome === 'sent') return `已自动补跑一次必需测试${failures ? `（${failures}，尝试 ${r.attempt}）` : ''}`;
+    const outcome = { unsent: '自动补跑没有发出', refused: '自动补跑被拒绝', unknown: '自动补跑结果不确定' }[r?.outcome];
+    return outcome ? `${outcome}${failures ? `（${failures}）` : ''}` : null;
   }
   async step() {
     // An unreadable memory file stops the lane (a forgotten record could click twice). It is read again at each step (a passing lock
@@ -391,9 +562,8 @@ export class AdmissionRerunner {
       }
     }
     this.unreadableTold = false;
-    // A record left as intent (the companion stopped between its two saves): whether GitHub got the request is not known. Never asked
-    // again; it becomes unknown, and the Owner hears of it once (review round 29, NIT 4).
-    for (const [headSha, rec] of Object.entries(this.state.data.records)) {
+    // A record left as intent is an unknown result. The Owner hears of it after the conversion is persisted.
+    for (const [key, rec] of Object.entries(this.state.data.records)) {
       if (rec?.outcome !== 'intent') continue;
       rec.outcome = 'unknown';
       rec.why = '伴随进程在发出请求前后停止，不知道请求是否到了 GitHub';
@@ -401,8 +571,8 @@ export class AdmissionRerunner {
       try { await this.state.save(); } catch { saved = false; }
       if (!saved) { rec.outcome = 'intent'; rec.why = null; break; }
       const told = rec.kind === REDISPATCH_KIND ? [`PR #${rec.pr}：必需测试没有运行，自动补发结果不确定`, `${rec.why}。请到 PR 页面看是否已有 ${REQUIRED_TESTS_WORKFLOW} 的运行；没有再推一个新提交。不会再自动补发。`]
-        : [`PR #${rec.pr}：自动补跑结果不确定`, `${rec.why}。请到 PR 页面看 run ${rec.runId} 是否已经重新开始；没有开始再手动补跑一次。不会再自动点。`];
-      try { await this.notify(`admission-rerun:${headSha}`, told[0], told[1]); } catch { /* a toast only */ }
+        : [`PR #${rec.pr}：自动补跑结果不确定`, `${rec.why}。${failureLabel(rec.failures)} 当前运行 ${rec.runId}，目标尝试 ${rec.attempt}。${retryExplanation(rec)}`];
+      try { await this.notify(`admission-rerun:${key}:${rec.requests ?? 1}`, told[0], told[1]); } catch { /* a toast only */ }
     }
     let status;
     try { status = await this.readStatus(); } catch { return { acted: 0, reason: 'STATUS_UNREADABLE' }; }
@@ -416,7 +586,7 @@ export class AdmissionRerunner {
     // lists it, or twice HEAD_WATCH_MS after it last was a candidate: a companion start (no poller pass yet), a STANDBY or UNCERTAIN
     // spell, a HALT or a stale status never resets the window or forgets a final verdict.
     const fullView = status?.node?.mode === 'ACTIVE' && !status.halt && statusFresh(status, now) && Array.isArray(pulls) && pulls.length > 0;
-    const live = new Set(candidates.map(c => c.headSha));
+    const live = new Set(candidates.map(c => c.testSha ?? c.headSha));
     for (const [k, h] of Object.entries(this.state.data.heads)) {
       if (live.has(k)) {
         if (!(now - Date.parse(h.lastCandidateAt ?? '') < HEAD_CANDIDATE_MARK_MS)) { h.lastCandidateAt = new Date(now).toISOString(); changed = true; }
@@ -424,26 +594,57 @@ export class AdmissionRerunner {
       }
       if (fullView || !(now - Date.parse(h.lastCandidateAt ?? h.firstSeen) < 2 * HEAD_WATCH_MS)) { delete this.state.data.heads[k]; changed = true; }
     }
-    for (const { pr, headSha } of candidates) {
-      // One request per head in all, whatever it was: the lost-run dispatch, the ADMISSION_PENDING repair or the environment-failure re-run share this one
-      // record (a head whose run was re-dispatched is not re-run again by this lane; the gate still allows its own one environment re-run by hand).
-      if (this.state.record(headSha)) continue; // asked once already, whatever came of it
+    for (const candidate of candidates) {
+      const { pr, testSha } = candidate;
+      const headSha = testSha ?? candidate.headSha;
+      const headRecord = this.state.headRecord(headSha);
+      if (headRecord?.kind === STUCK_KIND) continue;
       if (!this.state.data.heads[headSha]) { this.state.data.heads[headSha] = { firstSeen: new Date(now).toISOString(), lastCandidateAt: new Date(now).toISOString(), lookedAt: null, final: null }; changed = true; }
       const seen = this.state.data.heads[headSha];
-      // Old versions stored silent final verdicts without looking for skipped
-      // execution. Reconcile those once; retain the original watch window.
-      if (seen.final && !seen.skippedRecoveryChecked) { seen.final = null; changed = true; }
+      // Old verdicts can call a timeout final. Recheck them once within the original watch window.
+      if (seen.final && seen.repairRuleVersion !== REPAIR_RULE_VERSION) { seen.final = null; changed = true; }
       if (seen.final || now - Date.parse(seen.firstSeen) > HEAD_WATCH_MS) continue;
       if (seen.lookedAt && now - Date.parse(seen.lookedAt) < HEAD_RECHECK_MS) continue;
       if (looked >= HEADS_PER_STEP) break;
       looked += 1;
       changed = true;
       seen.lookedAt = new Date(now).toISOString();
-      const d = await decide({ gh: this.gh, headSha, headAgeMs: now - Date.parse(seen.firstSeen) });
+      const d = await decide({ gh: this.gh, ...candidate, headAgeMs: now - Date.parse(seen.firstSeen), canRequest: (runId, attempt) => {
+        const prior = this.state.request(runId, attempt);
+        return !prior || (canRetry(prior) && now - Date.parse(prior.at) >= REQUEST_RETRY_MS);
+      } });
+      if (d.systemic?.length) {
+        const target = requestKey(d.runId, d.attempt + 1);
+        const prior = seen.systemicNotice;
+        const told = prior?.target === target ? prior.jobs : [];
+        const next = d.systemic.filter(name => !told.includes(name));
+        if (next.length) {
+          seen.systemicNotice = { target, jobs: [...told, ...next] };
+          try { await this.state.save(); } catch {
+            if (prior === undefined) delete seen.systemicNotice;
+            else seen.systemicNotice = prior;
+            this.unsaved = true;
+            return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' };
+          }
+          for (const name of next) {
+            try { await this.notify(`admission-rerun:${target}:systemic:${name}`, `PR #${d.pr ?? pr}：${name} 系统性超时，暂不自动重跑`, d.reason); } catch { /* a toast only */ }
+          }
+        }
+      }
       if (d.action === 'final') {
         seen.final = d.reason;
-        seen.skippedRecoveryChecked = true;
-        if (d.neverRan) {
+        seen.repairRuleVersion = REPAIR_RULE_VERSION;
+        if (d.exhausted) {
+          try { await this.state.save(); } catch {
+            seen.final = null;
+            this.unsaved = true;
+            return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' };
+          }
+          try {
+            await this.notify(`admission-rerun:${d.runId}:exhausted`, `PR #${d.pr ?? pr}：三次环境类失败，已停止自动重跑（${failureLabel(d.exhausted)}）`,
+              `运行 ${d.runId} 已达到环境类修复上限，待查故障原因。`);
+          } catch { /* a toast only */ }
+        } else if (d.neverRan && !headRecord) {
           this.state.data.records[headSha] = { contract: RERUN_RECORD_CONTRACT, kind: STUCK_KIND, pr: d.pr ?? pr, headSha,
             runId: d.runId, attempt: d.attempt, outcome: 'refused', at: new Date(now).toISOString(), why: d.reason };
           try { await this.state.save(); } catch {
@@ -455,13 +656,23 @@ export class AdmissionRerunner {
       }
       if (d.action !== 'rerun' && d.action !== 'redispatch') continue;
       const lost = d.action === 'redispatch';
-      // The receipt first, on disk, then the one request. A crash or a lost answer in between leaves the intent: never sent again.
+      if (lost && headRecord) continue;
+      const key = lost ? headSha : requestKey(d.runId, d.attempt + 1);
+      const prior = this.state.data.records[key];
+      // Before a POST, durably consume one request for this key. Do not refund it on an ambiguous answer.
       const record = lost ? { contract: RERUN_RECORD_CONTRACT, kind: REDISPATCH_KIND, pr: d.pr ?? pr, headSha, runId: null, attempt: null, outcome: 'intent', at: new Date(now).toISOString(), why: null }
-        : { contract: RERUN_RECORD_CONTRACT, pr: d.pr ?? pr, headSha, runId: d.runId, attempt: d.attempt + 1, outcome: 'intent', at: new Date(now).toISOString(), why: null };
+        : { contract: RERUN_RECORD_CONTRACT, pr: d.pr ?? pr, headSha, runId: d.runId, attempt: d.attempt + 1, outcome: 'intent', at: new Date(now).toISOString(),
+          why: null, failures: d.failures, requests: prior ? (prior.requests ?? 1) + 1 : 1 };
       if (d.skipped) record.skipped = true;
-      this.state.data.records[headSha] = record;
+      if (testSha) record.frontHeadSha = candidate.headSha;
+      this.state.data.records[key] = record;
       // No receipt, no request; this step's earlier changes stay to be written at the next step (review round 30, NIT 1).
-      try { await this.state.save(); } catch { delete this.state.data.records[headSha]; this.unsaved = true; return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' }; }
+      try { await this.state.save(); } catch {
+        if (prior) this.state.data.records[key] = prior;
+        else delete this.state.data.records[key];
+        this.unsaved = true;
+        return { acted, reason: 'ADMISSION_RERUN_STATE_UNSAVED' };
+      }
       let r;
       try { r = await (lost ? this.gh.dispatch(d.ref, record.pr, headSha) : this.gh.rerun(d.runId)); } catch { r = { outcome: 'unsent', why: 'gh 没有启动' }; }
       Object.assign(record, { outcome: r.outcome, why: r.outcome === 'sent' ? null : short(r.why), at: new Date(this.clock()).toISOString() });
@@ -476,17 +687,25 @@ export class AdmissionRerunner {
         refused: [`PR #${record.pr}：必需测试没有运行，自动补发被 GitHub 拒绝`, `${record.why}。不会再自动补发；请先核对工作流入口和权限。`],
         unknown: [`PR #${record.pr}：必需测试没有运行，自动补发结果不确定`, `${record.why}。请到 PR 页面看是否已有 ${REQUIRED_TESTS_WORKFLOW} 的运行；没有再推一个新提交。不会再自动补发。`],
       }[r.outcome] : {
-        sent: d.environment
-          ? [`PR #${record.pr}：环境类失败，已自动整轮重跑一次`, `${d.environment.join('、')} 因网络或 runner 启动失败（日志里没有测试失败），已按 gate 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`]
+        sent: record.frontHeadSha
+          ? [`PR #${record.pr}：已自动整轮重跑列车暂存提交的必需测试`, `${failureLabel(record.failures)} 已请求“Re-run all jobs”（运行 ${d.runId}，尝试 ${record.attempt}）。`.trim()]
+          : d.environment
+          ? [`PR #${record.pr}：环境类失败，已自动整轮重跑一次`, `${failureLabel(record.failures)}。已请求“Re-run all jobs”（运行 ${d.runId}，尝试 ${record.attempt}）。`]
           : [`PR #${record.pr}：已自动补跑一次必需测试`, `准入在 gate 超时后才到，已按 #993 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`],
-        unsent: [`PR #${record.pr}：自动补跑没有发出`, `${record.why}，请求没有到 GitHub。不会再自动点；需要时请在 PR 页面手动补跑一次。`],
-        refused: [`PR #${record.pr}：自动补跑被 GitHub 拒绝`, `${record.why}。不会再自动点；需要时请在 PR 页面手动补跑一次。`],
-        unknown: [`PR #${record.pr}：自动补跑结果不确定`, `${record.why}。请到 PR 页面看 run ${d.runId} 是否已经重新开始；没有开始再手动补跑一次。不会再自动点。`],
+        unsent: [`PR #${record.pr}：自动补跑没有发出`, `${failureLabel(record.failures)} ${record.why}，请求没有到 GitHub。${retryExplanation(record)}`.trim()],
+        refused: [`PR #${record.pr}：自动补跑被 GitHub 拒绝`, `${failureLabel(record.failures)} ${record.why}。这个尝试号不再自动请求。`.trim()],
+        unknown: [`PR #${record.pr}：自动补跑结果不确定`, `${failureLabel(record.failures)} ${record.why}。${retryExplanation(record)}`.trim()],
       }[r.outcome] ?? [`PR #${record.pr}：自动补跑结果不确定`, '不会再自动点。'];
-      try { await this.notify(`admission-rerun:${headSha}`, text[0], text[1]); } catch { /* a toast only */ }
+      try { await this.notify(`admission-rerun:${key}:${record.requests ?? 1}`, text[0], text[1]); } catch { /* a toast only */ }
     }
     // An unsaved change (this step's, or one an earlier step could not write) is written now, else at the next step.
     if (changed || this.unsaved) { try { await this.state.save(); this.unsaved = false; } catch { this.unsaved = true; } }
     return { acted, looked };
   }
 }
+
+const failureLabel = failures => failures?.map(({ name, kind }) => `${name} ${kind}`).join('、') ?? '';
+const canRetry = r => ['unsent', 'unknown'].includes(r.outcome) && (r.requests ?? 1) === 1;
+const retryExplanation = r => canRetry(r)
+  ? '10 分钟后若 GitHub 仍显示同一尝试已结束，将再请求一次。'
+  : '这个尝试号不再自动请求。';

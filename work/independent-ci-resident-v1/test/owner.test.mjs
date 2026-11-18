@@ -129,10 +129,10 @@ test('a head waiting out its cool-down does not block the PRs behind it', async 
 });
 
 test('a stage proof field that is present must be true; absent fields add nothing', async t => {
-  const f = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: { windowsTreeZero: 'yes', serviceOriginalStopped: true } } } }) });
+  const f = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: { windowsTreeZero: 'yes', serviceOriginalStopped: true } } } }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'HALTED');
-  const g = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: {} } } }) });
+  const g = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: {} } } }) });
   await g.drop(triggerBytes());
   assert.equal((await g.exec.tick()).state, 'FAILED_CLEAN', 'fresh engine and Linux facts alone suffice when the stage reported none');
 });
