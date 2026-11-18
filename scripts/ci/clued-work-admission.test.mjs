@@ -3439,15 +3439,44 @@ const HEAVY_JOBS = ["clued-cloud-tests", "ci-suites", "migration-verify"];
 const attemptJob = (id, name, conclusion, overrides = {}) => ({ id, name, head_sha: HEAD, status: "completed", conclusion, ...overrides });
 const pendingNote = { title: "admission-gate", message: "ADMISSION_PENDING: kooyumi-work-admission of App 5368905 for #452 has posted no check after 600s; heavy jobs are skipped." };
 const refusedNote = { title: "admission-gate", message: "RERUN_REFUSED: run attempt 2: the independent CI admission allows one repair re-run; push a new commit; this re-run did not run the heavy jobs." };
+const timeoutIncident = JSON.parse(fs.readFileSync(new URL("./fixtures/required-tests-timeout-1159.json", import.meta.url), "utf8"));
+const timeoutJobId = 134709790262;
+const shiftAttemptTime = (timestamp, n) => n === 1 ? timestamp : new Date(Date.parse(timestamp) + (n - 1) * 35 * 60_000).toISOString();
+const timeoutAttempt = (n = 1, log = "2026-11-18T10:08:08.8314618Z ##[error]The operation was canceled.", head = HEAD) => ({
+  jobs: timeoutIncident.first_jobs.map(job => ({ ...job, head_sha: head, run_attempt: n, id: job.id + n - 1,
+    started_at: shiftAttemptTime(job.started_at, n), completed_at: shiftAttemptTime(job.completed_at, n) })),
+  notes: [],
+  annotations: { [timeoutJobId + n - 1]: timeoutIncident.timeout_annotations },
+  logs: { [timeoutJobId + n - 1]: log },
+});
+const incidentRefusal = {
+  jobs: timeoutIncident.second_jobs.map(job => ({ ...job, head_sha: HEAD })),
+  notes: timeoutIncident.refused_annotation,
+};
+const stagingRef = "refs/heads/clued-train/staging";
+const stagingActor = "clued-ci-checks-turing-20261018[bot]";
+const stagingWorkflow = ".github/workflows/clued-required-tests.yml";
+const recoveryWorkflowPath = `https://api.test/repos/o/r/actions/workflows/${timeoutIncident.workflow_id}/runs`;
+const recoveryJobsPath = "https://api.test/repos/o/r/actions/runs/7000/jobs";
+const recoveredAt = "2026-11-18T10:44:00Z";
+const recoveredHead = "d".repeat(40);
+const recoveryRun = { id: 7000, workflow_id: timeoutIncident.workflow_id, head_sha: recoveredHead,
+  path: stagingWorkflow, event: "push", status: "completed", updated_at: recoveredAt };
+const recoveryJob = attemptJob(7010, "migration-verify", "success", { head_sha: recoveredHead, completed_at: recoveredAt });
+const recoveryScript = (run = recoveryRun, job = recoveryJob) => ({
+  [`GET ${recoveryWorkflowPath}`]: { body: { total_count: 1, workflow_runs: [run] } },
+  [`GET ${recoveryJobsPath}?filter=all`]: { body: { total_count: 1, jobs: [job] } },
+});
 // A previous attempt n: the gate job (id 100n) with its annotations, and the heavy jobs with the given conclusions.
 const earlierAttempt = (n, { heavy = ["skipped", "skipped", "skipped"], notes = [pendingNote], extraJobs = [], gateJobs } = {}) => ({
   jobs: gateJobs ?? [attemptJob(100 * n, "admission-gate", "success"), ...heavy.map((conclusion, index) => attemptJob(100 * n + 1 + index, HEAVY_JOBS[index] ?? `heavy-${index}`,
     conclusion === "in_progress" ? null : conclusion, conclusion === "in_progress" ? { status: "in_progress" } : {})), ...extraJobs],
   notes,
 });
-async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {} } = {}) {
+async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {}, staging = false } = {}) {
   const extra = [];
-  const base = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: { id: 9001, run_attempt: attempt, head_sha: HEAD, created_at: RUN_CREATED, ...selfRun } },
+  const base = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: { id: 9001, run_attempt: attempt, head_sha: HEAD, created_at: RUN_CREATED,
+    workflow_id: timeoutIncident.workflow_id, ...(staging ? { event: "push", head_branch: "clued-train/staging", path: stagingWorkflow, actor: { login: stagingActor } } : {}), ...selfRun } },
     [CHECKS]: { body: { check_runs: checks } }, [PULL]: { body: { state: "open", head: { sha: HEAD }, base: { ref: "main" } } }, ...script });
   // The attempt-jobs and annotation URLs extend the run URL key, so they are served here, not by the first-prefix script.
   const fetchImpl = async (url, init = {}) => {
@@ -3465,14 +3494,15 @@ async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nat
       extra.push({ url: text, method: init.method ?? "GET" });
       const status = (jobs ? listStatus.jobs : listStatus.notes) ?? 200;
       const found = jobs ? earlier[Number(jobs[1]) - 1] : earlier.find((entry) => entry.jobs.some((job) => String(job.id) === notes[1]));
-      const body = status !== 200 || !found ? {} : jobs ? { total_count: found.jobs.length, jobs: found.jobs } : found.notes;
+      const body = status !== 200 || !found ? {} : jobs ? { total_count: found.jobs.length, jobs: found.jobs } : found.annotations?.[notes[1]] ?? found.notes;
       return { ok: status === 200, status, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) };
     }
     return base.fetchImpl(url, init);
   };
   const slept = [];
-  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, GITHUB_RUN_ATTEMPT: String(attempt), ...envOverrides }),
-    event: independentEvent(), eventName: "pull_request", fetchImpl, sleep: async (ms) => { slept.push(ms); } });
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, GITHUB_RUN_ATTEMPT: String(attempt),
+    ...(staging ? { GITHUB_REF: stagingRef, GITHUB_SHA: HEAD, GITHUB_ACTOR: stagingActor, GITHUB_WORKFLOW_REF: `o/r/${stagingWorkflow}@${stagingRef}` } : {}), ...envOverrides }),
+    event: staging ? {} : independentEvent(), eventName: staging ? "push" : "pull_request", fetchImpl, sleep: async (ms) => { slept.push(ms); } });
   return { outcome, calls: base.calls, extra, slept };
 }
 
@@ -3497,11 +3527,11 @@ test("independent gate repair re-run: an earlier attempt that ran any heavy job 
     const { outcome } = await repairGate([earlierAttempt(1, { heavy: ["skipped", conclusion, "skipped"] })]);
     assert.deepEqual([conclusion, outcome.admitted, outcome.verdict], [conclusion, false, "RERUN_REFUSED"]);
     assert.match(outcome.reasons[0], /attempt 1 already ran ci-suites: (completed\/\w+|in_progress\/none)/);
-    assert.match(outcome.reasons[0], /push a new commit/);
+    assert.match(outcome.reasons[0], /environment evidence does not allow repair/);
   }
   // All heavy jobs ran in attempt 1 (the ordinary failed-test case): refused, the commit's tests ran once.
   assert.equal((await repairGate([earlierAttempt(1, { heavy: ["failure", "success", "success"], notes: [] })])).outcome.verdict, "RERUN_REFUSED");
-  // The allowance is one: attempt 2 was the repair and ran, so attempt 3 is refused, even though attempt 1 only timed out.
+  // The skipped attempt uses no budget, but attempt 2 provides no evidence of an environment failure.
   for (const conclusion of ["success", "failure", "cancelled"]) {
     const { outcome } = await repairGate([earlierAttempt(1), earlierAttempt(2, { heavy: [conclusion, "skipped", "skipped"], notes: [] })]);
     assert.deepEqual([conclusion, outcome.admitted, outcome.verdict], [conclusion, false, "RERUN_REFUSED"]);
@@ -3528,10 +3558,98 @@ const pass = { conclusion: "success", steps: [step("Set up job", "success"), ste
 const netFail = { conclusion: "failure", steps: TESTS_DIED, log: NET_LOG };
 const setupFail = { conclusion: "failure", steps: SETUP_DIED };
 
+test("independent gate: #1159 job records with timeout-only evidence admit attempt 2 and attempt 3 after a refused attempt ran nothing", async () => {
+  for (const earlier of [[timeoutAttempt()], [timeoutAttempt(), incidentRefusal]]) {
+    const { outcome, extra } = await repairGate(earlier);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
+    assert.deepEqual(outcome.repair_rerun.earlier_attempts[0].environment_failure, ["migration-verify"]);
+    assert.deepEqual(outcome.repair_rerun.earlier_attempts[0].environment_failure_kinds, { "migration-verify": "timeout" });
+    assert.ok(extra.some(call => call.url.includes(`/check-runs/${timeoutJobId}/annotations`)));
+    assert.ok(extra.some(call => call.url.endsWith(`/actions/jobs/${timeoutJobId}/logs`)));
+    assert.ok(extra.every(call => call.method === "GET"));
+  }
+});
+
+test("independent gate: real #1159 failures and missing timeout evidence refuse repair", async () => {
+  const noTimeout = timeoutAttempt();
+  noTimeout.annotations[timeoutJobId] = [{ message: "The operation was canceled." }];
+  const failedStep = timeoutAttempt();
+  failedStep.jobs = failedStep.jobs.map(job => job.id === timeoutJobId
+    ? { ...job, steps: [...job.steps, step("Run tests", "failure")] } : job);
+  for (const [label, earlier, options] of [
+    ["actual #1159 log excerpt", timeoutAttempt(1, timeoutIncident.migration_log_excerpt), {}],
+    ["ordinary cancellation", noTimeout, {}],
+    ["failed step", failedStep, {}],
+    ["unreadable annotations", timeoutAttempt(), { listStatus: { notes: 404 } }],
+    ["unreadable log", timeoutAttempt(), { listStatus: { logs: 404 } }],
+    ["empty log", timeoutAttempt(1, ""), {}],
+  ]) {
+    const { outcome, extra } = await repairGate([earlier], options);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "RERUN_REFUSED"], label);
+    if (label === "ordinary cancellation") assert.ok(extra.every(call => !call.url.endsWith("/logs")));
+  }
+});
+
+test("independent gate: a second repair needs a matching job success after the last real attempt and on another commit", async () => {
+  const twice = [timeoutAttempt(), timeoutAttempt(2)];
+  for (const [label, script] of [
+    ["none", { [`GET ${recoveryWorkflowPath}`]: { body: { total_count: 0, workflow_runs: [] } } }],
+    ["same head", recoveryScript({ ...recoveryRun, head_sha: HEAD }, { ...recoveryJob, head_sha: HEAD })],
+    ["wrong workflow", recoveryScript({ ...recoveryRun, workflow_id: 123 })],
+    ["wrong job", recoveryScript(recoveryRun, { ...recoveryJob, name: "ci-suites" })],
+    ["success between real attempts", recoveryScript(recoveryRun, { ...recoveryJob, completed_at: "2026-11-18T10:15:00Z" })],
+    ["success exactly at the end of the last real attempt", recoveryScript(recoveryRun, { ...recoveryJob, completed_at: "2026-11-18T10:43:17Z" })],
+    ["job from another head", recoveryScript(recoveryRun, { ...recoveryJob, head_sha: "e".repeat(40) })],
+  ]) {
+    const { outcome } = await repairGate(twice, { script });
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, "RERUN_REFUSED"], label);
+    assert.match(outcome.reasons[0], /recovery evidence/, label);
+  }
+  const recovered = await repairGate(twice, { script: recoveryScript() });
+  assert.deepEqual([recovered.outcome.admitted, recovered.outcome.verdict], [true, "ADMITTED"], recovered.outcome.reasons.join("; "));
+  const capped = await repairGate([...twice, timeoutAttempt(3)], { script: recoveryScript() });
+  assert.equal(capped.outcome.verdict, "RERUN_REFUSED");
+  assert.match(capped.outcome.reasons[0], /three .*attempts/i);
+  assert.ok(capped.calls.every(call => !call.url.startsWith(recoveryWorkflowPath)));
+});
+
+test("staging gate: the required-tests push uses the same repair budget on S without PR admission", async () => {
+  const [timeout, ordinaryCancel, twice] = [timeoutAttempt(), timeoutAttempt(), [timeoutAttempt(), timeoutAttempt(2)]];
+  ordinaryCancel.annotations[timeoutJobId] = [];
+  for (const [label, earlier, options, verdict] of [
+    ["first staging run", [], {}, "NOT_APPLICABLE"],
+    ["timeout", [timeout], {}, "ADMITTED"],
+    ["ordinary cancellation", [ordinaryCancel], {}, "RERUN_REFUSED"],
+    ["second repair without recovery", twice, {}, "RERUN_REFUSED"],
+    ["second repair after recovery", twice, { script: recoveryScript() }, "ADMITTED"],
+    ["attempt history is for a PR head, not S", [timeoutAttempt(1, undefined, recoveredHead)], {}, "RERUN_REFUSED"],
+    ["API run is for another branch", [timeout], { selfRun: { head_branch: "main" } }, "RERUN_REFUSED"],
+  ]) {
+    const { outcome, calls } = await repairGate(earlier, { staging: true, ...options });
+    assert.equal(outcome.verdict, verdict, `${label}: ${outcome.reasons.join("; ")}`);
+    assert.ok(calls.every(call => !/\/pulls\/|kooyumi-work-admission/.test(call.url)), label);
+  }
+});
+
+test("required-tests failure evidence is identical across three copies and repair history agrees between the gate and hook", () => {
+  const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const classifier = text => text.match(/export const SETUP_STEPS[\s\S]*?\nexport function jobFailureKind[\s\S]*?\n\}/)?.[0];
+  const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nasync function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
+  const gateSource = source("./clued-work-admission.mjs");
+  const hookSource = source("../runner/clued-runner-job-started.mjs");
+  const gateClassifier = classifier(gateSource);
+  assert.match(gateClassifier, /kind: "timeout"/);
+  assert.equal(classifier(hookSource), gateClassifier);
+  assert.equal(classifier(source("../../work/independent-ci-resident-v1/src/env-failure.mjs")), gateClassifier);
+  assert.match(history(gateSource), /hasRepairRecovery/);
+  assert.equal(history(hookSource), history(gateSource));
+});
+
 test("independent gate environment re-run: a network failure or a setup death of the one attempt that ran admits one re-run", async () => {
   const net = await repairGate([ranAttempt(1, [netFail, pass, pass])]);
   assert.deepEqual([net.outcome.admitted, net.outcome.verdict], [true, "ADMITTED"]);
-  assert.deepEqual(net.outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3, environment_failure: ["clued-cloud-tests"] }] });
+  assert.deepEqual(net.outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3,
+    environment_failure: ["clued-cloud-tests"], environment_failure_kinds: { "clued-cloud-tests": "network" } }] });
   assert.ok(net.extra.some((call) => /\/actions\/jobs\/101\/logs$/.test(call.url)), "the failed job's log was read");
   assert.ok([...net.calls, ...net.extra].every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only");
   // Setup death needs no log: the step record alone is the evidence.
@@ -3556,7 +3674,7 @@ test("independent gate environment re-run: a network failure or a setup death of
   assert.deepEqual([(await repairGate([namedGate])).outcome.verdict], ["RERUN_REFUSED"]);
 });
 
-test("independent gate environment re-run: a failed test, an unproven failure or a second ran attempt never re-runs", async () => {
+test("independent gate environment re-run: a failed test, an unproven failure or an unproven recovery refuses", async () => {
   const refused = async (label, earlier, options, reason = /already ran/) => {
     const { outcome } = await repairGate(earlier, options);
     assert.deepEqual([label, outcome.admitted, outcome.verdict], [label, false, "RERUN_REFUSED"]);
@@ -3574,8 +3692,7 @@ test("independent gate environment re-run: a failed test, an unproven failure or
   await refused("a gate job that did not succeed", [ranAttempt(1, [netFail, pass, pass], { gate: attemptJob(100, "admission-gate", "failure", { steps: TESTS_DIED }) })]);
   await refused("a log that cannot be read", [ranAttempt(1, [netFail, pass, pass])], { listStatus: { logs: 500 } }, /earlier attempts could not be read/);
   await refused("a log that is gone", [ranAttempt(1, [netFail, pass, pass])], { listStatus: { logs: 404 } }, /earlier attempts could not be read/);
-  // The allowance is one per head: the re-run of an environment failure ran, and failed of the environment again: no third attempt.
-  await refused("a second environment failure on the same head", [ranAttempt(1, [netFail, pass, pass]), ranAttempt(2, [netFail, pass, pass])], {}, /attempt 2 already ran/);
+  await refused("a second environment failure without recovery evidence", [ranAttempt(1, [netFail, pass, pass]), ranAttempt(2, [netFail, pass, pass])], {}, /recovery evidence/);
   await refused("a ran attempt that passed, then an environment failure", [ranAttempt(1, [pass, pass, pass]), ranAttempt(2, [netFail, pass, pass])], {}, /attempt 1 already ran/);
 });
 
