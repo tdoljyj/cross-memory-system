@@ -1284,3 +1284,108 @@ test('backup failures stop migrate mode before any grant or production mutation'
     }
   }
 });
+
+// Round-3 review, medium 1: a kill while the progress file is being written
+// must not lose the progress already on disk (write to a temporary file, then
+// rename over the old one).
+test('rollback progress is written atomically: a failed write keeps the previous progress', async () => {
+  const { CONTRACT, WORKERS, main } = await import('../scripts/release-worker-versions.mjs');
+  const realFs = (await import('node:fs')).default;
+  const version = (n) => `${n.repeat(8)}-0000-4000-8000-${n.repeat(12)}`;
+  const recorded = { contract: CONTRACT, mode: 'release', source_commit: HEAD_COMMIT, edge: servedEdge(),
+    workers: WORKERS.map(({ name }, i) => ({ name, version_id: version(String(i + 1)) })) };
+  const served = Object.fromEntries(WORKERS.map(({ name }) => [name, version('9')]));
+  const wrangler = async (args) => {
+    if (args[0] === 'rollback') { served[args[3]] = args[1]; return { status: 0, stdout: '' }; }
+    return { status: 0, stdout: JSON.stringify({ versions: [{ version_id: served[args[3]], percentage: 100 }] }) };
+  };
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'worker-atomic-'));
+  const log = console.log; const error = console.error;
+  console.log = () => {}; console.error = () => {};
+  try {
+    const from = path.join(dir, 'v.json'), out = path.join(dir, 'r.json');
+    await writeFile(from, JSON.stringify(recorded));
+    let writes = 0;
+    // The second progress write is killed half way through.
+    const fileSystem = { ...realFs, writeFileSync: (file, data, ...rest) => {
+      writes += 1;
+      if (writes === 2) { realFs.writeFileSync(file, String(data).slice(0, 12)); throw new Error('synthetic kill during the evidence write'); }
+      return realFs.writeFileSync(file, data, ...rest);
+    } };
+    await assert.rejects(main(['rollback', '--from', from, '--out', out], { wrangler, wait: noSleep, env: {},
+      readEdges: async () => servedEdge(), windowMs: 120_000, sleep: noSleep, fileSystem }), /synthetic kill/);
+    const kept = JSON.parse(await readFile(out, 'utf8'));
+    assert.equal(kept.status, 'in_progress');
+    assert.deepEqual(kept.workers.map((w) => w.name), ['clued-connect']);
+  } finally {
+    console.log = log; console.error = error;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Round-3 review, medium 2: "restored" needs both edge endpoints compared. A
+// record without both is not a record of this release.
+test('the rollback refuses a record without both edge endpoints', async () => {
+  const { CONTRACT, WORKERS, rollbackVersions, main } = await import('../scripts/release-worker-versions.mjs');
+  const version = (n) => `${n.repeat(8)}-0000-4000-8000-${n.repeat(12)}`;
+  const base = { contract: CONTRACT, mode: 'release', source_commit: HEAD_COMMIT,
+    workers: WORKERS.map(({ name }, i) => ({ name, version_id: version(String(i + 1)) })) };
+  const wrangler = async (args) => ({ status: 0, stdout: JSON.stringify({ versions: [{
+    version_id: base.workers.find((w) => w.name === args[3]).version_id, percentage: 100 }] }) });
+  const options = { wrangler, wait: noSleep, env: {}, readEdges: async () => servedEdge(), windowMs: 120_000, sleep: noSleep };
+  for (const edge of [{}, { 'clued-cloud': servedEdge()['clued-cloud'] }, { 'clued-connect': servedEdge()['clued-connect'] },
+    { ...servedEdge(), 'clued-connect': null }]) {
+    await assert.rejects(rollbackVersions({ recorded: { ...base, edge }, ...options }), /not a valid record/, JSON.stringify(edge));
+  }
+  // Both present (even one unreadable at record time) is a valid record; the unreadable one is not restored.
+  assert.equal((await rollbackVersions({ recorded: { ...base, edge: servedEdge() }, ...options })).status, 'restored');
+  assert.equal((await rollbackVersions({ recorded: { ...base, edge: { ...servedEdge(), 'clued-connect': { error: 'timeout' } } }, ...options })).status, 'not_restored');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'worker-edge-record-'));
+  const log = console.log; const error = console.error;
+  console.log = () => {}; console.error = () => {};
+  try {
+    await writeFile(path.join(dir, 'v.json'), JSON.stringify({ ...base, edge: {} }));
+    await assert.rejects(main(['rollback', '--from', path.join(dir, 'v.json'), '--out', path.join(dir, 'r.json')], options), /not a valid record/);
+  } finally {
+    console.log = log; console.error = error;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Round-3 review, medium 3: the wrapper reads wrangler.production.jsonc as
+// Wrangler does (comments, trailing commas), and every failure, an exception
+// included, still leaves a conclusion file before the non-zero exit.
+test('the projection postflight reads JSONC as Wrangler does and always writes its conclusion', async () => {
+  const { main: postflightMain } = await import('../scripts/projection-postflight.mjs');
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'projection-jsonc-'));
+  const quiet = () => {};
+  try {
+    const config = path.join(dir, 'wrangler.production.jsonc');
+    await writeFile(config, '{\n  // the Builder fallback\n  "name": "clued-cloud", /* block */\n  "triggers": { "crons": ["*/10 * * * *",], },\n}\n');
+    const out = path.join(dir, 'postflight.json');
+    let calls = 0;
+    const passing = { configPath: config, log: quiet, now: () => 0, sleep: noSleep,
+      runGate: async () => { calls += 1; return { status: 0, stderr: '' }; } };
+    assert.equal(await postflightMain(['--evidence-out', out], passing), 0);
+    assert.equal(calls, 1);
+    const passed = JSON.parse(await readFile(out, 'utf8'));
+    assert.equal(passed.status, 'passed');
+    assert.equal(passed.period_minutes, 10);
+    // An exception in the gate call (say, unreadable attempt evidence): a conclusion, then exit 1.
+    await rm(out);
+    assert.equal(await postflightMain(['--evidence-out', out], { ...passing,
+      runGate: async () => { throw new Error('synthetic evidence parse failure'); } }), 1);
+    const thrown = JSON.parse(await readFile(out, 'utf8'));
+    assert.equal(thrown.status, 'failed');
+    assert.match(thrown.reason, /synthetic evidence parse failure/);
+    // An unreadable or invalid configuration: a conclusion, then exit 1.
+    for (const text of ['{ "triggers": ', '{ "triggers": { "crons": ["0 * * * *"] } }']) {
+      await writeFile(config, text);
+      await rm(out, { force: true });
+      assert.equal(await postflightMain(['--evidence-out', out], passing), 1, text);
+      assert.equal(JSON.parse(await readFile(out, 'utf8')).status, 'failed', text);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
