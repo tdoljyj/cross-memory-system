@@ -454,10 +454,9 @@ test('the application suite gates lint, ledger, typecheck and build before the u
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
 });
 
-test('same-node rebind database regression is required by both application and migration checks', () => {
+test('same-node rebind database regression runs only in the migration check', () => {
   const file = 'tests/ci-node-binding-rebind-db.test.mjs';
-  const app = SUITE_COMMANDS['clued-cloud'];
-  assert.ok(app.findIndex(c => c.argv.includes(file)) > app.findIndex(c => c.argv.includes('build')));
+  assert.ok(!SUITE_COMMANDS['clued-cloud'].some(c => c.argv.includes(file)));
   assert.ok(SUITE_COMMANDS['production-schema'].some(c => c.argv.includes(file)));
 });
 
