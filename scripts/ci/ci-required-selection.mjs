@@ -72,6 +72,7 @@ const GENERATED_OUTPUTS = [...new Set([...PINNED_REGISTRY_PATHS, ...generatedFil
 // §13.2 P2 (c) (the nightly 2,000,000 is clued-integration-runtime-nightly.yml); the database security hygiene,
 // which stops its own embedded PostgreSQL servers and so runs without --test-force-exit.
 const MIGRATION_DB_TESTS = ['apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs', 'apps/clued-cloud/tests/ci-scan-start-batch-key-db.test.mjs',
+  'apps/clued-cloud/tests/ci-node-binding-rebind-db.test.mjs', 'apps/clued-cloud/tests/ci-connection-self-db.test.mjs',
   'apps/clued-cloud/tests/binding-role-single-reader-db.test.mjs', 'apps/clued-cloud/tests/integration-runtime-derivation-db.test.mjs',
   'apps/clued-cloud/tests/db-security-hygiene-db.test.mjs',
   'apps/clued-cloud/tests/storage-runtime-authority-db.test.mjs',
@@ -108,6 +109,7 @@ const AUTHORIZATION_DB_TESTS = [
 // own files only (worker/*): worker/generated is rewritten by every component bump, and those version strings are
 // not what these tests check.
 const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
+  'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
   'apps/clued-cloud/tests/worker-continuity-loader.mjs', 'apps/clued-cloud/tests/independent-review-db.test.mjs',
   'apps/clued-cloud/worker/*', 'apps/clued-cloud/build/pdfjs-decode-guard.mjs', 'kernel/host/resource-center-*.mjs',
@@ -142,6 +144,7 @@ export const SUITES = {
     'pinned-registries': PINNED_REGISTRY_PATHS,
     'mechanical-outputs': GENERATED_OUTPUTS,
     'powershell-count': ['**/*.ps1', 'scripts/ci/check-powershell-count.mjs', 'scripts/ci/check-powershell-count.test.mjs'],
+    'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
@@ -249,6 +252,8 @@ export const SUITE_COMMANDS = {
   // Under StrictMode, .Count off a one-item or empty pipeline throws in Windows PowerShell 5.1; this scan takes under a second.
   'powershell-count': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-powershell-count.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-powershell-count.mjs'] }],
+  'cron-budget': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-cron-budget.test.mjs'] },
+    { cwd: '.', argv: ['node', 'scripts/ci/check-cron-budget.mjs'] }],
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs'] }],
@@ -262,10 +267,9 @@ export const SUITE_COMMANDS = {
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
-    { cwd: 'apps/clued-cloud', argv: ['node', '--test', '--test-concurrency=1',
+    { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{db-concurrency}',
       ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
-    // run-tests.mjs bounds the file concurrency for a shared runner, as the package scripts these tests came from did.
-    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '--test-force-exit',
+    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{db-concurrency}', '--test-force-exit',
       ...AUTHORIZATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
   ],
 };
@@ -380,6 +384,10 @@ export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestF
       // An empty list would make `node --test` run every file it finds.
       if (files.length === 0) throw new Error('no unit test files');
       return files;
+    }
+    if (arg === '{db-concurrency}') {
+      const concurrency = Math.max(2, Math.min(4, Math.floor(os.availableParallelism() / 4)));
+      return [`--test-concurrency=${concurrency}`];
     }
     const tests = /^\{tests:(.+)\}$/.exec(arg);
     if (tests) {

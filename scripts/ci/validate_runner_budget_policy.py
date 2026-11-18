@@ -109,8 +109,9 @@ LEGACY_HOSTED_DEBT = {
     "clued-cloud-production-release.yml": {
         "control_sha256": "fa8aa425cecbf174a94d13cf48b044810cfe5c8e47fafa9eae7ebd182e478f7c",
         "jobs": {
-            # PR #1121 refreshed on #1148/#1152: preserve the backup gate and routing.
-            "release": "cd92bb49bb7290a253553e15aa29710b8eaddf2169f2f5eac7041723c959e563"
+            # PR #1121 refreshed on #1164 (projection state gate): one-approval release with Worker rollback;
+            # main job cacbc2d0b9c41b9eb3d5913c2f66a0c5b07ba5717989b0ab51a1022fd40ceccc, routing unchanged.
+            "release": "16bfba3b8216bdfa6bc60c648ce747aaf7825f1f6f02b998e438e70c2e9dbb8c"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {

@@ -115,7 +115,7 @@ test('the compound pin, its registered entry and its three roles are the committ
   assert.deepEqual(roles,ids.map(job_id=>({job_id,definition_sha256:actual.role_sha256[job_id],definition:value.jobs[job_id]})));
   assert.deepEqual(compileRegisteredWorkflow(raw,{primary_ids:ids,parseYaml:yaml.parse,accepted_roles:roles}),entry);
 });
-// Both retired generations remain Git objects: before G3 (4a3e0485) and before staging push support (20edb51c).
+// Retired generations remain Git objects at their exact commits.
 // Each must decode and compile only as its own exact bytes and roles, never as a second current Source.
 test('the earlier exact compound Source still decodes from its catalogue and compiles only as its own bytes',async()=>{
   const {REQUIRED_TESTS_PREVIOUS_SOURCES:previous}=await import('./clued-workflow-profile.mjs');
@@ -123,6 +123,7 @@ test('the earlier exact compound Source still decodes from its catalogue and com
   const generations=[
     {commit:'4a3e048579e766d66285246b7fa93cd545514fb3',blob:'8a22de3a97425d9f85bc9f605dbdbf748b8e0946'},
     {commit:'20edb51c585beb6c31f97798983b2a5065899fca',blob:'2570781ab5a29d2fa9d09ac72f0ed6118f9e5686'},
+    {commit:'7b0b1e2485dec24229212b3bc1eba4405c4a259b',blob:'5470897712b63448447b45c86d233b782163960d'},
   ],file=REQUIRED_TESTS_SOURCE.file;
   assert.deepEqual(previous.map(pin=>pin.workflow_blob),generations.map(generation=>generation.blob));
   for(const {commit,blob} of generations){

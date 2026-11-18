@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { builderRunInProgress, onlyProjectionLag, settleProjectionLag, verifyReleaseState }
-  from '../scripts/production-release-gate.mjs';
+import { settleProjectionLag, verifyReleaseState } from '../scripts/production-release-gate.mjs';
 
 const baseline = JSON.parse(await readFile(new URL(
   '../scripts/production-release-baseline.json', import.meta.url), 'utf8'));
@@ -117,119 +116,188 @@ test('release refuses changed historical migrations and the old frontier selecto
   ]);
 });
 
-test('release refuses stale projections and a cycle-limited heartbeat', () => {
-  const state = healthy();
-  state.watchdog.heartbeat.last_result = 'cycle_limit';
-  state.watchdog.projections[0].resolved_through_revision = 90;
-  assert.deepEqual(verifyReleaseState(state), [
-    'worker_heartbeat_not_healthy',
-    'projection_not_current:global.priority_frontier',
-  ]);
-});
-
-test('release checks only tenants the Builder serves and fails closed without one', () => {
-  const unserved = (key) => ({ tenant_key: OTHER, builder_served: false, projection_key: key,
-    job_status: 'queued', invalidation_revision: 4, resolved_through_revision: 0,
-    stale_since: '2026-09-23T05:00:00Z', source_digest_status: 'not_applicable' });
-  const state = healthy();
-  state.watchdog.projections.push(unserved('global.priority_frontier'), unserved('global.__aggregate__'));
-  assert.deepEqual(verifyReleaseState(state), []);
-
-  const servedStale = healthy();
-  servedStale.watchdog.projections.push({ ...unserved('global.__aggregate__'), builder_served: true });
-  assert.deepEqual(verifyReleaseState(servedStale), ['projection_not_current:global.__aggregate__']);
-
-  const duplicate = healthy();
-  duplicate.watchdog.projections.push({ ...duplicate.watchdog.projections[0] });
-  assert.deepEqual(verifyReleaseState(duplicate), ['projection_not_current:global.priority_frontier']);
-
-  const legacySnapshot = healthy();
-  for (const row of legacySnapshot.watchdog.projections) delete row.builder_served;
-  assert.deepEqual(verifyReleaseState(legacySnapshot), [
-    'projection_not_current:global.priority_frontier',
-    'projection_not_current:global.__aggregate__',
-  ]);
-});
-
-test('a Builder run in progress is waited out, never accepted as healthy', () => {
-  // Release run 36656117945 read the heartbeat while the per-minute run was active.
-  const running = { heartbeat: { last_result: 'running',
-    last_started_at: '2026-09-23T05:12:48Z', last_finished_at: '2026-09-23T05:11:59Z' } };
-  assert.equal(builderRunInProgress(running, now), true);
-  const state = healthy();
-  state.watchdog.heartbeat = { ...running.heartbeat };
-  assert.deepEqual(verifyReleaseState(state), ['worker_heartbeat_not_healthy']);
-
-  const stuck = { heartbeat: { ...running.heartbeat, last_started_at: '2026-09-23T05:10:40Z' } };
-  assert.equal(builderRunInProgress(stuck, now), false);
-  const future = { heartbeat: { ...running.heartbeat, last_started_at: '2026-09-23T05:13:10Z' } };
-  assert.equal(builderRunInProgress(future, now), false);
-  for (const last_result of ['idle', 'exception', 'cycle_limit']) {
-    assert.equal(builderRunInProgress({ heartbeat: { ...running.heartbeat, last_result } }, now), false);
+test('release CLI checks projection state before and after deployment', async (t) => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'release-gate-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const root = path.join(temp, 'repo');
+  const app = path.join(root, 'apps/clued-cloud');
+  const scripts = path.join(app, 'scripts');
+  const migrations = path.join(app, 'supabase/migrations');
+  const ledger = path.join(app, 'supabase/ledger');
+  const pg = path.join(app, 'node_modules/pg');
+  for (const dir of [scripts, migrations, path.join(ledger, 'history-only'), pg]) {
+    await mkdir(dir, { recursive: true });
   }
-  assert.equal(builderRunInProgress(undefined, now), false);
-  assert.equal(builderRunInProgress({ heartbeat: { last_result: 'running' } }, now), false);
+  for (const name of ['production-release-gate.mjs', 'migration-ledger.mjs']) {
+    await copyFile(new URL(`../scripts/${name}`, import.meta.url), path.join(scripts, name));
+  }
+  await copyFile(new URL('./fixtures/production-release-pg.mjs', import.meta.url), path.join(pg, 'index.mjs'));
+  const json = (file, value) => writeFile(file, JSON.stringify(value));
+  await json(path.join(pg, 'package.json'), { main: 'index.mjs' });
+  const git = (...args) => {
+    const run = spawnSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid',
+      '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...args], { cwd: root, encoding: 'utf8' });
+    assert.equal(run.status, 0, run.stderr);
+    return run.stdout.trim();
+  };
+  const version = '20260101000000', name = 'bootstrap', sql = 'select 1;\n';
+  const filename = `${version}_${name}.sql`;
+  await writeFile(path.join(migrations, filename), sql);
+  git('init', '-b', 'main');
+  git('add', '--force', '.');
+  git('commit', '-qm', 'Create migration fixture');
+  await json(path.join(scripts, 'production-release-baseline.json'), {
+    contract: baseline.contract, source_commit: git('rev-parse', 'HEAD'), source_migration: filename,
+    source_sha256: createHash('sha256').update(sql).digest('hex'), required_predecessors: [],
+    production_history_version: version, production_history_name: name, production_statement_suffix: '',
+  });
+  await json(path.join(ledger, 'production-history.json'), {
+    contract: 'clued.production-migration-ledger.v1', history_through: version, row_count: 1,
+    rows: [{ version, name, source: 'migrations/' + filename, transform: 'identical',
+      statements_md5: createHash('md5').update(sql).digest('hex') }],
+  });
+  git('add', '.');
+  git('commit', '-qm', 'Record release baseline and ledger');
+  const db = path.join(temp, 'fixture.json');
+  const reads = path.join(temp, 'reads');
+  const evidence = path.join(temp, 'evidence.json');
+  const key = 'global.priority_frontier';
+  const history = [{ version, name, statements: [sql] }];
+  const frontier = 'select clued_private.mtpe_snapshot()';
+  const current = () => ({ ...healthy().watchdog, observed_at: new Date().toISOString(), heartbeat: null });
+  const lag = (age, patch = {}) => {
+    const snapshot = current();
+    Object.assign(snapshot.projections[0], { invalidation_revision: 95, job_status: 'queued',
+      stale_since: new Date(Date.now() - age).toISOString(), source_digest_status: 'not_applicable', ...patch });
+    return snapshot;
+  };
+  const run = async (mode, snapshots, overrides = {}) => {
+    await rm(evidence, { force: true });
+    await writeFile(reads, '');
+    await json(db, { history, frontier, snapshots, reads, ...overrides });
+    const result = spawnSync(process.execPath, [path.join(scripts, 'production-release-gate.mjs'),
+      mode, '--evidence-out', evidence], { cwd: app, encoding: 'utf8', timeout: 25_000,
+      env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: db, GITHUB_ACTIONS: 'true',
+        GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_REF: 'refs/heads/main' } });
+    assert.ifError(result.error);
+    return { ...result, reads: (await readFile(reads, 'utf8')).trim().split('\n').filter(Boolean).map(Number),
+      receipt: result.status === 0 ? JSON.parse(await readFile(evidence, 'utf8')) : null };
+  };
+  const passed = result => assert.equal(result.status, 0, result.stderr);
+  const blocked = (result, reason) => {
+    assert.equal(result.status, 1, result.stdout);
+    assert.ok(result.stderr.includes(reason), result.stderr);
+  };
+  await t.test('部署前接受缺失与陈旧的心跳', async () => {
+    for (const heartbeat of [null, { last_result: 'idle', last_finished_at: now.toISOString() }]) {
+      const result = await run('--pre-deploy', [{ ...current(), heartbeat }]);
+      passed(result);
+      assert.deepEqual(result.receipt.warnings, []);
+      assert.equal(result.reads.length, 1);
+    }
+  });
+  await t.test('部署后投影追平且无心跳，立即通过', async () => {
+    const snapshot = current();
+    delete snapshot.heartbeat;
+    snapshot.projections.unshift({ ...snapshot.projections[0], tenant_key: OTHER,
+      builder_served: false, job_status: 'failed', invalidation_revision: 999 });
+    const result = await run('--post-deploy', [snapshot]);
+    passed(result);
+    assert.equal(result.reads.length, 1);
+    assert.equal(result.receipt.projection_revisions.length, 2);
+    assert.deepEqual(result.receipt.projection_revisions.map(row => row.revision), [94, 181]);
+    assert.ok(!JSON.stringify(result.receipt).includes('heartbeat'));
+  });
+  await t.test('部署后积压三十秒，十秒后原心跳下读取到追平状态', async () => {
+    const result = await run('--post-deploy', [lag(30_000), current()]);
+    passed(result);
+    assert.equal(result.reads.length, 2);
+    assert.ok(result.reads[1] - result.reads[0] >= 9900);
+    assert.equal(result.receipt.projection_revisions[0].revision, 94);
+  });
+  await t.test('部署后超时、任务失败、摘要不符分别立即阻断', async () => {
+    for (const [snapshot, code] of [
+      [lag(301_000), 'projection_backlog_overdue'],
+      [lag(30_000, { job_status: 'failed' }), 'projection_job_failed'],
+      [current(), 'projection_digest_mismatch'],
+    ]) {
+      if (code === 'projection_digest_mismatch') snapshot.projections[0].source_digest_status = 'mismatch';
+      const result = await run('--post-deploy', [snapshot]);
+      blocked(result, code + ':' + key);
+      assert.equal(result.reads.length, 1);
+    }
+  });
+  await t.test('部署前同一积压只告警，凭据保留每个服务租户的状态', async () => {
+    const snapshot = lag(301_000);
+    snapshot.projections.push({ ...snapshot.projections[0], tenant_key: OTHER, job_status: 'failed' });
+    const result = await run('--pre-deploy', [snapshot]);
+    passed(result);
+    assert.equal(result.reads.length, 1);
+    for (const code of ['projection_backlog_overdue', 'projection_job_failed']) {
+      assert.ok(result.stderr.includes('::warning::' + code + ':' + key), result.stderr);
+      assert.ok(result.receipt.warnings.includes(code + ':' + key));
+    }
+    assert.equal(result.receipt.projection_revisions.length, 3);
+    assert.ok(result.receipt.projection_revisions.some(row => row.tenant_key === OWNER &&
+      row.stale_since === snapshot.projections[0].stale_since && row.resolved_through_revision === 94));
+  });
+  await t.test('迁移、账本、frontier 与快照故障在两种模式均立即阻断', async () => {
+    for (const mode of ['--pre-deploy', '--post-deploy']) {
+      for (const [overrides, errors] of [
+        [{ history: [] }, ['production_baseline_sql_mismatch', 'ledger_row_not_in_production']],
+        [{ history: [...history, { version: '20260102000000', name: 'unknown', statements: ['select 2;'] }] },
+          ['production_row_not_in_repository']],
+        [{ frontier: '' }, ['frontier_uses_old_selector']],
+      ]) {
+        const result = await run(mode, [lag(30_000)], overrides);
+        for (const error of errors) blocked(result, error);
+        assert.equal(result.reads.length, 1);
+      }
+      blocked(await run(mode, [null]), 'watchdog_unavailable');
+      blocked(await run(mode, [{ ...current(), observed_at: now.toISOString() }]), 'watchdog_snapshot_not_fresh');
+      blocked(await run(mode, [{ observed_at: new Date().toISOString() }]), 'watchdog_unavailable');
+    }
+  });
+  await t.test('部署后必需键缺失、服务行重复或缺少服务标记均阻断', async () => {
+    for (const mutate of [rows => rows.shift(), rows => rows.push({ ...rows[0] }),
+      rows => { delete rows[0].builder_served; }]) {
+      const snapshot = current();
+      mutate(snapshot.projections);
+      blocked(await run('--post-deploy', [snapshot]), 'projection_not_current:' + key);
+    }
+  });
 });
 
-test('post-deploy readback requires a heartbeat from the newly deployed cycle', () => {
-  const state = healthy();
-  state.minHeartbeatAt = '2026-09-23T05:12:00Z';
-  assert.deepEqual(verifyReleaseState(state), [
-    'worker_has_not_run_after_deployment',
-  ]);
+test('积压始终未追平时只等三分钟，最后一帧的过期或失败立即生效', async () => {
+  const key = 'global.priority_frontier';
+  for (const outcome of ['pending', 'overdue', 'failed']) {
+    let clock = now.getTime(), reads = 0;
+    const snapshot = () => {
+      const result = healthy().watchdog;
+      result.observed_at = new Date(clock).toISOString();
+      Object.assign(result.projections[0], { invalidation_revision: 95, source_digest_status: 'not_applicable',
+        job_status: outcome === 'failed' && reads ? 'failed' : 'queued',
+        stale_since: new Date(now.getTime() - (outcome === 'overdue' ? 290_000 : 30_000)).toISOString() });
+      return result;
+    };
+    const state = await settleProjectionLag({ watchdog: snapshot(), now: () => clock,
+      sleep: async ms => { assert.equal(ms, 10_000); clock += ms; },
+      readWatchdog: async () => { reads++; return snapshot(); } });
+    const code = outcome === 'failed' ? 'projection_job_failed' : 'projection_backlog_' + outcome;
+    assert.equal(reads, outcome === 'pending' ? 18 : 1);
+    assert.deepEqual(state.findings, [code + ':' + key]);
+  }
 });
 
-test('projection lag alone is waited out for a newer Builder run; other findings are not', () => {
-  assert.equal(onlyProjectionLag(['projection_not_current:global.priority_frontier',
-    'projection_not_current:global.__aggregate__']), true);
-  assert.equal(onlyProjectionLag([]), false);
-  assert.equal(onlyProjectionLag(['projection_not_current:global.priority_frontier',
-    'worker_heartbeat_not_healthy']), false);
-  assert.equal(onlyProjectionLag(['worker_has_not_run_after_deployment']), false);
-});
-
-function lagClock() {
-  let t = Date.parse('2026-09-23T05:12:49Z');
-  return { now: () => t, sleep: async (ms) => { t += ms; } };
-}
-const lagged = ['projection_not_current:global.priority_frontier'];
-const idleAt = (finished) => ({ heartbeat: { last_result: 'idle', last_finished_at: finished } });
-
-test('stale projections re-evaluate after the next completed Builder run', async () => {
-  const clock = lagClock();
-  const first = idleAt('2026-09-23T05:11:59Z');
-  const reads = [first, { heartbeat: { last_result: 'running',
-    last_started_at: '2026-09-23T05:13:00Z', last_finished_at: '2026-09-23T05:11:59Z' } },
-    idleAt('2026-09-23T05:13:05Z')];
-  const evaluated = [];
-  const result = await settleProjectionLag({ errors: lagged, watchdog: first,
-    readWatchdog: async () => reads.shift(),
-    evaluate: (snapshot) => { evaluated.push(snapshot); return []; }, ...clock });
-  assert.deepEqual(result.errors, []);
-  assert.equal(result.watchdog.heartbeat.last_finished_at, '2026-09-23T05:13:05Z');
-  assert.equal(evaluated.length, 1);
-});
-
-test('lag that outlasts the run budget, or no newer run, still blocks the release', async () => {
-  const first = idleAt('2026-09-23T05:11:59Z');
-  let finished = Date.parse(first.heartbeat.last_finished_at);
-  const clock = lagClock();
-  const stillStale = await settleProjectionLag({ errors: lagged, watchdog: first,
-    readWatchdog: async () => { finished += 60_000; return idleAt(new Date(finished).toISOString()); },
-    evaluate: () => lagged, maxRuns: 3, ...clock });
-  assert.deepEqual(stillStale.errors, lagged);
-
-  const quiet = await settleProjectionLag({ errors: lagged, watchdog: first,
-    readWatchdog: async () => first, evaluate: () => [], ...lagClock() });
-  assert.deepEqual(quiet.errors, lagged);
-  assert.equal(quiet.watchdog, first);
-
-  let reads = 0;
-  const other = await settleProjectionLag({ errors: ['worker_heartbeat_not_healthy'],
-    watchdog: first, readWatchdog: async () => { reads += 1; return first; },
-    evaluate: () => [], ...lagClock() });
-  assert.deepEqual(other.errors, ['worker_heartbeat_not_healthy']);
-  assert.equal(reads, 0);
+test('发布门不依赖心跳，两个发布入口使用部署后状态模式', async () => {
+  const gate = await readFile(new URL('../scripts/production-release-gate.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(gate, /heartbeat/i);
+  const host = await readFile(new URL('../scripts/existing-release-v3-host/payload/release/' +
+    'existing-release-entry-v1/v3-host/release-once.mjs', import.meta.url), 'utf8');
+  for (const caller of [productionWorkflow, host]) {
+    assert.match(caller, /production-release-gate\.mjs[' ,]+--post-deploy/);
+    assert.doesNotMatch(caller, /--min-heartbeat-at/);
+  }
 });
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
@@ -399,7 +467,7 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   // checks come before it, so a run that cannot proceed uses no grant
   // (re-review N6). deploy also runs the release gate first: run 37329072487
   // used its grant and then stopped at the gate.
-  const gate = names.indexOf('name: Block release unless database and Worker heartbeat are ready');
+  const gate = names.indexOf('name: Verify database prerequisites and record projection state');
   assert.ok(gate > 0 && gate < deployGrant);
   assert.match(steps[gate], /if: \$\{\{[^\n]*inputs\.mode == 'deploy'/);
   assert.match(steps[deployGrant], /NODE_OPTIONS: ''/);
@@ -480,7 +548,6 @@ test('the release gate evaluates the committed migration ledger against producti
   // Behaviour of evaluateLedger is covered in tests/migration-ledger.test.mjs; this pins its wiring.
   assert.match(gateSource, /import \{ baselineVersion, evaluateLedger, historyOnlyDirectory, readLedger, readSqlDirectory \}\n\s+from '\.\/migration-ledger\.mjs'/);
   assert.match(gateSource, /evaluateLedger\(\{ ledger, history,\n\s+migrations: await readSqlDirectory\(migrationsDirectory\),\n\s+historyOnly: await readSqlDirectory\(historyOnlyDirectory\),\n\s+historicalThrough: baselineVersion\(baseline\) \}\)/);
-  assert.match(gateSource, /const errors = \[\.\.\.settled\.errors, \.\.\.ledgerReport\.errors\];\n\s+if \(errors\.length\) throw/);
   assert.doesNotMatch(gateSource, /ledgerReport\.warnings[^\n]*errors/);
 });
 
@@ -551,7 +618,7 @@ const RELEASE_ORDER = [
   'Verify projection and MTPE behavior', 'Build exact Worker source', 'Verify and build Kooyumi Connect release source',
   'Verify backup and migration database identity', 'Create and verify encrypted pre-migration backup',
   'Require verified backup before migration', 'Check migration database credential', 'Consume the Owner Grant for the named migrations',
-  'Apply the named migrations', 'Block release unless database and Worker heartbeat are ready',
+  'Apply the named migrations', 'Verify database prerequisites and record projection state',
   'Consume the Owner Grant for this commit', 'Record the Worker versions production serves', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
   'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
   'Verify the PDF extractor service binding', 'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',
@@ -595,7 +662,7 @@ test('release mode without migrations skips backup and migrations and uses the d
   }
   assert.deepEqual(grantSteps(run).map((step) => step.name), ['Consume the Owner Grant for this commit']);
   const at = (name) => run.ran.indexOf(name);
-  assert.ok(at('Block release unless database and Worker heartbeat are ready') < at('Consume the Owner Grant for this commit'));
+  assert.ok(at('Verify database prerequisites and record projection state') < at('Consume the Owner Grant for this commit'));
   assert.ok(at('Consume the Owner Grant for this commit') < at('Record the Worker versions production serves'));
   assert.ok(at('Record the Worker versions production serves') < at('Deploy Clued PDF extractor Worker'));
   assert.ok(at('Verify projection currentness after deployment') > at('Deploy Kooyumi Connect Worker'));
@@ -632,7 +699,7 @@ test('a failed deploy or post-deploy verification rolls the Workers back and the
       if (failAt.startsWith('Verify exact')) assert.ok(!run.ran.includes('Deploy Kooyumi Connect Worker'));
     }
     // Nothing was deployed yet, or the versions were never recorded: nothing to roll back to.
-    for (const failAt of ['Block release unless database and Worker heartbeat are ready', 'Record the Worker versions production serves']) {
+    for (const failAt of ['Verify database prerequisites and record projection state', 'Record the Worker versions production serves']) {
       const run = simulateRelease({ mode }, failAt);
       assert.equal(run.conclusion, 'failure');
       assert.ok(!run.ran.includes(ROLLBACK_STEP), failAt);

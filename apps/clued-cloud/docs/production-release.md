@@ -4,7 +4,7 @@ The supported production Worker release entry is the owner-dispatched
 `Clued Cloud production release` GitHub Actions workflow on `main`. It checks
 the exact checkout, builds and tests it, verifies the production database,
 deploys `clued-cloud`, and then verifies the live source commit and both
-projection keys after a new scheduled Worker heartbeat. A failing preflight
+projection keys from the read-only status snapshot. A failing preflight
 stops before `wrangler deploy`.
 The production Wrangler configuration also runs the read-only preflight as its
 build command, so a direct Wrangler deployment using that configuration fails
@@ -44,7 +44,7 @@ config and the post-deploy attestation) declares `environment: clued-release`;
 belongs in GitHub secret storage; never put it in Git, logs, an artifact, or a
 command argument. Backup mode additionally requires a high-entropy
 `CLUED_PRODUCTION_BACKUP_KEY` GitHub secret; retain it while any encrypted
-backup artifact may be needed. Keep the one-minute Cron and existing Worker bindings in
+backup artifact may be needed. Keep the reviewed schedule and existing Worker bindings in
 `wrangler.production.jsonc`; deployment uses `--keep-vars`.
 
 ## Database sequence
@@ -52,12 +52,13 @@ backup artifact may be needed. Keep the one-minute Cron and existing Worker bind
 Apply reviewed schema migrations to production through the authorized
 Supabase process **before** dispatching the Worker release. The release gate
 reads `supabase_migrations.schema_migrations` and compares the recorded SQL
-with repository files. It checks the projection pipeline predecessors, the
-MTPE selector, a fresh healthy Worker heartbeat, and CURRENT revision/digest
-for `global.priority_frontier` and `global.__aggregate__`. It also checks the
-committed migration ledger (`supabase/ledger/production-history.json`) and
-compares it with the live history; after a `migrate` run, the next pull
-request records the new rows (see `docs/maintenance/migration-ledger.md`).
+with repository files.
+
+部署前和部署后都核对迁移前置项、SQL、生产迁移账本、frontier 的 MTPE 定义，以及状态快照是否可读、观测时间是否在两分钟内。迁移后在下一个 PR 记录新增的生产账本行，流程见 `docs/maintenance/migration-ledger.md`。
+
+`--pre-deploy` 在凭据中保留 Builder 服务的 `global.priority_frontier` 和 `global.__aggregate__` 的租户、修订、任务状态、积压起点和摘要比较结果。异常写入 `warnings` 并输出到发布日志，允许修复旧 Worker 的版本继续部署。
+
+`--post-deploy` 要求两个必需键均有服务行，每行的修订已追平、摘要一致。未满五分钟的积压每十秒重读一次，最多等待约三分钟。任务失败、摘要不符、积压已满五分钟或等待结束仍未追平时，验收失败并报告具体投影键。即使 cron 关闭且没有心跳，已追平的快照也能立即通过。
 
 Production migration history predates a unified versioning convention. The
 MTPE source file `20260924110000_mtpe_universal_intake_auto_priority.sql` was
@@ -98,7 +99,7 @@ to fail closed until the underlying state is repaired.
 
 For an authorized manual operation outside GitHub Actions, run the read-only
 `node scripts/production-release-gate.mjs --pre-deploy` immediately before
-the release and again afterward. A manual `wrangler deploy` without this gate
+the release and use `--post-deploy` afterward. A manual `wrangler deploy` without this gate
 has no release acceptance evidence.
 
 ## Avoid duplicate standalone preflight dispatches
@@ -111,7 +112,7 @@ or unavailable result cannot be reused.
 An exact SHA alone does not establish that a production-state check is still
 valid. Reuse is limited to the same target and checked prerequisites: migration
 files and production ledger, database history, relevant configuration and
-authorization, healthy heartbeat and current projection evidence. When any
+authorization, and a readable, fresh projection snapshot. When any
 prerequisite changed, freshness expired, or equivalence cannot be established,
 run a new preflight and state the reason. Do not invent a freshness guarantee
 from elapsed time or a green historical run.

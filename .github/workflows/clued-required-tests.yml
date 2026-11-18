@@ -185,7 +185,9 @@ jobs:
         working-directory: candidate/apps/clued-cloud
         env:
           npm_config_logs_dir: ${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-        run: timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
+        run: |
+          timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache "$HOME/.npm" --prefer-offline --fetch-retries=2 --fetch-timeout=30000
+          timeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64
       - name: Lint, ledger, typecheck, build and unit tests
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:

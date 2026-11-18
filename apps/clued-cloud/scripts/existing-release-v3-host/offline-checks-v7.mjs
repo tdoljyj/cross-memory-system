@@ -1,8 +1,8 @@
-// Offline checks for the v7-host package. Run on the Linux Host as the publisher
+// Shared offline checks for the v7 and v8 Host packages. Run on the Linux Host as the publisher
 // (uid 995) inside a transient unit that carries every [Service] setting of the
-// installed clued-existing-release-once.service except ExecStart, after v7 is
+// installed clued-existing-release-once.service except ExecStart, after the candidate is
 // installed and systemd reloaded, before the first release:
-//   node offline-checks-v7.mjs <v7-dir> <v6-dir> [/run/WSL/<pid>_interop ...]
+//   node offline-checks-v7.mjs <candidate-dir> <v6-dir> [/run/WSL/<pid>_interop ...]
 // Root lists the interop sockets outside the sandbox and passes their paths.
 // Nothing is written except one /dev/shm probe that must fail.
 import fs from 'node:fs';
@@ -24,11 +24,16 @@ const context=JSON.parse(fs.readFileSync('/etc/clued-production-release/existing
 check('runs as the publisher',process.getuid()===context.publisherUid&&process.getgid()===context.publisherGid,process.getuid()+':'+process.getgid());
 const m=JSON.parse(fs.readFileSync(path.join(v7,'package-manifest.json'),'utf8'));
 for(const f of files)check('manifest:'+f,m.files[f]?.sha256===hash(fs.readFileSync(path.join(v7,f)))&&m.files[f].bytes===fs.statSync(path.join(v7,f)).size);
-check('revision 7 after v6',m.revision===7&&m.previousPackageManifestSha256==='71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4');
+const revision8=m.revision===8;
+const manifestHash=hash(fs.readFileSync(path.join(v7,'package-manifest.json')));
+const v7Manifest='c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c';
+check('candidate manifest and predecessor', revision8
+ ? manifestHash==='39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3' && m.previousPackageManifestSha256===v7Manifest
+ : m.revision===7 && manifestHash===v7Manifest && m.previousPackageManifestSha256==='71ee46c6c0d5bb0bafa5a85a5445b11c4f0b534141eb25010b06b51da04b8bf4');
 const stages=fs.readFileSync(path.join(v7,'payload/release/existing-release-entry-v1/v3/existing-stages.mjs'),'utf8');
 check('existing-stages pins the v7 manager',stages.includes(`[MANAGER,'${m.files[MANAGER].sha256}']`));
 for(const f of files.filter(f=>f.startsWith('payload/')))check('installed:'+f,fs.readFileSync('/opt/clued-production-release-v3/'+f.slice('payload/'.length)).equals(fs.readFileSync(path.join(v7,f))));
-check('installed manifest is v7',fs.readFileSync('/opt/clued-production-release-v3/package-manifest.json').equals(fs.readFileSync(path.join(v7,'package-manifest.json'))));
+check('installed manifest matches candidate',fs.readFileSync('/opt/clued-production-release-v3/package-manifest.json').equals(fs.readFileSync(path.join(v7,'package-manifest.json'))));
 check('manager config pins the v7 manager',JSON.parse(fs.readFileSync('/etc/clued/currentness-manager.json','utf8')).manager?.sha256===m.files[MANAGER].sha256);
 const manager=await import(path.join(v7,MANAGER)),host=await import(path.join(v7,HOST_FILES));
 // The installed unit files, and what systemd loaded from them.
@@ -69,5 +74,5 @@ for(const [f,expect] of [['payload/release/existing-release-entry-v1/v3-host/rel
  const r=spawnSync(process.execPath,[path.join(v7,f)],{encoding:'utf8',cwd:v7});check('default disabled:'+f,r.stdout.includes(`"status":"${expect}"`),r.stdout.trim());
 }
 const pass=results.every(x=>x.ok);
-process.stdout.write(JSON.stringify({contract:'clued.existing-release-v7-host-offline-checks/1',uid:process.getuid(),packageManifestSha256:hash(fs.readFileSync(path.join(v7,'package-manifest.json'))),checks:results.length,pass,results},null,1)+'\n');
+process.stdout.write(JSON.stringify({contract:revision8?'clued.existing-release-v8-host-offline-checks/1':'clued.existing-release-v7-host-offline-checks/1',uid:process.getuid(),packageManifestSha256:hash(fs.readFileSync(path.join(v7,'package-manifest.json'))),checks:results.length,pass,results},null,1)+'\n');
 process.exitCode=pass?0:1;

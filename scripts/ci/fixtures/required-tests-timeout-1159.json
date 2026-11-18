@@ -1,0 +1,421 @@
+{
+  "run_id": 44277214142,
+  "workflow_id": 402974661,
+  "first_jobs": [
+    {
+      "completed_at": "2026-11-18T09:37:26Z",
+      "conclusion": "success",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134708288469,
+      "name": "admission-gate",
+      "run_attempt": 1,
+      "started_at": "2026-11-18T09:34:43Z",
+      "status": "completed",
+      "steps": [
+        {
+          "conclusion": "success",
+          "name": "Set up job",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Set up runner",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Configure job temporary storage",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run node scripts/ci/clued-work-admission.mjs --mode gate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Complete job",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-11-18T09:56:39Z",
+      "conclusion": "success",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134709790258,
+      "name": "clued-cloud-tests",
+      "run_attempt": 1,
+      "started_at": "2026-11-18T09:37:49Z",
+      "status": "completed",
+      "steps": [
+        {
+          "conclusion": "success",
+          "name": "Set up job",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Set up runner",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Check out the candidate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Resolve push baseline before loading trusted commands",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Check out the trusted base (selection and commands)",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Configure job temporary storage",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Select suites",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Install from lockfile",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Lint, ledger, typecheck, build and unit tests",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Check out the trusted base (selection and commands)",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Check out the candidate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Complete job",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-11-18T10:08:17Z",
+      "conclusion": "cancelled",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134709790262,
+      "name": "migration-verify",
+      "run_attempt": 1,
+      "started_at": "2026-11-18T09:37:56Z",
+      "status": "completed",
+      "steps": [
+        {
+          "conclusion": "success",
+          "name": "Set up job",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Set up runner",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Check out the candidate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Resolve push baseline before loading trusted commands",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Check out the trusted base (selection and commands)",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Configure job temporary storage",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Select suites",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Install from lockfile",
+          "status": "completed"
+        },
+        {
+          "conclusion": "cancelled",
+          "name": "Verify migrations on the production schema",
+          "status": "completed"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Not affected",
+          "status": "completed"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Check out the trusted base (selection and commands)",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Check out the candidate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Complete job",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-11-18T09:54:49Z",
+      "conclusion": "success",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134709790321,
+      "name": "ci-suites",
+      "run_attempt": 1,
+      "started_at": "2026-11-18T09:42:50Z",
+      "status": "completed",
+      "steps": [
+        {
+          "conclusion": "success",
+          "name": "Set up job",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Set up runner",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Check out the candidate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Resolve push baseline before loading trusted commands",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Check out the trusted base (selection and commands)",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Configure job temporary storage",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Select suites",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run the selected suites",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Check out the trusted base (selection and commands)",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Check out the candidate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Complete job",
+          "status": "completed"
+        }
+      ]
+    }
+  ],
+  "second_jobs": [
+    {
+      "completed_at": "2026-11-18T10:10:44Z",
+      "conclusion": "failure",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134727693143,
+      "name": "admission-gate",
+      "run_attempt": 2,
+      "started_at": "2026-11-18T10:10:22Z",
+      "status": "completed",
+      "steps": [
+        {
+          "conclusion": "success",
+          "name": "Set up job",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Set up runner",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Configure job temporary storage",
+          "status": "completed"
+        },
+        {
+          "conclusion": "failure",
+          "name": "Run node scripts/ci/clued-work-admission.mjs --mode gate",
+          "status": "completed"
+        },
+        {
+          "conclusion": "skipped",
+          "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "status": "completed"
+        },
+        {
+          "conclusion": "success",
+          "name": "Complete job",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-11-18T10:10:44Z",
+      "conclusion": "skipped",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134727961979,
+      "name": "needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped'",
+      "run_attempt": 2,
+      "started_at": "2026-11-18T10:10:44Z",
+      "status": "completed",
+      "steps": []
+    },
+    {
+      "completed_at": "2026-11-18T10:10:44Z",
+      "conclusion": "skipped",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134727961989,
+      "name": "needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped'",
+      "run_attempt": 2,
+      "started_at": "2026-11-18T10:10:44Z",
+      "status": "completed",
+      "steps": []
+    },
+    {
+      "completed_at": "2026-11-18T10:10:44Z",
+      "conclusion": "skipped",
+      "head_sha": "be149834bd809e697d9ec41f22302cbc72e7eae6",
+      "id": 134727962678,
+      "name": "needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped'",
+      "run_attempt": 2,
+      "started_at": "2026-11-18T10:10:44Z",
+      "status": "completed",
+      "steps": []
+    }
+  ],
+  "timeout_annotations": [
+    {
+      "annotation_level": "failure",
+      "message": "The job has exceeded the maximum execution time of 30m0s",
+      "title": ""
+    },
+    {
+      "annotation_level": "failure",
+      "message": "The operation was canceled.",
+      "title": ""
+    }
+  ],
+  "refused_annotation": [
+    {
+      "annotation_level": "failure",
+      "message": "RERUN_REFUSED: run attempt 2: the independent CI admission allows one repair re-run: when no earlier attempt ran a heavy job, or when the one that ran died of the environment (attempt 1 already ran clued-cloud-tests: completed/success, migration-verify: completed/cancelled, ci-suites: completed/success; one commit's required tests run once); push a new commit; this re-run did not run the heavy jobs.",
+      "title": "admission-gate"
+    }
+  ],
+  "migration_log_excerpt": "2026-11-18T10:04:39.3615217Z   ✖ beyond 5 trash jobs the Agent registers one batch and the Owner confirms it once; each item covers one job (11213.098985ms)\n2026-11-18T10:05:07.7799508Z ✖ Canonical Resource Center registration and exact read-only authority (legacy-expiry) (102826.515988ms)\n2026-11-18T10:08:08.8314618Z ##[error]The operation was canceled."
+}

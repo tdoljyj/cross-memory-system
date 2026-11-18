@@ -99,6 +99,122 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     const giveBack = n => call('ci','clued_work_merge_slot_return_v1',{scope:'global',pr_ref:repo+'#'+n});
     const binding = async n => (await admin.query('select status from clued_private.work_claim_pr_task_bindings_v1 where repo_id=$1 and pr_number=$2',[repo,n])).rows[0]?.status;
 
+    const releaseInfo = async r => (await admin.query('select to_jsonb(c) value from clued_private.work_claims_v1 c where claim_id=$1', [r.claim.claim_id])).rows[0].value;
+    const inbox = async r => (await call('holder', 'clued_agent_inbox_v1', {
+      session_ref: r.claim.holder_session_ref, view: 'unread', mark_read: false,
+    })).messages.filter(m => m.to_claim_id === r.claim.claim_id);
+    await t.test('PR merge records its source and merge SHA and notifies only the original holder once', async () => {
+      const r = await claim(await task()); await admitted(r, 101, 'a'.repeat(40));
+      assert.equal((await adopt(101)).status, 'ok');
+      const c = await releaseInfo(r);
+      assert.equal(c.status, 'RELEASED'); assert.equal(c.released_by, 'pr_end');
+      assert.equal(c.released_evidence_ref, repo + '#101@' + 'f'.repeat(40));
+      assert.ok(Number.isFinite(Date.parse(c.released_at)));
+      const messages = await inbox(r); assert.equal(messages.length, 1);
+      assert.equal(messages[0].kind, 'info');
+      assert.equal(messages[0].body, `认领 ${r.claim.claim_id} 已因 ${repo}#101 合入（ffffffff）于 ${new Date(c.released_at).toISOString()} 自动释放，Task ${r.claim.task_id}`);
+      assert.equal((await call('otherHolder', 'clued_agent_inbox_v1', { view: 'unread' })).messages.length, 0);
+      const observed = await call('holder', 'clued_work_verify_v1', { scope: 'global', claim_id: r.claim.claim_id });
+      assert.equal(observed.claim.released_by, 'pr_end');
+      assert.equal(observed.claim.released_evidence_ref, c.released_evidence_ref);
+      const ended = (await native('clued_work_claims_owner_list_v1', { ended_within_hours: 24 })).ended.find(x => x.claim_id === r.claim.claim_id);
+      assert.equal(ended.released_by, 'pr_end'); assert.equal(ended.released_evidence_ref, c.released_evidence_ref);
+      assert.equal((await adopt(101)).status, 'ok'); assert.equal((await inbox(r)).length, 1);
+    });
+    await t.test('holder release returns and persists holder source, evidence and time; draining is still live', async () => {
+      const r = await claim(await task());
+      const conflict = await call('otherHolder', 'clued_work_claim_v1', { scope: 'global', task_id: r.claim.task_id,
+        write_set: r.claim.write_set, idempotency_key: uuid(), holder_label: 'conflicting fixture' });
+      assert.equal(conflict.error_code, 'work_claim_conflict');
+      assert.equal(conflict.conflicts[0].released_by, null); assert.equal(conflict.conflicts[0].released_at, null);
+      assert.equal(conflict.conflicts[0].released_evidence_ref, null);
+      const draining = committed(await call('holder', 'clued_work_release_v1', { scope: 'global', claim_id: r.claim.claim_id,
+        fence: r.claim.fence, lease_key: r.lease_key, outcome: 'draining' }));
+      assert.equal(draining.claim.released_by, null); assert.equal(draining.claim.released_at, null);
+      const result = committed(await release(r)), c = await releaseInfo(r);
+      assert.equal(c.released_by, 'holder'); assert.equal(result.claim.released_by, 'holder');
+      assert.equal(result.claim.released_evidence_ref, c.released_evidence_ref);
+      assert.match(c.released_evidence_ref, /^fixture:/); assert.ok(Date.parse(c.released_at));
+      assert.equal((await inbox(r)).length, 0);
+    });
+    await t.test('a message insertion failure cannot undo PR release or its receipt', async () => {
+      const r = await claim(await task()); await admitted(r, 102, 'b'.repeat(40));
+      await admin.query(`create function clued_private.fixture_reject_release_message() returns trigger language plpgsql as $$
+        begin raise exception 'fixture message insert failed'; end $$;
+        create trigger fixture_reject_release_message before insert on clued_private.agent_messages_v1
+        for each row execute function clued_private.fixture_reject_release_message()`);
+      try {
+        assert.equal((await adopt(102)).status, 'ok');
+        const c = await releaseInfo(r); assert.equal(c.status, 'RELEASED'); assert.equal(c.released_by, 'pr_end');
+        assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts where operation='work_claim_release' and object_id=$1", [r.claim.claim_id])).rows[0].n, 1);
+        assert.equal((await inbox(r)).length, 0);
+      } finally {
+        await admin.query('drop trigger fixture_reject_release_message on clued_private.agent_messages_v1; drop function clued_private.fixture_reject_release_message()');
+      }
+    });
+    await t.test('closed PR notification has no invented SHA; disabling messages preserves release metadata', async () => {
+      const r = await claim(await task()); await admitted(r, 103, 'c'.repeat(40));
+      assert.equal((await giveBack(103)).status, 'ok');
+      assert.equal((await releaseInfo(r)).released_evidence_ref, repo + '#103');
+      assert.match((await inbox(r))[0].body, /关闭（合并 SHA 不可得）/);
+      const c = await claim(await task()); await admitted(c, 104, 'd'.repeat(40));
+      await admin.query(`insert into clued_private.agent_message_settings_v1(user_id,enabled,version,updated_at,receipt_id)
+        values($1,false,1,now(),$2)`, [user, roleReceipt]);
+      try {
+        assert.equal((await adopt(104)).status, 'ok');
+        assert.equal((await releaseInfo(c)).released_by, 'pr_end'); assert.equal((await inbox(c)).length, 0);
+      } finally { await admin.query('delete from clued_private.agent_message_settings_v1 where user_id=$1', [user]); }
+    });
+    await t.test('expiry, hard deadline and takeover expose explicit sources without fabricating historical releases', async () => {
+      const expired = await claim(await task());
+      await admin.query("update clued_private.work_claims_v1 set issued_at=now()-interval '2 seconds',expires_at=now()-interval '1 second' where claim_id=$1", [expired.claim.claim_id]);
+      const virtual = (await native('clued_work_claims_owner_list_v1', { ended_within_hours: 24 })).ended.find(c => c.claim_id === expired.claim.claim_id);
+      assert.equal(virtual.released_by, 'expiry'); assert.equal(virtual.released_at, virtual.expires_at);
+      await admin.query('select clued_private.work_claim_expire_due($1)', [user]);
+      assert.equal((await releaseInfo(expired)).released_by, 'expiry');
+      const next = committed(await call('otherHolder', 'clued_work_takeover_v1', {
+        scope: 'global', claim_id: expired.claim.claim_id, holder_label: 'release source takeover fixture',
+        write_set: expired.claim.write_set, idempotency_key: uuid(),
+      }));
+      const old = await releaseInfo(expired);
+      assert.equal(old.released_by, 'takeover'); assert.equal(old.released_evidence_ref, 'claim:' + next.claim.claim_id);
+      committed(await call('otherHolder', 'clued_work_release_v1', { scope: 'global', claim_id: next.claim.claim_id,
+        fence: next.claim.fence, lease_key: next.lease_key, outcome: 'abandoned' }));
+      const hard = await claim(await task());
+      await admin.query("update clued_private.work_claims_v1 set issued_at=now()-interval '2 seconds',expires_at=now()-interval '1 second',hard_deadline_at=now()-interval '1 second' where claim_id=$1", [hard.claim.claim_id]);
+      await admin.query('select clued_private.work_claim_expire_due($1)', [user]);
+      const deadline = await releaseInfo(hard); assert.equal(deadline.released_by, 'hard_deadline');
+      assert.equal(deadline.released_at, deadline.expires_at);
+    });
+    await t.test('Owner handover keeps the claim live and does not invent a release', async () => {
+      const r = await claim(await task());
+      const issued = await native('clued_work_claim_handover_confirmation_issue_v1', { claim_id: r.claim.claim_id });
+      assert.equal(issued.status, 'issued', JSON.stringify(issued));
+      const handed = committed(await native('clued_work_claim_handover_v1', { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }));
+      const c = await releaseInfo(r);
+      assert.equal(c.status, 'ACTIVE'); assert.equal(c.released_by, null); assert.equal(c.released_at, null);
+      assert.ok(Number(c.fence) > Number(r.claim.fence));
+      // Owner handover delivers a private key; release using that exact result.
+      // The delivered key is never written to fixture output or disk.
+      committed(await call('holder', 'clued_work_release_v1', { scope: 'global', claim_id: r.claim.claim_id,
+        fence: handed.claim.fence, lease_key: handed.lease_key, outcome: 'abandoned' }));
+    });
+    await t.test('race losers record copy adoption and the winning claim as evidence', async () => {
+      const id = await task();
+      const issued = await native('clued_work_claim_multi_confirmation_issue_v1', {
+        task_id: id, copies: 2, shared_resources: ['fixture/' + id + '/main.mjs'],
+      });
+      assert.equal(issued.status, 'issued', JSON.stringify(issued));
+      committed(await native('clued_work_claim_multi_enable_v1', { confirmation_token: issued.confirmation_token, view_digest: issued.view_digest }));
+      const winner = await claim(id), loser = await claim(id);
+      await admitted(winner, 105, 'e'.repeat(40)); assert.equal((await adopt(105)).status, 'ok');
+      const c = await releaseInfo(loser);
+      assert.equal(c.status, 'SUPERSEDED'); assert.equal(c.released_by, 'copy_adoption');
+      assert.equal(c.released_evidence_ref, 'claim:' + winner.claim.claim_id); assert.ok(Date.parse(c.released_at));
+      assert.equal((await releaseInfo(winner)).released_by, 'pr_end');
+      assert.equal((await inbox(loser)).length, 0);
+    });
+
     await t.test('empty edit preflight retains holder authority, path coverage and the original renewal gates',async t=>{
       const r=await claim(await task());
       const input={action:'verify_edit',scope:'global',claim_id:r.claim.claim_id,fence:r.claim.fence,
@@ -213,9 +329,9 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     });
     await t.test('4. an error inside the release judgment leaves adopt answering as usual and the claim unchanged',async()=>{
       const r=await claim(await task());await admitted(r,9,'9'.repeat(40));
-      const original=(await admin.query("select pg_get_functiondef('clued_private.work_claim_pr_end_release_v1(public.clued_agent_bindings,text,text)'::regprocedure) d")).rows[0].d;
+      const original=(await admin.query("select pg_get_functiondef('clued_private.work_claim_pr_end_release_v1(public.clued_agent_bindings,text,text,text)'::regprocedure) d")).rows[0].d;
       // A fault after a partial write: the write must roll back with the judgment.
-      await admin.query(`create or replace function clued_private.work_claim_pr_end_release_v1(b public.clued_agent_bindings,p_scope text,p_pr text)
+      await admin.query(`create or replace function clued_private.work_claim_pr_end_release_v1(b public.clued_agent_bindings,p_scope text,p_pr text,p_merge_sha text)
         returns void language plpgsql security definer set search_path='' as $f$ begin
           update clued_private.work_claims_v1 set status='RELEASED' where user_id=b.user_id;
           raise exception 'fixture release fault'; end $f$`);

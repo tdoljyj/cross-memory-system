@@ -1,0 +1,50 @@
+diff --git a/payload/release/existing-release-entry-v1/v3-host/release-once.mjs b/payload/release/existing-release-entry-v1/v3-host/release-once.mjs
+index 8a0f19eb787b5164b3fd537ea5fe2dc858414fed..ef5fc09c6fdec385d926e9426670ffd6385d9870 100644
+--- a/payload/release/existing-release-entry-v1/v3-host/release-once.mjs
++++ b/payload/release/existing-release-entry-v1/v3-host/release-once.mjs
+@@ -8,3 +8,2 @@ import {main as existingStage} from '../v3/existing-stages.mjs';
+ const SCOPE='existing-production-release-v3-host';
+-const sleep=ms=>new Promise(done=>setTimeout(done,ms));
+ const PDF_CONFIG='apps/clued-cloud/wrangler.pdf-extractor.jsonc',PDF_RELEASE_CONFIG='.wrangler/pdf-extractor.release.json';
+@@ -54,3 +53,3 @@ export async function main(argv=[]){
+   const cf=()=>({...plain(),CLOUDFLARE_API_TOKEN:cloudflare,CLOUDFLARE_ACCOUNT_ID:account});
+-  function run(name,args,{env=plain(),cwd=APP,allowFailure=false,timeout=600000}={}){
++  function run(name,args,{env=plain(),cwd=APP,timeout=600000}={}){
+    c=readContext(contextSha);exactMain(c);verifyBuildFiles(c);
+@@ -62,3 +61,3 @@ export async function main(argv=[]){
+    if(r.error||r.signal||!Number.isInteger(r.status))fail('COMMAND_TREE_OUTCOME_UNCONFIRMED');
+-   if(r.status!==0&&!allowFailure)fail('ORIGINAL_RELEASE_COMMAND_FAILED');return r.status===0;
++   if(r.status!==0)fail('ORIGINAL_RELEASE_COMMAND_FAILED');
+   }
+@@ -80,8 +79,4 @@ export async function main(argv=[]){
+   run('connect-postflight',['../kooyumi-connect/verify-production.mjs','--evidence-out',RUN+'/connect-postflight.json']);
+-  let healthy=false;
+-  for(let attempt=1;attempt<=6;attempt++){
+-   healthy=run('heartbeat-'+attempt,['scripts/production-release-gate.mjs','--pre-deploy','--min-heartbeat-at',deployedAt,'--evidence-out',RUN+'/production-postflight.json'],{env:{...plain(),CLUED_ATTESTATION_DATABASE_URL:readSecret('attestation-database-url')},allowFailure:true,timeout:600000});
+-   if(healthy)break;if(attempt<6)await sleep(30000);
+-  }
+-  if(!healthy)fail('ORIGINAL_FRESH_HEARTBEAT_POSTFLIGHT_FAILED');
++  run('projection-postflight',['scripts/production-release-gate.mjs','--post-deploy','--evidence-out',RUN+'/production-postflight.json'],
++   {env:{...plain(),CLUED_ATTESTATION_DATABASE_URL:readSecret('attestation-database-url')}});
+   c=readContext(contextSha);exactMain(c);verifyBuildFiles(c);
+diff --git a/payload/release/existing-release-entry-v1/v3/existing-stages.mjs b/payload/release/existing-release-entry-v1/v3/existing-stages.mjs
+index 946eb0692319a4c8efc5257681fd1dffc0aeb0db..1e6805d62d246d490b2b8205a89326ab0aa54b62 100644
+--- a/payload/release/existing-release-entry-v1/v3/existing-stages.mjs
++++ b/payload/release/existing-release-entry-v1/v3/existing-stages.mjs
+@@ -19,3 +19,3 @@ const PINNED=Object.freeze({
+  'apps/clued-cloud/scripts/verify-currentness-transport.mjs':'f5c59bdcd09834aa88f466879a072e30318d799ad8ab65c1c4e6337396a5a54a',
+- 'apps/clued-cloud/scripts/production-release-gate.mjs':'3bb019ba9f842589e782b89b0c4c10ffb4875c78198b9eea83f53f8cd6303f89',
++ 'apps/clued-cloud/scripts/production-release-gate.mjs':'b94feed3593aedd6526f81acbcd0bc9ba0b12640ec6253c27608190b9ce63768',
+  'scripts/ci/clued-release-grant.mjs':'55b587d4e052b0281ce346c68ce1e4fc2c4f74d06287f0af1fa76481ca18c52e',
+@@ -85,6 +85,8 @@ async function grantBeforeDeploy(c,contextSha){
+  const app=path.join(c.sourceRoot,'apps/clued-cloud');
+- // Unchanged gate already has a truthful non-GHA clean-main branch. Its own
+- // ledger/DB/projection/heartbeat checks remain actual read-only observations.
+  const preflight=spawnSync(c.node.path,['scripts/production-release-gate.mjs','--pre-deploy'],{cwd:app,env:{...safeEnv(c),CLUED_ATTESTATION_DATABASE_URL:secret('attestation-database-url')},encoding:'utf8',maxBuffer:8*1024*1024});
+- if(preflight.error||preflight.status!==0)fail('ORIGINAL_PRODUCTION_PREFLIGHT_FAILED');loadContext(contextSha);exactMain(c);
++ if(preflight.error||preflight.status!==0)fail('ORIGINAL_PRODUCTION_PREFLIGHT_FAILED');
++ const receiptBeforeDeploy=JSON.parse(preflight.stdout);
++ writeOnce('production-preflight.json',receiptBeforeDeploy);
++ for(const warning of receiptBeforeDeploy.warnings)process.stderr.write('::warning::'+warning+'\n');
++ loadContext(contextSha);exactMain(c);
+  const {checkGrant}=await import(pathToFileURL(path.join(c.sourceRoot,'scripts/ci/clued-release-grant.mjs')).href);

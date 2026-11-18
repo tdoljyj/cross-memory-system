@@ -26,12 +26,12 @@ const snapshot = (overrides = {}) => ({
 test('watchdog detects idle, failed, stuck, missing, and inconsistent projection states', () => {
   assert.deepEqual(evaluateProjectionWatchdog(snapshot()), []);
   assert.deepEqual(evaluateProjectionWatchdog(snapshot({ heartbeat: null })).map((i) => i.code),
-    ['HEARTBEAT_MISSING']);
+    []);
   assert.deepEqual(evaluateProjectionWatchdog(snapshot({ heartbeat: {
     last_started_at: '2026-09-23T00:20:00.000Z',
     last_finished_at: '2026-09-23T00:19:00.000Z', last_result: 'transport_unavailable',
   } })).map((i) => i.code).sort(),
-  ['HEARTBEAT_STALE', 'TICK_INCOMPLETE', 'WORKER_DEGRADED'].sort());
+  ['WORKER_DEGRADED']);
   const broken = snapshot({ projections: [
     row('global.priority_frontier', { invalidation_revision: 4,
       source_digest_status: 'not_applicable', job_status: 'failed',
@@ -88,13 +88,13 @@ test('watchdog counts tenants the Builder does not serve instead of alerting per
 });
 
 test('watchdog de-duplicates recurring incidents and emits recovery transitions', () => {
-  const incidents = evaluateProjectionWatchdog(snapshot({ heartbeat: null }));
+  const incidents = evaluateProjectionWatchdog(snapshot({ projections: [] }));
   const first = notificationChanges([], incidents);
   assert.equal(first.opened.length, 1);
   assert.deepEqual(notificationChanges(first.active, incidents),
     { opened: [], recovered: [], active: first.active });
   const recovered = notificationChanges(first.active, []);
-  assert.deepEqual(recovered.recovered, ['worker:heartbeat_missing']);
+  assert.deepEqual(recovered.recovered, ['projections:none']);
   assert.deepEqual(recovered.active, []);
   assert.deepEqual(missingTenantIncidents([tenant], []).map((incident) => incident.code),
     ['TENANT_MISSING']);
@@ -103,7 +103,7 @@ test('watchdog de-duplicates recurring incidents and emits recovery transitions'
 
 test('email contains only bounded status, and failed delivery cannot advance state', async () => {
   const calls = [];
-  const changes = notificationChanges([], evaluateProjectionWatchdog(snapshot({ heartbeat: null })));
+  const changes = notificationChanges([], evaluateProjectionWatchdog(snapshot({ projections: [] })));
   const config = { accountId: 'account', apiToken: 'secret', from: 'monitor@example.invalid',
     to: 'owner@example.invalid' };
   await sendProjectionWatchdogEmail(changes, config, async (url, init) => {

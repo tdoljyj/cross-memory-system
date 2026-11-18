@@ -594,7 +594,8 @@ export default function OAuthConnectionsPage() {
                 <div><dt>状态</dt><dd>{!binding.active ? "已撤销或失效" : expired ? "已过期" : "授权有效"}</dd></div>
                 <div><dt>授权日期</dt><dd>{binding.created_at ? <time dateTime={binding.created_at}>{new Date(binding.created_at).toLocaleString("zh-CN")}</time> : "暂无记录"}</dd></div>
                 <div><dt>最近使用</dt><dd>{binding.last_used_at ? <time dateTime={binding.last_used_at}>{new Date(binding.last_used_at).toLocaleString("zh-CN")}</time> : "暂无记录"}</dd></div>
-                <div><dt>有效期至</dt><dd><time dateTime={binding.expires_at}>{new Date(binding.expires_at).toLocaleString("zh-CN")}</time></dd></div>
+                <div><dt>有效期至</dt><dd><time dateTime={binding.expires_at}>{new Date(binding.expires_at).toLocaleString("zh-CN")}</time>
+                  {expired ? "（已到期）" : "（剩余 " + Math.ceil((Date.parse(binding.expires_at) - now) / 86400000) + " 天）"}</dd></div>
                 <div><dt>连接编号</dt><dd>{binding.binding_id}</dd></div>
                 <div><dt>范围</dt><dd>{rangeName(binding)}</dd></div>
                 <div><dt>操作权限</dt><dd>{binding.coverage?.status === 'restricted' || binding.coverage?.status === 'unknown' ? '自定义／受限' : operationSummary(binding.grants.filter(grant => !isMacro(grant)), binding.selection_format !== 'sources_v1')}</dd></div>

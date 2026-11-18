@@ -17,7 +17,7 @@ const G6_SIGNATURE='public.clued_mcp_currentness_g6_gate(text,jsonb)';
 const CONSUMER_HEALTH_URL='https://clued.pixelgrav.com/healthz';
 const PINNED=Object.freeze({
  'apps/clued-cloud/scripts/verify-currentness-transport.mjs':'f5c59bdcd09834aa88f466879a072e30318d799ad8ab65c1c4e6337396a5a54a',
- 'apps/clued-cloud/scripts/production-release-gate.mjs':'3bb019ba9f842589e782b89b0c4c10ffb4875c78198b9eea83f53f8cd6303f89',
+ 'apps/clued-cloud/scripts/production-release-gate.mjs':'b94feed3593aedd6526f81acbcd0bc9ba0b12640ec6253c27608190b9ce63768',
  'scripts/ci/clued-release-grant.mjs':'55b587d4e052b0281ce346c68ce1e4fc2c4f74d06287f0af1fa76481ca18c52e',
 });
 const EXTERNAL=new URL('../../verify-currentness-external.mjs',import.meta.url);
@@ -83,10 +83,12 @@ function exactMain(c){if(localGit(c,['rev-parse','HEAD'])!==c.sourceCommit||loca
 async function grantBeforeDeploy(c,contextSha){
  exactMain(c);writeOnce('grant-intent.json',{contract:'clued.existing-release-grant-intent/1',contextSha256:contextSha,sourceCommit:c.sourceCommit,startedAt:new Date().toISOString(),automaticRetryAllowed:false});
  const app=path.join(c.sourceRoot,'apps/clued-cloud');
- // Unchanged gate already has a truthful non-GHA clean-main branch. Its own
- // ledger/DB/projection/heartbeat checks remain actual read-only observations.
  const preflight=spawnSync(c.node.path,['scripts/production-release-gate.mjs','--pre-deploy'],{cwd:app,env:{...safeEnv(c),CLUED_ATTESTATION_DATABASE_URL:secret('attestation-database-url')},encoding:'utf8',maxBuffer:8*1024*1024});
- if(preflight.error||preflight.status!==0)fail('ORIGINAL_PRODUCTION_PREFLIGHT_FAILED');loadContext(contextSha);exactMain(c);
+ if(preflight.error||preflight.status!==0)fail('ORIGINAL_PRODUCTION_PREFLIGHT_FAILED');
+ const receiptBeforeDeploy=JSON.parse(preflight.stdout);
+ writeOnce('production-preflight.json',receiptBeforeDeploy);
+ for(const warning of receiptBeforeDeploy.warnings)process.stderr.write('::warning::'+warning+'\n');
+ loadContext(contextSha);exactMain(c);
  const {checkGrant}=await import(pathToFileURL(path.join(c.sourceRoot,'scripts/ci/clued-release-grant.mjs')).href);
  // These are private arguments to the unchanged helper's metadata API. They
  // describe actual Git metadata; no GITHUB_ACTIONS/run/job identity is set.
