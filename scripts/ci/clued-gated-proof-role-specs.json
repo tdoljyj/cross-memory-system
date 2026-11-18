@@ -2057,10 +2057,10 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "5f4b53dd7ab2a96eb8e2cb2d94eca35c8244fa0f": [
+        "90018809f94ceb6ba6ffcea8dcfac94a5d23b1e8": [
           {
             "job_id": "clued-cloud-tests",
-            "definition_sha256": "574888a4ac5c7d4ac9f356fe9774a0953b25c051e56b65fd01e1d910982c24de",
+            "definition_sha256": "69464b220bcb8e531890db01ef6fcfe51954b1a99db2fff0d2e0d69200449ca8",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
               "needs": "admission-gate",
@@ -2106,23 +2106,7 @@
                   "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nbase=$(git rev-parse \"$STAGING_SHA^1\")\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run.\n  # The first parent must be an already trusted main ancestor.\n  git merge-base --is-ancestor \"$base\" origin/main\nfi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
                 },
                 {
-                  "name": "Derive the trusted base locally",
-                  "id": "trusted-local",
-                  "working-directory": "candidate",
-                  "shell": "bash",
-                  "env": {
-                    "TMPDIR": "${{ runner.temp }}",
-                    "TMP": "${{ runner.temp }}",
-                    "TEMP": "${{ runner.temp }}",
-                    "PYTHONPYCACHEPREFIX": "${{ runner.temp }}/clued-pycache",
-                    "WRANGLER_LOG_PATH": "${{ runner.temp }}/clued-wrangler-logs",
-                    "TRUSTED_REF": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}"
-                  },
-                  "run": "# Run before candidate code. Leave an occupied path to checkout.\nif [[ \"$TRUSTED_REF\" =~ ^[0-9a-fA-F]{40}$ && ! -e ../trusted && ! -L ../trusted ]] &&\n   git --no-replace-objects cat-file -e \"${TRUSTED_REF}^{commit}\" 2>/dev/null &&\n   git --no-replace-objects -c core.hooksPath=/dev/null worktree add --detach ../trusted \"$TRUSTED_REF\"; then\n  echo \"local=true\" >> \"$GITHUB_OUTPUT\"\nfi\n"
-                },
-                {
                   "name": "Check out the trusted base (selection and commands)",
-                  "if": "steps.trusted-local.outputs.local != 'true'",
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
@@ -2170,7 +2154,7 @@
           },
           {
             "job_id": "ci-suites",
-            "definition_sha256": "3d48c41e53fadb73c6b1eeb3f2bd18a5bc9087930586444bfd0dc2ddbc6c9f88",
+            "definition_sha256": "b0d7e70eb85cbff52c94e555e7a687027343de0164cfa3d69028f897d8160bdf",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
               "needs": "admission-gate",
@@ -2216,23 +2200,7 @@
                   "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nbase=$(git rev-parse \"$STAGING_SHA^1\")\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run.\n  # The first parent must be an already trusted main ancestor.\n  git merge-base --is-ancestor \"$base\" origin/main\nfi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
                 },
                 {
-                  "name": "Derive the trusted base locally",
-                  "id": "trusted-local",
-                  "working-directory": "candidate",
-                  "shell": "bash",
-                  "env": {
-                    "TMPDIR": "${{ runner.temp }}",
-                    "TMP": "${{ runner.temp }}",
-                    "TEMP": "${{ runner.temp }}",
-                    "PYTHONPYCACHEPREFIX": "${{ runner.temp }}/clued-pycache",
-                    "WRANGLER_LOG_PATH": "${{ runner.temp }}/clued-wrangler-logs",
-                    "TRUSTED_REF": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}"
-                  },
-                  "run": "# Run before candidate code. Leave an occupied path to checkout.\nif [[ \"$TRUSTED_REF\" =~ ^[0-9a-fA-F]{40}$ && ! -e ../trusted && ! -L ../trusted ]] &&\n   git --no-replace-objects cat-file -e \"${TRUSTED_REF}^{commit}\" 2>/dev/null &&\n   git --no-replace-objects -c core.hooksPath=/dev/null worktree add --detach ../trusted \"$TRUSTED_REF\"; then\n  echo \"local=true\" >> \"$GITHUB_OUTPUT\"\nfi\n"
-                },
-                {
                   "name": "Check out the trusted base (selection and commands)",
-                  "if": "steps.trusted-local.outputs.local != 'true'",
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
@@ -2273,7 +2241,7 @@
           },
           {
             "job_id": "migration-verify",
-            "definition_sha256": "f6a4d517899db44eaa08ff1ec19dc6ff058306c5aa52f5f991036e187d18681c",
+            "definition_sha256": "1019c074dd0be744b74289aa460dfbfc563d1c2c2a4012741e068dd2d342c088",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
               "needs": "admission-gate",
@@ -2297,7 +2265,7 @@
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
-                    "fetch-depth": "${{ github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' && '0' || '2' }}",
+                    "fetch-depth": 0,
                     "path": "candidate"
                   }
                 },
@@ -2319,23 +2287,7 @@
                   "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nbase=$(git rev-parse \"$STAGING_SHA^1\")\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run.\n  # The first parent must be an already trusted main ancestor.\n  git merge-base --is-ancestor \"$base\" origin/main\nfi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
                 },
                 {
-                  "name": "Derive the trusted base locally",
-                  "id": "trusted-local",
-                  "working-directory": "candidate",
-                  "shell": "bash",
-                  "env": {
-                    "TMPDIR": "${{ runner.temp }}",
-                    "TMP": "${{ runner.temp }}",
-                    "TEMP": "${{ runner.temp }}",
-                    "PYTHONPYCACHEPREFIX": "${{ runner.temp }}/clued-pycache",
-                    "WRANGLER_LOG_PATH": "${{ runner.temp }}/clued-wrangler-logs",
-                    "TRUSTED_REF": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}"
-                  },
-                  "run": "# Run before candidate code. Leave an occupied path to checkout.\nif [[ \"$TRUSTED_REF\" =~ ^[0-9a-fA-F]{40}$ && ! -e ../trusted && ! -L ../trusted ]] &&\n   git --no-replace-objects cat-file -e \"${TRUSTED_REF}^{commit}\" 2>/dev/null &&\n   git --no-replace-objects -c core.hooksPath=/dev/null worktree add --detach ../trusted \"$TRUSTED_REF\"; then\n  echo \"local=true\" >> \"$GITHUB_OUTPUT\"\nfi\n"
-                },
-                {
                   "name": "Check out the trusted base (selection and commands)",
-                  "if": "steps.trusted-local.outputs.local != 'true'",
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
@@ -2391,10 +2343,10 @@
     },
     ".github/workflows/clued-required-tests-windows.yml": {
       "sources": {
-        "3eb902e0086b7843618633806c519beca017b259": [
+        "bf46c22f3ff1c9e491d181ca1464f174b4a21d9b": [
           {
             "job_id": "ci-suites-windows",
-            "definition_sha256": "3bda3c644a3241eef5eb1223f0ad9c71bc1eba4ec3e76dfec225eed8e2cff66d",
+            "definition_sha256": "67a8d5c72a1499e0f6445a9e5f266b281e4b8f9734c45e7a5bd268278dc43936",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites-windows' || 'ci-suites-windows-skipped' }}",
               "needs": "admission-gate",
@@ -2416,37 +2368,21 @@
               },
               "steps": [
                 {
+                  "name": "Check out the trusted base (selection and commands)",
+                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+                  "with": {
+                    "persist-credentials": false,
+                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+                    "path": "trusted"
+                  }
+                },
+                {
                   "name": "Check out the candidate",
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
                     "fetch-depth": 0,
                     "path": "candidate"
-                  }
-                },
-                {
-                  "name": "Derive the trusted base locally",
-                  "id": "trusted-local",
-                  "working-directory": "candidate",
-                  "shell": "bash",
-                  "env": {
-                    "TMPDIR": "${{ runner.temp }}",
-                    "TMP": "${{ runner.temp }}",
-                    "TEMP": "${{ runner.temp }}",
-                    "PYTHONPYCACHEPREFIX": "${{ runner.temp }}/clued-pycache",
-                    "WRANGLER_LOG_PATH": "${{ runner.temp }}/clued-wrangler-logs",
-                    "TRUSTED_REF": "${{ github.event.pull_request.base.sha || github.sha }}"
-                  },
-                  "run": "# Run before candidate code. Leave an occupied path to checkout.\nif [[ \"$TRUSTED_REF\" =~ ^[0-9a-fA-F]{40}$ && ! -e ../trusted && ! -L ../trusted ]] &&\n   git --no-replace-objects cat-file -e \"${TRUSTED_REF}^{commit}\" 2>/dev/null &&\n   git --no-replace-objects -c core.hooksPath=/dev/null worktree add --detach ../trusted \"$TRUSTED_REF\"; then\n  echo \"local=true\" >> \"$GITHUB_OUTPUT\"\nfi\n"
-                },
-                {
-                  "name": "Check out the trusted base (selection and commands)",
-                  "if": "steps.trusted-local.outputs.local != 'true'",
-                  "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
-                  "with": {
-                    "persist-credentials": false,
-                    "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
-                    "path": "trusted"
                   }
                 },
                 {

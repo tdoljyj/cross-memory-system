@@ -96,37 +96,18 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
           fetch-depth: 0
           path: candidate
-      - name: Derive the trusted base locally
-        id: trusted-local
-        working-directory: candidate
-        shell: bash
-        env:
-          TMPDIR: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
-          TEMP: ${{ runner.temp }}
-          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
-          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
-          TRUSTED_REF: ${{ github.event.pull_request.base.sha || github.sha }}
-        run: |
-          # Run before candidate code. Leave an occupied path to checkout.
-          if [[ "$TRUSTED_REF" =~ ^[0-9a-fA-F]{40}$ && ! -e ../trusted && ! -L ../trusted ]] &&
-             git --no-replace-objects cat-file -e "${TRUSTED_REF}^{commit}" 2>/dev/null &&
-             git --no-replace-objects -c core.hooksPath=/dev/null worktree add --detach ../trusted "$TRUSTED_REF"; then
-            echo "local=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Check out the trusted base (selection and commands)
-        if: steps.trusted-local.outputs.local != 'true'
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-          path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select and run the suites declared for Windows

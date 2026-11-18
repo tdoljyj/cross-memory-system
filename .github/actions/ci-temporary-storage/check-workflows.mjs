@@ -85,21 +85,6 @@ export function stepFingerprint(steps) {
   return createHash("sha256").update(JSON.stringify(steps)).digest("hex");
 }
 
-// The reviewed derivation and its complementary checkout together supply the
-// trusted path. A conditional checkout alone cannot satisfy the bootstrap.
-function reviewedTrustedWorktree(steps, sha256) {
-  const index = steps.findIndex(step => step.id === "trusted-local");
-  if (index < 1) return -1;
-  const derive = steps[index];
-  const [candidate] = checkoutSources(steps.slice(0, 1));
-  const [fallback] = checkoutSources(steps.slice(index + 1, index + 2));
-  return candidate?.path === "candidate" && candidate.if === "true" &&
-    derive["working-directory"] === "candidate" && !Object.hasOwn(derive, "if") &&
-    stepFingerprint([derive]) === sha256 &&
-    fallback?.path === "trusted" && fallback.ref === derive.env?.TRUSTED_REF &&
-    fallback.if === "steps.trusted-local.outputs.local != 'true'" ? index + 1 : -1;
-}
-
 // These Source candidates classify six exact pre-bootstrap guards, not whole jobs.
 // The scan-permission lifecycle DOES write its single no-clobber RUNNER_TEMP
 // producer and consumes the original once permission. It is never read-only.
@@ -272,10 +257,6 @@ export function repositoryTemporaryStorageFindings(document, name, audit, contex
     if (classification.mode === "job-temp" && JSON.stringify(checkoutSources(steps)) !== JSON.stringify(classification.checkout_sources)) {
       findings.push(`${label}: reviewed checkout source or condition changed`);
     }
-    const trustedFallback = reviewedTrustedWorktree(steps, classification.trusted_worktree_step_sha256);
-    if (Object.hasOwn(classification, "trusted_worktree_step_sha256") && trustedFallback < 0) {
-      findings.push(`${label}: reviewed trusted worktree or its fallback changed`);
-    }
     if (classification.mode === "step-env" && checkoutSources(steps).length) {
       findings.push(`${label}: no-checkout control must not load repository code`);
     }
@@ -305,9 +286,8 @@ export function repositoryTemporaryStorageFindings(document, name, audit, contex
           // conditional checkout occurred before the unconditional bootstrap.
           const guardImpliesCheckout = lifecycle?.conditional_checkout_implied_by_guard === true &&
             index === lifecycle.bootstrapIndex && lifecycle.guardIndex < index;
-          const available = (prefix === "trusted" && trustedFallback >= 0 && trustedFallback < index) ||
-            checkoutSources(steps.slice(0, index)).some(s => s.path === prefix && s.if !== "false" &&
-              (s.if === "true" || s.if === condition(step.if ?? "true") || guardImpliesCheckout));
+          const available = checkoutSources(steps.slice(0, index)).some(s => s.path === prefix && s.if !== "false" &&
+            (s.if === "true" || s.if === condition(step.if ?? "true") || guardImpliesCheckout));
           if (!available) findings.push(`${label}: temporary bootstrap is not in an existing compatible checkout`);
           if (step.uses !== classification.action) findings.push(`${label}: temporary bootstrap changed its reviewed source checkout`);
         }

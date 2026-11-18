@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -629,110 +629,6 @@ test('a platform step runs every selected suite, names each result, fails when a
 // The job is read from the workflow GitHub runs (.github/workflows): before step 2 of ADR 0032 there was no such
 // workflow, so nothing published ci-suites-windows and this test could not find the job.
 const WINDOWS_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests-windows.yml');
-const REQUIRED_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
-const DERIVED_TRUSTED_JOBS = [
-  [REQUIRED_WORKFLOW, 'clued-cloud-tests', '0'],
-  [REQUIRED_WORKFLOW, 'ci-suites', '0'],
-  [REQUIRED_WORKFLOW, 'migration-verify', "${{ github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' && '0' || '2' }}"],
-  [WINDOWS_WORKFLOW, 'ci-suites-windows', '0'],
-];
-
-function requiredJobSteps(file, id) {
-  const text = readFileSync(file, 'utf8');
-  const job = text.split(`\n  ${id}:\n`)[1]?.split(/\n  [a-z][a-z-]+:\n/)[0];
-  assert.ok(job, id);
-  return job.split('\n      - ').slice(1);
-}
-
-const trustedStep = (steps) => steps.find((step) => step.startsWith('name: Derive the trusted base locally\n'));
-
-test('the four required-test jobs derive trusted from the candidate before using the guarded network fallback', () => {
-  for (const [file, id, fetchDepth] of DERIVED_TRUSTED_JOBS) {
-    const steps = requiredJobSteps(file, id);
-    const candidate = steps.findIndex((step) => step.startsWith('name: Check out the candidate\n'));
-    const derive = steps.indexOf(trustedStep(steps));
-    const fallback = steps.findIndex((step) => step.startsWith('name: Check out the trusted base (selection and commands)\n'));
-    const bootstrap = steps.findIndex((step) => step.startsWith('name: Configure job temporary storage\n'));
-    const linux = file === REQUIRED_WORKFLOW;
-    assert.ok(candidate === 0 && derive === (linux ? 2 : 1) && fallback === derive + 1 && bootstrap > fallback, id);
-    if (linux) assert.match(steps[1], /\n        id: train-base\n/);
-    assert.ok(steps[candidate].includes(`\n          fetch-depth: ${fetchDepth}\n`), id);
-    assert.match(steps[derive], /\n        id: trusted-local\n/);
-    assert.match(steps[derive], /\n        working-directory: candidate\n/);
-    assert.match(steps[fallback], /\n        if: steps\.trusted-local\.outputs\.local != 'true'\n/);
-    assert.match(steps[fallback], /\n          path: trusted(?:\n|$)/);
-    assert.equal(steps[derive].match(/\n          TRUSTED_REF: (.*)\n/)?.[1],
-      steps[fallback].match(/\n          ref: (.*)\n/)?.[1], id);
-  }
-});
-
-test('the workflow derivation checks out only the PR merge base with a depth-two fetch', (t) => {
-  const fixture = mkdtempSync(path.join(os.tmpdir(), 'required-trusted-worktree-'));
-  t.after(() => rmSync(fixture, { recursive: true, force: true }));
-  const git = (cwd, ...args) => execFileSync('git', args, { cwd });
-  const source = path.join(fixture, 'source');
-  const candidate = path.join(fixture, 'candidate');
-  const trusted = path.join(fixture, 'trusted');
-  const archived = path.join(fixture, 'archived');
-  const output = path.join(fixture, 'github-output');
-  for (const dir of [source, candidate, archived]) mkdirSync(dir);
-  git(source, 'init', '-q', '-b', 'main');
-  git(source, 'config', 'user.name', 'CI fixture');
-  git(source, 'config', 'user.email', 'ci@example.invalid');
-  writeFileSync(path.join(source, '.gitattributes'), '* -text\n');
-  writeFileSync(path.join(source, 'selector.mjs'), Buffer.from([0x61, 0x0d, 0x0a, 0x00, 0x62]));
-  git(source, 'add', '.');
-  git(source, 'commit', '-qm', 'Trusted base');
-  const base = git(source, 'rev-parse', 'HEAD').toString().trim();
-  git(source, 'switch', '-qc', 'pr');
-  writeFileSync(path.join(source, 'selector.mjs'), 'candidate selector\n');
-  writeFileSync(path.join(source, 'candidate-only'), 'candidate file\n');
-  git(source, 'add', '.');
-  git(source, 'commit', '-qm', 'Candidate changes');
-  git(source, 'switch', '-q', 'main');
-  git(source, 'merge', '-q', '--no-ff', '-m', 'PR merge', 'pr');
-  git(candidate, 'init', '-q');
-  git(candidate, 'fetch', '-q', '--depth=2', pathToFileURL(source).href, 'main');
-  git(candidate, 'checkout', '-q', '--detach', 'FETCH_HEAD');
-  const head = git(candidate, 'rev-parse', 'HEAD').toString().trim();
-  assert.equal(git(candidate, 'rev-parse', 'HEAD^1').toString().trim(), base);
-  assert.equal(git(candidate, 'rev-parse', '--is-shallow-repository').toString().trim(), 'true');
-
-  const run = (script, ref) => {
-    writeFileSync(output, '');
-    const result = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail'], {
-      cwd: candidate, input: script, encoding: 'utf8',
-      env: { ...process.env, TRUSTED_REF: ref, GITHUB_OUTPUT: output.split(path.sep).join('/') },
-    });
-    assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stderr);
-    return readFileSync(output, 'utf8').trim();
-  };
-
-  const archive = git(source, 'archive', '--format=tar', base);
-  execFileSync('tar', ['-xf', '-'], { cwd: archived, input: archive });
-  const scripts = DERIVED_TRUSTED_JOBS.map(([file, id]) => {
-    const derive = trustedStep(requiredJobSteps(file, id));
-    assert.ok(derive, `${id}: missing trusted worktree derivation`);
-    assert.match(derive, /\n        shell: bash\n/);
-    return derive.split('\n        run: |\n')[1].replace(/^ {10}/gm, '');
-  });
-  for (const script of new Set(scripts)) {
-    assert.doesNotMatch(run(script, '0'.repeat(40)), /^local=true$/m, 'missing full SHA must fall back');
-    assert.doesNotMatch(run(script, 'main'), /^local=true$/m, 'branch name must fall back');
-    assert.equal(existsSync(trusted), false);
-    assert.equal(run(script, base), 'local=true');
-    assert.equal(git(trusted, 'rev-parse', 'HEAD').toString().trim(), base);
-    assert.equal(git(candidate, 'rev-parse', 'HEAD').toString().trim(), head);
-    const files = readdirSync(archived).sort();
-    assert.deepEqual(readdirSync(trusted).filter((name) => name !== '.git').sort(), files);
-    for (const name of files) assert.deepEqual(readFileSync(path.join(trusted, name)), readFileSync(path.join(archived, name)));
-    assert.doesNotMatch(run(script, head), /^local=true$/m, 'an existing destination must fall back');
-    assert.equal(git(trusted, 'rev-parse', 'HEAD').toString().trim(), base, 'existing destination is untouched');
-    git(candidate, 'worktree', 'remove', trusted);
-  }
-});
-
 function windowsJob() {
   const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
   const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
@@ -801,7 +697,6 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
   assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
-  assert.equal(job.split('name: Configure job temporary storage')[1].match(/\brun: /g).length, 1,
-    'one suite command after the trusted bootstrap');
+  assert.equal(job.match(/\brun: /g).length, 1, 'one command: nothing else can pass or fail the job');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
 });
