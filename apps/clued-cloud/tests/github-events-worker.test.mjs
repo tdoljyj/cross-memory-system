@@ -38,11 +38,29 @@ test('原始字节验签后，合入和关闭未合入的投递各送达网关�
   for (const mergeSha of [sha, null, undefined, '123abcd', 42]) {
     const body = mergeSha === sha ? bytes : JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merge_commit_sha: mergeSha } });
     assert.equal((await deliver({ body }))?.status, 200);
-    assert.deepEqual(calls.splice(0), [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merged: true, merge_sha: mergeSha === sha ? sha : null } }]);
+    assert.deepEqual(calls.splice(0), [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merge_sha: mergeSha === sha ? sha : null } }]);
   }
   const body = JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: false } });
   assert.equal((await deliver({ body }))?.status, 200);
   assert.deepEqual(calls, [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merged: false, merge_sha: null } }]);
+});
+
+test('已签名合入事件兼容只接受三个字段的旧数据库函数', async t => {
+  const database = t.mock.method(globalThis, 'fetch', async (_target, init) => {
+    const { p_input } = JSON.parse(init.body);
+    const allowed = ['repository', 'pr_number', 'merge_sha'];
+    if (Object.keys(p_input).some(key => !allowed.includes(key))) {
+      return Response.json({ code: '22023' }, { status: 400 });
+    }
+    return Response.json({ status: 'ok', finished: 1, released: [] });
+  });
+
+  const response = await deliver();
+  assert.equal(database.mock.callCount(), 1);
+  assert.equal(response?.status, 200);
+  assert.deepEqual(JSON.parse(database.mock.calls[0].arguments[1].body), {
+    p_input: { repository: 'Org/Repo', pr_number: 1161, merge_sha: sha },
+  });
 });
 
 test('生产形态环境中的已签名合入事件送达默认数据库', async t => {
@@ -58,7 +76,7 @@ test('生产形态环境中的已签名合入事件送达默认数据库', async
   assert.equal(headers.get('authorization'), 'Bearer test-gateway');
   assert.match(headers.get('apikey') ?? '', /^sb_publishable_/);
   assert.deepEqual(JSON.parse(init.body), {
-    p_input: { repository: 'Org/Repo', pr_number: 1161, merged: true, merge_sha: sha },
+    p_input: { repository: 'Org/Repo', pr_number: 1161, merge_sha: sha },
   });
 });
 

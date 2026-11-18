@@ -75,8 +75,10 @@ export async function handleGitHubEvents(request: Request, env: Env): Promise<Re
   if (typeof repo.full_name !== 'string' || !/^[a-z0-9_.-]{1,100}\/[a-z0-9_.-]{1,100}$/i.test(repo.full_name)
     || typeof event.number !== 'number' || !Number.isSafeInteger(event.number) || event.number < 1 || event.number > 9999999999) return reply(400);
   const mergeSha = pr.merged ? pr.merge_commit_sha : null;
-  const p_input = { repository: repo.full_name, pr_number: event.number, merged: pr.merged,
-    merge_sha: typeof mergeSha === 'string' && /^[0-9a-f]{40}$/i.test(mergeSha) ? mergeSha : null };
+  // 旧网关只接受合入事件的三个字段。
+  const p_input = { repository: repo.full_name, pr_number: event.number,
+    merge_sha: typeof mergeSha === 'string' && /^[0-9a-f]{40}$/i.test(mergeSha) ? mergeSha : null,
+    ...(pr.merged ? {} : { merged: false }) };
 
   try {
     const token = databaseGatewayToken(env);

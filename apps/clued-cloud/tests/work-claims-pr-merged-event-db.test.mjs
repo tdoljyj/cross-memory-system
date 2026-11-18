@@ -185,7 +185,7 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
         assert.equal(init.method, 'POST');
         assert.equal(new Headers(init.headers).get('authorization'), 'Bearer fixture-gateway');
         const envelope = JSON.parse(init.body);
-        assert.deepEqual(envelope, { p_input: { ...input(1162), merged: true } });
+        assert.deepEqual(envelope, { p_input: input(1162) });
         return Response.json(await event(envelope.p_input));
       });
       const response = await worker.fetch(new Request('https://app.example.test/v1/github/events', {
