@@ -1432,6 +1432,14 @@ test('the projection postflight writes its conclusion before it cleans up, and a
 // Round-4 review: the release's own pre-deploy tests read the production
 // configuration through the same reader as the wrapper, so legal JSONC
 // (comments, trailing commas) in it cannot fail them.
+// A JSONC copy of a wrangler configuration: the same settings with comments
+// and trailing commas, as a person might write them.
+async function jsoncCopyOf(file) {
+  const original = await readFile(file, 'utf8');
+  return '// production configuration\n' + original.replace(/\n\}\s*$/, ',\n}\n')
+    .replace('"triggers": { "crons": ["*/10 * * * *"] }', '"triggers": { /* Builder fallback */ "crons": ["*/10 * * * *",], }');
+}
+
 test('the release tests read the wrangler configuration with the wrapper\'s JSONC reader', async () => {
   const postflight = await import('../scripts/projection-postflight.mjs');
   const source = await readFile(new URL(import.meta.url), 'utf8');
@@ -1439,9 +1447,8 @@ test('the release tests read the wrangler configuration with the wrapper\'s JSON
   const dir = await mkdtemp(path.join(os.tmpdir(), 'wrangler-jsonc-'));
   try {
     const original = await readFile(PRODUCTION_WRANGLER, 'utf8');
-    // The same configuration with a comment and trailing commas.
-    const jsonc = '// production configuration\n' + original.replace(/\n\}\s*$/, ',\n}\n')
-      .replace('"triggers": { "crons": ["*/10 * * * *"] }', '"triggers": { /* Builder fallback */ "crons": ["*/10 * * * *",], }');
+    // The same configuration with comments and trailing commas.
+    const jsonc = await jsoncCopyOf(PRODUCTION_WRANGLER);
     assert.notEqual(jsonc, original);
     assert.throws(() => JSON.parse(jsonc));
     const copy = path.join(dir, 'wrangler.production.jsonc');
@@ -1450,6 +1457,77 @@ test('the release tests read the wrangler configuration with the wrapper\'s JSON
     assert.deepEqual(read, await postflight.readWranglerConfig(PRODUCTION_WRANGLER));
     assert.equal(postflight.cronPeriodMinutes(read), 10);
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Round-5 review: the configuration itself may already carry a top-level
+// trailing comma and comments (Wrangler accepts both). Every release test that
+// reads it, the JSONC copy included, must still pass.
+test('a production configuration with a top-level trailing comma and comments passes the release tests that read it', async () => {
+  const postflight = await import('../scripts/projection-postflight.mjs');
+  const parsed = await postflight.readWranglerConfig(PRODUCTION_WRANGLER);
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'wrangler-trailing-'));
+  try {
+    // Hand-written JSONC: a comment before each key, a trailing comma after
+    // every member and element, the last top-level member included.
+    const jsonc = (value, pad = '') => {
+      if (Array.isArray(value)) {
+        return value.length ? `[\n${value.map((item) => `${pad}  ${jsonc(item, pad + '  ')},`).join('\n')}\n${pad}]` : '[]';
+      }
+      if (value && typeof value === 'object') {
+        const entries = Object.entries(value);
+        return entries.length ? `{\n${entries.map(([key, item]) =>
+          `${pad}  // ${key}\n${pad}  ${JSON.stringify(key)}: ${jsonc(item, pad + '  ')}, /* ${key} */`).join('\n')}\n${pad}}` : '{}';
+      }
+      return JSON.stringify(value);
+    };
+    const configured = path.join(dir, 'wrangler.production.jsonc');
+    const text = `${jsonc(parsed)}\n`;
+    assert.match(text, /, \/\* observability \*\/\n\}\n$/, 'the last top-level member has a trailing comma');
+    await writeFile(configured, text);
+    // Wrangler reads it as the same configuration.
+    const read = await postflight.readWranglerConfig(configured);
+    assert.deepEqual(read, parsed);
+    // The budget and window tests' computation over it.
+    assert.equal(postflight.windowMs(postflight.cronPeriodMinutes(read)), 12 * 60_000);
+    // The JSONC-copy test's fixture built from it is still read as the same configuration.
+    const copy = path.join(dir, 'copy.jsonc');
+    await writeFile(copy, await jsoncCopyOf(configured));
+    assert.deepEqual(await postflight.readWranglerConfig(copy), parsed);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// Round-5 review, low: a failed conclusion write still removes the scratch
+// directory; an invalid rollback record is not announced as rolled back.
+test('the projection postflight cleans up even when the conclusion cannot be written', async () => {
+  const { main: postflightMain } = await import('../scripts/projection-postflight.mjs');
+  let cleaned = 0;
+  await assert.rejects(postflightMain(['--evidence-out', path.join(os.tmpdir(), 'unused-postflight.json')], {
+    periodMinutes: 10, now: () => 0, sleep: noSleep, log: () => {}, runGate: async () => ({ status: 0, stderr: '' }),
+    writeConclusion: () => { throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); },
+    removeScratch: (directory) => { cleaned += 1; fs.rmSync(directory, { recursive: true, force: true }); } }), /ENOSPC/);
+  assert.equal(cleaned, 1);
+});
+
+test('an invalid rollback record is reported as not rolled back', async () => {
+  const { CONTRACT, WORKERS, main } = await import('../scripts/release-worker-versions.mjs');
+  const version = (n) => `${n.repeat(8)}-0000-4000-8000-${n.repeat(12)}`;
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'worker-invalid-title-'));
+  const log = console.log; const error = console.error; const errors = [];
+  console.log = () => {}; console.error = (line) => errors.push(String(line));
+  try {
+    await writeFile(path.join(dir, 'v.json'), JSON.stringify({ contract: CONTRACT, mode: 'release', edge: {},
+      workers: WORKERS.map(({ name }, i) => ({ name, version_id: version(String(i + 1)) })) }));
+    assert.equal(await main(['rollback', '--from', path.join(dir, 'v.json'), '--out', path.join(dir, 'r.json')],
+      { env: {}, wait: noSleep, sleep: noSleep, windowMs: 120_000 }), 1);
+    assert.ok(errors.length > 0);
+    for (const line of errors) assert.doesNotMatch(line, /title=Release rolled back/, line);
+    assert.ok(errors.some((line) => /title=Release not rolled back/.test(line)), errors.join('\n'));
+  } finally {
+    console.log = log; console.error = error;
     await rm(dir, { recursive: true, force: true });
   }
 });
