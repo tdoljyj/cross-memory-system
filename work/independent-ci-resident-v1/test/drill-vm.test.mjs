@@ -25,7 +25,7 @@ const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 // Dot-source the script (definitions only) and print the expression's value as JSON.
 function ps(expr) {
   const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-    `$ProgressPreference='SilentlyContinue'; . ${q(script)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
+    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim());
 }
@@ -36,6 +36,9 @@ function psCode(expr) {
 const opts = { skip: !windows };
 const idleHostStatus = (writtenAt = new Date().toISOString()) =>
   JSON.stringify({ node: { mode: 'STANDBY' }, executor: { state: 'IDLE' }, current: null, writtenAt });
+const activeHostStatus = (hold, { writtenAt = '2026-11-19T02:00:00Z', executor = 'IDLE', current = null } = {}) =>
+  JSON.stringify({ node: { mode: 'ACTIVE' }, executor: { state: executor }, current, writtenAt,
+    intakePause: hold && { until: '2026-11-19T04:00:00Z', holders: [hold] } });
 const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
 const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
 
@@ -200,9 +203,9 @@ test('the answer ISO is built without elevation and carries autounattend.xml und
 
 test('host duty gate fails closed for active, busy, missing and malformed resident status', opts, () => {
   const r = ps(`@(
-    (Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"RUNNING"},"current":null}' 64GB),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":{"pr":1153}}' 64GB),
+    (Test-DrillHostSafety ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} 64GB),
+    (Test-DrillHostSafety ${q(idleHostStatus().replace('"IDLE"', '"RUNNING"'))} 64GB),
+    (Test-DrillHostSafety ${q(idleHostStatus().replace('"current":null', '"current":{"pr":1153}'))} 64GB),
     (Test-DrillHostSafety $null 64GB), (Test-DrillHostSafety '{broken' 64GB),
     (Test-DrillHostSafety '{}' 64GB),
     (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"}}' 64GB),
@@ -214,12 +217,85 @@ test('host duty gate fails closed for active, busy, missing and malformed reside
   assert.equal(r.at(-1).action, 'start');
 });
 
+test('an active host with fresh idle status must have its own hold through the required deadline', opts, () => {
+  const now = '2026-11-19T02:00:00Z';
+  const required = '2026-11-19T03:20:00Z';
+  const hold = { holder: 'drill', since: now, until: required };
+  const calls = [activeHostStatus(null), activeHostStatus(hold),
+    activeHostStatus(hold, { executor: 'PARKED' }), activeHostStatus(hold, { current: { pr: 1170 } }),
+    activeHostStatus(hold, { writtenAt: '2026-11-19T01:54:59Z' })];
+  const r = ps(`$now = [DateTimeOffset]${q(now)}; $required = [DateTimeOffset]${q(required)}; @(
+    ${calls.map(v => `(Test-DrillHostSafety ${q(v)} 64GB -Now $now -HoldUntil $required)`).join(',\n')}
+  )`);
+  assert.deepEqual(r.map(x => x.action), ['refuse', 'start', 'refuse', 'refuse', 'refuse']);
+  assert.deepEqual(r.map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', null, 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_STATUS_STALE']);
+});
+
+test('the active runtime gate aborts for a short hold or a different holder', opts, () => {
+  const now = '2026-11-19T02:00:00Z';
+  const required = '2026-11-19T03:20:00Z';
+  const calls = [
+    { holder: 'drill', until: '2026-11-19T03:19:59Z' },
+    { holder: 'owner', until: required },
+    { holder: 'drill', until: required },
+  ].map(hold => activeHostStatus({ since: now, ...hold }));
+  const r = ps(`$now = [DateTimeOffset]${q(now)}; $required = [DateTimeOffset]${q(required)}; @(
+    ${calls.map(v => `(Test-DrillHostSafety ${q(v)} 64GB -Running -Now $now -HoldUntil $required)`).join(',\n')}
+  )`);
+  assert.deepEqual(r.map(x => x.action), ['abort', 'abort', 'continue']);
+});
+
+test('intake wait timeout releases only the drill hold without starting the VM', opts, () => {
+  const r = ps(`
+    $script:events = @()
+    $script:Drill.IntakeWaitMinutes = 0
+    function Read-DrillHostStatus { ${q(activeHostStatus(null))} }
+    function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
+    function Get-DrillIntakeTool { 'installed-tool' }
+    function Request-DrillIntake { param($Tool, $Verb, $Minutes) $script:events += ('{0}:{1}' -f $Verb, $Minutes) }
+    function Start-VM { $script:events += 'start' }
+    $code = try { Invoke-DrillWithHostHold 70 { Start-VM }; $null } catch { (Get-DrillCode $_).code }
+    @{ code = $code; events = $script:events }
+  `);
+  assert.deepEqual(r, { code: 'DRILL_HOST_CI_BUSY', events: ['pause:80', 'resume:0'] });
+});
+
+test('the active hold covers the whole window and is resumed only after safe cleanup', opts, () => {
+  const r = ps(`
+    $script:events = @()
+    function Read-DrillHostStatus { ${q(activeHostStatus(null, { executor: 'RUNNING' }))} }
+    function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
+    function Get-DrillIntakeTool { 'installed-tool' }
+    function Request-DrillIntake { param($Tool, $Verb, $Minutes) $script:events += ('{0}:{1}' -f $Verb, $Minutes) }
+    function Get-DrillHostSafety($HoldUntil) {
+      $script:events += "wait-for:$($HoldUntil.ToString('HH:mm'))"
+      @{ ok = $true; holdSince = Get-DrillTime; holdUntil = $HoldUntil }
+    }
+    $over = try { Invoke-DrillWithHostHold 71 { throw 'must not enter' }; $null } catch { (Get-DrillCode $_).code }
+    $null = Invoke-DrillWithHostHold 70 { param($window)
+      $script:events += "start:$($window.deadline.ToString('HH:mm'))"
+      $window.safeToResume = $false
+      $script:events += 'stop-and-restore'
+      $window.safeToResume = $true
+    }
+    $null = Invoke-DrillWithHostHold 70 { param($window)
+      $window.safeToResume = $false
+      $script:events += 'restore-unconfirmed'
+    }
+    @{ over = $over; events = $script:events }
+  `);
+  assert.deepEqual(r, { over: 'DRILL_HOST_INTAKE_BUDGET_EXCEEDED', events: [
+    'pause:120', 'wait-for:03:20', 'start:03:10', 'stop-and-restore', 'resume:0',
+    'pause:120', 'wait-for:03:20', 'restore-unconfirmed',
+  ] });
+});
+
 test('running guard aborts on duty, batch, unreadable status or memory pressure after a safe start', opts, () => {
   const r = ps(`$idle = ${q(idleHostStatus())}; @(
     (Test-DrillHostSafety $idle 64GB), (Test-DrillHostSafety $idle 64GB -Running),
-    (Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB -Running),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"RUNNING"},"current":null}' 64GB -Running),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"WAITING"},"current":{"pr":1153}}' 64GB -Running),
+    (Test-DrillHostSafety ($idle.Replace('"STANDBY"', '"ACTIVE"')) 64GB -Running),
+    (Test-DrillHostSafety ($idle.Replace('"IDLE"', '"RUNNING"')) 64GB -Running),
+    (Test-DrillHostSafety ($idle.Replace('"IDLE"', '"WAITING"').Replace('"current":null', '"current":{"pr":1153}')) 64GB -Running),
     (Test-DrillHostSafety $null 64GB -Running), (Test-DrillHostSafety $idle (6GB - 1) -Running -MemoryAssigned 8GB),
     (Test-DrillHostSafety $idle 6GB -Running -MemoryAssigned 8GB))`);
   assert.deepEqual(r.map(x => x.action), ['start', 'continue', 'abort', 'abort', 'abort', 'abort', 'abort', 'continue']);
@@ -254,7 +330,7 @@ test('the duty gate refuses stale, missing and invalid status timestamps', opts,
 
 test('host preflight refuses duty before any Hyper-V or memory query', opts, () => {
   assert.equal(psCode(`
-    function Get-DrillHostSafety { Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB }
+    function Get-DrillHostSafety { Test-DrillHostSafety ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} 64GB }
     function Get-CimInstance { throw 'MUST_NOT_QUERY_HOST' }
     function Get-VMSwitch { throw 'MUST_NOT_QUERY_HYPERV' }
     Assert-DrillHost`), 'DRILL_HOST_IS_ON_DUTY');
@@ -347,7 +423,7 @@ test('checkpoint caller discards a result after a guard failure and restores the
   const r = ps(`
     $script:restores = 0
     function Get-DrillHostSafety { @{ ok = $true } }
-    function Get-DrillVmInfo { @{ notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
     function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) }
     function Assert-DrillHost { }
     function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint)
@@ -356,13 +432,15 @@ test('checkpoint caller discards a result after a guard failure and restores the
     }
     function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
     function Start-DrillGuardedVm { }
+    function Start-DrillBootWatchdog { ${q(path.join(tmp, 'checkpoint-test'))} }
     function Get-DrillCredential { }
     function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
     function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) if ($RestoreCheckpoint) { $script:restores++ }; return $true }
     $outcome = Invoke-DrillOnCheckpoint {
       $script:HostGuard.state.failure = @{ code = 'DRILL_HOST_IS_ON_DUTY'; detail = 'test' }
       'discard this result'
-    } 'unused'
+    } 'unused' @{ safeToResume = $true; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10); holdUntil = [DateTimeOffset]::MinValue }
     @{ outcome = $outcome; restores = $script:restores }`);
   assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true });
   assert.equal(r.restores, 1);
@@ -370,7 +448,7 @@ test('checkpoint caller discards a result after a guard failure and restores the
 
 test('an EndInvoke exception leaves a failed receipt after the owned VM is stopped and restored', opts, () => {
   const r = ps(`
-    $script:events = @(); $script:vm = @{ State = 'Off' }
+    $script:events = @(); $script:vm = @{ State = 'Off'; Id = [guid]::Empty }
     $script:Drill.Runs = ${q(tmp)}
     $Version = '1.2.3'; $From = 'fixture'; $Kit = 'fixture'
     function Read-DrillPrereq { @{ sha256 = 'prereq' } }
@@ -379,6 +457,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
     function Get-DrillReleaseFiles { }
     function Assert-DrillHost { @{ freeGB = 16 } }
     function Invoke-DrillBaseline { @{ action = 'ready' } }
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
     function Get-DrillHostSafety { @{ ok = $true } }
     function Get-DrillVmInfo { @{ vm = $script:vm; notes = 'clued.drill-vm/1'; state = $script:vm.State; checkpoints = @($script:Drill.Checkpoint) } }
     function Get-VM { param($Name) $script:vm }
@@ -392,8 +471,10 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
       return $script:HostGuard
     }
     function Start-DrillGuardedVm { $script:vm.State = 'Running' }
+    function Start-DrillBootWatchdog { ${q(path.join(tmp, 'endinvoke-test'))} }
     function Get-DrillCredential { }
     function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
     function Invoke-DrillRun { 'discard this result' }
     $outcome = try { Invoke-DrillMain } catch { Get-DrillCode $_ }
     $receipt = if (Get-Prop $outcome 'receipt') { Read-DrillJson $outcome.receipt }
@@ -420,6 +501,73 @@ test('the only Start-VM command is inside Start-DrillGuardedVm', opts, () => {
       if ($parent) { $parent.Name } else { '<script>' }
     }) }`);
   assert.deepEqual(r.owners, ['Start-DrillGuardedVm']);
+});
+
+test('guest shutdown timer uses the same deadline after a reboot without touching live tasks', opts, () => {
+  const r = ps(`
+    function New-ScheduledTaskAction($Execute, $Argument) {
+      $encoded = ($Argument -split ' ')[-1]
+      $script:shutdown = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+      return 'action'
+    }
+    function New-ScheduledTaskTrigger([switch]$Once, [datetime]$At, [switch]$AtStartup) {
+      if ($Once) { return 'once' }; if ($AtStartup) { return 'startup' }
+    }
+    function New-ScheduledTaskSettingsSet { return 'settings' }
+    function Register-ScheduledTask($TaskName, $Action, $Trigger, $Settings, $User, $ErrorAction) {
+      $script:task = @{ name = $TaskName; user = $User; triggers = $Trigger }
+    }
+    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(30).ToString('o')
+    $result = & $script:GuestShutdownTimer $deadline $env:COMPUTERNAME
+    @{ armed = $result; task = $script:task; deadline = $deadline; shutdown = $script:shutdown }
+  `);
+  assert.equal(r.armed, true);
+  assert.deepEqual(r.task, { name: 'CluedDrillGuestShutdown', user: 'SYSTEM', triggers: ['once', 'startup'] });
+  assert.ok(r.shutdown.includes(r.deadline));
+  assert.match(r.shutdown, /shutdown\.exe" \/s \/f \/t 0/);
+});
+
+test('M5 collects the six public observations and consumes an optional host checker', opts, () => {
+  const root = path.join(tmp, 'm5-guest');
+  const resident = path.join(root, 'resident');
+  const runDir = path.join(tmp, 'm5-run');
+  const put = (file, data) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data));
+  };
+  const profile = { ownerSid: 'S-1-5-21-1-2-3-4', controllerSid: 'S-1-5-21-1-2-3-5' };
+  put(path.join(resident, 'record', 'acceptance.json'), { node: { ...profile, privateField: 'not exported' } });
+  put(path.join(resident, 'broker', 'renew-key.json'), { source: 'system' });
+  put(path.join(resident, 'state', 'renew-key-resident.json'), { source: 'resident' });
+  put(path.join(root, 'state', 'v2', 'receipts', 'renew-key-controller.json'), { source: 'controller' });
+  put(path.join(resident, 'mailbox', 'responses', 'renew-key.json'), { source: 'companion' });
+  put(path.join(resident, 'broker', 'renew-ci.json'), { at: '2026-11-19T01:00:00Z', code: 'RENEW_GATEWAY_UNAVAILABLE' });
+  const probe = { at: '2026-11-19T02:00:00Z', code: 'RENEW_IDENTITY_REFUSED' };
+  put(path.join(resident, 'broker', 'renew-upgrade.json'), probe);
+  fs.mkdirSync(runDir);
+
+  const simulatedHost = path.join(tmp, 'm5-host');
+  fs.mkdirSync(path.join(simulatedHost, 'test'), { recursive: true });
+  const runM5 = () => ps(`
+    $script:Drill.GuestRoot = ${q(resident)}
+    $script:DrillScriptPath = ${q(path.join(simulatedHost, 'drill', 'drill-vm.ps1'))}
+    function Invoke-DrillGuest { param($cred, $block, $ArgumentList, $TimeoutMinutes, $Step) & $block $ArgumentList }
+    $runDir = ${q(runDir)}
+    $m5 = if (Test-Path (Join-Path $runDir 'm5')) { @{ directory = 'm5'; missing = @(); collectionCode = $null } } else { Copy-DrillM5 $runDir $null }
+    Get-DrillM5Verdict $runDir $m5
+  `);
+  const absent = runM5();
+  assert.deepEqual(absent, { directory: 'm5', missing: [], collectionCode: null,
+    result: 'NOT_EVALUATED', detail: 'M5 未评估（renewal-drill 未随包）' });
+  assert.deepEqual(fs.readdirSync(path.join(runDir, 'm5')).sort(),
+    ['companion.json', 'controller.json', 'probe.json', 'profile.json', 'resident.json', 'system.json']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'profile.json'), 'utf8')), profile);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'probe.json'), 'utf8')), probe);
+  fs.writeFileSync(path.join(simulatedHost, 'test', 'renewal-drill.mjs'),
+    'import fs from "node:fs"; if (fs.readdirSync(process.argv[2]).length !== 6) process.exit(1); console.log(\'{"result":"PASS"}\');');
+  const present = runM5();
+  assert.equal(present.result, 'PASS');
+  assert.deepEqual(present.verdict, { result: 'PASS' });
 });
 
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
