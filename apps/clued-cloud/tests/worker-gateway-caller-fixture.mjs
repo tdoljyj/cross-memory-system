@@ -31,6 +31,7 @@ export const SCAN_START_GATEWAY_SIGNATURES = ['clued_ci_scan_start_hosted_v1(jso
 // two serving-Worker doors, again for the Worker gateway only.
 export const CI_NODE_GATEWAY_SIGNATURES = ['clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)', 'clued_ci_node_trust_v1(text,uuid)'].sort();
 export const WORKER_DUE_SIGNATURE = 'clued_worker_due_v1(text)';
+export const PR_MERGED_EVENT_SIGNATURE = 'clued_work_pr_merged_event_v1(jsonb)';
 
 export async function findGatewayCloseoutMigration(cloudRoot=cloud) {
   const names=(await fs.readdir(path.join(cloudRoot,'supabase/migrations'))).filter(n=>n.endsWith('_worker_gateway_closeout_v1.sql'));
@@ -63,8 +64,8 @@ export async function snapshotCallerCatalog(db) {
 // own manifest, so replaying it after the full chain fails on the privileges
 // that explicit later successors add on purpose: the two scan-start serving
 // doors for the Worker gateway (20261102151506), the two CI node gateway
-// doors (20261106090000), the Worker due query (20261118090000), plus the anon
-// connection-self reader (20261118100000). These are exactly those
+// doors (20261106090000), the Worker due query (20261118090000), the anon
+// connection-self reader (20261118100000) and the PR merge event (20261118213000). These are exactly those
 // privileges; a later successor that adds one names it here.
 export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ['public.clued_ci_scan_start_hosted_v1(jsonb)', GATEWAY_ROLE],
@@ -72,6 +73,7 @@ export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ['public.clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)', GATEWAY_ROLE],
   ['public.clued_ci_node_trust_v1(text,uuid)', GATEWAY_ROLE],
   ['public.'+WORKER_DUE_SIGNATURE, GATEWAY_ROLE],
+  ['public.' + PR_MERGED_EVENT_SIGNATURE, GATEWAY_ROLE],
   ['public.' + CONNECTION_SELF_SIGNATURE, 'anon'],
 ];
 // Replays the sealed closeout SQL unchanged. Where a successor is installed,
@@ -100,8 +102,10 @@ export async function assertGatewayCloseoutBoundary(db) {
   const successor = (await db.query("select to_regclass('clued_private.ci_scan_start_keys_v1') is not null present")).rows[0].present;
   const nodeGateway = (await db.query("select to_regclass('clued_private.ci_node_commands_v1') is not null present")).rows[0].present;
   const dueInstalled = (await db.query('select to_regprocedure($1) is not null present', ['public.'+WORKER_DUE_SIGNATURE])).rows[0].present;
+  const mergeEventInstalled = (await db.query('select to_regprocedure($1) is not null present', ['public.' + PR_MERGED_EVENT_SIGNATURE])).rows[0].present;
   const expected = [...WORKER_SIGNATURES, ...(successor ? SCAN_START_GATEWAY_SIGNATURES : []),
-    ...(nodeGateway ? CI_NODE_GATEWAY_SIGNATURES : []), ...(dueInstalled ? [WORKER_DUE_SIGNATURE] : [])].sort();
+    ...(nodeGateway ? CI_NODE_GATEWAY_SIGNATURES : []), ...(dueInstalled ? [WORKER_DUE_SIGNATURE] : []),
+    ...(mergeEventInstalled ? [PR_MERGED_EVENT_SIGNATURE] : [])].sort();
   assert.deepEqual(await signatures(GATEWAY_ROLE,false),expected,
     'Gateway grants match the historical closeout and the installed successor RPCs');
   const self = (await db.query('select to_regprocedure($1) is not null present', ['public.' + CONNECTION_SELF_SIGNATURE])).rows[0].present;

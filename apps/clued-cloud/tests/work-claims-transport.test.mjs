@@ -412,7 +412,8 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
   };
   const { calls, restore } = mockFetch(({ rpc, body }) =>
     Response.json({ status: 'committed', echo: rpc ?? body.p_tool, lease_key: `clued_lk_${'b'.repeat(64)}`,
-      claim: { claim_id: '22222222-2222-4222-8222-222222222222', holder_binding_id: 'b-1' } }));
+      claim: { claim_id: '22222222-2222-4222-8222-222222222222', holder_binding_id: 'b-1',
+        released_by: 'pr_end', released_evidence_ref: 'owner/repo#12@' + 'f'.repeat(40), released_at: '2026-11-18T01:00:00Z' } }));
   try {
     for (const name of WORK_TOOLS) {
       for (const token of [bindingToken, oauthToken]) {
@@ -423,6 +424,9 @@ test('Binding and OAuth callers reach the same step-1 RPCs with the arguments pa
         assert.equal(result.structuredContent.status, 'committed');
         // holder_binding_id is a different key from binding_id and survives sanitization.
         assert.equal(result.structuredContent.claim.holder_binding_id, 'b-1');
+        assert.equal(result.structuredContent.claim.released_by, 'pr_end');
+        assert.equal(result.structuredContent.claim.released_evidence_ref, 'owner/repo#12@' + 'f'.repeat(40));
+        assert.equal(result.structuredContent.claim.released_at, '2026-11-18T01:00:00Z');
         // The lease key reaches the caller that took the claim.
         assert.equal(result.structuredContent.lease_key, `clued_lk_${'b'.repeat(64)}`);
         const call = calls.at(-1);
@@ -476,6 +480,7 @@ test('a conflict or budget rejection is a structured result, not a transport err
     claim_id: '33333333-3333-4333-8333-333333333333', task_id: '11111111-1111-4111-8111-111111111111',
     holder_binding_id: 'b-2', holder_session_ref: 'session-b', status: 'ACTIVE', fence: 1,
     expires_at: '2026-10-01T08:00:00+00:00',
+    released_by: null, released_evidence_ref: null, released_at: null,
     overlap: { same_task: false, paths: ['apps/clued-cloud/package-lock.json'], trigger_refs: ['ghsa:GHSA-vcvr-r3jv-pc5j'] },
   }] };
   const { restore } = mockFetch(() => Response.json(rejection));
