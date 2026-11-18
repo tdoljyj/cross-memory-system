@@ -1,11 +1,11 @@
 {
   "contract": "clued.existing-release-v3-host-source-checks/1",
-  "revision": 7,
-  "packageManifestSha256": "c9b1a43105bdfcf8631e1abeec0c3552a56797bb259f3bccd767899953bacc8c",
+  "revision": 8,
+  "packageManifestSha256": "39705672a485658219ab6b9d7d96f2e4309d1e854e91cbc84d2a24bd7ee4f9d3",
   "checks": {
     "offlineChecksScript": "offline-checks-v7.mjs",
-    "offlineChecksScriptSha256": "d081d21835db9ff3de6a3e4df0d0417dd98e39038d82bad15699719cf9447169",
-    "result": "NOT_RUN: run on the Linux Host as the publisher after installing v7, before the first release",
+    "offlineChecksScriptSha256": "50dd2a9a714387b234138c2f3ab45cd95929b80181c52e6ec95972bb754cbd57",
+    "result": "NOT_RUN: v8 安装后由获授权的发布身份在真实 Host 验证",
     "rootInstallExecuted": false,
     "credentialsRead": false,
     "productionExecuted": false

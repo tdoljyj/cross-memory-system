@@ -5,7 +5,7 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "product": "1.6",
   "skill.clued": "1.0.25",
   "agent-contract": "60",
-  "mcp.server": "0.9.18",
+  "mcp.server": "0.9.19",
   "hook.runner-job-started": "1.0.6",
   "hook.runner-loader": "1.0.0",
   "hook.capture-guard": "1.0.4",
@@ -38,6 +38,6 @@ export const CLUED_COMPONENT_VERSIONS: Readonly<Record<string, string>> = {
   "script.standard-runner-actor-source": "1.0.1",
   "ci.temporary-storage-lifecycle": "1.0.7",
   "script.archive-retention": "1.0.11",
-  "script.merge-reconciliation": "1.0.38"
+  "script.merge-reconciliation": "1.0.39"
 };
-export const MCP_SERVER_VERSION = "0.9.18";
+export const MCP_SERVER_VERSION = "0.9.19";

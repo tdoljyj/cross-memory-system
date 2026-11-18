@@ -321,9 +321,9 @@ test('production capture workflow is owner-only on main and cannot qualify or mu
   assert.doesNotMatch(capture, /storage_client_capability_admin_v2|register_snapshot|qualify|supabase_apply/);
   for (const name of ['Install embedded PostgreSQL ICU compatibility runtime',
     'Verify projection and MTPE behavior', 'Build exact Worker source',
-    'Block release unless database and Worker heartbeat are ready',
+    'Verify database prerequisites and record projection state',
     'Check Cloudflare deployment credential', 'Deploy Clued production Worker',
-    'Record deployment completion time', 'Verify exact live commit and currentness transport',
+    'Verify exact live commit and currentness transport',
     'Verify projection currentness after deployment']) {
     const step = workflow.slice(workflow.indexOf(`- name: ${name}`),
       workflow.indexOf('- name:', workflow.indexOf(`- name: ${name}`) + 1));

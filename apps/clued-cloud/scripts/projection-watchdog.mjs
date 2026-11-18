@@ -10,26 +10,10 @@ export function evaluateProjectionWatchdog(snapshot, options = {}) {
     !Number.isFinite(ISO(snapshot.observed_at))) throw new Error('invalid_watchdog_snapshot');
   const now = ISO(snapshot.observed_at);
   const staleMs = options.staleMs ?? 5 * 60_000;
-  const heartbeatMs = options.heartbeatMs ?? 5 * 60_000;
-  const graceUntil = options.graceUntil ? ISO(options.graceUntil) : -Infinity;
-  if (![staleMs, heartbeatMs].every((value) => Number.isSafeInteger(value) && value > 0) ||
-    Number.isNaN(graceUntil)) throw new Error('invalid_watchdog_threshold');
+  if (!Number.isSafeInteger(staleMs) || staleMs <= 0) throw new Error('invalid_watchdog_threshold');
   const incidents = [];
   const add = (key, code, detail) => incidents.push({ key, code, detail });
   const heartbeat = snapshot.heartbeat;
-  if (now > graceUntil) {
-    if (!heartbeat || !Number.isFinite(ISO(heartbeat.last_finished_at))) {
-      add('worker:heartbeat_missing', 'HEARTBEAT_MISSING', 'No completed refresh tick.');
-    } else if (elapsed(now, heartbeat.last_finished_at) > heartbeatMs) {
-      add('worker:heartbeat_stale', 'HEARTBEAT_STALE', 'Refresh tick has not completed within threshold.');
-    }
-    if (heartbeat && Number.isFinite(ISO(heartbeat.last_started_at)) &&
-      elapsed(now, heartbeat.last_started_at) > heartbeatMs &&
-      (!Number.isFinite(ISO(heartbeat.last_finished_at)) ||
-        ISO(heartbeat.last_finished_at) < ISO(heartbeat.last_started_at))) {
-      add('worker:tick_incomplete', 'TICK_INCOMPLETE', 'Most recent refresh tick did not finish.');
-    }
-  }
   if (heartbeat && ['transport_unavailable', 'builder_protocol_error', 'exception'].includes(heartbeat.last_result)) {
     add('worker:degraded', 'WORKER_DEGRADED', `Last refresh result: ${heartbeat.last_result}.`);
   }
@@ -186,9 +170,7 @@ export async function runProjectionWatchdog(env = process.env) {
       await client.connect();
       const result = await client.query('select clued_watchdog.projection_watchdog_snapshot() as snapshot');
       const freshSnapshot = result.rows[0]?.snapshot;
-      incidents = evaluateProjectionWatchdog(freshSnapshot, {
-        graceUntil: env.CLUED_WATCHDOG_GRACE_UNTIL,
-      });
+      incidents = evaluateProjectionWatchdog(freshSnapshot);
       const currentTenants = [...new Set(freshSnapshot.projections.map((row) => row.tenant_key))];
       incidents.push(...missingTenantIncidents(previousTenants, currentTenants));
       observedTenants = [...new Set([...previousTenants, ...currentTenants])].sort();
