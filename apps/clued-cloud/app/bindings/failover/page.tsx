@@ -235,6 +235,8 @@ export default function ResidentFailoverPage() {
     if (alert.receipt_kind === "CI_ADMISSION_AUTO_HANDOVER") return "已自动把 CI 准入从 " + nameOf(alert.from_binding_id) + " 移交给 "
       + nameOf(alert.to_binding_id) + "（" + (alert.trigger === "service_not_running" ? "服务持续没在运行" : "失联")
       + "），" + clock(alert.effective_at) + " 起生效。";
+    if (alert.receipt_kind === "CI_CONNECTION_EXPIRING") return (({ ci: "节点 CI", heartbeat: "心跳", upgrade: "升级" } as Record<string, string>)[String(alert.connection_kind)] ?? "连接")
+      + "（" + nameOf(alert.binding_id) + "）将在 " + String(alert.threshold_days) + " 天内到期，有效期至 " + clock(alert.expires_at) + "，请核对并更换连接。";
     if (alert.receipt_kind === "CI_ADMISSION_FAILOVER_NO_TARGET") return "当前持有者 " + nameOf(alert.holder)
       + " 失联，但没有可以接班的节点，没有交接，请你处理。";
     return (ALERTS[String(alert.reason)] ?? "提醒（" + String(alert.reason ?? "") + "）") + "。";
