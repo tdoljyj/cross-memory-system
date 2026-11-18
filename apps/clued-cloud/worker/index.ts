@@ -3,22 +3,14 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import {
   handleContinuityRequest,
-  runProjectionRefreshScheduled,
-  runStorageRefreshScheduled,
-  runStorageRecoveryScheduled,
-  runStorageUnattemptedReleaseScheduled,
-  runStorageStagingScheduled,
-  runStorageOnboardScheduled,
   runStorageJobQueue,
-  runStorageCloudJob,
   type ContinuityEnv,
   type StorageJobQueueMessage,
 } from "./continuity";
 
 import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } from "./delegated-oauth";
 import { createPdfExtractorCheckGate, PDF_EXTRACTOR_CHECK_PATH } from "./storage-read-pdf-client";
-import { runStorageQueuedSweepScheduled } from "./storage-queued-dispatch";
-import { runStorageAccessDigestBackfillScheduled } from "./storage-access-digest-backfill";
+import { runScheduledTasks } from "./scheduled-registry";
 import { routeStorageOrigin, routeWebOrigin } from "./web-origin-routing.mjs";
 import { selectOAuthOrigin, OAuthOriginConfigurationError } from "./oauth-origin.mjs";
 
@@ -106,49 +98,8 @@ const worker = {
     }
     return legacyWorker.fetch(request, env, ctx);
   },
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Keep the minute cron, but spread the seven storage tasks over a ten-minute
-    // cycle to reduce database I/O. Use the scheduled time even on late delivery.
-    const minute = Math.floor(controller.scheduledTime / 60_000);
-    const storageSlot = minute % 10;
-    // The projection watchdog has five-minute heartbeat/staleness thresholds
-    // (scripts/projection-watchdog.mjs); leave room for delivery and execution.
-    if (minute % 2 === 0) ctx.waitUntil(runProjectionRefreshScheduled(env));
-    if (storageSlot === 0) ctx.waitUntil(runStorageRefreshScheduled(env).then(result => {
-      if (result.status === "unavailable" || result.status === "attention_required")
-        console.warn(JSON.stringify({ event: "storage_refresh_attention_required", status: result.status }));
-    }));
-    if (storageSlot === 1) ctx.waitUntil(runStorageRecoveryScheduled(env).then(result => {
-      if (result.status === "unavailable" || result.status === "attention_required")
-        console.warn(JSON.stringify({ event: "storage_recovery_attention_required", status: result.status }));
-    }));
-    if (storageSlot === 2) ctx.waitUntil(runStorageUnattemptedReleaseScheduled(env).then(result => {
-      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_unattempted_release_unavailable" }));
-      else if (result.status === "ok" && result.released > 0)
-        console.warn(JSON.stringify({ event: "storage_unattempted_released", released: result.released }));
-    }));
-    // BUG-20261008-001: a queued job whose one dispatch was lost or refused is
-    // dispatched again with backoff, and settled after 2 hours instead of staying queued.
-    if (storageSlot === 3) ctx.waitUntil(runStorageQueuedSweepScheduled(env, { runJob: (_env, reference) => runStorageCloudJob(env, reference) }).then(result => {
-      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_queued_sweep_unavailable" }));
-      else if (result.status === "ok" && (result.settled > 0 || result.dispatched > 0 || result.root_busy > 0))
-        console.warn(JSON.stringify({ event: "storage_queued_sweep", settled: result.settled, dispatched: result.dispatched, root_busy: result.root_busy }));
-    }));
-    // Storage step 2 (Task e2eb07d1): directories with neither digest get their
-    // access digest when Drive still reports their registered version.
-    if (storageSlot === 4) ctx.waitUntil(runStorageAccessDigestBackfillScheduled(env).then(result => {
-      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_access_digest_backfill_unavailable" }));
-      else if (result.status === "ok" && (result.recorded > 0 || result.missing > 0 || result.skipped > 0))
-        console.warn(JSON.stringify({ event: "storage_access_digest_backfill", recorded: result.recorded,
-          missing: result.missing, skipped: result.skipped }));
-    }));
-    if (storageSlot === 5) ctx.waitUntil(runStorageStagingScheduled(env).then(result => {
-      if (result.status === "unavailable") console.warn(JSON.stringify({ event: "storage_staging_sweep_unavailable" }));
-    }));
-    if (storageSlot === 6) ctx.waitUntil(runStorageOnboardScheduled(env).then(result => {
-      if (result.status === "unavailable" && env.CLUED_STORAGE_ONBOARD_V1 === "true")
-        console.warn(JSON.stringify({ event: "storage_onboard_sweep_unavailable" }));
-    }));
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    return runScheduledTasks(env, ctx);
   },
   async queue(batch: { readonly messages: readonly StorageJobQueueMessage[] }, env: Env) {
     await runStorageJobQueue(batch, env);
