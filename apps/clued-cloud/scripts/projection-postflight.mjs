@@ -78,13 +78,15 @@ function option(argv, name) {
 }
 
 // Wrangler's own reader (JSONC: comments, trailing commas), as `wrangler deploy` reads it.
-async function readWranglerConfig(file) {
+// The release tests read the production configuration through it too.
+export async function readWranglerConfig(file) {
   const { experimental_readRawConfig: readRawConfig } = await import('wrangler');
   return readRawConfig({ config: file }).rawConfig;
 }
 
 export async function main(argv = process.argv.slice(2), { periodMinutes, runGate, now, sleep,
   configPath = WRANGLER_PRODUCTION, readConfig = readWranglerConfig,
+  removeScratch = (directory) => rmSync(directory, { recursive: true, force: true }),
   log = (line) => process.stderr.write(`${line}\n`) } = {}) {
   const out = option(argv, '--evidence-out');
   if (!out) {
@@ -105,7 +107,7 @@ export async function main(argv = process.argv.slice(2), { periodMinutes, runGat
       }
       period = cronPeriodMinutes(config);
     }
-    if (!runGate) scratch = mkdtempSync(path.join(os.tmpdir(), 'projection-postflight-'));
+    scratch = mkdtempSync(path.join(os.tmpdir(), 'projection-postflight-'));
     const gate = runGate ?? (async (attempt) => {
       const evidence = path.join(scratch, `attempt-${attempt}.json`);
       const result = spawnGate(evidence);
@@ -117,12 +119,19 @@ export async function main(argv = process.argv.slice(2), { periodMinutes, runGat
   } catch (error) {
     conclusion = { status: 'failed', reason: error?.message === 'cron_schedule_unsupported' || error?.conclusion
       ? error.message : `postflight_error: ${error?.message ?? error}`, attempts: conclusion?.attempts ?? [] };
-  } finally {
-    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
+  // The conclusion first; the scratch directory after. A failed clean-up
+  // (EBUSY, EACCES) only adds a warning and changes nothing written.
   const record = { contract: 'clued.production-projection-postflight.v1', ...conclusion, finished_at: new Date().toISOString() };
   writeFileSync(out, `${JSON.stringify(record, null, 2)}\n`);
   log(`projection postflight ${record.status}${record.reason ? `: ${record.reason}` : ''}`);
+  if (scratch) {
+    try {
+      removeScratch(scratch);
+    } catch (error) {
+      log(`::warning::projection postflight could not remove ${scratch} (${error?.code ?? 'error'}): ${error?.message ?? error}`);
+    }
+  }
   return record.status === 'passed' ? 0 : 1;
 }
 

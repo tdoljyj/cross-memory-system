@@ -205,7 +205,7 @@ export async function rollbackVersions({ recorded, wrangler = npxWrangler, wait 
       !recorded.edge || typeof recorded.edge !== 'object' ||
       // "restored" compares both public edges; a record without both cannot say it.
       EDGE_NAMES.some((name) => !recorded.edge[name] || typeof recorded.edge[name] !== 'object')) {
-    throw new Error('recorded Worker versions are not a valid record of this release');
+    throw Object.assign(new Error('recorded Worker versions are not a valid record of this release'), { invalidRecord: true });
   }
   const message = `Automatic rollback: release ${env.GITHUB_SHA ?? '?'} failed (run ${env.GITHUB_RUN_ID ?? '?'})`;
   const base = { contract: 'clued.production-worker-rollback.v1', source_commit: env.GITHUB_SHA ?? null };
@@ -309,8 +309,29 @@ export async function main(argv = process.argv.slice(2), { wrangler, wait, env =
   }
   const from = option(argv, '--from');
   if (command === 'rollback' && from && out) {
-    const result = await rollbackVersions({ recorded: JSON.parse(fs.readFileSync(from, 'utf8')), wrangler, wait, env, readEdges, windowMs, sleep,
-      onProgress: (partial) => writeJson(out, partial, fileSystem) });
+    let result;
+    try {
+      let recorded;
+      try {
+        recorded = JSON.parse(fs.readFileSync(from, 'utf8'));
+      } catch (error) {
+        throw Object.assign(new Error(`recorded Worker versions are not a valid record of this release: ${error?.message ?? error}`),
+          { invalidRecord: true });
+      }
+      result = await rollbackVersions({ recorded, wrangler, wait, env, readEdges, windowMs, sleep,
+        onProgress: (partial) => writeJson(out, partial, fileSystem) });
+    } catch (error) {
+      if (!error?.invalidRecord) throw error;
+      // Nothing was rolled back, and nothing can be shown restored: say so on disk.
+      const refused = { contract: 'clued.production-worker-rollback.v1', source_commit: env.GITHUB_SHA ?? null, ok: false,
+        status: 'not_restored', reason: error.message, finished_at: new Date().toISOString(), workers: [], mismatches: [error.message] };
+      writeJson(out, refused, fileSystem);
+      const line = `## Automatic Worker rollback\n\n**Not restored: ${error.message}. Nothing was rolled back; check production before releasing again.**\n`;
+      console.log(line);
+      if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, line);
+      console.error(`::error title=Release rolled back::not restored: ${error.message}`);
+      return 1;
+    }
     writeJson(out, result, fileSystem);
     const summary = renderRollbackSummary(result);
     console.log(summary);
