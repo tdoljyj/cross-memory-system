@@ -4436,24 +4436,25 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 ### 56.5 第 4 项：准入超时后自动补跑（Owner 选 C：由伴随进程点；Decision `207c0cd0` v2）
 
 - **现状。**
-  - `clued-required-tests.yml` 的 `admission-gate` 最多等 600 s（`INDEPENDENT_GATE_WAIT_SECONDS`），等常驻第 1 段发出 `kooyumi-work-admission`。
+  - 必需测试工作流的 `admission-gate` 最多等 600 s（`INDEPENDENT_GATE_WAIT_SECONDS`），等常驻第 1 段发出 `kooyumi-work-admission`。
   - 常驻忙时第 1 段来晚了，gate 就以 `ADMISSION_PENDING` 结束，重型 job 跳过，必需检查缺失。
-  - #993 已经允许“Re-run all jobs”在同一 head 上补跑一次（`independentRepairRerun`）。缺的是谁来点：今天要 Owner 手动点。
+  - #993 允许对这种运行整轮补跑（`independentRepairRerun`）。缺陷 `6be83331` 修复前，伴随进程只会补跑 Linux 工作流，Windows 仍要人工点。
 - **做法**（`src/admission-rerun.mjs`，伴随进程里自己的 lane、自己的 Runner、自己的记忆文件 `companion-admission-rerun.json`）：
   - 伴随进程用写 PR 状态的 Owner 会话 gh 登录请求“Re-run all jobs”：`gh api --method POST repos/<repo>/actions/runs/<id>/rerun`。不新增 workflow、令牌或常驻 App 权限。
   - 只在本节点 ACTIVE、没有 HALT、状态文件是最近 5 分钟（`STATUS_STALE_MS`）内写的时候（更旧的状态证明不了角色：执行器可能已停、另一节点已接手；面板触发和 PR 状态也这样读），只看本节点跑过或排过的 head（状态里的 current、排队行、最近结果），且这个 head 是轮询器看到的开着的 PR。
   - 每分钟一步；同一个 head 至多每 2 分钟看一次，从第一次看到起看 12 小时；每步至多看 5 个 head。
+  - 每次观察从 `rules/branches/main` 读取有效规则中的必需检查，读取失败、无规则或规则形状错误时记为读错误并暂停该 head 的请求。通过 App 15368 在该 SHA 发出的同名 check run 确认检查已出现。必需 Actions 检查全部出现且没有待处理的补跑时才记 head 的 `final`。单个工作流的终止只影响该工作流。检查已出现不代表通过，环境类失败仍按第 4 条判断。
   - 一个 head 只要还是候选，它的记录就一直留着（不论多久），所以 12 小时的窗口不会重新开始，“永久放弃”也不会忘。记录里还记着它最后一次是候选的时间（至多每小时更新一次）。不是候选时，记录只在两种情况下去掉：完整的一步（状态新、本节点 ACTIVE、没有 HALT、轮询器已经看到开着的 PR）里它不在候选之列；或者它最后一次是候选已过 24 小时。伴随进程刚启动（轮询器还没跑过）、节点暂时 STANDBY 或 UNCERTAIN、HALT、状态过旧，都不算完整的一步。所以伴随进程刚启动、节点暂时 STANDBY 或 UNCERTAIN、HALT 时，12 小时的窗口和“永久放弃”的结论都不会被重置。
 - **点之前必须全部满足**（判断从未合入的 76481044 搬来，`decide`）：
   1. 恰好一个开着的、目标为默认分支、来自本仓库的 PR 的 head 正是它，并且 App 5368905 在这个 head 上最新的 `kooyumi-work-admission` 是 completed/success、绑定这个 PR（第 1 段已发出准入；同 `independentAdmissionCheck`）。
-  2. 这个 head 的 `clued-required-tests` pull_request 运行全部 completed，没有排队或在跑的尝试。
-  3. 这个 head 的其他运行的重型作业均已跳过。最新 PR 运行的历史由下一条判断。
+  2. 按 SHA 分页列出全部 Actions 运行，按 GitHub 工作流 ID 分组。对绑定该 PR 且恰有一个 `admission-gate` 和至少一个重型作业的运行，按组核对是否还有排队或在跑的尝试。不同工作流分别判断。列车暂存 SHA 同样按工作流检查，要求该组有唯一一条暂存分支的 push 运行，发请求前再核对暂存 ref。
+  3. 同一工作流在这个 head 的其他运行的重型作业均已跳过。该工作流最新 PR 运行的历史由下一条判断。
   4. 按 Fable D4 §1.2，`repairAllowed` 用 GitHub 历史预判准入门。门只在 runner 准备阶段失败，或重型作业全部跳过且门留下已知的准入等待、重跑拒绝或 GitHub 暂时故障证据时，该尝试不占次数。真跑过的尝试要求门通过且每个未通过的重型作业都有环境类证据。第一次修复可以直接请求，第二次要等上一轮真跑的尝试结束后，每个待修作业在同一工作流的其他提交上成功，三轮真跑后停止。超时要求作业为 `cancelled`、检查注解明确记录达到 GitHub 时限、完整步骤没有 failure、日志可读且没有测试失败。
      - 对超时作业另看同一工作流最近三份其他提交的同名作业结果。两份或更多确认为超时时跳过本步，每个作业和目标尝试号只通知一次。发现后续成功时恢复，继续由门决定是否放行。
   5. 点之前再读一次：PR 仍开着、仍是这个 head，运行仍是 completed、仍是同一个尝试。
   - 从不点“Re-run failed jobs”或单个 job。新尝试里的 gate 会再判一次，这一侧从来不是放行重型 job 的依据。
 - **按运行和目标尝试号去重。**
-  - 重跑回执以运行 ID 和下一个尝试号为键（`clued.independent-ci.admission-rerun/1`）。记录 PR、head、目标尝试号、请求次数、结果、时间和环境类作业及原因。先持久化 `intent`，再发送请求，最后写入结果。旧的按 head 保存的回执按其中的运行 ID 和尝试号归位。补发工作流的回执继续按 head 保存。
+  - 重跑回执以运行 ID 和下一个尝试号为键（`clued.independent-ci.admission-rerun/1`）。记录 PR、head、目标尝试号、请求次数、结果、时间和环境类作业及原因。先持久化 `intent`，再发送请求，最后写入结果。旧的按 head 保存的重跑回执按其中的运行 ID 和尝试号归位。补发回执以 head 与工作流 ID 为键，历史上缺少工作流 ID 的补发回执仍阻止同一 head 再补发。
   - 伴随进程看到遗留的 `intent` 时，把它持久化为 `unknown` 再通知。首次请求为 `unsent` 或 `unknown` 时，至少等十分钟，通过同样的证据核对，并重读确认该运行仍处于相同的已完成尝试，再发一次。同一键最多两次，`sent` 或 `refused` 关闭该键。
   - 第二次写（记下结果）失败时，这一步结束时或之后的某一步再写，直到写进去；在那之前盘上的 `intent` 照样挡住再点。`intent` 本身写不进时不发请求，这一步别的改动（新 head 的窗口起点、最终结论）也留到下一步写。把只剩 `intent` 的回执改记成 `unknown` 时写不进，就保持 `intent`、先不通知，下一步再改。
   - 回执写不进去就不发请求。记忆文件存在却读不出来、不是 JSON、或形状不完全对，这个 lane 什么也不做（忘掉回执可能导致点两次）；之后每一步重读一次，仍读不出时给 Owner 弹一次通知。回执保留 14 天。
@@ -4476,21 +4477,17 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 草稿→就绪、改 PR 正文：不产生运行（`pull_request` 默认只有 opened、synchronize、reopened）。
   - 把分支先推到一个子提交再强推回原 head：原 head 会补出一次 `pull_request` 运行。但中间那个 head 没有认领授权，常驻和准入会看到它，而且强推回去不是比较后交换（可能覆盖 Agent 同时推的提交）。不采用。
   - close→reopen 会清自动合入、发通知（DESK 已排除）。
-  - 结论：不改受保护工作流就没有安全的入口。lane 用 `workflow_dispatch`（`POST actions/workflows/clued-required-tests.yml/dispatches -f ref=<PR 分支>`）；在工作流加上这个入口之前，GitHub 回 HTTP 422，lane 记 `refused` 并告知一次。
+  - lane 使用 `workflow_dispatch`（`POST actions/workflows/<工作流 ID>/dispatches -f ref=<PR 分支>`）。GitHub 返回 HTTP 422 时保留拒绝回执，同一 head 和工作流只尝试一次。
 - **做法**（`admission-rerun.mjs`，同一个 lane、同一个记忆文件、同一种回执，`kind: redispatch`）：
   - 候选仍然只看本节点 ACTIVE 时跑过或排过、且仍开着的 PR 的 head。
   - 恰好一个开着的本仓库 PR 有这个 head，且这个 lane 第一次看到它已满 `LOST_RUN_AFTER_MS`（5 分钟）。这个 lane 在推送后约两分钟内就能看到 head，所以这是推送时间的保守下界。
-  - 这个工作流在这个 head 上的运行完整列表（`runs?head_sha=`，`total_count` 必须等于条数且不超过 100）为空。
-  - 发请求前再读一次：PR 仍开着、仍是这个 head、分支名合格，运行列表仍为空。
+  - 从默认分支的工作流定义识别哪些带门作业对应规则集缺项，按有效工作流 ID 补发。该工作流在这个 head 上没有任何事件的运行。也可补发已准入但因推送者身份被跳过全部重型作业的 PR 运行，条件沿用同一工作流的全部运行和尝试记录。
+  - 发请求前再读一次：PR 仍开着、仍是这个 head、base 与分支名合格，该工作流在 head 上与默认分支定义相同，运行清单未变且准入仍有效。
   - 读失败、列表截断、head 变了、年龄不知道，都算“未知”，不动作，2 分钟后再读。
-  - 先写 `intent` 回执再发请求；每个 head 一辈子只发一次，不论结果。
-- **告知。** PR 页面基础文字前加一句：已补发写“必需测试没有运行，已自动补发一次”，被拒或没发出写“……自动补发未成功”，结果不明写“……自动补发结果不确定”。同时给 Owner 弹一次通知。
-- **还缺的受保护改动（要 Grant）**：
-  - `clued-required-tests.yml`：加 `workflow_dispatch`，各 job 的 `if:` 认这种事件；
-  - `scripts/ci/clued-work-admission.mjs`：dispatch 也走 Native 准入，并绑定这个分支唯一开着的 PR；
-  - `scripts/runner/clued-runner-job-started.mjs`：把它列进 `DISPATCH_GATED_WORKFLOWS`，各 runner 重装 hook。
-  - 这些都做完之前，丢事件只会被发现、留痕和告知，不会补出运行。
-- **测试**：`test/admission-rerun.test.mjs` 里 `lost run:` 开头的四例。
+  - 先写 `intent` 回执再发请求。相同 head 和工作流的回执在重启后继续去重。
+- **告知。** PR 页面显示最近的补发结果。HTTP 422 按缺项显示“ci-suites-windows 没有运行，无法自动补发”，同时通知 Owner 一次。
+- **Windows 补发入口。** `clued-required-tests-windows.yml` 目前缺少 `workflow_dispatch`（T-C），其既有运行可整轮补跑。缺少运行时由 HTTP 422 回执说明。
+- **测试。** `test/admission-rerun.test.mjs` 的 `6be83331 E1/E3/E4` 以及 `lost run:` 用例。
 
 #### 56.5b 改受保护工作流的 PR：准入晚于 runner 钩子（缺陷 B，2026-11-15）
 
