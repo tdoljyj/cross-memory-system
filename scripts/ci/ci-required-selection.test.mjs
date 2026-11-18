@@ -61,7 +61,9 @@ function slotFixture(t) {
     }
     rmSync(dir, { recursive: true, force: true });
   });
-  return function start(name, { waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0 } = {}) {
+  return function start(name, {
+    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter',
+  } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
     mkdirSync(scripts, { recursive: true });
@@ -84,14 +86,16 @@ function slotFixture(t) {
       const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
       setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
     `);
+    writeFileSync(path.join(scripts, 'check-pinned-registries.mjs'), 'process.exitCode = 75;\n');
     const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
       SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
+    env.CI_BASE_SHA ||= 'fixture-base';
     delete env.CI;
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
     if (ci) env[ci] = 'true';
     const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, selector,
-      '--run', 'retrigger-counter', '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      '--run', suite, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (data) => { output += data; });
     child.stderr.on('data', (data) => { output += data; });
@@ -220,7 +224,6 @@ test('L2: a held slot expires, reports the owner, and drains its descendants bef
 test('only GitHub Actions --run bypasses an occupied local queue', async (t) => {
   const start = slotFixture(t);
   const holders = await fillSuiteSlots(start);
-  await waitForQueuedSuite(start('local'), holders);
   await waitForQueuedSuite(start('CI', { ci: 'CI' }), holders);
   const run = start('GITHUB_ACTIONS', { ci: 'GITHUB_ACTIONS' });
   await waitForSlotFixture(run, run.ready);
@@ -244,6 +247,12 @@ test('L1: selector help distinguishes suite failure from a local slot timeout', 
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /1 .*suite fail/i);
   assert.match(help.stdout, /75 .*local suite.*timeout/i);
+});
+
+test('a command that exits 75 is still a suite failure rather than a slot timeout', async (t) => {
+  const run = slotFixture(t)('failed-command', { suite: 'pinned-registries' });
+  assert.deepEqual(await run.done, [1, null]);
+  assert.match(run.output(), /exited 75/);
 });
 
 for (const file of ['apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',

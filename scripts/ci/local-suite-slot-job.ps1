@@ -58,11 +58,14 @@ public static class LocalSuiteJob {
 
     private static string JobName(string request) { return @"Global\" + request; }
 
-    public static bool IsGone(string request) {
+    public static string Probe(string request) {
         IntPtr job = OpenJobObject(JobQuery, false, JobName(request));
-        if (job == IntPtr.Zero) return Marshal.GetLastWin32Error() == FileNotFound;
+        if (job == IntPtr.Zero) {
+            int error = Marshal.GetLastWin32Error();
+            return error == FileNotFound ? "gone" : "unknown-" + error;
+        }
         CloseHandle(job);
-        return false;
+        return "live";
     }
 
     private static uint Active(IntPtr job) {
@@ -125,7 +128,7 @@ public static class LocalSuiteJob {
 
 if ($Probe) {
     foreach ($request in (ConvertFrom-Json $env:CLUED_LOCAL_SUITE_JOB_PROBE)) {
-        if ([LocalSuiteJob]::IsGone($request)) { $request }
+        "$request $([LocalSuiteJob]::Probe($request))"
     }
     exit 0
 }

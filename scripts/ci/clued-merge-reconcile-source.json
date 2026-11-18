@@ -208,9 +208,9 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "26383f0b58d25fe542f6a0a2c7d8139bb6f7bbecacf6bdbb74455fb1ed4c5d91",
+    "scripts/ci/ci-required-selection.mjs": "1667e98b05d68cfaffe94eab788565b3327db143b3c3b8a4513d6bda643a2581",
 
-    "scripts/ci/ci-required-selection.test.mjs": "922cf62c12aa815cfc7e06183fbd7cea46c7b65361f49a859550c1a44559dd39",
+    "scripts/ci/ci-required-selection.test.mjs": "ca4f7ed611157368b5f8e69130c4f2ee0f3c8a23bc5e43ccf503efcdefcef013",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
@@ -404,7 +404,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "9a23c43586632f72a86d3c5e5927e74261b5a408dcf094ae2a982ef86796d134",
+    "scripts/ci/clued-required-applicability.mjs": "79a2009a0a57e3e8b530dd74ba0308bd16b75a2220dbe2cb2ea7639c28fb60c8",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -474,7 +474,11 @@
 
     "scripts/ci/hosted-migration-source-history.fixture.mjs": "e1a68070aa3800282a8fe675006eb531ba255a4d23a4eaed755f9e39f9bfa3e5",
 
-    "scripts/ci/local-suite-slots.mjs": "ba66cc4129da8927c3e702ca266a312547bf042f4f5474df582890b305da4651",
+    "scripts/ci/local-suite-slot-guard.mjs": "3d88a4732f2b488183f72f9d62a9182426e3019b6a35c9f20425ff89b3184f2d",
+
+    "scripts/ci/local-suite-slot-job.ps1": "454bfa7f997da880d6a782463eff2f695ca0a29bcf1b43f17160562ce9afa67c",
+
+    "scripts/ci/local-suite-slots.mjs": "46b26fa1ae2b39a4d9dc537515c0c172a28bfd95d75734728ed168bc125d8331",
 
     "scripts/ci/local-verify-concurrency.test.mjs": "272eb5255fd1b9e5c462a2fd03b8c9bf145065e7c0db1daad08002e016c56b80",
 

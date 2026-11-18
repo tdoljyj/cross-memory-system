@@ -64,7 +64,9 @@ if (process.env.CLUED_LOCAL_SUITE_GUARD && process.argv[1] === import.meta.filen
       process.stdin.destroy();
       delete process.env.CLUED_LOCAL_SUITE_GUARD;
       const { runSuite } = await import('./ci-required-selection.mjs');
-      process.exitCode = runSuite(context.suite, { root: context.root });
+      const status = runSuite(context.suite, { root: context.root });
+      // Keep the local slot timeout status exclusive to the queue and guard.
+      process.exitCode = status === context.timeoutExit ? 1 : status;
     } else {
       process.exitCode = 1;
     }

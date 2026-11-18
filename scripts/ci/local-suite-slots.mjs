@@ -102,14 +102,14 @@ function probeFailure(error) {
   return error.message.replace(/\s+/g, ' ').slice(0, 300);
 }
 
-function windowsJobsGone(requests, deadline) {
-  if (requests.length === 0 || performance.now() >= deadline) return new Set();
+function probeWindowsJobs(requests, deadline) {
+  if (requests.length === 0 || performance.now() >= deadline) return new Map();
   // This is only needed when a guarded owner died without a drain receipt.
   const output = execFileSync('powershell.exe', [...JOB_ARGS, '-Probe'], {
     env: { ...process.env, CLUED_LOCAL_SUITE_JOB_PROBE: JSON.stringify(requests) },
     encoding: 'utf8', timeout: probeBudget(deadline), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
-  return new Set(output.trim().split(/\r?\n/));
+  return new Map(output.trim().split(/\r?\n/).filter(Boolean).map((line) => line.split(' ')));
 }
 
 function reap(requestPath) {
@@ -191,7 +191,7 @@ function waitTimeout(suite, waitMs, reason, timeoutExit) {
   return timeoutExit;
 }
 
-export async function withLocalSuiteSlot(suite, run, {
+export async function withLocalSuiteSlot(suite, command, {
   directory = sharedDirectory(), waitMs = WAIT_MS, holdMs = HOLD_MS, probeMs = PROBE_MS,
 } = {}) {
   const deadline = performance.now() + waitMs;
@@ -211,7 +211,7 @@ export async function withLocalSuiteSlot(suite, run, {
     if (start && /^[a-f\d]+$/.test(start)) break;
     start = null;
     const remaining = deadline - performance.now();
-    if (remaining <= 0) return waitTimeout(suite, waitMs, reason, run.timeoutExit);
+    if (remaining <= 0) return waitTimeout(suite, waitMs, reason, command.timeoutExit);
     announce(reason);
     await delay(Math.min(probeMs, remaining));
   }
@@ -240,10 +240,18 @@ export async function withLocalSuiteSlot(suite, run, {
             starts.get(pid) !== undefined && starts.get(pid) !== previous).map(({ name: request }) => request));
           probeReason = requests.some(({ pid }) => starts.get(pid) === undefined) ? 'some process identities are unknown' : undefined;
           if (WINDOWS) {
-            jobsGone = windowsJobsGone([...stale].filter((request) => {
+            const pending = [...stale].filter((request) => {
               const location = path.join(directory, request);
               return existsSync(path.join(location, 'granted')) && !existsSync(path.join(location, 'drained'));
-            }), deadline);
+            });
+            const jobs = probeWindowsJobs(pending, deadline);
+            jobsGone = new Set(pending.filter((request) => jobs.get(request) === 'gone'));
+            const unknown = pending.find((request) => !['gone', 'live'].includes(jobs.get(request)));
+            if (unknown) {
+              const code = jobs.get(unknown)?.replace('unknown-', '');
+              const reason = code ? `Windows job status unknown (error ${code})` : 'Windows job status unavailable';
+              probeReason = [probeReason, reason].filter(Boolean).join('; ');
+            }
           }
         } catch (error) {
           probeReason = probeFailure(error);
@@ -256,12 +264,12 @@ export async function withLocalSuiteSlot(suite, run, {
       const remaining = deadline - performance.now();
       if (ahead < SLOT_LIMIT && !live.some((request) => request.ticket === null) && remaining > 0) {
         writeFileSync(path.join(requestPath, 'holding'), '');
-        return await runGuard(suite, run, requestPath, holdMs);
+        return await runGuard(suite, command, requestPath, holdMs);
       }
       const holders = live.filter(({ holding }) => holding).map(({ suite, pid }) => `${suite} (PID ${pid})`);
       const message = `queue position ${Math.max(1, ahead - SLOT_LIMIT + 1)}; holders: ${holders.join(', ') || 'none'}`
         + (probeReason ? `; process probe: ${probeReason}` : '');
-      if (remaining <= 0) return waitTimeout(suite, waitMs, message, run.timeoutExit);
+      if (remaining <= 0) return waitTimeout(suite, waitMs, message, command.timeoutExit);
       announce(message);
       await delay(Math.min(POLL_MS, remaining));
     }
