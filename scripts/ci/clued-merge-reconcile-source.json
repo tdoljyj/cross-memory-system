@@ -204,9 +204,9 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "f1799f4bc8140912a49e265a2ef9cf062f30c1a3d531e49b3fd1452a0e1c4ba1",
+    "scripts/ci/ci-required-selection.mjs": "51f0fb277759a6656c938c562bd6842a3fde5db4d141ad15df66948e9352dad5",
 
-    "scripts/ci/ci-required-selection.test.mjs": "18c1e1880976a2359e339f579bacd22dbea13d280c18e0bf246f1a3dc0c1caf9",
+    "scripts/ci/ci-required-selection.test.mjs": "a171de108f7ce07892138da4d7bf9a80de48496dfa562bf67ebef488689abdc0",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
@@ -400,7 +400,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "5ed766aa43a729a90cbdc74c609f5d26af7fb3219c6ec9e366bf92ae9176ff64",
+    "scripts/ci/clued-required-applicability.mjs": "73a90fdc4b464d5b7a82be6a7e356c0c59a26798696629bbe35f0bdc80dd1ae2",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -422,9 +422,9 @@
 
     "scripts/ci/clued-standard-runner-actor-sources.json": "40c246c854ef965e5c2922e0ecb0de55e31110cf33eb93bcd4bc12416a8274d5",
 
-    "scripts/ci/clued-work-admission.mjs": "f964ae73a2595f27c2cd4d86341a95f24a3b353b671203792db0a652a62e0860",
+    "scripts/ci/clued-work-admission.mjs": "0ef84cb6a0c46653f1694410dc20844b207b3e0a1d698128595be665bda928d5",
 
-    "scripts/ci/clued-work-admission.test.mjs": "951aecca624aadddc5e734fd275e37f0ef4cbf17eabececcd7b7e3d2dd33ee00",
+    "scripts/ci/clued-work-admission.test.mjs": "0f161a6555a348dcb706ad09d00713fd35c5778935d6ae90a36332b91bc62137",
 
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
 
@@ -451,6 +451,8 @@
     "scripts/ci/fixtures/hosted-migration-source-history.v1.json": "3171be2d3c7f557ef3faced4a7bef558376416892c3c187e45c54e53242a133f",
 
     "scripts/ci/fixtures/production-publisher-source-history.v1.json": "4a3fce0d4cf0e5a3a4148853a718dbf7b5fa02222cdd23d5d434eb2b62b0aca7",
+
+    "scripts/ci/fixtures/required-tests-timeout-1159.json": "e5dc2a24b21d7d2dbfa86c399dca06332de3d05bace21b137ea8a8f8749c9076",
 
     "scripts/ci/fixtures/retired-gated-proof-catalogue.mjs": "2bb8ea7a33265c6c379dd9fefe73852ca9408c69f2296dc1c2727f57909d5540",
 
@@ -520,7 +522,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "de4320e11885762d0549f8c4e33acd772b65f99e5a582e728252d075012a1ea8",
+    "scripts/ci/merge-admission-r9-source.json": "13f1735e66583fc053892809577d3226985d507eb535c73498602a770474272c",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 
@@ -622,7 +624,7 @@
 
     "scripts/runner/clued-runner-hook-loader.test.mjs": "76079eac51efe273a4da68ceba57150eb9b26f8de4d6a8ddc57b3b4dfd3b600f",
 
-    "scripts/runner/clued-runner-job-started.mjs": "16c56bf4658af7417dde67cf6d9f65c49a0564f9022fa7cef34101f934de8baa",
+    "scripts/runner/clued-runner-job-started.mjs": "9b05fbdf79912c8563bee3b5db2bf7d6158b498f7b79708855c0c158c4ae4404",
 
     "scripts/runner/clued-runner-job-started.ps1": "d3ed2f7755db0f906d60064926d5bf233ceef51089dc64c1bc736f92d0065217",
 
@@ -630,7 +632,7 @@
 
     "scripts/runner/clued-runner-job-started.sh": "47022237ae7f41e00b61dc158f103002d20787e555a42b6afeed7ed5561e26f0",
 
-    "scripts/runner/clued-runner-job-started.test.mjs": "cc7d39937260e7975227207a0793a91a6eb9d127544ce00dea60f0d9862074dd",
+    "scripts/runner/clued-runner-job-started.test.mjs": "ff6d450a00047efcd1223d2f227ae6953bfb5363b892822fe7eb8d5d00f1ce6a",
 
     "scripts/runner/clued-runner-job-started.work-handover-current-epoch-proxy-dispatch-v1.mjs": "e0cec3d48810a6ee934814ebc58060f40486098d7eef005237fb6e1f75a6bf0e",
 

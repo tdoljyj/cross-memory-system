@@ -264,10 +264,9 @@ export const SUITE_COMMANDS = {
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
-    { cwd: 'apps/clued-cloud', argv: ['node', '--test', '--test-concurrency=1',
+    { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{db-concurrency}',
       ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
-    // run-tests.mjs bounds the file concurrency for a shared runner, as the package scripts these tests came from did.
-    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '--test-force-exit',
+    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{db-concurrency}', '--test-force-exit',
       ...AUTHORIZATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
   ],
 };
@@ -382,6 +381,10 @@ export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestF
       // An empty list would make `node --test` run every file it finds.
       if (files.length === 0) throw new Error('no unit test files');
       return files;
+    }
+    if (arg === '{db-concurrency}') {
+      const concurrency = Math.max(2, Math.min(4, Math.floor(os.availableParallelism() / 4)));
+      return [`--test-concurrency=${concurrency}`];
     }
     const tests = /^\{tests:(.+)\}$/.exec(arg);
     if (tests) {

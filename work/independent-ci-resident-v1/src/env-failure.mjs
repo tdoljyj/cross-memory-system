@@ -1,12 +1,4 @@
-// Environment failures of a required-tests job (Task 1b): a job that died only because of the network or the runner's own setup, with
-// no test failing, may be re-run once ("Re-run all jobs", the only re-run clued-required-tests.yml allows). Evidence only, read from
-// the job record (its steps) and its log; whatever does not prove an environment failure is "not environment" and never re-run:
-//   setup:   every failed step is one of the runner's own steps before the workflow's, in its place: "Set up job", then the job-started
-//            hook's "Set up runner" (defect B: the hook refused the job). It died before the workflow's own steps began; no test ran, no
-//            log needed. A workflow step of either name sits later in the job and does not count;
-//   network: the log names a network failure and shows no failed test, assertion, or "N failed" summary anywhere.
-// The classifier of the admission gate (scripts/ci/clued-work-admission.mjs) lives there, inside the pinned file; this is its copy for the
-// companion's admission-rerun lane, and test/env-failure.test.mjs keeps the two identical.
+// The pinned gate and standalone runner hook carry the same failure classifier.
 export const SETUP_STEPS = ["Set up job", "Set up runner"];
 // A log longer than this is never classified (the tail with the verdict may be missing): not environment.
 export const MAX_LOG_CHARS = 3_500_000;
@@ -29,15 +21,25 @@ export function diedInSetup(job) {
   const failed = failedSteps(job);
   return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
 }
-// job: the Actions API job record; log: its log text, or null when it was not read. -> { environment, kind, why }
-export function jobFailureKind(job, log = null) {
+// The timeout annotation is emitted on the cancelled job's check run, independently of its log.
+function hasTimeoutAnnotation(annotations) {
+  return Array.isArray(annotations) && annotations.some(note =>
+    typeof note?.message === "string" && note.message.startsWith("The job has exceeded the maximum execution time of "));
+}
+export function jobFailureKind(job, log = null, annotations = null) {
   const no = (why) => ({ environment: false, kind: "unknown", why });
-  if (!job || job.status !== "completed" || job.conclusion !== "failure") return no("the job did not end in failure");
+  if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
   if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
   const failed = failedSteps(job);
-  if (failed === null || failed.length === 0) return no("the job record names no failed step");
+  const cancelled = job.conclusion === "cancelled";
+  if (cancelled) {
+    if (failed === null || !job.steps.length || failed.length > 0
+      || job.steps.some(step => typeof step?.conclusion !== "string")) return no("the cancelled job lacks a complete record without failed steps");
+    if (!hasTimeoutAnnotation(annotations)) return no("the cancelled job has no timeout annotation");
+  } else if (!failed?.length) return no("the job record names no failed step");
   if (typeof log !== "string" || log.length === 0 || log.length > MAX_LOG_CHARS) return no("the job log is missing or too long to judge");
   if (TEST_FAILURE.some((pattern) => pattern.test(log))) return { environment: false, kind: "test", why: "the log shows a failed test" };
+  if (cancelled) return { environment: true, kind: "timeout", why: "the job exceeded its maximum execution time and the log shows no failed test" };
   const network = NETWORK_FAILURE.find((pattern) => pattern.test(log));
   return network ? { environment: true, kind: "network", why: `the log shows a network failure (${network.source.slice(0, 40)}) and no failed test` } : no("the log shows no network failure");
 }
