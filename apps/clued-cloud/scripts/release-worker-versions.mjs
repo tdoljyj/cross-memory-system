@@ -34,6 +34,8 @@ export const WRANGLER_CONFIGS = Object.freeze(WORKERS.map(({ config }) => path.p
 const CONNECT_SMOKE_URL = `${PUBLIC_ORIGIN}/connect/api/smoke`;
 const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
+/** The two public edges a record names and the final reading compares. */
+const EDGE_NAMES = Object.freeze(['clued-cloud', 'clued-connect']);
 const ATTEMPTS = 3;
 const RETRY_MS = 5_000;
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -139,7 +141,7 @@ async function readEdgesWithRetry(readEdges, wait) {
   let edge;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try { edge = await readEdges(); } catch (error) {
-      edge = Object.fromEntries(['clued-cloud', 'clued-connect'].map((name) => [name, { error: error?.message ?? String(error) }]));
+      edge = Object.fromEntries(EDGE_NAMES.map((name) => [name, { error: error?.message ?? String(error) }]));
     }
     if (Object.values(edge).every((value) => SHA.test(value?.source_commit ?? ''))) return edge;
     if (attempt < ATTEMPTS) await wait(RETRY_MS);
@@ -200,7 +202,9 @@ export async function rollbackVersions({ recorded, wrangler = npxWrangler, wait 
   if (recorded?.contract !== CONTRACT || !Array.isArray(recorded.workers) ||
       recorded.workers.map((w) => w?.name).join() !== WORKERS.map((w) => w.name).join() ||
       recorded.workers.some((w) => !VERSION_ID.test(w.version_id ?? '')) ||
-      !recorded.edge || typeof recorded.edge !== 'object') {
+      !recorded.edge || typeof recorded.edge !== 'object' ||
+      // "restored" compares both public edges; a record without both cannot say it.
+      EDGE_NAMES.some((name) => !recorded.edge[name] || typeof recorded.edge[name] !== 'object')) {
     throw new Error('recorded Worker versions are not a valid record of this release');
   }
   const message = `Automatic rollback: release ${env.GITHUB_SHA ?? '?'} failed (run ${env.GITHUB_RUN_ID ?? '?'})`;
@@ -243,7 +247,7 @@ export async function rollbackVersions({ recorded, wrangler = npxWrangler, wait 
   }
   let servedEdge;
   try { servedEdge = await readEdges(); } catch (error) { servedEdge = { error: error?.message ?? String(error) }; }
-  const edge = Object.keys(recorded.edge).map((name) => {
+  const edge = EDGE_NAMES.map((name) => {
     const matches = edgeMatches(recorded.edge[name], servedEdge?.[name]);
     if (!matches) {
       mismatches.push(`edge ${name} serves ${servedEdge?.[name]?.source_commit ?? 'an unreadable commit'}, recorded ${recorded.edge[name]?.source_commit ?? 'unreadable'}`);
@@ -279,18 +283,23 @@ function option(argv, name) {
   return index >= 0 ? argv[index + 1] : undefined;
 }
 
-function writeJson(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+// Write to a temporary file and rename it over the old one: a kill during the
+// write leaves the previous complete file in place.
+function writeJson(file, value, fileSystem = fs) {
+  fileSystem.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.tmp`;
+  fileSystem.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  fileSystem.renameSync(temporary, file);
 }
 
-export async function main(argv = process.argv.slice(2), { wrangler, wait, env = process.env, readEdges, gitSame, windowMs, sleep } = {}) {
+export async function main(argv = process.argv.slice(2), { wrangler, wait, env = process.env, readEdges, gitSame, windowMs, sleep,
+  fileSystem = fs } = {}) {
   const [command] = argv;
   const out = option(argv, '--out');
   const mode = option(argv, '--mode');
   if (command === 'record' && out && (mode === 'deploy' || mode === 'release')) {
     const recorded = await recordVersions({ wrangler, wait, env, mode, readEdges, gitSame });
-    writeJson(out, recorded);
+    writeJson(out, recorded, fileSystem);
     console.log(recorded.workers.map((w) => `${w.name} serves ${w.version_id}`).join('\n'));
     for (const [name, value] of Object.entries(recorded.edge)) console.log(`edge ${name}: ${value.source_commit ?? `unreadable (${value.error})`}`);
     if (recorded.config_identical === false) {
@@ -301,8 +310,8 @@ export async function main(argv = process.argv.slice(2), { wrangler, wait, env =
   const from = option(argv, '--from');
   if (command === 'rollback' && from && out) {
     const result = await rollbackVersions({ recorded: JSON.parse(fs.readFileSync(from, 'utf8')), wrangler, wait, env, readEdges, windowMs, sleep,
-      onProgress: (partial) => writeJson(out, partial) });
-    writeJson(out, result);
+      onProgress: (partial) => writeJson(out, partial, fileSystem) });
+    writeJson(out, result, fileSystem);
     const summary = renderRollbackSummary(result);
     console.log(summary);
     if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, summary);

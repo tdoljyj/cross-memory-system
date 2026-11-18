@@ -77,33 +77,46 @@ function option(argv, name) {
   return index >= 0 ? argv[index + 1] : undefined;
 }
 
+// Wrangler's own reader (JSONC: comments, trailing commas), as `wrangler deploy` reads it.
+async function readWranglerConfig(file) {
+  const { experimental_readRawConfig: readRawConfig } = await import('wrangler');
+  return readRawConfig({ config: file }).rawConfig;
+}
+
 export async function main(argv = process.argv.slice(2), { periodMinutes, runGate, now, sleep,
+  configPath = WRANGLER_PRODUCTION, readConfig = readWranglerConfig,
   log = (line) => process.stderr.write(`${line}\n`) } = {}) {
   const out = option(argv, '--evidence-out');
   if (!out) {
     log('usage: projection-postflight.mjs --evidence-out FILE');
     return 2;
   }
-  const scratch = runGate ? null : mkdtempSync(path.join(os.tmpdir(), 'projection-postflight-'));
+  let scratch = null;
   let conclusion;
+  // Every way out, an exception included, leaves a conclusion before the exit.
   try {
     let period = periodMinutes;
-    try {
-      period ??= cronPeriodMinutes(JSON.parse(readFileSync(WRANGLER_PRODUCTION, 'utf8')));
-    } catch (error) {
-      conclusion = { status: 'failed', reason: error?.message === 'cron_schedule_unsupported'
-        ? 'cron_schedule_unsupported' : 'wrangler_config_unreadable', attempts: [] };
+    if (period === undefined) {
+      let config;
+      try {
+        config = await readConfig(configPath);
+      } catch (error) {
+        throw Object.assign(new Error(`wrangler_config_unreadable: ${error?.message ?? error}`), { conclusion: true });
+      }
+      period = cronPeriodMinutes(config);
     }
-    if (!conclusion) {
-      const gate = runGate ?? (async (attempt) => {
-        const evidence = path.join(scratch, `attempt-${attempt}.json`);
-        const result = spawnGate(evidence);
-        process.stderr.write(result.stderr);
-        return { ...result, evidence: existsSync(evidence) ? JSON.parse(readFileSync(evidence, 'utf8')) : null };
-      });
-      conclusion = { period_minutes: period, window_ms: windowMs(period),
-        ...await runPostflight({ periodMinutes: period, runGate: gate, now, sleep, log }) };
-    }
+    if (!runGate) scratch = mkdtempSync(path.join(os.tmpdir(), 'projection-postflight-'));
+    const gate = runGate ?? (async (attempt) => {
+      const evidence = path.join(scratch, `attempt-${attempt}.json`);
+      const result = spawnGate(evidence);
+      process.stderr.write(result.stderr);
+      return { ...result, evidence: existsSync(evidence) ? JSON.parse(readFileSync(evidence, 'utf8')) : null };
+    });
+    conclusion = { period_minutes: period, window_ms: windowMs(period),
+      ...await runPostflight({ periodMinutes: period, runGate: gate, now, sleep, log }) };
+  } catch (error) {
+    conclusion = { status: 'failed', reason: error?.message === 'cron_schedule_unsupported' || error?.conclusion
+      ? error.message : `postflight_error: ${error?.message ?? error}`, attempts: conclusion?.attempts ?? [] };
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
