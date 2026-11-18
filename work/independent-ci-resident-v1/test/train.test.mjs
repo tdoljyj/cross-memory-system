@@ -150,7 +150,7 @@ test('the status copy of a summary and the PR page line: recent, this head at th
   for (const bad of [null, [], { ...last, at: 'x' }, { ...last, mode: 'on' }, { ...last, wouldDo: 'REVOKE' }]) assert.equal(parseTrainLast(bad), null);
   const pull = { pr: 910, headSha: '2'.repeat(40) };
   const parked = { state: 'pending', description: '已测通，在合并队列第 1 位：等成为队首，约 12:05 再查第 8 段' };
-  assert.match(withTrainLine(parked, last, pull, NOW + MIN).description, /^已测通.*；列车影子（只记录，不执行）：你是合并队列车头。车头六项已绿，等合并。$/);
+  assert.match(withTrainLine(parked, last, pull, NOW + MIN).description, /^已测通.*；列车影子（只记录，不执行）：你是合并队列车头。合并位已绿，等合并。$/);
   assert.equal(withTrainLine(parked, last, pull, NOW + TRAIN_PAGE_MAX_AGE_MS + 1), parked, 'too old');
   assert.equal(withTrainLine(parked, last, { ...pull, headSha: '3'.repeat(40) }, NOW), parked, 'another head');
   assert.equal(withTrainLine(parked, last, { ...pull, pr: 911 }, NOW), parked, 'another PR');
@@ -251,6 +251,8 @@ test('the companion reporter puts the shadow line on the front PR only, after th
   const run = async argv => {
     calls.push(argv);
     if (argv.some(x => x.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(x => x.includes('/check-runs?'))) return { code: 0, stdout: REQUIRED.map(n => `${n}\tcompleted\tsuccess`).join('\n') + '\n' };
+    if (argv.some(x => x.includes('/statuses?'))) return { code: 0, stdout: '' };
     return { code: 0, stdout: '{}' };
   };
   const board = new StatusBoard({ clock: () => NOW, pid: 1 });
@@ -269,7 +271,7 @@ test('the companion reporter puts the shadow line on the front PR only, after th
     const post = calls.find(argv => argv.includes('POST') && argv.some(x => x.endsWith(`/statuses/${pr === 910 ? H : other}`)));
     return post?.find(x => x.startsWith('description='))?.slice('description='.length) ?? null;
   };
-  assert.match(description(910), /列车影子（只记录，不执行）：你是合并队列车头。车头六项已绿，等合并。$/);
+  assert.match(description(910), /列车影子（只记录，不执行）：你是合并队列车头。全部必需检查已绿，等合并。$/);
   assert.ok(description(911) && !description(911).includes('列车影子'), 'another PR gets no line');
 });
 

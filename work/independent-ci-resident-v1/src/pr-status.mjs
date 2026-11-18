@@ -43,6 +43,18 @@ export const MAX_POSTS_PER_PASS = 20;
 export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
 export const REQUIRED_CACHE_MS = 30 * 60_000;
+export const HEAD_CHECKS_CACHE_MS = 60_000;
+// Which of main's required checks (the ruleset's contexts, read by requiredContexts) are not yet green on a head. checks: Map name -> 'pass' |
+// 'pending' | 'fail' (headChecks). Returns [] when all are green, else words per missing or unfinished one; null when either side is unknown.
+export function requiredGap(required, checks) {
+  if (!Array.isArray(required) || required.length === 0 || !(checks instanceof Map)) return null;
+  const word = { pending: '进行中', fail: '未通过' };
+  return required.filter(c => checks.get(c) !== 'pass').map(c => `${c}（${word[checks.get(c)] ?? '未出现'}）`);
+}
+// Check-run conclusions GitHub counts as passing for a required check.
+const PASSING = new Set(['success', 'neutral', 'skipped']);
+const checkState = (status, conclusion) => status !== 'completed' ? 'pending' : PASSING.has(conclusion) ? 'pass' : 'fail';
+const STATUS_STATE = { success: 'pass', pending: 'pending', failure: 'fail', error: 'fail' };
 export const ADVISORY_TIMEOUT_MS = 15_000;
 export const PASS_BUDGET_MS = 60_000;
 // A head whose write failed is tried again after POST_RETRY_MS with the same text, and at the next pass when the text it should
@@ -593,6 +605,35 @@ export class PrStatusReporter {
     return list;
   }
 
+  // The checks of one head as Map name -> 'pass' | 'pending' | 'fail' (check runs and commit statuses, the latest of each name); null when either
+  // read fails. Interface kept replaceable: T-A (admission-rerun.mjs) factors a shared reader of main's required checks; DESK unifies then.
+  async headChecks(headSha) {
+    const hit = this.headChecksCache?.get(headSha);
+    if (hit && this.clock() - hit.at < HEAD_CHECKS_CACHE_MS) return hit.value;
+    const runs = await this.call([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/commits/${headSha}/check-runs?filter=latest&per_page=100`,
+      '--jq', '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv'], { timeoutMs: ADVISORY_TIMEOUT_MS });
+    const sts = runs.code === 0 ? await this.call([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/commits/${headSha}/statuses?per_page=100`,
+      '--jq', '.[] | [.context, .state] | @tsv'], { timeoutMs: ADVISORY_TIMEOUT_MS }) : null;
+    let value = null;
+    if (runs.code === 0 && sts?.code === 0) {
+      value = new Map();
+      const rows = out => String(out).split(/\r?\n/).map(l => l.split('\t')).filter(r => r[0]);
+      // Statuses come newest first: the first row of a context is its latest.
+      for (const [name, state] of rows(sts.stdout)) if (!value.has(name)) value.set(name, STATUS_STATE[state] ?? 'pending');
+      for (const [name, status, conclusion] of rows(runs.stdout)) if (value.get(name) !== 'pass') value.set(name, checkState(status, conclusion));
+    }
+    (this.headChecksCache ??= new Map()).set(headSha, { at: this.clock(), value });
+    if (this.headChecksCache.size > 64) this.headChecksCache.delete(this.headChecksCache.keys().next().value);
+    return value;
+  }
+
+  // Only the front PR whose train line says "green, wait for merge" needs the head's checks.
+  async frontGap(pull, last, required) {
+    const t = last && last.front?.headSha === pull.headSha ? (last.decision ?? last.wouldDo) : null;
+    if (t !== 'FRONT_GREEN_WAIT_MERGE' || this.stalled || !this.inBudget()) return null;
+    try { return requiredGap(required, await this.headChecks(pull.headSha)); } catch { return null; }
+  }
+
   async post(headSha, want, context) {
     check(HEX40.test(headSha) && ['pending', 'success', 'failure', 'error'].includes(want.state) && typeof want.description === 'string' && contextShapeSafe(context), 'PR_STATUS_INVALID');
     const r = await this.call([this.ghExe, 'api', '--method', 'POST', `repos/${this.repo}/statuses/${headSha}`, '-f', `state=${want.state}`, '-f', `context=${context}`,
@@ -672,7 +713,7 @@ export class PrStatusReporter {
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
           const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
-          const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
+          const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, required))),
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);
