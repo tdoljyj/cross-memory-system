@@ -1533,3 +1533,99 @@ test('an invalid rollback record is reported as not rolled back', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// Fable 1121 §7: the release path reads wrangler configurations only through
+// readWranglerConfig (Wrangler's own JSONC reader), so a legal comment or
+// trailing comma in a configuration cannot stop a release before its deploy.
+// Scope: the files that the workflow's preflight / deploy / release steps name
+// directly (node and node --test arguments, globs expanded; `npm run` scripts
+// expanded one level from package.json). Known limit: it does not follow the
+// modules those files import (the release scripts themselves use
+// readWranglerConfig). Zero exceptions inside the scope.
+function releasePathFiles() {
+  const app = fileURLToPath(new URL('..', import.meta.url));
+  const repo = path.resolve(app, '../..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(app, 'package.json'), 'utf8'));
+  const expand = (dir, pattern) => {
+    const full = path.resolve(dir, pattern);
+    if (!pattern.includes('*')) return [full];
+    const folder = path.dirname(full);
+    const name = new RegExp(`^${path.basename(full).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/\\\\]*')}$`);
+    return fs.existsSync(folder) ? fs.readdirSync(folder).filter((entry) => name.test(entry)).map((entry) => path.join(folder, entry)) : [];
+  };
+  const named = (text, dir) => {
+    const out = [];
+    for (const line of text.split('\n')) {
+      for (const match of line.matchAll(/(?:^|[\s;&|(])node\s+((?:--[\w-]+(?:=\S+)?\s+)*)([^\s;&|)]+(?:\s+[^\s;&|)-][^\s;&|)]*)*)/g)) {
+        for (const token of match[2].split(/\s+/).map((t) => t.replace(/["']/g, ''))) {
+          if (/\.(?:mjs|cjs|js|ts)$/.test(token)) out.push(...expand(dir, token));
+        }
+      }
+      for (const match of line.matchAll(/npm run ([\w:.-]+)/g)) {
+        for (const token of (pkg.scripts?.[match[1]] ?? '').split(/[\s;&|()]+/).map((t) => t.replace(/["']/g, ''))) {
+          if (/\.(?:mjs|cjs|js|ts)$/.test(token)) out.push(...expand(app, token));
+        }
+      }
+    }
+    return out;
+  };
+  const files = new Set();
+  for (const step of productionWorkflow.split(/\n      - /).slice(1)) {
+    const condition = /\n {8}if: ([^\n]*)/.exec(`\n${step}`)?.[1] ?? '';
+    if (!/'(?:preflight|deploy|release)'/.test(condition)) continue;
+    const dir = /\n {8}working-directory: \.\n/.test(`\n${step}\n`) ? repo : app;
+    const run = /\n {8}run: (?:[|>]-?\n)?([\s\S]*)$/.exec(`\n${step}`)?.[1] ?? '';
+    for (const file of named(run, dir)) if (fs.existsSync(file)) files.add(path.normalize(file));
+  }
+  return { repo, files: [...files].sort() };
+}
+
+// A wrangler configuration parsed with JSON.parse or a hand-written parser,
+// directly or through a variable that holds the file's text.
+function wranglerParseFindings(source) {
+  const config = /wrangler[\w.-]*\.json[c5]?\b/;
+  if (!config.test(source)) return [];
+  const statements = source.split(/;\s*\n|\n(?=\s*(?:const|let|var|for|if|assert)\b)/);
+  const holders = new Set();
+  for (const statement of statements) {
+    const held = /(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:fs\.)?(?:readFile|readFileSync)\s*\([^;]*wrangler/.exec(statement);
+    if (held) holders.add(held[1]);
+  }
+  const findings = [];
+  for (const statement of statements) {
+    for (const call of statement.matchAll(/\b(?:JSON\.parse|JSON5\.parse|parseJsonc|stripJsonComments)\s*\(/g)) {
+      const rest = statement.slice(call.index);
+      if (config.test(rest) || [...holders].some((name) => new RegExp(`\\(\\s*${name}\\b`).test(rest))) {
+        findings.push(statement.trim().split('\n')[0].slice(0, 160));
+      }
+    }
+  }
+  return findings;
+}
+
+test('the release path reads wrangler configurations only through readWranglerConfig', () => {
+  // The guard catches each way of parsing a configuration by hand (samples
+  // assembled at run time, so this file never contains one).
+  const parse = ['JSON', 'parse'].join('.');
+  const file = ['../wrangler', 'production.jsonc'].join('.');
+  for (const sample of [
+    `const config = ${parse}(await readFile(new URL('${file}', import.meta.url), 'utf8'));\n`,
+    `const text = await readFile(new URL('${file}', import.meta.url), 'utf8');\nconst config = ${parse}(text);\n`,
+    `const config = parseJsonc(fs.readFileSync('${file}', 'utf8'));\n`]) {
+    assert.equal(wranglerParseFindings(sample).length, 1, sample);
+  }
+  assert.deepEqual(wranglerParseFindings(`const config = await readWranglerConfig('${file}');\nconst other = ${parse}(body);\n`), []);
+  const { repo, files } = releasePathFiles();
+  const relative = files.map((f) => path.relative(repo, f).split(path.sep).join('/'));
+  // The scope is the release path: the tests and scripts those steps run.
+  for (const expected of ['apps/clued-cloud/tests/production-release-gate.test.mjs', 'apps/clued-cloud/tests/oauth-origin.test.mjs',
+    'apps/kooyumi-connect/tests/connect-migration.test.mjs', 'apps/kooyumi-connect/tests/release.test.mjs',
+    'apps/clued-cloud/scripts/projection-postflight.mjs', 'apps/clued-cloud/scripts/release-worker-versions.mjs']) {
+    assert.ok(relative.includes(expected), expected);
+  }
+  // Not source-capture: its script is outside this scope.
+  assert.ok(!relative.includes('apps/clued-cloud/scripts/storage-client-registration-source.mjs'));
+  const findings = files.flatMap((f) => wranglerParseFindings(fs.readFileSync(f, 'utf8'))
+    .map((finding) => `${path.relative(repo, f).split(path.sep).join('/')}: ${finding}`));
+  assert.deepEqual(findings, []);
+});
