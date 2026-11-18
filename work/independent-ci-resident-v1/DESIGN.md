@@ -4440,28 +4440,28 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 常驻忙时第 1 段来晚了，gate 就以 `ADMISSION_PENDING` 结束，重型 job 跳过，必需检查缺失。
   - #993 已经允许“Re-run all jobs”在同一 head 上补跑一次（`independentRepairRerun`）。缺的是谁来点：今天要 Owner 手动点。
 - **做法**（`src/admission-rerun.mjs`，伴随进程里自己的 lane、自己的 Runner、自己的记忆文件 `companion-admission-rerun.json`）：
-  - 伴随进程用 Owner 会话里的 gh 登录（它本来就用这个登录写 PR 状态）点一次“Re-run all jobs”：`gh api --method POST repos/<repo>/actions/runs/<id>/rerun`。不新增 workflow，不要新令牌，不给常驻 App 加权限。
+  - 伴随进程用写 PR 状态的 Owner 会话 gh 登录请求“Re-run all jobs”：`gh api --method POST repos/<repo>/actions/runs/<id>/rerun`。不新增 workflow、令牌或常驻 App 权限。
   - 只在本节点 ACTIVE、没有 HALT、状态文件是最近 5 分钟（`STATUS_STALE_MS`）内写的时候（更旧的状态证明不了角色：执行器可能已停、另一节点已接手；面板触发和 PR 状态也这样读），只看本节点跑过或排过的 head（状态里的 current、排队行、最近结果），且这个 head 是轮询器看到的开着的 PR。
   - 每分钟一步；同一个 head 至多每 2 分钟看一次，从第一次看到起看 12 小时；每步至多看 5 个 head。
   - 一个 head 只要还是候选，它的记录就一直留着（不论多久），所以 12 小时的窗口不会重新开始，“永久放弃”也不会忘。记录里还记着它最后一次是候选的时间（至多每小时更新一次）。不是候选时，记录只在两种情况下去掉：完整的一步（状态新、本节点 ACTIVE、没有 HALT、轮询器已经看到开着的 PR）里它不在候选之列；或者它最后一次是候选已过 24 小时。伴随进程刚启动（轮询器还没跑过）、节点暂时 STANDBY 或 UNCERTAIN、HALT、状态过旧，都不算完整的一步。所以伴随进程刚启动、节点暂时 STANDBY 或 UNCERTAIN、HALT 时，12 小时的窗口和“永久放弃”的结论都不会被重置。
 - **点之前必须全部满足**（判断从未合入的 76481044 搬来，`decide`）：
   1. 恰好一个开着的、目标为默认分支、来自本仓库的 PR 的 head 正是它，并且 App 5368905 在这个 head 上最新的 `kooyumi-work-admission` 是 completed/success、绑定这个 PR（第 1 段已发出准入；同 `independentAdmissionCheck`）。
   2. 这个 head 的 `clued-required-tests` pull_request 运行全部 completed，没有排队或在跑的尝试。
-  3. 这个 head 的任何运行、任何尝试里，除 gate 外没有 job 真跑过（都是 completed/skipped）。
-  4. gate 自己的补跑规则（`repairAllowed`，照搬 #993 的 `independentRepairRerun`）允许下一个尝试：之前每个尝试只跑了 gate，gate 以 `ADMISSION_PENDING`、`RERUN_REFUSED` 或 GitHub 5xx/连不上的 ERROR 结束。手动点过、但什么也没跑的补跑不占这一次。例外（任务 1b）：唯一一次真跑过的尝试，若其失败的作业全是环境类（只死在 runner 的“Set up job”，或日志有网络失败特征且无任何测试失败，证据规则见 scripts/ci/clued-work-admission.mjs 的 jobFailureKind，resident 在 src/env-failure.mjs 留一份、测试保持一致）且 gate 作业本身成功，也允许这一次整轮重跑；gate 作业死在 “Set up job” 视为没跑过。每个 head 上限一次，来自 GitHub 的记录，不是计数器。
+  3. 这个 head 的其他运行的重型作业均已跳过。最新 PR 运行的历史由下一条判断。
+  4. 按 Fable D4 §1.2，`repairAllowed` 用 GitHub 历史预判准入门。门只在 runner 准备阶段失败，或重型作业全部跳过且门留下已知的准入等待、重跑拒绝或 GitHub 暂时故障证据时，该尝试不占次数。真跑过的尝试要求门通过且每个未通过的重型作业都有环境类证据。第一次修复可以直接请求，第二次要等上一轮真跑的尝试结束后，每个待修作业在同一工作流的其他提交上成功，三轮真跑后停止。超时要求作业为 `cancelled`、检查注解明确记录达到 GitHub 时限、完整步骤没有 failure、日志可读且没有测试失败。
+     - 对超时作业另看同一工作流最近三份其他提交的同名作业结果。两份或更多确认为超时时跳过本步，每个作业和目标尝试号只通知一次。发现后续成功时恢复，继续由门决定是否放行。
   5. 点之前再读一次：PR 仍开着、仍是这个 head，运行仍是 completed、仍是同一个尝试。
   - 从不点“Re-run failed jobs”或单个 job。新尝试里的 gate 会再判一次，这一侧从来不是放行重型 job 的依据。
-- **最多一次，断流时也不重复。**
-  - 每个 head 一条回执（`clued.independent-ci.admission-rerun/1`：PR、head、run、尝试号、结果、时间）。先把 `intent` 写到盘上，再发请求，发完写结果：`sent`、`unsent`、`refused` 或 `unknown`（见下文“告知”）。
-  - 这个 head 只要有任何回执（包括请求的答复丢了、或在两次写之间崩溃，只剩 `intent`），就再也不点。伴随进程启动后看到只剩 `intent` 的回执，把它改记成 `unknown`，给 Owner 弹一次“结果不确定”。
+- **按运行和目标尝试号去重。**
+  - 重跑回执以运行 ID 和下一个尝试号为键（`clued.independent-ci.admission-rerun/1`）。记录 PR、head、目标尝试号、请求次数、结果、时间和环境类作业及原因。先持久化 `intent`，再发送请求，最后写入结果。旧的按 head 保存的回执按其中的运行 ID 和尝试号归位。补发工作流的回执继续按 head 保存。
+  - 伴随进程看到遗留的 `intent` 时，把它持久化为 `unknown` 再通知。首次请求为 `unsent` 或 `unknown` 时，至少等十分钟，通过同样的证据核对，并重读确认该运行仍处于相同的已完成尝试，再发一次。同一键最多两次，`sent` 或 `refused` 关闭该键。
   - 第二次写（记下结果）失败时，这一步结束时或之后的某一步再写，直到写进去；在那之前盘上的 `intent` 照样挡住再点。`intent` 本身写不进时不发请求，这一步别的改动（新 head 的窗口起点、最终结论）也留到下一步写。把只剩 `intent` 的回执改记成 `unknown` 时写不进，就保持 `intent`、先不通知，下一步再改。
-  - gh 起不来（`unsent`）、GitHub 拒绝（`refused`）、超时或结果无法确认（`unknown`），都只记下来，不重试，给 Owner 弹一次通知，说明情况和要不要手动补跑。
   - 回执写不进去就不发请求。记忆文件存在却读不出来、不是 JSON、或形状不完全对，这个 lane 什么也不做（忘掉回执可能导致点两次）；之后每一步重读一次，仍读不出时给 Owner 弹一次通知。回执保留 14 天。
   - 读 GitHub 失败（断流、非 0 退出、不是 JSON）时什么也不点，2 分钟后重新读。
-  - 回执丢了（例如重装），还有 gate 自己的规则兜底：补跑的那次尝试里重型 job 真跑了，就不会再允许。
+  - 回执丢了（例如重装），还有 gate 自己的 GitHub 历史预算和恢复证据要求兜底。
 - **告知。**
-  - 点成功后给 Owner 弹一次通知；这个 head 在 PR 页面上的基础文字前面加“已自动补跑一次必需测试；”（`pr-status.mjs#withRerunLine`）。这一句放在值班词（当班、双活停机、已交班、停摆）之后：别的节点只在文字开头读值班词（`node-duty.mjs#parseDutyStatus`），看门狗那一句仍在最后。
-  - 请求的结果分四种记进回执，各给 Owner 一句话：`sent`（已补跑）；`unsent`（gh 没有启动，请求没到 GitHub）；`refused`（GitHub 以 HTTP 4xx 拒绝）；`unknown`（超时、作业宿主无法确认、或没有 HTTP 答复的失败：GitHub 可能已经开始，请到 PR 页面看）。不论哪种都不再自动点。
+  - PR 状态通过 `pr-status.mjs#withRerunLine` 显示最近的结果。成功回执保留“已自动补跑一次必需测试”前缀，并附上环境类作业名和类别。补跑提示在值班词后，看门狗提示仍在最后。
+  - 每次请求的结果记进回执并通知 Owner。结果为 `sent`（已请求）、`unsent`（gh 没有启动）、`refused`（HTTP 4xx）或 `unknown`（请求是否生效未知）。
 - **两处已知约束：以后任何新 workflow 都会碰到**（在未合入的 76481044 里实测发现）：
   - 已安装在每台 runner 上的 hook `scripts/runner/clued-runner-job-started.mjs` 只放行 main 上的 push、schedule、workflow_run、pull_request_target、workflow_dispatch，不放行 `check_run`。要用 `check_run` 触发，得先做 hook 的后继版本，并在每台 runner 上重装。
   - 每个新 workflow 都必须登记进 `.github/actions/ci-temporary-storage/coverage.json`。这个文件被 gitleaks/trivy 的 scan-start 策略钉住（`hosted-relay-v1/registry.json` 的冻结闭包，生产 Worker `ci-scan-start-v1.ts` 会核对）。所以加任何一个 workflow，都得重新钉值并部署生产 Worker，否则之后 PR 的 scan start 会被拒（`clued-cloud` 的 `ci-scan-start-worker.test.mjs` 会失败）。

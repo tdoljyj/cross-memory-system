@@ -62,10 +62,20 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     if (route === `/commits/${HEAD}/pulls?per_page=100&page=1`) return ok(st.pulls);
     if (route === `/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission&filter=all&per_page=100&page=1`) return ok({ total_count: st.checks.length, check_runs: st.checks });
     if (route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?event=pull_request&head_sha=${HEAD}&per_page=100`
-      || route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${HEAD}&per_page=100`) return ok({ total_count: st.runs.length, workflow_runs: st.runs.map(shown) });
+      || route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${HEAD}&per_page=100`) {
+      const own = st.runs.filter(r => r.head_sha === HEAD).map(shown);
+      return ok({ total_count: own.length, workflow_runs: own });
+    }
     if ((m = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=1$/.exec(route))) { const r = byId(m[1]); const jobs = r.attempts.flatMap((_, i) => jobsOf(r, i + 1)); return ok({ total_count: jobs.length, jobs }); }
     if ((m = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs\?per_page=100&page=1$/.exec(route))) { const jobs = jobsOf(byId(m[1]), Number(m[2])); return ok({ total_count: jobs.length, jobs }); }
-    if ((m = /^\/check-runs\/(\d+)\/annotations\?per_page=100&page=1$/.exec(route))) { const id = Number(m[1]); const r = byId(Math.floor(id / 100)); return ok(r.attempts[Math.floor((id % 100) / 10) - 1].notes); }
+    if ((m = /^\/check-runs\/(\d+)\/annotations\?per_page=100&page=1$/.exec(route))) {
+      const id = Number(m[1]), a = byId(Math.floor(id / 100)).attempts[Math.floor((id % 100) / 10) - 1];
+      return ok(id % 10 === 0 ? a.notes : (a.jobNotes?.[id % 10] ?? []));
+    }
+    if (route.startsWith(`/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?`)) {
+      const others = st.runs.filter(r => r.head_sha !== HEAD).sort((a, b) => b.id - a.id).map(shown);
+      return ok({ total_count: others.length, workflow_runs: others });
+    }
     if ((m = /^\/actions\/jobs\/(\d+)\/logs$/.exec(route))) { st.logReads = (st.logReads ?? 0) + 1; const id = Number(m[1]); const r = byId(Math.floor(id / 100)); const n = Math.floor((id % 100) / 10); return { code: 0, stdout: r.attempts[n - 1].logs?.[id % 10] ?? '' }; }
     if ((m = /^\/pulls\/(\d+)$/.exec(route))) return ok(st.pulls.find(p => p.number === Number(m[1])) ?? null);
     if ((m = /^\/actions\/runs\/(\d+)$/.exec(route))) return ok(shown(byId(m[1])));
@@ -78,6 +88,122 @@ const T0 = Date.parse('2026-11-05T12:00:00Z');
 const botRun = (overrides = {}) => run(700, [attempt({ notes: [] })], { actor: { login: 'clued-admission[bot]', type: 'Bot' }, ...overrides });
 const status = (o = {}) => ({ node: { mode: 'ACTIVE' }, halt: null, current: null, pending: [{ pr: 452, headSha: HEAD, state: 'PARKED' }], recent: [], ...o });
 const pulls = [{ pr: 452, headSha: HEAD }];
+const TIMEOUT_NOTE = { message: 'The job has exceeded the maximum execution time of 30m0s' };
+function migrationAttempt(head = HEAD, conclusion = 'cancelled', completed = '2026-11-05T11:00:00Z') {
+  const a = attempt({ head, heavy: ['success', 'success', conclusion], notes: [] });
+  a.jobs[0].completed_at = completed;
+  for (const [i, name] of ['clued-cloud-tests', 'ci-suites', 'migration-verify'].entries()) {
+    Object.assign(a.jobs[i + 1], { name, completed_at: completed, started_at: '2026-11-05T10:00:00Z',
+      steps: [{ name: 'Set up job', conclusion: 'success' }, { name: 'Verify migrations', conclusion }] });
+  }
+  return { ...a, jobNotes: { 3: [TIMEOUT_NOTE] }, logs: { 3: 'Running migration verification\nThe operation was canceled.' } };
+}
+
+test('E4: a proven migration timeout sends one repair, then the successful next attempt settles', async t => {
+  const w = world({ runs: [run(700, [migrationAttempt()])] });
+  const l = await lane(t, w);
+  assert.equal((await l.r.step()).acted, 1);
+  assert.deepEqual(l.state.record(HEAD).failures, [{ name: 'migration-verify', kind: 'timeout' }]);
+  assert.match(withRerunLine({ description: '运行中' }, l.r.line(HEAD)).description, /^已自动补跑一次必需测试（migration-verify timeout，尝试 2）/);
+  w.runs[0].attempts[1] = migrationAttempt(HEAD, 'success');
+  w.runs[0].status = 'completed';
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+});
+
+test('E5: a prior late-admission receipt only blocks its own attempt, including across restart', async t => {
+  const w = world();
+  const l = await lane(t, w);
+  assert.equal((await l.r.step()).acted, 1);
+  const legacy = JSON.parse(await fs.readFile(l.file, 'utf8'));
+  const { requests, failures, ...receipt } = legacy.records['700:2'];
+  legacy.records = { [HEAD]: receipt };
+  await fs.writeFile(l.file, JSON.stringify(legacy));
+  w.runs[0].attempts[1] = migrationAttempt();
+  w.runs[0].status = 'completed';
+  const restarted = await lane(t, w, { stateFile: l.file });
+  restarted.advance(HEAD_RECHECK_MS);
+  assert.equal((await restarted.r.step()).acted, 1);
+  assert.deepEqual(w.posts, [700, 700]);
+  const { records } = JSON.parse(await fs.readFile(l.file, 'utf8'));
+  assert.deepEqual(Object.keys(records).sort(), ['700:2', '700:3']);
+});
+
+test('a final verdict persisted by the pre-timeout lane is checked again during the original watch window', async t => {
+  const w = world({ runs: [run(700, [migrationAttempt()])] });
+  const l = await lane(t, w);
+  l.state.data.heads[HEAD] = { firstSeen: new Date(T0).toISOString(), final: 'attempt 2 already ran a heavy job', skippedRecoveryChecked: true };
+  await l.state.save();
+  const restarted = await lane(t, w, { stateFile: l.file });
+  assert.equal((await restarted.r.step()).acted, 1);
+});
+
+test('E6: two timeouts on three other heads pause once; a subsequent success resumes', async t => {
+  const others = [1, 2, 3].map((n, i) => {
+    const head = String(n).repeat(40);
+    return run(703 - i, [migrationAttempt(head, i < 2 ? 'cancelled' : 'success', `2026-11-05T10:5${9 - i}:00Z`)], { head_sha: head });
+  });
+  const w = world({ runs: [run(700, [migrationAttempt()]), ...others] });
+  const l = await lane(t, w);
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'skip');
+  await l.r.step();
+  const restarted = await lane(t, w, { stateFile: l.file });
+  restarted.advance(HEAD_RECHECK_MS);
+  await restarted.r.step();
+  assert.deepEqual(w.posts, []);
+  assert.match(l.toasts[0], /migration-verify 系统性超时/);
+  assert.deepEqual(restarted.toasts, []);
+  const recovered = '4'.repeat(40);
+  w.runs.push(run(704, [migrationAttempt(recovered, 'success', '2026-11-05T12:01:00Z')], { head_sha: recovered }));
+  restarted.advance(HEAD_RECHECK_MS);
+  assert.equal((await restarted.r.step()).acted, 1);
+  assert.deepEqual(w.posts, [700]);
+});
+
+test('an inconclusive POST is retried once after ten minutes if the same attempt is still completed', async t => {
+  let requests = 0;
+  const w = world({ fail: (_, method) => {
+    if (method !== 'POST') return null;
+    requests += 1;
+    return { timedOut: true };
+  } });
+  const l = await lane(t, w);
+  assert.equal((await l.r.step()).acted, 1);
+  l.advance(9 * 60_000);
+  await l.r.step();
+  assert.equal(requests, 1);
+  const restarted = await lane(t, w, { stateFile: l.file });
+  restarted.advance(11 * 60_000);
+  assert.equal((await restarted.r.step()).acted, 1);
+  restarted.advance(11 * 60_000);
+  await restarted.r.step();
+  assert.equal(requests, 2);
+});
+
+test('a second repair waits for the same job to succeed on another head after the last attempt ended; a third is refused', async () => {
+  const recent = migrationAttempt(HEAD, 'cancelled', '2026-11-05T11:30:00Z');
+  const w = world({ runs: [run(700, [migrationAttempt(), recent])] });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'skip');
+  const other = '5'.repeat(40);
+  w.runs.push(run(701, [migrationAttempt(other, 'success', '2026-11-05T11:29:00Z')], { head_sha: other }));
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'skip');
+  w.runs[1].attempts.push(migrationAttempt(other, 'success', '2026-11-05T11:31:00Z'));
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'rerun');
+  w.runs[0].attempts.push(migrationAttempt());
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'final');
+});
+
+test('three proven environmental failures stop the lane and notify the Owner once', async t => {
+  const w = world({ runs: [run(700, [migrationAttempt(), migrationAttempt(), migrationAttempt()])] });
+  const l = await lane(t, w);
+  assert.equal((await l.r.step()).acted, 0);
+  assert.match(l.toasts[0], /三次环境类失败.*migration-verify timeout/);
+  const restarted = await lane(t, w, { stateFile: l.file });
+  await restarted.r.step();
+  assert.deepEqual(restarted.toasts, []);
+  assert.deepEqual(w.posts, []);
+});
 async function lane(t, w, { st = status(), stateFile = null } = {}) {
   let now = T0;
   const toasts = [];
@@ -96,7 +222,7 @@ test('allowed: one "Re-run all jobs", a receipt written before it, the PR page a
   assert.deepEqual(await l.r.step(), { acted: 1, looked: 1 });
   assert.deepEqual(w.posts, [700]);
   assert.deepEqual(order.slice(0, 1), [['save', 'intent', 0]], 'the intent is on disk before the request');
-  const rec = JSON.parse(await fs.readFile(l.file, 'utf8')).records[HEAD];
+  const rec = JSON.parse(await fs.readFile(l.file, 'utf8')).records['700:2'];
   assert.deepEqual([rec.contract, rec.pr, rec.runId, rec.attempt, rec.outcome], ['clued.independent-ci.admission-rerun/1', 452, 700, 2, 'sent']);
   assert.equal(l.r.done(HEAD), true);
   assert.deepEqual(l.toasts, ['PR #452：已自动补跑一次必需测试']);
@@ -561,17 +687,17 @@ test('review round 29: an outcome whose save failed is written by the end of the
   l.state.save = async () => { saves += 1; if (saves === 2) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); return save(); };
   await l.r.step();
   assert.deepEqual(w.posts, [700]);
-  assert.equal(JSON.parse(await fs.readFile(l.file, 'utf8')).records[HEAD].outcome, 'sent', 'written at the end of the same step');
+  assert.equal(JSON.parse(await fs.readFile(l.file, 'utf8')).records['700:2'].outcome, 'sent', 'written at the end of the same step');
   // a second failure too: the next step writes it
   saves = 0;
   const w2 = world(), l2 = await lane(t, w2);
   const save2 = l2.state.save.bind(l2.state);
   l2.state.save = async () => { saves += 1; if (saves >= 2 && saves <= 3) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); return save2(); };
   await l2.r.step();
-  assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records[HEAD].outcome, 'intent', 'both saves of this step failed');
+  assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records['700:2'].outcome, 'intent', 'both saves of this step failed');
   l2.advance(60_000);
   await l2.r.step();
-  assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records[HEAD].outcome, 'sent');
+  assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records['700:2'].outcome, 'sent');
 });
 
 test('review round 29: an intent left by a stop between the two saves becomes unknown, and the Owner hears of it once', async t => {
@@ -584,7 +710,7 @@ test('review round 29: an intent left by a stop between the two saves becomes un
   await again.r.step();
   assert.deepEqual(w.posts, [], 'never asked again');
   assert.deepEqual(again.toasts, ['PR #452：自动补跑结果不确定']);
-  assert.equal(JSON.parse(await fs.readFile(l.file, 'utf8')).records[HEAD].outcome, 'unknown');
+  assert.equal(JSON.parse(await fs.readFile(l.file, 'utf8')).records['700:2'].outcome, 'unknown');
   assert.equal(again.r.done(HEAD), false);
 });
 
@@ -617,11 +743,11 @@ test('review round 30: an intent that cannot be saved leaves the step\'s other c
   await again.r.step();
   await again.r.step();
   assert.deepEqual(again.toasts, ['PR #452：自动补跑结果不确定']);
-  assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records[HEAD].outcome, 'unknown');
+  assert.equal(JSON.parse(await fs.readFile(l2.file, 'utf8')).records['700:2'].outcome, 'unknown');
   assert.deepEqual(w2.posts, [], 'never asked');
 });
 
-// --- Task 1b: an environment failure (the runner's setup, or the network with no failed test) of the one attempt that ran is re-run once.
+// --- Environment failures rely on job evidence, and a second repair needs proof of recovery.
 const step = (name, conclusion) => ({ name, status: 'completed', conclusion });
 const SETUP_DIED = [step('Set up job', 'failure'), step('Run tests', 'skipped')];
 const TESTS_DIED = [step('Set up job', 'success'), step('Run tests', 'failure')];
@@ -635,7 +761,7 @@ const ran = (specs, { gate = { name: 'admission-gate', status: 'completed', conc
   jobs: [gate, ...specs.map((sp, i) => ({ name: HEAVY[i], head_sha: HEAD, status: 'completed', conclusion: sp.conclusion, ...(sp.steps ? { steps: sp.steps } : {}) }))],
   logs: Object.fromEntries(specs.flatMap((sp, i) => sp.log === undefined ? [] : [[i + 1, sp.log]])) });
 
-test('environment failure: a network failure of the attempt that ran is re-run once; a second one on the same head never is', async t => {
+test('environment failure: a network failure is re-run once; another needs recovery evidence', async t => {
   const w = world({ runs: [run(700, [ran([netFail, ok, ok])])] });
   const d = await decide({ gh: w.gh, headSha: HEAD });
   assert.deepEqual([d.action, d.runId, d.attempt, d.environment], ['rerun', 700, 1, [HEAVY[0]]]);
@@ -644,13 +770,13 @@ test('environment failure: a network failure of the attempt that ran is re-run o
   assert.deepEqual(w.posts, [700]);
   assert.equal(l.state.record(HEAD).attempt, 2);
   assert.match(l.toasts[0], /环境类失败/);
-  // The re-run (attempt 2) ran and failed of the network again: the head is done, nothing is clicked again.
+  // There is no evidence to repair the second failure yet.
   w.runs[0].status = 'completed';
   w.runs[0].attempts[1] = ran([netFail, ok, ok]);
   l.advance(HEAD_RECHECK_MS + 1);
   await l.r.step();
   assert.deepEqual(w.posts, [700]);
-  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'final');
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'skip');
 });
 
 test('environment failure: a setup death needs no log; a gate job that died in setup ran nothing', async t => {

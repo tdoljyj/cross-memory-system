@@ -4,18 +4,32 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { MAX_LOG_CHARS, diedInSetup, jobFailureKind } from '../src/env-failure.mjs';
+import { jobFailureKind as gateFailureKind } from '../../../scripts/ci/clued-work-admission.mjs';
 
 const step = (name, conclusion) => ({ name, status: 'completed', conclusion });
 const job = (conclusion, steps, extra = {}) => ({ id: 1, name: 'ci-suites', status: 'completed', conclusion, ...(steps ? { steps } : {}), ...extra });
 const SETUP = [step('Set up job', 'failure'), step('Run tests', 'skipped')];
 const RUN = [step('Set up job', 'success'), step('Run tests', 'failure')];
 
-test('the resident copy is identical to the classifier inside the gate', async () => {
-  const classifier = text => text.slice(text.indexOf('export const SETUP_STEP'), text.includes("// A job's log is plain text") ? text.indexOf("// A job's log is plain text") : undefined).replaceAll('\r\n', '\n').trim();
-  const gate = classifier(await fs.readFile(new URL('../../../scripts/ci/clued-work-admission.mjs', import.meta.url), 'utf8'));
-  const copy = classifier(await fs.readFile(new URL('../src/env-failure.mjs', import.meta.url), 'utf8'));
+test('the resident failure classifier agrees with the pinned gate and, after T1, byte-matches the gate and runner hook', async () => {
+  const classifier = text => text.replaceAll('\r\n', '\n').match(/^export const SETUP_STEPS[\s\S]*?^export function jobFailureKind[\s\S]*?^}/m)?.[0];
+  const [gate, copy, hook] = await Promise.all(['../../../scripts/ci/clued-work-admission.mjs', '../src/env-failure.mjs',
+    '../../../scripts/runner/clued-runner-job-started.mjs'].map(async file => classifier(await fs.readFile(new URL(file, import.meta.url), 'utf8'))));
   assert.ok(gate.includes('export function jobFailureKind') && gate.length > 1500);
-  assert.equal(copy, gate);
+  if (hook || gate.includes('annotations = null')) {
+    assert.equal(copy, gate);
+    assert.equal(hook, gate);
+  } else {
+    // T2 is developed against the pre-T1 base. Keep the shared setup/network
+    // evidence byte-identical there and require full equality once T1 lands.
+    const common = body => body.slice(0, body.indexOf('\n//', body.indexOf('export function diedInSetup')));
+    assert.equal(common(copy), common(gate));
+    for (const steps of [SETUP, RUN, []]) {
+      for (const log of ['ECONNRESET', 'ECONNRESET\nnot ok 1', 'ordinary log', null]) {
+        assert.deepEqual(jobFailureKind(job('failure', steps), log), gateFailureKind(job('failure', steps), log));
+      }
+    }
+  }
 });
 
 test('a job that died in the runner\'s setup is an environment failure with no log; any other failed step needs the log', () => {
@@ -50,9 +64,25 @@ test('the log: a network failure with no failed test is environment; a failed te
   assert.equal(jobFailureKind(job('failure', RUN), `${net}${'x'.repeat(MAX_LOG_CHARS)}`).environment, false);
 });
 
-test('only a failure is classified: cancelled, timed out, passed and unfinished jobs are never environment', () => {
+test('unsupported conclusions and cancellations without positive evidence never count as environment', () => {
   for (const conclusion of ['cancelled', 'timed_out', 'success', 'skipped', 'neutral', null]) {
     assert.equal(jobFailureKind(job(conclusion, SETUP), 'ECONNRESET').environment, false, String(conclusion));
   }
   assert.equal(jobFailureKind(job('failure', SETUP, { status: 'in_progress' })).environment, false);
+});
+
+test('a cancelled job requires a complete step record, the timeout annotation, and a readable log with no failed test', () => {
+  const cancelled = job('cancelled', [step('Set up job', 'success'), step('Run migrations', 'cancelled')]);
+  const notes = [{ message: 'The job has exceeded the maximum execution time of 30m0s' }];
+  const log = 'Running migrations\nThe operation was canceled.';
+  assert.equal(jobFailureKind(cancelled, log, notes).kind, 'timeout');
+  for (const missing of [null, [], [{ message: 'The operation was canceled.' }], [{ message: `User text: ${notes[0].message}` }]]) {
+    assert.equal(jobFailureKind(cancelled, log, missing).environment, false);
+  }
+  for (const steps of [undefined, [], [step('Run migrations', 'failure')], [{ name: 'Run migrations' }]]) {
+    assert.equal(jobFailureKind({ ...cancelled, steps }, log, notes).environment, false);
+  }
+  for (const rejected of [null, '', '# fail 1', 'x'.repeat(MAX_LOG_CHARS + 1)]) {
+    assert.equal(jobFailureKind(cancelled, rejected, notes).environment, false);
+  }
 });
