@@ -7,6 +7,15 @@
 //   network: the log names a network failure and shows no failed test, assertion, or "N failed" summary anywhere.
 // The classifier of the admission gate (scripts/ci/clued-work-admission.mjs) lives there, inside the pinned file; this is its copy for the
 // companion's admission-rerun lane, and test/env-failure.test.mjs keeps the two identical.
+// N9: the staging repair uses the same log veto as the gate's existing classifier.
+export function hasTimeoutEvidence(job, log, annotations) {
+  return job?.status === 'completed' && job.conclusion === 'cancelled' && job.steps?.length > 0 && failedSteps(job)?.length === 0
+    && job.steps.every(step => typeof step?.conclusion === 'string')
+    && Array.isArray(annotations) && annotations.some(note =>
+      typeof note?.message === 'string' && note.message.startsWith('The job has exceeded the maximum execution time of '))
+    && typeof log === 'string' && log.length > 0 && log.length <= MAX_LOG_CHARS && !TEST_FAILURE.some(pattern => pattern.test(log));
+}
+
 export const SETUP_STEPS = ["Set up job", "Set up runner"];
 // A log longer than this is never classified (the tail with the verdict may be missing): not environment.
 export const MAX_LOG_CHARS = 3_500_000;

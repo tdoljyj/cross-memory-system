@@ -87,6 +87,21 @@ async function lane(t, w, { st = status(), stateFile = null } = {}) {
   return { r, state, toasts, file, advance: ms => { now += ms; } };
 }
 
+test('N9: a live push-mode front offers S to the repair lane before and during parking', () => {
+  const testSha = 'b'.repeat(40);
+  const train = { enabled: 'on', landing: 'push' };
+  const front = { ...pulls[0], testSha, state: 'PARKED', deferred: 'TRAIN_LANDING_CHECKS_PENDING' };
+  const candidates = overrides => candidateHeads(status({ writtenAt: T0, train, pending: [front], ...overrides }), pulls, T0);
+  assert.deepEqual(candidates({}), [{ ...pulls[0], testSha }, pulls[0]]);
+  assert.deepEqual(candidates({ pending: [{ ...front, state: 'RUNNING', deferred: null }] }), [{ ...pulls[0], testSha }, pulls[0]]);
+  assert.deepEqual(candidates({ pending: [{ ...front, state: 'QUEUED', deferred: null }] }), [{ ...pulls[0], testSha }, pulls[0]]);
+  assert.deepEqual(candidates({ train: { ...train, landing: 'github-merge' } }), pulls);
+  assert.deepEqual(candidates({ train: { ...train, notOnDuty: true } }), pulls);
+  assert.deepEqual(candidates({ pending: [{ ...front, state: 'STOPPED' }] }), pulls);
+  assert.deepEqual(candidates({ pending: [{ ...front, testSha: HEAD }] }), pulls);
+  assert.deepEqual(candidates({ pending: [{ ...front, headSha: 'c'.repeat(40) }] }), []);
+});
+
 test('allowed: one "Re-run all jobs", a receipt written before it, the PR page and the Owner told; never a second one', async t => {
   const w = world();
   const l = await lane(t, w);

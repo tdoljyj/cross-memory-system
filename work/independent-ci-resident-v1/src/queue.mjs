@@ -604,6 +604,9 @@ export class RunQueue {
     const queuedReason = r => (time(r.deferUntil) && r.deferUntil <= now ? null : (r.deferred ?? r.reason ?? null));
     return this.data.rows.filter(r => r.current).map(r => ({
       pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state === 'PARKED' && !parkedHere(r) ? 'RUNNING' : r.state,
+      // The companion can begin checking the staging run while the executor is still running stages 1-7.
+      ...(LIVE_STATES.includes(r.state) && r.current.testSha && (!r.running || r.running.testSha === r.current.testSha)
+        ? { testSha: r.current.testSha } : {}),
       reason: r.state === 'PARKED' && !parkedHere(r) ? null : own(r) ? (r.reason ?? null) : r.state === 'QUEUED' ? queuedReason(r) : (r.deferred ?? r.reason ?? null),
       heldBy: held(r), since: r.since ?? null,
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,

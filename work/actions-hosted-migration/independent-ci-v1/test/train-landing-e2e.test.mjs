@@ -29,7 +29,10 @@ import { parseLandingArg } from '../src/resident-v2/invoke-stage.mjs';
 import fs from 'node:fs/promises';
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
-import { TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
+import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from '../../../independent-ci-resident-v1/src/admission-rerun.mjs';
+import { parseStatus, StatusBoard } from '../../../independent-ci-resident-v1/src/status.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
+import { CLEAN_PROOF, executorFixture, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -55,7 +58,8 @@ async function world(t, { prs, bad = () => false, sharedClaim = false }) {
   W.refs.set('heads/main', T0);
   const actions = sha => {
     const id = W.nextCheck++;
-    W.checks.set(id, { id, app: { id: ACTIONS }, name: 'ci-suites', head_sha: sha, status: 'completed', conclusion: bad(W.content.get(sha)) ? 'failure' : 'success' });
+    W.checks.set(id, { id, app: { id: ACTIONS }, name: 'ci-suites', head_sha: sha, status: 'completed',
+      conclusion: bad(W.content.get(sha)) ? 'failure' : 'success', completed_at: iso(e.now - 5 * 60_000) });
   };
   for (const pr of prs) {
     const head = commit(h(`head:${pr}`), [T0], [String(pr)]);
@@ -412,6 +416,136 @@ const untouched = (e, T) => {
   assert.equal(e.main(), T, 'main unchanged');
   assert.equal([...e.gh.world.checks.values()].filter(c => c.name === 'kooyumi-merge-slot').length, 0, 'no merge-slot green');
 };
+
+test('N9 E10: the same S parks on timeout, is re-run by the lane, and lands without blaming a PR', async t => {
+  const { e, b, T } = await opened(t);
+  const { pr, headSha, testSha } = b;
+  const originalHeads = [...e.W.pulls.values()].map(p => p.head);
+  const context = 'migration-verify';
+  const rules = e.gh.readBranchRules;
+  e.gh.readBranchRules = async () => {
+    const reply = await rules();
+    reply.rules.at(-1).parameters.required_status_checks.push({ context, integration_id: ACTIONS });
+    return reply;
+  };
+  const addCheck = (status, conclusion) => {
+    const id = e.W.nextCheck++;
+    e.W.checks.set(id, { id, name: context, head_sha: testSha, app: { id: ACTIONS }, status, conclusion, completed_at: iso(e.now) });
+    return id;
+  };
+  const checkId = addCheck('completed', 'cancelled');
+  const board = new StatusBoard({ clock: e.clock });
+  board.update({ node: { name: 'fixture-node', mode: 'ACTIVE' }, train: { enabled: 'on', landing: 'push' } });
+  const engine = fakeEngine();
+  const stage = engine.runStage.bind(engine);
+  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled: 'on', nonFrontRuns: true,
+    maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, sweep: 'audit', landing: 'push', batchMax: 4 } });
+  const f = await executorFixture(t, { now: e.now, engine, status: board, policy });
+  f.exec.trainTakeoverDone = true;
+  engine.runStage = async (batch, role, options) => {
+    const result = await stage(batch, role, options);
+    if (role.number !== 8) return result;
+    e.now = f.clock();
+    const outcome = await stage8(t, e, b);
+    f.advance(e.now - f.clock());
+    return { ok: outcome.status === 'SETTLED', code: outcome.reason, proof: CLEAN_PROOF,
+      outcome: { ...outcome, mayHavePublished: outcome.sideEffects !== 0 } };
+  };
+  const key = await f.exec.enqueueFront(openFrontBatchOf(b));
+  const subject = { repo: REPO, pr, headSha, baseSha: T, testSha, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1 };
+  await f.ledger.reserve(key, subject, { origin: 'queued' });
+  f.queue.begin(pr, headSha, key, 'queued', f.clock());
+  const timedOut = await f.exec.driveReserved(key, subject, f.clock());
+  assert.deepEqual([timedOut.state, timedOut.reason], ['PARKED', 'TRAIN_LANDING_CHECKS_PENDING'], JSON.stringify(timedOut));
+  untouched(e, T);
+  assert.deepEqual(e.W.pushes, []);
+
+  const staging = 'clued-train/staging';
+  const run = { id: 712, head_sha: testSha, head_branch: staging, event: 'push', run_attempt: 1, status: 'completed', conclusion: 'cancelled' };
+  const state = await AdmissionRerunState.open(path.join(await tempDir(t), 'rerun.json'), e.clock);
+  const requests = [];
+  let annotations = [], log = 'Running migrations\n##[error]The operation was canceled.';
+  const steps = [{ name: 'Set up job', conclusion: 'success' }, { name: 'Run tests', conclusion: 'cancelled' }];
+  const lane = new AdmissionRerunner({ state, clock: e.clock, pulls: () => [{ pr, headSha }], notify: async () => {},
+    readStatus: async () => parseStatus(Buffer.from(JSON.stringify(board.snapshot()))),
+    gh: {
+      repo: REPO,
+      async get(route) {
+        if (route === `/git/ref/heads/${staging}`) return { ref: `refs/heads/${staging}`, object: { sha: e.W.refs.get(`heads/${staging}`) } };
+        if (route === `/actions/runs/${run.id}`) return { ...run };
+        if (route === `/pulls/${pr}`) return e.gh.readPullRequest(pr);
+        if (route.startsWith('/actions/workflows/clued-required-tests.yml/runs?') && route.includes(`head_sha=${testSha}`))
+          return { total_count: 1, workflow_runs: [{ ...run }] };
+        assert.fail(route);
+      },
+      async paged(route) {
+        if (route === `/commits/${headSha}/pulls`) return [];
+        if (route === `/actions/runs/${run.id}/attempts/1/jobs`) return [
+          { id: 500, name: 'admission-gate', head_sha: testSha, status: 'completed', conclusion: 'success' },
+          { id: checkId, name: context, head_sha: testSha, status: 'completed', conclusion: 'cancelled', steps },
+        ];
+        if (route === `/check-runs/${checkId}/annotations`) return annotations;
+        assert.fail(route);
+      },
+      async text(route) {
+        assert.equal(route, `/actions/jobs/${checkId}/logs`);
+        return log;
+      },
+      async rerun(id) {
+        assert.equal(state.record(testSha)?.outcome, 'intent');
+        requests.push(id);
+        Object.assign(run, { run_attempt: 2, status: 'queued' });
+        addCheck('queued', null);
+        return { outcome: 'sent' };
+      },
+    },
+  });
+  const stagingDecision = () => decide({ gh: lane.gh, pr, headSha, testSha });
+  assert.equal((await stagingDecision()).action, 'final', 'manual cancellation has no timeout proof');
+  annotations = [{ message: 'The job has exceeded the maximum execution time of 30m0s' }];
+  log = 'not ok 1 - migration assertion\n' + log;
+  assert.equal((await stagingDecision()).action, 'final', 'the test failure vetoes even an annotated timeout');
+  log = log.split('\n').slice(1).join('\n');
+  steps[1].conclusion = null;
+  assert.equal((await stagingDecision()).action, 'final', 'a missing step verdict cannot prove a clean timeout');
+  steps[1].conclusion = 'cancelled';
+  e.W.refs.set(`heads/${staging}`, T);
+  assert.equal((await stagingDecision()).action, 'skip', 'the staging ref moved');
+  e.W.refs.set(`heads/${staging}`, testSha);
+  await lane.step();
+  assert.deepEqual(requests, [run.id]);
+  assert.match(lane.line(headSha), /列车暂存提交/);
+  assert.deepEqual(state.record(testSha)?.timeouts, [context]);
+  const queued = await stage8(t, e, b);
+  assert.deepEqual([queued.status, queued.reason, queued.sideEffects], ['BLOCKED', 'TRAIN_LANDING_CHECKS_PENDING', 0]);
+  addCheck('completed', 'success');
+  Object.assign(run, { status: 'completed', conclusion: 'success' });
+  e.now += HEAD_RECHECK_MS;
+  await lane.step();
+  assert.deepEqual(requests, [run.id]);
+  f.advance(timedOut.until - f.clock());
+  const { acted: landed } = await f.exec.resumeParked();
+  assert.deepEqual([landed?.state, landed?.key], ['COMPLETED', key], JSON.stringify(landed));
+  for (const number of [2, 3, 4, 5, 6, 7])
+    assert.equal(engine.calls.filter(([action, stage]) => action === 'stage' && stage === number).length, 1, `stage ${number} ran once`);
+  assert.deepEqual(e.W.pushes, [testSha]);
+  assert.deepEqual([...e.W.pulls.values()].map(p => p.head), originalHeads);
+  await stage10(e);
+  assert.deepEqual(e.failed, []);
+  assert.equal(e.adopted.filter(([, sha]) => sha === testSha).length, originalHeads.length);
+});
+
+test('N9 E11: a real failure on S parks within five minutes and becomes a failure at the deadline', async t => {
+  const { e, b, T } = await opened(t);
+  const check = [...e.W.checks.values()].find(c => c.head_sha === b.testSha && c.app.id === ACTIONS);
+  Object.assign(check, { conclusion: 'failure', completed_at: iso(e.now + 60_000) });
+  const first = await stage8(t, e, b);
+  assert.deepEqual([first.reason, first.sideEffects], ['TRAIN_LANDING_CHECKS_PENDING', 0]);
+  e.now += 4 * 60_000;
+  const second = await stage8(t, e, b);
+  assert.deepEqual([second.reason, second.sideEffects], ['TRAIN_LANDING_CHECK_FAILED', 0]);
+  untouched(e, T);
+});
 
 test('push: same-tree H with missing or skipped project CI lands using the green checks on S', async t => {
   for (const headChecks of ['missing', 'skipped']) await t.test(headChecks, async t => {
