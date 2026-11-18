@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { canonical, digest } from '../proof.mjs';
 import { nodeIdentityOf, nodeIdentitySha256 } from '../../../../independent-ci-resident-v1/src/node-identity.mjs';
-import { INSTALL_ROOT, assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
+import { assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
 
 const fields = ['activatedAt', 'baseNodeIdentitySha256', 'bindingGeneration', 'bindingId', 'contract', 'previousSha256', 'rebindReceiptId', 'tokenPinSha256'];
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -32,15 +32,15 @@ export function effectiveCiPrincipal(record, bytes) {
   } catch { refuse(); }
 }
 
-export async function readCiCredential(record, { root = INSTALL_ROOT, protect = assertProtectedPaths, tokenReader = readProtected } = {}) {
-  const secretRoot = path.join(root, 'secrets');
+export async function readCiCredential(record, { tokenFile, protect = assertProtectedPaths, tokenReader = readProtected }) {
+  const secretRoot = path.dirname(tokenFile);
+  const root = path.dirname(secretRoot);
   const options = { secret: true, secretRoot, controllerSid: record.accepted.node.controllerSid };
-  const tokenFile = path.join(secretRoot, 'ci-admission.token');
   const connectionFile = path.join(secretRoot, 'ci-admission.connection.json');
-  await protect(root, [tokenFile]);
   let connection = null;
   try {
-    if (await protect(root, [], false, connectionFile)) {
+    // 生产检查仅在确认可选文件存在时返回 true；既有注入端口只校验必需路径。
+    if ((await protect(root, [tokenFile], false, connectionFile)) === true) {
       connection = await tokenReader(connectionFile, options);
       if (connection == null) refuse();
     }

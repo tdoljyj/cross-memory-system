@@ -68,12 +68,12 @@ export async function readSignedExchange(spool, filename) {
 export async function assertProtectedPaths(root, files, state = false, optionalFile = null) {
   if (optionalFile !== null) {
     // 先核父目录，只有叶文件缺失才能沿用安装记录。
-    await assertProtectedPaths(root, [path.dirname(optionalFile)], state);
+    await assertProtectedPaths(root, [...files, path.dirname(optionalFile)], state);
     try { await fsp.lstat(optionalFile); } catch (error) {
       if (error.code === 'ENOENT') return false;
       throw error;
     }
-    files = [...files, optionalFile];
+    files = [optionalFile];
   }
   const checked = new Set();
   for (const file of [root, ...files]) {

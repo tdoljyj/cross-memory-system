@@ -110,8 +110,9 @@ export function observationLog(directory, jobId) {
   return log;
 }
 
-export async function controllerPrincipal(record, { root = INSTALL_ROOT, keyFile = APP_KEY_FILE, protect = assertProtectedPaths, tokenReader = readProtected } = {}) {
-  const credential = await readCiCredential(record, { root, protect, tokenReader });
+export async function controllerPrincipal(record, { tokenFile = path.join(INSTALL_ROOT, 'secrets', 'ci-admission.token'), keyFile = APP_KEY_FILE, protect = assertProtectedPaths, tokenReader = readProtected } = {}) {
+  const root = path.dirname(path.dirname(tokenFile));
+  const credential = await readCiCredential(record, { tokenFile, protect, tokenReader });
   await protect(root, [keyFile]);
   const appKey = await tokenReader(keyFile, { secret: true, secretRoot: path.dirname(keyFile), controllerSid: record.accepted.node.controllerSid });
   check(createHash('sha256').update(createPublicKey(appKey).export({ type: 'spki', format: 'der' })).digest('base64') === record.accepted.appPublicKeySha256Base64,

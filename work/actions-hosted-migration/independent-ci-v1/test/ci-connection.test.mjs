@@ -52,7 +52,7 @@ async function disk(t, connectionText, token) {
     if (stat && !stat.isFile()) throw Error('fixture_boundary');
     return Boolean(stat);
   };
-  return { root, keyFile, reads, tokenReader, protect };
+  return { root, tokenFile: path.join(secrets, 'ci-admission.token'), keyFile, reads, tokenReader, protect };
 }
 
 test('换绑后真实角色探测只读取一份记录和一个令牌，向只读接口使用新令牌', async t => {
