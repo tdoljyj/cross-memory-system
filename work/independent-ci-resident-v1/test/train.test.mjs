@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { trainDue, trainPageLine, trainSummary, WOULD_DO, claimBindingFingerprint } from '../src/train.mjs';
-import { executorFixture, fakeEngine, rawPolicy, triggerBytes } from './helpers.mjs';
+import { executorFixture, fakeEngine, rawPolicy, rulesReply, triggerBytes } from './helpers.mjs';
 import { WOULD_DO as SOURCE_WOULD_DO, TRAIN_FACTS_CONTRACT } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
 const MIN = 60_000, NOW = Date.parse('2026-10-23T12:00:00Z');
@@ -250,9 +250,9 @@ test('the companion reporter puts the shadow line on the front PR only, after th
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(x => x.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
-    if (argv.some(x => x.includes('/check-runs?'))) return { code: 0, stdout: REQUIRED.map(n => `${n}\tcompleted\tsuccess`).join('\n') + '\n' };
-    if (argv.some(x => x.includes('/statuses?'))) return { code: 0, stdout: '' };
+    if (argv.some(x => x.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+    if (argv.some(x => x.includes('/check-runs?'))) return { code: 0, stdout: JSON.stringify({ total_count: REQUIRED.length, check_runs: REQUIRED.map(name => ({ name, head_sha: H, app: { id: 5368905 }, status: 'completed', conclusion: 'success' })) }) };
+    if (argv.some(x => x.includes('/statuses?')) && !argv.includes('--jq')) return { code: 0, stdout: '[]' };
     return { code: 0, stdout: '{}' };
   };
   const board = new StatusBoard({ clock: () => NOW, pid: 1 });

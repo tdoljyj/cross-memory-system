@@ -307,9 +307,14 @@ function frontBindOf(b, front) {
 
 // The green-front words come from main's own required checks, never from a count or a list kept here: gap is null (not read: only
 // the merge slot is known green), [] (every required check of main is green on this head) or the missing / unfinished ones, as words.
+// The first missing check is always named in full; further ones are added while they fit GAP_NAMES_MAX, and the count says how many there are.
+export const GAP_NAMES_MAX = 90;
 export function frontGreenText(gap) {
   if (!Array.isArray(gap)) return '合并位已绿，等合并';
-  return gap.length === 0 ? '全部必需检查已绿，等合并' : `合并位已绿；还缺 ${gap.join('、')}`;
+  if (gap.length === 0) return '全部必需检查已绿，等合并';
+  let names = gap[0], shown = 1;
+  while (shown < gap.length && names.length + 1 + gap[shown].length <= GAP_NAMES_MAX) names += `、${gap[shown++]}`;
+  return `合并位已绿；缺 ${gap.length} 项：${names}${shown < gap.length ? '…' : ''}`;
 }
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).
 const TEXT = {
@@ -426,6 +431,8 @@ export function withTrainLine(want, last, pull, now, max = 140, gap = null) {
   if (!want || ['failure', 'error'].includes(want.state) || !last || now - last.at > TRAIN_PAGE_MAX_AGE_MS || !last.front?.headSha || last.front.headSha !== pull?.headSha) return want;
   const line = trainPageLine(last, pull.pr, gap);
   if (!line) return want;
-  const d = `${want.description}；${line}`;
+  // A gap goes first (a clipped text keeps its start), and the duty word another node reads is added before it by node-duty.mjs; all green or
+  // unknown goes after the text as before.
+  const d = Array.isArray(gap) && gap.length > 0 ? `${line}；${want.description}` : `${want.description}；${line}`;
   return { ...want, description: d.length <= max ? d : `${d.slice(0, max - 1)}…` };
 }

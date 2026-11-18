@@ -1,22 +1,25 @@
-// Task 6be83331 T-B (E2, E5): the front PR's "green, wait for merge" words come from main's own required checks and this head's checks.
-// No count and no list of checks lives in the words: a ruleset of 9, 10 or 11 checks gives the same kind of text.
+// Task 6be83331 T-B (E2, E5 and the review rework): the front PR's "green, wait for merge" words come from main's own required checks
+// (with their App pins) and this head's own observations. No count of checks and no list of them lives in the words.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as prStatus from '../src/pr-status.mjs';
-const { LocalStore, PrStatusReporter } = prStatus;
-const requiredGap = (...a) => prStatus.requiredGap(...a);
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { trainPageLine, trainSummary } from '../src/train.mjs';
 import { tempRoot } from './helpers.mjs';
 
+const { LocalStore, PrStatusReporter } = prStatus;
 const REPO = 'tdoljyj/cross-memory-system';
 const MAIN = 'd'.repeat(40);
 const H = n => String(n).repeat(40).slice(0, 40);
 const RESIDENT = ['gitleaks', 'trivy', 'kooyumi-work-admission', 'kooyumi-admission-verified', 'kooyumi-merge-slot', 'contract-placement'];
 const ACTIONS = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'];
-const PS = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe';
+const APP = 5368905, GHA = 15368;
+const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const RULES = [...RESIDENT.map(context => ({ context, integrationId: APP })), ...ACTIONS.map(context => ({ context, integrationId: GHA }))];
+const ok = (names, appId) => names.map(name => ({ name, appId, status: 'completed', conclusion: 'success' }));
+const GREEN = [...ok(RESIDENT, APP), ...ok(ACTIONS, GHA)];
 
 const front = (pr, at) => ({ at: new Date(at).toISOString(), mode: 'shadow', onDuty: true, mainSha: MAIN, rules: { strict: true, mergeOnly: true },
   front: { claimId: 'c', pr, headSha: H(pr) }, wouldDo: 'FRONT_GREEN_WAIT_MERGE', wouldRevoke: [], wouldRevokeCount: 0, contract: 'clued.independent-ci.train-facts/1' });
@@ -25,65 +28,98 @@ const board = (at, pr) => { const b = new StatusBoard({ clock: () => at }); b.se
   b.update({ train: { enabled: 'shadow', last: JSON.parse(JSON.stringify(trainSummary(front(pr, at)))) } });
   return parseStatus(Buffer.from(JSON.stringify(b.snapshot()))); };
 
-// A fake GitHub: main's ruleset, and the head's check runs / statuses.
-function fake({ required, runs }) {
+// A fake GitHub for one head. It answers both reading styles (the plain --jq text of the first version and the REST JSON of the shared reader),
+// so the same case runs against either implementation.
+function fake({ rules = RULES, runs = GREEN, statuses = [], head = H(7) } = {}) {
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: required.join('\n') + '\n' };
-    if (argv.some(a => a.includes('/check-runs?'))) return { code: 0, stdout: runs.map(([n, s, c]) => `${n}\t${s}\t${c ?? ''}`).join('\n') + '\n' };
+    const jq = argv.includes('--jq'), route = argv.find(a => a.startsWith('repos/')) ?? '', json = v => ({ code: 0, stdout: JSON.stringify(v) });
+    if (route.includes('/rules/branches/main')) return jq ? { code: 0, stdout: [...new Set(rules.map(r => r.context))].join('\n') + '\n' }
+      : json([{ type: 'required_status_checks', parameters: { required_status_checks: rules.map(r => ({ context: r.context, ...(r.integrationId ? { integration_id: r.integrationId } : {}) })) } }]);
+    if (route.includes('/check-runs?')) return jq ? { code: 0, stdout: runs.map(r => `${r.name}\t${r.status}\t${r.conclusion ?? ''}`).join('\n') + '\n' }
+      : json({ total_count: runs.length, check_runs: runs.map(r => ({ name: r.name, head_sha: head, app: { id: r.appId }, status: r.status, conclusion: r.conclusion ?? null })) });
+    if (route.includes('/statuses?') && !jq) return json(statuses.map(s => ({ context: s.context, state: s.state })));
+    if (route.includes('/statuses?') && argv.includes('--paginate')) return { code: 0, stdout: statuses.map(s => `${s.context}\t${s.state}`).join('\n') + '\n' };
+    if (route.includes('/statuses?')) return { code: 0, stdout: '[]' };
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
-    if (argv.some(a => a.includes('/statuses?'))) return { code: 0, stdout: '' };
     return { code: 0, stdout: '{}' };
   };
   return { calls, run };
 }
 const texts = calls => calls.filter(a => a.includes('POST')).map(a => a.find(x => x.startsWith('description=')).slice('description='.length));
-async function reporter(t, run, now) {
+async function reporter(t, run, now, extra = {}) {
   const root = await tempRoot(t);
-  return new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\gh.exe', powershellExe: PS, run, clock: () => now.v,
-    store: await LocalStore.open(path.join(root, 's.json'), () => now.v), notifications: false, writeRequest: async () => {} });
+  return new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now.v,
+    store: await LocalStore.open(path.join(root, 's.json'), () => now.v), notifications: false, writeRequest: async () => {}, ...extra });
 }
-const ok = names => names.map(n => [n, 'completed', 'success']);
+const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
+const lastText = async (t, spec, extra) => {
+  const now = { v: Date.parse('2026-11-19T04:00:00Z') };
+  const g = fake(spec);
+  const r = await reporter(t, g.run, now, extra);
+  await r.pass({ pulls, status: board(now.v, 7) });
+  return texts(g.calls).at(-1);
+};
 
 test('E2: a front head missing a required Actions check is not called green; the words name it, and turn to "all green" when it arrives', async t => {
-  const now = { v: Date.parse('2026-11-19T04:00:00Z') };
-  const g = fake({ required: [...RESIDENT, ...ACTIONS], runs: ok([...RESIDENT, 'ci-suites', 'clued-cloud-tests', 'migration-verify']) });
-  const r = await reporter(t, g.run, now);
-  const pulls = [{ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0 }];
-  await r.pass({ pulls, status: board(now.v, 7) });
-  const first = texts(g.calls).at(-1);
-  assert.match(first, /还缺 ci-suites-windows（未出现）/);
+  const without = GREEN.filter(r => r.name !== 'ci-suites-windows');
+  const first = await lastText(t, { runs: without });
+  assert.match(first, /缺 1 项：ci-suites-windows（未出现）/);
   assert.ok(!first.includes('六项') && !first.includes('全部必需检查已绿'), first);
-  // the Windows run is in progress: still not green, and it says so
-  g.calls.length = 0; now.v += 2 * 60_000;
-  const g2 = fake({ required: [...RESIDENT, ...ACTIONS], runs: [...ok([...RESIDENT, 'ci-suites', 'clued-cloud-tests', 'migration-verify']), ['ci-suites-windows', 'in_progress', '']] });
-  const r2 = await reporter(t, g2.run, now);
-  await r2.pass({ pulls, status: board(now.v, 7) });
-  assert.match(texts(g2.calls).at(-1), /还缺 ci-suites-windows（进行中）/);
-  // everything there: green words
-  const g3 = fake({ required: [...RESIDENT, ...ACTIONS], runs: ok([...RESIDENT, ...ACTIONS]) });
-  const r3 = await reporter(t, g3.run, now);
-  await r3.pass({ pulls, status: board(now.v, 7) });
-  assert.match(texts(g3.calls).at(-1), /全部必需检查已绿，等合并/);
+  assert.match(await lastText(t, { runs: [...without, { name: 'ci-suites-windows', appId: GHA, status: 'in_progress', conclusion: null }] }), /缺 1 项：ci-suites-windows（进行中）/);
+  assert.match(await lastText(t, { runs: GREEN }), /全部必需检查已绿，等合并/);
 });
 
-test('E5: no count or list in the words: rulesets of 9 and 11 checks, a new required check is covered without a code change', async () => {
-  const nine = [...RESIDENT, 'ci-suites', 'clued-cloud-tests', 'migration-verify'];
-  const eleven = [...RESIDENT, ...ACTIONS, 'brand-new-workflow'];
-  const have = new Map([...RESIDENT, 'ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'].map(n => [n, 'pass']));
-  assert.deepEqual(requiredGap(nine, have), []);
-  assert.deepEqual(requiredGap(eleven, have), ['brand-new-workflow（未出现）']);
-  have.set('ci-suites', 'fail');
-  assert.deepEqual(requiredGap(nine, have), ['ci-suites（未通过）']);
-  assert.equal(requiredGap(null, have), null);
-  assert.equal(requiredGap(nine, null), null);
+test('review high 1: the right App must have posted the check; a same-name success from another App, or a commit status, is missing', async t => {
+  const wrongApp = [...GREEN.filter(r => r.name !== 'ci-suites-windows'), { name: 'ci-suites-windows', appId: 9999, status: 'completed', conclusion: 'success' }];
+  assert.match(await lastText(t, { runs: wrongApp }), /缺 1 项：ci-suites-windows（未出现）/, 'wrong App');
+  const onlyStatus = GREEN.filter(r => r.name !== 'ci-suites-windows');
+  assert.match(await lastText(t, { runs: onlyStatus, statuses: [{ context: 'ci-suites-windows', state: 'success' }] }), /缺 1 项：ci-suites-windows（未出现）/, 'a status is not the pinned check');
+  // a status never hides a failed or running check-run of the same name
+  const failedRun = [...onlyStatus, { name: 'ci-suites-windows', appId: GHA, status: 'completed', conclusion: 'failure' }];
+  assert.match(await lastText(t, { runs: failedRun, statuses: [{ context: 'ci-suites-windows', state: 'success' }] }), /缺 1 项：ci-suites-windows（未通过）/, 'same name, run and status');
+  // an unpinned rule is met by any App's check or by a status
+  const unpinned = RULES.map(r => r.context === 'ci-suites-windows' ? { context: r.context, integrationId: null } : r);
+  assert.match(await lastText(t, { rules: unpinned, runs: onlyStatus, statuses: [{ context: 'ci-suites-windows', state: 'success' }] }), /全部必需检查已绿/, 'unpinned: status counts');
+});
+
+test('review high 2: a required check that completed as skipped is missing, never green', async t => {
+  const skipped = [...GREEN.filter(r => r.name !== 'ci-suites-windows'), { name: 'ci-suites-windows', appId: GHA, status: 'completed', conclusion: 'skipped' }];
+  const text = await lastText(t, { runs: skipped });
+  assert.match(text, /缺 1 项：ci-suites-windows（已跳过）/);
+  assert.ok(!text.includes('全部必需检查已绿'), text);
+});
+
+test('review medium 4: the missing names come first and survive a long text and the watchdog tail; a long list says how many', async t => {
+  const long = 'x'.repeat(120);
+  const now = { v: Date.parse('2026-11-19T04:00:00Z') };
+  const many = [...RESIDENT, ...ACTIONS].map(n => `${n}-with-a-long-check-name-suffix`);
+  const rules = [{ context: 'ci-suites-windows-with-a-long-check-name', integrationId: GHA }, ...many.map(context => ({ context, integrationId: GHA }))];
+  const g = fake({ rules, runs: [] });
+  const r = await reporter(t, g.run, now, { rerunLine: () => long, watchdogStale: () => true });
+  await r.pass({ pulls, status: board(now.v, 7) });
+  const text = texts(g.calls).at(-1);
+  assert.ok(text.length <= 140, text);
+  assert.match(text, new RegExp(`缺 ${rules.length} 项：ci-suites-windows-with-a-long-check-name（未出现）`), text);
+  assert.ok(text.endsWith('自动接班看门狗未运行'), text);
+  // a single missing check with the long text in front
+  const one = await lastText(t, { runs: GREEN.filter(x => x.name !== 'ci-suites-windows') }, { rerunLine: () => long });
+  assert.match(one, /缺 1 项：ci-suites-windows（未出现）/);
+});
+
+test('E5: no count or list in the words: rulesets of 9 and 11 checks, a new required check is covered without a code change', async t => {
+  const nine = RULES.filter(r => r.context !== 'ci-suites-windows');
+  const eleven = [...RULES, { context: 'brand-new-workflow', integrationId: GHA }];
+  const seen = GREEN.map(r => ({ name: r.name, appId: r.appId, source: 'run', state: 'pass' }));
+  assert.deepEqual(prStatus.requiredGap(nine, seen), []);
+  assert.deepEqual(prStatus.requiredGap(eleven, seen), ['brand-new-workflow（未出现）']);
+  assert.match(await lastText(t, { rules: eleven }), /缺 1 项：brand-new-workflow（未出现）/);
+  assert.match(await lastText(t, { rules: nine }), /全部必需检查已绿/);
+  assert.equal(prStatus.requiredGap(null, seen), null);
+  assert.equal(prStatus.requiredGap(nine, null), null);
   const s = trainSummary(front(7, Date.parse('2026-11-19T04:00:00Z')));
-  for (const gap of [null, [], ['x（未出现）'], ['a（未出现）', 'b（进行中）']]) {
-    const line = trainPageLine(s, 7, gap);
-    assert.ok(!/六|[0-9]+\s*项|[一二三四五六七八九十]项/.test(line), line);
-  }
-  assert.match(trainPageLine(s, 7, ['a（未出现）', 'b（进行中）']), /还缺 a（未出现）、b（进行中）/);
+  for (const gap of [null, []]) assert.ok(!/六|[0-9]+\s*项|[一二三四五六七八九十]项/.test(trainPageLine(s, 7, gap)));
   assert.match(trainPageLine(s, 7, null), /合并位已绿，等合并/);
   const src = await fs.readFile(new URL('../src/train.mjs', import.meta.url), 'utf8');
   assert.ok(!src.includes('六项'), 'train.mjs keeps no hard-coded count of checks');

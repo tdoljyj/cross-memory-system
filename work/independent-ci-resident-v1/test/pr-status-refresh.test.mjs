@@ -8,7 +8,7 @@ import { RunQueue } from '../src/queue.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { LocalStore, POST_RETRY_MS, PrStatusReporter, WATCHDOG_STALE_TEXT, describe, events, statusSignature } from '../src/pr-status.mjs';
 import { nodeContext, parseDutyStatus } from '../src/node-duty.mjs';
-import { tempRoot } from './helpers.mjs';
+import { rulesReply, tempRoot } from './helpers.mjs';
 
 const MIN = 60_000;
 const REPO = 'tdoljyj/cross-memory-system';
@@ -57,7 +57,7 @@ test('a write lost to the outage is tried again at the next pass once the text c
   let now = T0, up = false;
   const posted = [];
   const run = async argv => {
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: 'ci-suites\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(['ci-suites']);
     if (argv.includes('POST')) { if (!up) return { code: 1, stdout: '' }; posted.push(argv.join(' ')); return { code: 0, stdout: '{}' }; }
     return { code: 0, stdout: '{}' };
   };
@@ -87,7 +87,7 @@ test('review round 4: the reporter puts the re-run line after the duty word and 
   let now = T0;
   const posted = [];
   const run = async argv => {
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: 'ci-suites\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(['ci-suites']);
     if (argv.includes('POST')) { posted.push(argv.find(a => a.startsWith('description=')).slice('description='.length)); return { code: 0, stdout: '{}' }; }
     return { code: 0, stdout: '{}' };
   };
