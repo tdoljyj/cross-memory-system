@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { AdmissionRerunState, AdmissionRerunner, HEAD_RECHECK_MS, REQUIRED_TESTS_WORKFLOW, candidateHeads, decide, ghPort } from '../src/admission-rerun.mjs';
+import { AdmissionRerunState, AdmissionRerunner, HEAD_RECHECK_MS, candidateHeads, decide, ghPort } from '../src/admission-rerun.mjs';
 import { withRerunLine } from '../src/pr-status.mjs';
 import { parseDutyStatus } from '../src/node-duty.mjs';
 import { tempRoot } from './helpers.mjs';
@@ -14,22 +14,37 @@ import { fileURLToPath } from 'node:url';
 
 const REPO = 'o/r';
 const HEAD = 'a'.repeat(40);
+const BASE = 'b'.repeat(40);
 const NATIVE_ID = `independent-ci:native-work-admission:${'3'.repeat(64)}:f9:e1:a1`;
 const HEAVY = ['clued-cloud-tests-skipped', 'ci-suites-skipped', 'migration-verify-skipped'];
+const LINUX_WORKFLOW = 100;
+const WINDOWS_WORKFLOW = 101;
+const WORKFLOWS = [{ id: LINUX_WORKFLOW, path: '.github/workflows/clued-required-tests.yml', state: 'active' },
+  { id: WINDOWS_WORKFLOW, path: '.github/workflows/clued-required-tests-windows.yml', state: 'active' }];
+const CHECK_NAMES = HEAVY.map(name => name.replace(/-skipped$/, ''));
+const actionCheck = (name, o = {}) => ({ name, head_sha: HEAD, app: { id: 15368 }, ...o });
+const requiredRule = (...names) => ({ type: 'required_status_checks', parameters: {
+  required_status_checks: names.map(context => ({ context, integration_id: 15368 })),
+} });
 const pendingNote = { title: 'admission-gate', message: 'ADMISSION_PENDING: kooyumi-work-admission of App 5368905 for #452: has posted no check after 600s.' };
 const outageNote = { title: 'kooyumi-work-admission', message: 'GitHub API /repos/o/r/commits/x/check-runs returned 502' };
 const otherNote = { title: 'admission-gate', message: 'REJECTED: something else' };
 const nativeCheck = (o = {}) => ({ id: 50, name: 'kooyumi-work-admission', head_sha: HEAD, status: 'completed', conclusion: 'success', external_id: NATIVE_ID, app: { id: 5368905 },
   output: { summary: `Independent Native control check for o/r#452; observation sha256 ${'5'.repeat(64)}.` }, ...o });
-const pullRequest = (o = {}) => ({ number: 452, state: 'open', head: { sha: HEAD, ref: 'claude/x', repo: { full_name: REPO } }, base: { ref: 'main', repo: { full_name: REPO } }, ...o });
+const pullRequest = (o = {}) => ({ number: 452, state: 'open', head: { sha: HEAD, ref: 'claude/x', repo: { full_name: REPO } }, base: { ref: 'main', sha: BASE, repo: { full_name: REPO } }, ...o });
 const attempt = ({ heavy = ['skipped', 'skipped', 'skipped'], notes = [pendingNote], head = HEAD } = {}) => ({ notes,
   jobs: [{ name: 'admission-gate', status: 'completed', conclusion: 'success', head_sha: head },
     ...heavy.map((c, i) => ({ name: HEAVY[i], head_sha: head, status: c === 'in_progress' ? 'in_progress' : 'completed', conclusion: c === 'in_progress' ? null : c }))] });
-const run = (id, attempts, o = {}) => ({ id, head_sha: HEAD, event: 'pull_request', status: 'completed', pull_requests: [{ number: 452 }], attempts, ...o });
+const run = (id, attempts, o = {}) => ({ id, workflow_id: LINUX_WORKFLOW, head_sha: HEAD, event: 'pull_request', status: 'completed', pull_requests: [{ number: 452 }], attempts, ...o });
+const workflowAttempt = name => {
+  const a = attempt({ heavy: ['skipped'] });
+  a.jobs[1].name = `${name}-skipped`;
+  return a;
+};
 
 // A scripted `gh api`: fail(route, method) may return { code } or 'throw' or { timedOut: true } for one call.
-function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null, onDispatch = async () => {} } = {}) {
-  const st = { pulls, checks, runs, posts: [], dispatches: [], calls: [] };
+function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(700, [attempt()])], rerunCode = 0, dispatchCode = 0, fail = () => null, onDispatch = async () => {}, rules = [requiredRule(...CHECK_NAMES)] } = {}) {
+  const st = { pulls, checks, runs, rules, posts: [], dispatches: [], calls: [] };
   const byId = id => st.runs.find(r => r.id === Number(id));
   const jobsOf = (r, n) => r.attempts[n - 1].jobs.map((j, i) => ({ id: r.id * 100 + n * 10 + i, run_attempt: n, ...j }));
   const shown = r => { const { attempts, ...rest } = r; return { ...rest, run_attempt: attempts.length }; };
@@ -44,11 +59,11 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     assert.ok(target.startsWith(`repos/${REPO}/`), target);
     const route = target.slice(`repos/${REPO}`.length);
     let m;
-    if (method === 'POST' && route === `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/dispatches`) {
+    if (method === 'POST' && (m = /^\/actions\/workflows\/(\d+)\/dispatches$/.exec(route))) {
       st.dispatchFields = argv.flatMap((value, index) => value === '-f' ? [argv[index + 1]] : []);
       const i = argv.indexOf('-f'); assert.ok(i > 0, 'the ref is a field');
       st.dispatches.push(argv[i + 1]);
-      if (dispatchCode === 0) st.runs.push(run(900, [attempt({ heavy: ['in_progress', 'in_progress', 'in_progress'], notes: [] })], { event: 'workflow_dispatch', status: 'queued', pull_requests: [] }));
+      if (dispatchCode === 0) st.runs.push(run(900 + st.dispatches.length, [attempt({ heavy: ['in_progress', 'in_progress', 'in_progress'], notes: [] })], { workflow_id: Number(m[1]), event: 'workflow_dispatch', status: 'queued', pull_requests: [] }));
       if (dispatchCode === 0) await onDispatch(st);
       return { code: dispatchCode, stdout: '', stderr: dispatchCode === 0 ? '' : "gh: Workflow does not have 'workflow_dispatch' trigger (HTTP 422)" };
     }
@@ -59,9 +74,16 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
       return { code: rerunCode, stdout: '' };
     }
     assert.equal(method, 'GET');
+    if (route === '/rules/branches/main?per_page=100&page=1') return ok(st.rules);
+    if (/^\/commits\/[a-f0-9]{40}\/check-runs\?filter=all&per_page=100&page=1$/.test(route)) return ok({ total_count: st.checks.length, check_runs: st.checks });
+    if (route === '/actions/workflows?per_page=100&page=1') return ok({ total_count: WORKFLOWS.length, workflows: WORKFLOWS });
+    if ((m = /^\/contents\/(\.github\/workflows\/[\w.-]+)\?ref=[a-f0-9]{40}$/.exec(route))) {
+      const content = await fs.readFile(new URL(`../../../${m[1]}`, import.meta.url));
+      return ok({ path: m[1], content: content.toString('base64'), encoding: 'base64', sha: 'c'.repeat(40) });
+    }
     if (route === `/commits/${HEAD}/pulls?per_page=100&page=1`) return ok(st.pulls);
     if (route === `/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission&filter=all&per_page=100&page=1`) return ok({ total_count: st.checks.length, check_runs: st.checks });
-    if ((m = /^\/actions\/workflows\/clued-required-tests\.yml\/runs\?(?:event=pull_request&)?head_sha=([a-f0-9]{40})&per_page=100$/.exec(route))) {
+    if ((m = /^\/actions\/runs\?head_sha=([a-f0-9]{40})&per_page=100&page=1$/.exec(route))) {
       const own = st.runs.filter(r => r.head_sha === m[1]).map(shown);
       return ok({ total_count: own.length, workflow_runs: own });
     }
@@ -71,8 +93,8 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
       const id = Number(m[1]), a = byId(Math.floor(id / 100)).attempts[Math.floor((id % 100) / 10) - 1];
       return ok(id % 10 === 0 ? a.notes : (a.jobNotes?.[id % 10] ?? []));
     }
-    if (route.startsWith(`/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?`)) {
-      const others = st.runs.filter(r => r.head_sha !== HEAD).sort((a, b) => b.id - a.id).map(shown);
+    if ((m = /^\/actions\/workflows\/(\d+)\/runs\?/.exec(route))) {
+      const others = st.runs.filter(r => r.head_sha !== HEAD && r.workflow_id === Number(m[1])).sort((a, b) => b.id - a.id).map(shown);
       return ok({ total_count: others.length, workflow_runs: others });
     }
     if ((m = /^\/actions\/jobs\/(\d+)\/logs$/.exec(route))) { st.logReads = (st.logReads ?? 0) + 1; const id = Number(m[1]); const r = byId(Math.floor(id / 100)); const n = Math.floor((id % 100) / 10); return { code: 0, stdout: r.attempts[n - 1].logs?.[id % 10] ?? '' }; }
@@ -87,6 +109,80 @@ const T0 = Date.parse('2026-11-05T12:00:00Z');
 const botRun = (overrides = {}) => run(700, [attempt({ notes: [] })], { actor: { login: 'clued-admission[bot]', type: 'Bot' }, ...overrides });
 const status = (o = {}) => ({ node: { mode: 'ACTIVE' }, halt: null, current: null, pending: [{ pr: 452, headSha: HEAD, state: 'PARKED' }], recent: [], ...o });
 const pulls = [{ pr: 452, headSha: HEAD }];
+
+test('6be83331 E1: both gated PR runs are repaired independently with one receipt each', async t => {
+  const ungated = { jobs: [workflowAttempt('lint').jobs[1]] };
+  const w = world({ runs: [run(700, [attempt()]), run(701, [workflowAttempt('ci-suites-windows')], { workflow_id: WINDOWS_WORKFLOW }),
+    run(702, [ungated], { workflow_id: 103 })],
+    rules: [requiredRule('ci-suites', 'ci-suites-windows')] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700, 701]);
+  assert.deepEqual(Object.keys(l.state.data.records).sort(), ['700:2', '701:2']);
+});
+
+test('6be83331 E1: staging repairs each gated workflow on the bound staging SHA', async t => {
+  const testSha = 'b'.repeat(40), staging = 'clued-train/staging';
+  const subject = { head_sha: testSha, head_branch: staging, event: 'push', conclusion: 'failure' };
+  const windows = workflowAttempt('ci-suites-windows');
+  for (const job of windows.jobs) job.head_sha = testSha;
+  const w = world({ runs: [run(700, [attempt({ head: testSha })], subject),
+    run(701, [windows], { ...subject, workflow_id: WINDOWS_WORKFLOW })],
+    fail: target => target.endsWith(`/git/ref/heads/${staging}`) ? { code: 0, stdout: JSON.stringify({
+      ref: `refs/heads/${staging}`, object: { sha: testSha },
+    }) } : null });
+  const l = await lane(t, w, { st: status({ train: { enabled: 'on', landing: 'push' }, pending: [{ pr: 452, headSha: HEAD, testSha, state: 'PARKED' }] }) });
+  await l.r.step();
+  assert.deepEqual(w.posts, [700, 701]);
+  assert.deepEqual(Object.values(l.state.data.records).map(r => [r.headSha, r.frontHeadSha]), [[testSha, HEAD], [testSha, HEAD]]);
+});
+
+test('6be83331 E3: a new Actions requirement keeps the head open and its workflow is repaired', async t => {
+  const w = world({ runs: [run(700, [migrationAttempt(HEAD, 'success')])],
+    checks: [nativeCheck(), actionCheck('ci-suites'), actionCheck('additional-check', { app: { id: 5368905 } })],
+    rules: [requiredRule('ci-suites', 'additional-check')] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.equal(l.state.data.heads[HEAD].final, null);
+  w.runs.push(run(701, [workflowAttempt('additional-check')], { workflow_id: 102 }));
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.deepEqual(w.posts, [701]);
+  w.runs[1].attempts[1] = workflowAttempt('additional-check');
+  Object.assign(w.runs[1].attempts[1].jobs[1], { name: 'additional-check', conclusion: 'success' });
+  w.runs[1].status = 'completed';
+  w.checks.push(actionCheck('additional-check'));
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.ok(l.state.data.heads[HEAD].final);
+});
+
+test('6be83331 E3: missing or malformed main required-check rules stop mutations and report a read error', async t => {
+  for (const rules of [[], [{ type: 'required_status_checks', parameters: {} }]]) {
+    const w = world({ rules });
+    const l = await lane(t, w);
+    const result = await l.r.step();
+    assert.match(result.errors[0].reason, /main required status checks are unreadable/);
+    assert.deepEqual(w.calls.filter(c => c.method === 'POST'), []);
+    assert.equal(l.state.data.heads[HEAD].final, null);
+  }
+});
+
+test('6be83331 E4: missing Windows workflow without a dispatch trigger is tried once and shown on the PR', async t => {
+  const w = world({ runs: [run(700, [migrationAttempt(HEAD, 'success')])], checks: [nativeCheck(), actionCheck('ci-suites')],
+    rules: [requiredRule('ci-suites', 'ci-suites-windows')], dispatchCode: 1 });
+  const l = await lane(t, w);
+  await l.r.step();
+  l.advance(LOST_RUN_AFTER_MS);
+  await l.r.step();
+  const restarted = await lane(t, w, { stateFile: l.file });
+  restarted.advance(LOST_RUN_AFTER_MS + HEAD_RECHECK_MS);
+  await restarted.r.step();
+  assert.deepEqual(w.calls.filter(call => call.method === 'POST').map(call => call.target),
+    [`repos/${REPO}/actions/workflows/${WINDOWS_WORKFLOW}/dispatches`]);
+  assert.match(withRerunLine({ description: '运行中' }, restarted.r.line(HEAD)).description,
+    /ci-suites-windows 没有运行，无法自动补发/);
+});
 const TIMEOUT_NOTE = { message: 'The job has exceeded the maximum execution time of 30m0s' };
 function migrationAttempt(head = HEAD, conclusion = 'cancelled', completed = '2026-11-05T11:00:00Z') {
   const a = attempt({ head, heavy: ['success', 'success', conclusion], notes: [] });
@@ -296,7 +392,7 @@ test('bot head: refused dispatch stays visible and tells Owner once without retr
   const l = await lane(t, w);
   await l.r.step();
   assert.equal(w.dispatches.length, 1);
-  assert.match(l.r.line(HEAD), /必需测试被跳过且不能自动补跑：.*HTTP 422.*请推新提交或手动 Run workflow/);
+  assert.equal(l.r.line(HEAD), `${CHECK_NAMES.join('、')} 没有运行，无法自动补发`);
   assert.equal(l.toasts.length, 1);
   l.advance(HEAD_RECHECK_MS); await l.r.step();
   const restarted = await lane(t, w, { stateFile: l.file }); await restarted.r.step();
@@ -359,7 +455,7 @@ test('bot head: moved PR, new run or changed attempt at final read sends nothing
     let reads = 0;
     const w = world({ runs: [botRun()], fail: (route, method, st) => {
       if (change === 'pr' && route.endsWith('/pulls/452')) return { code: 0, stdout: JSON.stringify(pullRequest({ state: 'closed' })) };
-      if (route.includes(`/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?`) && ++reads === 2) {
+      if (route.includes(`/actions/runs?head_sha=${HEAD}`) && ++reads === 2) {
         if (change === 'run') st.runs.push(run(900, [attempt()], { status: 'queued' }));
         if (change === 'attempt') st.runs[0].attempts.push(attempt());
       }
@@ -471,7 +567,9 @@ test('network cut on the reads: nothing is clicked; the head is read again later
   let down = true;
   const w = world({ fail: (route, method) => (down && method === 'GET' && route.includes('/actions/') ? { code: 1, stdout: '' } : null) });
   const l = await lane(t, w);
-  assert.deepEqual(await l.r.step(), { acted: 0, looked: 1 });
+  const result = await l.r.step();
+  assert.equal(result.acted, 0);
+  assert.match(result.errors[0].reason, /GET \/actions\/runs.*failed/);
   assert.deepEqual(w.posts, []);
   assert.equal(l.state.record(HEAD), null);
   await l.r.step();
@@ -660,7 +758,8 @@ test('a run or an attempt with a job of another head is unreadable: nothing is c
 });
 
 test('review round 4: a companion start, a STANDBY spell or a HALT never resets the window or forgets a final verdict', async t => {
-  const w = world({ runs: [run(700, [attempt({ heavy: ['success', 'skipped', 'skipped'] })])] });
+  const w = world({ runs: [run(700, [attempt({ heavy: ['success', 'skipped', 'skipped'] })])],
+    checks: [nativeCheck(), ...CHECK_NAMES.map(name => actionCheck(name))] });
   let st = status(), list = pulls;
   let now = T0;
   const state = await AdmissionRerunState.open(path.join(await tempRoot(t), 'rerun.json'), () => now);
@@ -694,7 +793,8 @@ test('review round 9: a head that stays a candidate past 24 hours is never looke
 });
 
 test('review round 10: a still-candidate head keeps its entry across a companion start (no poller pass yet) and a stale status, even past 24 hours', async t => {
-  const w = world({ runs: [run(700, [attempt({ heavy: ['success', 'skipped', 'skipped'] })])] });
+  const w = world({ runs: [run(700, [attempt({ heavy: ['success', 'skipped', 'skipped'] })])],
+    checks: [nativeCheck(), ...CHECK_NAMES.map(name => actionCheck(name))] });
   let now = T0, list = pulls, written = () => now;
   const state = await AdmissionRerunState.open(path.join(await tempRoot(t), 'rerun.json'), () => now);
   const r = new AdmissionRerunner({ gh: w.gh, state, clock: () => now, readStatus: async () => status({ writtenAt: written() }), pulls: () => list, notify: async () => {} });
@@ -883,7 +983,7 @@ test('lost run: a head with no clued-required-tests run 5 minutes after it was s
   assert.deepEqual(w.dispatches, ['ref=claude/x'], 'one dispatch of the PR branch');
   assert.deepEqual(w.posts, [], 'no re-run: there is no run');
   assert.ok(order.some(([outcome, n]) => outcome === 'intent' && n === 0), 'the intent is on disk before the request');
-  const rec = JSON.parse(await fs.readFile(l.file, 'utf8')).records[HEAD];
+  const rec = JSON.parse(await fs.readFile(l.file, 'utf8')).records[`${HEAD}:${LINUX_WORKFLOW}`];
   assert.deepEqual([rec.kind, rec.pr, rec.runId, rec.outcome], ['redispatch', 452, null, 'sent']);
   assert.equal(l.r.done(HEAD), false, 'not a re-run');
   assert.equal(l.r.line(HEAD), '必需测试没有运行，已自动补发一次');
@@ -920,7 +1020,7 @@ test('lost run: a run exists (any event, any state), or the head is younger than
 });
 
 test('lost run: a failed or truncated query, a moved head, a run that appears right before the request: no dispatch, read again later', async t => {
-  const runsRoute = `repos/${REPO}/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs?head_sha=${HEAD}&per_page=100`;
+  const runsRoute = `repos/${REPO}/actions/runs?head_sha=${HEAD}&per_page=100&page=1`;
   const broken = [
     route => (route === runsRoute ? { code: 1, stdout: '', stderr: 'HTTP 502' } : null),
     route => (route === runsRoute ? { code: null, timedOut: true, stdout: '' } : null),
@@ -954,7 +1054,7 @@ test('lost run: a failed or truncated query, a moved head, a run that appears ri
 
 test('lost run: GitHub refuses the dispatch (no workflow_dispatch entry yet) or its answer is lost: recorded, the Owner told once, never asked again', async t => {
   const cases = [
-    [{ dispatchCode: 1 }, 'refused', 'PR #452：必需测试没有运行，自动补发被 GitHub 拒绝', '必需测试没有运行，自动补发未成功'],
+    [{ dispatchCode: 1 }, 'refused', `PR #452：${CHECK_NAMES.join('、')} 没有运行，无法自动补发`, `${CHECK_NAMES.join('、')} 没有运行，无法自动补发`],
     [{ fail: (route, method) => (method === 'POST' ? { code: null, timedOut: true, stdout: '' } : null) }, 'unknown', 'PR #452：必需测试没有运行，自动补发结果不确定', '必需测试没有运行，自动补发结果不确定'],
     [{ fail: (route, method) => (method === 'POST' ? { code: null, stdout: '', refused: 'RUNNER_SPAWN_FAILED' } : null) }, 'unsent', 'PR #452：必需测试没有运行，自动补发没有发出', '必需测试没有运行，自动补发未成功'],
   ];
