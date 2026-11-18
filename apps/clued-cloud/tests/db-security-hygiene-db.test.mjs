@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
+import { checkDatabaseMaintenance } from './database-io-maintenance-db.case.mjs';
 
 // Database permission hygiene, P0-4 (migration 20261007120000, Clued Task 9a4d6d2c, Owner Decision
 // eed7154f; docs/maintenance/database-security.md). Two databases on one server: "plain" is what
@@ -363,6 +364,13 @@ test('database permission hygiene: exact privilege changes, Worker RPCs stay cal
       await apply(prod, [MIGRATION]);
       assert.deepEqual(await snapshot(prod), prodAfter);
     });
+
+    // Reuse the local server with an isolated database for the retention and index fixtures.
+    await plain.query('create database io_maintenance');
+    const maintenance = servers[0].server.getPgClient('io_maintenance');
+    clients.push(maintenance);
+    await maintenance.connect();
+    await checkDatabaseMaintenance(t, maintenance);
   } finally {
     for (const client of clients.reverse()) await client.end().catch(() => {});
     for (const { server, directory } of servers) {
