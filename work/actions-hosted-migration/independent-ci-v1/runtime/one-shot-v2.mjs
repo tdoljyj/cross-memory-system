@@ -5,6 +5,7 @@
 // The protected observation reads the BATCH claim generation recorded by stage 1 (A-strict) through the
 // read-only Native verify RPC; it never binds a PR or charges a meter (the full evaluator does that).
 import path from 'node:path';
+import { effectiveCiPrincipal } from '../src/resident-v2/ci-principal.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
@@ -25,7 +26,7 @@ const REFS = ['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorization
 const stop = code => { throw Object.assign(new Error(code), { code }); };
 
 // Pure verification of the clued_work_verify_v1 reply for the batch claim generation.
-export function protectedFactsFromVerify({ job, batchClaim, body, status, config, accepted, sentMono, nowMono }) {
+export function protectedFactsFromVerify({ job, batchClaim, body, status, config, accepted, bindingId, sentMono, nowMono }) {
   const claim = body?.claim;
   const failed = [];
   for (const [name, ok] of [['reply', status === 200 && body?.status === 'ok'], ['verdict', body?.verdict === 'ADMITTED'],
@@ -39,7 +40,8 @@ export function protectedFactsFromVerify({ job, batchClaim, body, status, config
   // admission and native.current ports. Never compare two machines' clocks.
   failed.push(...serverAnswerCurrent({ verifiedAt: body?.verified_at, expiresAt: claim?.expires_at, sentMono, nowMono }));
   if (failed.length) throw Object.assign(new Error('native_claim_observation_refused'), { code: 'native_claim_observation_refused', checks: failed });
-  return { ...subjectOfV2(job), ...Object.fromEntries(REFS.map(r => [r, accepted[r]])), ciPrincipalBindingId: config.ciPrincipalBindingId,
+  // 已装入口显式传入进程持有的编号；仅持安装配置的既有纯函数调用方使用基线解析。
+  return { ...subjectOfV2(job), ...Object.fromEntries(REFS.map(r => [r, accepted[r]])), ciPrincipalBindingId: bindingId ?? effectiveCiPrincipal({ config, accepted }, null).bindingId,
     sourceAccepted: true, hostQualified: true, publisherQualified: true, ciPrincipalQualified: true, observedAt: body.verified_at, claimExpiresAt: claim.expires_at,
     claim: { claimId: claim.claim_id, fence: claim.fence, epoch: claim.execution_epoch }, executionPolicy: body.execution_policy, guarded: effectiveGuard(body.execution_policy, claim.lease_key_required) };
 }
@@ -77,7 +79,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 // The protected observation port of a v2 scanner publisher (this entry): the
 // read-only Native verify RPC for the batch claim generation. It never binds a PR or charges a meter.
 // clock (audit anchors), monotonic (answer age and retry budget), sleep and timeoutSignal are the tests' seams.
-export function protectedAuthority({ config, accepted, github, fetchImpl, nativeToken, live, log, clock = Date.now, monotonic = () => performance.now(), sleep = pause,
+export function protectedAuthority({ config, accepted, bindingId, github, fetchImpl, nativeToken, live, log, clock = Date.now, monotonic = () => performance.now(), sleep = pause,
   timeoutSignal = ms => AbortSignal.timeout(ms), recoveryState = null }) {
   return { async observe(subject, claimGen) {
     live();
@@ -128,7 +130,7 @@ export function protectedAuthority({ config, accepted, github, fetchImpl, native
       if (state && state.written !== true) state.slowestReadMs = Math.max(state.slowestReadMs, monotonic() - sentMono);
       if (cause === null) {
         let facts;
-        try { facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, sentMono, nowMono: monotonic() }); }
+        try { facts = protectedFactsFromVerify({ job: subject, batchClaim: claimGen, body, status: response.status, config, accepted, bindingId, sentMono, nowMono: monotonic() }); }
         catch (error) {
           // Retain the existing deadline outcome for an otherwise valid answer
           // whose timer ran late. A semantic refusal is never made retryable.
@@ -463,18 +465,18 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
   return runEntry({ argv, entryRole: 'check-publisher', moduleUrl: import.meta.url, output, body: async ({ args, inputs, held, live, sourceRoot }) => {
     const job = inputs.jobs[0], envelope = inputs.resultEnvelope, { config, accepted } = inputs.record;
     const batchClaim = await readBatchClaim(STATE_V2.batchClaims, job);
-    const { appKey, nativeToken } = await controllerPrincipal(inputs.record);
+    const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsScan, job.id);
-    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, policyText: held.policyText, sourceRoot, live, log });
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log });
     const { admission, fetchImpl } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsScan);
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });
     const recoveryContext = { nonce: args.nonce, stage: inputs.plan.stage, entryRole: inputs.plan.entryRole, batchKey: inputs.plan.batchKey,
       configSha256: args.configSha256, sourceManifestSha256: inputs.plan.sourceManifestSha256, acceptanceSha256: inputs.plan.acceptanceSha256, entrySha256: inputs.plan.entrySha256 };
-    const publisher = createRecoverableCheckPublisherV2({ recoveryContext, auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext }), authorityOptions: { config, accepted, github, fetchImpl, nativeToken },
+    const publisher = createRecoverableCheckPublisherV2({ recoveryContext, auditWriter: createPublicationRecoveryAuditWriter({ context: recoveryContext }), authorityOptions: { config, bindingId, accepted, github, fetchImpl, nativeToken },
       readCurrentBatchClaim: j => readBatchClaim(STATE_V2.batchClaims, j), live, log, publisherOptions: { nativeAdmission: admission, github, journal, signers: inputs.record.signers, configuredChecks: config.checks,
       readChangedPaths: subject => github.readChangedPaths(subject), batchClaim,
-      protectedDeployment: { enabled: true, domain: 'production', repository: config.repository, ciPrincipalBindingId: config.ciPrincipalBindingId, ...Object.fromEntries(REFS.map(r => [r, accepted[r]])) },
+      protectedDeployment: { enabled: true, domain: 'production', repository: config.repository, ciPrincipalBindingId: bindingId, ...Object.fromEntries(REFS.map(r => [r, accepted[r]])) },
       domain: 'production' } });
     return publisher.publish({ job, envelope });
   } });

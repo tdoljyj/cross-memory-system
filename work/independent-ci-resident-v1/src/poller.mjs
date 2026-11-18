@@ -18,7 +18,7 @@
 // last answer (If-None-Match). An unchanged answer is 304 Not Modified (GitHub's conditional requests: an authenticated 304
 // is not counted against the REST rate limit) and the last answer stands. `gh api` exits 1 on a 304 but prints the status line
 // and the headers (--include), so the status line decides, never the exit code. No webhook.
-import { HEX40, check } from './canonical.mjs';
+import { HEX40, check, digest } from './canonical.mjs';
 import { TRIGGER_CONTRACT_V2 } from './trigger.mjs';
 
 const json = text => { try { return JSON.parse(text); } catch { return null; } };
@@ -72,6 +72,7 @@ export class Poller {
     this.sent = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
     this.compareBudget = MAX_COMPARES_PER_PASS; this.stalled = false;
     this.etags = new Map(); this.reads = { fresh: 0, notModified: 0 }; this.retryAt = new Map();
+    this.parkedObserved = new Map(); this.parkedCursor = 0; this.rulesDigest = null;
   }
 
   // One conditional REST read: the value of a 200 (kept with its ETag once `accept` takes it), or the kept value on a 304.
@@ -99,6 +100,64 @@ export class Poller {
     return this.conditional(PULLS_ROUTE(this.repo), v => (Array.isArray(v) ? v.map(p => ({ number: p?.number, headRefOid: p?.head?.sha ?? null,
       baseRefOid: p?.base?.sha ?? null, isDraft: p?.draft === true, updatedAt: p?.updated_at ?? null })) : null),
     'POLLER_PULLS_UNAVAILABLE', 60_000);
+  }
+
+  noteBranchRules(rules) {
+    if (Array.isArray(rules)) this.rulesDigest = digest(rules);
+  }
+
+  // Observe one sleeping batch per existing polling pass. The executor uses these changes only as hints;
+  // stage 8 still obtains all of its own required-check and rule evidence before it can write.
+  async parkedPass(pending) {
+    if (!this.lastPass) return;
+    const sleeping = pending.filter(row => row.state === 'PARKED' && row.nextAt === null
+      && HEX40.test(row.baseSha ?? '') && this.lastPass.pulls.some(pr => pr.pr === row.pr && pr.headSha === row.headSha));
+    const heads = new Set(sleeping.map(row => row.testSha ?? row.headSha));
+    for (const sha of this.parkedObserved.keys()) {
+      if (!heads.has(sha)) {
+        this.parkedObserved.delete(sha);
+        this.etags.delete(this.parkedChecksRoute(sha));
+      }
+    }
+    if (sleeping.length === 0 || this.stalled) return;
+    this.parkedCursor = (this.parkedCursor + 1) % sleeping.length;
+    const row = sleeping[this.parkedCursor], sha = row.testSha ?? row.headSha;
+    const previous = this.parkedObserved.get(sha);
+    let checks = previous?.checks ?? null, checksReady = false;
+    try {
+      checks = await this.conditional(this.parkedChecksRoute(sha), value => {
+        if (!Array.isArray(value?.check_runs) || value.total_count > value.check_runs.length) return null;
+        return {
+          digest: digest(value.check_runs.map(c => [c.id, c.name, c.status, c.conclusion]).sort((a, b) => a[0] - b[0])),
+          ready: value.check_runs.length > 0 && value.check_runs.every(c => c.conclusion === 'success'),
+        };
+      }, 'PARKED_CHECKS_UNAVAILABLE', COMPARE_TIMEOUT_MS);
+      checksReady = checks.ready;
+    } catch { /* an absent observation cannot replace the last confirmed value */ }
+    let mergeMethods = previous?.mergeMethods ?? null;
+    if (row.deferred === 'MERGE_METHODS_NOT_MERGE_ONLY') {
+      try {
+        mergeMethods = await this.conditional(`repos/${this.repo}`, value => {
+          const flags = [value?.allow_merge_commit, value?.allow_squash_merge, value?.allow_rebase_merge];
+          return flags.every(flag => typeof flag === 'boolean') ? flags : null;
+        }, 'PARKED_MERGE_METHODS_UNAVAILABLE', COMPARE_TIMEOUT_MS);
+      } catch { /* retain the last confirmed value */ }
+    }
+    const signal = digest([row.pr, row.headSha, sha, this.lastPass.mainSha, this.rulesDigest, checks?.digest ?? null, mergeMethods]);
+    if (previous?.signal === signal) return;
+    const observation = { signal, checks, mergeMethods };
+    const recoveredRules = row.deferred === 'RULESET_UNREADABLE' && this.rulesDigest !== null;
+    const recoveredMethods = mergeMethods?.[0] === true && mergeMethods?.[1] === false && mergeMethods?.[2] === false;
+    if (!previous && !checksReady && !recoveredRules && !recoveredMethods && this.lastPass.mainSha === row.baseSha) {
+      this.parkedObserved.set(sha, observation);
+      return;
+    }
+    await this.writeTrigger({ contract: TRIGGER_CONTRACT_V2, repo: this.repo, pr: row.pr, headSha: row.headSha, baseSha: row.baseSha, parkEvent: signal });
+    this.parkedObserved.set(sha, observation);
+  }
+
+  parkedChecksRoute(sha) {
+    return `repos/${this.repo}/commits/${sha}/check-runs?filter=latest&per_page=100`;
   }
 
   // behind_by of main...head (commits of main the head does not contain), or null when GitHub did not answer. Two

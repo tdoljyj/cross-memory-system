@@ -162,7 +162,7 @@ test('node loses duty: STANDBY ends every resting batch (A and B) at the next ti
   assert.equal((await k.exec.tick()).failureCode, SUPERSEDED_AT_SAFE_POINT);
 });
 
-test('PR state unreadable: the batch stays parked (one read per 10 minutes, no receipt churn) until park.maxMs, the backstop', async t => {
+test('PR state unreadable: the batch stays parked and stops taking a slot at park.maxMs', async t => {
   const f = await fx(t);
   await parkedAtB(f);
   f.pr.answer = false;
@@ -179,9 +179,9 @@ test('PR state unreadable: the batch stays parked (one read per 10 minutes, no r
   assert.equal((await receiptBodies(f, 'supersede-unconfirmed')).length, 1);
   // park.maxMs is outside the rule: it bounds how long a batch the rule cannot decide holds its parking place
   f.advance(24 * 60 * MIN);
-  const r = await f.exec.tick();
-  assert.deepEqual([r.state, r.failureCode], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT']);
-  assert.equal((await f.ledger.state(KEY)).terminal.facts.basis, 'park-max-age');
+  await f.exec.tick();
+  assert.ok(Ledger.parkedAt(await f.ledger.state(KEY)));
+  assert.deepEqual(await f.exec.parkedCounts(), { inside: 0, outside: 0 });
 });
 
 test('reinstall: on a paused node off duty the rule ends the residue, so W1 and the uninstall find no open batch; the pause stays', async t => {

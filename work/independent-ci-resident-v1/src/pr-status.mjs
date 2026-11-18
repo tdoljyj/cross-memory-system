@@ -1,3 +1,4 @@
+import { budgetForPull, budgetText } from './budget-alert.mjs';
 // The executor's status on the PR page, and Windows notifications for the big events (resident quota redesign v0.6
 // + §9, phase 1, item 7; Owner Decision 38936534). Runs in the companion (the Owner's own session and gh login).
 //
@@ -31,6 +32,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
+import { FAILURE_TABLE } from './classify.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
@@ -64,7 +66,7 @@ export function statusSignature(status) {
   return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
     intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true,
-    parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status) });
+    parkingFull: status.queue?.parkingFull === true, quota: [quotaFull(status, 'batches'), quotaFull(status, 'evaluations')], hold: globalDefer(status), budgets: status.notices?.filter(n => n.budget).map(n => [n.key, n.budget]) ?? [] });
 }
 // Whether a daily budget of the whole queue is used up (status.limits, written by the scheduling pass that reached the due rows): the
 // executions (every row) or the evaluations (not a wait's retry: it has its own budget). Review round 23, MINOR 1.
@@ -154,7 +156,7 @@ const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MA
 // (companion-heartbeat.mjs#watchdogStale), every text this node writes for a PR head ends with this, never clipped away. At
 // the end, so the duty words that start a text (node-duty.mjs) stay where the other nodes read them.
 export const WATCHDOG_STALE_TEXT = '自动接班看门狗未运行';
-// Generation 12 (DESIGN §56.5): the companion re-ran this head's required tests once (admission-rerun.mjs). Applied to the base text
+// DESIGN §56.5: show the companion's latest required-tests recovery receipt (admission-rerun.mjs). Applied to the base text
 // (describe), before the duty word and the other lines are added: at the start of the base, so a clipped text keeps it; never in front
 // of a duty word (当班, 双活停机, 已交班, 停摆), which another node reads at the start of the text. A weak (generic) text gets none.
 // The lost-run lane's line (a head GitHub created no run for, AdmissionRerunner#line) goes in the same place. line: true (the re-run
@@ -255,6 +257,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   }
   if (!status) return null;
   if (now - status.writtenAt > staleMs) return { state: 'error', description: `执行器状态自 ${hhmm(status.writtenAt)} 起未更新，可能已停止` };
+  const budget = budgetForPull(status, pull, now);
+  if (budget && !status.halt && !status.paused && !(status.current?.pr === pull.pr && status.current?.headSha === pull.headSha))
+    return { state: 'pending', description: clip(budgetText(budget)) };
   const mine = x => x && x.pr === pull.pr && x.headSha === pull.headSha;
   if (mine(status.current)) {
     const stage = status.current.stage;
@@ -284,6 +289,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
+      if (row.nextAt === null) return { state: 'pending', description: clip(`休眠停靠（${row.deferred ?? '第 8 段未就绪'}）：有变化后再查第 8 段${lease}`) };
       // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(row.watched
@@ -351,7 +357,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
       case 'FAILED_CLEAN':
         if (recent.retry === 'safe-point') return { state: 'pending', description: '流程在安全点结束：条件恢复后自动接着跑，不用推新提交' };
-        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
+        if (['same-batch', 'continuation', 'new-trigger', 'park'].includes(recent.retry))
+          return { state: 'pending', description: clip(`流程停在（${code}）：等待恢复，不用推新提交`) };
         if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
         // DESIGN §41.4 (review R3 MINOR 10): GitHub recomputed the test merge; the next stage 10 reads S again (the head's second
         // front batch), no new commit is needed. Only after that one is a new commit asked for (TRAIN_FRONT_ATTEMPTS_USED).
@@ -378,12 +386,13 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         if (recent.code === 'OWNER_REVIEW_REQUIRED') return { state: 'pending', description: '等 Owner 批准受保护改动，批准后编辑 PR 可提前重试' };
         if (recent.code === 'TASK_CI_HEAD_CAP_REACHED') return { state: 'pending', description: 'Task 的 24 小时 CI 额度已满，稍后自动重试' };
         if (recent.class === 'waiting') return { state: 'pending', description: clip(`等待中（${code}），稍后自动重试`) };
+        if (recent.code === 'NATIVE_POLICY_UNSUPPORTED') return { state: 'pending', description: '等待节点更新 Source，当前提交可自动重试' };
         return { state: 'failure', description: clip(`未准入（${code}）：修正后编辑 PR 再试`) };
       case 'NOT_EXECUTED':
         // Defect a8910e41: the binding run is released now (before: burned, FAILED_CLEAN below); the same words.
         if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
         // Field defect 2026-11-14: the bundle found main moved past this head's base; the row stopped (no retry with that base).
-        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
         return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
       case 'IGNORED':
         if (recent.code === 'UNEXECUTED_DAILY_CAP') return { state: 'failure', description: '此提交今日评估次数已满：请推新提交' };
@@ -392,7 +401,12 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       default: return null;
     }
   }
-  if (row && row.state === 'STOPPED') return { state: 'failure', description: clip(`此提交不再运行（${row.deferred ?? '?'}）：请推新提交`) };
+  if (row && row.state === 'STOPPED') {
+    if (row.deferred === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
+    if (FAILURE_TABLE.rows.some(r => r.code === row.deferred && ['environment', 'queue'].includes(r.class) && r.retry !== 'new-commit'))
+      return { state: 'pending', description: clip(`流程停在（${row.deferred}）：等待恢复，不用推新提交`) };
+    return { state: 'failure', description: clip(`此提交不再运行（${row.deferred ?? '?'}）：请推新提交`) };
+  }
   if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
   if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
   if (!status.backfill.complete) return { state: 'pending', description: '执行器启动中：回填已执行记录', weak: true };
@@ -438,6 +452,12 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
     const head = n.headSha ? n.headSha.slice(0, 8) : '';
+    if (n.budget) {
+      if (n.at > now || now - n.at > 86400000 || n.budget.resetsAt !== null && n.budget.resetsAt < now) continue;
+      out.push({ key: `notice:${n.key}`, title: n.code === 'STAGE8_RETRY_BUDGET_EXHAUSTED' ? `PR #${n.pr} 的第 8 段重试额度已用完` : '常驻 CI 额度已用完',
+        body: `${n.pr ? `PR #${n.pr}：` : ''}${budgetText(n.budget)}。额度与所有门禁保持不变。` });
+      continue;
+    }
     switch (n.kind) {
       case 'role-probe-connection': out.push({ key: `notice:${n.key}`, title: '节点角色连接授权已失效', body: '只读探测收到连接授权拒绝，可能已撤销、过期或不再适用。角色状态不确定；请检查连接与角色安排。此通知不启动或重试 CI。' }); break;
       case 'role-probe-interrupted': out.push({ key: `notice:${n.key}`, title: '节点角色探测被中断，已自动恢复', body: '上一次角色探测（或排队观察）进行到一半时执行器重启或断电。已结束那次探测，按上一次完整的结论立即重新探测；如果中断时的进程还占着探测通道，这次探测会停机等你处理。连续中断达到策略上限也会停机。' }); break;
@@ -446,7 +466,10 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'new-trigger': out.push(n.code === 'CLAIM_CHANGED'
         ? { key: `notice:${n.key}`, title: `PR #${n.pr} 认领或授权已更新`, body: `提交 ${head} 上次因认领或授权条件未准入；已确认条件更新，立即重新评估。` }
         : { key: `notice:${n.key}`, title: `PR #${n.pr} 收到新触发`, body: `提交 ${head} 等待中的重试已提前，冷却 10 分钟后重新评估。` }); break;
-      case 'stopped': out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
+      case 'stopped':
+        if (status.notices?.some(b => b.budget && b.pr === n.pr && b.headSha === n.headSha
+          && ['RELEASE_CAP_REACHED', 'NETWORK_RELEASE_CAP_REACHED'].includes(b.code))) break;
+        out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`,
         title: n.pr ? `PR #${n.pr} 的第 8 段重试额度已用完` : '今日第 8 段重试额度已用完',
         body: n.pr ? '这个 PR 在过去 24 小时内的重试已达上限，额度恢复后继续；其他 PR 的额度独立计算。' : '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
@@ -584,6 +607,8 @@ export class PrStatusReporter {
     const r = this.notify ? await this.notify(e.key, e.title, e.body).then(() => ({ code: 0 }), () => ({ code: 1 }))
       : await this.run(toastArgv(this.powershellExe, e.title, e.body), { timeoutMs: ADVISORY_TIMEOUT_MS });
     if (r?.refused === 'RUNNER_BUSY_WITH_UNFINISHED_CHILD') { this.stalled = true; return false; }
+    // Budget alerts retry a failed enqueue. A failure is auxiliary, never a delivered notification.
+    if (e.key.startsWith('notice:budget:') && r.code !== 0) return false;
     this.store.data.notified[e.key] = { at: new Date(now).toISOString() };
     this.dirty = true;
     if (stalledCall(r)) this.stalled = true;

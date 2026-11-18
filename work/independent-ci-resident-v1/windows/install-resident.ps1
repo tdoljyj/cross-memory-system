@@ -122,6 +122,15 @@ $CompanionJobHost = 'CluedCompanionJobHost.exe'
 $SourceV2Windows = 'work\actions-hosted-migration\independent-ci-v1\src\resident-v2\windows'
 # Where the runtime reads the two controller secrets (runtime/protected-files.mjs APP_KEY_FILE; resident-v2/entry-runtime.mjs).
 $SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
+function Assert-CiInstallBaseline([string]$ciRoot) {
+  $file = Join-Path $ciRoot 'secrets\ci-admission.connection.json'
+  try { [void][IO.File]::GetAttributes($file) }
+  catch [IO.FileNotFoundException] { return }
+  catch [IO.DirectoryNotFoundException] { return }
+  catch { throw 'CI_CONNECTION_RECORD_REFUSED' }
+  throw 'CI_CONNECTION_REINSTALL_BASELINE_REQUIRED'
+}
+Assert-CiInstallBaseline $CiRoot
 $script:SecretBytes = @{}   # the verified secret bytes, in memory only, between the plan and the 'node-secrets' step
 # Where the fingerprint check runs the package's node.exe and tool (DESIGN.md section 30.5): a directory this script creates, never the package directory.
 $SecretWorkParent = 'C:\Windows\Temp'

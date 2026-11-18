@@ -15,6 +15,14 @@ import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporte
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
+for (const file of ['apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
+  'apps/clued-cloud/supabase/migrations/20261118100000_ci_connection_self_v1.sql',
+  'apps/clued-cloud/tests/ci-connection-self-db.test.mjs']) {
+  test('单改连接自查合同仍选中 Windows 节点断言 '+file, () => {
+    assert.ok(selectSuites('ci-suites',[file],'win32').suites.includes('source-v2-node'));
+  });
+}
+
 test('G3 required-tests exposes pr/head dispatch and keeps all three self-hosted checks gated on that head', async () => {
   const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8');
   const { gateFindings } = await import('./clued-work-admission.mjs');
