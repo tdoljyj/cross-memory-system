@@ -368,6 +368,45 @@ test('checkpoint caller discards a result after a guard failure and restores the
   assert.equal(r.restores, 1);
 });
 
+test('an EndInvoke exception leaves a failed receipt after the owned VM is stopped and restored', opts, () => {
+  const r = ps(`
+    $script:events = @(); $script:vm = @{ State = 'Off' }
+    $script:Drill.Runs = ${q(tmp)}
+    $Version = '1.2.3'; $From = 'fixture'; $Kit = 'fixture'
+    function Read-DrillPrereq { @{ sha256 = 'prereq' } }
+    function Test-DrillPackageDir { @{ version = '1.2.3'; tarSha256 = 'tar'; ciSourceManifestSha256 = 'source' } }
+    function Read-DrillKit { @{ sha256 = 'kit'; prereqSha256 = 'prereq'; executionBlocker = $null } }
+    function Get-DrillReleaseFiles { }
+    function Assert-DrillHost { @{ freeGB = 16 } }
+    function Invoke-DrillBaseline { @{ action = 'ready' } }
+    function Get-DrillHostSafety { @{ ok = $true } }
+    function Get-DrillVmInfo { @{ vm = $script:vm; notes = 'clued.drill-vm/1'; state = $script:vm.State; checkpoints = @($script:Drill.Checkpoint) } }
+    function Get-VM { param($Name) $script:vm }
+    function Restore-VMCheckpoint { param($VMName, $Name, [switch]$Confirm) $script:events += 'restore' }
+    function Stop-VM { param($VM, [switch]$TurnOff, [switch]$Force) $VM.State = 'Off'; $script:events += 'stop' }
+    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint)
+      $worker = [pscustomobject]@{}
+      $worker | Add-Member ScriptMethod EndInvoke { $script:events += 'end'; throw 'mock EndInvoke failure' }
+      $worker | Add-Member ScriptMethod Dispose { $script:events += 'dispose' }
+      $script:HostGuard = @{ worker = $worker; state = [hashtable]::Synchronized(@{ ready = $true; armed = $true; failure = $null }); pending = @{ IsCompleted = $false } }
+      return $script:HostGuard
+    }
+    function Start-DrillGuardedVm { $script:vm.State = 'Running' }
+    function Get-DrillCredential { }
+    function Wait-DrillGuest { }
+    function Invoke-DrillRun { 'discard this result' }
+    $outcome = try { Invoke-DrillMain } catch { Get-DrillCode $_ }
+    $receipt = if (Get-Prop $outcome 'receipt') { Read-DrillJson $outcome.receipt }
+    @{ conclusion = (Get-Prop $receipt 'conclusion'); failure = (Get-Prop $receipt 'failure'); restored = (Get-Prop $receipt 'restoredToCheckpoint');
+       events = $script:events; guardCleared = ($null -eq $script:HostGuard) }`);
+  assert.deepEqual(r.events, ['restore', 'stop', 'restore', 'end', 'dispose']);
+  assert.equal(r.restored, true);
+  assert.equal(r.conclusion, 'FAIL');
+  assert.equal(r.failure.code, 'DRILL_HOST_GUARD_FAILED');
+  assert.match(JSON.stringify(r.failure.detail), /mock EndInvoke failure/);
+  assert.equal(r.guardCleared, true);
+});
+
 test('the only Start-VM command is inside Start-DrillGuardedVm', opts, () => {
   const r = ps(`
     $tokens = $null; $errors = $null
@@ -534,6 +573,7 @@ function evidence(over = {}) {
     verify: { status: 'RESIDENT_VERIFIED' }, status, current: { generation: 1, ciSourceManifestSha256: S, linux: { manifestSha256: L } },
     facts: { generation: 1, staged: null, pinsOk: true, ciSourceManifestSha256: S, manifestSha256: L }, acceptanceSource: S,
     reboot: { ok: true, status, readAt: NOW }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
+      launcherExit: 0, launcherStatus: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', launcherVerdict: 'BOOTSTRAP_DONE',
       reverifyPassed: true, prepareAgainStatus: 'FLEET_NODE_INSTALL_PREPARED' }, kit: { perNodeSteps: ['8c step 2'] } };
   return JSON.stringify(Object.assign(e, over));
 }
@@ -591,6 +631,47 @@ test('the verdict fails what the plan says fails', opts, () => {
   assert.equal(verdictOf(evidence({ verify: { status: 'X' } })).conclusion, 'FAIL');
   const skipped = verdictOf(evidence({ reinstall: { skipped: true } }));
   assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PENDING_PRODUCTION_READBACK');
+});
+
+test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {
+  const { reinstall } = JSON.parse(evidence());
+  const { launcherExit, launcherStatus, launcherVerdict, ...withoutLauncher } = reinstall;
+  for (const [reason, value] of [
+    ['missing command', withoutLauncher],
+    ['nonzero exit', { ...reinstall, launcherExit: 1 }],
+    ['launcher refused', { ...reinstall, launcherStatus: 'PAUSE_NOT_CONFIRMED', launcherVerdict: 'BOOTSTRAP_LAUNCHER_ENDED' }],
+    ['missing terminal status', { ...reinstall, launcherStatus: null, launcherVerdict: 'BOOTSTRAP_LAUNCHER_ENDED' }],
+  ]) {
+    const r = verdictOf(evidence({ reinstall: value }));
+    assert.equal(pass(r).A8, false, reason);
+    assert.equal(r.conclusion, 'FAIL', reason);
+  }
+});
+
+test('A8 captures the current launcher exit and indented terminal JSON from the prepare command', opts, () => {
+  const tree = fileURLToPath(new URL('../../../', import.meta.url));
+  const good = "ConvertTo-Json @{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' }";
+  const commands = [null, ' ', "ConvertTo-Json @{ status = 'PAUSE_NOT_CONFIRMED' }", `${good}; exit 4`, good];
+  const r = ps(`
+    function Invoke-MockNode($File) {
+      if ((Split-Path -Leaf $File) -eq 'upgrade.mjs') { '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; return }
+      $prepare = @{ status = 'FLEET_NODE_INSTALL_PREPARED' }
+      if ($null -ne $script:runCommand) { $prepare.runCommand = $script:runCommand }
+      $prepare | ConvertTo-Json -Compress
+    }
+    $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(commands))}
+    @($cases | ForEach-Object {
+      $script:runCommand = $_
+      $ri = & $script:GuestReinstall 'Invoke-MockNode' ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha'
+      @{ exit = $ri.launcherExit; status = $ri.launcherStatus; verdict = $ri.launcherVerdict; pass = (Test-DrillReinstallLauncher $ri) }
+    })`);
+  assert.deepEqual(r, [
+    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false },
+    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false },
+    { exit: 0, status: 'PAUSE_NOT_CONFIRMED', verdict: 'BOOTSTRAP_LAUNCHER_ENDED', pass: false },
+    { exit: 4, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: false },
+    { exit: 0, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: true },
+  ]);
 });
 
 const startedAt = '2026-11-16T02:00:00Z';

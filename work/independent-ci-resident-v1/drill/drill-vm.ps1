@@ -551,6 +551,11 @@ function Wait-DrillInteractive([string]$RunDir, $Paths, [pscredential]$Cred) {
 
 function New-DrillItem([string]$Id, $Pass, [string]$Detail) { [ordered]@{ id = $Id; pass = $Pass; detail = $Detail } }
 
+function Test-DrillReinstallLauncher($Reinstall) {
+  $exitCode = Get-Prop $Reinstall 'launcherExit'
+  return ($exitCode -is [int]) -and ($exitCode -eq 0) -and ((Get-Prop $Reinstall 'launcherVerdict') -ceq 'BOOTSTRAP_DONE')
+}
+
 # The phase-A verdict (plan section 3) from what the drill read in the guest. pass: $true, $false, or $null (not judged here:
 # A5's production half and A9 are judged by -Finalize from the production read-back).
 #   $E: entry (Read-DrillEntryResult), verify (@{status}), status (status.json), current (upgrade\current.json),
@@ -583,8 +588,8 @@ function Get-DrillVerdict($E) {
   if ($null -eq $ri -or $ri.skipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall)')) }
   else {
     $a8 = ([string]$ri.upgradeStatus -ceq 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') -and ([string]$ri.prepareStatus -ceq 'FLEET_NODE_INSTALL_PREPARED') `
-      -and [bool]$ri.reverifyPassed -and ([string]$ri.prepareAgainStatus -ceq 'FLEET_NODE_INSTALL_PREPARED')
-    [void]$items.Add((New-DrillItem 'A8' $a8 "upgrade=$($ri.upgradeStatus) prepare=$($ri.prepareStatus) reverify=$($ri.reverifyPassed) prepareAgain=$($ri.prepareAgainStatus)"))
+      -and (Test-DrillReinstallLauncher $ri) -and [bool]$ri.reverifyPassed -and ([string]$ri.prepareAgainStatus -ceq 'FLEET_NODE_INSTALL_PREPARED')
+    [void]$items.Add((New-DrillItem 'A8' $a8 "upgrade=$($ri.upgradeStatus) prepare=$($ri.prepareStatus) launcher=$(Get-Prop $ri 'launcherVerdict') launcherStatus=$(Get-Prop $ri 'launcherStatus') launcherExit=$(Get-Prop $ri 'launcherExit') reverify=$($ri.reverifyPassed) prepareAgain=$($ri.prepareAgainStatus)"))
   }
   [void]$items.Add((New-DrillItem 'A9' $null 'production read-back by -Finalize'))
   $steps = @($E.kit.perNodeSteps)
@@ -753,6 +758,18 @@ function Stop-DrillOwnedVm([switch]$RestoreCheckpoint) {
   return (Get-VM -Name $script:Drill.VmName -ErrorAction Stop).State -eq 'Off'
 }
 
+function Stop-DrillGuardedVm($Guard, [switch]$RestoreCheckpoint) {
+  if (-not $Guard) { return (Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint) }
+  $state = $Guard.state
+  # The foreground and the aborting guard can both reach cleanup.
+  [Threading.Monitor]::Enter($state.SyncRoot)
+  try {
+    $stopped = Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint
+    if ($stopped) { $state.armed = $false; $state.stop = $true }
+    return $stopped
+  } finally { [Threading.Monitor]::Exit($state.SyncRoot) }
+}
+
 # A separate runspace owns this loop: guest jobs, Copy-Item, Read-Host and long waits cannot delay host protection.
 # The start and abort share a lock, so an abort can never be followed by a late Start-VM.
 function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreCheckpoint) {
@@ -775,18 +792,21 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
   } catch { $State.failure = @{ code = 'DRILL_HOST_GUARD_FAILED'; detail = (Get-DrillCode $_) } }
   finally {
     $State.ready = $true
-    if ($State.failure -and $State.armed) {
-      $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
-        abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null }
-      # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
-      try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
-      try {
-        $receipt.stopped = Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint
-        $receipt.restoredToCheckpoint = $RestoreCheckpoint -and $receipt.stopped
-      } catch { $receipt.cleanupFailure = Get-DrillCode $_ }
-      $State.cleanup = $receipt
-      try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { $State.receiptFailure = $true }
-    }
+    [Threading.Monitor]::Enter($State.SyncRoot)
+    try {
+      if ($State.failure -and $State.armed) {
+        $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
+          abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null }
+        # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
+        try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
+        try {
+          $receipt.stopped = Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint
+          $receipt.restoredToCheckpoint = $RestoreCheckpoint -and $receipt.stopped
+        } catch { $receipt.cleanupFailure = Get-DrillCode $_ }
+        $State.cleanup = $receipt
+        try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { $State.receiptFailure = $true }
+      }
+    } finally { [Threading.Monitor]::Exit($State.SyncRoot) }
   }
 }
 
@@ -829,7 +849,12 @@ function Stop-DrillHostGuard($Guard) {
   if (-not $Guard) { return }
   $Guard.state.stop = $true
   try { [void]$Guard.worker.EndInvoke($Guard.pending) }
-  finally { $Guard.worker.Dispose(); $script:HostGuard = $null }
+  catch {
+    $Guard.state.failure = @{ code = 'DRILL_HOST_GUARD_FAILED'; detail = @{ endInvoke = (Get-DrillCode $_); priorFailure = $Guard.state.failure } }
+  } finally {
+    try { $Guard.worker.Dispose() }
+    finally { $script:HostGuard = $null }
+  }
 }
 
 function Assert-DrillHost {
@@ -1010,6 +1035,7 @@ function Invoke-DrillBaseline([string]$RunDir) {
   $note = { param([string]$m) Add-Content -LiteralPath $log -Value ("{0} {1}" -f [DateTimeOffset]::UtcNow.ToString('o'), $m) -Encoding UTF8 }
   $started = [DateTimeOffset]::UtcNow
   $guard = $null
+  $off = $false
   try {
     $guard = Start-DrillHostGuard $RunDir
     Start-DrillGuardedVm
@@ -1052,15 +1078,19 @@ function Invoke-DrillBaseline([string]$RunDir) {
     if (@($nested.features | Where-Object { [string]$_.state -ne 'Enabled' }).Count) { throw (New-DrillError 'DRILL_BASELINE_FEATURES_NOT_ENABLED' $nested.features) }
     Stop-VM -VM $vm -Force   # graceful shutdown
     if ((Get-VM -Name $script:Drill.VmName).State -ne 'Off') { throw (New-DrillError 'DRILL_BASELINE_NOT_OFF') }
+    $off = $true
   } catch {
     [void](Save-DrillScreen $script:Drill.VmName (Join-Path $RunDir 'baseline-failure.bmp'))
     $c = Get-DrillCode $_
     & $note "stopped: $($c.code)"
-    [void](Stop-DrillOwnedVm)
     throw
   } finally {
-    Stop-DrillHostGuard $guard
-    if ($guard -and $guard.state.failure) { throw (New-DrillError $guard.state.failure.code $guard.state.failure.detail) }
+    try {
+      if (-not $off -and -not (Stop-DrillGuardedVm $guard)) { throw (New-DrillError 'DRILL_BASELINE_NOT_OFF') }
+    } finally {
+      Stop-DrillHostGuard $guard
+      if ($guard -and $guard.state.failure) { throw (New-DrillError $guard.state.failure.code $guard.state.failure.detail) }
+    }
   }
   # Both DVD drives go (removing a drive takes its medium with it; ejecting first made the removal fail: 2026-11-16 12:18),
   # and only now is the network plugged in.
@@ -1134,13 +1164,45 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir) {
     Assert-DrillGuard
   } catch { $failure = Get-DrillCode $_ }
   finally {
+    try {
+      if ($cleanupNeeded) { $restored = Stop-DrillGuardedVm $guard -RestoreCheckpoint }
+    } catch { $restored = $false }
     Stop-DrillHostGuard $guard
     if ($guard -and $guard.state.failure) { $failure = $guard.state.failure; $result = $null }
-    try {
-      if ($cleanupNeeded) { $restored = Stop-DrillOwnedVm -RestoreCheckpoint }
-    } catch { $restored = $false }
   }
   return @{ result = $result; failure = $failure; restored = $restored }
+}
+
+$script:GuestReinstall = {
+  param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha)
+  $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
+  $last = { param($lines) $l = @($lines | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { try { $l | ConvertFrom-Json } catch { $null } } }
+  $up = @(& $Node (Join-Path $fleet 'upgrade.mjs') fetch --version $Version --work (Join-Path $Work 'a8-upgrade') --from $From --no-request 2>&1 | ForEach-Object { [string]$_ })
+  $p1 = @(& $Node (Join-Path $fleet 'install.mjs') prepare --artifact (Join-Path $From $TarName) --artifact-sha $TarSha --acceptance (Join-Path $From $AccName) --work (Join-Path $Work 'a8-prepare') 2>&1 | ForEach-Object { [string]$_ })
+  $upj = & $last $up; $p1j = & $last $p1
+  $reinstall = [ordered]@{ skipped = $false;
+    upgradeStatus = $(if ($upj -and $upj.PSObject.Properties['status']) { [string]$upj.status });
+    prepareStatus = $(if ($p1j -and $p1j.PSObject.Properties['status']) { [string]$p1j.status });
+    launcherVerdict = 'NOT_RUN_MISSING_RUN_COMMAND'; launcherStatus = $null; launcherExit = $null; launcherTail = @(); launcherStderr = $null;
+    upgradeTail = @($up | Select-Object -Last 5); prepareTail = @($p1 | Select-Object -Last 5);
+    reverifyPassed = $false; prepareAgainStatus = $null }
+  $runCommand = if ($p1j) { $p1j.PSObject.Properties['runCommand'] }
+  if ($runCommand -and $runCommand.Value -is [string] -and -not [string]::IsNullOrWhiteSpace($runCommand.Value)) {
+    try {
+      # Use the accepted package's parser and verdict for the launcher's indented terminal JSON.
+      . (Join-Path $fleet 'bootstrap.ps1') -From $From
+      $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', $runCommand.Value) 0
+      $reinstall.launcherExit = $launch.exit
+      $reinstall.launcherStatus = Get-Key $launch.last 'status'
+      $reinstall.launcherVerdict = (Get-LauncherVerdict $false $launch.last).status
+      $reinstall.launcherTail = @($launch.stdout -split "`r?`n" | Select-Object -Last 20)
+      $reinstall.launcherStderr = $launch.stderr
+    } catch {
+      $reinstall.launcherVerdict = 'DRILL_LAUNCHER_ERROR'
+      $reinstall.launcherStderr = $_.Exception.Message
+    }
+  }
+  return $reinstall
 }
 
 function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
@@ -1212,17 +1274,11 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
   $reinstall = @{ skipped = $true }
   if (-not $SkipReinstall -and $entry.tree -and $entry.node) {
-    $reinstall = Invoke-DrillGuest $Cred {
-      param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha)
-      $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
-      $last = { param($lines) $l = @($lines | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { try { $l | ConvertFrom-Json } catch { $null } } else { $null } }
-      $up = @(& $Node (Join-Path $fleet 'upgrade.mjs') fetch --version $Version --work (Join-Path $Work 'a8-upgrade') --from $From --no-request 2>&1 | ForEach-Object { [string]$_ })
-      $prep = { param($dir) @(& $Node (Join-Path $fleet 'install.mjs') prepare --artifact (Join-Path $From $TarName) --artifact-sha $TarSha --acceptance (Join-Path $From $AccName) --work (Join-Path $Work $dir) 2>&1 | ForEach-Object { [string]$_ }) }
-      $p1 = & $prep 'a8-prepare'; $p1j = & $last $p1
-      $launch = @()
-      if ($p1j -and $p1j.runCommand) { $launch = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $p1j.runCommand 2>&1 | ForEach-Object { [string]$_ }) }
-      [ordered]@{ skipped = $false; upgradeStatus = [string](& $last $up).status; prepareStatus = [string]$p1j.status; launcherTail = @($launch | Select-Object -Last 20); upgradeTail = @($up | Select-Object -Last 5); prepareTail = @($p1 | Select-Object -Last 5) }
-    } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
+    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
+    Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
+  } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
+
+  if (Test-DrillReinstallLauncher $reinstall) {
     $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
     Write-DrillJson (Join-Path $RunDir 'read-after-reinstall.json') $again
     $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
@@ -1235,7 +1291,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 60 -Step 'prepare-again'
     $reinstall.prepareAgainStatus = [string]$p2
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
-  } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
+  }
 
   return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings }
 }
