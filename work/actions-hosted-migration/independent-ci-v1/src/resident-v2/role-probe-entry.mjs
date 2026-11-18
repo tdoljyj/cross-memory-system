@@ -3,7 +3,7 @@
 // holders reply here). Generic helper still owns the native timer and complete cleanup.
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { digest } from '../proof.mjs';
+import { readCiCredential } from './ci-principal.mjs';
 import { assertProtectedPaths, readProtected } from '../../runtime/protected-files.mjs';
 import { createMergeSlotNative } from '../independent-control-checks-v2/merge-slot-native.mjs';
 import { nativeReadPost, runEntry } from './entry-runtime.mjs';
@@ -15,13 +15,9 @@ import { ROLE_PROBE_RUN_CONTRACT_WATCH, validWatchPr } from './role-probe-run.mj
 // own deadline (live), like every other read of a controller entry.
 // watchPr (generation 12, resident DESIGN 56.2): the job's watched PR (role-probe-run/2), else null. It changes nothing but the
 // held code (merge-slot-native.mjs#parseRoleProbe).
-export async function probeRole({ record, live, watchPr = null, tokenReader = readProtected, protect = assertProtectedPaths, fetchImpl = globalThis.fetch, readRetry = {} }) {
+export async function probeRole({ record, live, root = WIN_ROOT, watchPr = null, tokenReader = readProtected, protect = assertProtectedPaths, fetchImpl = globalThis.fetch, readRetry = {} }) {
   live();
-  const file = path.join(WIN_ROOT, 'secrets', 'ci-admission.token');
-  await protect(WIN_ROOT, [file]);
-  const token = (await tokenReader(file, { secret: true, secretRoot: path.join(WIN_ROOT, 'secrets'), controllerSid: record.accepted.node.controllerSid })).trim();
-  if (!/^clued_bnd_[A-Za-z0-9_-]{8,480}$/.test(token) || digest('clued.independent-ci.ci-binding-pin/1\0' + token) !== record.accepted.ciTokenPinSha256)
-    throw Object.assign(new Error('ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED'), { code: 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' });
+  const { nativeToken: token } = await readCiCredential(record, { root, protect, tokenReader });
   // Each repeat keeps the probe's own 10 s bound (merge-slot-native.mjs). No log port here: the outcome's code says what was seen.
   const reads = withReadRetry((url, opts) => { live(); return fetchImpl(url, opts); }, { live, deadlineAt: () => live.deadlineAt ?? null, attemptTimeoutMs: 10_000,
     readPost: nativeReadPost(record.config.supabaseUrl), ...readRetry });
