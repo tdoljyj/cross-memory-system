@@ -72,9 +72,15 @@ export function readLegacy(text) {
   return data.entries;
 }
 
+// Moving a command from an inline run to a run block leaves the same install.
+const installKey = ({ file, line }) => `${file}\0${line.replace(/^(?:- )?run:[ \t]+/, '')}`;
+
 const counts = (entries) => {
   const map = new Map();
-  for (const { file, line } of entries) map.set(`${file}\0${line}`, (map.get(`${file}\0${line}`) ?? 0) + 1);
+  for (const entry of entries) {
+    const key = installKey(entry);
+    map.set(key, (map.get(key) ?? 0) + 1);
+  }
   return map;
 };
 const shown = (key) => key.replace('\0', ': ');
@@ -85,7 +91,7 @@ export function verdict(found, legacy, base = null) {
   const left = counts(legacy);
   const problems = [];
   for (const hit of found) {
-    const key = `${hit.file}\0${hit.line}`;
+    const key = installKey(hit);
     if (left.get(key) > 0) left.set(key, left.get(key) - 1);
     else problems.push(`${hit.file}:${hit.number}: installs dependencies without ${ENTRY}: ${hit.line}\n` +
       `    use: node ${ENTRY} install <app-dir>  (offline; it prepares the store, the only networked step, when a package is missing)`);

@@ -2057,10 +2057,10 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "5470897712b63448447b45c86d233b782163960d": [
+        "90018809f94ceb6ba6ffcea8dcfac94a5d23b1e8": [
           {
             "job_id": "clued-cloud-tests",
-            "definition_sha256": "f720a913b3fa098d135a3d9eb49cb4767d6a049822f4de9f0bd182687605a02a",
+            "definition_sha256": "69464b220bcb8e531890db01ef6fcfe51954b1a99db2fff0d2e0d69200449ca8",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
               "needs": "admission-gate",
@@ -2139,7 +2139,7 @@
                   "env": {
                     "npm_config_logs_dir": "${{ runner.temp }}/clued-npm-debug-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}"
                   },
-                  "run": "timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000"
+                  "run": "timeout --signal=TERM --kill-after=15s 8m npm ci --ignore-scripts --cache \"$HOME/.npm\" --prefer-offline --fetch-retries=2 --fetch-timeout=30000\ntimeout --signal=TERM --kill-after=15s 2m npm rebuild @embedded-postgres/linux-x64\n"
                 },
                 {
                   "name": "Lint, ledger, typecheck, build and unit tests",
