@@ -165,7 +165,7 @@ test('Connect joins the existing main production release after its Grant and mai
   assert.equal(job.environment, 'clued-release');
   assert.equal(job.defaults.run['working-directory'], 'apps/clued-cloud');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
-  const ordered = ['Verify and build Kooyumi Connect release source', 'Block release unless database and Worker heartbeat are ready',
+  const ordered = ['Verify and build Kooyumi Connect release source', 'Verify database prerequisites and record projection state',
     'Consume the Owner Grant for this commit', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
     'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
     'Verify the PDF extractor service binding', 'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',

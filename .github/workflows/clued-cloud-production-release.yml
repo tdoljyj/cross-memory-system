@@ -358,7 +358,7 @@ jobs:
             --out-dir "$RUNNER_TEMP/kooyumi-connect-build" \
             --evidence-out .sites-runtime/release-evidence/connect-build.json
           node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
-      - name: Block release unless database and Worker heartbeat are ready
+      - name: Verify database prerequisites and record projection state
         if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
@@ -418,10 +418,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
-      - name: Record deployment completion time
-        if: ${{ inputs.mode == 'deploy' }}
-        id: deployment_completion
-        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" >> "$GITHUB_OUTPUT"
       - name: Verify exact live commit and currentness transport
         if: ${{ inputs.mode == 'deploy' }}
         env:
@@ -451,16 +447,9 @@ jobs:
         if: ${{ inputs.mode == 'deploy' }}
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
-        run: |
-          for attempt in 1 2 3 4 5 6; do
-            if node scripts/production-release-gate.mjs --pre-deploy \
-              --min-heartbeat-at '${{ steps.deployment_completion.outputs.timestamp }}' \
-              --evidence-out .sites-runtime/release-evidence/production-postflight.json; then
-              exit 0
-            fi
-            sleep 30
-          done
-          exit 1
+        run: >-
+          node scripts/production-release-gate.mjs --post-deploy
+          --evidence-out .sites-runtime/release-evidence/production-postflight.json
       - name: Preserve release evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
