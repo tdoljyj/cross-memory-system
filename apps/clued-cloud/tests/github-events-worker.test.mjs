@@ -45,6 +45,23 @@ test('原始字节验签后，合入和关闭未合入的投递各送达网关�
   assert.deepEqual(calls, [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merged: false, merge_sha: null } }]);
 });
 
+test('生产形态环境中的已签名合入事件送达默认数据库', async t => {
+  const database = t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({ status: 'ok', finished: 1, released: [] }));
+  const response = await deliver({ environment: { GITHUB_WEBHOOK_SECRET: secret, CLUED_DB_GATEWAY_TOKEN: 'test-gateway' } });
+
+  assert.equal(response?.status, 200);
+  assert.equal(database.mock.callCount(), 1);
+  const [target, init] = database.mock.calls[0].arguments;
+  assert.equal(target, 'https://ccxsikzwxlolxqlosril.supabase.co/rest/v1/rpc/clued_work_pr_merged_event_v1');
+  const headers = new Headers(init.headers);
+  assert.equal(headers.get('authorization'), 'Bearer test-gateway');
+  assert.match(headers.get('apikey') ?? '', /^sb_publishable_/);
+  assert.deepEqual(JSON.parse(init.body), {
+    p_input: { repository: 'Org/Repo', pr_number: 1161, merged: true, merge_sha: sha },
+  });
+});
+
 test('无效签名、无关事件和关闭的路由都不会调用网关', async t => {
   const db = t.mock.method(globalThis, 'fetch', () => { throw new Error('unexpected database call'); });
   for (const [options, status] of [
