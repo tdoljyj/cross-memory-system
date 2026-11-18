@@ -55,6 +55,14 @@ test('Wrangler rejects multiple triggers in a named environment and a five-minut
   check(repo.run());
 });
 
+test('Wrangler checks midnight when either a restricted month day or a weekday can trigger', (t) => {
+  const repo = fixture(t);
+  repo.write(worker, '{"triggers":{"crons":["0,55 0,23 1 * MON"]}}');
+  check(repo.run(), /less than 10 minutes/i);
+  repo.write(worker, '{"triggers":{"crons":["0,55 0,23 * * MON"]}}');
+  check(repo.run());
+});
+
 test('19: a new every-minute cron.schedule migration fails even alongside an exempt historical job', (t) => {
   const repo = fixture(t);
   repo.write(allowlist, JSON.stringify({ wrangler: [], pgCron: [

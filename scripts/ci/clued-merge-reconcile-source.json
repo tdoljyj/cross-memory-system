@@ -182,9 +182,9 @@
 
     "scripts/ci/check-ci-deps-entry.test.mjs": "7fa49dc008760f4ac24431ad7ddd33a6fd3b20577e32a69811bbfab6bf7c68cd",
 
-    "scripts/ci/check-cron-budget.mjs": "8bd1a2f3b6c660563d64f5f461b19eb63059d8e3422ed3df721bf6608fc6b8af",
+    "scripts/ci/check-cron-budget.mjs": "f881240dc37968af5a885ed52eb49c44e75b0ceea011cd4cd549bfcebeeb69cc",
 
-    "scripts/ci/check-cron-budget.test.mjs": "c094fb69e60f98a162f4cc6d45b4d87daf4ec8802cd0f90eeb6068e0933b0363",
+    "scripts/ci/check-cron-budget.test.mjs": "0e32630563b0205155b37f87f7fa69672bcfc08a2a58c6724d73e2e24176bb46",
 
     "scripts/ci/check-pinned-registries.mjs": "68eaeb1971047ddc8c69cfc71ffd40d27dd223857adb9b0325681d88e79c9280",
 

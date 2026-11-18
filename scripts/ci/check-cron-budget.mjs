@@ -69,9 +69,9 @@ function parseCron(schedule, pgCron = false) {
     months: cronField(month, 1, 12, MONTHS),
     days: lastDay ? new Set() : cronField(day, 1, 31),
     weekdays: new Set([...cronField(weekday, pgCron ? 0 : 1, 7, WEEKDAYS)].map((value) => pgCron ? value % 7 : value - 1)),
-    // Vixie cron uses OR only when neither day field starts with a wildcard.
-    // Cloudflare requires both day fields to match.
-    requireBothDays: !pgCron || day.startsWith('*') || weekday.startsWith('*'),
+    // Both dialects use OR when both day fields are restricted. Vixie cron
+    // also treats a leading wildcard with a step as a wildcard for this rule.
+    requireBothDays: pgCron ? day.startsWith('*') || weekday.startsWith('*') : day === '*' || weekday === '*',
     lastDay,
   };
   const { times } = cron;
