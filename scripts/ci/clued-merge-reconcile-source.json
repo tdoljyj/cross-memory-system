@@ -182,6 +182,10 @@
 
     "scripts/ci/check-ci-deps-entry.test.mjs": "7fa49dc008760f4ac24431ad7ddd33a6fd3b20577e32a69811bbfab6bf7c68cd",
 
+    "scripts/ci/check-cron-budget.mjs": "8bd1a2f3b6c660563d64f5f461b19eb63059d8e3422ed3df721bf6608fc6b8af",
+
+    "scripts/ci/check-cron-budget.test.mjs": "c094fb69e60f98a162f4cc6d45b4d87daf4ec8802cd0f90eeb6068e0933b0363",
+
     "scripts/ci/check-pinned-registries.mjs": "68eaeb1971047ddc8c69cfc71ffd40d27dd223857adb9b0325681d88e79c9280",
 
     "scripts/ci/check-pinned-registries.test.mjs": "13e41d637f0ac3480cce621123498f3b88c1f690167724248a7752f915c300ae",
@@ -204,7 +208,7 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "a9d2d2616ec0ea4e86389e0024e1a91e7cf14a6769215d64b9d7003192ab7812",
+    "scripts/ci/ci-required-selection.mjs": "12ef5305ba9406d15bc20a5b0d3ee73c23732d9f2556015d6479cc75b6686af8",
 
     "scripts/ci/ci-required-selection.test.mjs": "463bc5d39a55bdfef016b6c636335751eb004719c024be9f34a91729c768b5d1",
 
@@ -400,7 +404,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "c757479aca217a6adabae9c6ecda38c5edf17b90ba1653dbb32c589428b62e2d",
+    "scripts/ci/clued-required-applicability.mjs": "65dbeab259c2b42f362b7cfbfaefe68849f4a4afb2a560debfd9233a5a9050a8",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -445,6 +449,8 @@
     "scripts/ci/component-version-integration.py": "a50c3dad32f05a1ec2e5bed567babbe51a1ab6d057996cb7a859483b49db1b7c",
 
     "scripts/ci/component-version-integration.test.py": "dcf3cf7d4a5b67648501a0585a8e7b1c0e318e4e7e3ffad75413cf78b083b230",
+
+    "scripts/ci/cron-budget-allowlist.json": "1a3f3ba961e1bb4a17149a65ca0e83dc560b61631b4b42a36b319be4ff1bcac6",
 
     "scripts/ci/fixtures/heartbeat-pr890-strategy-shrink.v1.json": "985ec57c0722daa9e2de230f39ab5a4f075f404f799933f9f8d2d0931cdddb43",
 

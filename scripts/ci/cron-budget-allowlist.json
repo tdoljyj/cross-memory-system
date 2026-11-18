@@ -1,0 +1,48 @@
+{
+  "wrangler": [
+    {
+      "file": "apps/clued-cloud/wrangler.production.jsonc",
+      "config": "triggers.crons",
+      "schedule": "* * * * *",
+      "owner": "T3",
+      "expiresOn": "2026-12-02"
+    }
+  ],
+  "pgCron": [
+    {
+      "file": "apps/clued-cloud/supabase/migrations/20261004120000_headless_binding_issuance.sql",
+      "job": "clued-binding-expiry-sweep",
+      "schedule": "*/5 * * * *",
+      "owner": "T5",
+      "expiresOn": "2026-12-31"
+    },
+    {
+      "file": "apps/clued-cloud/supabase/migrations/20261016040000_storage_conflict_isolation_v1.sql",
+      "job": "clued-storage-i9-conflict",
+      "schedule": "* * * * *",
+      "owner": "T5",
+      "expiresOn": "2026-12-31"
+    },
+    {
+      "file": "apps/clued-cloud/supabase/migrations/20261031090000_merge_train_failover_v1.sql",
+      "job": "clued-ci-admission-failover",
+      "schedule": "* * * * *",
+      "owner": "T5",
+      "expiresOn": "2026-12-31"
+    },
+    {
+      "file": "apps/clued-cloud/supabase/migrations/20261106150000_ci_scheduling_t2a2_v1.sql",
+      "job": "clued-ci-lease-sweep",
+      "schedule": "* * * * *",
+      "owner": "T5",
+      "expiresOn": "2026-12-31"
+    }
+  ],
+  "collisionPeers": [
+    {
+      "file": "apps/clued-cloud/supabase/migrations/20261008210000_credential_verifier_v1.sql",
+      "job": "clued-credential-backup-purge",
+      "schedule": "17 3 * * *"
+    }
+  ]
+}
