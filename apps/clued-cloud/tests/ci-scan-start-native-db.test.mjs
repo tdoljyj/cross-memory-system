@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
-import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES,CI_NODE_GATEWAY_SIGNATURES,WORKER_DUE_SIGNATURE} from './worker-gateway-caller-fixture.mjs';
+import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES,CI_NODE_GATEWAY_SIGNATURES,WORKER_DUE_SIGNATURE,CONNECTION_SELF_SIGNATURE} from './worker-gateway-caller-fixture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
@@ -128,7 +128,7 @@ test('physical scan-start Native K: real transactions, exact existing authority 
       assert.deepEqual(await names('clued_worker_gateway'),[...WORKER_SIGNATURES,...newGateway,...CI_NODE_GATEWAY_SIGNATURES,WORKER_DUE_SIGNATURE].sort());
       const anon=(await admin.query(`select p.oid::regprocedure::text s from pg_proc p where p.pronamespace='public'::regnamespace and p.prosecdef
         and has_function_privilege('anon',p.oid,'EXECUTE') order by 1`)).rows.map(r=>r.s.replace(/^public\./,''));
-      assert.deepEqual(anon,CI_SIGNATURES);
+      assert.deepEqual(anon,[...CI_SIGNATURES, CONNECTION_SELF_SIGNATURE].sort());
       assert.equal(afterCommands.replace("  if op='scan_start_independent' then\n    return clued_private.ci_scan_start_local_v1(p_token_hash,p_input);\n  end if;\n",''),
         beforeCommands);
       for(const [original,copy] of Object.entries(cloneOf)){
