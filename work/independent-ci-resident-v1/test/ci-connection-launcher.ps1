@@ -6,7 +6,7 @@ $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens
 if ($errors.Count) { throw $errors[0] }
 $pins = [regex]::Match($source, '(?s)#region pins\s+(.+?)#endregion pins').Groups[1].Value
 . ([scriptblock]::Create($pins))
-foreach ($name in @('Assert-CiInstallBaseline','Restore-W1Pause','Get-FileSha','Sha256Bytes','Get-Key','Parse-Json',
+foreach ($name in @('Test-PreparedW1','Assert-CiInstallBaseline','Restore-W1Pause','Get-FileSha','Sha256Bytes','Get-Key','Parse-Json',
     'Wait-Until','Stop-Launch','Write-Json','Write-New','Invoke-Child','Step-SweepCarry','Step-Output')) {
   $fn = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name}, $true)
   if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }

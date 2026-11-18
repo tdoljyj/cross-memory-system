@@ -1638,10 +1638,14 @@ function Step-LinuxRoot {
 }
 #endregion generic
 
+function Test-PreparedW1 {
+  return $FleetPlanSha256 -and -not $FleetFirstInstall -and
+    -not (Test-Path variable:ContinueOriginalLauncherSha256) -and -not (Test-Path variable:ResumeOriginalLauncherSha256)
+}
+
 #region main
 Step-Identity
-$preparedW1 = $FleetPlanSha256 -and -not $FleetFirstInstall -and
-  -not (Test-Path variable:ContinueOriginalLauncherSha256) -and -not (Test-Path variable:ResumeOriginalLauncherSha256)
+$preparedW1 = Test-PreparedW1
 try {
   Assert-CiInstallBaseline (Split-Path -Parent $ResidentRoot)
 } catch {
