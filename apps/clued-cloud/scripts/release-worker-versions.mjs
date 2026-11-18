@@ -1,19 +1,20 @@
-// Automatic Worker rollback for the production release (PLAN 3a, Fable 1121).
+// Automatic Worker rollback for the production release (PLAN 3a, Fable 1121 §6).
 //
 // record: before the grant and the first deploy, read the version each
 //   production Worker serves (wrangler deployments status --json) and the
 //   commit the public edge serves (main /healthz, Connect smoke). A Worker that
 //   does not serve exactly one version at 100% stops the release before any
-//   deploy. In release mode it also stops when this commit changes a Worker
-//   setting that a version rollback does not undo (UNVERSIONED_KEYS), compared
-//   by git against the commit the edge serves; deploy publishes those.
+//   deploy. A release also stops unless the three wrangler production
+//   configurations are byte for byte those of every commit the edge serves
+//   (git diff): a version rollback undoes code, bindings and vars, not the
+//   Worker's schedule, routes or queue wiring. deploy publishes such commits.
 // rollback: after a failed deploy or post-deploy verification, roll back every
 //   Worker whose served version is no longer the recorded one, last deployed
-//   first, and read each one back; then wait, within the release's propagation
-//   window, for the edge to serve the recorded commits again. Only both make
-//   "restored". The database is forward-only and is never touched here. The
-//   run still fails: a rollback restores service, it does not make the release
-//   a success.
+//   first, writing each Worker's result as soon as it is done. Then wait one
+//   propagation window and read all three versions and both edge commits once:
+//   only that reading decides "restored". The database is forward-only and is
+//   never touched here. The run still fails: a rollback restores service, it
+//   does not make the release a success.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,17 +29,8 @@ export const WORKERS = Object.freeze([
   Object.freeze({ name: 'clued-cloud', config: 'wrangler.production.jsonc' }),
   Object.freeze({ name: 'clued-connect', config: '../kooyumi-connect/wrangler.production.jsonc' }),
 ]);
-/**
- * Worker settings a version rollback does not undo. `wrangler rollback`
- * restores a version (code, bindings, vars); triggers, routes, queue consumers
- * and Durable Object migrations stay as the failed deploy left them.
- */
-export const UNVERSIONED_KEYS = Object.freeze(['triggers', 'routes', 'queues.consumers', 'migrations']);
-/**
- * Which edge commit each Worker's configuration is compared against. The PDF
- * extractor has no public entry; it ships in step with the main Worker.
- */
-const EDGE_OF = Object.freeze({ 'clued-storage-pdf': 'clued-cloud', 'clued-cloud': 'clued-cloud', 'clued-connect': 'clued-connect' });
+/** The wrangler production configurations a release must leave byte for byte unchanged. */
+export const WRANGLER_CONFIGS = Object.freeze(WORKERS.map(({ config }) => path.posix.normalize(`apps/clued-cloud/${config}`)));
 const CONNECT_SMOKE_URL = `${PUBLIC_ORIGIN}/connect/api/smoke`;
 const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -46,7 +38,6 @@ const ATTEMPTS = 3;
 const RETRY_MS = 5_000;
 const COMMAND_TIMEOUT_MS = 30_000;
 const EDGE_READ_TIMEOUT_MS = 20_000;
-const EDGE_POLL_MS = 10_000;
 const APP = fileURLToPath(new URL('..', import.meta.url));
 const REPOSITORY = path.resolve(APP, '../..');
 
@@ -54,9 +45,10 @@ const REPOSITORY = path.resolve(APP, '../..');
 const READ_SERVED_WORST_MS = ATTEMPTS * COMMAND_TIMEOUT_MS + (ATTEMPTS - 1) * RETRY_MS;
 const EDGE_READ_WORST_MS = ATTEMPTS * EDGE_READ_TIMEOUT_MS + (ATTEMPTS - 1) * RETRY_MS;
 export const RECORD_WORST_CASE_MS = WORKERS.length * READ_SERVED_WORST_MS + EDGE_READ_WORST_MS;
-/** Every Worker failing every attempt, then the whole edge window and one more read. */
+/** Every Worker failing every attempt, the propagation window, then the final reading. */
 export const rollbackWorstCaseMs = (windowMs) => WORKERS.length * (READ_SERVED_WORST_MS +
-  ATTEMPTS * (COMMAND_TIMEOUT_MS + READ_SERVED_WORST_MS) + (ATTEMPTS - 1) * RETRY_MS) + windowMs + EDGE_READ_TIMEOUT_MS;
+  ATTEMPTS * (COMMAND_TIMEOUT_MS + READ_SERVED_WORST_MS) + (ATTEMPTS - 1) * RETRY_MS) + windowMs +
+  WORKERS.length * READ_SERVED_WORST_MS + EDGE_READ_TIMEOUT_MS;
 
 /**
  * The window in which Cloudflare's edge reaches a new or restored version:
@@ -147,7 +139,7 @@ async function readEdgesWithRetry(readEdges, wait) {
   let edge;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try { edge = await readEdges(); } catch (error) {
-      edge = Object.fromEntries(Object.values(EDGE_OF).map((name) => [name, { error: error?.message ?? String(error) }]));
+      edge = Object.fromEntries(['clued-cloud', 'clued-connect'].map((name) => [name, { error: error?.message ?? String(error) }]));
     }
     if (Object.values(edge).every((value) => SHA.test(value?.source_commit ?? ''))) return edge;
     if (attempt < ATTEMPTS) await wait(RETRY_MS);
@@ -155,37 +147,16 @@ async function readEdgesWithRetry(readEdges, wait) {
   return edge;
 }
 
-export function gitShowFile(commit, file) {
-  const run = spawnSync('git', ['show', `${commit}:${file}`], { cwd: REPOSITORY, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-  if (run.error || run.status !== 0) throw new Error(`git cannot show ${file} at ${commit}`);
-  return run.stdout;
-}
-
-const repositoryPath = (config) => path.posix.normalize(`apps/clued-cloud/${config}`);
-const pick = (value, key) => key.split('.').reduce((at, part) => (at == null ? undefined : at[part]), value);
-const canonical = (value) => JSON.stringify(value === undefined ? null : value);
-
-/** Settings a version rollback does not undo that differ between the commit the edge serves and HEAD. */
-export async function unversionedConfigChanges({ edge, gitShow }) {
-  const changes = [];
-  for (const { name, config } of WORKERS) {
-    const from = edge?.[EDGE_OF[name]]?.source_commit;
-    const file = repositoryPath(config);
-    const parse = async (commit) => {
-      try { return JSON.parse(await gitShow(commit, file)); } catch (error) {
-        throw new Error(`cannot read ${file} at ${commit}: ${error?.message ?? error}`);
-      }
-    };
-    const [before, after] = [await parse(from), await parse('HEAD')];
-    for (const key of UNVERSIONED_KEYS) {
-      if (canonical(pick(before, key)) !== canonical(pick(after, key))) changes.push({ worker: name, file, key, from });
-    }
-  }
-  return changes;
+/** `git diff --quiet <commit> HEAD -- <files>`: true when identical, false when not; throws when git cannot tell. */
+export function gitSameFiles(commit, files) {
+  if (!SHA.test(commit ?? '')) throw new Error(`not a commit: ${commit}`);
+  const run = spawnSync('git', ['diff', '--quiet', commit, 'HEAD', '--', ...files], { cwd: REPOSITORY, encoding: 'utf8' });
+  if (run.error || (run.status !== 0 && run.status !== 1)) throw new Error(`git cannot compare with ${commit}`);
+  return run.status === 0;
 }
 
 export async function recordVersions({ wrangler = npxWrangler, wait = pause, env = process.env, mode,
-  readEdges = readEdgeCommits, gitShow = gitShowFile } = {}) {
+  readEdges = readEdgeCommits, gitSame = gitSameFiles } = {}) {
   if (mode !== 'deploy' && mode !== 'release') throw new Error(`record needs --mode deploy or release, not ${mode}`);
   const workers = [];
   for (const { name } of WORKERS) {
@@ -195,48 +166,37 @@ export async function recordVersions({ wrangler = npxWrangler, wait = pause, env
   }
   const edge = await readEdgesWithRetry(readEdges, wait);
   const unreadable = Object.entries(edge).filter(([, value]) => !SHA.test(value?.source_commit ?? ''));
-  let unversioned_changes = null;
+  let config_identical = null;
+  let configError;
   if (!unreadable.length) {
     try {
-      unversioned_changes = await unversionedConfigChanges({ edge, gitShow });
+      config_identical = true;
+      for (const commit of new Set(Object.values(edge).map((value) => value.source_commit))) {
+        if (!(await gitSame(commit, WRANGLER_CONFIGS))) config_identical = false;
+      }
     } catch (error) {
-      if (mode === 'release') throw new Error(`${error.message}; a release cannot prove its settings roll back; nothing was deployed`);
+      config_identical = null;
+      configError = error?.message ?? String(error);
     }
   }
   if (mode === 'release') {
     if (unreadable.length) {
-      throw new Error(`a release compares its settings with the commit the edge serves, and ${unreadable.map(([name, value]) =>
+      throw new Error(`a release compares its wrangler configuration with the commit the edge serves, and ${unreadable.map(([name, value]) =>
         `${name} is unreadable (${value?.error ?? 'no commit'})`).join(', ')}; nothing was deployed`);
     }
-    if (unversioned_changes.length) {
-      throw new Error(`a Worker version rollback cannot undo ${unversioned_changes.map((c) =>
-        `${c.worker} ${c.key} (${c.file}, changed since ${c.from.slice(0, 12)})`).join('; ')}; publish this commit with deploy mode; nothing was deployed`);
+    if (config_identical !== true) {
+      throw new Error(`${configError ? `${configError}; ` : ''}the wrangler production configuration is not byte for byte the one the edge serves (${WRANGLER_CONFIGS.join(', ')}); a Worker rollback would not undo it; publish this commit with deploy mode; nothing was deployed`);
     }
   }
   return { contract: CONTRACT, mode, source_commit: env.GITHUB_SHA ?? null, recorded_at: new Date().toISOString(),
-    workers, edge, unversioned_changes };
+    workers, edge, config_identical };
 }
 
 const edgeMatches = (recorded, served) => SHA.test(recorded?.source_commit ?? '') &&
   served?.source_commit === recorded.source_commit && (recorded.revision === undefined || served?.revision === recorded.revision);
 
-async function confirmEdge({ recorded, readEdges, windowMs, now, sleep }) {
-  const names = Object.keys(recorded ?? {});
-  const deadline = now() + windowMs;
-  let served = {};
-  for (;;) {
-    try { served = await readEdges(); } catch (error) { served = { error: error?.message ?? String(error) }; }
-    if (names.every((name) => edgeMatches(recorded[name], served?.[name]))) break;
-    const remaining = deadline - now();
-    if (remaining <= 0) break;
-    await sleep(Math.min(EDGE_POLL_MS, remaining));
-  }
-  return names.map((name) => ({ name, recorded: recorded[name], served: served?.[name] ?? null,
-    confirmed: edgeMatches(recorded[name], served?.[name]) }));
-}
-
 export async function rollbackVersions({ recorded, wrangler = npxWrangler, wait = pause, env = process.env,
-  readEdges = readEdgeCommits, windowMs, now = Date.now, sleep = pause }) {
+  readEdges = readEdgeCommits, windowMs, sleep = pause, onProgress = () => {} }) {
   if (recorded?.contract !== CONTRACT || !Array.isArray(recorded.workers) ||
       recorded.workers.map((w) => w?.name).join() !== WORKERS.map((w) => w.name).join() ||
       recorded.workers.some((w) => !VERSION_ID.test(w.version_id ?? '')) ||
@@ -244,41 +204,55 @@ export async function rollbackVersions({ recorded, wrangler = npxWrangler, wait 
     throw new Error('recorded Worker versions are not a valid record of this release');
   }
   const message = `Automatic rollback: release ${env.GITHUB_SHA ?? '?'} failed (run ${env.GITHUB_RUN_ID ?? '?'})`;
+  const base = { contract: 'clued.production-worker-rollback.v1', source_commit: env.GITHUB_SHA ?? null };
   const workers = [];
   for (const { name, version_id } of [...recorded.workers].reverse()) {
     const before = await readServed(wrangler, name, wait);
     if (before === version_id) {
       workers.push({ name, recorded: version_id, at_failure: before, action: 'unchanged' });
-      continue;
+    } else {
+      let result; let after;
+      for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+        result = await invoke(wrangler, ['rollback', version_id, '--name', name, '--message', message, '--yes']);
+        // A timed-out response may still have changed production. Read back
+        // before retrying, and use the served version as the success criterion.
+        after = await readServed(wrangler, name, wait);
+        if (after === version_id) break;
+        if (attempt < ATTEMPTS) await wait(RETRY_MS);
+      }
+      workers.push({ name, recorded: version_id, at_failure: before, served_after: after,
+        action: after === version_id ? 'rolled_back' : 'rollback_failed',
+        ...(result.status === 0 ? {} : { error: (result.stderr || result.stdout || 'Wrangler failed').trim().split('\n').slice(-3).join(' ') }) });
     }
-    let result; let after;
-    for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
-      result = await invoke(wrangler, ['rollback', version_id, '--name', name, '--message', message, '--yes']);
-      // A timed-out response may still have changed production. Read back
-      // before retrying, and use the served version as the success criterion.
-      after = await readServed(wrangler, name, wait);
-      if (after === version_id) break;
-      if (attempt < ATTEMPTS) await wait(RETRY_MS);
-    }
-    workers.push({ name, recorded: version_id, at_failure: before, served_after: after,
-      action: after === version_id ? 'rolled_back' : 'rollback_failed',
-      ...(result.status === 0 ? {} : { error: (result.stderr || result.stdout || 'Wrangler failed').trim().split('\n').slice(-3).join(' ') }) });
+    // On disk at once: a step killed half way still shows what it did.
+    onProgress({ ...base, ok: false, status: 'in_progress', workers: [...workers] });
   }
-  const versionsRestored = workers.every((w) => w.action !== 'rollback_failed');
-  let edge = Object.keys(recorded.edge).map((name) => ({ name, recorded: recorded.edge[name], served: null, confirmed: false }));
-  let edgeError;
-  if (versionsRestored) {
-    try {
-      edge = await confirmEdge({ recorded: recorded.edge, readEdges, windowMs: windowMs ?? propagationWindowMs(), now, sleep });
-    } catch (error) {
-      edgeError = error?.message ?? String(error);
-    }
+  // One reading, a whole propagation window after the last action: a late
+  // deploy or an edge still moving shows up here, not as an early match.
+  const mismatches = [];
+  try {
+    await sleep(windowMs ?? propagationWindowMs());
+  } catch (error) {
+    mismatches.push(`no propagation window: ${error?.message ?? error}`);
   }
-  const status = !versionsRestored ? 'rollback_failed'
-    : edge.every((e) => e.confirmed) ? 'restored' : 'versions_restored_edge_unconfirmed';
-  return { contract: 'clued.production-worker-rollback.v1', source_commit: env.GITHUB_SHA ?? null,
-    ok: status === 'restored', status, finished_at: new Date().toISOString(), workers, edge,
-    ...(edgeError ? { edge_error: edgeError } : {}) };
+  const versions = [];
+  for (const { name, version_id } of recorded.workers) {
+    const served = await readServed(wrangler, name, wait);
+    versions.push({ name, recorded: version_id, served, matches: served === version_id });
+    if (served !== version_id) mismatches.push(`${name} serves ${served ?? 'an unreadable version'}, recorded ${version_id}`);
+  }
+  let servedEdge;
+  try { servedEdge = await readEdges(); } catch (error) { servedEdge = { error: error?.message ?? String(error) }; }
+  const edge = Object.keys(recorded.edge).map((name) => {
+    const matches = edgeMatches(recorded.edge[name], servedEdge?.[name]);
+    if (!matches) {
+      mismatches.push(`edge ${name} serves ${servedEdge?.[name]?.source_commit ?? 'an unreadable commit'}, recorded ${recorded.edge[name]?.source_commit ?? 'unreadable'}`);
+    }
+    return { name, recorded: recorded.edge[name], served: servedEdge?.[name] ?? null, matches };
+  });
+  const status = mismatches.length ? 'not_restored' : 'restored';
+  return { ...base, ok: status === 'restored', status, finished_at: new Date().toISOString(), workers,
+    final_reading: { versions, edge }, mismatches };
 }
 
 export function renderRollbackSummary(result) {
@@ -289,12 +263,14 @@ export function renderRollbackSummary(result) {
     lines.push(`| \`${w.name}\` | \`${w.recorded}\` | \`${w.at_failure ?? 'unreadable'}\` | ${w.action}${w.error ? `: ${w.error.replace(/\|/g, '/')}` : ''} |`);
   }
   const commit = (value) => (value?.source_commit ? `\`${value.source_commit.slice(0, 12)}\`${value.revision ? ` ${value.revision}` : ''}` : `unreadable${value?.error ? `: ${String(value.error).replace(/\|/g, '/')}` : ''}`);
-  lines.push('', '| Edge | Recorded commit | Served after rollback | Confirmed |', '| --- | --- | --- | --- |');
-  for (const e of result.edge ?? []) lines.push(`| \`${e.name}\` | ${commit(e.recorded)} | ${commit(e.served)} | ${e.confirmed ? 'yes' : 'no'} |`);
-  lines.push('', result.status === 'restored' ? 'Production serves the recorded versions again, and the edge serves the recorded commits.'
-    : result.status === 'versions_restored_edge_unconfirmed'
-      ? `**The recorded versions are back at 100%, but the edge was not confirmed to serve the recorded commits${result.edge_error ? ` (${result.edge_error})` : ''}. Check production before releasing again.**`
-      : '**A Worker could not be rolled back; production may still serve the failed release.**', '');
+  lines.push('', 'Final reading, one propagation window after the rollback:', '',
+    '| Item | Recorded | Served | Matches |', '| --- | --- | --- | --- |');
+  for (const v of result.final_reading?.versions ?? []) lines.push(`| \`${v.name}\` version | \`${v.recorded}\` | \`${v.served ?? 'unreadable'}\` | ${v.matches ? 'yes' : 'no'} |`);
+  for (const e of result.final_reading?.edge ?? []) lines.push(`| \`${e.name}\` edge | ${commit(e.recorded)} | ${commit(e.served)} | ${e.matches ? 'yes' : 'no'} |`);
+  lines.push('', result.status === 'restored'
+    ? 'Production serves the recorded versions again, and the edge serves the recorded commits.'
+    : `**Not restored: ${result.mismatches.join('; ').replace(/\|/g, '/')}. Check production before releasing again.**`,
+  '', 'Worker settings changed by hand outside the repository are not restored by a rollback: the release applied the repository\'s configuration.', '');
   return lines.join('\n');
 }
 
@@ -308,30 +284,31 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-export async function main(argv = process.argv.slice(2), { wrangler, wait, env = process.env, readEdges, gitShow, windowMs, now, sleep } = {}) {
+export async function main(argv = process.argv.slice(2), { wrangler, wait, env = process.env, readEdges, gitSame, windowMs, sleep } = {}) {
   const [command] = argv;
   const out = option(argv, '--out');
   const mode = option(argv, '--mode');
   if (command === 'record' && out && (mode === 'deploy' || mode === 'release')) {
-    const recorded = await recordVersions({ wrangler, wait, env, mode, readEdges, gitShow });
+    const recorded = await recordVersions({ wrangler, wait, env, mode, readEdges, gitSame });
     writeJson(out, recorded);
     console.log(recorded.workers.map((w) => `${w.name} serves ${w.version_id}`).join('\n'));
     for (const [name, value] of Object.entries(recorded.edge)) console.log(`edge ${name}: ${value.source_commit ?? `unreadable (${value.error})`}`);
-    for (const change of recorded.unversioned_changes ?? []) {
-      console.error(`::warning::deploy changes ${change.worker} ${change.key}; a rollback of this run would not undo it`);
+    if (recorded.config_identical === false) {
+      console.error('::warning::the wrangler production configuration differs from the commit the edge serves; a rollback of this run would not undo that part');
     }
     return 0;
   }
   const from = option(argv, '--from');
   if (command === 'rollback' && from && out) {
-    const result = await rollbackVersions({ recorded: JSON.parse(fs.readFileSync(from, 'utf8')), wrangler, wait, env, readEdges, windowMs, now, sleep });
+    const result = await rollbackVersions({ recorded: JSON.parse(fs.readFileSync(from, 'utf8')), wrangler, wait, env, readEdges, windowMs, sleep,
+      onProgress: (partial) => writeJson(out, partial) });
     writeJson(out, result);
     const summary = renderRollbackSummary(result);
     console.log(summary);
     if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, summary);
     const rolledBack = result.workers.filter((w) => w.action === 'rolled_back').map((w) => w.name);
     console.error(`::error title=Release rolled back::${rolledBack.length ? `Rolled back ${rolledBack.join(', ')}` : 'No Worker had changed'}${
-      result.status === 'rollback_failed' ? '; a rollback failed' : result.status === 'restored' ? '' : '; the edge was not confirmed'}`);
+      result.status === 'restored' ? '' : `; not restored: ${result.mismatches.join('; ')}`}`);
     return result.ok ? 0 : 1;
   }
   console.error('usage: release-worker-versions.mjs record --mode deploy|release --out FILE | rollback --from FILE --out FILE');

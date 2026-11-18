@@ -108,19 +108,18 @@ LEGACY_HOSTED_DEBT = {
     },
     "clued-cloud-production-release.yml": {
         # PR #1121 (Fable 1121 rework): release takes no migrations and gains the rollback_drill input.
-        "control_sha256": "b9521ea67b4793782510badab825d981120cd6aa394262a4f15d7c2957f2d8ba",
+        "control_sha256": "c9cd44da8c145047a0f9bb940c079f81d4f6b0e77daa9e61bd28a416e4d20f9c",
         "jobs": {
-            # PR #1121 after the Fable 1121 ruling: one-approval release without migrations, Worker
-            # rollback with edge confirmation, G6 attestation last, a timeout on every release step.
+            # PR #1121 after Fable 1121 §6: one-approval release without migrations or wrangler config
+            # changes, Worker rollback judged by one final reading, G6 after the rollback step.
             # main job cacbc2d0b9c41b9eb3d5913c2f66a0c5b07ba5717989b0ab51a1022fd40ceccc, routing unchanged.
-            "release": "85e7f3d7de2bab3c9549d0627b9049575050e9b46bde2e2a43a0df7bed82c06c"
+            "release": "ada26c7e59b4e39f9849410a4e1171b86eaac789895cceed22e1d81732fcec12"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
         "control_sha256": "3e5d2cc28b9b03d5a806d76ef8c80175ccbc502da0d6a5ca733c62482fcfb491",
         "jobs": {
-            # PR #1121: verification and the attestation write are two steps, as in the release.
-            "verify-and-attest": "ca0e3e6fe35fa3cb12167d2b1455f4e6ee2e8250716f90875c2025c016fd1489"
+            "verify-and-attest": "e0a688288499912e2827283a5f0551ef8de109f5dfc5303b054a55ce852d601f"
         }
     },
     "clued-g4-database.yml": {

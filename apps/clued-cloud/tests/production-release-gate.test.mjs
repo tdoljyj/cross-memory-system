@@ -362,7 +362,7 @@ test('production release deploys the PDF extractor Worker first and verifies the
   const steps = productionWorkflow.split(/\n      - /).slice(1);
   const index = (name) => steps.findIndex((step) => step.startsWith(`name: ${name}\n`));
   const build = index('Build exact Worker source'), extractor = index('Deploy Clued PDF extractor Worker'),
-    main = index('Deploy Clued production Worker'), live = index('Verify exact live commit and currentness transport'),
+    main = index('Deploy Clued production Worker'), live = index('Wait until production serves this commit'),
     verify = index('Verify the PDF extractor service binding');
   assert.ok(build >= 0 && build < extractor && extractor < main && main < live && live < verify, JSON.stringify({ build, extractor, main, live, verify }));
   // Same deploy token and account as the main Worker; no vars, secrets or extra flags for the extractor.
@@ -691,7 +691,7 @@ test('the G6 attestation runs after the rollback step, only when everything succ
   assert.equal(releaseSteps.filter(writesAttestation).length, 1);
   assert.ok(releaseSteps.indexOf(g6) > releaseSteps.findIndex((s) => s.name === ROLLBACK_STEP));
   // The step is main's verifier unchanged: verify and write in one.
-  assert.match(g6.text, /\n {8}run: node scripts\/verify-currentness-transport\.mjs --production --evidence-out \.sites-runtime\/release-evidence\/currentness-attestation\.json\n/);
+  assert.match(g6.text, /\n {8}run: node scripts\/verify-currentness-transport\.mjs --production --evidence-out \.sites-runtime\/release-evidence\/currentness-attestation\.json(?:\n|$)/);
   assert.match(g6.text, /CLUED_ATTESTATION_DATABASE_URL: \$\{\{ secrets\.CLUED_ATTESTATION_DATABASE_URL_V2 \}\}/);
   assert.match(g6.text, /\n {8}id: g6\n/);
   for (const mode of ['deploy', 'release']) {

@@ -12,9 +12,9 @@ on:
           the PDF, main application and Kooyumi Connect Workers as one controlled release.
           release is the same deploy from one approval for a commit whose every change a
           Worker version rollback undoes: it takes no migrations (apply them with migrate
-          first) and refuses a commit that changes Cron, routes, queue consumers or
-          Durable Object migrations (publish those with deploy). deploy and release roll
-          the Workers back to the versions they served if a deploy or verification fails.
+          first) and runs only when the three wrangler production configurations are byte for
+          byte those of the commit the edge serves (otherwise use deploy). deploy and release
+          roll the Workers back to the versions they served if a deploy or verification fails.
         type: choice
         required: true
         default: preflight
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-24.04
     # At least every step of a deploy or release plus the rollback (each has its
     # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
-    timeout-minutes: 170
+    timeout-minutes: 165
     # OwnerCredential §6.1: CLUED_RELEASE_TOKEN and CLUED_MIGRATION_DATABASE_URL
     # live in this environment (Owner setting: deployment branches main only).
     environment: clued-release
@@ -417,11 +417,11 @@ jobs:
       # Before the grant and the first change to the Workers: the version each one
       # serves and the commit the public edge serves (main /healthz, Connect
       # smoke), so a failed deploy or verification below rolls back to exactly
-      # that and waits for the edge to serve it again. A Worker without a single
-      # version at 100% stops here. A release also stops here when the commit
-      # changes settings a version rollback does not undo (Cron, routes, queue
-      # consumers, Durable Object migrations), compared by git against the
-      # commit the edge serves; deploy publishes those.
+      # that and reads it back. A Worker without a single version at 100% stops
+      # here. A release also stops here unless the three wrangler production
+      # configurations are byte for byte those of the commit the edge serves
+      # (git diff): a version rollback undoes code, bindings and vars, not
+      # Cron, routes or queue consumers. deploy publishes such commits.
       - name: Record the Worker versions production serves
         id: worker_versions
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
@@ -453,12 +453,18 @@ jobs:
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 3
         env:
+          RELEASE_MODE: ${{ inputs.mode }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           # The Worker's producer and consumer bindings need the queue before deploy.
           if ! npx wrangler queues info clued-storage-jobs >/dev/null; then
+            # A Worker rollback would not remove a queue: release only reads.
+            if [ "$RELEASE_MODE" = "release" ]; then
+              echo "::error::clued-storage-jobs is missing or unreadable; release creates nothing a rollback cannot undo (use deploy)" >&2
+              exit 1
+            fi
             npx wrangler queues create clued-storage-jobs
           fi
       - name: Deploy Clued PDF extractor Worker
@@ -480,13 +486,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
-      # Waits for the live commit, runs the currentness tests and writes the
-      # evidence; it does not touch the database (the attestation is written
-      # last, below, once nothing can roll the Workers back).
-      - name: Verify exact live commit and currentness transport
+      - name: Wait until production serves this commit
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
-        timeout-minutes: 15
-        run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+        timeout-minutes: 4
+        run: >-
+          node --input-type=module -e "const { waitForLiveSourceCommit } = await import('./scripts/currentness-live-build.mjs');
+          await waitForLiveSourceCommit(process.env.GITHUB_SHA, { log: (line) => console.error(line) });"
       - name: Verify production serves the repository Agent contract
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 3
@@ -511,16 +516,20 @@ jobs:
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 4
         run: node ../kooyumi-connect/verify-production.mjs --evidence-out .sites-runtime/release-evidence/connect-postflight.json
+      # Calls the unchanged gate's --post-deploy until one Cron period plus two
+      # minutes has passed, while its only findings are a backlog; a failed
+      # job, a digest mismatch or a stalled call ends it at once. The step
+      # timeout is that window plus five minutes.
       - name: Verify projection currentness after deployment
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
-        timeout-minutes: 13
+        timeout-minutes: 17
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: >-
-          node scripts/production-release-gate.mjs --post-deploy
+          node scripts/projection-postflight.mjs
           --evidence-out .sites-runtime/release-evidence/production-postflight.json
       # Rollback drill: every check above passed. Failing here rolls the
-      # Workers back through the real path, before the attestation is written.
+      # Workers back through the real path; the G6 step below then does not run.
       # It can only fail a run; off (the default) it is not on the path.
       - name: Fail the rollback drill after every verification passed
         if: ${{ inputs.mode == 'release' && inputs.rollback_drill }}
@@ -528,29 +537,39 @@ jobs:
         run: |
           echo "::error title=Rollback drill::Every verification passed; failing on purpose so the Workers roll back to the recorded versions"
           exit 1
-      # The G6 attestation names the deployed commit, and the Worker a rollback
-      # restores asks G6 for its own commit. So it is written last, from this
-      # run's evidence, once every verification passed; a failed write rolls
-      # back like any other failure and leaves the previous row untouched.
-      - name: Publish the G6 currentness attestation
-        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
-        timeout-minutes: 5
-        env:
-          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
-        run: node scripts/verify-currentness-transport.mjs --publish .sites-runtime/release-evidence/currentness-attestation.json
-      # Any failure after the versions were recorded (the grant, a deploy, the
-      # live-commit, contract, PDF, Connect, currentness or attestation step, a
+      # Any failure after the versions were recorded (the grant, the queue, a
+      # deploy, the live commit, contract, PDF, Connect or projection check, a
       # step timeout, the drill) rolls each changed Worker back to its recorded
-      # version, waits for the edge to serve the recorded commits again and
-      # writes what it did to the Summary. The run still fails. The database is
-      # forward-only; a release carries no migration.
+      # version, then reads all three versions and the edge commits once, after
+      # one propagation window; only that reading decides "restored". The run
+      # still fails. The database is forward-only; a release carries no migration.
       - name: Roll back the Workers after a failed deploy or verification
         if: ${{ failure() && (inputs.mode == 'deploy' || inputs.mode == 'release') && steps.worker_versions.outcome == 'success' }}
-        timeout-minutes: 30
+        timeout-minutes: 35
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: node scripts/release-worker-versions.mjs rollback --from .sites-runtime/release-evidence/worker-versions.json --out .sites-runtime/release-evidence/worker-rollback.json
+      # Outside the rollback: it runs only when everything above succeeded, and
+      # its failure does not roll production back. Written or not, the
+      # attestation and the live Worker then name the same commit.
+      - name: Verify exact live commit and currentness transport
+        id: g6
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 15
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+        run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+      - name: Report an unconfirmed G6 attestation
+        if: ${{ failure() && steps.g6.outcome == 'failure' }}
+        timeout-minutes: 1
+        run: |
+          {
+            echo '## G6 attestation not confirmed'
+            echo
+            echo 'The release completed and passed every verification; the Workers were not rolled back.'
+            echo 'The G6 currentness attestation is not confirmed: run the Clued currentness production post-deploy attestation workflow.'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve release evidence
         if: always()
         timeout-minutes: 5
