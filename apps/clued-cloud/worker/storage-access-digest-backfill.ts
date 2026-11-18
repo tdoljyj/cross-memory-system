@@ -30,6 +30,7 @@ import { resolveSupabasePublicConfig } from "../app/supabase-public-config";
 import { createStorageCredentialVault, type StorageCredentialEnvelope } from "./storage-credential-vault";
 import { createStorageFetch } from "./storage-fetch";
 import { scopeProfile } from "./storage-google-scopes";
+import { storageScheduleEnabled } from "./storage-scheduled-flags";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { createStorageDemandRuntime } from "./storage-demand-runtime";
 
@@ -73,8 +74,7 @@ async function sha256(value: string) {
 
 export async function runStorageAccessDigestBackfillScheduled(env: StorageAccessDigestBackfillEnv,
   deps: { fetch?: typeof fetch; clock?: () => number } = {}): Promise<StorageAccessDigestBackfillResult> {
-  if (env.CLUED_STORAGE_ACCOUNT_V1 !== "true" || env.CLUED_STORAGE_GOOGLE_V1 !== "true" ||
-      env.CLUED_STORAGE_JOBS_V2 !== "true" || env.CLUED_STORAGE_EXECUTOR_V1 !== "true") return { status: "disabled" };
+  if (!storageScheduleEnabled.accessDigestBackfill(env)) return { status: "disabled" };
   const issuer = env.CLUED_STORAGE_CONNECTOR_ISSUER;
   const gatewayToken = databaseGatewayToken(env);
   const clientId = env.CLUED_STORAGE_GOOGLE_CLIENT_ID ?? "";

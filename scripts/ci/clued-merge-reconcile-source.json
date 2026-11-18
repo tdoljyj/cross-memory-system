@@ -90,7 +90,7 @@
 
     ".github/workflows/clued-cloud-node22-install.yml": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97",
 
-    ".github/workflows/clued-cloud-production-release.yml": "9626fc1cfe2f83994b65f57bcadd8879c68d50052fdc0a5716abd3ede70673bf",
+    ".github/workflows/clued-cloud-production-release.yml": "1ffa5b8f035930ffd5619a6b002d5cda99de2a8492795ad83e489049f03d543e",
 
     ".github/workflows/clued-compute-panel.yml": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
 
@@ -182,6 +182,10 @@
 
     "scripts/ci/check-ci-deps-entry.test.mjs": "d88476f4b456624c1ba410b68a842f83b164f78be157c1203dbaae04aa890921",
 
+    "scripts/ci/check-cron-budget.mjs": "f881240dc37968af5a885ed52eb49c44e75b0ceea011cd4cd549bfcebeeb69cc",
+
+    "scripts/ci/check-cron-budget.test.mjs": "0e32630563b0205155b37f87f7fa69672bcfc08a2a58c6724d73e2e24176bb46",
+
     "scripts/ci/check-pinned-registries.mjs": "68eaeb1971047ddc8c69cfc71ffd40d27dd223857adb9b0325681d88e79c9280",
 
     "scripts/ci/check-pinned-registries.test.mjs": "13e41d637f0ac3480cce621123498f3b88c1f690167724248a7752f915c300ae",
@@ -204,7 +208,7 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "51f0fb277759a6656c938c562bd6842a3fde5db4d141ad15df66948e9352dad5",
+    "scripts/ci/ci-required-selection.mjs": "71a8e838bd33b76d372ef7509f4f0068e45d0aedf602b086b539459700b3e4d2",
 
     "scripts/ci/ci-required-selection.test.mjs": "a171de108f7ce07892138da4d7bf9a80de48496dfa562bf67ebef488689abdc0",
 
@@ -224,11 +228,11 @@
 
     "scripts/ci/clued-control-workflow-reconcile-source.test.mjs": "e31ce637c6fab136d9cc5ae91a9f19022769d197b7c858d2ff274fe8f9738914",
 
-    "scripts/ci/clued-control-workflow-source.mjs": "cc5706803ea53a740dcdfc6d5e1a9b0146e624363a6a6801e9a572af6e081fa2",
+    "scripts/ci/clued-control-workflow-source.mjs": "ba7e3b50eef51bd5ccb1ea097c927141e753787fa2e582d205c5d5ef4b87b5a7",
 
     "scripts/ci/clued-control-workflow-source.test.mjs": "f35ebc464b7065cc02da7930b6319c17e18038fbb4765035c78cdd12d3cfa2d8",
 
-    "scripts/ci/clued-control-workflow-sources.json": "1af0ea9d2e4988df44b9e243f2438deaff2ce74111dbce899f9376dfa7e53467",
+    "scripts/ci/clued-control-workflow-sources.json": "7d7ecdaf053d45bbf4dff4cc77b4a2a669fb494601ea8ed0c33b144094d2b9e3",
 
     "scripts/ci/clued-docs-only.py": "55a23681687378d3732c3416e88ad55c3244e69d04d1d09b5c3ac3e15013b573",
 
@@ -350,7 +354,7 @@
 
     "scripts/ci/clued-merge-reconcile-source.test.mjs": "8fb5a8590c101b66602905da885496bc68fa430de723b0f7dd51d752b2ce36f7",
 
-    "scripts/ci/clued-merge-reconcile.mjs": "121733a2a50951bbc131df54a23f0cd0c8485f1729234a57f36b30bc3cdd338e",
+    "scripts/ci/clued-merge-reconcile.mjs": "70ea4047dbb9017f479491d90a454a4e9c9ace201734d07a8df9ff20eaafaa17",
 
     "scripts/ci/clued-merge-reconcile.test.mjs": "435a865b4c10936b571de51ee89a21567e42b561ecd9a28c78851aae35ed0c1b",
 
@@ -400,7 +404,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "73a90fdc4b464d5b7a82be6a7e356c0c59a26798696629bbe35f0bdc80dd1ae2",
+    "scripts/ci/clued-required-applicability.mjs": "f462881355a66d6a0cf41b65b164655f85e230aa579012b6d050f188080e31bb",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -445,6 +449,8 @@
     "scripts/ci/component-version-integration.py": "a50c3dad32f05a1ec2e5bed567babbe51a1ab6d057996cb7a859483b49db1b7c",
 
     "scripts/ci/component-version-integration.test.py": "dcf3cf7d4a5b67648501a0585a8e7b1c0e318e4e7e3ffad75413cf78b083b230",
+
+    "scripts/ci/cron-budget-allowlist.json": "b7336807042a97cc520e565279fabf461bb4351380e6f3c16dbd1b515768ad0f",
 
     "scripts/ci/fixtures/heartbeat-pr890-strategy-shrink.v1.json": "985ec57c0722daa9e2de230f39ab5a4f075f404f799933f9f8d2d0931cdddb43",
 
@@ -618,7 +624,7 @@
 
     "scripts/ci/test_validate_runner_budget_policy.py": "bffb1953f4c36f9f577934a91e17722e895b5c1f094e96ccd2e9489f5c743aae",
 
-    "scripts/ci/validate_runner_budget_policy.py": "9b1f9353db56cde8ba346cea0a7d9ee9d36d64438b40964ff3cf8c488c527c40",
+    "scripts/ci/validate_runner_budget_policy.py": "1e504ba7541257a6e7f4a89548f66c3e5de0ed1c9ff839a93e4592f58bf439ff",
 
     "scripts/runner/clued-runner-hook-loader.mjs": "de10d6bc74f8d965ab86190c87949248295896f9bb6fbab0dc774333f0d1c978",
 

@@ -343,7 +343,7 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
       await migrator.query('select pg_temp.apply_gateway($1)', [sql]);
     });
 
-    await t.test('the reviewed grant list covers live source call sites and no Native-only RPC', async () => {
+    await t.test('the reviewed grant list covers live call sites and the retained heartbeat grant only', async () => {
       const workerFiles = (await fs.readdir(path.join(root, 'worker'))).filter(n => /\.(ts|mjs)$/.test(n));
       const sources = (await Promise.all(workerFiles.map(n => fs.readFile(path.join(root, 'worker', n), 'utf8')))).join('\n');
       const mentioned = new Set(sources.match(/\bclued_[a-z0-9_]+\b/g));
@@ -356,7 +356,11 @@ test('Worker gateway is additive, least privileged, and still requires a live Bi
         and p.proargnames && array['p_token_hash','p_issuer_hash']::text[] order by signature`)).rows
         .filter(r => mentioned.has(r.proname) && !excluded.has(r.proname) && !r.proname.startsWith('clued_p5_'))
         .map(r => 'public.' + r.signature);
-      assert.deepEqual(signatures, expected);
+      // This historical migration predates the on-demand scheduler. The
+      // heartbeat RPC remains in the database until its separate retirement.
+      const heartbeat = 'public.clued_mcp_projection_refresh_heartbeat(text,jsonb)';
+      assert.ok(!expected.includes(heartbeat), 'the Worker no longer calls the heartbeat RPC');
+      assert.deepEqual(signatures, [...expected, heartbeat].sort());
     });
 
     const user = crypto.randomUUID(), proof = hex();

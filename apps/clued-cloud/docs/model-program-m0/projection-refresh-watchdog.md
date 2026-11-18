@@ -7,11 +7,7 @@ is CURRENT; readers still use KooYomi currentness and fail closed.
 
 ## Components and permissions
 
-- The one-minute Worker cron runs projection refresh every two minutes (using
-  the event's scheduled time), within the five-minute heartbeat and unresolved
-  invalidation thresholds. Each refresh records a start/finish heartbeat
-  through the existing, independently authorized Projection Builder binding.
-  A missing Builder token cannot write a heartbeat.
+- 看门狗根据投影积压、任务结果和摘要比较判断异常。Worker 空闲、暂停定时触发，或尚无运行记录时，均可正常读取状态。
 - Migration `20260923213200_projection_refresh_watchdog.sql` exposes one bounded
   status snapshot in the isolated `clued_watchdog` schema to the
   `clued_projection_watchdog` NOLOGIN role. It includes
@@ -24,7 +20,7 @@ is CURRENT; readers still use KooYomi currentness and fail closed.
   Test that this role can call the snapshot and cannot select private tables or
   call Builder RPCs before scheduling it.
 - Run `node scripts/projection-watchdog.mjs` in an independent, single-instance
-  scheduler every minute, outside the refresh Worker and with persistent state
+  scheduler outside the refresh Worker and with persistent state
   storage. It must restart on failure and have its own job-failure alert. Use a
   private state path and restrict filesystem ACLs to the monitor identity. A
   transient monitoring/database failure must itself create an alert; the
@@ -36,7 +32,6 @@ Environment for the independent monitor:
 | --- | --- |
 | `CLUED_WATCHDOG_DATABASE_URL` | Narrow LOGIN role connection URL. |
 | `CLUED_WATCHDOG_STATE_PATH` | Durable path for active incident IDs. |
-| `CLUED_WATCHDOG_GRACE_UNTIL` | ISO timestamp after the first deployed cron tick; allow cron propagation during initial activation only. |
 | `CLUED_ALERT_CF_ACCOUNT_ID` | Cloudflare account ID. |
 | `CLUED_ALERT_CF_API_TOKEN` | Narrow Email Sending API token. |
 | `CLUED_ALERT_FROM` | Verified KooYomi alert sender. |
@@ -51,9 +46,11 @@ returned `Unauthorized (2036)`, so live email delivery is **not activated or
 verified** by this change. Do not schedule this monitor as production-active
 until the delivery path and its independent job-failure alarm are proved.
 
+数据库中的每小时任务另有 SQL 判定入口 `clued_watchdog.projection_watchdog_tick()`。下面的信号说明针对本页的 Node.js 脚本。
+
 ## Signals and behavior
 
-- Missing/stale/unfinished Worker tick or degraded refresh transport.
+- 快照若明确报告传输或 Builder 协议错误或异常，保留 `WORKER_DEGRADED` 告警。
 - Terminal queue failure, missing job while invalidation is unresolved, or
   unresolved invalidation older than five minutes.
 - Revision going backwards, stored digest diverging from the latest complete
@@ -75,11 +72,10 @@ replicas against the same state file.
 
 1. Apply the migration through the separately authorized database release.
    Grant only the NOLOGIN watchdog role to the dedicated LOGIN monitor identity.
-2. Deploy the Worker heartbeat in a separately authorized Worker release; set
-   initial grace and confirm two completed cron ticks.
+2. 核对快照可读，并确认服务租户、两个投影键、修订和摘要状态。
 3. Configure the independent scheduler and secrets, dry-run on synthetic
    conditions, then prove an actual email reaches the approved inbox. Inject a
-   safe missed-tick condition and recovery, confirm one alert and one recovery.
+   synthetic overdue backlog and recovery, confirm one alert and one recovery.
 4. Check both projections' currentness from independent Host/Agent reads.
    Record UTC timestamps, revision/digest status, and delivery receipts without
    storing Canonical content in the monitor log.
