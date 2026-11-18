@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,36 +10,42 @@ import { build } from "esbuild";
 // Bundle the real entry point, replacing its I/O dependencies with spies.
 // No database, provider, vinext server or Cloudflare runtime is started.
 const entry = fileURLToPath(new URL("../worker/index.ts", import.meta.url));
-const storage = [
-  "runStorageRefreshScheduled", "runStorageRecoveryScheduled",
-  "runStorageUnattemptedReleaseScheduled", "runStorageQueuedSweepScheduled",
-  "runStorageAccessDigestBackfillScheduled", "runStorageStagingScheduled",
-  "runStorageOnboardScheduled",
-];
-const projection = "runProjectionRefreshScheduled";
+const taskByKey = {
+  projection_refresh: "wakeProjectionRefresh",
+  storage_refresh: "runStorageRefreshScheduled",
+  storage_recovery: "runStorageRecoveryScheduled",
+  storage_unattempted_release: "runStorageUnattemptedReleaseScheduled",
+  storage_queued_sweep: "runStorageQueuedSweepScheduled",
+  storage_access_digest_backfill: "runStorageAccessDigestBackfillScheduled",
+  storage_staging: "runStorageStagingScheduled",
+  storage_onboard: "runStorageOnboardScheduled",
+};
 const modules = new Map([
-  ["./continuity", [projection, ...storage.filter(name => ![
-    "runStorageQueuedSweepScheduled", "runStorageAccessDigestBackfillScheduled",
-  ].includes(name)), "handleContinuityRequest", "runStorageJobQueue", "runStorageCloudJob"]],
-  ["./storage-queued-dispatch", ["runStorageQueuedSweepScheduled"]],
-  ["./storage-access-digest-backfill", ["runStorageAccessDigestBackfillScheduled"]],
+  ["./continuity", Object.values(taskByKey).filter(name => ![
+    taskByKey.storage_queued_sweep, taskByKey.storage_access_digest_backfill,
+  ].includes(name))],
+  ["./storage-queued-dispatch", [taskByKey.storage_queued_sweep]],
+  ["./storage-access-digest-backfill", [taskByKey.storage_access_digest_backfill]],
 ]);
 const directory = await mkdtemp(path.join(os.tmpdir(), "clued-worker-scheduled-"));
 const output = path.join(directory, "worker.mjs");
 await build({
   stdin: { contents: `export { default as worker } from ${JSON.stringify(entry)};
+    export * as continuity from ${JSON.stringify(path.resolve(path.dirname(entry), "continuity.ts"))};
     export { calls } from "scheduled-spies";`, resolveDir: path.dirname(entry) },
   outfile: output, bundle: true, platform: "node", format: "esm",
   plugins: [{ name: "scheduled-spies", setup(builder) {
     builder.onResolve({ filter: /^scheduled-spies$/ }, () => ({ path: "spies", namespace: "scheduled-test" }));
     builder.onResolve({ filter: /.*/ }, args => {
-      if (args.importer === entry) return { path: args.path, namespace: "scheduled-test" };
+      if ((args.importer === entry || path.basename(args.importer) === "scheduled-registry.ts") &&
+          (modules.has(args.path) || args.importer === entry && args.path !== "./scheduled-registry")) return { path: args.path, namespace: "scheduled-test" };
     });
     builder.onLoad({ filter: /.*/, namespace: "scheduled-test" }, args => {
       if (args.path === "spies") return { contents: `export const calls = [];
         export function invoke(name, args) { calls.push({ name, args }); return Promise.resolve({ status: "disabled" }); }` };
       const names = modules.get(args.path);
-      if (names) return { contents: `import { invoke } from "scheduled-spies";
+      if (names) return { resolveDir: path.dirname(entry), contents: `export * from ${JSON.stringify(path.resolve(path.dirname(entry), args.path + ".ts"))};
+        import { invoke } from "scheduled-spies";
         ${names.map(name => `export const ${name} = (...args) => invoke(${JSON.stringify(name)}, args);`).join("\n")}` };
       const inert = {
         "vinext/server/image-optimization": "export const DEFAULT_DEVICE_SIZES = [], DEFAULT_IMAGE_SIZES = []; export function handleImageOptimization() {}",
@@ -53,53 +60,89 @@ await build({
     });
   } }],
 });
-const { worker, calls } = await import(pathToFileURL(output).href);
+const { worker, calls, continuity } = await import(pathToFileURL(output).href);
 test.after(() => rm(directory, { recursive: true, force: true }));
 
-const env = { marker: "synthetic-schedule-env" };
-async function tick(iso) {
+const env = {
+  SUPABASE_URL: "https://db.test", SUPABASE_PUBLISHABLE_KEY: "anon-test",
+  CLUED_DB_GATEWAY_TOKEN: "synthetic-gateway", CLUED_PROJECTION_BUILDER_TOKEN: "clued_bnd_synthetic",
+  CLUED_STORAGE_ACCOUNT_V1: "true", CLUED_STORAGE_GOOGLE_V1: "true", CLUED_STORAGE_REFRESH_V1: "true",
+  CLUED_STORAGE_JOBS_V1: "true", CLUED_STORAGE_JOBS_V2: "true", CLUED_STORAGE_EXECUTOR_V1: "true",
+  CLUED_STORAGE_BINARY_V1: "true",
+};
+const idle = Object.fromEntries(Object.keys(taskByKey).map(key => [key, false]));
+const reply = (due = idle) => ({ status: "ok", observed_at: "2026-11-18T00:00:00Z", due });
+
+async function tick(t, respond, flags = env) {
   calls.length = 0;
   const pending = [];
-  await worker.scheduled({ scheduledTime: Date.parse(iso), cron: "* * * * *" }, env, {
+  const requests = [];
+  const warnings = [];
+  t.mock.method(console, "warn", (...args) => warnings.push(args));
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    requests.push({ url, init });
+    return respond();
+  });
+  await worker.scheduled({ scheduledTime: Date.parse("2026-11-18T00:00:00Z"), cron: "*/10 * * * *" }, flags, {
     waitUntil(promise) { pending.push(promise); },
   });
   await Promise.all(pending);
-  assert.equal(pending.length, calls.length, "every started task is held by waitUntil");
-  for (const call of calls) assert.equal(call.args[0], env, "task receives the original environment");
-  return calls.map(call => call.name);
+  assert.deepEqual(requests.map(({ url }) => String(url)), ["https://db.test/rest/v1/rpc/clued_worker_due_v1"]);
+  const { init } = requests[0];
+  assert.equal(new Headers(init.headers).get("authorization"), `Bearer ${flags.CLUED_DB_GATEWAY_TOKEN}`);
+  assert.deepEqual(JSON.parse(init.body), {
+    p_token_hash: createHash("sha256").update(flags.CLUED_DB_GATEWAY_TOKEN).digest("hex"),
+  });
+  assert.ok(init.signal instanceof AbortSignal, "due fetch has a deadline");
+  for (const call of calls) assert.equal(call.args[0], flags);
+  return { tasks: calls.map(call => call.name), pending: pending.length, warnings: warnings.length };
 }
 
-test("each minute runs only its assigned storage task; unused slots perform no storage I/O", async () => {
-  for (let slot = 0; slot < 10; slot++) {
-    const invoked = await tick(`2026-11-18T00:0${slot}:00.000Z`);
-    assert.deepEqual(invoked.filter(name => name !== projection), slot < storage.length ? [storage[slot]] : [], `minute slot ${slot}`);
-  }
+test("idle tick makes only the read-only due RPC and starts no task or heartbeat", async t => {
+  assert.deepEqual(await tick(t, () => Response.json(reply())), { tasks: [], pending: 0, warnings: 0 });
 });
 
-test("every sliding ten-minute window runs each storage task exactly once across the hour/day boundary", async () => {
-  const start = Date.parse("2026-11-18T23:55:00.000Z");
-  const minutes = [];
-  for (let minute = 0; minute < 69; minute++) {
-    minutes.push(await tick(new Date(start + minute * 60_000).toISOString()));
-  }
-  for (let offset = 0; offset < 60; offset++) {
-    const window = minutes.slice(offset, offset + 10).flat().filter(name => name !== projection);
-    assert.deepEqual([...window].sort(), [...storage].sort(), `window ${offset}`);
-  }
+for (const [key, task] of Object.entries(taskByKey)) {
+  test(`due ${key} dispatches only ${task} under waitUntil`, async t => {
+    assert.deepEqual(await tick(t, () => Response.json(reply({ ...idle, [key]: true }))),
+      { tasks: [task], pending: 1, warnings: 0 });
+  });
+}
+
+for (const [failure, respond] of Object.entries({
+  timeout: () => { throw new DOMException("deadline exceeded", "TimeoutError"); },
+  "HTTP 503": () => new Response(null, { status: 503 }),
+  "broken JSON": () => new Response("{"),
+  "bad status": () => Response.json({ ...reply(), status: "unavailable" }),
+  "missing observation": () => Response.json({ due: idle, status: "ok" }),
+  "partial flags": () => Response.json(reply({ projection_refresh: true })),
+  "non-boolean flag": () => Response.json(reply({ ...idle, projection_refresh: true, storage_onboard: 0 })),
+})) {
+  test(`due failure (${failure}) warns once and starts no tasks`, async t => {
+    assert.deepEqual(await tick(t, respond), { tasks: [], pending: 0, warnings: 1 });
+  });
+}
+
+test("disabled tasks are never started even when all eight are due", async t => {
+  const due = Object.fromEntries(Object.keys(taskByKey).map(key => [key, true]));
+  const flags = { ...env, CLUED_PROJECTION_BUILDER_TOKEN: "", CLUED_STORAGE_ACCOUNT_V1: "false" };
+  assert.deepEqual(await tick(t, () => Response.json(reply(due)), flags), { tasks: [], pending: 0, warnings: 0 });
 });
 
-test("projection refresh runs every two scheduled minutes within the five-minute watchdog threshold", async () => {
-  for (let minute = 0; minute < 10; minute++) {
-    const invoked = await tick(`2026-11-18T00:0${minute}:00.000Z`);
-    assert.equal(invoked.filter(name => name === projection).length, minute % 2 === 0 ? 1 : 0);
-  }
+test("executor off still allows queued settlement, release and onboard expiry", async t => {
+  const due = Object.fromEntries(Object.keys(taskByKey).map(key => [key, true]));
+  const flags = { ...env, CLUED_PROJECTION_BUILDER_TOKEN: "", CLUED_STORAGE_REFRESH_V1: "false",
+    CLUED_STORAGE_EXECUTOR_V1: "false", CLUED_STORAGE_ONBOARD_V1: "false" };
+  const result = await tick(t, () => Response.json(reply(due)), flags);
+  assert.deepEqual(result.tasks.sort(), [taskByKey.storage_queued_sweep, taskByKey.storage_unattempted_release,
+    taskByKey.storage_onboard].sort());
+  assert.equal(result.pending, 3);
 });
 
-test("delayed delivery uses scheduledTime rather than the wall clock", async () => {
-  const original = Date.now;
-  Date.now = () => Date.parse("2026-11-19T12:09:00.000Z");
-  try {
-    const invoked = await tick("2026-11-18T23:54:00.000Z");
-    assert.deepEqual(invoked, [projection, storage[4]]);
-  } finally { Date.now = original; }
+test("projection wake policy agrees with every advertised tool annotation", () => {
+  const allEnabled = new Proxy({}, { get: () => "true" });
+  for (const tool of continuity.publicMcpTools(allEnabled)) {
+    assert.equal(continuity.isProjectionWriteTool(tool.name), tool.annotations.readOnlyHint === false, tool.name);
+  }
+  assert.equal(continuity.isProjectionWriteTool("unknown_tool"), false);
 });
