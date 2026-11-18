@@ -4,6 +4,7 @@ import { withCanonicalMcpError } from "./mcp-error-envelope";
 import { handleMcpProfile, mcpProfileTool, McpProfileError, type McpProfile } from "./mcp-profile";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
 import { handleCiNodeGatewayV1, isCiNodeGatewayPath } from "./ci-node-gateway-v1";
+import { GITHUB_EVENTS_PATH, handleGitHubEvents } from "./github-events-v1";
 import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
   type ModelDomainFeatureEnv, type ModelDomainToolName } from "./model-domain-tools";
@@ -4064,7 +4065,9 @@ export async function handleContinuityRequest(
   // A fixed serving-Worker door, not MCP/Owner authentication or a browser
   // credential flow. Keep its transient runtime credentials out of general
   // tracing, projection invalidation and response decoration.
-  if (isCiNodeGatewayPath(new URL(request.url).pathname)) return handleCiNodeGatewayV1(request, env);
+  const pathname = new URL(request.url).pathname;
+  if (pathname === GITHUB_EVENTS_PATH) return handleGitHubEvents(request, env);
+  if (isCiNodeGatewayPath(pathname)) return handleCiNodeGatewayV1(request, env);
   const trace = createNativeReadTrace(request);
   const response = await handleContinuityRequestInner(request, env, ctx, trace);
   if (response) trace?.complete(response);
