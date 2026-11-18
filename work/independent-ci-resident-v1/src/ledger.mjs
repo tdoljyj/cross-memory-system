@@ -79,7 +79,7 @@ export const OPEN_RECORDS = Object.freeze(['00-reserved.json', '10-started.json'
 export const OWNER_ABORT_RECORD = '80-owner-abort.json';
 export const PARK_RECORD = '70-parked.json';
 export const MAX_TRIES = 99;
-const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2})\.json$/;
+const TRY = /^7(?:(1)-try|(2)-tried)-(\d{2,16})\.json$/;
 const tryName = (begun, n) => `${begun ? '71-try' : '72-tried'}-${String(n).padStart(2, '0')}.json`;
 export const SELF_ABORT_RECORD = '81-self-abort.json';
 
@@ -177,9 +177,11 @@ export class Ledger {
     try {
       if (batchKey(s.reserved.subject) !== s.reserved.key || s.terminal.key !== s.reserved.key || s.selfAbort.key !== s.reserved.key) return false;
     } catch { return false; }
+    const safePoint = f?.failureCode === 'SUPERSEDED_AT_SAFE_POINT' && f.class === 'clean-final' && ['upgrade-drain', 'park-max-age'].includes(f.basis);
+    const capacity = f?.failureCode === 'PARKED_OVER_CAPACITY' && f.class === 'queue' && f.basis === 'park-over-capacity'
+      && f.safePoint === 'parked' && s.tries?.at(-1)?.ended?.ending === 'PARKED_OVER_CAPACITY';
     return s?.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && !s.abort && s.started && s.wait
-      && f?.failureCode === 'SUPERSEDED_AT_SAFE_POINT' && f.class === 'clean-final' && f.breaker === 'neutral'
-      && ['upgrade-drain', 'park-max-age'].includes(f.basis) && s.selfAbort?.basis === f.basis && s.selfAbort.safePoint === f.safePoint
+      && (safePoint || capacity) && f.breaker === 'neutral' && s.selfAbort?.basis === f.basis && s.selfAbort.safePoint === f.safePoint
       && typeof f.windows === 'string' && typeof f.linux === 'string'
       && ((f.safePoint === 'waiting' && f.stage === 1 && !s.planIntent && !s.plan && !s.parked)
         || (f.safePoint === 'parked' && f.stage === 8 && s.plan && s.parked && s.tries.every(t => t.ended !== null)));
@@ -227,17 +229,21 @@ export class Ledger {
   // The stage-8 tries of a parked entry, in order: [{ n, begun, ended }] (ended null while a try runs or crashed). A gap
   // (try n+1 without try n, a result without its try) is content that does not fit: UNREADABLE.
   async readTries(dir, read) {
-    const names = (await fs.readdir(dir)).filter(n => TRY.test(n)).sort();
+    const records = (await fs.readdir(dir)).flatMap(name => {
+      const match = TRY.exec(name);
+      return match ? [{ name, begun: match[1] !== undefined, n: Number(match[3]) }] : [];
+    }).sort((a, b) => a.n - b.n);
     const tries = [];
-    for (const name of names) {
-      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
-      const n = Number(nn);
-      if (kind === '1') { check(n === tries.length + 1 && n <= MAX_TRIES, 'PARKED_TRY_SEQUENCE_INVALID'); tries.push({ n, begun: await read(name), ended: null }); }
+    for (const { name, begun, n } of records) {
+      check(Number.isSafeInteger(n) && name === tryName(begun, n), 'PARKED_TRY_SEQUENCE_INVALID');
+      if (begun) {
+        check(n === tries.length + 1, 'PARKED_TRY_SEQUENCE_INVALID');
+        tries.push({ n, begun: await read(name), ended: null });
+      }
     }
-    for (const name of names) {
-      const [, one, two, nn] = TRY.exec(name); const kind = one ?? two;
-      if (kind !== '2') continue;
-      const t = tries[Number(nn) - 1];
+    for (const { name, begun, n } of records) {
+      if (begun) continue;
+      const t = tries[n - 1];
       check(t && t.ended === null, 'PARKED_TRY_SEQUENCE_INVALID');
       t.ended = await read(name);
     }
@@ -320,7 +326,7 @@ export class Ledger {
   // One stage-8 try of a parked entry: begun right before it runs, ended only when it was not ready (zero side effects).
   async beginTry(key, facts) {
     const s = await this.state(key);
-    check(Ledger.parkedAt(s) && s.tries.length < MAX_TRIES, 'PARKED_TRY_REQUIRES_PARKED_ENTRY', s.state);
+    check(Ledger.parkedAt(s), 'PARKED_TRY_REQUIRES_PARKED_ENTRY', s.state);
     const n = s.tries.length + 1;
     await writeNew(path.join(this.dir(key), tryName(true, n)), { key, contract: 'clued.independent-ci.resident-stage8-try/1', n, at: isoNow(this.clock), ...facts });
     return n;
@@ -611,12 +617,14 @@ export class Ledger {
         // Stage-8 retries may be budgeted per PR. Historical rows and flow continuations use their durable reservation;
         // an unreadable/missing subject stays conservatively charged, never gains a free retry.
         const reserved = await read(path.join(dir, '00-reserved.json'));
-        for (const name of (await fs.readdir(dir)).filter(n => /^71-try-(\d{2})\.json$/.test(n) && (n !== '71-try-01.json' || reserved?.flowStage8 === true))) {
+        for (const name of (await fs.readdir(dir)).filter(n => TRY.exec(n)?.[1] && (n !== '71-try-01.json' || reserved?.flowStage8 === true))) {
           const at = Date.parse((await read(path.join(dir, name)))?.at);
           if (!(at < sinceMs) && (stage8Pr === null || !Number.isSafeInteger(reserved?.subject?.pr) || reserved.subject.pr === stage8Pr)) u.stage8Retries += 1;
         }
-        if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         const terminal = await read(path.join(dir, '90-terminal.json'));
+        if (terminal?.outcome === 'FAILED_CLEAN' && terminal.facts?.basis === 'park-over-capacity' && Date.parse(terminal.at) >= sinceMs
+            && HEX40.test(reserved?.subject?.headSha ?? '')) bump(u.releasesByHead, reserved.subject.headSha);
+        if (!reserved || !(Date.parse(reserved.reservedAt) >= sinceMs)) continue;
         count({ reserved, started: await exists(path.join(dir, '10-started.json')), reason: null, facts: terminal?.facts ?? null,
           burned: ['FAILED_CLEAN', 'FAILED_UNKNOWN'].includes(terminal?.outcome) });
       } catch (error) { if (!contentError(error)) throw error; u.evaluations += 1; }

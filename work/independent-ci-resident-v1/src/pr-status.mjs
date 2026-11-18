@@ -31,6 +31,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
+import { FAILURE_TABLE } from './classify.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
@@ -284,6 +285,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     // Parked before stage 8 (phase 2, step 2): its checks are published; it waits for the merge queue.
     if (row.state === 'PARKED') {
       const lease = leaseText(row, now, { running: false }), latest = row.nextAt ? `（最晚约 ${hhmm(row.nextAt)}）` : '';
+      if (row.nextAt === null) return { state: 'pending', description: clip(`休眠停靠（${row.deferred ?? '第 8 段未就绪'}）：有变化后再查第 8 段${lease}`) };
       // Generation 12 (DESIGN §56.2): a watched row (row.watched) tries stage 8 within minutes once its claim holds the merge slot;
       // an unwatched one (an older Source, a STANDBY node, the watch or try budget used up) keeps the generation-11 text.
       if (row.deferred === 'RESIDENT_MERGE_QUEUE_NOT_JOINED') return { state: 'pending', description: clip(row.watched
@@ -351,7 +353,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       case 'COMPLETED': return { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' };
       case 'FAILED_CLEAN':
         if (recent.retry === 'safe-point') return { state: 'pending', description: '流程在安全点结束：条件恢复后自动接着跑，不用推新提交' };
-        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
+        if (['same-batch', 'continuation', 'new-trigger', 'park'].includes(recent.retry))
+          return { state: 'pending', description: clip(`流程停在（${code}）：等待恢复，不用推新提交`) };
         if (recent.code === 'TRAIN_TEST_MERGE_TREE_DIFFERS') return { state: 'failure', description: '试合并与测过的树不同，未发合并位：请推新提交（已通知 Owner）' };
         // DESIGN §41.4 (review R3 MINOR 10): GitHub recomputed the test merge; the next stage 10 reads S again (the head's second
         // front batch), no new commit is needed. Only after that one is a new commit asked for (TRAIN_FRONT_ATTEMPTS_USED).
@@ -378,12 +382,13 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
         if (recent.code === 'OWNER_REVIEW_REQUIRED') return { state: 'pending', description: '等 Owner 批准受保护改动，批准后编辑 PR 可提前重试' };
         if (recent.code === 'TASK_CI_HEAD_CAP_REACHED') return { state: 'pending', description: 'Task 的 24 小时 CI 额度已满，稍后自动重试' };
         if (recent.class === 'waiting') return { state: 'pending', description: clip(`等待中（${code}），稍后自动重试`) };
+        if (recent.code === 'NATIVE_POLICY_UNSUPPORTED') return { state: 'pending', description: '等待节点更新 Source，当前提交可自动重试' };
         return { state: 'failure', description: clip(`未准入（${code}）：修正后编辑 PR 再试`) };
       case 'NOT_EXECUTED':
         // Defect a8910e41: the binding run is released now (before: burned, FAILED_CLEAN below); the same words.
         if (recent.code === 'TRAIN_FRONT_CLAIM_BOUND') return { state: 'pending', description: '合并列车：已为队首认领绑定此 PR，车头批次随后在试合并提交上跑，不用推新提交' };
         // Field defect 2026-11-14: the bundle found main moved past this head's base; the row stopped (no retry with that base).
-        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'failure', description: 'main 已移动：请合入最新 main 并推新提交' };
+        if (recent.code === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
         return recent.code === 'BATCH_SUPERSEDED' ? null : { state: 'pending', description: clip(`未执行（${code}），稍后自动重试`) };
       case 'IGNORED':
         if (recent.code === 'UNEXECUTED_DAILY_CAP') return { state: 'failure', description: '此提交今日评估次数已满：请推新提交' };
@@ -392,7 +397,12 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       default: return null;
     }
   }
-  if (row && row.state === 'STOPPED') return { state: 'failure', description: clip(`此提交不再运行（${row.deferred ?? '?'}）：请推新提交`) };
+  if (row && row.state === 'STOPPED') {
+    if (row.deferred === 'RESIDENT_BASE_MOVED') return { state: 'pending', description: 'main 已移动：等待系统更新 PR 的基线' };
+    if (FAILURE_TABLE.rows.some(r => r.code === row.deferred && ['environment', 'queue'].includes(r.class) && r.retry !== 'new-commit'))
+      return { state: 'pending', description: clip(`流程停在（${row.deferred}）：等待恢复，不用推新提交`) };
+    return { state: 'failure', description: clip(`此提交不再运行（${row.deferred ?? '?'}）：请推新提交`) };
+  }
   if (status.halt) return { state: 'error', description: clip(`执行器已停机（${status.halt.code}），等 Owner 复位`) };
   if (status.paused) return { state: 'pending', description: '执行器已暂停，等 Owner 恢复' };
   if (!status.backfill.complete) return { state: 'pending', description: '执行器启动中：回填已执行记录', weak: true };

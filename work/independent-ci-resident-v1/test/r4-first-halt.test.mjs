@@ -276,7 +276,7 @@ test('no archive code, or one that is not a fixed code: the records are exactly 
 });
 
 test('the same for a failure archive (FAILURE_ARCHIVE_UNCONFIRMED) and for the success path (SUCCESS_PATH_ARCHIVE_UNCONFIRMED)', async t => {
-  const failure = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } },
+  const failure = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } },
     archiveWindows: { verified: false, directory: null, moved: null, archiveCode: 'SPOOL_PATH_REDIRECTED' } }) });
   await failure.drop(triggerBytes());
   const a = await failure.exec.tick();
@@ -295,7 +295,7 @@ test('the same for a failure archive (FAILURE_ARCHIVE_UNCONFIRMED) and for the s
 test('a re-arm whose Windows archive is refused says why in its refusal receipt', async t => {
   // First a failure that halts with an unarchived FAILED_UNKNOWN scene (the Windows archive fails), then the Owner's re-arm, whose archive fails the same way.
   const archiveWindows = { verified: false, directory: null, moved: null, archiveCode: 'SPOOL_PARENT_HOLD_REFUSED' };
-  const f = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'FIXED_PUBLIC_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } }, archiveWindows }),
+  const f = await executorFixture(t, { engine: fakeEngine({ stages: { 3: { ok: false, code: 'STAGE_CHILD_REFUSED', proof: { ...WINDOWS_CLEAN, linuxUnitsInactive: true, containersZero: true } } }, archiveWindows }),
     companion: fakeCompanion() });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'HALTED');

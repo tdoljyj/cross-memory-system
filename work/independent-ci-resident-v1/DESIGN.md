@@ -5931,3 +5931,10 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - **不做的事。** 不改常驻 App 权限；不重新启用旧执行器（它的合并、自动合并、重跑在列车下已无用途，且托管令牌拿不到轮换的角色）；不对非车头 PR 合 main；受保护层 PR 照 `78a3052f` 第 2 条暂不自动更新（dispatcher 仍会问，最多 3 次，每次秒级拒绝）。冲突仍由持有者手工解决（update-branch 422）；main 若改了工作流文件而 App 没有 workflows 权限，update-branch 会被拒（403），同样退回手工。
 - **测试。** `scripts/ci/clued-front-main-merge.test.mjs`：模拟 GitHub 与 Native 的 HTTP，真实执行脚本 + 真实 `evaluate`：落后的车头 → 一次 update-branch（期望 head 绑定）→ 证明检查 → 合并提交 ADMITTED、Native 收到一次 carry、无人授权。修复前（同一测试跑在不含准入改动的代码上）合并提交 `REJECTED pr_task_binding_head_not_authorized`。另测：无证明、他 App 的证明、父提交不符、指名他 PR、源未授权 → 不沿用；frozen、head 已变、已含 main、冲突、草稿、受保护层、非 GitHub 合并 → 不动或不证明。`apps/clued-cloud/tests/work-claims-main-merge-db.test.mjs`（真实迁移链）：签发者沿用后 resolve 为 bound、verify ADMITTED、回执记签发者、fence/版本/硬截止不变、幂等、可链式；持有者/只读绑定不能沿用；源未授权、他 PR、坏输入、已释放认领都拒；`CLUED_MAIN_MERGE_BASELINE=1` 去掉迁移则第一例失败。`test/front-merge-dispatch.test.mjs`：只当班节点、只新鲜的 `FRONT_NEEDS_MAIN_MERGE`、一次/重试/上限/重启不重发。
 - **上线。** 仓库侧（工作流、脚本）合入即生效，可手工 `gh workflow run clued-front-main-merge.yml -f pr=N -f head=SHA` 代替手工合 main；准入沿用要生产迁移（Owner 批）和下一版通用包（第 1 段准入与 companion 都在包里）。
+
+## 81. 非 PR 原因的失败恢复（Fable D4 §2，T5）
+
+- 失败表按段区分同批重跑、停靠、释放、attempt 2 和续跑资格。同批重跑复用 §54 的退避与归档，执行段的子进程超时最多补试一次。签名结果缺失时，归档对应执行段的现场并重跑该段，随后才进入发布段。对能证明没有启动子进程或没有调用发布段的拒绝，重试留回执。可能已发布的超时继续受发布证据和停机条件约束。
+- 第 8 段只有在有零副作用的证明时才可停靠。试满或到龄后休眠，归还停靠名额。PR 或 main 变化、检查或规则观察变化、合并列车队首变化可唤醒，仍受每 PR 每日重试预算约束。唤醒信号只使第 8 段到期，由该段重新核验。关闭 PR 或替换 head 仍按 §72 结束批次。
+- 停靠超容量时走现有第 8 段安全点再入队路径。持久记录停靠结束并计入释放额度。仓库、PR、head、base、试合并提交和 Source 一致后，按现有释放退避重新检查第 8 段。一般续跑批次由 D4 的 T6 实现，此处只记录其资格。
+- 保留现有落地模式的队列与试合并等待行。切换落地后按产生路径验证是否退役。第 R 段和三个旧一次性状态已退出常驻失败表，旧 Source 的阶段事实格式仍可读取。
