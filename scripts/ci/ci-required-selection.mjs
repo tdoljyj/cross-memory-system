@@ -109,6 +109,7 @@ const AUTHORIZATION_DB_TESTS = [
 // own files only (worker/*): worker/generated is rewritten by every component bump, and those version strings are
 // not what these tests check.
 const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
+  'apps/clued-cloud/tests/ci-connection-renew-db.test.mjs',
   'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
   'apps/clued-cloud/tests/worker-continuity-loader.mjs', 'apps/clued-cloud/tests/independent-review-db.test.mjs',
@@ -266,6 +267,7 @@ export const SUITE_COMMANDS = {
     { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}'] },
   ],
   'production-schema': [
+    { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/ci-connection-renew-db.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{db-concurrency}',

@@ -177,3 +177,7 @@ export async function executorFixture(t, { engine = fakeEngine(), companion, pol
   };
   return { root, ports, exec, ledger, receipts, inbox, engine, companion: comp, drop, advance: ms => { time += ms; }, clock, executedHeads, queue };
 }
+
+// The reply of GET /rules/branches/main with one required_status_checks rule (names; pins: { name: integrationId }).
+export const rulesReply = (names, pins = {}) => ({ code: 0, stdout: JSON.stringify([{ type: 'required_status_checks', parameters: {
+  required_status_checks: names.map(context => ({ context, ...(pins[context] ? { integration_id: pins[context] } : {}) })) } }]) });

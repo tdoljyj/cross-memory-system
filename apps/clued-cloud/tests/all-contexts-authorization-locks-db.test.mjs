@@ -389,8 +389,9 @@ test('all-contexts real early writer barriers and preserved caller catalog', { t
       }), second, () => finishPermission(second, token));
       assert.equal(result.held.status, 'committed'); assert.equal(result.waited.status, 'committed', JSON.stringify(result.waited));
     });
-    for (const [name, action] of [['clued_owner_grant_door_consume_v1', 'release.production'],
-      ['clued_owner_grant_admission_door_v1', 'repo.protected_change']]) {
+    // The release door is the database login since 20261119130000 and takes no Binding lock; the
+    // public door refuses the release actions before it resolves a Binding.
+    for (const [name, action] of [['clued_owner_grant_admission_door_v1', 'repo.protected_change']]) {
       await t.test(`actual ${name} B SHARE -> GrantLock consumption versus Native permission writer has no inverse lock`, async () => {
         const subject = await approve(first, await prepare());
         if (name === 'clued_owner_grant_admission_door_v1') {
