@@ -61,6 +61,33 @@ export const CREDENTIAL_FILES = 'tree/work/independent-ci-resident-v1/windows/cr
 export const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
 // The prerequisite items (by name in the package's prereq-manifest.json) the drill injects and the guest never downloads.
 export const INJECTED_TOOLS = Object.freeze(['gh', 'git-for-windows']);
+// The first key written twice in one object of a JSON text -- by case too, as for file names -- or null. Scanned as JSON (strings with their
+// escapes, objects and arrays nested), never counted by a pattern: JSON.parse keeps the last of a key given twice and cannot show it
+// (8th review round, medium 2 and low 1). Called on a text JSON.parse has taken.
+function duplicateJsonKey(text) {
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '{') stack.push(new Set());
+    else if (c === '[') stack.push(null);
+    else if (c === '}' || c === ']') stack.pop();
+    else if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      let k = j + 1;
+      while (k < text.length && /\s/.test(text[k])) k++;
+      const top = stack[stack.length - 1];
+      if (text[k] === ':' && top) {
+        const key = JSON.parse(text.slice(i, j + 1)).toLowerCase();
+        if (top.has(key)) return key;
+        top.add(key);
+      }
+      i = j;
+    }
+  }
+  return null;
+}
+
 // The package's credential list from its archive, the one reader the build and the run's gate both use: exactly
 // { contract, required, optional }, each group an object of plain file names, a non-empty required group, no key twice, no name twice
 // (in a group, across the two, or by case). Anything else, or no list, is refused. Returns the list and the hash of its bytes.
@@ -74,9 +101,8 @@ export function credentialsOfTar(tarBytes) {
   check(c !== null && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).sort().join() === 'contract,optional,required' &&
     c.contract === CREDENTIAL_FILES_CONTRACT && group(c.required) && group(c.optional) && Object.keys(c.required).length > 0,
     'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json');
-  // JSON.parse keeps the last of a key given twice: every key written must be one read
-  const written = [...text.matchAll(/"((?:[^"\\]|\\.)*)"\s*:/g)].length;
-  check(written === 3 + Object.keys(c.required).length + Object.keys(c.optional).length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a key twice');
+  // a key written twice in one object, by case too (JSON.parse keeps the last; Windows PowerShell refuses such an object)
+  check(duplicateJsonKey(text) === null, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a key twice');
   const names = [...Object.values(c.required), ...Object.values(c.optional)];
   check(new Set(names.map(n => n.toLowerCase())).size === names.length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a name twice');
   return { sha256: sha256(entries[0].data), credentials: { contract: c.contract, required: c.required, optional: c.optional } };
