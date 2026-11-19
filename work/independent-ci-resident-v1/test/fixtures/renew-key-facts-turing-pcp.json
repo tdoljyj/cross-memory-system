@@ -1,0 +1,12 @@
+{
+  "source": "admin-diag-turing-20261119.txt",
+  "capturedAt": "2026-11-19T13:28:59.7620438Z",
+  "algorithm": "ECDSA",
+  "isMachineKey": true,
+  "exportPolicy": 0,
+  "publicBlob": {
+    "magic": "0x31534345",
+    "cb": 32,
+    "length": 72
+  }
+}
