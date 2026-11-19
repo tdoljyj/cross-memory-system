@@ -403,7 +403,9 @@ test('UNKNOWN endings of an abort record its safe point and request digest', asy
   const companion = fakeCompanion();
   const f = await executorFixture(t, { companion });
   let digest;
-  companion.buildBundle = async () => { const file = await ownerAborts(f); digest = (await import('node:crypto')).createHash('sha256').update(await fs.readFile(file)).digest('hex'); return { ok: true }; };
+  // Before stage 1 (P1c: an ordinary batch's bundle now follows its stage 1): the abort arrives while the batch is derived.
+  const derive = f.engine.derive;
+  f.engine.derive = async (...a) => { const file = await ownerAborts(f); digest = (await import('node:crypto')).createHash('sha256').update(await fs.readFile(file)).digest('hex'); return derive(...a); };
   f.ledger.beginOwnerAbort = async () => { throw Object.assign(new Error('disk'), { code: 'EIO' }); };
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'HALTED');
@@ -527,7 +529,9 @@ test('the abort before stage 1 needs the reservation digest and never reaches th
   const engine = fakeEngine();
   const companion = fakeCompanion();
   const f = await executorFixture(t, { engine, companion });
-  companion.buildBundle = async () => { companion.calls.push(['bundle']); assert.equal((await f.ledger.latestRecord(KEY)).name, '00-reserved.json'); await ownerAborts(f); return { ok: true }; };
+  // Before stage 1 (P1c: an ordinary batch's bundle now follows its stage 1): the abort arrives while the batch is derived.
+  const derive = engine.derive;
+  engine.derive = async (...a) => { assert.equal((await f.ledger.latestRecord(KEY)).name, '00-reserved.json'); await ownerAborts(f); return derive(...a); };
   await f.drop(triggerBytes());
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode, r.safePoint], ['FAILED_CLEAN', OWNER_ABORTED, 'before-stage-1']);

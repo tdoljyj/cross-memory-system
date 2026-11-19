@@ -204,9 +204,10 @@ test('the breaker: three counted failures open it; nothing starts until the tria
 
 test('a newer commit before stage 1 releases the batch as SUPERSEDED: nothing burned, the newer commit runs next', async t => {
   const f = await executorFixture(t);
-  const bundle = f.companion.buildBundle;
+  // Before stage 1 (P1c: an ordinary batch's bundle now follows its stage 1): the newer commit arrives while the batch is derived.
+  const derive = f.engine.derive;
   let once = true;
-  f.companion.buildBundle = async b => { if (once) { once = false; await f.drop(triggerBytes({ headSha: H(7) })); } return bundle(b); };
+  f.engine.derive = async (...a) => { if (once) { once = false; await f.drop(triggerBytes({ headSha: H(7) })); } return derive(...a); };
   await f.drop(triggerBytes());
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode, r.release], ['NOT_EXECUTED', BATCH_SUPERSEDED, 'SUPERSEDED']);
@@ -371,10 +372,12 @@ test('review m4: the release cap holds across a queue that started over; the reb
   const exec = new ResidentExecutor({ ...f.ports, queue });
   await f.drop(triggerBytes()); // the poller proposes the head again after the new generation
   f.advance(10 * MIN + 1);
+  // P1c: each of the two released batches ran its stage 1 before its bundle failed.
+  assert.deepEqual(stagesRun(engine), [1, 1]);
   const r = await exec.tick();
   assert.equal(r.reason, 'RELEASE_CAP_REACHED');
   assert.equal(queue.row(884).state, 'STOPPED');
-  assert.deepEqual(stagesRun(engine), [], 'the cap stops it before any stage can run');
+  assert.deepEqual(stagesRun(engine), [1, 1], 'the cap stops it before any stage can run');
   assert.equal(companion.calls.filter(c => c[0] === 'bundle').length, 2, 'never a third bundle release');
   assert.ok((await receiptTypes(f)).includes('queue-rebuilt'));
 });

@@ -63,11 +63,12 @@ test('malformed or foreign triggers are rejected without touching the engine; re
   assert.match(first.body.bytesSha256 ?? '', /^[0-9a-f]{64}$/);
 });
 
-test('the bundle is fetched before stage 1; its failure releases the key with nothing published (review M4)', async t => {
+// FABLE-ci-10min §3.2 P1c: an ordinary batch's bundle follows its stage 1 (which reads no bundle) and still comes before the head is burned.
+test('the bundle is fetched after stage 1, before the head is burned; its failure releases the key, the head not burned (review M4)', async t => {
   const f = await executorFixture(t, { companion: fakeCompanion({ bundle: { ok: false } }) });
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'NOT_EXECUTED');
-  assert.deepEqual(stagesRun(f.engine), [], 'stage 1 never ran');
+  assert.deepEqual(stagesRun(f.engine), [1], 'stage 1 ran, nothing after it');
   assert.equal((await f.ledger.state(keyFor())).state, 'ABSENT');
   assert.equal(await f.ledger.headBurned(headKey(subject())), false);
 });

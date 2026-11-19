@@ -323,9 +323,10 @@ test('superseded before stage 1: also a Windows-only close', async t => {
   const engine = fakeEngine();
   const companion = fakeCompanion({ archiveLinux: { verified: false, directory: null } });
   const f = await executorFixture(t, { companion, engine });
-  const bundle = companion.buildBundle;
+  // Before stage 1 (P1c: an ordinary batch's bundle now follows its stage 1): the newer commit arrives while the batch is derived.
+  const derive = engine.derive;
   let once = true;
-  companion.buildBundle = async b => { if (once) { once = false; await f.drop(triggerBytes({ headSha: '7'.repeat(40) })); } return bundle(b); };
+  engine.derive = async (...a) => { if (once) { once = false; await f.drop(triggerBytes({ headSha: '7'.repeat(40) })); } return derive(...a); };
   await f.drop(triggerBytes());
   const out = await f.exec.tick();
   assert.equal(out.release, 'SUPERSEDED');

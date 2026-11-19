@@ -138,7 +138,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainFrontRecheckNext, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
@@ -567,6 +567,16 @@ export class ResidentExecutor {
       return row?.running?.key === e.key && row.running.headSha === s.headSha
         && ![row.current, row.running].some(r => Object.hasOwn(r ?? {}, 'testSha'));
     });
+  }
+
+  // P1b: train on, this node on duty past the take-over, and the newest on-mode stage 10 of this process named a bound front (PR and head).
+  // Only orders a due run before the batch work; the cadence is unchanged. A parked batch that stage 8 found first in the merge queue is the
+  // front-open debt's (trainFrontOpenOwed: on the ledger, settled by one real decision); its stage-8 fact alone is never asked again, or a
+  // debt that stage 10 settled (the front left: NO_FRONT) would put stage 10 ahead of every busy tick once due.
+  trainFrontWaits() {
+    if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone) return false;
+    const l = this.trainLast;
+    return l?.mode === 'on' && Number.isSafeInteger(l.front?.pr) && HEX40.test(l.front?.headSha ?? '');
   }
 
   // Whether the take-over sweep still holds this node (eligible, not done): new batches and parked ones wait (review R3 MINOR 6).
@@ -1982,8 +1992,10 @@ export class ResidentExecutor {
     // so the schedule and the front's yield after stage 1 (§62.6) read the train as it is now, never the revoke-only run under the pause;
     // otherwise the queue head's ordinary batch scanned H and the front batch scanned the same tree again on S.
     // PR #1142: a tested ordinary head at B gets the same priority, once, so a busy queue cannot starve its front batch.
-    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed())) {
-      const owed = await this.trainMaintenance();
+    // FABLE-ci-10min §3.2 P1b (field 2026-11-19 06:39, #1171): a due stage-10 run also goes first while a front is bound; otherwise a trigger
+    // of another PR in the same tick reserved its ordinary batch first and held stage 10 for 14-24 minutes.
+    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed() || this.trainFrontWaits())) {
+      const owed = await this.trainMaintenance({ routineOnly: true });
       if (owed) return owed;
     }
     // Batches at a parking point go first (design v0.5 §4.3 step 3): each one waiting for hosted signals is evaluated
@@ -2410,7 +2422,8 @@ export class ResidentExecutor {
   // The train on (DESIGN §41): the run mode is train.mjs#trainRunMode's (on, or revoke-only under PAUSE and an intake pause;
   // only on an ACTIVE node); there a bound TRAIN_FACTS outcome with side effects and facts /2 that validate in that mode is a
   // normal ending; any other ending with a side effect HALTs as before. paused: called from the PAUSE path of the tick.
-  async trainMaintenance({ paused = false } = {}) {
+  // routineOnly: a call ahead of the batch work (tick, P1b) runs only a routine or urgent run, never an idle-progress extra.
+  async trainMaintenance({ paused = false, routineOnly = false } = {}) {
     const train = this.policy.train;
     const observationOnly = train.enabled === 'off' && !paused && this.queue.claimChecks().length > 0;
     if (!this.trainRuns || (train.enabled === 'off' && !observationOnly)) return null;
@@ -2429,13 +2442,14 @@ export class ResidentExecutor {
       if (held === null) this.trainUrgent = true;
     }
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
-    const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on' && TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision);
+    const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on'
+      && (TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision) || this.trainFrontRecheck?.due === true);
     if (this.trainRuns.length >= train.maintenanceMaxPerDay) this.queue.notice(boundedNotice({ code: 'TRAIN_DAILY_LIMIT', used: this.trainRuns.length,
       limit: train.maintenanceMaxPerDay, now, resetsAt: this.trainRuns.length ? Math.min(...this.trainRuns) + DAY : null, recovery: null }));
     const routineDue = trainDue({ train: cadence, now, runs: this.trainRuns, busy: false, urgent, recheck });
     let idleProgressExtra = false;
     // DESIGN §65: in strict-permanent mode a full round is a background audit, never hurried, unless a rewritten main waits for it.
-    if (!routineDue && !paused && train.enabled === 'on' && this.trainProgressReady === true && (this.trainSweepGates() || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN')) {
+    if (!routineDue && !paused && !routineOnly && train.enabled === 'on' && this.trainProgressReady === true && (this.trainSweepGates() || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN')) {
       const frontWork = this.queue.candidates(now).some(row => Object.hasOwn(row, 'testSha') && !this.trainGate(row))
         || (await this.ledger.parkedEntries()).some(e => Object.hasOwn(e.reserved?.subject ?? {}, 'testSha')
           && Ledger.parkedAt(e) && this.parkedDueAt(e) <= now && !this.trainGate(e.reserved?.subject));
@@ -2536,6 +2550,8 @@ export class ResidentExecutor {
         if (front?.pr) await this.hintParkedHead(front, { changed });
       }
     }
+    // P1a: the fast look of a bound front that did not open (train.mjs#trainFrontRecheckNext); any other run ends the current one.
+    this.trainFrontRecheck = trainFrontRecheckNext(this.trainFrontRecheck ?? null, mode === 'on' && clean ? summary : null);
     if (acting && (!summary || !clean)) {
       this.trainStrictReadiness = null; this.trainStrictFrontReadiness = null;
       // DESIGN §62.4: a binding observation never outlives a stage-10 run that could not confirm it again.
@@ -3771,17 +3787,18 @@ export class ResidentExecutor {
     keepBatch(batch);
     await this.receipt('batch-derived', { key, batchId: batch.batchId, packageSha256: batch.packageSha256 });
 
-    // The bundle comes first: it needs only the Owner's own read credential, has no Windows or Linux
-    // effect and publishes nothing, so its failure can release the reservation.
-    this.atStage(0, 'bundle');
-    const bundle = await this.companion.buildBundle(batch);
-    // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
-    // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
-    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
-      : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
-    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
-      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
-      bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
+    // FABLE-ci-10min §3.2 P1c: stage 1 reads GitHub and Clued, never the bundle (its entry reads only its own stage package and the
+    // installed Source), and the bundle is first read by the workspace preparation. An ordinary batch (no S) runs stage 1 first, so the
+    // admission check (the hosted jobs' gate) is out a bundle's time (45-105 s in the field) earlier; its bundle follows, still before
+    // markStarted, so a bundle failure releases the reservation as before (stage 1 may run again on this head, as after every stage-1
+    // release). A front batch (S) keeps the bundle first (it is what finds a moved member or base before stage 1 touches the slot), and
+    // builds none when every scan is reused (DESIGN §75): no workspace is prepared then.
+    const ordinary = !Object.hasOwn(subject, 'testSha');
+    const reused = ordinary ? null : await this.frontScansReused(subject);
+    if (!ordinary && reused.length < HEAVY_ROLES.length) {
+      const failed = await this.firstBundle(batch, subject);
+      if (failed) return failed;
+    }
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
     // Phase 2: a newer commit of the PR arrived while the bundle was built. Nothing of this batch ran: released, not
@@ -3812,6 +3829,12 @@ export class ResidentExecutor {
       try { await this.receipt('train-front-yield', { key, pr: subject.pr, headSha: subject.headSha, mergeQueue: first.outcome.scheduling.mergeQueue }); } catch { /* a view */ }
       return this.frontBindEnd(key);
     }
+    // P1c: the ordinary batch's bundle, after its stage 1 and before the head is burned. A newer commit that arrives meanwhile is, as
+    // during stage 1, the rule's (DESIGN §72): after stage 1 only a live read ends a superseded batch (endIfNotStanding).
+    if (ordinary) {
+      const failed = await this.firstBundle(batch, subject);
+      if (failed) return failed;
+    }
 
     // Admitted and published: from here on this head is burned.
     await this.ledger.markStarted(key, { batchId: batch.batchId });
@@ -3821,7 +3844,7 @@ export class ResidentExecutor {
     // The wait's anchor (t0) and the derived batch, durable before the first wait evaluation: a later tick,
     // or a restarted service, continues from here without deriving or running stage 1 again.
     await this.ledger.beginWait(key, { t0, batch, claimExpiresAt: this.leaseOf(subject) });
-    const outcome = await this.continueBatch(key, subject, batch, t0);
+    const outcome = await this.continueBatch(key, subject, batch, t0, { reused });
     if (outcome?.state === 'WAITING') await this.receipt('relay-waiting', { key, until: outcome.until, reason: outcome.reason });
     return outcome;
   }
@@ -3852,15 +3875,31 @@ export class ResidentExecutor {
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
 
+  // The batch's first bundle (stage 0): it needs only the Owner's own read credential, has no Windows or Linux effect and publishes
+  // nothing, so its failure releases the reservation (fail(): phase 'bundle', before markStarted). A StepFailure, or null when built.
+  async firstBundle(batch, subject) {
+    this.atStage(0, 'bundle');
+    const bundle = await this.companion.buildBundle(batch);
+    // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
+    // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
+    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
+      : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
+    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
+      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
+      bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
+    return null;
+  }
+
   // Everything after 15-relay-wait: 20-plan-intent, 25-plan, the local roles, stage 8 and the close.
   //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
   //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
-  async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
+  //   reused: the front batch's scans reused as drive() found them before its bundle (P1c), so the plan is the one the bundle was built for.
+  async continueBatch(key, subject, batch, t0, { resumed = false, reused = null } = {}) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
     if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
-    const plan = await this.localPlan(key, subject, t0);
+    const plan = await this.localPlan(key, subject, t0, reused);
     const relayed = 0;
 
     // Only LOCAL_REQUIRED roles run locally, in the fixed role order; the protocol records of the previous
@@ -4054,11 +4093,11 @@ export class ResidentExecutor {
   // 20-plan-intent -> 25-plan: every heavy role is local (the hosted relay is removed, DESIGN §76). The records are written exactly as
   // relay.enabled = false wrote them (reason RELAY_DISABLED, no candidates, nothing relayed), so older readers keep their meaning.
   // Returns the plan { candidates: [], relayed: [], local: [{ role, reason, receipt, source }] }.
-  async localPlan(key, subject, t0) {
+  async localPlan(key, subject, t0, given = null) {
     // A train front batch (a subject with S, §41.4, §38.8 m1): every role stays local with its own reason.
     const front = Object.hasOwn(subject, 'testSha');
     // Rule 41ab823a (DESIGN §75): a scan whose exact input already passed in a batch of this node is not run again on the front.
-    const reused = front ? await this.frontScansReused(subject) : [];
+    const reused = front ? given ?? await this.frontScansReused(subject) : [];
     const roles = front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES];
     const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';
     const reasons = Object.fromEntries(roles.map(r => [r, reason]));

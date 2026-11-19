@@ -343,6 +343,20 @@ test('rule 41ab823a (PR #1086): same head, same main, S with H\'s tree: the fron
   assert.ok(reused.reused.every(x => x.from === ordinaryKey), 'reused from the ordinary batch of (H, T)');
 });
 
+// FABLE-ci-10min §3.2 P1c (T2): a front batch whose every scan is reused prepares no workspace, so it builds no bundle either; one with
+// a scan to run still builds its own.
+test('P1c: the front batch with every scan reused builds no bundle; one with a scan to run builds one (before the fix: always one)', async t => {
+  const { e, f } = await steadyState(t, { queueFacts: false });
+  e.gh.world.commits.set(H, { sha: H, tree: e.gh.world.commits.get(S).tree, parents: [T] });
+  assert.ok(await untilSlotGreen(e, f));
+  assert.equal((await f.receipts.latest(['train-front-scans-reused'], 5)).length, 1, 'every scan was reused');
+  assert.equal(f.companion.calls.filter(c => c[0] === 'bundle').length, 1, 'the ordinary batch\'s bundle only');
+  const g = await steadyState(t, { queueFacts: false });
+  g.e.gh.world.commits.set(H, { sha: H, tree: sha(0x7777), parents: [T] });
+  assert.ok(await untilSlotGreen(g.e, g.f));
+  assert.equal(g.f.companion.calls.filter(c => c[0] === 'bundle').length, 2, 'the front batch scans: its own bundle');
+});
+
 test('rule 41ab823a: a scan whose input changed runs again on the front batch (S\'s tree is not H\'s, or no H tree was named)', async t => {
   for (const headTree of [sha(0x7777), null]) {
     const { e, f, engine } = await steadyState(t, { queueFacts: false });
