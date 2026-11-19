@@ -137,17 +137,17 @@ test('yielding: waits while the resident runs, says why, keeps the run alive, go
   assert.equal(lines.length, 1);
 });
 
-test('each suite first yields to the resident, from one wait for the whole run; --no-yield (null) never asks', (t) => {
+test('each suite first yields to the resident, from one wait for the whole run; --no-yield (null) never asks', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-yield-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const args = { root: home, home, selector: { readKnownFailures: () => ({}) }, main: 'b'.repeat(40), dir: path.join(home, 'missing'), suites: ['one', 'two', 'three'],
     logs: home, freshBase: false, run: { run: { pid: process.pid }, touch: () => {} }, platform: 'windows', temp: home };
   const asked = [];
-  const results = verifySuites({ ...args, yieldTo: (label, o) => { asked.push([label, o.timeoutMs, typeof o.keepAlive]); return 20 * 60_000; } });
+  const results = await verifySuites({ ...args, yieldTo: (label, o) => { asked.push([label, o.timeoutMs, typeof o.keepAlive]); return 20 * 60_000; } });
   assert.deepEqual(asked, [['windows: one', YIELD_TIMEOUT_MS, 'function'], ['windows: two', YIELD_TIMEOUT_MS - 20 * 60_000, 'function'],
     ['windows: three', YIELD_TIMEOUT_MS - 40 * 60_000, 'function']]);
   assert.equal(results.length, 3, 'every suite still gets its verdict (here: the worktree is missing)');
-  assert.equal(verifySuites({ ...args, yieldTo: null }).length, 3);
+  assert.equal((await verifySuites({ ...args, yieldTo: null })).length, 3);
 });
 
 test('Windows starts npm through its CLI next to node.exe (npm.cmd needs a shell); elsewhere npm itself', () => {
@@ -468,7 +468,7 @@ test('runCommands starts each command as runSuite would: same cwd, command line 
   try {
     for (const id of Object.keys(selection.SUITE_COMMANDS)) {
       const theirs = [];
-      const status = selection.runSuite(id, { root, spawn: record(theirs), log: () => {}, env: { ...process.env, CI_BASE_SHA: main, RUNNER_TEMP: scratch } });
+      const status = selection.executeSuite(id, { root, spawn: record(theirs), log: () => {}, env: { ...process.env, CI_BASE_SHA: main, RUNNER_TEMP: scratch } });
       assert.equal(status, 0, id);
       const ours = [];
       runCommands(selector, id, root, main, path.join(scratch, `${id}.log`), { spawn: record(ours) });
@@ -721,13 +721,13 @@ test('--affected selects exactly what the ci-suites job selects, from the select
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
-    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']);
+    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'selection']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
   assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
-    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry');
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, selection');
   // the first file of each top-level directory leads, so the resident's own files show too
   assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));

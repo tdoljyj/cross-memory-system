@@ -55,10 +55,10 @@
 // Runs go side by side (defect 791484c2). Each run is queued after the change is
 // snapshotted (so it verifies what was there when it started) and starts when it
 // is first in line and the machine has room for one more: free memory, idle CPU,
-// free disk, the system drive counted against the CI watchdog's levels. At most
-// CLUED_LOCAL_VERIFY_MAX_RUNS run (default 4); the first run always starts;
-// CLUED_LOCAL_VERIFY_RESOURCES=off leaves only that limit, as the tests do. A
-// waiting run prints its position.
+// free disk, the system drive counted against the CI watchdog's levels. The
+// first run always starts. On Windows, each candidate or baseline suite then
+// takes a machine-wide suite slot. CLUED_LOCAL_VERIFY_RESOURCES=off skips the
+// resource checks. A waiting run prints its position.
 // A run stopped without cleaning up (a killed process) is noticed by its process
 // number and, while queued, by not having been touched for two minutes. run.lock
 // keeps naming a run that lives (a run names itself again between suites if the
@@ -92,7 +92,8 @@
 // a green run).
 //
 // Exit 0: no new failure. Exit 1: a new failure, or one it could not compare
-// with main. Exit 2: the run itself could not be set up.
+// with main. Exit 2: the run itself could not be set up. A local suite slot
+// timeout uses the selector's timeout exit code (see --help).
 import { spawn as spawnAsync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -468,11 +469,13 @@ const lockMaxAge = (name) => (name === 'admission' ? 2 * 60_000 : name.startsWit
 // fn() while holding the named lock of the cache.
 export function withLock(home, name, fn, options = {}) {
   const release = acquireNamedLock(lockDirOf(home), name, { what: name, pollMs: 250, maxAgeMs: lockMaxAge(name), ...options }); // short holds are common: look often
+  let result;
   try {
-    return fn(release);
+    result = fn(release);
   } finally {
-    release();
+    if (!(result instanceof Promise)) release();
   }
+  return result instanceof Promise ? result.finally(release) : result;
 }
 
 function processAlive(pid) {
@@ -496,7 +499,6 @@ export const RUN_NEEDS = { memGb: 6, cores: 4, dataGb: 3, systemGb: 3 }; // one 
 export const HOST_KEEPS = { memGb: 10, cores: 4, dataGb: 10 }; // what the CI runners and the user keep (the watchdog resumes at 10 GB of memory)
 // In the Linux distribution (one VM with the CI runners' distribution, 28 GB here) the watchdog stops the runners at 6 GB free memory.
 export const VM_KEEPS = { memGb: 6, cores: 4, dataGb: 5 };
-export const MAX_RUNS = 4;
 const RAMP_MS = 120_000; // a run just started has not yet taken what it will take
 const QUEUE_POLL_MS = 1000;
 const QUEUE_GRACE_MS = 3000; // a wait this short is not worth a line
@@ -621,10 +623,9 @@ export function sampleResources(home, { cpus = os.cpus, freemem = os.freemem, fr
 
 // Room for one more run, given those running (and how many of them only just
 // started: what they will take is not yet seen in the free numbers).
-export function roomForOneMore({ running, ramping = 0 }, sample, { maxRuns = MAX_RUNS, needs = RUN_NEEDS, keeps = process.platform === 'win32' ? HOST_KEEPS : VM_KEEPS, resume = 0 } = {}) {
+export function roomForOneMore({ running, ramping = 0 }, sample, { needs = RUN_NEEDS, keeps = process.platform === 'win32' ? HOST_KEEPS : VM_KEEPS, resume = 0 } = {}) {
   if (running === 0) return { ok: true, lacks: [] };
   const lacks = [];
-  if (running >= maxRuns) lacks.push({ kind: 'runs', text: `${running} runs are running, the limit is ${maxRuns}` });
   const short = (kind, label, free, need, keep, unit = 'GB') => {
     const ahead = ramping * need; // taken soon by the runs that only just started
     if (free - ahead - keep < need) {
@@ -642,8 +643,6 @@ export function roomForOneMore({ running, ramping = 0 }, sample, { maxRuns = MAX
 
 // How many GB of the system drive the watchdog wants kept free (0 on a machine that is no CI host).
 export const resumeLevelGb = (env = process.env, levels = watchdogLevels({ env })) => levels?.resume ?? 0;
-export const maxRunsOf = (env = process.env) => (Number.isInteger(Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS)) && Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS) > 0
-  ? Number(env.CLUED_LOCAL_VERIFY_MAX_RUNS) : MAX_RUNS);
 
 // Earlier versions of this tool take one run.lock for a whole run and wait for
 // each other's. While a run of this version lives, run.lock names one of them as
@@ -721,7 +720,7 @@ function writeUmbrella(file, pid, now) {
 // it running. One short lock serialises the decisions of waiting runs.
 export function admitRun(home, handle, { now = Date.now, wait = sleep, alive = processAlive, log = console.log,
   limits = {}, env = process.env, sample = env.CLUED_LOCAL_VERIFY_RESOURCES === 'off'
-    ? () => ({ freeMemGb: Infinity, idleCores: Infinity, dataFreeGb: null, systemFreeGb: null }) // only the limit on runs applies (tests)
+    ? () => ({ freeMemGb: Infinity, idleCores: Infinity, dataFreeGb: null, systemFreeGb: null }) // resource checks disabled (tests)
     : () => sampleResources(home) } = {}) {
   let reported = { key: '', at: 0 };
   for (;;) {
@@ -743,7 +742,7 @@ export function admitRun(home, handle, { now = Date.now, wait = sleep, alive = p
       } else {
         const ramping = running.filter((run) => now() - run.admittedAt < RAMP_MS).length;
         lacks = roomForOneMore({ running: running.length, ramping }, running.length === 0 ? {} : sample(),
-          { maxRuns: maxRunsOf(env), resume: resumeLevelGb(env), ...limits }).lacks;
+          { resume: resumeLevelGb(env), ...limits }).lacks;
         if (lacks.length === 0) {
           // run.lock names this run (or a run of this version) before it starts, so an older copy waits
           const took = takeUmbrella(home, { alive, now });
@@ -989,8 +988,8 @@ async function loadSelector(root, main, home) {
       fs.writeFileSync(path.join(dir, 'complete'), '');
     }, { what: `the selection files of main ${main.slice(0, 12)}` });
   }
-  const selector = await import(pathToFileURL(path.join(dir, path.basename(SELECTOR))).href);
-  return { ...selector, reporterUrl: pathToFileURL(path.join(dir, 'ci-test-failures-reporter.mjs')).href };
+  const selectorUrl = pathToFileURL(path.join(dir, path.basename(SELECTOR))).href;
+  return { ...await import(selectorUrl), selectorUrl, reporterUrl: pathToFileURL(path.join(dir, 'ci-test-failures-reporter.mjs')).href };
 }
 
 function removeLink(link) {
@@ -1324,6 +1323,35 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
   return results;
 }
 
+class LocalSuiteTimeout extends Error {
+  constructor(suite, exitCode) {
+    super(`${suite}: local suite slot timed out; see the slot diagnostic above`);
+    this.exitCode = exitCode;
+  }
+}
+
+// The comparison runner needs every command result, so its worker uses
+// runCommands directly inside the same process-tree guard as the selector.
+async function runVerificationSuite(selector, id, root, main, logFile, env) {
+  if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS === 'true') {
+    return runCommands(selector, id, root, main, logFile, { env });
+  }
+  const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+  const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
+  const resultFile = `${logFile}.results.json`;
+  try {
+    const status = await withLocalSuiteSlot(id, {
+      root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
+      work: { selectorUrl: selector.selectorUrl, reporterUrl: selector.reporterUrl, verify: { main, logFile, resultFile } },
+    });
+    if (status === LOCAL_TIMEOUT_EXIT) throw new LocalSuiteTimeout(id, status);
+    if (status !== 0) throw new Error(`${id}: local suite guard exited ${status}; see its output`);
+    return JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+  } finally {
+    fs.rmSync(resultFile, { force: true });
+  }
+}
+
 // How many tests a Node test report shows: the run's own count (skipped and todo
 // tests included: a command whose tests are all skipped on this platform did get to
 // its tests), else the events.
@@ -1432,10 +1460,10 @@ function mainResults(selector, id, { root, main, home, logFile, env, freshBase, 
   return withLock(home, `main-${path.basename(cache, '.json')}`, () => {
     const meanwhile = freshBase ? null : readCached(cache); // another run computed it while this one waited
     if (meanwhile) return meanwhile;
-    return withLock(home, worktreeLock(worktreePath(root, main, home)), () => {
+    return withLock(home, worktreeLock(worktreePath(root, main, home)), async () => {
       const dir = worktree(root, main, home);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
-      const results = runCommands(selector, id, dir, main, logFile, { env });
+      const results = await runVerificationSuite(selector, id, dir, main, logFile, env);
       writeCached(cache, results);
       return results;
     }, { what: `the worktree of main ${main.slice(0, 12)}`, log });
@@ -1446,7 +1474,7 @@ const platformName = () => (process.platform === 'win32' ? 'windows' : 'linux');
 
 // The change is verified in a worktree of its own, removed afterwards: other runs
 // of the same commit, or of main, never share it.
-function verifyHere({ root, home, selector, main, candidate, suites, logs, freshBase, run, yieldTo }) {
+async function verifyHere({ root, home, selector, main, candidate, suites, logs, freshBase, run, yieldTo }) {
   const platform = platformName();
   if (process.version !== `v${CI_NODE}`) console.log(`local-verify: ${platform}: Node ${process.version} here, CI uses v${CI_NODE}`);
   try {
@@ -1458,7 +1486,7 @@ function verifyHere({ root, home, selector, main, candidate, suites, logs, fresh
   fs.mkdirSync(temp, { recursive: true });
   run.update({ worktrees: [...run.run.worktrees, dir] });
   try {
-    return verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp, yieldTo });
+    return await verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp, yieldTo });
   } finally {
     try {
       dropWorktree(root, dir, home);
@@ -1471,7 +1499,7 @@ function verifyHere({ root, home, selector, main, candidate, suites, logs, fresh
 }
 
 // yieldTo: yieldToResident, or null (--no-yield).
-export function verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp, yieldTo }) {
+export async function verifySuites({ root, home, selector, main, dir, suites, logs, freshBase, run, platform, temp, yieldTo }) {
   const env = testEnvironment(process.env, { CI_BASE_SHA: main, TEMP: temp, TMP: temp, TMPDIR: temp });
   const knownLists = selector.readKnownFailures();
   const results = [];
@@ -1486,15 +1514,17 @@ export function verifySuites({ root, home, selector, main, dir, suites, logs, fr
       refreshUmbrella(home, run);
       cleanWorktree(dir);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
-      const head = runCommands(selector, id, dir, main, log, { env });
+      const head = await runVerificationSuite(selector, id, dir, main, log, env);
       outcome = compareSuite(head, null, { selector, knownLists });
       if (outcome.verdict !== 'pass') {
         console.log(`local-verify: ${platform}: ${id} failed; running it on main ${main.slice(0, 12)} to compare`);
-        const theirs = mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase, run });
+        const theirs = await mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase, run });
         outcome = compareSuite(head, theirs, { selector, knownLists });
       }
     } catch (error) {
-      outcome = { verdict: 'unknown', detail: error.message };
+      outcome = error instanceof LocalSuiteTimeout
+        ? { verdict: 'timeout', detail: error.message, exitCode: error.exitCode }
+        : { verdict: 'unknown', detail: error.message };
     }
     results.push({ platform, suite: id, ...outcome, log });
     console.log(`local-verify: ${platform}: ${id}: ${outcome.verdict}${outcome.detail ? ` (${outcome.detail})` : ''}`);
@@ -1698,9 +1728,16 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, n
   });
 }
 
-const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW FAILURE', unknown: 'COULD NOT COMPARE' };
+const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW FAILURE', unknown: 'COULD NOT COMPARE', timeout: 'SUITE SLOT TIMEOUT' };
 
 async function main(argv) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
+    console.log('usage: node scripts/ci/local-verify.mjs [--affected | --suite <id> ...] [--base <commit>] [--committed]');
+    console.log('       [--linux | --linux-only] [--no-fetch] [--fresh-base] [--no-yield]');
+    console.log(`Exit codes: 0 for no new failure; 1 for a verification failure; 2 for a setup error; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
+    return 0;
+  }
   const options = parseArgs(argv);
   options.linux = runsLinux(options);
   if (options.affected && !options.linux) console.log('local-verify: --affected: this host has no CluedDev-Linux side to add; this side only');
@@ -1772,7 +1809,7 @@ async function verifyChange({ options, root, home, change, run }) {
   const linux = options.linux && suites.length
     ? startLinux({ root, home, candidate, main: mainCommit, suites, logs, freshBase: options.freshBase, noYield: !options.yield })
     : null;
-  const results = options.here ? verifyHere({ root, home, selector, main: mainCommit, candidate, suites, logs, freshBase: options.freshBase, run,
+  const results = options.here ? await verifyHere({ root, home, selector, main: mainCommit, candidate, suites, logs, freshBase: options.freshBase, run,
     yieldTo: options.yield ? yieldToResident : null }) : [];
   if (linux) results.push(...await linux);
   console.log('\nlocal-verify summary');
@@ -1781,7 +1818,8 @@ async function verifyChange({ options, root, home, change, run }) {
     if (result.verdict !== 'pass') console.log(`  ${''.padEnd(31)} log: ${result.log}`);
   }
   console.log(`${RESULT_MARK}${JSON.stringify(results)}`);
-  return results.some((result) => result.verdict === 'new' || result.verdict === 'unknown') ? 1 : 0;
+  if (results.some((result) => result.verdict === 'new' || result.verdict === 'unknown')) return 1;
+  return results.find((result) => result.verdict === 'timeout')?.exitCode ?? 0;
 }
 
 // import.meta.main exists from Node 22.18; on an older Node it is undefined, and a
