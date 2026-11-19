@@ -1104,24 +1104,40 @@ function Invoke-DrillWsl([string[]]$Arguments, $Stdin = $null) {
   return Invoke-DrillProcess (Join-Path $env:SystemRoot 'System32\wsl.exe') $Arguments $script:Drill.WslTimeoutSeconds @{ WSL_UTF8 = '1' } @() $Stdin
 }
 
-# `wsl --list --running --quiet` (its result: exit, stdout, stderr): one distribution name a line, nothing else. A zero exit with any other
-# line (a message, a replacement character from a wrong decoding, a NUL) is not read as "not running": it throws (Codex review of
-# ced480363, high 4). An empty list is believed only as an empty answer -- no output at all and no diagnostic; output that holds no name
-# (NULs, line breaks) or an empty one with something on stderr cannot be told from a broken answer (review of 74e7a65e7, high 3).
-function ConvertFrom-DrillWslRunningList($Result) {
+# The distributions registered for this (the operator's) account: the DistributionName of each key under HKCU\...\Lxss, read only.
+# Host state: under a test marker it is not read (tests define this function), as wsl.exe is not run.
+function Get-DrillWslRegisteredNames {
+  if ($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' 'HKCU Lxss') }
+  @(Get-ChildItem -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction Stop |
+    ForEach-Object { [string](Get-ItemProperty -LiteralPath $_.PSPath -Name DistributionName -ErrorAction Stop).DistributionName })
+}
+
+# `wsl --list --running --quiet` (its result: exit, stdout, stderr), held to the distributions this account has registered: every line is
+# one of their names exactly, or the whole answer is refused -- a name cut short, a message, a replacement character, a NUL (Codex reviews
+# of ced480363 high 4, 74e7a65e7 high 3, f734afe7e high 2). A diagnostic on stderr refuses it whatever stdout holds; a blank stderr is
+# none. An empty list is believed only as an empty answer: no output at all; output that holds no name (NULs, line breaks) is refused.
+function ConvertFrom-DrillWslRunningList($Result, [string[]]$Registered) {
   if ((Get-DrillField $Result 'exit') -ne 0) { throw (New-DrillError 'WSL_RUNNING_LIST_FAILED') }
   $text = Get-DrillField $Result 'stdout'; $err = Get-DrillField $Result 'stderr'
   if ($null -eq $text) { $text = '' }
   if ($text -isnot [string] -or $text.Contains("`0")) { throw (New-DrillError 'WSL_RUNNING_LIST_UNREADABLE') }
+  if ($null -ne $err -and ([string]$err).Trim()) { throw (New-DrillError 'WSL_RUNNING_LIST_UNREADABLE' 'a diagnostic on stderr') }
   $names = @()
   foreach ($line in @($text -split "`r?`n")) {
     $t = $line.Trim()
     if (-not $t) { continue }
-    if ($t -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw (New-DrillError 'WSL_RUNNING_LIST_UNREADABLE') }
+    if (@($Registered) -cnotcontains $t) { throw (New-DrillError 'WSL_RUNNING_LIST_UNREADABLE' 'not a registered distribution name') }
     $names += $t
   }
-  if ($names.Count -eq 0 -and ($text.Length -ne 0 -or ($null -ne $err -and ([string]$err).Trim()))) { throw (New-DrillError 'WSL_RUNNING_LIST_UNREADABLE') }
+  if ($names.Count -eq 0 -and $text.Length -ne 0) { throw (New-DrillError 'WSL_RUNNING_LIST_UNREADABLE') }
   return $names
+}
+
+# This account's registered names, and every runner distribution among them (else nothing it says about them can be read).
+function Get-DrillWslRegisteredRunners($Distributions) {
+  $registered = @(try { Get-DrillWslRegisteredNames } catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_UNEXPECTED') { throw }; throw (New-DrillError 'WSL_REGISTRY_UNREADABLE') })
+  foreach ($d in @($Distributions)) { if ($registered -cnotcontains $d) { throw (New-DrillError 'WSL_RUNNER_DISTRIBUTION_NOT_REGISTERED' $d) } }
+  return $registered
 }
 
 # `ps -e -o pid=,etimes=,comm=` in the distribution: "<pid> <seconds running> <name>" a line, a name of 1..15 characters (the kernel's comm),
@@ -1151,9 +1167,11 @@ function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
   try {
     $state.distributions = @(Get-DrillRunnerDistributions $HostName)
     if ($state.distributions.Count -gt 0) {
+      $state.reason = 'WSL_REGISTRY_UNREADABLE'
+      $registered = Get-DrillWslRegisteredRunners $state.distributions
       $state.reason = 'WSL_RUNNING_LIST_FAILED'
-      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')))
-      $state.running = @($state.distributions | Where-Object { $runningNow -contains $_ })
+      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')) $registered)
+      $state.running = @($state.distributions | Where-Object { $runningNow -ccontains $_ })
       foreach ($d in $state.running) {
         $state.reason = 'WSL_PROCESS_LIST_FAILED'
         $ps = Invoke-DrillWsl @('--distribution', $d, '--exec', 'ps', '-e', '-o', 'pid=,etimes=,comm=')
@@ -1200,13 +1218,15 @@ function Invoke-DrillWslCacheRelease([string]$HostName = $env:COMPUTERNAME) {
     Assert-DrillWslReleaseScriptLiteral
     $text = ([string]$script:DrillWslReleaseScript).Replace("`r", '')
     $out.distributions = @(Get-DrillRunnerDistributions $HostName)
+    $registered = @()
+    if ($out.distributions.Count -gt 0) { $registered = Get-DrillWslRegisteredRunners $out.distributions }
     foreach ($d in $out.distributions) {
       if (Test-DrillHostRunnerJob @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName })) {
         $out.skipped = [ordered]@{ where = 'windows'; reason = 'ACTIONS_RUNNER_JOB' }
         break
       }
-      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')))
-      if ($runningNow -notcontains $d) { $out.results += [ordered]@{ distribution = $d; running = $false; exit = $null; initSeconds = $null }; continue }
+      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')) $registered)
+      if ($runningNow -cnotcontains $d) { $out.results += [ordered]@{ distribution = $d; running = $false; exit = $null; initSeconds = $null }; continue }
       $r = Invoke-DrillWsl @('--distribution', $d, '--user', 'root', '--exec', 'sh', '-s') $text
       $exit = Get-DrillField $r 'exit'
       # the script's answer: its process list, then, only after a release, the sentinel line. Nothing in it is passed over: a list that

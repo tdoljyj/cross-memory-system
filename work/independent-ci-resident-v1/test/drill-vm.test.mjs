@@ -1450,6 +1450,7 @@ test('the WSL side reads the runner distribution by host name, never executes in
     $pinned = $script:Drill.NodeProfiles
     $real = @(Get-DrillRunnerDistributions 'desk-w-591')
     $script:Drill.NodeProfiles = ${q(profiles)}
+    function Get-DrillWslRegisteredNames { 'docker-desktop'; 'Fixture-CI'; 'Other-CI' }
     $script:calls = [Collections.Generic.List[string]]::new()
     $script:DrillWslRunner = { param($a)
       $script:calls.Add($a -join ' ')
@@ -1497,6 +1498,7 @@ test('every failure to read the WSL side refuses the boot by name, a zero exit w
   const r = ps(`
     $script:Drill.NodeProfiles = ${q(profiles)}
     $env:COMPUTERNAME = 'FIXTURE-HOST'
+    function Get-DrillWslRegisteredNames { if ($script:mode -ceq 'unregistered') { 'Other-CI' } else { 'Fixture-CI'; 'Fixture-CI-2' } }
     function Read-DrillHostStatus { ${q(idleHostStatus())} }
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
     function Get-VM { param($ErrorAction) }
@@ -1513,6 +1515,10 @@ test('every failure to read the WSL side refuses the boot by name, a zero exit w
           'list-nul-name' { return @{ exit = 0; stdout = "Fixture-CI\`0\`n"; stderr = '' } }
           'list-empty-diagnostic' { return @{ exit = 0; stdout = ''; stderr = 'wsl: something went wrong' } }
           'list-empty' { return @{ exit = 0; stdout = ''; stderr = '' } }
+          'list-truncated' { return @{ exit = 0; stdout = "Fixture-C\`n"; stderr = '' } }
+          'list-unknown-name' { return @{ exit = 0; stdout = "Fixture-CI\`nNot-Registered\`n"; stderr = '' } }
+          'list-with-diagnostic' { return @{ exit = 0; stdout = "Fixture-CI\`n"; stderr = 'wsl: something went wrong' } }
+          'list-blank-stderr' { return @{ exit = 0; stdout = "Fixture-CI\`n"; stderr = " \`r\`n " } }
           default { return @{ exit = 0; stdout = "Fixture-CI\`n" } }
         }
       }
@@ -1524,7 +1530,7 @@ test('every failure to read the WSL side refuses the boot by name, a zero exit w
       }
     }
     $out = [ordered]@{}
-    foreach ($m in @('quiet', 'job', 'list-fails', 'list-replacement', 'list-message', 'list-nul', 'list-newlines', 'list-nul-name', 'list-empty-diagnostic', 'list-empty', 'throws', 'exit', 'empty', 'ps-usage', 'ps-no-ps', 'ps-replacement', 'ps-long-name', 'ps-no-numbers')) {
+    foreach ($m in @('quiet', 'job', 'list-fails', 'list-replacement', 'list-message', 'list-nul', 'list-newlines', 'list-nul-name', 'list-empty-diagnostic', 'list-empty', 'list-truncated', 'list-unknown-name', 'list-with-diagnostic', 'list-blank-stderr', 'unregistered', 'throws', 'exit', 'empty', 'ps-usage', 'ps-no-ps', 'ps-replacement', 'ps-long-name', 'ps-no-numbers')) {
       $script:mode = $m
       $s = Get-DrillHostSafety
       $out[$m] = @{ action = $s.action; code = $s.code; busyWith = $s.busyWith; why = $s.wslUnreadable }
@@ -1538,7 +1544,12 @@ test('every failure to read the WSL side refuses the boot by name, a zero exit w
   assert.deepEqual(r.job, { action: 'refuse', code: 'DRILL_HOST_CI_BUSY', busyWith: 'WSL_ACTIONS_RUNNER_JOB', why: null });
   // a running list that is empty is believed only as an empty answer: no output at all and no diagnostic (Codex review of 74e7a65e7, high 3)
   assert.deepEqual(r['list-empty'], { action: 'start', code: null, busyWith: null, why: null });
-  for (const m of ['list-fails', 'list-replacement', 'list-message', 'list-nul', 'list-newlines', 'list-nul-name', 'list-empty-diagnostic', 'throws', 'exit', 'empty', 'ps-usage', 'ps-no-ps', 'ps-replacement', 'ps-long-name', 'ps-no-numbers', 'unknown-host']) {
+  // a line is a registered distribution's name exactly, or the whole answer is refused (Codex review of f734afe7e, high 2): a name cut
+  // short reads as no distribution at all; a non-empty answer with a diagnostic is refused too, a blank stderr is no diagnostic
+  assert.deepEqual(r['list-blank-stderr'], { action: 'start', code: null, busyWith: null, why: null });
+  assert.equal(r['list-truncated'].why, 'WSL_RUNNING_LIST_UNREADABLE');
+  assert.equal(r['unregistered'].why, 'WSL_RUNNER_DISTRIBUTION_NOT_REGISTERED');
+  for (const m of ['list-fails', 'list-replacement', 'list-message', 'list-nul', 'list-newlines', 'list-nul-name', 'list-empty-diagnostic', 'list-truncated', 'list-unknown-name', 'list-with-diagnostic', 'unregistered', 'throws', 'exit', 'empty', 'ps-usage', 'ps-no-ps', 'ps-replacement', 'ps-long-name', 'ps-no-numbers', 'unknown-host']) {
     assert.equal(r[m].action, 'refuse', m);
     assert.equal(r[m].code, 'DRILL_HOST_WSL_UNREADABLE', m);
     assert.equal(r[m].busyWith, null, m);
@@ -1555,14 +1566,16 @@ test('wsl.exe never runs under a test marker, and an injected runner never runs 
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
     function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
     $marked = try { Invoke-DrillWsl @('--list', '--running', '--quiet') | Out-Null; $null } catch { (Get-DrillCode $_).code }
+    $registry = try { Get-DrillWslRegisteredNames | Out-Null; $null } catch { (Get-DrillCode $_).code }
     $release = Invoke-DrillWslCacheRelease
     $saved = $env:NODE_TEST_CONTEXT; $savedClued = $env:CLUED_UNDER_TEST
     $env:NODE_TEST_CONTEXT = $null; $env:CLUED_UNDER_TEST = $null
     $script:DrillWslRunner = { param($a) $script:ran = $true; @{ exit = 0; stdout = '' } }
     $unmarked = try { Invoke-DrillWsl @('--list', '--running', '--quiet') | Out-Null; $null } catch { (Get-DrillCode $_).code }
     $env:NODE_TEST_CONTEXT = $saved; $env:CLUED_UNDER_TEST = $savedClued
-    @{ marked = $marked; release = $release; unmarked = $unmarked; ran = [bool](Get-Variable -Name ran -Scope Script -ValueOnly -ErrorAction SilentlyContinue) }`);
+    @{ marked = $marked; registry = $registry; release = $release; unmarked = $unmarked; ran = [bool](Get-Variable -Name ran -Scope Script -ValueOnly -ErrorAction SilentlyContinue) }`);
   assert.equal(r.marked, 'DRILL_HOST_ACCESS_UNDER_TEST');
+  assert.equal(r.registry, 'DRILL_HOST_ACCESS_UNDER_TEST');
   assert.deepEqual(r.release.released, []);
   assert.equal(r.release.failed.code, 'DRILL_HOST_ACCESS_UNDER_TEST');
   assert.equal(r.unmarked, 'DRILL_WSL_RUNNER_WITHOUT_TEST_MARKER');
@@ -1675,6 +1688,7 @@ function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, initSecon
     function Get-Process { param($ErrorAction) $script:events.Add('windows-processes'); $script:windowsNames | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
     $script:windowsNames = @('Runner.Listener')
     function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillWslRegisteredNames { 'Fixture-CI' }
     $script:quietPs = ${q(psLines(initSeconds, 'Runner.Listener'))}
     $script:jobPs = ${q(psLines(86400, 'Runner.Listener', 'Runner.Worker'))}
     $script:jobInDistributionAfter = -1
@@ -1805,6 +1819,7 @@ test('the release reads Windows and the running list again before each distribut
     $script:calls = [Collections.Generic.List[string]]::new()
     $script:windowsJob = $false
     function Get-DrillRunnerDistributions { param($HostName) 'Fixture-A'; 'Fixture-B'; 'Fixture-C' }
+    function Get-DrillWslRegisteredNames { 'Fixture-A'; 'Fixture-B'; 'Fixture-C' }
     function Get-Process { param($ErrorAction) $script:calls.Add('windows'); $n = @('Runner.Listener'); if ($script:windowsJob) { $n += 'Runner.Worker' }; $n | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
     $script:DrillWslRunner = { param($a, $stdin)
       $j = $a -join ' '
@@ -1830,6 +1845,7 @@ test('the release script is one literal in single quotes, nothing put into it, a
   const r = ps(`
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
     function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillWslRegisteredNames { 'Fixture-CI' }
     $script:sent = [Collections.ArrayList]::new()
     $script:DrillWslRunner = { param($a, $stdin)
       if ($a[0] -ceq '--list') { return @{ exit = 0; stdout = "Fixture-CI\`n"; stderr = '' } }
