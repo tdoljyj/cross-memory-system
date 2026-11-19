@@ -210,7 +210,8 @@
 
 - **入队**：Agent 在 PR 准入通过、当前 head 的 CI 绿、合并已获所需批准（受保护层即 Owner 授权已放行）后调用入队。v0.1 为了不加新工具，入队仍是 `clued_work_renew` 带合并引用；服务端不再返回 `work_claim_conflict`，而是返回 `merge_queue: {position, ahead: [...]}`。位置 1 即「持有合并位」，与今天同义。代价变化：今天被拒的续期不计次数、不耗令牌，入队成功的续期计一次续期（上限 12）并需要新的 `progress_ref`；只入队一次，可接受。
 - **队列头的工作**：并入 main（如果 head 还不含 tip）→ CI → 合并。第一步实施里仍由 Agent 做并入与推送；第二步由执行器做（§7.3）。合并由 GitHub auto-merge 做（§7.4）；GitHub 已可合并、不再接受 auto-merge 时由执行器直接合并（§7.3 第 5 步实施说明，Task `ff476b06`）。
-- **出队**：PR 合并（现有 `clued_work_claim_adopt_v1`）、关闭（现有 `clued_work_merge_slot_return_v1`）、队列头的 head 上任一必需检查**最终失败**（§7.3 的执行器上报 `ci_failed`，与 GitHub merge queue「CI 失败即移出」相同）、持有者主动退出（续期去掉引用 / 释放认领）、兜底时效（§7.3）。出队后下一项成为队列头；它的 PR 如果已含 tip 就可直接进 CI，否则并入 main。
+- **出队**：PR 合入或关闭未合入、队列头的 head 上任一必需检查**最终失败**（§7.3 的执行器上报 `ci_failed`，与 GitHub merge queue「CI 失败即移出」相同）、持有者主动退出（续期去掉引用 / 释放认领）、兜底时效（§7.3）。出队后下一项成为队列头；它的 PR 如果已含 tip 就可直接进 CI，否则并入 main。
+- **PR 绑定结束**：GitHub 合入或关闭未合入事件是主路径。常驻执行器的 `clued_work_claim_adopt_v1` 可确认已合入，CI 准入 Binding 也可在确认 GitHub 上已关闭后随 `clued_work_merge_slot_return_v1` 显式传入 `github_state: 'closed'`。普通归还仅影响合并位，PR 绑定状态和认领保持原样。
 - **插队**：没有。Owner 需要紧急合并时用 `frozen`（队列照常，只是人人要授权）或自己手动合并（它移动 main，队列头的最后一轮白跑一次，这是 Owner 的选择）。
 - `clued-merge-slot` 检查：head 含 tip 且该层 / 状态要求合并位时，只有队列头通过；否则按 §4.1 第 4 条通过。
 

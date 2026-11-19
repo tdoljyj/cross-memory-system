@@ -1,9 +1,8 @@
-import type { ContinuityEnv } from './continuity';
-import { databaseGatewayToken } from './database-gateway';
+import { databaseGatewayToken, resolveSupabaseConfig, type DatabaseGatewayEnv } from './database-gateway';
 
 export const GITHUB_EVENTS_PATH = '/v1/github/events';
 const MAX_BYTES = 2 * 1024 * 1024;
-type Env = Pick<ContinuityEnv, 'SUPABASE_URL' | 'SUPABASE_PUBLISHABLE_KEY' | 'CLUED_DB_GATEWAY_TOKEN'> & {
+type Env = DatabaseGatewayEnv & {
   GITHUB_WEBHOOK_SECRET?: string;
 };
 
@@ -71,22 +70,25 @@ export async function handleGitHubEvents(request: Request, env: Env): Promise<Re
   }
   const pr = event?.pull_request;
   const repo = event?.repository;
-  if (event?.action !== 'closed' || pr?.merged !== true || typeof repo?.default_branch !== 'string'
+  if (event?.action !== 'closed' || typeof pr?.merged !== 'boolean' || typeof repo?.default_branch !== 'string'
     || !repo.default_branch || pr.base?.ref !== repo.default_branch) return reply(204);
   if (typeof repo.full_name !== 'string' || !/^[a-z0-9_.-]{1,100}\/[a-z0-9_.-]{1,100}$/i.test(repo.full_name)
     || typeof event.number !== 'number' || !Number.isSafeInteger(event.number) || event.number < 1 || event.number > 9999999999) return reply(400);
-  const mergeSha = pr.merge_commit_sha;
+  const mergeSha = pr.merged ? pr.merge_commit_sha : null;
+  // 旧网关只接受合入事件的三个字段。
   const p_input = { repository: repo.full_name, pr_number: event.number,
-    merge_sha: typeof mergeSha === 'string' && /^[0-9a-f]{40}$/i.test(mergeSha) ? mergeSha : null };
+    merge_sha: typeof mergeSha === 'string' && /^[0-9a-f]{40}$/i.test(mergeSha) ? mergeSha : null,
+    ...(pr.merged ? {} : { merged: false }) };
 
   try {
     const token = databaseGatewayToken(env);
-    if (!env.SUPABASE_URL || !token || !env.SUPABASE_PUBLISHABLE_KEY) return reply(500);
-    const db = new URL(env.SUPABASE_URL);
+    const { url: dbUrl, key: dbKey } = resolveSupabaseConfig(env);
+    if (!dbUrl || !token || !dbKey) return reply(500);
+    const db = new URL(dbUrl);
     if (db.protocol !== 'https:' || db.username || db.password || db.pathname !== '/' || db.search || db.hash) return reply(500);
     const response = await fetch(db.origin + '/rest/v1/rpc/clued_work_pr_merged_event_v1', {
       method: 'POST', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000),
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, apikey: env.SUPABASE_PUBLISHABLE_KEY },
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, apikey: dbKey },
       body: JSON.stringify({ p_input }),
     });
     // PostgREST 用 HTTP 状态报告数据库异常。投递方只需状态，认领 ID 留在网关内。

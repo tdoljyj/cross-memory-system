@@ -222,7 +222,7 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
         fence: r.claim.fence, lease_version: r.claim.lease_version, lease_key: r.lease_key,
         progress_ref: 'queue:' + uuid(), trigger_refs: [`merge:${repo}:main`] }));
       const beforeClose = (await admin.query('select trigger_refs,merge_queued_at,admitted_heads from clued_private.work_claims_v1 where claim_id=$1', [r.claim.claim_id])).rows[0];
-      const closed = await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#2` });
+      const closed = await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#2`, github_state: 'closed' });
       assert.equal(closed.status, 'ok');
       const terminal = await resolve('reader', 2, head);
       assert.equal(terminal.binding_status, 'no_live_claim'); assert.equal(terminal.task_id, r.claim.task_id);
@@ -321,7 +321,7 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       const r = await claim(await task()), head = '6'.repeat(40), otherRepo = 'fixture/other';
       for (const number of [30, 31, 32, 33]) committed(await authorize(r, head, number));
       for (const number of [30, 31, 33]) assert.equal((await resolve('ci', number, head)).binding_status, 'bound');
-      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#33` });
+      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#33`, github_state: 'closed' });
       committed(await authorize(r, head, 40, { repository: otherRepo }));
       assert.equal((await resolve('ci', 40, head, { pr_ref: `${otherRepo}#40` })).binding_status, 'bound');
       committed(await call('holder', 'clued_work_renew_v1', { scope: 'global', claim_id: r.claim.claim_id,
@@ -339,7 +339,7 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       const other = await holders(otherRepo);
       assert.equal(other.task_id, r.claim.task_id); assert.deepEqual(other.bound_prs, [`${otherRepo}#40`]);
       assert.equal(other.bound_pr, `${otherRepo}#40`); assert.deepEqual(other.merge_refs, [`merge:${otherRepo}:main`]);
-      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#30` });
+      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#30`, github_state: 'closed' });
       const remaining = await holders(repo);
       assert.deepEqual(remaining.bound_prs, [`${repo}#31`]); assert.equal(remaining.bound_pr, `${repo}#31`);
       assert.deepEqual((await holders(otherRepo)).bound_prs, [`${otherRepo}#40`]);
