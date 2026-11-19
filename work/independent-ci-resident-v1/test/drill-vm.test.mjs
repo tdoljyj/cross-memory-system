@@ -479,13 +479,13 @@ test('running guard aborts on duty, batch, unreadable status or memory pressure 
 
 test('memory threshold includes the whole VM and the boot margin at start and only its unassigned memory at runtime', opts, () => {
   const r = ps(`$idle = ${q(idleHostStatus())}; @(
-    (Test-DrillHostSafety $idle (28GB - 1) -VmMemoryBytes 14GB),
-    (Test-DrillHostSafety $idle 28GB -VmMemoryBytes 14GB -MemoryAssigned 14GB),
+    (Test-DrillHostSafety $idle (21GB - 1) -VmMemoryBytes 14GB),
+    (Test-DrillHostSafety $idle 21GB -VmMemoryBytes 14GB -MemoryAssigned 14GB),
     (Test-DrillHostSafety $idle (10GB - 1) -VmMemoryBytes 14GB -Running -MemoryAssigned 10GB),
     (Test-DrillHostSafety $idle 10GB -VmMemoryBytes 14GB -Running -MemoryAssigned 10GB),
     (Test-DrillHostSafety $idle 6GB -VmMemoryBytes 14GB -Running -MemoryAssigned 15GB))`);
   assert.deepEqual(r.map(x => x.action), ['refuse', 'start', 'abort', 'continue', 'continue']);
-  assert.deepEqual(r.map(x => x.requiredFreeBytes / 1024 ** 3), [28, 28, 10, 10, 6]);
+  assert.deepEqual(r.map(x => x.requiredFreeBytes / 1024 ** 3), [21, 21, 10, 10, 6]);
 });
 
 test('the duty gate refuses stale, missing and invalid status timestamps', opts, () => {
@@ -806,7 +806,7 @@ test('host reader uses only the pinned status file and accounts for an existing 
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = $script:freeBytes / 1KB } }
     function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 14GB; MemoryAssigned = $script:assignedBytes } }
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
-    $script:freeBytes = 28GB; $script:assignedBytes = 0
+    $script:freeBytes = 21GB; $script:assignedBytes = 0
     $safety = Get-DrillHostSafety
     $script:freeBytes = 10GB; $script:assignedBytes = 10GB
     $running = Get-DrillHostSafety -Running
@@ -814,7 +814,7 @@ test('host reader uses only the pinned status file and accounts for an existing 
   `);
   assert.equal(r.pinned, 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json');
   assert.equal(r.path, fixture);
-  assert.equal(r.safety.requiredFreeBytes, 28 * 1024 ** 3);
+  assert.equal(r.safety.requiredFreeBytes, 21 * 1024 ** 3);
   assert.equal(r.safety.ok, true);
   assert.equal(r.running.requiredFreeBytes, 10 * 1024 ** 3);
   assert.equal(r.running.action, 'continue');
@@ -1303,22 +1303,21 @@ test('abort cleanup checks VM ownership, stops before restore and never acts on 
   assert.deepEqual(r, { off: true, code: 'DRILL_VM_NAME_TAKEN_NOT_OURS', events: ['stop', 'restore'] });
 });
 
-test('the host memory gate refuses below 22 GB free at boot (guest 8 + reserve 6 + boot margin 8), with no retry', opts, () => {
-  const r = ps(`@((Test-DrillHostMemory (22GB - 1)), (Test-DrillHostMemory 22GB))`);
+test('the host memory gate refuses below 15 GB free at boot (guest 8 + reserve 6 + provisional boot margin 1), with no retry', opts, () => {
+  const r = ps(`@((Test-DrillHostMemory (15GB - 1)), (Test-DrillHostMemory 15GB))`);
   assert.equal(r[0].ok, false); assert.equal(r[0].code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r[1].ok, true);
 });
 
-// Fable renew-key ruling, supplement "drill host memory" item 2: the boot gate had no margin between its two halves, so a host
-// just over it was bound to fall under the running gate once the guest started (receipt 20261119T172257Z: 19.7 GB free at start,
-// 5.8 GB 30 s after boot, i.e. 5.9 GB beyond the guest's 8 GB). Passing the boot gate must mean passing the running gate after boot.
-test('a host that passes the boot gate still passes the running gate after the guest and the observed boot overhead', opts, () => {
+// Fable renew-key ruling, supplement "drill host memory" item 2: the boot gate (guest 8 + reserve 6 = 14 GB) had no margin between
+// its two halves, so a host just over it was bound to fall under the running gate once the guest started. Passing the boot gate must
+// leave the running gate passing after the guest takes its memory plus up to the (provisional, 1 GB) boot margin.
+test('a host that passes the boot gate still passes the running gate after the guest and the boot margin', opts, () => {
   const r = ps(`$idle = ${q(idleHostStatus())}
     $boot = Test-DrillHostMemory 0
-    $observedOverhead = [long](5.9 * 1GB)
     @{ boot = $boot.requiredFreeBytes
-       after = (Test-DrillHostMemory ($boot.requiredFreeBytes - 8GB - $observedOverhead) -Running -MemoryAssigned 8GB)
-       receipt = (Test-DrillHostSafety $idle ([long](19.7 * 1GB))) }`);
+       after = (Test-DrillHostMemory ($boot.requiredFreeBytes - 8GB - 1GB) -Running -MemoryAssigned 8GB)
+       receipt = (Test-DrillHostSafety $idle 14GB) }`);
   assert.equal(r.after.ok, true, `boot gate ${r.boot / 1024 ** 3} GB leaves ${r.after.freeGB} GB after boot`);
   assert.equal(r.receipt.action, 'refuse');
   assert.equal(r.receipt.code, 'DRILL_HOST_MEMORY_SHORT');

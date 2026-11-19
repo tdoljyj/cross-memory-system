@@ -64,9 +64,11 @@ $script:Drill = [ordered]@{
   # Keep production's workstation low-memory margin (Runner Runbook 2.2: 6 GiB) plus any VM memory still to allocate.
   ProductionReserveBytes = 6GB
   # The boot gate's margin over the guest and the reserve, so that passing it means the running gate still passes once the guest is
-  # up (Fable renew-key ruling, supplement "drill host memory" item 2). Receipts' "free at start - free after boot - guest 8 GB":
-  # 5.9 GB (run 20261119T172257Z, 30 s after boot) and 3.3 GB (run 20261119T030253Z); the larger rounded up to 6 GB, plus a 2 GB jitter step.
-  BootMarginBytes = 8GB
+  # up (Fable renew-key ruling, supplement "drill host memory" item 2). PROVISIONAL, to be recalibrated from the first receipt taken
+  # under clean conditions (Fable, 2026-11-20). The receipts' "free at start - free after boot - guest 8 GB" (5.9 GB in run
+  # 20261119T172257Z, 3.3 GB in run 20261119T030253Z) is not counted: it was the production WSL growing under a CI job of the host's
+  # Actions runners, which the Runner.Worker refusal below now keeps from overlapping a boot.
+  BootMarginBytes = 1GB
   HostGuardSeconds = 30
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
