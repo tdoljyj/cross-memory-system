@@ -322,12 +322,22 @@ function frontBindOf(b, front) {
     && front?.pr === null && front.claimId === b.claimId ? Object.freeze({ pr: b.pr, headSha: b.headSha, claimId: b.claimId }) : null;
 }
 
+// The green-front words come from main's own required checks, never from a count or a list kept here: gap is null (not read: only
+// the merge slot is known green), [] (every required check of main is green on this head) or the missing / unfinished ones, as words.
+// The first missing check is always named in full; further ones are added while they fit GAP_NAMES_MAX, and the count says how many there are.
+export const GAP_NAMES_MAX = 90;
+export function frontGreenText(gap) {
+  if (!Array.isArray(gap)) return '合并位已绿，等合并';
+  if (gap.length === 0) return '全部必需检查已绿，等合并';
+  let names = gap[0], shown = 1;
+  while (shown < gap.length && names.length + 1 + gap[shown].length <= GAP_NAMES_MAX) names += `、${gap[shown++]}`;
+  return `合并位已绿；缺 ${gap.length} 项：${names}${shown < gap.length ? '…' : ''}`;
+}
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).
 const TEXT = {
   FRONT_NOT_RUNNABLE: '车头 PR 现在不能跑（草稿、已关闭或不是合到 main）',
   FRONT_NEEDS_MAIN_MERGE: '开车后会请作者先把 main 合进分支（冲突，或 strict 开着而 head 落后）',
   FRONT_TEST_MERGE_NOT_READY: '开车后会等 GitHub 算好试合并',
-  FRONT_GREEN_WAIT_MERGE: '车头六项已绿，等合并',
   OPEN_FRONT_BATCH: '开车后会在 GitHub 的试合并提交上跑车头批次',
 };
 // The train on (DESIGN §41.2-41.4): stage 10's decision on the front PR, in words.
@@ -335,7 +345,6 @@ const ON_TEXT = {
   FRONT_NOT_RUNNABLE: '车头 PR 现在不能跑（草稿、已关闭或不是合到 main）',
   FRONT_NEEDS_MAIN_MERGE: '请先把 main 合进分支再推送（冲突，或 head 不含 main 尖端）',
   FRONT_TEST_MERGE_NOT_READY: '等 GitHub 算好试合并',
-  FRONT_GREEN_WAIT_MERGE: '车头六项已绿，等合并',
   OPEN_FRONT_BATCH: '车头批次已开，在 GitHub 的试合并提交上跑',
   TRAIN_FRONT_BUDGET_SHORT: '位子剩余时间不够跑一批：系统会自动重新排队，无需操作',
   TRAIN_FRONT_ATTEMPTS_USED: '这个 head 的两次车头批次已用完：请推新提交',
@@ -351,11 +360,12 @@ const ON_TEXT = {
 };
 // Generation 15 (DESIGN 60.2): why nothing goes green while the train re-sweeps everything after main was rewritten.
 export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
-export function trainPageLine(summary, pr) {
+export function trainPageLine(summary, pr, gap = null) {
   if (!summary || summary.front?.pr !== pr) return null;
-  if (summary.mode === 'shadow') return TEXT[summary.wouldDo] ? `列车影子（只记录，不执行）：你是合并队列车头。${TEXT[summary.wouldDo]}。` : null;
+  const words = (table, key) => key === 'FRONT_GREEN_WAIT_MERGE' ? frontGreenText(gap) : table[key];
+  if (summary.mode === 'shadow') return words(TEXT, summary.wouldDo) ? `列车影子（只记录，不执行）：你是合并队列车头。${words(TEXT, summary.wouldDo)}。` : null;
   const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
-    : ON_TEXT[summary.decision] ?? null;
+    : words(ON_TEXT, summary.decision) ?? null;
   const background = summary.sweep?.strictFrontReadiness?.state === 'ready'
     ? '车头采用严格检查路径，历史清扫仍单独进行。'
     : summary.sweep?.strictCoverage?.state === 'ready' && summary.sweep.strictCoverage.backgroundAllPending !== null
@@ -438,10 +448,12 @@ export function parseTrainNodes(v) { return plain(v) ? nodesOf(v.nodes, v.droppe
 // TRAIN_PAGE_MAX_AGE_MS old) saw this very head at the front. Never on a failure or an error, never instead of the
 // executor's own words.
 export const TRAIN_PAGE_MAX_AGE_MS = 30 * 60_000;
-export function withTrainLine(want, last, pull, now, max = 140) {
+export function withTrainLine(want, last, pull, now, max = 140, gap = null) {
   if (!want || ['failure', 'error'].includes(want.state) || !last || now - last.at > TRAIN_PAGE_MAX_AGE_MS || !last.front?.headSha || last.front.headSha !== pull?.headSha) return want;
-  const line = trainPageLine(last, pull.pr);
+  const line = trainPageLine(last, pull.pr, gap);
   if (!line) return want;
-  const d = `${want.description}；${line}`;
+  // A gap goes first (a clipped text keeps its start), and the duty word another node reads is added before it by node-duty.mjs; all green or
+  // unknown goes after the text as before.
+  const d = Array.isArray(gap) && gap.length > 0 ? `${line}；${want.description}` : `${want.description}；${line}`;
   return { ...want, description: d.length <= max ? d : `${d.slice(0, max - 1)}…` };
 }
