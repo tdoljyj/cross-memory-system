@@ -862,11 +862,10 @@ const HEAD_COMMIT = 'c'.repeat(40), EDGE_COMMIT = 'e'.repeat(40);
 // What the public edge serves: the main Worker's /healthz and Connect's smoke.
 const servedEdge = (commit = EDGE_COMMIT, revision = 'r1') =>
   ({ 'clued-cloud': { source_commit: commit }, 'clued-connect': { source_commit: commit, revision } });
-const WRANGLER_FILES = ['apps/clued-cloud/wrangler.pdf-extractor.jsonc', 'apps/clued-cloud/wrangler.production.jsonc',
-  'apps/kooyumi-connect/wrangler.production.jsonc'];
 // `git diff --quiet <commit> HEAD -- <files>` as a function: true when identical.
 const gitSame = (differs = []) => async (commit, files) => {
-  assert.deepEqual(files, WRANGLER_FILES);
+  const { WRANGLER_CONFIGS } = await import('../scripts/release-worker-versions.mjs');
+  assert.deepEqual(files, WRANGLER_CONFIGS);
   return !differs.includes(commit);
 };
 const noSleep = async () => {};
@@ -876,9 +875,10 @@ test('the rollback restores each changed Worker to its recorded version, last de
     await import('../scripts/release-worker-versions.mjs');
   // The names are the ones the deploy steps' configurations publish (read as Wrangler reads them).
   const { readWranglerConfig } = await import('../scripts/projection-postflight.mjs');
-  for (const { name, config } of WORKERS) {
-    assert.equal((await readWranglerConfig(fileURLToPath(new URL(`../${config}`, import.meta.url)))).name, name, config);
-    assert.ok(productionWorkflow.includes(config), config);
+  const { WRANGLER_CONFIGS } = await import('../scripts/release-worker-versions.mjs');
+  const repository = fileURLToPath(new URL('../../../', import.meta.url));
+  for (const [index, { name }] of WORKERS.entries()) {
+    assert.equal((await readWranglerConfig(path.join(repository, WRANGLER_CONFIGS[index]))).name, name, name);
   }
   const id = (n) => `${String(n).repeat(8)}-0000-4000-8000-${String(n).repeat(12)}`;
   const status = (version) => ({ status: 0, stdout: JSON.stringify({ id: 'd', versions: [{ version_id: version, percentage: 100 }] }) });
@@ -900,7 +900,7 @@ test('the rollback restores each changed Worker to its recorded version, last de
   };
   const wait = noSleep;
   const env = { GITHUB_SHA: HEAD_COMMIT, GITHUB_RUN_ID: '42' };
-  const edges = { readEdges: async () => servedEdge(), gitSame: gitSame(), sleep: noSleep, windowMs: 120_000 };
+  const edges = { readEdges: async () => servedEdge(), gitSameFiles: gitSame(), sleep: noSleep, windowMs: 120_000 };
   const before = { 'clued-storage-pdf': id(1), 'clued-cloud': id(2), 'clued-connect': id(3) };
   const recorded = await recordVersions({ wrangler: fakeCloudflare({ ...before }).wrangler, wait, env, mode: 'release', ...edges });
   assert.deepEqual(recorded.workers, Object.entries(before).map(([name, version_id]) => ({ name, version_id })));
@@ -971,26 +971,26 @@ test('a release whose wrangler configuration differs from the commit the edge se
   };
   const base = { wrangler, wait: noSleep, env: { GITHUB_SHA: HEAD_COMMIT }, readEdges: async () => servedEdge() };
   // The edge commits differ from HEAD in any of the three files.
-  await assert.rejects(recordVersions({ ...base, mode: 'release', gitSame: gitSame([EDGE_COMMIT]) }),
+  await assert.rejects(recordVersions({ ...base, mode: 'release', gitSameFiles: gitSame([EDGE_COMMIT]) }),
     (error) => /deploy mode/.test(error.message) && /nothing was deployed/.test(error.message));
   // Connect's edge on another commit than the main Worker's: both are compared.
   const other = 'f'.repeat(40);
   const split = { ...servedEdge(), 'clued-connect': { source_commit: other, revision: 'r1' } };
-  await assert.rejects(recordVersions({ ...base, mode: 'release', readEdges: async () => split, gitSame: gitSame([other]) }), /nothing was deployed/);
+  await assert.rejects(recordVersions({ ...base, mode: 'release', readEdges: async () => split, gitSameFiles: gitSame([other]) }), /nothing was deployed/);
   // git cannot compare (unknown commit): refused.
-  await assert.rejects(recordVersions({ ...base, mode: 'release', gitSame: async () => { throw new Error('bad object'); } }), /nothing was deployed/);
+  await assert.rejects(recordVersions({ ...base, mode: 'release', gitSameFiles: async () => { throw new Error('bad object'); } }), /nothing was deployed/);
   // The edge commit cannot be read: refused.
   for (const edge of [{ ...servedEdge(), 'clued-cloud': { error: 'timeout' } }, { ...servedEdge(), 'clued-connect': { error: 'http 503' } }]) {
-    await assert.rejects(recordVersions({ ...base, mode: 'release', readEdges: async () => edge, gitSame: gitSame() }), /nothing was deployed/);
-    const recorded = await recordVersions({ ...base, mode: 'deploy', readEdges: async () => edge, gitSame: gitSame() });
+    await assert.rejects(recordVersions({ ...base, mode: 'release', readEdges: async () => edge, gitSameFiles: gitSame() }), /nothing was deployed/);
+    const recorded = await recordVersions({ ...base, mode: 'deploy', readEdges: async () => edge, gitSameFiles: gitSame() });
     assert.ok(Object.values(recorded.edge).some((value) => value.error));
   }
   // deploy keeps publishing such commits and records that the files differ.
-  const deployed = await recordVersions({ ...base, mode: 'deploy', gitSame: gitSame([EDGE_COMMIT]) });
+  const deployed = await recordVersions({ ...base, mode: 'deploy', gitSameFiles: gitSame([EDGE_COMMIT]) });
   assert.equal(deployed.config_identical, false);
-  const same = await recordVersions({ ...base, mode: 'release', gitSame: gitSame() });
+  const same = await recordVersions({ ...base, mode: 'release', gitSameFiles: gitSame() });
   assert.equal(same.config_identical, true);
-  await assert.rejects(recordVersions({ ...base, mode: 'preview', gitSame: gitSame() }), /mode/);
+  await assert.rejects(recordVersions({ ...base, mode: 'preview', gitSameFiles: gitSame() }), /mode/);
   assert.equal(deploys, 0);
   // In the workflow, a refused record means no grant used and nothing deployed.
   const refused = simulateRelease({ mode: 'release' }, RECORD_STEP);
@@ -1369,15 +1369,15 @@ test('the rollback refuses a record without both edge endpoints', async () => {
 // Wrangler does (comments, trailing commas), and every failure, an exception
 // included, still leaves a conclusion file before the non-zero exit.
 test('the projection postflight reads JSONC as Wrangler does and always writes its conclusion', async () => {
-  const { main: postflightMain } = await import('../scripts/projection-postflight.mjs');
+  const { main: postflightMain, readWranglerConfig } = await import('../scripts/projection-postflight.mjs');
   const dir = await mkdtemp(path.join(os.tmpdir(), 'projection-jsonc-'));
   const quiet = () => {};
   try {
-    const config = path.join(dir, 'wrangler.production.jsonc');
+    const config = path.join(dir, 'production-config.jsonc');
     await writeFile(config, '{\n  // the Builder fallback\n  "name": "clued-cloud", /* block */\n  "triggers": { "crons": ["*/10 * * * *",], },\n}\n');
     const out = path.join(dir, 'postflight.json');
     let calls = 0;
-    const passing = { configPath: config, log: quiet, now: () => 0, sleep: noSleep,
+    const passing = { readConfig: () => readWranglerConfig(config), log: quiet, now: () => 0, sleep: noSleep,
       runGate: async () => { calls += 1; return { status: 0, stderr: '' }; } };
     assert.equal(await postflightMain(['--evidence-out', out], passing), 0);
     assert.equal(calls, 1);
@@ -1450,9 +1450,8 @@ function toJsonc(value, pad = '') {
 // A JSONC copy of a wrangler configuration: the same settings with comments
 // and trailing commas. Built from the configuration as Wrangler reads it, so
 // the original's own punctuation (a trailing comma already there) cannot break it.
-async function jsoncCopyOf(file) {
-  const { readWranglerConfig } = await import('../scripts/projection-postflight.mjs');
-  return `// production configuration\n${toJsonc(await readWranglerConfig(file))}\n`;
+async function jsoncCopyOf(read) {
+  return `// production configuration\n${toJsonc(await read())}\n`;
 }
 
 test('the release tests read the wrangler configuration with the wrapper\'s JSONC reader', async () => {
@@ -1461,12 +1460,10 @@ test('the release tests read the wrangler configuration with the wrapper\'s JSON
   assert.doesNotMatch(source, /JSON\.parse\(await readFile\(new URL\('\.\.\/wrangler\.production\.jsonc'/);
   const dir = await mkdtemp(path.join(os.tmpdir(), 'wrangler-jsonc-'));
   try {
-    const original = await readFile(PRODUCTION_WRANGLER, 'utf8');
     // The same configuration with comments and trailing commas.
-    const jsonc = await jsoncCopyOf(PRODUCTION_WRANGLER);
-    assert.notEqual(jsonc, original);
+    const jsonc = await jsoncCopyOf(() => postflight.readWranglerConfig(PRODUCTION_WRANGLER));
     assert.throws(() => JSON.parse(jsonc));
-    const copy = path.join(dir, 'wrangler.production.jsonc');
+    const copy = path.join(dir, 'production-config.jsonc');
     await writeFile(copy, jsonc);
     const read = await postflight.readWranglerConfig(copy);
     assert.deepEqual(read, await postflight.readWranglerConfig(PRODUCTION_WRANGLER));
@@ -1484,7 +1481,7 @@ test('a production configuration with a top-level trailing comma and comments pa
   const parsed = await postflight.readWranglerConfig(PRODUCTION_WRANGLER);
   const dir = await mkdtemp(path.join(os.tmpdir(), 'wrangler-trailing-'));
   try {
-    const configured = path.join(dir, 'wrangler.production.jsonc');
+    const configured = path.join(dir, 'production-config.jsonc');
     const text = `${toJsonc(parsed)}\n`;
     assert.match(text, /, \/\* observability \*\/\n\}\n$/, 'the last top-level member has a trailing comma');
     await writeFile(configured, text);
@@ -1495,7 +1492,7 @@ test('a production configuration with a top-level trailing comma and comments pa
     assert.equal(postflight.windowMs(postflight.cronPeriodMinutes(read)), 12 * 60_000);
     // The JSONC-copy test's fixture built from it is still read as the same configuration.
     const copy = path.join(dir, 'copy.jsonc');
-    await writeFile(copy, await jsoncCopyOf(configured));
+    await writeFile(copy, await jsoncCopyOf(() => postflight.readWranglerConfig(configured)));
     assert.deepEqual(await postflight.readWranglerConfig(copy), parsed);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -1580,27 +1577,132 @@ function releasePathFiles() {
   return { repo, files: [...files].sort() };
 }
 
-// A wrangler configuration parsed with JSON.parse or a hand-written parser,
-// directly or through a variable that holds the file's text.
-function wranglerParseFindings(source) {
-  const config = /wrangler[\w.-]*\.json[c5]?\b/;
-  if (!config.test(source)) return [];
-  const statements = source.split(/;\s*\n|\n(?=\s*(?:const|let|var|for|if|assert)\b)/);
-  const holders = new Set();
-  for (const statement of statements) {
-    const held = /(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:fs\.)?(?:readFile|readFileSync)\s*\([^;]*wrangler/.exec(statement);
-    if (held) holders.add(held[1]);
-  }
-  const findings = [];
-  for (const statement of statements) {
-    for (const call of statement.matchAll(/\b(?:JSON\.parse|JSON5\.parse|parseJsonc|stripJsonComments)\s*\(/g)) {
-      const rest = statement.slice(call.index);
-      if (config.test(rest) || [...holders].some((name) => new RegExp(`\\(\\s*${name}\\b`).test(rest))) {
-        findings.push(statement.trim().split('\n')[0].slice(0, 160));
+// Round-7 review: the guard is a structural rule, not a list of parse
+// patterns. In the release path a wrangler configuration path (a literal, or
+// a const whose initializer holds one) may only be an argument of
+// readWranglerConfig(...) (parse) or gitSameFiles(...) (byte comparison, no
+// parse), besides its own const definition and an export list. Any other use
+// fails: a raw read, an alias, a concatenation, an interpolation.
+const CONFIG_PATH_LITERAL = /wrangler[\w.-]*\.json[c5]?\b/;
+const CONFIG_PATH_CALLS = ['readWranglerConfig', 'gitSameFiles'];
+
+// The source with comments, regular expressions and the text of string and
+// template literals blanked (template expressions stay code), and the spans
+// of the literals that name a configuration.
+function codeAndConfigLiterals(source) {
+  const out = source.split('');
+  const literals = [];
+  const blank = (from, to) => { for (let k = from; k < to; k += 1) if (out[k] !== '\n') out[k] = ' '; };
+  const regexAfter = /(?:^|[(,=:[!&|?{};+\-*%<>~^]|\b(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield|await))\s*$/;
+  let i = 0;
+  const templateDepth = [];
+  while (i < source.length) {
+    const c = source[i], n = source[i + 1];
+    if (c === '/' && n === '/') { const end = source.indexOf('\n', i); const stop = end < 0 ? source.length : end; blank(i, stop); i = stop; continue; }
+    if (c === '/' && n === '*') { const end = source.indexOf('*/', i + 2); const stop = end < 0 ? source.length : end + 2; blank(i, stop); i = stop; continue; }
+    if (c === '/' && regexAfter.test(out.slice(Math.max(0, i - 40), i).join(''))) {
+      let j = i + 1, inClass = false;
+      for (; j < source.length && source[j] !== '\n'; j += 1) {
+        if (source[j] === '\\') { j += 1; continue; }
+        if (source[j] === '[') inClass = true;
+        else if (source[j] === ']') inClass = false;
+        else if (source[j] === '/' && !inClass) break;
       }
+      blank(i, j + 1); i = j + 1; continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < source.length && source[j] !== c && source[j] !== '\n') j += source[j] === '\\' ? 2 : 1;
+      if (CONFIG_PATH_LITERAL.test(source.slice(i, j + 1))) literals.push(i);
+      blank(i + 1, j); i = j + 1; continue;
+    }
+    if (c === '`' || (c === '}' && templateDepth.at(-1) === 0)) {
+      // A template's text up to its end or the next ${ expression.
+      if (c === '}') templateDepth.pop();
+      let j = i + 1;
+      while (j < source.length && source[j] !== '`' && !(source[j] === '$' && source[j + 1] === '{')) j += source[j] === '\\' ? 2 : 1;
+      if (CONFIG_PATH_LITERAL.test(source.slice(i, j + 1))) literals.push(i);
+      blank(i + 1, j);
+      if (source[j] === '$') { templateDepth.push(0); i = j + 2; } else i = j + 1;
+      continue;
+    }
+    if (templateDepth.length) {
+      if (c === '{') templateDepth[templateDepth.length - 1] += 1;
+      else if (c === '}') templateDepth[templateDepth.length - 1] -= 1;
+    }
+    i += 1;
+  }
+  return { code: out.join(''), literals };
+}
+
+function argumentSpans(code, names) {
+  const spans = [];
+  for (const match of code.matchAll(new RegExp(`(?<![\\w$])(?:${names.join('|')})\\s*\\(`, 'g'))) {
+    let depth = 1, j = match.index + match[0].length;
+    for (; j < code.length && depth; j += 1) depth += code[j] === '(' ? 1 : code[j] === ')' ? -1 : 0;
+    spans.push([match.index + match[0].length, j - 1]);
+  }
+  return spans;
+}
+
+// const NAME = <initializer>, to the end of its statement.
+function constInitializers(code) {
+  const out = [];
+  for (const match of code.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=(?!=)/g)) {
+    let depth = 0, j = match.index + match[0].length;
+    for (; j < code.length; j += 1) {
+      const ch = code[j];
+      if ('([{'.includes(ch)) depth += 1;
+      else if (')]}'.includes(ch)) { if (!depth) break; depth -= 1; }
+      else if (!depth && (ch === ';' || ch === ',')) break;
+      else if (!depth && ch === '\n' && !/[=(,+\-*/.?:|&[{]\s*$/.test(code.slice(match.index, j))
+        && !/^\s*[.?:+\-*/|&)\]}]/.test(code.slice(j + 1, j + 80))) break;
+    }
+    out.push({ name: match[1], start: match.index, end: j });
+  }
+  return out;
+}
+
+// The calls a literal sits in between `from` and it, innermost first.
+function enclosingCalls(code, position, from) {
+  const names = [];
+  let depth = 0;
+  for (let j = position - 1; j >= from; j -= 1) {
+    if (code[j] === ')') depth += 1;
+    else if (code[j] === '(') {
+      if (depth) depth -= 1;
+      else names.push(/([\w$.]*)\s*$/.exec(code.slice(Math.max(from, j - 60), j))[1]);
     }
   }
-  return findings;
+  return names;
+}
+// Forming a path is all a definition may do with the literal.
+const PATH_FORMING = /^(?:URL|fileURLToPath|path\.(?:posix\.)?(?:join|resolve|normalize)|Object\.freeze)$/;
+
+function configPathFindings(source) {
+  const { code, literals } = codeAndConfigLiterals(source);
+  if (!literals.length) return [];
+  const inside = (position, spans) => spans.some(([from, to]) => position >= from && position < to);
+  const calls = argumentSpans(code, CONFIG_PATH_CALLS);
+  // A const defines a configuration path when a literal in its initializer
+  // sits only inside path-forming calls (the result of readWranglerConfig is
+  // content, not a path; a literal handed to anything else is a finding).
+  const definitions = constInitializers(code).filter((d) => literals.some((at) => at >= d.start && at < d.end
+    && !inside(at, calls) && enclosingCalls(code, at, d.start).every((name) => PATH_FORMING.test(name))));
+  const allowed = [...calls, ...definitions.map((d) => [d.start, d.end]),
+    ...[...code.matchAll(/\bexport\s*\{[^}]*\}/g)].map((m) => [m.index, m.index + m[0].length])];
+  const lineOf = (position) => {
+    const from = source.lastIndexOf('\n', position) + 1, to = source.indexOf('\n', position);
+    return source.slice(from, to < 0 ? undefined : to).trim().slice(0, 160);
+  };
+  const findings = [];
+  for (const at of literals) if (!inside(at, allowed)) findings.push(lineOf(at));
+  for (const { name } of definitions) {
+    for (const use of code.matchAll(new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}(?![\\w$])`, 'g'))) {
+      if (!inside(use.index, allowed)) findings.push(`${name}: ${lineOf(use.index)}`);
+    }
+  }
+  return [...new Set(findings)];
 }
 
 test('the release path reads wrangler configurations only through readWranglerConfig', () => {
@@ -1612,9 +1714,9 @@ test('the release path reads wrangler configurations only through readWranglerCo
     `const config = ${parse}(await readFile(new URL('${file}', import.meta.url), 'utf8'));\n`,
     `const text = await readFile(new URL('${file}', import.meta.url), 'utf8');\nconst config = ${parse}(text);\n`,
     `const config = parseJsonc(fs.readFileSync('${file}', 'utf8'));\n`]) {
-    assert.equal(wranglerParseFindings(sample).length, 1, sample);
+    assert.ok(configPathFindings(sample).length >= 1, sample);
   }
-  assert.deepEqual(wranglerParseFindings(`const config = await readWranglerConfig('${file}');\nconst other = ${parse}(body);\n`), []);
+  assert.deepEqual(configPathFindings(`const config = await readWranglerConfig('${file}');\nconst other = ${parse}(body);\n`), []);
   const { repo, files } = releasePathFiles();
   const relative = files.map((f) => path.relative(repo, f).split(path.sep).join('/'));
   // The scope is the release path: the tests and scripts those steps run.
@@ -1625,17 +1727,10 @@ test('the release path reads wrangler configurations only through readWranglerCo
   }
   // Not source-capture: its script is outside this scope.
   assert.ok(!relative.includes('apps/clued-cloud/scripts/storage-client-registration-source.mjs'));
-  const findings = files.flatMap((f) => wranglerParseFindings(fs.readFileSync(f, 'utf8'))
+  const findings = files.flatMap((f) => configPathFindings(fs.readFileSync(f, 'utf8'))
     .map((finding) => `${path.relative(repo, f).split(path.sep).join('/')}: ${finding}`));
   assert.deepEqual(findings, []);
 });
-
-// Round-7 review: the guard is a structural rule, not a list of parse
-// patterns. In the release path a wrangler configuration path (a literal, or
-// a const whose initializer holds one) may only be an argument of
-// readWranglerConfig(...) (parse) or gitSameFiles(...) (byte comparison).
-// Any other use fails: a raw read, an alias, a concatenation.
-const configPathFindings = wranglerParseFindings;
 
 test('the release-path guard fails every use of a configuration path but readWranglerConfig and gitSameFiles', () => {
   // Samples assembled at run time, so this file holds none of them.

@@ -85,7 +85,7 @@ export async function readWranglerConfig(file) {
 }
 
 export async function main(argv = process.argv.slice(2), { periodMinutes, runGate, now, sleep,
-  configPath = WRANGLER_PRODUCTION, readConfig = readWranglerConfig,
+  readConfig = () => readWranglerConfig(WRANGLER_PRODUCTION),
   removeScratch = (directory) => rmSync(directory, { recursive: true, force: true }),
   writeConclusion = (file, text) => writeFileSync(file, text),
   log = (line) => process.stderr.write(`${line}\n`) } = {}) {
@@ -102,7 +102,7 @@ export async function main(argv = process.argv.slice(2), { periodMinutes, runGat
     if (period === undefined) {
       let config;
       try {
-        config = await readConfig(configPath);
+        config = await readConfig();
       } catch (error) {
         throw Object.assign(new Error(`wrangler_config_unreadable: ${error?.message ?? error}`), { conclusion: true });
       }

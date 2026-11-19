@@ -25,12 +25,17 @@ import { PUBLIC_ORIGIN } from '../../kooyumi-connect/verify-production.mjs';
 export const CONTRACT = 'clued.production-worker-versions.v1';
 /** Deploy order of clued-cloud-production-release.yml; rollback runs in reverse. */
 export const WORKERS = Object.freeze([
-  Object.freeze({ name: 'clued-storage-pdf', config: 'wrangler.pdf-extractor.jsonc' }),
-  Object.freeze({ name: 'clued-cloud', config: 'wrangler.production.jsonc' }),
-  Object.freeze({ name: 'clued-connect', config: '../kooyumi-connect/wrangler.production.jsonc' }),
+  Object.freeze({ name: 'clued-storage-pdf' }),
+  Object.freeze({ name: 'clued-cloud' }),
+  Object.freeze({ name: 'clued-connect' }),
 ]);
-/** The wrangler production configurations a release must leave byte for byte unchanged. */
-export const WRANGLER_CONFIGS = Object.freeze(WORKERS.map(({ config }) => path.posix.normalize(`apps/clued-cloud/${config}`)));
+/**
+ * The wrangler production configurations a release must leave byte for byte
+ * unchanged, in WORKERS order. In the release path a configuration path only
+ * reaches readWranglerConfig or gitSameFiles (tests/production-release-gate.test.mjs).
+ */
+export const WRANGLER_CONFIGS = Object.freeze(['apps/clued-cloud/wrangler.pdf-extractor.jsonc',
+  'apps/clued-cloud/wrangler.production.jsonc', 'apps/kooyumi-connect/wrangler.production.jsonc']);
 const CONNECT_SMOKE_URL = `${PUBLIC_ORIGIN}/connect/api/smoke`;
 const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -150,7 +155,7 @@ async function readEdgesWithRetry(readEdges, wait) {
 }
 
 /** `git diff --quiet <commit> HEAD -- <files>`: true when identical, false when not; throws when git cannot tell. */
-export function gitSameFiles(commit, files) {
+export function gitDiffQuiet(commit, files) {
   if (!SHA.test(commit ?? '')) throw new Error(`not a commit: ${commit}`);
   const run = spawnSync('git', ['diff', '--quiet', commit, 'HEAD', '--', ...files], { cwd: REPOSITORY, encoding: 'utf8' });
   if (run.error || (run.status !== 0 && run.status !== 1)) throw new Error(`git cannot compare with ${commit}`);
@@ -158,7 +163,7 @@ export function gitSameFiles(commit, files) {
 }
 
 export async function recordVersions({ wrangler = npxWrangler, wait = pause, env = process.env, mode,
-  readEdges = readEdgeCommits, gitSame = gitSameFiles } = {}) {
+  readEdges = readEdgeCommits, gitSameFiles = gitDiffQuiet } = {}) {
   if (mode !== 'deploy' && mode !== 'release') throw new Error(`record needs --mode deploy or release, not ${mode}`);
   const workers = [];
   for (const { name } of WORKERS) {
@@ -174,7 +179,7 @@ export async function recordVersions({ wrangler = npxWrangler, wait = pause, env
     try {
       config_identical = true;
       for (const commit of new Set(Object.values(edge).map((value) => value.source_commit))) {
-        if (!(await gitSame(commit, WRANGLER_CONFIGS))) config_identical = false;
+        if (!(await gitSameFiles(commit, WRANGLER_CONFIGS))) config_identical = false;
       }
     } catch (error) {
       config_identical = null;
@@ -187,7 +192,7 @@ export async function recordVersions({ wrangler = npxWrangler, wait = pause, env
         `${name} is unreadable (${value?.error ?? 'no commit'})`).join(', ')}; nothing was deployed`);
     }
     if (config_identical !== true) {
-      throw new Error(`${configError ? `${configError}; ` : ''}the wrangler production configuration is not byte for byte the one the edge serves (${WRANGLER_CONFIGS.join(', ')}); a Worker rollback would not undo it; publish this commit with deploy mode; nothing was deployed`);
+      throw new Error(`${configError ? `${configError}; ` : ''}the three wrangler production configurations are not byte for byte the ones the edge serves; a Worker rollback would not undo it; publish this commit with deploy mode; nothing was deployed`);
     }
   }
   return { contract: CONTRACT, mode, source_commit: env.GITHUB_SHA ?? null, recorded_at: new Date().toISOString(),
@@ -292,13 +297,13 @@ function writeJson(file, value, fileSystem = fs) {
   fileSystem.renameSync(temporary, file);
 }
 
-export async function main(argv = process.argv.slice(2), { wrangler, wait, env = process.env, readEdges, gitSame, windowMs, sleep,
+export async function main(argv = process.argv.slice(2), { wrangler, wait, env = process.env, readEdges, gitSameFiles, windowMs, sleep,
   fileSystem = fs } = {}) {
   const [command] = argv;
   const out = option(argv, '--out');
   const mode = option(argv, '--mode');
   if (command === 'record' && out && (mode === 'deploy' || mode === 'release')) {
-    const recorded = await recordVersions({ wrangler, wait, env, mode, readEdges, gitSame });
+    const recorded = await recordVersions({ wrangler, wait, env, mode, readEdges, gitSameFiles });
     writeJson(out, recorded, fileSystem);
     console.log(recorded.workers.map((w) => `${w.name} serves ${w.version_id}`).join('\n'));
     for (const [name, value] of Object.entries(recorded.edge)) console.log(`edge ${name}: ${value.source_commit ?? `unreadable (${value.error})`}`);
