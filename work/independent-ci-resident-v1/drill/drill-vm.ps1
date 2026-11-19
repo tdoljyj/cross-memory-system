@@ -3,6 +3,7 @@
 #   pwsh -NoProfile -File drill-vm.ps1 -BaselineOnly
 #   pwsh -NoProfile -File drill-vm.ps1 -PrereqOnly      (baseline copy + the pinned prerequisites from D:\clued-drill\prereq, then restored)
 #   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-SkipReinstall] [-RunTimeoutMinutes 70]
+#     (a candidate: -From without an acceptance; the kit carries a drill-only one, see Test-DrillPackageDir and FIRST-INSTALL-KIT.md)
 #   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json>
 #
 # Inputs on the host: D:\clued-drill\iso (the Windows 11 ISO and expected-sha256.txt), D:\clued-drill\prereq\prereq.json (the
@@ -406,10 +407,18 @@ public static class DrillIsoWriter {
 }
 
 # The release triple (fetch.mjs names): the tar is accepted only when its sha256 equals SHA256SUMS and the acceptance file.
-function Test-DrillPackageDir([string]$Dir, [string]$Version) {
+# A candidate (Fable ruling 11-19 section 2.3: the drill runs BEFORE the Owner accepts): the From directory has no acceptance and the
+# kit carries the candidate's own (make-drill-kit.mjs candidateAcceptance, for the guest only); the run is held to the three hashes the
+# kit names and the receipt says candidate: true with them. A candidate kit with an Owner's acceptance in From is refused (which one?).
+function Test-DrillPackageDir([string]$Dir, [string]$Version, $KitInfo = $null) {
   if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z.\-]{0,63}$') { throw (New-DrillError 'DRILL_VERSION_REFUSED') }
   $tag = "fleet-node-$Version"
   $tar = Join-Path $Dir "$tag.tar"; $acc = Join-Path $Dir "$tag.acceptance.json"; $sums = Join-Path $Dir 'SHA256SUMS'
+  $candidate = Get-Prop $KitInfo 'candidate'
+  if ($null -ne $candidate) {
+    if (Test-Path -LiteralPath $acc) { throw (New-DrillError 'DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE' ([IO.Path]::GetFileName($acc))) }
+    $acc = [string](Get-Prop $candidate 'acceptance')
+  }
   foreach ($f in @($tar, $acc, $sums)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw (New-DrillError 'DRILL_PACKAGE_FILE_MISSING' ([IO.Path]::GetFileName($f))) } }
   $sha = Get-Sha256Hex $tar
   $acceptance = Read-DrillJson $acc
@@ -419,7 +428,11 @@ function Test-DrillPackageDir([string]$Dir, [string]$Version) {
   if ($line.Count -ne 1 -or $line[0].Substring(0, 64) -cne $sha) { throw (New-DrillError 'DRILL_TAR_NOT_IN_SHA256SUMS') }
   $source = [string](Get-Prop $acceptance 'ciSourceManifestSha256')
   if ($source -notmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_ACCEPTANCE_REFUSED' 'ciSourceManifestSha256') }
-  return [ordered]@{ version = $Version; tar = $tar; acceptance = $acc; sums = $sums; tarSha256 = $sha; ciSourceManifestSha256 = $source }
+  $kitSha = [string](Get-Prop $acceptance 'firstInstallKitSha256')
+  if ($null -ne $candidate -and ($sha -cne [string](Get-Prop $candidate 'tarSha256') -or $source -cne [string](Get-Prop $candidate 'ciSourceManifestSha256') -or
+      $kitSha -cne [string](Get-Prop $candidate 'firstInstallKitSha256'))) { throw (New-DrillError 'DRILL_CANDIDATE_NOT_THE_KITS') }
+  return [ordered]@{ version = $Version; tar = $tar; acceptance = $acc; sums = $sums; tarSha256 = $sha; ciSourceManifestSha256 = $source
+    firstInstallKitSha256 = $kitSha; candidate = ($null -ne $candidate) }
 }
 
 # The first-install kit (kit.json, contract clued.drill.first-install-kit/1): every file pinned by sha256; one entry run in the
@@ -461,7 +474,18 @@ function Read-DrillKit([string]$Dir) {
   if ($mode -and $mode -cne 'first-install-host') { throw (New-DrillError 'DRILL_KIT_REFUSED' 'prerequisiteMode') }
   if ($mode -and -not $seen.ContainsKey('release-pins.json')) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'release-pins.json') }
   $blocker = [string](Get-Prop $kit 'executionBlocker')
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker }
+  # a candidate's kit (make-drill-kit.mjs): its acceptance is one of the kit's pinned files, and the three hashes it names
+  $candidate = $null; $c = Get-Prop $kit 'candidate'
+  if ($null -ne $c) {
+    $accName = [string](Get-Prop $c 'acceptance')
+    if ($accName -cnotmatch '^fleet-node-[0-9A-Za-z][0-9A-Za-z.\-]{0,63}\.acceptance\.json$' -or -not $seen.ContainsKey($accName.ToLowerInvariant())) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'candidate.acceptance') }
+    $candidate = [ordered]@{ acceptance = (Join-Path $Dir $accName) }
+    foreach ($k in @('tarSha256', 'ciSourceManifestSha256', 'firstInstallKitSha256')) {
+      $v = [string](Get-Prop $c $k); if ($v -cnotmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' "candidate.$k") }
+      $candidate[$k] = $v
+    }
+  }
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate }
 }
 
 # A generated kit binds the complete Release directory, not just the old package triple.
@@ -470,18 +494,21 @@ function Get-DrillReleaseFiles($Package, $KitInfo) {
   if ($KitInfo.prerequisiteMode -cne 'first-install-host') { return @($Package.tar, $Package.acceptance, $Package.sums) }
   $pins = Read-DrillJson (Join-Path $KitInfo.dir 'release-pins.json')
   if ([string](Get-Prop $pins 'version') -cne $Package.version) { throw (New-DrillError 'DRILL_RELEASE_VERSION_MISMATCH') }
-  $root = Split-Path -Parent $Package.tar; $seen = @{}; $files = @()
+  $root = Split-Path -Parent $Package.tar; $seen = @{}; $files = @(); $inRoot = 0
+  # a candidate's acceptance is the kit's (Test-DrillPackageDir), every other asset is From's
+  $candidateAcceptance = if ($Package['candidate']) { [IO.Path]::GetFileName($Package.acceptance) } else { $null }
   foreach ($f in @(Get-Prop $pins 'files')) {
     $name = [string](Get-Prop $f 'path'); $hash = [string](Get-Prop $f 'sha256')
     if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$' -or $hash -cnotmatch '^[0-9a-f]{64}$' -or $seen.ContainsKey($name)) { throw (New-DrillError 'DRILL_RELEASE_PINS_REFUSED') }
-    $seen[$name] = $true; $file = Join-Path $root $name
+    $seen[$name] = $true
+    $file = if ($name -ceq $candidateAcceptance) { $Package.acceptance } else { $inRoot++; Join-Path $root $name }
     if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Sha256Hex $file) -cne $hash) { throw (New-DrillError 'DRILL_RELEASE_ASSET_CHANGED' $name) }
     $files += $file
   }
   foreach ($file in @($Package.tar, $Package.acceptance, $Package.sums)) {
     if (-not $seen.ContainsKey([IO.Path]::GetFileName($file))) { throw (New-DrillError 'DRILL_RELEASE_PINS_REFUSED') }
   }
-  if (@(Get-ChildItem -LiteralPath $root -Force).Count -ne $files.Count) { throw (New-DrillError 'DRILL_RELEASE_UNLISTED_ASSET') }
+  if (@(Get-ChildItem -LiteralPath $root -Force).Count -ne $inRoot) { throw (New-DrillError 'DRILL_RELEASE_UNLISTED_ASSET') }
   return $files
 }
 
@@ -654,7 +681,9 @@ function Get-DrillVerdict($E) {
   [void]$items.Add((New-DrillItem 'A4' $a4 "facts.generation=$(Get-Prop $f 'generation') staged=$(Get-Prop $f 'staged') pinsOk=$(Get-Prop $f 'pinsOk')"))
   $local = [string](Get-Prop $c 'ciSourceManifestSha256')
   $a5 = ($local -match '^[0-9a-f]{64}$') -and $local -ceq [string]$E.acceptanceSource
-  [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize"))
+  # a candidate (Fable ruling 11-19 renew-key section 4.3) has no production half: A5 is the guest's Source against the request's, here
+  if ((Get-Prop $E 'candidate') -eq $true) { [void]$items.Add((New-DrillItem 'A5' $a5 "local=$local acceptance=$($E.acceptanceSource); candidate: no production half")) }
+  else { [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize")) }
   $s = $E.status
   $a6 = ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') -and ([string](Get-Prop $s 'executor.state') -ceq 'IDLE') -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
   [void]$items.Add((New-DrillItem 'A6' $a6 "mode=$(Get-Prop $s 'node.mode') executor=$(Get-Prop $s 'executor.state') live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
@@ -686,14 +715,23 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
   return (New-DrillItem $Id (($result -ceq 'PASS') -and $fresh) "selfcheck=$result observedAt=$at")
 }
 
-# Overall: FAIL if any required item is missing or a core item failed; PASS_A when A1-A9 hold; otherwise PENDING.
-function Get-DrillConclusion($Items) {
+# Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
+# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The two PASS values are the
+# set publish.mjs seal --drill-receipt takes (test/drill-vm.test.mjs holds them equal); a candidate is shown to the Owner only after its
+# -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
+# without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
+# A candidate (its receipt is what the Owner's acceptance and seal rest on) has no "skipped": each of A1-A8 must be true, so a candidate
+# run with A8 skipped (-SkipReinstall, which Invoke-DrillMain refuses for a candidate anyway) or any other item not judged is FAIL, at the
+# run and at -Finalize (Codex review of PR-甲, blocking 1). An accepted version's re-drill keeps "skipped" as the diagnosis it was.
+function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
+  if ([string](Get-Prop $M5 'result') -cne 'PASS') { return 'FAIL' }
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
   $core = @('A1','A2','A3','A4','A5','A6','A7','A8','A9')
   foreach ($id in ($core + 'A10')) {
     if (-not $byId.ContainsKey($id)) { return 'FAIL' }
   }
   if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
+  if ($Candidate -and @(@('A1','A2','A3','A4','A5','A6','A7','A8') | Where-Object { $byId[$_].pass -ne $true }).Count) { return 'FAIL' }
   if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
@@ -715,6 +753,9 @@ select
 
 # A5's production half and A9 from the read-back row. nodes_changed counts every touch of ci_nodes_v1 (heartbeats of the
 # in-service nodes do not write it: they write ci_node_liveness_v1), so any non-zero count is looked at, never ignored.
+# A candidate's receipt (candidate: true) is read back right after its drill, before the Owner accepts, and judged on A9 alone: what
+# A5's production half guarded against (the drilled package is not the one the fleet runs) is held by seal (the receipt's three hashes
+# are the acceptance's) and by every node recomputing the Source of the accepted Release it installs (Fable renew-key section 4.3).
 function Get-DrillProductionVerdict($Receipt, $Readback) {
   if ([string](Get-Prop $Readback 'contract') -cne $script:Drill.ReadbackContract) { throw (New-DrillError 'DRILL_READBACK_REFUSED' 'contract') }
   if ([string](Get-Prop $Readback 'startedAt') -cne [string](Get-Prop $Receipt 'startedAt')) { throw (New-DrillError 'DRILL_READBACK_NOT_THIS_DRILL') }
@@ -726,6 +767,7 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
     $counts[$k] = [long]$v
   }
   $a9 = @($counts.Values | Where-Object { $_ -ne 0 }).Count -eq 0
+  if ((Get-Prop $Receipt 'candidate') -eq $true) { return @((New-DrillItem 'A9' $a9 (($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))) }
   $sources = @(Get-Prop $row 'live_sources' | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
   $local = [string](Get-Prop $Receipt 'evidence.localSource')
   $a5 = $sources.Count -ge 1 -and @($sources | Where-Object { $_ -cne $local }).Count -eq 0
@@ -872,20 +914,35 @@ function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeco
   } finally { $child.Dispose() }
 }
 
+# Clued Task fe8a2cbf (Fable renew-key ruling, supplements "test touching production" and "the test guard criterion"): the one act of
+# the drill that changes the host is executing the installed intake tool (it writes a request the service on duty acts on). Under a test
+# marker -- NODE_TEST_CONTEXT, which the node test runner gives every test process and its children inherit, or CLUED_UNDER_TEST,
+# honoured here as well (the one test entry is to set it for every suite: PR-丁, not yet) -- no tool is executed, whatever its paths:
+# nothing about a path is judged, so no spelling of a root can slip through. A test that needs the hold logic injects the sender
+# ($script:DrillIntakeSender: { param($Tool, $Verb, $Minutes, $Arguments) ... returns @{ exit; stdout } }), used only under a marker (without one an injected sender is refused, DRILL_INTAKE_SENDER_WITHOUT_TEST_MARKER). Reading the host status and
+# locating the tool are read-only and not fenced. The boot watchdog (started through WMI, so it inherits no environment) never executes
+# the intake tool: it only stops and restores the drill VM (Stop-DrillOwnedVm), so it needs no marker of its own. Cooperative: the marker
+# stops a mistake, not code that clears it on purpose.
+$script:DrillIntakeSender = $null
+function Get-DrillIntakeArguments($Tool, [ValidateSet('pause', 'resume')][string]$Verb, [int]$Minutes = 0) {
+  $a = @($Tool.tool, "request-intake-$Verb", '--root', $Tool.root, '--holder', $script:Drill.IntakeHolder, '--reason', 'first-install drill')
+  if ($Verb -ceq 'pause') { $a += @('--minutes', [string]$Minutes) }
+  , $a
+}
 function Request-DrillIntake($Tool, [ValidateSet('pause', 'resume')][string]$Verb, [int]$Minutes = 0) {
-  $argsForTool = @($Tool.tool, "request-intake-$Verb", '--root', $Tool.root, '--holder', $script:Drill.IntakeHolder, '--reason', 'first-install drill')
-  $expected = 'INTAKE_RESUME_REQUESTED'
-  if ($Verb -ceq 'pause') {
-    $argsForTool += @('--minutes', [string]$Minutes)
-    $expected = 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES'
-  }
+  # first, before the tool record is read: under a marker only an injected sender is used; without one an injected sender is refused
+  # (production never takes a request from a stand-in: Codex review r5), so neither it nor the real tool runs
+  $marked = [bool]($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)
+  if ($marked -and $null -eq $script:DrillIntakeSender) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' "request-intake-$Verb") }
+  if (-not $marked -and $null -ne $script:DrillIntakeSender) { throw (New-DrillError 'DRILL_INTAKE_SENDER_WITHOUT_TEST_MARKER' "request-intake-$Verb") }
+  $argsForTool = Get-DrillIntakeArguments $Tool $Verb $Minutes
+  $expected = if ($Verb -ceq 'pause') { 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES' } else { 'INTAKE_RESUME_REQUESTED' }
   try {
-    $run = Invoke-DrillNode $Tool.node $argsForTool 15
+    $run = if ($marked) { & $script:DrillIntakeSender $Tool $Verb $Minutes $argsForTool } else { Invoke-DrillNode $Tool.node $argsForTool 15 }
     $status = Get-Prop (ConvertFrom-Json -InputObject $run.stdout) 'status'
     if ($run.exit -ne 0 -or $status -cne $expected) { throw 'request refused' }
   } catch { throw (New-DrillError "DRILL_HOST_INTAKE_$($Verb.ToUpperInvariant())_FAILED") }
 }
-
 function Invoke-DrillWithHostHold([int]$Minutes, [scriptblock]$Body, [switch]$StandbyOnly) {
   # Serialize all invocations using the same VM and the fixed public holder, across logon sessions.
   $mutex = [Threading.Mutex]::new($false, $script:Drill.HostMutex)
@@ -1675,19 +1732,6 @@ function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
   return @{ directory = 'm5'; missing = $missing; collectionCode = $code }
 }
 
-function Test-DrillM5Applicable($Package) {
-  # Read only the file list inside the tar that Test-DrillPackageDir bound to the acceptance.
-  $json = & "$env:SystemRoot\System32\tar.exe" -xOf $Package.tar 'universal-manifest.json' 2>$null
-  if ($LASTEXITCODE -ne 0) { throw 'Unable to read the fleet package manifest' }
-  $manifest = ($json -join "`n") | ConvertFrom-Json
-  if ($manifest.contract -cne 'clued.independent-ci.fleet-universal/1' -or $manifest.version -cne $Package.version -or
-      $manifest.files -isnot [Array] -or $manifest.files.Count -eq 0) {
-    throw 'Invalid fleet package manifest'
-  }
-  # The renewal delivery (ec9249530) added this contract. SwapBroker.cs was already in 78ad314b.
-  return ($manifest.files.path -ccontains 'tree/work/independent-ci-resident-v1/windows/ci-connection-renew.contract.json')
-}
-
 function Get-DrillM5Verdict([string]$RunDir, $M5) {
   if (-not $M5) { return @{ result = 'FAIL'; detail = 'DRILL_M5_OBSERVATIONS_MISSING' } }
   $M5.result = 'FAIL'
@@ -1713,7 +1757,7 @@ function Get-DrillM5Verdict([string]$RunDir, $M5) {
   return $M5
 }
 
-function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred, [bool]$CollectM5) {
+function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
   $g = $script:Drill.GuestWork
   $prereqFacts = if ($Interactive -or $KitInfo.prerequisiteMode -ceq 'first-install-host') { @{ mode = 'first-install-host'; preparedByEntry = (-not $Interactive) } } else { Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred }
   $paths = @{ from = "$g\from"; kit = "$g\kit"; fake = "$g\fake"; work = "$g\work"; version = $Package.version }
@@ -1801,10 +1845,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   }
 
-  $m5 = if ($CollectM5) {
-    try { Copy-DrillM5 $RunDir $Cred }
-    catch { @{ collectionCode = (Get-DrillCode $_).code } }
-  }
+  $m5 = try { Copy-DrillM5 $RunDir $Cred } catch { @{ collectionCode = (Get-DrillCode $_).code } }
   return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
 }
 
@@ -1822,7 +1863,7 @@ function Invoke-DrillMain {
     $prod = Get-DrillProductionVerdict $receipt (Read-DrillJson $ProductionReadback)
     $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else { [ordered]@{ id = $i.id; pass = $i.pass; detail = $i.detail } } })
     $receipt.items = $items
-    $receipt.conclusion = Get-DrillConclusion $items
+    $receipt.conclusion = Get-DrillConclusion $items (Get-Prop $receipt 'm5') ((Get-Prop $receipt 'candidate') -eq $true)
     $receipt | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('o')) -Force
     $receipt | Add-Member -NotePropertyName productionReadbackSha256 -NotePropertyValue (Get-Sha256Hex $ProductionReadback) -Force
     Write-DrillJson $Finalize $receipt
@@ -1834,7 +1875,9 @@ function Invoke-DrillMain {
   $package = $null; $kitInfo = $null; $prereq = $null
   if (-not $BaselineOnly) { $prereq = Read-DrillPrereq $script:Drill.PrereqDir }
   if ($full) {
-    $package = Test-DrillPackageDir $From $Version; $kitInfo = Read-DrillKit $Kit
+    $kitInfo = Read-DrillKit $Kit; $package = Test-DrillPackageDir $From $Version $kitInfo
+    # a candidate's receipt is what the acceptance rests on: no item of it may be skipped (Codex review of PR-甲, blocking 1)
+    if ($package['candidate'] -and $SkipReinstall) { throw (New-DrillError 'DRILL_CANDIDATE_CANNOT_SKIP' '-SkipReinstall') }
     if ($Interactive -and $kitInfo.prerequisiteMode -cne 'first-install-host') { throw (New-DrillError 'DRILL_INTERACTIVE_REQUIRES_RELEASE_KIT') }
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
@@ -1869,16 +1912,10 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     return $out
   }
 
-  $collectM5 = $false
-  try {
-    $collectM5 = Test-DrillM5Applicable $Package
-    $detail = if ($collectM5) { 'DRILL_M5_RUN_INCOMPLETE' } else { 'M5 未评估（本次包的文件清单无续期组件）' }
-    $m5 = @{ result = 'NOT_EVALUATED'; detail = $detail }
-  } catch {
-    $m5 = @{ result = 'FAIL'; detail = 'DRILL_M5_PACKAGE_MANIFEST_UNREADABLE' }
-  }
+  # M5 is collected for every package (Fable ruling 11-19 section 2.2); until the run reads it, it is not evaluated, which fails the receipt
+  $m5 = @{ result = 'NOT_EVALUATED'; detail = 'DRILL_M5_RUN_INCOMPLETE' }
   $startedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $Package $KitInfo $Prereq $cred $collectM5 } $runDir $Window
+  $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $Package $KitInfo $Prereq $cred } $runDir $Window
   $run = $o.result; $failure = $o.failure; $restored = $o.restored
 
   $evidence = [ordered]@{ localSource = $null; hostExecutorStates = $o.hostExecutorStates }
@@ -1886,20 +1923,18 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
   }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
-  if ($collectM5) {
-    try {
-      if ($run) { $m5 = Get-DrillM5Verdict $runDir $run.m5 }
-      $m5Dir = Join-Path $runDir 'm5'
-      if (Test-Path -LiteralPath $m5Dir -PathType Container) {
-        $files += @(Get-ChildItem -LiteralPath $m5Dir -File | ForEach-Object { [ordered]@{ name = "m5/$($_.Name)"; sha256 = (Get-Sha256Hex $_.FullName) } })
-      }
-    } catch {
-      $m5.result = 'FAIL'
-      $m5.detail = 'DRILL_M5_EVIDENCE_UNREADABLE'
+  try {
+    if ($run) { $m5 = Get-DrillM5Verdict $runDir $run.m5 }
+    $m5Dir = Join-Path $runDir 'm5'
+    if (Test-Path -LiteralPath $m5Dir -PathType Container) {
+      $files += @(Get-ChildItem -LiteralPath $m5Dir -File | ForEach-Object { [ordered]@{ name = "m5/$($_.Name)"; sha256 = (Get-Sha256Hex $_.FullName) } })
     }
+  } catch {
+    $m5.result = 'FAIL'
+    $m5.detail = 'DRILL_M5_EVIDENCE_UNREADABLE'
   }
   $receipt = [ordered]@{
     contract = $script:Drill.ReceiptContract
@@ -1907,11 +1942,13 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     entryMode = $(if ($Interactive) { 'interactive-original-bootstrap' } else { 'adapted-unattended' })
     bootstrapException = $(if ($Interactive) { $null } else { 'README section 5: drill VM only exception to do not bypass bootstrap to run prepare; non-elevated check, RunAs and credential dialogs bypassed' })
     version = $package.version; tarSha256 = $package.tarSha256; ciSourceManifestSha256 = $package.ciSourceManifestSha256
+    # the three hashes an acceptance names; candidate: the drill ran before the Owner's acceptance, on the kit's drill-only acceptance
+    firstInstallKitSha256 = $package['firstInstallKitSha256']; candidate = [bool]$package['candidate']
     kitSha256 = $kitInfo.sha256; prereqSha256 = $prereq.sha256; baseline = [ordered]@{ checkpoint = $script:Drill.Checkpoint; build = $baseline }
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = $mem.freeGB
     failure = $failure; restoredToCheckpoint = $restored
     evidence = $evidence; files = $files; items = $items; m5 = $m5
-    conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items })
+    conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items $m5 ([bool]$package['candidate']) })
     productionReadbackSql = (Get-DrillReadbackSql $startedAt)
   }
   $receiptPath = Join-Path $runDir 'receipt.json'
