@@ -3,7 +3,7 @@ import { createNativeReadTrace, type NativeReadTrace } from "./native-read-trace
 import { withCanonicalMcpError } from "./mcp-error-envelope";
 import { handleMcpProfile, mcpProfileTool, McpProfileError, type McpProfile } from "./mcp-profile";
 import { databaseGatewayToken, type DatabaseGatewayEnv } from "./database-gateway";
-import { handleCiNodeGatewayV1, isCiNodeGatewayPath } from "./ci-node-gateway-v1";
+import { CI_CONNECTION_RENEW_PATH, handleCiConnectionRenew, handleCiNodeGatewayV1, isCiNodeGatewayPath } from "./ci-node-gateway-v1";
 import { GITHUB_EVENTS_PATH, handleGitHubEvents } from "./github-events-v1";
 import { MODEL_DOMAIN_BOOTSTRAP_REQUEST_TOOL, MODEL_DOMAIN_BOOTSTRAP_COMMIT_TOOL, isModelDomainTool, modelDomainSourceEnabled,
   modelDomainBootstrapRequestEnabled, modelDomainTools, modelDomainToolPolicies,
@@ -151,6 +151,8 @@ type Scope = (typeof ALL_SCOPES)[number];
 
 export interface ContinuityEnv extends DatabaseGatewayEnv, RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv, WorkClaimFeatureEnv, OwnerRequestFeatureEnv,
   AgentMessageFeatureEnv, IntegrationFeatureEnv, ModelDomainFeatureEnv, StorageOAuthCutoverEnv {
+  CI_RENEW_SOURCE_LIMIT?: Pick<RateLimit, 'limit'>;
+  CI_RENEW_IDENTITY_LIMIT?: Pick<RateLimit, 'limit'>;
   CLUED_DELEGATED_OAUTH_V12?: string;
   CLUED_OAUTH_ORIGIN?: string;
   CLUED_PROJECTION_BUILDER_TOKEN?: string;
@@ -4074,6 +4076,10 @@ export async function handleContinuityRequest(
   // tracing, projection invalidation and response decoration.
   const pathname = new URL(request.url).pathname;
   if (pathname === GITHUB_EVENTS_PATH) return handleGitHubEvents(request, env);
+  if (pathname === CI_CONNECTION_RENEW_PATH) return handleCiConnectionRenew(request, env, (name, args, signal) =>
+    supabaseRequest(env, "/rest/v1/rpc/" + name, {
+      method: "POST", body: JSON.stringify(args), signal, redirect: "error", cache: "no-store",
+    }));
   if (isCiNodeGatewayPath(pathname)) return handleCiNodeGatewayV1(request, env);
   const trace = createNativeReadTrace(request);
   const response = await handleContinuityRequestInner(request, env, ctx, trace);
