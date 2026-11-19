@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
   knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, executeSuite, selectSuites,
+  unitTestFiles,
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
@@ -67,7 +68,7 @@ function slotFixture(t) {
     rmSync(dir, { recursive: true, force: true });
   });
   return function start(name, {
-    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run',
+    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null,
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -91,7 +92,7 @@ function slotFixture(t) {
       const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
       setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
     `;
-    writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), probe);
+    writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), body ?? probe);
     let tool = selector;
     let target = suite;
     if (mode === '--write-known') {
@@ -128,8 +129,9 @@ function slotFixture(t) {
       Object.assign(env, { SLOT_FIXTURE_EVENT: '1', GITHUB_EVENT_NAME: 'pull_request',
         GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'fixture/repo', GITHUB_TOKEN: 'fixture' });
     }
+    const named = mode === '--run-files' ? ['scripts/ci/retrigger-counter.test.mjs'] : [];
     const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, tool,
-      mode, target, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      mode, target, ...named, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (data) => { output += data; });
     child.stderr.on('data', (data) => { output += data; });
@@ -1008,4 +1010,129 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
   assert.equal(job.match(/\brun: /g).length, 1, 'one command: nothing else can pass or fail the job');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
+});
+
+// --run-files: point-in-time reproduction of named test files through the same suite command.
+const RESIDENT_DIR = 'work/independent-ci-resident-v1';
+const spawnRecorder = (status = 0) => {
+  const calls = [];
+  const spawn = (command, args, options) => { calls.push({ command, args, cwd: options.cwd }); return { status }; };
+  return { calls, spawn };
+};
+const spawnForbidden = () => { throw new Error('no command may start'); };
+
+test('run-files 1: resident-node runs only the named file with the CI command shape', () => {
+  const all = readdirSync(path.join(ROOT, RESIDENT_DIR, 'test')).filter((name) => name.endsWith('.test.mjs')).sort();
+  assert.ok(all.length > 1);
+  const { calls, spawn } = spawnRecorder();
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn, log, files: [`${RESIDENT_DIR}/test/${all[0]}`] }), 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['--test', `test/${all[0]}`]);
+  assert.equal(calls[0].cwd, path.join(ROOT, RESIDENT_DIR));
+});
+
+test('run-files 2: a file the suite does not run is refused with the accepted range, nothing starts', () => {
+  const lines = [];
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log: (line) => lines.push(line),
+    files: ['scripts/ci/ci-required-selection.test.mjs'] }), 2);
+  assert.match(lines.join('\n'), /scripts\/ci\/ci-required-selection\.test\.mjs/);
+  assert.match(lines.join('\n'), new RegExp(`${RESIDENT_DIR}/test/`));
+});
+
+test('run-files 3: a file that does not exist is refused, nothing starts', () => {
+  const lines = [];
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log: (line) => lines.push(line),
+    files: [`${RESIDENT_DIR}/test/no-such-file.test.mjs`] }), 2);
+  assert.match(lines.join('\n'), /no-such-file\.test\.mjs/);
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log, files: [] }), 2, 'no files named');
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log, files: ['../outside.test.mjs'] }), 2);
+});
+
+test('run-files 4: resident-python discovers the named file only and skips the other directory', () => {
+  const named = readdirSync(path.join(ROOT, RESIDENT_DIR, 'test')).find((name) => /^test_.*\.py$/.test(name));
+  const { calls, spawn } = spawnRecorder();
+  assert.equal(executeSuite('resident-python', { root: ROOT, env: {}, spawn, log, files: [`${RESIDENT_DIR}/test/${named}`] }), 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(-5), ['discover', '-s', 'test', '-p', named]);
+  assert.equal(calls[0].cwd, path.join(ROOT, RESIDENT_DIR));
+});
+
+test('run-files 5: validators, lint, typecheck and build are skipped; the test runner flags stay', () => {
+  const governance = readdirSync(path.join(ROOT, 'scripts/ci/self-hosted/node-governance')).find((name) => name.endsWith('.test.mjs'));
+  const node = spawnRecorder();
+  assert.equal(executeSuite('node-governance', { root: ROOT, env: {}, spawn: node.spawn, log,
+    files: [`scripts/ci/self-hosted/node-governance/${governance}`] }), 0);
+  assert.equal(node.calls.length, 1);
+  assert.ok(!node.calls.some((call) => call.args.some((arg) => /validate_node_profiles/.test(arg))));
+
+  const unit = unitTestFiles(path.join(ROOT, 'apps/clued-cloud'))[0];
+  const cloud = spawnRecorder();
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn: cloud.spawn, log, platform: 'linux', files: [`apps/clued-cloud/${unit}`] }), 0);
+  assert.equal(cloud.calls.length, 1);
+  assert.ok(cloud.calls[0].args.includes(unit));
+  assert.ok(!cloud.calls.some((call) => ['lint', 'typecheck', 'build', 'ledger:verify'].some((word) => call.args.includes(word))));
+
+  const guarded = SUITE_COMMANDS['production-schema'][3].argv.at(-1);
+  const schema = spawnRecorder();
+  assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: schema.spawn, log, files: [`apps/clued-cloud/${guarded}`] }), 0);
+  const kept = schema.calls.find((call) => call.args.includes(guarded));
+  assert.ok(kept.args.includes('--test-force-exit'));
+  assert.ok(kept.args.some((arg) => arg.startsWith('--test-concurrency=')));
+  assert.ok(!kept.args.includes('tests/production-schema-drift.test.mjs'));
+});
+
+test('run-files 6: known failures count only for the named files', () => {
+  const a = 'scripts/ci/clued-work-admission.test.mjs';
+  const b = 'scripts/ci/merge-admission-policy.test.mjs';
+  const entry = (file) => ({ file, path: ['old'], fingerprint: '2'.repeat(16), reason: 'r' });
+  const known = { 'admission-self-tests': [entry(a), entry(b)] };
+  const summary = { type: 'summary', counts: {}, success: true };
+  const report = (events) => () => events.map((event) => JSON.stringify(event)).join('\n');
+  const abs = (file) => path.join(ROOT, file);
+  const lines = [];
+  const first = spawnRecorder(0);
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn: first.spawn, known, files: [a],
+    log: (line) => lines.push(line), readReportFile: report([{ type: 'pass', file: abs(a), path: ['old'] }, summary]) }), 0);
+  assert.ok(first.calls[0].args.includes(a) && !first.calls[0].args.includes(b));
+  assert.ok(!lines.some((line) => line.includes(b)), 'the entry of the file that did not run is not reported');
+  const second = spawnRecorder(1);
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn: second.spawn, known, files: [a], log,
+    readReportFile: report([{ type: 'fail', file: abs(a), path: ['new one'], fingerprint: '3'.repeat(16) }, summary]) }), 1);
+});
+
+test('run-files 7: command line refuses GitHub Actions and a missing file list and documents itself', () => {
+  const run = (args, env = {}) => spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', ...args],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '', ...env } });
+  const ci = run(['--run-files', 'retrigger-counter', 'scripts/ci/retrigger-counter.test.mjs'], { GITHUB_ACTIONS: 'true' });
+  assert.equal(ci.status, 2);
+  assert.match(ci.stdout + ci.stderr, /GITHUB_ACTIONS/);
+  const none = run(['--run-files', 'retrigger-counter']);
+  assert.equal(none.status, 2);
+  assert.match(none.stdout + none.stderr, /run-files/);
+  assert.equal(run(['--run-files', 'no-such-suite', 'x.test.mjs']).status, 2);
+  const help = run(['--help']);
+  assert.match(help.stdout, /--run-files <suite> <file>/);
+});
+
+test('run-files 8: a targeted run takes a slot and queues behind two holders', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  const waiting = start('waiting', { mode: '--run-files' });
+  await waitForQueuedSuite(waiting, holders);
+  holders[0].release();
+  await waitForSlotFixture(waiting, waiting.ready);
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+  assert.match(waiting.output(), /run-files retrigger-counter: 1 .*0/);
+});
+
+test('run-files 9: the named test file decides the exit code in a real run', async (t) => {
+  const start = slotFixture(t);
+  const red = start('red', { mode: '--run-files', body: 'throw new Error("fails before the fix");\n' });
+  assert.deepEqual(await red.done, [1, null]);
+  assert.match(red.output(), /scripts\/ci\/retrigger-counter\.test\.mjs/);
+  assert.match(red.output(), /not a suite verdict/);
+  const green = start('green', { mode: '--run-files', body: 'process.exitCode = 0;\n' });
+  assert.deepEqual(await green.done, [0, null]);
+  assert.match(green.output(), /not a suite verdict/);
 });
