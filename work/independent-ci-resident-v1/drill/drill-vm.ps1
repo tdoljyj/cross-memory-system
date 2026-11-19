@@ -2139,7 +2139,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
   }
   # The first install's step record, from what the run directory holds whatever the run's end: under A1, or in the evidence when the run
   # ended before there was a verdict.
