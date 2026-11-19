@@ -172,6 +172,7 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
   $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned
   $code = 'DRILL_HOST_STATUS_UNREADABLE'
   $mode = $null; $since = $null; $until = $null
+  $executorObservation = $null
   try {
     if (-not $StatusJson.TrimStart().StartsWith('{')) { throw 'expected a status object' }
     $s = ConvertFrom-Json -InputObject $StatusJson -ErrorAction Stop
@@ -182,6 +183,20 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
       $writtenAt = $s.PSObject.Properties['writtenAt']
       if ($writtenAt -and (Test-DrillHostStatusFresh $writtenAt.Value $Now)) {
         $mode = $reportedMode
+        $reason = $s.executor.PSObject.Properties['reason']
+        $executorObservation = [ordered]@{
+          state = $executor
+          reason = $(if ($reason -and $reason.Value -is [string]) { $reason.Value })
+          current = $null
+        }
+        if ($null -ne $s.current) {
+          $stageProperty = $s.current.PSObject.Properties['stage']
+          $phaseProperty = $s.current.PSObject.Properties['phase']
+          $executorObservation.current = [ordered]@{
+            stage = $(if ($stageProperty -and ($stageProperty.Value -is [int] -or $stageProperty.Value -is [long])) { $stageProperty.Value })
+            phase = $(if ($phaseProperty -and $phaseProperty.Value -is [string]) { $phaseProperty.Value })
+          }
+        }
         $pause = $s.PSObject.Properties['intakePause']
         $holders = if ($pause -and $pause.Value -is [pscustomobject]) { $pause.Value.PSObject.Properties['holders'] }
         $drillHolds = @()
@@ -199,7 +214,6 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
           'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED')
         $stage8 = $false
         if ($mode -ceq 'ACTIVE' -and $s.executor -is [pscustomobject]) {
-          $reason = $s.executor.PSObject.Properties['reason']
           $maintenance = $executor -ceq 'RUNNING' -and $null -ne $reason -and
             $reason.Value -is [string] -and $reason.Value -ceq 'TRAIN_MAINTENANCE'
           $quiet = $quiet -or $executor -ceq 'PARKED' -or $maintenance
@@ -227,6 +241,7 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
   return @{ ok = ($null -eq $code); code = $code; mode = $mode; holdSince = $since; holdUntil = $until;
     freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes;
+    executorObservation = $executorObservation; observedAt = $Now.ToUniversalTime().ToString('o');
     action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
 }
 
@@ -801,11 +816,15 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
       $target = [Math]::Max($target, [long]$vm.MemoryStartup)
       $assigned = [long]$vm.MemoryAssigned
     }
-    return Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
+    $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
   } catch {
     $c = Get-DrillCode $_
-    return @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
+    $safety = @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
   }
+  # The resource checks can take time. Keep the observation from the original status read.
+  $safety.executorObservation = $duty.executorObservation
+  $safety.observedAt = $duty.observedAt
+  return $safety
 }
 
 function Assert-DrillHostSafety([DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
@@ -953,6 +972,17 @@ function Stop-DrillGuardedVm($Guard, [switch]$RestoreCheckpoint) {
   } finally { [Threading.Monitor]::Exit($state.SyncRoot) }
 }
 
+function Add-DrillExecutorObservation($State, $Safety) {
+  $sample = Get-Prop $Safety 'executorObservation'
+  if ($null -eq $sample) { return }
+  $key = ConvertTo-DrillJson $sample
+  if (-not $State.executorStates.Contains($key)) {
+    $State.executorStates.Add($key, [ordered]@{
+      state = $sample.state; reason = $sample.reason; current = $sample.current; firstSeenAt = $Safety.observedAt
+    })
+  }
+}
+
 # A separate runspace owns this loop: guest jobs, Copy-Item, Read-Host and long waits cannot delay host protection.
 # The start and abort share a lock, so an abort can never be followed by a late Start-VM.
 function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreCheckpoint) {
@@ -965,6 +995,7 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
         try {
           if ($State.stop) { return }
           $safety = Get-DrillGuardSafety $State
+          if ($State.armed) { Add-DrillExecutorObservation $State $safety }
           if (-not $safety.ok) { $State.failure = @{ code = $safety.code; detail = $safety } }
           $State.ready = $true
         } finally { [Threading.Monitor]::Exit($State.SyncRoot) }
@@ -979,6 +1010,7 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
     try {
       if ($State.failure -and $State.armed) {
         $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
+          hostExecutorStates = @($State.executorStates.Values);
           abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null }
         # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
@@ -1005,6 +1037,7 @@ function Get-DrillGuardSafety($State) {
 
 function Start-DrillHostGuard([string]$RunDir, [switch]$RestoreCheckpoint, $Window) {
   $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $false; failure = $null; cleanup = $null;
+    executorStates = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal);
     deadline = (Get-Prop $Window 'deadline'); holdUntil = (Get-Prop $Window 'holdUntil') })
   $worker = [PowerShell]::Create()
   [void]$worker.AddScript({ param($file, $config, $state, $dir, $restore)
@@ -1039,6 +1072,7 @@ function Start-DrillGuardedVm([string]$BootSignal) {
     if ($BootSignal) { [IO.File]::WriteAllText($BootSignal, 'starting') }
     Start-VM -Name $script:Drill.VmName -ErrorAction Stop
     $state.armed = $true
+    Add-DrillExecutorObservation $state $safety
   } finally { [Threading.Monitor]::Exit($state.SyncRoot) }
 }
 
@@ -1380,6 +1414,75 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
   }
 }
 
+function Start-DrillDetachedWatchdog([string]$EncodedCommand) {
+  if (-not ('CluedDrill.BootProcess' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace CluedDrill {
+  public static class BootProcess {
+    const uint CreateSuspended = 0x00000004;
+    const uint CreateBreakawayFromJob = 0x01000000;
+    const uint CreateNoWindow = 0x08000000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct StartupInfo {
+      public uint Size;
+      public IntPtr Reserved, Desktop, Title;
+      public uint X, Y, Width, Height, Columns, Rows, Fill, Flags;
+      public ushort ShowWindow, ReservedBytes;
+      public IntPtr ReservedData, Input, Output, Error;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct ProcessInfo {
+      public IntPtr Process, Thread;
+      public uint ProcessId, ThreadId;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    static extern bool CreateProcessW(string image, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes,
+      bool inheritHandles, uint flags, IntPtr environment, IntPtr directory, ref StartupInfo startup, out ProcessInfo child);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool inJob);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll")]
+    static extern bool TerminateProcess(IntPtr process, uint exitCode);
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr handle);
+
+    public static Process Start(string image, string arguments) {
+      var startup = new StartupInfo { Size = (uint)Marshal.SizeOf(typeof(StartupInfo)) };
+      var command = new StringBuilder("\"" + image + "\" " + arguments);
+      ProcessInfo child;
+      if (!CreateProcessW(image, command, IntPtr.Zero, IntPtr.Zero, false, CreateSuspended | CreateBreakawayFromJob | CreateNoWindow,
+          IntPtr.Zero, IntPtr.Zero, ref startup, out child)) throw new Win32Exception();
+      try {
+        // In a chain of nested jobs, breakaway can leave the child in an outer job.
+        bool inJob;
+        if (!IsProcessInJob(child.Process, IntPtr.Zero, out inJob)) throw new Win32Exception();
+        if (inJob) throw new InvalidOperationException("The watchdog is still in a Windows job.");
+        if (ResumeThread(child.Thread) == uint.MaxValue) throw new Win32Exception();
+        return Process.GetProcessById((int)child.ProcessId);
+      } catch {
+        TerminateProcess(child.Process, 1);
+        throw;
+      } finally {
+        CloseHandle(child.Thread);
+        CloseHandle(child.Process);
+      }
+    }
+  }
+}
+'@
+  }
+  $image = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+  [CluedDrill.BootProcess]::Start($image, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand")
+}
+
 function Start-DrillBootWatchdog([string]$RunDir, [guid]$VmId, [DateTimeOffset]$Deadline) {
   $signal = Join-Path $RunDir 'guest-shutdown'
   $parentStarted = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
@@ -1387,8 +1490,8 @@ function Start-DrillBootWatchdog([string]$RunDir, [guid]$VmId, [DateTimeOffset]$
   $escapedSignal = $signal.Replace("'", "''")
   $command = ". '$file'; Invoke-DrillBootWatchdog '$escapedSignal' $PID $parentStarted '$VmId' '$($Deadline.ToString('o'))'"
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-  $worker = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -WindowStyle Hidden -PassThru -ArgumentList @(
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
+  try { $worker = Start-DrillDetachedWatchdog $encoded }
+  catch { throw (New-DrillError 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY' (Get-DrillCode $_)) }
   try {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     while (-not $worker.HasExited -and $clock.Elapsed.TotalSeconds -lt 15) {
@@ -1420,9 +1523,10 @@ $script:GuestShutdownTimer = {
 }
 
 # Restore the clean checkpoint, start the VM behind the memory gate, run $Body with the guest credential, and always end Off
-# and restored, whatever happened. Returns @{ result; failure; restored }.
+# and restored, whatever happened. Returns the outcome and guard observations.
 function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) {
   $result = $null; $failure = $null; $restored = $false; $guard = $null; $cleanupNeeded = $false; $signal = $null
+  $executorStates = @()
   try {
     [void](Assert-DrillHostSafety -HoldUntil $Window.holdUntil)
     $info = Get-DrillVmInfo
@@ -1450,9 +1554,12 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) 
     if ($restored -and $signal) { try { [IO.File]::WriteAllText("$signal.armed", '') } catch { } }
     if ($cleanupNeeded) { $Window.safeToResume = $restored }
     Stop-DrillHostGuard $guard
-    if ($guard -and $guard.state.failure) { $failure = $guard.state.failure; $result = $null }
+    if ($guard) {
+      $executorStates = @($guard.state.executorStates.Values)
+      if ($guard.state.failure) { $failure = $guard.state.failure; $result = $null }
+    }
   }
-  return @{ result = $result; failure = $failure; restored = $restored }
+  return @{ result = $result; failure = $failure; restored = $restored; hostExecutorStates = $executorStates }
 }
 
 $script:GuestReinstall = {
@@ -1562,9 +1669,8 @@ function Test-DrillM5Applicable($Package) {
       $manifest.files -isnot [Array] -or $manifest.files.Count -eq 0) {
     throw 'Invalid fleet package manifest'
   }
-  $paths = $manifest.files.path
-  $windows = 'tree/work/independent-ci-resident-v1/windows'
-  return ($paths -ccontains "$windows/SwapBroker.cs" -or $paths -ccontains "$windows/ci-connection-renew.contract.json")
+  # The renewal delivery (ec9249530) added this contract. SwapBroker.cs was already in 78ad314b.
+  return ($manifest.files.path -ccontains 'tree/work/independent-ci-resident-v1/windows/ci-connection-renew.contract.json')
 }
 
 function Get-DrillM5Verdict([string]$RunDir, $M5) {
@@ -1742,7 +1848,8 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     # The prerequisites alone, on a fresh copy of the baseline, then restored: WSL2 under nested virtualization, systemd, docker.
     $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillPrereqInGuest $runDir $prereq $cred } $runDir $Window
     $out = [ordered]@{ status = $(if ($o.failure) { 'DRILL_PREREQ_FAILED' } else { 'DRILL_PREREQ_READY' }); code = $(if ($o.failure) { $o.failure.code } else { $null });
-      detail = $(if ($o.failure) { $o.failure.detail } else { $null }); restored = $o.restored; prereqSha256 = $prereq.sha256; evidence = (Join-Path $runDir 'prereq-facts.json') }
+      detail = $(if ($o.failure) { $o.failure.detail } else { $null }); restored = $o.restored; prereqSha256 = $prereq.sha256;
+      evidence = (Join-Path $runDir 'prereq-facts.json'); hostExecutorStates = $o.hostExecutorStates }
     Write-DrillJson (Join-Path $runDir 'prereq-run.json') $out
     return $out
   }
@@ -1759,7 +1866,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   $o = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun $runDir $Package $KitInfo $Prereq $cred $collectM5 } $runDir $Window
   $run = $o.result; $failure = $o.failure; $restored = $o.restored
 
-  $evidence = [ordered]@{ localSource = $null }
+  $evidence = [ordered]@{ localSource = $null; hostExecutorStates = $o.hostExecutorStates }
   $items = @()
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')

@@ -434,7 +434,7 @@ test('host preflight refuses duty before any Hyper-V or memory query', opts, () 
 
 test('guard latches the reason and shuts down/restores independently of guest waits', opts, () => {
   const r = ps(`
-    $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $true; failure = $null })
+    $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $true; failure = $null; executorStates = [ordered]@{} })
     $script:events = @()
     function Get-DrillHostSafety { param([switch]$Running) Test-DrillHostSafety $null 64GB -Running:$Running }
     function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $script:events += "stop-and-restore:$RestoreCheckpoint"; return $true }
@@ -671,7 +671,7 @@ test('checkpoint caller discards a result after a guard failure and restores the
     function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) }
     function Assert-DrillHost { }
     function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint)
-      $script:HostGuard = @{ state = @{ ready = $true; failure = $null }; pending = @{ IsCompleted = $false } }
+      $script:HostGuard = @{ state = @{ ready = $true; failure = $null; executorStates = [ordered]@{} }; pending = @{ IsCompleted = $false } }
       return $script:HostGuard
     }
     function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
@@ -686,7 +686,7 @@ test('checkpoint caller discards a result after a guard failure and restores the
       'discard this result'
     } 'unused' @{ safeToResume = $true; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10); holdUntil = [DateTimeOffset]::MinValue }
     @{ outcome = $outcome; restores = $script:restores }`);
-  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true });
+  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true, hostExecutorStates: [] });
   assert.equal(r.restores, 1);
 });
 
@@ -711,7 +711,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
       $worker = [pscustomobject]@{}
       $worker | Add-Member ScriptMethod EndInvoke { $script:events += 'end'; throw 'mock EndInvoke failure' }
       $worker | Add-Member ScriptMethod Dispose { $script:events += 'dispose' }
-      $script:HostGuard = @{ worker = $worker; state = [hashtable]::Synchronized(@{ ready = $true; armed = $true; failure = $null }); pending = @{ IsCompleted = $false } }
+      $script:HostGuard = @{ worker = $worker; state = [hashtable]::Synchronized(@{ ready = $true; armed = $true; failure = $null; executorStates = [ordered]@{} }); pending = @{ IsCompleted = $false } }
       return $script:HostGuard
     }
     function Start-DrillGuardedVm { $script:vm.State = 'Running' }
@@ -836,7 +836,7 @@ function m5DrillReceipt(name, renewalPaths) {
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
     $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
     $fixture.m5 = @{ directory = 'm5'; missing = @('probe.json'); collectionCode = $null }
-    function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture } }
+    function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
     $package = @{ version = '1.2.3'; tar = ${q(archive)}; tarSha256 = ${q(sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)} }
     $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
     Read-DrillJson $out.receipt
