@@ -109,9 +109,9 @@ LEGACY_HOSTED_DEBT = {
     "clued-cloud-production-release.yml": {
         "control_sha256": "ba9aebecbf6b9a87fdfb2563ba8f223bfbfe4e44211ca32dac64145c48a53f68",
         "jobs": {
-            # T1 候选：同一发布作业改用投影状态门，供精确提交审核。
-            # 上一作业摘要 4630deff3c4cb1d1b4ff143e6c812a5a5ab3b590b98fa1ceca935ae79bf80e09，控制段和运行路由仍按原值冻结。
-            "release": "cacbc2d0b9c41b9eb3d5913c2f66a0c5b07ba5717989b0ab51a1022fd40ceccc"
+            # 发布门 v1（FABLE-release-identity-autonomous-20261119）：同一发布作业改由数据库登录身份过门。
+            # 上一作业摘要 cacbc2d0b9c41b9eb3d5913c2f66a0c5b07ba5717989b0ab51a1022fd40ceccc，控制段和运行路由仍按原值冻结。
+            "release": "da0654044b1ffd68e72ca867a3a8fe462583c2b9caa0cde7205269f77a829fcc"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
