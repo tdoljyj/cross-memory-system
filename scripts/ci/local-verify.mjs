@@ -101,7 +101,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
-import { KEEP_VARIABLE } from './test-env.mjs';
+import { testEnv } from './test-env.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -326,10 +326,11 @@ export function dependencyKey({ lock, packageJson, npmrc = '', nodeVersion = pro
   return sha256(JSON.stringify({ lock: sha256(lock), fields, npmrc: String(npmrc), node: nodeVersion.split('.')[0], platform })).slice(0, 16);
 }
 
-// The variables the suites' commands get: the one list (test-env.mjs), not the caller's tokens or Clued settings.
+// The environment the suites' commands get: the selector's (test-env.mjs: the listed variables, the fake identity, the test
+// marker), not the caller's tokens or Clued settings.
 // On Windows Python's own UTF-8 mode stands in for the runners' UTF-8 locale.
 export function testEnvironment(env, extra = {}, platform = process.platform) {
-  return { ...Object.fromEntries(Object.entries(env).filter(([name]) => KEEP_VARIABLE.test(name))),
+  return { ...testEnv(env),
     ...(platform === 'win32' ? { PYTHONUTF8: '1' } : {}), ...extra };
 }
 
@@ -1268,8 +1269,8 @@ function dependencyKeyAt(root, commit) {
   return packageJson && lock ? dependencyKey({ lock, packageJson, npmrc: show('.npmrc') ?? '' }) : null;
 }
 
-const unitTestFilesWith = (cwd) => () => {
-  const listed = spawnSync(process.execPath, ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8', windowsHide: true });
+const unitTestFilesWith = (cwd, env) => () => {
+  const listed = spawnSync(process.execPath, ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, env, encoding: 'utf8', windowsHide: true });
   if (listed.status !== 0 || typeof listed.stdout !== 'string') throw new Error('select-tests --list failed');
   return listed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
 };
@@ -1281,6 +1282,9 @@ const unitTestFilesWith = (cwd) => () => {
 // start), the command's test report (read as runSuite reads it, files relative
 // to root) and its known-failure key.
 export function runCommands(selector, id, root, main, logFile, { spawn = spawnSync, env = process.env, kill = killUnder } = {}) {
+  // Whatever env the caller passes (the in-process path on Linux and in Actions), the listing and the commands get the
+  // test environment (Codex review of 2ee162c2, high 1).
+  const childEnv = testEnv(env);
   const fd = fs.openSync(logFile, 'w');
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), `clued-local-verify-${id}-`));
   const log = (line) => fs.writeSync(fd, `${line}\n`);
@@ -1291,12 +1295,12 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
       const known = command.known ?? null;
       try {
         const [program, ...args] = selector.expandArgv(command.argv, { cwd, base: main, report: path.join(temporary, `${id}-report.json`),
-          listUnit: unitTestFilesWith(cwd) });
+          listUnit: unitTestFilesWith(cwd, childEnv) });
         const reported = withFailureReport(program, args, { known: Boolean(known), reporterUrl: selector.reporterUrl,
           file: path.join(temporary, `command-${index}.jsonl`) });
         const [file, ...prefix] = program === 'npm' ? npmCommand() : program === 'node' ? [process.execPath] : [program];
         log(`::group::${id}: (${command.cwd}) ${[program, ...reported.args].join(' ')}`);
-        const result = spawn(file, [...prefix, ...reported.args], { cwd, env, stdio: ['ignore', fd, fd], windowsHide: true, timeout: COMMAND_TIMEOUT_MS });
+        const result = spawn(file, [...prefix, ...reported.args], { cwd, env: childEnv, stdio: ['ignore', fd, fd], windowsHide: true, timeout: COMMAND_TIMEOUT_MS });
         log('::endgroup::');
         const status = result.error ? null : result.signal ? 128 : result.status;
         // as runSuite: a known-failure command without its report has an empty one

@@ -189,8 +189,43 @@ test('paths, keys and the environment the commands get', () => {
   }
   const env = testEnvironment({ Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', GITHUB_TOKEN: 'secret', SUPABASE_URL: 's',
     CLUED_HOME: 'c', NODE_OPTIONS: '--x', CI: 'true' }, { CI_BASE_SHA: 'm' }, 'linux');
-  assert.deepEqual(env, { Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', CI_BASE_SHA: 'm' });
-  assert.deepEqual(testEnvironment({ TEMP: '/t' }, {}, 'win32'), { TEMP: '/t', PYTHONUTF8: '1' }, "Windows Python in UTF-8 mode, like the runners' locale");
+  // Codex review of 2ee162c2, high 1: local-verify's commands get the selector's test environment, fake identity included.
+  const identity = new Set([...Object.keys(selection.fakeIdentityEnv('d')), 'CLUED_UNDER_TEST']);
+  const own = (vars) => Object.fromEntries(Object.entries(vars).filter(([name]) => !identity.has(name)));
+  assert.deepEqual(own(env), { Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', CI_BASE_SHA: 'm' });
+  assert.equal(env.GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
+  assert.equal(env.CLUED_UNDER_TEST, '1');
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.deepEqual(own(testEnvironment({ TEMP: '/t' }, {}, 'win32')), { TEMP: '/t', PYTHONUTF8: '1' }, "Windows Python in UTF-8 mode, like the runners' locale");
+});
+
+// Codex review of 2ee162c2, high 1: the in-process path (Linux, Actions) listed the application's unit tests with the
+// caller's whole environment, and ran the commands with whatever env it was given.
+test("runCommands lists unit tests and runs every command with the test environment, never the caller's", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-env-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.writeFileSync(path.join(root, 'scripts', 'select-tests.mjs'), `import { writeFileSync } from 'node:fs';
+writeFileSync('listing-env.json', JSON.stringify({ pat: process.env.GITHUB_PAT_TOKEN ?? null, gh: process.env.GH_TOKEN ?? null,
+  marker: process.env.CLUED_UNDER_TEST ?? null, nosystem: process.env.GIT_CONFIG_NOSYSTEM ?? null }));
+console.log('tests/a.test.mjs');
+`);
+  const saved = process.env.GITHUB_PAT_TOKEN;
+  process.env.GITHUB_PAT_TOKEN = 'owner-pat';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_PAT_TOKEN; else process.env.GITHUB_PAT_TOKEN = saved; });
+  const selector = { ...selection, reporterUrl: 'file:///r.mjs', SUITE_COMMANDS: { s: [{ cwd: '.', argv: ['node', '--test', '{unit-tests}'] }] } };
+  const seen = [];
+  const results = runCommands(selector, 's', root, 'm'.repeat(40), path.join(root, 'log.txt'), {
+    env: { ...process.env, GH_TOKEN: 'owner-token', ANTHROPIC_API_KEY: 'owner-key' },
+    spawn: (file, args, options) => { seen.push(options.env); return { status: 0 }; }, kill: () => {} });
+  assert.equal(results[0].error, null, fs.readFileSync(path.join(root, 'log.txt'), 'utf8'));
+  const fake = selection.FAKE_GITHUB_TOKEN;
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'listing-env.json'), 'utf8')), { pat: null, gh: fake, marker: '1', nosystem: '1' },
+    'the unit-test listing');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY'].filter((name) => name in seen[0]), [], 'the command');
+  assert.equal(seen[0].GH_TOKEN, fake);
+  assert.equal(seen[0].CLUED_UNDER_TEST, '1');
 });
 
 // Codex review of 2ee162c2, low 7: the Linux side ran a copy of local-verify.mjs alone, without the modules it imports
