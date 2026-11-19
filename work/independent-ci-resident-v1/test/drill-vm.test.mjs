@@ -2084,7 +2084,7 @@ test('the entry gives -Kit to a host preparation that takes it, and carries the 
   assert.match(restart, /"why":"gh installed"/);
   const refused = stop({ exit: 1, last: { status: 'FIRST_INSTALL_HOST_REFUSED', code: 'GH_INSTALL_FAILED' } });
   assert.match(refused, /^HOST_PREPARATION_NOT_DONE:.*GH_INSTALL_FAILED/);
-  assert.equal(stop({ exit: 0, last: { status: 'FIRST_INSTALL_HOST_READY' } }), null);
+  assert.equal(entryPs(`$null -eq (Get-EntryHostStopCode (${q(JSON.stringify({ exit: 0, last: { status: 'FIRST_INSTALL_HOST_READY' } }))} | ConvertFrom-Json))`), true);
   assert.match(entryText, /\$hostStop = Get-EntryHostStopCode \$hostRun\s+if \(\$hostStop\) \{ throw \$hostStop \}/);
 });
 
