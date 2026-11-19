@@ -919,7 +919,7 @@ function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeco
 # marker -- NODE_TEST_CONTEXT, which the node test runner gives every test process and its children inherit, or CLUED_UNDER_TEST,
 # honoured here as well (the one test entry is to set it for every suite: PR-丁, not yet) -- no tool is executed, whatever its paths:
 # nothing about a path is judged, so no spelling of a root can slip through. A test that needs the hold logic injects the sender
-# ($script:DrillIntakeSender: { param($Tool, $Verb, $Minutes, $Arguments) ... returns @{ exit; stdout } }). Reading the host status and
+# ($script:DrillIntakeSender: { param($Tool, $Verb, $Minutes, $Arguments) ... returns @{ exit; stdout } }), used only under a marker (without one an injected sender is refused, DRILL_INTAKE_SENDER_WITHOUT_TEST_MARKER). Reading the host status and
 # locating the tool are read-only and not fenced. The boot watchdog (started through WMI, so it inherits no environment) never executes
 # the intake tool: it only stops and restores the drill VM (Stop-DrillOwnedVm), so it needs no marker of its own. Cooperative: the marker
 # stops a mistake, not code that clears it on purpose.
@@ -930,11 +930,15 @@ function Get-DrillIntakeArguments($Tool, [ValidateSet('pause', 'resume')][string
   , $a
 }
 function Request-DrillIntake($Tool, [ValidateSet('pause', 'resume')][string]$Verb, [int]$Minutes = 0) {
+  # first, before the tool record is read: under a marker only an injected sender is used; without one an injected sender is refused
+  # (production never takes a request from a stand-in: Codex review r5), so neither it nor the real tool runs
+  $marked = [bool]($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)
+  if ($marked -and $null -eq $script:DrillIntakeSender) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' "request-intake-$Verb") }
+  if (-not $marked -and $null -ne $script:DrillIntakeSender) { throw (New-DrillError 'DRILL_INTAKE_SENDER_WITHOUT_TEST_MARKER' "request-intake-$Verb") }
   $argsForTool = Get-DrillIntakeArguments $Tool $Verb $Minutes
   $expected = if ($Verb -ceq 'pause') { 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES' } else { 'INTAKE_RESUME_REQUESTED' }
-  if ($null -eq $script:DrillIntakeSender -and ($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' "request-intake-$Verb") }
   try {
-    $run = if ($null -ne $script:DrillIntakeSender) { & $script:DrillIntakeSender $Tool $Verb $Minutes $argsForTool } else { Invoke-DrillNode $Tool.node $argsForTool 15 }
+    $run = if ($marked) { & $script:DrillIntakeSender $Tool $Verb $Minutes $argsForTool } else { Invoke-DrillNode $Tool.node $argsForTool 15 }
     $status = Get-Prop (ConvertFrom-Json -InputObject $run.stdout) 'status'
     if ($run.exit -ne 0 -or $status -cne $expected) { throw 'request refused' }
   } catch { throw (New-DrillError "DRILL_HOST_INTAKE_$($Verb.ToUpperInvariant())_FAILED") }
