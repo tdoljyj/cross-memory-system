@@ -66,7 +66,7 @@ $script:Drill = [ordered]@{
   HostGuardSeconds = 30
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
-  ProductionRoot = 'C:\ProgramData\CluedIndependentCI'   # the fixed root a test never reaches (Test-DrillProductionUnderTest)
+  ProductionRoot = 'C:\ProgramData\CluedIndependentCI'   # the fixed root a test never reaches (Test-DrillProductionPath)
   IntakeHolder = 'drill'
   IntakeWaitMinutes = 40
   IntakeMarginMinutes = 10
@@ -841,20 +841,52 @@ function Get-DrillTime { [DateTimeOffset]::UtcNow }
 
 # Clued Task fe8a2cbf (Fable renew-key ruling, supplement 1, layer A): a test that reached the real Invoke-DrillMain asked the installed
 # service of the host it ran on (the node on duty, the operator's own account) to hold intake. The three points where the drill crosses
-# into the host (reading its status, locating the installed CLI, sending an intake request) refuse by name when a test marker is set
-# (NODE_TEST_CONTEXT, which the node test runner gives every test process and its children inherit, or CLUED_UNDER_TEST, which the one
-# test entry sets) and the target is under the fixed production root. A fixture root is never refused. A cooperative marker: it stops a
-# mistake, not code that clears the environment on purpose.
-function Test-DrillProductionUnderTest([string]$Path) {
-  if (-not $env:NODE_TEST_CONTEXT -and -not $env:CLUED_UNDER_TEST) { return $false }
-  $root = $script:Drill.ProductionRoot.TrimEnd('\')
-  $full = try { [IO.Path]::GetFullPath($Path).TrimEnd('\') } catch { return $true }   # a path that cannot be read as one is not let through
-  return ($full -ieq $root -or $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase))
+# into the host (reading its status, locating the installed CLI, sending an intake request) refuse by name when a test marker is set and
+# the target is under the fixed production root. The markers: NODE_TEST_CONTEXT, which the node test runner gives every test process
+# and its children inherit; CLUED_UNDER_TEST, honoured here too (the one test entry is to set it for every suite: PR-丁, not yet). A
+# fixture root is never refused. A cooperative marker: it stops a mistake, not code that clears the environment on purpose.
+#
+# Test-DrillProductionPath is the rule, a pure function (nothing read: the path, whether a marker is set, the root). Under a marker it
+# reduces a Windows path by text alone (forward slashes, the \\?\ and \\.\ prefixes, doubled separators, . and .., trailing dots and
+# spaces of a name, case, the All Users alias of ProgramData) and compares it with the root segment by segment. What text alone cannot
+# settle counts as the production root (Codex review r3, item 2): a segment that may be an 8.3 short name (it holds a ~) where the root's
+# segment stands, a UNC or device path, a relative or drive-relative path, a stream name. A ~ elsewhere (a short TEMP such as
+# C:\Users\RUNNER~1\...) settles nothing about the root and is not refused.
+function Get-DrillPathSegments([string]$Path) {
+  # @{ drive; segments } of a path reduced by text alone, or $null for a form that cannot be
+  if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+  $p = $Path.Replace('/', '\')
+  if ($p.StartsWith('\\?\') -or $p.StartsWith('\\.\')) { $p = $p.Substring(4) }
+  if ($p -cnotmatch '^[A-Za-z]:\\') { return $null }   # UNC (\\server, \\?\UNC\...), device, drive-relative or relative
+  $parts = New-Object Collections.Generic.List[string]
+  foreach ($seg in $p.Substring(3).Split('\')) {
+    if ($seg -eq '' -or $seg -eq '.') { continue }
+    if ($seg -eq '..') { if ($parts.Count) { $parts.RemoveAt($parts.Count - 1) }; continue }
+    $name = $seg.TrimEnd('.', ' ')
+    if ($name -eq '' -or $name.Contains(':')) { return $null }
+    $parts.Add($name)
+  }
+  foreach ($alias in @(@('Users', 'All Users'), @('Documents and Settings', 'All Users'))) {
+    if ($parts.Count -ge 2 -and $parts[0] -ieq $alias[0] -and $parts[1] -ieq $alias[1]) { $parts.RemoveAt(0); $parts[0] = 'ProgramData' }
+  }
+  return @{ drive = $p.Substring(0, 1).ToUpperInvariant(); segments = @($parts) }
 }
-function Assert-DrillNotProductionUnderTest([string]$Path) {
-  if (Test-DrillProductionUnderTest $Path) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' $Path) }
+function Test-DrillProductionPath([string]$Path, [bool]$Marked, [string]$Root) {
+  if (-not $Marked) { return $false }
+  $x = Get-DrillPathSegments $Path
+  if ($null -eq $x) { return $true }
+  $r = Get-DrillPathSegments $Root
+  if ($x.drive -cne $r.drive -or $x.segments.Count -lt $r.segments.Count) { return $false }
+  for ($i = 0; $i -lt $r.segments.Count; $i++) {
+    if ($x.segments[$i] -ieq $r.segments[$i]) { continue }
+    if ($x.segments[$i].Contains('~')) { continue }   # may be the short name of the root's segment: not settled by text
+    return $false
+  }
+  return $true
+}function Assert-DrillNotProductionUnderTest([string]$Path) {
+  $marked = [bool]($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)
+  if (Test-DrillProductionPath -Path $Path -Marked $marked -Root $script:Drill.ProductionRoot) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' $Path) }
 }
-
 function Read-DrillHostStatus {
   Assert-DrillNotProductionUnderTest $script:Drill.HostStatus
   try { Get-Content -LiteralPath $script:Drill.HostStatus -Raw -Encoding UTF8 -ErrorAction Stop } catch { $null }
