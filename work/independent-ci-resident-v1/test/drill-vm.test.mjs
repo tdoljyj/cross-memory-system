@@ -811,38 +811,84 @@ test('host reader uses only the pinned status file and accounts for an existing 
 // Clued Task fe8a2cbf (Fable renew-key ruling, supplement 1, layer A): a test that reached the real Invoke-DrillMain asked the
 // installed service on this host, the node on duty, to hold intake. The three points where the drill crosses into the host (reading
 // its status, locating the installed CLI, sending an intake request) refuse by name when a test marker is set (NODE_TEST_CONTEXT, which
-// the node test runner gives every test process and its children, or CLUED_UNDER_TEST) and the target is the fixed production root. A
-// fixture root is not refused. These red cases only read (the install receipt, the status file) or name a node.exe that does not exist:
-// never the real Invoke-DrillMain, never a request.
-test('under test, the drill refuses the production root at every point it crosses into the host', opts, () => {
+// the node test runner gives every test process and its children, or CLUED_UNDER_TEST) and the target is the fixed production root.
+// The rule is a pure function (Test-DrillProductionPath: a path, whether a marker is set, the root; nothing read), fed fixtures only.
+// Under a marker every form that names the production root is caught: case, forward slashes, trailing separators, doubled separators,
+// . and .. segments, trailing dots and spaces, the long-path and device prefixes, the All Users alias; a form text alone cannot settle
+// (a possible 8.3 short name where the root's segment stands, a UNC or device path, a relative path, a stream name) is refused under a
+// marker (Codex review r3, item 2). A short TEMP elsewhere settles nothing about the root and is not refused.
+test('the production-root rule is a pure function: every equivalent form is caught under a marker, a fixture root is not', opts, () => {
+  const root = 'C:\\ProgramData\\CluedIndependentCI';
+  const fixture = path.join(tmp, 'fixture-root', 'status.json');
+  const cases = [
+    // [path, marked, refused]
+    [root, true, true],
+    ['C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json', true, true],
+    ['c:\\programdata\\cluedindependentci', true, true],
+    ['C:/ProgramData/CluedIndependentCI/resident', true, true],
+    ['C:\\ProgramData\\CluedIndependentCI\\', true, true],
+    ['C:\\ProgramData\\\\CluedIndependentCI\\\\resident', true, true],
+    ['C:\\ProgramData\\x\\..\\CluedIndependentCI\\.\\resident', true, true],
+    ['C:\\ProgramData\\CluedIndependentCI.\\resident', true, true],
+    ['C:\\ProgramData\\CluedIndependentCI \\resident', true, true],
+    ['\\\\?\\C:\\ProgramData\\CluedIndependentCI\\resident', true, true],
+    ['\\\\.\\C:\\ProgramData\\CluedIndependentCI', true, true],
+    ['C:\\PROGRA~3\\CLUEDI~1\\resident', true, true],
+    ['C:\\Users\\All Users\\CluedIndependentCI', true, true],
+    ['\\\\localhost\\C$\\ProgramData\\CluedIndependentCI', true, true],
+    ['\\\\?\\UNC\\localhost\\C$\\ProgramData\\CluedIndependentCI', true, true],
+    ['resident\\state\\status.json', true, true],
+    ['C:\\ProgramData\\CluedIndependentCI\\status.json:stream', true, true],
+    ['', true, true],
+    // not the production root
+    [fixture, true, false],
+    ['C:\\ProgramData\\CluedIndependentCI-other\\x', true, false],
+    ['C:\\ProgramData\\CluedIndependentCIx', true, false],
+    ['C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\x\\status.json', true, false],
+    ['D:\\ProgramData\\CluedIndependentCI', true, false],
+    ['C:\\ProgramData\\x\\..\\..\\ProgramData2\\CluedIndependentCI', true, false],
+    // no marker: never refused (the rule only fences tests)
+    [root, false, false],
+    ['C:\\PROGRA~3\\CLUEDI~1', false, false],
+  ];
+  const r = ps(`$cases = ${q(JSON.stringify(cases))} | ConvertFrom-Json
+    @($cases | ForEach-Object { Test-DrillProductionPath -Path ([string]$_[0]) -Marked ([bool]$_[1]) -Root ${q(root)} })`);
+  assert.deepEqual(cases.map((c, i) => [c[0], c[1], r[i]]), cases.map(c => [c[0], c[1], c[2]]));
+});
+
+// The crossing points call the rule before they read, locate or send, and refuse by name. Everything that could act is a stub that
+// throws and counts (Invoke-DrillNode, Start-Process, Get-Content, Read-DrillJson, Get-DrillHostSafety, Get-CimInstance, Get-VM,
+// Invoke-DrillWithHostHold): a red run shows what the code tried, and none of it ran (Codex review r3, item 1).
+test('under a marker the three crossing points refuse the production root before anything acts', opts, () => {
   assert.ok(process.env.NODE_TEST_CONTEXT, 'the test runner marks this process');
   const r = ps(`
+    $script:tried = [ordered]@{ node = 0; startProcess = 0; read = 0; json = 0; safety = 0; cim = 0; vm = 0; hold = 0 }
+    function Invoke-DrillNode { $script:tried.node++; throw 'PROCESS_MUST_NOT_START' }
+    function Start-Process { $script:tried.startProcess++; throw 'PROCESS_MUST_NOT_START' }
+    function Get-Content { $script:tried.read++; throw 'READ_MUST_NOT_HAPPEN' }
+    function Read-DrillJson { $script:tried.json++; throw 'READ_MUST_NOT_HAPPEN' }
+    function Get-DrillHostSafety { $script:tried.safety++; throw 'HOST_MUST_NOT_BE_READ' }
+    function Get-CimInstance { $script:tried.cim++; throw 'HOST_MUST_NOT_BE_READ' }
+    function Get-VM { $script:tried.vm++; throw 'HYPERV_MUST_NOT_BE_ASKED' }
+    function Invoke-DrillWithHostHold { $script:tried.hold++; throw 'HOST_HOLD_MUST_NOT_RUN' }
     $codeOf = { param($b) try { $null = & $b; 'NOT_REFUSED' } catch { (Get-DrillCode $_).code } }
-    $fakeTool = @{ root = 'C:\\ProgramData\\CluedIndependentCI'; node = 'C:\\clued-drill-test-nowhere\\node.exe'; tool = 'C:\\clued-drill-test-nowhere\\rearm-tool.mjs' }
+    $productionTool = @{ root = 'C:\\ProgramData\\CluedIndependentCI'; node = 'C:\\ProgramData\\CluedIndependentCI\\runtime\\node.exe'
+      tool = 'C:\\ProgramData\\CluedIndependentCI\\resident\\x\\tools\\rearm-tool.mjs' }
     $out = [ordered]@{
-      tool = (& $codeOf { Get-DrillIntakeTool })
       status = (& $codeOf { Read-DrillHostStatus })
-      request = (& $codeOf { Request-DrillIntake $fakeTool resume 0 })
-      safety = (& $codeOf { Get-DrillHostSafety })
+      tool = (& $codeOf { Get-DrillIntakeTool })
+      request = (& $codeOf { Request-DrillIntake $productionTool resume 0 })
     }
-    # CLUED_UNDER_TEST alone marks a test too (the one entry sets it for every suite)
     $env:NODE_TEST_CONTEXT = $null; $env:CLUED_UNDER_TEST = '1'
     $out.cluedMarker = (& $codeOf { Get-DrillIntakeTool })
+    $out.tried = $script:tried
     $out`);
-  assert.deepEqual(r, { tool: 'DRILL_HOST_ACCESS_UNDER_TEST', status: 'DRILL_HOST_ACCESS_UNDER_TEST', request: 'DRILL_HOST_ACCESS_UNDER_TEST',
-    safety: 'DRILL_HOST_ACCESS_UNDER_TEST', cluedMarker: 'DRILL_HOST_ACCESS_UNDER_TEST' });
+  assert.deepEqual(r, { status: 'DRILL_HOST_ACCESS_UNDER_TEST', tool: 'DRILL_HOST_ACCESS_UNDER_TEST', request: 'DRILL_HOST_ACCESS_UNDER_TEST',
+    cluedMarker: 'DRILL_HOST_ACCESS_UNDER_TEST', tried: { node: 0, startProcess: 0, read: 0, json: 0, safety: 0, cim: 0, vm: 0, hold: 0 } });
   // a fixture root is read as before
   const fixture = path.join(tmp, 'under-test-status.json'); fs.writeFileSync(fixture, idleHostStatus('2026-11-19T00:00:00Z'));
   assert.deepEqual(ps(`$script:Drill.HostStatus = ${q(fixture)}; Read-DrillHostStatus | ConvertFrom-Json`), JSON.parse(idleHostStatus('2026-11-19T00:00:00Z')));
-  // the rule: a marker and the fixed production root, nothing else (pure: no file is touched)
-  assert.deepEqual(ps(`@(
-    (Test-DrillProductionUnderTest 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json'),
-    (Test-DrillProductionUnderTest 'c:\\programdata\\cluedindependentci'),
-    (Test-DrillProductionUnderTest ${q(fixture)}),
-    (Test-DrillProductionUnderTest 'C:\\ProgramData\\CluedIndependentCI-other\\x'),
-    $(Remove-Item Env:NODE_TEST_CONTEXT, Env:CLUED_UNDER_TEST -ErrorAction SilentlyContinue; Test-DrillProductionUnderTest 'C:\\ProgramData\\CluedIndependentCI\\x'))`),
-    [true, true, false, false, false]);
-  // each crossing point checks before it acts: nothing is read, located or sent unchecked
+  // each crossing point checks before it acts
   const text = fs.readFileSync(script, 'utf8');
   for (const fn of ['Read-DrillHostStatus', 'Get-DrillIntakeTool', 'Request-DrillIntake']) {
     const start = text.indexOf(`function ${fn}`), body = text.slice(start, text.indexOf('\n}', start));
