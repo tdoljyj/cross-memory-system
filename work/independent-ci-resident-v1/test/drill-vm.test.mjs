@@ -577,7 +577,7 @@ test('the drill receipt keeps each executor state first observed during the arme
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
     function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
     function Restore-VMCheckpoint { param($VMName, $Name, [switch]$Confirm) }
-    function Start-DrillBootWatchdog { ${q(path.join(root, 'fake-watchdog'))} }
+    function Start-DrillBootWatchdog { @{ signal = ${q(path.join(root, 'fake-watchdog'))}; process = $null } }
     function Start-DrillGuardedVm { $script:HostGuard.state.armed = $true }
     function Get-DrillCredential { }
     function Wait-DrillGuest { }
@@ -603,37 +603,8 @@ test('the drill receipt keeps each executor state first observed during the arme
   ]);
 });
 
-test('the boot watchdog still runs checkpoint cleanup after its parent job is terminated', opts, () => {
-  const root = fs.mkdtempSync(path.join(tmp, 'boot-watchdog-'));
-  const fixture = path.join(root, 'boot-fixture.ps1');
-  const host = path.join(root, 'host.ps1');
-  const ready = path.join(root, 'host-ready');
-  const start = path.join(root, 'start');
-  const cleanup = path.join(root, 'restored');
-  const vmId = '8f87dbcb-9fbc-4fd6-adc4-7c6345192c50';
-  fs.writeFileSync(fixture, `. ${q(script)}
-    $script:DrillScriptPath = $PSCommandPath
-    $script:Drill.BootMutex = ${q(`Local\\DrillWatchdogTest-${path.basename(root)}`)}
-    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]'${vmId}' }; notes = $script:Drill.Marker; state = 'Running' } }
-    function Stop-DrillOwnedVm {
-      param([switch]$RestoreCheckpoint)
-      [IO.File]::WriteAllText(${q(cleanup)}, [string]$RestoreCheckpoint)
-      $true
-    }
-  `);
-  fs.writeFileSync(host, `. ${q(fixture)}
-    $clock = [Diagnostics.Stopwatch]::StartNew()
-    while (-not (Test-Path -LiteralPath ${q(start)})) {
-      if ($clock.Elapsed.TotalSeconds -ge 15) { throw 'test job not ready' }
-      Start-Sleep -Milliseconds 20
-    }
-    $signal = Start-DrillBootWatchdog ${q(root)} '${vmId}' ([DateTimeOffset]::UtcNow.AddSeconds(30))
-    [IO.File]::WriteAllText("$signal.starting", '')
-    [IO.File]::WriteAllText(${q(ready)}, '')
-    Start-Sleep -Seconds 30
-  `);
-  const result = ps(`
-    Add-Type -TypeDefinition @'
+// A job of our own that refuses breakaway (KILL_ON_JOB_CLOSE only), like the agent session job a real drill runs in.
+const drillTestJob = `Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -661,14 +632,46 @@ public static class DrillTestJob {
     var job = CreateJobObject(IntPtr.Zero, IntPtr.Zero);
     if (job == IntPtr.Zero) throw new Win32Exception();
     var limits = new ExtendedLimits();
-    limits.Basic.Flags = 0x00000800 | 0x00002000; // BREAKAWAY_OK | KILL_ON_JOB_CLOSE
+    limits.Basic.Flags = 0x00002000;
     if (SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits))) return job;
     var error = new Win32Exception();
     CloseHandle(job);
     throw error;
   }
 }
-'@
+'@`;
+
+test('the boot watchdog still runs checkpoint cleanup after its parent job is terminated', opts, () => {
+  const root = fs.mkdtempSync(path.join(tmp, 'boot-watchdog-'));
+  const fixture = path.join(root, 'boot-fixture.ps1');
+  const host = path.join(root, 'host.ps1');
+  const ready = path.join(root, 'host-ready');
+  const start = path.join(root, 'start');
+  const cleanup = path.join(root, 'restored');
+  const vmId = '8f87dbcb-9fbc-4fd6-adc4-7c6345192c50';
+  fs.writeFileSync(fixture, `. ${q(script)}
+    $script:DrillScriptPath = $PSCommandPath
+    $script:Drill.BootMutex = ${q(`Local\\DrillWatchdogTest-${path.basename(root)}`)}
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]'${vmId}' }; notes = $script:Drill.Marker; state = 'Running' } }
+    function Stop-DrillOwnedVm {
+      param([switch]$RestoreCheckpoint)
+      [IO.File]::WriteAllText(${q(cleanup)}, [string]$RestoreCheckpoint)
+      $true
+    }
+  `);
+  fs.writeFileSync(host, `. ${q(fixture)}
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path -LiteralPath ${q(start)})) {
+      if ($clock.Elapsed.TotalSeconds -ge 15) { throw 'test job not ready' }
+      Start-Sleep -Milliseconds 20
+    }
+    $watchdog = Start-DrillBootWatchdog ${q(root)} '${vmId}' ([DateTimeOffset]::UtcNow.AddSeconds(30))
+    [IO.File]::WriteAllText("$($watchdog.signal).starting", '')
+    [IO.File]::WriteAllText(${q(ready)}, '')
+    Start-Sleep -Seconds 30
+  `);
+  const result = ps(`
+    ${drillTestJob}
     $job = [DrillTestJob]::Create()
     $worker = $null
     try {
@@ -692,6 +695,91 @@ public static class DrillTestJob {
     }`);
   assert.deepEqual(result, { terminated: true, cleanup: true });
   assert.equal(fs.readFileSync(cleanup, 'utf8'), 'True');
+});
+
+test('the boot watchdog is never started by job breakaway', () => {
+  const source = fs.readFileSync(script, 'utf8');
+  assert.doesNotMatch(source, /0x0*1000000\b|BREAKAWAY_FROM_JOB|BreakawayFromJob/i);
+});
+
+test('a watchdog that exits after signalling ready never lets the VM start', opts, () => {
+  const root = fs.mkdtempSync(path.join(tmp, 'watchdog-exit-'));
+  const fake = path.join(root, 'fake-watchdog.ps1');
+  fs.writeFileSync(fake, `[IO.File]::WriteAllText($args[0], ''); Start-Sleep -Milliseconds 1500`);
+  const r = ps(`
+    $script:starts = 0; $script:fakeWatch = $null
+    function Start-VM { param($Name, $ErrorAction) $script:starts++ }
+    function Get-DrillHostSafety { @{ ok = $true } }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) }
+    function Assert-DrillHost { }
+    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint, $Window)
+      $state = [hashtable]::Synchronized(@{ ready = $true; armed = $false; failure = $null; executorStates = [ordered]@{} })
+      $script:HostGuard = @{ state = $state; pending = @{ IsCompleted = $false } }
+      return $script:HostGuard
+    }
+    function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
+    function Start-DrillDetachedWatchdog {
+      $p = Start-Process -FilePath ${q(powershell)} -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile', '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass', '-File', ('"' + ${q(fake)} + '"'), ('"' + ${q(path.join(root, 'guest-shutdown.ready'))} + '"'))
+      $script:fakeWatch = [Diagnostics.Process]::GetProcessById($p.Id)
+      return $p
+    }
+    # The watchdog exits after its ready signal was read and before the boot.
+    function Get-DrillGuardSafety { param($State) [void]$script:fakeWatch.WaitForExit(15000); @{ ok = $true } }
+    function Add-DrillExecutorObservation { }
+    function Get-DrillCredential { }
+    function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $true }
+    $outcome = Invoke-DrillOnCheckpoint { 'booted' } ${q(root)} @{ safeToResume = $true; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10); holdUntil = [DateTimeOffset]::MinValue }
+    @{ starts = $script:starts; result = $outcome.result; failure = $outcome.failure; exited = $script:fakeWatch.HasExited }`);
+  assert.equal(r.exited, true);
+  assert.equal(r.starts, 0);
+  assert.equal(r.result, null);
+  assert.equal(r.failure.code, 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY');
+  assert.equal(r.failure.detail.code, 'DRILL_WATCHDOG_EXITED_BEFORE_BOOT');
+});
+
+test('the watchdog launcher never terminates a process it cannot tie to this launch', opts, () => {
+  const r = ps(`
+    $decoy = Start-Process -FilePath ${q(powershell)} -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 20'
+    try {
+      # WMI hands back a PID that now belongs to someone else (the launched process exited and the PID was reused).
+      function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) [pscustomobject]@{ ReturnValue = 0; ProcessId = $decoy.Id } }
+      $c = try { [void](Start-DrillDetachedWatchdog 'AAAA' ([Diagnostics.Stopwatch]::StartNew())); $null } catch { Get-DrillCode $_ }
+      @{ code = (Get-Prop $c 'code'); alive = (-not $decoy.HasExited) }
+    } finally { if (-not $decoy.HasExited) { $decoy.Kill() }; $decoy.Dispose() }`);
+  assert.deepEqual(r, { code: 'DRILL_WATCHDOG_IDENTITY_UNCONFIRMED', alive: true });
+});
+
+test('a launched watchdog found inside a job is terminated and confirmed gone before the refusal', opts, () => {
+  const encoded = Buffer.from('Start-Sleep -Seconds 20', 'utf16le').toString('base64');
+  const r = ps(`
+    ${drillTestJob}
+    $job = [DrillTestJob]::Create()
+    $decoy = Start-Process -FilePath ${q(powershell)} -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}'
+    try {
+      if (-not [DrillTestJob]::AssignProcessToJobObject($job, $decoy.Handle)) { throw [ComponentModel.Win32Exception]::new() }
+      function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) [pscustomobject]@{ ReturnValue = 0; ProcessId = $decoy.Id } }
+      $c = try { [void](Start-DrillDetachedWatchdog '${encoded}' ([Diagnostics.Stopwatch]::StartNew())); $null } catch { Get-DrillCode $_ }
+      @{ code = (Get-Prop $c 'code'); inJob = (Get-Prop $c 'detail.inJob'); terminated = (Get-Prop $c 'detail.terminated'); exited = $decoy.HasExited }
+    } finally {
+      if (-not $decoy.HasExited) { $decoy.Kill() }
+      $decoy.Dispose()
+      [void][DrillTestJob]::CloseHandle($job)
+    }`);
+  assert.deepEqual(r, { code: 'DRILL_WATCHDOG_IN_JOB', inJob: true, terminated: true, exited: true });
+});
+
+test('asking WMI for the watchdog is bounded by the ready budget and fails by name', opts, () => {
+  const root = fs.mkdtempSync(path.join(tmp, 'watchdog-wmi-'));
+  const r = ps(`
+    $script:timeout = $null
+    function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) $script:timeout = $OperationTimeoutSec; throw 'WMI did not answer' }
+    $c = try { [void](Start-DrillBootWatchdog ${q(root)} ([guid]::Empty) ([DateTimeOffset]::UtcNow.AddMinutes(1))); $null } catch { Get-DrillCode $_ }
+    @{ code = (Get-Prop $c 'code'); inner = (Get-Prop $c 'detail.code'); timeout = $script:timeout }`);
+  assert.deepEqual(r, { code: 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY', inner: 'DRILL_WATCHDOG_WMI_CREATE_FAILED', timeout: 15 });
 });
 
 test('host reader uses only the pinned status file and accounts for an existing larger VM', opts, () => {
@@ -791,7 +879,7 @@ test('checkpoint caller discards a result after a guard failure and restores the
     }
     function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
     function Start-DrillGuardedVm { }
-    function Start-DrillBootWatchdog { ${q(path.join(tmp, 'checkpoint-test'))} }
+    function Start-DrillBootWatchdog { @{ signal = ${q(path.join(tmp, 'checkpoint-test'))}; process = $null } }
     function Get-DrillCredential { }
     function Wait-DrillGuest { }
     function Invoke-DrillGuest { $true }
@@ -830,7 +918,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
       return $script:HostGuard
     }
     function Start-DrillGuardedVm { $script:vm.State = 'Running' }
-    function Start-DrillBootWatchdog { ${q(path.join(tmp, 'endinvoke-test'))} }
+    function Start-DrillBootWatchdog { @{ signal = ${q(path.join(tmp, 'endinvoke-test'))}; process = $null } }
     function Get-DrillCredential { }
     function Wait-DrillGuest { }
     function Invoke-DrillGuest { $true }
