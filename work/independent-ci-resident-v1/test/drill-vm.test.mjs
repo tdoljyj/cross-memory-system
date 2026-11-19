@@ -1769,6 +1769,52 @@ test('A8 captures the current launcher exit and indented terminal JSON from the 
 // The drill's own children (the kit entry, verify, the A8 tools, root in the prerequisite distribution) are read like the package's
 // Invoke-Native (windows/first-install-host.ps1): stdout and stderr apart; a stderr line is text, never a PowerShell error that ends the
 // step under Stop. No merged stream is left in the drill.
+// Codex review of 58136df61, medium 3: the prerequisite step's own children (the WSL MSI, wsl --version, wsl --install) are read the same
+// way and kept in the facts, failure or not; wsl's own output is UTF-16LE (the package decodes wsl --version so: first-install-host.ps1).
+// The children are a stand-in runner here: nothing is installed and wsl is never called.
+test('the prerequisite step reads the MSI and wsl apart and keeps their output in the facts, on a refusal too', opts, () => {
+  const text = fs.readFileSync(script, 'utf8');
+  const block = text.slice(text.indexOf('$script:GuestPrereq = {'), text.indexOf('\n}', text.indexOf('$script:GuestPrereq = {')));
+  assert.doesNotMatch(block, /Start-Process|& \$wslExe|\$LASTEXITCODE/);
+  const dir = path.join(tmp, 'prereq-guest'); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'wsl-msi.log'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('MSI (s) line 1\r\nProduct: Windows Subsystem for Linux -- Installation completed successfully.\r\n', 'utf16le')]));
+  const fakeNative = `param([string]$Exe, [string[]]$Arguments, [int]$Seconds = 3600, [string]$Encoding = 'utf-8')
+    $global:nativeCalls += ,([ordered]@{ exe = [IO.Path]::GetFileName($Exe); args = ($Arguments -join ' '); encoding = $Encoding })
+    $a = $Arguments -join ' '
+    if ($Exe -match 'msiexec') { return [ordered]@{ exit = $global:msiExit; stdout = ''; stderr = 'msi note' } }
+    if ($a -ceq '--version') { return [ordered]@{ exit = 0; stdout = "WSL version: 2.7.13.0\`r\`nKernel version: 6.6\`r\`n"; stderr = '' } }
+    if ($a -match '^--install') { return [ordered]@{ exit = 0; stdout = 'Installing'; stderr = 'install note' } }
+    if ($a -match 'dpkg -i') { return [ordered]@{ exit = 0; stdout = "DPKG_EXIT=0\`nAUDIT=0\`n"; stderr = '' } }
+    return [ordered]@{ exit = 0; stdout = "PRETTY_NAME=Ubuntu\`nsystemd\`nactive\`n"; stderr = '' }`;
+  const run = msiExit => ps(`$global:nativeCalls = @(); $global:msiExit = ${msiExit}
+    $f = & $script:GuestPrereq ${q(dir)} 'wsl.msi' 'rootfs.tar.gz' 'Ubuntu-Drill' '2.7.13.0' ${q(fakeNative)}
+    [ordered]@{ facts = $f; calls = @($global:nativeCalls) }`);
+  const ok = run(0);
+  assert.equal(ok.facts.failure, null);
+  assert.equal(ok.facts.wslVersion, 'WSL version: 2.7.13.0 Kernel version: 6.6');
+  assert.deepEqual(ok.facts.msi.logTail.slice(-1), ['Product: Windows Subsystem for Linux -- Installation completed successfully.']);
+  assert.equal(ok.facts.msi.stderr, 'msi note');
+  assert.deepEqual({ exit: ok.facts.install.exit, stdout: ok.facts.install.stdout, stderr: ok.facts.install.stderr }, { exit: 0, stdout: 'Installing', stderr: 'install note' });
+  assert.equal(ok.facts.dockerActive, true); assert.equal(ok.facts.systemdPid1, true);
+  // wsl's own commands are decoded as UTF-16LE; root's Linux output as UTF-8
+  assert.deepEqual(ok.calls.map(c => [c.exe, c.encoding]).slice(0, 3), [['msiexec.exe', 'utf-8'], ['wsl.exe', 'utf-16'], ['wsl.exe', 'utf-16']]);
+  assert.ok(ok.calls.slice(3).every(c => c.exe === 'wsl.exe' && c.encoding === 'utf-8'));
+  assert.match(ok.calls[0].args, /\/L\*v .*wsl-msi\.log$/);
+  // a refused MSI: the facts still come back with its output and log, nothing after it runs, and the host stops by name after writing them
+  const bad = run(1603);
+  assert.equal(bad.facts.failure, 'PREREQ_WSL_MSI_EXIT_1603');
+  assert.equal(bad.facts.msi.exit, 1603);
+  assert.equal(bad.facts.msi.logTail.length, 2);
+  assert.equal(bad.calls.length, 1);
+  const runDir = path.join(tmp, 'prereq-run'); fs.mkdirSync(runDir, { recursive: true });
+  const code = psCode(`function New-PSSession { 'session' }; function Invoke-Command { @() }; function Copy-Item { }; function Remove-PSSession { }
+    function Get-Sha256Hex { 'x' }
+    function Invoke-DrillGuest { [ordered]@{ failure = 'PREREQ_WSL_MSI_EXIT_1603'; msi = [ordered]@{ exit = 1603 } } }
+    Invoke-DrillPrereqInGuest ${q(runDir)} @{ dir = 'unused'; wsl = 'wsl.msi'; rootfs = 'r'; debs = @(); distribution = 'd'; wslVersion = 'v' } $null`);
+  assert.equal(code, 'DRILL_PREREQ_FAILED');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'prereq-facts.json'), 'utf8')).msi.exit, 1603);
+});
+
 test('the drill reads its children with stdout and stderr apart: a stderr line never stops a step', opts, () => {
   assert.doesNotMatch(fs.readFileSync(script, 'utf8'), /2>&1\s*\|\s*ForEach-Object/);
   const n = ps(`$ErrorActionPreference = 'Stop'

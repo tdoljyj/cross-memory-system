@@ -570,12 +570,21 @@ $script:GuestPrereq = {
   $ErrorActionPreference = 'Stop'
   $native = [scriptblock]::Create($NativeText)
   $wslExe = "$env:SystemRoot\System32\wsl.exe"
-  $p = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList @('/i', (Join-Path $Dir $Wsl), '/qn', '/norestart') -Wait -PassThru
-  if ($p.ExitCode -notin @(0, 3010)) { throw "PREREQ_WSL_MSI_EXIT_$($p.ExitCode)" }
-  $ver = ((& $wslExe --version) -join ' ') -replace [char]0, ''
-  if ($WslVersion -and $ver -notmatch [regex]::Escape($WslVersion)) { throw "PREREQ_WSL_VERSION_NOT_PINNED" }
-  & $wslExe --install --from-file (Join-Path $Dir $Rootfs) --name $Distro --no-launch | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "PREREQ_DISTRO_INSTALL_EXIT_$LASTEXITCODE" }
+  # Every child here is read apart (Invoke-DrillNative) and kept in the facts, a refusal included: a refusal returns the facts with its
+  # code in `failure` (the host writes them, then stops by that code), never a bare exception (Codex review of 58136df61, medium 3).
+  # wsl's own output is UTF-16LE (the package reads wsl --version so: first-install-host.ps1); the MSI writes its log to wsl-msi.log.
+  $f = [ordered]@{ failure = $null; distribution = $Distro }
+  $msiLog = Join-Path $Dir 'wsl-msi.log'
+  $mi = & $native "$env:SystemRoot\System32\msiexec.exe" @('/i', (Join-Path $Dir $Wsl), '/qn', '/norestart', '/L*v', $msiLog) 1800
+  $f.msi = [ordered]@{ exit = $mi.exit; stdout = $mi.stdout; stderr = $mi.stderr; logTail = @(if (Test-Path -LiteralPath $msiLog -PathType Leaf) { Get-Content -LiteralPath $msiLog -Tail 40 }) }
+  if ($mi.exit -notin @(0, 3010)) { $f.failure = "PREREQ_WSL_MSI_EXIT_$($mi.exit)"; return $f }
+  $vr = & $native $wslExe @('--version') 120 'utf-16'
+  $ver = (@($vr.stdout -split "`r?`n" | Where-Object { $_ -ne '' }) -join ' ')
+  $f.wslVersion = $ver; $f.wslVersionRun = [ordered]@{ exit = $vr.exit; stderr = $vr.stderr }
+  if ($WslVersion -and $ver -notmatch [regex]::Escape($WslVersion)) { $f.failure = 'PREREQ_WSL_VERSION_NOT_PINNED'; return $f }
+  $ir = & $native $wslExe @('--install', '--from-file', (Join-Path $Dir $Rootfs), '--name', $Distro, '--no-launch') 1800 'utf-16'
+  $f.install = [ordered]@{ exit = $ir.exit; stdout = $ir.stdout; stderr = $ir.stderr }
+  if ($ir.exit -ne 0) { $f.failure = "PREREQ_DISTRO_INSTALL_EXIT_$($ir.exit)"; return $f }
   # --exec: the arguments go to env as they are (with `--` WSL runs the command line through root's shell, which split the
   # bash -c text at its | and ; - 2026-11-16 13:07). stdout and stderr apart (Invoke-DrillNative): the stdout lines are judged as data,
   # stderr is kept beside them.
@@ -586,8 +595,9 @@ $script:GuestPrereq = {
   $dpkgExit = @($dpkg.out | Where-Object { $_ -match '^DPKG_EXIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
   $audit = @($dpkg.out | Where-Object { $_ -match '^AUDIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
   $facts = & $root "for i in `$(seq 1 30); do systemctl is-active --quiet docker.service && break; sleep 2; done; grep ^PRETTY_NAME /usr/lib/os-release; ps -p 1 -o comm=; systemctl is-active docker.service; dpkg-query -W -f='`${Package} `${Version}\n' docker.io containerd runc"
-  [ordered]@{ wslVersion = $ver; distribution = $Distro; dpkgExit = $dpkgExit; dpkgAuditLines = $audit; dpkgTail = @($dpkg.out); dpkgStderr = $dpkg.err; facts = $facts.out; factsStderr = $facts.err
-    dockerActive = (@($facts.out) -contains 'active'); systemdPid1 = (@($facts.out) -contains 'systemd') }
+  $f.dpkgExit = $dpkgExit; $f.dpkgAuditLines = $audit; $f.dpkgTail = @($dpkg.out); $f.dpkgStderr = $dpkg.err; $f.facts = $facts.out; $f.factsStderr = $facts.err
+  $f.dockerActive = (@($facts.out) -contains 'active'); $f.systemdPid1 = (@($facts.out) -contains 'systemd')
+  $f
 }
 
 # The kit entry's arguments with the fixed guest paths in place.
@@ -946,12 +956,14 @@ function Get-DrillIntakeTool {
 # the path", risks taken in). A child still running at $Seconds is left running (nothing is killed) and the step stops by name.
 # Self-contained: the guest receives it as text ($script:DrillNativeText) and makes it a script block there.
 function Invoke-DrillNative {
-  param([string]$Exe, [string[]]$Arguments, [int]$Seconds = 3600)
+  param([string]$Exe, [string[]]$Arguments, [int]$Seconds = 3600, [string]$Encoding = 'utf-8')
   $quote = { param([string]$a) if ($a.Length -gt 0 -and $a -notmatch '[\s"]') { $a } else { '"' + (($a -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' } }
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $Exe; $psi.Arguments = (@($Arguments | ForEach-Object { & $quote $_ }) -join ' ')
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
-  $utf8 = New-Object Text.UTF8Encoding($false); $psi.StandardOutputEncoding = $utf8; $psi.StandardErrorEncoding = $utf8
+  # 'utf-16': a child that writes UTF-16LE (wsl.exe's own messages); UTF-8 otherwise
+  $enc = if ($Encoding -ceq 'utf-16') { [Text.Encoding]::Unicode } else { New-Object Text.UTF8Encoding($false) }
+  $psi.StandardOutputEncoding = $enc; $psi.StandardErrorEncoding = $enc
   $p = [Diagnostics.Process]::Start($psi)
   $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
   if (-not $p.WaitForExit($Seconds * 1000)) { throw ('COMMAND_TIMEOUT_NOTHING_KILLED: ' + [IO.Path]::GetFileName($Exe)) }
@@ -1512,6 +1524,7 @@ function Invoke-DrillPrereqInGuest([string]$RunDir, $Prereq, [pscredential]$Cred
   try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion, $script:DrillNativeText) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' -Step 'prereq' }
   catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_GUEST_STEP_FAILED') { throw }; throw (New-DrillError 'DRILL_PREREQ_FAILED' $c.detail) }
   Write-DrillJson (Join-Path $RunDir 'prereq-facts.json') $facts
+  if (Get-Prop $facts 'failure') { throw (New-DrillError 'DRILL_PREREQ_FAILED' (Get-Prop $facts 'failure')) }
   if ($facts.dpkgExit -ne 0 -or $facts.dpkgAuditLines -ne 0 -or -not $facts.dockerActive -or -not $facts.systemdPid1) {
     throw (New-DrillError 'DRILL_PREREQ_NOT_READY' @{ dpkgExit = $facts.dpkgExit; audit = $facts.dpkgAuditLines; docker = $facts.dockerActive; systemd = $facts.systemdPid1 }) }
   return $facts
