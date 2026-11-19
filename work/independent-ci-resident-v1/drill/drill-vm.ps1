@@ -45,13 +45,19 @@ $script:DrillScriptPath = $PSCommandPath
 $script:HostGuard = $null
 # The cache release (Decision 21db5a9c; Fable renew-key ruling, supplement "WSL gate race" item 1; Codex review of 74e7a65e7, high 1): one
 # fixed script, given to sh in the runner distribution on its standard input. It lists the processes once (and prints the list, for the
-# init's run time), makes sure that list is one (it holds the ps itself), looks in it for Runner.Worker by the same criterion as the
-# Windows side (the exact name, any case), and releases only when it has made sure there is none: exit 3 with a job, 4 when anything in
-# the check fails (no list, no ps in it, grep not able to answer), 5 when the release itself fails, 0 released (the page cache only:
-# 1, not dentries and inodes). A single-quoted here-string: nothing is put into it (Assert-DrillWslReleaseScriptLiteral holds it to that).
+# init's run time), makes sure every line of it is a process line ("pid seconds name", a name of 1..15 printable characters) and that it
+# holds the ps itself, looks in it for Runner.Worker by the same criterion as the Windows side (the exact name, any case), and releases
+# only when it has made sure there is none: exit 3 with a job, 4 when anything in the check fails (no list, a line that is no process
+# line, no ps in it, grep not able to answer), 5 when the release itself fails; released, it prints CLUED_DRILL_PAGE_CACHE_RELEASED
+# (WslReleaseSentinel) after the page cache was written (1, not dentries and inodes) and exits 0. The host records a release only on that
+# line (Codex review of f734afe7e: an input that never arrived exits 0 too). A single-quoted here-string: nothing is put into it
+# (Assert-DrillWslReleaseScriptLiteral holds it to that).
 $script:DrillWslReleaseScript = @'
 list=$(ps -e -o pid=,etimes=,comm=) || exit 4
 printf '%s\n' "$list"
+printf '%s\n' "$list" | grep -vxE '[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+[^[:cntrl:]]{1,15}' >/dev/null
+bad=$?
+if [ "$bad" -ne 1 ]; then exit 4; fi
 printf '%s\n' "$list" | grep -qxE '[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+ps[[:space:]]*' || exit 4
 printf '%s\n' "$list" | grep -qixE '[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+Runner[.]Worker[[:space:]]*'
 found=$?
@@ -59,6 +65,7 @@ if [ "$found" -eq 0 ]; then exit 3; fi
 if [ "$found" -ne 1 ]; then exit 4; fi
 sync || exit 5
 echo 1 > /proc/sys/vm/drop_caches || exit 5
+echo CLUED_DRILL_PAGE_CACHE_RELEASED
 exit 0
 '@
 # The three stages before a boot, each with its own sample (Invoke-DrillPreBootRelease, Start-DrillGuardedVm), for the receipt.
@@ -102,6 +109,8 @@ $script:Drill = [ordered]@{
   WslTimeoutSeconds = 30
   # A distribution whose init has run no longer than this when probed was started by the probe itself (supplement "WSL gate race" item 2).
   WslJustStartedSeconds = 15
+  # The release script's last line after it wrote the page cache (DrillWslReleaseScript): the only sign of a release.
+  WslReleaseSentinel = 'CLUED_DRILL_PAGE_CACHE_RELEASED'
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
   IntakeHolder = 'drill'
@@ -1199,14 +1208,21 @@ function Invoke-DrillWslCacheRelease([string]$HostName = $env:COMPUTERNAME) {
       $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')))
       if ($runningNow -notcontains $d) { $out.results += [ordered]@{ distribution = $d; running = $false; exit = $null; initSeconds = $null }; continue }
       $r = Invoke-DrillWsl @('--distribution', $d, '--user', 'root', '--exec', 'sh', '-s') $text
-      $initSeconds = $null
-      try { $initSeconds = (ConvertFrom-DrillWslProcessList (Get-DrillField $r 'stdout')).initSeconds } catch { $initSeconds = $null }
-      if ($null -ne $initSeconds -and $initSeconds -le $script:Drill.WslJustStartedSeconds) { $out.wslStartedByProbe += $d }
       $exit = Get-DrillField $r 'exit'
-      $out.results += [ordered]@{ distribution = $d; running = $true; exit = $exit; initSeconds = $initSeconds }
-      if ($exit -eq 0) { $out.released += $d }
+      # the script's answer: its process list, then, only after a release, the sentinel line. Nothing in it is passed over: a list that
+      # does not read is recorded (listError) and never counts as a release (Codex review of f734afe7e, high 1 and medium 1).
+      $answer = @(([string](Get-DrillField $r 'stdout')) -split "`r?`n" | Where-Object { $_.Trim() })
+      $sentinel = $answer.Count -gt 0 -and $answer[$answer.Count - 1].Trim() -ceq $script:Drill.WslReleaseSentinel
+      if ($sentinel) { $answer = @($answer | Select-Object -First ($answer.Count - 1)) }
+      $listed = $null; $listError = $null
+      try { $listed = ConvertFrom-DrillWslProcessList ($answer -join "`n") } catch { $listError = (Get-DrillCode $_).code }
+      $initSeconds = if ($listed) { $listed.initSeconds } else { $null }
+      if ($null -ne $initSeconds -and $initSeconds -le $script:Drill.WslJustStartedSeconds) { $out.wslStartedByProbe += $d }
+      $out.results += [ordered]@{ distribution = $d; running = $true; exit = $exit; sentinel = $sentinel; listError = $listError; initSeconds = $initSeconds }
+      if ($exit -eq 0 -and $sentinel -and $null -eq $listError) { $out.released += $d }
       elseif ($exit -eq 3) { $out.skipped = [ordered]@{ where = $d; reason = 'WSL_ACTIONS_RUNNER_JOB' }; break }
       elseif ($exit -eq 4) { throw (New-DrillError 'DRILL_WSL_RELEASE_CHECK_FAILED' @{ distribution = $d }) }
+      elseif ($exit -eq 0) { throw (New-DrillError 'DRILL_WSL_RELEASE_NOT_CONFIRMED' @{ distribution = $d; sentinel = $sentinel; listError = $listError }) }
       else { throw (New-DrillError 'DRILL_WSL_CACHE_RELEASE_FAILED' @{ distribution = $d; exit = $exit }) }
     }
   } catch {

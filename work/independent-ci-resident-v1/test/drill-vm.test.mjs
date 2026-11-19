@@ -1605,6 +1605,10 @@ test('the release script releases only when it has made sure there is no Runner.
     'ps-prints-nothing': [{ out: '' }, 4, false],
     'not-a-process-list': [{ out: 'Usage: ps [options]\n' }, 4, false],
     'grep-fails': [{ out: psLines(86400, 'Runner.Listener'), grepFails: true }, 4, false],
+    // Codex review of f734afe7e, high 1: one line that is no process line, among good ones, is a failed check: nothing released
+    'good-and-bad-lines': [{ out: psLines(86400, 'Runner.Listener') + '    213       ? Runner.Worker\n' }, 4, false],
+    'a-line-without-name': [{ out: psLines(86400, 'Runner.Listener') + '    214   86000\n' }, 4, false],
+    'a-name-too-long': [{ out: psLines(86400, 'Runner.Listener') + '    215   86000 a-name-longer-than-fifteen\n' }, 4, false],
   };
   for (const [name, [world, exit, released]] of Object.entries(cases)) {
     const w = shWorld(name, world);
@@ -1612,8 +1616,45 @@ test('the release script releases only when it has made sure there is no Runner.
     assert.equal(r.status, exit, `${name}: ${r.stdout}${r.stderr}`);
     assert.equal(w.synced(), released, `${name}: sync`);
     assert.equal(w.dropped(), released ? '1' : null, `${name}: drop`);
+    // the sentinel, printed only after the page cache was written, is the one sign of a release (medium 1)
+    assert.equal(/^CLUED_DRILL_PAGE_CACHE_RELEASED$/m.test(r.stdout), released, `${name}: sentinel`);
     if (exit !== 4 || name === 'grep-fails') assert.match(r.stdout, /^\s+1\s+86400 systemd$/m, `${name}: the list goes back for the probe's run time`);
   }
+  // an input that never arrived: sh exits 0 having done nothing, and says nothing
+  const empty = spawnSync(gitSh, ['-s'], { input: '', encoding: 'utf8', timeout: 60000 });
+  assert.equal(empty.status, 0);
+  assert.equal(empty.stdout, '');
+});
+
+// Codex review of f734afe7e, high 1 and medium 1: the host records a release only from a zero exit whose output ends with the sentinel
+// and whose process list reads; a zero exit without it (the script never ran: an empty input) or with a list it cannot read is a failure.
+test('a release is recorded only on the sentinel and a list that reads; a silent zero exit or an unreadable list is a failure', opts, () => {
+  const r = ps(`
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillWslRegisteredNames { 'Fixture-CI' }
+    $script:DrillWslRunner = { param($a, $stdin)
+      if ($a[0] -ceq '--list') { return @{ exit = 0; stdout = "Fixture-CI\`n"; stderr = '' } }
+      return @{ exit = 0; stdout = $script:answer; stderr = '' }
+    }
+    $out = [ordered]@{}
+    foreach ($case in @(
+        @('silent', ''),
+        @('no-sentinel', ${q(psLines(86400, 'Runner.Listener'))}),
+        @('bad-list', ${q('garbage\nCLUED_DRILL_PAGE_CACHE_RELEASED\n')}),
+        @('released', ${q(psLines(86400, 'Runner.Listener') + 'CLUED_DRILL_PAGE_CACHE_RELEASED\n')}))) {
+      $script:answer = $case[1]
+      $out[$case[0]] = Invoke-DrillWslCacheRelease
+    }
+    $out`);
+  for (const name of ['silent', 'no-sentinel', 'bad-list']) {
+    assert.deepEqual(r[name].released, [], name);
+    assert.equal(r[name].failed.code, 'DRILL_WSL_RELEASE_NOT_CONFIRMED', name);
+  }
+  assert.equal(r['bad-list'].results[0].listError, 'WSL_PROCESS_LIST_UNREADABLE');
+  assert.deepEqual(r.released.released, ['Fixture-CI']);
+  assert.equal(r.released.failed, null);
+  assert.equal(r.released.results[0].initSeconds, 86400);
 });
 
 function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, initSeconds = 86400 } = {}) {
@@ -1770,7 +1811,7 @@ test('the release reads Windows and the running list again before each distribut
       if ($j -ceq '--list --running --quiet') { $script:calls.Add('list'); return @{ exit = 0; stdout = "Fixture-A\`nFixture-C\`n"; stderr = '' } }
       $script:calls.Add($a[1])
       if ($a[1] -ceq 'Fixture-C') { $script:windowsJob = $true }
-      return @{ exit = 0; stdout = ${q(psLines(86400, 'Runner.Listener'))} }
+      return @{ exit = 0; stdout = ${q(psLines(86400, 'Runner.Listener') + 'CLUED_DRILL_PAGE_CACHE_RELEASED\n')} }
     }
     $first = Invoke-DrillWslCacheRelease
     $firstCalls = @($script:calls); $script:calls.Clear(); $script:windowsJob = $false
@@ -1792,7 +1833,7 @@ test('the release script is one literal in single quotes, nothing put into it, a
     $script:sent = [Collections.ArrayList]::new()
     $script:DrillWslRunner = { param($a, $stdin)
       if ($a[0] -ceq '--list') { return @{ exit = 0; stdout = "Fixture-CI\`n"; stderr = '' } }
-      [void]$script:sent.Add(@{ argv = @($a); stdin = $stdin }); @{ exit = 0; stdout = ${q(psLines(86400, 'Runner.Listener'))} }
+      [void]$script:sent.Add(@{ argv = @($a); stdin = $stdin }); @{ exit = 0; stdout = ${q(psLines(86400, 'Runner.Listener') + 'CLUED_DRILL_PAGE_CACHE_RELEASED\n')} }
     }
     $ok = Invoke-DrillWslCacheRelease
     $firstSent = $script:sent[0]; $script:sent.Clear()
