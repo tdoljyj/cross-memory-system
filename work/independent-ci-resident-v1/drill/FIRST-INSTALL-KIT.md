@@ -9,6 +9,18 @@
 只另放 ci-admission.token、resident-upgrade.token、public.json，不放心跳令牌；输入与正式临时凭据目录在所有结束路径清理。
 结局由接受版 Get-LauncherVerdict 判断，companion 切换未完成不会变成功。
 
+**凭据按被演练的包来给**（Fable 裁定补“合入顺序”“心跳令牌与重启码”）：建 kit 时从包的宿主准备脚本读出两组凭据文件名——
+`$RequiredCredentialFiles`（必需）与 `$OptionalCredentialFiles`（可选），记进 kit 的 `credentials`；读不出这两组的包拒绝建 kit
+（`DRILL_PACKAGE_CREDENTIALS_UNREADABLE`）。开机前：必需的名字演练造不出来即拒绝（`DRILL_CREDENTIAL_REQUIRED_NOT_MADE`，detail 为名字）；
+可选的名字演练必须有显式决定，没有决定即拒绝（`DRILL_CREDENTIAL_OPTIONAL_UNDECIDED`）。包没声明的名字不生成、不交付。
+决定写在 `drill-vm.ps1` 的 `$script:DrillCredentialDecisions`，回执 `credentials` 列出本次给了的与本次未给的可选凭据（含理由）。
+
+替身登记——按设计不给的可选凭据：
+
+| 名字 | 决定 | 理由 | 因此没验到 |
+|---|---|---|---|
+| `ci-node-heartbeat.token` | 按设计不给（不造假心跳令牌） | 假令牌会让来宾的常驻向生产心跳端点发请求，既改变来宾行为，也会让演练对生产的回读不再是零 | 心跳这条路；它的证据是真机运行后的心跳 |
+
 构建器把三处绕过写进 perNodeSteps；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。
 清空 perNodeSteps 也不能得到 PASS_A_FULL。即使 A1–A9 全通过，仍不能勾掉“新节点首装实测一次”或证明服务端接纳。
 

@@ -53,7 +53,27 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
 
 // Pure manifest constructor: every payload byte is pinned, including release-pins.json. `candidate`: the candidate's acceptance among
 // the payloads and the three hashes it names (drill-vm.ps1 holds the run to them and writes them into the receipt).
-export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null }) {
+// Fable renew-key ruling, supplements "merge order" and "heartbeat token and restart code": the drill is held to the package it drills.
+// Its credential file names are read from that package's host preparation, from its two constants -- the required names and the optional
+// ones -- and recorded in the kit; a package that does not declare the two is refused (no kit). drill-vm.ps1 Get-DrillCredentialPlan
+// then refuses before any boot a required name the drill cannot make, and an optional name it has no decision for.
+export const HOST_SCRIPT = 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1';
+export function packageCredentials(text) {
+  const group = name => {
+    const m = new RegExp(`^\\$${name}\\s*=\\s*\\[ordered\\]@\\{([^}]*)\\}\\s*$`, 'm').exec(String(text ?? ''));
+    if (!m) return null;
+    const body = m[1].trim(), pairs = [...body.matchAll(/([A-Za-z][A-Za-z0-9]*)\s*=\s*'([^']+)'/g)];
+    if (body.replace(/([A-Za-z][A-Za-z0-9]*)\s*=\s*'([^']+)'/g, '').replace(/[;\s]/g, '') !== '') return null;
+    return Object.fromEntries(pairs.map(p => [p[1], p[2]]));
+  };
+  const required = group('RequiredCredentialFiles'), optional = group('OptionalCredentialFiles');
+  check(required && optional && Object.keys(required).length > 0, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
+  const names = [...Object.values(required), ...Object.values(optional)];
+  check(names.every(nameOK) && new Set(names).size === names.length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
+  return { required, optional };
+}
+
+export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
   const prereq = JSON.parse(prereqBytes.toString('utf8'));
   check(prereq.contract === 'clued.drill.prereq/1', 'DRILL_PREREQ_CONTRACT_REFUSED');
@@ -64,7 +84,7 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
     entry: { file: 'first-install-entry.ps1', arguments: ['-From', '{from}', '-Kit', '{kit}', '-Fake', '{fake}', '-Work', '{work}', '-Version', '{version}'] },
     timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', '工具缓存短路径替身（包缺陷 Expand-Cached 超 MAX_PATH，修复中）'], prereqSha256: sha256(prereqBytes),
     // The real first-install host owns WSL import, Docker and accounts, from S0.
-    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}) };
+    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(credentials ? { credentials } : {}) };
 }
 
 // Validate a complete local Release directory, without treating a new sums file as acceptance. No acceptance file in it: a candidate
@@ -130,6 +150,9 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
       firstInstallKitSha256: acceptance.firstInstallKitSha256 };
   }
   payloads['release-pins.json'] = Buffer.from(JSON.stringify(pins, null, 2) + '\n');
+  const hostScript = readTar(read(from, `fleet-node-${version}.tar`)).find(e => e.path === HOST_SCRIPT);
+  check(hostScript, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
+  const credentials = packageCredentials(hostScript.data.toString('utf8'));
   const prereqBytes = fs.readFileSync(prereq), p = JSON.parse(prereqBytes);
   const pm = JSON.parse(read(from, `fleet-node-${version}.prereq-manifest.json`));
   const available = [...(pm.items ?? []), ...(pm.debs ?? [])];
@@ -145,7 +168,7 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     check(!Object.hasOwn(payloads, name), 'DRILL_PREREQ_DUPLICATE');
     payloads[name] = bytes;
   }
-  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate });
+  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials });
   fs.mkdirSync(out); // refuse an existing target, including a previous kit
   for (const [name, bytes] of Object.entries(payloads)) fs.writeFileSync(path.join(out, name), bytes, { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'kit.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });

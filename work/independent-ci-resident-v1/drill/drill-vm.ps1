@@ -502,7 +502,41 @@ function Read-DrillKit([string]$Dir) {
       $candidate[$k] = $v
     }
   }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate }
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials') }
+}
+
+# The drill's decision for each credential file name a package may declare (Fable renew-key ruling, supplements "merge order" and
+# "heartbeat token and restart code"): give it -- New-DrillFakeCredentials makes the file under `fake`, the entry's copy table hands it
+# over under the package's name -- or withhold it by design, with the reason. Neither side has a default: a required name the drill
+# cannot give, or an optional name with no decision here, refuses the drill before any boot (Get-DrillCredentialPlan). Registered in
+# FIRST-INSTALL-KIT.md (stand-in register); the receipt lists the optional ones withheld.
+$script:DrillCredentialDecisions = [ordered]@{
+  'app-private-key.pem' = [ordered]@{ give = $true; fake = 'app-key.pem' }
+  'ci-admission.token' = [ordered]@{ give = $true; fake = 'ci-admission.token' }
+  'resident-upgrade.token' = [ordered]@{ give = $true; fake = 'resident-upgrade.token' }
+  'public.json' = [ordered]@{ give = $true; fake = 'public.json' }
+  'ci-node-heartbeat.token' = [ordered]@{ give = $false; reason = 'a fake token would make the guest''s resident send requests to the production heartbeat endpoint: the guest would behave otherwise and the drill''s production read-back would no longer be zero' }
+}
+
+# The kit's credential names (make-drill-kit.mjs, from the package) against the drill's decisions: what is given (and the fake file each
+# is made as), what is withheld and why. Throws by name for a required name the drill cannot give or an optional one it has no decision for.
+function Get-DrillCredentialPlan($Kit) {
+  $c = Get-Prop $Kit 'credentials'
+  $req = Get-Prop $c 'required'; $opt = Get-Prop $c 'optional'
+  if ($null -eq $req -or $null -eq $opt) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'credentials') }
+  $names = { param($g) @(if ($g -is [Collections.IDictionary]) { $g.Values } else { $g.PSObject.Properties | ForEach-Object { $_.Value } }) | ForEach-Object { [string]$_ } }
+  $give = @(); $withheld = @()
+  foreach ($n in @(& $names $req)) {
+    $d = $script:DrillCredentialDecisions[$n]
+    if ($null -eq $d -or $d.give -ne $true) { throw (New-DrillError 'DRILL_CREDENTIAL_REQUIRED_NOT_MADE' $n) }
+    $give += $n
+  }
+  foreach ($n in @(& $names $opt)) {
+    $d = $script:DrillCredentialDecisions[$n]
+    if ($null -eq $d) { throw (New-DrillError 'DRILL_CREDENTIAL_OPTIONAL_UNDECIDED' $n) }
+    if ($d.give -eq $true) { $give += $n } else { $withheld += [ordered]@{ name = $n; reason = $d.reason } }
+  }
+  [ordered]@{ given = $give; fake = @($give | ForEach-Object { $script:DrillCredentialDecisions[$_].fake }); withheld = $withheld }
 }
 
 # A generated kit binds the complete Release directory, not just the old package triple.
@@ -968,8 +1002,10 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
 # Generates, inside the VM, the CI token, upgrade token and an RSA App key nobody registered, and prints only public values.
 # Fingerprints use the package's formulas (tools/secret-fingerprint.mjs; the offline test cross-checks them).
 function New-DrillFakeCredentials {
-  param([string]$OutDir)   # in the body: the guest receives this function as a script block, which keeps only the body
+  # $Make: the fake files to write (Get-DrillCredentialPlan .fake): none other is made
+  param([string]$OutDir, [string[]]$Make)   # in the body: the guest receives this function as a script block, which keeps only the body
   $ErrorActionPreference = 'Stop'
+  if ($null -eq $Make) { throw 'FAKE_CREDENTIALS_NAMES_REQUIRED' }
   if (Test-Path -LiteralPath $OutDir) { throw 'FAKE_CREDENTIALS_DIR_EXISTS' }
   New-Item -ItemType Directory -Path $OutDir | Out-Null
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -995,9 +1031,9 @@ function New-DrillFakeCredentials {
   $pem = "{0}BEGIN {1}{0}`n{2}`n{0}END {1}{0}`n" -f $pemFence, $pemLabel, $pemBody
   $ci = & $token; $up = & $token
   $enc = New-Object System.Text.UTF8Encoding $false
-  [IO.File]::WriteAllText((Join-Path $OutDir 'ci-admission.token'), $ci, $enc)
-  [IO.File]::WriteAllText((Join-Path $OutDir 'resident-upgrade.token'), $up, $enc)
-  [IO.File]::WriteAllText((Join-Path $OutDir 'app-key.pem'), $pem, $enc)
+  if ($Make -contains 'ci-admission.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'ci-admission.token'), $ci, $enc) }
+  if ($Make -contains 'resident-upgrade.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'resident-upgrade.token'), $up, $enc) }
+  if ($Make -contains 'app-key.pem') { [IO.File]::WriteAllText((Join-Path $OutDir 'app-key.pem'), $pem, $enc) }
   $public = [ordered]@{
     contract = 'clued.drill.fake-credentials/1'
     note = 'generated inside the drill VM; registered nowhere; the service refuses them'
@@ -1010,7 +1046,7 @@ function New-DrillFakeCredentials {
     appPublicKeySha256Base64 = [Convert]::ToBase64String((& $sha $spki))
     files = [ordered]@{ ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; appKey = 'app-key.pem' }
   }
-  [IO.File]::WriteAllText((Join-Path $OutDir 'public.json'), ($public | ConvertTo-Json -Depth 4), $enc)
+  if ($Make -contains 'public.json') { [IO.File]::WriteAllText((Join-Path $OutDir 'public.json'), ($public | ConvertTo-Json -Depth 4), $enc) }
   $ci = $null; $up = $null; $pem = $null
   return $public
 }
@@ -2143,7 +2179,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Copy-Item -Path (Join-Path $KitInfo.dir '*') -Destination $paths.kit -ToSession $session -Recurse
     $tarInGuest = Invoke-Command -Session $session -ScriptBlock { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() } -ArgumentList (Join-Path $paths.from ([IO.Path]::GetFileName($Package.tar)))
     if ($tarInGuest -cne $Package.tarSha256) { throw (New-DrillError 'DRILL_TAR_CHANGED_IN_COPY') }
-    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake
+    # only the files of the names this package declares and the drill gives (Get-DrillCredentialPlan)
+    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake, ([string[]]@((Get-DrillCredentialPlan $KitInfo).fake))
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
 
@@ -2239,6 +2276,8 @@ function Invoke-DrillMain {
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
     if ($kitInfo.executionBlocker) { throw (New-DrillError 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY' $kitInfo.executionBlocker) }
+    # the package's credential names against the drill's decisions, before the host gate, the hold or any boot
+    $kitInfo['credentialPlan'] = Get-DrillCredentialPlan $kitInfo
   }
   Invoke-DrillWithHostHold $RunTimeoutMinutes {
     param($window)
@@ -2317,6 +2356,8 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     failure = $failure; restoredToCheckpoint = $restored
     evidence = $evidence; files = $files; items = $items; m5 = $m5
     conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items $m5 ([bool]$package['candidate']) })
+    # the package's credential names as given or withheld by design (the optional ones not given this run, with why)
+    credentials = $(try { Get-DrillCredentialPlan $kitInfo } catch { $null })
     productionReadbackSql = (Get-DrillReadbackSql $startedAt)
   }
   $receiptPath = Join-Path $runDir 'receipt.json'

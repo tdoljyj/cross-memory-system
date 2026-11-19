@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
+import * as drillKit from '../drill/make-drill-kit.mjs';
 import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, publish, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
@@ -28,6 +29,14 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'drill-vm-test-'));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+// A package's two credential constants (Fable renew-key ruling, supplement "heartbeat token and restart code"), as the host preparation
+// script declares them; make-drill-kit.mjs packageCredentials reads them.
+const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', ciToken: 'ci-admission.token', upgradeToken: 'resident-upgrade.token', public: 'public.json' },
+  optional: { heartbeatToken: 'ci-node-heartbeat.token' } };
+const hostScriptText = (c = PACKAGE_CREDENTIALS) => {
+  const lit = o => '[ordered]@{ ' + Object.entries(o).map(([k, v]) => `${k} = '${v}'`).join('; ') + ' }';
+  return `# host preparation\r\n$RequiredCredentialFiles = ${lit(c.required)}\r\n$OptionalCredentialFiles = ${lit(c.optional)}\r\n`;
+};
 
 // Dot-source the script (definitions only) and print the expression's value as JSON.
 function ps(expr) {
@@ -108,7 +117,7 @@ test('kit manifest is deterministic, pins exact bytes and uses only guest placeh
   assert.throws(() => readSums(`${'a'.repeat(64)}  ../x\n`), /SUMS_REFUSED/);
 });
 
-function firstInstallAssets(label, { candidate = false } = {}) {
+function firstInstallAssets(label, { candidate = false, hostText = hostScriptText() } = {}) {
   const root = path.join(tmp, label); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
@@ -119,6 +128,7 @@ function firstInstallAssets(label, { candidate = false } = {}) {
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
       { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 }, { fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }
     ], debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
+    { path: 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1', data: Buffer.from(hostText) },
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
   fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');
@@ -146,6 +156,12 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
   assert.equal((await makeDrillKit(f)).candidate, null);
   const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
   for (const item of manifest.files) assert.equal(sha(fs.readFileSync(path.join(f.out, item.path))), item.sha256);
+  // the drilled package's two credential groups go into the kit; a package that does not declare them gets no kit
+  assert.deepEqual(manifest.credentials, PACKAGE_CREDENTIALS);
+  const oneConstant = firstInstallAssets('assembly-one-constant', { hostText: "$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token' }\r\n" });
+  prepareFrom({ ...oneConstant, out: oneConstant.from });
+  await assert.rejects(() => makeDrillKit(oneConstant), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
+  assert.ok(!fs.existsSync(oneConstant.out), 'refused before writing a kit');
   // the host's pinned installers (gh, Git for Windows) go into the guest through the same injection as WSL and the rootfs (Fable,
   // supplement "after the package branch" 3, 1): never downloaded in the guest
   assert.ok(manifest.files.some(i => i.path === 'gh.msi'), JSON.stringify(manifest.files.map(i => i.path)));
@@ -944,7 +960,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
     $Version = '1.2.3'; $From = 'fixture'; $Kit = 'fixture'
     function Read-DrillPrereq { @{ sha256 = 'prereq' } }
     function Test-DrillPackageDir { @{ version = '1.2.3'; tarSha256 = 'tar'; ciSourceManifestSha256 = 'source' } }
-    function Read-DrillKit { @{ sha256 = 'kit'; prereqSha256 = 'prereq'; executionBlocker = $null } }
+    function Read-DrillKit { @{ sha256 = 'kit'; prereqSha256 = 'prereq'; executionBlocker = $null; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) } }
     function Get-DrillReleaseFiles { }
     function Assert-DrillHost { @{ freeGB = 16 } }
     function Invoke-DrillBaseline { @{ action = 'ready' } }
@@ -1211,51 +1227,85 @@ test('the PASS conclusions of drill-vm.ps1 are exactly publish.mjs DRILL_PASS_CO
   for (const c of DRILL_PASS_CONCLUSIONS) assert.ok(sealLine.includes(c), c);
 });
 
-// Fable renew-key ruling, supplement "package branch, two points", B4, and Codex review of 1cedea9ef, medium 3: the fake credential files
-// are checked at all three places -- what the drill generates (New-DrillFakeCredentials), how the entry hands them over (its copy table:
-// app-key.pem becomes app-private-key.pem, the one mapping there is; public.json is written by the entry), and what the package consumes
-// ($CredentialFiles, windows/first-install-host.ps1). A generated file the entry does not hand over, a copied file nobody generates, and a
-// handed-over name the package does not list all fail: no todo. With branch one's companion-github.token stand-in this stays red until
-// the package lists the name (claude/first-install-fixes).
-function credentialNameCheck(generated, pairs, publicHanded, packageNames) {
-  const handed = [];
-  const notHanded = [];
-  for (const name of generated) {
-    if (name === 'public.json' && publicHanded) { handed.push('public.json'); continue; }
-    const pair = pairs.find(([from]) => from === name);
-    if (pair) handed.push(pair[1]); else notHanded.push(name);
-  }
-  // Codex review of c1497e0a1, low 1: one source, one target each, and the one rename there is (app-key.pem -> app-private-key.pem)
-  const twice = list => list.filter((n, i) => list.indexOf(n) !== i);
-  return { handed, notHanded, notGenerated: pairs.map(([from]) => from).filter(n => !generated.includes(n)),
-    notInPackage: handed.filter(n => !packageNames.includes(n)),
-    duplicateTargets: twice(handed), duplicateSources: twice(pairs.map(([from]) => from)),
-    otherRenames: pairs.filter(([from, to]) => from !== to && !(from === 'app-key.pem' && to === 'app-private-key.pem')).map(([from, to]) => `${from}->${to}`) };
-}
-test('every fake credential file the drill generates is handed over under a name the package\'s fixed list holds', () => {
-  const hostText = fs.readFileSync(fileURLToPath(new URL('../windows/first-install-host.ps1', import.meta.url)), 'utf8');
-  const list = /\$CredentialFiles = \[ordered\]@\{([^}]*)\}/.exec(hostText);
-  assert.ok(list, 'the package\'s $CredentialFiles');
-  const packageNames = [...list[1].matchAll(/=\s*'([^']+)'/g)].map(m => m[1]);
+// Fable renew-key ruling, supplements "merge order" and "heartbeat token and restart code": the drill is held to the package it drills.
+// The package declares required and optional credential names; the drill gives every required one, and has an explicit decision for every
+// optional one (give, or withhold by design with the reason); otherwise no boot. The heartbeat token is withheld: no fake one is made.
+const decisionsOf = () => ps(`$script:DrillCredentialDecisions`);
+const planOf = credentials => ps(`try { Get-DrillCredentialPlan (${q(JSON.stringify({ credentials }))} | ConvertFrom-Json) } catch { $c = Get-DrillCode $_; [ordered]@{ code = $c.code; detail = $c.detail } }`);
+test('the credential plan: every required name given, every optional name decided, the heartbeat token withheld with its reason', opts, () => {
+  const plan = planOf(PACKAGE_CREDENTIALS);
+  assert.deepEqual(plan.given, ['app-private-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json']);
+  assert.deepEqual(plan.fake, ['app-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json']);
+  assert.equal(plan.withheld.length, 1);
+  assert.equal(plan.withheld[0].name, 'ci-node-heartbeat.token');
+  assert.match(plan.withheld[0].reason, /production heartbeat endpoint/);
+  // a required name the drill cannot give, an optional name it has not decided, a kit without the two groups: refused by name
+  assert.deepEqual(planOf({ ...PACKAGE_CREDENTIALS, required: { ...PACKAGE_CREDENTIALS.required, other: 'other-required.token' } }), { code: 'DRILL_CREDENTIAL_REQUIRED_NOT_MADE', detail: 'other-required.token' });
+  assert.deepEqual(planOf({ ...PACKAGE_CREDENTIALS, optional: { ...PACKAGE_CREDENTIALS.optional, other: 'other-optional.token' } }), { code: 'DRILL_CREDENTIAL_OPTIONAL_UNDECIDED', detail: 'other-optional.token' });
+  assert.deepEqual(planOf({ ...PACKAGE_CREDENTIALS, required: { ...PACKAGE_CREDENTIALS.required, heartbeatToken: 'ci-node-heartbeat.token' }, optional: {} }), { code: 'DRILL_CREDENTIAL_REQUIRED_NOT_MADE', detail: 'ci-node-heartbeat.token' });
+  assert.equal(planOf(undefined).code, 'DRILL_KIT_REFUSED');
+  // a package without an optional heartbeat: nothing withheld, nothing made for it
+  assert.deepEqual(planOf({ ...PACKAGE_CREDENTIALS, optional: {} }).withheld, []);
+  // refused before the host gate, the hold or any boot
+  const undecided = { ...PACKAGE_CREDENTIALS, optional: { other: 'other-optional.token' } };
+  assert.equal(psCode(`${candidateStubs}
+    function Read-DrillKit { @{ prereqSha256 = 'pin'; executionBlocker = $null; candidate = @{ acceptance = 'x' }; credentials = (${q(JSON.stringify(undecided))} | ConvertFrom-Json) } }
+    Invoke-DrillMain`), 'DRILL_CREDENTIAL_OPTIONAL_UNDECIDED');
+  // the receipt lists what was given and the optional ones withheld this run
+  const receipt = m5DrillReceipt('credentials-receipt', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
+  assert.deepEqual(receipt.credentials.withheld.map(w => w.name), ['ci-node-heartbeat.token']);
+  assert.ok(receipt.credentials.given.includes('ci-admission.token'));
+  // registered with its reason in the guide
+  const guide = fs.readFileSync(fileURLToPath(new URL('../drill/FIRST-INSTALL-KIT.md', import.meta.url)), 'utf8');
+  assert.match(guide, /`ci-node-heartbeat\.token` \| 按设计不给/);
+});
+
+test('the repository\'s package and the drill: required names the drill makes, optional names it decides; the hand-over agrees', opts, () => {
+  const read = rel => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+  const decisions = decisionsOf();
+  const given = Object.keys(decisions).filter(n => decisions[n].give === true);
+  const covers = c => ({ required: Object.values(c.required).filter(n => !given.includes(n)), optional: Object.values(c.optional).filter(n => !Object.hasOwn(decisions, n)) });
+  // the repository's package: with the two groups, every required name is one the drill makes and every optional one is decided; a package
+  // still on the one-constant form gets no kit (refused by name, never read as "nothing required")
+  const hostText = read('../windows/first-install-host.ps1');
+  let repo = null;
+  try { repo = drillKit.packageCredentials(hostText); } catch (e) { assert.equal(e.message, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE'); }
+  if (repo) assert.deepEqual(covers(repo), { required: [], optional: [] }, JSON.stringify(repo));
+  else assert.doesNotMatch(hostText, /^\$RequiredCredentialFiles/m);
+  // the check itself: the two-group form as the package branch declares it
+  assert.deepEqual(covers(drillKit.packageCredentials(hostScriptText())), { required: [], optional: [] });
+  assert.deepEqual(covers(drillKit.packageCredentials(hostScriptText({ required: { ...PACKAGE_CREDENTIALS.required, x: 'x.token' }, optional: { y: 'y.token' } }))),
+    { required: ['x.token'], optional: ['y.token'] });
+  assert.throws(() => drillKit.packageCredentials(hostScriptText({ required: { a: 'a.token' }, optional: { b: 'a.token' } })), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
+  // the two lines as the package branch holds them (claude/first-install-fixes 913be48ca), read as they are. Its required
+  // companion-github.token is made by branch one's generator: until that is merged here (with a decision for the name), a drill of this
+  // package is refused before boot, by name -- never drilled without the token
+  const branchLines = [
+    "$RequiredCredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; public = 'public.json'; companionToken = 'companion-github.token' }",
+    "$OptionalCredentialFiles = [ordered]@{ heartbeatToken = 'ci-node-heartbeat.token' }",
+    "$CredentialFiles = & { $o = [ordered]@{}; foreach ($m in @($RequiredCredentialFiles, $OptionalCredentialFiles)) { foreach ($k in @($m.Keys)) { $o[$k] = $m[$k] } }; $o }",
+  ].join('\r\n') + '\r\n';
+  const branch = drillKit.packageCredentials(branchLines);
+  assert.deepEqual(branch.optional, { heartbeatToken: 'ci-node-heartbeat.token' });
+  assert.equal(branch.required.companionToken, 'companion-github.token');
+  assert.deepEqual(covers(branch), { required: given.includes('companion-github.token') ? [] : ['companion-github.token'], optional: [] });
+  // every name given is made by the generator and handed over by the entry under the package's name; one rename only, nothing twice
   const drillText = fs.readFileSync(script, 'utf8');
   const generator = drillText.slice(drillText.indexOf('function New-DrillFakeCredentials'), drillText.indexOf('\n}', drillText.indexOf('function New-DrillFakeCredentials')));
-  const generated = [...new Set([...generator.matchAll(/Join-Path \$OutDir '([^']+)'/g)].map(m => m[1]))];
-  const entryText = fs.readFileSync(entryScript, 'utf8');
-  const table = entryText.slice(entryText.indexOf('foreach ($pair in @('), entryText.indexOf('[IO.File]::Copy((Join-Path $FakeInputs'));
+  const made = [...new Set([...generator.matchAll(/Join-Path \$OutDir '([^']+)'/g)].map(m => m[1]))];
+  const entryText = read('../drill/first-install-entry.ps1');
+  const table = entryText.slice(entryText.indexOf('foreach ($pair in @('), entryText.indexOf('$source = Join-Path $FakeInputs $pair[0]'));
   const pairs = [...table.matchAll(/@\('([^']+)', '([^']+)'\)/g)].map(m => [m[1], m[2]]);
-  const publicHanded = /Join-Path \$FakeInputs 'public\.json'/.test(entryText) && /Join-Path \$inputCredentials 'public\.json'/.test(entryText);
-  assert.ok(generated.length >= 4 && pairs.length >= 3, JSON.stringify({ generated, pairs }));
-  // the check itself catches each kind of drift
-  assert.deepEqual(credentialNameCheck(['a.pem', 'b.token', 'public.json'], [['a.pem', 'a-key.pem'], ['c.token', 'c.token']], true, ['a-key.pem']),
-    { handed: ['a-key.pem', 'public.json'], notHanded: ['b.token'], notGenerated: ['c.token'], notInPackage: ['public.json'], duplicateTargets: [], duplicateSources: [], otherRenames: ['a.pem->a-key.pem'] });
-  // a second file handed over under a name another one already has: caught
-  const clash = credentialNameCheck(['ci-admission.token', 'resident-upgrade.token'], [['ci-admission.token', 'ci-admission.token'], ['resident-upgrade.token', 'ci-admission.token']], false, ['ci-admission.token']);
-  assert.deepEqual({ duplicateTargets: clash.duplicateTargets, otherRenames: clash.otherRenames }, { duplicateTargets: ['ci-admission.token'], otherRenames: ['resident-upgrade.token->ci-admission.token'] });
-  const r = credentialNameCheck(generated, pairs, publicHanded, packageNames);
-  assert.deepEqual({ notHanded: r.notHanded, notGenerated: r.notGenerated, notInPackage: r.notInPackage, duplicateTargets: r.duplicateTargets, duplicateSources: r.duplicateSources, otherRenames: r.otherRenames },
-    { notHanded: [], notGenerated: [], notInPackage: [], duplicateTargets: [], duplicateSources: [], otherRenames: [] },
-    `generated ${JSON.stringify(generated)} handed ${JSON.stringify(r.handed)} package ${JSON.stringify(packageNames)}`);
-  assert.ok(r.handed.includes('app-private-key.pem'));
+  const handOver = new Map([...pairs.map(([from, to]) => [to, from]), ['public.json', 'public.json']]);
+  for (const name of given) {
+    assert.ok(made.includes(decisions[name].fake), `the generator makes ${decisions[name].fake}`);
+    assert.equal(handOver.get(name), decisions[name].fake, `the entry hands ${decisions[name].fake} over as ${name}`);
+  }
+  const targets = pairs.map(([, to]) => to);
+  assert.equal(new Set(targets).size, targets.length, 'no target twice');
+  assert.deepEqual(pairs.filter(([from, to]) => from !== to), [['app-key.pem', 'app-private-key.pem']], 'the one rename there is');
+  assert.ok(targets.every(t => given.includes(t)), 'the entry hands over nothing the drill does not give');
+  assert.ok(!made.includes('ci-node-heartbeat.token'), 'no fake heartbeat token is ever made');
 });
 
 // No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
@@ -1318,7 +1368,7 @@ async function sealWorld(t) {
 const candidateStubs = `
     $Version = '1.2.3'; $From = 'unused'; $Kit = 'unused'
     function Read-DrillPrereq { @{ sha256 = 'pin' } }
-    function Read-DrillKit { @{ prereqSha256 = 'pin'; executionBlocker = $null; candidate = @{ acceptance = 'x' } } }
+    function Read-DrillKit { @{ prereqSha256 = 'pin'; executionBlocker = $null; candidate = @{ acceptance = 'x' }; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) } }
     function Test-DrillPackageDir { @{ tar = 'unused'; candidate = $true } }
     function Get-DrillReleaseFiles { @('unused') }
     function Assert-DrillHost { throw (New-DrillError 'TEST_REACHED_HOST_GATE') }
@@ -1644,7 +1694,7 @@ function evidence(over = {}) {
     pause: { sha256: '4'.repeat(64), requestSha256: PAUSE_REQUEST },
     reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z' }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
       launcherExit: 0, launcherStatus: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', launcherVerdict: 'BOOTSTRAP_DONE',
-      reverifyPassed: true, prepareAgainStatus: 'FLEET_NODE_INSTALL_PREPARED' }, kit: { perNodeSteps: ['8c step 2'] } };
+      reverifyPassed: true, prepareAgainStatus: 'FLEET_NODE_INSTALL_PREPARED' }, kit: { perNodeSteps: ['8c step 2'], credentials: PACKAGE_CREDENTIALS } };
   return JSON.stringify(Object.assign(e, over));
 }
 // Build the evidence hashtable in PowerShell from JSON (nested objects as PSCustomObject, as the guest reads give them).
@@ -2362,7 +2412,7 @@ test('the drill without its inputs stops before touching anything', opts, () => 
 
 test('the guest-side fake credentials match the package fingerprint formulas and print no secret', opts, () => {
   const out = path.join(tmp, 'fake');
-  const pub = ps(`New-DrillFakeCredentials ${q(out)}`);
+  const pub = ps(`New-DrillFakeCredentials ${q(out)} @('app-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json')`);
   const ci = fs.readFileSync(path.join(out, 'ci-admission.token'), 'utf8');
   const up = fs.readFileSync(path.join(out, 'resident-upgrade.token'), 'utf8');
   const pem = fs.readFileSync(path.join(out, 'app-key.pem'), 'utf8');
@@ -2379,5 +2429,11 @@ test('the guest-side fake credentials match the package fingerprint formulas and
   assert.equal(hostPublic.heartbeatBindingId, '');
   const printed = JSON.stringify(pub);
   for (const secret of [ci, up, pem.split('\n')[1]]) assert.ok(!printed.includes(secret));
-  assert.equal(psCode(`New-DrillFakeCredentials ${q(out)}`), 'DRILL_UNEXPECTED', 'never reuses a directory');
+  assert.equal(psCode(`New-DrillFakeCredentials ${q(out)} @('public.json')`), 'DRILL_UNEXPECTED', 'never reuses a directory');
+  // only the files asked for (the names the package declares and the drill gives); no list, nothing made
+  const some = path.join(tmp, 'fake-some');
+  ps(`New-DrillFakeCredentials ${q(some)} @('ci-admission.token', 'public.json')`);
+  assert.deepEqual(fs.readdirSync(some).sort(), ['ci-admission.token', 'public.json']);
+  assert.equal(psCode(`New-DrillFakeCredentials ${q(path.join(tmp, 'fake-none'))}`), 'DRILL_UNEXPECTED');
+  assert.equal(fs.existsSync(path.join(tmp, 'fake-none')), false);
 });

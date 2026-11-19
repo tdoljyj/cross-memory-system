@@ -252,10 +252,14 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     } catch { $sameAcl = $false }
     if (-not $sameAcl) { throw ('DRILL_CREDENTIAL_INPUT_ACL_REFUSED:' + $actualSddl) }
     foreach ($pair in @(@('app-key.pem', 'app-private-key.pem'), @('ci-admission.token', 'ci-admission.token'), @('resident-upgrade.token', 'resident-upgrade.token'))) {
-      [IO.File]::Copy((Join-Path $FakeInputs $pair[0]), (Join-Path $inputCredentials $pair[1]), $false)
+      # only what the drill made for this package (drill-vm.ps1 Get-DrillCredentialPlan): a name it withholds has no file to hand over
+      $source = Join-Path $FakeInputs $pair[0]
+      if ([IO.File]::Exists($source)) { [IO.File]::Copy($source, (Join-Path $inputCredentials $pair[1]), $false) }
     }
-    $public = ConvertTo-FirstInstallPublic (Get-Content -LiteralPath (Join-Path $FakeInputs 'public.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
-    [IO.File]::WriteAllText((Join-Path $inputCredentials 'public.json'), ($public | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    if ([IO.File]::Exists((Join-Path $FakeInputs 'public.json'))) {
+      $public = ConvertTo-FirstInstallPublic (Get-Content -LiteralPath (Join-Path $FakeInputs 'public.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
+      [IO.File]::WriteAllText((Join-Path $inputCredentials 'public.json'), ($public | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    }
     $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $hostScript = Join-Path $hostTree 'work\independent-ci-resident-v1\windows\first-install-host.ps1'
     # A host preparation that takes -Kit (package 0a4abc6f2 on: it reads the companion's gh path from it) gets the Release's first-install
