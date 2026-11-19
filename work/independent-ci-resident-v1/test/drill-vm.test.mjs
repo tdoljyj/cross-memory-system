@@ -2165,9 +2165,21 @@ test('the stage files are read with read-write sharing, file by file, also while
   assert.ok(fs.existsSync(path.join(runDir, 'host.stdout.log')));
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'))['launcher-result.json'].terminal.status, 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED');
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-files.json'), 'utf8')).files['launcher.stdout.log'].state, 'unreadable');
-  // a collection that fails is recorded and throws nothing
+  // a collection that fails is recorded and throws nothing; it writes no stage-evidence.json or stage-timings.json from nothing, so an
+  // emergency restore after it reads "not taken" (Codex review of e0a3cded5, medium 2)
   const failDir = path.join(tmp, 'stage-files-fail'); fs.mkdirSync(failDir, { recursive: true });
   assert.equal(ps(`function Invoke-DrillGuest { throw (New-DrillError 'DRILL_GUEST_STEP_FAILED') }; (Save-DrillStageEvidence ${q(failDir)} $null).record.collection.code`), 'DRILL_GUEST_STEP_FAILED');
+  assert.deepEqual(fs.readdirSync(failDir), ['stage-files.json']);
+  fs.writeFileSync(path.join(failDir, 'host-guard.json'), JSON.stringify({ status: 'DRILL_ABORTED', code: 'X', restoredToCheckpoint: true, cleanupDone: true }));
+  assert.equal(ps(`(Get-DrillGuardOutcome ${q(failDir)}).evidence`), 'NOT_TAKEN');
+  // a stage JSON cut short is named so, never "saved", and is not written as evidence
+  const cutWork = path.join(tmp, 'stage-files-cut'), cutRun = path.join(tmp, 'stage-files-cut-run');
+  fs.mkdirSync(cutWork, { recursive: true }); fs.mkdirSync(cutRun, { recursive: true });
+  fs.writeFileSync(path.join(cutWork, 'host-result.json'), '{"exit":0,"term');
+  const cut = ps(`function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step) & $Script ${q(cutWork)} $ArgumentList[1] }
+    (Save-DrillStageEvidence ${q(cutRun)} $null).record.files`);
+  assert.equal(cut['host-result.json'].state, 'unreadable-json');
+  assert.equal(fs.existsSync(path.join(cutRun, 'stage-evidence.json')), false);
   // the first install's call collects them in its finally, so a timeout of that call still takes them back
   assert.match(fs.readFileSync(script, 'utf8'), /\} finally \{\s*\$collected = Save-DrillStageEvidence \$RunDir \$Cred\s*\}/);
   // the entry reads the launcher stage's file the same way
@@ -2354,6 +2366,7 @@ test('an emergency restore is written as it ended: restored or not, evidence tak
     fs.writeFileSync(path.join(dir, 'host-guard.json'), JSON.stringify({ status: 'DRILL_ABORTED', code: 'DRILL_HOST_CI_BUSY', ...guard }));
     for (const f of files) {
       if (f === 'm5' || f === 'm5-empty') fs.mkdirSync(path.join(dir, 'm5'), { recursive: true });
+      if (f === 'steps') { for (const [n, t] of Object.entries(STEP_LOGS)) fs.writeFileSync(path.join(dir, n), t); continue; }
       if (f === 'm5') for (const n of ['profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json', 'record.json']) fs.writeFileSync(path.join(dir, 'm5', n), '{}');
       else if (f !== 'm5-empty') fs.writeFileSync(path.join(dir, f), '{}');
     }
@@ -2370,8 +2383,11 @@ test('an emergency restore is written as it ended: restored or not, evidence tak
   assert.equal(unknown.restore, 'UNKNOWN');
   assert.equal(unknown.note, '守护紧急还原，结局未记下，证据未取');
   // the guard tripped late (during A7, A8 or M5): the evidence was taken
-  const late = outcome('late', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, all);
+  const late = outcome('late', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, [...all, 'steps']);
   assert.deepEqual({ note: late.note, evidence: late.evidence }, { note: '由守护紧急还原，证据已取', evidence: 'TAKEN' });
+  // Codex review of e0a3cded5, medium 2: the five files without the stage logs this run needed are not "all of it"
+  const noLogs = outcome('no-logs', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, all);
+  assert.deepEqual({ evidence: noLogs.evidence, stepsComplete: noLogs.stepsComplete }, { evidence: 'PARTIAL', stepsComplete: false });
   // Codex review of c1497e0a1, medium 3: an empty M5 directory is no evidence; a stage log alone is part of it, and is listed
   const emptyM5 = outcome('empty-m5', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, [...all.filter(f => f !== 'm5'), 'm5-empty']);
   assert.deepEqual({ evidence: emptyM5.evidence, notTaken: emptyM5.notTaken }, { evidence: 'PARTIAL', notTaken: ['m5'] });

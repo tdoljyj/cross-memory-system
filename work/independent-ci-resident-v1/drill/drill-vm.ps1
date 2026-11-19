@@ -1794,8 +1794,11 @@ function Get-DrillAbortEvidence([string]$RunDir) {
   $taken = @($expected | Where-Object { if ($_ -ceq 'm5') { $m5.Count -eq $script:DrillM5Names.Count } else { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf } })
   $stageLogs = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log') | Where-Object { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf }
   $any = $taken.Count + $m5.Count + @($stageLogs).Count
-  [ordered]@{ evidence = $(if ($any -eq 0) { 'NOT_TAKEN' } elseif ($taken.Count -eq $expected.Count) { 'TAKEN' } else { 'PARTIAL' }); taken = $taken
-    notTaken = @($expected | Where-Object { $taken -notcontains $_ }); m5Observations = $m5; stageLogs = @($stageLogs) }
+  # all of it only with the step record complete too (Codex review of e0a3cded5, medium 2): the stage logs this run needed are there
+  $steps = try { Read-DrillFirstInstallSteps $RunDir } catch { $null }
+  $stepsComplete = ($null -ne $steps) -and ((Get-Prop $steps 'missing') -eq $false) -and ((Get-Prop $steps 'incomplete') -eq $false)
+  [ordered]@{ evidence = $(if ($any -eq 0) { 'NOT_TAKEN' } elseif ($taken.Count -eq $expected.Count -and $stepsComplete) { 'TAKEN' } else { 'PARTIAL' }); taken = $taken
+    notTaken = @($expected | Where-Object { $taken -notcontains $_ }); m5Observations = $m5; stageLogs = @($stageLogs); stepsComplete = $stepsComplete }
 }
 
 # The host guard's emergency restore, as it ended (its host-guard.json, DRILL_ABORTED): restored, restore failed, or not known (a record
@@ -2172,16 +2175,31 @@ function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
     $err = Get-DrillField $f 'error'
     if ($err) { $record.files[$name] = [ordered]@{ state = 'unreadable'; error = [string]$err }; continue }
     $text = [string](Get-DrillField $f 'text')
+    # a stage JSON is evidence only when it reads as JSON (a cut one is named so, never "saved"); it is written below with the others
+    if ($name.EndsWith('.json')) {
+      $parsed = $null; try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $null }
+      if ($null -eq $parsed) { $record.files[$name] = [ordered]@{ state = 'unreadable-json'; bytes = $text.Length } }
+      else { $json[$name] = $parsed; $record.files[$name] = [ordered]@{ state = 'read'; bytes = $text.Length } }
+      continue
+    }
     try {
-      if ($name.EndsWith('.json')) { $json[$name] = $(try { $text | ConvertFrom-Json } catch { [ordered]@{ unreadable = $true } }) }
-      else { [IO.File]::WriteAllText((Join-Path $RunDir $name), $text, (New-Object Text.UTF8Encoding($false))) }
+      [IO.File]::WriteAllText((Join-Path $RunDir $name), $text, (New-Object Text.UTF8Encoding($false)))
       $record.files[$name] = [ordered]@{ state = 'saved'; bytes = $text.Length }
     } catch { $record.files[$name] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
   }
+  # Written only from what was really read (Codex review of e0a3cded5, medium 2): no stage-evidence.json or stage-timings.json from nothing,
+  # and every file's state says whether it reached the run directory.
   $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json'] }
   $timings = $json['stage-timings.json']
-  try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence } catch { $record.files['host-result.json'] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
-  try { Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings } catch { }
+  $results = @(@('host-result.json', 'launcher-result.json') | Where-Object { $json.Contains($_) })
+  if ($results.Count) {
+    try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' } }
+    catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } } }
+  }
+  if ($json.Contains('stage-timings.json')) {
+    try { Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings; $record.files['stage-timings.json'].state = 'saved' }
+    catch { $record.files['stage-timings.json'] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
+  }
   try { Write-DrillJson (Join-Path $RunDir 'stage-files.json') $record } catch { }
   return @{ stageEvidence = $stageEvidence; timings = $timings; record = $record }
 }
