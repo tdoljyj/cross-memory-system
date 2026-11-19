@@ -131,7 +131,8 @@ test('kit manifest is deterministic, pins exact bytes and uses only guest placeh
   assert.throws(() => readSums(`${'a'.repeat(64)}  ../x\n`), /SUMS_REFUSED/);
 });
 
-function firstInstallAssets(label, { candidate = false, hostText = hostScriptText() } = {}) {
+// dropManifest: prerequisite item names left out of the package's prereq-manifest.json (Codex review of f33fc33e5, medium 3)
+function firstInstallAssets(label, { candidate = false, hostText = hostScriptText(), dropManifest = [] } = {}) {
   const root = path.join(tmp, label); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
@@ -142,7 +143,7 @@ function firstInstallAssets(label, { candidate = false, hostText = hostScriptTex
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
       { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 },
       { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }
-    ], debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
+    ].filter(i => !dropManifest.includes(i.name)), debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
     { path: 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1', data: Buffer.from(hostText) },
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
@@ -3445,4 +3446,178 @@ test('a first install cut off by the deadline leaves its printed lines in the gu
     ['{"name":"prepare","result":"ok","rejectCode":null,"detail":null}']);
   assert.deepEqual(r.steps.steps.map(x => [x.stage, x.name]), [['entry', 'prepare']]);
   assert.equal(r.steps.noVerdict, true);
+});
+
+// Codex review of f33fc33e5, medium 1: the credential constants are read the way PowerShell reads the script. A variable name in any case is
+// the same variable, so another assignment of it in another case (or scope-qualified, braced, or by Set-Variable) is ambiguous and refused;
+// a line of the declaration's shape inside a here-string or a comment is no declaration (not counted, and never the one read).
+test('the credential constants: any case is the same variable, here-strings and comments declare nothing, two assignments refuse', () => {
+  const base = hostScriptText();
+  for (const [reason, text] of [
+    ['assigned again in another case', base + "$requiredcredentialfiles = [ordered]@{ appKey = 'other.pem' }\r\n"],
+    ['assigned again in another case, indented in a function', base + "function X {\r\n  $OPTIONALCREDENTIALFILES = [ordered]@{ }\r\n}\r\n"],
+    ['assigned again scope-qualified', base + "$script:RequiredCredentialFiles = [ordered]@{ appKey = 'other.pem' }\r\n"],
+    ['assigned again braced', base + "${OptionalCredentialFiles} = [ordered]@{ }\r\n"],
+    ['assigned again mid-line', base + "if ($x) { $RequiredCredentialFiles = [ordered]@{ appKey = 'other.pem' } }\r\n"],
+    ['assigned again by Set-Variable', base + "Set-Variable -Name requiredCredentialFiles -Value ([ordered]@{})\r\n"],
+    ['declared only inside a here-string', "$doc = @'\r\n" + base + "'@\r\n"],
+    ['declared only inside a double-quoted here-string', '$doc = @"\r\n' + base + '"@\r\n'],
+    ['declared only in line comments', base.split('\r\n').filter(Boolean).map(l => '# ' + l).join('\r\n') + '\r\n'],
+  ]) assert.throws(() => drillKit.packageCredentials(text), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
+  // the shape in a here-string, a line comment or a block comment beside the real declarations: not counted, the real ones read
+  const shapes = "# $RequiredCredentialFiles = [ordered]@{ appKey = 'comment.pem' }\r\n" +
+    "$doc = @'\r\n$OptionalCredentialFiles = [ordered]@{ other = 'here.token' }\r\n'@\r\n" +
+    '$doc2 = @"\r\n$RequiredCredentialFiles = [ordered]@{ appKey = \'here2.pem\' }\r\n"@\r\n' +
+    "<#\r\n$OptionalCredentialFiles = [ordered]@{ other = 'block.token' }\r\n#>\r\n" + base;
+  assert.deepEqual(drillKit.packageCredentials(shapes), PACKAGE_CREDENTIALS);
+  // the declaration written in another case is still the one declaration
+  assert.deepEqual(drillKit.packageCredentials(base.replace('$RequiredCredentialFiles', '$requiredCredentialFiles')), PACKAGE_CREDENTIALS);
+  // the package branch's lines with its derived constant (which only reads them) and a here-string after them, as in 913be48ca
+  const pkg = `<#\r\n.SYNOPSIS host preparation\r\n#>\r\n${HOST_LINES_913BE48CA.join('\r\n')}\r\n` +
+    "$CredentialFiles = & { $o = [ordered]@{}; foreach ($m in @($RequiredCredentialFiles, $OptionalCredentialFiles)) { foreach ($k in @($m.Keys)) { $o[$k] = $m[$k] } }; $o }\r\n" +
+    "$CredUiSource = @'\r\nusing System;\r\n'@\r\n";
+  assert.equal(drillKit.packageCredentials(pkg).required.companionToken, 'companion-github.token');
+});
+
+// Codex review of f33fc33e5, medium 2: guest-evidence.json's ok is judged after the per-file states are summed: anything absent, unreadable
+// or not saved makes it false. A6 takes the launcher's verdict only from what was saved in the run directory and read back from there.
+test('guest-evidence ok is false on any missing file, and A6 reads the launcher verdict only as saved and read back', opts, () => {
+  const e = JSON.parse(evidence());
+  const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
+    'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1}' };
+  const collect = (name, change = {}, failWrite = null) => {
+    const guest = guestWorkDir(`r5-ok-${name}-guest`, Object.fromEntries(Object.entries({ ...files, ...change }).filter(([, t]) => t !== null)));
+    const runDir = path.join(tmp, `r5-ok-${name}`); fs.mkdirSync(runDir, { recursive: true });
+    const override = failWrite === null ? '' :
+      `$orig = \${function:Write-DrillJson}; function Write-DrillJson([string]$Path, $Value) { if ($Path -like ${q('*' + failWrite)}) { throw 'disk full' }; & $orig $Path $Value }`;
+    return ps(`
+      ${override}
+      function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script ${q(guest)} $ArgumentList[1] }
+      $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+      @{ record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); launcher = $c.launcher }`);
+  };
+  const full = collect('full');
+  assert.equal(full.record.ok, true);
+  assert.deepEqual(full.launcher, e.launcher);
+  for (const [name, change, state] of [['absent', { 'prepare.stdout.log': null }, 'absent'], ['cut', { 'host-result.json': '{"exit":0,"term' }, 'unreadable-json']]) {
+    const r = collect(name, change);
+    assert.equal(r.record.ok, false, name);
+    assert.ok(Object.values(r.record.stageFiles).some(f => f.state === state), name);
+  }
+  // the launcher result read, but stage-evidence.json never written: not saved, ok false, and no launcher verdict for A6
+  const unsaved = collect('unsaved', {}, 'stage-evidence.json');
+  assert.equal(unsaved.record.stageFiles['launcher-result.json'].state, 'not-saved');
+  assert.equal(unsaved.record.ok, false);
+  assert.equal(unsaved.launcher, null);
+  assert.equal(pass(verdictOf(evidence({ launcher: unsaved.launcher }))).A6, false);
+  // the run takes the launcher verdict from the collection's read-back, not from the collected object
+  assert.match(fs.readFileSync(script, 'utf8'), /\$launcher = \$collected\.launcher/);
+});
+
+// Codex review of f33fc33e5, medium 3: gh and Git for Windows are prerequisites the package's bootstrap requires; the package's prerequisite
+// manifest lacking either is refused by the builder and by the gate before boot -- a missing entry is never "nothing to check".
+test('gh or Git for Windows missing from the package prerequisite manifest: no kit, no boot', opts, async () => {
+  const f = firstInstallAssets('r5-tools-undeclared', { dropManifest: ['gh'] });
+  const p = JSON.parse(fs.readFileSync(f.prereq, 'utf8'));
+  fs.writeFileSync(f.prereq, JSON.stringify({ ...p, tools: p.tools.filter(t => t.path !== 'gh.msi') }));
+  prepareFrom({ ...f, out: f.from });
+  await assert.rejects(() => makeDrillKit(f), /DRILL_PREREQ_TOOL_NOT_DECLARED:gh/);
+  assert.ok(!fs.existsSync(f.out));
+  // the gate: a kit built on the full manifest, checked against a manifest without Git for Windows
+  const g = firstInstallAssets('r5-tools-gate');
+  prepareFrom({ ...g, out: g.from });
+  await makeDrillKit(g);
+  const fullFile = path.join(g.from, `fleet-node-${g.version}.prereq-manifest.json`);
+  const full = JSON.parse(fs.readFileSync(fullFile, 'utf8'));
+  const short = path.join(g.root, 'manifest-without-git.json');
+  fs.writeFileSync(short, JSON.stringify({ ...full, items: full.items.filter(i => i.name !== 'git-for-windows') }));
+  const gate = m => ps(`try { Assert-DrillKitToolsBound (Read-DrillKit ${q(g.out)}) ${q(m)}; 'bound' } catch { $c = Get-DrillCode $_; "$($c.code) $($c.detail)" }`);
+  assert.equal(gate(fullFile), 'bound');
+  assert.equal(gate(short), 'DRILL_PACKAGE_TOOL_NOT_DECLARED git-for-windows');
+  // declared twice is no single declaration either
+  const twice = path.join(g.root, 'manifest-gh-twice.json');
+  fs.writeFileSync(twice, JSON.stringify({ ...full, items: [...full.items, full.items.find(i => i.name === 'gh')] }));
+  assert.equal(gate(twice), 'DRILL_PACKAGE_TOOL_NOT_DECLARED gh');
+});
+
+// Codex review of f33fc33e5, medium 4: the kit's per-node steps register the stand-ins the drill actually makes and hands over -- every
+// name of the required group and every optional name decided "give" -- from the one decision table both read.
+test('the kit registers a stand-in step for every name the drill makes, required or optional, from the one decision table', opts, () => {
+  const inputs = { payloads: { 'release-pins.json': Buffer.from('{}'), 'first-install-entry.ps1': Buffer.from('entry') },
+    prereqBytes: Buffer.from('{"contract":"clued.drill.prereq/1"}\r\n') };
+  const { companionToken, ...noCompanion } = PACKAGE_CREDENTIALS.required;
+  const optionalCompanion = { required: noCompanion, optional: { ...PACKAGE_CREDENTIALS.optional, companionToken: 'companion-github.token' } };
+  const steps = c => drillKitManifest({ ...inputs, credentials: c }).perNodeSteps;
+  assert.equal(steps(optionalCompanion).length, 4, 'made and handed over as an optional name: registered');
+  assert.match(steps(optionalCompanion)[3], /^陪伴 GitHub 经典令牌替身/);
+  assert.equal(steps({ required: noCompanion, optional: PACKAGE_CREDENTIALS.optional }).length, 3);
+  // the run makes the same names (its plan) from the same table: the table the run holds is the file the builder reads
+  assert.ok(planOf(optionalCompanion).fake.includes('companion-github.token'));
+  const table = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../drill/credential-decisions.json', import.meta.url)), 'utf8'));
+  const held = decisionsOf();
+  assert.deepEqual(Object.keys(held), Object.keys(table.decisions));
+  for (const [name, d] of Object.entries(table.decisions)) {
+    assert.equal(held[name].give, d.give, name);
+    if (d.give) assert.equal(held[name].fake, d.fake, name); else assert.equal(held[name].reason, d.reason, name);
+  }
+  // a stand-in step is registered for exactly the names the plan makes that carry one
+  for (const c of [PACKAGE_CREDENTIALS, optionalCompanion, { required: noCompanion, optional: PACKAGE_CREDENTIALS.optional }]) {
+    const made = planOf(c).given.filter(n => table.decisions[n].perNodeStep);
+    assert.deepEqual(steps(c).slice(3), made.map(n => table.decisions[n].perNodeStep));
+  }
+});
+
+// Codex review of f33fc33e5, medium 5: after a successful same-package reinstall the re-verify runs the whole verdict; its input carries the
+// launcher verdict and the pause (the same sources as the first install's A6), so strict mode does not stop it and prepare-again runs.
+test('a successful same-package reinstall goes through the re-verify to prepare-again', opts, () => {
+  const e = JSON.parse(evidence());
+  const runDir = path.join(tmp, 'r5-a8-run'); fs.mkdirSync(runDir, { recursive: true });
+  const guest = guestWorkDir('r5-a8-guest', { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
+    'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1}' });
+  const read = { status: e.status, current: e.current, facts: e.facts, pause: e.pause, verify: e.verify, readAt: e.now };
+  const r = ps(`
+    $script:steps = [Collections.Generic.List[string]]::new()
+    $script:Interactive = $false; $SkipReinstall = $false
+    function New-PSSession { param($VMName, $Credential) 'session' }
+    function Remove-PSSession { param($Session) }
+    function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
+    function Invoke-Command { param($Session, $ScriptBlock, $ArgumentList, $VMName, $Credential, [switch]$AsJob, $ErrorAction) if ($ArgumentList -is [string]) { if ($ArgumentList -like '*.tar') { 'ab' } else { @{ contract = 'x' } } } }
+    function Wait-DrillGuest { param($Credential, $Minutes, $After) [DateTimeOffset]::UtcNow }
+    function Wait-DrillRebootRefresh { param($Cred, $Boot, $Deadline) (${q(JSON.stringify(e.reboot))} | ConvertFrom-Json) }
+    function Copy-DrillM5 { param($RunDir, $Cred) @{} }
+    $read = ${q(JSON.stringify(read))} | ConvertFrom-Json
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
+      $script:steps.Add($Step)
+      if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); exit = 0; stderr = '' } }
+      if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
+      if ($Step -ceq 'read-after-install' -or $Step -ceq 'read-after-reinstall') { return $read }
+      if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 0; launcherVerdict = 'BOOTSTRAP_DONE' } }
+      if ($Step -ceq 'prepare-again') { return @{ status = 'FLEET_NODE_INSTALL_PREPARED'; exit = 0; stderr = '' } }
+      throw "unexpected step $Step"
+    }
+    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ${q(e.acceptanceSource)} }
+    $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
+    $code = try { $run = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; 'done' } catch { $c = Get-DrillCode $_; "$($c.code) $($c.detail)" }
+    $re = Join-Path ${q(runDir)} 'reinstall.json'
+    @{ code = $code; steps = @($script:steps); reinstall = $(if (Test-Path -LiteralPath $re) { Read-DrillJson $re } else { $null }) }`);
+  assert.equal(r.code, 'done');
+  assert.ok(r.steps.includes('prepare-again'), JSON.stringify(r.steps));
+  assert.equal(r.reinstall.reverifyPassed, true);
+  assert.equal(r.reinstall.prepareAgainStatus, 'FLEET_NODE_INSTALL_PREPARED');
+  // the re-verify's input carries the same launcher verdict and the pause read after the reinstall
+  assert.match(fs.readFileSync(script, 'utf8'), /\$reVerdict = Get-DrillVerdict @\{[^\n]*launcher = \$launcher; pause = \$again\.pause/);
+});
+
+// Codex review of f33fc33e5, low 1: the stage timings saved on their own are evidence taken too (an emergency restore after them only is
+// "partly taken", not "not taken").
+test('the emergency restore counts stage-timings.json saved on its own as evidence taken', opts, () => {
+  const dir = path.join(tmp, 'r5-guard-timings'); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'stage-timings.json'), '{"host":1}');
+  const r = ps(`Get-DrillAbortEvidence ${q(dir)}`);
+  assert.equal(r.evidence, 'PARTIAL');
+  assert.equal(r.stageTimings, true);
 });
