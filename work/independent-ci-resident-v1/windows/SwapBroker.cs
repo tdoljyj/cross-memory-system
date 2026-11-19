@@ -667,49 +667,106 @@ internal static class Renewal
 
 internal sealed class RenewalKey : IDisposable
 {
-
     readonly CngKey key;
     internal readonly string Fingerprint, Provider;
-    RenewalKey(CngKey value, string provider) {
+
+    sealed class SelfCheckFailure {
+        internal string Step="open", Reason;
+        internal int? SignStatus, HResult;
+        internal readonly List<object> Attempts=new List<object>();
+
+        internal void Attempt(string provider, int? error) {
+            Attempts.Add(new {
+                provider=provider==RenewalKeyAccessV2.Providers[0]?"tpm":"software",
+                hresult=error.HasValue?RenewalKeyAccessV2.FormatHResult(error.Value):null
+            });
+        }
+        internal Dictionary<string,object> Record() {
+            var record=new Dictionary<string,object>{{"step",Step},{"attempts",Attempts}};
+            if(Reason!=null) record["reason"]=Reason;
+            if(SignStatus.HasValue) record["signStatus"]=RenewalKeyAccessV2.FormatHResult(SignStatus.Value);
+            if(HResult.HasValue) record["hresult"]=RenewalKeyAccessV2.FormatHResult(HResult.Value);
+            return record;
+        }
+    }
+
+    RenewalKey(CngKey value, string provider, SelfCheckFailure failure) {
         key=value; Provider=provider;
-        var blob=key.Export(CngKeyBlobFormat.EccPublicBlob);
-        Renewal.Require(Admit(key.IsMachineKey,key.Algorithm.Algorithm,key.ExportPolicy,blob)==null,"RENEW_IDENTITY_KEY_UNAVAILABLE");
+        if(failure!=null) failure.Reason="machine-key";
+        bool isMachineKey=key.IsMachineKey;
+        if(isMachineKey && failure!=null) failure.Reason="export-policy";
+        var exportPolicy=isMachineKey?key.ExportPolicy:CngExportPolicies.None;
+        bool readBlob=isMachineKey && exportPolicy==CngExportPolicies.None;
+        if(readBlob && failure!=null) failure.Reason="public-blob";
+        var blob=readBlob?ReadPublicBlob(key):null;
+        string reason=Admit(isMachineKey,exportPolicy,blob);
+        if(failure!=null) failure.Reason=reason;
+        Renewal.Require(reason==null,"RENEW_IDENTITY_KEY_UNAVAILABLE");
         var x=new byte[32];var y=new byte[32];Array.Copy(blob,8,x,0,32);Array.Copy(blob,40,y,0,32);
         Fingerprint=Renewal.Digest("{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\""+Renewal.Base64Url(x)+"\",\"y\":\""+Renewal.Base64Url(y)+"\"}");
     }
 
-    internal static string Admit(bool isMachineKey, string algorithmName, CngExportPolicies exportPolicy, byte[] publicBlob) {
-        return isMachineKey && algorithmName==CngAlgorithm.ECDsaP256.Algorithm && exportPolicy==CngExportPolicies.None &&
-            publicBlob.Length==72 && BitConverter.ToUInt32(publicBlob,0)==0x31534345 && BitConverter.ToUInt32(publicBlob,4)==32
-            ? null : "RENEW_IDENTITY_KEY_UNAVAILABLE";
+    internal static byte[] ReadPublicBlob(CngKey key) {
+        return key.Export(CngKeyBlobFormat.EccPublicBlob);
+    }
+
+    internal static string Admit(bool isMachineKey, CngExportPolicies exportPolicy, byte[] publicBlob) {
+        if(!isMachineKey) return "machine-key";
+        if(exportPolicy!=CngExportPolicies.None) return "export-policy";
+        // BCRYPT_ECDSA_PUBLIC_P256_MAGIC identifies both the curve and the signing purpose.
+        return publicBlob!=null && publicBlob.Length==72 && BitConverter.ToUInt32(publicBlob,0)==0x31534345 &&
+            BitConverter.ToUInt32(publicBlob,4)==32 ? null : "public-blob";
     }
 
     internal static Dictionary<string,object> SelfCheck(Func<string> identify, Action checkReceipt, Func<string,CngKey> open=null) {
         string sid=null, provider=null;
+        var failure=new SelfCheckFailure();
         try {
-            string identity=identify();
-            using(var key=Open(open)) {
-                sid=identity;
-                if(sid=="S-1-5-18") {
+            sid=identify();
+            if(sid=="S-1-5-18") {
+                using(var key=Open(open ?? OpenProvider,failure)) {
+                    failure.Step="active-receipt";
                     checkReceipt();
-                    key.Sign("clued.ci.renew-key-selfcheck/1");
+                    key.Sign("clued.ci.renew-key-selfcheck/1",failure);
                     provider=key.Provider;
                 }
             }
-        } catch(Exception) { /* report only the refusal */ }
+        } catch(BrokerRefusal) { }
+        catch(Exception e) { failure.HResult=e.HResult; }
         return new Dictionary<string,object> {
             {"at",Renewal.Stamp(DateTime.UtcNow)},{"sid",sid},{"provider",provider},
-            {"code",provider==null?"RENEW_IDENTITY_KEY_UNAVAILABLE":null}
+            {"code",provider==null?"RENEW_IDENTITY_KEY_UNAVAILABLE":null},
+            {"failure",provider==null?failure.Record():null}
         };
     }
 
-    internal static RenewalKey Open(Func<string,CngKey> open=null) {
-        if(open==null) open=provider=>CngKey.Open(RenewalKeyAccessV2.Name,new CngProvider(provider),RenewalKeyAccessV2.Flags);
+    static CngKey OpenProvider(string provider) {
+        return CngKey.Open(RenewalKeyAccessV2.Name,new CngProvider(provider),RenewalKeyAccessV2.Flags);
+    }
+    internal static RenewalKey Open() { return Open(OpenProvider,null); }
+    static RenewalKey Open(Func<string,CngKey> open, SelfCheckFailure failure) {
         foreach(string provider in RenewalKeyAccessV2.Providers) {
             CngKey key;
             try { key=open(provider); }
-            catch(CryptographicException e) { if(RenewalKeyAccessV2.Absent(e.HResult)) continue; break; }
-            try { return new RenewalKey(key,provider); } catch { key.Dispose(); break; }
+            catch(CryptographicException e) {
+                if(failure!=null) failure.Attempt(provider,e.HResult);
+                if(RenewalKeyAccessV2.Absent(e.HResult)) continue;
+                break;
+            }
+            catch(Exception e) {
+                if(failure!=null) failure.Attempt(provider,e.HResult);
+                throw;
+            }
+            if(failure!=null) {
+                failure.Attempt(provider,null);
+                failure.Step="admit";
+            }
+            try { return new RenewalKey(key,provider,failure); }
+            catch(Exception e) {
+                if(failure!=null && !(e is BrokerRefusal)) failure.HResult=e.HResult;
+                key.Dispose();
+                break;
+            }
         }
         throw new BrokerRefusal("RENEW_IDENTITY_KEY_UNAVAILABLE");
     }
@@ -720,14 +777,21 @@ internal sealed class RenewalKey : IDisposable
     internal static byte[] SignatureHash(string canonical) {
         using(var sha=SHA256.Create()) return sha.ComputeHash(Renewal.Utf8.GetBytes(canonical));
     }
-    internal string Sign(string canonical) {
+    internal string Sign(string canonical) { return Sign(canonical,null); }
+    string Sign(string canonical, SelfCheckFailure failure) {
+        if(failure!=null) failure.Step="sign";
         byte[] hash=SignatureHash(canonical);
-        byte[] signature=new byte[64];int length;
+        byte[] signature=new byte[64];int length,status;
         // SignHash on .NET Framework passes zero native flags. Keep the hardware operation itself silent.
         using(var handle=key.Handle)
-            Renewal.Require(NCryptSignHash(handle,IntPtr.Zero,hash,hash.Length,signature,signature.Length,out length,0x40)==0 &&
-                length==64,"RENEW_IDENTITY_KEY_UNAVAILABLE");
-        using(var verify=CngKey.Import(key.Export(CngKeyBlobFormat.EccPublicBlob),CngKeyBlobFormat.EccPublicBlob))
+            status=NCryptSignHash(handle,IntPtr.Zero,hash,hash.Length,signature,signature.Length,out length,0x40);
+        if(failure!=null) failure.SignStatus=status;
+        Renewal.Require(status==0 && length==64,"RENEW_IDENTITY_KEY_UNAVAILABLE");
+        if(failure!=null) {
+            failure.Step="verify";
+            failure.SignStatus=null;
+        }
+        using(var verify=CngKey.Import(ReadPublicBlob(key),CngKeyBlobFormat.EccPublicBlob))
         using(var ec=new ECDsaCng(verify)) Renewal.Require(ec.VerifyHash(hash,signature),"RENEW_IDENTITY_KEY_UNAVAILABLE");
         return Renewal.Base64Url(signature);
     }

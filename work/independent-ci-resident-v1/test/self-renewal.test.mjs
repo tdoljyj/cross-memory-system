@@ -71,6 +71,28 @@ test('TURING 21:16 反向观测中常驻在两个 KSP 都找不到密钥时通�
   assert.equal(checks.result,'PASS');
 });
 
+test('常驻状态原样记录 SYSTEM 失败诊断，并在 Broker 恢复后清空', async t => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'renew-failure-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  for(const dir of ['state','broker/requests','broker/responses']) fs.mkdirSync(path.join(root,dir),{recursive:true});
+  let now=Date.now();
+  const failure={step:'open',attempts:[{provider:'tpm',hresult:'0x8028400F'},{provider:'software',hresult:'0x80090016'}]};
+  const systemFile=path.join(root,'broker/renew-key.json');
+  fs.writeFileSync(systemFile,JSON.stringify({at:new Date(now).toISOString(),sid:'S-1-5-18',provider:null,
+    code:'RENEW_IDENTITY_KEY_UNAVAILABLE',failure}));
+  const step=renewalWatch({root,profile:{},mode:()=>'STANDBY',clock:()=>now,observe:async()=>null});
+  const keys=()=>JSON.parse(fs.readFileSync(path.join(root,'state/connection-renewal.json'))).keys;
+  await step();
+  assert.deepEqual(keys().systemFailure,failure);
+  assert.equal(keys().result,'FAIL');
+  now+=10*60_000;
+  fs.writeFileSync(systemFile,JSON.stringify({at:new Date(now).toISOString(),sid:'S-1-5-18',
+    provider:'Microsoft Platform Crypto Provider',code:null,failure:null}));
+  await step();
+  assert.equal(keys().system,true);
+  assert.equal(keys().systemFailure,null);
+});
+
 import { createHash } from 'node:crypto';
 const sidHash=createHash('sha1').update(Buffer.from('CLUEDCIRESIDENT','utf16le')).digest();
 // D2c 裁定 B2：常驻不再自己判断窗口和当班。两类连接同样直接投递，是否进窗口、是否当班只由 Broker 的新鲜探询判断。
@@ -99,10 +121,10 @@ function drillFixture(t) {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'renew-drill-'));
   t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const at=new Date().toISOString(), profile={ownerSid:'S-1-5-21-1-2-3-101',controllerSid:'S-1-5-21-1-2-3-102'};
-  const row=sid=>({at,sid,tpm:'ABSENT',software:'DENIED'});
+  const row=sid=>({at,sid,tpm:'DENIED',software:'ABSENT'});
   const put=(name,value)=>fs.writeFileSync(path.join(dir,name+'.json'),JSON.stringify(value));
   put('profile',profile);
-  put('system',{at,sid:'S-1-5-18',provider:'Microsoft Software Key Storage Provider',code:null});
+  put('system',{at,sid:'S-1-5-18',provider:'Microsoft Platform Crypto Provider',code:null});
   put('resident',row('S-1-5-80-'+Array.from({length:5},(_,i)=>sidHash.readUInt32LE(4*i)).join('-')));
   put('controller',row(profile.controllerSid));
   put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
@@ -142,6 +164,17 @@ test('演练夹具只凭公开的同轮身份和网关观测判定', t=>{
   put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
   put('controller',row(profile.ownerSid));
   result=drill();assert.equal(result.status,1);assert.equal(JSON.parse(result.stdout).result,'FAIL');
+});
+
+test('M5 来宾使用软件 KSP 时即使日常自检通过也会拒绝', t=>{
+  const {drill,put}=drillFixture(t);
+  put('system',{at:new Date().toISOString(),sid:'S-1-5-18',provider:'Microsoft Software Key Storage Provider',code:null});
+  const result=drill();
+  const verdict=JSON.parse(result.stdout);
+  assert.equal(verdict.checks.result,'PASS');
+  assert.equal(verdict.result,'FAIL');
+  assert.equal(verdict.code,'DRILL_TPM_PROVIDER_REQUIRED');
+  assert.equal(result.status,1);
 });
 
 const HOUR = 3_600_000;
@@ -533,6 +566,9 @@ test('独立审查的 Broker 行为回归', {skip:process.platform !== 'win32'},
     return r.stdout.trim();
   };
   await t.test('T1 TURING PCP 公钥块准入',()=>run('turing-key-admission',path.join(resident,'test/fixtures/renew-key-facts-turing-pcp.json')));
+  await t.test('T2 拒绝曲线、用途、导出策略、机器属性和公钥块尺寸不符',()=>run('key-admission-facts'));
+  await t.test('T3 软件 KSP 三把临时密钥只有 ECDSA P-256 公钥块通过',()=>run('key-software-facts'));
+  await t.test('T4 Broker 续期密钥准入禁止使用提供程序自报的算法属性',()=>run('key-admission-source',path.join(w,'SwapBroker.cs')));
   await t.test('T5 打不开密钥时记录两个 KSP 原始 HResult',()=>run('key-open-failure'));
   await t.test('T5 准入失败指明拒绝项',()=>run('key-admit-failure'));
   const contract=JSON.parse(fs.readFileSync(serverContract,'utf8'));

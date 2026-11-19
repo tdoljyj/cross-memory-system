@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.IO;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text.RegularExpressions;
 
 public static class RenewalTests {
     static RenewalPolicy Policy() {
@@ -24,19 +25,20 @@ public static class RenewalTests {
         var facts=Renewal.Object(File.ReadAllText(fixturePath));
         var header=(Dictionary<string,object>)facts["publicBlob"];
         var publicBlob=PublicBlob(Convert.ToUInt32((string)header["magic"],16),(int)header["cb"],(int)header["length"]);
-        var reason=RenewalKey.Admit((bool)facts["isMachineKey"],(string)facts["algorithm"],(CngExportPolicies)(int)facts["exportPolicy"],publicBlob);
-        Check(reason==null,"TURING PCP: expected ECDSA P-256 public blob to pass, got "+reason);
+        var reason=RenewalKey.Admit((bool)facts["isMachineKey"],(CngExportPolicies)(int)facts["exportPolicy"],publicBlob);
+        Check(reason==null,"TURING PCP ("+facts["algorithm"]+"): expected ECDSA P-256 public blob to pass, got "+reason);
     }
     static void KeyOpenFailure() {
+        bool receiptChecked=false;
         var observation=Renewal.Object(Renewal.Json(RenewalKey.SelfCheck(()=>"S-1-5-18",
-            ()=>{throw new Exception("receipt called after failed key open");},
+            ()=>{receiptChecked=true;},
             provider=>{throw new CryptographicException(provider==RenewalKeyAccessV2.Providers[0]
                 ? unchecked((int)0x8028400F) : unchecked((int)0x80090016));})));
         object diagnostic;
         Check(observation.TryGetValue("failure",out diagnostic) && diagnostic!=null,"missing open failure diagnostic");
         var failure=(Dictionary<string,object>)diagnostic;
         Check((string)failure["step"]=="open","failure step");
-        var attempts=(System.Collections.ArrayList)failure["attempts"];
+        var attempts=(System.Collections.IList)failure["attempts"];
         Check(attempts.Count==2,"both provider attempts required");
         var tpm=(Dictionary<string,object>)attempts[0];
         var software=(Dictionary<string,object>)attempts[1];
@@ -44,6 +46,56 @@ public static class RenewalTests {
         Check((string)software["provider"]=="software" && (string)software["hresult"]=="0x80090016","software raw HResult");
         Check((string)observation["sid"]=="S-1-5-18" && observation["provider"]==null &&
             (string)observation["code"]=="RENEW_IDENTITY_KEY_UNAVAILABLE","failed self-check identity and code");
+        Check(!receiptChecked,"receipt checked after failed key open");
+
+        int opens=0;
+        observation=Renewal.Object(Renewal.Json(RenewalKey.SelfCheck(()=>"S-1-5-18",()=>{receiptChecked=true;},
+            provider=>{opens++;throw new CryptographicException(unchecked((int)0x80090010));})));
+        failure=(Dictionary<string,object>)observation["failure"];
+        attempts=(System.Collections.IList)failure["attempts"];
+        Check(opens==1 && attempts.Count==1 && !receiptChecked,"non-absence must stop provider fallback");
+        Check((string)((Dictionary<string,object>)attempts[0])["hresult"]=="0x80090010","denied raw HResult");
+    }
+    static void KeyAdmissionFacts() {
+        var p256=PublicBlob(0x31534345,32,72);
+        Check(RenewalKey.Admit(true,CngExportPolicies.None,p256)==null,"ECDSA P-256");
+        Check(RenewalKey.Admit(false,CngExportPolicies.None,p256)=="machine-key","user key");
+        Check(RenewalKey.Admit(true,CngExportPolicies.AllowExport,p256)=="export-policy","exportable key");
+        foreach(var blob in new[]{PublicBlob(0x33534345,48,104),PublicBlob(0x314B4345,32,72),
+            PublicBlob(0x31534345,32,71),PublicBlob(0x31534345,31,72),new byte[0],null})
+            Check(RenewalKey.Admit(true,CngExportPolicies.None,blob)=="public-blob","unexpected public blob admitted");
+    }
+    static CngKey EphemeralSoftwareKey(CngAlgorithm algorithm) {
+        return CngKey.Create(algorithm,null,new CngKeyCreationParameters{Provider=CngProvider.MicrosoftSoftwareKeyStorageProvider});
+    }
+    static void SoftwareKeyFacts() {
+        foreach(var algorithm in new[]{CngAlgorithm.ECDsaP256,CngAlgorithm.ECDsaP384,CngAlgorithm.ECDiffieHellmanP256}) {
+            using(var key=EphemeralSoftwareKey(algorithm)) {
+                // Only the real public blob is under test. A temporary user key cannot pass the machine-key check.
+                Check(key.IsEphemeral && !key.IsMachineKey,"fixture must remain an ephemeral user key");
+                var reason=RenewalKey.Admit(true,CngExportPolicies.None,RenewalKey.ReadPublicBlob(key));
+                Check(reason==(algorithm==CngAlgorithm.ECDsaP256?null:"public-blob"),"unexpected software key verdict: "+algorithm);
+            }
+        }
+    }
+    static void KeyAdmissionSource(string brokerPath) {
+        var keyClass=Regex.Match(File.ReadAllText(brokerPath),
+            @"internal sealed class RenewalKey\s*:[\s\S]*?(?=\r?\ninternal sealed class RenewalFiles)");
+        Check(keyClass.Success,"RenewalKey class not found");
+        Check(!Regex.IsMatch(keyClass.Value,@"\.Algorithm\b|\bCngAlgorithm\."),
+            "RenewalKey must not use the provider's algorithm name");
+    }
+    static void KeyAdmissionFailure() {
+        var p256=PublicBlob(0x31534345,32,72);
+        Check(RenewalKey.Admit(true,CngExportPolicies.AllowExport,p256)=="export-policy",
+            "admit failure must identify export-policy");
+        bool receiptChecked=false;
+        int opens=0;
+        var observation=Renewal.Object(Renewal.Json(RenewalKey.SelfCheck(()=>"S-1-5-18",()=>{receiptChecked=true;},
+            provider=>{opens++;return EphemeralSoftwareKey(CngAlgorithm.ECDsaP256);})));
+        var failure=(Dictionary<string,object>)observation["failure"];
+        Check((string)failure["step"]=="admit" && (string)failure["reason"]=="machine-key","admit diagnostic");
+        Check(opens==1 && !receiptChecked,"admit refusal must stop before fallback and receipt");
     }
     static void Denies(Action invoke, string code) {
         try { invoke(); } catch (BrokerRefusal x) { Check(x.Code == code, code); return; }
@@ -240,11 +292,10 @@ public static class RenewalTests {
         const string original="clued_bnd_fixture_old";
         if(args[0]=="turing-key-admission") { TuringKeyAdmission(args[1]); return; }
         if(args[0]=="key-open-failure") { KeyOpenFailure(); return; }
-        if(args[0]=="key-admit-failure") {
-            Check(RenewalKey.Admit(true,"ECDSA_P256",CngExportPolicies.AllowExport,PublicBlob(0x31534345,32,72))=="export-policy",
-                "admit failure must identify export-policy");
-            return;
-        }
+        if(args[0]=="key-admit-failure") { KeyAdmissionFailure(); return; }
+        if(args[0]=="key-admission-facts") { KeyAdmissionFacts(); return; }
+        if(args[0]=="key-software-facts") { SoftwareKeyFacts(); return; }
+        if(args[0]=="key-admission-source") { KeyAdmissionSource(args[1]); return; }
         if(args[0]=="route") {
             string route=null;
             GlobalInstallation("upgrade",false,null,false,url=>{

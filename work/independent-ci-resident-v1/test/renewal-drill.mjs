@@ -25,7 +25,9 @@ try {
   // The drill must exercise both installed files. ABSENT is sufficient for the daily
   // pre-renewal check, but cannot demonstrate a denied file open in the guest.
   const filesDenied=companion['ci-admission.token']==='DENIED' && companion['ci-admission.connection.json']==='DENIED';
-  const passed=distinct && reachable && filesDenied && checks.result==='PASS';
-  console.log(JSON.stringify({result:passed?'PASS':'FAIL',identities:distinct,gateway:reachable,checks}));
+  const tpm=system?.provider==='Microsoft Platform Crypto Provider';
+  const passed=tpm && distinct && reachable && filesDenied && checks.result==='PASS';
+  console.log(JSON.stringify({result:passed?'PASS':'FAIL',identities:distinct,gateway:reachable,checks,
+    ...(!tpm && {code:'DRILL_TPM_PROVIDER_REQUIRED'})}));
   process.exitCode=passed?0:1;
 } catch {console.log('{"result":"FAIL","code":"DRILL_EVIDENCE_UNAVAILABLE"}');process.exitCode=1;}
