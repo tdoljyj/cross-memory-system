@@ -727,3 +727,69 @@ test('field 2026-11-13: a Task whose CI head was replaced by a push still gets i
   for (let i = 0; i < 6 && !next; i++) { const r = await stage10(e); decisions.push(r.facts.decision); next = r.facts.openFrontBatch; }
   assert.deepEqual([next?.pr, next?.headSha], [910, pushed], JSON.stringify(decisions));
 });
+
+// ---- D6 §8.4 (field 2026-11-19, DIAG-train-sweep-incomplete-20261119): a landing state the validator refuses ----
+// DESK's store held a landing-state-* record the current validator refuses, so every push round refused the front in composeBatch
+// (as TRAIN_SWEEP_INCOMPLETE) and nothing ever wrote a valid state. The real file has not been seen yet (landing-dump/out.txt was not
+// produced): this fixture is generation 1's record (before f5dde69d1: the seven fields plus terminalScan), 待真实文件核对.
+import { canonical } from '../src/proof.mjs';
+import { validateLandingState, LANDING_STATE_CONTRACT, TrainSweepStore } from '../src/independent-control-checks-v2/train-sweep-store.mjs';
+import { trainSummary, withTrainLine, TRAIN_OWNER_NOTICE_DECISIONS } from '../../../independent-ci-resident-v1/src/train.mjs';
+
+const LEGACY_RUN = '0000b59a89ac0000-000000000001';
+async function legacyLandingState(e, ms) {
+  const record = { contract: LANDING_STATE_CONTRACT, writtenAt: iso(ms), runId: LEGACY_RUN, bad: [], suspect: null, adopted: [], handled: [],
+    terminalScan: { nextKind: 'landing-batch', front: { name: `front-${String(ms - 60_000).padStart(13, '0')}-${LEGACY_RUN}-0000aaaa.json`, recordSha256: 'a'.repeat(64) }, landing: null } };
+  assert.throws(() => validateLandingState(record), { code: 'invalid_train_landing_state' }, 'the validator stays strict: the old field is refused');
+  const name = `landing-state-${String(ms).padStart(13, '0')}-${LEGACY_RUN}-0000bbbb.json`;
+  await fs.writeFile(path.join(e.store.directory, name), canonical(record));
+  return name;
+}
+
+test('D6 §8.4 (a): a landing state the validator refuses and no landing batch -> read as empty, a valid state written, the first push round opens the batch', async t => {
+  const e = await world(t, { prs: [910, 911] });
+  const legacy = await legacyLandingState(e, NOW - 6 * 86_400_000);
+  await assert.rejects(e.store.readLandingState(), { code: 'TRAIN_LANDING_STATE_UNREADABLE' }, 'the store refuses it as before');
+  const r = await stage10(e);
+  assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+  assert.equal(r.facts.landing?.error, undefined, JSON.stringify(r.facts.landing));
+  assert.deepEqual((await e.store.landingBatchByTest(r.facts.openFrontBatch.testSha)).members.map(m => m.pr), [910, 911]);
+  assert.ok(e.W.refs.has('heads/clued-train/staging'), 'S pushed to staging');
+  const names = await fs.readdir(e.store.directory);
+  assert.ok(names.includes(legacy), 'the refused record is left as it is');
+  assert.equal(names.filter(n => n.startsWith('landing-state-')).length, 2, 'one valid state written in that round');
+  // a fresh reader (the next round's store) reads the written state, not the refused one
+  assert.deepEqual(await (await TrainSweepStore.open(e.store.directory)).readLandingState(), { bad: [], suspect: null, adopted: [], handled: [] });
+  const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 6 });
+  assert.equal(e.queue.length, 0, JSON.stringify(log));
+  assert.deepEqual([910, 911].map(pr => e.W.pulls.get(pr).merged), [true, true]);
+});
+
+test('D6 §8.4 (b): the same refused state beside a landing batch of this node -> TRAIN_LANDING_STATE_UNREADABLE, no batch; landing.error reaches the status and the PR line, the Owner is told', async t => {
+  const e = await world(t, { prs: [910, 911] });
+  const T = e.main(), old = h('old-head');
+  await e.store.appendLandingBatch({ writtenAt: iso(NOW - 7 * 86_400_000), runId: LEGACY_RUN, frontPr: 900, frontHeadSha: old, baseSha: T, testSha: h('old-S'), testTree: h('old-tree'),
+    attempt: 1, members: [{ pr: 900, headSha: old, claimId: claimOf(900) }] });
+  await legacyLandingState(e, NOW - 6 * 86_400_000);
+  for (let round = 0; round < 2; round++) {
+    const r = await stage10(e);
+    assert.equal(r.facts.decision, 'TRAIN_LANDING_STATE_UNREADABLE', JSON.stringify(r.facts));
+    assert.deepEqual(r.facts.landing, { error: 'TRAIN_LANDING_STATE_UNREADABLE' });
+    assert.equal(r.facts.openFrontBatch, null);
+    validateTrainFacts(r.facts);
+    assert.ok(!e.W.refs.has('heads/clued-train/staging') && !e.W.refs.has('heads/clued-train/staging.tmp'), 'nothing composed');
+    assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
+    // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
+    const summary = trainSummary(r.facts);
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE' }]);
+    const board = new StatusBoard({ clock: e.clock });
+    board.update({ train: { enabled: 'on', last: summary } });
+    const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE' }]);
+    const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
+    assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
+    assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));
+  }
+  assert.deepEqual(e.W.pushes, []);
+  assert.equal(e.main(), T);
+});

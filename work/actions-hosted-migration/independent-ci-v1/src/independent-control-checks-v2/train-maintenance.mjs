@@ -993,7 +993,8 @@ async function findRiders({ github, native, fx, job, rows, claimScope, holder, w
 // Several: clued-train/staging.tmp forced to T, each member merged in (a conflict or a head already in T leaves that member out), the
 // chain read back. Either way clued-train/staging is forced to S (the CI trigger for the required checks other Apps produce on S).
 async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
-  if (!state) return { refusal: 'TRAIN_SWEEP_INCOMPLETE' };
+  // D6 §8.4 (b): the landing state could not be read while this node has landing batches (adoptLanded): its own decision, not a sweep's.
+  if (!state) return { refusal: 'TRAIN_LANDING_STATE_UNREADABLE' };
   const frontMember = { pr: holder.pr, headSha: front.headSha, claimId: holder.claimId };
   const candidates = max > 1 ? await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1 }) : [];
   const picked = pickMembers({ front: frontMember, candidates, bad: state.bad, suspect: state.suspect, max });
@@ -1029,7 +1030,15 @@ async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx
   const out = { facts: null, adopted: [], lostDuty: false, state: null };
   let state, batches;
   try { state = await sweepStore.readLandingState(); batches = await sweepStore.landingBatches(20); }
-  catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
+  catch (error) {
+    // D6 §8.4: the landing state only schedules (riders kept out, the bisection suspect, batches adopted or handled); main's safety is S's
+    // checks and each member's own admission. (a) A state that cannot be read while this node has no landing batch at all loses nothing:
+    // it is read as empty and a valid one is written this round, read back before anything uses it (the validator stays strict).
+    // (b) Otherwise the refusal stays: TRAIN_LANDING_STATE_UNREADABLE in the facts and, at the front batch, as the decision.
+    state = error?.code === 'TRAIN_LANDING_STATE_UNREADABLE' ? await resetLandingState({ sweepStore, job, clock }) : null;
+    if (!state) { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
+    batches = [];
+  }
   const notMarkedMerged = [], landed = [];
   let changed = false;
   for (const b of [...batches].reverse()) {
@@ -1064,6 +1073,16 @@ async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx
   out.state = state;
   out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
   return out;
+}
+
+// D6 §8.4 (a): no landing batch of this node (readable or not) -> an empty landing state written and read back, or null (refuse).
+async function resetLandingState({ sweepStore, job, clock }) {
+  try {
+    if (await sweepStore.anyLandingBatch()) return null;
+    await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, bad: [], suspect: null, adopted: [], handled: [] });
+    const again = await sweepStore.readLandingState();
+    return again.bad.length === 0 && again.suspect === null && again.adopted.length === 0 && again.handled.length === 0 ? again : null;
+  } catch { return null; }
 }
 
 // Generation 28 (resident ADR 0017, the 45-minute gap of ADR 0016): from the moment a claim becomes the queue head until stage 10's
