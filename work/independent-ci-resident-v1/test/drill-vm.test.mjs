@@ -2058,6 +2058,27 @@ test('the stage files are read with read-write sharing, file by file, also while
   assert.match(fs.readFileSync(entryScript, 'utf8'), /Get-LastJsonLine \(Read-EntrySharedText \$launcherResult\)/);
 });
 
+// Codex review of c1497e0a1, high 3 (package 0a4abc6f2): a host preparation that takes -Kit gets the Release's first-install kit, copied and
+// held to its pinned hash; an older one (no -Kit) is called as before. Fable, supplement "after the package branch" 3: the host
+// preparation's own verdict -- a restart Windows asks for (gh 3010, Git 8), or a refusal -- reaches the entry's stop code as it is.
+test('the entry gives -Kit to a host preparation that takes it, and carries the host\'s own verdict into its stop code', opts, () => {
+  const takes = path.join(tmp, 'host-takes-kit.ps1'), older = path.join(tmp, 'host-older.ps1');
+  fs.writeFileSync(takes, 'param([string]$Tree, [string]$CredentialDirectory, [string]$Kit, [switch]$Reset)\n');
+  fs.writeFileSync(older, 'param([string]$Tree, [string]$CredentialDirectory, [switch]$Reset)\n');
+  assert.deepEqual(entryPs(`@((Test-EntryHostTakesKit ${q(takes)}), (Test-EntryHostTakesKit ${q(older)}))`), [true, false]);
+  const entryText = fs.readFileSync(entryScript, 'utf8');
+  assert.match(entryText, /if \(Test-EntryHostTakesKit \$hostScript\) \{[\s\S]*?Copy-ToWork \(Join-Path \$Assets "\$prefix\.first-install-kit\.json"\) \$hostDir \$firstSums\["\$prefix\.first-install-kit\.json"\][\s\S]*?\$kitArgs = @\('-Kit', \$localKit\)/);
+  assert.match(entryText, /'-CredentialDirectory', \$inputCredentials\) \+ \$kitArgs\)/);
+  const stop = run => entryPs(`Get-EntryHostStopCode (${q(JSON.stringify(run))} | ConvertFrom-Json)`);
+  const restart = stop({ exit: 3, last: { status: 'RESTART_THEN_RUN_THE_SAME_COMMAND', why: 'gh installed' } });
+  assert.match(restart, /^RESTART_THEN_RUN_THE_SAME_COMMAND:/);
+  assert.match(restart, /"why":"gh installed"/);
+  const refused = stop({ exit: 1, last: { status: 'FIRST_INSTALL_HOST_REFUSED', code: 'GH_INSTALL_FAILED' } });
+  assert.match(refused, /^HOST_PREPARATION_NOT_DONE:.*GH_INSTALL_FAILED/);
+  assert.equal(stop({ exit: 0, last: { status: 'FIRST_INSTALL_HOST_READY' } }), null);
+  assert.match(entryText, /\$hostStop = Get-EntryHostStopCode \$hostRun\s+if \(\$hostStop\) \{ throw \$hostStop \}/);
+});
+
 // Codex review of c1497e0a1, medium 4: "the stage gave no verdict" means one thing everywhere. A verdict is an object whose status is a
 // non-empty string other than the package's own "no verdict" codes (STAGE_CHILD_PRINTED_NO_VERDICT: the stage shell speaks, its child did
 // not; STAGE_GAVE_NO_VERDICT); a missing or empty log gives none either; the entry's stageGaveNoVerdict is read; prepare, which prints only

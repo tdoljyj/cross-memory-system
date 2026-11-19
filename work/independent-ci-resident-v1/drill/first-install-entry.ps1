@@ -104,6 +104,27 @@ function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$Lim
   } finally { $writer.Dispose() }
 }
 
+# Whether the package's host preparation takes -Kit (package 0a4abc6f2 on): read from the script's own parameters.
+function Test-EntryHostTakesKit([string]$HostScript) {
+  return (Get-Command -Name $HostScript -ErrorAction Stop).Parameters.ContainsKey('Kit')
+}
+
+# The host preparation's own verdict carried as it is (Fable renew-key ruling, supplement "after the package branch" 3): a restart
+# Windows asks for, or a refusal, stops the entry with the package's code and the verdict's fields after ':', never a blanket failure.
+function Get-EntryHostStopCode($HostRun) {
+  $last = Get-EntryField $HostRun 'last'
+  $status = Get-EntryField $last 'status'
+  if ((Get-EntryField $HostRun 'exit') -eq 0 -and $status -ceq 'FIRST_INSTALL_HOST_READY') { return $null }
+  $raw = if ($null -ne $last) { ConvertTo-Json -InputObject $last -Compress -Depth 6 } else { 'exit=' + (Get-EntryField $HostRun 'exit') }
+  if ($status -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { return ('RESTART_THEN_RUN_THE_SAME_COMMAND:' + $raw) }
+  return ('HOST_PREPARATION_NOT_DONE:' + $raw)
+}
+function Get-EntryField($Object, [string]$Name) {
+  if ($null -eq $Object) { return $null }
+  if ($Object -is [Collections.IDictionary]) { if ($Object.Contains($Name)) { return $Object[$Name] }; return $null }
+  $p = $Object.PSObject.Properties[$Name]; if ($p) { return $p.Value }; return $null
+}
+
 # A stage's output file is this run's alone: one left from an earlier run is removed before the stage starts, and still there is a refusal
 # (the stage would then be read for another run's verdict).
 function Clear-EntryStageOutput([string]$Path) {
@@ -237,18 +258,26 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     [IO.File]::WriteAllText((Join-Path $inputCredentials 'public.json'), ($public | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
     $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $hostScript = Join-Path $hostTree 'work\independent-ci-resident-v1\windows\first-install-host.ps1'
+    # A host preparation that takes -Kit (package 0a4abc6f2 on: it reads the companion's gh path from it) gets the Release's first-install
+    # kit, copied locally and held to its pinned hash like the archive; an older one is called as before (Codex review of c1497e0a1, high 3).
+    $kitArgs = @()
+    if (Test-EntryHostTakesKit $hostScript) {
+      $localKit = Copy-ToWork (Join-Path $Assets "$prefix.first-install-kit.json") $hostDir $firstSums["$prefix.first-install-kit.json"]
+      if (-not (Test-UnderDirectory $localKit $script:Work)) { throw 'ELEVATED_INPUT_NOT_LOCAL' }
+      $kitArgs = @('-Kit', $localKit)
+    }
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
       # its stdout line by line into host.stdout.log: the step record (drill-vm.ps1 Read-DrillFirstInstallSteps reads steps from the
       # complete stdout logs only; host-result.json below keeps only the tail and is read for its verdict line)
-      $hostRun = Invoke-EntryStreamedChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $hostScript, '-Tree', $hostTree,
+      $hostRun = Invoke-EntryStreamedChild $PowerShellExe (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $hostScript, '-Tree', $hostTree,
         '-PrereqDirectory', $pre, '-PrereqManifest', $localManifest, '-PrereqManifestSha256', $sums["$prefix.prereq-manifest.json"],
         '-KitSha256', $pins['kitSha256'], '-ToolchainNodeSha256', $pins['toolchainNodeSha256'], '-RegistrarSha256', $pins['registrarSha256'],
-        '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) $HostLimitSeconds (Join-Path $Output 'host.stdout.log')
+        '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) + $kitArgs) $HostLimitSeconds (Join-Path $Output 'host.stdout.log')
     } finally { $measurements.host = $watch.Elapsed.TotalSeconds }
     [IO.File]::WriteAllText((Join-Path $Output 'host-result.json'), (ConvertTo-JsonLine ([ordered]@{ exit = $hostRun.exit; terminal = $hostRun.last; stdoutTail = $(if ($hostRun.stdout) { $t = [string]$hostRun.stdout; $t.Substring([Math]::Max(0, $t.Length - 6000)) } else { $null }); stderrTail = $(if ($hostRun.stderr) { $t = [string]$hostRun.stderr; $t.Substring([Math]::Max(0, $t.Length - 3000)) } else { $null }) })), (New-Object Text.UTF8Encoding($false)))
-    if ([string](Get-Key $hostRun.last 'status') -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { throw 'RESTART_THEN_RUN_THE_SAME_COMMAND' }
-    if ($hostRun.exit -ne 0 -or [string](Get-Key $hostRun.last 'status') -cne 'FIRST_INSTALL_HOST_READY') { throw 'HOST_PREPARATION_NOT_DONE' }
+    $hostStop = Get-EntryHostStopCode $hostRun
+    if ($hostStop) { throw $hostStop }
     $watch.Restart()
     try { $prepared = Invoke-EntryStreamedChild $entryNode @($install, 'prepare', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'), '--from', $Assets) 0 (Join-Path $Output 'prepare.stdout.log') $childEnv -NoWindow }
     finally { $measurements.prepare = $watch.Elapsed.TotalSeconds }
