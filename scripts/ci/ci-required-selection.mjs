@@ -330,8 +330,8 @@ export function readKnownFailures(file = KNOWN_FAILURES_PATH) {
   return data;
 }
 
-export function unitTestFiles(cwd, spawn = spawnSync) {
-  const result = spawn('node', ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8' });
+export function unitTestFiles(cwd, spawn = spawnSync, env = process.env) {
+  const result = spawn('node', ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8', env: testEnv(env) });
   if (result.status !== 0 || typeof result.stdout !== 'string') throw new Error('select-tests --list failed');
   return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
 }
@@ -503,6 +503,11 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
 // CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
 // NODE_TEST_CONTEXT on its own; Python and PowerShell suites have only this one). The caller's env is not changed.
 export const testEnv = (env) => ({ ...env, CLUED_UNDER_TEST: '1' });
+// The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
+// suites: --run, --run-selected, --write-known. --check runs nothing and is left as it is.
+export function markTestRun(argv, env) {
+  if (['--run', '--run-selected', '--write-known'].some((flag) => argv.includes(flag))) env.CLUED_UNDER_TEST = '1';
+}
 
 export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
@@ -622,6 +627,7 @@ function writeKnown(id, root, env, keep = false) {
 }
 
 async function main(argv, env = process.env) {
+  markTestRun(argv, env);
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
