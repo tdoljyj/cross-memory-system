@@ -104,6 +104,17 @@ public static class CluedWindowsFormalEntryV2 {
    FormalPublicBoundaryV2.Info i;var final=new StringBuilder(32768);uint n=GetFinalPathNameByHandleW(f.SafeFileHandle,final,32768,0);if(!GetFileInformationByHandle(f.SafeFileHandle,out i)||i.Links!=1||(i.Attributes&0x410)!=0||n==0||n>=32768||!String.Equals(final.ToString(),"\\\\?\\"+path,StringComparison.OrdinalIgnoreCase))Fail("PUBLIC_RECEIPT_HANDLE_UNCONFIRMED");f.Write(bytes,0,bytes.Length);f.Flush(true);
   }
  }
+ // Use the identity of the actual, validated role-probe service. Only a public observation is written.
+ static void ObserveRenewalKey() {
+  string target=Path.Combine(FormalPublicBoundaryV2.Receipts,"renew-key-controller.json");
+  string tmp=target+"."+Guid.NewGuid().ToString("N");
+  try {
+   var bytes=Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(RenewalKeyAccessV2.Observation()));
+   using(var f=new FileStream(tmp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {f.Write(bytes,0,bytes.Length);f.Flush(true);}
+   if(File.Exists(target)) File.Replace(tmp,target,null);else File.Move(tmp,target);
+  } catch { /* The original role probe and its receipt are independent. */ }
+  finally {try {File.Delete(tmp);}catch{}}
+ }
  static void RunService(uint argc,IntPtr argv){
   string nonce=null,config=null,failure=null,cleanupFailure=null;bool identity=false,ready=false,timeout=false,exitKnown=false,cleanupConfirmed=false;uint pid=0,exit=uint.MaxValue,scmFailure=0,activeProcesses=uint.MaxValue;var boundary=new FormalPublicBoundaryV2(Check);
   statusHandle=RegisterServiceCtrlHandlerExW(ServiceName,Handler,IntPtr.Zero);if(statusHandle==IntPtr.Zero)return;
@@ -115,6 +126,7 @@ public static class CluedWindowsFormalEntryV2 {
   finally{
    if(cleanupFailure!=null){if(failure==null)failure=cleanupFailure;scmFailure=96;}
    // Only a fully validated boundary may write a receipt; a preflight refusal is the SCM exit code.
+   if(ready && identity && boundary.Stage==11) ObserveRenewalKey();
    if(ready)try{Receipt(nonce,failure,identity,boundary,pid,exit,timeout,exitKnown,cleanupConfirmed,cleanupFailure,activeProcesses);}catch{scmFailure=93;}
    boundary.Dispose();try{Report(1,scmFailure);}catch{}
   }

@@ -28,6 +28,7 @@ import { NODE_STATUS_FILE, createNodeResourceReader } from './host-capacity.mjs'
 import { ExecutedHeads } from './executed-heads.mjs';
 import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
 import { RunQueue } from './queue.mjs';
+import { renewalWatch } from './connection-renewal.mjs';
 import { CompanionPresence, PRESENCE_EVERY_MS } from './companion-presence.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -137,6 +138,9 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),
     }),
   });
+  const renew = renewalWatch({root,profile:policy.node,clock,mode:()=>exec.renewalMode(),
+    onHandover:()=>exec.requestHandoverProbe(),
+    drained:async()=>!runner.busy && (await ledger.open()).length===0});
   const spool = path.join(path.dirname(root), 'formal-spool');
   const retention = new RetentionWatch({ policy, receipts, clock,
     readSettings: () => readRetentionSettings(path.join(root, 'owner', SETTINGS_FILE)),
@@ -163,6 +167,14 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
         } });
     },
     pruneLinux: () => companion.archivePrune() });
+  let renewalRunning=false;
+  const renewalTimer=setInterval(async()=>{
+    if(renewalRunning) return;
+    renewalRunning=true;
+    try {await renew();} catch { /* never affect intake or SCM work */ }
+    finally {renewalRunning=false;}
+  },15_000);
+  renewalTimer.unref();
   await recordServiceStart({ receipts, root, policySha256: values['policy-sha256'], pid: process.pid });
   const stopFile = path.join(state, 'STOP-REQUESTED');
   return serviceLoop({ exec, lock, sleep, once: values.once === true,
@@ -172,6 +184,7 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
       await receipts.append('service-stop', { pid: process.pid });
       await fs.rename(stopFile, path.join(state, 'locks', `stop-${Date.now()}-${process.pid}`));
       status.setState('STOPPED');
+      clearInterval(renewalTimer);
       statusTimer.stop();
       await statusTimer.flush();
     },

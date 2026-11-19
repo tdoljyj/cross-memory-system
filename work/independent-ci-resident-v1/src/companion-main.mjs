@@ -37,6 +37,7 @@ import { FleetLagNotifier, fleetLagReader, githubFleetChanges } from './fleet-la
 import { pruneArchivedGenerations } from './generation-retention.mjs';
 import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { assertGhIsolation, assertNotElevated, sessionFacts, writeSessionFacts } from './companion-session.mjs';
+import { companionKeyWatch } from './connection-renewal.mjs';
 import { resolveCompanionWslClient } from './wsl-client.mjs';
 
 // The PR page status and the notifications look at the executor's status once a minute (resident quota redesign
@@ -339,6 +340,7 @@ export async function main(args = process.argv.slice(2)) {
   // child, or whose set-up failed, sends no heartbeat, so the service starts no batch (DESIGN §24; design r3 review MINOR 1;
   // r3 implementation review MAJOR 2). The beat stops with the lanes; the entry below exits outright, so no timer keeps a
   // companion alive that answers nothing.
+  const renewKeyCheck=companionKeyWatch(values.root);
   const beating = startHeartbeat(mailbox);
   const lockAlive = setInterval(() => { instanceLock.touch().catch(() => {}); }, COMPANION_LOCK_TOUCH_MS);
   // Review MINOR 6: the companion's own gh login is checked again every few minutes, not only at start: a hosts.yml that lost its token
@@ -359,6 +361,7 @@ export async function main(args = process.argv.slice(2)) {
       lane({ runner: rerunRunner, work: () => rerunner.step(), everyMs: RERUN_LANE_EVERY_MS }),
       ...(frontMerge ? [lane({ runner: frontMergeRunner, work: () => frontMerge.step(), everyMs: FRONT_MERGE_LANE_EVERY_MS })] : []),
       lane({ runner: advisory, work: async () => {
+        await renewKeyCheck();
         try { await retentionNotifier.step(); } catch { /* advisory; retry without marking an undelivered notice */ }
         // The bundle retention (companion.mjs#pruneBundles): bundles of ended batches, at start and every hour.
         if (Date.now() - lastBundlePrune > BUNDLE_PRUNE_EVERY_MS) { lastBundlePrune = Date.now(); await companion.pruneOldBundles(); }
