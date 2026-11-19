@@ -477,6 +477,22 @@ test('a suite stops at its first failing command and reports a command that did 
   assert.throws(() => runSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
 });
 
+// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command runs with CLUED_UNDER_TEST=1, Python and PowerShell
+// suites too, so the installed request tools can tell a test from the operator; the caller's env object is not changed.
+test('every suite command runs with the test marker CLUED_UNDER_TEST=1', () => {
+  const seen = [];
+  const spawn = (command, args, options) => {
+    seen.push(options.env.CLUED_UNDER_TEST);
+    return { status: 0 };
+  };
+  const env = { CI_BASE_SHA: 'b', KEEP: 'x' };
+  assert.equal(runSuite('components', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(runSuite('resident-python', { root: ROOT, env: { CLUED_UNDER_TEST: '' }, spawn, log }), 0);
+  assert.ok(seen.length >= 3);
+  assert.deepEqual([...new Set(seen)], ['1']);
+  assert.deepEqual(env, { CI_BASE_SHA: 'b', KEEP: 'x' });
+});
+
 // A real run through the reporter: the failure shapes round 2 found masked.
 // The fixture is its own test run, not part of this one (as run-tests.mjs does).
 const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; return env; };
