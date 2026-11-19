@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
 // CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
@@ -14,10 +15,11 @@ import path from 'node:path';
 // gh login; gh's configuration directory is an empty directory; git's global configuration is a file holding only a test
 // identity, the system configuration (where the credential helper is) is off, and git never prompts. It does not stop code
 // that reads a token file by its absolute path.
-// Every rule that shapes a suite child's environment, in one object (Codex third review of 2ee162c2, medium 2): the
-// variables passed on from the caller, the proxy rule, the fake identity, the test marker and what local-verify adds. The
-// environment version (environmentVersion, at the end) is the hash of these rules and of the code applying them, so a
-// change to any of them is another version and a result made under another environment is not taken for one made here.
+// Every rule that shapes a suite child's environment is in this file: the variables passed on from the caller, the proxy
+// rule, the fake identity, the test marker and what local-verify adds. Its version (TEST_ENV_VERSION) is the hash of this
+// whole file (Fable ruling 11-20 "补：止血 PR 第四轮" §3), so any change here, wherever, is another version and a result
+// made under another environment (local-verify's cache of main's results) is not taken for one made under this.
+export const TEST_ENV_VERSION = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
 export const TEST_ENV_RULES = Object.freeze({
   // The variables a suite's commands get from the caller (ruling 11-20 "补：测试身份根修" §3): what a program needs to run,
   // find its tools, its temporary, home and toolchain directories and the network, and the run's own context. Nothing else
@@ -215,7 +217,3 @@ export function localVerifyEnv(env, values = {}, platform = process.platform) {
   if (unknown.length) throw new Error(`${unknown.join(', ')}: not a value local-verify sets (TEST_ENV_RULES.localVerify.values)`);
   return { ...testEnv(env, { own: true }), ...(platform === 'win32' ? localVerify.win32 : {}), ...values };
 }
-const APPLY = [credentialFree, keptVariables, fakeIdentityEnv, testEnv, localVerifyEnv];
-export const environmentVersion = (rules = TEST_ENV_RULES) => createHash('sha256').update(JSON.stringify(rules))
-  .update(APPLY.map(String).join('\n')).digest('hex');
-export const TEST_ENV_VERSION = environmentVersion();

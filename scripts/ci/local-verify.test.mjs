@@ -4,6 +4,7 @@
 // change, hands commits to the Linux clone and compares a failure with main.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -254,17 +255,23 @@ test('runCommands checks the identity for each command: one a command changed is
   assert.deepEqual(fs.readdirSync(seen[1]), []);
 });
 
-// Codex third review of 2ee162c2, medium 2: every rule that shapes a suite child's environment, local-verify's own additions
-// included, is in one rules object, and the environment version is the hash of those rules and the code applying them, so
-// changing any of them (here PYTHONUTF8 on Windows) gives another version and main's cached results are not reused.
-test('the suite environment is built from one rules object, whose hash is the environment version', () => {
-  const rules = selection.TEST_ENV_RULES;
-  assert.ok(rules, 'one rules object');
-  assert.equal(selection.environmentVersion(rules), selection.TEST_ENV_VERSION);
-  const changed = { ...rules, localVerify: { ...rules.localVerify, win32: {} } };
-  assert.notEqual(selection.environmentVersion(changed), selection.TEST_ENV_VERSION, 'a changed local-verify addition is another version');
-  assert.equal(testEnvironment({ TEMP: '/t' }, {}, 'win32').PYTHONUTF8, rules.localVerify.win32.PYTHONUTF8, 'its additions come from the rules');
-  assert.throws(() => testEnvironment({}, { NODE_OPTIONS: '--x' }, 'linux'), /not a value local-verify sets/);
+// Fable ruling 11-20 "补：止血 PR 第四轮" §3: the environment version is the hash of the whole file that defines the
+// environment rules (test-env.mjs), so any change in it, wherever, is another version. local-verify's additions are rules
+// of that file too.
+test('the environment version is the hash of the whole test-env.mjs, and changes with any edit to it', (t) => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, 'test-env.mjs'));
+  assert.equal(selection.TEST_ENV_VERSION, createHash('sha256').update(source).digest('hex'));
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'test-env-version-'));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(copy, 'test-env.mjs'), Buffer.concat([source, Buffer.from('\n// an edit\n')]));
+  const edited = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `const { TEST_ENV_VERSION } = await import(${JSON.stringify(pathToFileURL(path.join(copy, 'test-env.mjs')).href)}); console.log(TEST_ENV_VERSION);`],
+  { encoding: 'utf8' });
+  assert.equal(edited.status, 0, edited.stderr);
+  assert.notEqual(edited.stdout.trim(), selection.TEST_ENV_VERSION);
+  assert.equal(testEnvironment({ TEMP: '/t' }, {}, 'win32').PYTHONUTF8, selection.TEST_ENV_RULES.localVerify.win32.PYTHONUTF8,
+    "local-verify's additions are rules of that file");
 });
 
 test('the Linux side gets local-verify with every module it imports, and that copy loads', async (t) => {
