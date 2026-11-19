@@ -933,6 +933,14 @@ test('an inherited identity directory is reused only when it is the run\'s and u
   assert.deepEqual(readdirSync(temp), [], 'every directory made is removed at exit');
 });
 
+// Codex review of 2ee162c2, medium 5: a proxy URL may carry a user name and password; such a variable is not passed.
+test('a proxy variable whose URL carries a user name or password is not passed; one without is', () => {
+  const kept = selection.keptVariables({ HTTPS_PROXY: 'http://user:secret@proxy:8080', http_proxy: 'http://proxy:3128',
+    ALL_PROXY: 'socks5://user@proxy:1080', https_proxy: 'user:pw@proxy:8080', all_proxy: 'http://%zz@proxy', NO_PROXY: 'localhost',
+    HTTP_PROXY: 'proxy.local:8080' });
+  assert.deepEqual(kept, { http_proxy: 'http://proxy:3128', NO_PROXY: 'localhost', HTTP_PROXY: 'proxy.local:8080' });
+});
+
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-run-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));

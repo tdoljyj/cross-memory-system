@@ -70,7 +70,19 @@ export const KEEP_VARIABLE = new RegExp(`^(${[
   // carrying it; without it what a suite leaves running would outlive the job on a self-hosted node. Not a credential.
   'RUNNER_TRACKING_ID',
 ].join('|')})$`, 'i');
-export const keptVariables = (env) => Object.fromEntries(Object.entries(env).filter(([name]) => KEEP_VARIABLE.test(name)));
+// A proxy URL can carry a user name and password (Codex review of 2ee162c2, medium 5): such a variable is not passed, nor one
+// that cannot be read as a URL and has an @ in it.
+const PROXY = /^(HTTPS?|ALL)_PROXY$/i;
+function credentialFree(value) {
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `http://${value}`);
+    return !url.username && !url.password;
+  } catch {
+    return !String(value).includes('@');
+  }
+}
+export const keptVariables = (env) => Object.fromEntries(Object.entries(env)
+  .filter(([name, value]) => KEEP_VARIABLE.test(name) && (!PROXY.test(name) || credentialFree(value))));
 export function testEnv(env) {
   const { dir, run } = testIdentity(env);
   return { ...keptVariables(env), ...fakeIdentityEnv(dir, run), CLUED_UNDER_TEST: '1' };
