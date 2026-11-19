@@ -63,7 +63,8 @@ async function world(t, { prs, bad = () => false, sharedClaim = false }) {
   };
   for (const pr of prs) {
     const head = commit(h(`head:${pr}`), [T0], [String(pr)]);
-    W.pulls.set(pr, { number: pr, head, state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr) });
+    // autoMerge: the author turned GitHub auto-merge on (every agent PR does, gh pr merge --auto); paths: its changed files (null: unreadable)
+    W.pulls.set(pr, { number: pr, head, state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr), autoMerge: true, paths: ['a.txt'] });
     actions(head); // the PR's own CI on its head (pull_request)
     const id = W.nextCheck++; // stage 1 admitted it: App 5368905's kooyumi-work-admission on the head
     W.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-work-admission', head_sha: head, status: 'completed', conclusion: 'success' });
@@ -83,7 +84,13 @@ async function world(t, { prs, bad = () => false, sharedClaim = false }) {
     const p = W.pulls.get(n), main = W.refs.get('heads/main');
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
     return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
+      auto_merge: p.autoMerge ? { merge_method: 'merge' } : null,
       head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: main, repo: { full_name: REPO } } };
+  };
+  gh.readChangedPaths = async j => {
+    const p = W.pulls.get(j.pr);
+    if (!p || p.paths === null) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' });
+    return { complete: true, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, paths: [...p.paths] };
   };
   gh.readCompare = async (base, head) => base === head ? { status: 'identical', aheadBy: 0, behindBy: 0 }
     : ancestor(base, head) ? { status: 'ahead', aheadBy: 1, behindBy: 0 } : ancestor(head, base) ? { status: 'behind', aheadBy: 0, behindBy: 1 } : { status: 'diverged', aheadBy: 1, behindBy: 1 };
@@ -159,7 +166,7 @@ async function stage10(e, outcome = null) {
   const job = jobOf({ createdAt: iso(e.now), runId, sweep: 'audit', onSince: iso(NOW - 3_600_000),
     ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-    claimScope: SCOPE, layerOfPaths: () => 'code', landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
+    claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
 }
 async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal' } = {}) {
   e.now += 60_000;
@@ -222,6 +229,38 @@ test('push: an admission green and advisory trailer cannot admit an unbound ride
   assert.ok(batch);
   assert.deepEqual((await e.store.landingBatchByTest(batch.testSha)).members.map(m => m.pr), [910]);
   assert.equal(e.W.pulls.get(911).merged, false);
+});
+
+// D6 (Fable 2026-11-19 §1 items 7, 8): the first batch stage 10 opens, as the members it recorded (front first).
+async function firstBatchMembers(e) {
+  let batch;
+  for (let i = 0; i < 6 && !batch; i++) batch = (await stage10(e)).facts.openFrontBatch;
+  assert.ok(batch, 'a front batch opens');
+  return (await e.store.landingBatchByTest(batch.testSha)).members.map(m => m.pr);
+}
+const LAYER = paths => (paths.some(p => p.startsWith('scripts/ci/')) ? 'protected' : 'code');
+
+test('push D6 §1.7: a PR whose auto-merge is off never rides; the batch takes the next rider instead', async t => {
+  const e = await world(t, { prs: [910, 911, 912] });
+  e.W.pulls.get(911).autoMerge = false;
+  assert.deepEqual(await firstBatchMembers(e), [910, 912]);
+  assert.equal(e.W.pulls.get(911).merged, false);
+});
+
+test('push D6 §1.8: a protected-layer PR is never batched: a protected rider (or one whose paths cannot be read) is left out, a protected front goes alone', async t => {
+  const rider = await world(t, { prs: [910, 911, 912, 913] });
+  rider.layerOfPaths = LAYER;
+  rider.W.pulls.get(911).paths = ['scripts/ci/x.mjs'];
+  rider.W.pulls.get(912).paths = null; // unreadable counts as protected
+  assert.deepEqual(await firstBatchMembers(rider), [910, 913], 'protected and unreadable riders stay out');
+  const front = await world(t, { prs: [910, 911, 912] });
+  front.layerOfPaths = LAYER;
+  front.W.pulls.get(910).paths = ['a.txt', 'scripts/ci/x.mjs'];
+  assert.deepEqual(await firstBatchMembers(front), [910], 'a protected front is a batch of one');
+  const unread = await world(t, { prs: [910, 911] });
+  unread.layerOfPaths = LAYER;
+  unread.W.pulls.get(910).paths = null;
+  assert.deepEqual(await firstBatchMembers(unread), [910], 'a front whose paths cannot be read is a batch of one');
 });
 
 test('push: three queued PRs -> one batch -> main fast-forwarded to the tested S -> all three marked merged and adopted', async t => {
@@ -461,7 +500,10 @@ test('N9 E10: the same S parks on timeout, is re-run by the lane, and lands with
   assert.deepEqual(e.W.pushes, []);
 
   const staging = 'clued-train/staging';
-  const run = { id: 712, head_sha: testSha, head_branch: staging, event: 'push', run_attempt: 1, status: 'completed', conclusion: 'cancelled' };
+  const workflow = '.github/workflows/clued-required-tests.yml';
+  const source = await fs.readFile(new URL(`../../../../${workflow}`, import.meta.url));
+  const run = { id: 712, workflow_id: 100, path: workflow, head_sha: testSha, head_branch: staging,
+    event: 'push', run_attempt: 1, status: 'completed', conclusion: 'cancelled' };
   const state = await AdmissionRerunState.open(path.join(await tempDir(t), 'rerun.json'), e.clock);
   const requests = [];
   let annotations = [], log = 'Running migrations\n##[error]The operation was canceled.';
@@ -471,16 +513,21 @@ test('N9 E10: the same S parks on timeout, is re-run by the lane, and lands with
     gh: {
       repo: REPO,
       async get(route) {
+        if (route === `/contents/${workflow}?ref=${T}`) return { path: workflow, sha: '1'.repeat(40), encoding: 'base64', content: source.toString('base64') };
         if (route === `/git/ref/heads/${staging}`) return { ref: `refs/heads/${staging}`, object: { sha: e.W.refs.get(`heads/${staging}`) } };
         if (route === `/actions/runs/${run.id}`) return { ...run };
-        if (route === `/pulls/${pr}`) return e.gh.readPullRequest(pr);
-        if (route.startsWith('/actions/workflows/clued-required-tests.yml/runs?') && route.includes(`head_sha=${testSha}`))
-          return { total_count: 1, workflow_runs: [{ ...run }] };
-        if (route === '/actions/workflows/clued-required-tests.yml/runs?per_page=100&page=1')
+        if (route === `/pulls/${pr}`) {
+          const pull = await e.gh.readPullRequest(pr);
+          return { ...pull, number: pr, base: { ...pull.base, sha: T } };
+        }
+        if (route === `/actions/workflows/${run.workflow_id}/runs?per_page=100&page=1`)
           return { total_count: 1, workflow_runs: [{ ...run }] };
         assert.fail(route);
       },
       async paged(route) {
+        if (route === '/rules/branches/main') return (await e.gh.readBranchRules()).rules;
+        if (route === `/commits/${testSha}/check-runs?filter=all`) return (await e.gh.readChecks(testSha)).checks;
+        if (route === `/actions/runs?head_sha=${testSha}`) return [{ ...run }];
         if (route === `/commits/${headSha}/pulls`) return [];
         if (route === `/actions/runs/${run.id}/attempts/1/jobs`) return [
           { id: 500, name: 'admission-gate', head_sha: testSha, status: 'completed', conclusion: 'success' },
@@ -692,23 +739,140 @@ test('push: a member that moved to a new head after its batch landed is not adop
   assert.deepEqual(e.adopted.map(a => a[0]).sort(), [910, 911]);
 });
 
-// Field 2026-11-13: Native finishes a PR's Task binding only on adopt or return, and the holder releases its claim as soon as it
-// merges, so a PR the holder merged (or closed) itself was never adopted and its binding stayed active for good (25 such rows were
-// cleared by hand at 07:06Z). Stage 10 reads every bound PR of the holder; one GitHub has closed is ended with adopt or return.
-test('field 2026-11-13: bound PRs merged or closed outside the train are adopted or returned by stage 10, the open one stays front', async t => {
+// Field 2026-11-13: a PR the holder merged (or closed) itself was never adopted and its binding stayed active for good (25 such rows
+// were cleared by hand at 07:06Z). FABLE 11-19 L2: stage 10 reconciles every binding Native still holds open with GitHub, so the
+// holder's bound PRs GitHub has ended are reported (merged with the merge commit, closed) and the open one stays front.
+test('field 2026-11-13: bound PRs merged or closed outside the train are reported by stage 10, the open one stays front', async t => {
   const e = await world(t, { prs: [910, 911, 912], sharedClaim: true });
-  const returned = [];
-  e.native.port.returnSlot = async i => { returned.push(i.pr); e.queue.splice(e.queue.indexOf(i.pr), 1); return { onDuty: true, returned: false, claims: [] }; };
+  const reported = [];
+  e.native.port.lifecycleReport = async ({ prs }) => {
+    for (const p of prs) { reported.push([p.pr, p.state, p.mergeSha]); e.queue.splice(e.queue.indexOf(p.pr), 1); }
+    return { onDuty: true, deployed: true, tracked: [...e.queue] };
+  };
+  e.native.port.returnSlot = async () => assert.fail('giving back a slot ends no binding');
   const W = e.W, M = W.merge(e.main(), e.head(910), ':holder');
   W.refs.set('heads/main', M);
   Object.assign(W.pulls.get(910), { state: 'closed', merged: true, mergeSha: M });
   Object.assign(W.pulls.get(912), { state: 'closed', merged: false });
   let batch = null;
   for (let i = 0; i < 6 && !batch; i++) batch = (await stage10(e)).facts.openFrontBatch;
-  assert.deepEqual(e.adopted, [[910, M]]);
-  assert.deepEqual(returned, [912]);
+  assert.deepEqual(reported, [[912, 'closed', null], [910, 'merged', M]]);
+  assert.deepEqual(e.adopted, []);
   assert.deepEqual(e.queue, [911]);
   assert.equal(batch?.pr, 911);
+});
+
+// FABLE 11-19 §4.1 (7): stage 10 asks Native which bindings are still open (tracked), reads only those GitHub no longer lists as
+// open and reports what GitHub says, merged with its merge commit or closed, in one call; an open PR is never reported. D merged
+// after its holder had released the claim itself (#1173): it is reported like C, whatever the claim.
+test('pr lifecycle reconcile: one report per round names B closed, C and D merged with their merge commits, never the open A', async t => {
+  const e = await world(t, { prs: [910, 911, 912, 913] });
+  e.queue.splice(1);
+  const W = e.W, MC = W.merge(e.main(), e.head(912), ':c'), MD = W.merge(e.main(), e.head(913), ':d');
+  Object.assign(W.pulls.get(911), { state: 'closed', merged: false });
+  Object.assign(W.pulls.get(912), { state: 'closed', merged: true, mergeSha: MC });
+  Object.assign(W.pulls.get(913), { state: 'closed', merged: true, mergeSha: MD });
+  const reports = [], reads = [];
+  let tracked = [910, 911, 912, 913];
+  e.native.port.lifecycleReport = async ({ prs }) => {
+    reports.push(prs); tracked = tracked.filter(n => !prs.some(p => p.pr === n));
+    return { onDuty: true, deployed: true, tracked: [...tracked] };
+  };
+  const read = e.gh.readPullRequest, page = e.gh.readPullsPage, pages = [];
+  e.gh.readPullRequest = async (n, o) => { reads.push(n); return read(n, o); };
+  e.gh.readPullsPage = async o => { pages.push(o); return page(o); };
+  await stage10(e);
+  assert.deepEqual(reports, [[], [{ pr: 913, state: 'merged', mergeSha: MD }, { pr: 912, state: 'merged', mergeSha: MC }, { pr: 911, state: 'closed', mergeSha: null }]]);
+  assert.deepEqual(reads.filter(n => n !== 910).sort(), [911, 912, 913]);
+  // Review 4: the round's own open list (fewer than a page) is complete; the reconcile reads no page of its own.
+  const ownPages = () => pages.filter(o => o?.state === 'open' && o?.sort === 'created').length;
+  assert.equal(ownPages(), 0);
+  // Steady state: every tracked binding is open on GitHub, so a round asks once and reads no PR for it.
+  reports.length = 0; reads.length = 0; pages.length = 0;
+  await stage10(e);
+  assert.deepEqual(reports, [[]]);
+  assert.deepEqual(reads.filter(n => n !== 910), []);
+  assert.equal(ownPages(), 0);
+});
+
+// Review 3: closed is reported only when GitHub says merged false and no merged_at; a reply without them is no fact this round.
+test('pr lifecycle reconcile reports closed only on merged === false and no merged_at', async t => {
+  const e = await world(t, { prs: [910, 914, 915] });
+  e.queue.splice(1);
+  Object.assign(e.W.pulls.get(914), { state: 'closed', merged: undefined });
+  Object.assign(e.W.pulls.get(915), { state: 'closed', merged: false });
+  const read = e.gh.readPullRequest;
+  e.gh.readPullRequest = async (n, o) => { const p = await read(n, o); return n === 915 ? { ...p, merged_at: '2026-11-19T00:00:00Z' } : p; };
+  const reports = [];
+  e.native.port.lifecycleReport = async ({ prs }) => { reports.push(prs); return { onDuty: true, deployed: true, tracked: [914, 915] }; };
+  await stage10(e);
+  assert.deepEqual(reports, [[]]);
+});
+
+// Review B1: the reconcile is never on the train's path. It runs after the front's adopt/return/touch, the front bind and the front
+// batch, inside the round's budget, every read with the round's deadline and the clock checked before each read; GitHub reads that
+// take long change neither the decision nor the front batch: the reconcile only does less (and reports what it already has).
+test('pr lifecycle reconcile is bounded and after the front: slow GitHub reads change no decision and no front batch', async t => {
+  const ended = Array.from({ length: 30 }, (_, i) => 920 + i), SLOW = 200_000;
+  const round = async slow => {
+    const e = await world(t, { prs: [910, ...ended] });
+    e.queue.splice(1);
+    for (const n of ended) Object.assign(e.W.pulls.get(n), { state: 'closed', merged: false });
+    const reported = [];
+    e.native.port.lifecycleReport = async ({ prs }) => {
+      reported.push(...prs.map(p => p.pr));
+      return { onDuty: true, deployed: true, tracked: slow ? [910, ...ended].filter(n => !reported.includes(n)) : [] };
+    };
+    if (slow) {
+      const read = e.gh.readPullRequest, page = e.gh.readPullsPage;
+      e.gh.readPullRequest = async (n, o) => { if (ended.includes(n)) e.now += SLOW; return read(n, o); };
+      e.gh.readPullsPage = async o => { if (o?.state === 'open' && o?.sort === 'created') e.now += SLOW; return page(o); };
+    }
+    const before = e.now;
+    const r = await stage10(e);
+    return { facts: [r.facts.decision, r.facts.requestPause, r.facts.openFrontBatch?.pr ?? null, r.facts.openFrontBatch?.headSha ?? null],
+      reported, spent: e.now - before - 60_000 };
+  };
+  const quick = await round(false), slow = await round(true);
+  assert.deepEqual(slow.facts, quick.facts);
+  assert.ok(slow.reported.length > 0 && slow.reported.length < 25, `the reconcile did less: ${slow.reported.length}`);
+  assert.ok(slow.spent <= 250_000 + SLOW, `the round stayed in its budget: ${slow.spent}`);
+});
+
+// FABLE 11-19 §4.1 (9): the reconcile is auxiliary. An RPC that is not deployed (PGRST202), a GitHub read that throws or a reply that
+// cannot be read only means no reconcile this round: the round decides as it would without it and never asks for a pause.
+test('pr lifecycle reconcile is auxiliary: not deployed, a failed GitHub read or an unreadable reply skips it and changes no decision', async t => {
+  const unreadable = () => Object.assign(new Error('MERGE_TRAIN_NATIVE_UNREADABLE'), { code: 'MERGE_TRAIN_NATIVE_UNREADABLE' });
+  const round = async patch => {
+    const e = await world(t, { prs: [910, 911] });
+    e.queue.splice(1);
+    Object.assign(e.W.pulls.get(911), { state: 'closed', merged: false });
+    e.asked = [];
+    patch(e);
+    const r = await stage10(e);
+    return { e, facts: [r.facts.decision, r.facts.requestPause, r.facts.openFrontBatch?.pr ?? null] };
+  };
+  const answer = (e, reply) => { e.native.port.lifecycleReport = async ({ prs }) => { e.asked.push(prs); return reply(prs); }; };
+  const baseline = await round(e => answer(e, () => ({ onDuty: true, deployed: true, tracked: [] })));
+  assert.deepEqual(baseline.e.asked, [[]]);
+  assert.equal(baseline.facts[1], null);
+  const cases = {
+    'not deployed': e => answer(e, () => ({ onDuty: null, deployed: false, tracked: null })),
+    'first reply unreadable': e => answer(e, () => { throw unreadable(); }),
+    'github read throws': e => {
+      answer(e, () => ({ onDuty: true, deployed: true, tracked: [911] }));
+      const read = e.gh.readPullRequest;
+      e.gh.readPullRequest = async n => { if (n === 911) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return read(n); };
+    },
+    'report reply unreadable': e => answer(e, prs => { if (prs.length) throw unreadable(); return { onDuty: true, deployed: true, tracked: [911] }; }),
+    'tracked malformed': e => answer(e, () => ({ onDuty: true, deployed: true, tracked: 'all' })),
+  };
+  for (const [name, patch] of Object.entries(cases)) {
+    const r = await round(patch);
+    assert.ok(r.e.asked.length >= 1, `${name}: the reconcile was tried`);
+    assert.deepEqual(r.facts, baseline.facts, name);
+  }
+  assert.deepEqual((await round(cases['github read throws'])).e.asked, [[]], 'nothing readable from GitHub: no report');
 });
 
 // Field 2026-11-13 (#1087): the holder's CI head is a head its PR no longer has (the author pushed). No bound PR matches it, which
@@ -726,4 +890,70 @@ test('field 2026-11-13: a Task whose CI head was replaced by a push still gets i
   let next = null, decisions = [];
   for (let i = 0; i < 6 && !next; i++) { const r = await stage10(e); decisions.push(r.facts.decision); next = r.facts.openFrontBatch; }
   assert.deepEqual([next?.pr, next?.headSha], [910, pushed], JSON.stringify(decisions));
+});
+
+// ---- D6 §8.4 (field 2026-11-19, DIAG-train-sweep-incomplete-20261119): a landing state the validator refuses ----
+// DESK's store held a landing-state-* record the current validator refuses, so every push round refused the front in composeBatch
+// (as TRAIN_SWEEP_INCOMPLETE) and nothing ever wrote a valid state. The real file has not been seen yet (landing-dump/out.txt was not
+// produced): this fixture is generation 1's record (before f5dde69d1: the seven fields plus terminalScan), 待真实文件核对.
+import { canonical } from '../src/proof.mjs';
+import { validateLandingState, LANDING_STATE_CONTRACT, TrainSweepStore } from '../src/independent-control-checks-v2/train-sweep-store.mjs';
+import { trainSummary, withTrainLine, TRAIN_OWNER_NOTICE_DECISIONS } from '../../../independent-ci-resident-v1/src/train.mjs';
+
+const LEGACY_RUN = '0000b59a89ac0000-000000000001';
+async function legacyLandingState(e, ms) {
+  const record = { contract: LANDING_STATE_CONTRACT, writtenAt: iso(ms), runId: LEGACY_RUN, bad: [], suspect: null, adopted: [], handled: [],
+    terminalScan: { nextKind: 'landing-batch', front: { name: `front-${String(ms - 60_000).padStart(13, '0')}-${LEGACY_RUN}-0000aaaa.json`, recordSha256: 'a'.repeat(64) }, landing: null } };
+  assert.throws(() => validateLandingState(record), { code: 'invalid_train_landing_state' }, 'the validator stays strict: the old field is refused');
+  const name = `landing-state-${String(ms).padStart(13, '0')}-${LEGACY_RUN}-0000bbbb.json`;
+  await fs.writeFile(path.join(e.store.directory, name), canonical(record));
+  return name;
+}
+
+test('D6 §8.4 (a): a landing state the validator refuses and no landing batch -> read as empty, a valid state written, the first push round opens the batch', async t => {
+  const e = await world(t, { prs: [910, 911] });
+  const legacy = await legacyLandingState(e, NOW - 6 * 86_400_000);
+  await assert.rejects(e.store.readLandingState(), { code: 'TRAIN_LANDING_STATE_UNREADABLE' }, 'the store refuses it as before');
+  const r = await stage10(e);
+  assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+  assert.equal(r.facts.landing?.error, undefined, JSON.stringify(r.facts.landing));
+  assert.deepEqual((await e.store.landingBatchByTest(r.facts.openFrontBatch.testSha)).members.map(m => m.pr), [910, 911]);
+  assert.ok(e.W.refs.has('heads/clued-train/staging'), 'S pushed to staging');
+  const names = await fs.readdir(e.store.directory);
+  assert.ok(names.includes(legacy), 'the refused record is left as it is');
+  assert.equal(names.filter(n => n.startsWith('landing-state-')).length, 2, 'one valid state written in that round');
+  // a fresh reader (the next round's store) reads the written state, not the refused one
+  assert.deepEqual(await (await TrainSweepStore.open(e.store.directory)).readLandingState(), { bad: [], suspect: null, adopted: [], handled: [] });
+  const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 6 });
+  assert.equal(e.queue.length, 0, JSON.stringify(log));
+  assert.deepEqual([910, 911].map(pr => e.W.pulls.get(pr).merged), [true, true]);
+});
+
+test('D6 §8.4 (b): the same refused state beside a landing batch of this node -> TRAIN_LANDING_STATE_UNREADABLE, no batch; landing.error reaches the status and the PR line, the Owner is told', async t => {
+  const e = await world(t, { prs: [910, 911] });
+  const T = e.main(), old = h('old-head');
+  await e.store.appendLandingBatch({ writtenAt: iso(NOW - 7 * 86_400_000), runId: LEGACY_RUN, frontPr: 900, frontHeadSha: old, baseSha: T, testSha: h('old-S'), testTree: h('old-tree'),
+    attempt: 1, members: [{ pr: 900, headSha: old, claimId: claimOf(900) }] });
+  await legacyLandingState(e, NOW - 6 * 86_400_000);
+  for (let round = 0; round < 2; round++) {
+    const r = await stage10(e);
+    assert.equal(r.facts.decision, 'TRAIN_LANDING_STATE_UNREADABLE', JSON.stringify(r.facts));
+    assert.deepEqual(r.facts.landing, { error: 'TRAIN_LANDING_STATE_UNREADABLE' });
+    assert.equal(r.facts.openFrontBatch, null);
+    validateTrainFacts(r.facts);
+    assert.ok(!e.W.refs.has('heads/clued-train/staging') && !e.W.refs.has('heads/clued-train/staging.tmp'), 'nothing composed');
+    assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
+    // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
+    const summary = trainSummary(r.facts);
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE' }]);
+    const board = new StatusBoard({ clock: e.clock });
+    board.update({ train: { enabled: 'on', last: summary } });
+    const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE' }]);
+    const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
+    assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
+    assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));
+  }
+  assert.deepEqual(e.W.pushes, []);
+  assert.equal(e.main(), T);
 });

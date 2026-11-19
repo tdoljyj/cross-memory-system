@@ -7,33 +7,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { attachAcceptance, attachFirstInstallKit, main, publish } from '../publish.mjs';
+import * as publishModule from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
+import { FAKE_GH } from './fleet-fixtures.mjs';
 
 const sha = b => createHash('sha256').update(b).digest('hex');
 const VERSION = '2026.11.12-1', TAG = `fleet-node-${VERSION}`, COMMIT = 'a1'.repeat(20);
 const FLEET = 'tree/work/independent-ci-resident-v1/rollout/fleet/';
 const BOOTSTRAP = Buffer.from('# bootstrap.ps1 of the accepted commit\r\nparam([string]$From)\r\n');
 const PREREQ = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-prereq-manifest/1', items: [] }) + '\n');
-
-// Records its argv and whether a token variable reached it; "release view" answers from what "release create" uploaded.
-const FAKE_GH = `import fs from 'node:fs';
-import { createHash } from 'node:crypto';
-const asset = f => { const b = fs.readFileSync(f), name = f.split(/[\\\\/]/).pop(); return { name, size: b.length, sha256: createHash('sha256').update(b).digest('hex'), ...(name.endsWith('SHA256SUMS') ? { text: b.toString('utf8') } : {}) }; };
-const state = process.env.FAKE_GH_STATE;
-const log = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { calls: [], assets: [] };
-const args = process.argv.slice(2);
-log.calls.push({ args, tokenSeen: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'].filter(k => process.env[k] !== undefined) });
-if (process.env.FAKE_GH_FAIL === '1') { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 422: fake failure'); process.exit(1); }
-if (args[0] === 'release' && args[1] === 'create') {
-  const files = args.slice(3, args.indexOf('--repo'));
-  log.assets = files.map(asset);
-  console.log('https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2]);
-}
-if (args[0] === 'release' && args[1] === 'upload') log.assets.push(asset(args[3]));
-if (args[0] === 'release' && args[1] === 'view') console.log(JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: log.assets }));
-fs.writeFileSync(state, JSON.stringify(log));
-`;
 
 async function world(t) {
   const d = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetpub'));
@@ -133,26 +117,27 @@ const accept = async (w, over = {}, name = `${TAG}.acceptance.json`) => {
     ownerPackageAcceptanceRef: decision, installationReceiptRef: receipt, ownerDecisionRef: decision, ownerReceiptRef: receipt,
     formalRoles: { gitleaks: {}, trivy: {}, 'contract-placement': {} } };
   await fs.writeFile(file, JSON.stringify({ contract: 'clued.independent-ci.fleet-node-acceptance/1', version: VERSION, archive_sha256: w.source.archive_sha256,
-    commit: COMMIT, repository: 'tdoljyj/cross-memory-system', ciSourceManifestSha256: '7'.repeat(64), cluedDecision: DECISION, acceptedAt: '2026-11-12T08:00:00Z',
+    commit: COMMIT, repository: 'tdoljyj/cross-memory-system', ciSourceManifestSha256: '7'.repeat(64), cluedDecision: DECISION, acceptedAt: '2026-11-12T08:00:00Z', firstInstallKitSha256: w.kitSha ?? 'e'.repeat(64),
     fleetRefs, ...over }));
   return file;
 };
 
 test('attach-acceptance: uploads the file as an extra asset (no --clobber), fills accepted-at and Decision, refuses a second one', async t => {
-  const w = await world(t);
+  const w = await kitWorld(t);
+  await w.attach();
   const file = await accept(w);
   const run = (over = {}) => attachAcceptance({ version: VERSION, acceptance: file, index: w.index, ghCommand: [process.execPath, path.join(w.d, 'fake-gh.mjs')], ...over });
   const saved = { ...process.env };
   process.env.FAKE_GH_STATE = path.join(w.d, 'gh-state.json');
   process.env.GH_TOKEN = 'fake-token-value-for-the-test';
   t.after(() => { for (const k of ['FAKE_GH_STATE', 'GH_TOKEN']) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
-  await w.run();
   const before = (await w.calls()).length;
   const r = await run();
   assert.equal(r.status, 'FLEET_ACCEPTANCE_ATTACHED');
-  const calls = await w.calls();
-  assert.equal(calls.length, before + 2);
-  const [up, view] = calls.slice(before);
+  const calls = (await w.calls()).slice(before);
+  // the kit is read back from the Release first (view, the sums file, the kit), then the one upload, then the view that checks it
+  assert.deepEqual(calls.map(c => c.args.slice(0, 2).join(' ')), ['release view', 'release download', 'release download', 'release upload', 'release view']);
+  const up = calls[3], view = calls[4];
   assert.deepEqual(up.args.slice(0, 3), ['release', 'upload', TAG]);
   assert.equal(path.basename(up.args[3]), `${TAG}.acceptance.json`);
   assert.ok(!up.args.includes('--clobber'));
@@ -160,8 +145,9 @@ test('attach-acceptance: uploads the file as an extra asset (no --clobber), fill
   assert.deepEqual(view.args.slice(0, 3), ['release', 'view', TAG]);
   const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
   assert.equal(lines[2], `| ${VERSION} | ${r.url} | ${w.source.archive_sha256} | ${COMMIT} | 2026-11-12T08:00:00Z | ${DECISION} |`);
+  const after = (await w.calls()).length;
   await assert.rejects(run(), { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
-  assert.equal((await w.calls()).length, before + 2, 'refused before gh');
+  assert.equal((await w.calls()).length, after, 'refused before gh');
 });
 
 test('attach-acceptance refuses a file that is not this release, and leaves index and gh alone', async t => {
@@ -218,7 +204,7 @@ async function kitWorld(t) {
   process.env.GH_TOKEN = 'fake-token-value-for-the-test';
   t.after(() => { for (const k of ['FAKE_GH_STATE', 'GH_TOKEN']) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
   const attach = (over = {}) => attachFirstInstallKit({ version: VERSION, kit, images: [image], ghCommand: [process.execPath, w.fake], ...over });
-  return { ...w, kit, image, attach };
+  return { ...w, kit, image, attach, kitSha: sha(await fs.readFile(kit)) };
 }
 
 test('attach-first-install-kit: the kit, its local role images and one sums file over them, each uploaded without --clobber; a second time refused', async t => {
@@ -260,7 +246,7 @@ test('attach-first-install-kit refuses a kit and images that do not name each ot
   assert.equal((await w.calls()).length, n, 'refused before gh');
 });
 
-test('main: only the three subcommands, with their own options', async () => {
+test('main: only the four subcommands, with their own options', async () => {
   await assert.rejects(main(['attach-first-install-kit', '--version', '1']), { code: 'USAGE' });
   await assert.rejects(main(['attach-first-install-kit', '--version', '1', '--kit', 'k', '--acceptance', 'a']), { code: 'USAGE' });
   await assert.rejects(main([]), { code: 'USAGE' });
@@ -268,4 +254,168 @@ test('main: only the three subcommands, with their own options', async () => {
   await assert.rejects(main(['release', '--dir', 'x']), { code: 'USAGE' });
   await assert.rejects(main(['release', '--dir', 'x', '--repo', 'a/b', '--version', '1']), { code: 'USAGE' });
   await assert.rejects(main(['attach-acceptance', '--version', '1']), { code: 'USAGE' });
+  await assert.rejects(main(['acceptance-draft', '--version', '1', '--dir', 'x', '--base', 'b']), { code: 'USAGE' });
+  await assert.rejects(main(['acceptance-draft', '--version', '1', '--dir', 'x', '--base', 'b', '--out', 'o', '--kit', 'k']), { code: 'USAGE' });
+});
+
+// ---------------------------------------------------------------- the kit is part of every acceptance (Decision a056a7d9: the wrong road does not exist)
+const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const unchanged = async (w, indexBefore, callsBefore) => {
+  assert.ok((await fs.readFile(w.index)).equals(indexBefore), 'the index row was not written');
+  const made = (await w.calls()).slice(callsBefore);
+  assert.deepEqual(made.filter(c => c.args[1] === 'upload'), [], 'nothing was uploaded');
+};
+
+test('78ad314b replay: the acceptance file as it was really accepted (nine keys, no firstInstallKitSha256) is refused; no upload, no index row', async t => {
+  const d = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetreplay'));
+  t.after(() => fs.rm(d, { recursive: true, force: true }));
+  const name = 'fleet-node-2026.11.19-78ad314b.acceptance.json';
+  const file = path.join(d, name);
+  await fs.copyFile(path.join(FIXTURES, name), file);
+  const a = JSON.parse(await fs.readFile(file, 'utf8'));
+  assert.equal(Object.keys(a).length, 9);
+  assert.ok(!('firstInstallKitSha256' in a));
+  const index = path.join(d, 'index.md');
+  await fs.writeFile(index, `| 版本 | Release | tar sha256 | commit | 接受时间 | Decision |\n|---|---|---|---|---|---|\n| ${a.version} | https://github.com/tdoljyj/cross-memory-system/releases/tag/fleet-node-${a.version} | ${a.archive_sha256} | ${a.commit} |  |  |\n`);
+  const fake = path.join(d, 'fake-gh.mjs'), state = path.join(d, 'gh-state.json');
+  await fs.writeFile(fake, FAKE_GH);
+  // the Release as it was published: the tar, release.json, SHA256SUMS and the two node-entry assets; no kit
+  const assets = ['tar', 'release.json', 'bootstrap.ps1', 'prereq-manifest.json'].map(x => ({ name: `fleet-node-${a.version}.${x}`, size: 10, b64: '' })).concat([{ name: 'SHA256SUMS', size: 10, b64: '' }]);
+  await fs.writeFile(state, JSON.stringify({ calls: [], assets }));
+  const saved = process.env.FAKE_GH_STATE;
+  process.env.FAKE_GH_STATE = state;
+  t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
+  const before = await fs.readFile(index);
+  await assert.rejects(attachAcceptance({ version: a.version, acceptance: file, index, ghCommand: [process.execPath, fake] }), { code: 'ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+  assert.ok((await fs.readFile(index)).equals(before));
+  assert.deepEqual(JSON.parse(await fs.readFile(state, 'utf8')).calls, [], 'refused before gh was called');
+});
+
+test('attach-acceptance refuses an acceptance whose kit is not on the Release: no kit asset, another hash, a role image missing', async t => {
+  const w = await kitWorld(t);
+  const base = { version: VERSION, index: w.index, ghCommand: [process.execPath, w.fake] };
+  const indexBefore = await fs.readFile(w.index);
+  // no kit on the Release at all (published, nothing attached yet)
+  const n0 = (await w.calls()).length;
+  await assert.rejects(attachAcceptance({ ...base, acceptance: await accept(w) }), { code: 'ACCEPTANCE_KIT_NOT_ON_RELEASE' });
+  await unchanged(w, indexBefore, n0);
+  await w.attach();
+  const n = (await w.calls()).length;
+  // the kit is there, the acceptance names another one
+  await assert.rejects(attachAcceptance({ ...base, acceptance: await accept(w, { firstInstallKitSha256: 'f'.repeat(64) }) }), { code: 'ACCEPTANCE_KIT_NOT_THE_ATTACHED' });
+  await unchanged(w, indexBefore, n);
+  // a local role image the kit lists is not on the Release
+  const state = JSON.parse(await fs.readFile(path.join(w.d, 'gh-state.json'), 'utf8'));
+  state.assets = state.assets.filter(a => !a.name.startsWith('role-image-'));
+  await fs.writeFile(path.join(w.d, 'gh-state.json'), JSON.stringify(state));
+  await assert.rejects(attachAcceptance({ ...base, acceptance: await accept(w) }), { code: 'ACCEPTANCE_KIT_IMAGE_NOT_ON_RELEASE' });
+  await unchanged(w, indexBefore, n);
+});
+
+// acceptance-draft with the node-side parts stood in for (the real ones are the first-install test): the kit of a node, the archive's Source
+const draftWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64) } = {}) => {
+  const w = await world(t);
+  await w.run();
+  const kit = { contract: 'clued.independent-ci.fleet-node-first-install-kit/1', config: { ciSourceManifestSha256: templateSource }, images: { pull: [], local: [{ id: IMAGE, asset: `role-image-${IMAGE}.tar.gz` }] } };
+  const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
+  await fs.writeFile(image, Buffer.from('gzip of a docker save'));
+  const decision = `${DECISION}-1111-4111-8111-111111111111`, receipt = 'e1e1e1e1-2222-4222-8222-222222222222';
+  const base = { cluedDecision: DECISION, acceptedAt: '2026-11-12T08:00:00Z', fleetRefs: { sourceAcceptanceRef: decision, hostQualificationRef: decision, ownerAuthorizationRef: decision,
+    publisherQualificationRef: decision, ownerPackageAcceptanceRef: decision, installationReceiptRef: receipt, ownerDecisionRef: decision, ownerReceiptRef: receipt,
+    formalRoles: { gitleaks: {}, trivy: {}, 'contract-placement': {} } } };
+  const saved = process.env.FAKE_GH_STATE;
+  process.env.FAKE_GH_STATE = path.join(w.d, 'gh-state.json');
+  t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
+  const out = path.join(w.d, 'draft');
+  const draft = (over = {}) => publishModule.acceptanceDraft({ version: VERSION, dir: w.out, base, out, images: [image], index: w.index, ghCommand: [process.execPath, w.fake],
+    deps: { kitOf: async () => kit, readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: packageSource }) }, ...over });
+  return { ...w, kit, image, base, out, draft };
+};
+const noDraft = async w => { await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`))); };
+
+test('acceptance-draft refuses a template whose Source is this package\'s: no draft file, nothing uploaded', async t => {
+  const w = await draftWorld(t, { templateSource: 'b'.repeat(64), packageSource: 'b'.repeat(64) });
+  const before = await fs.readFile(w.index), n = (await w.calls()).length;
+  await assert.rejects(w.draft(), { code: 'ACCEPTANCE_DRAFT_TEMPLATE_IS_THIS_SOURCE' });
+  await noDraft(w);
+  await unchanged(w, before, n);
+});
+
+test('acceptance-draft refuses a missing role image the previous Release does not have either: no draft file, nothing uploaded', async t => {
+  const w = await draftWorld(t);
+  const before = await fs.readFile(w.index), n = (await w.calls()).length;
+  await assert.rejects(w.draft({ images: [] }), { code: 'ACCEPTANCE_DRAFT_IMAGE_MISSING' });
+  await noDraft(w);
+  await unchanged(w, before, n);
+  // an earlier version in the index whose Release has that image, but its sums file names another hash: refused, not used
+  const prev = '2026.11.11-1', prevTag = `fleet-node-${prev}`;
+  const body = Buffer.from('gzip of a docker save');
+  const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
+  await fs.writeFile(w.index, [lines[0], lines[1], `| ${prev} | u | ${'1'.repeat(64)} | ${'2'.repeat(40)} | 2026-11-11T00:00:00Z | b5d041d2 |`, ...lines.slice(2)].join('\r\n'));
+  const stateFile = path.join(w.d, 'gh-state.json');
+  const state = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+  const img = { name: `role-image-${IMAGE}.tar.gz`, size: body.length, b64: body.toString('base64') };
+  const sums = (hash) => { const t = `${hash}  role-image-${IMAGE}.tar.gz\n`; return { name: `${prevTag}.first-install.SHA256SUMS`, size: t.length, b64: Buffer.from(t).toString('base64') }; };
+  state.other = { [prevTag]: [img, sums('9'.repeat(64))] };
+  await fs.writeFile(stateFile, JSON.stringify(state));
+  await assert.rejects(w.draft({ images: [] }), { code: 'ACCEPTANCE_DRAFT_PREVIOUS_IMAGE_NOT_ITS_SUMS' });
+  await noDraft(w);
+  // the same Release with the right sums file: the image is reused, the draft is written
+  state.other[prevTag] = [img, sums(sha(body))];
+  await fs.writeFile(stateFile, JSON.stringify(state));
+  const r = await w.draft({ images: [] });
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_DRAFT_WRITTEN');
+  assert.deepEqual(r.images, [IMAGE]);
+});
+
+test('acceptance-draft: the kit and images are on the Release, then the acceptance file carries the kit\'s hash and passes attach-acceptance', async t => {
+  const w = await draftWorld(t);
+  const r = await w.draft();
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_DRAFT_WRITTEN');
+  const a = JSON.parse(await fs.readFile(r.acceptance, 'utf8'));
+  const kitBytes = await fs.readFile(path.join(w.out, `${TAG}.first-install-kit.json`));
+  assert.equal(a.firstInstallKitSha256, sha(kitBytes));
+  assert.equal(a.ciSourceManifestSha256, 'b'.repeat(64));
+  const up = (await w.assets()).find(x => x.name === `${TAG}.first-install-kit.json`);
+  assert.equal(up.sha256, a.firstInstallKitSha256, 'the uploaded kit is the accepted one');
+  // the order: kit, images and sums are uploaded, read back, and the acceptance is written after (it is only on disk)
+  assert.deepEqual((await w.calls()).filter(c => c.args[1] === 'upload').map(c => path.basename(c.args[3])),
+    [`${TAG}.first-install-kit.json`, `role-image-${IMAGE}.tar.gz`, `${TAG}.first-install.SHA256SUMS`]);
+  // and the file goes through the gate as it is
+  const ok = await attachAcceptance({ version: VERSION, acceptance: r.acceptance, index: w.index, ghCommand: [process.execPath, w.fake] });
+  assert.equal(ok.status, 'FLEET_ACCEPTANCE_ATTACHED');
+  // the directory is new: a second draft into it is refused
+  await assert.rejects(w.draft(), { code: 'ACCEPTANCE_DRAFT_OUT_NOT_NEW' });
+});
+
+// ---------------------------------------------------------------- review 6d46b5c5: A (an accepted version gets no kit), B (an upload that stopped is resumed)
+test('acceptance-draft refuses a version whose index row already has its acceptance: the kit is never added afterwards, nothing uploaded', async t => {
+  const w = await draftWorld(t);
+  const text = await fs.readFile(w.index, 'utf8');
+  assert.ok(text.includes('|  |  |'));
+  await fs.writeFile(w.index, text.split('|  |  |').join(`| 2026-11-12T08:00:00Z | ${DECISION} |`));
+  const before = await fs.readFile(w.index), n = (await w.calls()).length;
+  await assert.rejects(w.draft(), { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
+  await noDraft(w);
+  await unchanged(w, before, n);
+});
+
+test('acceptance-draft: an upload that stopped half way is resumed by the same command (the kit is not uploaded twice, nothing is refused as already attached)', async t => {
+  const w = await draftWorld(t);
+  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';   // the kit goes up, the role image fails
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  await assert.rejects(w.draft(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
+  await noDraft(w);
+  assert.deepEqual((await w.assets()).filter(a => a.name.includes('first-install') || a.name.startsWith('role-image-')).map(a => a.name), [`${TAG}.first-install-kit.json`]);
+  delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+  const r = await w.draft();   // the same arguments, the same --out
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_DRAFT_WRITTEN');
+  const names = (await w.assets()).map(a => a.name);
+  for (const n of [`${TAG}.first-install-kit.json`, `role-image-${IMAGE}.tar.gz`, `${TAG}.first-install.SHA256SUMS`]) assert.equal(names.filter(x => x === n).length, 1, n);
+  const a = JSON.parse(await fs.readFile(r.acceptance, 'utf8'));
+  assert.equal(a.firstInstallKitSha256, (await w.assets()).find(x => x.name === `${TAG}.first-install-kit.json`).sha256);
+  // another kit already on the Release is never completed or replaced
+  const w2 = await draftWorld(t);
+  await w2.draft({ deps: { kitOf: async () => ({ ...w2.kit, marker: 1 }), readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: 'b'.repeat(64) }) }, out: path.join(w2.d, 'other') }).catch(() => null);
+  await assert.rejects(w2.draft(), e => e.code === 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT');
 });

@@ -22,13 +22,13 @@ function deliver({ body = bytes, signature = sign(body), event = 'pull_request',
       ...(signature ? { 'x-hub-signature-256': signature } : {}), ...headers } }), environment);
 }
 
-test('原始字节验签后，三个事件字段恰好送达网关一次', async t => {
+test('原始字节验签后，合入和关闭未合入的投递各送达网关一次', async t => {
   const calls = [];
   t.mock.method(globalThis, 'fetch', async (target, init) => {
     calls.push(JSON.parse(init.body));
     assert.equal(target, env.SUPABASE_URL + '/rest/v1/rpc/clued_work_pr_merged_event_v1');
     assert.equal(init.method, 'POST');
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     const headers = new Headers(init.headers);
     assert.equal(headers.get('authorization'), 'Bearer test-gateway');
     assert.equal(headers.get('apikey'), 'test-key');
@@ -40,6 +40,44 @@ test('原始字节验签后，三个事件字段恰好送达网关一次', async
     assert.equal((await deliver({ body }))?.status, 200);
     assert.deepEqual(calls.splice(0), [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merge_sha: mergeSha === sha ? sha : null } }]);
   }
+  const body = JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: false } });
+  assert.equal((await deliver({ body }))?.status, 200);
+  assert.deepEqual(calls, [{ p_input: { repository: 'Org/Repo', pr_number: 1161, merged: false, merge_sha: null } }]);
+});
+
+test('已签名合入事件兼容只接受三个字段的旧数据库函数', async t => {
+  const database = t.mock.method(globalThis, 'fetch', async (_target, init) => {
+    const { p_input } = JSON.parse(init.body);
+    const allowed = ['repository', 'pr_number', 'merge_sha'];
+    if (Object.keys(p_input).some(key => !allowed.includes(key))) {
+      return Response.json({ code: '22023' }, { status: 400 });
+    }
+    return Response.json({ status: 'ok', finished: 1, released: [] });
+  });
+
+  const response = await deliver();
+  assert.equal(database.mock.callCount(), 1);
+  assert.equal(response?.status, 200);
+  assert.deepEqual(JSON.parse(database.mock.calls[0].arguments[1].body), {
+    p_input: { repository: 'Org/Repo', pr_number: 1161, merge_sha: sha },
+  });
+});
+
+test('生产形态环境中的已签名合入事件送达默认数据库', async t => {
+  const database = t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({ status: 'ok', finished: 1, released: [] }));
+  const response = await deliver({ environment: { GITHUB_WEBHOOK_SECRET: secret, CLUED_DB_GATEWAY_TOKEN: 'test-gateway' } });
+
+  assert.equal(response?.status, 200);
+  assert.equal(database.mock.callCount(), 1);
+  const [target, init] = database.mock.calls[0].arguments;
+  assert.equal(target, 'https://ccxsikzwxlolxqlosril.supabase.co/rest/v1/rpc/clued_work_pr_merged_event_v1');
+  const headers = new Headers(init.headers);
+  assert.equal(headers.get('authorization'), 'Bearer test-gateway');
+  assert.match(headers.get('apikey') ?? '', /^sb_publishable_/);
+  assert.deepEqual(JSON.parse(init.body), {
+    p_input: { repository: 'Org/Repo', pr_number: 1161, merge_sha: sha },
+  });
 });
 
 test('无效签名、无关事件和关闭的路由都不会调用网关', async t => {
@@ -49,7 +87,8 @@ test('无效签名、无关事件和关闭的路由都不会调用网关', async
     [{ body: Buffer.concat([bytes, Buffer.from(' ')]), signature: sign(bytes) }, 401],
     [{ signature: 'sha256=' + 'a'.repeat(63) }, 401], [{ event: 'ping', signature: null }, 401],
     [{ event: 'ping' }, 204], [{ body: JSON.stringify({ ...merged, action: 'opened' }) }, 204],
-    [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: false } }) }, 204],
+    [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: undefined } }) }, 204],
+    [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, merged: 'false' } }) }, 204],
     [{ body: JSON.stringify({ ...merged, pull_request: { ...merged.pull_request, base: { ref: 'main' } } }) }, 204],
     [{ body: JSON.stringify({ action: 'closed', pull_request: { merged: true } }) }, 204],
     [{ body: '{' }, 400], [{ environment: { ...env, GITHUB_WEBHOOK_SECRET: undefined } }, 404],

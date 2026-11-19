@@ -96,12 +96,27 @@ const AUTHORIZATION_DB_TESTS = [
   'integration-runtime-verification-db',
   'issuer-credentials-db', 'k-cont-db', 'model-domain-bootstrap-db', 'mtpe-frontier-eligibility-v2-1-db', 'mtpe-frontier-eligibility-v2-db',
   'mtpe-owner-pin-consistency-db', 'mtpe-universal-intake-db', 'now-conflict-null-project-db', 'owner-grants-db', 'owner-grants-release-door-db',
-  'owner-grants-resident-upgrade-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'project-invitations-db',
+  'owner-grants-resident-upgrade-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'production-release-door-flow-db',
+  'project-invitations-db',
   'project-list-authorization-db', 'projection-refresh-pipeline-db', 'record-update-field-merge-db', 'resource-center-authority-db',
   'resume-constraint-index-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
   'task-dependency-guard-db', 'work-claim-exemptions-db', 'work-claims-acceptance-db', 'work-claims-binding-roles-db', 'work-claims-ci-metering-db',
   'work-claims-continuation-db', 'work-claims-hardening-db', 'work-claims-main-merge-db', 'work-claims-multi-copy-db', 'work-claims-reject-receipts-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
   'work-claims-resource-kinds-db', 'worker-gateway-db', 'worker-gateway-request-context-db',
+  // Database tests no required suite ran until ci-required-selection.test.mjs required each to run or be exempted
+  // (2026-11-19); each of these passed when listed. The exempted ones and their reasons are in that test.
+  'approved-legacy-successor-reconcile-db', 'audit-receipt-lookup-indexes-db', 'ci-database-lint-type-fixes-db', 'ci-heartbeat-scope-db',
+  'credential-table-privileges-db', 'credential-verifier-db', 'currentness-legacy-inventory', 'future-consent-authorization-db',
+  'imprint-bulk-backfill-db', 'imprint-development-organization-db', 'imprint-organization-db', 'imprint-owner-scope-query-db',
+  'imprint-source-history-db', 'integration-runtime-transport', 'integration-status-lookup-indexes-db', 'kooyumi-issuer-provision',
+  'legacy-audit-binding-revoke-db', 'legacy-create-carrier-reconcile-db', 'legacy-existing-retraction-reconcile-db',
+  'merge-admission-clock-audit-transport-db', 'merge-admission-measurement-capabilities-db', 'merge-admission-measurement-clock-target-db',
+  'merge-admission-measurement-history-db', 'model-domain-bootstrap-claim-currentness-scope-db', 'owner-auto-approve-persistent-db',
+  'owner-request-answers-db', 'priority-custom-db', 'project-lifecycle-successor-v2-db', 'storage-admission-retry-db',
+  'storage-conflict-isolation-db', 'storage-file-version-denial-db', 'storage-google-redirect-cutover',
+  'storage-legacy-create-registration-db', 'storage-legacy-directory-recovery-db', 'storage-master-control-db',
+  'storage-registration-reconcile-db', 'storage-semantic-recovery-db', 'task-goal-delivery-db', 'task-goal-delivery-production-schema-db',
+  'task-owner-detail-db', 'work-claims-generated-files-db', 'work-claims-lease-pin-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
@@ -109,13 +124,18 @@ const AUTHORIZATION_DB_TESTS = [
 // own files only (worker/*): worker/generated is rewritten by every component bump, and those version strings are
 // not what these tests check.
 const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/tests/fixtures/integration-runtime/**',
+  'apps/clued-cloud/tests/ci-connection-renew-db.test.mjs',
   'apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/tests/*fixture*.mjs', 'apps/clued-cloud/tests/*.case.mjs', 'apps/clued-cloud/tests/worker/**',
   'apps/clued-cloud/tests/worker-continuity-loader.mjs', 'apps/clued-cloud/tests/independent-review-db.test.mjs',
   'apps/clued-cloud/worker/*', 'apps/clued-cloud/build/pdfjs-decode-guard.mjs', 'kernel/host/resource-center-*.mjs',
   'kernel/policy/resource-center-*.mjs', 'scripts/phase2-qualification/minimum-context-compiler/**',
   'development/contracts/information-flow/vendored/**',
-  'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'];
+  'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json',
+  'apps/clued-cloud/scripts/kooyumi-issuer-provision.mjs', 'apps/clued-cloud/scripts/storage-google-redirect-cutover.mjs',
+  'scripts/ci/clued-independent-publication-identity.mjs', 'scripts/ci/merge-admission-clock-source.mjs',
+  'scripts/ci/merge-admission-measurement-history.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs',
+  'work/actions-hosted-migration/independent-ci-v1/src/proof.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/queue.mjs'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
@@ -125,7 +145,9 @@ export const SUITES = {
     // Node Resource Governance v1: the renderer, its sweep and installer, the declarations and the standard (whose archive numbers the resident tests hold too).
     'node-governance': ['scripts/ci/self-hosted/node-governance/**', 'scripts/ci/self-hosted/node-profiles.json', 'scripts/ci/self-hosted/validate_node_profiles.py',
       'config/node-governance-standard.json', 'work/independent-ci-resident-v1/src/host-capacity.mjs'],
-    'resident-node': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
+    // The renewal contract is the server's file; the resident package carries it (build-package.mjs RESIDENT_EXTERNAL) and these
+    // tests verify the fixed signature vector against it, so a server-side change runs them (D2c ruling B1; package.test.mjs checks it).
+    'resident-node': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json', 'apps/clued-cloud/worker/ci-connection-renew.contract.json'],
     'resident-python': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
     // The reinstall tools' own tests (work/independent-ci-resident-v1/reinstall/test) pin the launcher template, read the resident's
     // windows/linux/rollout files and the Source v2 resident-v2 record code, so they run on the same paths as the resident suites.
@@ -148,8 +170,11 @@ export const SUITES = {
     'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
+    // Its test checks that every database test of apps/clued-cloud/tests runs in a required suite or is exempted, so a
+    // new or changed test there, or the classifier, selects it.
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
-      'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml'],
+      'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
+      'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
   // The application suite reads files from across the repository (workflow,
   // contract and CI-script tests), so every change runs it.
@@ -159,6 +184,8 @@ export const SUITES = {
   'migration-verify': {
     'production-schema': ['apps/clued-cloud/supabase/**', 'apps/clued-cloud/scripts/production-schema-*.mjs',
       'apps/clued-cloud/scripts/migration-ledger.mjs', 'apps/clued-cloud/scripts/production-release-baseline.json',
+      // The release door flow test runs the release workflow steps and the grant script (FABLE-release-identity-autonomous §3.1).
+      '.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
       'apps/clued-cloud/tests/production-schema-drift.test.mjs', ...MIGRATION_DB_TESTS, ...AUTHORIZATION_DB_TESTS, ...MIGRATION_DB_TEST_INPUTS, 'apps/clued-cloud/package.json',
       'apps/clued-cloud/package-lock.json'],
   },
@@ -239,7 +266,7 @@ export const SUITE_COMMANDS = {
   ],
   'admission-self-tests': [{ cwd: '.', known: 'admission-self-tests', argv: ['node', '--test',
     'scripts/ci/clued-work-admission.test.mjs', 'scripts/ci/merge-admission-policy.test.mjs',
-    'scripts/ci/merge-admission-policy-file.test.mjs', 'scripts/ci/clued-release-grant.test.mjs',
+    'scripts/ci/merge-admission-policy-file.test.mjs', 'scripts/ci/clued-release-grant.test.mjs', 'scripts/ci/clued-release-door.test.mjs',
     'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/runner/clued-runner-hook-loader.test.mjs', 'scripts/runner/install-hook-loader.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs',
     'scripts/ci/clued-front-main-merge.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
@@ -266,6 +293,7 @@ export const SUITE_COMMANDS = {
     { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}'] },
   ],
   'production-schema': [
+    { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/ci-connection-renew-db.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{db-concurrency}',

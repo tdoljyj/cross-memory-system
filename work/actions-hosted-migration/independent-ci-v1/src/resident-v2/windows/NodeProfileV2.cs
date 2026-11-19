@@ -13,6 +13,28 @@ using Microsoft.Win32.SafeHandles;
 
 // C1: public node identity only. No runtime/key/Source/qualification identity is derived here.
 // The canonical hash is the existing C1a SHA256(canonical(node) UTF8), without a trailing LF.
+// Shared by the controller helper and the broker's read-only diagnostic. Check under the caller's own token.
+internal static class RenewalKeyAccessV2 {
+    internal const string Name="Clued-CI-Node-Identity-v1";
+    internal static readonly string[] Providers={"Microsoft Platform Crypto Provider","Microsoft Software Key Storage Provider"};
+    internal const CngKeyOpenOptions Flags=CngKeyOpenOptions.MachineKey|CngKeyOpenOptions.Silent;
+    internal static bool Absent(int error) {
+        return error==unchecked((int)0x80090016) || error==unchecked((int)0x80090011) || error==unchecked((int)0x80090013) || error==unchecked((int)0x8028400f);
+    }
+    internal static string Check(string provider) {
+        try { using(CngKey.Open(Name,new CngProvider(provider),Flags)) return "OPEN"; }
+        catch(CryptographicException e) {
+            if(e.HResult==unchecked((int)0x80090010) || e.HResult==unchecked((int)0x80070005))return "DENIED";
+            return Absent(e.HResult)?"ABSENT":"UNKNOWN";
+        }
+        catch {return "UNKNOWN";}
+    }
+    internal static Dictionary<string,object> Observation() {
+        using(var id=WindowsIdentity.GetCurrent()) return new Dictionary<string,object> {
+            {"at",DateTime.UtcNow.ToString("o")},{"sid",id.User.Value},{"tpm",Check(Providers[0])},{"software",Check(Providers[1])}
+        };
+    }
+}
 public sealed class NodeProfileV2 {
  public const string Contract="clued.independent-ci.node-profile/1";
  public const string FixedResidentRoot="C:\\ProgramData\\CluedIndependentCI\\resident";

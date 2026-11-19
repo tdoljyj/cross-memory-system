@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { AdmissionRerunner, AdmissionRerunState, REQUIRED_TESTS_WORKFLOW } from '../src/admission-rerun.mjs';
+import { AdmissionRerunner, AdmissionRerunState } from '../src/admission-rerun.mjs';
 import { executorFixture, fakeEngine, triggerBytes, CI_SOURCE, WINDOWS_CLEAN } from './helpers.mjs';
 import { setup, iso, T, S, TREE, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
 import { admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
@@ -13,7 +14,7 @@ import { writeOutcome } from '../../actions-hosted-migration/independent-ci-v1/s
 import { outcomeFacts, outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 
 const PR = 1159, HEAD = 'be149834bd809e697d9ec41f22302cbc72e7eae6', RUN = 44277214142, MIGRATION = 134709790262;
-const RUNS = `/actions/workflows/${REQUIRED_TESTS_WORKFLOW}/runs`;
+const WORKFLOW = 100;
 
 test('E9: #1159 recovers from parking B on the same head with one rerun and no push', async t => {
   const e = await setup(t, { strict: true });
@@ -40,18 +41,23 @@ test('E9: #1159 recovers from parking B on the same head with one rerun and no p
     p.head.repo = p.base.repo = { full_name: REPO };
     return p;
   };
-  const actions = { id: RUN, head_sha: HEAD, event: 'pull_request', status: 'completed', run_attempt: 1, pull_requests: [{ number: PR }] };
+  const workflow = '.github/workflows/clued-required-tests.yml';
+  const source = await fs.readFile(new URL(`../../../${workflow}`, import.meta.url));
+  const actions = { id: RUN, workflow_id: WORKFLOW, path: workflow, head_sha: HEAD, event: 'pull_request', status: 'completed', run_attempt: 1, pull_requests: [{ number: PR }] };
   const mutations = [], pushes = [];
   const gh = {
     repo: REPO,
     async get(route) {
       if (route === `/pulls/${PR}`) return github.readPullRequest(PR);
+      if (route === `/contents/${workflow}?ref=${T}`) return { path: workflow, sha: TREE, encoding: 'base64', content: source.toString('base64') };
       if (route === `/actions/runs/${RUN}`) return { ...actions };
-      if (route === `${RUNS}?head_sha=${HEAD}&per_page=100`) return { total_count: 1, workflow_runs: [{ ...actions }] };
-      if (route.startsWith(`${RUNS}?`)) return { total_count: 0, workflow_runs: [] };
+      if (route.startsWith(`/actions/workflows/${WORKFLOW}/runs?`)) return { total_count: 0, workflow_runs: [] };
       assert.fail(route);
     },
     async paged(route) {
+      if (route === '/rules/branches/main') return (await github.readBranchRules()).rules;
+      if (route === `/commits/${HEAD}/check-runs?filter=all`) return (await github.readChecks(HEAD)).checks;
+      if (route === `/actions/runs?head_sha=${HEAD}`) return [{ ...actions }];
       if (route === `/commits/${HEAD}/pulls`) return [await github.readPullRequest(PR)];
       if (route === `/commits/${HEAD}/check-runs?check_name=kooyumi-work-admission&filter=all`) return [github.world.checks.get(10)];
       if (route === `/check-runs/${MIGRATION}/annotations`) return [{ message: 'The job has exceeded the maximum execution time of 30m0s' }];

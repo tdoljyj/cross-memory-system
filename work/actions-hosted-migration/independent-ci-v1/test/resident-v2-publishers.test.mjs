@@ -65,6 +65,49 @@ test('failed required checks neither join nor extend, and an already queued clai
   }
 });
 
+// FABLE 11-19 §4.1 (8), the #1176 incident: stage 8 sees a required check fail while the claim is queued and gives back its merge
+// slot. That is only a slot: the same claim's next attempt (the check rerun passed) goes on exactly as an attempt that never failed.
+// The offline Native has the semantics of 20261119001000 ('slot-only'); with the production function before it ('pr-end': every
+// return ended the PR binding and released the claim) the second attempt is refused, which is the incident itself.
+// A model test (review 1): stage 8 did not change, so it does not fail before the fix; the semantics it models are proved on the real
+// database by work-claims-pr-end-release-db (#1166 and L1-3: a return ends no binding and releases no claim).
+const STAGE8_RETURN_SEMANTICS = 'slot-only';
+async function stage8AfterReturn(t, semantics, { fail = true } = {}) {
+  const c = claim(), github = fakeGithub(), time = Date.now();
+  github.state.rules[2].parameters.required_status_checks.push({ context: 'ci-suites', integration_id: 15368 });
+  github.checks.push({ id: 1, head_sha: HEAD, name: 'ci-suites', app: { id: 15368 }, status: 'completed', conclusion: fail ? 'failure' : 'success' });
+  const native = { status: 'ACTIVE', queued: true, returns: [] };
+  native.returnSlot = async ({ pr }) => {
+    native.returns.push(pr); native.queued = false;
+    if (semantics === 'pr-end') native.status = 'RELEASED';
+    return { onDuty: true, returned: true, claims: [c.claimId] };
+  };
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  const publisher = () => createFixtureControlPublisherV2({ github, journal, assertLive() {}, record() {}, authority: {}, batchClaim: claimGeneration(c), clock: () => time,
+    claimAssist: { joinQueue: async () => { native.queued = true; }, extendLease: async () => {} }, slotNative: native,
+    admission: fakeAdmission((job, packet, opts) => {
+      if (native.status !== 'ACTIVE') return blocked('full_admission_rejected');
+      opts.scheduling?.({ mergeQueue: { entered: native.queued, state: native.queued ? 'head' : null, position: native.queued ? 1 : null }, claimExpiresAt: iso(time + 60_000) });
+      return admitted(job, c, packet, { mergeQueueHead: native.queued, observedAt: time });
+    }) });
+  const one = jobsFor(1), two = jobsFor(2);
+  const first = fail ? await publisher().publishPair([one['control-admission'], one['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS }) : {};
+  if (fail) github.checks.push({ id: 2, head_sha: HEAD, name: 'ci-suites', app: { id: 15368 }, status: 'completed', conclusion: 'success' });
+  native.queued = true; // the holder's claim joins its queue again (renew with the merge-slot trigger)
+  const second = await publisher().publishPair([two['control-admission'], two['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  return { first: [first.status, first.reason], second: [second.status, second.reason], returns: native.returns, claim: native.status };
+}
+test('#1176: a stage-8 required check failure gives back only the merge slot; the same claim\'s next attempt goes on', async t => {
+  const never = await stage8AfterReturn(t, STAGE8_RETURN_SEMANTICS, { fail: false });
+  const after = await stage8AfterReturn(t, STAGE8_RETURN_SEMANTICS);
+  assert.deepEqual(after.first, ['BLOCKED', 'REQUIRED_CHECK_FAILED']);
+  assert.deepEqual(after.returns, [888]);
+  assert.equal(after.claim, 'ACTIVE', 'giving back the merge slot leaves the claim live');
+  assert.notEqual(after.second[1], 'full_admission_rejected');
+  assert.notEqual(after.second[1], 'BATCH_CLAIM_CHANGED');
+  assert.deepEqual(after.second, never.second, 'the second attempt goes on as one that never failed');
+});
+
 // A complete admitted v2 observation for `job` under `observed` (shape of full-admission-v2 facts).
 const SLOT_UNTIL = Date.now() + 3600_000; // Native's merge-slot deadline does not move between observations
 function admitted(job, observed, packet, { mergeQueueHead = false, slotUntil = SLOT_UNTIL, batchClaim = null, observedAt = Date.now() } = {}) {

@@ -1,4 +1,4 @@
-import { removeTestDirectory } from './cluster-cleanup.mjs';
+import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, removeTestDirectory } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -71,7 +71,8 @@ test('actor-free successor: real M1 normalization and Native denial boundaries o
   const server = new EmbeddedPostgres({
     databaseDir, user: 'postgres', password: hash(), port: await freePort(),
     persistent: true, createPostgresUser:false,
-    postgresFlags: ['-c', 'io_method=sync','-c','listen_addresses=127.0.0.1'],
+    initdbFlags: EPHEMERAL_INITDB_FLAGS,
+    postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],
     onLog() {}, onError(message) { process.stderr.write(message + '\n'); },
   });
   let admin,ownProcess,startAttempted=false,initialiseSettled=false;
