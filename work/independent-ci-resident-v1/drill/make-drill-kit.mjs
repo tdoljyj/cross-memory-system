@@ -102,7 +102,10 @@ export function packageCredentials(text) {
   const group = name => {
     const v = `(?:\\$(?:(?:script|global|local|private):)?${name}(?![A-Za-z0-9_])|\\$\\{(?:(?:script|global|local|private):)?${name}\\})`;
     const assignments = [...code.matchAll(new RegExp(`${v}[ \\t]*(?:[-+*/%]|\\?\\?)?=(?!=)`, 'gi'))];
-    const changed = new RegExp(`${v}[ \\t]*(?:\\[[^\\]\\r\\n]*\\][ \\t]*=(?!=)|\\.[A-Za-z_][A-Za-z0-9_]*[ \\t]*=(?!=)|\\.(?:Add|Remove|RemoveAt|Clear|Insert|Set_Item)[ \\t]*\\()`, 'i').test(code);
+    // changed after the declaration (6th review round, medium 1): any assignment -- plain or compound (+= -= *= /= %= ??=) -- to an
+    // index or a property reached from the constant, or a mutating method called on it or on what it holds
+    const access = `(?:[ \\t]*\\[[^\\]\\r\\n]*\\]|\\.[A-Za-z_][A-Za-z0-9_]*)+`;
+    const changed = new RegExp(`${v}${access}[ \\t]*(?:[-+*/%]|\\?\\?)?=(?!=)|${v}(?:${access})?\\.(?:Add|Remove|RemoveAt|Clear|Insert|Set_Item|Push|Pop|Enqueue|Dequeue)[ \\t]*\\(`, 'i').test(code);
     const byCmdlet = new RegExp(`\\b(?:Set|New|Remove|Clear)-Variable\\b[^\\r\\n]*[\\s'"]${name}(?![A-Za-z0-9_])`, 'i').test(lines);
     if (assignments.length !== 1 || changed || byCmdlet) return null;
     const m = new RegExp(`^\\$${name}[ \\t]*=[ \\t]*\\[ordered\\]@\\{([^}\\r\\n]*)\\}[ \\t]*\\r?$`, 'mi').exec(lines);
