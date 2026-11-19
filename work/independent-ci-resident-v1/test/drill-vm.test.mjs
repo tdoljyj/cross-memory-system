@@ -962,6 +962,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
     function Test-DrillPackageDir { @{ version = '1.2.3'; tarSha256 = 'tar'; ciSourceManifestSha256 = 'source' } }
     function Read-DrillKit { @{ sha256 = 'kit'; prereqSha256 = 'prereq'; executionBlocker = $null; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) } }
     function Get-DrillReleaseFiles { }
+    function Assert-DrillKitCredentialsBound { }
     function Assert-DrillHost { @{ freeGB = 16 } }
     function Invoke-DrillBaseline { @{ action = 'ready' } }
     function Read-DrillHostStatus { ${q(idleHostStatus())} }
@@ -1260,6 +1261,33 @@ test('the credential plan: every required name given, every optional name decide
   assert.match(guide, /`ci-node-heartbeat\.token` \| 按设计不给/);
 });
 
+// Codex review of e0a3cded5, high 2: the run binds the kit's credential names again to the package it drills -- derived from the verified
+// tar by the one reader (make-drill-kit.mjs --credentials-of) and compared; a kit edited to drop a required name, or emptied, is refused.
+test('the run binds the kit\'s credential names again to the package it drills: any difference refuses before boot', opts, async () => {
+  const f = firstInstallAssets('bound-credentials');
+  prepareFrom({ ...f, out: f.from });
+  await makeDrillKit(f);
+  const tar = path.join(f.from, `fleet-node-${f.version}.tar`);
+  const bound = (t = tar) => psCode(`Assert-DrillKitCredentialsBound (Read-DrillKit ${q(f.out)}) ${q(t)}`);
+  assert.equal(bound(), null);
+  const kitFile = path.join(f.out, 'kit.json');
+  const kit = JSON.parse(fs.readFileSync(kitFile, 'utf8'));
+  const put = credentials => fs.writeFileSync(kitFile, JSON.stringify({ ...kit, credentials }, null, 2));
+  const { upgradeToken, ...withoutOne } = PACKAGE_CREDENTIALS.required;
+  put({ ...PACKAGE_CREDENTIALS, required: withoutOne });
+  assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'a required name dropped from the kit');
+  put({ required: {}, optional: {} });
+  assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'emptied');
+  assert.equal(planOf({ required: {}, optional: {} }).code, 'DRILL_KIT_REFUSED', 'an empty required group is no plan either');
+  put(PACKAGE_CREDENTIALS);
+  assert.equal(bound(), null);
+  // a tar whose host preparation does not declare the two: unreadable
+  const old = firstInstallAssets('bound-credentials-old', { hostText: "$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem' }\r\n" });
+  assert.equal(bound(path.join(old.build, `fleet-node-${old.version}.tar`)), 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
+  // the run calls it before the host gate, on the package's verified tar
+  assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitCredentialsBound \$kitInfo \$package\.tar/);
+});
+
 test('the repository\'s package and the drill: required names the drill makes, optional names it decides; the hand-over agrees', opts, () => {
   const read = rel => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
   const decisions = decisionsOf();
@@ -1374,7 +1402,8 @@ const candidateStubs = `
     function Assert-DrillHost { throw (New-DrillError 'TEST_REACHED_HOST_GATE') }
     # never the real host hold, whatever the code does (Clued Task fe8a2cbf)
     function Invoke-DrillWithHostHold { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
-    function Get-DrillIntakeTool { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }`;
+    function Get-DrillIntakeTool { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
+    function Assert-DrillKitCredentialsBound { }`;
 test('a candidate run with -SkipReinstall is no longer refused before the host gate; without it, as before', opts, () => {
   assert.equal(psCode(`${candidateStubs}; $SkipReinstall = $true; Invoke-DrillMain`), 'TEST_REACHED_HOST_HOLD');
   assert.equal(psCode(`${candidateStubs}; Invoke-DrillMain`), 'TEST_REACHED_HOST_HOLD');

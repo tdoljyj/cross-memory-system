@@ -518,6 +518,22 @@ $script:DrillCredentialDecisions = [ordered]@{
   'ci-node-heartbeat.token' = [ordered]@{ give = $false; reason = 'a fake token would make the guest''s resident send requests to the production heartbeat endpoint: the guest would behave otherwise and the drill''s production read-back would no longer be zero' }
 }
 
+# The kit's credential names bound again to the package being drilled (Codex review of e0a3cded5, high 2): derived from the verified tar
+# by the one reader (make-drill-kit.mjs --credentials-of) and compared with the kit's, group by group and name by name; any difference
+# refuses the drill before any boot, so an edited kit cannot drop a name the package needs.
+function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
+  $reader = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'make-drill-kit.mjs'
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $run = Invoke-DrillNode $node @($reader, '--credentials-of', $Tar) 60
+  $derived = $null
+  if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
+  if ($null -eq $derived) { throw (New-DrillError 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE' $Tar) }
+  $pairs = { param($c) foreach ($g in @('required', 'optional')) { $m = Get-Prop $c $g
+    @(if ($m -is [Collections.IDictionary]) { foreach ($k in @($m.Keys)) { "$g.$k=$($m[$k])" } } elseif ($null -ne $m) { foreach ($p in $m.PSObject.Properties) { "$g.$($p.Name)=$($p.Value)" } }) | Sort-Object } }
+  $want = @(& $pairs $derived) -join "`n"; $have = @(& $pairs (Get-Prop $KitInfo 'credentials')) -join "`n"
+  if ($want -cne $have) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ package = $want; kit = $have }) }
+}
+
 # The kit's credential names (make-drill-kit.mjs, from the package) against the drill's decisions: what is given (and the fake file each
 # is made as), what is withheld and why. Throws by name for a required name the drill cannot give or an optional one it has no decision for.
 function Get-DrillCredentialPlan($Kit) {
@@ -525,6 +541,9 @@ function Get-DrillCredentialPlan($Kit) {
   $req = Get-Prop $c 'required'; $opt = Get-Prop $c 'optional'
   if ($null -eq $req -or $null -eq $opt) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'credentials') }
   $names = { param($g) @(if ($g -is [Collections.IDictionary]) { $g.Values } else { $g.PSObject.Properties | ForEach-Object { $_.Value } }) | ForEach-Object { [string]$_ } }
+  # the shape (Codex review of e0a3cded5, high 2): a non-empty required group; every name a plain file name
+  if (@(& $names $req).Count -eq 0) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'credentials.required') }
+  foreach ($n in @(@(& $names $req) + @(& $names $opt))) { if ($n -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' "credentials $n") } }
   $give = @(); $withheld = @()
   foreach ($n in @(& $names $req)) {
     $d = $script:DrillCredentialDecisions[$n]
@@ -2276,7 +2295,9 @@ function Invoke-DrillMain {
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
     if ($kitInfo.executionBlocker) { throw (New-DrillError 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY' $kitInfo.executionBlocker) }
-    # the package's credential names against the drill's decisions, before the host gate, the hold or any boot
+    # the package's credential names against the drill's decisions, before the host gate, the hold or any boot; the kit's names first bound
+    # again to the package's verified tar
+    Assert-DrillKitCredentialsBound $kitInfo $package.tar
     $kitInfo['credentialPlan'] = Get-DrillCredentialPlan $kitInfo
   }
   Invoke-DrillWithHostHold $RunTimeoutMinutes {

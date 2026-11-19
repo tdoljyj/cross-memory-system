@@ -73,6 +73,13 @@ export function packageCredentials(text) {
   return { required, optional };
 }
 
+// The two groups of a package archive (its host preparation script); the one reader the build and the run's gate both use.
+export function credentialsOfTar(tarBytes) {
+  const hostScript = readTar(tarBytes).find(e => e.path === HOST_SCRIPT);
+  check(hostScript, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
+  return packageCredentials(hostScript.data.toString('utf8'));
+}
+
 export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
   const prereq = JSON.parse(prereqBytes.toString('utf8'));
@@ -150,9 +157,7 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
       firstInstallKitSha256: acceptance.firstInstallKitSha256 };
   }
   payloads['release-pins.json'] = Buffer.from(JSON.stringify(pins, null, 2) + '\n');
-  const hostScript = readTar(read(from, `fleet-node-${version}.tar`)).find(e => e.path === HOST_SCRIPT);
-  check(hostScript, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
-  const credentials = packageCredentials(hostScript.data.toString('utf8'));
+  const credentials = credentialsOfTar(read(from, `fleet-node-${version}.tar`));
   const prereqBytes = fs.readFileSync(prereq), p = JSON.parse(prereqBytes);
   const pm = JSON.parse(read(from, `fleet-node-${version}.prereq-manifest.json`));
   const available = [...(pm.items ?? []), ...(pm.debs ?? [])];
@@ -210,8 +215,12 @@ export function prepareFrom({ build, final, images, version, out }) {
 
 if (import.meta.main) {
   try {
-    const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'request', 'build', 'final', 'images'].map(n => [n, { type: 'string' }])) });
-    check(values.version && values.out, 'USAGE: --version <v> --out <new-dir> (--from <release-dir> --prereq <prereq.json> [--request <fleet-node-<v>.acceptance-request.json>: a candidate] | --build <dir> --final <dir> --images <dir>)');
-    console.log(JSON.stringify(values.build ? prepareFrom(values) : await makeDrillKit(values)));
+    const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'request', 'build', 'final', 'images', 'credentials-of'].map(n => [n, { type: 'string' }])) });
+    // --credentials-of <tar>: the package's two credential groups, for drill-vm.ps1's gate (Assert-DrillKitCredentialsBound)
+    if (values['credentials-of']) console.log(JSON.stringify(credentialsOfTar(fs.readFileSync(values['credentials-of']))));
+    else {
+      check(values.version && values.out, 'USAGE: --version <v> --out <new-dir> (--from <release-dir> --prereq <prereq.json> [--request <fleet-node-<v>.acceptance-request.json>: a candidate] | --build <dir> --final <dir> --images <dir>) | --credentials-of <tar>');
+      console.log(JSON.stringify(values.build ? prepareFrom(values) : await makeDrillKit(values)));
+    }
   } catch (e) { console.error(e.message); process.exitCode = 1; }
 }
