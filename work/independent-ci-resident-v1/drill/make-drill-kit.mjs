@@ -99,7 +99,10 @@ export function credentialsOfTar(tarBytes) {
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(entries[0].data); } catch { text = null; }
   check(text !== null, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json is not UTF-8');
   try { c = JSON.parse(text); } catch { c = null; }
-  const group = g => g !== null && typeof g === 'object' && !Array.isArray(g) && Object.values(g).every(v => typeof v === 'string' && nameOK(v));
+  // a credential file name: a plain name that a Win32 path keeps as it is -- no trailing dot or space, no reserved device name
+  // (CON, PRN, AUX, NUL, COM0-9, LPT0-9 and their superscript forms, with or without an extension; 8th review round, low 3)
+  const fileName = v => typeof v === 'string' && nameOK(v) && !/[. ]$/.test(v) && !/^(?:CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³])(?:\..*)?$/i.test(v);
+  const group = g => g !== null && typeof g === 'object' && !Array.isArray(g) && Object.values(g).every(fileName);
   check(c !== null && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).sort().join() === 'contract,optional,required' &&
     c.contract === CREDENTIAL_FILES_CONTRACT && group(c.required) && group(c.optional) && Object.keys(c.required).length > 0,
     'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json');
