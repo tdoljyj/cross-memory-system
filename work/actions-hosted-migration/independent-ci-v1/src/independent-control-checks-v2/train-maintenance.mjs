@@ -225,9 +225,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     // §41.4 (MergeAdmission v0.2 §2.4), on only: a protected-layer front whose H does not contain T needs main merged in
     // first. The layer is read only when H does not contain T; paths that cannot be read count as protected.
     if (job.mode === 'on' && front.state === 'open' && headSha && front.headContainsMain !== true) {
-      let layer = 'protected';
-      try { layer = layerOfPaths((await github.readChangedPaths({ repo: job.repo, pr: holder.pr, headSha, baseSha: pull.base.sha })).paths); } catch { layer = 'protected'; }
-      front = { ...front, protectedLayer: layer === 'protected' };
+      front = { ...front, protectedLayer: await protectedPull({ github, job, layerOfPaths, pr: holder.pr, headSha, baseSha: pull.base.sha }) };
     }
   }
   let entries = [], summary = null, ledgerReason = null;
@@ -657,7 +655,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
     const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
-      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
+      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState,
+        layerOfPaths, frontBaseSha: pull?.base?.sha ?? null } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
     // turn_short (Fable 2026-11-19; field 2026-11-19, #1169 -> #1173): the hard cap leaves this turn less than the front batch needs,
     // and a new turn would fit it. Nothing else ends such a turn (renewFrontSlot stops renewing it, it lapses idle before the cap,
@@ -964,11 +963,18 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
   return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...batch, ...(members ? { members } : {}), ...(headTree ? { headTree } : {}) } };
 }
 
-// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose Native binding names a current claim of this install and
-// whose current head carries App 5368905's newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim); in
-// PR-number order, at most `want`. A read that fails ends the search (fewer riders, never a guess).
+// The PR's merge-admission layer is protected: its changed paths by the held policy (layerOfPaths), and a read that fails counts as protected.
+async function protectedPull({ github, job, layerOfPaths, pr, headSha, baseSha }) {
+  try { return layerOfPaths((await github.readChangedPaths({ repo: job.repo, pr, headSha, baseSha })).paths) === 'protected'; } catch { return true; }
+}
+
+// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, with GitHub auto-merge on (the author's will to
+// merge; D6 2026-11-19 §1 item 7), whose Native binding names a current claim of this install and whose current head carries App 5368905's
+// newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim), and whose changes are not protected-layer (D6 §1
+// item 8: a protected change lands only alone, under its own Grant for its exact head); in PR-number order, at most `want`. A read that
+// fails ends the search (fewer riders, never a guess); a layer that cannot be read only leaves that PR out.
 export const RIDER_MAX_READS = 10;
-async function findRiders({ github, native, fx, job, rows, claimScope, holder, want }) {
+async function findRiders({ github, native, fx, job, rows, claimScope, holder, want, layerOfPaths }) {
   const out = [];
   if (want <= 0) return out;
   const open = rows.filter(r => r?.state === 'open' && r.baseRef === 'main' && r.number !== holder.pr).sort((a, b) => a.number - b.number).slice(0, RIDER_MAX_READS);
@@ -976,14 +982,16 @@ async function findRiders({ github, native, fx, job, rows, claimScope, holder, w
     if (out.length >= want) break;
     try {
       const pull = await github.readPullRequest(row.number);
-      if (!eligibleBindingPull(pull, job.repo)) continue;
+      if (!eligibleBindingPull(pull, job.repo) || pull.auto_merge == null) continue;
       const binding = await projectPull({ native, fx, pull, job, claimScope });
       if (binding.binding_status === 'conflict') fail('TRAIN_PR_BINDING_CONFLICT');
       if (binding.binding_status !== 'bound' || binding.claim.claim_id === holder.claimId) continue;
       const listed = await github.readChecks(pull.head.sha);
       const admitted = (listed?.checks ?? []).filter(c => c?.app?.id === APP_ID && c.name === 'kooyumi-work-admission' && c.head_sha === pull.head.sha)
         .sort((a, b) => b.id - a.id)[0];
-      if (admitted?.status === 'completed' && admitted.conclusion === 'success') out.push({ pr: pull.number, headSha: pull.head.sha, claimId: binding.claim.claim_id });
+      if (admitted?.status !== 'completed' || admitted.conclusion !== 'success') continue;
+      if (await protectedPull({ github, job, layerOfPaths, pr: pull.number, headSha: pull.head.sha, baseSha: pull.base.sha })) continue;
+      out.push({ pr: pull.number, headSha: pull.head.sha, claimId: binding.claim.claim_id });
     } catch (error) { if (error?.code === 'TRAIN_PR_BINDING_CONFLICT') throw error; break; }
   }
   return out;
@@ -992,11 +1000,14 @@ async function findRiders({ github, native, fx, job, rows, claimScope, holder, w
 // ADR 0018 §3: the members, S and S's tree of the batch push opens, with the landing port's writes (counted). One member: GitHub's test merge.
 // Several: clued-train/staging.tmp forced to T, each member merged in (a conflict or a head already in T leaves that member out), the
 // chain read back. Either way clued-train/staging is forced to S (the CI trigger for the required checks other Apps produce on S).
-async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
+async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx, layerOfPaths, frontBaseSha }) {
   // D6 §8.4 (b): the landing state could not be read while this node has landing batches (adoptLanded): its own decision, not a sweep's.
   if (!state) return { refusal: 'TRAIN_LANDING_STATE_UNREADABLE' };
   const frontMember = { pr: holder.pr, headSha: front.headSha, claimId: holder.claimId };
-  const candidates = max > 1 ? await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1 }) : [];
+  // D6 §1 item 8: a protected-layer front (or one whose layer cannot be read) takes no riders.
+  const alone = max <= 1 || front.protectedLayer === true
+    || await protectedPull({ github, job, layerOfPaths, pr: holder.pr, headSha: front.headSha, baseSha: frontBaseSha });
+  const candidates = alone ? [] : await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1, layerOfPaths });
   const picked = pickMembers({ front: frontMember, candidates, bad: state.bad, suspect: state.suspect, max });
   let members = picked.members, testSha = front.testMerge?.sha ?? null, testTree = front.testMerge?.tree ?? null;
   try {
