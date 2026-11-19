@@ -28,8 +28,6 @@
 // There is no advisory mode: no consumed grant, no run.
 
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 export const DOOR_FUNCTION = "clued_private.release_door_v1(jsonb)";
 export const ACTIONS = { deploy: "release.production", migrate: "migration.production" };
@@ -192,7 +190,7 @@ export async function main(argv = process.argv.slice(2), env = process.env,
   return 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main().then((code) => process.exit(code), (error) => {
     console.error(error);
     process.exit(1);
