@@ -333,7 +333,7 @@ try {
   # instead of printing its line. Every bootstrap output is progress-grade: never an exception, never a change of control flow (the
   # credential clean-up order stays); a value that is not plain data is printed as its type name.
   Case 'json:out-result-prints-the-work-directory' {
-    $saved = $script:Work
+    $saved = Get-Variable -Name Work -Scope Script -ValueOnly -ErrorAction SilentlyContinue
     try {
       $script:Work = Join-Path 'C:\ProgramData\CluedBootstrap' 'abc'
       $line = Out-Result 'BOOTSTRAP_DONE' 'launcher' ([ordered]@{ firstInstall = $true; codes = (@('A', 'B') | Where-Object { $_ }); dir = (Split-Path -Parent 'C:\a\b') })

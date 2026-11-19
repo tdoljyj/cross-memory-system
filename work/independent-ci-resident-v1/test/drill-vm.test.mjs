@@ -964,7 +964,7 @@ test('A1-A10 passing with M5 not PASS is never a PASS; with M5 PASS the A tier g
 // once (the local Source is the request's; that the fleet runs it is the nodes' own concern: they install only the accepted Release and
 // recompute the Source), and -Finalize, run right after the drill, judges only A9 (the drill wrote nothing to production). Order:
 // drill -> -Finalize -> the Owner accepts -> seal. A re-drill of an accepted version (not a candidate) keeps A5's production half.
-const notTheDrillsSource = { ...readbackRow, live_sources: ['6'.repeat(64)] };
+const notTheDrillsSource = () => ({ ...readbackRow, live_sources: ['6'.repeat(64)] });   // a function: readbackRow is declared further down
 test('a candidate receipt: A5 in the guest only, -Finalize judges A9 alone; an accepted re-drill keeps the production half', opts, () => {
   const cand = m5DrillReceipt('cand-a5', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true });
   assert.equal(cand.candidate, true);
@@ -972,18 +972,18 @@ test('a candidate receipt: A5 in the guest only, -Finalize judges A9 alone; an a
   assert.equal(cand.items.find(i => i.id === 'A9').pass, null);
   assert.equal(cand.conclusion, 'PENDING_PRODUCTION_READBACK', 'not read back yet: not a PASS');
   // the fleet runs another Source (the nodes are not on this generation yet): no matter for a candidate
-  const done = finalize('cand-a5-finalize', cand, notTheDrillsSource);
+  const done = finalize('cand-a5-finalize', cand, notTheDrillsSource());
   assert.equal(done.status, 0, JSON.stringify(done.output));
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
   const final = JSON.parse(done.bytes);
   assert.equal(final.items.find(i => i.id === 'A5').pass, true);
   assert.equal(final.items.find(i => i.id === 'A9').pass, true);
   // A9 is still read: a production write during the drill fails the candidate
-  assert.equal(finalize('cand-a9-finalize', cand, { ...notTheDrillsSource, bindings_created: 1 }).output.conclusion, 'FAIL');
+  assert.equal(finalize('cand-a9-finalize', cand, { ...notTheDrillsSource(), bindings_created: 1 }).output.conclusion, 'FAIL');
   // an accepted version's re-drill: A5 waits for the production half, which compares the live Sources as before
   const accepted = m5DrillReceipt('acc-a5', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
   assert.equal(accepted.items.find(i => i.id === 'A5').pass, null);
-  assert.equal(finalize('acc-a5-finalize', accepted, notTheDrillsSource).output.conclusion, 'FAIL');
+  assert.equal(finalize('acc-a5-finalize', accepted, notTheDrillsSource()).output.conclusion, 'FAIL');
   assert.equal(finalize('acc-a5-finalize-same', accepted).output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
 });
 
@@ -1059,7 +1059,7 @@ test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the on
   const before = fs.readFileSync(w.index);
   await assert.rejects(w.sealIt(pending), { code: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
   assert.deepEqual(fs.readFileSync(w.index), before, 'refused before anything is written');
-  const done = finalize('seal-cand-finalize', cand, notTheDrillsSource);
+  const done = finalize('seal-cand-finalize', cand, notTheDrillsSource());
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
   const r = await w.sealIt(done.receiptFile);
   assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');

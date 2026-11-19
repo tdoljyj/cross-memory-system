@@ -361,7 +361,7 @@ try {
     Yes ([string]$js.DeserializeObject((Step 'odd' $fi))['result'] -clike '*DirectoryInfo*') 't3:step-names-the-type'
     Yes ($js.DeserializeObject((Step 'odd' ([ordered]@{ ok = $jp; bad = $fi })))['result']['ok'] -ceq [string]$jp) 't3:step-keeps-the-plain-part'
     foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle)) {
-      Throws { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $odd }) } 'STOP:HOST_OUTPUT_NOT_PLAIN_DATA' ('t3:verdict-refused ' + $odd.GetType().Name)
+      Throws { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $odd }) } 'OUTPUT_NOT_PLAIN_DATA:$.facts*' ('t3:verdict-refused ' + $odd.GetType().Name)
     }
   }
   Case 't2:one-serializer-in-the-script' {
