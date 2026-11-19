@@ -1332,6 +1332,15 @@ test('the repository\'s package and the drill: required names the drill makes, o
   assert.deepEqual(covers(drillKit.packageCredentials(hostScriptText({ required: { ...PACKAGE_CREDENTIALS.required, x: 'x.token' }, optional: { y: 'y.token' } }))),
     { required: ['x.token'], optional: ['y.token'] });
   assert.throws(() => drillKit.packageCredentials(hostScriptText({ required: { a: 'a.token' }, optional: { b: 'a.token' } })), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
+  // Codex review of e0a3cded5, medium 3: what does not read one way is refused -- a decoy in a block comment, a constant only in a block
+  // comment, a key twice, a second (indented) assignment
+  const decoy = "<#\r\n$RequiredCredentialFiles = [ordered]@{ appKey = 'decoy.pem' }\r\n#>\r\n";
+  for (const [reason, text] of [
+    ['a decoy in a block comment beside the real one', decoy + hostScriptText()],
+    ['only in a block comment', '<#\r\n' + hostScriptText() + '#>\r\n'],
+    ['a key twice', "$RequiredCredentialFiles = [ordered]@{ appKey = 'a.pem'; AppKey = 'b.pem' }\r\n$OptionalCredentialFiles = [ordered]@{ }\r\n"],
+    ['a second, indented assignment', hostScriptText() + "function X {\r\n  $OptionalCredentialFiles = [ordered]@{ other = 'other.token' }\r\n}\r\n"],
+  ]) assert.throws(() => drillKit.packageCredentials(text), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
   // the two lines as the package branch holds them (claude/first-install-fixes 913be48ca), read as they are. Its required
   // companion-github.token is made by branch one's generator: until that is merged here (with a decision for the name), a drill of this
   // package is refused before boot, by name -- never drilled without the token

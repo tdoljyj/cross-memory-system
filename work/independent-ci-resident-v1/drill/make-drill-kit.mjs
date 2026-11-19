@@ -60,13 +60,24 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
 export const HOST_SCRIPT = 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1';
 // The prerequisite items (by name in the package's prereq-manifest.json) the drill injects and the guest never downloads.
 export const INJECTED_TOOLS = Object.freeze(['gh', 'git-for-windows']);
+// Read only when it reads one way (Codex review of e0a3cded5, medium 3): exactly one assignment of each constant anywhere in the script
+// (indented ones count), at a line's start, outside any <# #> block comment, a single-line literal of plain pairs, no key twice (PowerShell
+// keys are case-insensitive). Anything else is ambiguous and refused.
 export function packageCredentials(text) {
+  const src = String(text ?? '');
+  const comments = [...src.matchAll(/<#[\s\S]*?#>/g)].map(m => [m.index, m.index + m[0].length]);
+  const inComment = at => comments.some(([a, b]) => at >= a && at < b);
+  const pairRe = /([A-Za-z][A-Za-z0-9]*)\s*=\s*'([^'\r\n]+)'/g;
   const group = name => {
-    const m = new RegExp(`^\\$${name}\\s*=\\s*\\[ordered\\]@\\{([^}]*)\\}\\s*$`, 'm').exec(String(text ?? ''));
-    if (!m) return null;
-    const body = m[1].trim(), pairs = [...body.matchAll(/([A-Za-z][A-Za-z0-9]*)\s*=\s*'([^']+)'/g)];
-    if (body.replace(/([A-Za-z][A-Za-z0-9]*)\s*=\s*'([^']+)'/g, '').replace(/[;\s]/g, '') !== '') return null;
-    return Object.fromEntries(pairs.map(p => [p[1], p[2]]));
+    const assignments = [...src.matchAll(new RegExp(`^[ \\t]*\\$${name}[ \\t]*=`, 'gm'))];
+    if (assignments.length !== 1 || inComment(assignments[0].index)) return null;
+    const m = new RegExp(`^\\$${name}[ \\t]*=[ \\t]*\\[ordered\\]@\\{([^}\\r\\n]*)\\}[ \\t]*\\r?$`, 'm').exec(src);
+    if (!m || m.index !== assignments[0].index) return null;
+    const body = m[1];
+    if (body.replace(pairRe, '').replace(/[;\s]/g, '') !== '') return null;
+    const pairs = [...body.matchAll(pairRe)].map(p => [p[1], p[2]]);
+    if (new Set(pairs.map(([k]) => k.toLowerCase())).size !== pairs.length) return null;
+    return Object.fromEntries(pairs);
   };
   const required = group('RequiredCredentialFiles'), optional = group('OptionalCredentialFiles');
   check(required && optional && Object.keys(required).length > 0, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
