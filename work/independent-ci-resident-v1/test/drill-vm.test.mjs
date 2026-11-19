@@ -117,7 +117,7 @@ function firstInstallAssets(label, { candidate = false } = {}) {
   const archive = writeTar([...['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
     path: `tree/work/independent-ci-resident-v1/rollout/fleet/${n}`,
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
-      { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 }
+      { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 }, { fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }
     ], debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
@@ -130,8 +130,8 @@ function firstInstallAssets(label, { candidate = false } = {}) {
   const prereq = path.join(root, 'prereq.json');
   fs.writeFileSync(prereq, JSON.stringify({ contract: 'clued.drill.prereq/1',
     wsl: { path: 'wsl.msi', sha256: sha('wsl') }, rootfs: { path: 'ubuntu.wsl', sha256: sha('rootfs') },
-    debs: [{ path: 'docker.deb', sha256: sha('deb') }] }));
-  for (const [name, bytes] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['docker.deb', 'deb']]) fs.writeFileSync(path.join(root, name), bytes);
+    debs: [{ path: 'docker.deb', sha256: sha('deb') }], tools: [{ path: 'gh.msi', sha256: sha('gh') }] }));
+  for (const [name, bytes] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['docker.deb', 'deb'], ['gh.msi', 'gh']]) fs.writeFileSync(path.join(root, name), bytes);
   return { root, build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq,
     from: path.join(root, 'from'), out: path.join(root, 'kit') };
 }
@@ -146,6 +146,9 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
   assert.equal((await makeDrillKit(f)).candidate, null);
   const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
   for (const item of manifest.files) assert.equal(sha(fs.readFileSync(path.join(f.out, item.path))), item.sha256);
+  // the host's pinned installers (gh, Git for Windows) go into the guest through the same injection as WSL and the rootfs (Fable,
+  // supplement "after the package branch" 3, 1): never downloaded in the guest
+  assert.ok(manifest.files.some(i => i.path === 'gh.msi'), JSON.stringify(manifest.files.map(i => i.path)));
   if (windows) {
     assert.equal(ps(`(Read-DrillKit ${q(f.out)}).prerequisiteMode`), 'first-install-host');
     assert.equal(ps(`$p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)}; @(Get-DrillReleaseFiles $p (Read-DrillKit ${q(f.out)})).Count`), 9);
@@ -1617,6 +1620,12 @@ test('the prerequisites: official sources only, every byte pinned, injected from
   assert.equal(psCode(`Read-DrillPrereq ${q(prereqDir('pre-nodebs', (p) => ({ ...p, debs: [] })))}`), 'DRILL_PREREQ_REFUSED');
   assert.equal(psCode(`Read-DrillPrereq ${q(prereqDir('pre-outside', (p, dir, put) => { put('x.deb', 'x'); return { ...p, debs: [{ path: 'x.deb', sha256: sha('x'), url: p.debs[0].url }] }; }))}`), 'DRILL_PREREQ_REFUSED');
   assert.equal(psCode(`Read-DrillPrereq ${q(path.join(tmp, 'nowhere'))}`), 'DRILL_PREREQ_MISSING');
+  // the host's pinned gh and Git for Windows installers, from their official releases only
+  const gh = { path: 'gh_2.103.3_windows_amd64.msi', url: 'https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_windows_amd64.msi' };
+  const git = { path: 'Git-2.55.0.3-64-bit.exe', url: 'https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/Git-2.55.0.3-64-bit.exe' };
+  const withTools = prereqDir('pre-tools', (p, dir, put) => ({ ...p, tools: [{ ...gh, sha256: put(gh.path, 'gh') }, { ...git, sha256: put(git.path, 'git') }] }));
+  assert.deepEqual(ps(`[ordered]@{ tools = @((Read-DrillPrereq ${q(withTools)}).tools) }`).tools, [gh.path, git.path]);
+  assert.equal(psCode(`Read-DrillPrereq ${q(prereqDir('pre-tools-mirror', (p, dir, put) => ({ ...p, tools: [{ ...gh, url: 'https://example.net/gh.msi', sha256: put(gh.path, 'gh') }] })))}`), 'DRILL_PREREQ_REFUSED');
 });
 
 const NOW = '2026-11-16T03:00:00Z';

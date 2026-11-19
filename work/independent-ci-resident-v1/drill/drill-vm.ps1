@@ -542,9 +542,9 @@ function Read-DrillPrereq([string]$Dir) {
   if ($distro -notmatch '^[A-Za-z][A-Za-z0-9._-]{0,63}$') { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'distribution') }
   $root = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
   $check = {
-    param($f, [string]$what, [string]$suffix)
+    param($f, [string]$what, [string]$suffix, [string]$urlPattern = '^https?://(github\.com/microsoft/WSL/|releases\.ubuntu\.com/|archive\.ubuntu\.com/ubuntu/|security\.ubuntu\.com/ubuntu/)')
     $rel = [string](Get-Prop $f 'path'); $want = [string](Get-Prop $f 'sha256'); $url = [string](Get-Prop $f 'url')
-    if ($rel -notmatch '^[A-Za-z0-9._+~\-\\]+$' -or $rel -match '(^|\\)\.\.(\\|$)' -or -not $rel.EndsWith($suffix) -or $want -notmatch '^[0-9a-f]{64}$' -or $url -notmatch '^https?://(github\.com/microsoft/WSL/|releases\.ubuntu\.com/|archive\.ubuntu\.com/ubuntu/|security\.ubuntu\.com/ubuntu/)') {
+    if ($rel -notmatch '^[A-Za-z0-9._+~\-\\]+$' -or $rel -match '(^|\\)\.\.(\\|$)' -or -not $rel.EndsWith($suffix) -or $want -notmatch '^[0-9a-f]{64}$' -or $url -notmatch $urlPattern) {
       throw (New-DrillError 'DRILL_PREREQ_REFUSED' "$what $rel") }
     $full = [IO.Path]::GetFullPath((Join-Path $Dir $rel))
     if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' "$what $rel") }
@@ -558,7 +558,13 @@ function Read-DrillPrereq([string]$Dir) {
   if ($debs.Count -lt 1) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'debs') }
   $debPaths = @($debs | ForEach-Object { & $check $_ 'deb' '.deb' })
   if (@($debPaths | Where-Object { $_ -notmatch '^debs\\[^\\]+$' }).Count) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'debs live in debs\') }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); distribution = $distro; wsl = $wsl; rootfs = $rootfs; debs = $debPaths; wslVersion = [string](Get-Prop $p 'wsl.version') }
+  # the host's pinned installers of gh and Git for Windows (Fable renew-key ruling, supplement "after the package branch" 3, 1): injected
+  # into the guest like WSL and the rootfs (make-drill-kit.mjs puts each into the kit when the Release's prerequisite manifest pins it),
+  # never downloaded there; from their official releases only
+  $toolPaths = @(@(Get-Prop $p 'tools') | Where-Object { $null -ne $_ } | ForEach-Object {
+    $suffix = if ([string](Get-Prop $_ 'path') -like '*.msi') { '.msi' } else { '.exe' }
+    & $check $_ 'tool' $suffix '^https://github\.com/(cli/cli|git-for-windows/git)/releases/download/' })
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); distribution = $distro; wsl = $wsl; rootfs = $rootfs; debs = $debPaths; tools = $toolPaths; wslVersion = [string](Get-Prop $p 'wsl.version') }
 }
 
 # Inside the VM (elevated PowerShell Direct session): install the pinned WSL package, register the pinned Ubuntu image under the

@@ -133,7 +133,8 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
   const prereqBytes = fs.readFileSync(prereq), p = JSON.parse(prereqBytes);
   const pm = JSON.parse(read(from, `fleet-node-${version}.prereq-manifest.json`));
   const available = [...(pm.items ?? []), ...(pm.debs ?? [])];
-  for (const item of [p.wsl, p.rootfs, ...(p.debs ?? [])]) {
+  // tools: the host's pinned gh and Git for Windows installers, injected like WSL and the rootfs (never downloaded in the guest)
+  for (const item of [p.wsl, p.rootfs, ...(p.debs ?? []), ...(p.tools ?? [])]) {
     check(item && typeof item.path === 'string' && /^[A-Za-z0-9._+~\\-]+$/.test(item.path) &&
       !item.path.split('\\').includes('..') && !path.win32.isAbsolute(item.path), 'DRILL_PREREQ_PATH_REFUSED');
     const name = path.win32.basename(item.path);
