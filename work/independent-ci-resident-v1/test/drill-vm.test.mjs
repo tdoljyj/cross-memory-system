@@ -1960,6 +1960,16 @@ test('the entry writes a stage child\'s stdout to its log line by line: a stage 
   assert.equal(flooded.timedOut, true);
   assert.ok(flooded.seconds < 20, String(flooded.seconds));
   assert.match(fs.readFileSync(entryScript, 'utf8'), /if \(-not \$proc\.WaitForExit\(\(& \$left\)\)\) \{ return \(& \$timeout\) \}/);
+  // the launcher stage's output file is this run's alone (Codex review of c1497e0a1, medium 2): an earlier one is cleared before the
+  // stage, and one that cannot be cleared stops the entry by name
+  const stale = path.join(tmp, 'launcher-stale.stdout.log');
+  fs.writeFileSync(stale, JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' }) + '\r\n');
+  entryPs(`Clear-EntryStageOutput ${q(stale)}; $true`);
+  assert.equal(fs.existsSync(stale), false);
+  fs.writeFileSync(stale, 'held');
+  assert.equal(entryPs(`$h = New-Object IO.FileStream -ArgumentList ${q(stale)}, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::None)
+    try { Clear-EntryStageOutput ${q(stale)}; 'cleared' } catch { $_.Exception.Message } finally { $h.Dispose() }`), 'DRILL_STAGE_OUTPUT_NOT_CLEARED:launcher-stale.stdout.log');
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /Clear-EntryStageOutput \$launcherResult\s+\$watch\.Restart\(\)\s+try \{ \$launch = Invoke-StageChild/);
   // the prepare log is one of the complete logs the step record is read from
   const dir = path.join(tmp, 'steps-prepare'); fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'prepare.stdout.log'), JSON.stringify({ name: 'rehearse', result: 'ok' }) + '\r\n');

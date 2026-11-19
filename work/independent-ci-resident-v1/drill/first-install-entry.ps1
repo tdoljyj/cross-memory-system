@@ -104,6 +104,13 @@ function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$Lim
   } finally { $writer.Dispose() }
 }
 
+# A stage's output file is this run's alone: one left from an earlier run is removed before the stage starts, and still there is a refusal
+# (the stage would then be read for another run's verdict).
+function Clear-EntryStageOutput([string]$Path) {
+  if ([IO.File]::Exists($Path)) { try { [IO.File]::Delete($Path) } catch { } }
+  if ([IO.File]::Exists($Path)) { throw ('DRILL_STAGE_OUTPUT_NOT_CLEARED:' + [IO.Path]::GetFileName($Path)) }
+}
+
 # A stage file read while its writer may still hold it open (read-write sharing, as bootstrap.ps1 Read-StageResult reads it).
 function Read-EntrySharedText([string]$Path) {
   $fs = New-Object IO.FileStream -ArgumentList $Path, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
@@ -252,6 +259,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     # itself: whatever it holds when the stage ends or is cut off is what the drill reads (Fable renew-key ruling, supplement "branch two,
     # two points" 1; the package will write it line by line).
     $launcherResult = Join-Path $Output 'launcher.stdout.log'
+    # this run's file only (Codex review of c1497e0a1, medium 2): an earlier run's output is cleared before the stage and must be gone
+    Clear-EntryStageOutput $launcherResult
     $watch.Restart()
     try { $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $bootstrap, '-Stage', 'launcher', '-Result', $launcherResult,
       '-Launcher', $drillLauncher['path'], '-LauncherSha256', $drillLauncher['sha256'], '-ExpectedOperatorSid', $operatorSid) $LauncherLimitSeconds }
