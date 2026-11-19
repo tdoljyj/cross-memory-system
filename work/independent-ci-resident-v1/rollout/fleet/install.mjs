@@ -304,13 +304,34 @@ export async function upgraderConfigFor({ recordDir, residentTree }) {
   return Buffer.from(pyDumps(cfg, { indent: 2 }) + '\n', 'utf8');
 }
 
-// The installed tokens the launcher carries into the new install (section 8.1), from the receipt only (their content is never opened, and
+async function readUpgradePin(root) {
+  const file = path.join(root, 'install', 'resident-upgrade.connection.json');
+  let stat;
+  try { stat = await fs.lstat(file); }
+  catch (e) { if (e.code === 'ENOENT') return undefined; throw e; }
+  need(stat.isFile() && stat.nlink === 1 && stat.size > 0 && stat.size <= 4096, 'INSTALLED_UPGRADE_PIN_REFUSED');
+  const bytes = await fs.readFile(file);
+  try { return jsonOf(bytes); }
+  catch { throw new Refused('INSTALLED_UPGRADE_PIN_REFUSED'); }
+}
+
+// The installed tokens the launcher carries into the new install (section 8.1), from the upgrade pin and receipt (their content is never opened, and
 // nothing outside the node is asked for): the upgrade token must be installed with its target and fingerprint; the heartbeat token is
 // either not installed (no entry, null, or placed false: null) or installed with target, fingerprint and a binding id (or null).
 // Anything else is refused with what is missing.
-export function installedSecretsOf(receipt) {
+export function installedSecretsOf(receipt, renewed) {
   const missing = (t, keys) => keys.filter(k => !(k === 'target' ? typeof t?.[k] === 'string' && TOKEN_PATH.test(t[k]) : k === 'fingerprint' ? HEX64.test(t?.[k] ?? '') : t?.[k] === true));
-  const up = receipt.upgradeToken;
+  let up = receipt.upgradeToken;
+  if (renewed !== undefined) {
+    const id = value => typeof value === 'string' && UUID.test(value) && value !== '00000000-0000-0000-0000-000000000000';
+    need(exact(renewed, ['contract','baseNodeIdentitySha256','bindingGeneration','bindingId','receiptId','tokenPinSha256'])
+      && renewed.contract === 'clued.independent-ci.upgrade-connection/1' && HEX64.test(receipt.nodeIdentitySha256 ?? '')
+      && renewed.baseNodeIdentitySha256 === receipt.nodeIdentitySha256 && id(renewed.bindingId)
+      && Number.isSafeInteger(renewed.bindingGeneration) && renewed.bindingGeneration > 1
+      && (renewed.receiptId === null || id(renewed.receiptId)) && typeof renewed.tokenPinSha256 === 'string' && HEX64.test(renewed.tokenPinSha256),
+      'INSTALLED_UPGRADE_PIN_REFUSED');
+    up = {...up, fingerprint: renewed.tokenPinSha256};
+  }
   const upMissing = missing(up, ['placed', 'target', 'fingerprint']);
   need(upMissing.length === 0, 'INSTALLED_UPGRADE_TOKEN_UNKNOWN', { missing: upMissing.map(k => `upgradeToken.${k}`) });
   const hb = receipt.heartbeatToken;
@@ -497,7 +518,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   need(fresh || !(node.facts.ciSourceManifestSha256 === acceptance.ciSourceManifestSha256 && node.current.ciSourceManifestSha256 !== acceptance.ciSourceManifestSha256),
     'LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH', { continueWith: 'python -I <tree>/work/independent-ci-resident-v1/reinstall/launcher/generate.py --fleet-continue <the stopped launch: launcher.ps1> --out <new launcher.ps1>' });
   need(typeof node.distribution === 'string' && node.distribution === node.profile.wslDistribution && /^[A-Za-z0-9._-]{1,64}$/.test(node.distribution), 'NODE_DISTRIBUTION_REFUSED');
-  const secrets = fresh ? node.secrets : installedSecretsOf(node.receipt);
+  const secrets = fresh ? node.secrets : installedSecretsOf(node.receipt, await readUpgradePin(root));
   need(acceptance.repository === node.inst.repository, 'FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY', { accepted: acceptance.repository, installed: node.inst.repository });
   const work = path.resolve(workDir);
   await fs.mkdir(work, { recursive: false });

@@ -145,7 +145,9 @@ export const SUITES = {
     // Node Resource Governance v1: the renderer, its sweep and installer, the declarations and the standard (whose archive numbers the resident tests hold too).
     'node-governance': ['scripts/ci/self-hosted/node-governance/**', 'scripts/ci/self-hosted/node-profiles.json', 'scripts/ci/self-hosted/validate_node_profiles.py',
       'config/node-governance-standard.json', 'work/independent-ci-resident-v1/src/host-capacity.mjs'],
-    'resident-node': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
+    // The renewal contract is the server's file; the resident package carries it (build-package.mjs RESIDENT_EXTERNAL) and these
+    // tests verify the fixed signature vector against it, so a server-side change runs them (D2c ruling B1; package.test.mjs checks it).
+    'resident-node': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json', 'apps/clued-cloud/worker/ci-connection-renew.contract.json'],
     'resident-python': [...RESIDENT_AND_SOURCE, 'config/node-governance-standard.json'],
     // The reinstall tools' own tests (work/independent-ci-resident-v1/reinstall/test) pin the launcher template, read the resident's
     // windows/linux/rollout files and the Source v2 resident-v2 record code, so they run on the same paths as the resident suites.
