@@ -848,6 +848,12 @@ function New-DrillFakeCredentials {
   [IO.File]::WriteAllText((Join-Path $OutDir 'ci-admission.token'), $ci, $enc)
   [IO.File]::WriteAllText((Join-Path $OutDir 'resident-upgrade.token'), $up, $enc)
   [IO.File]::WriteAllText((Join-Path $OutDir 'app-key.pem'), $pem, $enc)
+  # The companion GitHub classic token stand-in (Fable renew-key ruling, supplement "token pending" 1C; kit perNodeSteps): the shape of a
+  # classic token (ghp_ and 36 letters or digits), fake at a glance (CLUEDDRILLFAKE), made and read in the guest only; GitHub refuses it.
+  $alnum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  $r22 = New-Object byte[] 22; $rng.GetBytes($r22)
+  $gh = 'ghp_CLUEDDRILLFAKE' + (-join ($r22 | ForEach-Object { $alnum[$_ % 62] }))
+  [IO.File]::WriteAllText((Join-Path $OutDir 'companion-github.token'), $gh, $enc)
   $public = [ordered]@{
     contract = 'clued.drill.fake-credentials/1'
     note = 'generated inside the drill VM; registered nowhere; the service refuses them'
@@ -858,10 +864,10 @@ function New-DrillFakeCredentials {
     upgradeTokenFingerprint = (& $pin $up)
     appKeyId = 1
     appPublicKeySha256Base64 = [Convert]::ToBase64String((& $sha $spki))
-    files = [ordered]@{ ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; appKey = 'app-key.pem' }
+    files = [ordered]@{ ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; appKey = 'app-key.pem'; companionGithubToken = 'companion-github.token' }
   }
   [IO.File]::WriteAllText((Join-Path $OutDir 'public.json'), ($public | ConvertTo-Json -Depth 4), $enc)
-  $ci = $null; $up = $null; $pem = $null
+  $ci = $null; $up = $null; $pem = $null; $gh = $null
   return $public
 }
 

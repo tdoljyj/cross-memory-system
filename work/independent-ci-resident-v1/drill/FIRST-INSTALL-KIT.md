@@ -6,10 +6,18 @@
 
 这是 README §5“不要绕过 bootstrap 手工运行 prepare”的**演练机内例外**，仅绕开普通令牌检查、RunAs、凭据窗口。
 凭据输入目录严格使用 O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)，把 app-key.pem 映射成 app-private-key.pem，
-只另放 ci-admission.token、resident-upgrade.token、public.json，不放心跳令牌；输入与正式临时凭据目录在所有结束路径清理。
+只另放 ci-admission.token、resident-upgrade.token、companion-github.token（陪伴令牌替身，见下）、public.json，不放心跳令牌；输入与正式临时凭据目录在所有结束路径清理。
 结局由接受版 Get-LauncherVerdict 判断，companion 切换未完成不会变成功。
 
-构建器把三处绕过写进 perNodeSteps；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。
+构建器把三处绕过和陪伴令牌替身写进 perNodeSteps；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。
+
+替身登记（入口不再盖住任何包内函数；`Expand-Cached` 的旧替身已删，#1154 修好了包里的真函数）：
+
+| 替身 | 替的是什么 | 为什么 | 因此没验到 | 何时可删 |
+|---|---|---|---|---|
+| `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
+
+gh 本身不做替身，随前置清单真装进来宾。凭据窗口里令牌的文件名以包为准，入口现按其余假凭据的方式放进输入目录。
 清空 perNodeSteps 也不能得到 PASS_A_FULL。即使 A1–A9 全通过，仍不能勾掉“新节点首装实测一次”或证明服务端接纳。
 
 ## 两种 kit

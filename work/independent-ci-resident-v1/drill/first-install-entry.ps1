@@ -75,20 +75,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
   . $bootstrap -From $Assets
   # Helpers normally terminate the bootstrap process. Here the entry owns the single terminal result and cleanup.
   function Stop-Bootstrap([string]$step, [string]$code, $detail) { throw ($code + $(if ($null -ne $detail) { ':' + (@($detail) -join ',') } else { '' })) }
-  # Drill-only stand-in for a package defect being fixed (claude/bootstrap-short-tool-cache): the accepted Expand-Cached names its
-  # cache <name>-<sha256>.partial-<guid>, which with node.zip's deepest entry passes MAX_PATH on a default Windows (LongPathsEnabled=0).
-  # Same behaviour, shorter names; the full sha256 is still the completion mark. Declared in the kit's perNodeSteps, so A10 cannot pass.
-  function Expand-Cached([string]$zip, [string]$name, [string]$sha256) {
-    $dir = Join-Path (Join-Path $WorkParent 'tools') ($name + '-' + $sha256.Substring(0, 16))
-    $state = Get-ExtractState $dir $sha256
-    if ($state -ceq 'complete') { return $dir }
-    if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.i-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmss')) }
-    $partial = $dir + '.p-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
-    Expand-Archive -LiteralPath $zip -DestinationPath $partial
-    [IO.File]::WriteAllText((Join-Path $partial '.bootstrap-complete'), $sha256)
-    [IO.Directory]::Move($partial, $dir)
-    $dir
-  }
+  # No package function is shadowed here: the package's own Expand-Cached runs (#1154 fixed its MAX_PATH defect; the drill-only stand-in
+  # that kept covering it was removed, Fable renew-key ruling, supplement "companion account and evidence" section 3).
   $script:From = $Assets
   $measurements = [ordered]@{ host = $null; prepare = $null; launcher = $null }
   $inputCredentials = Join-Path $Output 'credentials'
@@ -173,7 +161,10 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       $sameAcl = ($a.Owner.Value -ceq $w.Owner.Value) -and (($a.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) -and ((@($ak) -join ';') -ceq (@($wk) -join ';'))
     } catch { $sameAcl = $false }
     if (-not $sameAcl) { throw ('DRILL_CREDENTIAL_INPUT_ACL_REFUSED:' + $actualSddl) }
-    foreach ($pair in @(@('app-key.pem', 'app-private-key.pem'), @('ci-admission.token', 'ci-admission.token'), @('resident-upgrade.token', 'resident-upgrade.token'))) {
+    # companion-github.token: the stand-in for the companion GitHub classic token (New-DrillFakeCredentials; kit perNodeSteps); the name the
+    # credential window gives it is the package's to set, this one follows the other fake files until then.
+    foreach ($pair in @(@('app-key.pem', 'app-private-key.pem'), @('ci-admission.token', 'ci-admission.token'), @('resident-upgrade.token', 'resident-upgrade.token'),
+        @('companion-github.token', 'companion-github.token'))) {
       [IO.File]::Copy((Join-Path $FakeInputs $pair[0]), (Join-Path $inputCredentials $pair[1]), $false)
     }
     $public = ConvertTo-FirstInstallPublic (Get-Content -LiteralPath (Join-Path $FakeInputs 'public.json') -Raw -Encoding UTF8 | ConvertFrom-Json)

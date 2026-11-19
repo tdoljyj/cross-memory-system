@@ -96,8 +96,13 @@ test('kit manifest is deterministic, pins exact bytes and uses only guest placeh
   const manifest = drillKitManifest(inputs);
   assert.deepEqual(drillKitManifest(inputs), manifest);
   assert.equal(manifest.prereqSha256, sha(inputs.prereqBytes));
-  assert.equal(manifest.perNodeSteps.length, 4);   // the three bypassed shell points and the Expand-Cached stand-in (#1154)
-  assert.match(manifest.perNodeSteps.join(" "), /非提权.*RunAs.*凭据窗口.*短路径/);
+  // the three bypassed shell points and the companion GitHub token stand-in (Fable renew-key ruling, supplement "token pending"
+  // section 1C): what it replaces, why, what it leaves unverified, and that it is never removed. The Expand-Cached stand-in is gone
+  // (#1154 fixed the package's function; supplement "companion account and evidence" section 3).
+  assert.equal(manifest.perNodeSteps.length, 4);
+  assert.match(manifest.perNodeSteps.join(" "), /非提权.*RunAs.*凭据窗口.*陪伴 GitHub 经典令牌替身/);
+  assert.match(manifest.perNodeSteps[3], /凭据窗口.*真凭据.*GitHub 接受.*通道.*不可删.*真机首装/);
+  assert.doesNotMatch(manifest.perNodeSteps.join(" "), /Expand-Cached|短路径/);
   assert.equal(manifest.prerequisiteMode, 'first-install-host');
   assert.equal(Object.hasOwn(manifest, 'executionBlocker'), false);
   assert.ok(manifest.entry.arguments.every(a => /^(-[A-Za-z]+|\{(from|kit|fake|work|version)\})$/.test(a)));
@@ -1181,6 +1186,14 @@ test('the PASS conclusions of drill-vm.ps1 are exactly publish.mjs DRILL_PASS_CO
   assert.deepEqual([...DRILL_PASS_CONCLUSIONS].sort(), mine);
 });
 
+// The guest entry runs the package's own Expand-Cached (the stand-in that shadowed it is gone, #1154), and puts the companion token
+// stand-in into the credential input with the other fake credentials.
+test('the guest entry shadows no package function and hands over the companion token stand-in', () => {
+  const text = fs.readFileSync(entryScript, 'utf8');
+  assert.doesNotMatch(text, /function\s+Expand-Cached/i);
+  assert.match(text, /@\('companion-github\.token', 'companion-github\.token'\)/);
+});
+
 // No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
 test('drill/ holds no literal of the drill stand-ins', () => {
   const dir = fileURLToPath(new URL('../drill/', import.meta.url));
@@ -1866,7 +1879,12 @@ test('the guest-side fake credentials match the package fingerprint formulas and
   assert.equal(hostPublic.ciPrincipalRoleRef, pub.ciPrincipalRoleRef);
   assert.equal(hostPublic.ciPrincipalQualificationRef, pub.ciPrincipalQualificationRef);
   assert.equal(hostPublic.heartbeatBindingId, '');
+  // the companion GitHub classic token stand-in: the shape of a classic token, fake at a glance, generated and read in the guest only
+  const gh = fs.readFileSync(path.join(out, 'companion-github.token'), 'utf8');
+  assert.match(gh, /^ghp_[A-Za-z0-9]{36}$/);
+  assert.match(gh, /^ghp_CLUEDDRILLFAKE/);
+  assert.equal(pub.files.companionGithubToken, 'companion-github.token');
   const printed = JSON.stringify(pub);
-  for (const secret of [ci, up, pem.split('\n')[1]]) assert.ok(!printed.includes(secret));
+  for (const secret of [ci, up, pem.split('\n')[1], gh]) assert.ok(!printed.includes(secret));
   assert.equal(psCode(`New-DrillFakeCredentials ${q(out)}`), 'DRILL_UNEXPECTED', 'never reuses a directory');
 });
