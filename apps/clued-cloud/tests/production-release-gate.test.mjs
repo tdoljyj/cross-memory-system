@@ -1629,3 +1629,35 @@ test('the release path reads wrangler configurations only through readWranglerCo
     .map((finding) => `${path.relative(repo, f).split(path.sep).join('/')}: ${finding}`));
   assert.deepEqual(findings, []);
 });
+
+// Round-7 review: the guard is a structural rule, not a list of parse
+// patterns. In the release path a wrangler configuration path (a literal, or
+// a const whose initializer holds one) may only be an argument of
+// readWranglerConfig(...) (parse) or gitSameFiles(...) (byte comparison).
+// Any other use fails: a raw read, an alias, a concatenation.
+const configPathFindings = wranglerParseFindings;
+
+test('the release-path guard fails every use of a configuration path but readWranglerConfig and gitSameFiles', () => {
+  // Samples assembled at run time, so this file holds none of them.
+  const parse = ['JSON', 'parse'].join('.');
+  const literal = `'${['../wrangler', 'production.jsonc'].join('.')}'`;
+  const counterexamples = {
+    // The review's injection: a path constant read by hand.
+    injection: `const WRANGLER_PRODUCTION = fileURLToPath(new URL(${literal}, import.meta.url));\n`
+      + `const round7Config = ${parse}(readFileSync(WRANGLER_PRODUCTION, 'utf8'));\n`,
+    // A literal read directly.
+    literal: `const text = readFileSync(${literal}, 'utf8');\nconsole.log(text.length);\n`,
+    // A constant given another name, then read.
+    alias: `const CONFIG_PATH = new URL(${literal}, import.meta.url);\nconst alias = CONFIG_PATH;\n`
+      + `const config = ${parse}(await readFile(alias, 'utf8'));\n`,
+  };
+  for (const [name, sample] of Object.entries(counterexamples)) {
+    assert.ok(configPathFindings(sample).length >= 1, `${name} is not reported:\n${sample}`);
+  }
+  const allowed = `const PRODUCTION = fileURLToPath(new URL(${literal}, import.meta.url));\n`
+    + `const config = await readWranglerConfig(PRODUCTION);\n`
+    + `export const CONFIGS = Object.freeze([${literal}]);\n`
+    + `if (!(await gitSameFiles(commit, CONFIGS))) throw new Error('changed');\n`
+    + `const other = ${parse}(body);\nconst pattern = /'--config' "x"/;\n`;
+  assert.deepEqual(configPathFindings(allowed), []);
+});
