@@ -611,7 +611,7 @@ function writeKnown(id, root, env, keep = false) {
 }
 
 const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>]';
-const LOCAL_TIMEOUT_EXIT = 75;
+export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
   if (argv.includes('--help') || argv.includes('-h')) {

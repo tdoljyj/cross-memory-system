@@ -265,7 +265,7 @@ test('embedded PostgreSQL tests choose a free port and a fresh temporary directo
 // ---- three changes at the same time ----
 
 // A repository whose main has a stand-in selection (one suite, "probe") and three changes on top of it.
-function probeRepository(t, { seconds }) {
+function probeRepository(t, { seconds, waitMs = 45_000 }) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lv-conc-probe-')));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const repo = path.join(base, 'repo');
@@ -293,7 +293,7 @@ function probeRepository(t, { seconds }) {
     "import fs from 'node:fs';",
     "import path from 'node:path';",
     `const stamps = ${JSON.stringify(stamps)};`,
-    "const verdict = fs.existsSync('fail-this-change') ? 1 : 0;",
+    "const verdict = fs.existsSync('fail-this-change') ? 75 : 0;",
     "const id = fs.existsSync('change.txt') ? fs.readFileSync('change.txt', 'utf8').trim() : 'main';",
     'const start = Date.now();',
     `await new Promise((resolve) => setTimeout(resolve, ${seconds * 1000}));`,
@@ -323,7 +323,7 @@ function probeRepository(t, { seconds }) {
       if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
       const source = 'import { withLocalSuiteSlot as acquire } from ' + JSON.stringify(${JSON.stringify(slotModule)}) + ';'
         + 'export const withLocalSuiteSlot = (id, command) => acquire(id, command, ' + JSON.stringify({
-          directory: ${JSON.stringify(queue)}, waitMs: 45_000,
+          directory: ${JSON.stringify(queue)}, waitMs: ${waitMs},
         }) + ');';
       return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
     }});`);
@@ -344,6 +344,22 @@ function runTool({ dir, main, env, home }) {
 }
 
 const stampsOf = (dir) => fs.readdirSync(dir).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
+
+test('local verification returns 75 when the Windows suite slot wait expires', { skip: process.platform !== 'win32' }, async (t) => {
+  const { base, main, changes, env, stamps } = probeRepository(t, { seconds: 0, waitMs: 0 });
+  const home = path.join(base, 'verify');
+  const result = await runTool({ dir: changes[0].dir, main, env, home });
+  assert.match(result.output, /LOCAL_SUITE_SLOT_TIMEOUT: probe .*suite did not start/);
+  assert.deepEqual(stampsOf(stamps), [], 'the candidate and baseline did not run');
+  assert.equal(result.code, 75, result.output);
+});
+
+test('local verification help documents distinct failure and slot timeout exit codes', () => {
+  const help = spawnSync(process.execPath, [TOOL, '--help'], { encoding: 'utf8', windowsHide: true });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /\b1\b[^\r\n]*failure/i);
+  assert.match(help.stdout, /\b75\b[^\r\n]*slot timeout/i);
+});
 
 test('three concurrent local verifications preserve verdicts and hold at most two suite slots', { timeout: 240_000 }, async (t) => {
   const seconds = 7;

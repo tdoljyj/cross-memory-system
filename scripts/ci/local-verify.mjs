@@ -92,7 +92,8 @@
 // a green run).
 //
 // Exit 0: no new failure. Exit 1: a new failure, or one it could not compare
-// with main. Exit 2: the run itself could not be set up.
+// with main. Exit 2: the run itself could not be set up. A local suite slot
+// timeout uses the selector's timeout exit code (see --help).
 import { spawn as spawnAsync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -1322,6 +1323,13 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
   return results;
 }
 
+class LocalSuiteTimeout extends Error {
+  constructor(suite, exitCode) {
+    super(`${suite}: local suite slot timed out; see the slot diagnostic above`);
+    this.exitCode = exitCode;
+  }
+}
+
 // The comparison runner needs every command result, so its worker uses
 // runCommands directly inside the same process-tree guard as the selector.
 async function runVerificationSuite(selector, id, root, main, logFile, env) {
@@ -1329,12 +1337,14 @@ async function runVerificationSuite(selector, id, root, main, logFile, env) {
     return runCommands(selector, id, root, main, logFile, { env });
   }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+  const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
   const resultFile = `${logFile}.results.json`;
   try {
     const status = await withLocalSuiteSlot(id, {
-      root, env, timeoutExit: 75,
+      root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
       work: { selectorUrl: selector.selectorUrl, reporterUrl: selector.reporterUrl, verify: { main, logFile, resultFile } },
     });
+    if (status === LOCAL_TIMEOUT_EXIT) throw new LocalSuiteTimeout(id, status);
     if (status !== 0) throw new Error(`${id}: local suite guard exited ${status}; see its output`);
     return JSON.parse(fs.readFileSync(resultFile, 'utf8'));
   } finally {
@@ -1512,7 +1522,9 @@ export async function verifySuites({ root, home, selector, main, dir, suites, lo
         outcome = compareSuite(head, theirs, { selector, knownLists });
       }
     } catch (error) {
-      outcome = { verdict: 'unknown', detail: error.message };
+      outcome = error instanceof LocalSuiteTimeout
+        ? { verdict: 'timeout', detail: error.message, exitCode: error.exitCode }
+        : { verdict: 'unknown', detail: error.message };
     }
     results.push({ platform, suite: id, ...outcome, log });
     console.log(`local-verify: ${platform}: ${id}: ${outcome.verdict}${outcome.detail ? ` (${outcome.detail})` : ''}`);
@@ -1716,9 +1728,16 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, n
   });
 }
 
-const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW FAILURE', unknown: 'COULD NOT COMPARE' };
+const VERDICT_LABEL = { pass: 'PASS', base: 'ALREADY FAILING ON MAIN', new: 'NEW FAILURE', unknown: 'COULD NOT COMPARE', timeout: 'SUITE SLOT TIMEOUT' };
 
 async function main(argv) {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
+    console.log('usage: node scripts/ci/local-verify.mjs [--affected | --suite <id> ...] [--base <commit>] [--committed]');
+    console.log('       [--linux | --linux-only] [--no-fetch] [--fresh-base] [--no-yield]');
+    console.log(`Exit codes: 0 for no new failure; 1 for a verification failure; 2 for a setup error; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
+    return 0;
+  }
   const options = parseArgs(argv);
   options.linux = runsLinux(options);
   if (options.affected && !options.linux) console.log('local-verify: --affected: this host has no CluedDev-Linux side to add; this side only');
@@ -1799,7 +1818,8 @@ async function verifyChange({ options, root, home, change, run }) {
     if (result.verdict !== 'pass') console.log(`  ${''.padEnd(31)} log: ${result.log}`);
   }
   console.log(`${RESULT_MARK}${JSON.stringify(results)}`);
-  return results.some((result) => result.verdict === 'new' || result.verdict === 'unknown') ? 1 : 0;
+  if (results.some((result) => result.verdict === 'new' || result.verdict === 'unknown')) return 1;
+  return results.find((result) => result.verdict === 'timeout')?.exitCode ?? 0;
 }
 
 // import.meta.main exists from Node 22.18; on an older Node it is undefined, and a
