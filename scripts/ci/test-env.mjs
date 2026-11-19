@@ -48,6 +48,9 @@ export const KEEP_VARIABLE = new RegExp(`^(${[
   // CI's job storage (ci-temporary-storage) and toolchain settings, and the run's base commit.
   'PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX', 'PYTHONUTF8', 'PYTHONIOENCODING', 'WRANGLER_LOG_PATH', 'PROMPTFOO_CONFIG_DIR',
   'CLUED_CI_NPM_CACHE', 'CI_BASE_SHA',
+  // The Actions runner marks every process of a job with RUNNER_TRACKING_ID and, when the job ends, ends the ones still
+  // carrying it; without it what a suite leaves running would outlive the job on a self-hosted node. Not a credential.
+  'RUNNER_TRACKING_ID',
 ].join('|')})$`, 'i');
 export const keptVariables = (env) => Object.fromEntries(Object.entries(env).filter(([name]) => KEEP_VARIABLE.test(name)));
 export const testEnv = (env) => ({ ...keptVariables(env), ...fakeIdentityEnv(testIdentityDir(env)), CLUED_UNDER_TEST: '1' });

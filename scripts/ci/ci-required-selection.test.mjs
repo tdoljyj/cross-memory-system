@@ -873,6 +873,20 @@ test('suite children get only the listed variables and a fake identity: fake Git
   assert.deepEqual(env, before, "the caller's env is not changed");
 });
 
+// Codex review of 2ee162c2, high 2 and medium 3: in Actions the selector starts suites itself. The job's token the workflow
+// gives the step stays with the selector (it lists the PR's files) and never reaches a suite child; the runner's
+// RUNNER_TRACKING_ID does, so the runner still finds and ends what a suite leaves running when the job ends.
+test("under Actions a suite child gets the fake token, not the job's, and keeps the runner's orphan-process marker", () => {
+  const seen = [];
+  const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+  const env = { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 'job-token', RUNNER_TRACKING_ID: 'github_1234', CI_BASE_SHA: 'b', PATH: '/bin' };
+  assert.equal(executeSuite('retrigger-counter', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
+  assert.equal(seen[0].RUNNER_TRACKING_ID, 'github_1234');
+  assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
+});
+
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-run-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
