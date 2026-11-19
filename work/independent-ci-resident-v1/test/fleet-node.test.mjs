@@ -18,7 +18,20 @@ const windows = process.platform === 'win32';
 const skip = windows ? false : 'the node side of the universal package runs on the Windows host only';
 const tail = (s, n = 6000) => (String(s ?? '').length > n ? String(s).slice(-n) : String(s ?? ''));
 // a child of `node --test` must not think it reports to this runner
-const childEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; return e; };
+// and carries the test marker itself (Fable ruling 11-20 "补：止血 PR 第四轮" §4)
+const childEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; e.CLUED_UNDER_TEST = '1'; return e; };
+
+// Every child carries the test marker itself (Fable "补：发布工具测试入套件"; ruling 11-20 "补：止血 PR 第四轮" §4), also when
+// this file is started without the one entry.
+test('the fleet children carry the test marker CLUED_UNDER_TEST=1 whatever this process has', () => {
+  const saved = process.env.CLUED_UNDER_TEST;
+  delete process.env.CLUED_UNDER_TEST;
+  try {
+    assert.equal(childEnv().CLUED_UNDER_TEST, '1');
+  } finally {
+    if (saved !== undefined) process.env.CLUED_UNDER_TEST = saved;
+  }
+});
 
 const files = windows ? fs.readdirSync(FLEET_TESTS).filter(n => n.endsWith('.test.mjs')).sort() : [];
 test('rollout/fleet/test holds the fleet tests this file runs', { skip }, () => {
