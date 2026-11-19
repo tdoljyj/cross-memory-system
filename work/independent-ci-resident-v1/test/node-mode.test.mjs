@@ -106,6 +106,25 @@ const notReady = code => ({ ok: false, code, proof: WINDOWS_CLEAN, brokerNoLaunc
 
 // ---- the mode ----
 
+test('让班回执立即停止开批，回执前已发出的角色探针不能重新打开接单', async t => {
+  const f = await nodeFx(t);
+  await f.exec.tick();
+  assert.equal(f.exec.renewalMode(), 'ACTIVE');
+  f.engine.runRoleProbe = async () => {
+    f.exec.requestHandoverProbe();
+    return probeResult(HELD);
+  };
+  f.exec.roleProbe.markUrgent();
+  await f.exec.tick();
+  assert.equal(f.exec.renewalMode(), 'UNCERTAIN');
+  await f.drop(triggerBytes());
+  f.engine.runRoleProbe = async () => probeResult(NOT_HELD);
+  assert.deepEqual(pick(await f.exec.tick()), ['DEFERRED', 'NODE_ROLE_UNCERTAIN']);
+  assert.equal(f.exec.renewalMode(), 'STANDBY');
+  assert.equal(derives(f), 0);
+  assert.equal(f.queue.row(884).state, 'QUEUED');
+});
+
 test('a start begins UNCERTAIN with the probe due at once: no trigger is taken before the probe says held', async t => {
   const f = await nodeFx(t);
   assert.equal(f.exec.roleProbeMode, 'UNCERTAIN');

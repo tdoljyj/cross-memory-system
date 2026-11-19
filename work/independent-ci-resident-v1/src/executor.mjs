@@ -768,7 +768,15 @@ export class ResidentExecutor {
   probing() { return typeof this.engine.runRoleProbe === 'function'; }
 
   // An unknown value is UNCERTAIN: fail safe.
-  nodeMode() { return NODE_MODES.includes(this.roleProbeMode) ? this.roleProbeMode : 'UNCERTAIN'; }
+  nodeMode() { return !this.handoverProbePending && NODE_MODES.includes(this.roleProbeMode) ? this.roleProbeMode : 'UNCERTAIN'; }
+
+  // 收回接单资格。下一次串行 tick 再复核角色，避免让班前已发出的探针用旧应答重新开批。
+  requestHandoverProbe() { this.handoverProbePending = true; }
+
+  renewalMode() {
+    const role = this.nodeMode();
+    return role === 'STANDBY' && this.roleProbe.last?.result !== 'not-held' ? 'UNCERTAIN' : role;
+  }
 
   reportNode() {
     if (this.probing()) this.report(s => s.setNode?.(this.policy.node.nodeName, this.policy.ciSourceManifestSha256, this.nodeMode()));
@@ -777,7 +785,7 @@ export class ResidentExecutor {
   // The mode is in force before its receipt is written (the receipt is the record, not a condition).
   async setNodeMode(to, why) {
     const from = this.nodeMode();
-    if (!this.probing() || from === to) return false;
+    if (!this.probing() || this.handoverProbePending || from === to) return false;
     this.roleProbeMode = to;
     this.reportNode();
     this.trainEligibility();
@@ -1745,6 +1753,10 @@ export class ResidentExecutor {
     this.tickSeq = (this.tickSeq ?? 0) + 1;
     this.tickBatchDue = false;
     try {
+      if (this.handoverProbePending) {
+        this.handoverProbePending = false;
+        await this.nodeRestart('renewal-handover');
+      }
       let result = await this.tickInner();
       // Stage 10 just named a batch to open now (OPEN_FRONT_BATCH queued, or a front-bind pending): the loop must not rest 15 s first.
       // The state stays the resting one for the status board; `immediate` only tells the service loop to sleep the short interval.

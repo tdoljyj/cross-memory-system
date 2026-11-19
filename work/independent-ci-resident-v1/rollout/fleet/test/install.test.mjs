@@ -562,6 +562,47 @@ test('ports: the upgrader configuration is upgrader-config.py\'s bytes; the rein
   assert.ok((await upgraderConfigFor({ recordDir: path.join(w.a.root, 'record'), residentTree: RES })).equals(await fs.readFile(out)));
 });
 
+test('H1 续期公开记录覆盖安装回执，prepare 将新指纹钉入 launcher 输入',async () => {
+  const w=await getWorld();
+  const n=await nodeSite(keep,'a',fleetFacts());
+  const receipt=readJson(path.join(n.root,'install','install-receipt.json'));
+  const sample='clued_bnd_reinstall_fixture_123';
+  const renewedPin=sha(Buffer.from('clued.independent-ci.ci-binding-pin/1\0'+sample));
+  const pin={contract:'clued.independent-ci.upgrade-connection/1',baseNodeIdentitySha256:receipt.nodeIdentitySha256,
+    bindingId:randomUUID(),bindingGeneration:2,receiptId:randomUUID(),tokenPinSha256:renewedPin};
+  const recordFile=path.join(n.root,'install','resident-upgrade.connection.json');
+  await fs.writeFile(recordFile,JSON.stringify(pin));
+  const py=pythonTools();
+  await prepare(w,n,path.join(n.dir,'renewed-install'),{python:py.fn});
+  const prepared=py.calls.find(c=>c.name==='generate.py').plan.secrets.upgradeToken;
+  const sampleFile=path.join(n.dir,'resident-upgrade.token');
+  await fs.writeFile(sampleFile,sample);
+  // Run only the launcher's carry step, with fresh temporary inputs and its prepared fingerprint.
+  const script=String.raw`
+    $ErrorActionPreference='Stop'
+    $errors=$null; $tokens=$null
+    $ast=[Management.Automation.Language.Parser]::ParseFile($env:CARRY_TEMPLATE,[ref]$tokens,[ref]$errors)
+    foreach($name in 'Sha256Bytes','Write-New','Get-FleetTokenFingerprint','Step-CarryTokens','Remove-FleetCarry') {
+      $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$false)
+      . ([scriptblock]::Create($fn.Extent.Text))
+    }
+    function Stop-Launch($code,$detail) { throw $code }
+    $CarryParent=$env:CARRY_ROOT; $UpgradeTokenTarget=$env:CARRY_FILE; $FleetUpgradeTokenFingerprint=$env:CARRY_PIN
+    $U8=$Strict8=New-Object Text.UTF8Encoding($false,$true)
+    $StageSddl='D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;'+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value+')'
+    $Done=New-Object Collections.Generic.List[string]; $CarriedTokens=@{}
+    $copies=Step-CarryTokens
+    if(-not [IO.File]::Exists($copies.upgradeToken)) { throw 'MISSING_CARRIED_COPY' }
+    Remove-FleetCarry
+  `;
+  const carry=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true,
+    env:{...process.env,CARRY_TEMPLATE:path.join(RES,'reinstall/launcher/template.ps1'),CARRY_ROOT:n.dir,CARRY_FILE:sampleFile,CARRY_PIN:prepared.fingerprint}});
+  assert.equal(carry.status,0,carry.stderr);
+  assert.equal(prepared.fingerprint,pin.tokenPinSha256);
+  await fs.writeFile(recordFile,'null');
+  await assert.rejects(prepare(w,n,path.join(n.dir,'invalid-pin'),{python:py.fn}),{code:'INSTALLED_UPGRADE_PIN_REFUSED'});
+});
+
 // ---------------------------------------------------------------- the kit is part of every acceptance a node installs or upgrades to
 test('guard: a node installed before the kit field existed (its record\'s acceptance.json has none) is read and reinstalled to a version whose acceptance has the kit', { timeout: 600_000 }, async () => {
   const w = await getWorld();

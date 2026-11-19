@@ -517,6 +517,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'upgrade-deferred': out.push({ key: `notice:${n.key}`, title: '常驻升级已延后', body: `原因：${n.code ?? '?'}。升级代理稍后自动再试，没有改动任何文件。` }); break;
       case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
       case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
+      case 'renewal-failed': out.push({ key: `notice:${n.key}`, title: '节点连接续期检查未通过', body: `原因：${n.code ?? '?'}。请查看 status.json 的 versions.renewal，核对连接观测与签名权限。` }); break;
       case 'selfcheck-failed': out.push({ key: `notice:${n.key}`, title: '节点用完即弃自检未通过', body: `原因：${n.code ?? '?'}（视图探针或遗留容器，详见 status.json 的 versions.selfcheck）。不影响准入和合入，请查明后处理。` }); break;
       // Step 3c-2b (DESIGN §41.4, §41.6): stage 10's decisions for the Owner.
       case 'train-owner': out.push({ key: `notice:${n.key}`, ...(TRAIN_OWNER_TEXT[n.code] ?? { title: '合并列车需要 Owner 处理', body: n.code ?? '?' }) }); break;

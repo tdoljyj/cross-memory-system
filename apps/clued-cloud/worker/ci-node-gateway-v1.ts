@@ -196,7 +196,7 @@ export async function handleCiNodeGatewayV1(request: Request, env: DatabaseGatew
     const rpc = (name: 'clued_ci_node_trust_v1' | 'clued_ci_node_command_v1', body: Json) => deadline(async signal => {
       ensure(++fetches <= MAX_FETCHES, 'CI_NODE_GATEWAY_BOUND', 503);
       const target = db.origin + '/rest/v1/rpc/' + name;
-      const response = await rawFetch(target, { method: 'POST', signal, redirect: 'error', cache: 'no-store', headers: {
+      const response = await rawFetch(target, { method: 'POST', signal, redirect: 'manual', cache: 'no-store', headers: {
         authorization: 'Bearer ' + dbToken, apikey: dbKey, 'content-type': 'application/json', accept: 'application/json',
       }, body: JSON.stringify(body) });
       ensure(response.status === 200 && (response.url === '' || response.url === target), 'CI_NODE_GATEWAY_UNCONFIRMED', 503);
