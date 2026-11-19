@@ -1,5 +1,6 @@
 // The environment every suite child gets: the selector's (ci-required-selection.mjs) and local-verify's one source. Only
 // node: imports, so local-verify --linux can carry it with its own copy.
+import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -43,6 +44,34 @@ const running = (pid) => {
     return error.code === 'EPERM';
   }
 };
+// A process is its id and its start time (Codex third review of 2ee162c2, low 1: an id can be reused). The start time as
+// the system keeps it: the start field of /proc/<pid>/stat on Linux, the process's start ticks on Windows; null when it
+// cannot be read. Read once per process and id.
+const starts = new Map();
+export function startOf(pid) {
+  if (!starts.has(pid)) {
+    let start = null;
+    try {
+      if (process.platform === 'linux') {
+        start = readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').at(-1).split(' ')[19] ?? null;
+      } else if (process.platform === 'win32') {
+        const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+          `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+        start = result.status === 0 && /^\d+$/.test(result.stdout.trim()) ? result.stdout.trim() : null;
+      }
+    } catch {
+      start = null;
+    }
+    starts.set(pid, start);
+  }
+  return starts.get(pid);
+}
+// The maker is known to be running: its id is in use by a process with its start time.
+const makerRunning = (maker) => Number.isInteger(maker?.pid) && maker.pid > 0 && running(maker.pid)
+  && typeof maker.started === 'string' && startOf(maker.pid) === maker.started;
+// The maker is known to have exited: its id is free, or in use by a process started at another time.
+const makerExited = (maker) => Number.isInteger(maker?.pid) && maker.pid > 0 && typeof maker.started === 'string'
+  && (!running(maker.pid) || (startOf(maker.pid) !== null && startOf(maker.pid) !== maker.started));
 function record(dir) {
   try {
     return JSON.parse(readFileSync(path.join(dir, 'run'), 'utf8'));
@@ -67,7 +96,7 @@ function taken(dir, run) {
     const [self, gh, git, file] = [dir, path.join(dir, 'gh'), path.join(dir, 'gitconfig'), path.join(dir, 'run')].map((entry) => lstatSync(entry));
     if (!self.isDirectory() || !gh.isDirectory() || !git.isFile() || !file.isFile()) return false;
     const made = record(dir);
-    return made?.run === run && Number.isInteger(made.pid) && running(made.pid)
+    return made?.run === run && makerRunning(made)
       && readFileSync(path.join(dir, 'gitconfig'), 'utf8') === GITCONFIG && readdirSync(path.join(dir, 'gh')).length === 0;
   } catch {
     return false;
@@ -95,7 +124,7 @@ function ended(dir) {
   try {
     if (!lstatSync(dir).isDirectory() || !lstatSync(path.join(dir, 'run')).isFile()) return false;
     const maker = JSON.parse(readFileSync(path.join(dir, 'run'), 'utf8'));
-    return Number.isInteger(maker?.pid) && maker.pid > 0 && !running(maker.pid);
+    return makerExited(maker);
   } catch {
     return false;
   }
@@ -128,7 +157,7 @@ export function testIdentity(env = process.env, { own = false } = {}) {
   const run = randomUUID();
   mkdirSync(path.join(dir, 'gh'));
   writeFileSync(path.join(dir, 'gitconfig'), GITCONFIG);
-  writeFileSync(path.join(dir, 'run'), JSON.stringify({ run, pid: process.pid }));
+  writeFileSync(path.join(dir, 'run'), JSON.stringify({ run, pid: process.pid, started: startOf(process.pid) }));
   current = { dir, run };
   return current;
 }

@@ -1086,6 +1086,27 @@ test('the sweep leaves every directory whose run it cannot confirm ended', (t) =
   assert.deepEqual(readdirSync(temp).sort(), Object.keys(keep).map((name) => `clued-test-identity-${name}`).sort());
 });
 
+// Codex third review of 2ee162c2, low 1: a maker is the process with its id AND its start time. When the id now belongs to
+// another process (reused), the directory is not taken, and the sweep removes it.
+test('a run record whose process id now belongs to another process is neither taken nor kept', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-reused-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const dir = path.join(temp, 'clued-test-identity-reused');
+  mkdirSync(path.join(dir, 'gh'), { recursive: true });
+  const { name, email } = selection.TEST_GIT_IDENTITY;
+  writeFileSync(path.join(dir, 'gitconfig'), `[user]\n\tname = ${name}\n\temail = ${email}\n`);
+  const run = '6f1c2a3e-0000-4000-8000-000000000001';
+  // This process is running: its id stands for the reused one, with another start time.
+  writeFileSync(path.join(dir, 'run'), JSON.stringify({ run, pid: process.pid, started: 'another-start' }));
+  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
+  const child = spawnSync(process.execPath, ['-e', `import(${url}).then(({ testEnv }) => require('node:fs').writeSync(1,
+    testEnv({ ...process.env, RUNNER_TEMP: process.argv[1], CLUED_TEST_IDENTITY_DIR: process.argv[2], CLUED_TEST_IDENTITY_RUN: process.argv[3] })
+      .CLUED_TEST_IDENTITY_DIR));`, temp, dir, run], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.notEqual(child.stdout.trim(), dir, 'not taken');
+  assert.ok(!existsSync(dir), 'swept: its maker has exited');
+});
+
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-run-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
