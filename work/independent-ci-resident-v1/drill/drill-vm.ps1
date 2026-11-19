@@ -1058,10 +1058,23 @@ function Get-DrillRunnerDistributions([string]$HostName = $env:COMPUTERNAME) {
   $entries = @($profiles.hosts | Where-Object { $_ -and [string](Get-Prop $_ 'hostname') -ieq $HostName })
   if ($entries.Count -gt 1) { throw (New-DrillError 'HOST_IN_NODE_PROFILES_TWICE' $HostName) }
   if ($entries.Count -eq 0) { throw (New-DrillError 'HOST_NOT_IN_NODE_PROFILES' $HostName) }
-  $runners = @(@(Get-Prop $entries[0] 'linux_runner') + @(Get-Prop $entries[0] 'additional_linux_runners') | Where-Object { $null -ne $_ })
-  $names = @($runners | ForEach-Object { Get-Prop $_ 'distro' } | Select-Object -Unique)
-  foreach ($n in $names) {
-    if ($n -isnot [string] -or $n -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$') { throw 'invalid distribution name' }
+  # Only an entry with no Linux runner entry at all has none. A runner entry is an object whose distro is a name; anything else -- a
+  # missing or null distro, a null entry, a list that is not one -- refuses like an unreadable registry, never reads as "no runner"
+  # (Codex review of addf1ffa5, medium 1). Names are taken whole (\z: nothing after them, not even a line end) and merged ordinally.
+  $runners = @()
+  $single = $entries[0].PSObject.Properties['linux_runner']
+  if ($null -ne $single) { $runners += , $single.Value }
+  $more = $entries[0].PSObject.Properties['additional_linux_runners']
+  if ($null -ne $more) {
+    if ($more.Value -isnot [array]) { throw (New-DrillError 'NODE_PROFILES_RUNNER_DISTRIBUTION_INVALID' $HostName) }
+    foreach ($r in $more.Value) { $runners += , $r }
+  }
+  $names = @()
+  foreach ($r in $runners) {
+    $distro = $null
+    if ($r -is [pscustomobject] -and $null -ne $r.PSObject.Properties['distro']) { $distro = $r.PSObject.Properties['distro'].Value }
+    if ($distro -isnot [string] -or $distro -cnotmatch '\A[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw (New-DrillError 'NODE_PROFILES_RUNNER_DISTRIBUTION_INVALID' $HostName) }
+    if (-not (Test-DrillNameIn $distro $names)) { $names += $distro }
   }
   return $names
 }

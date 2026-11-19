@@ -1513,6 +1513,48 @@ test('the running list: whole registered names only, else refused; a distributio
   assert.deepEqual(r.stoppedCalls, ['--list --running --quiet'], 'a distribution that is not running is asked nothing');
 });
 
+// Codex review of addf1ffa5, medium 1: only a host entry that has no Linux runner entry at all skips the probe. A runner entry whose
+// distro is missing, null, not a name, or a name with anything after it (a NUL, a line end), refuses the boot like an unreadable registry;
+// two names that differ only by such a character are never merged into one.
+test('a Linux runner entry without a readable distro refuses; only an entry with no Linux runner at all skips the probe', opts, () => {
+  const profiles = path.join(tmp, 'node-profiles-broken.json');
+  const hosts = {
+    'NO-DISTRO': { linux_runner: { name: 'r' } }, 'NULL-DISTRO': { linux_runner: { distro: null } }, 'NULL-RUNNER': { linux_runner: null },
+    'NUMBER-DISTRO': { linux_runner: { distro: 7 } }, 'EMPTY-DISTRO': { linux_runner: { distro: '' } },
+    'ADDITIONAL-NULL': { linux_runner: { distro: 'Fixture-CI' }, additional_linux_runners: [null] },
+    'ADDITIONAL-NO-DISTRO': { linux_runner: { distro: 'Fixture-CI' }, additional_linux_runners: [{ name: 'r2' }] },
+    'ADDITIONAL-NOT-A-LIST': { linux_runner: { distro: 'Fixture-CI' }, additional_linux_runners: { distro: 'Fixture-CI' } },
+    'NUL-TWIN': { linux_runner: { distro: 'Fixture-CI' }, additional_linux_runners: [{ distro: 'Fixture-CI\u0000' }] },
+    'LINE-END': { linux_runner: { distro: 'Fixture-CI\n' } },
+    'NO-LINUX': { windows_runner: { name: 'w' } }, 'NO-LINUX-EMPTY-LIST': { additional_linux_runners: [] },
+    'TWO-SAME': { linux_runner: { distro: 'Fixture-CI' }, additional_linux_runners: [{ distro: 'Fixture-CI' }, { distro: 'Fixture-CI-2' }] } };
+  fs.writeFileSync(profiles, JSON.stringify({ hosts: Object.entries(hosts).map(([hostname, h]) => ({ hostname, ...h })) }));
+  const r = ps(`
+    $script:Drill.NodeProfiles = ${q(profiles)}
+    $out = [ordered]@{}
+    foreach ($h in ${q(Object.keys(hosts).join(','))}.Split(',')) {
+      $out[$h] = try { ,@(Get-DrillRunnerDistributions $h) } catch { (Get-DrillCode $_).code }
+    }
+    # end to end: such an entry refuses the boot, with no WSL call and no registry read
+    $script:calls = 0
+    function Get-DrillWslRegisteredNames { $script:calls++; 'Fixture-CI' }
+    $script:DrillWslRunner = { param($a) $script:calls++; @{ exit = 1; stdout = ''; stderr = '' } }
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    $env:COMPUTERNAME = 'NULL-DISTRO'
+    $s = Get-DrillHostSafety -JobsOnly
+    @{ out = $out; gate = @{ action = $s.action; code = $s.code; why = $s.wslUnreadable }; calls = $script:calls }`);
+  for (const h of ['NO-DISTRO', 'NULL-DISTRO', 'NULL-RUNNER', 'NUMBER-DISTRO', 'EMPTY-DISTRO', 'ADDITIONAL-NULL', 'ADDITIONAL-NO-DISTRO',
+    'ADDITIONAL-NOT-A-LIST', 'NUL-TWIN', 'LINE-END']) {
+    assert.equal(r.out[h], 'NODE_PROFILES_RUNNER_DISTRIBUTION_INVALID', h);
+  }
+  assert.deepEqual(r.out['NO-LINUX'], []);
+  assert.deepEqual(r.out['NO-LINUX-EMPTY-LIST'], []);
+  assert.deepEqual(r.out['TWO-SAME'], ['Fixture-CI', 'Fixture-CI-2']);
+  assert.deepEqual(r.gate, { action: 'refuse', code: 'DRILL_HOST_WSL_UNREADABLE', why: 'NODE_PROFILES_RUNNER_DISTRIBUTION_INVALID' });
+  assert.equal(r.calls, 0);
+});
+
 // The distribution is the one this host's Linux runners are registered in (node-profiles.json by host name), never the resident's own; a
 // host the registry does not know is refused; a registered host without a Linux runner asks WSL nothing; a runner distribution this account
 // has not registered is refused.
