@@ -56,14 +56,26 @@ const matches = (file) => PINNED_REGISTRY_PATHS.some((p) => globToRegExp(p).test
 
 const R9 = 'scripts/ci/merge-admission-r9-source.json';
 
+function unpackFixture(tar, dir) {
+  const unpacked = spawnSync('tar', ['-x', '-C', dir], { input: tar });
+  assert.equal(unpacked.status, 0, String(unpacked.stderr));
+}
+
+test('a Git archive unpacks into a fixture under TEMP', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-archive-'));
+  t.after(() => cleanup(dir));
+  const tar = execFileSync('git', ['archive', '--format=tar', 'HEAD', R9], { cwd: repo });
+  unpackFixture(tar, dir);
+  assert.ok(fs.statSync(path.join(dir, R9)).isFile());
+});
+
 // The committed tree (git archive HEAD) in a temporary git repository of its own, so a pinned file can be
 // changed without touching this checkout. Only committed files are in it. A fresh repository, not a clone:
 // the R9 helper refuses a shallow one.
 function copyOfThisCheckout() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-registries-'));
   const tar = execFileSync('git', ['archive', '--format=tar', 'HEAD'], { cwd: repo, maxBuffer: 1 << 30 });
-  const unpacked = spawnSync('tar', ['-x', '-C', dir], { input: tar });
-  assert.equal(unpacked.status, 0, String(unpacked.stderr));
+  unpackFixture(tar, dir);
   git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'core.autocrlf', 'false');
   commit(dir, 'main');
   return dir;
