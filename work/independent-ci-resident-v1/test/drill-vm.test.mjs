@@ -695,7 +695,11 @@ public static class DrillTestJob {
 });
 
 test('host reader uses only the pinned status file and accounts for an existing larger VM', opts, () => {
+  // the pinned file is the production one; under test the reader is pointed at a fixture (the production root refuses a test, below)
+  const fixture = path.join(tmp, 'host-status-fixture.json');
   const r = ps(`
+    $pinned = $script:Drill.HostStatus
+    $script:Drill.HostStatus = ${q(fixture)}
     function Get-Content { param($LiteralPath, [switch]$Raw, $Encoding, $ErrorAction)
       $script:readPath = $LiteralPath
       return ${q(idleHostStatus())}
@@ -706,13 +710,58 @@ test('host reader uses only the pinned status file and accounts for an existing 
     $safety = Get-DrillHostSafety
     $script:freeBytes = 10GB; $script:assignedBytes = 10GB
     $running = Get-DrillHostSafety -Running
-    @{ path = $script:readPath; safety = $safety; running = $running }
+    @{ pinned = $pinned; path = $script:readPath; safety = $safety; running = $running }
   `);
-  assert.equal(r.path, 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json');
+  assert.equal(r.pinned, 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json');
+  assert.equal(r.path, fixture);
   assert.equal(r.safety.requiredFreeBytes, 20 * 1024 ** 3);
   assert.equal(r.safety.ok, true);
   assert.equal(r.running.requiredFreeBytes, 10 * 1024 ** 3);
   assert.equal(r.running.action, 'continue');
+});
+
+// Clued Task fe8a2cbf (Fable renew-key ruling, supplement 1, layer A): a test that reached the real Invoke-DrillMain asked the
+// installed service on this host, the node on duty, to hold intake. The three points where the drill crosses into the host (reading
+// its status, locating the installed CLI, sending an intake request) refuse by name when a test marker is set (NODE_TEST_CONTEXT, which
+// the node test runner gives every test process and its children, or CLUED_UNDER_TEST) and the target is the fixed production root. A
+// fixture root is not refused. These red cases only read (the install receipt, the status file) or name a node.exe that does not exist:
+// never the real Invoke-DrillMain, never a request.
+test('under test, the drill refuses the production root at every point it crosses into the host', opts, () => {
+  assert.ok(process.env.NODE_TEST_CONTEXT, 'the test runner marks this process');
+  const r = ps(`
+    $codeOf = { param($b) try { $null = & $b; 'NOT_REFUSED' } catch { (Get-DrillCode $_).code } }
+    $fakeTool = @{ root = 'C:\\ProgramData\\CluedIndependentCI'; node = 'C:\\clued-drill-test-nowhere\\node.exe'; tool = 'C:\\clued-drill-test-nowhere\\rearm-tool.mjs' }
+    $out = [ordered]@{
+      tool = (& $codeOf { Get-DrillIntakeTool })
+      status = (& $codeOf { Read-DrillHostStatus })
+      request = (& $codeOf { Request-DrillIntake $fakeTool resume 0 })
+      safety = (& $codeOf { Get-DrillHostSafety })
+    }
+    # CLUED_UNDER_TEST alone marks a test too (the one entry sets it for every suite)
+    $env:NODE_TEST_CONTEXT = $null; $env:CLUED_UNDER_TEST = '1'
+    $out.cluedMarker = (& $codeOf { Get-DrillIntakeTool })
+    $out`);
+  assert.deepEqual(r, { tool: 'DRILL_HOST_ACCESS_UNDER_TEST', status: 'DRILL_HOST_ACCESS_UNDER_TEST', request: 'DRILL_HOST_ACCESS_UNDER_TEST',
+    safety: 'DRILL_HOST_ACCESS_UNDER_TEST', cluedMarker: 'DRILL_HOST_ACCESS_UNDER_TEST' });
+  // a fixture root is read as before
+  const fixture = path.join(tmp, 'under-test-status.json'); fs.writeFileSync(fixture, idleHostStatus('2026-11-19T00:00:00Z'));
+  assert.deepEqual(ps(`$script:Drill.HostStatus = ${q(fixture)}; Read-DrillHostStatus | ConvertFrom-Json`), JSON.parse(idleHostStatus('2026-11-19T00:00:00Z')));
+  // the rule: a marker and the fixed production root, nothing else (pure: no file is touched)
+  assert.deepEqual(ps(`@(
+    (Test-DrillProductionUnderTest 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json'),
+    (Test-DrillProductionUnderTest 'c:\\programdata\\cluedindependentci'),
+    (Test-DrillProductionUnderTest ${q(fixture)}),
+    (Test-DrillProductionUnderTest 'C:\\ProgramData\\CluedIndependentCI-other\\x'),
+    $(Remove-Item Env:NODE_TEST_CONTEXT, Env:CLUED_UNDER_TEST -ErrorAction SilentlyContinue; Test-DrillProductionUnderTest 'C:\\ProgramData\\CluedIndependentCI\\x'))`),
+    [true, true, false, false, false]);
+  // each crossing point checks before it acts: nothing is read, located or sent unchecked
+  const text = fs.readFileSync(script, 'utf8');
+  for (const fn of ['Read-DrillHostStatus', 'Get-DrillIntakeTool', 'Request-DrillIntake']) {
+    const start = text.indexOf(`function ${fn}`), body = text.slice(start, text.indexOf('\n}', start));
+    const guard = body.indexOf('Assert-DrillNotProductionUnderTest');
+    assert.ok(guard > 0, `${fn} calls the guard`);
+    for (const act of ['Get-Content', 'Read-DrillJson', 'Invoke-DrillNode']) { const at = body.indexOf(act); if (at >= 0) assert.ok(guard < at, `${fn}: the guard comes before ${act}`); }
+  }
 });
 
 test('the start gate never calls Start-VM when the guard failed or has not become ready', opts, () => {
