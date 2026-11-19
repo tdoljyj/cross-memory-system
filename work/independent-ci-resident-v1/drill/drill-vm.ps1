@@ -576,7 +576,7 @@ $script:GuestPrereq = {
   $f = [ordered]@{ failure = $null; distribution = $Distro }
   $msiLog = Join-Path $Dir 'wsl-msi.log'
   $mi = & $native "$env:SystemRoot\System32\msiexec.exe" @('/i', (Join-Path $Dir $Wsl), '/qn', '/norestart', '/L*v', $msiLog) 1800
-  $f.msi = [ordered]@{ exit = $mi.exit; stdout = $mi.stdout; stderr = $mi.stderr; logTail = @(if (Test-Path -LiteralPath $msiLog -PathType Leaf) { Get-Content -LiteralPath $msiLog -Tail 40 }) }
+  $f.msi = [ordered]@{ exit = $mi.exit; stdout = $mi.stdout; stderr = $mi.stderr; logTail = @(if (Test-Path -LiteralPath $msiLog -PathType Leaf) { Get-Content -LiteralPath $msiLog -Tail 40 | ForEach-Object { [string]$_ } }) }
   if ($mi.exit -notin @(0, 3010)) { $f.failure = "PREREQ_WSL_MSI_EXIT_$($mi.exit)"; return $f }
   $vr = & $native $wslExe @('--version') 120 'utf-16'
   $ver = (@($vr.stdout -split "`r?`n" | Where-Object { $_ -ne '' }) -join ' ')
