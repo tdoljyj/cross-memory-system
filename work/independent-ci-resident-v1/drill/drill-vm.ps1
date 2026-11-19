@@ -1415,72 +1415,40 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
 }
 
 function Start-DrillDetachedWatchdog([string]$EncodedCommand) {
-  if (-not ('CluedDrill.BootProcess' -as [type])) {
+  if (-not ('CluedDrill.WatchdogJob' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
-using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace CluedDrill {
-  public static class BootProcess {
-    const uint CreateSuspended = 0x00000004;
-    const uint CreateBreakawayFromJob = 0x01000000;
-    const uint CreateNoWindow = 0x08000000;
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct StartupInfo {
-      public uint Size;
-      public IntPtr Reserved, Desktop, Title;
-      public uint X, Y, Width, Height, Columns, Rows, Fill, Flags;
-      public ushort ShowWindow, ReservedBytes;
-      public IntPtr ReservedData, Input, Output, Error;
-    }
-    [StructLayout(LayoutKind.Sequential)]
-    struct ProcessInfo {
-      public IntPtr Process, Thread;
-      public uint ProcessId, ThreadId;
-    }
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
-    static extern bool CreateProcessW(string image, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes,
-      bool inheritHandles, uint flags, IntPtr environment, IntPtr directory, ref StartupInfo startup, out ProcessInfo child);
+  public static class WatchdogJob {
     [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool inJob);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern uint ResumeThread(IntPtr thread);
-    [DllImport("kernel32.dll")]
-    static extern bool TerminateProcess(IntPtr process, uint exitCode);
-    [DllImport("kernel32.dll")]
-    static extern bool CloseHandle(IntPtr handle);
-
-    public static Process Start(string image, string arguments) {
-      var startup = new StartupInfo { Size = (uint)Marshal.SizeOf(typeof(StartupInfo)) };
-      var command = new StringBuilder("\"" + image + "\" " + arguments);
-      ProcessInfo child;
-      if (!CreateProcessW(image, command, IntPtr.Zero, IntPtr.Zero, false, CreateSuspended | CreateBreakawayFromJob | CreateNoWindow,
-          IntPtr.Zero, IntPtr.Zero, ref startup, out child)) throw new Win32Exception();
-      try {
-        // In a chain of nested jobs, breakaway can leave the child in an outer job.
-        bool inJob;
-        if (!IsProcessInJob(child.Process, IntPtr.Zero, out inJob)) throw new Win32Exception();
-        if (inJob) throw new InvalidOperationException("The watchdog is still in a Windows job.");
-        if (ResumeThread(child.Thread) == uint.MaxValue) throw new Win32Exception();
-        return Process.GetProcessById((int)child.ProcessId);
-      } catch {
-        TerminateProcess(child.Process, 1);
-        throw;
-      } finally {
-        CloseHandle(child.Thread);
-        CloseHandle(child.Process);
-      }
-    }
+    public static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool inJob);
   }
 }
 '@
   }
+  # WMI creates the watchdog under its own provider host, so it inherits no job from the caller.
+  # An agent session's job refuses breakaway, and that session is exactly what may be killed mid-drill.
   $image = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-  [CluedDrill.BootProcess]::Start($image, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand")
+  $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+  $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -ErrorAction Stop -Arguments @{
+    CommandLine = "`"$image`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand"
+    CurrentDirectory = "$env:SystemRoot\System32"
+    ProcessStartupInformation = $startup
+  }
+  if ($created.ReturnValue -ne 0) { throw "Win32_Process.Create returned $($created.ReturnValue)." }
+  $worker = Get-Process -Id ([int]$created.ProcessId) -ErrorAction Stop
+  try {
+    $inJob = $false
+    if (-not [CluedDrill.WatchdogJob]::IsProcessInJob($worker.Handle, [IntPtr]::Zero, [ref]$inJob)) { throw [ComponentModel.Win32Exception]::new() }
+    if ($inJob) { throw 'The watchdog is still in a Windows job.' }
+    return $worker
+  } catch {
+    try { $worker.Kill() } catch {}
+    $worker.Dispose()
+    throw
+  }
 }
 
 function Start-DrillBootWatchdog([string]$RunDir, [guid]$VmId, [DateTimeOffset]$Deadline) {

@@ -81,7 +81,7 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 回执独立记录 `m5.result`。核验通过为 `PASS`，观测缺失、核验器缺失或核验失败为 `FAIL`。文件清单无续期组件时为 `NOT_EVALUATED`，回执说明原因。
 D5 单独检查这份回执的 `m5.result`，只接受 `PASS`。A 档按回执的 `conclusion` 判定，`-Finalize` 继续只处理 A 档回读。
 
-来宾关机计时器就绪前，由脱离宿主 Windows 作业的看门进程负责兜底。无法确认脱离时，脚本拒绝开机。
+来宾关机计时器就绪前，由不在任何 Windows 作业里的看门进程负责兜底：它经 WMI（`Win32_Process.Create`）拉起，不继承拉起方（例如代理会话）的作业。拉起后确认它仍在某个作业里时，脚本拒绝开机。
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。
 
 本次未启动/修改 Hyper-V；A1–A10 实机结果、重启、再装、A5/A9 生产只读核验均由 DESK 另做。

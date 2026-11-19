@@ -595,7 +595,8 @@ public static class DrillTestJob {
     var job = CreateJobObject(IntPtr.Zero, IntPtr.Zero);
     if (job == IntPtr.Zero) throw new Win32Exception();
     var limits = new ExtendedLimits();
-    limits.Basic.Flags = 0x00000800 | 0x00002000; // BREAKAWAY_OK | KILL_ON_JOB_CLOSE
+    // KILL_ON_JOB_CLOSE only: breakaway is refused, like the agent session job a real drill runs in.
+    limits.Basic.Flags = 0x00002000;
     if (SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits))) return job;
     var error = new Win32Exception();
     CloseHandle(job);
@@ -626,6 +627,11 @@ public static class DrillTestJob {
     }`);
   assert.deepEqual(result, { terminated: true, cleanup: true });
   assert.equal(fs.readFileSync(cleanup, 'utf8'), 'True');
+});
+
+test('the boot watchdog is never started by job breakaway', () => {
+  const source = fs.readFileSync(script, 'utf8');
+  assert.doesNotMatch(source, /0x0*1000000\b|BREAKAWAY_FROM_JOB|BreakawayFromJob/i);
 });
 
 test('host reader uses only the pinned status file and accounts for an existing larger VM', opts, () => {
