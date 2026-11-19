@@ -100,7 +100,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.equal(j.joined, true, JSON.stringify(j));
     };
     const adopt = n => call('ci', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: `${repo}#${n}`, merge_sha: 'f'.repeat(40) });
-    const giveBack = n => call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#${n}` });
+    const reportClosed = n => call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#${n}`, github_state: 'closed' });
     const binding = async n => (await admin.query('select status from clued_private.work_claim_pr_task_bindings_v1 where repo_id=$1 and pr_number=$2', [repo, n])).rows[0]?.status;
     const queue = async () => (await admin.query('select clued_private.work_claim_merge_queue_current_v1($1,$2) v', [user, `merge:${repo}:main`])).rows[0].v;
     const entry = (q, r) => q.entries.find(e => e.claim_id === r.claim.claim_id);
@@ -154,7 +154,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       await join(31, headA);
       await ageTurn(a);
       const queuedBefore = await queuedAt(a);
-      assert.equal((await giveBack(33)).status, 'ok'); assert.equal(await binding(33), 'closed');
+      assert.equal((await reportClosed(33)).status, 'ok'); assert.equal(await binding(33), 'closed');
       assert.deepEqual(await queuedAt(a), queuedBefore, 'a closed PR does not end the turn');
       const mergedAt = await now();
       assert.equal((await adopt(31)).status, 'ok');

@@ -8,7 +8,7 @@
 // database refuses with SIGNATURE_GATEWAY_NOT_ACTIVATED.
 import renewContract from './ci-connection-renew.contract.json';
 import type { ContinuityEnv } from './continuity';
-import { databaseGatewayToken } from './database-gateway';
+import { databaseGatewayToken, resolveSupabaseConfig, type DatabaseGatewayEnv } from './database-gateway';
 import { CI_MAX_PAYLOAD_BYTES, ciCanonicalJson, verifyCiIdentitySignature, verifyCiNodeCommand, type CiAuthenticatedPrincipal, type CiTrustedNodeSnapshot } from './ci-scheduling-v1';
 
 export const CI_NODE_COMMAND_PATH = '/v1/ci/node';
@@ -18,7 +18,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const MAX_REQUEST = CI_MAX_PAYLOAD_BYTES + 65536, MAX_REPLY = 262144, MAX_FETCHES = 4;
 type Json = Record<string, unknown>;
-type Env = Pick<ContinuityEnv, 'SUPABASE_URL' | 'SUPABASE_PUBLISHABLE_KEY' | 'CLUED_DB_GATEWAY_TOKEN'>;
 type RenewLimits = Pick<ContinuityEnv, 'CI_RENEW_SOURCE_LIMIT' | 'CI_RENEW_IDENTITY_LIMIT'>;
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 type Options = { fetchImpl?: Fetch; now?: () => number };
@@ -167,7 +166,7 @@ export async function handleCiConnectionRenew(request: Request, limits: RenewLim
   }
 }
 
-export async function handleCiNodeGatewayV1(request: Request, env: Env, options: Options = {}): Promise<Response> {
+export async function handleCiNodeGatewayV1(request: Request, env: DatabaseGatewayEnv, options: Options = {}): Promise<Response> {
   try {
     const url = new URL(request.url);
     ensure(url.protocol === 'https:' && isCiNodeGatewayPath(url.pathname) && !url.search, 'CI_NODE_ROUTE_REFUSED', 404);
@@ -185,9 +184,10 @@ export async function handleCiNodeGatewayV1(request: Request, env: Env, options:
     const nodeId = status ? input.node_id : command!.node_id;
     ensure(typeof nodeId === 'string' && UUID.test(nodeId), 'CI_NODE_INPUT_REFUSED', 400);
 
-    const dbToken = databaseGatewayToken(env), dbKey = env.SUPABASE_PUBLISHABLE_KEY;
-    ensure(dbToken && dbKey && env.SUPABASE_URL, 'CI_NODE_GATEWAY_UNAVAILABLE', 503);
-    const db = new URL(env.SUPABASE_URL);
+    const dbToken = databaseGatewayToken(env);
+    const { url: dbUrl, key: dbKey } = resolveSupabaseConfig(env);
+    ensure(dbToken && dbKey && dbUrl, 'CI_NODE_GATEWAY_UNAVAILABLE', 503);
+    const db = new URL(dbUrl);
     ensure(db.protocol === 'https:' && !db.username && !db.password && db.pathname === '/' && !db.search && !db.hash,
       'CI_NODE_GATEWAY_UNAVAILABLE', 503);
     const rawFetch = options.fetchImpl ?? ((u: string, i: RequestInit) => fetch(u, i)), clock = options.now ?? Date.now;
