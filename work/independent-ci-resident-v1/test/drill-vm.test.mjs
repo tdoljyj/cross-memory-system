@@ -2117,6 +2117,30 @@ test('the stage files are read with read-write sharing, file by file, also while
   assert.match(fs.readFileSync(entryScript, 'utf8'), /Get-LastJsonLine \(Read-EntrySharedText \$launcherResult\)/);
 });
 
+// Codex review of e0a3cded5, high 1: the entry reads the objects the package's own parser gives (bootstrap.ps1 Get-LastJsonLine: a
+// JavaScriptSerializer Dictionary), not only hand-made ones: a ready host, a restart verdict with its step and installers' exit codes, a
+// launcher terminal; the restart verdict reaches A1's detail as it is.
+test('the entry reads the package parser\'s own objects: a ready host, a restart with its installers\' exit codes, a launcher terminal', opts, () => {
+  const bootstrap = fileURLToPath(new URL('../rollout/fleet/bootstrap.ps1', import.meta.url));
+  const restartLine = { status: 'RESTART_THEN_RUN_THE_SAME_COMMAND', why: 'gh installed', step: 'tools', installers: [{ name: 'gh', exit: 3010 }, { name: 'git-for-windows', exit: 8 }] };
+  const r = entryPs(`. ${q(bootstrap)} -From ${q(tmp)}
+    $ready = Get-LastJsonLine ${q(JSON.stringify({ name: 'stage', result: 'ok' }) + '\r\n' + JSON.stringify({ status: 'FIRST_INSTALL_HOST_READY' }))}
+    $restart = Get-LastJsonLine ${q(JSON.stringify(restartLine))}
+    $launcher = Get-LastJsonLine ${q(JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', pause: { confirmed: true } }))}
+    [ordered]@{ type = $ready.GetType().FullName; readyIsNull = ($null -eq (Get-EntryHostStopCode ([ordered]@{ exit = 0; last = $ready })));
+      restart = (Get-EntryHostStopCode ([ordered]@{ exit = 3; last = $restart })); launcher = (Test-EntryStageVerdict $launcher); host = (Test-EntryStageVerdict $ready) }`);
+  assert.match(r.type, /Dictionary/);
+  assert.equal(r.readyIsNull, true);
+  assert.match(r.restart, /^RESTART_THEN_RUN_THE_SAME_COMMAND:/);
+  for (const piece of ['"step":"tools"', '"exit":3010', '"exit":8', '"why":"gh installed"']) assert.ok(r.restart.includes(piece), piece);
+  assert.deepEqual({ launcher: r.launcher, host: r.host }, { launcher: true, host: true });
+  // the entry's result line with that stop code, read by the drill, gives A1 its detail as it is
+  const entry = ps(`Read-DrillEntryResult @(([ordered]@{ status = 'FIRST_INSTALL_STOPPED'; stopCode = ${q(r.restart)}; tree = ''; node = '' } | ConvertTo-Json -Compress)) 1`);
+  const a1 = verdictOf(evidence({ entry })).items.find(i => i.id === 'A1');
+  assert.equal(a1.pass, false);
+  assert.ok(a1.detail.includes('"exit":3010'), a1.detail);
+});
+
 // Codex review of c1497e0a1, high 3 (package 0a4abc6f2): a host preparation that takes -Kit gets the Release's first-install kit, copied and
 // held to its pinned hash; an older one (no -Kit) is called as before. Fable, supplement "after the package branch" 3: the host
 // preparation's own verdict -- a restart Windows asks for (gh 3010, Git 8), or a refusal -- reaches the entry's stop code as it is.

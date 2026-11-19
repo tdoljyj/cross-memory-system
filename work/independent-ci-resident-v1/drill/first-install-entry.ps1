@@ -119,9 +119,12 @@ function Get-EntryHostStopCode($HostRun) {
   if ($status -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { return ('RESTART_THEN_RUN_THE_SAME_COMMAND:' + $raw) }
   return ('HOST_PREPARATION_NOT_DONE:' + $raw)
 }
+# One field of an object the package's parser gave (Get-LastJsonLine: a JavaScriptSerializer Dictionary, whose IDictionary.Contains is an
+# explicit interface member) or of a PowerShell object: read as the package's own Get-Key reads it, through IDictionary (Codex review of
+# e0a3cded5, high 1).
 function Get-EntryField($Object, [string]$Name) {
   if ($null -eq $Object) { return $null }
-  if ($Object -is [Collections.IDictionary]) { if ($Object.Contains($Name)) { return $Object[$Name] }; return $null }
+  if ($Object -is [Collections.IDictionary]) { $d = [Collections.IDictionary]$Object; if ($d.Contains($Name)) { return $d[$Name] }; return $null }
   $p = $Object.PSObject.Properties[$Name]; if ($p) { return $p.Value }; return $null
 }
 
@@ -142,7 +145,7 @@ function Read-EntrySharedText([string]$Path) {
 # of the package's "no verdict" codes.
 function Test-EntryStageVerdict($Terminal) {
   if ($null -eq $Terminal) { return $false }
-  $s = if ($Terminal -is [Collections.IDictionary]) { if ($Terminal.Contains('status')) { $Terminal['status'] } else { $null } } else { $p = $Terminal.PSObject.Properties['status']; if ($p) { $p.Value } else { $null } }
+  $s = Get-EntryField $Terminal 'status'
   return ($s -is [string]) -and ($s.Length -gt 0) -and (@('STAGE_CHILD_PRINTED_NO_VERDICT', 'STAGE_GAVE_NO_VERDICT') -cnotcontains $s)
 }
 
