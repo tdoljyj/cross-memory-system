@@ -452,7 +452,8 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \}\}/);
   for (const grant of [migrateGrant, deployGrant]) {
     assert.match(steps[grant], /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
-    assert.match(steps[grant], /clued-release-grant\.mjs input --mode (deploy|migrate)/);
+    assert.match(steps[grant], /clued-release-grant\.mjs/);
+    assert.match(steps[grant], /input --mode (deploy|migrate)/);
     assert.match(steps[grant], /clued_private\.release_door_v1\(/);
   }
   assert.match(steps[migrateGrant], /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);

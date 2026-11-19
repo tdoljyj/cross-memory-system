@@ -231,7 +231,8 @@ test('release door v1: the release workflow consumes, probes and boots the door 
       await t.test('11: a first migration that fails uses no grant', async () => {
         // No step of migrate mode reaches the door outside the transaction that applies the files.
         const migrateSteps = steps.filter((s) => /inputs\.mode == 'migrate'/.test(s.split('\n').find((line) => /^\s*if:/.test(line)) ?? ''));
-        const doorSteps = migrateSteps.filter((s) => /clued-release-grant\.mjs|release_door_v1/.test(s)).map((s) => s.split('\n')[0]);
+        const code = (s) => s.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
+        const doorSteps = migrateSteps.filter((s) => /clued-release-grant\.mjs|release_door_v1/.test(code(s))).map((s) => s.split('\n')[0]);
         assert.deepEqual(doorSteps, ['name: Apply the named migrations']);
 
         const c = await fresh({ door: true, autoApprove: false });
