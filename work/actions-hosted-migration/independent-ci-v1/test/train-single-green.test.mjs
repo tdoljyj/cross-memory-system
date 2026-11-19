@@ -10,7 +10,9 @@ import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { admissionExternalIdV2, batchJobsV2, claimGeneration, frontJobIdsV2, scanExternalIdV2 } from '../src/job-v2.mjs';
 import { EffectJournal, ROLE_PUBLICATION_CONTRACT, rolePublicationKey } from '../src/effect-journal.mjs';
-import { SCAN_CHECK_NAMES, frontHeadScans, headScansOf, ofJobIds, publishedNames, validHeadScans } from '../src/published-on-github-v2.mjs';
+import { SCAN_CHECK_NAMES, headScansOf, ofJobIds, publishedNames, validHeadScans } from '../src/published-on-github-v2.mjs';
+// A namespace import: the tested-line pair (rule 41ab823a) is checked by its own test, so a Source without it fails only there.
+import * as onGithub from '../src/published-on-github-v2.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createFixtureControlPublisherV2, STAGE8_CHECK_MS, STAGE8_NOT_READY_REASONS, STAGE8_FINAL_REASONS } from '../src/independent-control-checks-v2/publisher.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
@@ -45,7 +47,7 @@ function fakeGithub(o = {}) {
       return structuredClone(state.commits[sha]);
     },
     async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
-    // compare T...H (rule 41ab823a, published-on-github-v2.mjs#frontHeadScans): H contains T unless the state says otherwise.
+    // compare T...H: counted (rule 41ab823a, R3: stage 1 never reads it for the reuse); H contains T unless the state says otherwise.
     async readCompare(base, head) {
       state.compares = (state.compares ?? 0) + 1;
       if (state.compareError) throw Object.assign(new Error(state.compareError), { code: state.compareError });
@@ -481,16 +483,19 @@ test('front identity, stage 1: the non-front run of H does not refuse the front 
   assert.deepEqual([head.r.status, head.r.reason, head.r.publishedChecks], ['BLOCKED', 'HEAD_PUBLISHED_ON_GITHUB', ['trivy']]);
 });
 
-// Rule 41ab823a (resident DESIGN §75; Fable 2026-11-19 §2.3, field #1170): the front batch's stage 1 names, from the same read-back, the
-// scans H already carries (App 5368905, completed, success, the scanner's staged external id, the newest of its name that is not the front's
-// own), and only when T is H's ancestor; the resident then runs none of them again when S's tree is H's tree. It never changes the ending.
+// Rule 41ab823a (resident DESIGN §75; Fable 2026-11-19 §2.3 and the review ruling, field #1170): the front batch's stage 1 names, from
+// the read-back it already made, the scans H already carries: App 5368905's newest check of each scan name that is not the front's own,
+// completed, successful, the scanner's staged external id, and a summary that says it tested H itself ("tested <H>", written by the
+// scanner publisher). Stage 1 sends no request of its own for it; the resident reuses them only when stage 10 said T is in H and S has
+// H's tree. It never changes stage 1's ending.
+const withTested = (checks, sha = HEAD) => checks.map(c => SCAN_CHECK_NAMES.includes(c.name) ? { ...c, output: { title: `${c.name}: success`, summary: `Independent CI job x.\ntested ${sha}` } } : c);
 const scansOf = checks => SCAN_CHECK_NAMES.map(role => ({ role, externalId: checks.find(c => c.name === role).external_id }));
-test('rule 41ab823a, stage 1: a settled front batch names H\'s scans from the read-back; the outcome and the stage fact carry them', async t => {
-  const seed = nonFrontChecks();
+test('rule 41ab823a, stage 1: a settled front batch names H\'s scans from the read-back it already made (R3: no compare); the outcome and the stage fact carry them', async t => {
+  const seed = withTested(nonFrontChecks());
   const x = await stage1(t, { seed });
   assert.equal(x.r.status, 'SETTLED', JSON.stringify(x.r));
   assert.deepEqual(x.r.headScans, scansOf(seed));
-  assert.equal(x.github.state.compares, 1, 'one compare T...H');
+  assert.equal(x.github.state.compares ?? 0, 0, 'R3: stage 1 sends no request of its own for the reuse');
   // The resident sees it through the outcome file and the stage fact (stage-inputs.mjs#writeOutcome, stage-fact.mjs#outcomeFacts), and only
   // from stage 1's settled ending.
   const write = async (result, entryRole = 'work-admission') => writeOutcome({ receiptsRoot: await tempDir(t), nonce: 'b'.repeat(32), plan: { stage: 1, entryRole }, jobIds: [], result });
@@ -501,35 +506,55 @@ test('rule 41ab823a, stage 1: a settled front batch names H\'s scans from the re
   assert.equal('headScans' in outcomeFacts({ ...(await write(x.r)), status: 'REVOKED' }), false);
 });
 
-test('rule 41ab823a, stage 1 guards: nothing to reuse unless the newest check of the name is a successful scanner check of App 5368905 and T is in H', async t => {
+// R1, R2 (review B1): a check on H does not say by itself which tree it scanned: a batch of several PRs publishes on its first member H1 the
+// scans of S = the chain merge (T', H1, H2, ...), and a front on an older main those of merge(T', H). Only a check whose summary names H as
+// the tested commit is H's own scan; one naming another commit (R1) or none (R2, the format before this generation) is never evidence.
+test('rule 41ab823a, stage 1 guards: only the newest successful scanner check of App 5368905 that tested H itself counts (R1 another tested commit, R2 none)', async t => {
   const j = jobsFor(HEAD), front = jobsFor();
-  const ids = role => scanExternalIdV2(j[role]);
   const none = async (name, o) => {
     const x = await stage1(t, o);
     assert.equal(x.r.status, 'SETTLED', `${name}: ${JSON.stringify(x.r)}`);
     assert.equal('headScans' in x.r, false, name);
+    assert.equal(x.github.state.compares ?? 0, 0, name);
   };
   await none('H carries nothing', {});
-  await none('T is not H\'s ancestor', { seed: nonFrontChecks(), githubState: { compare: { status: 'diverged', aheadBy: 1, behindBy: 2 } } });
-  await none('compare refused', { seed: nonFrontChecks(), githubState: { compareError: 'github_http_502' } });
+  await none('R1: the scans tested another commit (a batch of several PRs, S)', { seed: withTested(nonFrontChecks(), S) });
+  await none('R2: the scans say nothing of what they tested (the older format)', { seed: nonFrontChecks() });
+  // a batch that tests the head names nothing (with role checks on H it would end HEAD_PUBLISHED_ON_GITHUB anyway)
   await none('a batch that tests the head (S = H)', { seed: [], testSha: HEAD, trainMode: 'off' });
   // per role: the newest check of the name decides; another App, a failure (a withdrawal), a non-scanner external id never count
-  const scans = checks => headScansOf(checks, frontJobIdsV2(front['work-admission']));
-  const ok = role => checkRun(10 + SCAN_CHECK_NAMES.indexOf(role), role, ids(role));
-  assert.deepEqual(scans(SCAN_CHECK_NAMES.map(ok)).map(x => x.role), SCAN_CHECK_NAMES);
+  const scans = checks => headScansOf(checks, frontJobIdsV2(front['work-admission']), HEAD);
+  const ok = (role, o = {}) => withTested([checkRun(10 + SCAN_CHECK_NAMES.indexOf(role), role, scanExternalIdV2(j[role]), o)])[0];
+  assert.deepEqual(scans(SCAN_CHECK_NAMES.map(r => ok(r))).map(x => x.role), SCAN_CHECK_NAMES);
   assert.deepEqual(scans([{ ...ok('gitleaks'), conclusion: 'failure' }]), [], 'failed');
-  assert.deepEqual(scans([ok('gitleaks'), checkRun(20, 'gitleaks', ids('gitleaks'), { conclusion: 'failure' })]), [], 'withdrawn after it passed (newest is the failure)');
-  assert.deepEqual(scans([checkRun(5, 'gitleaks', ids('gitleaks'), { conclusion: 'failure' }), ok('gitleaks')]).map(x => x.role), ['gitleaks'], 'republished after a withdrawal');
+  assert.deepEqual(scans([ok('gitleaks'), { ...ok('gitleaks'), id: 20, conclusion: 'failure' }]), [], 'withdrawn after it passed (newest is the failure)');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), id: 5, conclusion: 'failure' }, ok('gitleaks')]).map(x => x.role), ['gitleaks'], 'republished after a withdrawal');
   assert.deepEqual(scans([{ ...ok('gitleaks'), app: { id: 15368 } }]), [], 'another App');
   assert.deepEqual(scans([{ ...ok('gitleaks'), status: 'in_progress', conclusion: null }]), [], 'not completed');
-  assert.deepEqual(scans([checkRun(10, 'gitleaks', `independent-ci:native-work-admission:v2:${'0'.repeat(64)}:a1:c00000000:f1:e1`)]), [], 'not a scanner publication');
-  assert.deepEqual(scans([ok('gitleaks'), checkRun(30, 'gitleaks', scanExternalIdV2(front.gitleaks), { conclusion: 'failure' })]).map(x => x.role), ['gitleaks'],
+  assert.deepEqual(scans([{ ...ok('gitleaks'), external_id: `independent-ci:native-work-admission:v2:${'0'.repeat(64)}:a1:c00000000:f1:e1` }]), [], 'not a scanner publication');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: { summary: `x\ntested ${S}` } }]), [], 'R1: tested another commit');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: { summary: 'Independent CI job x.' } }]), [], 'R2: the older format, no tested commit');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: { summary: `x\ntested ${HEAD}\ntested ${HEAD}` } }]), [], 'two tested lines');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: null }]), [], 'no output');
+  assert.deepEqual(scans([ok('gitleaks'), { ...ok('gitleaks'), id: 30, external_id: scanExternalIdV2(front.gitleaks), conclusion: 'failure' }]).map(x => x.role), ['gitleaks'],
     'the front batch\'s own check is not evidence (stage 1 ends HEAD_PUBLISHED_ON_GITHUB on it anyway)');
-  assert.deepEqual(await frontHeadScans({ async readCompare() { throw new Error('x'); } }, front['work-admission'], SCAN_CHECK_NAMES.map(ok), frontJobIdsV2(front['work-admission'])), []);
+  assert.deepEqual(scans([{ ...ok('gitleaks'), id: 40, output: { summary: `x\ntested ${S}` } }, ok('gitleaks')]), [], 'the newest one decides, and it tested another commit');
   // the shape the outcome accepts
+  const ids = role => scanExternalIdV2(j[role]);
   assert.deepEqual(validHeadScans([{ externalId: ids('trivy'), role: 'trivy' }, { role: 'gitleaks', externalId: ids('gitleaks') }]).map(x => x.role), ['gitleaks', 'trivy']);
   for (const bad of [null, {}, [{ role: 'gitleaks' }], [{ role: 'kooyumi-merge-slot', externalId: ids('gitleaks') }], [{ role: 'gitleaks', externalId: ids('gitleaks'), x: 1 }],
     [{ role: 'gitleaks', externalId: ids('gitleaks') }, { role: 'gitleaks', externalId: ids('gitleaks') }]]) assert.equal(validHeadScans(bad), null, JSON.stringify(bad));
+});
+
+// The writer and the reader of "tested <sha>" are one pair (published-on-github-v2.mjs): what one writes the other reads, exactly once.
+test('rule 41ab823a: the tested line is written and read by one pair of functions', () => {
+  assert.equal(typeof onGithub.scanTestedLine, 'function');
+  assert.equal(onGithub.scanTestedLine(HEAD), `tested ${HEAD}`);
+  assert.equal(onGithub.scanTestedOf(`Independent CI job x.\n${onGithub.scanTestedLine(S)}`), S);
+  assert.equal(onGithub.scanTestedOf(`${onGithub.scanTestedLine(S)}\n\nNative publication independent-ci:native:v1:x:p1`), S);
+  for (const bad of [null, undefined, 1, '', 'tested', `tested ${S.slice(1)}`, `tested ${S.toUpperCase()}`, ` tested ${S}`, `tested ${S} `, `xtested ${S}`,
+    `tested ${S}\ntested ${S}`, `tested ${S}\ntested ${HEAD}`]) assert.equal(onGithub.scanTestedOf(bad), null, JSON.stringify(bad));
+  assert.throws(() => onGithub.scanTestedLine('x'));
 });
 
 test('front identity, stage 8: the non-front control pair on H does not stop the front pair; the front\'s own merge-slot check from another node does', async t => {

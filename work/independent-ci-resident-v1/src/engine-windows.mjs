@@ -24,6 +24,9 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, chainOfFront, validateTrainRunInput } from './train.mjs';
+// Rule 41ab823a (DESIGN §75): stage 1's headScans, in the shape head-scans.mjs checks (re-exported for the tests that cross-check it).
+import { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, stageHeadScans } from './head-scans.mjs';
+export { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, stageHeadScans };
 
 // How long a failed read of the installed Source's watch support waits before it is read again (queueWatchSupported).
 export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
@@ -139,17 +142,6 @@ function queueEntry(v) {
   return { entered: v.entered && (state === 'head' || state === 'waiting'), state, position: Number.isSafeInteger(v.position) && v.position > 0 && v.position <= 10_000 ? v.position : null };
 }
 const codeList = v => Array.isArray(v) ? [...new Set(v.slice(0, 64).filter(x => typeof x === 'string' && DCODE.test(x)))].sort() : [];
-// Rule 41ab823a (DESIGN §75): stage 1 of a front batch names the scans H already carries, read on GitHub (Source
-// published-on-github-v2.mjs#frontHeadScans, the same shape: [{ role, externalId }], each scan role once, the staged external id).
-// Mirrored here (a test cross-checks both): a value that does not have exactly that shape is none, so the front batch scans as before.
-export const HEAD_SCAN_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
-export const HEAD_SCAN_EXTERNAL_ID = /^independent-ci:staged:v2:[a-f0-9]{64}:a[1-9]$/;
-export function stageHeadScans(v) {
-  if (!Array.isArray(v) || v.length === 0 || v.length > HEAD_SCAN_ROLES.length) return null;
-  const ok = v.every(x => x && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).length === 2 && HEAD_SCAN_ROLES.includes(x.role)
-    && typeof x.externalId === 'string' && HEAD_SCAN_EXTERNAL_ID.test(x.externalId)) && new Set(v.map(x => x.role)).size === v.length;
-  return ok ? HEAD_SCAN_ROLES.flatMap(role => v.filter(x => x.role === role).map(x => ({ role, externalId: x.externalId }))) : null;
-}
 export function parseStageOutcome(o) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
   if (typeof o.status !== 'string' || !/^[A-Z][A-Z_]{1,60}$/.test(o.status) || !(o.reason === null || (typeof o.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(o.reason)))

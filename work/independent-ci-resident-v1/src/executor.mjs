@@ -132,7 +132,7 @@ import { HEAVY_ROLES, RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, t
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { ALERT_RECEIPT } from './retention.mjs';
 import { NODE_RESOURCE_HOLDER } from './host-capacity.mjs';
-import { stageHeadScans } from './engine-windows.mjs';
+import { stageHeadScans } from './head-scans.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
@@ -2379,7 +2379,8 @@ export class ResidentExecutor {
     this.frontKeys.set(key, front.attempt);
     await this.persistQueue();
     await this.receipt('train-front-enqueued', { key, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, testTree: front.testTree,
-      attempt: front.attempt, claimId: front.claimId, since: front.since, ...(front.members ? { members: front.members } : {}), ...(front.headTree ? { headTree: front.headTree } : {}) });
+      attempt: front.attempt, claimId: front.claimId, since: front.since, ...(front.members ? { members: front.members } : {}), ...(front.headTree ? { headTree: front.headTree } : {}),
+      ...(front.baseInHead === true ? { baseInHead: true } : {}) });
     this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
     return key;
   }
@@ -3823,13 +3824,14 @@ export class ResidentExecutor {
       }
       return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
     }
-    // Rule 41ab823a (DESIGN §75): stage 1 of a front batch names the scans H already carries on GitHub (engine-windows.mjs#stageHeadScans).
+    // Rule 41ab823a (DESIGN §75): stage 1 of a front batch names the scans H already carries on GitHub (head-scans.mjs#stageHeadScans); a
+    // stage 1 that named none leaves no older fact of this key behind.
     if (Object.hasOwn(subject, 'testSha')) {
       const scans = stageHeadScans(first.outcome?.headScans);
       if (scans) {
         this.frontHeadScans.set(key, scans);
         while (this.frontHeadScans.size > FRONT_HEAD_SCANS_KEPT) this.frontHeadScans.delete(this.frontHeadScans.keys().next().value);
-      }
+      } else this.frontHeadScans.delete(key);
     }
     // Defect a8910e41 (DESIGN §62.4): the take-over binding run ends right here, before markStarted would burn the head: only stage 1
     // ran (it may run again on this head, as every stage-1 release), and fail() releases the reservation (TRAIN_FRONT_BOUND). A binding
@@ -4052,11 +4054,12 @@ export class ResidentExecutor {
 
   // Rule 41ab823a, DESIGN §75 (Fable 2026-11-19, field #1170): which scans of this front batch (a subject with S) need not run, because
   // H already carries them on GitHub. The evidence is what this batch's own stage 1 read there (frontHeadScans: App 5368905's newest
-  // check of each scan name on H, completed and successful, a scanner publication, with T an ancestor of H; Source
-  // published-on-github-v2.mjs#frontHeadScans), the very checks the merge gate reads, never this node's ledger: an ordinary batch that
+  // check of each scan name on H, completed and successful, a scanner publication whose summary says it tested H itself; Source
+  // published-on-github-v2.mjs#headScansOf), the very checks the merge gate reads, never this node's ledger: an ordinary batch that
   // was archived (upgrade drain, park age or capacity), lost with a reinstall or run on another node still counts. Its Source is not a
   // condition (as executed-heads: a check published on H stays valid under any Source). A front of one member only, whose S has H's own
-  // tree (stage 10's headTree), on this batch's H and T. Each such role is reused once: [{ role, from: the check's external id }] (the
+  // tree (stage 10's headTree) and whose T is in H (stage 10's own compare of exactly this (T, H): baseInHead), on this batch's H and T,
+  // so S holds nothing H does not. Each such role is reused once: [{ role, from: the check's external id }] (the
   // external id carries a job id, a one-way digest: the batch key cannot be read from it), in role order. Anything that does not fit, or
   // no evidence (stage 1 named none, or a restart lost it): reuses nothing, the front batch scans as before.
   frontScansReused(key, subject) {
@@ -4064,7 +4067,7 @@ export class ResidentExecutor {
     this.frontHeadScans.delete(key);
     const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
     if (!scans || !front || front.members || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha || !HEX40.test(front.testTree ?? '')
-      || front.headTree !== front.testTree) return [];
+      || front.headTree !== front.testTree || front.baseInHead !== true) return [];
     return HEAVY_ROLES.flatMap(role => scans.filter(x => x.role === role).map(x => ({ role, from: x.externalId })));
   }
 

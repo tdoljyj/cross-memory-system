@@ -212,11 +212,12 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     holder = selected ?? { ...holder, pr: null, boundPr: null };
     duty = { ...duty, holders: [holder] };
   }
-  let front = null, pull = null, mergeCommit = null, frontChecks = [];
+  let front = null, pull = null, mergeCommit = null, frontChecks = [], frontCompare = null;
   if (holder?.pr) {
     pull = await github.readPullRequest(holder.pr);
     const headSha = SHA.test(pull?.head?.sha ?? '') ? pull.head.sha : null;
     const compare = headSha ? await github.readCompare(mainSha, headSha) : null;
+    frontCompare = compare;
     mergeCommit = SHA.test(pull?.merge_commit_sha ?? '') ? await github.readGitCommit(pull.merge_commit_sha) : null;
     const listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] };
     if (listed?.complete !== true || !Array.isArray(listed.checks)) fail('TRAIN_FRONT_CHECKS_UNREADABLE');
@@ -645,7 +646,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
-    const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
+    const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, compare: frontCompare,
       pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState,
         layerOfPaths, frontBaseSha: pull?.base?.sha ?? null } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
@@ -944,7 +945,7 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 // its stage 8, no attempt is counted and no second openFrontBatch reaches the executor. A regenerated test merge with the
 // same parents and tree is the same S for this purpose. Residual: an attempt that ended without a frontOutcome (an
 // infrastructure failure) counts as running until the holder's running clock or slot ends.
-async function openFront({ job, github, native, claimScope, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null }) {
+async function openFront({ job, github, native, claimScope, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null, compare = null }) {
   const no = decision => ({ decision, openFrontBatch: null });
   let previous, used;
   try {
@@ -1010,7 +1011,11 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
   // scanning again. A read that fails or does not fit names nothing (the front batch scans as before); it is never a refusal.
   let headTree = null;
   if (!members) try { const c = await github.readGitCommit(front.headSha); if (c?.sha === front.headSha && SHA.test(c.tree ?? '')) headTree = c.tree; } catch { headTree = null; }
-  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...batch, ...(members ? { members } : {}), ...(headTree ? { headTree } : {}) } };
+  // The review ruling (B2): that T is in H is this run's own compare of exactly (T, H) (read above for frontPullFacts), for a front of one
+  // member; stage 1 then reads nothing for the reuse. A compare of other ends, or one that says H lacks part of T, names nothing.
+  const baseInHead = !members && compare?.baseSha === batch.baseSha && compare?.headSha === batch.headSha && compare.behindBy === 0
+    && ['ahead', 'identical'].includes(compare.status);
+  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...batch, ...(members ? { members } : {}), ...(headTree ? { headTree } : {}), ...(baseInHead ? { baseInHead: true } : {}) } };
 }
 
 // The PR's merge-admission layer is protected: its changed paths by the held policy (layerOfPaths), and a read that fails counts as protected.

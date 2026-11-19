@@ -23,7 +23,7 @@
 //     K(head, role)): a check of the same name of this App ends that publication cleanly with ROLE_ALREADY_ON_GITHUB
 //     (nothing published for it, nothing revoked, no HALT). What this node knows keeps its existing path.
 // For a train front batch both count only the checks of that front batch's own jobs (ofJobIds), never a non-front run of H.
-// The same read also tells a front batch which scans H already carries (frontHeadScans below; resident DESIGN §75).
+// The same read also tells a front batch which scans H already carries (headScansOf below; resident DESIGN §75).
 // Pure apart from the port reads.
 export const PUBLISHER_APP_ID = 5368905;
 export const HEAD_PUBLISHED_ON_GITHUB = 'HEAD_PUBLISHED_ON_GITHUB';
@@ -69,16 +69,31 @@ export async function publishedNames(github, headSha, names, appId = PUBLISHER_A
   return [...new Set(checks.filter(c => jobIds === null || ofJobIds(c, jobIds)).map(c => c.name).filter(n => names.includes(n)))].sort();
 }
 
-// Rule 41ab823a (resident DESIGN §75, Fable 2026-11-19 "same tree, same check, one real run"): the scans a train front batch (H, S)
-// need not run again because H already carries them, read from the same complete inventory as stage 1's read-back above (this App's
-// checks, the ones the merge gate reads), never from a node's own ledger, so an archived, reinstalled or other node's batch still counts.
-// Per scan role, the newest check of that name on H that is not one of this front batch's own jobs must be completed, successful and a
-// scanner publication (its external id the staged form, job-v2.mjs#scanExternalIdV2); and T must be an ancestor of H (compare behind_by
-// 0), so every earlier batch that scanned on H (ordinary: H itself; a front on an older main: merge(T', H) with T' in H) read H's tree.
-// The resident reuses them only when S's tree is H's tree. Anything that does not fit, or a read that fails, names nothing: the front
-// batch scans as before. It never changes stage 1's own ending.
+// Rule 41ab823a (resident DESIGN §75, Fable 2026-11-19 "same tree, same check, one real run", and the review ruling): the scans a train
+// front batch (H, S) need not run again because H already carries them, read from the same complete inventory as stage 1's read-back
+// above (this App's checks, the ones the merge gate reads), never from a node's own ledger, so an archived, reinstalled or other node's
+// batch still counts. A check on H does not by itself say what it scanned (a batch of several PRs publishes on its first member the scans
+// of its chain merge; a front on an older main those of merge(T', H)), so every scanner check says it: its summary has one line
+// "tested <the commit it scanned>" (scanTestedLine, written by staged-check-publisher-v2.mjs). Per scan role, the newest check of that
+// name on H that is not one of this front batch's own jobs must be completed, successful, a scanner publication (its external id the
+// staged form, job-v2.mjs#scanExternalIdV2) and say exactly once that it tested H itself: it scanned H's tree. The resident reuses it
+// only when S has H's tree and T is in H (stage 10's own compare, openFrontBatch baseInHead), so S holds nothing H does not. A check
+// that says nothing of it (the format before this generation), or another commit, names nothing: the front batch scans as before.
+// Pure: stage 1 sends no request of its own for it, and it never changes stage 1's ending.
 export const SCAN_CHECK_NAMES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 export const SCAN_EXTERNAL_ID = /^independent-ci:staged:v2:[a-f0-9]{64}:a[1-9]$/;
+// The one pair that writes and reads the tested commit of a scanner check (a line of its own in the summary).
+const TESTED_LINE = /^tested ([a-f0-9]{40})$/gm;
+export function scanTestedLine(sha) {
+  if (!SHA.test(sha ?? '')) fail('invalid_tested_commit');
+  return `tested ${sha}`;
+}
+// The commit a summary says it tested: the one such line, or null (none, several, or not a string).
+export function scanTestedOf(summary) {
+  if (typeof summary !== 'string') return null;
+  const found = [...summary.matchAll(TESTED_LINE)];
+  return found.length === 1 ? found[0][1] : null;
+}
 // [{ role, externalId }] in role order, each role once, or null when the value does not have exactly that shape.
 export function validHeadScans(v) {
   if (!Array.isArray(v) || v.length > SCAN_CHECK_NAMES.length) return null;
@@ -87,23 +102,14 @@ export function validHeadScans(v) {
   if (out.some(x => x === null) || new Set(out.map(x => x.role)).size !== out.length) return null;
   return SCAN_CHECK_NAMES.flatMap(role => out.filter(x => x.role === role));
 }
-// checks: this App's checks on H (readPublishedChecks); jobIds: the front subject's job ids (job-v2.mjs#frontJobIdsV2).
-export function headScansOf(checks, jobIds) {
-  if (!Array.isArray(checks) || !(jobIds instanceof Set)) return [];
+// checks: this App's checks on H (readPublishedChecks); jobIds: the front subject's job ids (job-v2.mjs#frontJobIdsV2); headSha: H.
+export function headScansOf(checks, jobIds, headSha) {
+  if (!Array.isArray(checks) || !(jobIds instanceof Set) || !SHA.test(headSha ?? '')) return [];
   const out = [];
   for (const role of SCAN_CHECK_NAMES) {
     const newest = checks.filter(c => c?.name === role && c.app?.id === PUBLISHER_APP_ID && !ofJobIds(c, jobIds)).sort((a, b) => b.id - a.id)[0];
-    if (newest && newest.status === 'completed' && newest.conclusion === 'success' && SCAN_EXTERNAL_ID.test(newest.external_id ?? ''))
-      out.push({ role, externalId: newest.external_id });
+    if (newest && newest.head_sha === headSha && newest.status === 'completed' && newest.conclusion === 'success' && SCAN_EXTERNAL_ID.test(newest.external_id ?? '')
+      && scanTestedOf(newest.output?.summary) === headSha) out.push({ role, externalId: newest.external_id });
   }
   return out;
-}
-// job: the front batch's stage-1 job (T = job.baseSha, H = job.headSha). Never throws.
-export async function frontHeadScans(github, job, checks, jobIds) {
-  try {
-    const scans = headScansOf(checks, jobIds);
-    if (scans.length === 0) return [];
-    const c = await github.readCompare(job.baseSha, job.headSha);
-    return c?.behindBy === 0 && ['ahead', 'identical'].includes(c.status) ? scans : [];
-  } catch { return []; }
 }

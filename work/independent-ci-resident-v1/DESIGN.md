@@ -5859,18 +5859,38 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 **根因**：上面的修法把“本节点账本 `ledger/` 里停过 B 的批次”当证据，而这份证据会消失：升级排空、停车超时、停车超容量都会把批次改名进 `ledger-flow-ends`；重装只带 00/10/25/80/90 五种记录（不带停车记录）；普通批次在另一台节点跑的本机根本没有。另外它要求 Source 相同，升级之后即使读得到也照样重跑。是一类问题，不是一个。
 
-**新修法**（证据只留一处：GitHub 上 H 的检查，也就是合入闸门读的那份）：
-- Source 第 1 段 `formal-work-admission-check-v2/publisher.mjs`：车头作业（S ≠ H）的 C4 回读已经读到 H 上 App 5368905 的全部检查。在同一次读取上，`published-on-github-v2.mjs#frontHeadScans` 对每个扫描名取“不属于本车头作业的最新一条”，要求已完成、成功、external_id 是扫描发布格式 `independent-ci:staged:v2:<job id>:a<n>`；再读一次 `compare/T...H`，要求 `behind_by == 0`（T 是 H 的祖先：H 上任何一次扫描，普通批次扫 H 自己，旧 main T′ 的车头扫 merge(T′, H)，T′ 也在 H 里，读的都是 H 的树）。结果作为 `headScans: [{role, externalId}]` 只放进 SETTLED 结果；读失败或不符就不给，绝不改变第 1 段的结局。
-- 通道：`stage-inputs.mjs#writeOutcome`（只在第 1 段 `work-admission` 的 SETTLED）→ `stage-fact.mjs#outcomeFacts` → 常驻 `engine-windows.mjs#parseStageOutcome`（`stageHeadScans` 镜像校验，测试与 Source 交叉核对）→ `executor.mjs#drive` 把它按批次 key 记在内存里。
-- `executor.mjs#frontScansReused`：单成员车头、绑定的 H、T 与批次一致、`headTree == testTree`、本批第 1 段给了 `headScans`，命中的角色记 `reused: [{role, from: 该检查的 external_id}]`，不再本地跑，也不在 H 上发第二条。external_id 里的 job id 是单向摘要，取不到批次 key，所以 `from` 填 external_id 原文。账本那条路删掉，不留“快路”。
-- **Source 不再是复用条件**（有意的取舍）：与 executed-heads 的既定立场一致，已发布在 H 上的绿灯在任何 Source 下都有效，新扫描器只管新提交。
+**新修法**（证据只留一处：GitHub 上 H 的检查，也就是合入闸门读的那份；按审查与 Fable 裁定返工）：
+- **扫描检查自报被测提交**：Source `staged-check-publisher-v2.mjs` 发布（含撤回、改发）时，summary 里单独一行 `tested <40 位 sha>`。车头作业写 S，其余批次写 H。写和读用同一对函数：`published-on-github-v2.mjs#scanTestedLine`、`#scanTestedOf`。只有 App 5368905 能写这段 summary，信任根不变。
+- Source 第 1 段 `formal-work-admission-check-v2/publisher.mjs`：车头作业（S ≠ H）的 C4 回读已经读到 H 上 App 5368905 的全部检查。用这份结果，`published-on-github-v2.mjs#headScansOf`（纯函数）对每个扫描名取“不属于本车头作业的最新一条”，要求同时满足：已完成、成功、external_id 是扫描发布格式 `independent-ci:staged:v2:<job id>:a<n>`、summary 恰好有一行 `tested`，且它等于 H，也就是这条检查扫的就是 H 这棵树。H 上的检查本身不说明扫的是哪棵树：多成员车头（ADR 0019）把链式合并 S′ 的扫描发在第一个成员 H1 上，旧 main 的车头扫的是 merge(T′, H)，所以必须自报。缺这一行（本代以前的格式）、有多行、或写的是别的提交，都不复用。结果作为 `headScans: [{role, externalId}]` 只放进 SETTLED 结果。第 1 段为此不发任何新请求，也绝不改变第 1 段的结局。
+- **T 是 H 的祖先由第 10 段给**：第 10 段开车头时，为 `frontPullFacts` 本来就读了 `compare(mainSha, H)`。`train-maintenance.mjs#openFront` 在三个条件同时成立时给 `openFrontBatch.baseInHead: true`：单成员、这次 compare 的两端正好是本批 (baseSha, headSha)、`behind_by == 0` 且状态为 ahead 或 identical。否则不带这个字段。`train-facts.mjs` 只接受 `true`，且只在单成员时接受。常驻侧 `train.mjs#openFrontBatchOf` 和 `train-front-enqueued` 回执原样保留它。
+- 通道：`stage-inputs.mjs#writeOutcome`（只在第 1 段 `work-admission` 的 SETTLED）→ `stage-fact.mjs#outcomeFacts` → 常驻 `engine-windows.mjs#parseStageOutcome` → `executor.mjs#drive` 按批次 key 记在内存里。第 1 段没给 headScans 时，删掉这个 key 下的旧值。格式校验 `stageHeadScans` 放在无依赖的 `head-scans.mjs` 里，引擎和执行器都从这里取，执行器不直接 import 引擎；测试与 Source 交叉核对。
+- `executor.mjs#frontScansReused`：要求单成员车头、绑定的 H、T 与批次一致、`headTree == testTree`、`baseInHead === true`、本批第 1 段给了 `headScans`。命中的角色记 `reused: [{role, from: 该检查的 external_id}]`，不再本地跑，也不在 H 上发第二条。external_id 里的 job id 是单向摘要，取不到批次 key，所以 `from` 填 external_id 原文。账本那条路删掉，不留“快路”。
+- 为什么这样就够：被复用的检查扫的是 H 的树；S 与 H 同树，且 T 在 H 里，所以 S 没有 H 之外的内容和提交。不需要逐个扫描器论证“合并扫过则单独也过”，这条性质对 trivy、contract-placement 本来就不成立。
+- **Source 不再是复用条件**（有意的取舍）：与 executed-heads 的既定立场一致，已发布在 H 上的绿灯在任何 Source 下都有效，新扫描器只管新提交。扫描规则收紧不追溯已扫过的在途 head；需要追溯时用新提交触发。本代上线时，旧检查没有 `tested` 行，在途 PR 的车头会各真跑一次。
 - **不改** `executed-heads` 的键（键里的 testSha 区分发布身份，没错；错的是证据放在会被归档的地方）。
-- 守卫（都是真跑，只会多跑）：H 上该名最新检查失败、被撤回（撤回改成 failure）、未完成、来自别的 App、不是扫描发布；T 不是 H 的祖先或 compare 读不到；多成员车头；树不等；第 1 段没走回读（批次 claim 已记录的重入）或重启丢了内存里的事实。
-- 残余：第 1 段到计划之间若有人撤回了 H 上的检查，车头不再重扫；第 8 段与 GitHub 的必需检查按名字实时把关，合不进去，与原修法相同。
+- **发布层 K(head, role) 没有拦住 #1170 的第二次发布，是有意放行（§41.4）**：车头批 (H, S) 是独立身份，第 1 段的 C4 与发布前的 ROLE_ALREADY_ON_GITHUB 都只算本车头作业自己的检查（`ofJobIds`），不算 H 的非车头运行。重复的根因在计划层的复用证据，由本节处理（DIAG 待查项与 Task db7ad602 据此结案）。
+- 守卫（都是真跑，只会多跑）：
+  - H 上的检查：该名最新一条失败、被撤回（撤回改成 failure）、未完成、来自别的 App、不是扫描发布、没有或多于一行 `tested`、`tested` 不是 H；
+  - 车头本身：没有 `baseInHead`（第 10 段的 compare 不是本批两端，或 H 缺 T 的提交），多成员车头，树不等；
+  - 证据缺失：第 1 段没走回读（批次 claim 已记录的重入），或重启丢了内存里的事实。
+- 残余：第 1 段到计划之间若有人撤回了 H 上的检查，车头不再重扫。第 8 段只看车头自己 job 的失败，看不到被复用的检查；这些检查在 H 上，按名字由 GitHub 的必需检查实时把关。待查（另登记）：推送模式（ADR 0018，S 由 App 推进 main）下，规则集是否还对 H 上的扫描检查把关。
 
 **测试**：
-- `test/train-takeover-front.test.mjs`（真实 executor + Source v2 第 10 段 + 第 8 段发布者；第 1 段的 `headScans` 走真实的 `frontHeadScans` → `writeOutcome` → `outcomeFacts` → `parseStageOutcome`）：“field #1170 (T3)…”普通批次停 B 后被改名进 `ledger-flow-ends`、后继批次记为已发布，车头批次只跑 [1, 8]，`25-plan` 的 `local` 为空、`reused` 三项（来自 H 上检查的 external_id），有 `train-front-scans-reused` 回执，H 上每项扫描只有一条检查；“Fable §2.3 (T3b)…”本机没有该 head 的任何批次账本，同样复用。修复前两条都红（车头批次又跑了 2–7）。“…guards…”失败、别的 App、非扫描 external_id、T 不在 H 里：车头照旧跑 1–7；树不同或没给 `headTree` 仍照旧跑。“the engine reads stage 1's headScans in exactly the Source's shape”：两边校验逐例一致。
-- `actions-hosted-migration/independent-ci-v1/test/train-single-green.test.mjs`：“rule 41ab823a, stage 1: …”车头第 1 段 SETTLED 带出三项、只读一次 compare，outcome 与阶段事实只在第 1 段 SETTLED 带它；“…stage 1 guards…”空、T 不是祖先、compare 失败、S = H 都不给；按名取最新，失败、撤回、别的 App、未完成、非扫描、本车头自己的检查都不算。
+- `test/train-takeover-front.test.mjs`（真实 executor + Source v2 第 10 段 + 第 8 段发布者；普通批的扫描检查带 `tested H`；第 1 段的 `headScans` 走真实的 `headScansOf` → `writeOutcome` → `outcomeFacts` → `parseStageOutcome`）：
+  - “field #1170 (T3)…”：普通批次停 B 后被改名进 `ledger-flow-ends`，后继批次记为已发布。车头批次只跑 [1, 8]；`25-plan` 的 `local` 为空、`reused` 三项（来自 H 上检查的 external_id）；有 `train-front-scans-reused` 回执；H 上每项扫描只有一条检查。
+  - “Fable §2.3 (T3b)…”：本机没有该 head 的任何批次账本，同样复用。
+  - “…guards…”：失败、别的 App、非扫描 external_id、`tested` 是别的提交（R1，多成员车头的 S′）、没有 `tested`（R2，旧格式）时，车头照旧跑 1–7。
+  - “R4…”：第 10 段的 compare 不给两端或两端不是本批时，没有 `baseInHead`，真跑。
+  - “R6…”：第 1 段之后、计划之前重启，内存里的事实丢失，真跑。
+  - 树不同或没给 `headTree`：仍照旧跑。
+  - “the engine reads stage 1's headScans in exactly the Source's shape”：两边校验逐例一致。
+  - 修复前：T3、T3b 红（车头批次又跑 2–7）；返工前的 b0a3f406，R1、R2、R4 红（照样复用）。
+- `actions-hosted-migration/independent-ci-v1/test/train-single-green.test.mjs`：
+  - “rule 41ab823a, stage 1: …”：车头第 1 段 SETTLED 带出三项，compare 读取次数为 0（R3）；outcome 与阶段事实只在第 1 段 SETTLED 带它。
+  - “…stage 1 guards…”：空、R1、R2、S = H 都不给；按名取最新，失败、撤回、别的 App、未完成、非扫描、两行 `tested`、本车头自己的检查都不算。
+  - “the tested line is written and read by one pair of functions”：写读互验。
+- `actions-hosted-migration/independent-ci-v1/test/publisher-adopt-copy.test.mjs` “R5…”：真实扫描发布器发出的检查，普通批写 `tested H`，车头批写 `tested S`，都恰好一行，可被读回。
+- `actions-hosted-migration/independent-ci-v1/test/train-facts.test.mjs`：`baseInHead` 只接受 `true`，且只在单成员时接受。
 
 ## 76. 托管转发已移除（Owner 2026-11-14，分支 `claude/remove-hosted-relay`）
 

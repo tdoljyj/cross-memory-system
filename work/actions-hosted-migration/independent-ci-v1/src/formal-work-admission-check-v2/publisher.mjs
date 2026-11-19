@@ -51,7 +51,7 @@ import { freshStamp } from '../clock-skew.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
-import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, frontHeadScans, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
+import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, headScansOf, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
 import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVerificationRetryable } from '../withdrawal-text.mjs';
 
@@ -219,7 +219,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
   async function publishOnce(input) {
     let job, key = null, externalId = null, previous = null, before, claimed = null, scheduling = null, headScans = [];
-    // Rule 41ab823a (resident DESIGN §75): a front batch's admission also reports which scans H already carries (published-on-github-v2.mjs#frontHeadScans).
+    // Rule 41ab823a (resident DESIGN §75): a front batch's admission also reports which scans H already carries (published-on-github-v2.mjs#headScansOf),
+    // from the read-back it already made: no request of its own.
     const settled = r => headScans.length ? { ...r, headScans } : r;
     // 'boundary' while the first evaluation runs; a refusal there with no batch claim recorded is safe to re-run.
     let step = 'start';
@@ -249,7 +250,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         // check ran. Nothing of the head ran, so it is not "executed": HEAD_INTERRUPTED_ON_GITHUB, and the resident's one automatic
         // attempt 2 (new job ids, so a new admission identity) runs the head again. Posting this attempt's identity again stays refused.
         if (ownAdmission) throw Object.assign(new Error(HEAD_INTERRUPTED_ON_GITHUB), { code: HEAD_INTERRUPTED_ON_GITHUB, publishedChecks: published });
-        if (front !== null) headScans = await frontHeadScans(github, job, appChecks, front);
+        if (front !== null) headScans = headScansOf(appChecks, front, job.headSha);
       }
       step = 'boundary';
       let evaluated;

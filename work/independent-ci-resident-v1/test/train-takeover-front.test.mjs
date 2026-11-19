@@ -16,7 +16,9 @@ import { tempDir, admittedFacts } from '../../actions-hosted-migration/independe
 import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs';
 import { makeTrainRun } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
 import { batchJobsV2, claimGeneration, frontJobIdsV2, makeJobV2, scanExternalIdV2 } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
-import { frontHeadScans, readPublishedChecks } from '../../actions-hosted-migration/independent-ci-v1/src/published-on-github-v2.mjs';
+import { headScansOf, readPublishedChecks } from '../../actions-hosted-migration/independent-ci-v1/src/published-on-github-v2.mjs';
+// A namespace import: the tested-line pair (rule 41ab823a) is checked by its own test, so a Source without it fails only there.
+import * as onGithub from '../../actions-hosted-migration/independent-ci-v1/src/published-on-github-v2.mjs';
 import { writeOutcome } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-inputs.mjs';
 import { outcomeFacts } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 import { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, parseStageOutcome, stageHeadScans } from '../src/engine-windows.mjs';
@@ -96,8 +98,8 @@ async function world(t, { quick = false } = {}) {
 // queueFacts (DESIGN §62.6): stage 1's outcome carries Native's merge-queue entry of the PR's claim (head when it is Native's holder), as
 // the Source's admission publisher reports it; false: no outcome (Native not reached, an older Source).
 // scans (rule 41ab823a, DESIGN §75): every ordinary batch's publication stage (3, 5, 7) publishes its scan check on H as App 5368905 with
-// the staged external id, and a front batch's stage 1 reports the scans H carries exactly as the Source does (the read-back's inventory
-// through published-on-github-v2.mjs#frontHeadScans, then stage-inputs.mjs#writeOutcome, stage-fact.mjs#outcomeFacts and the engine's
+// the staged external id and the line "tested <H>" in its summary (staged-check-publisher-v2.mjs), and a front batch's stage 1 reports the scans H carries exactly as the Source does (the read-back's inventory
+// through published-on-github-v2.mjs#headScansOf, then stage-inputs.mjs#writeOutcome, stage-fact.mjs#outcomeFacts and the engine's
 // parseStageOutcome). engine.beforeFrontStage1 (optional): runs right before a front batch's stage 1 (a scene change, e.g. an archive).
 function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, scans = false } = {}) {
   const subjects = new Map(), stages = [];
@@ -140,13 +142,13 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
       const role = { 3: 'gitleaks', 5: 'trivy', 7: 'contract-placement' }[stage.number];
       const id = 500 + e.gh.world.checks.size;
       e.gh.world.checks.set(id, { id, app: { id: 5368905 }, name: role, head_sha: subject.headSha, status: 'completed', conclusion: 'success',
-        external_id: scanExternalIdV2(jobOf(role)), output: { title: `${role}: success`, summary: 'Independent CI job' } });
+        external_id: scanExternalIdV2(jobOf(role)), output: { title: `${role}: success`, summary: `Independent CI job x.\ntested ${subject.headSha}` } });
       return ok;
     }
     if (scans && subject.testSha && stage.number === 1) {
       await engine.beforeFrontStage1?.(subject);
       const job = jobOf('work-admission');
-      const headScans = await frontHeadScans(e.gh, job, await readPublishedChecks(e.gh, subject.headSha), frontJobIdsV2(job));
+      const headScans = headScansOf(await readPublishedChecks(e.gh, subject.headSha), frontJobIdsV2(job), subject.headSha);
       e.gh.green(10, subject.headSha, { name: 'kooyumi-work-admission' });
       const written = await writeOutcome({ receiptsRoot: await tempDir(at.t), nonce: 'a'.repeat(32), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [job.id],
         result: { status: 'SETTLED', sideEffects: 1, scheduling: null, headScans } });
@@ -313,7 +315,7 @@ async function steadyState(t, { atA = false, queueFacts = true, pr = 910, claim 
   await f.drop(triggerBytes({ pr, headSha: head, baseSha: T }));
   const refused = async () => (await f.receipts.latest(['train-front-refused'], 50)).map(r => r.value.body.failureCode);
   const terminals = async () => (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body.failureCode);
-  return { e, f, engine, arrival, refused, terminals };
+  return { e, f, engine, arrival, refused, terminals, at };
 }
 
 test('steady state (task ad19ef19): a queue-head PR pushed after the take-over gets the merge-slot green within 30 minutes (no queue fact)', async t => {
@@ -387,6 +389,8 @@ test('rule 41ab823a: the engine reads stage 1\'s headScans in exactly the Source
   const outcome = { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, headScans: samples[0] };
   assert.deepEqual(parseStageOutcome(outcome).headScans.map(x => x.role), ['gitleaks', 'trivy']);
   assert.equal('headScans' in parseStageOutcome({ ...outcome, status: 'BLOCKED', sideEffects: 0, mayHavePublished: false }), false);
+  // the stub above writes the scanner's tested line as the Source's writer does
+  assert.equal(onGithub.scanTestedLine(H), `tested ${H}`);
 });
 
 test('rule 41ab823a (PR #1086): same head, same main, S with H\'s tree: the front batch runs no scan again and gets the merge-slot green', async t => {
@@ -398,7 +402,7 @@ test('rule 41ab823a (PR #1086): same head, same main, S with H\'s tree: the fron
   assert.equal(engine.published.status, 'SETTLED');
   assert.ok((await terminals()).includes('TRAIN_FRONT_TAKES_OVER'), 'the ordinary batch rested at B and gave way');
   const [enqueued] = (await f.receipts.latest(['train-front-enqueued'], 5)).map(r => r.value.body);
-  assert.deepEqual([enqueued.headTree, enqueued.testTree], [tree, tree], 'stage 10 named H\'s tree');
+  assert.deepEqual([enqueued.headTree, enqueued.testTree, enqueued.baseInHead], [tree, tree, true], 'stage 10 named H\'s tree and that T is in H');
   await assertReusedFromGithub(e, f, engine);
 });
 
@@ -443,21 +447,65 @@ test('rule 41ab823a: a scan whose input changed runs again on the front batch (S
 
 // Fable §2.3 guards: whatever H carries that is not a successful scanner check of App 5368905, or a base that is not H's ancestor, makes
 // the front batch scan again (the Source's read-back names nothing then); stage 1 itself ends as before.
-test('Fable §2.3 guards: a failed or withdrawn check, another App\'s, a non-scanner one, or T not in H: the front batch scans again', async t => {
+const frontStages = engine => engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage);
+async function untilFrontStage7(f, engine) {
+  for (let i = 0; i < 60 && !engine.stages.some(s => s.testSha === S && s.stage === 7); i++) { await f.exec.tick(); f.advance(MIN); }
+}
+
+// Fable §2.3 guards, and the review ruling (R1, R2): whatever H carries that is not a successful scanner check of App 5368905 that tested
+// H itself makes the front batch scan again; stage 1 itself ends as before.
+test('Fable §2.3 guards: a failed or withdrawn check, another App\'s, a non-scanner one, one that tested another commit (R1) or says nothing of it (R2): the front batch scans again', async t => {
   const scenes = {
     failed: e => { for (const c of scanChecksOn(e, H)) c.conclusion = 'failure'; },
     otherApp: e => { for (const c of scanChecksOn(e, H)) c.app = { id: 15368 }; },
     notScanner: e => { for (const c of scanChecksOn(e, H)) c.external_id = `independent-ci:control:x:v2:${'0'.repeat(64)}:a1`; },
-    baseNotInHead: e => { e.gh.world.behindHeads = new Set([H]); },
+    // R1 (review B1): the newest scans on H come from a batch of several PRs, which published on its first member H the scans of its chain
+    // merge S' (or a front on an older main, merge(T', H)): they tested another tree than H's.
+    'R1 tested another commit': e => { for (const c of scanChecksOn(e, H)) c.output = { ...c.output, summary: `Independent CI job x.\ntested ${sha(0x7abc)}` }; },
+    // R2: a check of the format before this generation says nothing of what it tested.
+    'R2 older format': e => { for (const c of scanChecksOn(e, H)) c.output = { ...c.output, summary: 'Independent CI job x.' }; },
   };
   for (const [name, scene] of Object.entries(scenes)) {
     const { e, f, engine } = await steadyState(t, { queueFacts: false, scans: true });
     e.gh.world.commits.set(H, { sha: H, tree: e.gh.world.commits.get(S).tree, parents: [T] });
     engine.beforeFrontStage1 = async () => scene(e);
-    for (let i = 0; i < 60 && !engine.stages.some(s => s.testSha === S && s.stage === 7); i++) { await f.exec.tick(); f.advance(MIN); }
-    assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage).slice(0, 7), [1, 2, 3, 4, 5, 6, 7], name);
+    await untilFrontStage7(f, engine);
+    assert.deepEqual(frontStages(engine).slice(0, 7), [1, 2, 3, 4, 5, 6, 7], name);
     assert.equal((await f.receipts.latest(['train-front-scans-reused'], 5)).length, 0, name);
   }
+});
+
+// R4 (review B2): that T is in H comes from stage 10's own compare of exactly this batch's (T, H) (openFrontBatch baseInHead); stage 1 reads
+// nothing for it. A compare that does not name both ends of this batch says nothing: the front batch scans again.
+test('R4: no baseInHead from stage 10 (its compare does not name this batch\'s T and H): the front batch scans again', async t => {
+  for (const reply of [(base, head) => ({ status: 'ahead', aheadBy: 1, behindBy: 0 }),
+    (base, head) => ({ baseSha: sha(0x7bcd), headSha: head, mergeBaseSha: sha(0x7bcd), status: 'ahead', aheadBy: 1, behindBy: 0 })]) {
+    const { e, f, engine } = await steadyState(t, { queueFacts: false, scans: true });
+    e.gh.world.commits.set(H, { sha: H, tree: e.gh.world.commits.get(S).tree, parents: [T] });
+    e.gh.world.hooks.compare = reply;
+    await untilFrontStage7(f, engine);
+    const [enqueued] = (await f.receipts.latest(['train-front-enqueued'], 5)).map(r => r.value.body);
+    assert.equal(enqueued?.baseInHead, undefined);
+    assert.deepEqual(frontStages(engine).slice(0, 7), [1, 2, 3, 4, 5, 6, 7]);
+    assert.equal((await f.receipts.latest(['train-front-scans-reused'], 5)).length, 0);
+  }
+});
+
+// R6: the evidence lives in memory from the front batch's stage 1 to its plan; a restart in between (the batch resumes from parking point A)
+// has none: the front batch scans again.
+test('R6: a restart between the front batch\'s stage 1 and its plan loses the evidence: the front batch scans again', async t => {
+  const { e, f, engine, at } = await steadyState(t, { queueFacts: false, scans: true });
+  e.gh.world.commits.set(H, { sha: H, tree: e.gh.world.commits.get(S).tree, parents: [T] });
+  holdAtA(f.exec, { when: s => Object.hasOwn(s, 'testSha') });
+  for (let i = 0; i < 60 && !engine.stages.some(s => s.testSha === S && s.stage === 1); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.deepEqual(frontStages(engine), [1]);
+  assert.equal(f.exec.frontHeadScans.size, 1, 'stage 1 named the scans H carries');
+  const g = await executorFixture(t, { policy: policy(true), engine, root: f.root, now: f.clock() });
+  Object.assign(at, { clock: g.clock, advance: g.advance });
+  await g.exec.trainRecover();
+  await untilFrontStage7(g, engine);
+  assert.deepEqual(frontStages(engine).slice(0, 7), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal((await g.receipts.latest(['train-front-scans-reused'], 5)).length, 0);
 });
 
 // The same at parking point A: the ordinary batch rests at A right after its stage 1 bound the claim (as one a restart found there).
