@@ -1718,11 +1718,15 @@ test('the release command is one literal in single quotes, nothing put into it, 
     $literal = $script:DrillWslReleaseCommand
     $script:DrillWslReleaseCommand = $literal + '; rm -rf /tmp/x'
     $tampered = Invoke-DrillWslCacheRelease
-    @{ ok = $ok; sent = $firstSent; literal = $literal; tampered = $tampered; tamperedSent = $script:sent.Count }`);
+    # one character more that a linguistic comparison passes over (Codex review of addf1ffa5, low 2)
+    $script:DrillWslReleaseCommand = $literal + [char]0
+    $nul = Invoke-DrillWslCacheRelease
+    @{ ok = $ok; sent = $firstSent; literal = $literal; tampered = $tampered; nul = $nul; tamperedSent = $script:sent.Count }`);
   assert.deepEqual(r.sent, ['--distribution', 'Fixture-CI', '--user', 'root', '--exec', 'sh', '-c', r.literal]);
   assert.doesNotMatch(r.literal, /["\\\r\n]/, 'nothing the Windows command line could split or escape');
   assert.deepEqual(r.ok.released, ['Fixture-CI']);
   assert.equal(r.tampered.failed.code, 'DRILL_WSL_RELEASE_COMMAND_NOT_LITERAL');
+  assert.equal(r.nul.failed.code, 'DRILL_WSL_RELEASE_COMMAND_NOT_LITERAL');
   assert.equal(r.tamperedSent, 0);
   assert.match(fs.readFileSync(script, 'utf8'), /^\$script:DrillWslReleaseCommand = '(?:[^']|'')+'$/m, 'a single-quoted string: PowerShell puts nothing into it');
 });

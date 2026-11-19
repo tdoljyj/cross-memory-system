@@ -1178,7 +1178,7 @@ function Assert-DrillWslReleaseCommandLiteral {
   $value = if ($assignments.Count -eq 1) { $assignments[0].Right.Expression } else { $null }
   if ($value -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
       $value.StringConstantType -ne [Management.Automation.Language.StringConstantType]::SingleQuoted -or
-      $value.Value -cne [string]$script:DrillWslReleaseCommand -or $value.Value -match '["\\\r\n]' -or
+      -not [string]::Equals($value.Value, [string]$script:DrillWslReleaseCommand, [StringComparison]::Ordinal) -or $value.Value -match '["\\\r\n]' -or
       -not $value.Value.StartsWith("pgrep -ix '$($script:Drill.WslJobPattern)' >/dev/null;", [StringComparison]::Ordinal)) {
     throw (New-DrillError 'DRILL_WSL_RELEASE_COMMAND_NOT_LITERAL')
   }
