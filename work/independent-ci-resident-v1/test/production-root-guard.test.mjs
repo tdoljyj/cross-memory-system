@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { EXTRA_FIXED_ROOT_VARIABLE, FIXED_PRODUCTION_ROOT, REFUSED_UNDER_TEST, TEST_MARKERS, isSameOrBelow, refuseUnderTest, underTest }
@@ -99,6 +99,64 @@ test('a fixture root under a marker, and the fixed root without a marker, write 
   const operator = await run(envWith({}, fixed), 'request-intake-resume', '--root', root, '--reason', 'r', '--holder', 'drill');
   assert.equal(operator.out.status, 'INTAKE_RESUME_REQUESTED');
   assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 1);
+});
+
+// windows/request-upgrade.ps1 (ruling 11-19, "补：PR-丁 余项"): its root is always the production root, so it refuses on a marker alone.
+// The script is NEVER run whole here (before the guard its -Cancel branch writes into the live upgrade\inbox): it is only parsed, and
+// the guard's own definitions, taken out by the syntax tree, are the only code executed.
+const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const REQUEST_UPGRADE = fileURLToPath(new URL('../windows/request-upgrade.ps1', import.meta.url));
+const psq = s => `'${String(s).replace(/'/g, "''")}'`;
+function powershell(command, env = envWith({})) {
+  return spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command], { encoding: 'utf8', timeout: 120000, env });
+}
+// The top-level statements of the script in order, classified from the syntax tree: a function definition, an assignment whose value
+// is literal (no command, call, variable or subexpression in it), Set-StrictMode, or anything else (by its text); and the guard's parts.
+function requestUpgradeShape() {
+  const r = powershell(`$ErrorActionPreference = 'Stop'; $t = $null; $e = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(${psq(REQUEST_UPGRADE)}, [ref]$t, [ref]$e)
+    if (@($e).Count) { throw 'PARSE_FAILED' }
+    $L = 'Management.Automation.Language.'
+    $active = { param($a) $a -is ($L + 'CommandAst') -or $a -is ($L + 'InvokeMemberExpressionAst') -or $a -is ($L + 'VariableExpressionAst') -or $a -is ($L + 'SubExpressionAst') }
+    $kinds = @(foreach ($s in $ast.EndBlock.Statements) {
+      if ($s -is ($L + 'FunctionDefinitionAst')) { 'function' }
+      elseif ($s -is ($L + 'AssignmentStatementAst') -and $null -eq $s.Right.Find($active, $true)) { 'literal' }
+      elseif ($s.Extent.Text -ceq 'Set-StrictMode -Version 2.0') { 'strict' }
+      else { 'statement:' + $s.Extent.Text.Split([char]10)[0].Trim() } })
+    $markers = @($ast.EndBlock.Statements | Where-Object { $_ -is ($L + 'AssignmentStatementAst') -and $_.Left.Extent.Text -ceq '$TestMarkers' } | ForEach-Object {
+      $_.Right.FindAll({ param($a) $a -is ($L + 'StringConstantExpressionAst') }, $true) | ForEach-Object { $_.Value } })
+    $guard = @($ast.EndBlock.Statements | Where-Object { ($_ -is ($L + 'AssignmentStatementAst') -and $_.Left.Extent.Text -ceq '$TestMarkers') -or
+      ($_ -is ($L + 'FunctionDefinitionAst') -and $_.Name -ceq 'Assert-NotUnderTest') } | ForEach-Object { $_.Extent.Text }) -join [char]10
+    ConvertTo-Json -Compress -InputObject ([ordered]@{ kinds = $kinds; markers = $markers; guard = $guard })`);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  return JSON.parse(r.stdout.trim());
+}
+
+test('request-upgrade.ps1: the refusal is the first thing its main flow does, before any file is read or written', { skip: process.platform !== 'win32' && 'Windows PowerShell' }, () => {
+  const { kinds } = requestUpgradeShape();
+  const first = kinds.findIndex(k => k.startsWith('statement:'));
+  assert.ok(first > 0, kinds.join(' | '));
+  assert.equal(kinds[first], 'statement:Assert-NotUnderTest', `before it only definitions and literal values: ${kinds.slice(0, first + 2).join(' | ')}`);
+});
+
+test('request-upgrade.ps1 names exactly the markers production-root-guard.mjs exports', { skip: process.platform !== 'win32' && 'Windows PowerShell' }, () => {
+  assert.deepEqual(requestUpgradeShape().markers, [...TEST_MARKERS]);
+});
+
+test('request-upgrade.ps1: its guard alone refuses under either marker and lets an unmarked session through', { skip: process.platform !== 'win32' && 'Windows PowerShell' }, () => {
+  const { guard } = requestUpgradeShape();
+  assert.match(guard, /function Assert-NotUnderTest/);
+  const run = markers => {
+    const r = powershell(`$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 2.0
+${guard}
+try { Assert-NotUnderTest; 'PASSED' } catch { $_.Exception.Message }`, envWith(markers));
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  assert.equal(run({ NODE_TEST_CONTEXT: 'child-v8' }), REFUSED_UNDER_TEST);
+  assert.equal(run({ CLUED_UNDER_TEST: '1' }), REFUSED_UNDER_TEST);
+  assert.equal(run({}), 'PASSED');
+  assert.equal(run({ CLUED_UNDER_TEST: '' }), 'PASSED');
 });
 
 test('the judgment: markers, the fixed root in its spellings, and what is not below it (strings only, no file system)', () => {
