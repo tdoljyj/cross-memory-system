@@ -11,6 +11,7 @@ import {
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
+import { classifyTests } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
@@ -263,6 +264,55 @@ test('every file a moved database test imports selects production-schema', () =>
     if (/\.(?:m?js|ts)$/.test(file)) pending.push(...specifiers(readFileSync(file, 'utf8')).map((spec) => path.resolve(path.dirname(file), spec)));
   }
   assert.ok(roots.length > 60 && seen.size > roots.length);
+});
+
+// A database test no required suite runs goes red on main unnoticed (the work-claim files of 20261108161615). Every
+// database test (classifyTests: it, or a test helper it imports, imports embedded-postgres) runs in a required suite
+// (listed in a suite command, or imported by a listed file) or is exempted here with its reason. A new database test
+// left out of both fails this test; an exemption whose test now runs, or no longer exists, fails it too.
+// "待修" entries failed when first run (2026-11-19, in the production-schema command); each leaves this table, into a
+// production-schema list, with its fix.
+const DB_TEST_EXEMPTIONS = {
+  // Need what the required checks do not have.
+  'production-backup-scope-db': '需要 pg_dump/pg_restore 或现成的 Docker PostgreSQL 17 镜像（CLUED_BACKUP_TEST_IMAGE），production-schema 没有；clued-g4-database.yml 用镜像跑它',
+  'p5-real-postgres': '运行中用 npx --yes supabase@2.115.0 从网络取 Supabase CLI 跑安全顾问；必需检查不联网（另：首跑即失败于这一步）',
+  // Red on main while nothing ran them.
+  'agent-messages-switch-db': '待修：permission denied for function clued_agent_inbox_summary_v1',
+  'ci-admission-handover-db': '待修：Z1 交接断言 live 期望 true 实为 false',
+  'ci-duty-holder-db': '待修：静态检查多出 clued_private.work_claim_merge_queue_yield_v1 等函数（9 处失败）',
+  'ci-node-gateway-db': '待修：work_claim_pr_binding_input_invalid（测试仍用旧的 PR 绑定入参，4 处失败）',
+  'ci-scheduling-stage1-db': '待修：函数授权表多出 clued_ci_connection_renew_trust_v1 等（18 处失败）',
+  'ci-scheduling-stage1-effects-db': '待修：work_claim_pr_binding_input_invalid（10 处失败）',
+  'ci-scheduling-t2a2-db': '待修：work_claim_pr_binding_input_invalid（13 处失败）',
+  'context-ownership-independent': '待修：/v1/development 返回 503，期望 200（2 处失败）',
+  'merge-train-failover-db': '待修：违反 ci_node_liveness_v1_steady_since_check 约束（5 处失败）',
+  'merge-train-queue-db': '待修：work_claim_legacy_pr_binding_retired（测试仍走已退役的旧 PR 绑定）',
+  'model-domain-successor-db': '待修：permission denied for function clued_project_mutate',
+  'owner-auto-approve-db': '待修：自动批准种类清单多出 ci.connection_renew',
+  'p6-shadow-canary': '待修：esbuild 打包 worker 失败 32 处（无法解析 node:util、node:crypto 等）',
+  'raw-binding-fallback-db': '待修：“第二次运行不改变任何东西”断言的指纹不等',
+  'registration-recovery-db': '待修：Worker 正常入口返回 unreconciled / PROVIDER_MUTATION_OUTCOME_UNKNOWN（16 处失败）',
+  'resident-upgrade-auto-approve-db': '待修：自动批准种类清单多出 ci.connection_renew',
+  'resident-upgrade-auto-approve-v2-db': '待修：自动批准种类清单多出 ci.connection_renew',
+  'search-context-text-cache-db': '待修：permission denied for function clued_mcp_search_context',
+  'storage-owner-lifecycle-db': '待修：网关函数数 88，测试仍期望 80（3 处失败）',
+  'work-claims-ci-queue-assist-db': '待修：work_claim_pr_binding_input_invalid',
+  'work-claims-handover-activation-db': '待修：work_claim_pr_binding_input_invalid',
+  'work-claims-handover-execution-db': '待修：work_claim_pr_binding_input_invalid',
+  'work-claims-pr-task-binding-db': '待修：最后一个 PR 结束后认领成了 RELEASED，测试期望不释放（PR 生命周期对账 PR 要把它列入 AUTHORIZATION_DB_TESTS）',
+  'work-verify-shared-observation-db': '待修：错误码 work_claim_pr_binding_input_invalid，期望 work_claim_pr_ref_invalid（2 处失败）',
+};
+test('every database test runs in a required suite or is exempted with its reason', () => {
+  const relative = (file) => path.relative(ROOT, file).split(path.sep).join('/');
+  const db = classifyTests(path.join(ROOT, 'apps/clued-cloud/tests')).db.map(relative);
+  const listed = Object.values(SUITE_COMMANDS).flatMap((commands) => commands.flatMap(({ cwd, argv }) =>
+    argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => path.posix.join(cwd, arg))));
+  const runs = new Set(closure(listed.filter((file) => existsSync(path.join(ROOT, file))).map((file) => path.join(ROOT, file))));
+  const exempt = Object.keys(DB_TEST_EXEMPTIONS).map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
+  assert.deepEqual(db.filter((file) => !runs.has(file) && !exempt.includes(file)), [],
+    'database tests no required suite runs: list each in a production-schema list (ci-required-selection.mjs) or exempt it here with its reason');
+  assert.deepEqual(exempt.filter((file) => runs.has(file) || !db.includes(file)), [], 'exemptions of a test that runs or is no database test: remove them');
+  for (const [name, reason] of Object.entries(DB_TEST_EXEMPTIONS)) assert.ok(reason.trim().length > 0, `${name}: reason`);
 });
 
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {

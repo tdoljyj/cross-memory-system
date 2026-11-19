@@ -102,6 +102,20 @@ const AUTHORIZATION_DB_TESTS = [
   'task-dependency-guard-db', 'work-claim-exemptions-db', 'work-claims-acceptance-db', 'work-claims-binding-roles-db', 'work-claims-ci-metering-db',
   'work-claims-continuation-db', 'work-claims-hardening-db', 'work-claims-main-merge-db', 'work-claims-multi-copy-db', 'work-claims-reject-receipts-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
   'work-claims-resource-kinds-db', 'worker-gateway-db', 'worker-gateway-request-context-db',
+  // Database tests no required suite ran until ci-required-selection.test.mjs required each to run or be exempted
+  // (2026-11-19); each of these passed when listed. The exempted ones and their reasons are in that test.
+  'approved-legacy-successor-reconcile-db', 'audit-receipt-lookup-indexes-db', 'ci-database-lint-type-fixes-db', 'ci-heartbeat-scope-db',
+  'credential-table-privileges-db', 'credential-verifier-db', 'currentness-legacy-inventory', 'future-consent-authorization-db',
+  'imprint-bulk-backfill-db', 'imprint-development-organization-db', 'imprint-organization-db', 'imprint-owner-scope-query-db',
+  'imprint-source-history-db', 'integration-runtime-transport', 'integration-status-lookup-indexes-db', 'kooyumi-issuer-provision',
+  'legacy-audit-binding-revoke-db', 'legacy-create-carrier-reconcile-db', 'legacy-existing-retraction-reconcile-db',
+  'merge-admission-clock-audit-transport-db', 'merge-admission-measurement-capabilities-db', 'merge-admission-measurement-clock-target-db',
+  'merge-admission-measurement-history-db', 'model-domain-bootstrap-claim-currentness-scope-db', 'owner-auto-approve-persistent-db',
+  'owner-request-answers-db', 'priority-custom-db', 'project-lifecycle-successor-v2-db', 'storage-admission-retry-db',
+  'storage-conflict-isolation-db', 'storage-file-version-denial-db', 'storage-google-redirect-cutover',
+  'storage-legacy-create-registration-db', 'storage-legacy-directory-recovery-db', 'storage-master-control-db',
+  'storage-registration-reconcile-db', 'storage-semantic-recovery-db', 'task-goal-delivery-db', 'task-goal-delivery-production-schema-db',
+  'task-owner-detail-db', 'work-claims-generated-files-db', 'work-claims-lease-pin-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
@@ -116,7 +130,11 @@ const MIGRATION_DB_TEST_INPUTS = ['apps/clued-cloud/tests/cluster-cleanup.mjs', 
   'apps/clued-cloud/worker/*', 'apps/clued-cloud/build/pdfjs-decode-guard.mjs', 'kernel/host/resource-center-*.mjs',
   'kernel/policy/resource-center-*.mjs', 'scripts/phase2-qualification/minimum-context-compiler/**',
   'development/contracts/information-flow/vendored/**',
-  'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json'];
+  'development/contracts/model-program/stage-admission/DatasetSplitBootstrapPlan.fc83a4a1.json',
+  'apps/clued-cloud/scripts/kooyumi-issuer-provision.mjs', 'apps/clued-cloud/scripts/storage-google-redirect-cutover.mjs',
+  'scripts/ci/clued-independent-publication-identity.mjs', 'scripts/ci/merge-admission-clock-source.mjs',
+  'scripts/ci/merge-admission-measurement-history.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/job-v2.mjs',
+  'work/actions-hosted-migration/independent-ci-v1/src/proof.mjs', 'work/actions-hosted-migration/independent-ci-v1/src/queue.mjs'];
 
 // suite id -> path patterns ("**" any depth, "*" within a segment).
 export const SUITES = {
@@ -149,8 +167,11 @@ export const SUITES = {
     'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
+    // Its test checks that every database test of apps/clued-cloud/tests runs in a required suite or is exempted, so a
+    // new or changed test there, or the classifier, selects it.
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
-      'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml'],
+      'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
+      'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
   // The application suite reads files from across the repository (workflow,
   // contract and CI-script tests), so every change runs it.
