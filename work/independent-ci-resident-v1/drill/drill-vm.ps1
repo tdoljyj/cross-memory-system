@@ -2551,8 +2551,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # first-install.log is written by Save-DrillGuestEvidence (the returned lines, or the guest's copy)
   [IO.File]::WriteAllText((Join-Path $RunDir 'first-install.stderr.log'), [string]$entryOut.stderr)
   $entry = Read-DrillEntryResult @($entryOut.lines) ([int]$entryOut.exit)
-  # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json
-  $launcher = Get-Prop (Get-DrillField $collected.stageEvidence 'launcher-result.json') 'terminal'
+  # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json, saved here and read back
+  $launcher = $collected.launcher
   }
   $timings = $collected.timings
   # the first install's own result, kept on its own: A1 stands even when a later step stops the run (Get-DrillA1Item)
@@ -2624,7 +2624,6 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
       Write-DrillLines $logFile @($log -split "`r?`n" | Where-Object { $_ -ne '' })
       $record.entryLog = 'guest-log'
     }
-    $record.ok = ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog) -and ($null -eq $stage.record.collection)
   } catch {
     $c = Get-DrillCode $_
     $record.code = $c.code; $record.detail = $c.detail
@@ -2632,8 +2631,15 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   # the stage files that did not reach the run directory are missing too (their states: stage-files.json)
   $record.missing = @(@($record.missing) + @(@($stage.record.files.Keys) | Where-Object { [string]$stage.record.files[$_].state -cne 'saved' }))
   $record.stageFiles = $stage.record.files
+  # ok only after every file's state is summed (Codex review of f33fc33e5, medium 2): anything absent, unreadable or not saved makes it false
+  $record.ok = ($null -eq $record.code) -and ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog) -and ($null -eq $stage.record.collection) -and (@($record.missing).Count -eq 0)
+  # the launcher's verdict for A6 only as saved in the run directory and read back from there (same review): never the collected object
+  $launcher = $null
+  if ([string](Get-DrillField (Get-DrillField $stage.record.files 'launcher-result.json') 'state') -ceq 'saved') {
+    try { $launcher = Get-Prop (Get-DrillField (Read-DrillJson (Join-Path $RunDir 'stage-evidence.json')) 'launcher-result.json') 'terminal' } catch { $launcher = $null }
+  }
   try { Write-DrillJson (Join-Path $RunDir 'guest-evidence.json') $record } catch { }
-  return @{ record = $record; timings = $timings; stageEvidence = $stage.stageEvidence }
+  return @{ record = $record; timings = $timings; stageEvidence = $stage.stageEvidence; launcher = $launcher }
 }
 
 # ---------------------------------------------------------------- main

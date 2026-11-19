@@ -2435,7 +2435,9 @@ test('the guest evidence is collected after a timed-out first install too, and a
       steps = (Read-DrillFirstInstallSteps ${q(runDir)}); steps2 = (Read-DrillFirstInstallSteps ${q(runDir2)}) }`);
   assert.equal(r.first, 'DRILL_FIRST_INSTALL_TIMEOUT');
   assert.deepEqual(r.firstSteps, ['first-install', 'stage-files', 'guest-evidence']);
-  assert.equal(r.record.ok, true);
+  // collected, but not all of it: ok only with nothing missing (Codex review of f33fc33e5, medium 2)
+  assert.equal(r.record.ok, false);
+  assert.equal(r.record.code, null);
   assert.deepEqual(r.record.missing, ['prepare.stdout.log', 'launcher.stdout.log', 'launcher-result.json']);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean),
     ['line one', '{"name":"prepare","result":"ok","rejectCode":null,"detail":null}']);
@@ -3393,7 +3395,7 @@ test('the merged collection feeds A1 and A6: complete logs pass, a missing stage
     return ps(`
       function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script ${q(guest)} $ArgumentList[1] }
       $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
-      @{ record = $c.record; launcher = (Get-Prop (Get-DrillField $c.stageEvidence 'launcher-result.json') 'terminal'); steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
+      @{ record = $c.record; launcher = $c.launcher; steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
   };
   const judged = c => { const r = verdictOf(evidence({ firstInstallSteps: c.steps, launcher: c.launcher })); return { ...pass(r), detail: Object.fromEntries(r.items.map(i => [i.id, i.detail])) }; };
   const full = collect('full');
@@ -3407,6 +3409,7 @@ test('the merged collection feeds A1 and A6: complete logs pass, a missing stage
   // the guest has no prepare log any more: named missing by the collection, the record incomplete, A1 failed
   const noPrepare = collect('no-prepare', { 'prepare.stdout.log': null });
   assert.ok(noPrepare.record.missing.includes('prepare.stdout.log'));
+  assert.equal(noPrepare.record.ok, false);
   assert.equal(noPrepare.record.stageFiles['prepare.stdout.log'].state, 'absent');
   assert.deepEqual(noPrepare.steps.incompleteStages, ['prepare']);
   assert.equal(judged(noPrepare).A1, false);
