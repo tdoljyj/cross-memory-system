@@ -941,6 +941,58 @@ test('a proxy variable whose URL carries a user name or password is not passed; 
   assert.deepEqual(kept, { http_proxy: 'http://proxy:3128', NO_PROXY: 'localhost', HTTP_PROXY: 'proxy.local:8080' });
 });
 
+// Codex second review of 2ee162c2, medium 1: a command line never takes an identity directory from its environment; a
+// process below it takes the inherited one only at an absolute path, with the run's id, while the process that made it
+// still runs. A complete directory left by a killed run, or another live run's handed to a new command line, is not used.
+test('a command line makes its own identity directory; below it the inherited one is taken only while its maker runs', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-owner-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const selector = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
+  // top: a command line (markTestRun); child: a process below one (testEnv); killed: a command line killed after it began.
+  const probe = `import(${selector}).then(({ markTestRun, testEnv }) => {
+    const env = { ...process.env, RUNNER_TEMP: process.argv[2] };
+    if (process.argv[1] === 'child') return require('node:fs').writeSync(1, testEnv(env).CLUED_TEST_IDENTITY_DIR);
+    markTestRun(['--run', 'x'], env);
+    if (process.argv[1] === 'top') return require('node:fs').writeSync(1, env.CLUED_TEST_IDENTITY_DIR);
+    require('node:fs').writeSync(1, JSON.stringify(testEnv(env)));
+    process.kill(process.pid, 'SIGKILL');
+  });`;
+  const start = (mode, env) => spawnSync(process.execPath, ['-e', probe, mode, temp], { env, encoding: 'utf8' }).stdout.trim();
+  const fresh = { ...process.env };
+  for (const name of ['CLUED_TEST_IDENTITY_DIR', 'CLUED_TEST_IDENTITY_RUN']) delete fresh[name];
+  const killedEnv = JSON.parse(start('killed', fresh));
+  const left = killedEnv.CLUED_TEST_IDENTITY_DIR;
+  assert.ok(existsSync(path.join(left, 'gitconfig')), 'a killed run leaves its directory');
+  // A live run's own directory, as its children inherit it.
+  const live = spawn(process.execPath, ['-e', `import(${selector}).then(({ markTestRun, testEnv }) => {
+    const env = { ...process.env, RUNNER_TEMP: process.argv[1] };
+    markTestRun(['--run', 'x'], env);
+    console.log(JSON.stringify(testEnv(env)));
+    setInterval(() => {}, 1000);
+  });`, temp], { env: fresh, stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => live.kill());
+  return new Promise((resolve, reject) => {
+    let text = '';
+    live.stdout.on('data', (chunk) => {
+      text += chunk;
+      if (!text.includes('\n')) return;
+      try {
+        const liveEnv = JSON.parse(text);
+        const own = liveEnv.CLUED_TEST_IDENTITY_DIR;
+        assert.equal(start('child', liveEnv), own, 'below a live run its directory is taken');
+        assert.notEqual(start('top', liveEnv), own, 'a new command line makes its own, even when handed a live one');
+        const relative = path.relative(process.cwd(), own);
+        assert.notEqual(start('child', { ...liveEnv, CLUED_TEST_IDENTITY_DIR: relative }), relative, 'not at a relative path');
+        const fromKilled = start('child', killedEnv);
+        assert.ok(fromKilled && fromKilled !== left, 'not one whose maker is gone');
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+});
+
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-run-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));

@@ -512,7 +512,7 @@ export { FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_GIT_IDENTITY, fakeIdentityEnv, k
 export function markTestRun(argv, env) {
   if (!['--run', '--run-selected', '--write-known', '--run-files'].some((flag) => argv.includes(flag))) return;
   env.CLUED_UNDER_TEST = '1';
-  const { dir, run } = testIdentity(env);
+  const { dir, run } = testIdentity(env, { own: true });
   env.CLUED_TEST_IDENTITY_DIR = dir;
   env.CLUED_TEST_IDENTITY_RUN = run;
 }
