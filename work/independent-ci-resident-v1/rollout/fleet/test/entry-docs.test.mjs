@@ -48,10 +48,15 @@ test('L4: continue.py says how a stopped first install continues (the same boots
   assert.match(comment, /the same bootstrap command/);
 });
 
-test('the kit is part of the acceptance draft: the README\'s release flow has one entry (publish.mjs acceptance-draft), no separate take-the-kit / attach-the-kit step', () => {
-  assert.match(readme, /^node [^\n]*publish\.mjs acceptance-draft --version <version> --dir /m);
-  assert.ok(!/attach-first-install-kit/.test(readme), 'the manual attach step is gone from the README');
+test('the acceptance has two commands in the README, prepare before the Owner and seal after; no draft entry, no hand-attached kit or acceptance', () => {
+  // Fable 3bc571a6 ruling section 3 (Task 758989fa): the two halves, each one command; the steps under them have no command of their own
+  assert.match(readme, /^node [^\n]*publish\.mjs prepare --version <version> --dir /m);
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision [^\n]*--receipt [^\n]*--accepted-at /m);
+  assert.ok(!/acceptance-draft/.test(readme), 'the old entry is gone from the README');
+  assert.ok(!/attach-acceptance|attach-first-install-kit/.test(readme), 'no manual attach step is named in the README');
   assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');
   assert.ok(!/^node [^\n]*first-install-kit/m.test(readme), 'no command line of the README runs a kit step by hand');
-  assert.match(readme, /publish release -> publish acceptance-draft[^\n]*-> Owner [^\n]*-> publish attach-acceptance/);
+  assert.ok(!/^node [^\n]*install\.mjs source-hash/m.test(readme), 'the Source is prepare\'s, nobody fills it in by hand');
+  // the flow: candidate -> drill -> the Owner's one acceptance -> seal
+  assert.match(readme, /publish release -> publish prepare[^\n]*-> 候选演练[^\n]*-> Owner 接受[^\n]*-> publish seal/);
 });

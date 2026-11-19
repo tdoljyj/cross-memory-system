@@ -16,7 +16,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test, { after } from 'node:test';
-import { CI_ROOT, FIRST_INSTALL_VHDX_DIRECTORY, RESIDENT_SERVICE_SID, firstInstallCheck, LINUX_SCRIPTS, PLAN_CONTRACT, firstInstallKitOf, imageAssetOf, main, prepareInstall, readKit, sourceHashOf } from '../install.mjs';
+import { CI_ROOT, FIRST_INSTALL_VHDX_DIRECTORY, RESIDENT_SERVICE_SID, firstInstallCheck, LINUX_SCRIPTS, PLAN_CONTRACT, firstInstallKitOf, imageAssetOf, installedFleetMaterial, main, prepareInstall, readKit, sourceHashOf } from '../install.mjs';
 import { buildUniversal } from '../universal.mjs';
 import { readPackageOnce } from '../../../upgrader/src/package.mjs';
 import { roles } from '../../../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
@@ -333,39 +333,111 @@ test('first install refuses: residue by name, a kit not accepted, facts not this
     assert.throws(() => readKit(Buffer.from(JSON.stringify(forged))), { code: 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_POLICIES' });
   });
 
-// The acceptance draft, for real: the template node's own kit (firstInstallKitOf), readKit, and the archive's own source-hash; gh is the fake one.
-test('acceptance-draft, whole: the draft\'s kit hash is the uploaded kit\'s bytes, its Source the package\'s, and its directory passes first-install-check as it is',
+
+// The acceptance in two halves, end to end on a real installed template node (Fable 3bc571a6 ruling section 3, Task 758989fa): the release as
+// publish makes it, prepare with the node's own kit, readKit, record material and the archive's own source-hash, then seal; gh is the fake one.
+// The two defects as they were found on 3bc571a6 were red here before the fix: the entry needed a real Decision before it wrote anything
+// (FLEET_ACCEPTANCE_REFUSED "cluedDecision"), and its second run after a stop took a new kit from the node, whose version facts carry
+// observedAt, and was refused (PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT, acceptance-draft.1.log).
+async function releaseWorld(t, w) {
+  const d = await tempDir(t, 'fleetaccept');
+  const index = path.join(d, 'index.md');
+  const fake = path.join(d, 'fake-gh.mjs'), state = path.join(d, 'gh-state.json');
+  await fs.writeFile(fake, FAKE_GH);
+  await fs.writeFile(state, JSON.stringify({ calls: [], assets: [] }));
+  const saved = process.env.FAKE_GH_STATE;
+  process.env.FAKE_GH_STATE = state;
+  t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
+  const ghCommand = [process.execPath, fake];
+  const outDir = path.join(w.d, 'out');   // the build output (tar, release.json, SHA256SUMS)
+  const published = await publishModule.publish({ dir: outDir, repo: 'tdoljyj/cross-memory-system', index, ghCommand });
+  assert.equal(published.status, 'FLEET_RELEASE_PUBLISHED');
+  const assets = () => JSON.parse(fsSync.readFileSync(state, 'utf8')).assets;
+  const kitName = `fleet-node-${VERSION}.first-install-kit.json`;
+  const out = path.join(d, 'accept');
+  const prepare = (over = {}) => publishModule.prepare({ version: VERSION, dir: outDir, out, images: w.kit.images.local.map(l => path.join(w.from, l.asset)), index,
+    root: w.template.root, ghCommand, ...over });
+  const seal = (request, over = {}) => publishModule.seal({ request, decision: randomUUID(), receipt: randomUUID(), acceptedAt: '2026-11-19T12:22:39Z', index, ghCommand, ...over });
+  return { d, index, assets, kitName, out, prepare, seal, outDir };
+}
+// the companion writes its version facts again (a new observedAt): the next kit taken from this node is other bytes
+async function factsObservedAgain(w, at) {
+  const f = path.join(w.template.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json');
+  await fs.writeFile(f, JSON.stringify({ ...readJson(f), observedAt: at }));
+}
+const isoNow = (ms = 0) => new Date(Date.now() + ms).toISOString().replace(/\.\d+Z$/, 'Z');
+
+test('3bc571a6 end to end: prepare on the installed node with no Decision, the Owner\'s acceptance, seal; the directory passes first-install-check, and so does the drill\'s stand-in',
   { timeout: 600_000 }, async t => {
     const w = await getWorld();
-    const d = await tempDir(t, 'fleetdraft');
-    const outDir = path.join(w.d, 'out');   // the build output (tar, release.json, SHA256SUMS)
-    const index = path.join(d, 'index.md');
-    await fs.writeFile(index, `| 版本 | Release | tar sha256 | commit | 接受时间 | Decision |\n|---|---|---|---|---|---|\n| ${VERSION} | u | ${w.release.source.archive_sha256} | ${w.commit} |  |  |\n`);
-    const fake = path.join(d, 'fake-gh.mjs'), state = path.join(d, 'gh-state.json');
-    await fs.writeFile(fake, FAKE_GH);
-    await fs.writeFile(state, JSON.stringify({ calls: [], assets: [] }));
-    const saved = process.env.FAKE_GH_STATE;
-    process.env.FAKE_GH_STATE = state;
-    t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
-    const out = path.join(d, 'draft');
-    const base = { cluedDecision: w.acceptance.cluedDecision, acceptedAt: w.acceptance.acceptedAt, fleetRefs: w.acceptance.fleetRefs };
-    const images = w.kit.images.local.map(l => path.join(w.from, l.asset));
-    assert.ok(images.length > 0);
-    const r = await publishModule.acceptanceDraft({ version: VERSION, dir: outDir, base, out, images, index, root: w.template.root, ghCommand: [process.execPath, fake] });
-    assert.equal(r.status, 'FLEET_ACCEPTANCE_DRAFT_WRITTEN');
-    const accepted = JSON.parse(await fs.readFile(r.acceptance, 'utf8'));
-    const uploaded = JSON.parse(await fs.readFile(state, 'utf8')).assets.find(a => a.name === `fleet-node-${VERSION}.first-install-kit.json`);
-    assert.equal(accepted.firstInstallKitSha256, uploaded.sha256, 'the accepted hash is the uploaded kit\'s bytes');
-    assert.equal(accepted.firstInstallKitSha256, sha(await fs.readFile(path.join(out, `fleet-node-${VERSION}.first-install-kit.json`))));
-    assert.equal(accepted.ciSourceManifestSha256, w.acceptance.ciSourceManifestSha256);
+    const r0 = await releaseWorld(t, w);
+    await factsObservedAgain(w, isoNow());
+    const p = await r0.prepare();
+    assert.equal(p.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+    assert.equal(p.kitFrom, 'node');
+    const request = readJson(p.request);
+    assert.ok(!('cluedDecision' in request) && !('acceptedAt' in request), 'no Decision, no time');
+    // the request names the kit on the Release, this package and the references the node carries
+    assert.equal(request.firstInstallKitSha256, r0.assets().find(a => a.name === r0.kitName).sha256);
+    assert.deepEqual([request.archive_sha256, request.commit], [w.release.source.archive_sha256, w.commit]);
+    const material = await installedFleetMaterial(w.template.root);
+    assert.deepEqual(request.fleetRefs, { sourceAcceptanceRef: material.installed.sourceAcceptanceRef, hostQualificationRef: material.installed.hostQualificationRef,
+      ownerAuthorizationRef: material.installed.ownerAuthorizationRef, publisherQualificationRef: material.installed.publisherQualificationRef,
+      ownerPackageAcceptanceRef: material.installed.ownerPackageAcceptanceRef, formalRoles: material.formalRoles });
+    // the Owner accepts (a Decision and the receipt of its write); seal takes no node root and no kit: only the request and those values
+    const decision = randomUUID(), receipt = randomUUID();
+    const sealed = await r0.seal(p.request, { decision, receipt });
+    assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
+    const accepted = readJson(sealed.acceptance);
+    assert.deepEqual(accepted, publishModule.acceptanceOf(request, { decision, receipt, acceptedAt: '2026-11-19T12:22:39Z' }));
+    assert.equal(r0.assets().find(a => a.name === `fleet-node-${VERSION}.acceptance.json`).sha256, sha(await fs.readFile(sealed.acceptance)));
+    assert.ok((await fs.readFile(r0.index, 'utf8')).includes(`| 2026-11-19T12:22:39Z | ${decision} | 首装未演练 |`));
+    // the Source prepare computed with the drill's stand-ins is the Source of the real acceptance: the archive's own source-hash says so
+    const { ciSourceManifestSha256, ...draft } = accepted;
+    assert.equal((await sourceHashOf({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: draft })).ciSourceManifestSha256, request.ciSourceManifestSha256);
     // the directory goes through first-install-check as it is (kit by the accepted hash, every image archive there)
-    const chk = await firstInstallCheck({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: accepted, from: out });
+    const chk = await firstInstallCheck({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: accepted, from: r0.out });
     assert.equal(chk.status, 'FIRST_INSTALL_INPUTS_ACCEPTED');
     assert.equal(chk.kitSha256, accepted.firstInstallKitSha256);
-    // and the draft is not made on a node that already runs this version (the template's Source is the package's): refused, nothing written
-    const again = await publishModule.acceptanceDraft({ version: VERSION, dir: outDir, base, out: path.join(d, 'draft2'), images, index, root: w.template.root, ghCommand: [process.execPath, fake],
-      deps: { kitOf: async () => ({ ...(await firstInstallKitOf({ root: w.template.root })), config: { ...(await firstInstallKitOf({ root: w.template.root })).config, ciSourceManifestSha256: w.acceptance.ciSourceManifestSha256 } }) } })
-      .then(() => null, e => e.code);
-    assert.equal(again, 'ACCEPTANCE_DRAFT_TEMPLATE_IS_THIS_SOURCE');
-    await assert.rejects(fs.access(path.join(d, 'draft2')));
+    // the candidate drill's acceptance (the same request, the stand-in Decision): a new node reads it as it reads the real one
+    const stand = publishModule.acceptanceOf(request, publishModule.DRILL_RESERVED);
+    assert.equal((await firstInstallCheck({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: stand, from: r0.out })).status, 'FIRST_INSTALL_INPUTS_ACCEPTED');
+    // the same seal again changes nothing; prepare after the acceptance is refused (no kit afterwards)
+    assert.equal((await r0.seal(p.request, { decision, receipt })).already, true);
+    await assert.rejects(r0.prepare(), { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
   });
+
+test('3bc571a6 end to end: a second prepare after a stop, the node\'s version facts observed again: the kit on the Release is used, uploaded once, and seals',
+  { timeout: 600_000 }, async t => {
+    const w = await getWorld();
+    const r0 = await releaseWorld(t, w);
+    process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';   // the kit goes up, the role image does not (acceptance-draft.log: the network stopped it)
+    t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+    await factsObservedAgain(w, isoNow(-60_000));
+    await assert.rejects(r0.prepare(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
+    delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+    const attached = r0.assets().find(a => a.name === r0.kitName).sha256;
+    await factsObservedAgain(w, isoNow());
+    assert.notEqual(sha(Buffer.from(JSON.stringify(await firstInstallKitOf({ root: w.template.root })) + '\n')), attached, 'the node now gives other kit bytes');
+    const p = await r0.prepare();   // acceptance-draft.1.log: PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT
+    assert.equal(p.kitFrom, 'release');
+    assert.equal(readJson(p.request).firstInstallKitSha256, attached, 'the Release\'s kit');
+    assert.equal(r0.assets().filter(a => a.name === r0.kitName).length, 1);
+    const sealed = await r0.seal(p.request);
+    const chk = await firstInstallCheck({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: readJson(sealed.acceptance), from: r0.out });
+    assert.equal(chk.kitSha256, attached);
+  });
+
+test('prepare is not run on a node that already runs this version (the template\'s Source is the package\'s): refused, nothing written', { timeout: 600_000 }, async t => {
+  const w = await getWorld();
+  const r0 = await releaseWorld(t, w);
+  await factsObservedAgain(w, isoNow());
+  const first = await r0.prepare();
+  const source = readJson(first.request).ciSourceManifestSha256;
+  const r1 = await releaseWorld(t, w);
+  const kit = await firstInstallKitOf({ root: w.template.root });
+  const out = path.join(r1.d, 'other');
+  await assert.rejects(r1.prepare({ out, deps: { kitOf: async () => ({ ...kit, config: { ...kit.config, ciSourceManifestSha256: source } }) } }), { code: 'PREPARE_TEMPLATE_IS_THIS_SOURCE' });
+  await assert.rejects(fs.access(out));
+  assert.ok(!r1.assets().some(a => a.name === r1.kitName));
+});

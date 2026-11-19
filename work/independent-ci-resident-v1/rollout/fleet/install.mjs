@@ -97,7 +97,7 @@ const jsonOf = b => JSON.parse(Buffer.from(b).toString('utf8').replace(/^\uFEFF/
 export const ACCEPTANCE_KEYS = Object.freeze(['contract', 'version', 'archive_sha256', 'commit', 'repository', 'ciSourceManifestSha256', 'cluedDecision', 'acceptedAt', 'fleetRefs']);
 // firstInstallKitSha256: the version's first-install kit the Owner accepts with it (firstInstallKitOf). Every acceptance of a version a
 // node is to install or upgrade to carries it (FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT: a package that cannot first-install a new node is
-// not accepted at all; publish.mjs attach-acceptance and acceptance-draft hold the same line). Only the draft source-hash reads (`draft`)
+// not accepted at all; publish.mjs prepare and seal hold the same line). Only the draft source-hash reads (`draft`)
 // may lack it, and so may the outer read of `upgrade.mjs fetch` (requireKit: false): that copy may be NEWER than the package it fetches, and
 // the rule of a package is its own (the unpacked upgrade.mjs reads the acceptance again, with the rule it was built with), so a rollback to an
 // older package with no kit field stays one command. The record of an OLDER installed version (record/acceptance.json) never goes through here, so a node installed before
@@ -1034,13 +1034,15 @@ export async function sourceHashOf({ artifactPath, artifactSha256, acceptance, n
   }
 }
 
-// fleet-refs: what an acceptance file's fleetRefs.formalRoles is today on this node (the installed record), read-only.
+// fleet-refs: what an acceptance file's fleetRefs carry today on this node (the installed record), read-only: formalRoles and the references every
+// acceptance takes over (publish.mjs prepare writes them into the acceptance request; the Decision and receipt are the new acceptance's own).
 export async function installedFleetMaterial(root = DEFAULT_ROOT) {
   const man = jsonOf(await fs.readFile(path.join(root, 'record', 'source-manifest.json')));
   const acc = jsonOf(await fs.readFile(path.join(root, 'record', 'acceptance.json')));
   const formalRoles = Object.fromEntries(FORMAL_ROLES.map(r => [r, Object.fromEntries(Object.entries(man.roles[r]).filter(([k]) => k !== 'sourceFiles' && k !== 'controllerRelay'))]));
   return { formalRoles, formalRolesSha256: sha(Buffer.from(pyCanonical(formalRoles), 'utf8')),
-    installed: { sourceAcceptanceRef: acc.sourceAcceptanceRef, hostQualificationRef: acc.hostQualificationRef, ciSourceManifestSha256: sha(await fs.readFile(path.join(root, 'record', 'source-manifest.json'))) } };
+    installed: { sourceAcceptanceRef: acc.sourceAcceptanceRef, hostQualificationRef: acc.hostQualificationRef, ownerAuthorizationRef: acc.ownerAuthorizationRef,
+      publisherQualificationRef: acc.publisherQualificationRef, ownerPackageAcceptanceRef: acc.ownerPackageAcceptanceRef, ciSourceManifestSha256: sha(await fs.readFile(path.join(root, 'record', 'source-manifest.json'))) } };
 }
 
 // The command is the same on every node (section 8): no node-specific argument exists. `deps` is for tests only (a fixture root and
