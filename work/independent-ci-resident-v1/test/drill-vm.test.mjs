@@ -203,7 +203,8 @@ test('a candidate drills on a kit-carried acceptance: the request with the drill
   const accBytes = fs.readFileSync(path.join(f.out, accName)), acc = JSON.parse(accBytes);
   assert.deepEqual(acc, acceptanceOf(request, DRILL_RESERVED));
   assert.equal(acc.cluedDecision, DRILL_RESERVED.decision); assert.equal(acc.fleetRefs.ownerReceiptRef, DRILL_RESERVED.receipt);
-  validateAcceptance(acc);   // what the guest's install.mjs reads, unchanged: no drill mode in the package  const pins = JSON.parse(fs.readFileSync(path.join(f.out, 'release-pins.json')));
+  validateAcceptance(acc);   // what the guest's install.mjs reads, unchanged: no drill mode in the package
+  const pins =JSON.parse(fs.readFileSync(path.join(f.out, 'release-pins.json')));
   assert.deepEqual(pins.files.find(x => x.path === accName), { path: accName, sha256: sha(accBytes) });
   assert.ok(JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).files.some(x => x.path === accName && x.sha256 === sha(accBytes)));
   if (windows) {

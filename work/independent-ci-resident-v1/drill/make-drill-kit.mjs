@@ -50,6 +50,7 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
   try { validateAcceptance(acceptance, now); } catch (e) { throw new Error(`DRILL_CANDIDATE_ACCEPTANCE_REFUSED:${e?.detail ?? e?.code ?? e?.message}`); }
   return acceptance;
 }
+
 // Pure manifest constructor: every payload byte is pinned, including release-pins.json. `candidate`: the candidate's acceptance among
 // the payloads and the three hashes it names (drill-vm.ps1 holds the run to them and writes them into the receipt).
 export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null }) {
