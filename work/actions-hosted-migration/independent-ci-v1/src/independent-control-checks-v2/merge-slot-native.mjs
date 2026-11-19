@@ -3,7 +3,7 @@
 // 20261010161848) returns the live merge-slot holder of the repository's queue in this scope. It needs the
 // ci-admission role, so it doubles as the on-duty probe: without the role Native answers
 // {status:'ok', holders:[], reason:'admission_binding_required'}, which means "not on duty", never "queue empty".
-// Merge train (DESIGN §41.4, §41.6): the writes touch, adopt, return, keepalive and the sweep watermark, and the read
+// Merge train (DESIGN §41.4, §41.6): the writes touch, adopt, return, lifecycleReport, keepalive and the sweep watermark, and the read
 // nodesStatus (ci_nodes_status: nodes, watchdog, watermarks), are Source A's port (scripts/ci/clued-merge-train-native.mjs),
 // offered here with the same config and token. Holders require the Native Task/PR
 // projection; an older API is unknown, never authority from its old scalar column.
@@ -93,6 +93,7 @@ export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
     touch: async input => write().touch(input),
     adopt: async input => write().adopt(input),
     returnSlot: async input => write().returnSlot(input),
+    lifecycleReport: async input => write().lifecycleReport(input),
     keepalive: async input => write().keepalive(input),
     reportSweepWatermark: async input => write().reportSweepWatermark(input),
     nodesStatus: async () => write().nodesStatus(),

@@ -4,7 +4,9 @@
 // Existing server functions only, all pinned to the ci-admission role (migration 20261031060000, step 2a):
 //   touch      clued_work_merge_slot_touch_v1   {scope, pr_ref, head_sha, ci_state, hard_cap_minutes?, reason?}
 //   adopt      clued_work_claim_adopt_v1        {scope, pr_ref, merge_sha}
-//   return     clued_work_merge_slot_return_v1  {scope, pr_ref}
+//   return     clued_work_merge_slot_return_v1  {scope, pr_ref}  (gives back the slot only; it ends no PR binding)
+//   lifecycle  clued_work_pr_lifecycle_report_v1 {scope, repository, prs: [{pr_number, state: merged|closed, merge_sha?}]}
+//              (migration 20261119140000): GitHub's facts about PRs that ended; answers the bindings still open (tracked)
 //   keepalive  clued_work_verify_v1             {action: merge_queue_keepalive, scope, repository, pr_refs}
 //   watermark  clued_work_verify_v1             {action: train_sweep_watermark, scope, repository, completed_at, updated_cursor, main_sha}
 //   nodes      clued_work_verify_v1             {action: ci_nodes_status, scope} (a read: §41.6 Source check)
@@ -21,10 +23,11 @@ export const TOUCH_RPC = 'clued_work_merge_slot_touch_v1';
 export const ADOPT_RPC = 'clued_work_claim_adopt_v1';
 export const RETURN_RPC = 'clued_work_merge_slot_return_v1';
 export const VERIFY_RPC = 'clued_work_verify_v1';
+export const LIFECYCLE_RPC = 'clued_work_pr_lifecycle_report_v1';
 export const KEEPALIVE_ACTION = 'merge_queue_keepalive';
 export const WATERMARK_ACTION = 'train_sweep_watermark';
 export const NODES_STATUS_ACTION = 'ci_nodes_status';
-export const MERGE_TRAIN_NATIVE_RPCS = Object.freeze([TOUCH_RPC, ADOPT_RPC, RETURN_RPC, VERIFY_RPC]);
+export const MERGE_TRAIN_NATIVE_RPCS = Object.freeze([TOUCH_RPC, ADOPT_RPC, RETURN_RPC, VERIFY_RPC, LIFECYCLE_RPC]);
 export const NOT_ON_DUTY = 'admission_binding_required';
 export const MERGE_TRAIN_NATIVE_UNREADABLE = 'MERGE_TRAIN_NATIVE_UNREADABLE';
 export const MERGE_TRAIN_NATIVE_INPUT_REFUSED = 'MERGE_TRAIN_NATIVE_INPUT_REFUSED';
@@ -35,6 +38,8 @@ export const SWEEP_WATERMARK_NEWER_EXISTS = 'SWEEP_WATERMARK_NEWER_EXISTS';
 export const MAX_STATUS_NODES = 64;
 export const CI_STATES = Object.freeze(['running', 'green', 'failed']);
 export const KEEPALIVE_MAX_PRS = 50;
+export const LIFECYCLE_MAX_PRS = 50;
+const TRACKED_MAX = 10000;
 const BODY_LIMIT = 65536;
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -143,6 +148,23 @@ export function createMergeTrainNativeWriter({ supabaseUrl, publishableKey, scop
       if (b.reason === NOT_ON_DUTY) { check(b.returned === false, MERGE_TRAIN_NATIVE_UNREADABLE); return { onDuty: false, returned: false, claims: [] }; }
       check(b.pr_ref === prRef(n) && uuids(b.merge_slot_returned) && b.returned === b.merge_slot_returned.length > 0, MERGE_TRAIN_NATIVE_UNREADABLE);
       return { onDuty: true, returned: b.returned, claims: [...b.merge_slot_returned] };
+    },
+    // FABLE 11-19 L2: the PR lifecycle report. prs: pull requests GitHub has just shown ended (at most 50, distinct): {pr, state:
+    // 'merged', mergeSha} (the merge commit) or {pr, state: 'closed', mergeSha: null}; an open PR is never a fact. [] only asks.
+    // -> {onDuty, deployed, tracked}: tracked, the repository's PR bindings Native still holds open (active or unknown), after the
+    // facts. Not deployed (404 PGRST202): {onDuty: null, deployed: false, tracked: null}. Not on duty: {onDuty: false, tracked: null}.
+    async lifecycleReport({ prs } = {}) {
+      check(Array.isArray(prs) && prs.length <= LIFECYCLE_MAX_PRS && prs.every(p => plain(p) && pr(p.pr)
+        && (p.state === 'closed' ? p.mergeSha === null || p.mergeSha === undefined : p.state === 'merged' && SHA.test(p.mergeSha ?? '')))
+        && new Set(prs.map(p => p.pr)).size === prs.length, MERGE_TRAIN_NATIVE_INPUT_REFUSED);
+      const reply = await call(LIFECYCLE_RPC, { scope, repository,
+        prs: prs.map(p => ({ pr_number: p.pr, state: p.state, ...(p.state === 'merged' ? { merge_sha: p.mergeSha } : {}) })) });
+      if (unknownRpc(reply)) return { onDuty: null, deployed: false, tracked: null };
+      const b = ok(reply);
+      if (b.status === 'rejected' && b.error_code === NOT_ON_DUTY) return { onDuty: false, deployed: true, tracked: null };
+      check(b.status === 'ok' && b.repository === repository.toLowerCase() && Array.isArray(b.tracked) && b.tracked.length <= TRACKED_MAX
+        && b.tracked.every(pr) && new Set(b.tracked).size === b.tracked.length, MERGE_TRAIN_NATIVE_UNREADABLE);
+      return { onDuty: true, deployed: true, tracked: [...b.tracked] };
     },
     // prs: the repository's pull requests the caller has just read as open (at most 50, distinct).
     async keepalive({ prs } = {}) {
