@@ -193,9 +193,31 @@ test('paths, keys and the environment the commands get', () => {
   assert.deepEqual(testEnvironment({ TEMP: '/t' }, {}, 'win32'), { TEMP: '/t', PYTHONUTF8: '1' }, "Windows Python in UTF-8 mode, like the runners' locale");
 });
 
+// Codex review of 2ee162c2, low 7: the Linux side ran a copy of local-verify.mjs alone, without the modules it imports
+// (ci-deps.mjs, the test environment), so it could not load there.
+test('the Linux side gets local-verify with every module it imports, and that copy loads', async (t) => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const closure = new Set();
+  const visit = (name) => {
+    if (closure.has(name)) return;
+    closure.add(name);
+    for (const [, file] of fs.readFileSync(path.join(here, name), 'utf8').matchAll(/^import [^;]*? from '\.\/([^'/]+\.mjs)';$/gm)) visit(file);
+  };
+  visit('local-verify.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-tool-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { copyTool } = await import('./local-verify.mjs');
+  assert.equal(typeof copyTool, 'function');
+  copyTool(dir);
+  assert.deepEqual(fs.readdirSync(dir).sort(), [...closure].sort());
+  const load = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(path.join(dir, 'local-verify.mjs')).href)})`],
+    { encoding: 'utf8' });
+  assert.equal(load.status, 0, load.stderr);
+});
+
 test("the Linux run takes objects only from this side's bundle (no GitHub login there), sets origin/* and tags exactly, and runs this side's copy", () => {
   const candidate = 'a'.repeat(40), main = 'b'.repeat(40);
-  const script = linuxScript({ bundle: "/mnt/c/L/it's.bundle", refs: '/mnt/c/L/run.refs', tool: '/mnt/c/L/tool.mjs', run: 'run-7', candidate, main,
+  const script = linuxScript({ bundle: "/mnt/c/L/it's.bundle", refs: '/mnt/c/L/run.refs', tool: '/mnt/c/L/tool', run: 'run-7', candidate, main,
     suites: ['clued-cloud', "x'y"], freshBase: true });
   assert.match(script, /^set -e\n/);
   assert.ok(script.includes('remote add origin https://github.com/tdoljyj/cross-memory-system.git'), 'an origin remote, as in CI');
@@ -210,7 +232,7 @@ test("the Linux run takes objects only from this side's bundle (no GitHub login 
   assert.ok(script.indexOf('trap ') < script.indexOf('flock -w'), 'the clean-up is set before anything is created');
   assert.ok(script.includes('refs/local-verify/run-7/ refs/local-verify/incoming/run-7/'), 'and removes the refs of this run only');
   assert.ok(script.includes(`for commit in ${candidate} ${main}; do`));
-  assert.ok(script.includes(`cp '/mnt/c/L/tool.mjs' "$tool/local-verify.mjs"`), 'the same tool on both sides, whatever the change holds');
+  assert.ok(script.includes(`cp '/mnt/c/L/tool'/*.mjs "$tool/"`), 'the same tool on both sides, whatever the change holds');
   assert.ok(script.endsWith(`--candidate ${candidate} --base ${main} --no-fetch --fresh-base --suite 'clued-cloud' --suite 'x'\\''y'`));
   assert.ok(linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: ['a'], noYield: true }).endsWith("--no-fetch --no-yield --suite 'a'"),
     'the Linux side skips the wait for the resident too when asked');

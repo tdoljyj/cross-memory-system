@@ -101,7 +101,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
-import { KEEP_VARIABLE } from './ci-required-selection.mjs';
+import { KEEP_VARIABLE } from './test-env.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -109,7 +109,9 @@ export const DISTRIBUTION = 'CluedDev-Linux';
 export const CI_NODE = '24.19.0';
 const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own (a failure message may name its drive)
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
-const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
+// test-env.mjs: what the selector imports since Task 2ee162c2; a main before it has none (OPTIONAL_SELECTOR_FILES).
+const SELECTOR_FILES = [SELECTOR, 'scripts/ci/test-env.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
+const OPTIONAL_SELECTOR_FILES = new Set(['scripts/ci/test-env.mjs']);
 const APP = 'apps/clued-cloud';
 // mechanical-outputs links the store into its throwaway worktree (component-version-integration.py): it never installs here.
 const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema', 'mechanical-outputs']);
@@ -324,7 +326,7 @@ export function dependencyKey({ lock, packageJson, npmrc = '', nodeVersion = pro
   return sha256(JSON.stringify({ lock: sha256(lock), fields, npmrc: String(npmrc), node: nodeVersion.split('.')[0], platform })).slice(0, 16);
 }
 
-// The variables the suites' commands get: the selector's one list (KEEP_VARIABLE), not the caller's tokens or Clued settings.
+// The variables the suites' commands get: the one list (test-env.mjs), not the caller's tokens or Clued settings.
 // On Windows Python's own UTF-8 mode stands in for the runners' UTF-8 locale.
 export function testEnvironment(env, extra = {}, platform = process.platform) {
   return { ...Object.fromEntries(Object.entries(env).filter(([name]) => KEEP_VARIABLE.test(name))),
@@ -980,6 +982,7 @@ async function loadSelector(root, main, home) {
       fs.mkdirSync(dir, { recursive: true });
       for (const file of SELECTOR_FILES) {
         const result = spawnSync('git', ['show', `${main}:${file}`], { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+        if (result.status !== 0 && OPTIONAL_SELECTOR_FILES.has(file)) continue;
         if (result.status !== 0) throw new Error(`main ${main.slice(0, 12)} has no ${file}`);
         fs.writeFileSync(path.join(dir, path.basename(file)), result.stdout);
       }
@@ -1570,10 +1573,18 @@ export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, 
     `git -C "$repo" for-each-ref --format='delete %(refname)' ${INCOMING}${run}/ | git -C "$repo" update-ref --stdin`,
     'flock -u 9; exec 9>&-',
     'tool=$(mktemp -d)',
-    `cp ${quote(tool)} "$tool/local-verify.mjs"`,
+    `cp ${quote(tool)}/*.mjs "$tool/"`,
     'cd "$repo"',
     `node "$tool/local-verify.mjs" --candidate ${candidate} --base ${main} --no-fetch${freshBase ? ' --fresh-base' : ''}${noYield ? ' --no-yield' : ''}${suites.map((id) => ` --suite ${quote(id)}`).join('')}`,
   ].join('\n');
+}
+
+// The tool the Linux side runs: this file and the modules it imports (local-verify.test.mjs checks the list is whole).
+export const TOOL_MODULES = ['local-verify.mjs', 'ci-deps.mjs', 'test-env.mjs'];
+export function copyTool(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  for (const name of TOOL_MODULES) fs.copyFileSync(path.join(here, name), path.join(dir, name));
 }
 
 export function readResults(text) {
@@ -1697,8 +1708,8 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, n
   const refsFile = path.join(home, 'bundles', `${run}.refs`);
   fs.mkdirSync(path.dirname(refsFile), { recursive: true });
   fs.writeFileSync(refsFile, refUpdates(githubRefs(root), clone.refs));
-  const toolFile = path.join(home, 'bundles', `${run}.local-verify.mjs`);
-  fs.copyFileSync(fileURLToPath(import.meta.url), toolFile);
+  const toolFile = path.join(home, 'bundles', `${run}.local-verify`);
+  copyTool(toolFile);
   const logFile = path.join(logs, 'linux.log');
   const fd = fs.openSync(logFile, 'w');
   console.log(`local-verify: linux: running in ${distribution} (log ${logFile}; it may wait there for a place, the log says so)`);
@@ -1717,7 +1728,7 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, n
       fs.closeSync(fd);
       if (bundle) fs.rmSync(bundle, { force: true });
       fs.rmSync(refsFile, { force: true });
-      fs.rmSync(toolFile, { force: true });
+      fs.rmSync(toolFile, { recursive: true, force: true });
       const results = readResults(fs.readFileSync(logFile, 'utf8'))?.map((result) => ({ ...result, log: windowsPathOf(result.log) }));
       resolve(results ?? [{ platform: 'linux', suite: '(run)', verdict: 'unknown', detail: error ?? `exited ${code} without results`, log: logFile }]);
     };
