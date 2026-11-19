@@ -1989,10 +1989,45 @@ test('A1 needs a complete step record: missing, incomplete or absent is no pass,
   assert.equal(finalize('a1-no-logs-finalize', noLogs, notTheDrillsSource()).output.code, 'DRILL_RECEIPT_NOT_FINALIZABLE');
 });
 
-// Fable renew-key ruling, supplement "interactive mode A1", second point: the host guard's emergency restore may come before the evidence
-// was taken. Accepted, and said so in the receipt (evidence.guardEmergencyRestore), never left silent.
-test('a host guard emergency restore is written into the receipt: restored by the guard, evidence not taken', opts, () => {
-  const root = path.join(tmp, 'guard-restore'); fs.mkdirSync(root, { recursive: true });
+// Fable renew-key ruling, supplement "interactive mode A1", second point, and Codex review of 1cedea9ef, medium 4: an emergency restore may
+// come before the evidence was taken. Its outcome is written as it was: restored, restore failed or not recorded; evidence not taken,
+// taken or partly taken (what the run directory holds). The host guard's outcome goes into the receipt; the boot watchdog, which acts
+// only while the parent is gone (no receipt), leaves its own record beside the run (guest-shutdown.outcome.json).
+test('an emergency restore is written as it ended: restored or not, evidence taken, partly taken or not', opts, () => {
+  const outcome = (name, guard, files = []) => {
+    const dir = path.join(tmp, `guard-${name}`); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'host-guard.json'), JSON.stringify({ status: 'DRILL_ABORTED', code: 'DRILL_HOST_CI_BUSY', ...guard }));
+    for (const f of files) { if (f === 'm5') fs.mkdirSync(path.join(dir, 'm5'), { recursive: true }); else fs.writeFileSync(path.join(dir, f), '{}'); }
+    return ps(`Get-DrillGuardOutcome ${q(dir)}`);
+  };
+  const all = ['first-install.log', 'stage-evidence.json', 'read-after-install.json', 'read-after-reboot.json', 'm5'];
+  const none = outcome('none', { restoredToCheckpoint: true, stopped: true, cleanupDone: true });
+  assert.deepEqual({ note: none.note, restore: none.restore, evidence: none.evidence, code: none.code }, { note: '由守护紧急还原，证据未取', restore: 'RESTORED', evidence: 'NOT_TAKEN', code: 'DRILL_HOST_CI_BUSY' });
+  const failed = outcome('failed', { restoredToCheckpoint: false, stopped: false, cleanupDone: true, cleanupFailure: { code: 'X' } }, ['first-install.log', 'stage-evidence.json']);
+  assert.deepEqual({ note: failed.note, restore: failed.restore, evidence: failed.evidence, taken: failed.taken, failure: failed.cleanupFailure },
+    { note: '守护紧急还原失败，证据部分已取', restore: 'RESTORE_FAILED', evidence: 'PARTIAL', taken: ['first-install.log', 'stage-evidence.json'], failure: { code: 'X' } });
+  // the guard's record written before its cleanup and never after: the outcome is not known, and is not called a restore
+  const unknown = outcome('unknown', { restoredToCheckpoint: false, stopped: false, cleanupFailure: null });
+  assert.equal(unknown.restore, 'UNKNOWN');
+  assert.equal(unknown.note, '守护紧急还原，结局未记下，证据未取');
+  // the guard tripped late (during A7, A8 or M5): the evidence was taken
+  const late = outcome('late', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, all);
+  assert.deepEqual({ note: late.note, evidence: late.evidence }, { note: '由守护紧急还原，证据已取', evidence: 'TAKEN' });
+  // the guard writes whether its cleanup ran
+  assert.match(fs.readFileSync(script, 'utf8'), /\$receipt\.cleanupDone = \$true/);
+
+  // the boot watchdog's record, at both of its restores
+  const signal = path.join(tmp, 'watchdog-run', 'guest-shutdown'); fs.mkdirSync(path.dirname(signal), { recursive: true });
+  const w = ps(`Write-DrillWatchdogOutcome ${q(signal)} 'PARENT_GONE' $true; Read-DrillJson ${q(signal + '.outcome.json')}`);
+  assert.deepEqual({ status: w.status, why: w.why, restore: w.restore, evidence: w.evidence, note: w.note },
+    { status: 'DRILL_WATCHDOG_RESTORE', why: 'PARENT_GONE', restore: 'RESTORED', evidence: 'NOT_TAKEN', note: '由开机看门进程紧急还原，证据未取' });
+  assert.equal(ps(`Write-DrillWatchdogOutcome ${q(signal)} 'TIMER_NOT_ARMED_BY_DEADLINE' $false; (Read-DrillJson ${q(signal + '.outcome.json')}).note`), '开机看门进程紧急还原失败，证据未取');
+  const text = fs.readFileSync(script, 'utf8');
+  const watchdog = text.slice(text.indexOf('function Invoke-DrillBootWatchdog'), text.indexOf('\n}', text.indexOf('function Invoke-DrillBootWatchdog')));
+  assert.equal([...watchdog.matchAll(/Write-DrillWatchdogOutcome \$Signal '(PARENT_GONE|TIMER_NOT_ARMED_BY_DEADLINE)'/g)].length >= 2, true);
+
+  // the receipt carries both, as they ended, beside its own restoredToCheckpoint
+  const root = path.join(tmp, 'guard-receipt'); fs.mkdirSync(root, { recursive: true });
   const r = ps(`
     $script:Drill.Runs = ${q(root)}
     function Assert-DrillHost { @{ freeGB = 20 } }
@@ -2000,15 +2035,20 @@ test('a host guard emergency restore is written into the receipt: restored by th
     function Get-DrillIntakeTool { throw 'HOST_HOLD_MUST_NOT_RUN' }
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
     function Invoke-DrillOnCheckpoint { param($Body, $RunDir, $Window)
-      Write-DrillJson (Join-Path $RunDir 'host-guard.json') ([ordered]@{ status = 'DRILL_ABORTED'; code = 'DRILL_HOST_CI_BUSY'; restoredToCheckpoint = $true })
+      Write-DrillJson (Join-Path $RunDir 'host-guard.json') ([ordered]@{ status = 'DRILL_ABORTED'; code = 'DRILL_HOST_CI_BUSY'; restoredToCheckpoint = $false; stopped = $false; cleanupDone = $true; cleanupFailure = @{ code = 'X' } })
+      Write-DrillWatchdogOutcome (Join-Path $RunDir 'guest-shutdown') 'TIMER_NOT_ARMED_BY_DEADLINE' $true
       @{ restored = $true; failure = @{ code = 'DRILL_HOST_CI_BUSY' }; result = $null; hostExecutorStates = @() } }
     $package = @{ version = '1.2.3'; tar = 'unused'; tarSha256 = ${q(S)}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(L)}; candidate = $false }
     $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package ([pscustomobject]@{ sha256 = 'fixture'; perNodeSteps = @() }) @{ sha256 = 'fixture' }
     $rc = Read-DrillJson $out.receipt
-    [ordered]@{ conclusion = $rc.conclusion; guard = $rc.evidence.guardEmergencyRestore }`);
+    [ordered]@{ conclusion = $rc.conclusion; restored = $rc.restoredToCheckpoint; guard = $rc.evidence.guardEmergencyRestore; watchdog = $rc.evidence.watchdogRestore }`);
   assert.equal(r.conclusion, 'FAIL');
-  assert.deepEqual(r.guard, { note: '由守护紧急还原，证据未取', code: 'DRILL_HOST_CI_BUSY', restoredToCheckpoint: true });
-  assert.equal(m5DrillReceipt('guard-normal', RENEWAL_3BC571A6).evidence.guardEmergencyRestore, undefined);
+  assert.equal(r.restored, true);
+  assert.deepEqual({ note: r.guard.note, restore: r.guard.restore }, { note: '守护紧急还原失败，证据未取', restore: 'RESTORE_FAILED' });
+  assert.equal(r.watchdog.note, '由开机看门进程紧急还原，证据未取');
+  const normal = m5DrillReceipt('guard-normal', RENEWAL_3BC571A6);
+  assert.equal(normal.evidence.guardEmergencyRestore, undefined);
+  assert.equal(normal.evidence.watchdogRestore, undefined);
 });
 
 test('the drill reads its children with stdout and stderr apart: a stderr line never stops a step', opts, () => {

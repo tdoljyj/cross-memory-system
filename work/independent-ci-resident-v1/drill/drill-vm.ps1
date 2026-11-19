@@ -1245,13 +1245,15 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
       if ($State.failure -and $State.armed) {
         $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
           hostExecutorStates = @($State.executorStates.Values);
-          abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null }
+          abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null; cleanupDone = $false }
         # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
         try {
           $receipt.stopped = Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint
           $receipt.restoredToCheckpoint = $RestoreCheckpoint -and $receipt.stopped
         } catch { $receipt.cleanupFailure = Get-DrillCode $_ }
+        # the record says the cleanup ran (Get-DrillGuardOutcome): one left from before it says "not known", never "restored"
+        $receipt.cleanupDone = $true
         $State.cleanup = $receipt
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { $State.receiptFailure = $true }
       }
@@ -1642,9 +1644,11 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
         try {
           $info = Get-DrillVmInfo
           if ($info -and $info.vm.Id -eq $VmId -and $info.notes -ceq $script:Drill.Marker -and $info.state -ne 'Off') {
-            if (Stop-DrillOwnedVm -RestoreCheckpoint) { return }
+            $stopped = Stop-DrillOwnedVm -RestoreCheckpoint
+            Write-DrillWatchdogOutcome $Signal 'PARENT_GONE' $stopped
+            if ($stopped) { return }
           }
-        } catch { }
+        } catch { Write-DrillWatchdogOutcome $Signal 'PARENT_GONE' $false }
         Start-Sleep -Milliseconds 500
       }
     }
@@ -1652,7 +1656,8 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
     if (-not (Test-Path -LiteralPath "$Signal.armed")) {
       $info = Get-DrillVmInfo
       if ($info -and $info.vm.Id -eq $VmId -and $info.notes -ceq $script:Drill.Marker) {
-        [void](Stop-DrillOwnedVm -RestoreCheckpoint)
+        $stopped = $false
+        try { $stopped = Stop-DrillOwnedVm -RestoreCheckpoint } finally { Write-DrillWatchdogOutcome $Signal 'TIMER_NOT_ARMED_BY_DEADLINE' $stopped }
       }
     }
   } finally {
@@ -1660,6 +1665,39 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
     if ($locked) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
   }
+}
+
+# The boot watchdog's record of a restore it made (Codex review of 1cedea9ef, medium 4): its parent is gone, so there is no receipt; the
+# record sits beside the run as <signal>.outcome.json. It acts only before the guest's own timer is armed, that is before the run's first
+# step, so no evidence was taken.
+function Write-DrillWatchdogOutcome([string]$Signal, [string]$Why, $Stopped) {
+  $restore = if ($Stopped -eq $true) { 'RESTORED' } else { 'RESTORE_FAILED' }
+  $r = [ordered]@{ status = 'DRILL_WATCHDOG_RESTORE'; why = $Why; restore = $restore; evidence = 'NOT_TAKEN'
+    note = $(if ($restore -ceq 'RESTORED') { '由开机看门进程紧急还原，证据未取' } else { '开机看门进程紧急还原失败，证据未取' }); at = [DateTimeOffset]::UtcNow.ToString('o') }
+  try { Write-DrillJson "$Signal.outcome.json" $r } catch { }
+}
+
+# What of the run's evidence the run directory holds after an emergency restore: none, all or part of it.
+function Get-DrillAbortEvidence([string]$RunDir) {
+  $expected = @('first-install.log', 'stage-evidence.json', 'read-after-install.json', 'read-after-reboot.json', 'm5')
+  $taken = @($expected | Where-Object { Test-Path -LiteralPath (Join-Path $RunDir $_) })
+  [ordered]@{ evidence = $(if ($taken.Count -eq 0) { 'NOT_TAKEN' } elseif ($taken.Count -eq $expected.Count) { 'TAKEN' } else { 'PARTIAL' }); taken = $taken
+    notTaken = @($expected | Where-Object { $taken -notcontains $_ }) }
+}
+
+# The host guard's emergency restore, as it ended (its host-guard.json, DRILL_ABORTED): restored, restore failed, or not known (a record
+# from before its cleanup); and what evidence the run had taken by then.
+function Get-DrillGuardOutcome([string]$RunDir) {
+  $file = Join-Path $RunDir 'host-guard.json'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+  $g = try { Read-DrillJson $file } catch { $null }
+  if ([string](Get-Prop $g 'status') -cne 'DRILL_ABORTED') { return $null }
+  $restore = if ((Get-Prop $g 'restoredToCheckpoint') -eq $true) { 'RESTORED' } elseif ((Get-Prop $g 'cleanupDone') -eq $true) { 'RESTORE_FAILED' } else { 'UNKNOWN' }
+  $ev = Get-DrillAbortEvidence $RunDir
+  $head = @{ RESTORED = '由守护紧急还原'; RESTORE_FAILED = '守护紧急还原失败'; UNKNOWN = '守护紧急还原，结局未记下' }[$restore]
+  $tail = @{ NOT_TAKEN = '证据未取'; TAKEN = '证据已取'; PARTIAL = '证据部分已取' }[$ev.evidence]
+  [ordered]@{ note = ($head + '，' + $tail); code = (Get-Prop $g 'code'); restore = $restore; cleanupFailure = (Get-Prop $g 'cleanupFailure')
+    evidence = $ev.evidence; taken = $ev.taken; notTaken = $ev.notTaken }
 }
 
 # Seconds from asking WMI for the watchdog until it must have signalled ready; the WMI calls count against it.
@@ -2173,15 +2211,12 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   }
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
-  # The host guard's emergency restore (it wrote host-guard.json, DRILL_ABORTED) may come before the evidence was taken (Fable renew-key
-  # ruling, supplement "interactive mode A1", second point): accepted, and said so here, never left silent.
-  $hostGuardFile = Join-Path $runDir 'host-guard.json'
-  if (Test-Path -LiteralPath $hostGuardFile -PathType Leaf) {
-    $hostGuard = try { Read-DrillJson $hostGuardFile } catch { $null }
-    if ([string](Get-Prop $hostGuard 'status') -ceq 'DRILL_ABORTED') {
-      $evidence.guardEmergencyRestore = [ordered]@{ note = '由守护紧急还原，证据未取'; code = (Get-Prop $hostGuard 'code'); restoredToCheckpoint = (Get-Prop $hostGuard 'restoredToCheckpoint') }
-    }
-  }
+  # An emergency restore may come before the evidence was taken (Fable renew-key ruling, supplement "interactive mode A1", second point):
+  # accepted, and written as it ended (Codex review of 1cedea9ef, medium 4) -- the host guard's, and the boot watchdog's record.
+  $guardOutcome = Get-DrillGuardOutcome $runDir
+  if ($guardOutcome) { $evidence.guardEmergencyRestore = $guardOutcome }
+  $watchdogFile = Join-Path $runDir 'guest-shutdown.outcome.json'
+  if (Test-Path -LiteralPath $watchdogFile -PathType Leaf) { $evidence.watchdogRestore = try { Read-DrillJson $watchdogFile } catch { [ordered]@{ unreadable = $true } } }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   try {
     if ($run) { $m5 = Get-DrillM5Verdict $runDir $run.m5 }
