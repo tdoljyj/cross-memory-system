@@ -90,7 +90,7 @@
 
     ".github/workflows/clued-cloud-node22-install.yml": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97",
 
-    ".github/workflows/clued-cloud-production-release.yml": "9d0551b78099ecb442a632de67c62be073d6ebd94c9293d0efb8bfadf9f6c4be",
+    ".github/workflows/clued-cloud-production-release.yml": "a5aa894b9435307baf31da5367a8daa4e75dc7e2b544aa29df005441ee0603f8",
 
     ".github/workflows/clued-compute-panel.yml": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
 
@@ -624,7 +624,7 @@
 
     "scripts/ci/test_validate_runner_budget_policy.py": "bffb1953f4c36f9f577934a91e17722e895b5c1f094e96ccd2e9489f5c743aae",
 
-    "scripts/ci/validate_runner_budget_policy.py": "1e504ba7541257a6e7f4a89548f66c3e5de0ed1c9ff839a93e4592f58bf439ff",
+    "scripts/ci/validate_runner_budget_policy.py": "04a9cb76a1bb295b9a657a81ecdfa1d0753134728a0282caf46541208c539b82",
 
     "scripts/runner/clued-runner-hook-loader.mjs": "de10d6bc74f8d965ab86190c87949248295896f9bb6fbab0dc774333f0d1c978",
 
