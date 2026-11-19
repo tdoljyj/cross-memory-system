@@ -146,7 +146,7 @@ test('release door v1: the release workflow consumes, probes and boots the door 
             PATH: `${bin}${path.delimiter}${process.env.PATH ?? process.env.Path ?? ''}`,
             CLUED_MIGRATION_DATABASE_URL: `postgresql://postgres:${password}@127.0.0.1:${port}/${name}`,
             CLUED_CONFIRM_ORIGIN: 'https://kooyumi.pixelgrav.com', GITHUB_REPOSITORY: REPOSITORY, GITHUB_SHA: SHA,
-            GITHUB_RUN_ID: '4242', GITHUB_RUN_ATTEMPT: '1', GITHUB_STEP_SUMMARY: summary, ...env } });
+            GITHUB_RUN_ID: '4242', GITHUB_RUN_ATTEMPT: '1', GITHUB_STEP_SUMMARY: summary, RUNNER_TEMP: checkout.split(path.sep).join('/'), ...env } });
           return { status: result.status, out: `${result.stdout}\n${result.stderr}` };
         };
         const migrate = (files, { installMd5 = '0'.repeat(32) } = {}) => run('Apply the named migrations',
