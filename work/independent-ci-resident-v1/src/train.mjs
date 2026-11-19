@@ -320,7 +320,7 @@ const ON_TEXT = {
   FRONT_TEST_MERGE_NOT_READY: '等 GitHub 算好试合并',
   FRONT_GREEN_WAIT_MERGE: '车头六项已绿，等合并',
   OPEN_FRONT_BATCH: '车头批次已开，在 GitHub 的试合并提交上跑',
-  TRAIN_FRONT_BUDGET_SHORT: '位子剩余时间不够跑一批：请让位子过期后重新入队',
+  TRAIN_FRONT_BUDGET_SHORT: '位子剩余时间不够跑一批：系统会自动重新排队，无需操作',
   TRAIN_FRONT_ATTEMPTS_USED: '这个 head 的两次车头批次已用完：请推新提交',
   TRAIN_SWEEP_INCOMPLETE: '清扫未完成，暂不发绿',
   TRAIN_REVOKE_UNCONFIRMED: '有撤销未确认，暂不发绿',
