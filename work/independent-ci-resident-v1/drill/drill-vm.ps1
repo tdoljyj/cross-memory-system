@@ -63,6 +63,13 @@ $script:Drill = [ordered]@{
   MemoryBytes = 8GB
   # Keep production's workstation low-memory margin (Runner Runbook 2.2: 6 GiB) plus any VM memory still to allocate.
   ProductionReserveBytes = 6GB
+  # The boot gate's margin over the guest and the running gate: passing the boot gate means the running gate still passes once the
+  # guest is up, as long as the host's other usage grows by no more than this margin meanwhile (Fable renew-key ruling, supplement
+  # "drill host memory" item 2). The boot gate is guest + running gate + this margin; nothing else holds the value. PROVISIONAL, to be recalibrated from the first receipt taken
+  # under clean conditions (Fable, 2026-11-20). The receipts' "free at start - free after boot - guest 8 GB" (5.9 GB in run
+  # 20261119T172257Z, 3.3 GB in run 20261119T030253Z) is not counted: it was the production WSL growing under a CI job of the host's
+  # Actions runners, which the Runner.Worker refusal below now keeps from overlapping a boot.
+  BootMarginBytes = 1GB
   HostGuardSeconds = 30
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
@@ -139,11 +146,17 @@ function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:D
     # Hyper-V's assigned memory has already been deducted from the host's free memory.
     [Math]::Max(0L, $target - $MemoryAssigned)
   } else {
-    [Math]::Max($target, $MemoryAssigned)
+    [Math]::Max($target, $MemoryAssigned) + $script:Drill.BootMarginBytes
   }
   $required = $vmFreeRequired + $script:Drill.ProductionReserveBytes
   return @{ ok = ($FreeBytes -ge $required); code = $(if ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null });
     freeGB = [Math]::Round($FreeBytes / 1GB, 1); requiredFreeBytes = $required }
+}
+
+# An Actions self-hosted runner executes each job in a Runner.Worker process (its Runner.Listener only waits for work). Judged from the
+# host's process list, not from runner names: how many runners the host has and what they are called is read from the machine.
+function Test-DrillHostRunnerJob([string[]]$ProcessNames) {
+  return @($ProcessNames | Where-Object { $_ -ieq 'Runner.Worker' }).Count -gt 0
 }
 
 function ConvertTo-DrillTimestamp($Value) {
@@ -169,10 +182,10 @@ function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
 # A drill hold leaves the parked stage-8 tries and revoke-only train maintenance on the Windows side.
 function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
   [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
-  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
+  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [string[]]$ProcessNames = @()) {
   $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned
   $code = 'DRILL_HOST_STATUS_UNREADABLE'
-  $mode = $null; $since = $null; $until = $null
+  $mode = $null; $since = $null; $until = $null; $busyWith = $null
   $executorObservation = $null
   try {
     if (-not $StatusJson.TrimStart().StartsWith('{')) { throw 'expected a status object' }
@@ -236,11 +249,15 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
         elseif ($mode -ceq 'ACTIVE' -and ($HoldUntil -le $Now -or $null -eq $since -or $since -gt $Now -or
           $null -eq $until -or $until -lt $HoldUntil -or $until -gt $Now.AddMinutes($script:Drill.IntakeMaxMinutes))) {
           $code = 'DRILL_HOST_IS_ON_DUTY'
-        } else { $code = $memory.code }
+        }
+        # Before boot only (Clued Task e71ceb33): the hold does not cover the host's Actions runners, and a job they pick up after the
+        # boot is left to the running memory gate.
+        elseif (-not $Running -and (Test-DrillHostRunnerJob $ProcessNames)) { $code = 'DRILL_HOST_CI_BUSY'; $busyWith = 'ACTIONS_RUNNER_JOB' }
+        else { $code = $memory.code }
       }
     }
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
-  return @{ ok = ($null -eq $code); code = $code; mode = $mode; holdSince = $since; holdUntil = $until;
+  return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; mode = $mode; holdSince = $since; holdUntil = $until;
     freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes;
     executorObservation = $executorObservation; observedAt = $Now.ToUniversalTime().ToString('o');
     action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
@@ -858,7 +875,8 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
       $target = [Math]::Max($target, [long]$vm.MemoryStartup)
       $assigned = [long]$vm.MemoryAssigned
     }
-    $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
+    $processes = if ($Running) { @() } else { @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName }) }
+    $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes
   } catch {
     $c = Get-DrillCode $_
     $safety = @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
