@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
-  knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, runSuite, selectSuites,
+  knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, executeSuite, selectSuites,
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
@@ -42,7 +42,7 @@ function slotFixture(t) {
     }
     if (process.env.SLOT_FIXTURE_EVENT) {
       globalThis.fetch = async () => ({
-        ok: true, json: async () => [{ filename: 'scripts/ci/retrigger-counter.test.mjs' }],
+        ok: true, json: async () => [{ filename: 'fixture/wrangler.jsonc' }],
       });
     }
     registerHooks({ resolve(specifier, context, next) {
@@ -120,6 +120,8 @@ function slotFixture(t) {
     delete env.NODE_TEST_CONTEXT;
     if (ci) env[ci] = 'true';
     if (mode === '--run-selected') {
+      writeFileSync(path.join(scripts, 'check-cron-budget.test.mjs'), probe);
+      writeFileSync(path.join(scripts, 'check-cron-budget.mjs'), '');
       target = 'ci-suites';
       const event = path.join(root, 'event.json');
       writeFileSync(event, '{"pull_request":{"number":1}}');
@@ -598,7 +600,7 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       calls.push([command, ...args]);
       return { status: 0 };
     };
-    assert.equal(runSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
+    assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
     assert.deepEqual(calls.slice(-2).map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
@@ -664,11 +666,11 @@ test('a suite stops at its first failing command and reports a command that did 
     calls.push([command, options.cwd]);
     return { status: calls.length === 1 ? 0 : 3 };
   };
-  assert.equal(runSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
+  assert.equal(executeSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
   assert.equal(calls.length, 2);
-  assert.equal(runSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
-  assert.equal(runSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
-  assert.throws(() => runSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
+  assert.equal(executeSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
+  assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
+  assert.throws(() => executeSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
 });
 
 // A real run through the reporter: the failure shapes round 2 found masked.
@@ -756,23 +758,23 @@ test('a known-failure command adds the trusted reporter, warns on known failures
   const abs = (file) => path.join(ROOT, file);
   const summary = { type: 'summary', counts: {}, success: false };
   const env = { RUNNER_TEMP: os.tmpdir() };
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log: (line) => lines.push(line),
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn, known, log: (line) => lines.push(line),
     readReportFile: report([{ type: 'fail', file: abs(entry.file), path: entry.path, fingerprint: entry.fingerprint }, summary]) }), 0);
   assert.ok(seen.includes(`--test-reporter=${pathToFileURL(REPORTER_PATH).href}`));
   assert.ok(seen.some((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('failures.jsonl')));
   assert.ok(lines.some((line) => line.startsWith('::warning title=admission-self-tests known failure::scripts/ci/x.test.mjs :: old a')));
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log,
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn, known, log,
     readReportFile: report([{ type: 'fail', file: abs(entry.file), path: entry.path, fingerprint: entry.fingerprint },
       { type: 'fail', file: abs('scripts/ci/x.test.mjs'), path: ['b'], fingerprint: 'b'.repeat(16) }, summary]) }), 1);
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log, readReportFile: () => '' }), 1, 'no report fails');
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn: () => ({ status: null, signal: 'SIGKILL' }), known, log,
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn, known, log, readReportFile: () => '' }), 1, 'no report fails');
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn: () => ({ status: null, signal: 'SIGKILL' }), known, log,
     readReportFile: report([summary]) }), 128, 'a killed run fails');
 });
 
 test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
   const calls = [];
   const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
-  assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
 });
 
@@ -792,7 +794,7 @@ test('on Windows the entry starts npm and npx through node, not the .cmd shim; e
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, exists: () => false }), ['npm', 'run', 'lint']);
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, platform: 'linux' }), ['npm', 'run', 'lint']);
   const calls = [];
-  runSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
+  executeSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
   assert.equal(calls.length, 1);
   if (process.platform === 'win32') {
     assert.equal(calls[0][0], process.execPath, 'the first step starts npm via node');
@@ -919,15 +921,15 @@ test('each platform is selected only the suites declared for it, by changed path
   assert.throws(() => selectSuites('ci-suites', null, 'darwin'), /unknown platform/);
 });
 
-test('a platform step runs every selected suite, names each result, fails when any suite fails and passes when nothing is selected', () => {
+test('a platform step runs every selected suite, names each result, fails when any suite fails and passes when nothing is selected', async () => {
   const ran = [];
   const lines = [];
   const run = (id) => { ran.push(id); return id === 'offline-drill' ? 3 : 0; };
-  assert.equal(runSelected(['resident-node', 'offline-drill', 'selection'], { root: ROOT, env: {}, run, log, summary: (text) => lines.push(text) }), 1);
+  assert.equal(await runSelected(['resident-node', 'offline-drill', 'selection'], { root: ROOT, env: {}, run, log, summary: (text) => lines.push(text) }), 1);
   assert.deepEqual(ran, ['resident-node', 'offline-drill', 'selection'], 'a failure does not hide the suites after it');
   assert.deepEqual(lines, ['- `resident-node`: passed\n', '- `offline-drill`: **failed**\n', '- `selection`: passed\n']);
-  assert.equal(runSelected(['resident-node'], { root: ROOT, env: {}, run, log }), 0);
-  assert.equal(runSelected([], { root: ROOT, env: {}, run: () => assert.fail('nothing to run'), log }), 0);
+  assert.equal(await runSelected(['resident-node'], { root: ROOT, env: {}, run, log }), 0);
+  assert.equal(await runSelected([], { root: ROOT, env: {}, run: () => assert.fail('nothing to run'), log }), 0);
 });
 
 // End to end (defect board row 14; #1092 was the mirror case, green on Windows and broken on Linux): a change that
@@ -945,7 +947,7 @@ function windowsJob() {
   return { published, platform: labels.includes('Windows') ? 'win32' : 'linux', check, root };
 }
 
-test('a change that breaks only on Windows fails ci-suites-windows and passes the Linux side, through the same selection and commands', (t) => {
+test('a change that breaks only on Windows fails ci-suites-windows and passes the Linux side, through the same selection and commands', async (t) => {
   const job = windowsJob();
   assert.deepEqual(job, { published: 'ci-suites-windows', platform: 'win32', check: 'ci-suites', root: 'candidate' });
   const candidate = mkdtempSync(path.join(os.tmpdir(), 'ci-both-platforms-'));
@@ -976,8 +978,8 @@ test('a change that breaks only on Windows fails ci-suites-windows and passes th
   // The step of the job on this host: the real commands, in the candidate checkout.
   const quiet = (command, args, options) => spawnSync(command, args, { ...options, stdio: 'pipe' });
   const lines = [];
-  const status = runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
-    run: (id, options) => runSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
+  const status = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
+    run: (id, options) => executeSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
   if (process.platform === 'win32') {
     assert.equal(hostPlatform(), job.platform, 'this host is the platform of the ci-suites-windows job');
     assert.equal(status, 1, 'ci-suites-windows fails: this is the failure a Linux-only CI never saw');

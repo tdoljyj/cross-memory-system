@@ -67,10 +67,18 @@ if (process.env.CLUED_LOCAL_SUITE_GUARD && process.argv[1] === import.meta.filen
     } else if (process.argv[2] === 'worker' && (process.platform === 'win32' || await ownerPipe().permission)) {
       if (process.platform !== 'win32') process.stdin.destroy();
       delete process.env.CLUED_LOCAL_SUITE_GUARD;
-      const { runSuite } = await import('./ci-required-selection.mjs');
-      const status = runSuite(context.suite, { root: context.root });
-      // Keep the local slot timeout status exclusive to the queue and guard.
-      process.exitCode = status === context.timeoutExit ? 1 : status;
+      const { suite, root, work, timeoutExit } = context;
+      if (work.verify) {
+        const { runCommands } = await import('./local-verify.mjs');
+        const selector = { ...await import(work.selectorUrl), reporterUrl: work.reporterUrl };
+        const { main, logFile, resultFile } = work.verify;
+        writeFileSync(resultFile, JSON.stringify(runCommands(selector, suite, root, main, logFile)));
+      } else {
+        const { executeSuite } = await import(work.selectorUrl);
+        const status = executeSuite(suite, { root, captureKnown: work.captureKnown, keep: work.keep });
+        // Keep the local slot timeout status exclusive to the queue and guard.
+        process.exitCode = status === timeoutExit ? 1 : status;
+      }
     } else {
       process.exitCode = 1;
     }

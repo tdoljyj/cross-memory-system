@@ -151,8 +151,8 @@ function requestTickets(directory, requests, stale, jobsGone) {
   return live;
 }
 
-async function runGuard(suite, { root, env, timeoutExit }, requestPath, holdMs) {
-  const context = { suite, root, requestPath, holdMs, timeoutExit, deadlineAt: Date.now() + holdMs,
+async function runGuard(suite, { root, env, timeoutExit, work }, requestPath, holdMs) {
+  const context = { suite, root, work, requestPath, holdMs, timeoutExit, deadlineAt: Date.now() + holdMs,
     owner: process.pid, worker: WORKER, node: process.execPath };
   const deadline = performance.now() + holdMs;
   const child = spawn(WINDOWS ? 'powershell.exe' : process.execPath, WINDOWS ? JOB_ARGS : [WORKER, 'guard'], {

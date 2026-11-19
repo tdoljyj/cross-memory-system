@@ -313,6 +313,7 @@ function probeRepository(t, { seconds }) {
     git(dir, 'commit', '-q', '-m', name);
     changes.push({ name, dir });
   }
+  delete env.GITHUB_ACTIONS; // These child invocations exercise local admission.
   const queue = path.join(base, 'queue');
   fs.mkdirSync(queue);
   const loader = path.join(base, 'slots.mjs');
@@ -330,9 +331,9 @@ function probeRepository(t, { seconds }) {
     NODE_OPTIONS: `--import=${pathToFileURL(loader).href}` } };
 }
 
-function runTool({ dir, main, env, home, extra = {} }) {
+function runTool({ dir, main, env, home }) {
   const child = spawn(process.execPath, [TOOL, '--committed', '--no-fetch', '--no-yield', '--base', main], { cwd: dir, windowsHide: true,
-    env: { ...env, CLUED_LOCAL_VERIFY_HOME: home, ...extra } });
+    env: { ...env, CLUED_LOCAL_VERIFY_HOME: home } });
   let output = '';
   child.stdout.on('data', (chunk) => { output += chunk; });
   child.stderr.on('data', (chunk) => { output += chunk; });
@@ -362,8 +363,7 @@ test('three concurrent local verifications preserve verdicts and hold at most tw
   // together, one cache
   const together = probeRepository(t, { seconds });
   const home = fs.realpathSync(fs.mkdtempSync(path.join(together.base, 'home-')));
-  const outcomes = await Promise.all(together.changes.map(({ dir }) => runTool({ dir, main: together.main, env: together.env, home,
-  })));
+  const outcomes = await Promise.all(together.changes.map(({ dir }) => runTool({ dir, main: together.main, env: together.env, home })));
   const names = together.changes.map((change) => change.name);
   names.forEach((name, index) => {
     assert.ok(outcomes[index].results, outcomes[index].output);
@@ -525,8 +525,7 @@ test('the Linux script is valid bash and its lock keeps two runs apart (where fl
 test('the probes of side-by-side runs see a temporary directory of their own', { timeout: 120_000 }, async (t) => {
   const repo = probeRepository(t, { seconds: 3 });
   const home = fs.realpathSync(fs.mkdtempSync(path.join(repo.base, 'home-')));
-  const outcomes = await Promise.all(repo.changes.slice(0, 2).map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home,
-  })));
+  const outcomes = await Promise.all(repo.changes.slice(0, 2).map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home })));
   outcomes.forEach((outcome) => assert.ok(outcome.results, outcome.output));
   const temps = stampsOf(repo.stamps).filter((stamp) => stamp.id !== 'main').map((stamp) => stamp.temp);
   assert.equal(new Set(temps).size, 2);

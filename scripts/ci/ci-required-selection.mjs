@@ -24,10 +24,10 @@
 //     (the ci-suites-windows job; resident ADR 0032).
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
-//     Outside CI, waits for a machine-wide local suite slot before running.
 //   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
 //     regenerates that suite's ci-known-failures.json entries from a real run
 //     (--keep also keeps the entries already listed).
+// All three run modes wait for a machine-wide suite slot outside GitHub Actions.
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -151,6 +151,7 @@ export const SUITES = {
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
+      'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml'],
   },
   // The application suite reads files from across the repository (workflow,
@@ -474,8 +475,23 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
   return exists(script) ? [nodePath, script, ...argv.slice(1)] : argv;
 }
 
-export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
-  known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false } = {}) {
+  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
+  if (captureKnown && !SUITE_COMMANDS[id].some((command) => command.known)) {
+    throw new Error(`suite ${id} has no known-failure command`);
+  }
+  if (env.GITHUB_ACTIONS === 'true') return executeSuite(id, { root, env, log, captureKnown, keep });
+  const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+  return withLocalSuiteSlot(id, {
+    root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
+    work: { selectorUrl: import.meta.url, captureKnown, keep },
+  });
+}
+
+// The CI process or the already guarded worker executes the suite here.
+export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
+  captureKnown = false, keep = false, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  if (captureKnown) return writeKnown(id, root, env, keep);
   const commands = SUITE_COMMANDS[id];
   if (!commands) throw new Error(`unknown suite: ${id}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
@@ -536,14 +552,17 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
 // one fails (so the summary names each); any failure fails the step, and with
 // it the check. Nothing selected is a pass: the change touches no suite of
 // this platform.
-export function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {} } = {}) {
+export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {} } = {}) {
   const failed = [];
+  let timedOut = false;
   for (const id of suites) {
-    const status = run(id, { root, env, log });
+    const status = await run(id, { root, env, log });
+    if (env.GITHUB_ACTIONS !== 'true' && status === LOCAL_TIMEOUT_EXIT) timedOut = true;
     summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
     if (status !== 0) failed.push(id);
   }
   if (failed.length > 0) log(`::error title=${hostPlatform()} suites::failed: ${failed.join(' ')}`);
+  if (timedOut) return LOCAL_TIMEOUT_EXIT;
   return failed.length > 0 ? 1 : 0;
 }
 
@@ -603,17 +622,15 @@ async function main(argv, env = process.env) {
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
-    return writeKnown(argv[writeIndex + 1], rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env, argv.includes('--keep'));
+    return runSuite(argv[writeIndex + 1], {
+      root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env, captureKnown: true, keep: argv.includes('--keep'),
+    });
   }
   const runIndex = argv.indexOf('--run');
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
-    const id = argv[runIndex + 1];
-    if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
     const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
-    if (env.GITHUB_ACTIONS === 'true') return runSuite(id, { root, env });
-    const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
-    return withLocalSuiteSlot(id, { root, env, timeoutExit: LOCAL_TIMEOUT_EXIT });
+    return runSuite(argv[runIndex + 1], { root, env });
   }
   const selectedIndex = argv.indexOf('--run-selected');
   const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');
