@@ -60,18 +60,52 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
 export const HOST_SCRIPT = 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1';
 // The prerequisite items (by name in the package's prereq-manifest.json) the drill injects and the guest never downloads.
 export const INJECTED_TOOLS = Object.freeze(['gh', 'git-for-windows']);
-// Read only when it reads one way (Codex review of e0a3cded5, medium 3): exactly one assignment of each constant anywhere in the script
-// (indented ones count), at a line's start, outside any <# #> block comment, a single-line literal of plain pairs, no key twice (PowerShell
-// keys are case-insensitive). Anything else is ambiguous and refused.
+// The script as PowerShell runs it, what is not code blanked (same length, line breaks kept): block comments, line comments and
+// here-strings -- a line of a declaration's shape in them declares nothing -- and, with strings, the contents of quoted strings.
+function blankNonCode(src, { strings }) {
+  const blank = s => s.replace(/[^\r\n]/g, ' ');
+  let out = '', i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    let j = -1;
+    if (src.startsWith('<#', i)) { const e = src.indexOf('#>', i + 2); j = e < 0 ? src.length : e + 2; }
+    else if (c === '#') { const e = src.indexOf('\n', i); j = e < 0 ? src.length : e; }
+    else if (c === '@' && /^@(["'])[ \t]*\r?\n/.test(src.slice(i, i + 8))) {
+      const e = src.indexOf('\n' + src[i + 1] + '@', i + 2); j = e < 0 ? src.length : e + 3;
+    }
+    if (j >= 0) { out += blank(src.slice(i, j)); i = j; continue; }
+    if (c === "'" || c === '"') {
+      let k = i + 1;
+      while (k < src.length) {
+        if (c === '"' && src[k] === '`') { k += 2; continue; }
+        if (src[k] === c) { if (src[k + 1] === c) { k += 2; continue; } break; }
+        k++;
+      }
+      const end = Math.min(k + 1, src.length);
+      out += strings ? c + blank(src.slice(i + 1, end - 1)) + (end - 1 > i ? src[end - 1] : '') : src.slice(i, end);
+      i = end; continue;
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+// Read only when it reads one way (Codex reviews of e0a3cded5, medium 3, and of f33fc33e5, medium 1), the way PowerShell reads it: a
+// variable's name in any case is the same variable, so exactly one assignment of each constant in the code -- any case, scope-qualified
+// ($script:...) or braced (${...}), anywhere on a line, nor changed after by index, property or a mutating method, nor named to a
+// *-Variable cmdlet -- and that one at a line's start, a single-line literal of plain pairs, no key twice (PowerShell keys are
+// case-insensitive). Comments and here-strings are not code. Anything else is ambiguous and refused.
 export function packageCredentials(text) {
   const src = String(text ?? '');
-  const comments = [...src.matchAll(/<#[\s\S]*?#>/g)].map(m => [m.index, m.index + m[0].length]);
-  const inComment = at => comments.some(([a, b]) => at >= a && at < b);
+  const code = blankNonCode(src, { strings: true }), lines = blankNonCode(src, { strings: false });
   const pairRe = /([A-Za-z][A-Za-z0-9]*)\s*=\s*'([^'\r\n]+)'/g;
   const group = name => {
-    const assignments = [...src.matchAll(new RegExp(`^[ \\t]*\\$${name}[ \\t]*=`, 'gm'))];
-    if (assignments.length !== 1 || inComment(assignments[0].index)) return null;
-    const m = new RegExp(`^\\$${name}[ \\t]*=[ \\t]*\\[ordered\\]@\\{([^}\\r\\n]*)\\}[ \\t]*\\r?$`, 'm').exec(src);
+    const v = `(?:\\$(?:(?:script|global|local|private):)?${name}(?![A-Za-z0-9_])|\\$\\{(?:(?:script|global|local|private):)?${name}\\})`;
+    const assignments = [...code.matchAll(new RegExp(`${v}[ \\t]*(?:[-+*/%]|\\?\\?)?=(?!=)`, 'gi'))];
+    const changed = new RegExp(`${v}[ \\t]*(?:\\[[^\\]\\r\\n]*\\][ \\t]*=(?!=)|\\.[A-Za-z_][A-Za-z0-9_]*[ \\t]*=(?!=)|\\.(?:Add|Remove|RemoveAt|Clear|Insert|Set_Item)[ \\t]*\\()`, 'i').test(code);
+    const byCmdlet = new RegExp(`\\b(?:Set|New|Remove|Clear)-Variable\\b[^\\r\\n]*[\\s'"]${name}(?![A-Za-z0-9_])`, 'i').test(lines);
+    if (assignments.length !== 1 || changed || byCmdlet) return null;
+    const m = new RegExp(`^\\$${name}[ \\t]*=[ \\t]*\\[ordered\\]@\\{([^}\\r\\n]*)\\}[ \\t]*\\r?$`, 'mi').exec(lines);
     if (!m || m.index !== assignments[0].index) return null;
     const body = m[1];
     if (body.replace(pairRe, '').replace(/[;\s]/g, '') !== '') return null;
