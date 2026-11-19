@@ -508,7 +508,6 @@ test('the drill receipt keeps each executor state first observed during the arme
     $script:Drill.Runs = ${q(root)}
     function Assert-DrillHost { @{ freeGB = 64 } }
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
-    function Test-DrillM5Applicable { $false }
     function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
     function Restore-VMCheckpoint { param($VMName, $Name, [switch]$Confirm) }
     function Start-DrillBootWatchdog { ${q(path.join(root, 'fake-watchdog'))} }
@@ -814,15 +813,16 @@ test('M5 collects the six public observations and requires the host checker for 
   assert.deepEqual(present.verdict, { result: 'PASS' });
 });
 
-function m5DrillReceipt(name, renewalPaths) {
+// A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
+// M5 observations `missing` and a host checker that answers `checker`.
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'] } = {}) {
   const root = path.join(tmp, name);
-  const checker = path.join(root, 'test', 'renewal-drill.mjs');
-  fs.mkdirSync(path.dirname(checker), { recursive: true });
-  fs.writeFileSync(checker, `console.log(JSON.stringify({ result: 'FAIL' })); process.exitCode = 1;`);
+  const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
+  fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
+  fs.writeFileSync(checkerFile, checker === 'PASS' ? `console.log(JSON.stringify({ result: 'PASS' }));`
+    : `console.log(JSON.stringify({ result: 'FAIL' })); process.exitCode = 1;`);
   const archive = path.join(root, 'package.tar');
-  const files = ['windows/install-resident.ps1', ...renewalPaths].map(rel => ({
-    path: `tree/work/independent-ci-resident-v1/${rel}`, data: Buffer.from(rel),
-  }));
+  const files = ['tree/work/independent-ci-resident-v1/windows/install-resident.ps1', ...paths].map(p => ({ path: p, data: Buffer.from(p) }));
   const manifest = { contract: 'clued.independent-ci.fleet-universal/1', version: '1.2.3',
     files: files.map(({ path, data }) => ({ path, sha256: sha(data), bytes: data.length })) };
   fs.writeFileSync(archive, writeTar([...files, { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]));
@@ -835,7 +835,7 @@ function m5DrillReceipt(name, renewalPaths) {
     function Assert-DrillHost { @{ freeGB = 20 } }
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
     $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
-    $fixture.m5 = @{ directory = 'm5'; missing = @('probe.json'); collectionCode = $null }
+    $fixture.m5 = @{ directory = 'm5'; missing = @(${missing.map(q).join(', ')}); collectionCode = $null }
     function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
     $package = @{ version = '1.2.3'; tar = ${q(archive)}; tarSha256 = ${q(sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)} }
     $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
@@ -844,26 +844,51 @@ function m5DrillReceipt(name, renewalPaths) {
   return receipt;
 }
 
-test('a legacy archive stays eligible for A-tier PASS with a renewal checker on the host', opts, () => {
-  // The accepted 78ad314b package lists the runner swap broker but no renewal contract.
-  const receipt = m5DrillReceipt('m5-legacy', ['windows/SwapBroker.cs']);
-  assert.equal(receipt.m5.result, 'NOT_EVALUATED');
-  assert.equal(receipt.m5.detail, 'M5 未评估（本次包的文件清单无续期组件）');
-  const done = finalize('m5-legacy-finalize', receipt);
-  assert.equal(done.status, 0);
-  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
-  assert.equal(JSON.parse(done.bytes).m5.result, 'NOT_EVALUATED');
+// Fable ruling 11-19 section 2.2: there is no "not evaluated counts" exit. The applicability test read a hard-coded archive path
+// (windows/ci-connection-renew.contract.json) that 3bc571a6 does not have (its contract is under apps/clued-cloud/worker/), so the drill
+// of a package WITH the renewal skipped M5 silently. M5 is now collected for every package and the conclusion requires M5 = PASS.
+const RENEWAL_3BC571A6 = ['tree/apps/clued-cloud/worker/ci-connection-renew.contract.json', 'tree/work/independent-ci-resident-v1/src/connection-renewal.mjs',
+  'tree/work/independent-ci-resident-v1/windows/SwapBroker.cs', 'tree/work/independent-ci-resident-v1/windows/BrokerPureTests.cs'];
+
+test('M5 is collected and judged for every package: the 3bc571a6 layout and a package without the renewal alike', opts, () => {
+  const current = m5DrillReceipt('m5-3bc571a6', RENEWAL_3BC571A6);
+  assert.equal(current.m5.result, 'FAIL');
+  assert.deepEqual(current.m5.missing, ['probe.json']);
+  assert.equal(current.m5.detail, 'DRILL_M5_OBSERVATIONS_MISSING');
+  assert.equal(current.conclusion, 'FAIL');
+  // the accepted 78ad314b listed the runner swap broker but no renewal: its observations are missing, so M5 fails, never "not evaluated"
+  const legacy = m5DrillReceipt('m5-legacy', ['tree/work/independent-ci-resident-v1/windows/SwapBroker.cs']);
+  assert.equal(legacy.m5.result, 'FAIL');
+  assert.equal(legacy.conclusion, 'FAIL');
+  const done = finalize('m5-legacy-finalize', legacy);
+  assert.equal(done.output.code, 'DRILL_RECEIPT_NOT_FINALIZABLE', JSON.stringify(done.output));
+  assert.equal(done.bytes, done.original);
+  // no second copy of the package layout in the drill: nothing to fall out of date
+  const text = fs.readFileSync(script, 'utf8');
+  assert.doesNotMatch(text, /ci-connection-renew\.contract\.json/);
+  assert.doesNotMatch(text, /Test-DrillM5Applicable/);
+  assert.doesNotMatch(text, /M5 未评估/);
 });
 
-test('missing renewal observations fail only M5 and still allow A-tier Finalize', opts, () => {
-  const receipt = m5DrillReceipt('m5-renewal', ['windows/SwapBroker.cs', 'windows/ci-connection-renew.contract.json']);
-  assert.equal(receipt.m5.result, 'FAIL');
-  assert.deepEqual(receipt.m5.missing, ['probe.json']);
-  assert.equal(receipt.conclusion, 'PENDING_PRODUCTION_READBACK');
-  const done = finalize('m5-renewal-finalize', receipt);
-  assert.equal(done.status, 0);
+test('A1-A10 passing with M5 not PASS is never a PASS; with M5 PASS the A tier goes on to -Finalize', opts, () => {
+  const passed = m5DrillReceipt('m5-pass', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
+  assert.equal(passed.m5.result, 'PASS');
+  assert.equal(passed.conclusion, 'PENDING_PRODUCTION_READBACK');
+  const done = finalize('m5-pass-finalize', passed);
+  assert.equal(done.status, 0, JSON.stringify(done.output));
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
-  assert.equal(JSON.parse(done.bytes).m5.result, 'FAIL');
+  const checkerFailed = m5DrillReceipt('m5-checker-fail', RENEWAL_3BC571A6, { checker: 'FAIL', missing: [] });
+  assert.equal(checkerFailed.m5.result, 'FAIL');
+  assert.equal(checkerFailed.conclusion, 'FAIL');
+  // -Finalize judges M5 too: a receipt whose items all pass but whose M5 is not PASS (or absent: a receipt written before this rule)
+  const items = verdictOf(evidence()).items;
+  for (const [name, m5] of [['m5-fail', { result: 'FAIL' }], ['m5-not-evaluated', { result: 'NOT_EVALUATED' }], ['m5-absent', undefined]]) {
+    const r = finalize(`finalize-${name}`, { items, m5 });
+    assert.equal(r.status, 0, JSON.stringify(r.output));
+    assert.equal(r.output.conclusion, 'FAIL', name);
+    assert.equal(JSON.parse(r.bytes).conclusion, 'FAIL', name);
+  }
+  assert.deepEqual(ps(`@((Get-DrillConclusion @() @{ result = 'PASS' }), (Get-DrillConclusion (${q(JSON.stringify(items.map(i => ({ ...i, pass: true }))))} | ConvertFrom-Json) @{ result = 'NOT_EVALUATED' }))`), ['FAIL', 'FAIL']);
 });
 
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
@@ -1023,7 +1048,7 @@ function evidence(over = {}) {
 }
 // Build the evidence hashtable in PowerShell from JSON (nested objects as PSCustomObject, as the guest reads give them).
 const verdictOf = (json) => ps(`$j = ${q(json)} | ConvertFrom-Json; $h = @{}; foreach ($p in $j.PSObject.Properties) { $h[$p.Name] = $p.Value };
-  $h.now = [DateTimeOffset]::Parse($j.now); $items = Get-DrillVerdict $h; [ordered]@{ items = @($items); conclusion = (Get-DrillConclusion $items) }`);
+  $h.now = [DateTimeOffset]::Parse($j.now); $items = Get-DrillVerdict $h; [ordered]@{ items = @($items); conclusion = (Get-DrillConclusion $items @{ result = 'PASS' }) }`);
 const pass = (r) => Object.fromEntries(r.items.map((i) => [i.id, i.pass]));
 
 test('adapted kits can never become PASS_A_FULL, including after production finalization or erased per-node steps', opts, () => {
@@ -1033,7 +1058,7 @@ test('adapted kits can never become PASS_A_FULL, including after production fina
     const r = verdictOf(evidence({ kit }));
     assert.equal(pass(r).A10, false);
     const items = r.items.map(i => ['A5', 'A9'].includes(i.id) ? { ...i, pass: true } : i);
-    assert.equal(ps(`Get-DrillConclusion (${q(JSON.stringify(items))} | ConvertFrom-Json)`), 'PASS_A_PER_NODE_STEPS_REMAIN');
+    assert.equal(ps(`Get-DrillConclusion (${q(JSON.stringify(items))} | ConvertFrom-Json) @{ result = 'PASS' }`), 'PASS_A_PER_NODE_STEPS_REMAIN');
   }
 });
 
@@ -1123,7 +1148,7 @@ const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bi
 const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });
 function finalize(name, fields) {
   const receipt = { contract: 'clued.independent-ci.drill-receipt/1', startedAt, evidence: { localSource: S },
-    failure: null, restoredToCheckpoint: true, conclusion: 'PENDING_PRODUCTION_READBACK', ...fields };
+    failure: null, restoredToCheckpoint: true, conclusion: 'PENDING_PRODUCTION_READBACK', m5: { result: 'PASS' }, ...fields };
   const receiptFile = path.join(tmp, `${name}.json`);
   const readback = path.join(tmp, 'readback.json');
   const original = JSON.stringify(receipt);
