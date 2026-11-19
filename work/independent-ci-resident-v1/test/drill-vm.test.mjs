@@ -3625,3 +3625,70 @@ test('the emergency restore counts stage-timings.json saved on its own as eviden
   assert.equal(r.evidence, 'PARTIAL');
   assert.equal(r.stageTimings, true);
 });
+
+// Codex review of 6th round (f697c6a65), medium 1: any write to an entry or a property of a credential constant after its declaration --
+// plain or compound assignment, through an index or a property, or a mutating method -- changes the list the package uses: the builder
+// refuses the kit and the gate before boot refuses the drill.
+test('a credential constant changed after its declaration through an index, a property or a method: no kit, no boot', opts, async () => {
+  const base = hostScriptText();
+  const changes = [
+    ['index, compound +=', "$RequiredCredentialFiles['companionToken'] += '.old'"],
+    ['index, compound -=', "$RequiredCredentialFiles['n'] -= 1"],
+    ['index, ??=', "${RequiredCredentialFiles}['extra'] ??= 'extra.token'"],
+    ['index, plain, scope-qualified', "$script:OptionalCredentialFiles['heartbeatToken'] = 'other.token'"],
+    ['property, compound', "$OptionalCredentialFiles.heartbeatToken += '.x'"],
+    ['chained index and property', "$RequiredCredentialFiles['appKey'].Length = 3"],
+    ['Add, another case', "[void]$requiredcredentialfiles.Add('extra', 'extra.token')"],
+    ['Remove', "$RequiredCredentialFiles.Remove('companionToken')"],
+    ['Clear', "$OptionalCredentialFiles.Clear()"],
+    ['Insert', "$RequiredCredentialFiles.Insert(0, 'extra', 'extra.token')"],
+  ];
+  for (const [reason, line] of changes) assert.throws(() => drillKit.packageCredentials(base + line + '\r\n'), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
+  // reading them is no change: Contains, Keys, an index read
+  assert.deepEqual(drillKit.packageCredentials(base + "if ($RequiredCredentialFiles.Contains('companionToken')) { $f = $RequiredCredentialFiles['companionToken']; $k = @($OptionalCredentialFiles.Keys) }\r\n"), PACKAGE_CREDENTIALS);
+  // the builder and the gate before boot, on a package that changes its list after the declaration
+  const changed = firstInstallAssets('r6-changed-after', { hostText: base + changes[0][1] + '\r\n' });
+  prepareFrom({ ...changed, out: changed.from });
+  await assert.rejects(() => makeDrillKit(changed), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
+  const good = firstInstallAssets('r6-changed-gate');
+  prepareFrom({ ...good, out: good.from });
+  await makeDrillKit(good);
+  const tar = path.join(changed.from, `fleet-node-${changed.version}.tar`);
+  assert.equal(ps(`try { Assert-DrillKitCredentialsBound (Read-DrillKit ${q(good.out)}) ${q(tar)}; 'bound' } catch { (Get-DrillCode $_).code }`), 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
+});
+
+// 6th round, low 1: the decision table is looked up the same way at both ends, the way the package is read and bound: by file name,
+// ordinal and case-sensitive. A name the table spells otherwise is no decision at either end: the run refuses it, the kit registers nothing.
+test('the decision table is looked up ordinally and case-sensitively at both ends', opts, () => {
+  const inputs = { payloads: { 'release-pins.json': Buffer.from('{}'), 'first-install-entry.ps1': Buffer.from('entry') },
+    prereqBytes: Buffer.from('{"contract":"clued.drill.prereq/1"}\r\n') };
+  const respelt = { ...PACKAGE_CREDENTIALS, required: { ...PACKAGE_CREDENTIALS.required, companionToken: 'Companion-GitHub.token' } };
+  assert.deepEqual(planOf(respelt), { code: 'DRILL_CREDENTIAL_REQUIRED_NOT_MADE', detail: 'Companion-GitHub.token' });
+  assert.equal(drillKitManifest({ ...inputs, credentials: respelt }).perNodeSteps.length, 3);
+  const optional = { ...PACKAGE_CREDENTIALS, optional: { heartbeatToken: 'CI-Node-Heartbeat.token' } };
+  assert.deepEqual(planOf(optional), { code: 'DRILL_CREDENTIAL_OPTIONAL_UNDECIDED', detail: 'CI-Node-Heartbeat.token' });
+  assert.equal(ps(`$script:DrillCredentialDecisions.Contains('Companion-GitHub.token')`), false);
+  assert.equal(ps(`$script:DrillCredentialDecisions.Contains('companion-github.token')`), true);
+});
+
+// 6th round, low 2: the evidence summary decides ok after the launcher verdict is read back; a read-back that fails is recorded with its
+// detail and makes ok false.
+test('a launcher verdict saved but not read back is recorded and makes the evidence summary not ok', opts, () => {
+  const e = JSON.parse(evidence());
+  const guest = guestWorkDir('r6-readback-guest', { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
+    'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1}' });
+  const runDir = path.join(tmp, 'r6-readback'); fs.mkdirSync(runDir, { recursive: true });
+  const r = ps(`
+    $orig = \${function:Read-DrillJson}
+    function Read-DrillJson([string]$Path) { if ($Path -like '*stage-evidence.json') { throw 'read back failed' }; & $orig $Path }
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script ${q(guest)} $ArgumentList[1] }
+    $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+    @{ record = (Get-Content -Raw -LiteralPath (Join-Path ${q(runDir)} 'guest-evidence.json') | ConvertFrom-Json); launcher = $c.launcher }`);
+  assert.equal(r.record.stageFiles['launcher-result.json'].state, 'saved');
+  assert.equal(r.launcher, null);
+  assert.equal(r.record.ok, false);
+  assert.equal(r.record.launcherReadback.ok, false);
+  assert.match(r.record.launcherReadback.error, /read back failed/);
+});
