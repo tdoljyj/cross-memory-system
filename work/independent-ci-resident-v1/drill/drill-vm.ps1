@@ -566,8 +566,9 @@ function Read-DrillPrereq([string]$Dir) {
 # Returns facts only; the host judges them. Never downloads: dpkg installs exactly the pinned files. (apt-get, even with
 # --no-download, resolved against the apt lists the Ubuntu image ships and wanted archives from the network: 2026-11-16 12:58.)
 $script:GuestPrereq = {
-  param($Dir, $Wsl, $Rootfs, $Distro, $WslVersion)
+  param($Dir, $Wsl, $Rootfs, $Distro, $WslVersion, $NativeText)
   $ErrorActionPreference = 'Stop'
+  $native = [scriptblock]::Create($NativeText)
   $wslExe = "$env:SystemRoot\System32\wsl.exe"
   $p = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList @('/i', (Join-Path $Dir $Wsl), '/qn', '/norestart') -Wait -PassThru
   if ($p.ExitCode -notin @(0, 3010)) { throw "PREREQ_WSL_MSI_EXIT_$($p.ExitCode)" }
@@ -576,15 +577,16 @@ $script:GuestPrereq = {
   & $wslExe --install --from-file (Join-Path $Dir $Rootfs) --name $Distro --no-launch | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "PREREQ_DISTRO_INSTALL_EXIT_$LASTEXITCODE" }
   # --exec: the arguments go to env as they are (with `--` WSL runs the command line through root's shell, which split the
-  # bash -c text at its | and ; - 2026-11-16 13:07). Continue: in Windows PowerShell a native stderr line under 2>&1 would
-  # otherwise become a terminating error; the output is judged as data.
-  $root = { param([string]$cmd) $ErrorActionPreference = 'Continue'; $o = @(& $wslExe -d $Distro -u root --exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C DEBIAN_FRONTEND=noninteractive /bin/bash -c $cmd 2>&1 | ForEach-Object { ([string]$_) -replace [char]0, '' }); [ordered]@{ exit = $LASTEXITCODE; out = $o } }
+  # bash -c text at its | and ; - 2026-11-16 13:07). stdout and stderr apart (Invoke-DrillNative): the stdout lines are judged as data,
+  # stderr is kept beside them.
+  $root = { param([string]$cmd) $n = & $native $wslExe @('-d', $Distro, '-u', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', 'LC_ALL=C', 'DEBIAN_FRONTEND=noninteractive', '/bin/bash', '-c', $cmd) 3600
+    [ordered]@{ exit = $n.exit; out = @($n.stdout -split "`r?`n" | Where-Object { $_ -ne '' }); err = $n.stderr } }
   $debDir = '/mnt/' + $Dir.Substring(0, 1).ToLowerInvariant() + ($Dir.Substring(2) -replace '\\', '/') + '/debs'
   $dpkg = & $root "dpkg -i --force-confold $debDir/*.deb 2>&1 | tail -n 25; echo DPKG_EXIT=`${PIPESTATUS[0]}; echo AUDIT=`$(dpkg --audit | wc -l)"
   $dpkgExit = @($dpkg.out | Where-Object { $_ -match '^DPKG_EXIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
   $audit = @($dpkg.out | Where-Object { $_ -match '^AUDIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
   $facts = & $root "for i in `$(seq 1 30); do systemctl is-active --quiet docker.service && break; sleep 2; done; grep ^PRETTY_NAME /usr/lib/os-release; ps -p 1 -o comm=; systemctl is-active docker.service; dpkg-query -W -f='`${Package} `${Version}\n' docker.io containerd runc"
-  [ordered]@{ wslVersion = $ver; distribution = $Distro; dpkgExit = $dpkgExit; dpkgAuditLines = $audit; dpkgTail = @($dpkg.out); facts = $facts.out
+  [ordered]@{ wslVersion = $ver; distribution = $Distro; dpkgExit = $dpkgExit; dpkgAuditLines = $audit; dpkgTail = @($dpkg.out); dpkgStderr = $dpkg.err; facts = $facts.out; factsStderr = $facts.err
     dockerActive = (@($facts.out) -contains 'active'); systemdPid1 = (@($facts.out) -contains 'systemd') }
 }
 
@@ -667,7 +669,7 @@ function Wait-DrillInteractive([string]$RunDir, $Paths, [pscredential]$Cred) {
     try { Copy-Item -LiteralPath 'C:\drill\work\interactive-screen.png' -Destination (Join-Path $RunDir 'interactive-screen.png') -FromSession $session }
     finally { Remove-PSSession -Session $session }
   }
-  return @{ entry = (ConvertFrom-DrillInteractiveEvidence $observed); credential = $Cred }
+  return @{ entry = (ConvertFrom-DrillInteractiveEvidence $observed); launcher = $observed.terminal; credential = $Cred }
 }
 
 function New-DrillItem([string]$Id, $Pass, [string]$Detail) { [ordered]@{ id = $Id; pass = $Pass; detail = $Detail } }
@@ -679,8 +681,9 @@ function Test-DrillReinstallLauncher($Reinstall) {
 
 # The phase-A verdict (plan section 3) from what the drill read in the guest. pass: $true, $false, or $null (not judged here:
 # A5's production half and A9 are judged by -Finalize from the production read-back).
-#   $E: entry (Read-DrillEntryResult), verify (@{status}), status (status.json), current (upgrade\current.json),
-#       facts (version-facts.json), acceptanceSource, now (DateTimeOffset), reboot (@{ok, status}), reinstall (@{skipped, ...}), kit
+#   $E: entry (Read-DrillEntryResult), launcher (the launcher's terminal), pause (state\PAUSED.json: sha256, requestSha256),
+#       verify (@{status}), status (status.json), current (upgrade\current.json), facts (version-facts.json), acceptanceSource,
+#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (@{skipped, ...}), kit
 function Get-DrillVerdict($E) {
   $items = New-Object System.Collections.ArrayList
   $now = [DateTimeOffset]$E.now
@@ -701,12 +704,23 @@ function Get-DrillVerdict($E) {
   # a candidate (Fable ruling 11-19 renew-key section 4.3) has no production half: A5 is the guest's Source against the request's, here
   if ((Get-Prop $E 'candidate') -eq $true) { [void]$items.Add((New-DrillItem 'A5' $a5 "local=$local acceptance=$($E.acceptanceSource); candidate: no production half")) }
   else { [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize")) }
+  # A6 (Fable renew-key ruling, supplement "eight on the path", item 5): a successful launcher ends with its own pause confirmed, so the
+  # node holds THAT pause: the request the launcher's terminal confirmed (pause.requestSha256, the one source) is the one state\PAUSED.json
+  # names, the status says paused and the executor rests PAUSED, with UNCERTAIN, no current batch, live 0 and no HALT. Idle is no pass.
   $s = $E.status
-  $a6 = ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') -and ([string](Get-Prop $s 'executor.state') -ceq 'IDLE') -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
-  [void]$items.Add((New-DrillItem 'A6' $a6 "mode=$(Get-Prop $s 'node.mode') executor=$(Get-Prop $s 'executor.state') live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
+  $want = [string](Get-Prop $E.launcher 'pause.requestSha256'); $held = [string](Get-Prop $E.pause 'requestSha256')
+  $ownPause = ((Get-Prop $E.launcher 'pause.confirmed') -eq $true) -and ($want -cmatch '^[0-9a-f]{64}$') -and ($held -ceq $want)
+  $a6 = $ownPause -and ((Get-Prop $s 'paused') -eq $true) -and ([string](Get-Prop $s 'executor.state') -ceq 'PAUSED') -and ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') `
+    -and ($null -eq (Get-Prop $s 'current')) -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
+  [void]$items.Add((New-DrillItem 'A6' $a6 "pause=$held confirmedByLauncher=$want paused=$(Get-Prop $s 'paused') executor=$(Get-Prop $s 'executor.state') mode=$(Get-Prop $s 'node.mode') current=$($null -ne (Get-Prop $s 'current')) live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
+  # A7: the status rewritten after this boot, and a self-check that passed, is fresh AND was observed after this boot (never the boot before's).
   $r = $E.reboot
   if ($null -eq $r) { [void]$items.Add((New-DrillItem 'A7' $false 'not run')) }
-  else { $sc = Test-DrillSelfcheck 'A7' $r.status ([DateTimeOffset]$r.readAt); [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass) "refreshedAfterBoot=$($r.ok) $($sc.detail)")) }
+  else {
+    $sc = Test-DrillSelfcheck 'A7' $r.status ([DateTimeOffset]$r.readAt)
+    $scAfter = Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) ([string](Get-Prop $r 'boot'))
+    [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail)"))
+  }
   $ri = $E.reinstall
   if ($null -eq $ri -or $ri.skipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall)')) }
   else {
@@ -722,6 +736,12 @@ function Get-DrillVerdict($E) {
   }
   [void]$items.Add((New-DrillItem 'A10' ($steps.Count -eq 0) $(if ($steps.Count) { 'per-node steps: ' + ($steps -join ' | ') } else { 'one command, no node value' })))
   return ,$items.ToArray()
+}
+
+# $At (a status or self-check time) later than $Boot (this boot); either missing or unreadable is not later.
+function Test-DrillAfterBoot([string]$At, [string]$Boot) {
+  if (-not $At -or -not $Boot) { return $false }
+  try { return [DateTimeOffset]::Parse($At, [Globalization.CultureInfo]::InvariantCulture) -gt [DateTimeOffset]::Parse($Boot, [Globalization.CultureInfo]::InvariantCulture) } catch { return $false }
 }
 
 function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
@@ -907,6 +927,27 @@ function Get-DrillIntakeTool {
     return @{ root = $root; node = $node; tool = $tool }
   } catch { throw (New-DrillError 'DRILL_HOST_INTAKE_TOOL_UNAVAILABLE') }
 }
+
+# Every child the drill starts in the guest (the kit entry, verify, the A8 tools, root in the prerequisite distribution) runs here, by the
+# package's rule (Invoke-Native, windows/first-install-host.ps1): stdout and stderr read apart, so a line a tool writes on stderr is text,
+# never a PowerShell error that ends the step under Stop (the merged 2>&1 reads did that: Fable renew-key ruling, supplement "eight on
+# the path", risks taken in). A child still running at $Seconds is left running (nothing is killed) and the step stops by name.
+# Self-contained: the guest receives it as text ($script:DrillNativeText) and makes it a script block there.
+function Invoke-DrillNative {
+  param([string]$Exe, [string[]]$Arguments, [int]$Seconds = 3600)
+  $quote = { param([string]$a) if ($a.Length -gt 0 -and $a -notmatch '[\s"]') { $a } else { '"' + (($a -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' } }
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $Exe; $psi.Arguments = (@($Arguments | ForEach-Object { & $quote $_ }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+  $utf8 = New-Object Text.UTF8Encoding($false); $psi.StandardOutputEncoding = $utf8; $psi.StandardErrorEncoding = $utf8
+  $p = [Diagnostics.Process]::Start($psi)
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if (-not $p.WaitForExit($Seconds * 1000)) { throw ('COMMAND_TIMEOUT_NOTHING_KILLED: ' + [IO.Path]::GetFileName($Exe)) }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $err = ([string]$e.Result) -replace "`0", ''
+  [ordered]@{ exit = $p.ExitCode; stdout = (([string]$o.Result) -replace "`0", ''); stderr = $(if ($err.Length -gt 4000) { $err.Substring($err.Length - 4000) } else { $err }) }
+}
+$script:DrillNativeText = ${function:Invoke-DrillNative}.ToString()
 
 function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeconds) {
   $child = [Diagnostics.Process]::new()
@@ -1415,24 +1456,33 @@ function Invoke-DrillBaseline([string]$RunDir, [switch]$ExistingOnly) {
 
 # The guest reads of one verdict pass: status, current, facts, verify. Inside the VM only.
 $script:GuestRead = {
-  param($Root)
+  param($Root, $NativeText)
   $ErrorActionPreference = 'Stop'
+  $native = [scriptblock]::Create($NativeText)
   $read = { param($p) if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null } }
   $status = & $read (Join-Path $Root 'state\status.json')
   $current = & $read (Join-Path $Root 'upgrade\current.json')
   $factsFile = Join-Path $Root 'upgrade\mailbox\responses\version-facts.json'
   $facts = & $read $factsFile
-  $verify = [ordered]@{ status = 'NOT_RUN'; exit = $null; tail = @() }
+  # the pause the node holds (A6 holds it to the one the launcher confirmed): the file's sha256 and the request it names
+  $pausedFile = Join-Path $Root 'state\PAUSED.json'
+  $pause = $null
+  if (Test-Path -LiteralPath $pausedFile -PathType Leaf) {
+    $pausedSource = try { (Get-Content -LiteralPath $pausedFile -Raw -Encoding UTF8 | ConvertFrom-Json).source } catch { $null }
+    $pause = [ordered]@{ sha256 = (Get-FileHash -LiteralPath $pausedFile -Algorithm SHA256).Hash.ToLowerInvariant()
+      requestSha256 = $(if ($pausedSource -and $pausedSource.PSObject.Properties['requestSha256']) { [string]$pausedSource.requestSha256 } else { $null }) }
+  }
+  $verify = [ordered]@{ status = 'NOT_RUN'; exit = $null; tail = @(); stderr = $null }
   $receipt = Join-Path $Root 'install\install-receipt.json'
   if ($current -and (Test-Path -LiteralPath $receipt)) {
     $script = Join-Path $Root ("resident\" + $current.residentManifestSha256 + "\windows\verify-resident.ps1")
     $rs = (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
-    $out = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -ExpectedInstallReceiptSha256 $rs -LinuxVersionFactsFile $factsFile 2>&1 | ForEach-Object { [string]$_ })
-    $code = $LASTEXITCODE
+    $n = & $native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script, '-ExpectedInstallReceiptSha256', $rs, '-LinuxVersionFactsFile', $factsFile) 840
+    $out = @($n.stdout -split "`r?`n")
     $verdict = @($out | Where-Object { $_ -match 'RESIDENT_VERIF' }) | Select-Object -Last 1
-    $verify = [ordered]@{ status = $(if ($verdict -match '(RESIDENT_[A-Z_]+)') { $Matches[1] } else { 'UNPARSED' }); exit = $code; tail = @($out | Select-Object -Last 40) }
+    $verify = [ordered]@{ status = $(if ($verdict -match '(RESIDENT_[A-Z_]+)') { $Matches[1] } else { 'UNPARSED' }); exit = $n.exit; tail = @($out | Select-Object -Last 40); stderr = $n.stderr }
   }
-  [ordered]@{ status = $status; current = $current; facts = $facts; verify = $verify; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
+  [ordered]@{ status = $status; current = $current; facts = $facts; pause = $pause; verify = $verify; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
 }
 
 # Copy the pinned prerequisites into the VM, re-check their hashes there, install them (GuestPrereq). Stops on any miss.
@@ -1447,7 +1497,7 @@ function Invoke-DrillPrereqInGuest([string]$RunDir, $Prereq, [pscredential]$Cred
     $bad = Invoke-Command -Session $session -ScriptBlock { param($d, $w) @($w.Keys | Where-Object { (Get-FileHash -LiteralPath (Join-Path $d $_) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $w[$_] }) } -ArgumentList $dest, $want
     if (@($bad).Count) { throw (New-DrillError 'DRILL_PREREQ_CHANGED_IN_COPY' @($bad)) }
   } finally { Remove-PSSession -Session $session }
-  try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' -Step 'prereq' }
+  try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion, $script:DrillNativeText) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' -Step 'prereq' }
   catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_GUEST_STEP_FAILED') { throw }; throw (New-DrillError 'DRILL_PREREQ_FAILED' $c.detail) }
   Write-DrillJson (Join-Path $RunDir 'prereq-facts.json') $facts
   if ($facts.dpkgExit -ne 0 -or $facts.dpkgAuditLines -ne 0 -or -not $facts.dockerActive -or -not $facts.systemdPid1) {
@@ -1653,17 +1703,20 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) 
 }
 
 $script:GuestReinstall = {
-  param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha)
+  param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha, $NativeText)
+  $native = [scriptblock]::Create($NativeText)
   $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
   $last = { param($lines) $l = @($lines | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { try { $l | ConvertFrom-Json } catch { $null } } }
-  $up = @(& $Node (Join-Path $fleet 'upgrade.mjs') fetch --version $Version --work (Join-Path $Work 'a8-upgrade') --from $From --no-request 2>&1 | ForEach-Object { [string]$_ })
-  $p1 = @(& $Node (Join-Path $fleet 'install.mjs') prepare --artifact (Join-Path $From $TarName) --artifact-sha $TarSha --acceptance (Join-Path $From $AccName) --work (Join-Path $Work 'a8-prepare') 2>&1 | ForEach-Object { [string]$_ })
+  $upRun = & $native $Node @((Join-Path $fleet 'upgrade.mjs'), 'fetch', '--version', $Version, '--work', (Join-Path $Work 'a8-upgrade'), '--from', $From, '--no-request') 3600
+  $p1Run = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare')) 3600
+  $up = @($upRun.stdout -split "`r?`n"); $p1 = @($p1Run.stdout -split "`r?`n")
   $upj = & $last $up; $p1j = & $last $p1
   $reinstall = [ordered]@{ skipped = $false;
     upgradeStatus = $(if ($upj -and $upj.PSObject.Properties['status']) { [string]$upj.status });
     prepareStatus = $(if ($p1j -and $p1j.PSObject.Properties['status']) { [string]$p1j.status });
     launcherVerdict = 'NOT_RUN_MISSING_RUN_COMMAND'; launcherStatus = $null; launcherExit = $null; launcherTail = @(); launcherStderr = $null;
-    upgradeTail = @($up | Select-Object -Last 5); prepareTail = @($p1 | Select-Object -Last 5);
+    upgradeTail = @($up | Where-Object { $_ -ne '' } | Select-Object -Last 5); prepareTail = @($p1 | Where-Object { $_ -ne '' } | Select-Object -Last 5);
+    upgradeExit = $upRun.exit; upgradeStderr = $upRun.stderr; prepareExit = $p1Run.exit; prepareStderr = $p1Run.stderr;
     reverifyPassed = $false; prepareAgainStatus = $null }
   $runCommand = if ($p1j) { $p1j.PSObject.Properties['runCommand'] }
   if ($runCommand -and $runCommand.Value -is [string] -and -not [string]::IsNullOrWhiteSpace($runCommand.Value)) {
@@ -1732,13 +1785,20 @@ $script:GuestM5Files = {
       if ($at -gt $latest) { $latest = $at; $public['probe.json'] = $data }
     } catch { }
   }
+  # record.json: the connection record as this administrator reads it (Fable renew-key ruling, supplement "eight on the path", item 8).
+  # Whether it is there, never its content: PRESENT, or ABSENT when the file or its directory is not found (install-resident.ps1's
+  # baseline reads it the same way); any other answer leaves the observation missing, so M5 fails.
+  try {
+    [void][IO.File]::GetAttributes((Join-Path (Split-Path -Parent $Root) 'secrets\ci-admission.connection.json')); $record = 'PRESENT'
+  } catch [IO.FileNotFoundException] { $record = 'ABSENT' } catch [IO.DirectoryNotFoundException] { $record = 'ABSENT' } catch { $record = $null }
+  if ($record) { $public['record.json'] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"ci-admission.connection.json":"' + $record + '"}')) }
   return $public
 }
 
 function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
   $dir = Join-Path $RunDir 'm5'
   New-Item -ItemType Directory -Path $dir | Out-Null
-  $names = @('profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json')
+  $names = @('profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json', 'record.json')
   $missing = @(); $code = $null
   try { $files = Invoke-DrillGuest $Cred $script:GuestM5Files -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'm5-observations' }
   catch { $files = $null; $code = (Get-DrillCode $_).code }
@@ -1775,6 +1835,23 @@ function Get-DrillM5Verdict([string]$RunDir, $M5) {
   return $M5
 }
 
+# A1's kit entry in the guest, once, bounded, read apart (Invoke-DrillNative): its last stdout line is the result, its stderr is kept.
+$script:GuestEntry = {
+  param($Entry, $EntryArgs, $Minutes, $NativeText)
+  $native = [scriptblock]::Create($NativeText)
+  $n = & $native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $Entry) + @($EntryArgs)) ([int]$Minutes * 60)
+  [ordered]@{ lines = @($n.stdout -split "`r?`n"); stderr = $n.stderr; exit = $n.exit }
+}
+
+# A8's second prepare after the reinstall, read the same way.
+$script:GuestPrepareAgain = {
+  param($Node, $Tree, $From, $Work, $TarName, $AccName, $TarSha, $NativeText)
+  $native = [scriptblock]::Create($NativeText)
+  $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
+  $n = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare-again')) 3600
+  $l = @($n.stdout -split "`r?`n" | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }
+}
+
 function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
   $g = $script:Drill.GuestWork
   $prereqFacts = if ($Interactive -or $KitInfo.prerequisiteMode -ceq 'first-install-host') { @{ mode = 'first-install-host'; preparedByEntry = (-not $Interactive) } } else { Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred }
@@ -1790,19 +1867,16 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
 
-  $timings = $null
+  $timings = $null; $launcher = $null
   if ($Interactive) {
     $interactiveRun = Wait-DrillInteractive $RunDir $paths $Cred
-    $entry = $interactiveRun.entry; $Cred = $interactiveRun.credential
+    $entry = $interactiveRun.entry; $launcher = $interactiveRun.launcher; $Cred = $interactiveRun.credential
   } else {
   # A1: the kit entry, once, bounded. No retry.
   $entryArgs = Resolve-DrillKitArguments $KitInfo.arguments $paths
-  $entryOut = Invoke-DrillGuest $Cred {
-    param($Entry, $EntryArgs)
-    $out = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Entry @EntryArgs 2>&1 | ForEach-Object { [string]$_ })
-    [ordered]@{ lines = $out; exit = $LASTEXITCODE }
-  } -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
+  $entryOut = Invoke-DrillGuest $Cred $script:GuestEntry -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs, $KitInfo.timeoutMinutes, $script:DrillNativeText) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
   [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]@($entryOut.lines))
+  [IO.File]::WriteAllText((Join-Path $RunDir 'first-install.stderr.log'), [string]$entryOut.stderr)
   $entry = Read-DrillEntryResult @($entryOut.lines) ([int]$entryOut.exit)
   $timings = Invoke-DrillGuest $Cred {
     $p = 'C:\drill\work\stage-timings.json'; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json }
@@ -1817,9 +1891,12 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $r
   } -TimeoutMinutes 2 -Step 'stage-evidence'
   Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence
+  # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json
+  $launcherResult = if ($stageEvidence -is [System.Collections.IDictionary]) { $stageEvidence['launcher-result.json'] } elseif ($stageEvidence) { $stageEvidence.PSObject.Properties['launcher-result.json'].Value }
+  $launcher = Get-Prop $launcherResult 'terminal'
   }
 
-  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
+  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
 
   # A7: reboot, nobody logs in; within 10 minutes the status is rewritten after the boot and the self-check still passes.
@@ -1833,10 +1910,11 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
       $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
       [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
     } -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'read-status' -Restartable
-    $written = Get-Prop $r.status 'writtenAt'
-    $ok = $false; if ($written) { try { $ok = [DateTimeOffset]::Parse([string]$written) -gt $boot } catch { $ok = $false } }
-    $reboot = @{ ok = $ok; status = $r.status; readAt = $r.readAt }
-    if ($ok -and [string](Get-Prop $r.status 'versions.selfcheck.result') -ceq 'PASS') { break }
+    $bootAt = $boot.ToString('o')
+    $ok = Test-DrillAfterBoot ([string](Get-Prop $r.status 'writtenAt')) $bootAt
+    $reboot = @{ ok = $ok; status = $r.status; readAt = $r.readAt; boot = $bootAt }
+    # wait for a self-check of this boot, never one the boot before left in the status (A7)
+    if ($ok -and [string](Get-Prop $r.status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) $bootAt)) { break }
     Start-Sleep -Seconds 30
   }
   Write-DrillJson (Join-Path $RunDir 'read-after-reboot.json') $reboot
@@ -1844,27 +1922,22 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
   $reinstall = @{ skipped = $true }
   if (-not $SkipReinstall -and $entry.tree -and $entry.node) {
-    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
+    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
 
   if (Test-DrillReinstallLauncher $reinstall) {
-    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
+    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
     Write-DrillJson (Join-Path $RunDir 'read-after-reinstall.json') $again
     $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
     $reinstall.reverifyPassed = @($reVerdict | Where-Object { $_.id -in @('A2', 'A3', 'A4') -and $_.pass -ne $true }).Count -eq 0 -and $null -eq (@($reVerdict | Where-Object { $_.id -eq 'A5' })[0].pass)
-    $p2 = Invoke-DrillGuest $Cred {
-      param($Node, $Tree, $From, $Work, $TarName, $AccName, $TarSha)
-      $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
-      $o = @(& $Node (Join-Path $fleet 'install.mjs') prepare --artifact (Join-Path $From $TarName) --artifact-sha $TarSha --acceptance (Join-Path $From $AccName) --work (Join-Path $Work 'a8-prepare-again') 2>&1 | ForEach-Object { [string]$_ })
-      $l = @($o | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }
-    } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 60 -Step 'prepare-again'
+    $p2 = Invoke-DrillGuest $Cred $script:GuestPrepareAgain -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 60 -Step 'prepare-again'
     $reinstall.prepareAgainStatus = [string]$p2
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   }
 
   $m5 = try { Copy-DrillM5 $RunDir $Cred } catch { @{ collectionCode = (Get-DrillCode $_).code } }
-  return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
+  return @{ entry = $entry; launcher = $launcher; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
 }
 
 # ---------------------------------------------------------------- main
@@ -1941,7 +2014,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
   }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   try {

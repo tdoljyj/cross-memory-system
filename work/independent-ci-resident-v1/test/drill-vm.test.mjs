@@ -1015,7 +1015,9 @@ test('guest shutdown timer uses the same deadline after a reboot without touchin
   assert.match(r.shutdown, /shutdown\.exe" \/s \/f \/t 0/);
 });
 
-test('M5 collects the six public observations and requires the host checker for an applicable package', opts, () => {
+// Fable renew-key ruling, supplement "eight on the path", item 8: the connection record is judged by what the guest administrator reads
+// (record.json: PRESENT or ABSENT); the companion's own observation must match it (renewal-drill.mjs, test/self-renewal.test.mjs).
+test('M5 collects the six public observations and the administrator\'s read of the connection record, and requires the host checker', opts, () => {
   const root = path.join(tmp, 'm5-guest');
   const resident = path.join(root, 'resident');
   const runDir = path.join(tmp, 'm5-run');
@@ -1048,14 +1050,21 @@ test('M5 collects the six public observations and requires the host checker for 
   assert.deepEqual(absent, { directory: 'm5', missing: [], collectionCode: null,
     result: 'FAIL', detail: 'DRILL_M5_HOST_CHECKER_MISSING' });
   assert.deepEqual(fs.readdirSync(path.join(runDir, 'm5')).sort(),
-    ['companion.json', 'controller.json', 'probe.json', 'profile.json', 'resident.json', 'system.json']);
+    ['companion.json', 'controller.json', 'probe.json', 'profile.json', 'record.json', 'resident.json', 'system.json']);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'profile.json'), 'utf8')), profile);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'probe.json'), 'utf8')), probe);
+  // a first install has no connection record: the guest administrator reads it as absent
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'record.json'), 'utf8')), { 'ci-admission.connection.json': 'ABSENT' });
   fs.writeFileSync(path.join(simulatedHost, 'test', 'renewal-drill.mjs'),
-    'import fs from "node:fs"; if (fs.readdirSync(process.argv[2]).length !== 6) process.exit(1); console.log(\'{"result":"PASS"}\');');
+    'import fs from "node:fs"; if (fs.readdirSync(process.argv[2]).length !== 7) process.exit(1); console.log(\'{"result":"PASS"}\');');
   const present = runM5();
   assert.equal(present.result, 'PASS');
   assert.deepEqual(present.verdict, { result: 'PASS' });
+  // the record there: read as present (its content is neither read nor exported)
+  put(path.join(root, 'secrets', 'ci-admission.connection.json'), { secret: 'not exported' });
+  fs.rmSync(path.join(runDir, 'm5'), { recursive: true });
+  runM5();
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'record.json'), 'utf8')), { 'ci-admission.connection.json': 'PRESENT' });
 });
 
 // A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
@@ -1072,7 +1081,7 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     files: files.map(({ path, data }) => ({ path, sha256: sha(data), bytes: data.length })) };
   fs.writeFileSync(archive, writeTar([...files, { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]));
   const e = JSON.parse(evidence());
-  const run = { first: { ...e, readAt: e.now }, entry: e.entry, reboot: e.reboot, reinstall: reinstall ?? e.reinstall,
+  const run = { first: { ...e, readAt: e.now }, entry: e.entry, launcher: e.launcher, reboot: e.reboot, reinstall: reinstall ?? e.reinstall,
     timings: {}, m5: null };
   const receipt = ps(`
     $script:Drill.Runs = ${q(root)}
@@ -1489,13 +1498,18 @@ test('the prerequisites: official sources only, every byte pinned, injected from
 
 const NOW = '2026-11-16T03:00:00Z';
 const S = '5'.repeat(64), L = '7'.repeat(64);
+// The pause the launcher confirmed (its terminal's pause.requestSha256) and state\PAUSED.json naming that request: a first install that
+// succeeded ends paused by its own request (Fable renew-key ruling, supplement "eight on the path", item 5).
+const PAUSE_REQUEST = '9'.repeat(64);
 function evidence(over = {}) {
-  const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'UNCERTAIN' }, executor: { state: 'IDLE' }, queue: { live: 0 }, halt: null,
+  const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'UNCERTAIN' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,
     versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:50:00Z' } } };
   const e = { now: NOW, entry: { exitCode: 0, status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe', parsed: true },
     verify: { status: 'RESIDENT_VERIFIED' }, status, current: { generation: 1, ciSourceManifestSha256: S, linux: { manifestSha256: L } },
     facts: { generation: 1, staged: null, pinsOk: true, ciSourceManifestSha256: S, manifestSha256: L }, acceptanceSource: S,
-    reboot: { ok: true, status, readAt: NOW }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
+    launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
+    pause: { sha256: '4'.repeat(64), requestSha256: PAUSE_REQUEST },
+    reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z' }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
       launcherExit: 0, launcherStatus: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', launcherVerdict: 'BOOTSTRAP_DONE',
       reverifyPassed: true, prepareAgainStatus: 'FLEET_NODE_INSTALL_PREPARED' }, kit: { perNodeSteps: ['8c step 2'] } };
   return JSON.stringify(Object.assign(e, over));
@@ -1556,6 +1570,42 @@ test('the verdict fails what the plan says fails', opts, () => {
   assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PENDING_PRODUCTION_READBACK');
 });
 
+// Fable renew-key ruling, supplement "eight on the path", item 5: a successful launcher ends with its own pause confirmed, so A6 holds
+// THAT pause (the request the launcher's terminal names, which state\PAUSED.json must name) with UNCERTAIN, no current batch, live 0 and
+// no HALT. An idle executor is no longer a pass: the install did not keep its pause.
+test('A6 holds the pause this install confirmed, read from the launcher result; idle is not a pass', opts, () => {
+  const e = JSON.parse(evidence());
+  const a6 = over => { const r = verdictOf(evidence(over)); return { pass: pass(r).A6, detail: r.items.find(i => i.id === 'A6').detail }; };
+  const held = a6({});
+  assert.equal(held.pass, true, held.detail);
+  assert.match(held.detail, new RegExp(`pause=${PAUSE_REQUEST}`));
+  for (const [reason, over] of [
+    ['idle, as A6 used to want', { status: { ...e.status, executor: { state: 'IDLE' }, paused: false } }],
+    ['the status view not paused', { status: { ...e.status, paused: false } }],
+    ['the executor not resting paused', { status: { ...e.status, executor: { state: 'RUNNING' } } }],
+    ['somebody else\'s pause', { pause: { ...e.pause, requestSha256: '8'.repeat(64) } }],
+    ['no PAUSED.json', { pause: null }],
+    ['the launcher did not confirm its pause', { launcher: { ...e.launcher, pause: { ...e.launcher.pause, confirmed: false } } }],
+    ['no launcher result', { launcher: null }],
+    ['neither side names a request', { launcher: { ...e.launcher, pause: { confirmed: true, requestSha256: null } }, pause: { requestSha256: null } }],
+    ['a current batch', { status: { ...e.status, current: { batch: 'b1' } } }],
+    ['a live queue', { status: { ...e.status, queue: { live: 1 } } }],
+    ['a HALT', { status: { ...e.status, halt: { code: 'X' } } }],
+    ['another mode', { status: { ...e.status, node: { mode: 'STANDBY' } } }],
+  ]) assert.equal(a6(over).pass, false, reason);
+});
+
+// Supplement, risks taken in: A7 never passes on a self-check observed before this boot (a result of the boot before).
+test('A7 needs the self-check observed after this boot, not only a status written after it', opts, () => {
+  const e = JSON.parse(evidence());
+  assert.equal(pass(verdictOf(evidence())).A7, true);
+  const before = verdictOf(evidence({ reboot: { ...e.reboot, boot: '2026-11-16T02:55:00Z' } }));
+  assert.equal(pass(before).A7, false);
+  assert.match(before.items.find(i => i.id === 'A7').detail, /selfcheckAfterBoot=False/);
+  const { boot, ...noBoot } = e.reboot;
+  assert.equal(pass(verdictOf(evidence({ reboot: noBoot }))).A7, false, 'no boot time: not judged a pass');
+});
+
 test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {
   const { reinstall } = JSON.parse(evidence());
   const { launcherExit, launcherStatus, launcherVerdict, ...withoutLauncher } = reinstall;
@@ -1571,30 +1621,89 @@ test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful termi
   }
 });
 
+// A tree whose fleet tools are stand-ins run by the real node: each writes a line on stderr (the A8 children are read with stdout and
+// stderr apart: Fable renew-key ruling, supplement "eight on the path", the drill's own six merged calls). install.mjs answers with the
+// runCommand the test puts in run-command.json; bootstrap.ps1 is the package's own (its launcher parser and verdict).
+function mockFleetTree(name) {
+  const tree = path.join(tmp, name);
+  const fleet = path.join(tree, 'work', 'independent-ci-resident-v1', 'rollout', 'fleet');
+  fs.mkdirSync(fleet, { recursive: true });
+  fs.copyFileSync(fileURLToPath(new URL('../rollout/fleet/bootstrap.ps1', import.meta.url)), path.join(fleet, 'bootstrap.ps1'));
+  fs.writeFileSync(path.join(fleet, 'upgrade.mjs'),
+    "process.stderr.write('upgrade: a note on stderr\\n'); console.log(JSON.stringify({ status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE' }));\n");
+  fs.writeFileSync(path.join(fleet, 'install.mjs'), [
+    "import fs from 'node:fs';",
+    "process.stderr.write('prepare: a note on stderr\\n');",
+    "const runCommand = JSON.parse(fs.readFileSync(new URL('./run-command.json', import.meta.url), 'utf8'));",
+    "console.log(JSON.stringify({ status: 'FLEET_NODE_INSTALL_PREPARED', ...(runCommand === null ? {} : { runCommand }) }));", ''].join('\n'));
+  return { tree, fleet };
+}
+
 test('A8 captures the current launcher exit and indented terminal JSON from the prepare command', opts, () => {
-  const tree = fileURLToPath(new URL('../../../', import.meta.url));
+  const { tree, fleet } = mockFleetTree('a8-tree');
   const good = "ConvertTo-Json @{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' }";
   const commands = [null, ' ', "ConvertTo-Json @{ status = 'PAUSE_NOT_CONFIRMED' }", `${good}; exit 4`, good];
   const r = ps(`
-    function Invoke-MockNode($File) {
-      if ((Split-Path -Leaf $File) -eq 'upgrade.mjs') { '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; return }
-      $prepare = @{ status = 'FLEET_NODE_INSTALL_PREPARED' }
-      if ($null -ne $script:runCommand) { $prepare.runCommand = $script:runCommand }
-      $prepare | ConvertTo-Json -Compress
-    }
-    $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(commands))}
+    $ErrorActionPreference = 'Stop'
+    $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(commands.map(c => JSON.stringify(c))))}
     @($cases | ForEach-Object {
-      $script:runCommand = $_
-      $ri = & $script:GuestReinstall 'Invoke-MockNode' ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha'
-      @{ exit = $ri.launcherExit; status = $ri.launcherStatus; verdict = $ri.launcherVerdict; pass = (Test-DrillReinstallLauncher $ri) }
+      [IO.File]::WriteAllText(${q(path.join(fleet, 'run-command.json'))}, $_)
+      $ri = & $script:GuestReinstall ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText
+      @{ exit = $ri.launcherExit; status = $ri.launcherStatus; verdict = $ri.launcherVerdict; pass = (Test-DrillReinstallLauncher $ri);
+        upgrade = $ri.upgradeStatus; prepare = $ri.prepareStatus; upgradeStderr = ([string]$ri.upgradeStderr).Trim(); prepareStderr = ([string]$ri.prepareStderr).Trim() }
     })`);
+  const read = { upgrade: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepare: 'FLEET_NODE_INSTALL_PREPARED',
+    upgradeStderr: 'upgrade: a note on stderr', prepareStderr: 'prepare: a note on stderr' };
   assert.deepEqual(r, [
-    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false },
-    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false },
-    { exit: 0, status: 'PAUSE_NOT_CONFIRMED', verdict: 'BOOTSTRAP_LAUNCHER_ENDED', pass: false },
-    { exit: 4, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: false },
-    { exit: 0, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: true },
+    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false, ...read },
+    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false, ...read },
+    { exit: 0, status: 'PAUSE_NOT_CONFIRMED', verdict: 'BOOTSTRAP_LAUNCHER_ENDED', pass: false, ...read },
+    { exit: 4, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: false, ...read },
+    { exit: 0, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: true, ...read },
   ]);
+  // the second prepare after the reinstall, the same way
+  fs.writeFileSync(path.join(fleet, 'run-command.json'), 'null');
+  assert.equal(ps(`$ErrorActionPreference = 'Stop'; & $script:GuestPrepareAgain ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText`),
+    'FLEET_NODE_INSTALL_PREPARED');
+});
+
+// The drill's own children (the kit entry, verify, the A8 tools, root in the prerequisite distribution) are read like the package's
+// Invoke-Native (windows/first-install-host.ps1): stdout and stderr apart; a stderr line is text, never a PowerShell error that ends the
+// step under Stop. No merged stream is left in the drill.
+test('the drill reads its children with stdout and stderr apart: a stderr line never stops a step', opts, () => {
+  assert.doesNotMatch(fs.readFileSync(script, 'utf8'), /2>&1\s*\|\s*ForEach-Object/);
+  const n = ps(`$ErrorActionPreference = 'Stop'
+    $r = Invoke-DrillNative ${q(powershell)} @('-NoProfile', '-NonInteractive', '-Command', "[Console]::Error.WriteLine('to stderr'); Write-Output 'line one'; exit 3") 120
+    $a = Invoke-DrillNative ${q(process.execPath)} @('-e', 'console.log(JSON.stringify(process.argv.slice(1)))', 'a "b" c', 'd\\', '', 'plain') 60
+    [ordered]@{ exit = $r.exit; stdout = $r.stdout.Trim(); stderr = $r.stderr.Trim(); argv = $a.stdout.Trim() }`);
+  assert.deepEqual({ ...n, argv: JSON.parse(n.argv) }, { exit: 3, stdout: 'line one', stderr: 'to stderr', argv: ['a "b" c', 'd\\', '', 'plain'] });
+
+  // the kit entry: its last stdout line is the result; its stderr is kept apart
+  const entry = path.join(tmp, 'native-entry.ps1');
+  fs.writeFileSync(entry, "param([string]$Work)\n[Console]::Error.WriteLine('entry: a note on stderr')\n" +
+    "Write-Output ('{\"status\":\"FIRST_INSTALL_DONE\",\"stopCode\":null,\"tree\":' + (ConvertTo-Json $Work) + ',\"node\":\"n\"}')\nexit 0\n");
+  const e = ps(`$ErrorActionPreference = 'Stop'
+    $o = & $script:GuestEntry ${q(entry)} @('-Work', 'C:\\drill\\work dir') 5 $script:DrillNativeText
+    $r = Read-DrillEntryResult @($o.lines) ([int]$o.exit)
+    [ordered]@{ status = $r.status; tree = $r.tree; exit = $r.exitCode; stderr = ([string]$o.stderr).Trim() }`);
+  assert.deepEqual(e, { status: 'FIRST_INSTALL_DONE', tree: 'C:\\drill\\work dir', exit: 0, stderr: 'entry: a note on stderr' });
+
+  // verify after the install, with state\PAUSED.json read beside it (A6)
+  const root = path.join(tmp, 'native-read');
+  const put = (rel, text) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
+  put('upgrade/current.json', JSON.stringify({ residentManifestSha256: 'abc' }));
+  put('install/install-receipt.json', '{}');
+  put('state/status.json', JSON.stringify({ paused: true }));
+  const pausedText = JSON.stringify({ source: { requestSha256: PAUSE_REQUEST, reason: 'any' } });
+  put('state/PAUSED.json', pausedText);
+  put('resident/abc/windows/verify-resident.ps1', "param($ExpectedInstallReceiptSha256, $LinuxVersionFactsFile)\n" +
+    "[Console]::Error.WriteLine('verify: a note on stderr')\nWrite-Output 'RESIDENT_VERIFIED'\nexit 0\n");
+  const g = ps(`$ErrorActionPreference = 'Stop'; $g = & $script:GuestRead ${q(root)} $script:DrillNativeText
+    [ordered]@{ verify = $g.verify.status; exit = $g.verify.exit; stderr = ([string]$g.verify.stderr).Trim(); pause = $g.pause }`);
+  assert.deepEqual(g, { verify: 'RESIDENT_VERIFIED', exit: 0, stderr: 'verify: a note on stderr',
+    pause: { sha256: sha(pausedText), requestSha256: PAUSE_REQUEST } });
+  fs.rmSync(path.join(root, 'state', 'PAUSED.json'));
+  assert.equal(ps(`$g = & $script:GuestRead ${q(root)} $script:DrillNativeText; $null -eq $g.pause`), true);
 });
 
 const startedAt = '2026-11-16T02:00:00Z';
