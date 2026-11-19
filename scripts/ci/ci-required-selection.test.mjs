@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -40,6 +40,11 @@ function slotFixture(t) {
       };
       syncBuiltinESMExports();
     }
+    if (process.env.SLOT_FIXTURE_EVENT) {
+      globalThis.fetch = async () => ({
+        ok: true, json: async () => [{ filename: 'scripts/ci/retrigger-counter.test.mjs' }],
+      });
+    }
     registerHooks({ resolve(specifier, context, next) {
       if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
       const source = \`import { withLocalSuiteSlot as acquire } from \${JSON.stringify(${JSON.stringify(slotModule)})};
@@ -62,7 +67,7 @@ function slotFixture(t) {
     rmSync(dir, { recursive: true, force: true });
   });
   return function start(name, {
-    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter',
+    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run',
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -73,7 +78,7 @@ function slotFixture(t) {
       const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
       setTimeout(() => clearInterval(poll), 35_000).unref();
     `);
-    writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), `
+    const probe = `
       import { spawnSync } from 'node:child_process';
       import { existsSync, writeFileSync } from 'node:fs';
       if (${tree}) {
@@ -85,7 +90,27 @@ function slotFixture(t) {
       writeFileSync('ready', '');
       const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
       setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
-    `);
+    `;
+    writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), probe);
+    let tool = selector;
+    let target = suite;
+    if (mode === '--write-known') {
+      const tools = path.join(root, 'tools');
+      mkdirSync(tools);
+      for (const file of ['ci-required-selection.mjs', 'ci-test-failures-reporter.mjs',
+        'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
+        copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
+      }
+      writeFileSync(path.join(tools, 'ci-known-failures.json'), '{}');
+      tool = path.join(tools, 'ci-required-selection.mjs');
+      target = 'admission-self-tests';
+      const files = SUITE_COMMANDS[target][0].argv.slice(2);
+      for (const [index, file] of files.entries()) {
+        const destination = path.join(root, file);
+        mkdirSync(path.dirname(destination), { recursive: true });
+        writeFileSync(destination, index === 0 ? probe : '');
+      }
+    }
     writeFileSync(path.join(scripts, 'check-pinned-registries.mjs'), 'process.exitCode = 75;\n');
     const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
       SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
@@ -94,8 +119,15 @@ function slotFixture(t) {
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
     if (ci) env[ci] = 'true';
-    const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, selector,
-      '--run', suite, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (mode === '--run-selected') {
+      target = 'ci-suites';
+      const event = path.join(root, 'event.json');
+      writeFileSync(event, '{"pull_request":{"number":1}}');
+      Object.assign(env, { SLOT_FIXTURE_EVENT: '1', GITHUB_EVENT_NAME: 'pull_request',
+        GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'fixture/repo', GITHUB_TOKEN: 'fixture' });
+    }
+    const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, tool,
+      mode, target, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (data) => { output += data; });
     child.stderr.on('data', (data) => { output += data; });
@@ -135,7 +167,7 @@ async function fillSuiteSlots(start) {
 
 async function waitForQueuedSuite(run, holders) {
   await waitForSlotFixture(run, () => run.ready() || /queue position 1/.test(run.output()));
-  assert.equal(run.ready(), false, 'a third local --run must wait before starting its suite');
+  assert.equal(run.ready(), false, 'a third local invocation must wait before starting its suite');
   for (const holder of holders) assert.match(run.output(), new RegExp(`retrigger-counter \\(PID ${holder.child.pid}\\)`));
 }
 
@@ -150,6 +182,29 @@ test('third local --run queues and prints the position and holders until normal 
   waiting.release();
   assert.deepEqual(await waiting.done, [0, null]);
 });
+
+for (const mode of ['--run-selected', '--write-known']) {
+  test(`M3: local ${mode} queues until a slot is available`, async (t) => {
+    const start = slotFixture(t);
+    const holders = await fillSuiteSlots(start);
+    const waiting = start('waiting', { mode });
+    await waitForQueuedSuite(waiting, holders);
+    holders[0].release();
+    await waitForSlotFixture(waiting, waiting.ready);
+    waiting.release();
+    assert.deepEqual(await waiting.done, [0, null]);
+  });
+
+  test(`M3: GitHub Actions ${mode} bypasses an occupied local queue`, async (t) => {
+    const start = slotFixture(t);
+    await fillSuiteSlots(start);
+    const run = start('actions', { mode, ci: 'GITHUB_ACTIONS' });
+    await waitForSlotFixture(run, run.ready);
+    run.release();
+    assert.deepEqual(await run.done, [0, null]);
+    assert.doesNotMatch(run.output(), /queue position/);
+  });
+}
 
 test('local --run reclaims a slot after the holder is killed', async (t) => {
   const start = slotFixture(t);

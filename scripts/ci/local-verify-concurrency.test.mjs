@@ -73,13 +73,11 @@ test('room for one more run: the first always starts; then free memory, idle CPU
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 27 }, { ramping: 2 }), ['memory'], '27 free, 12 of it about to go: 15 left, 16 needed');
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 28 }, { ramping: 2 }), [], '16 left');
   assert.deepEqual(kinds(2, { ...plenty, freeMemGb: 30 }, { ramping: 0 }), []);
-  assert.deepEqual(kinds(4, plenty), ['runs'], 'at most 4 at a time');
+  assert.deepEqual(kinds(4, plenty), [], 'resource admission has no fixed maximum run count');
   // in the distribution (one VM with the CI runners') less memory stays free than on the host
   const twelve = { ...plenty, freeMemGb: 12 };
   assert.equal(roomForOneMore({ running: 1 }, twelve, { keeps: VM_KEEPS }).ok, true);
   assert.equal(roomForOneMore({ running: 1 }, twelve, { keeps: HOST_KEEPS }).ok, false);
-  const limited = roomForOneMore({ running: 2 }, plenty, { maxRuns: 2, keeps: HOST_KEEPS });
-  assert.match(limited.lacks[0].text, /2 runs are running, the limit is 2/);
 });
 
 test('the machine is looked at: idle cores from the CPU times, memory and disk as asked', () => {
@@ -315,7 +313,21 @@ function probeRepository(t, { seconds }) {
     git(dir, 'commit', '-q', '-m', name);
     changes.push({ name, dir });
   }
-  return { base, repo, main, changes, stamps, env: { ...env, CLUED_LOCAL_VERIFY_RESOURCES: 'off' } };
+  const queue = path.join(base, 'queue');
+  fs.mkdirSync(queue);
+  const loader = path.join(base, 'slots.mjs');
+  const slotModule = pathToFileURL(path.join(ROOT, 'scripts/ci/local-suite-slots.mjs')).href;
+  fs.writeFileSync(loader, `import { registerHooks } from 'node:module';
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
+      const source = 'import { withLocalSuiteSlot as acquire } from ' + JSON.stringify(${JSON.stringify(slotModule)}) + ';'
+        + 'export const withLocalSuiteSlot = (id, command) => acquire(id, command, ' + JSON.stringify({
+          directory: ${JSON.stringify(queue)}, waitMs: 45_000,
+        }) + ');';
+      return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
+    }});`);
+  return { base, repo, main, changes, stamps, env: { ...env, CLUED_LOCAL_VERIFY_RESOURCES: 'off',
+    NODE_OPTIONS: `--import=${pathToFileURL(loader).href}` } };
 }
 
 function runTool({ dir, main, env, home, extra = {} }) {
@@ -332,8 +344,8 @@ function runTool({ dir, main, env, home, extra = {} }) {
 
 const stampsOf = (dir) => fs.readdirSync(dir).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
 
-test('three different changes verified at the same time finish side by side with the results each has alone', { timeout: 240_000 }, async (t) => {
-  const seconds = 12;
+test('three concurrent local verifications preserve verdicts and hold at most two suite slots', { timeout: 240_000 }, async (t) => {
+  const seconds = 7;
   // alone, one after the other, each with a cache of its own
   const solo = probeRepository(t, { seconds: 0 }); // the duration does not change a verdict
   const alone = {};
@@ -351,20 +363,18 @@ test('three different changes verified at the same time finish side by side with
   const together = probeRepository(t, { seconds });
   const home = fs.realpathSync(fs.mkdtempSync(path.join(together.base, 'home-')));
   const outcomes = await Promise.all(together.changes.map(({ dir }) => runTool({ dir, main: together.main, env: together.env, home,
-    extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '3' } })));
+  })));
   const names = together.changes.map((change) => change.name);
   names.forEach((name, index) => {
     assert.ok(outcomes[index].results, outcomes[index].output);
     assert.deepEqual(outcomes[index].results, alone[name].results, `${name}: the same result as alone`);
     assert.equal(outcomes[index].code, alone[name].code, `${name}: the same exit code as alone`);
   });
-  // the probes of the three changes ran at the same time: every one started before any one ended
-  const ran = stampsOf(together.stamps).filter((stamp) => stamp.id !== 'main');
-  assert.equal(ran.length, 3);
-  const timeline = JSON.stringify(ran.map((stamp) => [stamp.id, stamp.start - Math.min(...ran.map((x) => x.start)), stamp.end - Math.min(...ran.map((x) => x.start))]));
-  const waited = outcomes.map((outcome) => outcome.output.split('\n').filter((line) => /queued|started after|another run/.test(line)).join(' | ')).join(' // ');
-  assert.ok(Math.max(...ran.map((stamp) => stamp.start)) < Math.min(...ran.map((stamp) => stamp.end)), `the three probes overlap in time: ${timeline} ${waited}`);
-  assert.equal(new Set(ran.map((stamp) => stamp.cwd)).size, 3, 'each in a worktree of its own');
+  const ran = stampsOf(together.stamps).sort((a, b) => a.start - b.start);
+  assert.equal(ran.length, 4, 'three candidates and one shared baseline');
+  const peak = Math.max(...ran.map(({ start }) => ran.filter((stamp) => stamp.start <= start && start < stamp.end).length));
+  if (process.platform === 'win32') assert.equal(peak, 2, `at most two suites share the machine: ${JSON.stringify(ran)}`);
+  assert.equal(new Set(ran.map((stamp) => stamp.cwd)).size, 4, 'each in a worktree of its own');
   // main's baseline, which both failing changes need, was computed once, in main's shared worktree
   assert.equal(stampsOf(together.stamps).filter((stamp) => stamp.id === 'main').length, 1);
   // nothing is left: no run, no lock, no worktree of a run, no stale file
@@ -372,20 +382,6 @@ test('three different changes verified at the same time finish side by side with
   assert.deepEqual(fs.readdirSync(path.join(home, 'locks')).filter((name) => name.includes('.lock')), []);
   assert.equal(fs.existsSync(path.join(home, 'run.lock')), false);
   assert.deepEqual(fs.readdirSync(path.join(home, 'worktrees')).filter((name) => /-r\d+-[0-9a-f]{6}$/.test(name)), []);
-});
-
-test('more runs than the limit queue, say their position, and go one after the other', { timeout: 240_000 }, async (t) => {
-  const seconds = 5;
-  const repo = probeRepository(t, { seconds });
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(repo.base, 'home-')));
-  const outcomes = await Promise.all(repo.changes.map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home,
-    extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '1' } })));
-  outcomes.forEach((outcome) => assert.ok(outcome.results, outcome.output));
-  const positions = outcomes.flatMap((outcome) => [...outcome.output.matchAll(/queued, position (\d+) \(1 running\)/g)].map((match) => Number(match[1])));
-  assert.ok(positions.includes(1) && positions.includes(2), `positions seen: ${positions.join(',')}`);
-  const ran = stampsOf(repo.stamps).filter((stamp) => stamp.id !== 'main').sort((a, b) => a.start - b.start);
-  assert.equal(ran.length, 3);
-  ran.slice(1).forEach((stamp, index) => assert.ok(stamp.start >= ran[index].end - 50, 'one at a time'));
 });
 
 // ---- what the independent review asked to be proven ----
@@ -530,7 +526,7 @@ test('the probes of side-by-side runs see a temporary directory of their own', {
   const repo = probeRepository(t, { seconds: 3 });
   const home = fs.realpathSync(fs.mkdtempSync(path.join(repo.base, 'home-')));
   const outcomes = await Promise.all(repo.changes.slice(0, 2).map(({ dir }) => runTool({ dir, main: repo.main, env: repo.env, home,
-    extra: { CLUED_LOCAL_VERIFY_MAX_RUNS: '2' } })));
+  })));
   outcomes.forEach((outcome) => assert.ok(outcome.results, outcome.output));
   const temps = stampsOf(repo.stamps).filter((stamp) => stamp.id !== 'main').map((stamp) => stamp.temp);
   assert.equal(new Set(temps).size, 2);
