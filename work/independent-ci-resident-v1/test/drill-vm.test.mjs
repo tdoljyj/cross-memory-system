@@ -13,6 +13,10 @@ import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
+import { intakePauseRequest } from '../src/intake-pause.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
+import { StatusBoard } from '../src/status.mjs';
+import { executorFixture, fakeEngine, rawPolicy, triggerBytes, WINDOWS_CLEAN } from './helpers.mjs';
 
 const windows = process.platform === 'win32';
 const script = fileURLToPath(new URL('../drill/drill-vm.ps1', import.meta.url));
@@ -25,7 +29,7 @@ const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 // Dot-source the script (definitions only) and print the expression's value as JSON.
 function ps(expr) {
   const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-    `$ProgressPreference='SilentlyContinue'; . ${q(script)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
+    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim());
 }
@@ -36,6 +40,9 @@ function psCode(expr) {
 const opts = { skip: !windows };
 const idleHostStatus = (writtenAt = new Date().toISOString()) =>
   JSON.stringify({ node: { mode: 'STANDBY' }, executor: { state: 'IDLE' }, current: null, writtenAt });
+const activeHostStatus = (hold, { writtenAt = '2026-11-19T02:00:00Z', executor = 'IDLE', reason = null, current = null } = {}) =>
+  JSON.stringify({ node: { mode: 'ACTIVE' }, executor: { state: executor, reason }, current, writtenAt,
+    intakePause: hold && { until: '2026-11-19T04:00:00Z', holders: [hold] } });
 const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
 const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
 
@@ -200,9 +207,9 @@ test('the answer ISO is built without elevation and carries autounattend.xml und
 
 test('host duty gate fails closed for active, busy, missing and malformed resident status', opts, () => {
   const r = ps(`@(
-    (Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"RUNNING"},"current":null}' 64GB),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"},"current":{"pr":1153}}' 64GB),
+    (Test-DrillHostSafety ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} 64GB),
+    (Test-DrillHostSafety ${q(idleHostStatus().replace('"IDLE"', '"RUNNING"'))} 64GB),
+    (Test-DrillHostSafety ${q(idleHostStatus().replace('"current":null', '"current":{"pr":1153}'))} 64GB),
     (Test-DrillHostSafety $null 64GB), (Test-DrillHostSafety '{broken' 64GB),
     (Test-DrillHostSafety '{}' 64GB),
     (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"IDLE"}}' 64GB),
@@ -214,12 +221,177 @@ test('host duty gate fails closed for active, busy, missing and malformed reside
   assert.equal(r.at(-1).action, 'start');
 });
 
+test('an active host with fresh idle status must have its own hold through the required deadline', opts, () => {
+  const now = '2026-11-19T02:00:00Z';
+  const required = '2026-11-19T03:20:00Z';
+  const hold = { holder: 'drill', since: now, until: required };
+  const calls = [activeHostStatus(null), activeHostStatus(hold),
+    activeHostStatus(hold, { executor: 'PARKED' }), activeHostStatus(hold, { current: { pr: 1170 } }),
+    activeHostStatus(hold, { writtenAt: '2026-11-19T01:54:59Z' })];
+  const r = ps(`$now = [DateTimeOffset]${q(now)}; $required = [DateTimeOffset]${q(required)}; @(
+    ${calls.map(v => `(Test-DrillHostSafety ${q(v)} 64GB -Now $now -HoldUntil $required)`).join(',\n')}
+  )`);
+  assert.deepEqual(r.map(x => x.action), ['refuse', 'start', 'start', 'refuse', 'refuse']);
+  assert.deepEqual(r.map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', null, null, 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_STATUS_STALE']);
+});
+
+test('the active runtime gate aborts for a short hold or a different holder', opts, () => {
+  const now = '2026-11-19T02:00:00Z';
+  const required = '2026-11-19T03:20:00Z';
+  const calls = [
+    { holder: 'drill', until: '2026-11-19T03:19:59Z' },
+    { holder: 'owner', until: required },
+    { holder: 'drill', until: required },
+  ].map(hold => activeHostStatus({ since: now, ...hold }));
+  const r = ps(`$now = [DateTimeOffset]${q(now)}; $required = [DateTimeOffset]${q(required)}; @(
+    ${calls.map(v => `(Test-DrillHostSafety ${q(v)} 64GB -Running -Now $now -HoldUntil $required)`).join(',\n')}
+  )`);
+  assert.deepEqual(r.map(x => x.action), ['abort', 'abort', 'continue']);
+});
+
+const gateNow = '2026-11-19T02:00:00Z';
+const gateUntil = '2026-11-19T03:20:00Z';
+const gateHold = { holder: 'drill', since: gateNow, until: gateUntil };
+
+function gateActions(statuses, { running = true, memory = '64GB' } = {}) {
+  const verdicts = ps(`$now = [DateTimeOffset]${q(gateNow)}; $until = [DateTimeOffset]${q(gateUntil)}; @(
+    ${statuses.map(status => `(Test-DrillHostSafety ${q(status)} ${memory} -Running:$${running} -Now $now -HoldUntil $until)`).join(',\n')}
+  )`);
+  return [verdicts].flat().map(x => x.action);
+}
+
+test('the active drill continues while the executor is idle with no current batch', opts, () => {
+  assert.deepEqual(gateActions([activeHostStatus(gateHold)]), ['continue']);
+});
+
+test('the active drill continues while the executor is parked with no current batch', opts, () => {
+  assert.deepEqual(gateActions([activeHostStatus(gateHold, { executor: 'PARKED' })]), ['continue']);
+});
+
+test('the active drill can start and continue during revoke-only train maintenance', opts, async t => {
+  const now = Date.parse(gateNow);
+  const board = new StatusBoard({ clock: () => now });
+  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { ...rawPolicy().train, ...TRAIN_DEFAULTS, enabled: 'on' } });
+  board.setNode(policy.node.nodeName, policy.sourceManifestSha256, 'ACTIVE');
+  let during;
+  const engine = fakeEngine({ train: mode => {
+    assert.equal(mode, 'revoke-only');
+    during = board.snapshot();
+    return fakeEngine().runTrainStage(mode);
+  } });
+  const f = await executorFixture(t, { now, status: board, engine, policy });
+  await f.drop(JSON.stringify(intakePauseRequest({ holder: 'drill', minutes: 120, reason: 'drill' }, f.clock)), 'requests');
+  await f.exec.tick();
+  assert.deepEqual([during.executor.state, during.executor.reason, during.current], ['RUNNING', 'TRAIN_MAINTENANCE', null]);
+  assert.deepEqual(gateActions([JSON.stringify(during)], { running: false }), ['start']);
+  assert.deepEqual(gateActions([JSON.stringify(during)]), ['continue']);
+});
+
+test('the active drill continues from the parked stage-8 start checks through re-parking', opts, async t => {
+  const now = Date.parse(gateNow);
+  const tenMinutes = 600_000;
+  const board = new StatusBoard({ clock: () => now });
+  board.setNode(rawPolicy().node.nodeName, rawPolicy().sourceManifestSha256, 'ACTIVE');
+  const blocked = { ok: false, code: 'RESIDENT_MERGE_QUEUE_NOT_JOINED', proof: WINDOWS_CLEAN,
+    outcome: { status: 'BLOCKED', sideEffects: 0, mayHavePublished: false } };
+  const engine = fakeEngine({ stages: { 8: blocked } });
+  const f = await executorFixture(t, { now: now - tenMinutes, status: board, engine });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(JSON.stringify(intakePauseRequest({ holder: 'drill', minutes: 120, reason: 'drill' }, f.clock)), 'requests');
+  await f.drop(triggerBytes({ pr: 900, headSha: '4'.repeat(40) }));
+  assert.equal((await f.exec.tick()).reason, 'INTAKE_PAUSED');
+  f.advance(tenMinutes);
+
+  let checking, trying;
+  const check = f.exec.batchStartChecks.bind(f.exec);
+  f.exec.batchStartChecks = async subject => { checking = board.snapshot(); return check(subject); };
+  const run = engine.runStage.bind(engine);
+  engine.runStage = async (batch, stage, options) => { trying = board.snapshot(); return run(batch, stage, options); };
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  const parked = board.snapshot();
+  assert.equal(checking.current, null, 'the start checks have yet to publish a current batch');
+  assert.deepEqual([trying.current.stage, trying.current.phase], [8, 'stage']);
+  assert.deepEqual([parked.executor.state, parked.current], ['PARKED', null]);
+
+  const sequence = [checking, trying, parked];
+  assert.deepEqual(gateActions(sequence.map(s => JSON.stringify(s))), ['continue', 'continue', 'continue']);
+  assert.deepEqual(gateActions([JSON.stringify(trying)], { running: false }), ['refuse']);
+  for (const intakePause of [null, { ...trying.intakePause, holders: [{ ...gateHold, holder: 'owner' }] }]) {
+    assert.deepEqual(gateActions(sequence.map(s => JSON.stringify({ ...s, intakePause }))), ['abort', 'abort', 'abort']);
+  }
+});
+
+test('the active drill aborts for stages 1–7, unrecognized shapes, stale status or low memory', opts, () => {
+  const stage8 = { stage: 8, phase: 'stage' };
+  const states = [
+    ...Array.from({ length: 7 }, (_, i) => ({ current: { ...stage8, stage: i + 1 } })),
+    { current: { pr: 1170 } }, { current: { ...stage8, stage: '8' } }, { current: { stage: 8 } },
+    { executor: 'UNKNOWN', current: stage8 }, { executor: 'UNKNOWN' },
+    { executor: 'RUNNING', reason: 'OTHER' }, { executor: 'RUNNING', reason: ['TRAIN_MAINTENANCE'] },
+    { executor: 'RUNNING', reason: 'TRAIN_MAINTENANCE', current: { pr: 1170 } },
+    { executor: 'PARKED', writtenAt: '2026-11-19T01:54:59Z' },
+  ];
+  assert.deepEqual(gateActions(states.map(s => activeHostStatus(gateHold, s))), states.map(() => 'abort'));
+  assert.deepEqual(gateActions([activeHostStatus(gateHold, { current: stage8 })], { memory: '(6GB - 1)' }), ['abort']);
+  const standby = [
+    { executor: 'PARKED' }, { executor: 'RUNNING', reason: 'TRAIN_MAINTENANCE' }, { current: stage8 },
+  ].map(s => activeHostStatus(gateHold, s).replace('"ACTIVE"', '"STANDBY"'));
+  assert.deepEqual(gateActions(standby), ['abort', 'abort', 'abort']);
+  assert.deepEqual(gateActions(standby, { running: false }), ['refuse', 'refuse', 'refuse']);
+});
+
+test('intake wait timeout releases only the drill hold without starting the VM', opts, () => {
+  const r = ps(`
+    $script:events = @()
+    $script:Drill.IntakeWaitMinutes = 0
+    function Read-DrillHostStatus { ${q(activeHostStatus(null))} }
+    function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
+    function Get-DrillIntakeTool { 'installed-tool' }
+    function Request-DrillIntake { param($Tool, $Verb, $Minutes) $script:events += ('{0}:{1}' -f $Verb, $Minutes) }
+    function Start-VM { $script:events += 'start' }
+    $code = try { Invoke-DrillWithHostHold 70 { Start-VM }; $null } catch { (Get-DrillCode $_).code }
+    @{ code = $code; events = $script:events }
+  `);
+  assert.deepEqual(r, { code: 'DRILL_HOST_CI_BUSY', events: ['pause:80', 'resume:0'] });
+});
+
+test('the active hold covers the whole window and is resumed only after safe cleanup', opts, () => {
+  const r = ps(`
+    $script:events = @()
+    function Read-DrillHostStatus { ${q(activeHostStatus(null, { executor: 'RUNNING' }))} }
+    function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
+    function Get-DrillIntakeTool { 'installed-tool' }
+    function Request-DrillIntake { param($Tool, $Verb, $Minutes) $script:events += ('{0}:{1}' -f $Verb, $Minutes) }
+    function Get-DrillHostSafety($HoldUntil) {
+      $script:events += "wait-for:$($HoldUntil.ToString('HH:mm'))"
+      @{ ok = $true; holdSince = Get-DrillTime; holdUntil = $HoldUntil }
+    }
+    $over = try { Invoke-DrillWithHostHold 71 { throw 'must not enter' }; $null } catch { (Get-DrillCode $_).code }
+    $null = Invoke-DrillWithHostHold 70 { param($window)
+      $script:events += "start:$($window.deadline.ToString('HH:mm'))"
+      $window.safeToResume = $false
+      $script:events += 'stop-and-restore'
+      $window.safeToResume = $true
+    }
+    $null = Invoke-DrillWithHostHold 70 { param($window)
+      $window.safeToResume = $false
+      $script:events += 'restore-unconfirmed'
+    }
+    @{ over = $over; events = $script:events }
+  `);
+  assert.deepEqual(r, { over: 'DRILL_HOST_INTAKE_BUDGET_EXCEEDED', events: [
+    'pause:120', 'wait-for:03:20', 'start:03:10', 'stop-and-restore', 'resume:0',
+    'pause:120', 'wait-for:03:20', 'restore-unconfirmed',
+  ] });
+});
+
 test('running guard aborts on duty, batch, unreadable status or memory pressure after a safe start', opts, () => {
   const r = ps(`$idle = ${q(idleHostStatus())}; @(
     (Test-DrillHostSafety $idle 64GB), (Test-DrillHostSafety $idle 64GB -Running),
-    (Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB -Running),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"RUNNING"},"current":null}' 64GB -Running),
-    (Test-DrillHostSafety '{"node":{"mode":"STANDBY"},"executor":{"state":"WAITING"},"current":{"pr":1153}}' 64GB -Running),
+    (Test-DrillHostSafety ($idle.Replace('"STANDBY"', '"ACTIVE"')) 64GB -Running),
+    (Test-DrillHostSafety ($idle.Replace('"IDLE"', '"RUNNING"')) 64GB -Running),
+    (Test-DrillHostSafety ($idle.Replace('"IDLE"', '"WAITING"').Replace('"current":null', '"current":{"pr":1153}')) 64GB -Running),
     (Test-DrillHostSafety $null 64GB -Running), (Test-DrillHostSafety $idle (6GB - 1) -Running -MemoryAssigned 8GB),
     (Test-DrillHostSafety $idle 6GB -Running -MemoryAssigned 8GB))`);
   assert.deepEqual(r.map(x => x.action), ['start', 'continue', 'abort', 'abort', 'abort', 'abort', 'abort', 'continue']);
@@ -254,7 +426,7 @@ test('the duty gate refuses stale, missing and invalid status timestamps', opts,
 
 test('host preflight refuses duty before any Hyper-V or memory query', opts, () => {
   assert.equal(psCode(`
-    function Get-DrillHostSafety { Test-DrillHostSafety '{"node":{"mode":"ACTIVE"},"executor":{"state":"IDLE"},"current":null}' 64GB }
+    function Get-DrillHostSafety { Test-DrillHostSafety ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} 64GB }
     function Get-CimInstance { throw 'MUST_NOT_QUERY_HOST' }
     function Get-VMSwitch { throw 'MUST_NOT_QUERY_HYPERV' }
     Assert-DrillHost`), 'DRILL_HOST_IS_ON_DUTY');
@@ -262,7 +434,7 @@ test('host preflight refuses duty before any Hyper-V or memory query', opts, () 
 
 test('guard latches the reason and shuts down/restores independently of guest waits', opts, () => {
   const r = ps(`
-    $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $true; failure = $null })
+    $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $true; failure = $null; executorStates = [ordered]@{} })
     $script:events = @()
     function Get-DrillHostSafety { param([switch]$Running) Test-DrillHostSafety $null 64GB -Running:$Running }
     function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $script:events += "stop-and-restore:$RestoreCheckpoint"; return $true }
@@ -308,6 +480,242 @@ test('the real background guard aborts while the foreground is blocked, without 
   assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, 'host-guard.json'), 'utf8')).code, 'DRILL_HOST_IS_ON_DUTY');
 });
 
+test('the drill receipt keeps each executor state first observed during the armed guard', opts, () => {
+  const root = fs.mkdtempSync(path.join(tmp, 'guard-history-'));
+  const fixture = path.join(root, 'guard-fixture.ps1');
+  const hold = { holder: 'drill', since: '2026-11-19T01:59:00Z', until: '2026-11-19T03:59:00Z' };
+  const parked = activeHostStatus(hold, { executor: 'PARKED' });
+  const stage8 = activeHostStatus(hold, { executor: 'RUNNING', current: { stage: 8, phase: 'stage', batch: 'fixture' } });
+  const train = activeHostStatus(hold, { executor: 'RUNNING', reason: 'TRAIN_MAINTENANCE' });
+  const stage2 = activeHostStatus(hold, { executor: 'RUNNING', current: { stage: 2, phase: 'stage' } });
+  fs.writeFileSync(fixture, `. ${q(script)}
+    $script:DrillScriptPath = $PSCommandPath
+    $script:Drill.HostGuardSeconds = 0
+    $script:guardReads = 0
+    $script:samples = @(${[parked, stage8, stage8, train, parked, stage2].map(q).join(', ')})
+    function Get-DrillTime { ([DateTimeOffset]'2026-11-19T02:00:00Z').AddSeconds($script:guardReads) }
+    function Get-DrillHostSafety {
+      param([switch]$Running, [DateTimeOffset]$HoldUntil)
+      $sample = if ($Running) {
+        $script:samples[$script:guardReads]
+        $script:guardReads++
+      } else { ${q(activeHostStatus(hold))} }
+      Test-DrillHostSafety $sample 64GB -Running:$Running -HoldUntil $HoldUntil -Now (Get-DrillTime)
+    }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $true }
+  `);
+  const receipt = ps(`. ${q(fixture)}
+    $script:Drill.Runs = ${q(root)}
+    function Assert-DrillHost { @{ freeGB = 64 } }
+    function Invoke-DrillBaseline { @{ action = 'reuse' } }
+    function Test-DrillM5Applicable { $false }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Restore-VMCheckpoint { param($VMName, $Name, [switch]$Confirm) }
+    function Start-DrillBootWatchdog { @{ signal = ${q(path.join(root, 'fake-watchdog'))}; process = $null } }
+    function Start-DrillGuardedVm { $script:HostGuard.state.armed = $true }
+    function Get-DrillCredential { }
+    function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
+    function Invoke-DrillRun {
+      $clock = [Diagnostics.Stopwatch]::StartNew()
+      while (-not $script:HostGuard.state.failure -and $clock.Elapsed.TotalSeconds -lt 10) { Start-Sleep -Milliseconds 20 }
+      Assert-DrillGuard
+      throw 'guard did not stop on stage 2'
+    }
+    $window = @{ deadline = [DateTimeOffset]'2026-11-19T03:00:00Z'; holdUntil = [DateTimeOffset]'2026-11-19T03:10:00Z' }
+    $package = @{ version = '1.2.3'; tarSha256 = 'fixture'; ciSourceManifestSha256 = 'fixture' }
+    $out = Invoke-DrillPreparedRun $window $package @{ sha256 = 'fixture' } @{ sha256 = 'fixture' }
+    Read-DrillJson $out.receipt`);
+  assert.equal(receipt.failure.code, 'DRILL_HOST_CI_BUSY');
+  assert.equal(receipt.restoredToCheckpoint, true);
+  const at = seconds => `2026-11-19T02:00:0${seconds}.0000000+00:00`;
+  assert.deepEqual(receipt.evidence.hostExecutorStates, [
+    { state: 'PARKED', reason: null, current: null, firstSeenAt: at(1) },
+    { state: 'RUNNING', reason: null, current: { stage: 8, phase: 'stage' }, firstSeenAt: at(2) },
+    { state: 'RUNNING', reason: 'TRAIN_MAINTENANCE', current: null, firstSeenAt: at(4) },
+    { state: 'RUNNING', reason: null, current: { stage: 2, phase: 'stage' }, firstSeenAt: at(6) },
+  ]);
+});
+
+// A job of our own that refuses breakaway (KILL_ON_JOB_CLOSE only), like the agent session job a real drill runs in.
+const drillTestJob = `Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class DrillTestJob {
+  [StructLayout(LayoutKind.Sequential)]
+  struct BasicLimits {
+    public long ProcessTime, JobTime;
+    public uint Flags;
+    public UIntPtr MinWorkingSet, MaxWorkingSet;
+    public uint ActiveProcessLimit;
+    public UIntPtr Affinity;
+    public uint Priority, Scheduling;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  struct ExtendedLimits {
+    public BasicLimits Basic;
+    public ulong Reads, Writes, Other, ReadBytes, WrittenBytes, OtherBytes;
+    public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+  }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateJobObject(IntPtr attributes, IntPtr name);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref ExtendedLimits limits, uint size);
+  [DllImport("kernel32.dll", SetLastError = true)] public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+  [DllImport("kernel32.dll", SetLastError = true)] public static extern bool CloseHandle(IntPtr job);
+  public static IntPtr Create() {
+    var job = CreateJobObject(IntPtr.Zero, IntPtr.Zero);
+    if (job == IntPtr.Zero) throw new Win32Exception();
+    var limits = new ExtendedLimits();
+    limits.Basic.Flags = 0x00002000;
+    if (SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits))) return job;
+    var error = new Win32Exception();
+    CloseHandle(job);
+    throw error;
+  }
+}
+'@`;
+
+test('the boot watchdog still runs checkpoint cleanup after its parent job is terminated', opts, () => {
+  const root = fs.mkdtempSync(path.join(tmp, 'boot-watchdog-'));
+  const fixture = path.join(root, 'boot-fixture.ps1');
+  const host = path.join(root, 'host.ps1');
+  const ready = path.join(root, 'host-ready');
+  const start = path.join(root, 'start');
+  const cleanup = path.join(root, 'restored');
+  const vmId = '8f87dbcb-9fbc-4fd6-adc4-7c6345192c50';
+  fs.writeFileSync(fixture, `. ${q(script)}
+    $script:DrillScriptPath = $PSCommandPath
+    $script:Drill.BootMutex = ${q(`Local\\DrillWatchdogTest-${path.basename(root)}`)}
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]'${vmId}' }; notes = $script:Drill.Marker; state = 'Running' } }
+    function Stop-DrillOwnedVm {
+      param([switch]$RestoreCheckpoint)
+      [IO.File]::WriteAllText(${q(cleanup)}, [string]$RestoreCheckpoint)
+      $true
+    }
+  `);
+  fs.writeFileSync(host, `. ${q(fixture)}
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while (-not (Test-Path -LiteralPath ${q(start)})) {
+      if ($clock.Elapsed.TotalSeconds -ge 15) { throw 'test job not ready' }
+      Start-Sleep -Milliseconds 20
+    }
+    $watchdog = Start-DrillBootWatchdog ${q(root)} '${vmId}' ([DateTimeOffset]::UtcNow.AddSeconds(30))
+    [IO.File]::WriteAllText("$($watchdog.signal).starting", '')
+    [IO.File]::WriteAllText(${q(ready)}, '')
+    Start-Sleep -Seconds 30
+  `);
+  const result = ps(`
+    ${drillTestJob}
+    $job = [DrillTestJob]::Create()
+    $worker = $null
+    try {
+      $worker = Start-Process -FilePath ${q(powershell)} -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('"' + ${q(host)} + '"'))
+      if (-not [DrillTestJob]::AssignProcessToJobObject($job, $worker.Handle)) { throw [ComponentModel.Win32Exception]::new() }
+      [IO.File]::WriteAllText(${q(start)}, '')
+      $clock = [Diagnostics.Stopwatch]::StartNew()
+      while (-not (Test-Path -LiteralPath ${q(ready)})) {
+        if ($worker.HasExited -or $clock.Elapsed.TotalSeconds -ge 20) { throw 'watchdog did not become ready in the fixture' }
+        Start-Sleep -Milliseconds 20
+      }
+      if (-not [DrillTestJob]::CloseHandle($job)) { throw [ComponentModel.Win32Exception]::new() }
+      $job = [IntPtr]::Zero
+      $terminated = $worker.WaitForExit(3000)
+      $clock.Restart()
+      while (-not (Test-Path -LiteralPath ${q(cleanup)}) -and $clock.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 20 }
+      @{ terminated = $terminated; cleanup = (Test-Path -LiteralPath ${q(cleanup)}) }
+    } finally {
+      if ($job -ne [IntPtr]::Zero) { [void][DrillTestJob]::CloseHandle($job) }
+      if ($worker) { $worker.Dispose() }
+    }`);
+  assert.deepEqual(result, { terminated: true, cleanup: true });
+  assert.equal(fs.readFileSync(cleanup, 'utf8'), 'True');
+});
+
+test('the boot watchdog is never started by job breakaway', () => {
+  const source = fs.readFileSync(script, 'utf8');
+  assert.doesNotMatch(source, /0x0*1000000\b|BREAKAWAY_FROM_JOB|BreakawayFromJob/i);
+});
+
+test('a watchdog that exits after signalling ready never lets the VM start', opts, () => {
+  const root = fs.mkdtempSync(path.join(tmp, 'watchdog-exit-'));
+  const fake = path.join(root, 'fake-watchdog.ps1');
+  fs.writeFileSync(fake, `[IO.File]::WriteAllText($args[0], ''); Start-Sleep -Milliseconds 1500`);
+  const r = ps(`
+    $script:starts = 0; $script:fakeWatch = $null
+    function Start-VM { param($Name, $ErrorAction) $script:starts++ }
+    function Get-DrillHostSafety { @{ ok = $true } }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) }
+    function Assert-DrillHost { }
+    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint, $Window)
+      $state = [hashtable]::Synchronized(@{ ready = $true; armed = $false; failure = $null; executorStates = [ordered]@{} })
+      $script:HostGuard = @{ state = $state; pending = @{ IsCompleted = $false } }
+      return $script:HostGuard
+    }
+    function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
+    function Start-DrillDetachedWatchdog {
+      $p = Start-Process -FilePath ${q(powershell)} -WindowStyle Hidden -PassThru -ArgumentList @('-NoProfile', '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass', '-File', ('"' + ${q(fake)} + '"'), ('"' + ${q(path.join(root, 'guest-shutdown.ready'))} + '"'))
+      $script:fakeWatch = [Diagnostics.Process]::GetProcessById($p.Id)
+      return $p
+    }
+    # The watchdog exits after its ready signal was read and before the boot.
+    function Get-DrillGuardSafety { param($State) [void]$script:fakeWatch.WaitForExit(15000); @{ ok = $true } }
+    function Add-DrillExecutorObservation { }
+    function Get-DrillCredential { }
+    function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $true }
+    $outcome = Invoke-DrillOnCheckpoint { 'booted' } ${q(root)} @{ safeToResume = $true; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10); holdUntil = [DateTimeOffset]::MinValue }
+    @{ starts = $script:starts; result = $outcome.result; failure = $outcome.failure; exited = $script:fakeWatch.HasExited }`);
+  assert.equal(r.exited, true);
+  assert.equal(r.starts, 0);
+  assert.equal(r.result, null);
+  assert.equal(r.failure.code, 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY');
+  assert.equal(r.failure.detail.code, 'DRILL_WATCHDOG_EXITED_BEFORE_BOOT');
+});
+
+test('the watchdog launcher never terminates a process it cannot tie to this launch', opts, () => {
+  const r = ps(`
+    $decoy = Start-Process -FilePath ${q(powershell)} -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 20'
+    try {
+      # WMI hands back a PID that now belongs to someone else (the launched process exited and the PID was reused).
+      function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) [pscustomobject]@{ ReturnValue = 0; ProcessId = $decoy.Id } }
+      $c = try { [void](Start-DrillDetachedWatchdog 'AAAA' ([Diagnostics.Stopwatch]::StartNew())); $null } catch { Get-DrillCode $_ }
+      @{ code = (Get-Prop $c 'code'); alive = (-not $decoy.HasExited) }
+    } finally { if (-not $decoy.HasExited) { $decoy.Kill() }; $decoy.Dispose() }`);
+  assert.deepEqual(r, { code: 'DRILL_WATCHDOG_IDENTITY_UNCONFIRMED', alive: true });
+});
+
+test('a launched watchdog found inside a job is terminated and confirmed gone before the refusal', opts, () => {
+  const encoded = Buffer.from('Start-Sleep -Seconds 20', 'utf16le').toString('base64');
+  const r = ps(`
+    ${drillTestJob}
+    $job = [DrillTestJob]::Create()
+    $decoy = Start-Process -FilePath ${q(powershell)} -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}'
+    try {
+      if (-not [DrillTestJob]::AssignProcessToJobObject($job, $decoy.Handle)) { throw [ComponentModel.Win32Exception]::new() }
+      function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) [pscustomobject]@{ ReturnValue = 0; ProcessId = $decoy.Id } }
+      $c = try { [void](Start-DrillDetachedWatchdog '${encoded}' ([Diagnostics.Stopwatch]::StartNew())); $null } catch { Get-DrillCode $_ }
+      @{ code = (Get-Prop $c 'code'); inJob = (Get-Prop $c 'detail.inJob'); terminated = (Get-Prop $c 'detail.terminated'); exited = $decoy.HasExited }
+    } finally {
+      if (-not $decoy.HasExited) { $decoy.Kill() }
+      $decoy.Dispose()
+      [void][DrillTestJob]::CloseHandle($job)
+    }`);
+  assert.deepEqual(r, { code: 'DRILL_WATCHDOG_IN_JOB', inJob: true, terminated: true, exited: true });
+});
+
+test('asking WMI for the watchdog is bounded by the ready budget and fails by name', opts, () => {
+  const root = fs.mkdtempSync(path.join(tmp, 'watchdog-wmi-'));
+  const r = ps(`
+    $script:timeout = $null
+    function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) $script:timeout = $OperationTimeoutSec; throw 'WMI did not answer' }
+    $c = try { [void](Start-DrillBootWatchdog ${q(root)} ([guid]::Empty) ([DateTimeOffset]::UtcNow.AddMinutes(1))); $null } catch { Get-DrillCode $_ }
+    @{ code = (Get-Prop $c 'code'); inner = (Get-Prop $c 'detail.code'); timeout = $script:timeout }`);
+  assert.deepEqual(r, { code: 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY', inner: 'DRILL_WATCHDOG_WMI_CREATE_FAILED', timeout: 15 });
+});
+
 test('host reader uses only the pinned status file and accounts for an existing larger VM', opts, () => {
   const r = ps(`
     function Get-Content { param($LiteralPath, [switch]$Raw, $Encoding, $ErrorAction)
@@ -347,30 +755,32 @@ test('checkpoint caller discards a result after a guard failure and restores the
   const r = ps(`
     $script:restores = 0
     function Get-DrillHostSafety { @{ ok = $true } }
-    function Get-DrillVmInfo { @{ notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
     function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) }
     function Assert-DrillHost { }
     function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint)
-      $script:HostGuard = @{ state = @{ ready = $true; failure = $null }; pending = @{ IsCompleted = $false } }
+      $script:HostGuard = @{ state = @{ ready = $true; failure = $null; executorStates = [ordered]@{} }; pending = @{ IsCompleted = $false } }
       return $script:HostGuard
     }
     function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
     function Start-DrillGuardedVm { }
+    function Start-DrillBootWatchdog { @{ signal = ${q(path.join(tmp, 'checkpoint-test'))}; process = $null } }
     function Get-DrillCredential { }
     function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
     function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) if ($RestoreCheckpoint) { $script:restores++ }; return $true }
     $outcome = Invoke-DrillOnCheckpoint {
       $script:HostGuard.state.failure = @{ code = 'DRILL_HOST_IS_ON_DUTY'; detail = 'test' }
       'discard this result'
-    } 'unused'
+    } 'unused' @{ safeToResume = $true; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10); holdUntil = [DateTimeOffset]::MinValue }
     @{ outcome = $outcome; restores = $script:restores }`);
-  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true });
+  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true, hostExecutorStates: [] });
   assert.equal(r.restores, 1);
 });
 
 test('an EndInvoke exception leaves a failed receipt after the owned VM is stopped and restored', opts, () => {
   const r = ps(`
-    $script:events = @(); $script:vm = @{ State = 'Off' }
+    $script:events = @(); $script:vm = @{ State = 'Off'; Id = [guid]::Empty }
     $script:Drill.Runs = ${q(tmp)}
     $Version = '1.2.3'; $From = 'fixture'; $Kit = 'fixture'
     function Read-DrillPrereq { @{ sha256 = 'prereq' } }
@@ -379,6 +789,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
     function Get-DrillReleaseFiles { }
     function Assert-DrillHost { @{ freeGB = 16 } }
     function Invoke-DrillBaseline { @{ action = 'ready' } }
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
     function Get-DrillHostSafety { @{ ok = $true } }
     function Get-DrillVmInfo { @{ vm = $script:vm; notes = 'clued.drill-vm/1'; state = $script:vm.State; checkpoints = @($script:Drill.Checkpoint) } }
     function Get-VM { param($Name) $script:vm }
@@ -388,12 +799,14 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
       $worker = [pscustomobject]@{}
       $worker | Add-Member ScriptMethod EndInvoke { $script:events += 'end'; throw 'mock EndInvoke failure' }
       $worker | Add-Member ScriptMethod Dispose { $script:events += 'dispose' }
-      $script:HostGuard = @{ worker = $worker; state = [hashtable]::Synchronized(@{ ready = $true; armed = $true; failure = $null }); pending = @{ IsCompleted = $false } }
+      $script:HostGuard = @{ worker = $worker; state = [hashtable]::Synchronized(@{ ready = $true; armed = $true; failure = $null; executorStates = [ordered]@{} }); pending = @{ IsCompleted = $false } }
       return $script:HostGuard
     }
     function Start-DrillGuardedVm { $script:vm.State = 'Running' }
+    function Start-DrillBootWatchdog { @{ signal = ${q(path.join(tmp, 'endinvoke-test'))}; process = $null } }
     function Get-DrillCredential { }
     function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
     function Invoke-DrillRun { 'discard this result' }
     $outcome = try { Invoke-DrillMain } catch { Get-DrillCode $_ }
     $receipt = if (Get-Prop $outcome 'receipt') { Read-DrillJson $outcome.receipt }
@@ -420,6 +833,125 @@ test('the only Start-VM command is inside Start-DrillGuardedVm', opts, () => {
       if ($parent) { $parent.Name } else { '<script>' }
     }) }`);
   assert.deepEqual(r.owners, ['Start-DrillGuardedVm']);
+});
+
+test('guest shutdown timer uses the same deadline after a reboot without touching live tasks', opts, () => {
+  const r = ps(`
+    function New-ScheduledTaskAction($Execute, $Argument) {
+      $encoded = ($Argument -split ' ')[-1]
+      $script:shutdown = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded))
+      return 'action'
+    }
+    function New-ScheduledTaskTrigger([switch]$Once, [datetime]$At, [switch]$AtStartup) {
+      if ($Once) { return 'once' }; if ($AtStartup) { return 'startup' }
+    }
+    function New-ScheduledTaskSettingsSet { return 'settings' }
+    function Register-ScheduledTask($TaskName, $Action, $Trigger, $Settings, $User, $ErrorAction) {
+      $script:task = @{ name = $TaskName; user = $User; triggers = $Trigger }
+    }
+    $deadline = [DateTimeOffset]::UtcNow.AddMinutes(30).ToString('o')
+    $result = & $script:GuestShutdownTimer $deadline $env:COMPUTERNAME
+    @{ armed = $result; task = $script:task; deadline = $deadline; shutdown = $script:shutdown }
+  `);
+  assert.equal(r.armed, true);
+  assert.deepEqual(r.task, { name: 'CluedDrillGuestShutdown', user: 'SYSTEM', triggers: ['once', 'startup'] });
+  assert.ok(r.shutdown.includes(r.deadline));
+  assert.match(r.shutdown, /shutdown\.exe" \/s \/f \/t 0/);
+});
+
+test('M5 collects the six public observations and requires the host checker for an applicable package', opts, () => {
+  const root = path.join(tmp, 'm5-guest');
+  const resident = path.join(root, 'resident');
+  const runDir = path.join(tmp, 'm5-run');
+  const put = (file, data) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data));
+  };
+  const profile = { ownerSid: 'S-1-5-21-1-2-3-4', controllerSid: 'S-1-5-21-1-2-3-5' };
+  put(path.join(resident, 'record', 'acceptance.json'), { node: { ...profile, privateField: 'not exported' } });
+  put(path.join(resident, 'broker', 'renew-key.json'), { source: 'system' });
+  put(path.join(resident, 'state', 'renew-key-resident.json'), { source: 'resident' });
+  put(path.join(root, 'state', 'v2', 'receipts', 'renew-key-controller.json'), { source: 'controller' });
+  put(path.join(resident, 'mailbox', 'responses', 'renew-key.json'), { source: 'companion' });
+  put(path.join(resident, 'broker', 'renew-ci.json'), { at: '2026-11-19T01:00:00Z', code: 'RENEW_GATEWAY_UNAVAILABLE' });
+  const probe = { at: '2026-11-19T02:00:00Z', code: 'RENEW_IDENTITY_REFUSED' };
+  put(path.join(resident, 'broker', 'renew-upgrade.json'), probe);
+  fs.mkdirSync(runDir);
+
+  const simulatedHost = path.join(tmp, 'm5-host');
+  fs.mkdirSync(path.join(simulatedHost, 'test'), { recursive: true });
+  const runM5 = () => ps(`
+    $script:Drill.GuestRoot = ${q(resident)}
+    $script:DrillScriptPath = ${q(path.join(simulatedHost, 'drill', 'drill-vm.ps1'))}
+    function Invoke-DrillGuest { param($cred, $block, $ArgumentList, $TimeoutMinutes, $Step) & $block $ArgumentList }
+    $runDir = ${q(runDir)}
+    $m5 = if (Test-Path (Join-Path $runDir 'm5')) { @{ directory = 'm5'; missing = @(); collectionCode = $null } } else { Copy-DrillM5 $runDir $null }
+    Get-DrillM5Verdict $runDir $m5
+  `);
+  const absent = runM5();
+  assert.deepEqual(absent, { directory: 'm5', missing: [], collectionCode: null,
+    result: 'FAIL', detail: 'DRILL_M5_HOST_CHECKER_MISSING' });
+  assert.deepEqual(fs.readdirSync(path.join(runDir, 'm5')).sort(),
+    ['companion.json', 'controller.json', 'probe.json', 'profile.json', 'resident.json', 'system.json']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'profile.json'), 'utf8')), profile);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'm5', 'probe.json'), 'utf8')), probe);
+  fs.writeFileSync(path.join(simulatedHost, 'test', 'renewal-drill.mjs'),
+    'import fs from "node:fs"; if (fs.readdirSync(process.argv[2]).length !== 6) process.exit(1); console.log(\'{"result":"PASS"}\');');
+  const present = runM5();
+  assert.equal(present.result, 'PASS');
+  assert.deepEqual(present.verdict, { result: 'PASS' });
+});
+
+function m5DrillReceipt(name, renewalPaths) {
+  const root = path.join(tmp, name);
+  const checker = path.join(root, 'test', 'renewal-drill.mjs');
+  fs.mkdirSync(path.dirname(checker), { recursive: true });
+  fs.writeFileSync(checker, `console.log(JSON.stringify({ result: 'FAIL' })); process.exitCode = 1;`);
+  const archive = path.join(root, 'package.tar');
+  const files = ['windows/install-resident.ps1', ...renewalPaths].map(rel => ({
+    path: `tree/work/independent-ci-resident-v1/${rel}`, data: Buffer.from(rel),
+  }));
+  const manifest = { contract: 'clued.independent-ci.fleet-universal/1', version: '1.2.3',
+    files: files.map(({ path, data }) => ({ path, sha256: sha(data), bytes: data.length })) };
+  fs.writeFileSync(archive, writeTar([...files, { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]));
+  const e = JSON.parse(evidence());
+  const run = { first: { ...e, readAt: e.now }, entry: e.entry, reboot: e.reboot, reinstall: e.reinstall,
+    timings: {}, m5: null };
+  const receipt = ps(`
+    $script:Drill.Runs = ${q(root)}
+    $script:DrillScriptPath = ${q(path.join(root, 'drill', 'drill-vm.ps1'))}
+    function Assert-DrillHost { @{ freeGB = 20 } }
+    function Invoke-DrillBaseline { @{ action = 'reuse' } }
+    $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
+    $fixture.m5 = @{ directory = 'm5'; missing = @('probe.json'); collectionCode = $null }
+    function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
+    $package = @{ version = '1.2.3'; tar = ${q(archive)}; tarSha256 = ${q(sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)} }
+    $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
+    Read-DrillJson $out.receipt
+  `);
+  return receipt;
+}
+
+test('a legacy archive stays eligible for A-tier PASS with a renewal checker on the host', opts, () => {
+  // The accepted 78ad314b package lists the runner swap broker but no renewal contract.
+  const receipt = m5DrillReceipt('m5-legacy', ['windows/SwapBroker.cs']);
+  assert.equal(receipt.m5.result, 'NOT_EVALUATED');
+  assert.equal(receipt.m5.detail, 'M5 未评估（本次包的文件清单无续期组件）');
+  const done = finalize('m5-legacy-finalize', receipt);
+  assert.equal(done.status, 0);
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  assert.equal(JSON.parse(done.bytes).m5.result, 'NOT_EVALUATED');
+});
+
+test('missing renewal observations fail only M5 and still allow A-tier Finalize', opts, () => {
+  const receipt = m5DrillReceipt('m5-renewal', ['windows/SwapBroker.cs', 'windows/ci-connection-renew.contract.json']);
+  assert.equal(receipt.m5.result, 'FAIL');
+  assert.deepEqual(receipt.m5.missing, ['probe.json']);
+  assert.equal(receipt.conclusion, 'PENDING_PRODUCTION_READBACK');
+  const done = finalize('m5-renewal-finalize', receipt);
+  assert.equal(done.status, 0);
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  assert.equal(JSON.parse(done.bytes).m5.result, 'FAIL');
 });
 
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
@@ -684,7 +1216,7 @@ function finalize(name, fields) {
   const readback = path.join(tmp, 'readback.json');
   const original = JSON.stringify(receipt);
   fs.writeFileSync(receiptFile, original);
-  fs.writeFileSync(readback, JSON.stringify(readbackFor()));
+  fs.writeFileSync(readback, JSON.stringify(readbackFor(readbackRow, receipt.startedAt)));
   const run = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Finalize', receiptFile, '-ProductionReadback', readback], { encoding: 'utf8', timeout: 120000 });
   const bytes = fs.readFileSync(receiptFile, 'utf8');
   return { receipt, receiptFile, original, bytes, status: run.status, output: JSON.parse(run.stdout.trim()) };
