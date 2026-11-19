@@ -569,11 +569,33 @@ function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
   $derived = $null
   if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
   if ($null -eq $derived -or [string](Get-Prop $derived 'sha256') -cnotmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE' $Tar) }
-  $pairs = { param($c) foreach ($g in @('required', 'optional')) { $m = Get-Prop $c $g
-    @(if ($m -is [Collections.IDictionary]) { foreach ($k in @($m.Keys)) { "$g.$k=$($m[$k])" } } elseif ($null -ne $m) { foreach ($p in $m.PSObject.Properties) { "$g.$($p.Name)=$($p.Value)" } }) | Sort-Object } }
-  $want = @(& $pairs (Get-Prop $derived 'credentials')) -join "`n"; $have = @(& $pairs (Get-Prop $KitInfo 'credentials')) -join "`n"
+  # the list's bytes by their hash, and the two groups member by member (8th review round, medium 1: never through a joined text)
   $bytes = [string](Get-Prop $derived 'sha256'); $recorded = [string](Get-Prop $KitInfo 'credentialFilesSha256')
-  if ($want -cne $have -or $bytes -cne $recorded) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ package = $want; kit = $have; packageSha256 = $bytes; kitSha256 = $recorded }) }
+  $same = Test-DrillCredentialGroupsEqual (Get-Prop $derived 'credentials') (Get-Prop $KitInfo 'credentials')
+  if (-not $same -or $bytes -cne $recorded) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ groupsEqual = $same; packageSha256 = $bytes; kitSha256 = $recorded }) }
+}
+
+# A credential group's members as written: each key with its value (a dictionary or a parsed JSON object).
+function Get-DrillCredentialMembers($Group) {
+  $list = New-Object 'System.Collections.Generic.List[object]'
+  if ($Group -is [Collections.IDictionary]) { foreach ($k in @($Group.Keys)) { $list.Add(@{ key = [string]$k; value = $Group[$k] }) } }
+  elseif ($null -ne $Group) { foreach ($p in $Group.PSObject.Properties) { $list.Add(@{ key = [string]$p.Name; value = $p.Value }) } }
+  , $list
+}
+# The two groups of two lists the same: in each group the same number of members, and for every member of one the member of the other with
+# the same key (ordinal) holds the same string value (ordinal).
+function Test-DrillCredentialGroupsEqual($A, $B) {
+  foreach ($g in @('required', 'optional')) {
+    $ga = Get-Prop $A $g; $gb = Get-Prop $B $g
+    if ($null -eq $ga -or $null -eq $gb) { return $false }
+    $x = Get-DrillCredentialMembers $ga; $y = Get-DrillCredentialMembers $gb
+    if ($x.Count -ne $y.Count) { return $false }
+    foreach ($m in $x) {
+      $match = @($y | Where-Object { [string]::Equals($_.key, $m.key, [StringComparison]::Ordinal) })
+      if ($match.Count -ne 1 -or $m.value -isnot [string] -or $match[0].value -isnot [string] -or -not [string]::Equals($match[0].value, $m.value, [StringComparison]::Ordinal)) { return $false }
+    }
+  }
+  return $true
 }
 
 # The package's gh and Git for Windows installers in the kit, each with the hash the package's prerequisite manifest pins (Codex review of
