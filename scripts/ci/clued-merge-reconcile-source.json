@@ -90,7 +90,7 @@
 
     ".github/workflows/clued-cloud-node22-install.yml": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97",
 
-    ".github/workflows/clued-cloud-production-release.yml": "1ffa5b8f035930ffd5619a6b002d5cda99de2a8492795ad83e489049f03d543e",
+    ".github/workflows/clued-cloud-production-release.yml": "9d0551b78099ecb442a632de67c62be073d6ebd94c9293d0efb8bfadf9f6c4be",
 
     ".github/workflows/clued-compute-panel.yml": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
 
@@ -208,9 +208,9 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "5050d82a4daa3a027c6e73ffda3ee26eedf56a4d43042a5f3c3098d29d2f28fb",
+    "scripts/ci/ci-required-selection.mjs": "fc7d4a5f7237f9ce1e007b0e745b1bc51cd4f94c8ba5cb0bd7f526af637057a7",
 
-    "scripts/ci/ci-required-selection.test.mjs": "4d14397285f960ef6eb32bf5542103c710cc4fc671ea0016a327943ac18e80dd",
+    "scripts/ci/ci-required-selection.test.mjs": "d5a6665dbe703ef0f0b8c6250484fc1f0e3227faead3d802593c4845d6404ed1",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
@@ -400,11 +400,11 @@
 
     "scripts/ci/clued-registry-scan-guard.mjs": "630296844a6746b159e0ba128696e49ac5054c743829b58c141b00a55f1a5081",
 
-    "scripts/ci/clued-release-grant.mjs": "55b587d4e052b0281ce346c68ce1e4fc2c4f74d06287f0af1fa76481ca18c52e",
+    "scripts/ci/clued-release-grant.mjs": "90cf1368b1c002c74978697137950f623e32c69929408b3e8b08fc1ddb6b8670",
 
-    "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
+    "scripts/ci/clued-release-grant.test.mjs": "6f850831ccb914a74aa97aa0b9ec208fe0197b23b1082214f057ed2010ac81db",
 
-    "scripts/ci/clued-required-applicability.mjs": "aa66c6c4e27b6d8a9a554360ba81d8d17deab2d952f1959e825e65f2da05324f",
+    "scripts/ci/clued-required-applicability.mjs": "1eb2fe2535774783562b98d70c6e35cfd6261c619b5786fabb4fa03f3d35c540",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
