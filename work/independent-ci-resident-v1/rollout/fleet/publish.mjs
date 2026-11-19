@@ -1,38 +1,55 @@
 // Archive one universal node package on a GitHub Release (Decision b5d041d2 v2) and keep the 资料中心 index.
 //
 //   node rollout/fleet/publish.mjs release --dir <universal.mjs build out> --repo <owner/name> [--index <index file>]
-//   node rollout/fleet/publish.mjs attach-acceptance --version <v> --acceptance <fleet-node-<v>.acceptance.json> [--repo <owner/name>] [--index <index file>] [--dir <build out>]
-//   node rollout/fleet/publish.mjs attach-first-install-kit --version <v> --kit <fleet-node-<v>.first-install-kit.json> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>]
-//   node rollout/fleet/publish.mjs acceptance-draft --version <v> --dir <build out> --base <fields.json> --out <new dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
+//   node rollout/fleet/publish.mjs prepare --version <v> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
+//   node rollout/fleet/publish.mjs seal --request <fleet-node-<v>.acceptance-request.json> --decision <uuid> --receipt <uuid> --accepted-at <ISO Z>
+//        [--drill-receipt <receipt.json>] [--repo <owner/name>] [--index <index file>]
+//
+// The acceptance has two halves, each one command that may be run again (Fable 3bc571a6 ruling section 3, Task 758989fa): prepare before the
+// Owner accepts (what the Owner reviews), seal after (what the acceptance makes). Nothing else puts a kit or an acceptance on a Release: the
+// steps (attachFirstInstallKit, attachAcceptance) have no command of their own, so no hand-written acceptance file has a way up.
 //
 // release: the build output is checked first (exactly one fleet-node-<v>.release.json, its tar with the sha256 it names, SHA256SUMS naming
 //   both). The index must not name this version yet (an absent index is created with its header). Then
 //   gh release create fleet-node-<v> <tar> <release.json> SHA256SUMS --repo <repo> --target <commit> ..., gh release view checks the
-//   three assets by name and size, and only after that one row is appended: | version | Release URL | tar sha256 | commit | | |.
+//   three assets by name and size, and only after that one row is appended: | version | Release URL | tar sha256 | commit | | | |.
 //   Two more assets are the node entry of a first install (rollout/fleet/bootstrap.ps1 and prereq-manifest.json), taken from the
 //   checked archive itself (never a working-tree copy: the bytes the Owner accepts) as fleet-node-<v>.bootstrap.ps1 and
 //   fleet-node-<v>.prereq-manifest.json; the published SHA256SUMS is the build's two lines plus these two (written into a new temporary
 //   directory; the build output is not changed). An archive without them is refused before gh is called.
-// attach-first-install-kit: the coordinator's first-install kit (install.mjs first-install-kit, contract
-//   clued.independent-ci.fleet-node-first-install-kit/1) and the role images it lists as local (images.local[].{id, asset}: each
-//   asset role-image-<64hex>.tar.gz, a gzip of the template node's docker save; exactly those, no more, no fewer), uploaded one by one
-//   without --clobber, then fleet-node-<v>.first-install.SHA256SUMS over them (the release's SHA256SUMS was published with the release
-//   and is never replaced). A release that already has the kit or that sums file is refused before anything is uploaded. The index is
-//   not changed: the kit is not an acceptance.
-// acceptance-draft: the ONE way an acceptance reaches the Owner (the only place a first-install kit is made). On this node (a settled
-//   installed one, read-only: install.mjs firstInstallKitOf) it takes the version's kit and checks it (readKit); refuses when the
-//   template's Source is this package's (the node already runs this version: do it before upgrading); gets every local role image the
-//   kit lists (--image, else the previous Release's same-id asset, held to that version's first-install.SHA256SUMS; one missing refuses);
-//   uploads kit, images and sums (attachFirstInstallKit) and reads them back; and only then writes the acceptance file, with
-//   firstInstallKitSha256 and ciSourceManifestSha256, into --out next to the kit and the images (the directory first-install-check and
-//   bootstrap.ps1 -From read). Any step that fails leaves no acceptance file. --base: {cluedDecision, acceptedAt, fleetRefs[, repository]}.
-// attach-acceptance: the Owner's acceptance file (contract clued.independent-ci.fleet-node-acceptance/1) is checked against the index
-//   row of that version (archive_sha256 and commit; with --dir also against the build's release.json), its whole contract as
-//   install.mjs prepare reads it (validateAcceptance: repository = --repo, ciSourceManifestSha256, fleetRefs); its file name must be
-//   fleet-node-<v>.acceptance.json. It is uploaded as an extra asset (gh release upload, never --clobber: the tar stays as it is) and
-//   the row's accepted-at and Decision cells are filled. A row that already has them is refused before anything is uploaded.
-//   An acceptance without firstInstallKitSha256, or whose kit is not on the Release (the kit asset, first-install.SHA256SUMS naming that
-//   same hash, every local role image the kit lists), is refused too: a version that cannot first-install a node is not accepted.
+// prepare (after release, before the Owner accepts; on a settled installed node that does not run this version yet, read-only there):
+//   1. the first-install kit. The Release's, when it has one: once a kit is attached that copy is the one fact and nobody takes it from a node
+//      again (a node gives new bytes on every read: template.versionFacts carries its observedAt). Else this node's (install.mjs
+//      firstInstallKitOf). Either is held to what a new node reads (readKit), and the template's Source must not be this package's (the node
+//      already runs this version: take the kit before upgrading it).
+//   2. the request's fleetRefs, from this node's installed record (install.mjs installedFleetMaterial, read-only): the three that enter the
+//      Source (sourceAcceptanceRef, hostQualificationRef, formalRoles) and the three every acceptance carries (ownerAuthorizationRef,
+//      publisherQualificationRef, ownerPackageAcceptanceRef). The package's Source (install.mjs sourceHashOf) is computed with the drill's
+//      stand-in Decision and receipt (DRILL_RESERVED): the Source does not depend on them (BATCH1-INTERFACES.md section 6).
+//   3. every local role image the kit lists (--image, else the previous Release's same-id asset, held to that version's first-install.SHA256SUMS).
+//   4. --out (new or the one of an earlier run): the kit and the images in it; whatever of kit, images and fleet-node-<v>.first-install.SHA256SUMS
+//      the Release lacks is uploaded (attachFirstInstallKit, resuming: what is there and the same is kept, a truncated image or sums file
+//      replaced, another kit refused) and read back; then fleet-node-<v>.acceptance-request.json (REQUEST_CONTRACT): tar, commit, repository,
+//      Source, kit hash and those fleetRefs. No Decision, receipt or time: the Owner reviews it. An accepted version is refused (no kit afterwards).
+// seal (after the Owner accepted and the Decision is written; never touches a node or takes a kit): the request and the Decision id, the
+//   receipt id of that write and acceptedAt fill the five fields an acceptance makes (cluedDecision = ownerDecisionRef, installationReceiptRef =
+//   ownerReceiptRef, acceptedAt), validateAcceptance, then attachAcceptance; only after it succeeded is fleet-node-<v>.acceptance.json written
+//   next to the request (the directory first-install-check and bootstrap.ps1 -From read). The drill's stand-in values are refused.
+//   --drill-receipt: a candidate drill's receipt (drill/drill-vm.ps1, DRILL_RECEIPT_CONTRACT): its conclusion PASS_* and tarSha256,
+//   ciSourceManifestSha256 and firstInstallKitSha256 those of this acceptance, else refused; the index row names it. Without it the row says
+//   首装未演练 (the first-install drill is not a gate of an in-place upgrade: ruling section 1).
+// attachFirstInstallKit (prepare's step): the kit (contract clued.independent-ci.fleet-node-first-install-kit/1) and the role images it lists as
+//   local (images.local[].{id, asset}: each asset role-image-<64hex>.tar.gz, a gzip of the template node's docker save; exactly those, no more,
+//   no fewer), uploaded one by one without --clobber, then fleet-node-<v>.first-install.SHA256SUMS over them (the release's SHA256SUMS was
+//   published with the release and is never replaced). The index is not changed: the kit is not an acceptance.
+// attachAcceptance (seal's step): the acceptance file (contract clued.independent-ci.fleet-node-acceptance/1) is checked against the index
+//   row of that version (archive_sha256 and commit), its whole contract as install.mjs prepare reads it (validateAcceptance: repository =
+//   --repo, ciSourceManifestSha256, fleetRefs); its file name must be fleet-node-<v>.acceptance.json; the drill's stand-in values are refused.
+//   The Release must hold what it accepts: SHA256SUMS naming archive_sha256 for the tar, and the kit (the kit asset, first-install.SHA256SUMS
+//   naming that same hash, every local role image the kit lists). It is uploaded as an extra asset (gh release upload, never --clobber: the
+//   tar stays as it is) and the row's accepted-at, Decision and drill cells are filled. The same acceptance again (a run that stopped after
+//   the upload, or one that finished) completes what is missing and changes nothing else; another acceptance of an accepted version is refused
+//   before anything is uploaded.
 // Credentials come only from gh's own login: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN and GITHUB_ENTERPRISE_TOKEN are removed from
 // gh's environment, and nothing here reads, writes or prints a token.
 import { spawnSync } from 'node:child_process';
@@ -42,14 +59,15 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import os from 'node:os';
 import { RESIDENT } from './facts.mjs';
-import { firstInstallKitOf, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
+import { DEFAULT_ROOT, firstInstallKitOf, installedFleetMaterial, readKit, sourceHashOf, validateAcceptance } from './install.mjs';
 import { readTar } from './tar.mjs';
 import { RELEASE_CONTRACT, VERSION, tagOf } from './universal.mjs';
 
 export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
 export const DEFAULT_REPO = 'tdoljyj/cross-memory-system';
 export const DEFAULT_INDEX = 'G:\\我的云端硬盘\\Clued_资料中心\\10_E_工程与平台\\CI基础设施\\通用节点包_归档索引.md';
-export const INDEX_HEADER = ['版本', 'Release', 'tar sha256', 'commit', '接受时间', 'Decision'];
+// the drill column (seal): the candidate drill's conclusion and receipt sha256, or 首装未演练; an older table is completed with an empty cell
+export const INDEX_HEADER = ['版本', 'Release', 'tar sha256', 'commit', '接受时间', 'Decision', '首装演练'];
 export const KIT_CONTRACT = 'clued.independent-ci.fleet-node-first-install-kit/1';
 // the node entry of a first install, in the archive's tree: published asset name suffix -> archive path
 export const NODE_ENTRY = Object.freeze({ 'bootstrap.ps1': `tree/${RESIDENT}/rollout/fleet/bootstrap.ps1`, 'prereq-manifest.json': `tree/${RESIDENT}/rollout/fleet/prereq-manifest.json` });
@@ -105,7 +123,7 @@ function gh(ghCommand, args) {
   return { status: r.status, stdout: String(r.stdout ?? ''), stdoutBytes: r.stdout ?? Buffer.alloc(0), stderr: String(r.stderr ?? r.error ?? '').trim().slice(-300) };
 }
 
-// ---- the index: a markdown table of six columns; its own line ending is kept; an older five-column table is completed ----
+// ---- the index: a markdown table of seven columns; its own line ending is kept; an older (five- or six-column) table is completed ----
 const isRow = l => l.startsWith('|');
 const cells = line => line.split('|').slice(1, -1).map(c => c.trim());
 const row = c => `| ${c.join(' | ')} |`;
@@ -167,10 +185,53 @@ async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
     const size = (await fs.stat(a.file)).size;
     check(v.assets.some(x => x.name === a.name && x.size === size), 'PUBLISH_RELEASE_ASSET_MISSING', a.name);
   }
-  const line = row([s.version, v.url, s.archive_sha256, s.commit, '', '']);
+  const line = row([s.version, v.url, s.archive_sha256, s.commit, '', '', '']);
   await writeIndex(index, [...idx.lines, line], idx.eol);
   return { status: 'FLEET_RELEASE_PUBLISHED', tag: s.release_tag, url: v.url, archiveSha256: s.archive_sha256, commit: s.commit, indexLine: line };
 }
+
+// The drill's stand-in acceptance (Fable 3bc571a6 ruling section 2.3): a candidate drill installs a package before the Owner has accepted it,
+// from an acceptance file whose Decision and receipt are these two ids. They are defined here only (the drill imports them, so does prepare
+// for the Source, which they do not change); every acceptance on its way to a Release is refused when it names either (attachAcceptance), so
+// such a file never reaches a Release and no real node (which reads the Release, or the operator's own --from) can read one. acceptedAt is a
+// stand-in time, not reserved. Shapes a node accepts: UUIDs, not 00000000- (validateAcceptance) nor dddddddd-/eeeeeeee- (generate.py).
+export const DRILL_RESERVED = Object.freeze({ decision: 'ca7d1da7-d2e1-4c1d-8000-000000000001', receipt: 'ca7d1da7-d2e1-4c1d-8000-000000000002', acceptedAt: '2026-01-01T00:00:00Z' });
+export const REQUEST_CONTRACT = 'clued.independent-ci.fleet-node-acceptance-request/1';
+export const DRILL_RECEIPT_CONTRACT = 'clued.independent-ci.drill-receipt/1';
+export const NOT_DRILLED = '首装未演练';
+// the request's fleetRefs: what a node carries into every acceptance; the other three (ownerDecisionRef, installationReceiptRef, ownerReceiptRef) are seal's
+export const REQUEST_FLEET_REFS = Object.freeze(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ownerPackageAcceptanceRef', 'formalRoles']);
+const REQUEST_KEYS = ['contract', 'version', 'archive_sha256', 'commit', 'repository', 'ciSourceManifestSha256', 'firstInstallKitSha256', 'fleetRefs'];
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+const exactKeys = (o, keys) => o !== null && typeof o === 'object' && !Array.isArray(o) && Object.keys(o).length === keys.length && keys.every(k => Object.hasOwn(o, k));
+
+// The acceptance a request becomes: its fields and the five the acceptance makes (seal with the Owner's Decision; the drill with DRILL_RESERVED).
+export function acceptanceOf(request, { decision, receipt, acceptedAt }) {
+  const f = request.fleetRefs;
+  const a = { contract: ACCEPTANCE_CONTRACT, version: request.version, archive_sha256: request.archive_sha256, commit: request.commit, repository: request.repository,
+    ciSourceManifestSha256: request.ciSourceManifestSha256, cluedDecision: decision, acceptedAt,
+    fleetRefs: { sourceAcceptanceRef: f.sourceAcceptanceRef, hostQualificationRef: f.hostQualificationRef, ownerAuthorizationRef: f.ownerAuthorizationRef,
+      publisherQualificationRef: f.publisherQualificationRef, ownerPackageAcceptanceRef: f.ownerPackageAcceptanceRef, installationReceiptRef: receipt,
+      ownerDecisionRef: decision, ownerReceiptRef: receipt, formalRoles: f.formalRoles },
+    firstInstallKitSha256: request.firstInstallKitSha256 };
+  if (request.ciSourceManifestSha256 === undefined) delete a.ciSourceManifestSha256;
+  return a;
+}
+
+export function readRequest(r) {
+  check(exactKeys(r, REQUEST_KEYS) && r.contract === REQUEST_CONTRACT, 'REQUEST_REFUSED', 'shape');
+  check(VERSION.test(r.version ?? '') && HEX64.test(r.archive_sha256 ?? '') && /^[0-9a-f]{40}$/.test(r.commit ?? '') && REPO.test(r.repository ?? '')
+    && HEX64.test(r.ciSourceManifestSha256 ?? '') && HEX64.test(r.firstInstallKitSha256 ?? ''), 'REQUEST_REFUSED', 'hashes');
+  check(exactKeys(r.fleetRefs, [...REQUEST_FLEET_REFS]) && REQUEST_FLEET_REFS.every(k => k === 'formalRoles' || UUID.test(r.fleetRefs[k] ?? '')), 'REQUEST_REFUSED', 'fleetRefs');
+  return r;
+}
+
+// Whether an acceptance names the drill's stand-in Decision or receipt (an 8-hex cluedDecision by its prefix).
+const namesDrillReserved = a => {
+  const f = a?.fleetRefs && typeof a.fleetRefs === 'object' ? a.fleetRefs : {};
+  return [a?.cluedDecision, ...Object.values(f)].some(v => typeof v === 'string'
+    && (v === DRILL_RESERVED.decision || v === DRILL_RESERVED.receipt || (/^[0-9a-f]{8}$/.test(v) && DRILL_RESERVED.decision.startsWith(v))));
+};
 
 export async function readAcceptance(file, version) {
   check(path.basename(file) === `${tagOf(version)}.acceptance.json`, 'ACCEPTANCE_FILE_NAME_REFUSED', path.basename(file));
@@ -183,38 +244,58 @@ export async function readAcceptance(file, version) {
   check(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(a.acceptedAt ?? '') && !Number.isNaN(Date.parse(a.acceptedAt)), 'ACCEPTANCE_TIME_REFUSED');
   check(a.fleetRefs && typeof a.fleetRefs === 'object' && !Array.isArray(a.fleetRefs), 'ACCEPTANCE_FLEETREFS_REFUSED');
   check(HEX64.test(a.firstInstallKitSha256 ?? ''), 'ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT');
+  // a candidate drill's stand-in acceptance never reaches a Release (DRILL_RESERVED)
+  check(!namesDrillReserved(a), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { decision: a.cluedDecision });
   // the whole contract as every node's install.mjs prepare reads it (repository, ciSourceManifestSha256 from install.mjs source-hash, fleetRefs)
   try { validateAcceptance(a); } catch (e) { fail('ACCEPTANCE_REFUSED', e?.detail ?? e?.code ?? String(e)); }
   return a;
 }
 
-export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REPO, index = DEFAULT_INDEX, dir = null, ghCommand = ['gh'] }) {
+// seal's step (see the head of this file). `drill`: the index row's drill cell.
+export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REPO, index = DEFAULT_INDEX, dir = null, drill = NOT_DRILLED, ghCommand = ['gh'] }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
   const a = await readAcceptance(acceptance, version);
   check(a.repository === repo, 'ACCEPTANCE_NOT_THIS_REPOSITORY', a.repository);
+  check(typeof drill === 'string' && drill !== '' && !/[|\r\n]/.test(drill), 'PUBLISH_DRILL_CELL_REFUSED');
   const idx = await readIndex(index);
   const at = findRow(idx.lines, version);
   check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', version);
   const c = cells(idx.lines[at]);
-  check(c[4] === '' && c[5] === '', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
+  // the same acceptance again completes what a stopped run left; another one of an accepted version is refused
+  const again = c[4] === a.acceptedAt && c[5] === a.cluedDecision;
+  check((c[4] === '' && c[5] === '') || again, 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
   check(a.archive_sha256 === c[2] && a.commit === c[3], 'ACCEPTANCE_NOT_THIS_RELEASE');
   if (dir) {
     const { release } = await readBuild(dir);
     check(release.source.version === version && release.source.archive_sha256 === a.archive_sha256 && release.source.commit === a.commit, 'ACCEPTANCE_NOT_THIS_RELEASE');
   }
-  const tag = tagOf(version);
-  await checkKitOnRelease({ ghCommand, repo, tag, kitSha256: a.firstInstallKitSha256 });
-  const size = (await fs.stat(acceptance)).size;
-  const up = gh(ghCommand, ['release', 'upload', tag, acceptance, '--repo', repo]);
-  check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', up.stderr);
+  const tag = tagOf(version), name = path.basename(acceptance);
+  const bytes = await fs.readFile(acceptance);
+  const names = await checkKitOnRelease({ ghCommand, repo, tag, kitSha256: a.firstInstallKitSha256, archiveSha256: a.archive_sha256 });
+  if (names.has(name)) {
+    const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-acceptance-'));
+    try {
+      const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, name, stage));
+      check(there.equals(bytes), 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED_DIFFERENT', { release: sha(there), this: sha(bytes) });
+    } finally {
+      await fs.rm(stage, { recursive: true, force: true });
+    }
+  } else {
+    check(!again, 'PUBLISH_ACCEPTANCE_INDEX_WITHOUT_ASSET', { version });   // a row filled by hand, the asset never uploaded: not this command's to guess
+    const up = gh(ghCommand, ['release', 'upload', tag, acceptance, '--repo', repo]);
+    check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', up.stderr);
+  }
   const v = viewRelease(ghCommand, repo, tag);
-  check(v.assets.some(x => x.name === path.basename(acceptance) && x.size === size), 'PUBLISH_RELEASE_ASSET_MISSING', path.basename(acceptance));
-  c[4] = a.acceptedAt;
-  c[5] = a.cluedDecision;
-  idx.lines[at] = row(c);
-  await writeIndex(index, idx.lines, idx.eol);
-  return { status: 'FLEET_ACCEPTANCE_ATTACHED', tag, url: v.url, version, acceptedAt: a.acceptedAt, cluedDecision: a.cluedDecision, indexLine: idx.lines[at] };
+  check(v.assets.some(x => x.name === name && x.size === bytes.length), 'PUBLISH_RELEASE_ASSET_MISSING', name);
+  if (!again) {
+    c[4] = a.acceptedAt;
+    c[5] = a.cluedDecision;
+    c[6] = drill;
+    idx.lines[at] = row(c);
+    await writeIndex(index, idx.lines, idx.eol);
+  }
+  return { status: 'FLEET_ACCEPTANCE_ATTACHED', tag, url: v.url, version, acceptedAt: a.acceptedAt, cluedDecision: a.cluedDecision, drill: c[6], already: again, indexLine: idx.lines[at] };
 }
 
 // One release asset, downloaded (read-only) into `stage`; its path.
@@ -230,14 +311,20 @@ const localImagesOf = k => {
   return [...new Set(local.map(i => i.id))].sort();
 };
 
-// What an acceptance of this version needs on the Release: the kit asset and first-install.SHA256SUMS naming the accepted hash for it, and every
-// local role image the kit lists, both as an asset and in that sums file. Read-only; the same on attach-acceptance and as the read-back of acceptance-draft.
-async function checkKitOnRelease({ ghCommand, repo, tag, kitSha256 }) {
+// What an acceptance of this version needs on the Release: the kit asset and first-install.SHA256SUMS naming the accepted hash for it, every
+// local role image the kit lists, both as an asset and in that sums file, and (archiveSha256) the release's SHA256SUMS naming the tar with
+// that hash. Read-only; the read-back of prepare and the gate of attachAcceptance. The Release's asset names.
+async function checkKitOnRelease({ ghCommand, repo, tag, kitSha256, archiveSha256 = null }) {
   const kitName = `${tag}.first-install-kit.json`, sumsName = `${tag}.first-install.SHA256SUMS`;
   const names = new Set(viewRelease(ghCommand, repo, tag).assets.map(x => x.name));
   check(names.has(kitName) && names.has(sumsName), 'ACCEPTANCE_KIT_NOT_ON_RELEASE', { missing: [kitName, sumsName].filter(n => !names.has(n)) });
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-kitcheck-'));
   try {
+    if (archiveSha256 !== null) {
+      const tarName = `${tag}.tar`;
+      const release = names.has('SHA256SUMS') ? sumsOf((await fs.readFile(downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', stage))).toString('utf8')).get(tarName) : null;
+      check(names.has(tarName) && release === archiveSha256, 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { accepted: archiveSha256, release: release ?? null });
+    }
     const sums = sumsOf((await fs.readFile(downloadAsset(ghCommand, repo, tag, sumsName, stage))).toString('utf8'));
     const kitBytes = await fs.readFile(downloadAsset(ghCommand, repo, tag, kitName, stage));
     check(sums.get(kitName) === kitSha256 && sha(kitBytes) === kitSha256, 'ACCEPTANCE_KIT_NOT_THE_ATTACHED', { accepted: kitSha256, sums: sums.get(kitName) ?? null, kit: sha(kitBytes) });
@@ -245,14 +332,15 @@ async function checkKitOnRelease({ ghCommand, repo, tag, kitSha256 }) {
     try { k = JSON.parse(kitBytes.toString('utf8')); } catch { fail('FIRST_INSTALL_KIT_NOT_JSON'); }
     const missing = localImagesOf(k).map(id => `role-image-${id}.tar.gz`).filter(n => !names.has(n) || !sums.has(n));
     check(missing.length === 0, 'ACCEPTANCE_KIT_IMAGE_NOT_ON_RELEASE', { missing });
+    return names;
   } finally {
     await fs.rm(stage, { recursive: true, force: true });
   }
 }
 
-// The first-install kit and the local role images it names, then one sums file over them (see the head of this file).
-// resume (acceptance-draft only): the same kit may already be there from an upload that stopped half way; what is there is kept when it is the
-// same (the kit by its bytes, the others by size), a truncated image or sums file is replaced, and only what is missing is uploaded, the sums file last.
+// prepare's step (see the head of this file). resume: the same kit may already be there from an upload that stopped half way; what is there
+// is kept when it is the same (the kit by its bytes, the others by size), a truncated image or sums file is replaced, and only what is missing
+// is uploaded, the sums file last.
 export async function attachFirstInstallKit({ version, kit, images = [], repo = DEFAULT_REPO, ghCommand = ['gh'], resume = false }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
@@ -318,31 +406,24 @@ async function previousImage({ ghCommand, repo, index, version, id, stage }) {
     if (!names.has(asset) || !names.has(sumsName)) return null;
     const want = sumsOf((await fs.readFile(downloadAsset(ghCommand, repo, prev, sumsName, stage))).toString('utf8')).get(asset);
     const file = downloadAsset(ghCommand, repo, prev, asset, stage);
-    check(want !== undefined && sha(await fs.readFile(file)) === want, 'ACCEPTANCE_DRAFT_PREVIOUS_IMAGE_NOT_ITS_SUMS', { asset, from: prev });
+    check(want !== undefined && sha(await fs.readFile(file)) === want, 'PREPARE_PREVIOUS_IMAGE_NOT_ITS_SUMS', { asset, from: prev });
     return file;
   } catch (e) {
-    if (e?.code === 'ACCEPTANCE_DRAFT_PREVIOUS_IMAGE_NOT_ITS_SUMS') throw e;
+    if (e?.code === 'PREPARE_PREVIOUS_IMAGE_NOT_ITS_SUMS') throw e;
     return null;
   }
 }
 
-// The one entry of an acceptance to the Owner (see the head of this file). `deps` is for tests only (the kit of a fixture node, a stand-in for
-// the archive's source-hash); the command line cannot reach it.
-export async function acceptanceDraft({ version, dir, base, out, images = [], repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = undefined, ghCommand = ['gh'],
+// The first half of an acceptance (see the head of this file). `deps` is for tests only (the kit and the record material of a fixture node, a
+// stand-in for the archive's source-hash); the command line cannot reach it.
+export async function prepare({ version, dir, out, images = [], repo = DEFAULT_REPO, index = DEFAULT_INDEX, root = DEFAULT_ROOT, ghCommand = ['gh'],
   now = Date.now(), deps = {} }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
   const { release } = await readBuild(dir);
   const s = release.source;
-  check(s.version === version, 'ACCEPTANCE_DRAFT_BUILD_NOT_THIS_VERSION', s.version);
-  const tag = tagOf(version);
-  check(base !== null && typeof base === 'object' && !Array.isArray(base), 'ACCEPTANCE_DRAFT_BASE_REFUSED');
-  check(Object.keys(base).every(k => ['cluedDecision', 'acceptedAt', 'fleetRefs', 'repository'].includes(k)), 'ACCEPTANCE_DRAFT_BASE_REFUSED', Object.keys(base));
-  check((base.repository ?? repo) === repo, 'ACCEPTANCE_NOT_THIS_REPOSITORY', base.repository);
-  // --out may be the directory of an earlier run that stopped (kit and images there, no acceptance file yet): that run is resumed; one that finished is not redone
-  let finished = false;
-  try { await fs.access(path.join(out, `${tag}.acceptance.json`)); finished = true; } catch (e) { if (e?.code !== 'ENOENT') throw e; }
-  check(!finished, 'ACCEPTANCE_DRAFT_OUT_NOT_NEW', out);
+  check(s.version === version, 'PREPARE_BUILD_NOT_THIS_VERSION', s.version);
+  const tag = tagOf(version), kitName = `${tag}.first-install-kit.json`;
   const idx = await readIndex(index);
   const at = findRow(idx.lines, version);
   check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', version);
@@ -350,45 +431,96 @@ export async function acceptanceDraft({ version, dir, base, out, images = [], re
   check(c[2] === s.archive_sha256 && c[3] === s.commit, 'ACCEPTANCE_NOT_THIS_RELEASE');
   // an accepted version is never given a kit afterwards (its acceptance is the Owner's, bound to the hashes it names)
   check(c[4] === '' && c[5] === '', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
-  // 1. the kit, from the installed node, and held to what a new node will read
-  const kit = await (deps.kitOf ?? firstInstallKitOf)(root === undefined ? {} : { root });
-  const kitBytes = Buffer.from(JSON.stringify(kit) + '\n');
-  (deps.readKit ?? readKit)(kitBytes);
-  const kitSha256 = sha(kitBytes);
-  // 2. the file as it will be, and the Source this package gives: the template must be another one
-  const draft = { contract: ACCEPTANCE_CONTRACT, version, archive_sha256: s.archive_sha256, commit: s.commit, repository: repo, cluedDecision: base.cluedDecision,
-    acceptedAt: base.acceptedAt, fleetRefs: base.fleetRefs, firstInstallKitSha256: kitSha256 };
-  const sh = await (deps.sourceHash ?? sourceHashOf)({ artifactPath: path.join(dir, release.archive.name), artifactSha256: s.archive_sha256, acceptance: draft, now });
-  check(HEX64.test(sh?.ciSourceManifestSha256 ?? ''), 'ACCEPTANCE_DRAFT_SOURCE_HASH_REFUSED');
-  check(kit.config?.ciSourceManifestSha256 !== sh.ciSourceManifestSha256, 'ACCEPTANCE_DRAFT_TEMPLATE_IS_THIS_SOURCE',
-    { template: kit.config?.ciSourceManifestSha256, note: 'this node already runs this version: the kit must be taken before it upgrades' });
-  const accepted = { ...draft, ciSourceManifestSha256: sh.ciSourceManifestSha256 };
-  try { validateAcceptance(accepted, now); } catch (e) { fail('ACCEPTANCE_REFUSED', e?.detail ?? e?.code ?? String(e)); }
-  // 3. every local role image: given, else the previous Release's
-  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-draft-'));
+  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-prepare-'));
   try {
+    // 1. the kit: the Release's once it has one (the one fact from then on), else this node's; held to what a new node will read
+    const onRelease = new Set(viewRelease(ghCommand, repo, tag).assets.map(x => x.name)).has(kitName);
+    const kitBytes = onRelease ? await fs.readFile(downloadAsset(ghCommand, repo, tag, kitName, stage))
+      : Buffer.from(JSON.stringify(await (deps.kitOf ?? firstInstallKitOf)({ root })) + '\n');
+    (deps.readKit ?? readKit)(kitBytes);
+    let kit;
+    try { kit = JSON.parse(kitBytes.toString('utf8')); } catch { fail('FIRST_INSTALL_KIT_NOT_JSON'); }
+    // 2. the request: what this node carries into every acceptance, and the Source this package gives (the template must be another one)
+    const m = await (deps.fleetMaterial ?? installedFleetMaterial)(root);
+    const fleetRefs = Object.fromEntries(REQUEST_FLEET_REFS.map(k => [k, k === 'formalRoles' ? m?.formalRoles : m?.installed?.[k]]));
+    const request = { contract: REQUEST_CONTRACT, version, archive_sha256: s.archive_sha256, commit: s.commit, repository: repo, ciSourceManifestSha256: undefined,
+      firstInstallKitSha256: sha(kitBytes), fleetRefs };
+    const sh = await (deps.sourceHash ?? sourceHashOf)({ artifactPath: path.join(dir, release.archive.name), artifactSha256: s.archive_sha256,
+      acceptance: acceptanceOf(request, DRILL_RESERVED), now });
+    check(HEX64.test(sh?.ciSourceManifestSha256 ?? ''), 'PREPARE_SOURCE_HASH_REFUSED');
+    check(kit.config?.ciSourceManifestSha256 !== sh.ciSourceManifestSha256, 'PREPARE_TEMPLATE_IS_THIS_SOURCE',
+      { template: kit.config?.ciSourceManifestSha256, note: 'this node already runs this version: the kit must be taken before it upgrades' });
+    request.ciSourceManifestSha256 = sh.ciSourceManifestSha256;
+    readRequest(request);
+    // the request becomes an acceptance every node reads (the five fields seal fills aside)
+    try { validateAcceptance(acceptanceOf(request, DRILL_RESERVED), now); } catch (e) { fail('PREPARE_REQUEST_REFUSED', e?.detail ?? e?.code ?? String(e)); }
+    // 3. every local role image: given, else the previous Release's
     const given = new Map();
-    for (const f of images) { const m = ROLE_IMAGE.exec(path.basename(f)); check(m, 'FIRST_INSTALL_IMAGE_FILE_NAME_REFUSED', path.basename(f)); given.set(m[1], f); }
+    for (const f of images) { const mm = ROLE_IMAGE.exec(path.basename(f)); check(mm, 'FIRST_INSTALL_IMAGE_FILE_NAME_REFUSED', path.basename(f)); given.set(mm[1], f); }
     const ids = localImagesOf(kit);
     check([...given.keys()].every(id => ids.includes(id)), 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_KITS', { kit: ids, given: [...given.keys()] });
     const files = new Map();
     for (const id of ids) {
       const f = given.get(id) ?? await previousImage({ ghCommand, repo, index, version, id, stage });
-      check(f, 'ACCEPTANCE_DRAFT_IMAGE_MISSING', { id, asset: `role-image-${id}.tar.gz`, note: 'give it with --image; the previous Release has none of that id' });
+      check(f, 'PREPARE_IMAGE_MISSING', { id, asset: `role-image-${id}.tar.gz`, note: 'give it with --image; the previous Release has none of that id' });
       files.set(id, f);
     }
-    // 4. all checks passed: the directory, the kit and the images in it, the upload and its read-back, and only then the acceptance file
+    // 4. all checks passed: the directory, the kit and the images in it, what the Release lacks uploaded and read back, and only then the request
     await fs.mkdir(out, { recursive: true });
-    const kitFile = path.join(out, `${tag}.first-install-kit.json`);
+    const kitFile = path.join(out, kitName);
     await fs.writeFile(kitFile, kitBytes);
     const placed = [];
-    for (const [id, f] of files) { const to = path.join(out, `role-image-${id}.tar.gz`); await fs.copyFile(f, to); placed.push(to); }
+    for (const [id, f] of files) { const to = path.join(out, `role-image-${id}.tar.gz`); if (path.resolve(f) !== path.resolve(to)) await fs.copyFile(f, to); placed.push(to); }
     const attached = await attachFirstInstallKit({ version, kit: kitFile, images: placed, repo, ghCommand, resume: true });
-    await checkKitOnRelease({ ghCommand, repo, tag, kitSha256 });
-    const acceptanceFile = path.join(out, `${tag}.acceptance.json`);
-    await fs.writeFile(acceptanceFile, JSON.stringify(accepted, null, 2) + '\n', { flag: 'wx' });
-    return { status: 'FLEET_ACCEPTANCE_DRAFT_WRITTEN', version, acceptance: acceptanceFile, directory: out, firstInstallKitSha256: kitSha256,
-      ciSourceManifestSha256: sh.ciSourceManifestSha256, images: attached.images };
+    await checkKitOnRelease({ ghCommand, repo, tag, kitSha256: request.firstInstallKitSha256, archiveSha256: s.archive_sha256 });
+    const requestFile = path.join(out, `${tag}.acceptance-request.json`);
+    await fs.writeFile(requestFile, JSON.stringify(request, null, 2) + '\n');
+    return { status: 'FLEET_ACCEPTANCE_REQUEST_WRITTEN', version, request: requestFile, directory: out, kitFrom: onRelease ? 'release' : 'node',
+      firstInstallKitSha256: request.firstInstallKitSha256, ciSourceManifestSha256: request.ciSourceManifestSha256, images: attached.images };
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true });
+  }
+}
+
+// A candidate drill's receipt for this acceptance: the index row's drill cell (its conclusion and the receipt's sha256), or refused.
+async function drillCellOf(file, a) {
+  let bytes, r;
+  try { bytes = await fs.readFile(file); r = JSON.parse(bytes.toString('utf8').replace(/^﻿/, '')); } catch { fail('SEAL_DRILL_RECEIPT_REFUSED', 'not a JSON file'); }
+  check(r?.contract === DRILL_RECEIPT_CONTRACT && r.version === a.version, 'SEAL_DRILL_RECEIPT_REFUSED', { contract: r?.contract ?? null, version: r?.version ?? null });
+  check(typeof r.conclusion === 'string' && /^PASS_[A-Z_]+$/.test(r.conclusion), 'SEAL_DRILL_RECEIPT_NOT_PASS', { conclusion: r.conclusion ?? null });
+  const mine = { tarSha256: a.archive_sha256, ciSourceManifestSha256: a.ciSourceManifestSha256, firstInstallKitSha256: a.firstInstallKitSha256 };
+  const theirs = Object.fromEntries(Object.keys(mine).map(k => [k, r[k] ?? null]));
+  check(Object.keys(mine).every(k => theirs[k] === mine[k]), 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE', { receipt: theirs, acceptance: mine });
+  return `${r.conclusion} receipt ${sha(bytes)}`;
+}
+
+// The second half of an acceptance (see the head of this file).
+export async function seal({ request, decision, receipt, acceptedAt, drillReceipt = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'], now = Date.now() }) {
+  check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
+  let r;
+  try { r = JSON.parse((await fs.readFile(request)).toString('utf8').replace(/^﻿/, '')); } catch { fail('REQUEST_REFUSED', 'not a JSON file'); }
+  readRequest(r);
+  const tag = tagOf(r.version);
+  check(path.basename(request) === `${tag}.acceptance-request.json`, 'REQUEST_FILE_NAME_REFUSED', path.basename(request));
+  check(r.repository === repo, 'ACCEPTANCE_NOT_THIS_REPOSITORY', r.repository);
+  check([decision, receipt].every(id => UUID.test(id ?? '')) && decision !== receipt, 'SEAL_IDS_REFUSED', 'the Decision id and the receipt id of its write, two UUIDs');
+  const a = acceptanceOf(r, { decision, receipt, acceptedAt });
+  check(!namesDrillReserved(a), 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN', { decision });
+  try { validateAcceptance(a, now); } catch (e) { fail('ACCEPTANCE_REFUSED', e?.detail ?? e?.code ?? String(e)); }
+  const drill = drillReceipt === null ? NOT_DRILLED : await drillCellOf(drillReceipt, a);
+  const bytes = Buffer.from(JSON.stringify(a, null, 2) + '\n');
+  const final = path.join(path.dirname(request), `${tag}.acceptance.json`);
+  let there = null;
+  try { there = await fs.readFile(final); } catch (e) { if (e?.code !== 'ENOENT') throw e; }
+  check(there === null || there.equals(bytes), 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY', final);
+  // the file goes up from a directory of its own; it is written next to the request only after the Release and the index hold it
+  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-seal-'));
+  try {
+    const staged = path.join(stage, `${tag}.acceptance.json`);
+    await fs.writeFile(staged, bytes, { flag: 'wx' });
+    const attached = await attachAcceptance({ version: r.version, acceptance: staged, repo, index, drill, ghCommand });
+    if (there === null) await fs.writeFile(final, bytes, { flag: 'wx' });
+    return { ...attached, status: 'FLEET_ACCEPTANCE_SEALED', acceptance: final };
   } finally {
     await fs.rm(stage, { recursive: true, force: true });
   }
@@ -396,27 +528,28 @@ export async function acceptanceDraft({ version, dir, base, out, images = [], re
 
 export async function main(argv) {
   const [sub, ...rest] = argv;
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { dir: { type: 'string' }, repo: { type: 'string' }, index: { type: 'string' },
-    version: { type: 'string' }, acceptance: { type: 'string' }, kit: { type: 'string' }, image: { type: 'string', multiple: true }, base: { type: 'string' }, out: { type: 'string' } } });
+  let parsed;
+  try {
+    parsed = parseArgs({ args: rest, allowPositionals: true, options: { dir: { type: 'string' }, repo: { type: 'string' }, index: { type: 'string' },
+      version: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, request: { type: 'string' }, decision: { type: 'string' },
+      receipt: { type: 'string' }, 'accepted-at': { type: 'string' }, 'drill-receipt': { type: 'string' } } });
+  } catch { fail('USAGE'); }   // an option no command has (the old entry's --base, --kit, --acceptance among them)
+  const { values, positionals } = parsed;
   check(positionals.length === 0, 'USAGE');
   const only = (...allowed) => check(Object.keys(values).every(k => allowed.includes(k)), 'USAGE');
   if (sub === 'release') {
     only('dir', 'repo', 'index'); check(values.dir && values.repo, 'USAGE');
     return publish({ dir: values.dir, repo: values.repo, index: values.index });
   }
-  if (sub === 'attach-acceptance') {
-    only('version', 'acceptance', 'repo', 'index', 'dir'); check(values.version && values.acceptance, 'USAGE');
-    return attachAcceptance({ version: values.version, acceptance: values.acceptance, repo: values.repo, index: values.index, dir: values.dir });
+  if (sub === 'prepare') {
+    only('version', 'dir', 'out', 'image', 'repo', 'index'); check(values.version && values.dir && values.out, 'USAGE');
+    return prepare({ version: values.version, dir: values.dir, out: path.resolve(values.out), images: values.image ?? [], repo: values.repo, index: values.index });
   }
-  if (sub === 'attach-first-install-kit') {
-    only('version', 'kit', 'image', 'repo'); check(values.version && values.kit, 'USAGE');
-    return attachFirstInstallKit({ version: values.version, kit: values.kit, images: values.image ?? [], repo: values.repo });
-  }
-  if (sub === 'acceptance-draft') {
-    only('version', 'dir', 'base', 'out', 'image', 'repo', 'index'); check(values.version && values.dir && values.base && values.out, 'USAGE');
-    let base;
-    try { base = JSON.parse((await fs.readFile(values.base)).toString('utf8')); } catch { fail('ACCEPTANCE_DRAFT_BASE_REFUSED'); }
-    return acceptanceDraft({ version: values.version, dir: values.dir, base, out: path.resolve(values.out), images: values.image ?? [], repo: values.repo, index: values.index });
+  if (sub === 'seal') {
+    only('request', 'decision', 'receipt', 'accepted-at', 'drill-receipt', 'repo', 'index');
+    check(values.request && values.decision && values.receipt && values['accepted-at'], 'USAGE');
+    return seal({ request: path.resolve(values.request), decision: values.decision, receipt: values.receipt, acceptedAt: values['accepted-at'],
+      drillReceipt: values['drill-receipt'] ? path.resolve(values['drill-receipt']) : null, repo: values.repo, index: values.index });
   }
   return fail('USAGE');
 }
