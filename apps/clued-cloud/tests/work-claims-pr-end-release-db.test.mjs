@@ -498,6 +498,25 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.equal((await adopt(2008)).status, 'ok');
       assert.deepEqual((await finishes(2008)).map(m => [m.status, m.source]), [['merged', 'adopt']]);
     });
+    await t.test('L1-7 旧五参数结束入口一律拒绝：不带来源不能结束绑定', async () => {
+      const r = await claim(await task()); await admitted(r, 2010, '2a'.repeat(20));
+      for (const status of ['merged', 'closed'])
+        await assert.rejects(() => admin.query(`select clued_private.work_claim_pr_end_v1(b,'global',$2,$3,null)
+          from public.clued_agent_bindings b where b.id=$1`, [ids.ci, repo + '#2010', status]), { code: '22023', message: 'work_claim_pr_end_source_required' });
+      assert.deepEqual([await binding(2010), (await row(r)).status, (await finishes(2010)).length], ['active', 'ACTIVE', 0]);
+      committed(await release(r));
+    });
+    await t.test('L1-8 ACTIVE 认领从未授权的 unknown 绑定报 merged：绑定结束，认领仍 ACTIVE，没有释放回执', async () => {
+      const taskId = await task(), r = await claim(taskId);
+      await admin.query(`insert into clued_private.work_claim_pr_task_bindings_v1(user_id,repo_id,pr_number,task_id,status)
+        values($1,$2,2011,$3,'unknown')`, [user, repo, taskId]);
+      const answer = await lifecycle('ci', [{ pr_number: 2011, state: 'merged', merge_sha: 'b'.repeat(40) }]);
+      assert.deepEqual([answer.status, answer.finished, answer.released], ['ok', 1, []], JSON.stringify(answer));
+      assert.deepEqual([await binding(2011), (await row(r)).status], ['merged', 'ACTIVE']);
+      assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts where operation='work_claim_release' and object_id=$1",
+        [r.claim.claim_id])).rows[0].n, 0);
+      committed(await release(r));
+    });
     await t.test('L1-6 返回的 tracked 等于该账号该仓库全部 active/unknown 绑定', async () => {
       const other = await task();
       await admin.query(`insert into clued_private.work_claim_pr_task_bindings_v1(user_id,repo_id,pr_number,task_id,status)

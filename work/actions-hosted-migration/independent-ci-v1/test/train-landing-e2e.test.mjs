@@ -778,16 +778,65 @@ test('pr lifecycle reconcile: one report per round names B closed, C and D merge
     reports.push(prs); tracked = tracked.filter(n => !prs.some(p => p.pr === n));
     return { onDuty: true, deployed: true, tracked: [...tracked] };
   };
-  const read = e.gh.readPullRequest;
-  e.gh.readPullRequest = async n => { reads.push(n); return read(n); };
+  const read = e.gh.readPullRequest, page = e.gh.readPullsPage, pages = [];
+  e.gh.readPullRequest = async (n, o) => { reads.push(n); return read(n, o); };
+  e.gh.readPullsPage = async o => { pages.push(o); return page(o); };
   await stage10(e);
   assert.deepEqual(reports, [[], [{ pr: 913, state: 'merged', mergeSha: MD }, { pr: 912, state: 'merged', mergeSha: MC }, { pr: 911, state: 'closed', mergeSha: null }]]);
   assert.deepEqual(reads.filter(n => n !== 910).sort(), [911, 912, 913]);
+  // Review 4: the round's own open list (fewer than a page) is complete; the reconcile reads no page of its own.
+  const ownPages = () => pages.filter(o => o?.sort === 'created').length;
+  assert.equal(ownPages(), 0);
   // Steady state: every tracked binding is open on GitHub, so a round asks once and reads no PR for it.
-  reports.length = 0; reads.length = 0;
+  reports.length = 0; reads.length = 0; pages.length = 0;
   await stage10(e);
   assert.deepEqual(reports, [[]]);
   assert.deepEqual(reads.filter(n => n !== 910), []);
+  assert.equal(ownPages(), 0);
+});
+
+// Review 3: closed is reported only when GitHub says merged false and no merged_at; a reply without them is no fact this round.
+test('pr lifecycle reconcile reports closed only on merged === false and no merged_at', async t => {
+  const e = await world(t, { prs: [910, 914, 915] });
+  e.queue.splice(1);
+  Object.assign(e.W.pulls.get(914), { state: 'closed', merged: undefined });
+  Object.assign(e.W.pulls.get(915), { state: 'closed', merged: false });
+  const read = e.gh.readPullRequest;
+  e.gh.readPullRequest = async (n, o) => { const p = await read(n, o); return n === 915 ? { ...p, merged_at: '2026-11-19T00:00:00Z' } : p; };
+  const reports = [];
+  e.native.port.lifecycleReport = async ({ prs }) => { reports.push(prs); return { onDuty: true, deployed: true, tracked: [914, 915] }; };
+  await stage10(e);
+  assert.deepEqual(reports, [[]]);
+});
+
+// Review B1: the reconcile is never on the train's path. It runs after the front's adopt/return/touch, the front bind and the front
+// batch, inside the round's budget, every read with the round's deadline and the clock checked before each read; GitHub reads that
+// take long change neither the decision nor the front batch: the reconcile only does less (and reports what it already has).
+test('pr lifecycle reconcile is bounded and after the front: slow GitHub reads change no decision and no front batch', async t => {
+  const ended = Array.from({ length: 30 }, (_, i) => 920 + i), SLOW = 200_000;
+  const round = async slow => {
+    const e = await world(t, { prs: [910, ...ended] });
+    e.queue.splice(1);
+    for (const n of ended) Object.assign(e.W.pulls.get(n), { state: 'closed', merged: false });
+    const reported = [];
+    e.native.port.lifecycleReport = async ({ prs }) => {
+      reported.push(...prs.map(p => p.pr));
+      return { onDuty: true, deployed: true, tracked: slow ? [910, ...ended].filter(n => !reported.includes(n)) : [] };
+    };
+    if (slow) {
+      const read = e.gh.readPullRequest, page = e.gh.readPullsPage;
+      e.gh.readPullRequest = async (n, o) => { if (ended.includes(n)) e.now += SLOW; return read(n, o); };
+      e.gh.readPullsPage = async o => { if (o?.sort === 'created') e.now += SLOW; return page(o); };
+    }
+    const before = e.now;
+    const r = await stage10(e);
+    return { facts: [r.facts.decision, r.facts.requestPause, r.facts.openFrontBatch?.pr ?? null, r.facts.openFrontBatch?.headSha ?? null],
+      reported, spent: e.now - before - 60_000 };
+  };
+  const quick = await round(false), slow = await round(true);
+  assert.deepEqual(slow.facts, quick.facts);
+  assert.ok(slow.reported.length > 0 && slow.reported.length < 25, `the reconcile did less: ${slow.reported.length}`);
+  assert.ok(slow.spent <= 250_000 + SLOW, `the round stayed in its budget: ${slow.spent}`);
 });
 
 // FABLE 11-19 §4.1 (9): the reconcile is auxiliary. An RPC that is not deployed (PGRST202), a GitHub read that throws or a reply that

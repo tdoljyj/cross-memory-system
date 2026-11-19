@@ -69,6 +69,8 @@ test('failed required checks neither join nor extend, and an already queued clai
 // slot. That is only a slot: the same claim's next attempt (the check rerun passed) goes on exactly as an attempt that never failed.
 // The offline Native has the semantics of 20261119001000 ('slot-only'); with the production function before it ('pr-end': every
 // return ended the PR binding and released the claim) the second attempt is refused, which is the incident itself.
+// A model test (review 1): stage 8 did not change, so it does not fail before the fix; the semantics it models are proved on the real
+// database by work-claims-pr-end-release-db (#1166 and L1-3: a return ends no binding and releases no claim).
 const STAGE8_RETURN_SEMANTICS = 'slot-only';
 async function stage8AfterReturn(t, semantics, { fail = true } = {}) {
   const c = claim(), github = fakeGithub(), time = Date.now();

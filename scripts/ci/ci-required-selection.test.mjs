@@ -227,7 +227,8 @@ test('the database tests of the retired connection-authorization workflow run in
   const moved = ['authorization-end-to-end', 'connection-authorization-db', 'context-v2-terminal-restore-db', 'projection-refresh-pipeline-db',
     'work-claims-acceptance-db', 'work-claims-continuation-db', 'db-security-hygiene-db', 'information-flow-candidate-store-db',
     'information-flow-context-db', 'record-update-field-merge-db', 'mtpe-universal-intake-db', 'project-invitations-db',
-    'authorization-migration-chain', 'model-domain-bootstrap-db', 'resource-center-authority-db', 'dataset-split-native-grant-correction-db']
+    'authorization-migration-chain', 'model-domain-bootstrap-db', 'resource-center-authority-db', 'dataset-split-native-grant-correction-db',
+    'work-claims-pr-task-binding-db']
     .map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
   const files = productionSchemaFiles();
   for (const file of moved) {
