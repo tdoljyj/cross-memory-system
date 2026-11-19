@@ -1222,8 +1222,12 @@ function credentialNameCheck(generated, pairs, publicHanded, packageNames) {
     const pair = pairs.find(([from]) => from === name);
     if (pair) handed.push(pair[1]); else notHanded.push(name);
   }
+  // Codex review of c1497e0a1, low 1: one source, one target each, and the one rename there is (app-key.pem -> app-private-key.pem)
+  const twice = list => list.filter((n, i) => list.indexOf(n) !== i);
   return { handed, notHanded, notGenerated: pairs.map(([from]) => from).filter(n => !generated.includes(n)),
-    notInPackage: handed.filter(n => !packageNames.includes(n)) };
+    notInPackage: handed.filter(n => !packageNames.includes(n)),
+    duplicateTargets: twice(handed), duplicateSources: twice(pairs.map(([from]) => from)),
+    otherRenames: pairs.filter(([from, to]) => from !== to && !(from === 'app-key.pem' && to === 'app-private-key.pem')).map(([from, to]) => `${from}->${to}`) };
 }
 test('every fake credential file the drill generates is handed over under a name the package\'s fixed list holds', () => {
   const hostText = fs.readFileSync(fileURLToPath(new URL('../windows/first-install-host.ps1', import.meta.url)), 'utf8');
@@ -1240,9 +1244,13 @@ test('every fake credential file the drill generates is handed over under a name
   assert.ok(generated.length >= 4 && pairs.length >= 3, JSON.stringify({ generated, pairs }));
   // the check itself catches each kind of drift
   assert.deepEqual(credentialNameCheck(['a.pem', 'b.token', 'public.json'], [['a.pem', 'a-key.pem'], ['c.token', 'c.token']], true, ['a-key.pem']),
-    { handed: ['a-key.pem', 'public.json'], notHanded: ['b.token'], notGenerated: ['c.token'], notInPackage: ['public.json'] });
+    { handed: ['a-key.pem', 'public.json'], notHanded: ['b.token'], notGenerated: ['c.token'], notInPackage: ['public.json'], duplicateTargets: [], duplicateSources: [], otherRenames: ['a.pem->a-key.pem'] });
+  // a second file handed over under a name another one already has: caught
+  const clash = credentialNameCheck(['ci-admission.token', 'resident-upgrade.token'], [['ci-admission.token', 'ci-admission.token'], ['resident-upgrade.token', 'ci-admission.token']], false, ['ci-admission.token']);
+  assert.deepEqual({ duplicateTargets: clash.duplicateTargets, otherRenames: clash.otherRenames }, { duplicateTargets: ['ci-admission.token'], otherRenames: ['resident-upgrade.token->ci-admission.token'] });
   const r = credentialNameCheck(generated, pairs, publicHanded, packageNames);
-  assert.deepEqual({ notHanded: r.notHanded, notGenerated: r.notGenerated, notInPackage: r.notInPackage }, { notHanded: [], notGenerated: [], notInPackage: [] },
+  assert.deepEqual({ notHanded: r.notHanded, notGenerated: r.notGenerated, notInPackage: r.notInPackage, duplicateTargets: r.duplicateTargets, duplicateSources: r.duplicateSources, otherRenames: r.otherRenames },
+    { notHanded: [], notGenerated: [], notInPackage: [], duplicateTargets: [], duplicateSources: [], otherRenames: [] },
     `generated ${JSON.stringify(generated)} handed ${JSON.stringify(r.handed)} package ${JSON.stringify(packageNames)}`);
   assert.ok(r.handed.includes('app-private-key.pem'));
 });
