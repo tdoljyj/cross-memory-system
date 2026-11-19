@@ -145,7 +145,6 @@ import {
   DOOR_RETRY_DELAYS_MS,
   ownerReviewDoor,
   MERGE_SLOT_CHECK_NAME,
-  MERGE_SLOT_RETURN_RPC,
   mergeSlotCheck,
   mergeSlotOutputs,
   mergeSlotState,
@@ -2994,35 +2993,14 @@ test("merge slot: re-verification fails a green kooyumi-merge-slot check whose s
   assert.match(renderReverifySummary(result), /#460: failing kooyumi-merge-slot 5005 posted, Merge slot not held: merge:o\/r:main/);
 });
 
-const SLOT_RETURN = `POST ${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`;
-test("merge slot: a pull request closed without a merge gives its slot back; a merge reports what it returned", async () => {
+test("merge slot: a pull request closed without a merge is not reported here; a merge reports what it returned", async () => {
+  // FABLE 11-19 L3: the binding of a PR closed without a merge ends on GitHub's facts (webhook, the resident's PR lifecycle report);
+  // the adopt mode makes no call for it, and nothing here gives a merge slot back.
   const closed = () => merged({ pull_request: { merged: false, merge_commit_sha: null } });
-  let { fetchImpl, calls } = fakeFetch({ [SLOT_RETURN]: { body: { status: "ok", returned: true, pr_ref: "o/r#452", merge_slot_returned: [CLAIM] } } });
+  let { fetchImpl, calls } = fakeFetch({});
   let r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
-  assert.deepEqual([r.adopted, r.error, r.closed_unmerged, r.merge_slot_returned], [false, null, true, [CLAIM]]);
-  assert.match(r.reason, /merge slot returned/);
-  assert.deepEqual(calls.map((c) => c.url), [RPC_URL, `${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`]);
-  assert.equal(calls[0].body.p_input.read_only, true);
-  assert.deepEqual(calls[1].body, { p_token_hash: sha256Hex("clued_bnd_test"), p_input: { scope: "global", pr_ref: "o/r#452" } });
-  // Nothing held, not deployed yet, no trailer, no token: quiet.
-  for (const [script, reason] of [[{ [SLOT_RETURN]: { body: { status: "ok", returned: false, merge_slot_returned: [] } } }, /no merge slot held/],
-    [{ [SLOT_RETURN]: { status: 404, body: { code: "PGRST202" } } }, /not deployed/]]) {
-    r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
-    assert.deepEqual([r.error, reason.test(r.reason)], [null, true]);
-  }
-  ({ fetchImpl, calls } = fakeFetch({ [`${VERIFY}#resolve_pr_claim`]: call => ({ body: bindingPayload(call.body.p_input,
-    { binding_status: 'unbound', scope: null, task_id: null, claim: null, head_authorization_id: null }) }) }));
-  r = await adoptMerged({ env: env(), event: merged({ body: "none", pull_request: { merged: false } }), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
-  assert.match(r.reason, /no Native PR Task binding/);
-  assert.ok(calls.every(c => c.body?.p_input?.action === 'resolve_pr_claim'), 'no return mutation without a binding');
-  r = await adoptMerged({ env: env({ CLUED_CONTEXT_READ_TOKEN: "" }), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
-  assert.match(r.reason, /not set/);
-  // Refusals are errors.
-  for (const script of [{ [SLOT_RETURN]: { body: { status: "ok", returned: false, reason: "admission_binding_required" } } },
-    { [SLOT_RETURN]: { status: 400, body: { code: "22023", message: "work_claim_pr_ref_invalid" } } }, {}]) {
-    r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
-    assert.ok(r.error, JSON.stringify(script));
-  }
+  assert.deepEqual([r.adopted, r.error, r.reason, r.closed_unmerged], [false, null, "not a merged pull request", undefined]);
+  assert.deepEqual(calls, []);
   // A merge: adoption answers with the slots it returned.
   ({ fetchImpl } = fakeFetch({ [ADOPT]: { body: { status: "ok", adopted: false, reason: "no_copy_for_pr", merge_slot_returned: [CLAIM] } } }));
   r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });

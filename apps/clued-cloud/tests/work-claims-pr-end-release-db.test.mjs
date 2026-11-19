@@ -98,6 +98,15 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     const adopt = n => call('ci','clued_work_claim_adopt_v1',{scope:'global',pr_ref:repo+'#'+n,merge_sha:'f'.repeat(40)});
     const giveBack = (n, extra = {}) => call('ci','clued_work_merge_slot_return_v1',{scope:'global',pr_ref:repo+'#'+n,...extra});
     const binding = async n => (await admin.query('select status from clued_private.work_claim_pr_task_bindings_v1 where repo_id=$1 and pr_number=$2',[repo,n])).rows[0]?.status;
+    // PR 真实生命周期是绑定结束的唯一来源（FABLE 11-19 §4.1，L1）：只有 GitHub 的 merged/closed 事实能结束绑定，
+    // 来源是 webhook、常驻对账报告和列车 adopt；交还合并位不带任何结束语义。
+    const lifecycle = async (who, prs, extra = {}) => (await anon.query('select public.clued_work_pr_lifecycle_report_v1($1,$2) value',
+      [tokens[who], { scope: 'global', repository: repo, prs, ...extra }])).rows[0].value;
+    const finishes = async n => (await admin.query(`select metadata from public.clued_audit_receipts
+      where user_id=$1 and operation='work_claim_pr_task_finish' and metadata->>'repository'=$2 and (metadata->>'pr_number')::bigint=$3
+      order by created_at`, [user, repo, n])).rows.map(x => x.metadata);
+    const webhook = async (n, extra = {}) => (await gateway.query('select public.clued_work_pr_merged_event_v1($1) as result',
+      [{ repository: repo, pr_number: n, merge_sha: 'e'.repeat(40), ...extra }])).rows[0].result;
 
     const releaseInfo = async r => (await admin.query('select to_jsonb(c) value from clued_private.work_claims_v1 c where claim_id=$1', [r.claim.claim_id])).rows[0].value;
     const inbox = async r => (await call('holder', 'clued_agent_inbox_v1', {
@@ -119,7 +128,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       const after = await releaseInfo(r);
       assert.deepEqual({
         binding: await binding(1166), claim: after.status, releasedBy: after.released_by,
-        refs: after.trigger_refs, slotAt: after.merge_slot_at, receipt: result.binding_receipt_id,
+        refs: after.trigger_refs, slotAt: after.merge_slot_at, receipt: result.binding_receipt_id ?? null,
         endReceipts: await endReceipts(), inbox: (await inbox(r)).length,
       }, { binding: 'active', claim: 'ACTIVE', releasedBy: null, refs: [], slotAt: null, receipt: null, endReceipts: [], inbox: 0 });
       const renewed = committed(await call('holder', 'clued_work_renew_v1', {
@@ -148,15 +157,15 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.deepEqual((await releaseInfo(r)).trigger_refs, [slot]);
       committed(await release(r));
     });
-    await t.test('非法 GitHub 状态被拒绝，迟到的关闭让槽保留 merged', async () => {
+    await t.test('交还合并位不收任何 GitHub 状态；迟到的关闭报告让绑定保留 merged', async () => {
       const r = await claim(await task());
       await admitted(r, 106, '6'.repeat(40));
-      for (const value of ['open', 'merged', '', null, false, {}]) {
+      for (const value of ['closed', 'open', 'merged', '', null, false, {}]) {
         await assert.rejects(() => giveBack(106, { github_state: value }), { code: '22023', message: 'work_claim_merge_slot_return_input_invalid' });
       }
       assert.equal(await binding(106), 'active');
       assert.equal((await adopt(106)).status, 'ok');
-      assert.equal((await giveBack(106, { github_state: 'closed' })).binding_receipt_id, null);
+      assert.equal((await lifecycle('ci', [{ pr_number: 106, state: 'closed' }])).finished, 0);
       assert.equal(await binding(106), 'merged');
     });
     await t.test('关闭释放后，新认领可在原 Task 上重新授权、发现并准入同一 PR', async () => {
@@ -227,7 +236,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     });
     await t.test('closed PR notification has no invented SHA; disabling messages preserves release metadata', async () => {
       const r = await claim(await task()); await admitted(r, 103, 'c'.repeat(40));
-      assert.equal((await giveBack(103, { github_state: 'closed' })).status, 'ok');
+      assert.equal((await lifecycle('ci', [{ pr_number: 103, state: 'closed' }])).status, 'ok');
       assert.equal((await releaseInfo(r)).released_evidence_ref, repo + '#103');
       assert.match((await inbox(r))[0].body, /关闭（合并 SHA 不可得）/);
       const c = await claim(await task()); await admitted(c, 104, 'd'.repeat(40));
@@ -382,9 +391,9 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       assert.equal(receipts[0].metadata.released_by_binding_id,ids.ci);
       const next=await claim(id,session);assert.equal(next.claim.continued_from,r.claim.claim_id,JSON.stringify(next));
       committed(await release(next));
-      // A closed (not merged) PR ends the same way through return.
+      // A closed (not merged) PR ends the same way through the resident's lifecycle report.
       const c=await claim(await task());await admitted(c,4,'4'.repeat(40));
-      assert.equal((await giveBack(4, { github_state: 'closed' })).status,'ok');assert.equal(await binding(4),'closed');
+      assert.equal((await lifecycle('ci', [{ pr_number: 4, state: 'closed' }])).status,'ok');assert.equal(await binding(4),'closed');
       assert.equal((await row(c)).status,'RELEASED');
     });
     await t.test('2. another open PR of the same claim keeps it',async()=>{
@@ -415,6 +424,113 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
         assert.equal(before.status,'ACTIVE');assert.deepEqual(await row(r),before);
       }finally{await admin.query(original);}
       committed(await release(r));
+    });
+
+    await t.test('L1-1 关闭未合入且 webhook 没到：对账报告结束绑定并以 pr_end 释放认领，回执来源 reconcile', async () => {
+      const r = await claim(await task()); await admitted(r, 2001, '21'.repeat(20));
+      const answer = await lifecycle('ci', [{ pr_number: 2001, state: 'closed' }]);
+      assert.equal(answer.status, 'ok', JSON.stringify(answer));
+      assert.deepEqual([answer.finished, answer.released], [1, [r.claim.claim_id]]);
+      const c = await releaseInfo(r);
+      assert.deepEqual([await binding(2001), c.status, c.released_by, c.released_evidence_ref], ['closed', 'RELEASED', 'pr_end', repo + '#2001']);
+      assert.deepEqual((await finishes(2001)).map(m => [m.status, m.source]), [['closed', 'reconcile']]);
+    });
+    await t.test('L1-2 #1173：持有者先手动释放，再报 merged；同一 Task 之后的新认领照常自动释放', async () => {
+      const taskId = await task(), first = await claim(taskId);
+      await admitted(first, 2002, '22'.repeat(20));
+      committed(await release(first));
+      assert.equal(await binding(2002), 'active');
+      const merged = await lifecycle('ci', [{ pr_number: 2002, state: 'merged', merge_sha: 'c'.repeat(40) }]);
+      assert.deepEqual([merged.status, merged.finished, merged.released], ['ok', 1, []], JSON.stringify(merged));
+      assert.equal(await binding(2002), 'merged');
+      assert.deepEqual((await finishes(2002)).map(m => [m.status, m.source]), [['merged', 'reconcile']]);
+      const next = await claim(taskId);
+      await admitted(next, 2003, '23'.repeat(20));
+      const again = await lifecycle('ci', [{ pr_number: 2003, state: 'merged', merge_sha: 'd'.repeat(40) }]);
+      assert.deepEqual(again.released, [next.claim.claim_id], JSON.stringify(again));
+      const c = await releaseInfo(next);
+      assert.deepEqual([c.status, c.released_by, c.released_evidence_ref], ['RELEASED', 'pr_end', repo + '#2003@' + 'd'.repeat(40)]);
+    });
+    await t.test('L1-3 开着的 PR 结束不了：普通交还、带 github_state 的交还、state open 的报告之后绑定和认领不变', async () => {
+      const r = await claim(await task()); await admitted(r, 2004, '24'.repeat(20));
+      assert.equal((await giveBack(2004)).status, 'ok');
+      for (const value of ['closed', 'open', 'merged', null])
+        await assert.rejects(() => giveBack(2004, { github_state: value }), { code: '22023', message: 'work_claim_merge_slot_return_input_invalid' });
+      for (const state of ['open', 'OPEN', '', null])
+        await assert.rejects(() => lifecycle('ci', [{ pr_number: 2004, state }]), { code: '22023', message: 'work_pr_lifecycle_report_input_invalid' });
+      for (const bad of [[{ pr_number: 2004, state: 'closed', merge_sha: 'a'.repeat(40) }], [{ pr_number: 2004, state: 'merged', merge_sha: 'xyz' }],
+        [{ pr_number: 0, state: 'closed' }], [{ pr_number: '2004', state: 'closed' }], [{ pr_number: 2004, state: 'closed', extra: 1 }],
+        [{ pr_number: 2004, state: 'closed' }, { pr_number: 2004, state: 'merged', merge_sha: 'a'.repeat(40) }],
+        Array.from({ length: 51 }, (_, i) => ({ pr_number: 9000 + i, state: 'closed' }))])
+        await assert.rejects(() => lifecycle('ci', bad), { code: '22023', message: 'work_pr_lifecycle_report_input_invalid' });
+      await assert.rejects(() => lifecycle('ci', [], { unknown_key: true }), { code: '22023', message: 'work_pr_lifecycle_report_input_invalid' });
+      assert.equal(await binding(2004), 'active');
+      assert.equal((await row(r)).status, 'ACTIVE');
+      assert.deepEqual(await finishes(2004), []);
+      committed(await release(r));
+    });
+    await t.test('L1-4 非 ci-admission 连接调用报告：拒绝，库无变化', async () => {
+      const r = await claim(await task()); await admitted(r, 2005, '25'.repeat(20));
+      const snapshot = async () => (await admin.query(`select
+        (select jsonb_agg(to_jsonb(b) order by b.repo_id,b.pr_number) from clued_private.work_claim_pr_task_bindings_v1 b where b.user_id=$1) bindings,
+        (select jsonb_agg(to_jsonb(c) order by c.claim_id) from clued_private.work_claims_v1 c where c.user_id=$1) claims,
+        (select count(*)::int from public.clued_audit_receipts a where a.user_id=$1) receipts`, [user])).rows[0];
+      const before = await snapshot();
+      for (const who of ['holder', 'reader'])
+        assert.deepEqual(await lifecycle(who, [{ pr_number: 2005, state: 'closed' }]), { status: 'rejected', error_code: 'admission_binding_required' });
+      assert.deepEqual(await snapshot(), before);
+      committed(await release(r));
+    });
+    await t.test('L1-5 webhook 与对账各送一次同一事实只有一条结束回执；迟到的 closed 不覆盖 merged；三个来源各自记名', async () => {
+      const a = await claim(await task()); await admitted(a, 2006, '26'.repeat(20));
+      assert.equal((await webhook(2006)).finished, 1);
+      assert.equal((await lifecycle('ci', [{ pr_number: 2006, state: 'merged', merge_sha: 'e'.repeat(40) }])).finished, 0);
+      assert.equal((await lifecycle('ci', [{ pr_number: 2006, state: 'closed' }])).finished, 0);
+      assert.equal(await binding(2006), 'merged');
+      assert.deepEqual((await finishes(2006)).map(m => [m.status, m.source]), [['merged', 'webhook']]);
+      const b = await claim(await task()); await admitted(b, 2007, '27'.repeat(20));
+      assert.equal((await lifecycle('ci', [{ pr_number: 2007, state: 'merged', merge_sha: 'e'.repeat(40) }])).finished, 1);
+      assert.equal((await webhook(2007)).finished, 0);
+      assert.equal((await webhook(2007, { merged: false })).finished, 0);
+      assert.equal(await binding(2007), 'merged');
+      assert.deepEqual((await finishes(2007)).map(m => [m.status, m.source]), [['merged', 'reconcile']]);
+      const c = await claim(await task()); await admitted(c, 2008, '28'.repeat(20));
+      assert.equal((await adopt(2008)).status, 'ok');
+      assert.deepEqual((await finishes(2008)).map(m => [m.status, m.source]), [['merged', 'adopt']]);
+    });
+    await t.test('L1-7 旧五参数结束入口一律拒绝：不带来源不能结束绑定', async () => {
+      const r = await claim(await task()); await admitted(r, 2010, '2a'.repeat(20));
+      for (const status of ['merged', 'closed'])
+        await assert.rejects(() => admin.query(`select clued_private.work_claim_pr_end_v1(b,'global',$2,$3,null)
+          from public.clued_agent_bindings b where b.id=$1`, [ids.ci, repo + '#2010', status]), { code: '22023', message: 'work_claim_pr_end_source_required' });
+      assert.deepEqual([await binding(2010), (await row(r)).status, (await finishes(2010)).length], ['active', 'ACTIVE', 0]);
+      committed(await release(r));
+    });
+    await t.test('L1-8 ACTIVE 认领从未授权的 unknown 绑定报 merged：绑定结束，认领仍 ACTIVE，没有释放回执', async () => {
+      const taskId = await task(), r = await claim(taskId);
+      await admin.query(`insert into clued_private.work_claim_pr_task_bindings_v1(user_id,repo_id,pr_number,task_id,status)
+        values($1,$2,2011,$3,'unknown')`, [user, repo, taskId]);
+      const answer = await lifecycle('ci', [{ pr_number: 2011, state: 'merged', merge_sha: 'b'.repeat(40) }]);
+      assert.deepEqual([answer.status, answer.finished, answer.released], ['ok', 1, []], JSON.stringify(answer));
+      assert.deepEqual([await binding(2011), (await row(r)).status], ['merged', 'ACTIVE']);
+      assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts where operation='work_claim_release' and object_id=$1",
+        [r.claim.claim_id])).rows[0].n, 0);
+      committed(await release(r));
+    });
+    await t.test('L1-6 返回的 tracked 等于该账号该仓库全部 active/unknown 绑定', async () => {
+      const other = await task();
+      await admin.query(`insert into clued_private.work_claim_pr_task_bindings_v1(user_id,repo_id,pr_number,task_id,status)
+        values($1,$2,2099,$3,'unknown'),($1,'fixture/other-repo',2098,$3,'active')`, [user, repo, other]);
+      const open = async () => (await admin.query(`select pr_number::int n from clued_private.work_claim_pr_task_bindings_v1
+        where user_id=$1 and repo_id=$2 and status in ('active','unknown') order by 1`, [user, repo])).rows.map(x => x.n);
+      const expected = await open();
+      assert.ok(expected.includes(2099) && expected.length > 1);
+      assert.deepEqual((await lifecycle('ci', [])).tracked, expected);
+      const after = await lifecycle('ci', [{ pr_number: 2099, state: 'closed' }]);
+      assert.deepEqual(after.tracked, await open());
+      assert.equal(after.tracked.includes(2099), false);
+      assert.equal(after.tracked.includes(2098), false);
+      assert.deepEqual((await finishes(2099)).map(m => [m.status, m.source]), [['closed', 'reconcile']]);
     });
   }finally{
     for(const c of clients.reverse())await c.end().catch(()=>{});
