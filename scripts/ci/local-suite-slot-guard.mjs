@@ -75,7 +75,7 @@ if (process.env.CLUED_LOCAL_SUITE_GUARD && process.argv[1] === import.meta.filen
         writeFileSync(resultFile, JSON.stringify(runCommands(selector, suite, root, main, logFile)));
       } else {
         const { executeSuite } = await import(work.selectorUrl);
-        const status = executeSuite(suite, { root, captureKnown: work.captureKnown, keep: work.keep });
+        const status = executeSuite(suite, { root, captureKnown: work.captureKnown, keep: work.keep, files: work.files });
         // Keep the local slot timeout status exclusive to the queue and guard.
         process.exitCode = status === timeoutExit ? 1 : status;
       }

@@ -1067,7 +1067,8 @@ test('run-files 5: validators, lint, typecheck and build are skipped; the test r
 
   const unit = unitTestFiles(path.join(ROOT, 'apps/clued-cloud'))[0];
   const cloud = spawnRecorder();
-  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn: cloud.spawn, log, platform: 'linux', files: [`apps/clued-cloud/${unit}`] }), 0);
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn: cloud.spawn, log, platform: 'linux',
+    readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }), files: [`apps/clued-cloud/${unit}`] }), 0);
   assert.equal(cloud.calls.length, 1);
   assert.ok(cloud.calls[0].args.includes(unit));
   assert.ok(!cloud.calls.some((call) => ['lint', 'typecheck', 'build', 'ledger:verify'].some((word) => call.args.includes(word))));
