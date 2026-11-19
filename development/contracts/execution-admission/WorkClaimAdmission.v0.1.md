@@ -516,6 +516,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 - 撤销者通过现行 CI8 的受保护 `revocations_contexts` 发现 durable pending outbox/open publication 对应的当前授权 Scope，不依赖 claim 仍为 ACTIVE；Scope 与两类票据均使用有界游标，截断不当成已排清。ACK 与 publication begin/finish/reconcile/abort 变更原子写不可变审计 Receipt；精确 check 身份和原回执重放不改变。公开观察分支不提供这些能力。
 - 保持公开函数集合 GW80/CI8。CI8 `clued_work_verify_v1` 的新 `execution_current` 分支仅作有界只读观察（`p_token_hash=null`、固定精确公开目标，无 Scope/Owner/claim DTO/私钥返回、无写入）；它只补充已合格 GitHub 门/独立 runner 的即时 epoch 观察，不产生执行准入。其他 CI 操作仍需现行 Owner 指定 CI Binding。须在精确源码审核中明确新观察 Caller 与全部负例资格，不能以函数数量相同代替审查。
 - 分三阶段部署：①先合并并批准应用 staged SQL 与 Worker/页面/合同，旧模式兼容，自动交换仍 not-ready；②再合并并部署 CI publication/revoker、分支 gate 与独立 runner，验证真实消费和故障边界；③对精确源码和全部消费证据独立批准激活。新 RPC 未可用时不可将新强制 probe 投入分支门；页面 On 或单元绿色不代表完成。各 PR/生产迁移/发布/启用分别走现行门，保留实际 Receipt。
+- 在使用 `work_claim_execution_activate_v1` 设置 `work_claim_execution_policy_v1.activated_at` 前，以 `CLUED_TEST_NATIVE_ACTIVE_ACTIVATION=1` 运行 `node scripts/ci/ci-required-selection.mjs --run source-v2-node`。启用验收中的扫描发布必须实际通过票据开始、建立进行中检查、重验、成功写入及读回、票据结算的顺序断言。常规 staged 验收将这条断言标为待完成。
 
 每阶段部署必须固定已合并的真实 source commit，并使用配置 publisher 的独立输入：先获得该提交的只读 preflight 和已验证加密 backup；`migrate` 只指定本阶段实际审查的 migration 文件名，不隐含全部 pending migration，`deploy` 另走精确提交的发布门。保留两个动作各自的真实 Receipt，启动 workflow 不是完成证明。
 

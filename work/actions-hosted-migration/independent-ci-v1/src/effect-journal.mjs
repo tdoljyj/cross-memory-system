@@ -6,7 +6,8 @@ import { canonical, digest } from './proof.mjs';
 const KEY = /^[a-f0-9]{64}$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const transitions = Object.freeze({ intent: ['authorized', 'not_sent'], authorized: ['sent', 'not_sent'],
-  sent: ['settled', 'uncertain', 'revoked'], uncertain: ['settled', 'revoked'], settled: ['revoked'],
+  sent: ['created', 'settled', 'uncertain', 'revoked'], created: ['completing', 'revoked'],
+  completing: ['settled', 'revoked'], uncertain: ['settled', 'revoked'], settled: ['revoked'],
   not_sent: [], revoked: [] });
 
 // The directory is service state, outside PR workspaces. Installation must
