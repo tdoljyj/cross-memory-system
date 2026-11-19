@@ -57,8 +57,19 @@ if ($LASTEXITCODE) { throw '演练 kit 构建失败' }
 **候选**（接受之前）：`final/` 就是 `publish.mjs prepare` 的 `--out`（里面没有接受文件），构建 kit 时多给接受请求：
 
 ```powershell
-node $builder --version $v --build <构建输出> --final <prepare 的 --out> --images <镜像目录> --out $from
-node $builder --version $v --from $from --prereq D:/clued-drill/prereq/prereq.json --request <prepare 的 --out>\fleet-node-$v.acceptance-request.json --out $kit
+$v = '2026.11.20-0123abcd'                                   # 候选的版本
+$builder = 'work/independent-ci-resident-v1/drill/make-drill-kit.mjs'
+$build = 'D:/w/tmp/fleet-node-2026.11.20-0123abcd/build'     # 构建输出
+$prepared = 'D:/w/tmp/fleet-node-2026.11.20-0123abcd/accept' # publish.mjs prepare 的 --out：kit、镜像、接受请求，没有接受文件
+$images = 'D:/w/tmp/role-image-export-20261120'              # 镜像目录（prepare 的 --out 已含镜像时可直接用它）
+$candFrom = Join-Path $env:TEMP 'drill-from-20261120-candidate'  # 新目录，不能已存在
+$candKit = Join-Path $env:TEMP 'drill-kit-20261120-candidate'    # 新目录，不能已存在
+$request = Join-Path $prepared "fleet-node-$v.acceptance-request.json"
+node $builder --version $v --build $build --final $prepared --images $images --out $candFrom
+if ($LASTEXITCODE) { throw '候选 Release 目录组装失败' }
+node $builder --version $v --from $candFrom --prereq D:/clued-drill/prereq/prereq.json --request $request --out $candKit
+if ($LASTEXITCODE) { throw '候选演练 kit 构建失败' }
+pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $candFrom -Kit $candKit
 ```
 
 候选演练不得带任何跳过选项（`-SkipReinstall` 即拒绝开跑，`DRILL_CANDIDATE_CANNOT_SKIP`）；候选回执的 A1–A8 必须逐项为真，任何一项空着都是 `FAIL`。

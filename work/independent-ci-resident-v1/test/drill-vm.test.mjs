@@ -949,6 +949,8 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     $script:Drill.Runs = ${q(root)}
     $script:DrillScriptPath = ${q(path.join(root, 'drill', 'drill-vm.ps1'))}
     function Assert-DrillHost { @{ freeGB = 20 } }
+    function Invoke-DrillWithHostHold { throw 'HOST_HOLD_MUST_NOT_RUN' }
+    function Get-DrillIntakeTool { throw 'HOST_HOLD_MUST_NOT_RUN' }
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
     $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
     $fixture.m5 = @{ directory = 'm5'; missing = @(${missing.map(q).join(', ')}); collectionCode = $null }
@@ -1102,10 +1104,10 @@ async function sealWorld(t) {
 }
 
 // Codex review of PR-甲 (blocking 1): -SkipReinstall leaves A8 null ("skipped"), which the conclusion leaves out of the pending items, so a
-// candidate that never re-installed reached PASS after -Finalize and seal took it. A candidate's A1-A8 must each be true: a candidate
-// run with a skip option is refused before the host gate, and a candidate receipt with any of A1-A8 null is never a PASS (its -Finalize
-// and seal refuse it). An accepted version's re-drill keeps -SkipReinstall as the diagnosis it was.
-test('a candidate drill cannot skip: refused with -SkipReinstall; a candidate receipt with A8 skipped is never a PASS, nor sealed', opts, async t => {
+// candidate that never re-installed reached PASS after -Finalize and seal took it. A candidate's A1-A8 must each be true. Two cases: the
+// entry refuses a candidate run with a skip option; and, apart from the entry, a candidate receipt with A8 skipped goes through the real
+// conclusion, -Finalize and seal and is refused at each. An accepted version's re-drill keeps -SkipReinstall as the diagnosis it was.
+test('a candidate run with -SkipReinstall is refused at the entry, before the host gate or hold', opts, () => {
   const code = psCode(`
     $Version = '1.2.3'; $From = 'unused'; $Kit = 'unused'; $SkipReinstall = $true
     function Read-DrillPrereq { @{ sha256 = 'pin' } }
@@ -1113,26 +1115,30 @@ test('a candidate drill cannot skip: refused with -SkipReinstall; a candidate re
     function Test-DrillPackageDir { @{ tar = 'unused'; candidate = $true } }
     function Get-DrillReleaseFiles { @('unused') }
     function Assert-DrillHost { throw 'HOST_GATE_MUST_NOT_RUN' }
-    # never the real host hold (it reads this host's status and may ask the installed service to hold intake), whatever the code does
+    # never the real host hold, whatever the code does (Clued Task fe8a2cbf)
     function Invoke-DrillWithHostHold { throw 'HOST_HOLD_MUST_NOT_RUN' }
     function Get-DrillIntakeTool { throw 'HOST_HOLD_MUST_NOT_RUN' }
     Invoke-DrillMain`);
   assert.equal(code, 'DRILL_CANDIDATE_CANNOT_SKIP');
+});
+
+test('a candidate receipt with A8 skipped is refused through the real conclusion, -Finalize and seal', opts, async t => {
   const w = await sealWorld(t);
   const pkg = { tarSha256: w.request.archive_sha256, firstInstallKitSha256: w.request.firstInstallKitSha256 };
+  // the receipt Invoke-DrillPreparedRun writes for a candidate whose A8 was skipped (no entry, no host hold: m5DrillReceipt stubs them)
   const skipped = m5DrillReceipt('cand-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version: w.version, pkg, reinstall: { skipped: true } });
-  assert.equal(skipped.items.find(i => i.id === 'A8').pass, null);
-  assert.equal(skipped.conclusion, 'FAIL');
-  // a receipt that says pending anyway (written before this rule) is judged again by -Finalize: FAIL, and seal refuses it
+  // a receipt that says pending anyway (written before this rule) is judged again by -Finalize, and what it writes is fed to seal
   const done = finalize('cand-skip-finalize', { ...skipped, conclusion: 'PENDING_PRODUCTION_READBACK' }, notTheDrillsSource());
-  assert.equal(done.output.conclusion, 'FAIL');
-  await assert.rejects(w.sealIt(done.receiptFile), { code: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
+  let sealed;
+  try { sealed = (await w.sealIt(done.receiptFile)).status; } catch (e) { sealed = e.code ?? String(e); }
+  // each link of the chain, side by side (a red run shows every one that let it through)
+  assert.deepEqual({ a8: skipped.items.find(i => i.id === 'A8').pass, run: skipped.conclusion, finalize: done.output.conclusion ?? done.output.code, seal: sealed },
+    { a8: null, run: 'FAIL', finalize: 'FAIL', seal: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
   // an accepted version's re-drill may still skip A8 (a diagnosis, never sealed)
   const reDrill = m5DrillReceipt('acc-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], reinstall: { skipped: true } });
   assert.equal(reDrill.conclusion, 'PENDING_PRODUCTION_READBACK');
   assert.equal(finalize('acc-skip-finalize', reDrill).output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
 });
-
 test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the one not read back', opts, async t => {
   const w = await sealWorld(t);
   const pkg = { tarSha256: w.request.archive_sha256, firstInstallKitSha256: w.request.firstInstallKitSha256 };
