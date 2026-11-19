@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test, { after } from 'node:test';
 import { CI_ROOT, FIRST_INSTALL_VHDX_DIRECTORY, RESIDENT_SERVICE_SID, firstInstallCheck, LINUX_SCRIPTS, PLAN_CONTRACT, firstInstallKitOf, imageAssetOf, installedFleetMaterial, main, prepareInstall, readKit, sourceHashOf } from '../install.mjs';
 import { buildUniversal } from '../universal.mjs';
@@ -357,8 +358,18 @@ async function releaseWorld(t, w) {
   const out = path.join(d, 'accept');
   const prepare = (over = {}) => publishModule.prepare({ version: VERSION, dir: outDir, out, images: w.kit.images.local.map(l => path.join(w.from, l.asset)), index,
     root: w.template.root, ghCommand, ...over });
-  const seal = (request, over = {}) => publishModule.seal({ request, decision: randomUUID(), receipt: randomUUID(), acceptedAt: '2026-11-19T12:22:39Z', index, ghCommand, ...over });
-  return { d, index, assets, kitName, out, prepare, seal, outDir };
+  // the Decision record: the shape of the real clued_record_mutate return of 3bc571a6 (Decision c556370f, receipt 7ccaefca), its text naming this request
+  // (the old seal read the three values from the command line: they are given too, so the same tests ran before the rework)
+  const recordOf = async (request, edit = r => r) => {
+    const r = JSON.parse(await fs.readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'clued-decision-mutate-3bc571a6.json'), 'utf8'));
+    r.supplemental.record.content = `TEST TEXT\nacceptance-request fleet-node-${VERSION} sha256:${sha(await fs.readFile(request))}\n`;
+    const file = path.join(d, `decision-record-${randomUUID()}.json`);
+    await fs.writeFile(file, JSON.stringify(edit(r), null, 2));
+    return file;
+  };
+  const seal = async (request, over = {}) => publishModule.seal({ request, decisionRecord: await recordOf(request), decision: 'c556370f-b0fc-404b-b164-0f06699e4c7a',
+    receipt: '7ccaefca-5fda-4bc8-9747-2a8101b92342', acceptedAt: '2026-11-19T12:22:39Z', index, ghCommand, ...over });
+  return { d, index, assets, kitName, out, prepare, seal, recordOf, outDir };
 }
 // the companion writes its version facts again (a new observedAt): the next kit taken from this node is other bytes
 async function factsObservedAgain(w, at) {
@@ -384,9 +395,16 @@ test('3bc571a6 end to end: prepare on the installed node with no Decision, the O
     assert.deepEqual(request.fleetRefs, { sourceAcceptanceRef: material.installed.sourceAcceptanceRef, hostQualificationRef: material.installed.hostQualificationRef,
       ownerAuthorizationRef: material.installed.ownerAuthorizationRef, publisherQualificationRef: material.installed.publisherQualificationRef,
       ownerPackageAcceptanceRef: material.installed.ownerPackageAcceptanceRef, formalRoles: material.formalRoles });
-    // the Owner accepts (a Decision and the receipt of its write); seal takes no node root and no kit: only the request and those values
-    const decision = randomUUID(), receipt = randomUUID();
-    const sealed = await r0.seal(p.request, { decision, receipt });
+    // the request's Source well formed but not the one the Release's tar gives (the archive's own source-hash on the downloaded tar): refused, nothing up
+    const requestBytes = await fs.readFile(p.request);
+    await fs.writeFile(p.request, JSON.stringify({ ...request, ciSourceManifestSha256: sha(Buffer.from('another Source')) }, null, 2) + '\n');
+    await assert.rejects(r0.seal(p.request), { code: 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES' });
+    assert.ok(!r0.assets().some(a => a.name === `fleet-node-${VERSION}.acceptance.json`));
+    await fs.writeFile(p.request, requestBytes);
+    // the Owner accepts; DESK writes the Decision with prepare's line and keeps the return; seal takes no node root and no kit: the request and that record
+    const decision = 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt = '7ccaefca-5fda-4bc8-9747-2a8101b92342';
+    assert.equal(p.decisionLine, `acceptance-request fleet-node-${VERSION} sha256:${sha(requestBytes)}`);
+    const sealed = await r0.seal(p.request);
     assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
     const accepted = readJson(sealed.acceptance);
     assert.deepEqual(accepted, publishModule.acceptanceOf(request, { decision, receipt, acceptedAt: '2026-11-19T12:22:39Z' }));
@@ -403,8 +421,8 @@ test('3bc571a6 end to end: prepare on the installed node with no Decision, the O
     const stand = publishModule.acceptanceOf(request, publishModule.DRILL_RESERVED);
     assert.equal((await firstInstallCheck({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: stand, from: r0.out })).status, 'FIRST_INSTALL_INPUTS_ACCEPTED');
     // the same seal again changes nothing; prepare after the acceptance is refused (no kit afterwards)
-    assert.equal((await r0.seal(p.request, { decision, receipt })).already, true);
-    await assert.rejects(r0.prepare(), { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
+    assert.equal((await r0.seal(p.request)).already, true);
+    await assert.rejects(r0.prepare(), { code: 'PREPARE_VERSION_ALREADY_ACCEPTED' });
   });
 
 test('3bc571a6 end to end: a second prepare after a stop, the node\'s version facts observed again: the kit on the Release is used, uploaded once, and seals',

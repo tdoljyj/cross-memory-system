@@ -60,3 +60,22 @@ test('the acceptance has two commands in the README, prepare before the Owner an
   // the flow: candidate -> drill -> the Owner's one acceptance -> seal
   assert.match(readme, /publish release -> publish prepare[^\n]*-> 候选演练[^\n]*-> Owner 接受[^\n]*-> publish seal/);
 });
+
+test('the acceptance in the README: seal takes the Decision record, not three hand-copied values; the delivery directory is the Release\'s assets, not prepare\'s --out', () => {
+  // FABLE-renew-key-algorithm-ruling-20261119.md section 4 and its supplement; review suggestions 3 and 4
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision-record /m);
+  assert.ok(!/^node [^\n]*publish\.mjs seal [^\n]*--(decision|receipt|accepted-at) /m.test(readme), 'no Decision, receipt or time on seal\'s command line');
+  assert.match(readme, /clued_record_mutate/);
+  assert.match(readme, /PASS_A_FULL/);
+  assert.match(readme, /PASS_A_PER_NODE_STEPS_REMAIN/);
+  assert.ok(!/可直接交给 `install\.mjs first-install-check --from` 和 `bootstrap\.ps1 -From`/.test(readme), 'prepare\'s --out is not the delivery directory');
+  assert.match(readme, /交付目录/);
+  // the three references every acceptance carries: where they come from is written once
+  assert.match(fs.readFileSync(path.join(FLEET, 'BATCH1-INTERFACES.md'), 'utf8'), /\| `ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` \|[^\n]*publish\.mjs prepare/);
+});
+
+test('no file of the package names a publish.mjs command that no longer exists', () => {
+  for (const f of [path.join(FLEET, 'bootstrap.ps1'), path.join(RES, 'reinstall', 'tools', 'export-role-image.ps1')]) {
+    assert.ok(!/publish\.mjs (attach-first-install-kit|attach-acceptance|acceptance-draft)/.test(fs.readFileSync(f, 'utf8')), f);
+  }
+});
