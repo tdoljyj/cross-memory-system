@@ -32,6 +32,7 @@ export const SCAN_START_GATEWAY_SIGNATURES = ['clued_ci_scan_start_hosted_v1(jso
 export const CI_NODE_GATEWAY_SIGNATURES = ['clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)', 'clued_ci_node_trust_v1(text,uuid)'].sort();
 export const WORKER_DUE_SIGNATURE = 'clued_worker_due_v1(text)';
 export const PR_MERGED_EVENT_SIGNATURE = 'clued_work_pr_merged_event_v1(jsonb)';
+export const RENEW_SIGNATURES = ['clued_ci_connection_renew_trust_v1(uuid,uuid,text,text)', 'clued_ci_connection_renew_v1(jsonb)'];
 
 export async function findGatewayCloseoutMigration(cloudRoot=cloud) {
   const names=(await fs.readdir(path.join(cloudRoot,'supabase/migrations'))).filter(n=>n.endsWith('_worker_gateway_closeout_v1.sql'));
@@ -68,6 +69,7 @@ export async function snapshotCallerCatalog(db) {
 // connection-self reader (20261118100000) and the PR merge event (20261118213000). These are exactly those
 // privileges; a later successor that adds one names it here.
 export const CLOSEOUT_SUCCESSOR_GRANTS = [
+  ...RENEW_SIGNATURES.map(s => ['public.' + s, GATEWAY_ROLE]),
   ['public.clued_ci_scan_start_hosted_v1(jsonb)', GATEWAY_ROLE],
   ['public.clued_ci_scan_start_policy_v1(jsonb)', GATEWAY_ROLE],
   ['public.clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)', GATEWAY_ROLE],
@@ -103,7 +105,8 @@ export async function assertGatewayCloseoutBoundary(db) {
   const nodeGateway = (await db.query("select to_regclass('clued_private.ci_node_commands_v1') is not null present")).rows[0].present;
   const dueInstalled = (await db.query('select to_regprocedure($1) is not null present', ['public.'+WORKER_DUE_SIGNATURE])).rows[0].present;
   const mergeEventInstalled = (await db.query('select to_regprocedure($1) is not null present', ['public.' + PR_MERGED_EVENT_SIGNATURE])).rows[0].present;
-  const expected = [...WORKER_SIGNATURES, ...(successor ? SCAN_START_GATEWAY_SIGNATURES : []),
+  const renewInstalled = (await db.query("select to_regclass('clued_private.ci_connection_renewals_v1') is not null present")).rows[0].present;
+  const expected = [...WORKER_SIGNATURES, ...(renewInstalled ? RENEW_SIGNATURES : []), ...(successor ? SCAN_START_GATEWAY_SIGNATURES : []),
     ...(nodeGateway ? CI_NODE_GATEWAY_SIGNATURES : []), ...(dueInstalled ? [WORKER_DUE_SIGNATURE] : []),
     ...(mergeEventInstalled ? [PR_MERGED_EVENT_SIGNATURE] : [])].sort();
   assert.deepEqual(await signatures(GATEWAY_ROLE,false),expected,

@@ -1,0 +1,71 @@
+{
+  "contract": "clued.ci-connection-renew/1",
+  "endpoint": "https://kooyumi.pixelgrav.com/v1/ci/node/renew",
+  "pending_retry_seconds": 3600,
+  "clear_intent": {
+    "requires_renewed_false": true,
+    "codes": [
+      "RENEW_SUPERSEDED",
+      "RENEW_BINDING_UNAVAILABLE",
+      "RENEW_UPGRADE_ROLE_REFUSED",
+      "RENEW_TIME_INVALID",
+      "RENEW_AUTHORITY_CHANGED",
+      "RENEW_GRANT_REJECTED",
+      "RENEW_GRANT_REVOKED",
+      "RENEW_CONFLICT",
+      "CI_STALE_VERSION",
+      "CI_REBIND_OLD_REVOCATION_UNSAFE",
+      "CI_REBIND_OLD_CONNECTION_SHARED",
+      "CI_REBIND_ROLE_UNSAFE",
+      "CI_REBIND_DUTY_HANDOVER_REQUIRED",
+      "CI_REBIND_NOT_DRAINED"
+    ],
+    "operation": "replacement",
+    "requires_same_serialized_intent": true
+  },
+  "probe": {
+    "null_project": "discovery_only",
+    "active_identity_conflict": "RENEW_DISCOVERY_AMBIGUOUS",
+    "duty_field": "on_duty",
+    "window_field": "renewal_window_opens_at"
+  },
+  "yield": {
+    "action": "yield",
+    "kind": "ci",
+    "new_token_hash": null,
+    "result_fields": [
+      "from_binding_id",
+      "to_binding_id",
+      "receipt_id",
+      "effective_at"
+    ],
+    "clear_intent": false
+  },
+  "unavailable": {
+    "http_status": 503,
+    "node_code": "RENEW_GATEWAY_UNAVAILABLE"
+  },
+  "yield_signature_vector": {
+    "public_jwk": {
+      "kty": "EC",
+      "x": "ZMq0RCpATnMbdLefkSDyKSZMQy1W4Wq-TdPeJ5qIwUc",
+      "y": "Rn1N7jBoJH5FbBGfkgcpPml_TWhfXKOvUazbwNeE9xY",
+      "crv": "P-256"
+    },
+    "request": {
+      "contract": "clued.ci-connection-renew/1",
+      "project_id": "84ef9aa6-4f88-40c3-81ef-c8a50a6c2f95",
+      "node_id": "155f5fcb-428a-4f41-8ae2-d0ed0d7bb153",
+      "kind": "ci",
+      "identity_fingerprint": "35fae8208d0b22232c1026824ce449c3b175125b85e45dc5be39e93580f5b3d8",
+      "old_binding_id": "4f669066-7d04-4de3-b6d1-68e4f7197581",
+      "old_token_hash": "ae7f7fdfad7fffaba3549bdf7a6654f0277f1fdfdf4fdd4df57ded67d515265d",
+      "generation": 2,
+      "new_token_hash": null,
+      "issued_at": "2026-11-19T00:00:00.000Z",
+      "action": "yield",
+      "signature": "xT5rOKAH8mO1tnyKXvlJI9ujOeuZMbduUkefz8In8DZQm82MCkzYCQiUYsdiAE1NSv4RSq0YNy8D3ByYEvSdvA"
+    },
+    "canonical_utf8": "{\"action\":\"yield\",\"contract\":\"clued.ci-connection-renew/1\",\"generation\":2,\"identity_fingerprint\":\"35fae8208d0b22232c1026824ce449c3b175125b85e45dc5be39e93580f5b3d8\",\"issued_at\":\"2026-11-19T00:00:00.000Z\",\"kind\":\"ci\",\"new_token_hash\":null,\"node_id\":\"155f5fcb-428a-4f41-8ae2-d0ed0d7bb153\",\"old_binding_id\":\"4f669066-7d04-4de3-b6d1-68e4f7197581\",\"old_token_hash\":\"ae7f7fdfad7fffaba3549bdf7a6654f0277f1fdfdf4fdd4df57ded67d515265d\",\"project_id\":\"84ef9aa6-4f88-40c3-81ef-c8a50a6c2f95\"}"
+  }
+}
