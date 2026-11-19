@@ -722,7 +722,7 @@ function Get-DrillVerdict($E) {
     [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail)"))
   }
   $ri = $E.reinstall
-  if ($null -eq $ri -or $ri.skipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall)')) }
+  if ($null -eq $ri -or $ri.skipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall): same-package reinstall not drilled (同包重装未演练)')) }
   else {
     $a8 = ([string]$ri.upgradeStatus -ceq 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') -and ([string]$ri.prepareStatus -ceq 'FLEET_NODE_INSTALL_PREPARED') `
       -and (Test-DrillReinstallLauncher $ri) -and [bool]$ri.reverifyPassed -and ([string]$ri.prepareAgainStatus -ceq 'FLEET_NODE_INSTALL_PREPARED')
@@ -753,13 +753,16 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 }
 
 # Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
-# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The two PASS values are the
+# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The three PASS values are the
 # set publish.mjs seal --drill-receipt takes (test/drill-vm.test.mjs holds them equal); a candidate is shown to the Owner only after its
 # -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
 # without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
-# A candidate (its receipt is what the Owner's acceptance and seal rest on) has no "skipped": each of A1-A8 must be true, so a candidate
-# run with A8 skipped (-SkipReinstall, which Invoke-DrillMain refuses for a candidate anyway) or any other item not judged is FAIL, at the
-# run and at -Finalize (Codex review of PR-甲, blocking 1). An accepted version's re-drill keeps "skipped" as the diagnosis it was.
+# A candidate (its receipt is what the Owner's acceptance and seal rest on): each of A1-A7 must be true, and A8 true unless the run chose
+# to skip it (-SkipReinstall, an explicit option, never the default; Fable renew-key ruling, supplement "candidate skips A8"). A candidate
+# that skipped A8 ends in its own value, PASS_A_REINSTALL_NOT_DRILLED, never in the two others (Codex review of PR-甲, blocking 1: a skipped
+# candidate must not look like a full one; the value tells them apart, in the receipt and in the index seal writes). It is reported even
+# when per-node steps remain too (the larger gap; A10's detail still names them). An accepted version's re-drill keeps "skipped" as the
+# diagnosis it was.
 function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
   if ([string](Get-Prop $M5 'result') -cne 'PASS') { return 'FAIL' }
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
@@ -768,8 +771,10 @@ function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
     if (-not $byId.ContainsKey($id)) { return 'FAIL' }
   }
   if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
-  if ($Candidate -and @(@('A1','A2','A3','A4','A5','A6','A7','A8') | Where-Object { $byId[$_].pass -ne $true }).Count) { return 'FAIL' }
+  $a8Skipped = $null -eq $byId['A8'].pass -and [string]$byId['A8'].detail -match '^skipped'
+  if ($Candidate -and @(@('A1','A2','A3','A4','A5','A6','A7','A8') | Where-Object { $byId[$_].pass -ne $true -and -not ($_ -eq 'A8' -and $a8Skipped) }).Count) { return 'FAIL' }
   if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
+  if ($Candidate -and $a8Skipped) { return 'PASS_A_REINSTALL_NOT_DRILLED' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
 }
@@ -1967,8 +1972,6 @@ function Invoke-DrillMain {
   if (-not $BaselineOnly) { $prereq = Read-DrillPrereq $script:Drill.PrereqDir }
   if ($full) {
     $kitInfo = Read-DrillKit $Kit; $package = Test-DrillPackageDir $From $Version $kitInfo
-    # a candidate's receipt is what the acceptance rests on: no item of it may be skipped (Codex review of PR-甲, blocking 1)
-    if ($package['candidate'] -and $SkipReinstall) { throw (New-DrillError 'DRILL_CANDIDATE_CANNOT_SKIP' '-SkipReinstall') }
     if ($Interactive -and $kitInfo.prerequisiteMode -cne 'first-install-host') { throw (New-DrillError 'DRILL_INTERACTIVE_REQUIRES_RELEASE_KIT') }
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
