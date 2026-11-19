@@ -60,7 +60,7 @@ prereq-manifest 的文件名、sha256、字节数相符才拷入。Node/Python/G
 已钉清单取得；本构建器不联网。
 
 `prerequisiteMode=first-install-host` 让完整演练从 S0 把发行版、Docker 和账户交给正式主机准备，不提前导入同名发行版。
-`-PrereqOnly` 和旧 kit 的行为保持不变。`perNodeSteps` 明确列出三处绕过。
+旧 kit 仍支持预注入来宾前置条件。`perNodeSteps` 明确列出三处绕过。
 
 guest 路径固定映射为 `C:\drill\{from,kit,fake,work}`。fake 是 VM 内现生成的凭据文件，不是假服务；没有生产授权，
 不提供心跳令牌。entry 的最后一行只输出 `{status,stopCode,tree,node}`；只有 `FIRST_INSTALL_DONE`、exit 0、无 stopCode
@@ -71,6 +71,18 @@ Owner 批准后，DESK 在可用 Hyper-V 与 pwsh 的宿主机运行 A 档：
 ```powershell
 pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $from -Kit $kit
 ```
+
+默认整轮限时 70 分钟，包含来宾开机、A 档步骤及观测采集，可用 `-RunTimeoutMinutes` 指定。当班时须已有
+`S0-clean-os`，脚本通过已安装代次的 `rearm-tool.mjs` 申请 `drill` 暂停接新，最多等 40 分钟让在跑批次结束。
+保持预算为 40 分钟加整轮限时再加 10 分钟，超过 120 分钟会拒绝开机。开机前和运行中均检查宿主状态与内存。
+来宾按同一截止时间自关机，重启后沿用截止时间。脚本确认关机并还原检查点后请求恢复接新，未确认时保持到期自解。
+
+本次验收包的 `universal-manifest.json` 文件清单列有随续期交付新增的 `windows/ci-connection-renew.contract.json` 时，适用 M5。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的六份文件。
+回执独立记录 `m5.result`。核验通过为 `PASS`，观测缺失、核验器缺失或核验失败为 `FAIL`。文件清单无续期组件时为 `NOT_EVALUATED`，回执说明原因。
+D5 单独检查这份回执的 `m5.result`，只接受 `PASS`。A 档按回执的 `conclusion` 判定，`-Finalize` 继续只处理 A 档回读。
+
+来宾关机计时器就绪前，由不在任何 Windows 作业里的看门进程负责兜底：它经 WMI（`Win32_Process.Create`）拉起，不继承拉起方（例如代理会话）的作业。拉起后确认它仍在某个作业里时，脚本拒绝开机。
+回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。
 
 本次未启动/修改 Hyper-V；A1–A10 实机结果、重启、再装、A5/A9 生产只读核验均由 DESK 另做。
 
@@ -87,7 +99,7 @@ powershell -NoProfile -NonInteractive -Command "Get-Credential -UserName x -Mess
 A 档实测全绿后，经 Owner 批准再运行（独立还原 S0）：
 
 ```powershell
-pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $from -Kit $kit -Interactive -InteractiveTimeoutMinutes 120
+pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $from -Kit $kit -Interactive -InteractiveTimeoutMinutes 120 -RunTimeoutMinutes 180
 ```
 
 该模式不经 entry，也不提前安装发行版。脚本拷入同一资产，在 VM 内生成全新假凭据，以安全输入让 Owner 设置本次 drill
@@ -106,7 +118,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\drill\from\fleet-node-202
 New-Item C:\drill\work\interactive.done -ItemType File
 ```
 
-脚本限时等这个完成信号（默认 120 分钟，范围 5–240），没有信号就超时失败并还原。信号本身不构成成功证据。
+脚本限时等这个完成信号（默认 120 分钟，范围 5–240），仍受整轮限时约束。上例的预算需要宿主待命。
+没有信号就超时失败并还原。信号本身不构成成功证据。
 A1 来自 VM 内 C:\ProgramData\CluedBootstrap\<guid>\elevated-launcher-*.txt 的最后一个 JSON，由接受版
 Get-LauncherVerdict 判定，要求唯一结果文件、有效 PNG 截图、tree/node 路径。证据复制到宿主本次 runs 目录后，继续
 现有验收、A7 无登录重启和 A8 再装，最后关闭 VM 并还原 S0。临时登录口令随还原失效，不改宿主 DPAPI 基线凭据文件。
