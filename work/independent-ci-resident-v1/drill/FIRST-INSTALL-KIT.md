@@ -41,7 +41,7 @@ bootstrap/prereq-manifest 必须与 tar 内字节一致；tar、正式 kit 必�
 
 ## 构建接口
 
-从仓库根运行，只创建新目录（已有目标会拒绝）：
+从仓库根运行，只创建新目录（已有目标会拒绝）。下例是**已接受版本**（`final/` 里有接受文件）：
 
 ```powershell
 $v = '2026.11.17-bdf52173'
@@ -53,6 +53,15 @@ if ($LASTEXITCODE) { throw 'Release 目录组装失败' }
 node $builder --version $v --from $from --prereq D:/clued-drill/prereq/prereq.json --out $kit
 if ($LASTEXITCODE) { throw '演练 kit 构建失败' }
 ```
+
+**候选**（接受之前）：`final/` 就是 `publish.mjs prepare` 的 `--out`（里面没有接受文件），构建 kit 时多给接受请求：
+
+```powershell
+node $builder --version $v --build <构建输出> --final <prepare 的 --out> --images <镜像目录> --out $from
+node $builder --version $v --from $from --prereq D:/clued-drill/prereq/prereq.json --request <prepare 的 --out>\fleet-node-$v.acceptance-request.json --out $kit
+```
+
+候选演练不得带任何跳过选项（`-SkipReinstall` 即拒绝开跑，`DRILL_CANDIDATE_CANNOT_SKIP`）；候选回执的 A1–A8 必须逐项为真，任何一项空着都是 `FAIL`。
 
 演练 kit 平铺存放 `first-install-entry.ps1`、`release-pins.json`、WSL MSI、Ubuntu rootfs、全部 .deb 和 `kit.json`。
 除 `kit.json` 自身外，每个文件都在 `files` 中钉 sha256。prereq.json 按原始字节绑定；其 WSL/rootfs/debs 与正式
@@ -157,7 +166,7 @@ A 档在 guest 的 work/stage-timings.json 记录 host、prepare、launcher 实�
 bootstrapException 标明 README §5 例外，entryMode 区分适配和交互模式。交互模式的分段时间不作推算。
 本次只实现并做离线验证，没有 VM 实测秒数。
 
-A5/A9 由 DESK 用回执内 productionReadbackSql 取得只读结果，写到本次 runs 目录的 readback.json，随后：
+回读由 DESK 用回执内 productionReadbackSql 取得只读结果，写到本次 runs 目录的 readback.json，随后运行下面的命令。候选回执只判 A9（演练一结束就做）；已接受版本的重新演练判 A5 生产半边与 A9：
 
 ```powershell
 pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Finalize <本次receipt.json> -ProductionReadback <本次readback.json>

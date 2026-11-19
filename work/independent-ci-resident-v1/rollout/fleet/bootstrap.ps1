@@ -315,12 +315,23 @@ function ConvertTo-PlainData($value, [bool]$progress, [string]$at = '$', [int]$d
     }
   }
   if ($progress) { return ('<not plain data: ' + $t.FullName + '>') }
-  throw ('OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
+  $e = New-Object InvalidOperationException ('OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
+  $e.Data['OutputNotPlainData'] = $true   # the mark a caller recognizes the refusal by (never its text alone)
+  throw $e
 }
 function ConvertTo-JsonLine($value, [switch]$Progress) {
   $plain = ConvertTo-PlainData $value $Progress.IsPresent
   if ($null -ne $plain) { $plain = $plain.PSObject.BaseObject }
-  (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($plain)
+  $js = New-Object Web.Script.Serialization.JavaScriptSerializer
+  $js.MaxJsonLength = [int]::MaxValue   # not the default 2,097,152: at least what a reader takes (bootstrap reads a stage child up to 16,777,216)
+  if (-not $Progress) { return $js.Serialize($plain) }
+  try { $js.Serialize($plain) } catch {
+    # progress never throws: a line that cannot be written is replaced by one that keeps its status, step and code and names why
+    $kept = [ordered]@{}
+    if ($plain -is [Collections.IDictionary]) { foreach ($k in @('status', 'step', 'code')) { if ($plain.Contains($k) -and $plain[$k] -is [string]) { $kept[$k] = $plain[$k] } } }
+    $kept['notWritten'] = [string]$_.Exception.GetType().FullName
+    $js.Serialize($kept)
+  }
 }
 function Out-Result([string]$status, [string]$step, $extra) {
   $r = [ordered]@{ status = $status; step = $step; workDir = $script:Work }

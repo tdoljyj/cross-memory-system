@@ -720,7 +720,10 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 # set publish.mjs seal --drill-receipt takes (test/drill-vm.test.mjs holds them equal); a candidate is shown to the Owner only after its
 # -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
 # without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
-function Get-DrillConclusion($Items, $M5) {
+# A candidate (its receipt is what the Owner's acceptance and seal rest on) has no "skipped": each of A1-A8 must be true, so a candidate
+# run with A8 skipped (-SkipReinstall, which Invoke-DrillMain refuses for a candidate anyway) or any other item not judged is FAIL, at the
+# run and at -Finalize (Codex review of PR-甲, blocking 1). An accepted version's re-drill keeps "skipped" as the diagnosis it was.
+function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
   if ([string](Get-Prop $M5 'result') -cne 'PASS') { return 'FAIL' }
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
   $core = @('A1','A2','A3','A4','A5','A6','A7','A8','A9')
@@ -728,6 +731,7 @@ function Get-DrillConclusion($Items, $M5) {
     if (-not $byId.ContainsKey($id)) { return 'FAIL' }
   }
   if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
+  if ($Candidate -and @(@('A1','A2','A3','A4','A5','A6','A7','A8') | Where-Object { $byId[$_].pass -ne $true }).Count) { return 'FAIL' }
   if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
@@ -763,10 +767,10 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
     $counts[$k] = [long]$v
   }
   $a9 = @($counts.Values | Where-Object { $_ -ne 0 }).Count -eq 0
+  if ((Get-Prop $Receipt 'candidate') -eq $true) { return @((New-DrillItem 'A9' $a9 (($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))) }
   $sources = @(Get-Prop $row 'live_sources' | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
   $local = [string](Get-Prop $Receipt 'evidence.localSource')
   $a5 = $sources.Count -ge 1 -and @($sources | Where-Object { $_ -cne $local }).Count -eq 0
-  if ((Get-Prop $Receipt 'candidate') -eq $true) { return @((New-DrillItem 'A9' $a9 (($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))) }
   return @(
     (New-DrillItem 'A5' $a5 "local=$local production=$($sources -join ',')"),
     (New-DrillItem 'A9' $a9 (($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))
@@ -1829,7 +1833,7 @@ function Invoke-DrillMain {
     $prod = Get-DrillProductionVerdict $receipt (Read-DrillJson $ProductionReadback)
     $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else { [ordered]@{ id = $i.id; pass = $i.pass; detail = $i.detail } } })
     $receipt.items = $items
-    $receipt.conclusion = Get-DrillConclusion $items (Get-Prop $receipt 'm5')
+    $receipt.conclusion = Get-DrillConclusion $items (Get-Prop $receipt 'm5') ((Get-Prop $receipt 'candidate') -eq $true)
     $receipt | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('o')) -Force
     $receipt | Add-Member -NotePropertyName productionReadbackSha256 -NotePropertyValue (Get-Sha256Hex $ProductionReadback) -Force
     Write-DrillJson $Finalize $receipt
@@ -1842,6 +1846,8 @@ function Invoke-DrillMain {
   if (-not $BaselineOnly) { $prereq = Read-DrillPrereq $script:Drill.PrereqDir }
   if ($full) {
     $kitInfo = Read-DrillKit $Kit; $package = Test-DrillPackageDir $From $Version $kitInfo
+    # a candidate's receipt is what the acceptance rests on: no item of it may be skipped (Codex review of PR-甲, blocking 1)
+    if ($package['candidate'] -and $SkipReinstall) { throw (New-DrillError 'DRILL_CANDIDATE_CANNOT_SKIP' '-SkipReinstall') }
     if ($Interactive -and $kitInfo.prerequisiteMode -cne 'first-install-host') { throw (New-DrillError 'DRILL_INTERACTIVE_REQUIRES_RELEASE_KIT') }
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
@@ -1912,7 +1918,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = $mem.freeGB
     failure = $failure; restoredToCheckpoint = $restored
     evidence = $evidence; files = $files; items = $items; m5 = $m5
-    conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items $m5 })
+    conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items $m5 ([bool]$package['candidate']) })
     productionReadbackSql = (Get-DrillReadbackSql $startedAt)
   }
   $receiptPath = Join-Path $runDir 'receipt.json'

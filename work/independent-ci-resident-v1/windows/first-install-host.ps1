@@ -324,12 +324,23 @@ function ConvertTo-PlainData($value, [bool]$progress, [string]$at = '$', [int]$d
     }
   }
   if ($progress) { return ('<not plain data: ' + $t.FullName + '>') }
-  throw ('OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
+  $e = New-Object InvalidOperationException ('OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
+  $e.Data['OutputNotPlainData'] = $true   # the mark a caller recognizes the refusal by (never its text alone)
+  throw $e
 }
 function ConvertTo-JsonLine($value, [switch]$Progress) {
   $plain = ConvertTo-PlainData $value $Progress.IsPresent
   if ($null -ne $plain) { $plain = $plain.PSObject.BaseObject }
-  (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($plain)
+  $js = New-Object Web.Script.Serialization.JavaScriptSerializer
+  $js.MaxJsonLength = [int]::MaxValue   # not the default 2,097,152: at least what a reader takes (bootstrap reads a stage child up to 16,777,216)
+  if (-not $Progress) { return $js.Serialize($plain) }
+  try { $js.Serialize($plain) } catch {
+    # progress never throws: a line that cannot be written is replaced by one that keeps its status, step and code and names why
+    $kept = [ordered]@{}
+    if ($plain -is [Collections.IDictionary]) { foreach ($k in @('status', 'step', 'code')) { if ($plain.Contains($k) -and $plain[$k] -is [string]) { $kept[$k] = $plain[$k] } } }
+    $kept['notWritten'] = [string]$_.Exception.GetType().FullName
+    $js.Serialize($kept)
+  }
 }
 # Progress (an aid): one JSON line whatever it is given; it never throws and never ends P1.
 function Step([string]$name, $result) {
@@ -348,7 +359,8 @@ function Stop-Host([string]$code, $detail) {
 # name (HOST_OUTPUT_NOT_PLAIN_DATA), never as a bare exception and never written in a form someone has to guess at.
 function Invoke-Host {
   try { Invoke-HostPreparation } catch {
-    if ([string]$_.Exception.Message -cmatch 'OUTPUT_NOT_PLAIN_DATA:([^\s:]*):([^\s:]*)') { Stop-Host 'HOST_OUTPUT_NOT_PLAIN_DATA' ([ordered]@{ at = $Matches[1]; type = $Matches[2] }) }
+    $x = $_.Exception
+    if ($x.Data['OutputNotPlainData'] -eq $true -and [string]$x.Message -cmatch '^OUTPUT_NOT_PLAIN_DATA:(.*):([^:]*)$') { Stop-Host 'HOST_OUTPUT_NOT_PLAIN_DATA' ([ordered]@{ at = $Matches[1]; type = $Matches[2] }) }
     throw
   }
 }function Clear-Secrets { foreach ($k in @($script:Secrets.Keys)) { [Array]::Clear($script:Secrets[$k], 0, $script:Secrets[$k].Length) }; $script:Secrets.Clear() }
