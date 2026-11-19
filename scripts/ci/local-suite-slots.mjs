@@ -152,7 +152,8 @@ function requestTickets(directory, requests, stale, jobsGone) {
 }
 
 async function runGuard(suite, { root, env, timeoutExit }, requestPath, holdMs) {
-  const context = { suite, root, requestPath, holdMs, timeoutExit, owner: process.pid, worker: WORKER, node: process.execPath };
+  const context = { suite, root, requestPath, holdMs, timeoutExit, deadlineAt: Date.now() + holdMs,
+    owner: process.pid, worker: WORKER, node: process.execPath };
   const deadline = performance.now() + holdMs;
   const child = spawn(WINDOWS ? 'powershell.exe' : process.execPath, WINDOWS ? JOB_ARGS : [WORKER, 'guard'], {
     detached: !WINDOWS, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
@@ -165,13 +166,13 @@ async function runGuard(suite, { root, env, timeoutExit }, requestPath, holdMs) 
   const exited = once(child, 'close');
   for (;;) {
     const ready = WINDOWS ? existsSync(path.join(requestPath, 'ready')) : readdirSync(requestPath).some((name) => GROUP.test(name));
-    if (ready) break;
     if (performance.now() >= deadline) {
       child.kill('SIGKILL');
       console.error(`LOCAL_SUITE_HOLD_TIMEOUT: ${suite} (PID ${process.pid}) held a slot before the process guard became ready`);
       await exited;
       return timeoutExit;
     }
+    if (ready) break;
     const exit = await Promise.race([exited, delay(50)]);
     if (exit) throw new Error(`process guard for ${suite} exited (${exit[0] ?? exit[1]}) before it was ready`);
   }

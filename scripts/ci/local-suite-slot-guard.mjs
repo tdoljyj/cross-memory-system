@@ -25,8 +25,9 @@ function ownerPipe() {
   return { permission, disconnected };
 }
 
-async function guard({ suite, owner, worker, holdMs, timeoutExit, requestPath }) {
+async function guard({ suite, owner, worker, holdMs, timeoutExit, requestPath, deadlineAt }) {
   const started = performance.now();
+  const budget = Math.max(0, Math.min(holdMs, deadlineAt - Date.now()));
   const control = ownerPipe();
   const child = spawn(process.execPath, [worker, 'worker'], { detached: true, stdio: ['pipe', 'inherit', 'inherit'] });
   child.stdin.on('error', () => {}); // The blocked worker may exit before permission arrives.
@@ -36,11 +37,14 @@ async function guard({ suite, owner, worker, holdMs, timeoutExit, requestPath })
     const exited = once(child, 'exit').then(([code]) => code ?? 1);
     writeFileSync(path.join(requestPath, `group-${child.pid}`), '');
     if (!await control.permission) return 1;
-    child.stdin.end(Buffer.of(1));
     const timedOut = Symbol();
-    const deadline = Math.max(0, holdMs - (performance.now() - started));
-    const result = await Promise.race([exited, control.disconnected.then(() => 1),
-      delay(deadline, timedOut, { signal: timer.signal })]);
+    const remaining = budget - (performance.now() - started);
+    let result = timedOut;
+    if (remaining > 0) {
+      child.stdin.end(Buffer.of(1));
+      result = await Promise.race([exited, control.disconnected.then(() => 1),
+        delay(remaining, timedOut, { signal: timer.signal })]);
+    }
     if (result !== timedOut) return result;
     console.error(`LOCAL_SUITE_HOLD_TIMEOUT: ${suite} (PID ${owner}) held a slot for ${(holdMs / 60_000).toFixed(2)} minutes; stopping its process tree`);
     return timeoutExit;
@@ -60,8 +64,8 @@ if (process.env.CLUED_LOCAL_SUITE_GUARD && process.argv[1] === import.meta.filen
     const context = JSON.parse(process.env.CLUED_LOCAL_SUITE_GUARD);
     if (process.argv[2] === 'guard') {
       process.exitCode = await guard(context);
-    } else if (process.argv[2] === 'worker' && await ownerPipe().permission) {
-      process.stdin.destroy();
+    } else if (process.argv[2] === 'worker' && (process.platform === 'win32' || await ownerPipe().permission)) {
+      if (process.platform !== 'win32') process.stdin.destroy();
       delete process.env.CLUED_LOCAL_SUITE_GUARD;
       const { runSuite } = await import('./ci-required-selection.mjs');
       const status = runSuite(context.suite, { root: context.root });

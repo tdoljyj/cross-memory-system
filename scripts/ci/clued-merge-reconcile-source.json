@@ -474,11 +474,11 @@
 
     "scripts/ci/hosted-migration-source-history.fixture.mjs": "e1a68070aa3800282a8fe675006eb531ba255a4d23a4eaed755f9e39f9bfa3e5",
 
-    "scripts/ci/local-suite-slot-guard.mjs": "3d88a4732f2b488183f72f9d62a9182426e3019b6a35c9f20425ff89b3184f2d",
+    "scripts/ci/local-suite-slot-guard.mjs": "7a31670f435397697f3d17f3d866453d4beafdd8259d6992904e52151e164fca",
 
-    "scripts/ci/local-suite-slot-job.ps1": "454bfa7f997da880d6a782463eff2f695ca0a29bcf1b43f17160562ce9afa67c",
+    "scripts/ci/local-suite-slot-job.ps1": "3060a951fce3f365f45079694e561545bd771bba14d56de619a1a7b09e19c5fe",
 
-    "scripts/ci/local-suite-slots.mjs": "46b26fa1ae2b39a4d9dc537515c0c172a28bfd95d75734728ed168bc125d8331",
+    "scripts/ci/local-suite-slots.mjs": "5ed46ac76cf0df331d949533ef696d9760f81c903351b51a6c083a94f0b618ef",
 
     "scripts/ci/local-verify-concurrency.test.mjs": "272eb5255fd1b9e5c462a2fd03b8c9bf145065e7c0db1daad08002e016c56b80",
 
