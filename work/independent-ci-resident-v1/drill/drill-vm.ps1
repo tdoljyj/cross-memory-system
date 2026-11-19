@@ -2152,6 +2152,15 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
+  # The host guard's emergency restore (it wrote host-guard.json, DRILL_ABORTED) may come before the evidence was taken (Fable renew-key
+  # ruling, supplement "interactive mode A1", second point): accepted, and said so here, never left silent.
+  $hostGuardFile = Join-Path $runDir 'host-guard.json'
+  if (Test-Path -LiteralPath $hostGuardFile -PathType Leaf) {
+    $hostGuard = try { Read-DrillJson $hostGuardFile } catch { $null }
+    if ([string](Get-Prop $hostGuard 'status') -ceq 'DRILL_ABORTED') {
+      $evidence.guardEmergencyRestore = [ordered]@{ note = '由守护紧急还原，证据未取'; code = (Get-Prop $hostGuard 'code'); restoredToCheckpoint = (Get-Prop $hostGuard 'restoredToCheckpoint') }
+    }
+  }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   try {
     if ($run) { $m5 = Get-DrillM5Verdict $runDir $run.m5 }

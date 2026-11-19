@@ -1901,6 +1901,28 @@ test('firstInstallSteps come from the complete stdout logs only; a stage result 
   assert.equal(fin.items.find(i => i.id === 'A1').firstInstallSteps.missing, true);
 });
 
+// Fable renew-key ruling, supplement "interactive mode A1", second point: the host guard's emergency restore may come before the evidence
+// was taken. Accepted, and said so in the receipt (evidence.guardEmergencyRestore), never left silent.
+test('a host guard emergency restore is written into the receipt: restored by the guard, evidence not taken', opts, () => {
+  const root = path.join(tmp, 'guard-restore'); fs.mkdirSync(root, { recursive: true });
+  const r = ps(`
+    $script:Drill.Runs = ${q(root)}
+    function Assert-DrillHost { @{ freeGB = 20 } }
+    function Invoke-DrillWithHostHold { throw 'HOST_HOLD_MUST_NOT_RUN' }
+    function Get-DrillIntakeTool { throw 'HOST_HOLD_MUST_NOT_RUN' }
+    function Invoke-DrillBaseline { @{ action = 'reuse' } }
+    function Invoke-DrillOnCheckpoint { param($Body, $RunDir, $Window)
+      Write-DrillJson (Join-Path $RunDir 'host-guard.json') ([ordered]@{ status = 'DRILL_ABORTED'; code = 'DRILL_HOST_CI_BUSY'; restoredToCheckpoint = $true })
+      @{ restored = $true; failure = @{ code = 'DRILL_HOST_CI_BUSY' }; result = $null; hostExecutorStates = @() } }
+    $package = @{ version = '1.2.3'; tar = 'unused'; tarSha256 = ${q(S)}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(L)}; candidate = $false }
+    $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package ([pscustomobject]@{ sha256 = 'fixture'; perNodeSteps = @() }) @{ sha256 = 'fixture' }
+    $rc = Read-DrillJson $out.receipt
+    [ordered]@{ conclusion = $rc.conclusion; guard = $rc.evidence.guardEmergencyRestore }`);
+  assert.equal(r.conclusion, 'FAIL');
+  assert.deepEqual(r.guard, { note: '由守护紧急还原，证据未取', code: 'DRILL_HOST_CI_BUSY', restoredToCheckpoint: true });
+  assert.equal(m5DrillReceipt('guard-normal', RENEWAL_3BC571A6).evidence.guardEmergencyRestore, undefined);
+});
+
 test('the drill reads its children with stdout and stderr apart: a stderr line never stops a step', opts, () => {
   assert.doesNotMatch(fs.readFileSync(script, 'utf8'), /2>&1\s*\|\s*ForEach-Object/);
   const n = ps(`$ErrorActionPreference = 'Stop'
