@@ -1906,7 +1906,9 @@ $script:GuestPrepareAgain = {
   $native = [scriptblock]::Create($NativeText)
   $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
   $n = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare-again')) 3600
-  $l = @($n.stdout -split "`r?`n" | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }
+  $l = @($n.stdout -split "`r?`n" | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1
+  # the status, with the exit code and stderr beside it for reinstall.json (Codex review of 58136df61, low 4)
+  [ordered]@{ status = $(if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }); exit = $n.exit; stderr = $n.stderr }
 }
 
 function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
@@ -1976,7 +1978,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
     $reinstall.reverifyPassed = @($reVerdict | Where-Object { $_.id -in @('A2', 'A3', 'A4') -and $_.pass -ne $true }).Count -eq 0 -and $null -eq (@($reVerdict | Where-Object { $_.id -eq 'A5' })[0].pass)
     $p2 = Invoke-DrillGuest $Cred $script:GuestPrepareAgain -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 60 -Step 'prepare-again'
-    $reinstall.prepareAgainStatus = [string]$p2
+    $reinstall.prepareAgainStatus = [string](Get-Prop $p2 'status'); $reinstall.prepareAgainExit = $p2.exit; $reinstall.prepareAgainStderr = $p2.stderr
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   }
 
