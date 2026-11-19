@@ -51,7 +51,7 @@ test('L4: continue.py says how a stopped first install continues (the same boots
 test('the acceptance has two commands in the README, prepare before the Owner and seal after; no draft entry, no hand-attached kit or acceptance', () => {
   // Fable 3bc571a6 ruling section 3 (Task 758989fa): the two halves, each one command; the steps under them have no command of their own
   assert.match(readme, /^node [^\n]*publish\.mjs prepare --version <version> --dir /m);
-  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision [^\n]*--receipt [^\n]*--accepted-at /m);
+  assert.match(readme, /^node [^\n]*publish\.mjs seal --request [^\n]*--decision-record /m);
   assert.ok(!/acceptance-draft/.test(readme), 'the old entry is gone from the README');
   assert.ok(!/attach-acceptance|attach-first-install-kit/.test(readme), 'no manual attach step is named in the README');
   assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');

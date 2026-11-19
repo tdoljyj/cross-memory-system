@@ -105,7 +105,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 | `sourceAcceptanceRef` | UUID | source-manifest（每个角色 relay）、acceptance、signers | 进 Source |
 | `hostQualificationRef` | UUID | source-manifest（relay）、acceptance、signers 的 `qualificationRef` | 进 Source；全体一个值。重装时 Linux A 的 derive-roles.py 允许它变（角色策略 `hostAcceptanceRef` 随之更新）；之后原地升级要求不变 |
 | `formalRoles` | 对象，恰 `gitleaks`/`trivy`/`contract-placement` | source-manifest | 进 Source；角色材料（镜像 digest、工具路径与 sha）。现值可用 `install.mjs fleet-refs` 从已装 record 读出 |
-| `ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` | UUID | acceptance.json | 不进 Source；全体相同（今天都等于 Decision） |
+| `ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` | UUID | acceptance.json | 不进 Source；全体相同。权威来源是已装节点的 `record/acceptance.json`：`publish.mjs prepare` 原样沿用进接受请求（与 `install.mjs fleet-refs` 同一来源；97c2c90c、3bc571a6 两代都等于 `sourceAcceptanceRef` 5c06efc1，即首次接受时的 Decision）。新包的 Decision 只进 `ownerDecisionRef`。这三项要换，须 Fable 另行裁定，`prepare` 没有改它们的入口 |
 | `ownerDecisionRef` | UUID | acceptance.json、policy `ownerAcceptance.decisionRef`、包 `acceptance.decisionRef`（Grant 资源） | 必须与 `cluedDecision` 相同（8hex 时为其前缀） |
 | `installationReceiptRef`、`ownerReceiptRef` | UUID，两者必须相等，且不等于 `ownerDecisionRef` | acceptance.json、policy `ownerAcceptance.installReceiptRef` | prep.py 要求两者相等 |
 
