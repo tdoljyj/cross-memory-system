@@ -63,10 +63,10 @@ backup artifact may be needed. Keep the reviewed schedule and existing Worker bi
   迁移提交不了；第一条文件执行出错时授权也随之回滚，不会被用掉。
 - `deploy`：在发布闸门和凭据检查之后、任何 `wrangler` 之前，单独一步消费；门不存在时失败。
 - 自举（只发生一次）：门还不存在时，只有 md5 等于工作流里 `RELEASE_DOOR_INSTALL_MD5` 的安装迁移
-  （`*_release_door_db_identity_v1.sql`）能作为第一条执行；它在同一事务里装上门、经新门消费授权、
+  （`20261119130000_release_door_db_identity_v1.sql`）能作为第一条执行；它在同一事务里装上门、经新门消费授权、
   探门、记账，任何一步不成整体回滚。顺序：`backup` → `migrate`（只填安装迁移）→ `migrate`
-  （其余待跑迁移）→ `deploy`。安装迁移进仓库后，`tests/production-release-gate.test.mjs` 要求
-  `RELEASE_DOOR_INSTALL_MD5` 等于它的 md5（在那之前是 32 个 0，任何文件都对不上）。
+  （其余待跑迁移）→ `deploy`。`tests/production-release-gate.test.mjs` 要求
+  `RELEASE_DOOR_INSTALL_MD5` 等于仓库里这份安装迁移的 md5。
 
 `tests/production-release-door-flow-db.test.mjs` 对一次性数据库原样执行工作流的这两步。
 

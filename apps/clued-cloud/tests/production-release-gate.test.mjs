@@ -615,21 +615,20 @@ test('backup identity checks actual trusted connection routing, not a project la
 // Release door v1 bootstrap (FABLE-release-identity-autonomous-20261119 §2):
 // while the door does not exist, only a first file whose md5 equals
 // RELEASE_DOOR_INSTALL_MD5 may run. The value is the md5 of the one install
-// migration (*_release_door_db_identity_v1.sql, LF bytes as the runner checks
-// them out). Before that file is in the repository the value is 32 zeros, which
-// no file has, so the bootstrap cannot open. Once the file is here this test
-// fails until the pin names its md5: a one-line change of the workflow.
+// migration, 20261119130000_release_door_db_identity_v1.sql (PR-A), as LF
+// bytes the way the runner checks them out. Wherever that file is in the
+// repository this test holds the pin to it; a changed file needs a new pin.
 test('the release workflow pins the md5 of the release door install migration', async () => {
   const pins = [...productionWorkflow.matchAll(/^ {10}RELEASE_DOOR_INSTALL_MD5: '([0-9a-f]{32})'$/gm)].map((match) => match[1]);
   assert.equal(pins.length, 1, 'exactly one pin, on the apply step');
   const applyStep = productionWorkflow.split(/\n      - /).find((step) => step.startsWith('name: Apply the named migrations\n'));
   assert.ok(applyStep.includes(`RELEASE_DOOR_INSTALL_MD5: '${pins[0]}'`));
+  assert.notEqual(pins[0], '0'.repeat(32), 'a real md5, not a placeholder');
   const installs = migrationFiles.filter((name) => name.endsWith('_release_door_db_identity_v1.sql'));
   assert.ok(installs.length <= 1, installs.join(', '));
-  if (installs.length === 0) {
-    assert.equal(pins[0], '0'.repeat(32), 'no install migration yet: the placeholder keeps the bootstrap closed');
-    return;
-  }
+  // Before PR-A is merged into this checkout there is no file to compare with.
+  if (installs.length === 0) return;
+  assert.equal(installs[0], '20261119130000_release_door_db_identity_v1.sql');
   const bytes = Buffer.from((await readFile(new URL(`../supabase/migrations/${installs[0]}`, import.meta.url), 'utf8'))
     .replace(/\r\n/g, '\n'), 'utf8');
   assert.equal(pins[0], createHash('md5').update(bytes).digest('hex'),

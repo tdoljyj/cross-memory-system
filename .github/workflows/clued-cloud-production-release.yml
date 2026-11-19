@@ -255,9 +255,9 @@ jobs:
           CLUED_MIGRATION_DATABASE_URL: ${{ secrets.CLUED_MIGRATION_DATABASE_URL }}
           MIGRATIONS: ${{ inputs.migrations }}
           CLUED_CONFIRM_ORIGIN: https://kooyumi.pixelgrav.com
-          # md5 of *_release_door_db_identity_v1.sql; 32 zeros until it is pinned
-          # (production-release-gate.test.mjs fails once the file exists unpinned).
-          RELEASE_DOOR_INSTALL_MD5: '00000000000000000000000000000000'
+          # md5 of 20261119130000_release_door_db_identity_v1.sql (PR-A, 0f52d8bfa);
+          # production-release-gate.test.mjs checks it against the file.
+          RELEASE_DOOR_INSTALL_MD5: 'e2054fc85fc50c55d16ab44ef6dae201'
         run: |
           set -euo pipefail
           evidence_dir=.sites-runtime/release-evidence

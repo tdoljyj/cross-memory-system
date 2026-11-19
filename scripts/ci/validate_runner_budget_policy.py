@@ -111,7 +111,7 @@ LEGACY_HOSTED_DEBT = {
         "jobs": {
             # 发布门 v1（FABLE-release-identity-autonomous-20261119）：同一发布作业改由数据库登录身份过门。
             # 上一作业摘要 cacbc2d0b9c41b9eb3d5913c2f66a0c5b07ba5717989b0ab51a1022fd40ceccc，控制段和运行路由仍按原值冻结。
-            "release": "02a0547fb09589de29031e4ec068149f8847f4740a6507fddbc29c3fb46b1c60"
+            "release": "5276bfa1a6d1a7567b1ff70831238c54bf7594d1856288f092afb353ba9fded2"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
