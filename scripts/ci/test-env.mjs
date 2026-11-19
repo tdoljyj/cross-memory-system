@@ -1,8 +1,7 @@
 // The environment every suite child gets: the selector's (ci-required-selection.mjs) and local-verify's one source. Only
 // node: imports, so local-verify --linux can carry it with its own copy.
-import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,147 +50,59 @@ export const TEST_ENV_RULES = Object.freeze({
 });
 export const FAKE_GITHUB_TOKEN = TEST_ENV_RULES.fakeToken;
 export const TEST_GIT_IDENTITY = { name: TEST_ENV_RULES.git.name, email: TEST_ENV_RULES.git.email };
-export function fakeIdentityEnv(dir, run) {
+export function fakeIdentityEnv(dir) {
   const { fakeToken, fakeTokenNames, git } = TEST_ENV_RULES;
   return { ...Object.fromEntries(fakeTokenNames.map((name) => [name, fakeToken])),
     GH_CONFIG_DIR: path.join(dir, 'gh'), GIT_CONFIG_GLOBAL: path.join(dir, 'gitconfig'),
     GIT_CONFIG_NOSYSTEM: git.GIT_CONFIG_NOSYSTEM, GIT_TERMINAL_PROMPT: git.GIT_TERMINAL_PROMPT,
-    CLUED_TEST_IDENTITY_DIR: dir, CLUED_TEST_IDENTITY_RUN: run };
+    CLUED_TEST_IDENTITY_DIR: dir };
 }
-// One directory per run, under the run's temporary directory. A command line (markTestRun) always makes its own, before any
-// child starts; a process below it (the suite slot worker, a test calling the selector) takes the one it inherits, so a
-// child killed on a timeout leaves nothing behind. Taken only when it is the run's (Codex reviews of 2ee162c2, medium 4 and
-// second review medium 1): an absolute path to a real directory (no link) with this code's name, a run record naming the
-// run id the env carries (a random id that only reaches the run's own children) and the process that made it, still
-// running; the git file exactly as written and gh's directory empty. Anything else (a stale value, a killed run's, one a
-// suite changed) is not taken and a new one is made. Checked again for every child. Every directory a process makes is
-// removed when it exits; the clean-up is in place before the first is made.
+// The identity directory (ruling 11-20 "补：止血 PR 第四轮" §1, §2): one per run, randomly named under the run's temporary
+// directory; the command line makes it before any child starts and hands its place to the children in the environment
+// (CLUED_TEST_IDENTITY_DIR), with no ownership check: it holds no credential. It is removed when the process that made it
+// ends (normally, failing or interrupted); one a killed run left goes when a later run starts and finds it older than two
+// days, by name and time only (a run is bounded at twenty-odd minutes; a CI job at hours). A clean-up failure is one
+// printed line and never stops the run.
 const PREFIX = 'clued-test-identity-';
+const STALE_MS = 2 * 24 * 60 * 60 * 1000;
 const GITCONFIG = `[user]\n\tname = ${TEST_GIT_IDENTITY.name}\n\temail = ${TEST_GIT_IDENTITY.email}\n`;
-const running = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === 'EPERM';
-  }
-};
-// A process is its id and its start time (Codex third review of 2ee162c2, low 1: an id can be reused). The start time as
-// the system keeps it: the start field of /proc/<pid>/stat on Linux, the process's start ticks on Windows; null when it
-// cannot be read. Read once per process and id.
-const starts = new Map();
-export function startOf(pid) {
-  if (!starts.has(pid)) {
-    let start = null;
-    try {
-      if (process.platform === 'linux') {
-        start = readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').at(-1).split(' ')[19] ?? null;
-      } else if (process.platform === 'win32') {
-        const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-          `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
-        start = result.status === 0 && /^\d+$/.test(result.stdout.trim()) ? result.stdout.trim() : null;
-      }
-    } catch {
-      start = null;
-    }
-    starts.set(pid, start);
-  }
-  return starts.get(pid);
-}
-// The maker is known to be running: its id is in use by a process with its start time.
-const makerRunning = (maker) => Number.isInteger(maker?.pid) && maker.pid > 0 && running(maker.pid)
-  && typeof maker.started === 'string' && startOf(maker.pid) === maker.started;
-// The maker is known to have exited: its id is free, or in use by a process started at another time.
-const makerExited = (maker) => Number.isInteger(maker?.pid) && maker.pid > 0 && typeof maker.started === 'string'
-  && (!running(maker.pid) || (startOf(maker.pid) !== null && startOf(maker.pid) !== maker.started));
-function record(dir) {
-  try {
-    return JSON.parse(readFileSync(path.join(dir, 'run'), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-// The full canonical path (Codex third review of 2ee162c2, medium 1): absolute with a drive on Windows, already resolved, and
-// its own real path through every ancestor (no link, junction or short name on the way), so the path checked is the path
-// the children use, whatever their working directory.
-function canonical(dir) {
-  try {
-    return typeof dir === 'string' && path.isAbsolute(dir) && (process.platform !== 'win32' || /^[A-Za-z]:\\/.test(dir))
-      && path.resolve(dir) === dir && realpathSync.native(dir) === dir;
-  } catch {
-    return false;
-  }
-}
-function taken(dir, run) {
-  try {
-    if (!canonical(dir) || typeof run !== 'string' || !path.basename(dir).startsWith(PREFIX)) return false;
-    const [self, gh, git, file] = [dir, path.join(dir, 'gh'), path.join(dir, 'gitconfig'), path.join(dir, 'run')].map((entry) => lstatSync(entry));
-    if (!self.isDirectory() || !gh.isDirectory() || !git.isFile() || !file.isFile()) return false;
-    const made = record(dir);
-    return made?.run === run && makerRunning(made)
-      && readFileSync(path.join(dir, 'gitconfig'), 'utf8') === GITCONFIG && readdirSync(path.join(dir, 'gh')).length === 0;
-  } catch {
-    return false;
-  }
-}
-// The exit clean-up tries every directory: one that cannot be removed does not stop the others (it returns those).
-export function removeEach(dirs, remove = (dir) => rmSync(dir, { recursive: true, force: true })) {
+let own = null;
+function removeStale(base) {
   const failed = [];
-  for (const dir of dirs) {
+  for (const name of readdirSync(base).filter((entry) => entry.startsWith(PREFIX))) {
     try {
-      remove(dir);
+      if (Date.now() - statSync(path.join(base, name)).mtimeMs > STALE_MS) rmSync(path.join(base, name), { recursive: true, force: true });
     } catch {
-      failed.push(dir);
+      failed.push(name);
     }
   }
-  return failed;
+  if (failed.length) console.error(`test identity: could not remove ${failed.length} old director${failed.length === 1 ? 'y' : 'ies'} under ${base}`);
 }
-const made = new Set();
-let current = null;
-// What a killed run left (Codex second review of 2ee162c2, low 1): before making its directory a process removes, in the
-// same temporary area, the identity directories whose run has ended. Only one it can tell is a run's (Codex third review,
-// medium 3): a real directory (no link) whose run record is a regular file naming its maker, and that maker has exited.
-// Anything else with the name (no record yet, a record without a maker, an unreadable one, another kind of entry) is left.
-function ended(dir) {
+function removeOwn() {
   try {
-    if (!lstatSync(dir).isDirectory() || !lstatSync(path.join(dir, 'run')).isFile()) return false;
-    const maker = JSON.parse(readFileSync(path.join(dir, 'run'), 'utf8'));
-    return makerExited(maker);
-  } catch {
-    return false;
+    rmSync(own, { recursive: true, force: true });
+  } catch (error) {
+    console.error(`test identity: could not remove ${own}: ${error.message}`);
   }
 }
-function sweep(base) {
-  let names;
-  try {
-    names = readdirSync(base);
-  } catch {
-    return;
-  }
-  for (const name of names.filter((entry) => entry.startsWith(PREFIX))) {
-    const dir = path.join(base, name);
-    try {
-      if (!made.has(dir) && ended(dir)) rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // the next run tries again
-    }
-  }
-}
-// own: a command line's own directory, never an inherited one.
-export function testIdentity(env = process.env, { own = false } = {}) {
-  if (!own && taken(env.CLUED_TEST_IDENTITY_DIR, env.CLUED_TEST_IDENTITY_RUN)) return { dir: env.CLUED_TEST_IDENTITY_DIR, run: env.CLUED_TEST_IDENTITY_RUN };
-  if (current && taken(current.dir, current.run)) return current;
-  if (made.size === 0) process.once('exit', () => removeEach(made));
+// This process's own directory, made once (it throws when it cannot be made: the run does not start).
+export function ownIdentityDir(env = process.env) {
+  if (own) return own;
   const base = path.resolve(env.RUNNER_TEMP || os.tmpdir());
-  sweep(base);
+  try {
+    removeStale(base);
+  } catch (error) {
+    console.error(`test identity: could not look for old directories under ${base}: ${error.message}`);
+  }
   const dir = realpathSync.native(mkdtempSync(path.join(base, PREFIX)));
-  made.add(dir);
-  const run = randomUUID();
+  own = dir;
+  process.once('exit', removeOwn);
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129], ['SIGBREAK', 149]]) {
+    process.once(signal, () => process.exit(code));
+  }
   mkdirSync(path.join(dir, 'gh'));
   writeFileSync(path.join(dir, 'gitconfig'), GITCONFIG);
-  writeFileSync(path.join(dir, 'run'), JSON.stringify({ run, pid: process.pid, started: startOf(process.pid) }));
-  current = { dir, run };
-  return current;
+  return dir;
 }
 export const KEEP_VARIABLE = new RegExp(`^(${TEST_ENV_RULES.keep.join('|')})$`, 'i');
 const PROXY = new RegExp(TEST_ENV_RULES.proxy, 'i');
@@ -205,15 +116,16 @@ function credentialFree(value) {
 }
 export const keptVariables = (env) => Object.fromEntries(Object.entries(env)
   .filter(([name, value]) => KEEP_VARIABLE.test(name) && (!PROXY.test(name) || credentialFree(value))));
-export function testEnv(env, { own = false } = {}) {
-  const { dir, run } = testIdentity(env, { own });
-  return { ...keptVariables(env), ...fakeIdentityEnv(dir, run), ...TEST_ENV_RULES.marker };
+// A child's environment: the run's identity directory from the environment, or this process's own when it has none.
+export function testEnv(env) {
+  const dir = env.CLUED_TEST_IDENTITY_DIR || ownIdentityDir(env);
+  return { ...keptVariables(env), ...fakeIdentityEnv(dir), ...TEST_ENV_RULES.marker };
 }
-// local-verify's environment: its own command line's (a directory of its own), its additions for the platform, and the run
-// values it may set (any other name is refused).
+// local-verify's environment: a directory of its own, its additions for the platform, and the run values it may set (any
+// other name is refused).
 export function localVerifyEnv(env, values = {}, platform = process.platform) {
   const { localVerify } = TEST_ENV_RULES;
   const unknown = Object.keys(values).filter((name) => !localVerify.values.includes(name));
   if (unknown.length) throw new Error(`${unknown.join(', ')}: not a value local-verify sets (TEST_ENV_RULES.localVerify.values)`);
-  return { ...testEnv(env, { own: true }), ...(platform === 'win32' ? localVerify.win32 : {}), ...values };
+  return { ...testEnv({ ...env, CLUED_TEST_IDENTITY_DIR: ownIdentityDir(env) }), ...(platform === 'win32' ? localVerify.win32 : {}), ...values };
 }

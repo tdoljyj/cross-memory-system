@@ -887,52 +887,6 @@ test("under Actions a suite child gets the fake token, not the job's, and keeps 
   assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
 });
 
-// Codex review of 2ee162c2, medium 4: an inherited CLUED_TEST_IDENTITY_DIR was taken whenever it held a gitconfig. Now only
-// a directory this code made for the run the env names, still as made (the git file as written, gh empty), is reused;
-// anything else gets a new directory, and every directory a process makes is removed when it exits.
-test('an inherited identity directory is reused only when it is the run\'s and untouched; otherwise a new one is made', (t) => {
-  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-own-'));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
-  const child = `import(${url}).then(({ testEnv }) => console.log(testEnv(process.env).CLUED_TEST_IDENTITY_DIR));`;
-  const script = `import(${url}).then(({ testEnv }) => {
-    const { spawnSync } = require('node:child_process');
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const below = (env) => spawnSync(process.execPath, ['-e', ${JSON.stringify(child)}], { env: { ...env, RUNNER_TEMP: process.argv[1] }, encoding: 'utf8' }).stdout.trim();
-    const env = testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] });
-    const own = env.CLUED_TEST_IDENTITY_DIR;
-    const forged = path.join(process.argv[1], 'clued-test-identity-forged');
-    fs.mkdirSync(path.join(forged, 'gh'), { recursive: true });
-    fs.writeFileSync(path.join(forged, 'gitconfig'), '[credential]\\n\\thelper = owner-helper\\n');
-    const seen = {
-      own,
-      reused: below(env),
-      otherRun: below({ ...env, CLUED_TEST_IDENTITY_RUN: '00000000-0000-4000-8000-000000000000' }),
-      forged: below({ ...env, CLUED_TEST_IDENTITY_DIR: forged }),
-    };
-    fs.writeFileSync(path.join(own, 'gh', 'hosts.yml'), 'github.com:\\n');
-    seen.changed = below(env);
-    seen.ownAfterChange = testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] }).CLUED_TEST_IDENTITY_DIR;
-    fs.rmSync(forged, { recursive: true });
-    console.log(JSON.stringify(seen));
-  });`;
-  const fresh = { ...process.env };
-  delete fresh.CLUED_TEST_IDENTITY_DIR;
-  delete fresh.CLUED_TEST_IDENTITY_RUN;
-  const run = spawnSync(process.execPath, ['-e', script, temp], { env: fresh, encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stderr);
-  const seen = JSON.parse(run.stdout);
-  assert.equal(path.dirname(seen.own), temp);
-  assert.equal(seen.reused, seen.own, 'the run\'s own directory, untouched, is reused below it');
-  for (const name of ['otherRun', 'forged', 'changed']) {
-    assert.ok(seen[name] && ![seen.own, path.join(temp, 'clued-test-identity-forged')].includes(seen[name]), `${name}: a new directory`);
-    assert.equal(path.dirname(seen[name]), temp, name);
-  }
-  assert.notEqual(seen.ownAfterChange, seen.own, 'a directory a suite changed is not used again');
-  assert.deepEqual(readdirSync(temp), [], 'every directory made is removed at exit');
-});
-
 // Codex review of 2ee162c2, medium 5: a proxy URL may carry a user name and password; such a variable is not passed.
 test('a proxy variable whose URL carries a user name or password is not passed; one without is', () => {
   const kept = selection.keptVariables({ HTTPS_PROXY: 'http://user:secret@proxy:8080', http_proxy: 'http://proxy:3128',
@@ -941,196 +895,66 @@ test('a proxy variable whose URL carries a user name or password is not passed; 
   assert.deepEqual(kept, { http_proxy: 'http://proxy:3128', NO_PROXY: 'localhost', HTTP_PROXY: 'proxy.local:8080' });
 });
 
-// Codex second review of 2ee162c2, medium 1: a command line never takes an identity directory from its environment; a
-// process below it takes the inherited one only at an absolute path, with the run's id, while the process that made it
-// still runs. A complete directory left by a killed run, or another live run's handed to a new command line, is not used.
-test('a command line makes its own identity directory; below it the inherited one is taken only while its maker runs', (t) => {
-  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-owner-'));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const selector = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
-  // top: a command line (markTestRun); child: a process below one (testEnv); killed: a command line killed after it began.
-  const probe = `import(${selector}).then(({ markTestRun, testEnv }) => {
-    const env = { ...process.env, RUNNER_TEMP: process.argv[2] };
-    if (process.argv[1] === 'child') return require('node:fs').writeSync(1, testEnv(env).CLUED_TEST_IDENTITY_DIR);
-    markTestRun(['--run', 'x'], env);
-    if (process.argv[1] === 'top') return require('node:fs').writeSync(1, env.CLUED_TEST_IDENTITY_DIR);
-    require('node:fs').writeSync(1, JSON.stringify(testEnv(env)));
-    process.kill(process.pid, 'SIGKILL');
-  });`;
-  const start = (mode, env) => spawnSync(process.execPath, ['-e', probe, mode, temp], { env, encoding: 'utf8' }).stdout.trim();
-  const fresh = { ...process.env };
-  for (const name of ['CLUED_TEST_IDENTITY_DIR', 'CLUED_TEST_IDENTITY_RUN']) delete fresh[name];
-  const killedEnv = JSON.parse(start('killed', fresh));
-  const left = killedEnv.CLUED_TEST_IDENTITY_DIR;
-  assert.ok(existsSync(path.join(left, 'gitconfig')), 'a killed run leaves its directory');
-  // A live run's own directory, as its children inherit it.
-  const live = spawn(process.execPath, ['-e', `import(${selector}).then(({ markTestRun, testEnv }) => {
-    const env = { ...process.env, RUNNER_TEMP: process.argv[1] };
-    markTestRun(['--run', 'x'], env);
-    console.log(JSON.stringify(testEnv(env)));
-    setInterval(() => {}, 1000);
-  });`, temp], { env: fresh, stdio: ['ignore', 'pipe', 'inherit'] });
-  t.after(() => live.kill());
-  return new Promise((resolve, reject) => {
-    let text = '';
-    live.stdout.on('data', (chunk) => {
-      text += chunk;
-      if (!text.includes('\n')) return;
-      try {
-        const liveEnv = JSON.parse(text);
-        const own = liveEnv.CLUED_TEST_IDENTITY_DIR;
-        assert.equal(start('child', liveEnv), own, 'below a live run its directory is taken');
-        assert.notEqual(start('top', liveEnv), own, 'a new command line makes its own, even when handed a live one');
-        const relative = path.relative(process.cwd(), own);
-        assert.notEqual(start('child', { ...liveEnv, CLUED_TEST_IDENTITY_DIR: relative }), relative, 'not at a relative path');
-        const fromKilled = start('child', killedEnv);
-        assert.ok(fromKilled && fromKilled !== left, 'not one whose maker is gone');
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
-});
-
-// Codex second review of 2ee162c2, low 1: one directory the exit clean-up cannot remove does not stop the others, and a
-// directory a killed run left (its maker gone) is removed by the next run that makes one in the same temporary area.
-test('the exit clean-up tries every directory, and a killed run\'s directory goes with the next run', (t) => {
-  const tried = [];
-  const failed = selection.removeEach?.(['a', 'b', 'c'], (dir) => { tried.push(dir); if (dir === 'a') throw new Error('busy'); });
-  assert.deepEqual(tried, ['a', 'b', 'c']);
-  assert.deepEqual(failed, ['a']);
-  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-sweep-'));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
-  const probe = `import(${url}).then(({ testEnv }) => {
-    require('node:fs').writeSync(1, testEnv({ ...process.env, RUNNER_TEMP: process.argv[2] }, { own: true }).CLUED_TEST_IDENTITY_DIR);
-    if (process.argv[1] === 'killed') process.kill(process.pid, 'SIGKILL');
-  });`;
-  const start = (mode) => spawnSync(process.execPath, ['-e', probe, mode, temp], { encoding: 'utf8' }).stdout.trim();
-  const left = start('killed');
-  assert.ok(existsSync(left), 'a killed run leaves its directory');
-  const making = path.join(temp, 'clued-test-identity-making');
-  mkdirSync(making);
-  start('next');
-  assert.ok(!existsSync(left), 'the next run removes it');
-  assert.ok(existsSync(making), 'one still being made (no record yet, new) is left alone');
-});
-
-// Codex third review of 2ee162c2, medium 1: an inherited directory is taken only at its full canonical path (a drive on
-// Windows, already resolved, the same as its real path through every ancestor), and that one path is the one handed on.
-test('an inherited identity directory is taken only at its full canonical path', (t) => {
-  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-canonical-')));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const link = path.join(temp, 'through-link');
-  symlinkSync(temp, link, process.platform === 'win32' ? 'junction' : 'dir');
-  const selector = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
-  const child = `import(${selector}).then(({ testEnv }) => require('node:fs').writeSync(1,
-    testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] }).CLUED_TEST_IDENTITY_DIR));`;
-  const below = (env) => spawnSync(process.execPath, ['-e', child, temp], { env, encoding: 'utf8' }).stdout.trim();
-  const fresh = { ...process.env };
-  for (const name of ['CLUED_TEST_IDENTITY_DIR', 'CLUED_TEST_IDENTITY_RUN']) delete fresh[name];
-  const live = spawn(process.execPath, ['-e', `import(${selector}).then(({ markTestRun, testEnv }) => {
-    const env = { ...process.env, RUNNER_TEMP: process.argv[1] };
-    markTestRun(['--run', 'x'], env);
-    console.log(JSON.stringify(testEnv(env)));
-    setInterval(() => {}, 1000);
-  });`, temp], { env: fresh, stdio: ['ignore', 'pipe', 'inherit'] });
-  t.after(() => live.kill());
-  return new Promise((resolve, reject) => {
-    let text = '';
-    live.stdout.on('data', (chunk) => {
-      text += chunk;
-      if (!text.includes('\n')) return;
-      try {
-        const env = JSON.parse(text);
-        const own = env.CLUED_TEST_IDENTITY_DIR;
-        assert.equal(own, realpathSync.native(own), 'made at its canonical path');
-        assert.equal(below(env), own, 'its canonical path is taken');
-        const variants = { dotted: `${path.dirname(own)}${path.sep}.${path.sep}${path.basename(own)}`, linked: path.join(link, path.basename(own)) };
-        if (process.platform === 'win32') variants.driveless = own.slice(2);
-        for (const [name, dir] of Object.entries(variants)) {
-          const got = below({ ...env, CLUED_TEST_IDENTITY_DIR: dir });
-          assert.ok(got && got !== dir && got !== own, `${name}: ${dir} is not taken (got ${got})`);
-        }
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
-});
-
-// Codex third review of 2ee162c2, medium 3: the sweep removes only a directory it can tell is a run's whose maker has exited:
-// a real directory holding a run record that is a regular file naming its maker. Anything else with the name is left.
-test('the sweep leaves every directory whose run it cannot confirm ended', (t) => {
-  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-sweep-keep-'));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
-  const keep = {
-    'no-record': (dir) => mkdirSync(dir),
-    'record-without-maker': (dir) => { mkdirSync(dir); writeFileSync(path.join(dir, 'run'), JSON.stringify({ run: 'x' })); },
-    'unreadable-record': (dir) => { mkdirSync(dir); writeFileSync(path.join(dir, 'run'), '{"run":'); },
-    'record-not-a-file': (dir) => { mkdirSync(path.join(dir, 'run'), { recursive: true }); },
-    'not-a-directory': (dir) => writeFileSync(dir, ''),
-  };
-  for (const [name, make] of Object.entries(keep)) {
-    const dir = path.join(temp, `clued-test-identity-${name}`);
-    make(dir);
-    utimesSync(dir, old, old);
-  }
-  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
-  const run = spawnSync(process.execPath, ['-e', `import(${url}).then(({ testEnv }) => testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] }, { own: true }));`, temp],
-    { encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stderr);
-  assert.deepEqual(readdirSync(temp).sort(), Object.keys(keep).map((name) => `clued-test-identity-${name}`).sort());
-});
-
-// Codex third review of 2ee162c2, low 1: a maker is the process with its id AND its start time. When the id now belongs to
-// another process (reused), the directory is not taken, and the sweep removes it.
-test('a run record whose process id now belongs to another process is neither taken nor kept', (t) => {
-  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-reused-')));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const dir = path.join(temp, 'clued-test-identity-reused');
-  mkdirSync(path.join(dir, 'gh'), { recursive: true });
-  const { name, email } = selection.TEST_GIT_IDENTITY;
-  writeFileSync(path.join(dir, 'gitconfig'), `[user]\n\tname = ${name}\n\temail = ${email}\n`);
-  const run = '6f1c2a3e-0000-4000-8000-000000000001';
-  // This process is running: its id stands for the reused one, with another start time.
-  writeFileSync(path.join(dir, 'run'), JSON.stringify({ run, pid: process.pid, started: 'another-start' }));
-  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
-  const child = spawnSync(process.execPath, ['-e', `import(${url}).then(({ testEnv }) => require('node:fs').writeSync(1,
-    testEnv({ ...process.env, RUNNER_TEMP: process.argv[1], CLUED_TEST_IDENTITY_DIR: process.argv[2], CLUED_TEST_IDENTITY_RUN: process.argv[3] })
-      .CLUED_TEST_IDENTITY_DIR));`, temp, dir, run], { encoding: 'utf8' });
-  assert.equal(child.status, 0, child.stderr);
-  assert.notEqual(child.stdout.trim(), dir, 'not taken');
-  assert.ok(!existsSync(dir), 'swept: its maker has exited');
-});
-
-test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {
-  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-run-'));
-  t.after(() => rmSync(temp, { recursive: true, force: true }));
-  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
-  const nested = `import(${url}).then(({ testEnv }) => console.log(testEnv(process.env).GH_CONFIG_DIR));`;
-  const script = `import(${url}).then(({ markTestRun, testEnv }) => {
+// Fable ruling 11-20 "补：止血 PR 第四轮": one identity directory per run, randomly named under the run's temporary
+// directory, its place handed to the children in the environment, removed when the run ends, and no ownership check.
+const IDENTITY_SELECTOR = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
+const runIdentity = (temp, { fail = false } = {}) => {
+  const nested = `import(${IDENTITY_SELECTOR}).then(({ testEnv }) => console.log(testEnv(process.env).GH_CONFIG_DIR));`;
+  const script = `import(${IDENTITY_SELECTOR}).then(({ markTestRun, testEnv }) => {
     const env = { ...process.env, RUNNER_TEMP: process.argv[1] };
     markTestRun(['--run', 'selection'], env);
     const child = testEnv(env);
     const inner = require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(nested)}], { env: child, encoding: 'utf8' });
     console.log(JSON.stringify({ made: env.CLUED_TEST_IDENTITY_DIR, gh: child.GH_CONFIG_DIR, git: child.GIT_CONFIG_GLOBAL, nested: inner.stdout.trim(),
-      count: require('node:fs').readdirSync(process.argv[1]).length }));
+      there: require('node:fs').existsSync(env.CLUED_TEST_IDENTITY_DIR) }));
+    if (${fail}) process.exitCode = 1;
   });`;
-  // A fresh command line: not below another run (this test itself may be).
   const fresh = { ...process.env };
   delete fresh.CLUED_TEST_IDENTITY_DIR;
-  delete fresh.CLUED_TEST_IDENTITY_RUN;
   const run = spawnSync(process.execPath, ['-e', script, temp], { env: fresh, encoding: 'utf8' });
-  assert.equal(run.status, 0, run.stderr);
-  const { made, gh, git, nested: inner, count } = JSON.parse(run.stdout);
-  assert.equal(path.dirname(made), temp);
-  assert.deepEqual([path.dirname(gh), path.dirname(git), path.dirname(inner)], [made, made, made], 'one directory for the run, children reuse it');
-  assert.equal(count, 1);
-  assert.deepEqual(readdirSync(temp), [], 'removed at exit');
+  assert.equal(run.status, fail ? 1 : 0, run.stderr);
+  return JSON.parse(run.stdout);
+};
+test('each run makes its own identity directory under the run temporary directory, hands it to its children, and removes it when it ends', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-run-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const first = runIdentity(temp);
+  assert.equal(path.dirname(first.made), temp);
+  assert.ok(path.basename(first.made).startsWith('clued-test-identity-'));
+  assert.ok(first.there);
+  assert.deepEqual([path.dirname(first.gh), path.dirname(first.git), path.dirname(first.nested)], [first.made, first.made, first.made],
+    'the children get the run\'s directory through the environment');
+  const failed = runIdentity(temp, { fail: true });
+  assert.notEqual(failed.made, first.made, 'every run has a directory of its own');
+  assert.deepEqual(readdirSync(temp), [], 'removed when the run ends, failed or not');
+});
+
+test('a run removes identity directories older than two days and keeps newer ones and other names', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-old-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const day = 24 * 60 * 60 * 1000;
+  const at = { 'clued-test-identity-old': 3, 'clued-test-identity-recent': 1, 'other-old': 3 };
+  for (const [name, days] of Object.entries(at)) {
+    mkdirSync(path.join(temp, name));
+    const when = new Date(Date.now() - days * day);
+    utimesSync(path.join(temp, name), when, when);
+  }
+  runIdentity(temp);
+  assert.deepEqual(readdirSync(temp).sort(), ['clued-test-identity-recent', 'other-old']);
+});
+
+test('a run whose identity directory cannot be made does not start', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-fail-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const notADirectory = path.join(temp, 'file');
+  writeFileSync(notADirectory, '');
+  const fresh = { ...process.env, RUNNER_TEMP: notADirectory };
+  delete fresh.CLUED_TEST_IDENTITY_DIR;
+  const run = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), '--run', 'retrigger-counter', '--root', ROOT],
+    { env: fresh, encoding: 'utf8' });
+  assert.equal(run.status, selection.TEST_IDENTITY_EXIT, run.stderr);
+  assert.match(run.stderr, /test identity/);
+  assert.doesNotMatch(run.stdout, /::group::/, 'no suite command started');
 });
 
 // Codex review 4: the required checks start the TRUSTED BASE's selector, which may predate the marker: every workflow step that

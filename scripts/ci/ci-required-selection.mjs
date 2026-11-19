@@ -33,7 +33,7 @@ import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rea
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { testEnv, testIdentity } from './test-env.mjs';
+import { ownIdentityDir, testEnv } from './test-env.mjs';
 
 // The resident layer imports Source v2, Source v2 imports scripts/ci (and
 // through it scripts/runner) and the resident's node profile, the admission
@@ -506,8 +506,7 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
 
 // The environment of every suite child (test marker, listed variables, fake identity) is test-env.mjs; local-verify.mjs reads it too.
 export {
-  FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_ENV_RULES, TEST_ENV_VERSION, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, removeEach,
-  testEnv, testIdentity,
+  FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_ENV_RULES, TEST_ENV_VERSION, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, ownIdentityDir, testEnv,
 } from './test-env.mjs';
 // The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
 // suites: --run, --run-selected, --write-known, --run-files; it also makes the run's fake identity directory (Task 2ee162c2).
@@ -515,10 +514,10 @@ export {
 export function markTestRun(argv, env) {
   if (!['--run', '--run-selected', '--write-known', '--run-files'].some((flag) => argv.includes(flag))) return;
   env.CLUED_UNDER_TEST = '1';
-  const { dir, run } = testIdentity(env, { own: true });
-  env.CLUED_TEST_IDENTITY_DIR = dir;
-  env.CLUED_TEST_IDENTITY_RUN = run;
+  env.CLUED_TEST_IDENTITY_DIR = ownIdentityDir(env);
 }
+// A run whose identity directory cannot be made does not start (ruling 11-20 "补：止血 PR 第四轮" §1).
+export const TEST_IDENTITY_EXIT = 71;
 
 // --run-files: the suite's own commands with the test-file operands replaced by
 // the named files. Only the operands change, so the command is the one CI runs.
@@ -771,7 +770,12 @@ const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suit
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
-  markTestRun(argv, env);
+  try {
+    markTestRun(argv, env);
+  } catch (error) {
+    console.error(`test identity: cannot make the run's directory, nothing started: ${error.message}`);
+    return TEST_IDENTITY_EXIT;
+  }
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE);
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
