@@ -178,7 +178,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
         '-KitSha256', $pins['kitSha256'], '-ToolchainNodeSha256', $pins['toolchainNodeSha256'], '-RegistrarSha256', $pins['registrarSha256'],
         '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) $HostLimitSeconds
     } finally { $measurements.host = $watch.Elapsed.TotalSeconds }
-    [IO.File]::WriteAllText((Join-Path $Output 'host-result.json'), (ConvertTo-JsonLine ([ordered]@{ exit = $hostRun.exit; terminal = $hostRun.last; stdoutTail = $(if ($hostRun.stdout) { $t = [string]$hostRun.stdout; $t.Substring([Math]::Max(0, $t.Length - 6000)) } else { $null }); stderrTail = $(if ($hostRun.stderr) { $t = [string]$hostRun.stderr; $t.Substring([Math]::Max(0, $t.Length - 3000)) } else { $null }) })), (New-Object Text.UTF8Encoding($false)))
+    # stdout whole: the host preparation's step lines are the step record of the receipt (drill-vm.ps1 ConvertFrom-DrillFirstInstallSteps)
+    [IO.File]::WriteAllText((Join-Path $Output 'host-result.json'), (ConvertTo-JsonLine ([ordered]@{ exit = $hostRun.exit; terminal = $hostRun.last; stdout = $hostRun.stdout; stdoutTail = $(if ($hostRun.stdout) { $t = [string]$hostRun.stdout; $t.Substring([Math]::Max(0, $t.Length - 6000)) } else { $null }); stderrTail = $(if ($hostRun.stderr) { $t = [string]$hostRun.stderr; $t.Substring([Math]::Max(0, $t.Length - 3000)) } else { $null }) })), (New-Object Text.UTF8Encoding($false)))
     if ([string](Get-Key $hostRun.last 'status') -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { throw 'RESTART_THEN_RUN_THE_SAME_COMMAND' }
     if ($hostRun.exit -ne 0 -or [string](Get-Key $hostRun.last 'status') -cne 'FIRST_INSTALL_HOST_READY') { throw 'HOST_PREPARATION_NOT_DONE' }
     $watch.Restart()
@@ -193,7 +194,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       '-Launcher', $drillLauncher['path'], '-LauncherSha256', $drillLauncher['sha256'], '-ExpectedOperatorSid', $operatorSid) $LauncherLimitSeconds }
     finally { $measurements.launcher = $watch.Elapsed.TotalSeconds }
     $terminal = Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult))
-    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal })), (New-Object Text.UTF8Encoding($false)))
+    $launcherText = if ([IO.File]::Exists($launcherResult)) { [IO.File]::ReadAllText($launcherResult) } else { $null }
+    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; resultText = $launcherText })), (New-Object Text.UTF8Encoding($false)))
     $verdict = Get-LauncherVerdict $true $terminal
     return (ConvertTo-FirstInstallEntryResult $verdict $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit }) $entryTree $entryNode)
   } finally {

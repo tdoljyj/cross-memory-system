@@ -1067,7 +1067,7 @@ test('M5 collects the six public observations and requires the host checker for 
 
 // A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
 // M5 observations `missing` and a host checker that answers `checker`.
-function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null } = {}) {
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, stageEvidence = null } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -1090,7 +1090,9 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
     $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
     $fixture.m5 = @{ directory = 'm5'; missing = @(${missing.map(q).join(', ')}); collectionCode = $null }
-    function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
+    function Invoke-DrillOnCheckpoint { param($Body, $RunDir, $Window)
+      ${stageEvidence ? `[IO.File]::WriteAllText((Join-Path $RunDir 'stage-evidence.json'), ${q(JSON.stringify(stageEvidence))})` : ''}
+      @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
     $package = @{ version = ${q(version)}; tar = ${q(archive)}; tarSha256 = ${q(pkg.tarSha256 ?? sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(pkg.firstInstallKitSha256 ?? L)}; candidate = ${candidate ? '$true' : '$false'} }
     $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
     Read-DrillJson $out.receipt
@@ -1686,6 +1688,101 @@ test('the prerequisites: official sources only, every byte pinned, injected from
 
 const NOW = '2026-11-16T03:00:00Z';
 const S = '5'.repeat(64), L = '7'.repeat(64);
+// Fable renew-key ruling, supplement "companion account and evidence" section 2: the first install's step record comes from what the guest
+// printed (the entry's stdout) and the stage result files (the host preparation's stdout, the launcher's result text). Every step line has
+// one shape (name, result, rejectCode, detail; the older {step, result} is read too). Nothing parsed is recorded as missing, never as a
+// pass; no verdict line (a timeout) is said so, with the last step printed.
+test('the first-install step record: every stage\'s step lines, the last completed step, the verdict or its absence; nothing parsed is missing', opts, () => {
+  const hostOut = [
+    'some text',
+    JSON.stringify({ name: 'residue', result: 'none', rejectCode: null, detail: null }),
+    JSON.stringify({ step: 'wsl', result: '2.7.13.0' }),
+    JSON.stringify({ name: 'companion-account', result: 'refused', rejectCode: 'COMPANION_ACCOUNT_NOT_PREPARED', detail: { error: 'GH_EXE_MISSING' } }),
+    JSON.stringify({ status: 'FIRST_INSTALL_HOST_REFUSED', code: 'COMPANION_ACCOUNT_NOT_PREPARED' })].join('\r\n');
+  const launcherText = [JSON.stringify({ name: 'start-companion', result: 'ok', rejectCode: null, detail: null }), '{"status":"BOOTSTRAP_DONE"}'].join('\n');
+  const r = ps(`
+    $stage = [ordered]@{ 'host-result.json' = [pscustomobject]@{ exit = 1; stdout = ${q(hostOut)} }; 'launcher-result.json' = [pscustomobject]@{ exit = 0; resultText = ${q(launcherText)} } }
+    @{ full = (ConvertFrom-DrillFirstInstallSteps @('{"status":"FIRST_INSTALL_STOPPED","stopCode":"HOST_PREPARATION_NOT_DONE","tree":"","node":""}') $stage)
+      timeout = (ConvertFrom-DrillFirstInstallSteps @() ([ordered]@{ 'host-result.json' = [pscustomobject]@{ stdoutTail = ${q(hostOut)} }; 'launcher-result.json' = $null }))
+      none = (ConvertFrom-DrillFirstInstallSteps @('not json') $null) }`);
+  assert.equal(r.full.missing, false);
+  assert.deepEqual(r.full.steps.map(x => [x.stage, x.name, x.rejectCode]), [['host', 'residue', null], ['host', 'wsl', null],
+    ['host', 'companion-account', 'COMPANION_ACCOUNT_NOT_PREPARED'], ['launcher', 'start-companion', null]]);
+  assert.deepEqual(r.full.steps[2].detail, { error: 'GH_EXE_MISSING' });
+  assert.equal(r.full.firstRejected, 'companion-account');
+  assert.equal(r.full.lastCompletedStep, 'start-companion');
+  assert.deepEqual(r.full.verdict, { status: 'FIRST_INSTALL_STOPPED', stopCode: 'HOST_PREPARATION_NOT_DONE' });
+  assert.deepEqual(r.full.stages, { entry: 0, host: 3, launcher: 1 });
+  assert.equal(r.timeout.missing, false);
+  assert.equal(r.timeout.verdict, null);
+  assert.equal(r.timeout.noVerdict, true);
+  assert.equal(r.timeout.lastStep, 'companion-account');
+  assert.deepEqual(r.timeout.stages, { entry: 0, host: 3, launcher: null });
+  assert.equal(r.none.missing, true);
+  assert.deepEqual(r.none.steps, []);
+  assert.equal(r.none.lastCompletedStep, null);
+});
+
+// Section 2 of the same supplement: the guest evidence is taken whether the first install succeeded, failed or ran out of time, before the
+// checkpoint is restored; a failed collection is only recorded. On a timeout the lines the entry printed so far come from its guest log.
+test('the guest evidence is collected after a timed-out first install too, and a failed collection is only recorded', opts, () => {
+  const runDir = path.join(tmp, 'evidence-run'); fs.mkdirSync(runDir, { recursive: true });
+  const runDir2 = path.join(tmp, 'evidence-run-2'); fs.mkdirSync(runDir2, { recursive: true });
+  const hostResult = JSON.stringify({ exit: 1, stdout: JSON.stringify({ name: 'residue', result: 'none', rejectCode: null, detail: null }) });
+  const r = ps(`
+    $script:steps = [Collections.Generic.List[string]]::new()
+    $script:Interactive = $false; $script:SkipReinstall = $true
+    function New-PSSession { param($VMName, $Credential) 'session' }
+    function Remove-PSSession { param($Session) }
+    function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
+      $script:steps.Add($Step)
+      if ($Step -ceq 'first-install') { throw (New-DrillError 'DRILL_FIRST_INSTALL_TIMEOUT' @{ step = $Step }) }
+      if ($Step -ceq 'guest-evidence') {
+        if ($script:collectFails) { throw (New-DrillError 'DRILL_GUEST_STEP_FAILED' @{ step = $Step }) }
+        return [ordered]@{ 'first-install.stdout.log' = "line one\`r\`n{""name"":""prepare"",""result"":""ok"",""rejectCode"":null,""detail"":null}\`r\`n";
+          'stage-timings.json' = '{"host":12.5,"prepare":null,"launcher":null}'; 'host-result.json' = ${q(hostResult)}; 'launcher-result.json' = $null }
+      }
+      throw "unexpected step $Step"
+    }
+    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab' }
+    $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; prerequisiteMode = 'first-install-host' }
+    function Invoke-Command { param($Session, $ScriptBlock, $ArgumentList, $VMName, $Credential, [switch]$AsJob, $ErrorAction) if ($ArgumentList -is [string]) { if ($ArgumentList -like '*.tar') { 'ab' } else { @{ contract = 'x' } } } }
+    $script:collectFails = $false
+    $first = try { Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; 'NO THROW' } catch { (Get-DrillCode $_).code }
+    $firstSteps = @($script:steps); $script:steps.Clear()
+    $script:collectFails = $true
+    $second = try { Invoke-DrillRun ${q(runDir2)} $package $testKit $null $null; 'NO THROW' } catch { (Get-DrillCode $_).code }
+    @{ first = $first; firstSteps = $firstSteps; second = $second; secondSteps = @($script:steps)
+      record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); record2 = (Read-DrillJson (Join-Path ${q(runDir2)} 'guest-evidence.json'))
+      steps = (Read-DrillFirstInstallSteps ${q(runDir)}); steps2 = (Read-DrillFirstInstallSteps ${q(runDir2)}) }`);
+  assert.equal(r.first, 'DRILL_FIRST_INSTALL_TIMEOUT');
+  assert.deepEqual(r.firstSteps, ['first-install', 'guest-evidence']);
+  assert.equal(r.record.ok, true);
+  assert.deepEqual(r.record.missing, ['launcher-result.json']);
+  assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean),
+    ['line one', '{"name":"prepare","result":"ok","rejectCode":null,"detail":null}']);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-timings.json'), 'utf8')).host, 12.5);
+  assert.deepEqual(r.steps.steps.map(x => [x.stage, x.name]), [['entry', 'prepare'], ['host', 'residue']]);
+  assert.equal(r.steps.noVerdict, true);
+  assert.equal(r.second, 'DRILL_FIRST_INSTALL_TIMEOUT', 'a failed collection never replaces the run\'s own failure');
+  assert.deepEqual(r.secondSteps, ['first-install', 'guest-evidence']);
+  assert.equal(r.record2.ok, false);
+  assert.equal(r.record2.code, 'DRILL_GUEST_STEP_FAILED');
+  assert.equal(r.steps2.missing, true);
+});
+
+// The receipt carries the step record under A1 (and, when the run ended before any verdict, in its evidence).
+test('the receipt keeps the first-install step record under A1, read from the run directory', opts, () => {
+  const receipt = m5DrillReceipt('steps-receipt', RENEWAL_3BC571A6, { stageEvidence: { 'host-result.json': { exit: 0, stdout:
+    JSON.stringify({ name: 'residue', result: 'none', rejectCode: null, detail: null }) }, 'launcher-result.json': null } });
+  const a1 = receipt.items.find(i => i.id === 'A1');
+  assert.equal(a1.firstInstallSteps.missing, false);
+  assert.deepEqual(a1.firstInstallSteps.steps.map(x => x.name), ['residue']);
+  const bare = m5DrillReceipt('steps-receipt-missing', RENEWAL_3BC571A6);
+  assert.equal(bare.items.find(i => i.id === 'A1').firstInstallSteps.missing, true);
+});
+
 function evidence(over = {}) {
   const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'UNCERTAIN' }, executor: { state: 'IDLE' }, queue: { live: 0 }, halt: null,
     versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:50:00Z' } } };

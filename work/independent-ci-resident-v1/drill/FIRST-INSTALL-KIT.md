@@ -133,6 +133,13 @@ Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-Fro
 - 来宾里跑的仍是包内原样的安装代码，没有任何“演练模式”分支。回执写 `candidate: true` 与 `tarSha256`、`ciSourceManifestSha256`、`firstInstallKitSha256`，正是 `seal --drill-receipt` 核的三项；回读后的终稿才摆给 Owner。
 
 来宾关机计时器就绪前，由不在任何 Windows 作业里的看门进程负责兜底：它经 WMI（`Win32_Process.Create`）拉起，不继承拉起方（例如代理会话）的作业。拉起后确认它仍在某个作业里时，脚本拒绝开机。
+来宾取证在首装的每一种结局（完成、停止、超时）之后、对来宾做任何别的事之前执行，所以总在还原检查点之前：取回入口打印的每一行
+（入口运行时同步写到来宾 `C:\drill\work\first-install.stdout.log`，超时也留得下）、`stage-timings.json`、`host-result.json`（含宿主准备的完整标准输出）、
+`launcher-result.json`（含启动器结果文本），写成运行目录里的 `first-install.log`、`stage-timings.json`、`stage-evidence.json`；不取任何凭据文件。
+取证失败只记进 `guest-evidence.json`，不挡还原，也不替换本轮自己的失败码。回执 A1 下的 `firstInstallSteps` 从这些文件解析：各阶段的逐步结果行
+（`name`、`result`、`rejectCode`、`detail`）、最后完成的一步、首个被拒的一步、判决行（没有判决行时 `noVerdict: true`）；一行也解析不到记 `missing: true`，不当通过。
+本轮没有判决就结束时（无 A1），它记在 `evidence.firstInstallSteps`。
+
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。
 开机前门两侧都看 `Runner.Worker`：Windows 的进程表，以及本机 Linux runner 所在的 WSL 发行版（`scripts/ci/self-hosted/node-profiles.json` 按主机名取 `linux_runner`/`additional_linux_runners` 的 `distro`）。发行版没在运行就判无作业，不对它执行任何命令；在运行才只读列一次进程。有作业拒绝（`DRILL_HOST_CI_BUSY`，`busyWith` 为 `ACTIONS_RUNNER_JOB` 或 `WSL_ACTIONS_RUNNER_JOB`），读不出拒绝（`DRILL_HOST_WSL_UNREADABLE`）。顺序：保持生效 → 常驻空闲 → 两侧无作业 → 以 root 在该发行版内 `sync` 与 `sysctl -w vm.drop_caches=1`（只丢文件缓存，Decision 21db5a9c）→ 内存门 → 开机。释放失败不挡开机，由紧随其后的内存门按实况判；结果记在回执 `evidence.hostWslCacheRelease`。
 
