@@ -284,15 +284,16 @@ function New-RandomPassword { $b = New-Object byte[] 33; $r = [Security.Cryptogr
 function ConvertTo-Secure([string]$t) { $s = New-Object Security.SecureString; foreach ($ch in $t.ToCharArray()) { $s.AppendChar($ch) }; $s.MakeReadOnly(); $s }
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); $f = [IO.File]::OpenRead($p); try { (-join ($s.ComputeHash($f) | ForEach-Object { $_.ToString('x2') })) } finally { $f.Dispose(); $s.Dispose() } }
 function Sha256Bytes([byte[]]$b) { $s = [Security.Cryptography.SHA256]::Create(); try { -join ($s.ComputeHash($b) | ForEach-Object { $_.ToString('x2') }) } finally { $s.Dispose() } }
-# The one JSON writer of P1 (bootstrap.ps1's name; drill 3bc571a6 A1, Fable ruling 11-19 section 2.1): every line it prints and every
-# JSON file it writes goes through ConvertTo-JsonLine, and nothing else here calls the serializer. Under Windows PowerShell 5.1 a
-# cmdlet's output (Join-Path, Where-Object, Split-Path) is a string in a PSObject shell, which JavaScriptSerializer walks as an object
-# (PSParameterizedProperty: a circular reference); `Step 'stage' $stage` ended P1 so, and the READY line (facts = Join-Path) would have
-# ended it after a whole install. ConvertTo-PlainData takes the shell off and keeps only plain data: a string, a bool, a number, null,
-# a dictionary with string keys (ordered, its key order kept), a list (an array). Anything else (a FileInfo, a DateTime, an enum, a
-# PSCustomObject, a structure deeper than 32) is not plain data: progress (-Progress, Step) prints its type name instead and never stops
-# P1; a verdict line or facts.json is a contract and is refused by name (HOST_OUTPUT_NOT_PLAIN_DATA), never written in a form someone
-# has to guess at. ConvertTo-Json is not the way out (5.1's depth limit, one-element arrays and escaping are another set of traps).
+# The one JSON writer of P1 (drill 3bc571a6 A1, Fable ruling 11-19 section 2.1): every line it prints and every JSON file it writes
+# goes through ConvertTo-JsonLine, and nothing else here calls the serializer. Under Windows PowerShell 5.1 a cmdlet's output (Join-Path,
+# Where-Object, Split-Path) is a string in a PSObject shell, which JavaScriptSerializer walks as an object (PSParameterizedProperty: a
+# circular reference); `Step 'stage' $stage` ended P1 so, and the READY line (facts = Join-Path) would have ended it after a whole
+# install. ConvertTo-PlainData takes the shell off and keeps only plain data: a string, a bool, a number, null, a dictionary with string
+# keys (ordered, its key order kept), a list (an array). Anything else (a FileInfo, a DateTime, an enum, a PSCustomObject, a structure
+# deeper than 32) is not plain data: -Progress prints its type name instead and never throws; without it ConvertTo-JsonLine throws
+# OUTPUT_NOT_PLAIN_DATA:<where>:<type>. rollout/fleet/bootstrap.ps1 carries the same two functions, character for character (it is
+# downloaded on its own and cannot load this file; test-bootstrap.ps1 holds the two texts equal). ConvertTo-Json is not the way out
+# (5.1's depth limit, one-element arrays and escaping are another set of traps).
 function ConvertTo-PlainData($value, [bool]$progress, [string]$at = '$', [int]$depth = 0) {
   if ($null -eq $value) { return $null }
   $v = $value.PSObject.BaseObject
@@ -323,13 +324,10 @@ function ConvertTo-PlainData($value, [bool]$progress, [string]$at = '$', [int]$d
     }
   }
   if ($progress) { return ('<not plain data: ' + $t.FullName + '>') }
-  throw ('HOST_OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
+  throw ('OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
 }
 function ConvertTo-JsonLine($value, [switch]$Progress) {
-  $plain = try { ConvertTo-PlainData $value $Progress.IsPresent } catch {
-    if ($Progress -or [string]$_.Exception.Message -cnotmatch '^HOST_OUTPUT_NOT_PLAIN_DATA:(.*):([^:]*)$') { throw }
-    Stop-Host 'HOST_OUTPUT_NOT_PLAIN_DATA' ([ordered]@{ status = [string](Get-Key $value 'status'); code = [string](Get-Key $value 'code'); at = $Matches[1]; type = $Matches[2] })
-  }
+  $plain = ConvertTo-PlainData $value $Progress.IsPresent
   if ($null -ne $plain) { $plain = $plain.PSObject.BaseObject }
   (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($plain)
 }
@@ -337,9 +335,23 @@ function ConvertTo-JsonLine($value, [switch]$Progress) {
 function Step([string]$name, $result) {
   try { ConvertTo-JsonLine ([ordered]@{ step = $name; result = $result }) -Progress } catch { ConvertTo-JsonLine ([ordered]@{ step = $name; result = '<not printable>' }) -Progress }
 }
-# The refusal verdict: one JSON line, exit 1. A detail that is not plain data is refused by name with the code it was refusing.
-function Stop-Host([string]$code, $detail) { Clear-Secrets; ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = $code; detail = $detail }); exit 1 }
-function Clear-Secrets { foreach ($k in @($script:Secrets.Keys)) { [Array]::Clear($script:Secrets[$k], 0, $script:Secrets[$k].Length) }; $script:Secrets.Clear() }
+# The refusal verdict: one JSON line, exit 1. A detail that is not plain data is refused by name, with the code it was refusing.
+function Stop-Host([string]$code, $detail) {
+  Clear-Secrets
+  $line = try { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = $code; detail = $detail }) } catch {
+    ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = 'HOST_OUTPUT_NOT_PLAIN_DATA'; detail = [ordered]@{ code = $code; why = [string]$_.Exception.Message } }) -Progress
+  }
+  $line
+  exit 1
+}
+# The other verdicts (READY, RESET, RESTART) and the files P1 writes are contracts too: one that is not plain data ends P1 refused by
+# name (HOST_OUTPUT_NOT_PLAIN_DATA), never as a bare exception and never written in a form someone has to guess at.
+function Invoke-Host {
+  try { Invoke-HostPreparation } catch {
+    if ([string]$_.Exception.Message -cmatch 'OUTPUT_NOT_PLAIN_DATA:([^\s:]*):([^\s:]*)') { Stop-Host 'HOST_OUTPUT_NOT_PLAIN_DATA' ([ordered]@{ at = $Matches[1]; type = $Matches[2] }) }
+    throw
+  }
+}function Clear-Secrets { foreach ($k in @($script:Secrets.Keys)) { [Array]::Clear($script:Secrets[$k], 0, $script:Secrets[$k].Length) }; $script:Secrets.Clear() }
 function New-Dir([string]$path, [string]$sddl) {
   if ([IO.Directory]::Exists($path)) {
     if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { Stop-Host 'DIRECTORY_IS_A_LINK' $path }
@@ -823,4 +835,4 @@ function Invoke-Reset($old, $observed, [string]$operator) {
 }
 
 $script:NodeExe = $null; $script:FingerprintTool = $null; $script:InstallMjs = $null; $script:Secrets = [ordered]@{}
-if ($MyInvocation.InvocationName -ne '.') { Invoke-HostPreparation }
+if ($MyInvocation.InvocationName -ne '.') { Invoke-Host }

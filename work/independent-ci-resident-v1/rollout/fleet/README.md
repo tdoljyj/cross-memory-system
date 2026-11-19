@@ -145,7 +145,7 @@ node R/rollout/fleet/publish.mjs prepare --version <version> --dir <构建输出
 
 ### 4.2 候选演练（接受之前）
 
-Owner 接受的应当是已经在干净机器上装通过的东西：用 `--out` 目录里的 kit、镜像与接受请求跑候选首装演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）。演练给来宾用的接受文件由接受请求加**演练保留值**（`publish.mjs` 的 `DRILL_RESERVED`，仓库里只此一处）生成；`seal` 与挂接受文件的步骤见到保留值即拒绝，所以这份文件上不了 Release，真实节点拿不到。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门（只走升级路径的紧急包可以不演练，见 4.3 的 `--drill-receipt`）。
+Owner 接受的应当是已经在干净机器上装通过的东西：用 `--out` 目录里的 kit、镜像与接受请求跑候选首装演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）。演练给来宾用的接受文件由接受请求加**演练保留值**（`publish.mjs` 的 `DRILL_RESERVED`，仓库里只此一处）生成；`seal` 与挂接受文件的步骤见到保留值即拒绝，所以这份文件上不了 Release，真实节点拿不到。顺序是**演练 → `-Finalize`（演练一结束就只读回读一次，候选只判 A9）→ 把请求与回读后的终稿回执摆给 Owner → 接受 → seal**；接受之后不开机、不再回读。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门（只走升级路径的紧急包可以不演练，见 4.3 的 `--drill-receipt`）。
 
 ### 4.3 接受后：seal（填 Decision、挂上 Release、写索引）
 

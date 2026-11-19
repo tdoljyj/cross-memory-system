@@ -278,11 +278,54 @@ function Get-NeededPrereqs([bool]$firstInstall) { if ($firstInstall) { , @($Prer
 
 # ------------------------------------------------------------------ host actions
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); $f = [IO.File]::OpenRead($p); try { (-join ($s.ComputeHash($f) | ForEach-Object { $_.ToString('x2') })) } finally { $f.Dispose(); $s.Dispose() } }
-function ConvertTo-JsonLine($o) { (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($o) }
+# The JSON writer (Fable ruling 11-19 renew-key section 4.4a): windows/first-install-host.ps1's two functions, character for character
+# (this file is downloaded on its own and cannot load a file of the package; test-bootstrap.ps1 holds the two texts equal). Under
+# Windows PowerShell 5.1 the Work directory (Join-Path) is a string in a PSObject shell, which the bare serializer refused with a
+# PSParameterizedProperty circular reference: every result after the assets step (each refusal, the reset result,
+# RESTART_THEN_RUN_THE_SAME_COMMAND, the final verdict) became an exception. Every output here uses -Progress: it never throws and never
+# changes the control flow (the credential clean-up order stays); a value that is not plain data is printed as its type name (the status
+# and code of every result are literals of this script; the rest is diagnosis).
+function ConvertTo-PlainData($value, [bool]$progress, [string]$at = '$', [int]$depth = 0) {
+  if ($null -eq $value) { return $null }
+  $v = $value.PSObject.BaseObject
+  $t = $v.GetType()
+  if ($v -is [string] -or $v -is [bool]) { return $v }
+  $tc = [int][Type]::GetTypeCode($t)
+  if ($t.IsPrimitive -and -not $t.IsEnum -and $tc -ge 5 -and $tc -le 14 -or $v -is [decimal]) { return $v }   # SByte..Double, Decimal
+  if ($depth -lt 32) {
+    if ($v -is [Collections.IDictionary]) {
+      $o = [ordered]@{}
+      foreach ($k in @($v.Keys)) {
+        $key = if ($null -ne $k) { $k.PSObject.BaseObject } else { $null }
+        if ($key -isnot [string]) { $o = $null; break }
+        $r = ConvertTo-PlainData $v[$k] $progress ($at + '.' + $key) ($depth + 1)
+        if ($null -ne $r) { $r = $r.PSObject.BaseObject }   # an array a function returns comes back in a shell again
+        $o[$key] = $r
+      }
+      if ($null -ne $o) { return $o }
+    } elseif ($v -is [Collections.IEnumerable]) {
+      $items = @(foreach ($x in $v) { , $x })
+      $a = New-Object object[] $items.Count
+      for ($i = 0; $i -lt $items.Count; $i++) {
+        $r = ConvertTo-PlainData $items[$i] $progress ($at + '[' + $i + ']') ($depth + 1)
+        if ($null -ne $r) { $r = $r.PSObject.BaseObject }
+        $a[$i] = $r
+      }
+      return , $a
+    }
+  }
+  if ($progress) { return ('<not plain data: ' + $t.FullName + '>') }
+  throw ('OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
+}
+function ConvertTo-JsonLine($value, [switch]$Progress) {
+  $plain = ConvertTo-PlainData $value $Progress.IsPresent
+  if ($null -ne $plain) { $plain = $plain.PSObject.BaseObject }
+  (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($plain)
+}
 function Out-Result([string]$status, [string]$step, $extra) {
   $r = [ordered]@{ status = $status; step = $step; workDir = $script:Work }
   if ($null -ne $extra) { foreach ($k in @($extra.Keys)) { $r[$k] = $extra[$k] } }
-  ConvertTo-JsonLine $r
+  ConvertTo-JsonLine $r -Progress
 }
 function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
 # One elevated stage of this same file (-File, arguments one by one). Returns its exit, its last JSON object and the output file;
@@ -374,7 +417,7 @@ function Invoke-Stage {
       # H2: tokens an earlier run left (it gave up waiting, its window was closed, its cleanup was declined) never outlive this start:
       # P1 asks for them again and holds them to the fingerprints facts.json records
       $swept = Clear-CredentialDirectory $CredentialDirectory
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ credentialsLeftByAnEarlierRun = $swept.existed; removed = $swept.cleared; directory = $CredentialDirectory })))
+      $lines.Add((ConvertTo-JsonLine ([ordered]@{ credentialsLeftByAnEarlierRun = $swept.existed; removed = $swept.cleared; directory = $CredentialDirectory }) -Progress))
       if (-not $swept.cleared) { throw ('CREDENTIALS_LEFT_BY_AN_EARLIER_RUN_NOT_REMOVED:' + $CredentialDirectory) }
       $copy = Join-Path $stageDir 'a.tar'
       [IO.File]::Copy($Tar, $copy, $false)
@@ -388,7 +431,7 @@ function Invoke-Stage {
       if ($Reset) { $p1Args += '-Reset' }
       $run = Invoke-StageChild $PowerShellExe $p1Args 0
       foreach ($l in @(([string]$run.stdout) -split "`r?`n" | Where-Object { $_ -ne '' })) { $lines.Add($l) }
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ child = 'first-install-host.ps1'; exit = $run.exit; stderr = $run.stderr })))
+      $lines.Add((ConvertTo-JsonLine ([ordered]@{ child = 'first-install-host.ps1'; exit = $run.exit; stderr = $run.stderr }) -Progress))
       $verdict = $(if ($null -ne $run.last) { $run.last } else { [ordered]@{ status = 'STAGE_CHILD_PRINTED_NO_VERDICT'; child = 'first-install-host.ps1'; exit = $run.exit } })
       $status = [string](Get-Key $verdict 'status')
     } elseif ($Stage -ceq 'launcher') {
@@ -398,23 +441,23 @@ function Invoke-Stage {
       if ((Sha256File $copy) -cne $LauncherSha256) { throw 'LAUNCHER_CHANGED' }
       $run = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $copy, '-RunApprovedInstall') 0
       foreach ($l in @(([string]$run.stdout) -split "`r?`n" | Where-Object { $_ -ne '' })) { $lines.Add($l) }
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ child = 'launcher'; exit = $run.exit; stderr = $run.stderr })))
+      $lines.Add((ConvertTo-JsonLine ([ordered]@{ child = 'launcher'; exit = $run.exit; stderr = $run.stderr }) -Progress))
       $verdict = $(if ($null -ne $run.last) { $run.last } else { [ordered]@{ status = 'STAGE_CHILD_PRINTED_NO_VERDICT'; child = 'launcher'; exit = $run.exit } })
       $status = [string](Get-Key $verdict 'status')
     } else { $status = 'CLEANUP' }
   } catch {
     $f = Get-StageFailure $Stage $_.Exception
-    $lines.Add((ConvertTo-JsonLine $f)); $status = $f.status; $verdict = $f
+    $lines.Add((ConvertTo-JsonLine $f -Progress)); $status = $f.status; $verdict = $f
   } finally {
     if ($stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
     $parentAlive = Test-ParentAlive $ParentProcessId $ParentStartTicks
     if (Test-CredentialsToClear $Stage $status $parentAlive) {
       $c = Clear-CredentialDirectory $CredentialDirectory
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $c.cleared; directory = $CredentialDirectory; bootstrapStillWaiting = $parentAlive })))
-      if ($Stage -ceq 'cleanup') { $lines.Add((ConvertTo-JsonLine ([ordered]@{ status = $(if ($c.cleared) { 'CREDENTIALS_CLEARED' } else { 'CREDENTIALS_LEFT' }); directory = $CredentialDirectory }))) }
+      $lines.Add((ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $c.cleared; directory = $CredentialDirectory; bootstrapStillWaiting = $parentAlive }) -Progress))
+      if ($Stage -ceq 'cleanup') { $lines.Add((ConvertTo-JsonLine ([ordered]@{ status = $(if ($c.cleared) { 'CREDENTIALS_CLEARED' } else { 'CREDENTIALS_LEFT' }); directory = $CredentialDirectory }) -Progress)) }
     }
     # the verdict stays the last object: the child's (or the stage's failure), repeated after the notes
-    if ($Stage -cne 'cleanup' -and $null -ne $verdict) { $lines.Add((ConvertTo-JsonLine $verdict)) }
+    if ($Stage -cne 'cleanup' -and $null -ne $verdict) { $lines.Add((ConvertTo-JsonLine $verdict -Progress)) }
     if ($Result -and (Test-SafePath $Result)) { [IO.File]::WriteAllLines($Result, $lines.ToArray(), (New-Object Text.UTF8Encoding($false))) }
   }
 }

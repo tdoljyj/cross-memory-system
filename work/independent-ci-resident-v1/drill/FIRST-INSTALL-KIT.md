@@ -80,9 +80,15 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的六份文件。
 回执记录 `m5.result`：核验通过为 `PASS`，观测缺失（包里没有续期组件也是这一种）、核验器缺失或核验失败为 `FAIL`；`NOT_EVALUATED` 只出现在中途已失败的回执里。
 回执 `conclusion` 只有在 `m5.result` 为 `PASS` 时才可能不是 `FAIL`；`-Finalize` 同样按回执里的 `m5` 判，旧回执没有 `m5` 即 `FAIL`。
-来宾能证明的全部通过、只剩生产半边（A5 生产侧、A9，由 `-Finalize` 回读）时，结论为 `PASS_A_PENDING_PRODUCTION_READBACK`（原 `PENDING_PRODUCTION_READBACK`）：
-这就是“候选演练 PASS”，`publish.mjs seal --drill-receipt` 收 `PASS_*` 结论（裁定 §2.3：seal 在先、`-Finalize` 在后）。
+回读（`-Finalize`）之前结论为 `PENDING_PRODUCTION_READBACK`；回读之后只有 `PASS_A_FULL`、`PASS_A_PER_NODE_STEPS_REMAIN` 两种 PASS，
+正是 `publish.mjs seal --drill-receipt` 收的集合（定义在 `publish.mjs`，测试核两边一致）。
 
+**候选的顺序：演练 → `-Finalize` → Owner 接受 → seal**（Fable 11-19 续期密钥裁定 §4.3）。候选回执在接受之前就定稿：
+- A5 在来宾侧一次判完（本机 Source 等于请求里的 Source），没有生产半边；`-Finalize` 对候选回执只判 A9（演练有没有碰生产库）。
+  原来的生产半边防的是“演练的包不是生产在跑的包”，已由 seal 核回执三项哈希、节点只装已接受的 Release 并自己重算 Source 保证。
+- 演练一结束就回读 A9。从开机到回读这一段不与任何节点的升级、续期窗口重叠（否则 A9 非零；非零照旧要看，不许忽略）。
+- 接受之后不开机，也不再跑 `-Finalize`；seal 用的就是回读后的终稿。
+- 已接受版本的重新演练（非候选）不变：A5 等 `-Finalize` 的生产半边。
 ## 候选形态：先演练、再接受
 
 Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-From` 里**没有** `fleet-node-<v>.acceptance.json` 即为候选
@@ -96,7 +102,7 @@ Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-Fro
   `-From` 里出现指名保留值的接受文件，构建器也拒绝（`DRILL_ACCEPTANCE_IS_A_CANDIDATES`）。
 - `kit.json` 的 `candidate` 记下这份文件名与三项哈希；`drill-vm.ps1` 用它代替 `-From` 的接受文件，核三项哈希一致，`-From` 里另有接受文件则拒绝
   （`DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE`）。
-- 来宾里跑的仍是包内原样的安装代码，没有任何“演练模式”分支。回执写 `candidate: true` 与 `tarSha256`、`ciSourceManifestSha256`、`firstInstallKitSha256`，正是 `seal --drill-receipt` 核的三项。
+- 来宾里跑的仍是包内原样的安装代码，没有任何“演练模式”分支。回执写 `candidate: true` 与 `tarSha256`、`ciSourceManifestSha256`、`firstInstallKitSha256`，正是 `seal --drill-receipt` 核的三项；回读后的终稿才摆给 Owner。
 
 来宾关机计时器就绪前，由脱离宿主 Windows 作业的看门进程负责兜底。无法确认脱离时，脚本拒绝开机。
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。

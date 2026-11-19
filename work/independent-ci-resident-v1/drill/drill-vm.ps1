@@ -681,7 +681,9 @@ function Get-DrillVerdict($E) {
   [void]$items.Add((New-DrillItem 'A4' $a4 "facts.generation=$(Get-Prop $f 'generation') staged=$(Get-Prop $f 'staged') pinsOk=$(Get-Prop $f 'pinsOk')"))
   $local = [string](Get-Prop $c 'ciSourceManifestSha256')
   $a5 = ($local -match '^[0-9a-f]{64}$') -and $local -ceq [string]$E.acceptanceSource
-  [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize"))
+  # a candidate (Fable ruling 11-19 renew-key section 4.3) has no production half: A5 is the guest's Source against the request's, here
+  if ($E.candidate) { [void]$items.Add((New-DrillItem 'A5' $a5 "local=$local acceptance=$($E.acceptanceSource); candidate: no production half")) }
+  else { [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize")) }
   $s = $E.status
   $a6 = ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') -and ([string](Get-Prop $s 'executor.state') -ceq 'IDLE') -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
   [void]$items.Add((New-DrillItem 'A6' $a6 "mode=$(Get-Prop $s 'node.mode') executor=$(Get-Prop $s 'executor.state') live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
@@ -714,9 +716,9 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 }
 
 # Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
-# A1-A9 hold and M5 passed; PASS_A_PENDING_PRODUCTION_READBACK when everything the drill machine can show passed and only the production
-# half (A5's, A9: -Finalize) is left: the candidate drill PASS the Owner's acceptance follows (publish.mjs seal --drill-receipt takes a
-# PASS_* conclusion; Fable ruling 11-19 section 2.3: seal, then -Finalize). M5 has no "not evaluated" exit (section 2.2): a package
+# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The two PASS values are the
+# set publish.mjs seal --drill-receipt takes (test/drill-vm.test.mjs holds them equal); a candidate is shown to the Owner only after its
+# -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
 # without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
 function Get-DrillConclusion($Items, $M5) {
   if ([string](Get-Prop $M5 'result') -cne 'PASS') { return 'FAIL' }
@@ -726,7 +728,7 @@ function Get-DrillConclusion($Items, $M5) {
     if (-not $byId.ContainsKey($id)) { return 'FAIL' }
   }
   if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
-  if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PASS_A_PENDING_PRODUCTION_READBACK' }
+  if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
 }
@@ -747,6 +749,9 @@ select
 
 # A5's production half and A9 from the read-back row. nodes_changed counts every touch of ci_nodes_v1 (heartbeats of the
 # in-service nodes do not write it: they write ci_node_liveness_v1), so any non-zero count is looked at, never ignored.
+# A candidate's receipt (candidate: true) is read back right after its drill, before the Owner accepts, and judged on A9 alone: what
+# A5's production half guarded against (the drilled package is not the one the fleet runs) is held by seal (the receipt's three hashes
+# are the acceptance's) and by every node recomputing the Source of the accepted Release it installs (Fable renew-key section 4.3).
 function Get-DrillProductionVerdict($Receipt, $Readback) {
   if ([string](Get-Prop $Readback 'contract') -cne $script:Drill.ReadbackContract) { throw (New-DrillError 'DRILL_READBACK_REFUSED' 'contract') }
   if ([string](Get-Prop $Readback 'startedAt') -cne [string](Get-Prop $Receipt 'startedAt')) { throw (New-DrillError 'DRILL_READBACK_NOT_THIS_DRILL') }
@@ -761,6 +766,7 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
   $sources = @(Get-Prop $row 'live_sources' | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
   $local = [string](Get-Prop $Receipt 'evidence.localSource')
   $a5 = $sources.Count -ge 1 -and @($sources | Where-Object { $_ -cne $local }).Count -eq 0
+  if ((Get-Prop $Receipt 'candidate') -eq $true) { return @((New-DrillItem 'A9' $a9 (($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))) }
   return @(
     (New-DrillItem 'A5' $a5 "local=$local production=$($sources -join ',')"),
     (New-DrillItem 'A9' $a9 (($counts.Keys | ForEach-Object { "$_=$($counts[$_])" }) -join ' '))
@@ -1881,7 +1887,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
   }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   try {
