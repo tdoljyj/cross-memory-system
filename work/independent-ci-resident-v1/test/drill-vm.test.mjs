@@ -138,7 +138,7 @@ function firstInstallAssets(label, { candidate = false, credentialFiles = creden
       { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 },
       { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }
     ].filter(i => !dropManifest.includes(i.name)), debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
-    ...(credentialFiles === null ? [] : [{ path: 'tree/work/independent-ci-resident-v1/windows/credential-files.json', data: Buffer.from(credentialFiles) }]),
+    ...(credentialFiles === null ? [] : [{ path: 'tree/work/independent-ci-resident-v1/windows/credential-files.json', data: Buffer.isBuffer(credentialFiles) ? credentialFiles : Buffer.from(credentialFiles) }]),
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
   fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');
@@ -1339,6 +1339,18 @@ test('the run binds the kit\'s credential names again to the package it drills: 
   assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'emptied');
   assert.equal(planOf({ required: {}, optional: {} }).code, 'DRILL_KIT_REFUSED', 'an empty required group is no plan either');
   put(PACKAGE_CREDENTIALS);
+  assert.equal(bound(), 'bound');
+  // 8th review round, medium 1: the groups are compared member by member, never through a joined text -- one member whose value carries a
+  // line break and a second "group.key=value" (the old encoding of two members) is not the package's two, the list's hash kept as it is
+  const { ciToken, ...withoutCi } = kit.credentials.required;
+  put({ ...kit.credentials, required: { ...withoutCi, appKey: `${kit.credentials.required.appKey}\nrequired.ciToken=${ciToken}` } });
+  assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'one member for two');
+  put({ ...kit.credentials, required: { ...kit.credentials.required, extra: 'extra.token' } });
+  assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'a member more');
+  const { appKey, ...noAppKey } = kit.credentials.required;
+  put({ ...kit.credentials, required: { ...noAppKey, APPKEY: appKey } });
+  assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'a key in another case');
+  put(kit.credentials);
   assert.equal(bound(), 'bound');
   // a tar without the list: unreadable; a tar whose list has other bytes (the same names): not the package's
   const old = firstInstallAssets('bound-credentials-old', { credentialFiles: null });
@@ -3624,12 +3636,28 @@ test('the shipped credential list is read as data: any list that is not exactly 
     ['a key twice', `{"contract":"${CREDENTIAL_FILES_CONTRACT}","required":{"a":"a.token","a":"b.token"},"optional":{}}`],
     ['a name that is a path', list({ required: { a: '..\\a.token' }, optional: {} })],
     ['an empty required group', list({ required: {}, optional: {} })],
+    // 8th review round, medium 2: keys of a group that differ by case only are the same key (as for file names)
+    ['a key twice by case', list({ required: { a: 'a.token', A: 'b.token' }, optional: {} })],
+    ['a top-level key twice by case', `{"contract":"${CREDENTIAL_FILES_CONTRACT}","required":{"a":"a.token"},"optional":{},"Optional":{}}`],
+    // low 2: not UTF-8 (a bad byte in a key) is unreadable, never patched
+    ['not UTF-8', Buffer.concat([Buffer.from(`{"contract":"${CREDENTIAL_FILES_CONTRACT}","required":{"a`), Buffer.from([0xff]), Buffer.from('":"a.token"},"optional":{}}')])],
+    // low 3: Windows reserved device names and names a Win32 path would change
+    ['a reserved device name', list({ required: { a: 'CON.txt' }, optional: {} })],
+    ['a reserved device name, bare', list({ required: { a: 'nul' }, optional: {} })],
+    ['a numbered device name', list({ required: { a: 'com1.token' }, optional: {} })],
+    ['a name ending in a dot', list({ required: { a: 'a.token.' }, optional: {} })],
   ]) {
     const f = firstInstallAssets(`list-refused-${reason.replace(/\W+/g, '-')}`, { credentialFiles: text });
     prepareFrom({ ...f, out: f.from });
     await assert.rejects(() => makeDrillKit(f), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
     assert.ok(!fs.existsSync(f.out), reason);
   }
+  // 8th review round, low 1: a legal key with a colon and an escaped quote is one key, not two (no counting by pattern)
+  const odd = list({ required: { a: 'a.token', ':"b': 'b.token' }, optional: {} });
+  const oddKit = firstInstallAssets('list-odd-key', { credentialFiles: odd });
+  prepareFrom({ ...oddKit, out: oddKit.from });
+  await makeDrillKit(oddKit);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(oddKit.out, 'kit.json'), 'utf8')).credentials.required, { a: 'a.token', ':"b': 'b.token' });
   // the one reader the gate calls prints the list and its bytes' hash
   const f = firstInstallAssets('list-cli');
   const tar = path.join(f.build, `fleet-node-${f.version}.tar`);
