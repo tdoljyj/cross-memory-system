@@ -1731,7 +1731,7 @@ function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, initSecon
     }`;
 }
 const early = ['status', 'windows-processes', 'wsl-running', 'wsl-ps'];
-const release = ['windows-processes', 'wsl-running', 'wsl-release-script exit 0'];
+const release = ['wsl-running', 'windows-processes', 'wsl-release-script exit 0'];
 // the entry's and the post-restore host checks read the duty and the hold only; the boot gate samples both sides, then memory
 const entryCheck = ['status'];
 const hostCheck = ['status'];
@@ -1814,16 +1814,16 @@ test('no memory figure where none was read, and baseline.json keeps the pre-boot
   assert.deepEqual(r.baseline.hostPreBoot, { early: 'e', release: 'r', bootGate: { freeGB: 20 } });
 });
 
-test('the release reads Windows and the running list again before each distribution, and leaves one that stopped alone', opts, () => {
+test('the release reads the running list, then Windows, again right before each distribution, and leaves one that stopped alone', opts, () => {
   const r = ps(`
     $script:calls = [Collections.Generic.List[string]]::new()
-    $script:windowsJob = $false
+    $script:windowsJob = $false; $script:jobDuringList = $false
     function Get-DrillRunnerDistributions { param($HostName) 'Fixture-A'; 'Fixture-B'; 'Fixture-C' }
     function Get-DrillWslRegisteredNames { 'Fixture-A'; 'Fixture-B'; 'Fixture-C' }
     function Get-Process { param($ErrorAction) $script:calls.Add('windows'); $n = @('Runner.Listener'); if ($script:windowsJob) { $n += 'Runner.Worker' }; $n | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
     $script:DrillWslRunner = { param($a, $stdin)
       $j = $a -join ' '
-      if ($j -ceq '--list --running --quiet') { $script:calls.Add('list'); return @{ exit = 0; stdout = "Fixture-A\`nFixture-C\`n"; stderr = '' } }
+      if ($j -ceq '--list --running --quiet') { $script:calls.Add('list'); if ($script:jobDuringList) { $script:windowsJob = $true }; return @{ exit = 0; stdout = "Fixture-A\`nFixture-C\`n"; stderr = '' } }
       $script:calls.Add($a[1])
       if ($a[1] -ceq 'Fixture-C') { $script:windowsJob = $true }
       return @{ exit = 0; stdout = ${q(psLines(86400, 'Runner.Listener') + 'CLUED_DRILL_PAGE_CACHE_RELEASED\n')} }
@@ -1832,13 +1832,21 @@ test('the release reads Windows and the running list again before each distribut
     $firstCalls = @($script:calls); $script:calls.Clear(); $script:windowsJob = $false
     function Get-DrillRunnerDistributions { param($HostName) 'Fixture-C'; 'Fixture-A' }
     $second = Invoke-DrillWslCacheRelease
-    @{ first = $first; firstCalls = $firstCalls; second = $second; secondCalls = @($script:calls) }`);
-  assert.deepEqual(r.firstCalls, ['windows', 'list', 'Fixture-A', 'windows', 'list', 'windows', 'list', 'Fixture-C']);
+    $secondCalls = @($script:calls); $script:calls.Clear(); $script:windowsJob = $false
+    # a Windows job picked up while the running list was being asked for (Codex review of f734afe7e, medium 2)
+    $script:jobDuringList = $true
+    $third = Invoke-DrillWslCacheRelease
+    @{ first = $first; firstCalls = $firstCalls; second = $second; secondCalls = $secondCalls; third = $third; thirdCalls = @($script:calls) }`);
+  // per distribution: the running list, then the Windows side right before the call
+  assert.deepEqual(r.firstCalls, ['list', 'windows', 'Fixture-A', 'list', 'list', 'windows', 'Fixture-C']);
   assert.deepEqual(r.first.released, ['Fixture-A', 'Fixture-C']);
   assert.deepEqual(r.first.results.map(x => [x.distribution, x.running]), [['Fixture-A', true], ['Fixture-B', false], ['Fixture-C', true]]);
-  assert.deepEqual(r.secondCalls, ['windows', 'list', 'Fixture-C', 'windows']);
+  assert.deepEqual(r.secondCalls, ['list', 'windows', 'Fixture-C', 'list', 'windows']);
   assert.deepEqual(r.second.released, ['Fixture-C']);
   assert.deepEqual(r.second.skipped, { where: 'windows', reason: 'ACTIONS_RUNNER_JOB' });
+  assert.deepEqual(r.thirdCalls, ['list', 'windows']);
+  assert.deepEqual(r.third.released, []);
+  assert.deepEqual(r.third.skipped, { where: 'windows', reason: 'ACTIONS_RUNNER_JOB' });
 });
 
 test('the release script is one literal in single quotes, nothing put into it, and one that is not that literal is never sent', opts, () => {

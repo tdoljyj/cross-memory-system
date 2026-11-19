@@ -1206,8 +1206,8 @@ function Assert-DrillWslReleaseScriptLiteral {
 
 # Decision 21db5a9c (Fable renew-key ruling, supplements "drill host memory", "WSL runner jobs" item 3 and "WSL gate race" item 1; Codex
 # review of 74e7a65e7, high 1): after the early refusal, for each of this host's runner distributions, right before it and taken from no
-# earlier sample: the Windows side read again (a job there stops the release), the running list read again (a distribution that is not
-# running gets no command: it would start it), then the release script (DrillWslReleaseScript), which decides inside the distribution.
+# earlier sample: the running list read again (a distribution that is not running gets no command: it would start it), then the Windows
+# side read again (a job there stops the release), then the release script (DrillWslReleaseScript), which decides inside the distribution.
 # Its exit 3 (a job) skips the release -- not a failure, the boot gate refuses on the same job; any other non-zero exit is a failed
 # release, recorded, which does not stop the drill (the boot gate judges what is free). The script's process list gives the init's run
 # time: a distribution only seconds old was started by this call, recorded here (wslStartedByProbe). Under a test marker without an
@@ -1221,12 +1221,13 @@ function Invoke-DrillWslCacheRelease([string]$HostName = $env:COMPUTERNAME) {
     $registered = @()
     if ($out.distributions.Count -gt 0) { $registered = Get-DrillWslRegisteredRunners $out.distributions }
     foreach ($d in $out.distributions) {
+      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')) $registered)
+      if ($runningNow -cnotcontains $d) { $out.results += [ordered]@{ distribution = $d; running = $false; exit = $null; initSeconds = $null }; continue }
+      # the Windows side last, right before the call: the running list may have taken its time (Codex review of f734afe7e, medium 2)
       if (Test-DrillHostRunnerJob @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName })) {
         $out.skipped = [ordered]@{ where = 'windows'; reason = 'ACTIONS_RUNNER_JOB' }
         break
       }
-      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')) $registered)
-      if ($runningNow -cnotcontains $d) { $out.results += [ordered]@{ distribution = $d; running = $false; exit = $null; initSeconds = $null }; continue }
       $r = Invoke-DrillWsl @('--distribution', $d, '--user', 'root', '--exec', 'sh', '-s') $text
       $exit = Get-DrillField $r 'exit'
       # the script's answer: its process list, then, only after a release, the sentinel line. Nothing in it is passed over: a list that
