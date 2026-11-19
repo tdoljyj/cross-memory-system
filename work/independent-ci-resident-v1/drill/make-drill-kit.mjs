@@ -132,10 +132,10 @@ export function credentialsOfTar(tarBytes) {
 
 // The drill's decision for each credential name (give, with the fake file; or withhold, with the reason), the one table drill-vm.ps1 reads
 // as well. A name given with a perNodeStep is a stand-in the run makes and hands over: the kit registers that step (Codex review of
-// f33fc33e5, medium 4).
+// f33fc33e5, medium 4). Looked up by the name's own key, ordinal and case-sensitive, as drill-vm.ps1 does (6th review round, low 1).
 export const CREDENTIAL_DECISIONS = Object.freeze(JSON.parse(fs.readFileSync(new URL('./credential-decisions.json', import.meta.url), 'utf8')).decisions);
 const standInSteps = credentials => [...Object.values(credentials?.required ?? {}), ...Object.values(credentials?.optional ?? {})]
-  .filter(n => CREDENTIAL_DECISIONS[n]?.give === true && typeof CREDENTIAL_DECISIONS[n].perNodeStep === 'string')
+  .filter(n => Object.hasOwn(CREDENTIAL_DECISIONS, n) && CREDENTIAL_DECISIONS[n].give === true && typeof CREDENTIAL_DECISIONS[n].perNodeStep === 'string')
   .map(n => CREDENTIAL_DECISIONS[n].perNodeStep);
 
 export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null }) {

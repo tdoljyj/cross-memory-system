@@ -547,10 +547,13 @@ function Read-DrillKit([string]$Dir) {
 # FIRST-INSTALL-KIT.md (stand-in register); the receipt lists the optional ones withheld. The table is drill/credential-decisions.json, the
 # one source make-drill-kit.mjs reads too: a name given there with a perNodeStep is registered in the kit's per-node steps whenever the
 # package names it, required or optional, exactly as the run makes and hands it over (Codex review of f33fc33e5, medium 4).
+# Looked up by file name ordinally and case-sensitively (6th review round, low 1), as make-drill-kit.mjs looks it up (an object's own key)
+# and as the package's names are read and bound (packageCredentials; Assert-DrillKitCredentialsBound compares with -cne): a name the table
+# spells otherwise is no decision at either end.
 function Read-DrillCredentialDecisions([string]$File) {
   $t = [IO.File]::ReadAllText($File, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
   if ([string]$t.contract -cne 'clued.drill.credential-decisions/1') { throw (New-DrillError 'DRILL_CREDENTIAL_DECISIONS_REFUSED' $File) }
-  $o = [ordered]@{}
+  $o = New-Object System.Collections.Specialized.OrderedDictionary -ArgumentList ([StringComparer]::Ordinal)
   foreach ($p in $t.decisions.PSObject.Properties) { $d = [ordered]@{}; foreach ($f in $p.Value.PSObject.Properties) { $d[$f.Name] = $f.Value }; $o[$p.Name] = $d }
   $o
 }
