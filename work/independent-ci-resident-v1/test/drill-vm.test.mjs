@@ -1996,6 +1996,41 @@ test('a stage that ran is incomplete when its log is missing, empty, holds only 
   assert.equal(read().incomplete, false);
 });
 
+// Codex review of c1497e0a1, high 2: the stage files are read with read-write sharing (a stage still writing holds its log open), file by
+// file: one that cannot be read is named and the others are kept. The collection runs on every end of the first install (try/finally).
+test('the stage files are read with read-write sharing, file by file, also while a writer holds one open', opts, () => {
+  const work = path.join(tmp, 'stage-files-guest'); fs.mkdirSync(work, { recursive: true });
+  fs.writeFileSync(path.join(work, 'prepare.stdout.log'), JSON.stringify({ status: 'FLEET_NODE_FIRST_INSTALL_PREPARED' }) + '\r\n');
+  fs.writeFileSync(path.join(work, 'launcher-result.json'), JSON.stringify({ exit: 0, terminal: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' } }));
+  const hostLog = path.join(work, 'host.stdout.log'), launcherLog = path.join(work, 'launcher.stdout.log');
+  const g = ps(`
+    $w = New-Object IO.StreamWriter -ArgumentList ${q(hostLog)}, $false, (New-Object Text.UTF8Encoding($false)); $w.AutoFlush = $true; $w.WriteLine('{"name":"a","result":"ok"}')
+    $lock = New-Object IO.FileStream -ArgumentList ${q(launcherLog)}, ([IO.FileMode]::Create), ([IO.FileAccess]::ReadWrite), ([IO.FileShare]::None)
+    try { $r = & $script:GuestStageFiles ${q(work)} $script:DrillStageFiles } finally { $w.Dispose(); $lock.Dispose() }
+    [ordered]@{ host = $r['host.stdout.log']; launcher = $r['launcher.stdout.log']; prepare = $r['prepare.stdout.log'].present; timings = $r['stage-timings.json'].present }`);
+  assert.equal(g.host.text.trim(), '{"name":"a","result":"ok"}', 'read while its writer is still open');
+  assert.equal(g.launcher.text, null);
+  assert.ok(g.launcher.error, 'the locked one is named with its error');
+  assert.deepEqual({ prepare: g.prepare, timings: g.timings }, { prepare: true, timings: false });
+  // taken back into the run directory file by file: what could be read is saved, the rest is recorded
+  const runDir = path.join(tmp, 'stage-files-run'); fs.mkdirSync(runDir, { recursive: true });
+  const files = ps(`function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step) & $Script ${q(work)} $ArgumentList[1] }
+    $lock = New-Object IO.FileStream -ArgumentList ${q(launcherLog)}, ([IO.FileMode]::Open), ([IO.FileAccess]::ReadWrite), ([IO.FileShare]::None)
+    try { $c = Save-DrillStageEvidence ${q(runDir)} $null } finally { $lock.Dispose() }
+    $c.record.files`);
+  assert.deepEqual(['host.stdout.log', 'launcher.stdout.log', 'stage-timings.json', 'prepare.stdout.log'].map(n => files[n].state), ['saved', 'unreadable', 'absent', 'saved']);
+  assert.ok(fs.existsSync(path.join(runDir, 'host.stdout.log')));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'))['launcher-result.json'].terminal.status, 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-files.json'), 'utf8')).files['launcher.stdout.log'].state, 'unreadable');
+  // a collection that fails is recorded and throws nothing
+  const failDir = path.join(tmp, 'stage-files-fail'); fs.mkdirSync(failDir, { recursive: true });
+  assert.equal(ps(`function Invoke-DrillGuest { throw (New-DrillError 'DRILL_GUEST_STEP_FAILED') }; (Save-DrillStageEvidence ${q(failDir)} $null).record.collection.code`), 'DRILL_GUEST_STEP_FAILED');
+  // the first install's call collects them in its finally, so a timeout of that call still takes them back
+  assert.match(fs.readFileSync(script, 'utf8'), /\} finally \{\s*\$collected = Save-DrillStageEvidence \$RunDir \$Cred\s*\}/);
+  // the entry reads the launcher stage's file the same way
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /Get-LastJsonLine \(Read-EntrySharedText \$launcherResult\)/);
+});
+
 // Codex review of c1497e0a1, medium 4: "the stage gave no verdict" means one thing everywhere. A verdict is an object whose status is a
 // non-empty string other than the package's own "no verdict" codes (STAGE_CHILD_PRINTED_NO_VERDICT: the stage shell speaks, its child did
 // not; STAGE_GAVE_NO_VERDICT); a missing or empty log gives none either; the entry's stageGaveNoVerdict is read; prepare, which prints only

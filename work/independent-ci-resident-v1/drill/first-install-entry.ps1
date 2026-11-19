@@ -101,6 +101,12 @@ function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$Lim
   } finally { $writer.Dispose() }
 }
 
+# A stage file read while its writer may still hold it open (read-write sharing, as bootstrap.ps1 Read-StageResult reads it).
+function Read-EntrySharedText([string]$Path) {
+  $fs = New-Object IO.FileStream -ArgumentList $Path, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
+  try { (New-Object IO.StreamReader -ArgumentList $fs, (New-Object Text.UTF8Encoding($false))).ReadToEnd() } finally { $fs.Dispose() }
+}
+
 # A launcher stage's verdict, by the drill's rule (drill-vm.ps1 Test-DrillStageVerdict): a status that is a non-empty string and not one
 # of the package's "no verdict" codes.
 function Test-EntryStageVerdict($Terminal) {
@@ -248,7 +254,7 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       '-Launcher', $drillLauncher['path'], '-LauncherSha256', $drillLauncher['sha256'], '-ExpectedOperatorSid', $operatorSid) $LauncherLimitSeconds }
     finally { $measurements.launcher = $watch.Elapsed.TotalSeconds }
     # no output file, or one whose last object is not a verdict (a stage cut off): the stage gave no verdict
-    $terminal = if ([IO.File]::Exists($launcherResult)) { Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult)) } else { $null }
+    $terminal = if ([IO.File]::Exists($launcherResult)) { Get-LastJsonLine (Read-EntrySharedText $launcherResult) } else { $null }
     $stageGaveNoVerdict = -not (Test-EntryStageVerdict $terminal)
     if ($stageGaveNoVerdict) { $terminal = $null }
     [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; stageGaveNoVerdict = $stageGaveNoVerdict })), (New-Object Text.UTF8Encoding($false)))

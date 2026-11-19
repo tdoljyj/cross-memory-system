@@ -2052,6 +2052,55 @@ function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [Da
   return $reboot
 }
 
+# The stage files the entry writes under the guest's work directory, read in the guest file by file with read-write sharing (a stage still
+# writing holds its log open: the entry's line-by-line writer, the package's appending one; Read-StageResult in bootstrap.ps1 reads them
+# the same way). One that cannot be read is named with its error, never taking the others with it.
+$script:DrillStageFiles = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log', 'host-result.json', 'launcher-result.json', 'stage-timings.json')
+$script:GuestStageFiles = {
+  param($Work, $Names)
+  $r = [ordered]@{}
+  foreach ($name in @($Names)) {
+    $p = Join-Path $Work $name
+    try {
+      if (-not [IO.File]::Exists($p)) { $r[$name] = [ordered]@{ present = $false; text = $null; error = $null }; continue }
+      $fs = New-Object IO.FileStream -ArgumentList $p, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
+      try { $text = (New-Object IO.StreamReader -ArgumentList $fs, (New-Object Text.UTF8Encoding($false))).ReadToEnd() } finally { $fs.Dispose() }
+      $r[$name] = [ordered]@{ present = $true; text = $text; error = $null }
+    } catch { $r[$name] = [ordered]@{ present = $true; text = $null; error = [string]$_.Exception.Message } }
+  }
+  $r
+}
+
+# Takes the stage files back into the run directory, each on its own (the logs under their names, the two stage results as
+# stage-evidence.json, the timings as stage-timings.json), and records each one's outcome in stage-files.json: saved, absent, unreadable
+# in the guest, or not saved here. A failed collection is recorded and never replaces the run's own outcome.
+function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
+  $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); collection = $null; files = [ordered]@{} }
+  $got = $null
+  try { $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), $script:DrillStageFiles) -TimeoutMinutes 2 -Step 'stage-files' }
+  catch { $record.collection = (Get-DrillCode $_) }
+  $json = [ordered]@{}
+  foreach ($name in $script:DrillStageFiles) {
+    $f = Get-DrillField $got $name
+    if ($null -eq $f) { $record.files[$name] = [ordered]@{ state = 'not-collected' }; continue }
+    if ((Get-DrillField $f 'present') -ne $true) { $record.files[$name] = [ordered]@{ state = 'absent' }; continue }
+    $err = Get-DrillField $f 'error'
+    if ($err) { $record.files[$name] = [ordered]@{ state = 'unreadable'; error = [string]$err }; continue }
+    $text = [string](Get-DrillField $f 'text')
+    try {
+      if ($name.EndsWith('.json')) { $json[$name] = $(try { $text | ConvertFrom-Json } catch { [ordered]@{ unreadable = $true } }) }
+      else { [IO.File]::WriteAllText((Join-Path $RunDir $name), $text, (New-Object Text.UTF8Encoding($false))) }
+      $record.files[$name] = [ordered]@{ state = 'saved'; bytes = $text.Length }
+    } catch { $record.files[$name] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
+  }
+  $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json'] }
+  $timings = $json['stage-timings.json']
+  try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence } catch { $record.files['host-result.json'] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
+  try { Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings } catch { }
+  try { Write-DrillJson (Join-Path $RunDir 'stage-files.json') $record } catch { }
+  return @{ stageEvidence = $stageEvidence; timings = $timings; record = $record }
+}
+
 # A1's kit entry in the guest, once, bounded, read apart (Invoke-DrillNative): its last stdout line is the result, its stderr is kept.
 $script:GuestEntry = {
   param($Entry, $EntryArgs, $Minutes, $NativeText)
@@ -2093,33 +2142,20 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   } else {
   # A1: the kit entry, once, bounded. No retry.
   $entryArgs = Resolve-DrillKitArguments $KitInfo.arguments $paths
-  $entryOut = Invoke-DrillGuest $Cred $script:GuestEntry -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs, $KitInfo.timeoutMinutes, $script:DrillNativeText) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
+  # The stage files are taken back on every end of this call -- done, stopped, timed out (Codex review of c1497e0a1, high 2): the step
+  # record of a stage cut off is in them, and the original error is thrown on after.
+  $entryOut = $null
+  try {
+    $entryOut = Invoke-DrillGuest $Cred $script:GuestEntry -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs, $KitInfo.timeoutMinutes, $script:DrillNativeText) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
+  } finally {
+    $collected = Save-DrillStageEvidence $RunDir $Cred
+  }
   [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]@($entryOut.lines))
   [IO.File]::WriteAllText((Join-Path $RunDir 'first-install.stderr.log'), [string]$entryOut.stderr)
   $entry = Read-DrillEntryResult @($entryOut.lines) ([int]$entryOut.exit)
-  $timings = Invoke-DrillGuest $Cred {
-    $p = 'C:\drill\work\stage-timings.json'; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json }
-  } -TimeoutMinutes 2 -Step 'stage-timings'
-  Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings
-  $stageEvidence = Invoke-DrillGuest $Cred {
-    $r = [ordered]@{}
-    foreach ($name in @('host-result.json', 'launcher-result.json')) {
-      $p = Join-Path 'C:\drill\work' $name
-      $r[$name] = if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
-    }
-    $r
-  } -TimeoutMinutes 2 -Step 'stage-evidence'
-  Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence
-  # the stages' complete stdout logs, as files of the run (the step record: Read-DrillFirstInstallSteps)
-  $stageLogs = Invoke-DrillGuest $Cred {
-    $r = [ordered]@{}
-    foreach ($name in @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log')) { $p = Join-Path 'C:\drill\work' $name; $r[$name] = if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
-    $r
-  } -TimeoutMinutes 2 -Step 'stage-logs'
-  foreach ($name in @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log')) { $t = Get-DrillField $stageLogs $name; if ($t -is [string]) { [IO.File]::WriteAllText((Join-Path $RunDir $name), $t, (New-Object Text.UTF8Encoding($false))) } }
+  $timings = $collected.timings
   # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json
-  $launcherResult = if ($stageEvidence -is [System.Collections.IDictionary]) { $stageEvidence['launcher-result.json'] } elseif ($stageEvidence) { $stageEvidence.PSObject.Properties['launcher-result.json'].Value }
-  $launcher = Get-Prop $launcherResult 'terminal'
+  $launcher = Get-Prop (Get-DrillField $collected.stageEvidence 'launcher-result.json') 'terminal'
   }
 
   $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
