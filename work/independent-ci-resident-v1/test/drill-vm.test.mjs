@@ -408,22 +408,26 @@ test('the active drill aborts for stages 1–7, unrecognized shapes, stale statu
   assert.deepEqual(gateActions(standby, { running: false }), ['refuse', 'refuse', 'refuse']);
 });
 
+// What the injected sender is handed for one request, the executable first: forward slashes, so the JS template carries the paths intact.
+const intakeArgv = (verb, minutes) => ['C:/clued-drill-test-nowhere/node.exe', 'C:/clued-drill-test-nowhere/rearm-tool.mjs', `request-intake-${verb}`,
+  '--root', 'C:/clued-drill-test-nowhere', '--holder', 'drill', '--reason', 'first-install drill', ...(minutes === undefined ? [] : ['--minutes', String(minutes)])].join('|');
 test('intake wait timeout releases only the drill hold without starting the VM', opts, () => {
   const r = ps(`
     $script:events = @()
     $script:Drill.IntakeWaitMinutes = 0
     function Read-DrillHostStatus { ${q(activeHostStatus(null))} }
     function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
-    function Get-DrillIntakeTool { @{ root = 'C:\clued-drill-test-nowhere'; node = 'C:\clued-drill-test-nowhere\node.exe'; tool = 'C:\clued-drill-test-nowhere\rearm-tool.mjs' } }
+    function Get-DrillIntakeTool { @{ root = 'C:/clued-drill-test-nowhere'; node = 'C:/clued-drill-test-nowhere/node.exe'; tool = 'C:/clued-drill-test-nowhere/rearm-tool.mjs' } }
     function Invoke-DrillNode { throw 'PROCESS_MUST_NOT_START' }
     # the intake request goes through the stand-in the caller injects (the only way a test reaches the hold logic)
-    $script:DrillIntakeSender = { param($Tool, $Verb, $Minutes, $Arguments) $script:events += ('{0}:{1}' -f $Verb, $Minutes)
+    $script:sent = @()
+    $script:DrillIntakeSender = { param($Tool, $Verb, $Minutes, $Arguments) $script:events += ('{0}:{1}' -f $Verb, $Minutes); $script:sent += ((@($Tool.node) + @($Arguments)) -join '|')
       @{ exit = 0; stdout = $(if ($Verb -ceq 'pause') { '{"status":"INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES"}' } else { '{"status":"INTAKE_RESUME_REQUESTED"}' }) } }
     function Start-VM { $script:events += 'start' }
     $code = try { Invoke-DrillWithHostHold 70 { Start-VM }; $null } catch { (Get-DrillCode $_).code }
-    @{ code = $code; events = $script:events }
+    @{ code = $code; events = $script:events; sent = @($script:sent) }
   `);
-  assert.deepEqual(r, { code: 'DRILL_HOST_CI_BUSY', events: ['pause:80', 'resume:0'] });
+  assert.deepEqual(r, { code: 'DRILL_HOST_CI_BUSY', events: ['pause:80', 'resume:0'], sent: [intakeArgv('pause', 80), intakeArgv('resume')] });
 });
 
 test('the active hold covers the whole window and is resumed only after safe cleanup', opts, () => {
@@ -431,10 +435,11 @@ test('the active hold covers the whole window and is resumed only after safe cle
     $script:events = @()
     function Read-DrillHostStatus { ${q(activeHostStatus(null, { executor: 'RUNNING' }))} }
     function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
-    function Get-DrillIntakeTool { @{ root = 'C:\clued-drill-test-nowhere'; node = 'C:\clued-drill-test-nowhere\node.exe'; tool = 'C:\clued-drill-test-nowhere\rearm-tool.mjs' } }
+    function Get-DrillIntakeTool { @{ root = 'C:/clued-drill-test-nowhere'; node = 'C:/clued-drill-test-nowhere/node.exe'; tool = 'C:/clued-drill-test-nowhere/rearm-tool.mjs' } }
     function Invoke-DrillNode { throw 'PROCESS_MUST_NOT_START' }
     # the intake request goes through the stand-in the caller injects (the only way a test reaches the hold logic)
-    $script:DrillIntakeSender = { param($Tool, $Verb, $Minutes, $Arguments) $script:events += ('{0}:{1}' -f $Verb, $Minutes)
+    $script:sent = @()
+    $script:DrillIntakeSender = { param($Tool, $Verb, $Minutes, $Arguments) $script:events += ('{0}:{1}' -f $Verb, $Minutes); $script:sent += ((@($Tool.node) + @($Arguments)) -join '|')
       @{ exit = 0; stdout = $(if ($Verb -ceq 'pause') { '{"status":"INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES"}' } else { '{"status":"INTAKE_RESUME_REQUESTED"}' }) } }
     function Get-DrillHostSafety($HoldUntil) {
       $script:events += "wait-for:$($HoldUntil.ToString('HH:mm'))"
@@ -451,12 +456,12 @@ test('the active hold covers the whole window and is resumed only after safe cle
       $window.safeToResume = $false
       $script:events += 'restore-unconfirmed'
     }
-    @{ over = $over; events = $script:events }
+    @{ over = $over; events = $script:events; sent = @($script:sent) }
   `);
   assert.deepEqual(r, { over: 'DRILL_HOST_INTAKE_BUDGET_EXCEEDED', events: [
     'pause:120', 'wait-for:03:20', 'start:03:10', 'stop-and-restore', 'resume:0',
     'pause:120', 'wait-for:03:20', 'restore-unconfirmed',
-  ] });
+  ], sent: [intakeArgv('pause', 120), intakeArgv('resume'), intakeArgv('pause', 120)] });
 });
 
 test('running guard aborts on duty, batch, unreadable status or memory pressure after a safe start', opts, () => {
@@ -850,6 +855,31 @@ console.log(JSON.stringify({ status: process.argv[2] === 'request-intake-pause' 
   const marker = body.indexOf('NODE_TEST_CONTEXT'), node = body.indexOf('Invoke-DrillNode');
   assert.ok(marker > 0 && node > marker, 'Request-DrillIntake refuses under a marker before Invoke-DrillNode');
   for (const gone of ['Test-DrillProductionPath', 'Get-DrillPathSegments', 'Assert-DrillNotProductionUnderTest', 'ProductionRoot']) assert.ok(!text.includes(gone), gone);
+});
+
+// Codex review r5: the stand-in is only a test's. Without a marker an injected sender is refused by name (neither it nor the real tool
+// runs: production never takes a request from something injected); under a marker the refusal comes before the tool record is read, so
+// an empty record gets the same code.
+test('a sender is used only under a test marker; without one it is refused, and an empty tool record is refused first', opts, () => {
+  const dir = fs.mkdtempSync(path.join(tmp, 'fake-intake-nomark-'));
+  const mark = path.join(dir, 'tool-ran.mark');
+  const fakeTool = path.join(dir, 'fake-rearm-tool.mjs');
+  fs.writeFileSync(fakeTool, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(mark)}, 'ran'); console.log(JSON.stringify({ status: 'INTAKE_RESUME_REQUESTED' }));`);
+  const r = ps(`
+    $codeOf = { param($b) try { $null = & $b; 'NOT_REFUSED' } catch { (Get-DrillCode $_).code } }
+    $script:senderCalls = 0
+    $script:DrillIntakeSender = { param($Tool, $Verb, $Minutes, $Arguments) $script:senderCalls++; @{ exit = 0; stdout = '{"status":"INTAKE_RESUME_REQUESTED"}' } }
+    Remove-Item Env:NODE_TEST_CONTEXT, Env:CLUED_UNDER_TEST -ErrorAction SilentlyContinue
+    $noMarker = & $codeOf { Request-DrillIntake @{ root = ${q(dir)}; node = ${q(process.execPath)}; tool = ${q(fakeTool)} } resume 0 }
+    $env:CLUED_UNDER_TEST = '1'; $script:DrillIntakeSender = $null
+    [ordered]@{ noMarker = $noMarker; senderCalls = $script:senderCalls
+      emptyRecord = (& $codeOf { Request-DrillIntake $null resume 0 }); emptyHash = (& $codeOf { Request-DrillIntake @{} pause 80 }) }`);
+  assert.deepEqual({ ...r, toolRan: fs.existsSync(mark) }, { noMarker: 'DRILL_INTAKE_SENDER_WITHOUT_TEST_MARKER', senderCalls: 0,
+    emptyRecord: 'DRILL_HOST_ACCESS_UNDER_TEST', emptyHash: 'DRILL_HOST_ACCESS_UNDER_TEST', toolRan: false });
+  // the marker check is the first thing Request-DrillIntake does
+  const text = fs.readFileSync(script, 'utf8');
+  const start = text.indexOf('function Request-DrillIntake'), body = text.slice(start, text.indexOf('\n}', start));
+  assert.ok(body.indexOf('NODE_TEST_CONTEXT') < body.indexOf('Get-DrillIntakeArguments'), 'the marker is checked before the record is read');
 });
 
 // The argv of an intake request, apart from its execution (a pure function): node is the executable, the tool its first argument.
