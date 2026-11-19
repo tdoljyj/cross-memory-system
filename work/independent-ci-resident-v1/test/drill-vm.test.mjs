@@ -477,15 +477,15 @@ test('running guard aborts on duty, batch, unreadable status or memory pressure 
     'DRILL_HOST_CI_BUSY', 'DRILL_HOST_STATUS_UNREADABLE', 'DRILL_HOST_MEMORY_SHORT']);
 });
 
-test('memory threshold includes the whole VM at start and only its unassigned memory at runtime', opts, () => {
+test('memory threshold includes the whole VM and the boot margin at start and only its unassigned memory at runtime', opts, () => {
   const r = ps(`$idle = ${q(idleHostStatus())}; @(
-    (Test-DrillHostSafety $idle 14GB -VmMemoryBytes 14GB),
-    (Test-DrillHostSafety $idle 20GB -VmMemoryBytes 14GB -MemoryAssigned 14GB),
+    (Test-DrillHostSafety $idle (28GB - 1) -VmMemoryBytes 14GB),
+    (Test-DrillHostSafety $idle 28GB -VmMemoryBytes 14GB -MemoryAssigned 14GB),
     (Test-DrillHostSafety $idle (10GB - 1) -VmMemoryBytes 14GB -Running -MemoryAssigned 10GB),
     (Test-DrillHostSafety $idle 10GB -VmMemoryBytes 14GB -Running -MemoryAssigned 10GB),
     (Test-DrillHostSafety $idle 6GB -VmMemoryBytes 14GB -Running -MemoryAssigned 15GB))`);
   assert.deepEqual(r.map(x => x.action), ['refuse', 'start', 'abort', 'continue', 'continue']);
-  assert.deepEqual(r.map(x => x.requiredFreeBytes / 1024 ** 3), [20, 20, 10, 10, 6]);
+  assert.deepEqual(r.map(x => x.requiredFreeBytes / 1024 ** 3), [28, 28, 10, 10, 6]);
 });
 
 test('the duty gate refuses stale, missing and invalid status timestamps', opts, () => {
@@ -805,7 +805,8 @@ test('host reader uses only the pinned status file and accounts for an existing 
     }
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = $script:freeBytes / 1KB } }
     function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 14GB; MemoryAssigned = $script:assignedBytes } }
-    $script:freeBytes = 20GB; $script:assignedBytes = 0
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    $script:freeBytes = 28GB; $script:assignedBytes = 0
     $safety = Get-DrillHostSafety
     $script:freeBytes = 10GB; $script:assignedBytes = 10GB
     $running = Get-DrillHostSafety -Running
@@ -813,7 +814,7 @@ test('host reader uses only the pinned status file and accounts for an existing 
   `);
   assert.equal(r.pinned, 'C:\\ProgramData\\CluedIndependentCI\\resident\\state\\status.json');
   assert.equal(r.path, fixture);
-  assert.equal(r.safety.requiredFreeBytes, 20 * 1024 ** 3);
+  assert.equal(r.safety.requiredFreeBytes, 28 * 1024 ** 3);
   assert.equal(r.safety.ok, true);
   assert.equal(r.running.requiredFreeBytes, 10 * 1024 ** 3);
   assert.equal(r.running.action, 'continue');
@@ -1302,10 +1303,49 @@ test('abort cleanup checks VM ownership, stops before restore and never acts on 
   assert.deepEqual(r, { off: true, code: 'DRILL_VM_NAME_TAKEN_NOT_OURS', events: ['stop', 'restore'] });
 });
 
-test('the host memory gate refuses below 14 GB free, with no retry', opts, () => {
-  const r = ps(`@((Test-DrillHostMemory (14GB - 1)), (Test-DrillHostMemory 14GB))`);
+test('the host memory gate refuses below 22 GB free at boot (guest 8 + reserve 6 + boot margin 8), with no retry', opts, () => {
+  const r = ps(`@((Test-DrillHostMemory (22GB - 1)), (Test-DrillHostMemory 22GB))`);
   assert.equal(r[0].ok, false); assert.equal(r[0].code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r[1].ok, true);
+});
+
+// Fable renew-key ruling, supplement "drill host memory" item 2: the boot gate had no margin between its two halves, so a host
+// just over it was bound to fall under the running gate once the guest started (receipt 20261119T172257Z: 19.7 GB free at start,
+// 5.8 GB 30 s after boot, i.e. 5.9 GB beyond the guest's 8 GB). Passing the boot gate must mean passing the running gate after boot.
+test('a host that passes the boot gate still passes the running gate after the guest and the observed boot overhead', opts, () => {
+  const r = ps(`$idle = ${q(idleHostStatus())}
+    $boot = Test-DrillHostMemory 0
+    $observedOverhead = [long](5.9 * 1GB)
+    @{ boot = $boot.requiredFreeBytes
+       after = (Test-DrillHostMemory ($boot.requiredFreeBytes - 8GB - $observedOverhead) -Running -MemoryAssigned 8GB)
+       receipt = (Test-DrillHostSafety $idle ([long](19.7 * 1GB))) }`);
+  assert.equal(r.after.ok, true, `boot gate ${r.boot / 1024 ** 3} GB leaves ${r.after.freeGB} GB after boot`);
+  assert.equal(r.receipt.action, 'refuse');
+  assert.equal(r.receipt.code, 'DRILL_HOST_MEMORY_SHORT');
+});
+
+// Fable renew-key ruling, supplement "drill hold and the Actions self-hosted runners on the same host" (Clued Task e71ceb33): the hold
+// drains the resident but not the host's Actions runners, so a job one of them is executing (a Runner.Worker process) refuses the
+// boot. Judged from the process list, not from runner names; a job picked up after the boot is left to the running memory gate.
+test('the boot gate refuses while an Actions runner job is executing on the host, and a running drill is not aborted by one', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
+    function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 8GB; MemoryAssigned = $script:assigned } }
+    function Get-Process { param($ErrorAction) $script:names | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
+    $script:assigned = 0
+    $script:names = @('System', 'Runner.Listener', 'Runner.Listener', 'svchost')
+    $listening = Get-DrillHostSafety
+    $script:names = @('System', 'Runner.Listener', 'Runner.Worker', 'svchost')
+    $busy = Get-DrillHostSafety
+    $script:assigned = 8GB
+    $running = Get-DrillHostSafety -Running
+    @{ listening = $listening; busy = $busy; running = $running }`);
+  assert.equal(r.listening.action, 'start');
+  assert.equal(r.busy.action, 'refuse');
+  assert.equal(r.busy.code, 'DRILL_HOST_CI_BUSY');
+  assert.equal(r.busy.busyWith, 'ACTIONS_RUNNER_JOB');
+  assert.equal(r.running.action, 'continue');
 });
 
 test('the baseline action comes from the scene: only the VM whose name and notes are ours is ever touched', opts, () => {
