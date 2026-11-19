@@ -21,7 +21,8 @@
 --    its owner only (the migration login); not on PostgREST. Input: action,
 --    resources, with (as the old door), run_id and run_attempt (recorded in
 --    the use receipt as the caller's own, unverified claim), and two modes:
---    probe (the door is usable: identity row, anchor, both actions; it raises
+--    probe (the door is usable: identity row, its account usable
+--    (authorization_account_v12, as resolve_binding checks), anchor, both actions; it raises
 --    otherwise and writes nothing) and request_only (reuse or open the pending
 --    request, never consume, never approve). Each resource names the
 --    registered repository: repo:<repository>/<40-hex sha> for
@@ -105,6 +106,8 @@ begin
   -- The door itself: the registered identity, its unresolvable anchor, both actions at this door.
   select * into v_identity from clued_private.release_identity_v1;
   if not found then raise exception 'release_door_identity_missing' using errcode='55000'; end if;
+  -- The account must be usable, as every Binding door checks through resolve_binding.
+  perform clued_private.authorization_account_v12(v_identity.user_id);
   select * into v_anchor from public.clued_agent_bindings b
     where b.id=v_identity.anchor_binding_id and b.user_id=v_identity.user_id;
   if not found or v_anchor.revoked_at is null then

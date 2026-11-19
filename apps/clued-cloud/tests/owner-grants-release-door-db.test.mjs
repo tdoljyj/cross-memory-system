@@ -252,6 +252,25 @@ test('owner grants: the release door is the database login, consumes by action a
         /owner_grant_door_release_token_retired/);
     });
 
+    await t.test('1b. a banned or deleted account: the door refuses, approves nothing and consumes nothing', async () => {
+      // The switch is still on here, so without the account check the door would approve and consume.
+      const input = { action: 'migration.production', resources: [migrationFile('9')],
+        with: [{ action: 'release.production', resources: [commit('9')] }] };
+      const before = await counts();
+      for (const [column, value] of [['banned_until', "now()+interval '1 day'"], ['deleted_at', 'now()']]) {
+        await admin.query(`update auth.users set ${column}=${value} where id=$1`, [userId]);
+        try {
+          for (const call of [{ probe: true }, input, { ...input, request_only: true }]) {
+            await assert.rejects(() => releaseDoor(call), /account_not_available/, `${column}: ${JSON.stringify(call)}`);
+          }
+        } finally {
+          await admin.query(`update auth.users set ${column}=null where id=$1`, [userId]);
+        }
+      }
+      assert.deepEqual(await counts(), before, 'no request, approval, grant use or receipt');
+      assert.equal((await releaseDoor({ probe: true })).status, 'ok', 'the account back, the door is back');
+    });
+
     // From here on the Owner confirms each request by hand.
     await enableManualOwnerApprovalFixture(admin);
 
