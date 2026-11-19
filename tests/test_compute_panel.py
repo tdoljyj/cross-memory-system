@@ -1451,5 +1451,224 @@ class RecordedDataTests(unittest.TestCase):
         self.assertEqual(len(later["announced_dup"]), 33 - panel.DUP_ROWS)
 
 
+# Rule 41ab823a by tree (FABLE-main-push-tree-reuse §4, §5 T4/T5): real GitHub replies of #1178, #1156 and #1170.
+# GitHub REST replies recorded read-only on 2026-11-19 (Beijing), trimmed to the fields the scan reads.
+# check: (id, name, app slug, status, conclusion, started_at, completed_at, run id, external_id)
+# run: (id, path, event, run_attempt, head_commit.tree_id, head_sha); job: (id, name, run_attempt, status, conclusion, started_at, completed_at)
+TREE_RECORDED = {
+    1156: {
+        "pull": {"number": 1156, "title": "test(owner-grants): assert grant duration from server timestamps, not the wall clock", "state": "open", "head": {"sha": "43361ab833d68b2d6b9e53f7bc6e27ccbd6776e5"}, "merge_commit_sha": None, "merged_at": None, "closed_at": None, "updated_at": "2026-11-17T17:25:31Z"},
+        "checks": [
+            (134244333953, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z", 44136843405, "7ca72b2f-22af-5985-90e5-009600d3a533"),
+            (134244255605, "ci-suites", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z", 44136843405, "672ba5f8-5d12-5704-a447-4e8f1bdde9c2"),
+            (134244253929, "admission-gate", "github-actions", "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z", 44136843405, "4b9d1ded-144f-55f2-be56-aa1a1f82a449"),
+            (134244251063, "migration-verify", "github-actions", "completed", "failure", "2026-11-17T17:49:46Z", "2026-11-17T17:49:59Z", 44136843405, "cb8ddb09-fa77-517a-88f9-511726301d58"),
+            (134238390986, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:40:36Z", "2026-11-17T17:40:36Z", 0, "independent-ci:staged:v2:b6d3f34bd31f84e4833a17e3da75db1a5381fafb478821694b3bdd0f4dcd7271:a1"),
+            (134237153383, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:38:40Z", "2026-11-17T17:38:40Z", 0, "independent-ci:staged:v2:628999bb39141e269fdb3bd14fb4a346d1795062c26f4b0023f31fd8b441cc79:a1"),
+            (134235150300, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:35:34Z", "2026-11-17T17:35:34Z", 0, "independent-ci:staged:v2:8d890ea49378a00962d1de8adcebde4400b5c171eb8f011f59857cd25aa7e62b:a1"),
+            (134231302422, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:29:46Z", "2026-11-17T17:29:46Z", 0, "independent-ci:native-work-admission:v2:17249ee85b8a512ffcb1d7f6813f3c16492fac5760a800138921b2fddc78e690:a1:c1859e94e:f1:e1"),
+            (134229895984, "migration-verify", "github-actions", "completed", "failure", "2026-11-17T17:27:39Z", "2026-11-17T17:48:26Z", 44136843405, "62a7d4fd-fbec-5a3e-a855-ea1fe40618d5"),
+            (134229895876, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z", 44136843405, "1895fd81-3583-5369-b90a-51993c4f4dae"),
+            (134229895867, "ci-suites", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z", 44136843405, "b11f64ab-6838-5ef7-8f95-4ee423fa9935"),
+            (134229894294, "ci-suites-windows", "github-actions", "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:31:58Z", 44136843505, "57b39bfa-d66a-55e4-b54c-1f855d3748cd"),
+            (134229684764, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-17T17:27:16Z", "2026-11-17T17:27:16Z", 0, "independent-ci:native-work-admission:v2:46277db4d5e765dbb0d092c2a2afe34588df78ed8424e256ef155a56d7169537:a1:c1859e94e:f1:e1"),
+            (134228583490, "admission-gate", "github-actions", "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z", 44136843505, "aa3533a5-17aa-5cb0-a385-38a4668484aa"),
+            (134228580664, "admission-gate", "github-actions", "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z", 44136843405, "278c005b-2622-5000-b9ec-73c6354d5887"),
+        ],
+        "runs": [(44136843405, ".github/workflows/clued-required-tests.yml", "pull_request", 2, "a9e5b439dce5ecdfe7a63ee4f042f827595b1477", "43361ab833d68b2d6b9e53f7bc6e27ccbd6776e5"), (44136843505, ".github/workflows/clued-required-tests-windows.yml", "pull_request", 1, "a9e5b439dce5ecdfe7a63ee4f042f827595b1477", "43361ab833d68b2d6b9e53f7bc6e27ccbd6776e5")],
+        "push_runs": [],
+        "jobs": {
+            44136843405: [(134228580664, "admission-gate", 1, "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z"),
+                (134229895867, "ci-suites", 1, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z"),
+                (134229895876, "clued-cloud-tests", 1, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z"),
+                (134229895984, "migration-verify", 1, "completed", "failure", "2026-11-17T17:27:39Z", "2026-11-17T17:48:26Z"),
+                (134244251063, "migration-verify", 2, "completed", "failure", "2026-11-17T17:49:46Z", "2026-11-17T17:49:59Z"),
+                (134244253929, "admission-gate", 2, "completed", "success", "2026-11-17T17:25:39Z", "2026-11-17T17:27:36Z"),
+                (134244255605, "ci-suites", 2, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:32:20Z"),
+                (134244333953, "clued-cloud-tests", 2, "completed", "success", "2026-11-17T17:27:39Z", "2026-11-17T17:37:21Z")],
+        },
+    },
+    1170: {
+        "pull": {"number": 1170, "title": "First install: drill VM, first-install kit and on-duty guard (rebuilt)", "state": "closed", "head": {"sha": "8086d0e404dfc8f5bfcc8c467bd58658dea6efa9"}, "merge_commit_sha": "3ab8380d121b76a4256dd87d849897a535a48ab3", "merged_at": "2026-11-19T02:31:47Z", "closed_at": "2026-11-19T02:31:47Z", "updated_at": "2026-11-19T02:31:47Z"},
+        "checks": [
+            (135294798064, "kooyumi-merge-slot", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:31:45Z", "2026-11-19T02:31:45Z", 0, "independent-ci:control:control-merge-slot:v2:1eab0d55eb4999850da0dda699f9580024514f644d4bbf6b11798c33500434cf:a1:cd924089f:f2:e1"),
+            (135294632467, "kooyumi-admission-verified", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:31:20Z", "2026-11-19T02:31:20Z", 0, "independent-ci:control:control-admission:v2:4b430d371793f24636dbd12447133479bc7690c7eb9fd67d339d0072327c4b07:a1:cd924089f:f2:e1"),
+            (135294340231, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:30:36Z", "2026-11-19T02:30:36Z", 0, "independent-ci:staged:v2:1bc4ca39304e5a519bc0218793246015836c7e3481979700402ef65190f2a7b9:a1"),
+            (135293207330, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:27:49Z", "2026-11-19T02:27:49Z", 0, "independent-ci:staged:v2:ddb6c24e7fbe584101ed04796945a16a5bc34a9ff4a1bbb9a2b5f9435014c0c4:a1"),
+            (135292314263, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:25:38Z", "2026-11-19T02:25:38Z", 0, "independent-ci:staged:v2:c73bc1ea0a04e0dfad0304cc44eb8c21b4177e91c668f037f7452675a88c25fa:a1"),
+            (135290350282, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T02:20:56Z", "2026-11-19T02:20:56Z", 0, "independent-ci:native-work-admission:v2:965bc6a7b8b090d6637a85aed7cea41ddeac13f172efc7934d3fd31df6b03bfd:a1:cd924089f:f2:e1"),
+            (135222860319, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:47:13Z", "2026-11-18T23:47:13Z", 0, "independent-ci:staged:v2:ae70e963000e8540d956cac6e325525bc75b9ca50bb4e0de01256a890ce1c5d8:a1"),
+            (135221915080, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:45:13Z", "2026-11-18T23:45:13Z", 0, "independent-ci:staged:v2:c42571a5b0dd6fdba6945a10eef4a48b6228fffed60793c26a4a8482b117842a:a1"),
+            (135220645414, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:42:33Z", "2026-11-18T23:42:33Z", 0, "independent-ci:staged:v2:34278a0680c3981dffdda30c8a12ed7c5a1d62a50886bdc0941b3c1753a11d74:a1"),
+            (135218157960, "ci-suites", "github-actions", "completed", "success", "2026-11-18T23:37:25Z", "2026-11-18T23:45:11Z", 44422035542, "5a0a0de1-5628-5add-b193-7b27b40af327"),
+            (135218157827, "migration-verify", "github-actions", "completed", "success", "2026-11-18T23:37:25Z", "2026-11-18T23:40:55Z", 44422035542, "72fc1695-55fe-52db-bf1a-46086ea85df5"),
+            (135218157807, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-18T23:37:25Z", "2026-11-18T23:46:19Z", 44422035542, "e4465580-8a6d-56a4-b1f7-c923bc88da99"),
+            (135218142012, "ci-suites-windows", "github-actions", "completed", "success", "2026-11-18T23:37:23Z", "2026-11-18T23:50:33Z", 44422035579, "f7003d14-88f2-50b0-be20-6e75760c534d"),
+            (135217997505, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-18T23:37:03Z", "2026-11-18T23:37:03Z", 0, "independent-ci:native-work-admission:v2:8fc746f34586862c931ab2999316fed563f75bc6a0cc728423fff3a353b5bdeb:a1:cd924089f:f2:e1"),
+            (135217187194, "admission-gate", "github-actions", "completed", "success", "2026-11-18T23:35:27Z", "2026-11-18T23:37:22Z", 44422035542, "4151a308-b8a5-5df7-b7dc-9334ca776cd1"),
+            (135217187048, "admission-gate", "github-actions", "completed", "success", "2026-11-18T23:35:27Z", "2026-11-18T23:37:20Z", 44422035579, "c47b2b97-f21b-5090-b229-190279992f02"),
+        ],
+        "runs": [(44422035579, ".github/workflows/clued-required-tests-windows.yml", "pull_request", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "8086d0e404dfc8f5bfcc8c467bd58658dea6efa9"), (44422035542, ".github/workflows/clued-required-tests.yml", "pull_request", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "8086d0e404dfc8f5bfcc8c467bd58658dea6efa9")],
+        "push_runs": [(44444986057, ".github/workflows/clued-required-tests.yml", "push", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "3ab8380d121b76a4256dd87d849897a535a48ab3"), (44444986420, ".github/workflows/clued-required-tests-windows.yml", "push", 1, "055b4a666fa4b7adf6e4c23846f32ff3957ada09", "3ab8380d121b76a4256dd87d849897a535a48ab3")],
+        "jobs": {
+            44444986057: [(135294837874, "admission-gate", 1, "completed", "success", "2026-11-19T02:31:53Z", "2026-11-19T02:32:12Z"),
+                (135294983680, "migration-verify", 1, "completed", "success", "2026-11-19T02:32:15Z", "2026-11-19T02:51:26Z"),
+                (135294983707, "clued-cloud-tests", 1, "completed", "success", "2026-11-19T02:32:15Z", "2026-11-19T02:41:59Z"),
+                (135294984175, "ci-suites", 1, "completed", "success", "2026-11-19T02:32:15Z", "2026-11-19T02:42:21Z")],
+            44444986420: [(135294839149, "admission-gate", 1, "completed", "success", "2026-11-19T02:31:54Z", "2026-11-19T02:32:14Z"),
+                (135294998909, "ci-suites-windows", 1, "completed", "success", "2026-11-19T02:32:17Z", "2026-11-19T02:46:06Z")],
+        },
+    },
+    1178: {
+        "pull": {"number": 1178, "title": "Fleet: a package without the first-install kit fails to publish, an acceptance without its sha is refused", "state": "closed", "head": {"sha": "76783d4ad8b3b5584f80cae400e4465e14250241"}, "merge_commit_sha": "0a1d2f0b955833aaace9971ca634a5bd74371dab", "merged_at": "2026-11-19T06:43:24Z", "closed_at": "2026-11-19T06:43:24Z", "updated_at": "2026-11-19T06:43:24Z"},
+        "checks": [
+            (135390784412, "kooyumi-merge-slot", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:43:22Z", "2026-11-19T06:43:22Z", 0, "independent-ci:control:control-merge-slot:v2:7bba4aa046c6a8781575c6d432d0ff1d92aff52447de416b9c5cc682ee33cb22:a1:c06b37ff7:f1:e1"),
+            (135390656324, "kooyumi-admission-verified", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:43:03Z", "2026-11-19T06:43:03Z", 0, "independent-ci:control:control-admission:v2:37a5b028b7ac72b9eefe59efa5cc2c422318c281726a81d2f609ba9cb2697c7b:a1:c06b37ff7:f1:e1"),
+            (135390008323, "contract-placement", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:41:25Z", "2026-11-19T06:41:25Z", 0, "independent-ci:staged:v2:efdcf52ebf541444b5f83fe757b3ff1fc175279fc1cbec38fe2964f04e812ad1:a1"),
+            (135389269289, "trivy", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:39:35Z", "2026-11-19T06:39:35Z", 0, "independent-ci:staged:v2:1f0bd2b1eef35507756b2019ad5584620b36872b52cbd9493f7ee45605b06e4a:a1"),
+            (135388000825, "gitleaks", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:36:23Z", "2026-11-19T06:36:23Z", 0, "independent-ci:staged:v2:0893d0411875dd72b509a27d08b949efdce96e2e58e3d72b9274b35446199a2e:a1"),
+            (135385622189, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:30:26Z", "2026-11-19T06:30:26Z", 0, "independent-ci:native-work-admission:v2:463d345ad58c3b184c26c1bbde252b0bc35419397c3118498260fa23c7786cca:a1:c06b37ff7:f1:e1"),
+            (135383262052, "clued-cloud-tests", "github-actions", "completed", "success", "2026-11-19T06:31:06Z", "2026-11-19T06:38:40Z", 44471531779, "af4c9705-c9ce-557c-a135-35038fe38137"),
+            (135383261896, "ci-suites", "github-actions", "completed", "success", "2026-11-19T06:27:09Z", "2026-11-19T06:34:59Z", 44471531779, "bf231b43-88a0-562b-9956-15ed908afe0a"),
+            (135383261850, "migration-verify", "github-actions", "completed", "success", "2026-11-19T06:25:01Z", "2026-11-19T06:26:47Z", 44471531779, "d5dbac6a-6817-587e-9e57-04f6d06472db"),
+            (135383024242, "ci-suites-windows", "github-actions", "completed", "success", "2026-11-19T06:23:59Z", "2026-11-19T06:39:24Z", 44471531651, "9b2a4e48-2a23-57f0-b8ce-c2a0773b353f"),
+            (135382930538, "kooyumi-work-admission", "clued-ci-checks-turing-20261018", "completed", "success", "2026-11-19T06:23:43Z", "2026-11-19T06:23:43Z", 0, "independent-ci:native-work-admission:v2:cdbe9243d136e3542c7a8b7a350b73b5405a8a4d9d9499b01f66bb9495a58dd8:a1:c06b37ff7:f1:e1"),
+            (135381926463, "admission-gate", "github-actions", "completed", "success", "2026-11-19T06:24:01Z", "2026-11-19T06:24:32Z", 44471531779, "51f28859-8c5f-55c6-832f-07104069eb04"),
+            (135381925792, "admission-gate", "github-actions", "completed", "success", "2026-11-19T06:22:22Z", "2026-11-19T06:23:56Z", 44471531651, "e62c7eb8-8335-5c99-89af-841634724ccc"),
+        ],
+        "runs": [(44471531779, ".github/workflows/clued-required-tests.yml", "pull_request", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "76783d4ad8b3b5584f80cae400e4465e14250241"), (44471531651, ".github/workflows/clued-required-tests-windows.yml", "pull_request", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "76783d4ad8b3b5584f80cae400e4465e14250241")],
+        "push_runs": [(44474248138, ".github/workflows/clued-required-tests-windows.yml", "push", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "0a1d2f0b955833aaace9971ca634a5bd74371dab"), (44474248339, ".github/workflows/clued-required-tests.yml", "push", 1, "80b9c36e57f95261b59af5aac6f5a1fb649fd33f", "0a1d2f0b955833aaace9971ca634a5bd74371dab")],
+        "jobs": {
+            44474248339: [(135390823271, "admission-gate", 1, "completed", "success", "2026-11-19T06:43:30Z", "2026-11-19T06:43:48Z"),
+                (135390957668, "migration-verify", 1, "completed", "success", "2026-11-19T06:43:52Z", "2026-11-19T07:03:37Z"),
+                (135390957680, "clued-cloud-tests", 1, "completed", "success", "2026-11-19T06:43:53Z", "2026-11-19T06:54:06Z"),
+                (135390957746, "ci-suites", 1, "completed", "success", "2026-11-19T06:43:51Z", "2026-11-19T06:54:08Z")],
+            44474248138: [(135390822631, "admission-gate", 1, "completed", "success", "2026-11-19T06:43:30Z", "2026-11-19T06:43:50Z"),
+                (135390971555, "ci-suites-windows", 1, "completed", "success", "2026-11-19T06:43:53Z", "2026-11-19T06:59:33Z")],
+        },
+    },
+}
+
+REC_NOW = datetime(2026, 11, 19, 8, 0, tzinfo=timezone.utc)
+REC_REPO = "https://github.com/tdoljyj/cross-memory-system"
+
+
+def rec_check(row: tuple) -> dict:
+    cid, name, slug, status, conclusion, started, completed, run, external = row
+    return {"id": cid, "name": name, "app": {"slug": slug}, "status": status, "conclusion": conclusion,
+            "started_at": started, "completed_at": completed, "external_id": external or None,
+            "details_url": f"{REC_REPO}/actions/runs/{run}/job/{cid}" if run else REC_REPO}
+
+
+def rec_run(row: tuple) -> dict:
+    rid, path, event, attempt, tree, head = row
+    return {"id": rid, "path": path, "name": path.rsplit("/", 1)[-1], "event": event, "run_attempt": attempt,
+            "head_sha": head, "head_commit": {"id": head, "tree_id": tree}}
+
+
+def rec_job(run: int, row: tuple) -> dict:
+    jid, name, attempt, status, conclusion, started, completed = row
+    return {"id": jid, "run_id": run, "name": name, "run_attempt": attempt, "status": status, "conclusion": conclusion,
+            "started_at": started, "completed_at": completed}
+
+
+class TreeRecordedGitHub:
+    """Serves one recorded PR: its head's check runs and runs, the merge commit's push runs, and run jobs."""
+
+    def __init__(self, case: dict, skipped_push: bool = False) -> None:
+        self.case, self.skipped_push = case, skipped_push
+        self.paths: list[str] = []
+
+    def low(self) -> bool:
+        return False
+
+    def get(self, path: str, params: dict | None = None):
+        params = params or {}
+        self.paths.append(path)
+        case = self.case
+        head, merge = case["pull"]["head"]["sha"], case["pull"].get("merge_commit_sha")
+        if path == "/pulls":
+            return [case["pull"]]
+        if path == f"/commits/{head}/check-runs":
+            rows = [rec_check(row) for row in case["checks"]]
+            page = params.get("page", 1)
+            return {"total_count": len(rows), "check_runs": rows[(page - 1) * 100: page * 100]}
+        if path == "/actions/runs" and params.get("head_sha") == head:
+            return {"workflow_runs": [rec_run(row) for row in case["runs"]]}
+        if path == "/actions/runs" and merge and params.get("head_sha") == merge:
+            runs = [rec_run(row) for row in case["push_runs"]]
+            return {"workflow_runs": [run for run in runs if params.get("event") in (None, run["event"])]}
+        if path.startswith("/actions/runs/") and path.endswith("/jobs"):
+            run = int(path.split("/")[3])
+            jobs = [rec_job(run, row) for row in case["jobs"].get(run, [])]
+            if self.skipped_push and any(run == row[0] for row in case["push_runs"]):
+                for job in jobs:
+                    if job["name"] != "admission-gate":
+                        job.update(name=job["name"] + "-skipped", conclusion="skipped")
+            return {"total_count": len(jobs), "jobs": jobs}
+        raise panel.RequestError(f"GET {path} unscripted", 404)
+
+
+def scan_recorded(number: int, **kwargs) -> list[dict]:
+    return panel.scan_duplicates(TreeRecordedGitHub(TREE_RECORDED[number], **kwargs), REC_NOW, {})["found"]
+
+
+class TreeDuplicateTests(unittest.TestCase):
+    def test_t4_the_main_push_of_1178_ran_four_checks_again_on_the_same_tree(self) -> None:
+        found = scan_recorded(1178)
+        self.assertEqual(sorted(item["label"] for item in found),
+                         ["ci-suites-windows（clued-required-tests-windows.yml）", "ci-suites（clued-required-tests.yml）",
+                          "clued-cloud-tests（clued-required-tests.yml）", "migration-verify（clued-required-tests.yml）"])
+        for item in found:
+            self.assertEqual((item["pr"], item["count"], item["kind"]), (1178, 2, "rerun"))
+            self.assertIn("main-push", item["causes"])
+            self.assertEqual(item["tree"], "80b9c36e57f9")
+            self.assertEqual([run["event"] for run in item["runs"]], ["pull_request", "push"])
+            self.assertEqual([run["attempt"] for run in item["runs"]], [1, 1])
+        key, text = panel.duplicate_event(found[0])
+        self.assertIn("合入后 main push", text)
+
+    def test_t5_1156_reran_only_migration_verify_and_that_is_a_retry_after_a_failure(self) -> None:
+        (item,) = scan_recorded(1156)
+        self.assertEqual((item["check"], item["count"], item["kind"]),
+                         (".github/workflows/clued-required-tests.yml::migration-verify", 2, "retry"))
+        self.assertEqual([run["attempt"] for run in item["runs"]], [1, 2])
+        self.assertEqual([run["conclusion"] for run in item["runs"]], ["failure", "failure"])
+
+    def test_guard_1170_resident_scans_run_twice_on_one_head_stay_found(self) -> None:
+        found = {item["check"]: item for item in scan_recorded(1170)}
+        for name in ("gitleaks", "trivy", "contract-placement"):
+            self.assertEqual(found[name]["count"], 2)
+            self.assertEqual([run["executor"] for run in found[name]["runs"]], ["resident", "resident"])
+
+    def test_guard_a_main_push_whose_heavy_jobs_were_skipped_is_no_run(self) -> None:
+        self.assertEqual(scan_recorded(1178, skipped_push=True), [])
+
+    def test_a_retry_after_a_failure_is_listed_but_not_announced(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(REC_NOW - timedelta(hours=2))}}
+
+        class Client(TreeRecordedGitHub):
+            def get(self, path: str, params: dict | None = None):
+                params = params or {}
+                if path == "/pulls" and params.get("state") != "all":
+                    return []
+                if path.startswith("/actions/workflows") or (path == "/actions/runs" and "head_sha" not in params):
+                    return {"workflow_runs": []}
+                if path.endswith("/status"):
+                    return {}
+                if path.endswith("/statuses"):
+                    return []
+                return super().get(path, params)
+
+        report = panel.build(Client(TREE_RECORDED[1156]), REC_NOW, state)
+        self.assertEqual(len(report["duplicates"]["found"]), 1)
+        self.assertEqual([key for key in report["events"] if key.startswith("dup")], [])
+        body = panel.render(report, state)
+        self.assertIn("失败后重试", body)
+        self.assertIn("同一棵树", body)
+        report = panel.build(Client(TREE_RECORDED[1178]), REC_NOW, {"duplicates": {"as_of": panel.iso(REC_NOW - timedelta(hours=2))}})
+        self.assertEqual(len([key for key in report["events"] if key.startswith("dup:")]), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4116,3 +4116,155 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
 
 
 }
+
+// Main push tree reuse (FABLE-main-push-tree-reuse §2.2, §5 T1/T1w/T2): a merge whose tree equals the PR
+// head's tree, with main's old tip an ancestor of that head, reuses the head's passing required-test run.
+// The fixture is #1178's real GitHub replies (scripts/ci/fixtures/main-push-tree-reuse-1178.json).
+const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1178.json'), 'utf8'));
+function treeReuseCase(workflow, mutate = () => {}) {
+  const f = structuredClone(TREE_REUSE);
+  const w = f.workflows[workflow];
+  const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.merge.sha, GITHUB_RUN_ATTEMPT: '1',
+    GITHUB_RUN_ID: String(w.push_run.id), GITHUB_ACTOR: w.push_run.actor.login, GITHUB_REPOSITORY_OWNER: f.owner,
+    GITHUB_REPOSITORY: f.repository, GITHUB_TOKEN: 'test-only-placeholder',
+    GITHUB_WORKFLOW_REF: `${f.repository}/.github/workflows/${workflow}@refs/heads/main` };
+  const routes = {};
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    const route = routes[String(url)];
+    const body = typeof route === 'function' ? route() : route;
+    if (body instanceof Error) throw body;
+    if (body === undefined || body?.status >= 400) return { ok: false, status: body?.status ?? 404, headers: { get: () => null }, json: async () => ({}), text: async () => '' };
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => structuredClone(body), text: async () => JSON.stringify(body) };
+  };
+  const ctx = { f, w, env, routes, calls, fetchImpl, event: { ref: env.GITHUB_REF, after: f.merge.sha } };
+  const api = `https://api.github.com/repos/${f.repository}`;
+  const head = f.pr.head.sha;
+  ctx.runsRoute = `${api}/actions/workflows/${workflow}/runs?event=pull_request&head_sha=${head}&per_page=100`;
+  // Routes read the (possibly mutated) fixture objects at call time.
+  Object.assign(routes, {
+    [`${api}/commits/${f.merge.sha}`]: f.merge,
+    [`${api}/commits/${f.merge.sha}/pulls?per_page=100`]: () => f.pulls,
+    [`${api}/pulls/${f.pr.number}`]: f.pr,
+    [`${api}/commits/${head}`]: f.source,
+    [ctx.runsRoute]: () => w.runs,
+    [`${api}/actions/runs/${w.runs.workflow_runs[0].id}/attempts/${w.runs.workflow_runs[0].run_attempt}/jobs?per_page=100`]: w.jobs,
+    [`${api}/compare/${f.merge.parents[0].sha}...${head}`]: f.compare,
+  });
+  mutate(ctx);
+  return ctx;
+}
+const treeReuseGate = (ctx) => admissionModule.gate({ env: ctx.env, event: ctx.event, eventName: ctx.env.GITHUB_EVENT_NAME,
+  fetchImpl: ctx.fetchImpl, sleep: async () => {} });
+
+for (const [label, workflow] of [['T1 Linux', 'clued-required-tests.yml'], ['T1w Windows', 'clued-required-tests-windows.yml']]) {
+  test(`${label}: #1178's main push is not run again; the head's passing run of the same tree decides`, async () => {
+    const ctx = treeReuseCase(workflow);
+    const outcome = await treeReuseGate(ctx);
+    const source = ctx.w.runs.workflow_runs[0];
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_ALREADY_TESTED'], JSON.stringify(outcome));
+    const why = outcome.reasons.join(' ');
+    assert.match(why, new RegExp(`run ${source.id} attempt 1`));
+    assert.match(why, /PR #1178/);
+    assert.match(why, new RegExp(TREE_REUSE.merge.commit.tree.sha));
+    assert.equal(outcome.tree_reuse.qualification, 'PR_EVIDENCE_ONLY');
+    assert.equal(outcome.tree_reuse.current_sha_pass, false);
+  });
+}
+
+test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
+  try {
+    const eventPath = path.join(dir, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(ctx.event));
+    const code = await mainWith(['--mode', 'gate'], { ...ctx.env, GITHUB_EVENT_PATH: eventPath,
+      GITHUB_OUTPUT: path.join(dir, 'out'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary') }, ctx.fetchImpl);
+    assert.equal(code, 0);
+    const out = fs.readFileSync(path.join(dir, 'out'), 'utf8');
+    assert.match(out, /^admitted=false$/m);
+    assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('T2: every required job of both required-test workflows is in the reuse table, and so is every Actions-bound required check', async () => {
+  const { TARGETS } = await import('./clued-push-reuse.mjs');
+  const covered = new Set();
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    const target = TARGETS[workflow];
+    assert.ok(target, `${workflow} is in the reuse table`);
+    assert.equal(target.proof, 'ancestry');
+    const text = fs.readFileSync(path.join(ROOT, '.github/workflows', workflow), 'utf8');
+    const jobs = workflowJobs(text).map((job) => job.name).filter((name) => name !== 'admission-gate');
+    assert.deepEqual([...target.jobs].sort(), [...jobs].sort(), `${workflow}: jobs and table agree`);
+    // The required name is the job id, or <id>-skipped when the job does not run.
+    for (const job of jobs) assert.ok(text.includes(`&& '${job}' || '${job}-skipped'`), `${workflow}: ${job} carries its required name`);
+    for (const job of target.jobs) covered.add(job);
+  }
+  // The main ruleset's required checks as recorded with the fixture (rules/branches/main, 2026-11-19).
+  const actionsBound = TREE_REUSE.required_checks.filter((check) => check.integration_id === 15368).map((check) => check.context);
+  assert.ok(actionsBound.length >= 4);
+  for (const check of actionsBound) assert.ok(covered.has(check), `required check ${check} is covered`);
+});
+
+// Guards: green before and after the fix. Each one must still run the heavy jobs.
+const STILL_RUNS = [
+  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }],
+  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }],
+  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }],
+  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }],
+  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }],
+  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
+  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }],
+  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }],
+  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }],
+  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }],
+  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }],
+  ['the run changed while the proof was read', (c) => { let reads = 0; const runs = c.w.runs;
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }],
+  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }],
+  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }],
+  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }],
+  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }],
+  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }],
+  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }],
+  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }],
+];
+for (const [label, mutate] of STILL_RUNS) {
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run`, async () => {
+      const outcome = await treeReuseGate(treeReuseCase(workflow, mutate));
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    });
+  }
+}
+
+test('tree reuse guard: every failed or thrown GitHub read runs the heavy jobs', async () => {
+  const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
+  assert.equal(keys.length, 7);
+  for (const key of keys) {
+    for (const failure of [{ status: 500 }, { status: 404 }, new Error('offline')]) {
+      const ctx = treeReuseCase('clued-required-tests.yml');
+      ctx.routes[key] = failure;
+      const outcome = await treeReuseGate(ctx);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], `${key}: ${JSON.stringify(outcome)}`);
+    }
+  }
+});
+
+test('tree reuse guard: a re-run, staging, another branch or a workflow outside the table reads nothing and runs', async () => {
+  for (const [label, mutate] of [
+    ['attempt 2 (Re-run all jobs is the manual way to force a real run)', (c) => { c.env.GITHUB_RUN_ATTEMPT = '2'; }],
+    ['clued-train/staging', (c) => { c.env.GITHUB_REF = 'refs/heads/clued-train/staging'; c.env.GITHUB_WORKFLOW_REF = c.env.GITHUB_WORKFLOW_REF.replace('@refs/heads/main', '@refs/heads/clued-train/staging'); }],
+    ['another branch', (c) => { c.env.GITHUB_REF = 'refs/heads/feature'; }],
+    ['a workflow with its own push-reuse job (G4)', (c) => { c.env.GITHUB_WORKFLOW_REF = `${c.f.repository}/.github/workflows/clued-g4-database.yml@refs/heads/main`; }],
+    ['a workflow outside the table', (c) => { c.env.GITHUB_WORKFLOW_REF = `${c.f.repository}/.github/workflows/public-mcp-behavior.yml@refs/heads/main`; }],
+    ['no workflow ref', (c) => { delete c.env.GITHUB_WORKFLOW_REF; }],
+  ]) {
+    const ctx = treeReuseCase('clued-required-tests.yml', mutate);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], label);
+    assert.deepEqual(ctx.calls, [], label);
+  }
+});

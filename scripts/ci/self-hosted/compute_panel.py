@@ -630,6 +630,9 @@ def real_run(check: dict, workflows: dict[int, dict], now: datetime | None = Non
     status, conclusion = check.get("status"), check.get("conclusion")
     if not name or started is None:
         return None
+    finished = parse_time(check.get("completed_at")) if status == "completed" else None
+    done = iso(finished) if finished is not None else None
+    origin = check.get("_origin") or "head"
     if status == "in_progress":
         if now is not None and now - started < DUP_RUNNING:
             return None
@@ -646,8 +649,9 @@ def real_run(check: dict, workflows: dict[int, dict], now: datetime | None = Non
         # One execution, one identity: a native publication is named by its job, any other resident check by its external_id (a
         # check withdrawn and published again under the same external_id, e.g. after a read timeout, is the same run).
         job = external.split(":")[3] if kind == "native" and external.count(":") >= 3 else external
-        return {"key": name, "label": name, "executor": "resident", "at": iso(started), "conclusion": conclusion or status,
-                "attempt": int(attempt.group(1)) if attempt else None, "run": None, "event": None, "job": job}
+        return {"key": name, "label": name, "executor": "resident", "at": iso(started), "done": done, "conclusion": conclusion or status,
+                "attempt": int(attempt.group(1)) if attempt else None, "run": None, "event": None, "job": job,
+                "id": check.get("id"), "origin": origin}
     match = RUN_URL.search(str(check.get("details_url") or ""))
     run_id = int(match.group(1)) if match else None
     workflow = workflows.get(run_id) or {}
@@ -656,11 +660,16 @@ def real_run(check: dict, workflows: dict[int, dict], now: datetime | None = Non
     base = HOSTED_SUFFIX.sub("", name)
     where = workflow.get("path") or workflow.get("name") or "unknown-workflow"
     key = base if base != name else f"{where}::{name}"
+    # "Re-run failed jobs" copies the jobs it does not run into the new attempt as new check runs with the same
+    # start: one execution is one (run, job name, start). The attempt is the job's own, never the run's latest;
+    # a run that only had one attempt says it for every job, otherwise duplicate_findings() reads the jobs.
+    attempt = check.get("_attempt") or (1 if workflow.get("attempt") == 1 else None)
     return {"key": key, "label": base if base != name else f"{name}（{str(where).rsplit('/', 1)[-1]}）",
             "executor": "hosted" if run_id else cell(((check.get("app") if isinstance(check.get("app"), dict) else None) or {}).get("slug") or "other")[:40],
-            "at": iso(started),
-            "conclusion": conclusion or status, "attempt": workflow.get("attempt"), "run": run_id,
-            "event": workflow.get("event"), "job": None}
+            "at": iso(started), "done": done,
+            "conclusion": conclusion or status, "attempt": attempt, "run": run_id,
+            "event": workflow.get("event"), "job": f"{run_id}:{name}:{iso(started)}" if run_id else None,
+            "id": check.get("id"), "origin": origin}
 
 
 def short_name(name: str) -> str:
@@ -670,11 +679,30 @@ def short_name(name: str) -> str:
     return name[:DUP_NAME - 9] + "~" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
 
 
+FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
+
+
+def retry_after_failure(runs: list[dict]) -> bool:
+    """True when every run after the first started only once every earlier run had finished and failed: a retry
+    of a failure, which the rule allows. Anything else ran again after a pass, or alongside another run."""
+    for index, run in enumerate(runs[1:], 1):
+        for earlier in runs[:index]:
+            if earlier["conclusion"] not in FAILED_CONCLUSIONS or earlier["done"] is None \
+                    or parse_time(earlier["done"]) > parse_time(run["at"]):
+                return False
+    return True
+
+
 def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dict[int, dict],
-                       now: datetime) -> list[dict]:
-    """The checks of one PR head that really ran twice or more (rule 41ab823a)."""
+                       now: datetime, attempts_of: Any = None, tree: str | None = None) -> list[dict]:
+    """The checks of one tree that really ran twice or more (rule 41ab823a: one real run per tree and check).
+
+    `checks` are the PR head's check runs plus, when the merge commit has the head's tree, the jobs of its main push
+    runs (marked "_origin": "merge"). `attempts_of(run_id)` returns {job id: attempt} for a run that had more than one
+    attempt; it is read only for the runs of a finding."""
     groups: dict[str, list[dict]] = {}
-    for check in checks:
+    # The earliest copy of an execution stands for it (a re-run's copies of unrun jobs come later).
+    for check in sorted(checks, key=lambda item: item.get("id") if isinstance(item.get("id"), int) else 0):
         run = real_run(check, workflows, now)
         if run:
             group = groups.setdefault(run["key"], [])
@@ -686,9 +714,17 @@ def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dic
         if len(runs) < 2:
             continue
         runs.sort(key=lambda run: run["at"])
+        # A job's attempt is read only where one run executed it more than once (a re-run): the run's latest attempt
+        # would be wrong for its earlier executions. Unread, the attempt is left out of the row.
+        repeated = {run["run"] for run in runs if run["run"] is not None and sum(other["run"] == run["run"] for other in runs) > 1}
+        for run in runs:
+            if run["attempt"] is None and run["run"] in repeated and attempts_of is not None:
+                run["attempt"] = (attempts_of(run["run"]) or {}).get(run["id"])
         executors = {run["executor"] for run in runs}
         causes = []
-        if merged is not None and any(parse_time(run["at"]) > merged for run in runs):
+        if any(run["origin"] == "merge" for run in runs):
+            causes.append("main-push")         # the push of the merge commit ran the PR head's tree again
+        elif merged is not None and any(parse_time(run["at"]) > merged for run in runs):
             causes.append("after-merge")       # a merged PR scheduled again
         if len(executors) > 1:
             causes.append("cross-executor")    # the hosted workflow and the resident both ran it
@@ -698,8 +734,11 @@ def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dic
         for run in runs:
             mix[run["executor"]] = mix.get(run["executor"], 0) + 1
         found.append({
-            "head": head[:12], "pr": pull.get("number"), "check": short_name(key), "label": short_name(runs[0]["label"]),
-            "count": len(runs), "mix": mix, "causes": causes, "first": runs[0]["at"], "last": runs[-1]["at"],
+            "head": head[:12], "tree": tree[:12] if tree else None, "pr": pull.get("number"), "check": short_name(key),
+            "label": short_name(runs[0]["label"]), "count": len(runs), "mix": mix, "causes": causes,
+            # "rerun": ran again after a pass (breaks the rule, announced); "retry": a retry after failures (listed only).
+            "kind": "retry" if retry_after_failure(runs) else "rerun",
+            "first": runs[0]["at"], "last": runs[-1]["at"],
             "runs": [{k: run[k] for k in ("executor", "at", "conclusion", "attempt", "run", "event")}
                      for run in runs[:DUP_RUNS_SHOWN]],
             "title": cell(pull.get("title"))[:DUP_TITLE],
@@ -720,13 +759,18 @@ def duplicate_event(finding: dict) -> tuple[str, str]:
             counts[run["executor"]] = counts.get(run["executor"], 0) + 1
     names = {"resident": "常驻", "hosted": "托管"}
     parts = "、".join(f"{names.get(who, cell(who))} {n} 次" for who, n in counts.items())
-    why = "；".join({"after-merge": "合并后又被调度", "cross-executor": "托管与常驻各跑一次",
-                     "same-executor": "同一执行方重复"}[cause] for cause in finding.get("causes") or [])
+    why = "；".join(CAUSE_TEXT.get(cause, cell(cause)) for cause in finding.get("causes") or [])
     span = f"{finding['first']} 至 {finding['last']}" if finding.get("first") else f"最近 {finding['last']}"
-    detail = "；".join(part for part in (parts, why, span) if part)
-    text = (f"重复执行：PR #{finding['pr']}（{finding.get('title', '')}）提交 {finding['head'][:8]} 的检查 "
+    detail = "；".join(part for part in (KIND_TEXT.get(finding.get("kind"), ""), parts, why, span) if part)
+    tree = f"（树 {finding['tree'][:8]}）" if finding.get("tree") else ""
+    text = (f"重复执行：PR #{finding['pr']}（{finding.get('title', '')}）提交 {finding['head'][:8]}{tree} 的检查 "
             f"{cell(finding.get('label') or finding['check'])} 真跑了 {finding['count']} 次（{detail}）")
     return duplicate_key(finding), text
+
+
+CAUSE_TEXT = {"main-push": "合入后 main push", "after-merge": "合并后又被调度", "cross-executor": "托管与常驻各跑一次",
+              "same-executor": "同一执行方重复"}
+KIND_TEXT = {"rerun": "通过后又跑", "retry": "失败后重试"}
 
 
 def short_finding(finding: dict) -> dict:
@@ -769,8 +813,39 @@ def read_check_runs(client: GitHub, sha: str) -> list[dict]:
 def read_workflow_runs(client: GitHub, sha: str) -> dict[int, dict]:
     """run id -> workflow path, event and attempt, to tell same-named jobs of different workflows apart."""
     reply = retrying(lambda: client.get("/actions/runs", {"head_sha": sha, "per_page": 100})) or {}
-    return {run["id"]: {"path": run.get("path"), "name": run.get("name"), "event": run.get("event"),
-                        "attempt": run.get("run_attempt")} for run in reply.get("workflow_runs") or []}
+    return {run["id"]: run_record(run) for run in reply.get("workflow_runs") or []}
+
+
+def run_record(run: dict) -> dict:
+    return {"path": run.get("path"), "name": run.get("name"), "event": run.get("event"), "attempt": run.get("run_attempt"),
+            "head_sha": run.get("head_sha"), "tree": ((run.get("head_commit") or {}) if isinstance(run.get("head_commit"), dict) else {}).get("tree_id")}
+
+
+def read_run_jobs(client: GitHub, run_id: int) -> list[dict]:
+    """Every job of every attempt of one run (filter=all); a job's id is its check run's id. Needs actions: read."""
+    reply = retrying(lambda: client.get(f"/actions/runs/{run_id}/jobs", {"filter": "all", "per_page": 100})) or {}
+    return [job for job in reply.get("jobs") or [] if isinstance(job, dict)]
+
+
+def merge_push_checks(client: GitHub, merge: str, tree: str, paths: set[str]) -> tuple[list[dict], dict[int, dict]]:
+    """The jobs of the main push runs of a merge commit with the PR head's tree, as check runs, for the workflows that
+    also ran on the head (only those can repeat a head's check). Read through the runs, not the commit's check runs:
+    main's tip collects scheduled runs (the panel itself) that would push the push runs out of the listed pages."""
+    reply = retrying(lambda: client.get("/actions/runs", {"head_sha": merge, "event": "push", "per_page": 100})) or {}
+    checks: list[dict] = []
+    workflows: dict[int, dict] = {}
+    for run in reply.get("workflow_runs") or []:
+        record = run_record(run)
+        if record["event"] != "push" or record["tree"] != tree or record["path"] not in paths or not isinstance(run.get("id"), int):
+            continue
+        workflows[run["id"]] = record
+        for job in read_run_jobs(client, run["id"]):
+            checks.append({"id": job.get("id"), "name": job.get("name"), "status": job.get("status"),
+                           "conclusion": job.get("conclusion"), "started_at": job.get("started_at"),
+                           "completed_at": job.get("completed_at"), "app": {"slug": "github-actions"},
+                           "details_url": f"/actions/runs/{run['id']}/job/{job.get('id')}",
+                           "_attempt": job.get("run_attempt"), "_origin": "merge"})
+    return checks, workflows
 
 
 def dup_token(key: str) -> str:
@@ -848,6 +923,34 @@ def settle_key(pull: dict, sha: str) -> str:
     return f"{pull.get('number')}:{sha[:12]}"
 
 
+def tree_findings(client: GitHub, sha: str, pull: dict, now: datetime) -> list[dict]:
+    """The findings of one PR by tree: its head's check runs, and for a merged PR the main push of a merge commit
+    that has the head's tree (the tree is read off the runs' head_commit, no extra request)."""
+    checks = read_check_runs(client, sha)
+    workflows = read_workflow_runs(client, sha)
+    trees = {record["tree"] for record in workflows.values() if record.get("head_sha") == sha and record.get("tree")}
+    tree = next(iter(trees)) if len(trees) == 1 else None
+    merge = pull.get("merge_commit_sha") if pull.get("merged_at") else None
+    if tree and isinstance(merge, str) and merge and merge != sha:
+        paths = {record["path"] for record in workflows.values() if record.get("path")}
+        extra, extra_workflows = merge_push_checks(client, merge, tree, paths)
+        checks = checks + extra
+        workflows = {**workflows, **extra_workflows}
+    cache: dict[int, dict[int, int]] = {}
+
+    def attempts_of(run_id: int) -> dict[int, int]:
+        if run_id not in cache:
+            try:
+                cache[run_id] = {job["id"]: job.get("run_attempt") for job in read_run_jobs(client, run_id) if "id" in job}
+            except BudgetLow:
+                raise
+            except (RequestError, OSError, RuntimeError):
+                cache[run_id] = {}  # the attempt is a detail of the row: unread, it is left out
+        return cache[run_id]
+
+    return duplicate_findings(sha, pull, checks, workflows, now, attempts_of, tree)
+
+
 def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
     """Duplicate runs on the heads of the PRs updated in the last DUP_LOOKBACK.
 
@@ -879,7 +982,7 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
         if client.low():
             raise BudgetLow("额度不足，未读完")
         try:
-            findings = duplicate_findings(sha, pull, read_check_runs(client, sha), read_workflow_runs(client, sha), now)
+            findings = tree_findings(client, sha, pull, now)
         except RequestError as error:
             if error.code not in DUP_SKIP_CODES:
                 raise
@@ -1012,8 +1115,8 @@ def render(report: dict, state: dict) -> str:
                          f"{shown(m['queue_wait_minutes_median'])}/{shown(m['queue_wait_minutes_p90'])} | "
                          f"{shown(m['batch_minutes_median'])} | {m['retries']} | {m['burned_heads']} |")
     duplicates = report.get("duplicates") or {}
-    lines += ["", f"### 重复执行（规则 41ab823a：同一提交的同一检查只真跑一次；最近 {DUP_LOOKBACK.days} 天，"
-              f"{duplicates.get('as_of') or '尚未采集'}）", ""]
+    lines += ["", f"### 重复执行（规则 41ab823a：同一棵树的同一检查只真跑一次，PR head 与其同树的合并提交算一棵树；"
+              f"最近 {DUP_LOOKBACK.days} 天，{duplicates.get('as_of') or '尚未采集'}）", ""]
     if not duplicates.get("as_of"):
         lines.append("尚未采集（需要 checks: read；读取失败见页末说明）。")
     elif duplicates.get("omitted"):
@@ -1022,8 +1125,8 @@ def render(report: dict, state: dict) -> str:
         lines.append(f"没有发现：读了 {duplicates.get('heads_read', 0)} 个提交，没有同一检查真跑两次及以上。"
                      "取消、跳过、常驻的准入与第 8 段复查不算真跑。")
     else:
-        lines += ["| PR | 提交 | 检查 | 真跑次数 | 构成 | 原因 | 最近一次 |", "|---|---|---|---|---|---|---|"]
-        why = {"after-merge": "合并后又被调度", "cross-executor": "托管与常驻各跑一次", "same-executor": "同一执行方重复"}
+        lines += ["“通过后又跑”违反规则并告警；“失败后重试”只列出。", "",
+                  "| PR | 提交 | 检查 | 真跑次数 | 类别 | 构成 | 原因 | 最近一次 |", "|---|---|---|---|---|---|---|---|"]
         for item in duplicates["found"]:
             who = {"resident": "常驻", "hosted": "托管"}
             parts = "、".join(f"{who.get(r['executor'], cell(r['executor']))}{('#' + str(r['attempt'])) if r.get('attempt') else ''}"
@@ -1031,8 +1134,9 @@ def render(report: dict, state: dict) -> str:
             if not parts and item.get("mix"):  # the run details were shrunk away; the split stays
                 parts = "、".join(f"{who.get(e, cell(e))} {n}" for e, n in item["mix"].items())
             parts = parts or "—"
-            lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item.get('label') or item['check'])} | {item['count']} | {parts} | "
-                         f"{'；'.join(why[c] for c in item.get('causes') or []) or '—'} | {item['last']} |")
+            lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item.get('label') or item['check'])} | {item['count']} | "
+                         f"{KIND_TEXT.get(item.get('kind'), '—')} | {parts} | "
+                         f"{'；'.join(CAUSE_TEXT.get(c, cell(c)) for c in item.get('causes') or []) or '—'} | {item['last']} |")
         if duplicates.get("total", 0) > len(duplicates["found"]):
             lines.append(f"共 {duplicates['total']} 项，只列最近 {len(duplicates['found'])} 项。")
     if duplicates.get("skipped"):
@@ -1125,6 +1229,8 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
                 mark_announced(state, [duplicate_key(item) for item in items if item["head"] in was_quiet - unreadable])
     events: dict[str, str] = {}
     for item in items:
+        if item.get("kind") == "retry":
+            continue  # a retry after failures is allowed: it is listed in the table, never announced
         key = duplicate_key(item)
         if not is_announced(state, key):  # only what is still to be said: already announced ones stay out of the report
             events[key] = duplicate_event(item)[1]

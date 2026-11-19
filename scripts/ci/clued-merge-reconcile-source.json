@@ -392,9 +392,9 @@
 
     "scripts/ci/clued-publisher-qualification-sources.json": "8e98ef45ce2c093b3c9631e03e8deebc086abfa5b32cd3605ac9b23cf48f356c",
 
-    "scripts/ci/clued-push-reuse.mjs": "ed0554e62d88becd474f43c5e50c454d9714840c561b1d25894d793595365c65",
+    "scripts/ci/clued-push-reuse.mjs": "124bce927dfdf33cde8438bc3e6ab0ec9f0c903f5cb698235f752c319e8d520f",
 
-    "scripts/ci/clued-push-reuse.test.mjs": "065b8ba38b4e4c1c0a21aae81708fa092ef500707bbbecacd26562b4181ac1b7",
+    "scripts/ci/clued-push-reuse.test.mjs": "25f1a5a7539e40e01aba2b17152828e9491e28819bf6f9eef6738abf564ff16a",
 
     "scripts/ci/clued-reader-budget-cache.test.mjs": "14f3560b2ecdd7808f8d5048a49e8acbb58ee39e6203230d5d6a7097e29003fc",
 
@@ -426,9 +426,9 @@
 
     "scripts/ci/clued-standard-runner-actor-sources.json": "40c246c854ef965e5c2922e0ecb0de55e31110cf33eb93bcd4bc12416a8274d5",
 
-    "scripts/ci/clued-work-admission.mjs": "0ef84cb6a0c46653f1694410dc20844b207b3e0a1d698128595be665bda928d5",
+    "scripts/ci/clued-work-admission.mjs": "9f27bc661cd047bd53b8f88d6d31ed2bc52effe37e99e3b5fb0b75bee2ba5dce",
 
-    "scripts/ci/clued-work-admission.test.mjs": "0f161a6555a348dcb706ad09d00713fd35c5778935d6ae90a36332b91bc62137",
+    "scripts/ci/clued-work-admission.test.mjs": "ee88c494bd192d7c6a4276a37cc346707927903f4cc1d5163913dc9120c2564f",
 
     "scripts/ci/clued-work-claim-handover.mjs": "6f97b05d540e32f7d3460fcd012fc662f52f34e236fa12cf2b4075cc424748b4",
 
@@ -455,6 +455,8 @@
     "scripts/ci/fixtures/heartbeat-pr890-strategy-shrink.v1.json": "985ec57c0722daa9e2de230f39ab5a4f075f404f799933f9f8d2d0931cdddb43",
 
     "scripts/ci/fixtures/hosted-migration-source-history.v1.json": "3171be2d3c7f557ef3faced4a7bef558376416892c3c187e45c54e53242a133f",
+
+    "scripts/ci/fixtures/main-push-tree-reuse-1178.json": "aaa964f190dfde247e7b820822982018728e04f58b60d6dce7ecfa9cbf3d80ce",
 
     "scripts/ci/fixtures/production-publisher-source-history.v1.json": "4a3fce0d4cf0e5a3a4148853a718dbf7b5fa02222cdd23d5d434eb2b62b0aca7",
 
@@ -528,7 +530,7 @@
 
     "scripts/ci/merge-admission-r9-runtime-inputs.mjs": "272b3fbd957db86473605675209142c4d7d2548856dc44817cec3e935cf6675b",
 
-    "scripts/ci/merge-admission-r9-source.json": "13f1735e66583fc053892809577d3226985d507eb535c73498602a770474272c",
+    "scripts/ci/merge-admission-r9-source.json": "e39546d20defb7410b992926bfcca01f3f3f3b6afdb97db95d34361095054dd0",
 
     "scripts/ci/merge-admission-source-producer.mjs": "44334c9f8ecef3d4a1ad45329709a3efc8d3e456042c82a97145f6c979ebadfd",
 
@@ -576,7 +578,7 @@
 
     "scripts/ci/self-hosted/ci_health_transport.py": "80b699350b6a3d2583c2332f00dceed6d9259c0b594b15df30121c2a624712a4",
 
-    "scripts/ci/self-hosted/compute_panel.py": "9b26eb6c16f8fbc97ee15c7c1c7582ab2478927e487c8a4c8d2a0a6717c0de59",
+    "scripts/ci/self-hosted/compute_panel.py": "9ac2ed35e8561d2f88a84c77da1177e17d1206b55be76b6bb4bc6707fa79714d",
 
     "scripts/ci/self-hosted/host-port-lock.sh": "87d437f440d5feb16ccc0651ee105e821e9cace6483b3a6cded2d02750abbd7e",
 
