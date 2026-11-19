@@ -78,9 +78,9 @@ jobs:
           CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
-  # After the push baseline (git only), one step selects and runs, on the
-  # runner's own Node 24 and Python 3.12 (cap-node24, cap-python312; nothing is
-  # downloaded).
+  # One step selects and runs, on the runner's own Node 24 and Python 3.12
+  # (cap-node24, cap-python312; nothing is downloaded), after the push baseline
+  # (git only).
   ci-suites-windows:
     name: >-
       ${{ needs.admission-gate.outputs.admitted == 'true' &&

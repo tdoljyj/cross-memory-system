@@ -1171,7 +1171,7 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 
 // Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
 test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.6");
+  assert.equal(COMPONENT_VERSION, "1.0.7");
   const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
   const component = manifest.components.find((c) => c.id === "hook.runner-job-started");
   assert.deepEqual([component.version, component.files, component.version_marker.file], [COMPONENT_VERSION, ["clued-runner-job-started.mjs"], "clued-runner-job-started.mjs"]);

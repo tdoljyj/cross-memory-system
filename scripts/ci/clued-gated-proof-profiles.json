@@ -6383,7 +6383,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "ef5f22f608b1ecb2b4ef85e567a80cea91bd9cf18172276c15e7edadc9770918",
+      "source_sha256": "d5175ce1cdaafc1e2890067f6b2262794c60210e501e6d7efd74f7ba59cfabb2",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6465,9 +6465,9 @@
 "          CLUED_ADMISSION_GATE_WAIT_SECONDS: \"600\"",
 "        run: node scripts/ci/clued-work-admission.mjs --mode gate",
 "",
-"  # After the push baseline (git only), one step selects and runs, on the",
-"  # runner's own Node 24 and Python 3.12 (cap-node24, cap-python312; nothing is",
-"  # downloaded).",
+"  # One step selects and runs, on the runner's own Node 24 and Python 3.12",
+"  # (cap-node24, cap-python312; nothing is downloaded), after the push baseline",
+"  # (git only).",
 "  ci-suites-windows:",
 "    name: >-",
 "      ${{ needs.admission-gate.outputs.admitted == 'true' &&",
@@ -6545,7 +6545,7 @@
 "          exit $LASTEXITCODE",
 ""
       ],
-      "workflow_blob": "6127b9d1df351204db21e99c629a4f82c47e9a83"
+      "workflow_blob": "990774a2a29a7a024517d26b98d72258981414a9"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
