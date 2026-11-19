@@ -13,7 +13,7 @@
 `$RequiredCredentialFiles`（必需）与 `$OptionalCredentialFiles`（可选），记进 kit 的 `credentials`；读不出这两组的包拒绝建 kit
 （`DRILL_PACKAGE_CREDENTIALS_UNREADABLE`）。开机前：kit 的名单按已核的 tar 重新读出比对，不一致即拒绝（`DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES`）；
 必需的名字演练造不出来即拒绝（`DRILL_CREDENTIAL_REQUIRED_NOT_MADE`，detail 为名字）；可选的名字演练必须有显式决定，没有决定即拒绝
-（`DRILL_CREDENTIAL_OPTIONAL_UNDECIDED`）。包没声明的名字不生成、不交付。决定写在 `drill-vm.ps1` 的 `$script:DrillCredentialDecisions`，
+（`DRILL_CREDENTIAL_OPTIONAL_UNDECIDED`）。包没声明的名字不生成、不交付。决定写在 `drill/credential-decisions.json`（`drill-vm.ps1` 读成 `$script:DrillCredentialDecisions`，建 kit 也读它：给出且带 `perNodeStep` 的名字，不论在必需组还是可选组，都在 kit 的单节点步骤里登记一步），
 回执 `credentials` 列出本次给了的与本次未给的可选凭据（含理由）。
 
 构建器把三处绕过写进 perNodeSteps，被演练的包把陪伴令牌列为必需时再加陪伴令牌替身一条；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。

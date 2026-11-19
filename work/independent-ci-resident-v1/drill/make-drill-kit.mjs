@@ -127,6 +127,14 @@ export function credentialsOfTar(tarBytes) {
   return packageCredentials(hostScript.data.toString('utf8'));
 }
 
+// The drill's decision for each credential name (give, with the fake file; or withhold, with the reason), the one table drill-vm.ps1 reads
+// as well. A name given with a perNodeStep is a stand-in the run makes and hands over: the kit registers that step (Codex review of
+// f33fc33e5, medium 4).
+export const CREDENTIAL_DECISIONS = Object.freeze(JSON.parse(fs.readFileSync(new URL('./credential-decisions.json', import.meta.url), 'utf8')).decisions);
+const standInSteps = credentials => [...Object.values(credentials?.required ?? {}), ...Object.values(credentials?.optional ?? {})]
+  .filter(n => CREDENTIAL_DECISIONS[n]?.give === true && typeof CREDENTIAL_DECISIONS[n].perNodeStep === 'string')
+  .map(n => CREDENTIAL_DECISIONS[n].perNodeStep);
+
 export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
   const prereq = JSON.parse(prereqBytes.toString('utf8'));
@@ -136,10 +144,8 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
   return { contract: 'clued.drill.first-install-kit/1',
     files: names.map(name => ({ path: name, sha256: sha256(payloads[name]) })),
     entry: { file: 'first-install-entry.ps1', arguments: ['-From', '{from}', '-Kit', '{kit}', '-Fake', '{fake}', '-Work', '{work}', '-Version', '{version}'] },
-    // the companion token stand-in is a step only for a package that requires the token (its credential groups; the drill makes it then)
-    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口',
-      ...(Object.values(credentials?.required ?? {}).includes('companion-github.token')
-        ? ['陪伴 GitHub 经典令牌替身（替的是 Owner 在凭据窗口给的陪伴 GitHub 经典令牌；因为演练不得使用真凭据；因此没验到令牌被 GitHub 接受、陪伴访问 GitHub 的各个通道；不可删，没验到的部分由真机首装后的运行状态承担）'] : [])], prereqSha256: sha256(prereqBytes),
+    // a stand-in step for every name the package names and the drill makes and hands over (the decision table), required or optional
+    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', ...standInSteps(credentials)], prereqSha256: sha256(prereqBytes),
     // The real first-install host owns WSL import, Docker and accounts, from S0.
     prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(credentials ? { credentials } : {}) };
 }

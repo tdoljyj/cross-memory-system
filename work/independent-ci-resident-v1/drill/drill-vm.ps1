@@ -544,16 +544,17 @@ function Read-DrillKit([string]$Dir) {
 # "heartbeat token and restart code"): give it -- New-DrillFakeCredentials makes the file under `fake`, the entry's copy table hands it
 # over under the package's name -- or withhold it by design, with the reason. Neither side has a default: a required name the drill
 # cannot give, or an optional name with no decision here, refuses the drill before any boot (Get-DrillCredentialPlan). Registered in
-# FIRST-INSTALL-KIT.md (stand-in register); the receipt lists the optional ones withheld.
-$script:DrillCredentialDecisions = [ordered]@{
-  'app-private-key.pem' = [ordered]@{ give = $true; fake = 'app-key.pem' }
-  'ci-admission.token' = [ordered]@{ give = $true; fake = 'ci-admission.token' }
-  'resident-upgrade.token' = [ordered]@{ give = $true; fake = 'resident-upgrade.token' }
-  'public.json' = [ordered]@{ give = $true; fake = 'public.json' }
-  # the companion GitHub classic token stand-in (branch one's generator; made only when the package requires the name)
-  'companion-github.token' = [ordered]@{ give = $true; fake = 'companion-github.token' }
-  'ci-node-heartbeat.token' = [ordered]@{ give = $false; reason = 'a fake token would make the guest''s resident send requests to the production heartbeat endpoint: the guest would behave otherwise and the drill''s production read-back would no longer be zero' }
+# FIRST-INSTALL-KIT.md (stand-in register); the receipt lists the optional ones withheld. The table is drill/credential-decisions.json, the
+# one source make-drill-kit.mjs reads too: a name given there with a perNodeStep is registered in the kit's per-node steps whenever the
+# package names it, required or optional, exactly as the run makes and hands it over (Codex review of f33fc33e5, medium 4).
+function Read-DrillCredentialDecisions([string]$File) {
+  $t = [IO.File]::ReadAllText($File, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+  if ([string]$t.contract -cne 'clued.drill.credential-decisions/1') { throw (New-DrillError 'DRILL_CREDENTIAL_DECISIONS_REFUSED' $File) }
+  $o = [ordered]@{}
+  foreach ($p in $t.decisions.PSObject.Properties) { $d = [ordered]@{}; foreach ($f in $p.Value.PSObject.Properties) { $d[$f.Name] = $f.Value }; $o[$p.Name] = $d }
+  $o
 }
+$script:DrillCredentialDecisions = Read-DrillCredentialDecisions (Join-Path $PSScriptRoot 'credential-decisions.json')
 
 # The kit's credential names bound again to the package being drilled (Codex review of e0a3cded5, high 2): derived from the verified tar
 # by the one reader (make-drill-kit.mjs --credentials-of) and compared with the kit's, group by group and name by name; any difference
