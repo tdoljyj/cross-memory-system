@@ -855,7 +855,7 @@ console.log(JSON.stringify({ status: process.argv[2] === 'request-intake-pause' 
 // The argv of an intake request, apart from its execution (a pure function): node is the executable, the tool its first argument.
 test('the intake request argv: the tool, the verb, the root, the drill holder; minutes only with a pause', opts, () => {
   const r = ps(`$t = @{ root = 'R:\\root'; node = 'N:\\node.exe'; tool = 'T:\\rearm-tool.mjs' }
-    @{ pause = @(Get-DrillIntakeArguments $t pause 80); resume = @(Get-DrillIntakeArguments $t resume 0) }`);
+    @{ pause = (Get-DrillIntakeArguments $t pause 80); resume = (Get-DrillIntakeArguments $t resume 0) }`);   // the function returns the array whole
   assert.deepEqual(r.pause, ['T:\\rearm-tool.mjs', 'request-intake-pause', '--root', 'R:\\root', '--holder', 'drill', '--reason', 'first-install drill', '--minutes', '80']);
   assert.deepEqual(r.resume, ['T:\\rearm-tool.mjs', 'request-intake-resume', '--root', 'R:\\root', '--holder', 'drill', '--reason', 'first-install drill']);
   assert.ok(!r.pause.includes('N:\\node.exe') && !r.resume.includes('N:\\node.exe'), 'node is the executable, not an argument');
