@@ -79,7 +79,8 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // That change only runs the resume/renew inbox-summary read beside the live-claims read (Task 8ba4ef85); C1 audit tool, RPC mapping, error mapping and REST route are unchanged.
   // T3 changes scheduled dispatch and post-write projection wakeups; #1161 adds the exact /v1/github/events
   // dispatch before ordinary tracing. Other paths still go through the original CI and audit handling.
-  assert.equal(hash(workerSource),'eb04c7a77572982d30979c928759c627e1af62fdb8f2f0c183c89621911a7005');
+  // Database configuration now shares the same defaults with both Worker gateways. C1 audit transport is unchanged.
+  assert.equal(hash(workerSource),'d4bfa2ad260fddff58ae7a40d8684d59aa0264c72fa9b6c04a5001b0a264f3a2');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

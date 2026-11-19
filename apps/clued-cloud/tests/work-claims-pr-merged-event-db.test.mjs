@@ -113,21 +113,21 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
     const messages = async id => (await admin.query(`select
       (select count(*)::int from clued_private.agent_messages_v1 where to_claim_id=$1::uuid) as inbox,
       (select count(*)::int from public.clued_audit_receipts where operation='agent_message_send' and metadata->>'to_claim_id'=$1::uuid::text) as sent`, [id])).rows[0];
-    const checkSilentRelease = async (r, pr) => {
+    const checkSilentRelease = async (r, pr, status = 'merged') => {
       const id = r.claim.claim_id;
       const record = await state(id);
       assert.equal(record.status, 'RELEASED');
       assert.equal(record.released_by, 'pr_end');
       assert.ok(record.released_at);
-      assert.equal(record.released_evidence_ref, repository + '#' + pr + '@' + mergeSha);
+      assert.equal(record.released_evidence_ref, repository + '#' + pr + (status === 'merged' ? '@' + mergeSha : ''));
       const audit = await receipts(id);
       assert.equal(audit.length, 1);
       assert.equal(audit[0].binding_id, ids.holder);
       assert.equal(audit[0].metadata.released_by_binding_id, null);
       assert.equal(audit[0].metadata.released_evidence_ref, record.released_evidence_ref);
       const finish = await admin.query(`select binding_id from public.clued_audit_receipts
-        where user_id=$1 and operation='work_claim_pr_task_finish' and object_id=$2 and metadata->>'status'='merged'`,
-      [user, r.claim.task_id]);
+        where user_id=$1 and operation='work_claim_pr_task_finish' and object_id=$2 and metadata->>'status'=$3`,
+      [user, r.claim.task_id, status]);
       assert.deepEqual(finish.rows, [{ binding_id: null }]);
       assert.deepEqual(await messages(id), { inbox: 0, sent: 0 });
       assert.ok(!notices.some(message => message.includes('work_claim_pr_end_notification_skipped')));
@@ -153,7 +153,23 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
       assert.equal(late.binding_receipt_id, null);
       assert.equal(await binding(1161), 'merged');
       assert.deepEqual(await event(input(1161)), empty);
+      assert.deepEqual(await event({ ...input(1161), merged: false, merge_sha: null }), empty);
+      assert.equal(await binding(1161), 'merged');
       await checkSilentRelease(r, 1161);
+    });
+
+    await t.test('关闭未合入事件释放认领，重复投递不产生回执或收件箱消息', async () => {
+      const { r, retry } = await contention(1163);
+      const closed = { ...input(1163), merged: false, merge_sha: null };
+      assert.deepEqual(await event(closed), { status: 'ok', finished: 1, released: [r.claim.claim_id] });
+      committed(await retry());
+      assert.equal(await binding(1163), 'closed');
+      assert.deepEqual(await event(closed), empty);
+      await checkSilentRelease(r, 1163, 'closed');
+      // 重新打开后确实合入的 PR 可以更新为 merged，已释放的认领只保留原回执。
+      assert.deepEqual(await event(input(1163)), { status: 'ok', finished: 1, released: [] });
+      assert.equal(await binding(1163), 'merged');
+      assert.equal((await receipts(r.claim.claim_id)).length, 1);
     });
 
     await t.test('#1161 签名投递经过 Worker 和数据库网关后，冲突路径可立即认领', async t => {
@@ -214,6 +230,11 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
     });
 
     await t.test('只有网关可以调用，畸形输入被拒绝，未知 PR 返回零行', async () => {
+      const helper = 'clued_private.work_claim_pr_end_v1(public.clued_agent_bindings,text,text,text,text)';
+      for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
+        const { rows } = await admin.query('select has_function_privilege($1,$2,\'EXECUTE\') as allowed', [role, helper]);
+        assert.equal(rows[0].allowed, false, role);
+      }
       for (const role of ['anon', 'authenticated', 'service_role']) {
         const caller = await connect();
         await caller.query('set role ' + role);
@@ -223,7 +244,8 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
       assert.deepEqual(await event({ ...input(404), repository: 'unknown/repo', merge_sha: null }), empty);
       for (const bad of [null, [], {}, { repository, pr_number: 1 }, { ...input(1), extra: true },
         { ...input(1), repository: 'bad' }, input(-1), input(1.5), input('1'), input(10000000000),
-        { ...input(1), merge_sha: '123abcd' }, { ...input(1), merge_sha: 1 }]) {
+        { ...input(1), merge_sha: '123abcd' }, { ...input(1), merge_sha: 1 },
+        { ...input(1), merged: 'false' }, { ...input(1), merged: null }]) {
         await assert.rejects(() => event(bad), { code: '22023' });
       }
     });

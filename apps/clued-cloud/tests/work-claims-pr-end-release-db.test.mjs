@@ -1,5 +1,5 @@
 // Terminal admission is removed (20261113151000). A PR's end through adopt (merged) or
-// merge_slot_return (closed) releases the claim that served it when the Task has no other
+// an explicit GitHub closure releases the claim that served it when the Task has no other
 // open PR and the claim authorized no newer head; the judgment never changes adopt/return.
 import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
@@ -74,8 +74,8 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       idempotency_key: uuid(), authority: 'observed', confidence_reason: 'isolated binding fixture', source_refs: [], source_unavailable_reason: 'fixture',
       mutation: { title: uuid(), content: 'fixture', type_fields: { execution_bucket: 'next' }, relations: {} },
     })).target_refs[0].id;
-    const claim = async (task_id, session = uuid(), scope = 'global') => committed(await call('holder', 'clued_work_claim_v1', {
-      task_id, scope, write_set: ['fixture/' + task_id + '/main.mjs'], holder_label: 'pr-end fixture', holder_session_ref: session, idempotency_key: uuid() }));
+    const claim = async (task_id, session = uuid(), scope = 'global', trigger_refs = []) => committed(await call('holder', 'clued_work_claim_v1', {
+      task_id, scope, trigger_refs, write_set: ['fixture/' + task_id + '/main.mjs'], holder_label: 'pr-end fixture', holder_session_ref: session, idempotency_key: uuid() }));
     const authorize = (r, head, pr, extra = {}) => call('holder', 'clued_work_renew_v1', {
       scope: r.claim.context_key, action: 'authorize_head', claim_id: r.claim.claim_id, fence: r.claim.fence,
       lease_version: r.claim.lease_version, lease_key: r.lease_key, repository: repo, head_sha: head,
@@ -96,13 +96,86 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       return result;
     };
     const adopt = n => call('ci','clued_work_claim_adopt_v1',{scope:'global',pr_ref:repo+'#'+n,merge_sha:'f'.repeat(40)});
-    const giveBack = n => call('ci','clued_work_merge_slot_return_v1',{scope:'global',pr_ref:repo+'#'+n});
+    const giveBack = (n, extra = {}) => call('ci','clued_work_merge_slot_return_v1',{scope:'global',pr_ref:repo+'#'+n,...extra});
     const binding = async n => (await admin.query('select status from clued_private.work_claim_pr_task_bindings_v1 where repo_id=$1 and pr_number=$2',[repo,n])).rows[0]?.status;
 
     const releaseInfo = async r => (await admin.query('select to_jsonb(c) value from clued_private.work_claims_v1 c where claim_id=$1', [r.claim.claim_id])).rows[0].value;
     const inbox = async r => (await call('holder', 'clued_agent_inbox_v1', {
       session_ref: r.claim.holder_session_ref, view: 'unread', mark_read: false,
     })).messages.filter(m => m.to_claim_id === r.claim.claim_id);
+    const slot = 'merge:' + repo + ':main';
+    await t.test('#1166 检查失败让槽后，同一认领重新入队、通过准入并在合入时释放', async () => {
+      const head = '6'.repeat(40), mergeSha = 'f'.repeat(40);
+      const r = await claim(await task(), uuid(), 'global', [slot]);
+      assert.ok(r.claim.merge_slot_until);
+      await admitted(r, 1166, head);
+      const endReceipts = async () => (await admin.query(`select operation from public.clued_audit_receipts
+        where user_id=$1 and ((object_id=$2 and operation='work_claim_pr_task_finish')
+          or (object_id=$3 and operation='work_claim_release'))`, [user, r.claim.task_id, r.claim.claim_id])).rows;
+      assert.deepEqual(await endReceipts(), []);
+      const result = await giveBack(1166);
+      assert.equal(result.returned, true);
+      assert.deepEqual(result.merge_slot_returned, [r.claim.claim_id]);
+      const after = await releaseInfo(r);
+      assert.deepEqual({
+        binding: await binding(1166), claim: after.status, releasedBy: after.released_by,
+        refs: after.trigger_refs, slotAt: after.merge_slot_at, receipt: result.binding_receipt_id,
+        endReceipts: await endReceipts(), inbox: (await inbox(r)).length,
+      }, { binding: 'active', claim: 'ACTIVE', releasedBy: null, refs: [], slotAt: null, receipt: null, endReceipts: [], inbox: 0 });
+      const renewed = committed(await call('holder', 'clued_work_renew_v1', {
+        scope: 'global', claim_id: r.claim.claim_id, fence: r.claim.fence, lease_version: after.lease_version,
+        lease_key: r.lease_key, trigger_refs: [slot], progress_ref: 'fixture:' + uuid(),
+      }));
+      assert.equal(renewed.claim.claim_id, r.claim.claim_id);
+      assert.ok(renewed.claim.merge_slot_until);
+      assert.equal((await verify('ci', r, 1166, head)).verdict, 'ADMITTED');
+      const event = await gateway.query('select public.clued_work_pr_merged_event_v1($1) as result',
+        [{ repository: repo, pr_number: 1166, merge_sha: mergeSha }]);
+      assert.deepEqual(event.rows[0].result, { status: 'ok', finished: 1, released: [r.claim.claim_id] });
+      const ended = await releaseInfo(r);
+      assert.deepEqual([await binding(1166), ended.status, ended.released_by, ended.released_evidence_ref],
+        ['merged', 'RELEASED', 'pr_end', repo + '#1166@' + mergeSha]);
+    });
+    await t.test('#1151 同 Task 另有打开的 PR 时保留槽和两个绑定', async () => {
+      const r = await claim(await task(), uuid(), 'global', [slot]);
+      await admitted(r, 1151, '1'.repeat(40));
+      await admitted(r, 1152, '2'.repeat(40));
+      const result = await giveBack(1151);
+      assert.equal(result.returned, false);
+      assert.deepEqual(result.merge_slot_returned, []);
+      assert.equal(await binding(1151), 'active');
+      assert.equal(await binding(1152), 'active');
+      assert.deepEqual((await releaseInfo(r)).trigger_refs, [slot]);
+      committed(await release(r));
+    });
+    await t.test('非法 GitHub 状态被拒绝，迟到的关闭让槽保留 merged', async () => {
+      const r = await claim(await task());
+      await admitted(r, 106, '6'.repeat(40));
+      for (const value of ['open', 'merged', '', null, false, {}]) {
+        await assert.rejects(() => giveBack(106, { github_state: value }), { code: '22023', message: 'work_claim_merge_slot_return_input_invalid' });
+      }
+      assert.equal(await binding(106), 'active');
+      assert.equal((await adopt(106)).status, 'ok');
+      assert.equal((await giveBack(106, { github_state: 'closed' })).binding_receipt_id, null);
+      assert.equal(await binding(106), 'merged');
+    });
+    await t.test('关闭释放后，新认领可在原 Task 上重新授权、发现并准入同一 PR', async () => {
+      const taskId = await task(), head = '7'.repeat(40);
+      const first = await claim(taskId);
+      await admitted(first, 107, head);
+      // 重现旧版本已经写入的终态，恢复动作从这个历史状态开始。
+      await admin.query(`select clued_private.work_claim_pr_finish_v1(b,'global',$2,'closed')
+        from public.clued_agent_bindings b where b.id=$1`, [ids.ci, repo + '#107']);
+      await admin.query(`select clued_private.work_claim_pr_end_release_v1(b,'global',$2,null)
+        from public.clued_agent_bindings b where b.id=$1`, [ids.ci, repo + '#107']);
+      assert.equal(await binding(107), 'closed');
+      assert.equal((await releaseInfo(first)).released_by, 'pr_end');
+      const next = await claim(taskId);
+      assert.notEqual(next.claim.claim_id, first.claim.claim_id);
+      await admitted(next, 107, head);
+      assert.equal(await binding(107), 'active');
+      committed(await release(next));
+    });
     await t.test('PR merge records its source and merge SHA and notifies only the original holder once', async () => {
       const r = await claim(await task()); await admitted(r, 101, 'a'.repeat(40));
       assert.equal((await adopt(101)).status, 'ok');
@@ -154,7 +227,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
     });
     await t.test('closed PR notification has no invented SHA; disabling messages preserves release metadata', async () => {
       const r = await claim(await task()); await admitted(r, 103, 'c'.repeat(40));
-      assert.equal((await giveBack(103)).status, 'ok');
+      assert.equal((await giveBack(103, { github_state: 'closed' })).status, 'ok');
       assert.equal((await releaseInfo(r)).released_evidence_ref, repo + '#103');
       assert.match((await inbox(r))[0].body, /关闭（合并 SHA 不可得）/);
       const c = await claim(await task()); await admitted(c, 104, 'd'.repeat(40));
@@ -311,7 +384,7 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
       committed(await release(next));
       // A closed (not merged) PR ends the same way through return.
       const c=await claim(await task());await admitted(c,4,'4'.repeat(40));
-      assert.equal((await giveBack(4)).status,'ok');assert.equal(await binding(4),'closed');
+      assert.equal((await giveBack(4, { github_state: 'closed' })).status,'ok');assert.equal(await binding(4),'closed');
       assert.equal((await row(c)).status,'RELEASED');
     });
     await t.test('2. another open PR of the same claim keeps it',async()=>{
