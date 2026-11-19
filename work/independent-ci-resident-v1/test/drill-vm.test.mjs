@@ -31,8 +31,13 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 // A package's two credential constants (Fable renew-key ruling, supplement "heartbeat token and restart code"), as the host preparation
 // script declares them; make-drill-kit.mjs packageCredentials reads them.
-const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', ciToken: 'ci-admission.token', upgradeToken: 'resident-upgrade.token', public: 'public.json' },
+// The drilled package's two credential groups as the package branch declares them (913be48ca, windows/first-install-host.ps1:114-115): the
+// companion token required, the heartbeat token the only optional one. The positive cases use this shape.
+const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', ciToken: 'ci-admission.token', upgradeToken: 'resident-upgrade.token', public: 'public.json', companionToken: 'companion-github.token' },
   optional: { heartbeatToken: 'ci-node-heartbeat.token' } };
+// The older one-constant form (no required/optional split): the one fixture of it, for the refusal "a package that does not tell required
+// from optional gets no kit".
+const ONE_CONSTANT_HOST_TEXT = "$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token' }\r\n";
 const hostScriptText = (c = PACKAGE_CREDENTIALS) => {
   const lit = o => '[ordered]@{ ' + Object.entries(o).map(([k, v]) => `${k} = '${v}'`).join('; ') + ' }';
   return `# host preparation\r\n$RequiredCredentialFiles = ${lit(c.required)}\r\n$OptionalCredentialFiles = ${lit(c.optional)}\r\n`;
@@ -102,17 +107,17 @@ test('a declared entry blocker stops the full drill before its host or VM gate',
 test('kit manifest is deterministic, pins exact bytes and uses only guest placeholders', () => {
   const inputs = { payloads: { 'release-pins.json': Buffer.from('{}'), 'first-install-entry.ps1': Buffer.from('entry') },
     prereqBytes: Buffer.from('{"contract":"clued.drill.prereq/1"}\r\n') };
-  // a package that requires the companion token (its credential groups): the stand-in is one of the per-node steps (integration)
-  const withCompanion = { ...PACKAGE_CREDENTIALS, required: { ...PACKAGE_CREDENTIALS.required, companionToken: 'companion-github.token' } };
-  const manifest = drillKitManifest({ ...inputs, credentials: withCompanion });
-  assert.deepEqual(drillKitManifest({ ...inputs, credentials: withCompanion }), manifest);
+  // the package requires the companion token (its credential groups): the stand-in is one of the per-node steps (integration)
+  const manifest = drillKitManifest({ ...inputs, credentials: PACKAGE_CREDENTIALS });
+  assert.deepEqual(drillKitManifest({ ...inputs, credentials: PACKAGE_CREDENTIALS }), manifest);
   assert.equal(manifest.prereqSha256, sha(inputs.prereqBytes));
   // the three bypassed shell points and the companion GitHub token stand-in (Fable renew-key ruling, supplement "token pending"
   // section 1C): what it replaces, why, what it leaves unverified, and that it is never removed. The Expand-Cached stand-in is gone
   // (#1154 fixed the package's function; supplement "companion account and evidence" section 3).
   assert.equal(manifest.perNodeSteps.length, 4);
   // a package that does not require it: no stand-in, no step for it
-  assert.equal(drillKitManifest({ ...inputs, credentials: PACKAGE_CREDENTIALS }).perNodeSteps.length, 3);
+  const { companionToken, ...noCompanion } = PACKAGE_CREDENTIALS.required;
+  assert.equal(drillKitManifest({ ...inputs, credentials: { ...PACKAGE_CREDENTIALS, required: noCompanion } }).perNodeSteps.length, 3);
   assert.match(manifest.perNodeSteps.join(" "), /非提权.*RunAs.*凭据窗口.*陪伴 GitHub 经典令牌替身/);
   assert.match(manifest.perNodeSteps[3], /凭据窗口.*真凭据.*GitHub 接受.*通道.*不可删.*真机首装/);
   assert.doesNotMatch(manifest.perNodeSteps.join(" "), /Expand-Cached|短路径/);
@@ -168,7 +173,7 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
   for (const item of manifest.files) assert.equal(sha(fs.readFileSync(path.join(f.out, item.path))), item.sha256);
   // the drilled package's two credential groups go into the kit; a package that does not declare them gets no kit
   assert.deepEqual(manifest.credentials, PACKAGE_CREDENTIALS);
-  const oneConstant = firstInstallAssets('assembly-one-constant', { hostText: "$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token' }\r\n" });
+  const oneConstant = firstInstallAssets('assembly-one-constant', { hostText: ONE_CONSTANT_HOST_TEXT });
   prepareFrom({ ...oneConstant, out: oneConstant.from });
   await assert.rejects(() => makeDrillKit(oneConstant), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
   assert.ok(!fs.existsSync(oneConstant.out), 'refused before writing a kit');
@@ -192,8 +197,7 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
 });
 
 // The package branch's two constants as they stand at 913be48ca (work/independent-ci-resident-v1/windows/first-install-host.ps1:114-115),
-// verbatim: the companion token is in the required group, the heartbeat token the only optional one. (The fixture PACKAGE_CREDENTIALS
-// above is an older shape without it; the integration report's "not in the required group" was read from that fixture -- corrected here.)
+// verbatim: the companion token is in the required group, the heartbeat token the only optional one (PACKAGE_CREDENTIALS is this shape).
 const HOST_LINES_913BE48CA = [
   "$RequiredCredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; public = 'public.json'; companionToken = 'companion-github.token' }",
   "$OptionalCredentialFiles = [ordered]@{ heartbeatToken = 'ci-node-heartbeat.token' }"];
@@ -1290,8 +1294,8 @@ const decisionsOf = () => ps(`$script:DrillCredentialDecisions`);
 const planOf = credentials => ps(`try { Get-DrillCredentialPlan (${q(JSON.stringify({ credentials }))} | ConvertFrom-Json) } catch { $c = Get-DrillCode $_; [ordered]@{ code = $c.code; detail = $c.detail } }`);
 test('the credential plan: every required name given, every optional name decided, the heartbeat token withheld with its reason', opts, () => {
   const plan = planOf(PACKAGE_CREDENTIALS);
-  assert.deepEqual(plan.given, ['app-private-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json']);
-  assert.deepEqual(plan.fake, ['app-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json']);
+  assert.deepEqual(plan.given, ['app-private-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json', 'companion-github.token']);
+  assert.deepEqual(plan.fake, ['app-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json', 'companion-github.token']);
   assert.equal(plan.withheld.length, 1);
   assert.equal(plan.withheld[0].name, 'ci-node-heartbeat.token');
   assert.match(plan.withheld[0].reason, /production heartbeat endpoint/);
@@ -1302,12 +1306,12 @@ test('the credential plan: every required name given, every optional name decide
   assert.equal(planOf(undefined).code, 'DRILL_KIT_REFUSED');
   // a package without an optional heartbeat: nothing withheld, nothing made for it
   assert.deepEqual(planOf({ ...PACKAGE_CREDENTIALS, optional: {} }).withheld, []);
-  // the companion GitHub token stand-in (branch one's generator) is made only when the package requires the name (integration): not in
-  // this package's plan, and given and made once the package requires it -- New-DrillFakeCredentials makes exactly the plan's names
-  assert.ok(!plan.fake.includes('companion-github.token') && !plan.given.includes('companion-github.token'));
-  const withCompanion = planOf({ ...PACKAGE_CREDENTIALS, required: { ...PACKAGE_CREDENTIALS.required, companionToken: 'companion-github.token' } });
-  assert.ok(withCompanion.given.includes('companion-github.token') && withCompanion.fake.includes('companion-github.token'));
-  for (const [name, p] of [['plain', plan], ['companion', withCompanion]]) {
+  // the companion GitHub token stand-in (branch one's generator) is made only when the package requires the name (integration): given and
+  // made for this package, neither for one that does not require it -- New-DrillFakeCredentials makes exactly the plan's names
+  const { companionToken, ...noCompanion } = PACKAGE_CREDENTIALS.required;
+  const withoutCompanion = planOf({ ...PACKAGE_CREDENTIALS, required: noCompanion });
+  assert.ok(!withoutCompanion.fake.includes('companion-github.token') && !withoutCompanion.given.includes('companion-github.token'));
+  for (const [name, p] of [['plain', withoutCompanion], ['companion', plan]]) {
     const out = path.join(tmp, `fake-plan-${name}`);
     ps(`New-DrillFakeCredentials ${q(out)} @(${p.fake.map(q).join(', ')}); 'ok'`);
     assert.deepEqual(fs.readdirSync(out).sort(), [...p.fake].sort(), name);
@@ -1349,7 +1353,7 @@ test('the run binds the kit\'s credential names again to the package it drills: 
   put(PACKAGE_CREDENTIALS);
   assert.equal(bound(), 'bound');
   // a tar whose host preparation does not declare the two: unreadable
-  const old = firstInstallAssets('bound-credentials-old', { hostText: "$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem' }\r\n" });
+  const old = firstInstallAssets('bound-credentials-old', { hostText: '# host preparation without credential groups\r\n' });
   assert.equal(bound(path.join(old.build, `fleet-node-${old.version}.tar`)), 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
   // the run calls it before the host gate, on the package's verified tar
   assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitCredentialsBound \$kitInfo \(Get-Prop \$package 'tar'\)/);
@@ -1406,9 +1410,8 @@ test('the repository\'s package and the drill: required names the drill makes, o
     ['a key twice', "$RequiredCredentialFiles = [ordered]@{ appKey = 'a.pem'; AppKey = 'b.pem' }\r\n$OptionalCredentialFiles = [ordered]@{ }\r\n"],
     ['a second, indented assignment', hostScriptText() + "function X {\r\n  $OptionalCredentialFiles = [ordered]@{ other = 'other.token' }\r\n}\r\n"],
   ]) assert.throws(() => drillKit.packageCredentials(text), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
-  // the two lines as the package branch holds them (claude/first-install-fixes 913be48ca), read as they are. Its required
-  // companion-github.token is made by branch one's generator: until that is merged here (with a decision for the name), a drill of this
-  // package is refused before boot, by name -- never drilled without the token
+  // the two lines as the package branch holds them (claude/first-install-fixes 913be48ca), read as they are, with its derived constant.
+  // Its required companion-github.token is made by branch one's generator, merged here with a decision for the name: every name covered
   const branchLines = [
     "$RequiredCredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; public = 'public.json'; companionToken = 'companion-github.token' }",
     "$OptionalCredentialFiles = [ordered]@{ heartbeatToken = 'ci-node-heartbeat.token' }",
@@ -1417,7 +1420,8 @@ test('the repository\'s package and the drill: required names the drill makes, o
   const branch = drillKit.packageCredentials(branchLines);
   assert.deepEqual(branch.optional, { heartbeatToken: 'ci-node-heartbeat.token' });
   assert.equal(branch.required.companionToken, 'companion-github.token');
-  assert.deepEqual(covers(branch), { required: given.includes('companion-github.token') ? [] : ['companion-github.token'], optional: [] });
+  assert.ok(given.includes('companion-github.token'));
+  assert.deepEqual(covers(branch), { required: [], optional: [] });
   // every name given is made by the generator and handed over by the entry under the package's name; one rename only, nothing twice
   const drillText = fs.readFileSync(script, 'utf8');
   const generator = drillText.slice(drillText.indexOf('function New-DrillFakeCredentials'), drillText.indexOf('\n}', drillText.indexOf('function New-DrillFakeCredentials')));
