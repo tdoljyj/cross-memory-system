@@ -1188,7 +1188,7 @@ test('run-files 5: validators, lint, typecheck and build are skipped; the test r
   assert.ok(cloud.calls[0].args.includes(unit));
   assert.ok(!cloud.calls.some((call) => ['lint', 'typecheck', 'build', 'ledger:verify'].some((word) => call.args.includes(word))));
 
-  const guarded = SUITE_COMMANDS['production-schema'][3].argv.at(-1);
+  const guarded = SUITE_COMMANDS['production-schema'].find((command) => command.argv.includes('--test-force-exit')).argv.at(-1);
   const schema = spawnRecorder();
   assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: schema.spawn, log, files: [`apps/clued-cloud/${guarded}`] }), 0);
   const kept = schema.calls.find((call) => call.args.includes(guarded));
