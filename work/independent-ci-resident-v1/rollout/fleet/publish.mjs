@@ -588,6 +588,18 @@ export async function readDecisionRecord(file, line, now = Date.now()) {
   return { decision, receipt, acceptedAt: new Date(Math.floor(at / 1000) * 1000).toISOString().replace('.000Z', 'Z'), bytes };
 }
 
+// Only a package built from a commit already on main can be accepted (Fable renew-key ruling, supplement "one round exposes every error" (3)):
+// branch candidates may be built, released, prepared and drilled to probe; seal is where they stop. Asked of GitHub, not of a local clone that
+// may not have fetched: compare main...<commit> is "identical" or "behind" exactly when the commit is main's or one of its ancestors. An
+// answer that cannot be read refuses as well.
+function checkCommitOnMain(ghCommand, repo, commit) {
+  const r = gh(ghCommand, ['api', `repos/${repo}/compare/main...${commit}`]);
+  let status = null;
+  try { status = r.status === 0 ? JSON.parse(r.stdout).status : null; } catch { status = null; }
+  check(typeof status === 'string' && ['identical', 'behind', 'ahead', 'diverged'].includes(status), 'SEAL_MAIN_UNREADABLE', { commit, exit: r.status, stderr: r.stderr });
+  check(status === 'identical' || status === 'behind', 'SEAL_COMMIT_NOT_ON_MAIN', { commit, status });
+}
+
 // The second half of an acceptance (see the head of this file). `deps` is for tests only (a stand-in for the archive's source-hash).
 export async function seal({ request, decisionRecord, drillReceipt = null, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'], now = Date.now(), deps = {} }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
@@ -616,6 +628,7 @@ export async function seal({ request, decisionRecord, drillReceipt = null, repo 
   check(a.archive_sha256 === c[2] && a.commit === c[3], 'ACCEPTANCE_NOT_THIS_RELEASE');
   const recordThere = await readOrNull(recordCopy);
   check(recordThere === null || recordThere.equals(rec.bytes), 'SEAL_ANOTHER_DECISION_RECORD_IN_DIRECTORY', recordCopy);
+  checkCommitOnMain(ghCommand, repo, r.commit);
   // the file goes up from a directory of its own; it and the record are written next to the request only after the Release and the index hold it
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-seal-'));
   try {
