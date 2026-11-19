@@ -1297,8 +1297,8 @@ test('gh and Git for Windows: in the kit with the package\'s hashes or no kit, n
   prepareFrom({ ...f, out: f.from });
   await makeDrillKit(f);
   const manifest = path.join(f.from, `fleet-node-${f.version}.prereq-manifest.json`);
-  const gate = () => psCode(`Assert-DrillKitToolsBound (Read-DrillKit ${q(f.out)}) ${q(manifest)}`);
-  assert.equal(gate(), null);
+  const gate = () => ps(`try { Assert-DrillKitToolsBound (Read-DrillKit ${q(f.out)}) ${q(manifest)}; 'bound' } catch { (Get-DrillCode $_).code }`);
+  assert.equal(gate(), 'bound');
   const kitFile = path.join(f.out, 'kit.json');
   const kit = JSON.parse(fs.readFileSync(kitFile, 'utf8'));
   fs.writeFileSync(kitFile, JSON.stringify({ ...kit, files: kit.files.filter(i => i.path !== 'gh.msi') }, null, 2));
