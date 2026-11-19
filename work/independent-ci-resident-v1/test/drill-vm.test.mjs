@@ -841,7 +841,7 @@ console.log(JSON.stringify({ status: process.argv[2] === 'request-intake-pause' 
     $out`);
   assert.deepEqual({ ...r, toolRan: fs.existsSync(mark) },
     { pause: 'DRILL_HOST_ACCESS_UNDER_TEST', resume: 'DRILL_HOST_ACCESS_UNDER_TEST', cluedMarker: 'DRILL_HOST_ACCESS_UNDER_TEST', toolRan: false });
-  // an injected sender is the way a test reaches the hold logic, marker or not; it is handed the argv the real tool would get
+  // under a marker an injected sender is the way a test reaches the hold logic (without one it is refused, below); it is handed the argv the real tool would get
   const sent = ps(`$script:sent = @()
     $script:DrillIntakeSender = { param($Tool, $Verb, $Minutes, $Arguments) $script:sent += ,@($Verb, $Minutes, ($Arguments -join ' ')); @{ exit = 0; stdout = '{"status":"INTAKE_RESUME_REQUESTED"}' } }
     Request-DrillIntake ${tool} resume 0
