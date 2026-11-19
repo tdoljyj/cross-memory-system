@@ -1295,6 +1295,16 @@ test('a candidate run with -SkipReinstall is no longer refused before the host g
   assert.doesNotMatch(fs.readFileSync(script, 'utf8'), /DRILL_CANDIDATE_CANNOT_SKIP/);
 });
 
+// Fable renew-key ruling, supplement "interactive mode A1": the step record must come from the same complete stdout log by the same parser,
+// and keeping a copy of the operator's window is not enough here: the elevated stages run in their own window and their output (the host
+// preparation's step lines) goes to their result files, never back to that window. Until the source is connected, interactive mode is
+// refused before anything is read, booted or held.
+test('interactive mode is refused before the host gate while its step record has no source', opts, () => {
+  assert.equal(psCode(`${candidateStubs}; $Interactive = $true; Invoke-DrillMain`), 'DRILL_INTERACTIVE_STEP_RECORD_NOT_CONNECTED');
+  assert.equal(psCode('$Interactive = $true; $BaselineOnly = $true; Invoke-DrillMain'), 'DRILL_USAGE');
+  assert.equal(psCode(`${candidateStubs}; Invoke-DrillMain`), 'TEST_REACHED_HOST_HOLD');
+});
+
 test('a candidate that skipped A8 ends PASS_A_REINSTALL_NOT_DRILLED through the real conclusion, -Finalize and seal', opts, async t => {
   const w = await sealWorld(t);
   const pkg = { tarSha256: w.request.archive_sha256, firstInstallKitSha256: w.request.firstInstallKitSha256 };
