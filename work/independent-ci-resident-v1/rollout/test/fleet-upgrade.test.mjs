@@ -35,7 +35,7 @@ const readJson = async f => JSON.parse(await fs.readFile(f, 'utf8'));
 async function acceptanceOf(w, over = {}) {
   const decision = randomUUID(), receipt = randomUUID();
   const draft = { contract: 'clued.independent-ci.fleet-node-acceptance/1', version: w.release.source.version, archive_sha256: w.release.source.archive_sha256,
-    commit: w.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-13T00:00:00Z',
+    commit: w.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-13T00:00:00Z', firstInstallKitSha256: 'd'.repeat(64),
     fleetRefs: { sourceAcceptanceRef: w.fleet.sourceAcceptanceRef, hostQualificationRef: w.fleet.hostQualificationRef, ownerAuthorizationRef: decision,
       publisherQualificationRef: decision, ownerPackageAcceptanceRef: decision, installationReceiptRef: receipt, ownerDecisionRef: decision, ownerReceiptRef: receipt,
       formalRoles: w.fleet.formalRoles, ...over } };

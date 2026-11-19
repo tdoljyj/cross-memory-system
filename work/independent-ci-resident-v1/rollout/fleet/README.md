@@ -97,7 +97,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 ## 1. 总览与顺序
 
 ```
-发布机   build（一次） -> publish release -> Owner 接受 -> publish attach-acceptance（首装另加 attach-first-install-kit）
+发布机   build（一次） -> publish release -> publish acceptance-draft（取 kit、备镜像、上传、写接受草稿；Owner 面前的唯一入口） -> Owner 接受 -> publish attach-acceptance
 节点     该版资产放进一个目录 -> fleet-node-<v>.bootstrap.ps1 -From <目录>（非提权；它取前置、解包、prepare，在要提权处自己请求 UAC）
 ```
 
@@ -127,7 +127,16 @@ node R/rollout/fleet/publish.mjs release --dir <构建输出目录> --repo tdolj
 
 索引文件默认：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`，表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision。
 
-## 4. Owner 接受一次（接受文件）
+## 4. 接受草稿（唯一入口）与 Owner 接受一次（接受文件）
+
+给 Owner 看的接受草稿只有一个产出入口，**kit 的检查就在这里**（首装 kit 不再是靠人记得的另一步，缺 kit 的包造不出可接受的东西）：
+
+```
+node R/rollout/fleet/publish.mjs acceptance-draft --version <version> --dir <构建输出目录> --base <字段文件> --out <新目录> [--image <role-image-<id>.tar.gz> ...] [--repo tdoljyj/cross-memory-system] [--index <索引文件>]
+```
+
+在**装着更早版本、Linux 与 Windows 同一包的本机已装节点**上（非提权，只读）、且**在本机升到该版之前**运行。它依次做，任何一步不过就不产生接受文件：取本机 kit 并核（`readKit`）→ 核模板 Source 不等于本包 Source（相等即拒绝，说明须在升级之前执行）→ 备齐 kit 列的每个本地角色镜像（`--image` 给；没给就用索引里上一版 Release 的同 id `role-image-<id>.tar.gz`，并按该版 `first-install.SHA256SUMS` 核哈希；缺一个即拒绝）→ 上传 kit、镜像与 `fleet-node-<version>.first-install.SHA256SUMS` 并读回 → 最后才写出带 `firstInstallKitSha256` 与 `ciSourceManifestSha256` 的 `fleet-node-<version>.acceptance.json`。`--out` 必须是新目录，里面就是 `fleet-node-<v>.first-install-kit.json`、镜像与接受文件，可直接交给 `install.mjs first-install-check --from`。`--base` 是 JSON：`{ "cluedDecision", "acceptedAt", "fleetRefs", ["repository"] }`。
+
 
 接受只做一次，对全体节点适用。**由协调者在 Owner 的 Decision 之后写出**，文件名必须是 `fleet-node-<version>.acceptance.json`：
 
@@ -145,7 +154,7 @@ node R/rollout/fleet/publish.mjs release --dir <构建输出目录> --repo tdolj
 
 规则：凡进入 `record\source-manifest.json`（从而进入 `ciSourceManifestSha256`）的引用必须放在 `fleetRefs`，各节点相同，这样同一个包在两台上得到同一个 Source。按节点不同的（CI 连接资格 `ciPrincipalQualificationRef`、App 指纹、binding 等）不放这里，从本机记录读。确切字段清单见 `BATCH1-INTERFACES.md` 第 6 节；`formalRoles` 的现值可在任一已装节点上用 `node …\install.mjs fleet-refs` 只读取出。
 
-`ciSourceManifestSha256` 就是 Owner 接受的 Source（列车只比较它）。它只由包和 `fleetRefs` 决定，写接受文件的人先写出不含这一项的草稿，再在任一台机器上只读算出：
+`ciSourceManifestSha256` 就是 Owner 接受的 Source（列车只比较它）。它只由包和 `fleetRefs` 决定；`acceptance-draft` 已替你算好，下面的命令只用来在任一台机器上只读复核：
 
 ```
 node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.mjs source-hash --artifact <tar> --artifact-sha <hex> --acceptance <草稿>
@@ -159,7 +168,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 node R/rollout/fleet/publish.mjs attach-acceptance --version <version> --acceptance <接受文件> [--repo tdoljyj/cross-memory-system] [--index <索引文件>] [--dir <构建输出目录>]
 ```
 
-先核接受文件：合同、`version`、`archive_sha256` 与 `commit` 必须等于索引行里的值（给了 `--dir` 还要等于 release.json）、`repository` 等于 `--repo`，并按节点 `prepare` 的同一份规则核整份合同（`ciSourceManifestSha256` 的形状、`fleetRefs` 的确切字段、Decision 与时间）；通过后作为追加资产上传（不加 `--clobber`，tar 不变），再把索引行的接受时间与 Decision 补全。该行已有接受则拒绝，且在上传之前。
+先核接受文件：合同、`version`、`archive_sha256` 与 `commit` 必须等于索引行里的值（给了 `--dir` 还要等于 release.json）、`repository` 等于 `--repo`，并按节点 `prepare` 的同一份规则核整份合同（`ciSourceManifestSha256` 的形状、`fleetRefs` 的确切字段、Decision 与时间）；并要求接受文件带 `firstInstallKitSha256`、且该版 kit（kit 资产、`first-install.SHA256SUMS` 里相同的哈希、kit 列的每个镜像）已在 Release 上，缺任何一样都在上传之前拒绝；通过后作为追加资产上传（不加 `--clobber`，tar 不变），再把索引行的接受时间与 Decision 补全。该行已有接受则拒绝，且在上传之前。
 
 ## 5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 
@@ -198,7 +207,7 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 同一个入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>`。它先非提权运行 `install.mjs first-install-check`（接受文件、tar 与 kit 的哈希、角色镜像，并核 toolchain 的 `node.exe` 就是 kit 记录的控制器运行时：不符即 `CONTROLLER_NODE_NOT_THE_FLEETS`，在任何 UAC 之前），再提权跑一次主机准备（UAC 1，`windows/first-install-host.ps1`：账户、runner、发行版、凭据，写 `C:\ProgramData\CluedIndependentCI\first-install\facts.json`；它读的 tar 与前置清单是 bootstrap 复制到本地工作目录的副本，提权令牌看不到 Owner 映射的盘符），再非提权跑 `install.mjs prepare ... --from <目录>`，最后提权跑它给的启动器（UAC 2）。
 
 - `prepare` 的判据只有一个：有没有 `install\install-receipt.json`。没有时：本机不得有任何常驻残留（三个服务、resident 根；有就 `FIRST_INSTALL_RESIDUE_PRESENT` 并列出，不猜、不覆盖）；节点值只从 `facts.json`（`clued.independent-ci.first-install-facts/1`，名字全由机器名推导，规则写在 `readFirstInstallFacts`）和该版的首装 kit 读。CI 根对 operator 不可列目录（主机准备设的 DACL），`prepare` 看不到 `resident-uninstalled-*`：输出的 `residueUnchecked` 写明这一项没查，不当作没有（主机准备与启动器在提权下查）。
-- 首装 kit：`fleet-node-<v>.first-install-kit.json`，任一已装、Linux 与 Windows 同一包的节点上非提权只读运行 `install.mjs first-install-kit` 得到；内容是模板 roles-v3 与 version facts、模板 Source 清单与公钥、全队共用的 record 值、模板 policy/companion 配置、角色镜像。其 sha256 由 Owner 随版接受（接受文件的 `firstInstallKitSha256`），缺它首装即拒绝。kit 要取自装着**更早版本**的节点（模板 Source 等于新包 Source 时派生拒绝）。
+- 首装 kit：`fleet-node-<v>.first-install-kit.json`，由 `publish.mjs acceptance-draft` 在出接受草稿时从装着更早版本的本机已装节点取得并上传（第 4 节；没有单独的取 kit、挂 kit 步骤）；内容是模板 roles-v3 与 version facts、模板 Source 清单与公钥、全队共用的 record 值、模板 policy/companion 配置、角色镜像。其 sha256 由 Owner 随版接受（接受文件的 `firstInstallKitSha256`）：没有它的接受文件，`attach-acceptance` 不挂、`prepare` 与升级不读（`FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT`）；Release 上缺 kit 资产、`first-install.SHA256SUMS` 里的哈希与接受文件不等、或缺 kit 列的任一镜像，`attach-acceptance` 同样拒绝。本机已装的旧版记录不受影响。
 - 本地构建的角色镜像（contract-placement 的 `sha256:<id>`）随版发布为 `role-image-<id>.tar.gz`（全队一次导出），B 载入后由 docker 按 id 核内容；新节点不再要任何节点为它导出东西。
 - 其后与重装同一路径：建包两次、`linux-in\`、包内 `reinstall/linux/first-install.py` 的 `--in-dir/--out-dir` 形态（`A.sh` 首装检查与派生、`B.sh` 签名与安装、`B-resume.sh` 即 `B.sh`）、`install-plan.json`（`firstInstall`，无 W1，`secrets.source = first-install`）、`generate.py --fleet-plan`。结束输出 `FLEET_NODE_FIRST_INSTALL_PREPARED`。
 - 启动器：首装预检（无残留、令牌目录只有 SYSTEM/Administrators）→ 从 `first-install\credentials\` 带令牌并核指纹 → Windows 侧完整预检（runner 等待、两处秘密文件、安装器的两次 dry run 与 ACL 迁移计划；不过即停，Linux 未动）→ Linux A/B（由提权 Owner `wsl -u root`，发行版此时在 operator 名下的导入位置）→ 安装 → verify → companion → rearm → 现有的 M5-b 切换（`rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory`，把发行版 move 到 companion 名下）。没有 W1、没有卸载。切换没有通过（`companionHeadless` 不是 `COMPANION_HEADLESS_QUALIFIED`）时 bootstrap 答 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`，不答 `BOOTSTRAP_DONE`。

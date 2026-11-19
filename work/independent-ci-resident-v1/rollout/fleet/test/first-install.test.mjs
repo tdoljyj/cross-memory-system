@@ -20,7 +20,8 @@ import { CI_ROOT, FIRST_INSTALL_VHDX_DIRECTORY, RESIDENT_SERVICE_SID, firstInsta
 import { buildUniversal } from '../universal.mjs';
 import { readPackageOnce } from '../../../upgrader/src/package.mjs';
 import { roles } from '../../../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
-import { fixtureRepo, fleetFacts, nodeSite, sha, tempDir } from './fleet-fixtures.mjs';
+import * as publishModule from '../publish.mjs';
+import { FAKE_GH, fixtureRepo, fleetFacts, nodeSite, sha, tempDir } from './fleet-fixtures.mjs';
 
 const VERSION = '2026.11.16-1';
 const PY = ['python', 'python3'].find(c => spawnSync(c, ['-I', '-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' }).stdout?.trim() === '3') ?? null;
@@ -330,4 +331,41 @@ test('first install refuses: residue by name, a kit not accepted, facts not this
     // a kit that names an image its roles do not: refused whole
     const forged = { ...w.kit, images: { ...w.kit.images, pull: [...w.kit.images.pull, `ghcr.io/x/y@sha256:${'1'.repeat(64)}`] } };
     assert.throws(() => readKit(Buffer.from(JSON.stringify(forged))), { code: 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_POLICIES' });
+  });
+
+// The acceptance draft, for real: the template node's own kit (firstInstallKitOf), readKit, and the archive's own source-hash; gh is the fake one.
+test('acceptance-draft, whole: the draft\'s kit hash is the uploaded kit\'s bytes, its Source the package\'s, and its directory passes first-install-check as it is',
+  { timeout: 600_000 }, async t => {
+    const w = await getWorld();
+    const d = await tempDir(t, 'fleetdraft');
+    const outDir = path.join(w.d, 'out');   // the build output (tar, release.json, SHA256SUMS)
+    const index = path.join(d, 'index.md');
+    await fs.writeFile(index, `| 版本 | Release | tar sha256 | commit | 接受时间 | Decision |\n|---|---|---|---|---|---|\n| ${VERSION} | u | ${w.release.source.archive_sha256} | ${w.commit} |  |  |\n`);
+    const fake = path.join(d, 'fake-gh.mjs'), state = path.join(d, 'gh-state.json');
+    await fs.writeFile(fake, FAKE_GH);
+    await fs.writeFile(state, JSON.stringify({ calls: [], assets: [] }));
+    const saved = process.env.FAKE_GH_STATE;
+    process.env.FAKE_GH_STATE = state;
+    t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
+    const out = path.join(d, 'draft');
+    const base = { cluedDecision: w.acceptance.cluedDecision, acceptedAt: w.acceptance.acceptedAt, fleetRefs: w.acceptance.fleetRefs };
+    const images = w.kit.images.local.map(l => path.join(w.from, l.asset));
+    assert.ok(images.length > 0);
+    const r = await publishModule.acceptanceDraft({ version: VERSION, dir: outDir, base, out, images, index, root: w.template.root, ghCommand: [process.execPath, fake] });
+    assert.equal(r.status, 'FLEET_ACCEPTANCE_DRAFT_WRITTEN');
+    const accepted = JSON.parse(await fs.readFile(r.acceptance, 'utf8'));
+    const uploaded = JSON.parse(await fs.readFile(state, 'utf8')).assets.find(a => a.name === `fleet-node-${VERSION}.first-install-kit.json`);
+    assert.equal(accepted.firstInstallKitSha256, uploaded.sha256, 'the accepted hash is the uploaded kit\'s bytes');
+    assert.equal(accepted.firstInstallKitSha256, sha(await fs.readFile(path.join(out, `fleet-node-${VERSION}.first-install-kit.json`))));
+    assert.equal(accepted.ciSourceManifestSha256, w.acceptance.ciSourceManifestSha256);
+    // the directory goes through first-install-check as it is (kit by the accepted hash, every image archive there)
+    const chk = await firstInstallCheck({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: accepted, from: out });
+    assert.equal(chk.status, 'FIRST_INSTALL_INPUTS_ACCEPTED');
+    assert.equal(chk.kitSha256, accepted.firstInstallKitSha256);
+    // and the draft is not made on a node that already runs this version (the template's Source is the package's): refused, nothing written
+    const again = await publishModule.acceptanceDraft({ version: VERSION, dir: outDir, base, out: path.join(d, 'draft2'), images, index, root: w.template.root, ghCommand: [process.execPath, fake],
+      deps: { kitOf: async () => ({ ...(await firstInstallKitOf({ root: w.template.root })), config: { ...(await firstInstallKitOf({ root: w.template.root })).config, ciSourceManifestSha256: w.acceptance.ciSourceManifestSha256 } }) } })
+      .then(() => null, e => e.code);
+    assert.equal(again, 'ACCEPTANCE_DRAFT_TEMPLATE_IS_THIS_SOURCE');
+    await assert.rejects(fs.access(path.join(d, 'draft2')));
   });
