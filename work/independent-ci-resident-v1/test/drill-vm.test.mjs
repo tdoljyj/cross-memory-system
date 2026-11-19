@@ -1474,7 +1474,7 @@ test('the probe: exit 0 a job, exit 1 none, anything else -- another exit, anyth
   assert.deepEqual(none.map(x => [x.exit, x.stderr]), [[1, ''], [1, null]]);
   assert.deepEqual(job.map(x => [x.exit, x.stderr]), [[0, ''], [0, null]]);
   assert.equal(r.sweep.filter(x => !['NO_JOB', 'JOB', 'FAILED'].includes(x.verdict)).length, 0);
-  assert.deepEqual(r.probeArgv, ['--distribution Fixture-CI --exec pgrep -ix Runner.Worker']);
+  assert.deepEqual(r.probeArgv, ['--distribution Fixture-CI --exec pgrep -ix Runner[.]Worker']);
 });
 
 // The running list, the one output still read, by one fixed rule: cut at line ends, only lines of length zero dropped, every other line
@@ -1582,7 +1582,7 @@ test('the runner distribution by host name: an unknown host, an unregistered run
   assert.equal(r.known.ok, true);
   assert.deepEqual(r.known.running, ['Fixture-CI']);
   assert.deepEqual(r.known.jobs, []);
-  assert.deepEqual(r.knownCalls, ['--list --running --quiet', '--distribution Fixture-CI --exec pgrep -ix Runner.Worker']);
+  assert.deepEqual(r.knownCalls, ['--list --running --quiet', '--distribution Fixture-CI --exec pgrep -ix Runner[.]Worker']);
   assert.equal(r.windowsOnly.ok, true);
   assert.deepEqual(r.windowsOnly.distributions, []);
   assert.deepEqual([r.unknown.ok, r.unknown.reason], [false, 'HOST_NOT_IN_NODE_PROFILES']);
@@ -1625,6 +1625,26 @@ function shWorld(name, { pgrep = 1, sync = 0 } = {}) {
     synced: () => fs.existsSync(path.join(dir, 'synced')), dropped: () => fs.existsSync(path.join(dir, 'drop_caches')) };
 }
 const commandIn = (world, command) => world.prefix + command.split('/proc/sys/vm/drop_caches').join(world.drop);
+
+// Codex review of addf1ffa5, low 1: the probe and the release look for the same pattern, one constant, its dot a literal dot: as an
+// extended regular expression matched whole (pgrep -x) and in any case (-i) it takes Runner.Worker and runner.worker, never RunnerXWorker.
+// Run here through Git's grep -ixE, the same regular-expression form pgrep compiles; the release command carries the constant verbatim.
+test('one job pattern, its dot literal, in the probe and the release command alike', shOpts, () => {
+  const r = ps(`@{ pattern = $script:Drill.WslJobPattern; command = $script:DrillWslReleaseCommand }`);
+  assert.equal(r.pattern, 'Runner[.]Worker');
+  assert.ok(r.command.startsWith(`pgrep -ix '${r.pattern}' >/dev/null;`), r.command);
+  const grep = path.join(path.dirname(path.dirname(gitSh)), 'usr', 'bin', 'grep.exe');
+  const names = ['Runner.Worker', 'runner.worker', 'RunnerXWorker', 'Runner.Workers', 'xRunner.Worker', 'Runner.Listener'];
+  const hit = spawnSync(grep, ['-ixE', r.pattern], { input: names.join('\n') + '\n', encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+  assert.deepEqual(hit, ['Runner.Worker', 'runner.worker']);
+  // the release command hands pgrep exactly these arguments
+  const w = shWorld('pgrep-args', { pgrep: 1 });
+  const winDir = w.drop.replace(/\/drop_caches$/, '').replace(/^\/([a-z])\//, (m, d) => `${d.toUpperCase()}:/`);
+  fs.writeFileSync(path.join(winDir, 'pgrep'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${w.drop.replace(/drop_caches$/, 'pgrep.args')}'\nexit 1\n`);
+  const run = spawnSync(gitSh, ['-c', commandIn(w, r.command)], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(fs.readFileSync(path.join(winDir, 'pgrep.args'), 'utf8').split('\n').filter(Boolean), ['-ix', 'Runner[.]Worker']);
+});
 
 // The release command's own closed table, run: pgrep found (0) -> exit 3, nothing synced or released; none (1) -> sync, release, exit 0;
 // pgrep failed (2, 3) -> exit 4, nothing synced or released; the sync failing -> exit 5. The only way to the release is pgrep's exit 1.
@@ -1704,7 +1724,7 @@ test('the release command is one literal in single quotes, nothing put into it, 
   assert.deepEqual(r.ok.released, ['Fixture-CI']);
   assert.equal(r.tampered.failed.code, 'DRILL_WSL_RELEASE_COMMAND_NOT_LITERAL');
   assert.equal(r.tamperedSent, 0);
-  assert.match(fs.readFileSync(script, 'utf8'), /^\$script:DrillWslReleaseCommand = '[^']+'$/m, 'a single-quoted string: PowerShell puts nothing into it');
+  assert.match(fs.readFileSync(script, 'utf8'), /^\$script:DrillWslReleaseCommand = '(?:[^']|'')+'$/m, 'a single-quoted string: PowerShell puts nothing into it');
 });
 
 // Fable renew-key ruling, supplements "WSL runner jobs" item 3 and "WSL gate race" item 3 (the order unchanged by round four): early
@@ -1735,7 +1755,7 @@ function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64 } = {}) {
       if ($a -contains '--terminate' -or $a -contains '-t' -or $a -contains '--shutdown' -or $a -contains '--unregister') { $script:events.Add('STOP ' + $j); return @{ exit = 0; stdout = ''; stderr = '' } }
       if ($j -ceq '--list --running --quiet') { $script:events.Add('wsl-running'); return @{ exit = 0; stdout = "Fixture-CI\`r\`n"; stderr = '' } }
       $job = $script:jobAfter -ge 0 -and @($script:events | Where-Object { $_ -ceq 'wsl-probe' }).Count -ge $script:jobAfter
-      if ($j -ceq '--distribution Fixture-CI --exec pgrep -ix Runner.Worker') { $script:events.Add('wsl-probe'); return @{ exit = $(if ($job) { 0 } else { 1 }); stdout = ''; stderr = '' } }
+      if ($j -ceq '--distribution Fixture-CI --exec pgrep -ix Runner[.]Worker') { $script:events.Add('wsl-probe'); return @{ exit = $(if ($job) { 0 } else { 1 }); stdout = ''; stderr = '' } }
       if ($j -ceq ('--distribution Fixture-CI --user root --exec sh -c ' + $script:DrillWslReleaseCommand)) {
         $prefix, $drop = $script:worlds[$(if ($job) { 'job' } else { 'quiet' })] -split '\\|'
         $r = Invoke-DrillProcess ${q(gitSh ?? 'sh.exe')} @('-c', ($prefix + $script:DrillWslReleaseCommand.Replace('/proc/sys/vm/drop_caches', $drop))) 60

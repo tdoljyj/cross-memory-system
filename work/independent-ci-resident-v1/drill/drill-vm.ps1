@@ -44,11 +44,11 @@ $ErrorActionPreference = 'Stop'
 $script:DrillScriptPath = $PSCommandPath
 $script:HostGuard = $null
 # The cache release (Decision 21db5a9c; Fable renew-key ruling, supplements "WSL gate race" item 1 and "branch one, round four" item 2):
-# one fixed command, run by sh in the runner distribution as root. It asks the probe's question -- pgrep -ix Runner.Worker, by its exit
+# one fixed command, run by sh in the runner distribution as root. It asks the probe's question -- pgrep -ix with WslJobPattern, by its exit
 # alone -- and releases only on "none": exit 3 a job (skipped), 4 the lookup failed, 5 the release failed, 0 released (the page cache
 # only: 1, not dentries and inodes). Nothing is read from its output. A single-quoted string with no double quote or backslash: PowerShell
 # puts nothing into it and the Windows command line passes it whole (Assert-DrillWslReleaseCommandLiteral).
-$script:DrillWslReleaseCommand = 'pgrep -ix Runner.Worker >/dev/null; found=$?; if [ $found -eq 0 ]; then exit 3; fi; if [ $found -ne 1 ]; then exit 4; fi; sync || exit 5; echo 1 > /proc/sys/vm/drop_caches || exit 5; exit 0'
+$script:DrillWslReleaseCommand = 'pgrep -ix ''Runner[.]Worker'' >/dev/null; found=$?; if [ $found -eq 0 ]; then exit 3; fi; if [ $found -ne 1 ]; then exit 4; fi; sync || exit 5; echo 1 > /proc/sys/vm/drop_caches || exit 5; exit 0'
 # The three stages before a boot, each with its own sample (Invoke-DrillPreBootRelease, Start-DrillGuardedVm), for the receipt.
 $script:DrillPreBoot = $null
 # The guest password an interactive run set (Wait-DrillInteractive), for the evidence collection after it.
@@ -88,6 +88,9 @@ $script:Drill = [ordered]@{
   # companion account, while the runners' jobs run in the operator's distribution (Fable renew-key ruling, supplement "WSL runner jobs").
   NodeProfiles = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\scripts\ci\self-hosted\node-profiles.json'))
   WslTimeoutSeconds = 30
+  # The one pattern pgrep looks for, in the probe and in the release command (which carries it verbatim: Assert-DrillWslReleaseCommandLiteral):
+  # an extended regular expression matched whole (-x) in any case (-i), its dot a literal dot (Codex review of addf1ffa5, low 1).
+  WslJobPattern = 'Runner[.]Worker'
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
   IntakeHolder = 'drill'
@@ -1128,7 +1131,7 @@ function ConvertFrom-DrillWslRunningList($Result, [string[]]$Registered) {
   }
 }
 
-# The probe's closed table (Fable renew-key ruling, supplement "branch one, round four", item 1): `pgrep -ix Runner.Worker` in the
+# The probe's closed table (Fable renew-key ruling, supplement "branch one, round four", item 1): `pgrep -ix Runner[.]Worker` in the
 # distribution, the exact name in any case, as on the Windows side. Its stdout is never read.
 #   exit 0, nothing on stderr -> JOB       exit 1, nothing on stderr -> NO_JOB
 #   anything else -- another exit, anything on stderr, a time out (Invoke-DrillProcess throws) -> the query failed: the boot is refused
@@ -1154,7 +1157,7 @@ function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
       $state.running = @($state.distributions | Where-Object { Test-DrillNameIn $_ $runningNow })
       foreach ($d in $state.running) {
         $state.reason = 'WSL_PROCESS_QUERY_FAILED'
-        if ((Get-DrillWslJobVerdict (Invoke-DrillWsl @('--distribution', $d, '--exec', 'pgrep', '-ix', 'Runner.Worker'))) -ceq 'JOB') { $state.jobs += $d }
+        if ((Get-DrillWslJobVerdict (Invoke-DrillWsl @('--distribution', $d, '--exec', 'pgrep', '-ix', $script:Drill.WslJobPattern))) -ceq 'JOB') { $state.jobs += $d }
       }
     }
     $state.ok = $true; $state.reason = $null
@@ -1175,7 +1178,8 @@ function Assert-DrillWslReleaseCommandLiteral {
   $value = if ($assignments.Count -eq 1) { $assignments[0].Right.Expression } else { $null }
   if ($value -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
       $value.StringConstantType -ne [Management.Automation.Language.StringConstantType]::SingleQuoted -or
-      $value.Value -cne [string]$script:DrillWslReleaseCommand -or $value.Value -match '["\\\r\n]') {
+      $value.Value -cne [string]$script:DrillWslReleaseCommand -or $value.Value -match '["\\\r\n]' -or
+      -not $value.Value.StartsWith("pgrep -ix '$($script:Drill.WslJobPattern)' >/dev/null;", [StringComparison]::Ordinal)) {
     throw (New-DrillError 'DRILL_WSL_RELEASE_COMMAND_NOT_LITERAL')
   }
 }
