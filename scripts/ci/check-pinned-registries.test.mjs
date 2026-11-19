@@ -55,6 +55,42 @@ const NO_DEPS = ['r9', 'reconcile', 'components', 'agent-contract', 'plugin', 's
 const matches = (file) => PINNED_REGISTRY_PATHS.some((p) => globToRegExp(p).test(file));
 
 const R9 = 'scripts/ci/merge-admission-r9-source.json';
+const cleanup = (dir) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+
+function unpackFixture(tar, dir, executable = 'tar') {
+  const args = ['-xf', '-'];
+  // Windows bsdtar needs the Git archive's filename encoding on non-UTF-8 systems.
+  if (process.platform === 'win32' && /^bsdtar\b/.test(execFileSync(executable, ['--version'], { encoding: 'utf8' }))) {
+    args.push('--options', 'hdrcharset=UTF-8');
+  }
+  // Let the OS set the directory so tar never has to parse a Windows drive path.
+  const unpacked = spawnSync(executable, args, { cwd: dir, input: tar });
+  assert.ifError(unpacked.error);
+  assert.equal(unpacked.status, 0, String(unpacked.stderr));
+}
+
+test('a Git archive unpacks into a fixture under TEMP', async t => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-archive-source-'));
+  t.after(() => cleanup(source));
+  const file = '归档夹具.txt';
+  git(source, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(source, file), 'fixture');
+  commit(source, 'archive fixture');
+  const tar = execFileSync('git', ['archive', '--format=tar', 'HEAD'], { cwd: source });
+  const check = (subtest, executable) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-archive-'));
+    subtest.after(() => cleanup(dir));
+    unpackFixture(tar, dir, executable);
+    assert.equal(fs.readFileSync(path.join(dir, file), 'utf8'), 'fixture');
+  };
+  await t.test('tar from PATH', subtest => check(subtest, 'tar'));
+  if (process.platform === 'win32' && process.env.SystemRoot) {
+    const windowsTar = path.join(process.env.SystemRoot, 'System32', 'tar.exe');
+    if (fs.existsSync(windowsTar)) {
+      await t.test('Windows system bsdtar', subtest => check(subtest, windowsTar));
+    }
+  }
+});
 
 // The committed tree (git archive HEAD) in a temporary git repository of its own, so a pinned file can be
 // changed without touching this checkout. Only committed files are in it. A fresh repository, not a clone:
@@ -62,13 +98,11 @@ const R9 = 'scripts/ci/merge-admission-r9-source.json';
 function copyOfThisCheckout() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-registries-'));
   const tar = execFileSync('git', ['archive', '--format=tar', 'HEAD'], { cwd: repo, maxBuffer: 1 << 30 });
-  const unpacked = spawnSync('tar', ['-x', '-C', dir], { input: tar });
-  assert.equal(unpacked.status, 0, String(unpacked.stderr));
+  unpackFixture(tar, dir);
   git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'core.autocrlf', 'false');
   commit(dir, 'main');
   return dir;
 }
-const cleanup = (dir) => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 const byId = (report, id) => report.results.find((r) => r.id === id);
 
 // What the build script does to the registry (the bytes of every closure file), without needing yaml.

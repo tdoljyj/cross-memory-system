@@ -230,7 +230,7 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
     });
 
     await t.test('只有网关可以调用，畸形输入被拒绝，未知 PR 返回零行', async () => {
-      const helper = 'clued_private.work_claim_pr_end_v1(public.clued_agent_bindings,text,text,text,text)';
+      const helper = 'clued_private.work_claim_pr_end_v1(public.clued_agent_bindings,text,text,text,text,text)';
       for (const role of ['anon', 'authenticated', 'service_role', 'clued_worker_gateway']) {
         const { rows } = await admin.query('select has_function_privilege($1,$2,\'EXECUTE\') as allowed', [role, helper]);
         assert.equal(rows[0].allowed, false, role);

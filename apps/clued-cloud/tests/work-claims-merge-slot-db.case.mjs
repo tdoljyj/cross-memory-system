@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE, setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
 // Work Claims merge slot (migration 20261006120000, Task f89eaf0a, Owner
 // Decisions 0edf7889 and 2ea795e4): the slot merge:<owner>/<name>:<branch> is
@@ -111,7 +111,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       return (await human.query(`select public.${name}($1) v`, [input])).rows[0].v;
     };
     const agent = async (who, name, input) =>
-      CI_SIGNATURES.includes(name + '(text,jsonb)')
+      [...CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE].includes(name + '(text,jsonb)')
         ? (await anon.query(`select public.${name}($1,$2) v`, [tokens[who],input])).rows[0].v
         : await workerGatewayRpc(workerCaller, name, tokens[who], input);
     const committed = (result) => { assert.equal(result.status, 'committed', JSON.stringify(result)); return result; };
@@ -334,10 +334,10 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
       { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9' })).merge_slot_returned, [c1.claim_id]);
     assert.deepEqual((await view(c1)).trigger_refs, ['merge:other/repo:main', 'task:race']);
     assert.equal((await view(c1)).status, 'ACTIVE');
-    const confirmedClose = await agent('ci', 'clued_work_merge_slot_return_v1',
-      { scope: 'global', pr_ref: 'tdoljyj/Cross-Memory-System#9', github_state: 'closed' });
-    assert.equal(confirmedClose.returned, false);
-    assert.ok(confirmedClose.binding_receipt_id);
+    // Giving the slot back ended nothing; GitHub's closure, reported by the resident, ends the binding (20261119140000).
+    const confirmedClose = await agent('ci', 'clued_work_pr_lifecycle_report_v1',
+      { scope: 'global', repository: 'tdoljyj/Cross-Memory-System', prs: [{ pr_number: 9, state: 'closed' }] });
+    assert.deepEqual([confirmedClose.status, confirmedClose.finished, confirmedClose.released], ['ok', 1, [c1.claim_id]]);
     assert.equal((await view(c1)).status, 'RELEASED');
 
     // --- Merge Admission step 3 (migration 20261009010000): the slot follows CI. ---
