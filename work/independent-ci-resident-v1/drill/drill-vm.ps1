@@ -1061,7 +1061,8 @@ function Assert-DrillGuard {
   }
 }
 
-function Start-DrillGuardedVm([string]$BootSignal) {
+# $Watchdog (from Start-DrillBootWatchdog) is checked alive after the starting signal and right before Start-VM.
+function Start-DrillGuardedVm($Watchdog) {
   if (-not $script:HostGuard) { throw (New-DrillError 'DRILL_HOST_GUARD_FAILED') }
   $state = $script:HostGuard.state
   [Threading.Monitor]::Enter($state.SyncRoot)
@@ -1069,7 +1070,10 @@ function Start-DrillGuardedVm([string]$BootSignal) {
     Assert-DrillGuard
     $safety = Get-DrillGuardSafety $state
     if (-not $safety.ok) { throw (New-DrillError $safety.code $safety) }
-    if ($BootSignal) { [IO.File]::WriteAllText($BootSignal, 'starting') }
+    if ($Watchdog) {
+      [IO.File]::WriteAllText("$(Get-Prop $Watchdog 'signal').starting", 'starting')
+      Assert-DrillWatchdogAlive $Watchdog
+    }
     Start-VM -Name $script:Drill.VmName -ErrorAction Stop
     $state.armed = $true
     Add-DrillExecutorObservation $state $safety
@@ -1414,7 +1418,16 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
   }
 }
 
-function Start-DrillDetachedWatchdog([string]$EncodedCommand) {
+# Seconds from asking WMI for the watchdog until it must have signalled ready; the WMI calls count against it.
+$script:DrillWatchdogReadySeconds = 15
+
+function Get-DrillWatchdogTimeout([Diagnostics.Stopwatch]$Clock) {
+  $left = [Math]::Ceiling($script:DrillWatchdogReadySeconds - $Clock.Elapsed.TotalSeconds)
+  if ($left -lt 1) { throw (New-DrillError 'DRILL_WATCHDOG_READY_TIMEOUT') }
+  return [uint32]$left
+}
+
+function Start-DrillDetachedWatchdog([string]$EncodedCommand, [Diagnostics.Stopwatch]$Clock) {
   if (-not ('CluedDrill.WatchdogJob' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -1431,26 +1444,48 @@ namespace CluedDrill {
   # WMI creates the watchdog under its own provider host, so it inherits no job from the caller.
   # An agent session's job refuses breakaway, and that session is exactly what may be killed mid-drill.
   $image = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-  $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
-  $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -ErrorAction Stop -Arguments @{
-    CommandLine = "`"$image`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand"
-    CurrentDirectory = "$env:SystemRoot\System32"
-    ProcessStartupInformation = $startup
-  }
-  if ($created.ReturnValue -ne 0) { throw "Win32_Process.Create returned $($created.ReturnValue)." }
-  $worker = Get-Process -Id ([int]$created.ProcessId) -ErrorAction Stop
+  $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand"
   try {
-    $inJob = $false
-    if (-not [CluedDrill.WatchdogJob]::IsProcessInJob($worker.Handle, [IntPtr]::Zero, [ref]$inJob)) { throw [ComponentModel.Win32Exception]::new() }
-    if ($inJob) { throw 'The watchdog is still in a Windows job.' }
-    return $worker
+    $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -OperationTimeoutSec (Get-DrillWatchdogTimeout $Clock) -ErrorAction Stop -Arguments @{
+      CommandLine = "`"$image`" $arguments"; CurrentDirectory = "$env:SystemRoot\System32"; ProcessStartupInformation = $startup
+    }
   } catch {
-    try { $worker.Kill() } catch {}
-    $worker.Dispose()
-    throw
+    if ((Get-DrillCode $_).code -ne 'DRILL_UNEXPECTED') { throw }
+    throw (New-DrillError 'DRILL_WATCHDOG_WMI_CREATE_FAILED' (Get-DrillCode $_).detail)
   }
+  $id = [int](Get-Prop $created 'ProcessId')
+  if ((Get-Prop $created 'ReturnValue') -ne 0 -or $id -le 0) {
+    throw (New-DrillError 'DRILL_WATCHDOG_WMI_CREATE_REFUSED' @{ returnValue = (Get-Prop $created 'ReturnValue'); processId = $id })
+  }
+  # The open handle pins the PID: while we hold it, no other process can take this PID. Only after the command line read
+  # under that pin matches this launch is the handle known to be the watchdog; until then nothing is terminated.
+  $worker = $null
+  try {
+    $worker = [Diagnostics.Process]::GetProcessById($id)
+    [void]$worker.Handle
+    $seen = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$id" -OperationTimeoutSec (Get-DrillWatchdogTimeout $Clock) -ErrorAction Stop
+    $line = ([string](Get-Prop $seen 'CommandLine')).TrimEnd()
+    if ($worker.HasExited -or -not $line.EndsWith($arguments, [StringComparison]::Ordinal)) { throw 'not this launch' }
+  } catch {
+    if ($worker) { $worker.Dispose() }
+    if ((Get-DrillCode $_).code -eq 'DRILL_WATCHDOG_READY_TIMEOUT') { throw }
+    throw (New-DrillError 'DRILL_WATCHDOG_IDENTITY_UNCONFIRMED' @{ processId = $id; reason = (Get-DrillCode $_).detail })
+  }
+  $inJob = $false
+  $queried = [CluedDrill.WatchdogJob]::IsProcessInJob($worker.Handle, [IntPtr]::Zero, [ref]$inJob)
+  if ($queried -and -not $inJob) { return $worker }
+  # A watchdog inside a job dies with its launcher, so it protects nothing; it must be gone before the refusal stands,
+  # or it would keep the boot mutex and block the next drill.
+  $detail = [ordered]@{ processId = $id; inJob = $inJob; jobQueryError = $null; terminated = $false; killError = $null }
+  if (-not $queried) { $detail.jobQueryError = [ComponentModel.Win32Exception]::new().Message }
+  try { $worker.Kill() } catch { $detail.killError = $_.Exception.Message }
+  try { $detail.terminated = $worker.WaitForExit(5000) } catch { $detail.killError = "$($detail.killError) $($_.Exception.Message)".Trim() }
+  $worker.Dispose()
+  throw (New-DrillError 'DRILL_WATCHDOG_IN_JOB' $detail)
 }
 
+# Returns the signal path and the watchdog's process, which stays open: Start-DrillGuardedVm re-checks it right before Start-VM.
 function Start-DrillBootWatchdog([string]$RunDir, [guid]$VmId, [DateTimeOffset]$Deadline) {
   $signal = Join-Path $RunDir 'guest-shutdown'
   $parentStarted = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
@@ -1458,16 +1493,25 @@ function Start-DrillBootWatchdog([string]$RunDir, [guid]$VmId, [DateTimeOffset]$
   $escapedSignal = $signal.Replace("'", "''")
   $command = ". '$file'; Invoke-DrillBootWatchdog '$escapedSignal' $PID $parentStarted '$VmId' '$($Deadline.ToString('o'))'"
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-  try { $worker = Start-DrillDetachedWatchdog $encoded }
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  try { $worker = Start-DrillDetachedWatchdog $encoded $clock }
   catch { throw (New-DrillError 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY' (Get-DrillCode $_)) }
+  $ready = $false
   try {
-    $clock = [Diagnostics.Stopwatch]::StartNew()
-    while (-not $worker.HasExited -and $clock.Elapsed.TotalSeconds -lt 15) {
-      if (Test-Path -LiteralPath "$signal.ready") { return $signal }
+    while (-not $worker.HasExited -and $clock.Elapsed.TotalSeconds -lt $script:DrillWatchdogReadySeconds) {
+      # Ready counts only while the watchdog is still alive after the signal was seen.
+      if ((Test-Path -LiteralPath "$signal.ready") -and -not $worker.HasExited) { $ready = $true; return @{ signal = $signal; process = $worker } }
       Start-Sleep -Milliseconds 100
     }
-    throw (New-DrillError 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY')
-  } finally { $worker.Dispose() }
+    throw (New-DrillError 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY' @{ exited = $worker.HasExited })
+  } finally { if (-not $ready) { $worker.Dispose() } }
+}
+
+function Assert-DrillWatchdogAlive($Watchdog) {
+  $process = Get-Prop $Watchdog 'process'
+  if (-not $process -or $process.HasExited) {
+    throw (New-DrillError 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY' @{ code = 'DRILL_WATCHDOG_EXITED_BEFORE_BOOT' })
+  }
 }
 
 $script:GuestShutdownTimer = {
@@ -1493,7 +1537,7 @@ $script:GuestShutdownTimer = {
 # Restore the clean checkpoint, start the VM behind the memory gate, run $Body with the guest credential, and always end Off
 # and restored, whatever happened. Returns the outcome and guard observations.
 function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) {
-  $result = $null; $failure = $null; $restored = $false; $guard = $null; $cleanupNeeded = $false; $signal = $null
+  $result = $null; $failure = $null; $restored = $false; $guard = $null; $cleanupNeeded = $false; $signal = $null; $watchdog = $null
   $executorStates = @()
   try {
     [void](Assert-DrillHostSafety -HoldUntil $Window.holdUntil)
@@ -1506,8 +1550,9 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) 
     [void](Assert-DrillHost -HoldUntil $Window.holdUntil)
     $cred = Get-DrillCredential
     $guard = Start-DrillHostGuard $RunDir -RestoreCheckpoint -Window $Window
-    $signal = Start-DrillBootWatchdog $RunDir $info.vm.Id $Window.deadline
-    Start-DrillGuardedVm "$signal.starting"
+    $watchdog = Start-DrillBootWatchdog $RunDir $info.vm.Id $Window.deadline
+    $signal = Get-Prop $watchdog 'signal'
+    Start-DrillGuardedVm $watchdog
     [void](Wait-DrillGuest $cred 15)
     $armed = Invoke-DrillGuest $cred $script:GuestShutdownTimer -ArgumentList @($Window.deadline.ToString('o'), $script:Drill.ComputerName) -TimeoutMinutes 1 -Step 'guest-shutdown-timer'
     if ($armed -ne $true) { throw (New-DrillError 'DRILL_GUEST_SHUTDOWN_TIMER_NOT_ARMED') }
@@ -1521,6 +1566,8 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) 
     } catch { $restored = $false }
     if ($restored -and $signal) { try { [IO.File]::WriteAllText("$signal.armed", '') } catch { } }
     if ($cleanupNeeded) { $Window.safeToResume = $restored }
+    $watchdogProcess = Get-Prop $watchdog 'process'
+    if ($watchdogProcess) { $watchdogProcess.Dispose() }
     Stop-DrillHostGuard $guard
     if ($guard) {
       $executorStates = @($guard.state.executorStates.Values)
