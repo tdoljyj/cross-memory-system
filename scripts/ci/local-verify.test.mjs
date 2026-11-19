@@ -237,14 +237,19 @@ test('runCommands checks the identity for each command: one a command changed is
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const selector = { ...selection, reporterUrl: 'file:///r.mjs', SUITE_COMMANDS: { s: [
     { cwd: '.', argv: ['npm', 'run', 'lint'] }, { cwd: '.', argv: ['npm', 'run', 'build'] }] } };
+  // This test's own identity, never the one the suite run hands to every test file (Codex third review, low 2): it writes
+  // into the directory it is given.
+  const own = { ...process.env };
+  for (const name of ['CLUED_TEST_IDENTITY_DIR', 'CLUED_TEST_IDENTITY_RUN']) delete own[name];
   const seen = [];
-  runCommands(selector, 's', root, 'm'.repeat(40), path.join(root, 'log.txt'), { env: process.env, kill: () => {},
+  runCommands(selector, 's', root, 'm'.repeat(40), path.join(root, 'log.txt'), { env: own, kill: () => {},
     spawn: (file, args, options) => {
       seen.push(options.env.GH_CONFIG_DIR);
       if (seen.length === 1) fs.writeFileSync(path.join(options.env.GH_CONFIG_DIR, 'hosts.yml'), 'github.com:\n');
       return { status: 0 };
     } });
   assert.equal(seen.length, 2);
+  assert.notEqual(seen[0], path.join(process.env.CLUED_TEST_IDENTITY_DIR ?? '', 'gh'), "not the suite run's directory");
   assert.notEqual(seen[1], seen[0]);
   assert.deepEqual(fs.readdirSync(seen[1]), []);
 });
