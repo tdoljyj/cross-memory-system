@@ -12,7 +12,7 @@
     fleet-node-<v>.tar, fleet-node-<v>.release.json, SHA256SUMS, fleet-node-<v>.bootstrap.ps1, fleet-node-<v>.prereq-manifest.json,
     fleet-node-<v>.acceptance.json (the Owner's acceptance; install.mjs validates it as a whole)
     and, for a first install, fleet-node-<v>.first-install-kit.json, role-image-<64hex>.tar.gz (each local role image the kit names)
-    and fleet-node-<v>.first-install.SHA256SUMS (over those two kinds; publish.mjs attach-first-install-kit).
+    and fleet-node-<v>.first-install.SHA256SUMS (over those two kinds; uploaded by publish.mjs prepare).
   Every file in <dir> must be listed in exactly one of the two sums files with its hash (the acceptance, the two sums files and the
   prerequisite files the manifest names excepted); a listed file that is missing, an unlisted file, or a hash that differs refuses.
 

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
-import { DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, publish, readAcceptance, seal } from '../rollout/fleet/publish.mjs';
+import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, publish, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
@@ -989,15 +989,12 @@ test('a candidate receipt: A5 in the guest only, -Finalize judges A9 alone; an a
 
 // The two PASS conclusions a receipt can end in are the set seal takes (publish.mjs exports it; one definition there): held equal here so
 // neither side can rename one alone.
-test('the PASS conclusions of drill-vm.ps1 are exactly the set publish.mjs exports for seal', opts, async () => {
+test('the PASS conclusions of drill-vm.ps1 are exactly publish.mjs DRILL_PASS_CONCLUSIONS, the set seal takes', () => {
   const text = fs.readFileSync(script, 'utf8');
   const fn = text.slice(text.indexOf('function Get-DrillConclusion'), text.indexOf('\n}', text.indexOf('function Get-DrillConclusion')));
   const mine = [...new Set([...fn.matchAll(/'(PASS_[A-Z_]+)'/g)].map(m => m[1]))].sort();
   assert.deepEqual(mine, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
-  const pub = await import("../rollout/fleet/publish.mjs");
-  const sets = Object.entries(pub).filter(([, v]) => (Array.isArray(v) || v instanceof Set) && [...v].length && [...v].every(x => typeof x === 'string' && x.startsWith('PASS_')));
-  assert.equal(sets.length, 1, `publish.mjs exports one set of PASS conclusions (found: ${sets.map(([k]) => k).join(',') || 'none'})`);
-  assert.deepEqual([...sets[0][1]].sort(), mine);
+  assert.deepEqual([...DRILL_PASS_CONCLUSIONS].sort(), mine);
 });
 
 // No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
@@ -1045,8 +1042,11 @@ async function sealWorld(t) {
   await prepare({ version, dir: out, out: accept, images: [imageFile], index, ghCommand: gh, deps });
   const requestFile = path.join(accept, `${tag}.acceptance-request.json`);
   const request = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
-  const sealIt = drillReceipt => seal({ request: requestFile, decision: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt: '0b5e1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d',
-    acceptedAt: '2026-11-19T12:22:39Z', index, ghCommand: gh, drillReceipt });
+  // the Decision record as DESK exports it (the shape of the real clued_record_mutate return PR-乙's tests pin), naming this request
+  const record = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/test/fixtures/clued-decision-mutate-3bc571a6.json', import.meta.url)), 'utf8'));
+  record.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLineOf(version, sha(fs.readFileSync(requestFile)))}\n`;
+  const decisionRecord = path.join(d, 'decision-record.json'); fs.writeFileSync(decisionRecord, JSON.stringify(record, null, 2));
+  const sealIt = drillReceipt => seal({ request: requestFile, decisionRecord, index, ghCommand: gh, deps, drillReceipt });
   return { d, version, request, index, sealIt };
 }
 
@@ -1059,6 +1059,10 @@ test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the on
   const before = fs.readFileSync(w.index);
   await assert.rejects(w.sealIt(pending), { code: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
   assert.deepEqual(fs.readFileSync(w.index), before, 'refused before anything is written');
+  // an accepted version's re-drill (not a candidate), read back and PASS, is not a candidate's receipt
+  const reDrill = finalize('seal-redrill-finalize', m5DrillReceipt('seal-redrill', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], version: w.version, pkg }));
+  assert.equal(reDrill.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  await assert.rejects(w.sealIt(reDrill.receiptFile), { code: 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE' });
   const done = finalize('seal-cand-finalize', cand, notTheDrillsSource());
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
   const r = await w.sealIt(done.receiptFile);

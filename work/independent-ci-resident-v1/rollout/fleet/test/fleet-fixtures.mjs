@@ -167,6 +167,7 @@ export const targetOf = (release, over = {}) => ({ id: randomUUID(), receipt_id:
 // and whether a token variable reached it; "release view" answers from what "release create" and "release upload" put into FAKE_GH_STATE
 // (assets of the release being published), or from state.other[<tag>] (the assets of another, earlier release, seeded by the test);
 // "release download --pattern <name> --dir <dir>" writes that asset (its bytes kept as base64) into <dir>.
+// FAKE_GH_FAIL_DOWNLOAD=<asset name>: that one download fails as a dropped connection does (acceptance-draft.log).
 export const FAKE_GH = `import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -189,6 +190,7 @@ if (args[0] === 'release' && args[1] === 'upload') log.assets.push(asset(args[3]
 if (args[0] === 'release' && args[1] === 'view') console.log(JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: assetsOf(args[2]).map(a => ({ name: a.name, size: a.size })) }));
 if (args[0] === 'release' && args[1] === 'download') {
   const name = args[args.indexOf('--pattern') + 1], dir = args[args.indexOf('--dir') + 1];
+  if (process.env.FAKE_GH_FAIL_DOWNLOAD === name) { fs.writeFileSync(state, JSON.stringify(log)); console.error('net/http: TLS handshake timeout'); process.exit(1); }
   const a = assetsOf(args[2]).find(x => x.name === name);
   if (!a) { fs.writeFileSync(state, JSON.stringify(log)); console.error('no assets match the file pattern'); process.exit(1); }
   fs.mkdirSync(dir, { recursive: true });

@@ -9,6 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { DRILL_RESERVED, acceptanceOf, attachAcceptance, attachFirstInstallKit, main, prepare, publish, seal } from '../publish.mjs';
+import * as publishModule from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
 import { FAKE_GH } from './fleet-fixtures.mjs';
 
@@ -273,7 +274,12 @@ test('main: only release, prepare and seal, with their own options; the steps an
   await assert.rejects(main(['prepare', '--version', '1', '--dir', 'x']), { code: 'USAGE' });
   await assert.rejects(main(['prepare', '--version', '1', '--dir', 'x', '--out', 'o', '--base', 'b']), { code: 'USAGE' }, 'no Decision or fleetRefs file goes into prepare');
   await assert.rejects(main(['seal', '--request', 'r', '--decision', 'd', '--receipt', 'x']), { code: 'USAGE' });
-  await assert.rejects(main(['seal', '--request', 'r', '--decision', 'd', '--receipt', 'x', '--accepted-at', 't', '--dir', 'x']), { code: 'USAGE' }, 'seal reads no build and no node');
+  // the Decision record is the one source of Decision, receipt and time: none of the three is given on the command line
+  await assert.rejects(main(['seal', '--request', 'r']), { code: 'USAGE' });
+  for (const extra of [['--decision', 'd'], ['--receipt', 'x'], ['--accepted-at', 't'], ['--acceptedAt', 't']]) {
+    await assert.rejects(main(['seal', '--request', 'r', '--decision-record', 'f', ...extra]), { code: 'USAGE' }, extra[0]);
+  }
+  await assert.rejects(main(['seal', '--request', 'r', '--decision-record', 'f', '--dir', 'x']), { code: 'USAGE' }, 'seal reads no build and no node');
   await assert.rejects(main([]), { code: 'USAGE' });
   await assert.rejects(main(['--dir', 'x', '--repo', 'a/b', '--index', 'i']), { code: 'USAGE' });
   await assert.rejects(main(['release', '--dir', 'x']), { code: 'USAGE' });
@@ -344,9 +350,17 @@ test('attach-acceptance refuses an acceptance whose kit is not on the Release: n
 });
 
 
-// ---------------------------------------------------------------- the acceptance in two halves (Fable 3bc571a6 ruling section 3, Task 758989fa)
+// ---------------------------------------------------------------- the acceptance in two halves (Fable 3bc571a6 ruling section 3, Task 758989fa;
+// rework: FABLE-renew-key-algorithm-ruling-20261119.md section 4 and its supplement on the Decision record)
 // prepare and seal with the node-side parts stood in for (the real ones are the first-install test): the node's kit, its record material, the archive's Source.
 // kitOf gives new bytes on every read, as a real node does (template.versionFacts carries observedAt); kitReads counts them.
+// The Decision record is the shape of one real clued_record_mutate return (fixtures/clued-decision-mutate-3bc571a6.json: Decision c556370f,
+// receipt 7ccaefca, created 2026-11-19T12:22:39.628169+00:00; its texts replaced by test text). seal reads all three values from it.
+const RECORD_FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'clued-decision-mutate-3bc571a6.json');
+const FIX = JSON.parse(await fs.readFile(RECORD_FIXTURE, 'utf8'));
+const FIX_DECISION = FIX.target_refs[0].id, FIX_RECEIPT = FIX.receipt_id, FIX_ACCEPTED_AT = '2026-11-19T12:22:39Z';
+// the line prepare gives for the Decision's text (the interface DESK copies): the request file's sha256
+const requestLine = hash => `acceptance-request ${TAG} sha256:${hash}`;
 const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64) } = {}) => {
   const w = await world(t);
   await w.run();
@@ -359,7 +373,7 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
   process.env.FAKE_GH_STATE = path.join(w.d, 'gh-state.json');
   t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
   const out = path.join(w.d, 'accept');
-  const s = { kitReads: 0, kitBroken: false, sourceDrafts: [] };
+  const s = { kitReads: 0, kitBroken: false, sourceDrafts: [], sourceOf: packageSource };
   const kitOf = async () => {
     if (s.kitBroken) throw Object.assign(new Error('the node was asked for a kit'), { code: 'TEST_NODE_ASKED_FOR_A_KIT' });
     const observedAt = new Date(Date.UTC(2026, 10, 19, 12, 0, s.kitReads++)).toISOString();
@@ -367,20 +381,31 @@ const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = '
       config: { ciSourceManifestSha256: templateSource }, images: { pull: [], local: [{ id: IMAGE, asset: `role-image-${IMAGE}.tar.gz` }] } };
   };
   const deps = { kitOf, readKit: () => ({}), fleetMaterial: async () => ({ formalRoles, installed: { ...carried, ciSourceManifestSha256: templateSource } }),
-    sourceHash: async ({ acceptance }) => { s.sourceDrafts.push(acceptance); return { ciSourceManifestSha256: packageSource }; } };
+    sourceHash: async args => { s.sourceDrafts.push(args); return { ciSourceManifestSha256: s.sourceOf }; } };
   const gh = [process.execPath, w.fake];
   const prep = (over = {}) => prepare({ version: VERSION, dir: w.out, out, images: [image], index: w.index, ghCommand: gh, deps, ...over });
   const requestFile = path.join(out, `${TAG}.acceptance-request.json`);
-  const decision = 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt = '0b5e1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
-  const sealIt = (over = {}) => seal({ request: requestFile, decision, receipt, acceptedAt: '2026-11-19T12:22:39Z', index: w.index, ghCommand: gh, ...over });
+  // a Decision record whose text names this request (as DESK writes it), the real return's shape; `edit` changes the parsed return
+  const recordFile = async (edit = r => r, name = 'decision-record.json') => {
+    const r = structuredClone(FIX);
+    r.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLine(sha(await fs.readFile(requestFile)))}\n`;
+    const file = path.join(w.d, name);
+    await fs.writeFile(file, JSON.stringify(edit(r) ?? r, null, 2));
+    return file;
+  };
+  // the old seal read three values from the command line: they are given here too, so the same tests run before and after the rework
+  const sealIt = async (over = {}) => seal({ request: requestFile, decisionRecord: over.decisionRecord ?? await recordFile(), decision: FIX_DECISION, receipt: FIX_RECEIPT,
+    acceptedAt: FIX_ACCEPTED_AT, index: w.index, ghCommand: gh, deps, ...over });
   const kitAssets = async () => (await w.assets()).filter(a => a.name === `${TAG}.first-install-kit.json`);
-  return { ...w, image, out, s, deps, prep, requestFile, decision, receipt, sealIt, kitAssets, carried, formalRoles };
+  const setState = async edit => { const f = path.join(w.d, 'gh-state.json'); const st = JSON.parse(await fs.readFile(f, 'utf8')); edit(st); await fs.writeFile(f, JSON.stringify(st)); };
+  return { ...w, image, out, s, deps, prep, requestFile, recordFile, sealIt, kitAssets, carried, formalRoles, setState };
 };
 const noRequest = async w => { await assert.rejects(fs.access(w.requestFile)); };
 const uploadsOf = async w => (await w.calls()).filter(c => c.args[1] === 'upload');
+const b64Of = text => Buffer.from(text).toString('base64');
 
 // ruling test 1 (red before: acceptance-draft refused ACCEPTANCE_REFUSED "cluedDecision")
-test('prepare: no Decision, receipt or time goes in; the request the Owner reviews comes out, with the kit on the Release and the node\'s carried references', async t => {
+test('prepare: no Decision, receipt or time goes in; the request the Owner reviews comes out, with the kit on the Release, the node\'s carried references and the line for the Decision', async t => {
   const w = await prepWorld(t);
   const r = await w.prep();
   assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
@@ -394,10 +419,17 @@ test('prepare: no Decision, receipt or time goes in; the request the Owner revie
   assert.equal(request.firstInstallKitSha256, kit.sha256, 'the request names the kit on the Release');
   assert.ok((await fs.readFile(path.join(w.out, `${TAG}.first-install-kit.json`))).equals(Buffer.from(kit.b64, 'base64')));
   assert.ok(await fs.stat(path.join(w.out, `role-image-${IMAGE}.tar.gz`)));
-  // the Source is the package's, computed with the drill's stand-in Decision and receipt (they do not enter it)
-  assert.equal(w.s.sourceDrafts.length, 1);
-  assert.equal(w.s.sourceDrafts[0].cluedDecision, DRILL_RESERVED.decision);
-  assert.ok(!('ciSourceManifestSha256' in w.s.sourceDrafts[0]));
+  // the line DESK puts into the Decision: the request file's sha256 binds tar, commit, Source, kit and fleetRefs at once
+  const requestSha = sha(await fs.readFile(w.requestFile));
+  assert.deepEqual([r.requestSha256, r.decisionLine], [requestSha, requestLine(requestSha)]);
+  // the Source is the Release tar's (downloaded, not the build directory's), with the drill's stand-in Decision and receipt (they do not enter it)
+  assert.ok(w.s.sourceDrafts.length >= 1);
+  for (const d of w.s.sourceDrafts) {
+    assert.equal(d.acceptance.cluedDecision, DRILL_RESERVED.decision);
+    assert.ok(!('ciSourceManifestSha256' in d.acceptance));
+    assert.ok(!path.resolve(d.artifactPath).startsWith(path.resolve(w.out)), 'computed on the tar downloaded from the Release');
+    assert.equal(d.artifactSha256, w.source.archive_sha256);
+  }
   // nothing of an acceptance is on the Release, in the index or in the directory yet
   assert.ok(!(await w.assets()).some(a => a.name.endsWith('.acceptance.json')));
   assert.match((await fs.readFile(w.index, 'utf8')).split('\r\n')[2], /\|  \|  \|  \|$/);
@@ -430,6 +462,47 @@ test('prepare again after a stop: the node would give other kit bytes, the Relea
   assert.equal((await uploadsOf(w)).length, uploads);
 });
 
+// review suggestion 1: what a resumed upload keeps is compared by content, not by size
+test('prepare again after a stop: an image or sums file of the same size but other bytes on the Release is replaced, not kept', async t => {
+  const w = await prepWorld(t);
+  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '3';   // the kit and the image go up, the sums file does not
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  await assert.rejects(w.prep(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
+  delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+  const local = await fs.readFile(w.image);
+  const other = Buffer.from(local); other[0] ^= 1;
+  await w.setState(st => { const a = st.assets.find(x => x.name === `role-image-${IMAGE}.tar.gz`); a.b64 = other.toString('base64'); a.sha256 = sha(other); });
+  await w.prep();
+  const img = (await w.assets()).filter(x => x.name === `role-image-${IMAGE}.tar.gz`);
+  assert.deepEqual(img.map(x => x.sha256), [sha(local)], 'the image on the Release is the one the kit names');
+  // the sums file: one line changed, the same size
+  const sumsName = `${TAG}.first-install.SHA256SUMS`;
+  const good = (await w.assets()).find(x => x.name === sumsName).text;
+  const bad = good.replace(sha(local), sha(other));
+  assert.equal(bad.length, good.length);
+  await w.setState(st => { const a = st.assets.find(x => x.name === sumsName); a.b64 = b64Of(bad); a.text = bad; a.sha256 = sha(Buffer.from(bad)); });
+  await w.prep();
+  assert.deepEqual((await w.assets()).filter(x => x.name === sumsName).map(x => x.text), [good]);
+});
+
+// review suggestion 1: a transfer error stays a transfer error (acceptance-draft.log), it is not reported as a missing image
+test('prepare keeps a download error of the previous Release\'s image as it is, not as a missing image', async t => {
+  const w = await prepWorld(t);
+  const prev = '2026.11.11-1', prevTag = `fleet-node-${prev}`;
+  const body = Buffer.from('gzip of a docker save');
+  const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
+  await fs.writeFile(w.index, [lines[0], lines[1], `| ${prev} | u | ${'1'.repeat(64)} | ${'2'.repeat(40)} | 2026-11-11T00:00:00Z | b5d041d2 |  |`, ...lines.slice(2)].join('\r\n'));
+  const sumsText = `${sha(body)}  role-image-${IMAGE}.tar.gz\n`;
+  await w.setState(st => { st.other = { [prevTag]: [{ name: `role-image-${IMAGE}.tar.gz`, size: body.length, b64: body.toString('base64') },
+    { name: `${prevTag}.first-install.SHA256SUMS`, size: sumsText.length, b64: b64Of(sumsText) }] }; });
+  process.env.FAKE_GH_FAIL_DOWNLOAD = `role-image-${IMAGE}.tar.gz`;
+  t.after(() => { delete process.env.FAKE_GH_FAIL_DOWNLOAD; });
+  await assert.rejects(w.prep({ images: [] }), e => e.code === 'PUBLISH_GH_RELEASE_DOWNLOAD_FAILED' && /TLS handshake timeout/.test(JSON.stringify(e.detail)));
+  await noRequest(w);
+  delete process.env.FAKE_GH_FAIL_DOWNLOAD;
+  assert.equal((await w.prep({ images: [] })).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+});
+
 test('prepare refuses a template whose Source is this package\'s: no request, nothing uploaded', async t => {
   const w = await prepWorld(t, { templateSource: 'b'.repeat(64), packageSource: 'b'.repeat(64) });
   const before = await fs.readFile(w.index), n = (await w.calls()).length;
@@ -448,127 +521,207 @@ test('prepare refuses a missing role image the previous Release does not have ei
   const body = Buffer.from('gzip of a docker save');
   const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
   await fs.writeFile(w.index, [lines[0], lines[1], `| ${prev} | u | ${'1'.repeat(64)} | ${'2'.repeat(40)} | 2026-11-11T00:00:00Z | b5d041d2 |  |`, ...lines.slice(2)].join('\r\n'));
-  const stateFile = path.join(w.d, 'gh-state.json');
-  const state = JSON.parse(await fs.readFile(stateFile, 'utf8'));
   const img = { name: `role-image-${IMAGE}.tar.gz`, size: body.length, b64: body.toString('base64') };
-  const sums = (hash) => { const x = `${hash}  role-image-${IMAGE}.tar.gz\n`; return { name: `${prevTag}.first-install.SHA256SUMS`, size: x.length, b64: Buffer.from(x).toString('base64') }; };
-  state.other = { [prevTag]: [img, sums('9'.repeat(64))] };
-  await fs.writeFile(stateFile, JSON.stringify(state));
+  const sums = (hash) => { const x = `${hash}  role-image-${IMAGE}.tar.gz\n`; return { name: `${prevTag}.first-install.SHA256SUMS`, size: x.length, b64: b64Of(x) }; };
+  await w.setState(st => { st.other = { [prevTag]: [img, sums('9'.repeat(64))] }; });
   await assert.rejects(w.prep({ images: [] }), { code: 'PREPARE_PREVIOUS_IMAGE_NOT_ITS_SUMS' });
   await noRequest(w);
-  state.other[prevTag] = [img, sums(sha(body))];
-  await fs.writeFile(stateFile, JSON.stringify(state));
+  await w.setState(st => { st.other[prevTag] = [img, sums(sha(body))]; });
   const r = await w.prep({ images: [] });
   assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
   assert.deepEqual(r.images, [IMAGE]);
 });
 
-test('prepare refuses a version whose index row already has its acceptance: the kit is never added afterwards, nothing uploaded', async t => {
+// blocking 5: whether a version is accepted is what its Release holds (the acceptance asset); the index row is derived from it
+test('prepare refuses a version whose Release holds its acceptance, also with the index row empty and also without a kit; it names seal to complete the row', async t => {
+  // a seal that stopped after the upload: the acceptance is on the Release, the index row still empty
+  const w = await prepWorld(t);
+  await w.prep();
+  const sealed = await w.sealIt();
+  const index = await fs.readFile(w.index);
+  await fs.writeFile(w.index, index.toString('utf8').replace(`| 2026-11-19T12:22:39Z | ${FIX_DECISION} | 首装未演练 |`, '|  |  |  |'));
+  await fs.rm(sealed.acceptance);
+  const before = await fs.readFile(w.index), request = await fs.readFile(w.requestFile), n = (await w.calls()).length, reads = w.s.kitReads;
+  await assert.rejects(w.prep(), e => e.code === 'PREPARE_VERSION_ALREADY_ACCEPTED' && /seal/.test(JSON.stringify(e.detail)));
+  await unchanged(w, before, n);
+  assert.ok((await fs.readFile(w.requestFile)).equals(request), 'the request is not written again');
+  assert.equal(w.s.kitReads, reads);
+  // and the same seal completes the row
+  assert.equal((await w.sealIt()).status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.ok((await fs.readFile(w.index)).equals(index));
+  // an accepted version without a kit on its Release (78ad314b): prepare never gives it one
+  const w2 = await prepWorld(t);
+  const acc = Buffer.from('{"contract":"clued.independent-ci.fleet-node-acceptance/1"}\n');
+  await w2.setState(st => { st.assets.push({ name: `${TAG}.acceptance.json`, size: acc.length, b64: acc.toString('base64'), sha256: sha(acc) }); });
+  const before2 = await fs.readFile(w2.index), n2 = (await w2.calls()).length;
+  await assert.rejects(w2.prep(), { code: 'PREPARE_VERSION_ALREADY_ACCEPTED' });
+  await unchanged(w2, before2, n2);
+  assert.equal(w2.s.kitReads, 0, 'no node asked');
+  assert.deepEqual(await w2.kitAssets(), []);
+  await noRequest(w2);
+});
+
+test('prepare refuses an index row filled by hand while the Release holds no acceptance: not its to guess; nothing uploaded', async t => {
   const w = await prepWorld(t);
   const text = await fs.readFile(w.index, 'utf8');
   assert.ok(text.includes('|  |  |  |'));
   await fs.writeFile(w.index, text.split('|  |  |  |').join(`| 2026-11-12T08:00:00Z | ${DECISION} |  |`));
   const before = await fs.readFile(w.index), n = (await w.calls()).length;
-  await assert.rejects(w.prep(), { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
+  await assert.rejects(w.prep(), { code: 'PUBLISH_ACCEPTANCE_INDEX_WITHOUT_ASSET' });
   await noRequest(w);
   await unchanged(w, before, n);
 });
 
-// ruling test 3: seal never touches a node or a kit; the acceptance is the request's fields and the five the acceptance makes; the index row is written
-test('seal: the request and the Decision, receipt and time; no node asked, only the acceptance uploaded; on the Release, next to the request, in the index; again changes nothing', async t => {
+// blocking 2: one check of the request against the Release, used by prepare before it writes the request and by seal before anything goes up
+test('prepare does not write a request seal would refuse: a Release whose release.json names another commit is refused first', async t => {
+  const w = await prepWorld(t);
+  await w.setState(st => {
+    const a = st.assets.find(x => x.name === `${TAG}.release.json`);
+    const rel = JSON.parse(Buffer.from(a.b64, 'base64').toString('utf8'));
+    rel.source.commit = 'b2'.repeat(20);
+    const b = Buffer.from(JSON.stringify(rel, null, 1) + '\n');
+    a.b64 = b.toString('base64'); a.size = b.length; a.sha256 = sha(b);
+  });
+  await assert.rejects(w.prep(), { code: 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS' });
+  await noRequest(w);
+});
+
+// ruling test 3: seal never touches a node or a kit; the acceptance is the request's fields and the five the Decision record gives
+test('seal: the request and the Decision record; no node asked, only the acceptance uploaded; on the Release, next to the request with the record, in the index; again changes nothing', async t => {
   const w = await prepWorld(t);
   await w.prep();
   w.s.kitBroken = true;   // from here a node asked for a kit fails the test
   const n = (await w.calls()).length;
-  const r = await w.sealIt();
+  const recordFile = await w.recordFile();
+  const r = await w.sealIt({ decisionRecord: recordFile });
   assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
   assert.deepEqual((await w.calls()).slice(n).filter(c => c.args[1] === 'upload').map(c => path.basename(c.args[3])), [`${TAG}.acceptance.json`], 'only the acceptance goes up');
   const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
   const a = JSON.parse(await fs.readFile(r.acceptance, 'utf8'));
   assert.equal(r.acceptance, path.join(w.out, `${TAG}.acceptance.json`));
-  assert.deepEqual(a, acceptanceOf(request, { decision: w.decision, receipt: w.receipt, acceptedAt: '2026-11-19T12:22:39Z' }));
-  assert.deepEqual([a.cluedDecision, a.fleetRefs.ownerDecisionRef, a.fleetRefs.installationReceiptRef, a.fleetRefs.ownerReceiptRef], [w.decision, w.decision, w.receipt, w.receipt]);
+  // the five fields come from the record: target_refs[0].id, receipt_id, supplemental.record.created_at (UTC, to the second)
+  assert.deepEqual(a, acceptanceOf(request, { decision: FIX_DECISION, receipt: FIX_RECEIPT, acceptedAt: FIX_ACCEPTED_AT }));
+  assert.deepEqual([a.cluedDecision, a.fleetRefs.ownerDecisionRef, a.fleetRefs.installationReceiptRef, a.fleetRefs.ownerReceiptRef, a.acceptedAt],
+    ['c556370f-b0fc-404b-b164-0f06699e4c7a', 'c556370f-b0fc-404b-b164-0f06699e4c7a', '7ccaefca-5fda-4bc8-9747-2a8101b92342', '7ccaefca-5fda-4bc8-9747-2a8101b92342', '2026-11-19T12:22:39Z']);
+  assert.ok((await fs.readFile(path.join(w.out, `${TAG}.decision-record.json`))).equals(await fs.readFile(recordFile)), 'the record as it was given, next to the request');
+  assert.ok(!(await w.assets()).some(x => x.name.includes('decision-record')), 'the record is not uploaded');
   assert.equal((await w.assets()).find(x => x.name === `${TAG}.acceptance.json`).sha256, sha(await fs.readFile(r.acceptance)));
-  assert.equal((await fs.readFile(w.index, 'utf8')).split('\r\n')[2], `| ${VERSION} | ${r.url} | ${w.source.archive_sha256} | ${COMMIT} | 2026-11-19T12:22:39Z | ${w.decision} | 首装未演练 |`);
+  assert.equal((await fs.readFile(w.index, 'utf8')).split('\r\n')[2], `| ${VERSION} | ${r.url} | ${w.source.archive_sha256} | ${COMMIT} | 2026-11-19T12:22:39Z | ${FIX_DECISION} | 首装未演练 |`);
   // again: nothing uploaded, nothing changed
   const index = await fs.readFile(w.index), m = (await w.calls()).length;
-  const again = await w.sealIt();
+  const again = await w.sealIt({ decisionRecord: recordFile });
   assert.equal(again.already, true);
   assert.ok((await fs.readFile(w.index)).equals(index));
   assert.deepEqual((await w.calls()).slice(m).filter(c => c.args[1] === 'upload'), []);
   // a run that stopped after the upload, before the index row: the same command completes the row, uploads nothing
-  await fs.writeFile(w.index, index.toString('utf8').replace(`| 2026-11-19T12:22:39Z | ${w.decision} | 首装未演练 |`, '|  |  |  |'));
+  await fs.writeFile(w.index, index.toString('utf8').replace(`| 2026-11-19T12:22:39Z | ${FIX_DECISION} | 首装未演练 |`, '|  |  |  |'));
   await fs.rm(r.acceptance);
   const k0 = (await uploadsOf(w)).length;
-  const done = await w.sealIt();
+  const done = await w.sealIt({ decisionRecord: recordFile });
   assert.equal(done.already, false);
   assert.ok((await fs.readFile(w.index)).equals(index));
   assert.equal((await uploadsOf(w)).length, k0);
   // another Decision for an accepted version: refused before anything is uploaded or written
+  const other = await w.recordFile(rec => { rec.target_refs[0].id = rec.supplemental.record.id = 'a1b2c3d4-0000-4000-8000-000000000009';
+    rec.receipt_id = rec.supplemental.record.receipt_id = 'a1b2c3d4-0000-4000-8000-00000000000a'; return rec; }, 'other-record.json');
   const before = await fs.readFile(w.index), k = (await w.calls()).length;
-  const other = { decision: 'a1b2c3d4-0000-4000-8000-000000000009' };
-  await assert.rejects(w.sealIt(other), { code: 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY' });
+  await assert.rejects(w.sealIt({ decisionRecord: other, decision: 'a1b2c3d4-0000-4000-8000-000000000009', receipt: 'a1b2c3d4-0000-4000-8000-00000000000a' }),
+    { code: 'SEAL_ANOTHER_ACCEPTANCE_IN_DIRECTORY' });
   await fs.rename(r.acceptance, `${r.acceptance}.kept`);
-  await assert.rejects(w.sealIt(other), { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
+  await assert.rejects(w.sealIt({ decisionRecord: other, decision: 'a1b2c3d4-0000-4000-8000-000000000009', receipt: 'a1b2c3d4-0000-4000-8000-00000000000a' }),
+    { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
   await unchanged(w, before, k);
-  assert.equal((await w.calls()).length, k, 'refused before gh');
   await assert.rejects(fs.access(r.acceptance));
 });
 
-// ruling test 4: the drill's stand-in values are refused (seal, and the step under it whatever reaches it)
-test('seal refuses the drill\'s stand-in Decision or receipt: no upload, no index row, no acceptance file; the drill\'s own file is refused by the step too', async t => {
+// blocking 1 (supplement): the Decision record, as the one write of the Decision returned it, is the only source of the three values
+test('seal refuses a Decision record that is missing, not JSON, without receipt_id or target_refs, with two targets or one id twice, not committed: nothing uploaded or written', async t => {
   const w = await prepWorld(t);
   await w.prep();
-  const before = await fs.readFile(w.index), n = (await w.calls()).length;
-  for (const over of [{ decision: DRILL_RESERVED.decision }, { receipt: DRILL_RESERVED.receipt }, { decision: DRILL_RESERVED.decision, receipt: DRILL_RESERVED.receipt, acceptedAt: DRILL_RESERVED.acceptedAt }]) {
-    await assert.rejects(w.sealIt(over), { code: 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN' }, JSON.stringify(over));
-  }
-  await unchanged(w, before, n);
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  const missing = path.join(w.d, 'no-such-record.json');
+  const notJson = path.join(w.d, 'not-json.json'); await fs.writeFile(notJson, 'receipt 7ccaefca');
+  const cases = [
+    [missing, 'DECISION_RECORD_REFUSED'], [notJson, 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { delete r.receipt_id; return r; }, 'r1.json'), 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { delete r.target_refs; return r; }, 'r2.json'), 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { r.target_refs.push({ ...r.target_refs[0], id: 'a1b2c3d4-0000-4000-8000-000000000009' }); return r; }, 'r3.json'), 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { r.receipt_id = r.supplemental.record.receipt_id = r.target_refs[0].id; return r; }, 'r4.json'), 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { r.receipt_id = 'nope'; return r; }, 'r5.json'), 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { r.status = 'refused'; r.error_code = 'version_conflict'; return r; }, 'r6.json'), 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { r.supplemental.record.created_at = '2999-01-01T00:00:00+00:00'; return r; }, 'r7.json'), 'DECISION_RECORD_REFUSED'],
+    [await w.recordFile(r => { r.supplemental.record.created_at = 'yesterday'; return r; }, 'r8.json'), 'DECISION_RECORD_REFUSED'],
+  ];
+  for (const [file, code] of cases) await assert.rejects(w.sealIt({ decisionRecord: file }), { code }, path.basename(file));
+  assert.ok((await fs.readFile(w.index)).equals(before));
+  assert.equal((await uploadsOf(w)).length, n);
   await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)));
-  // the drill's acceptance as the drill makes it (acceptanceOf with DRILL_RESERVED): never attached either
+  await assert.rejects(fs.access(path.join(w.out, `${TAG}.decision-record.json`)));
+});
+
+test('seal refuses a Decision whose text names another candidate\'s request or none, a record that is not a Decision or not its target, the drill\'s ids', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  const cases = [
+    // the Decision written for candidate N used to seal candidate N+1
+    [r => { r.supplemental.record.content = `TEST TEXT\n${requestLine('9'.repeat(64))}\n`; return r; }, 'DECISION_RECORD_NOT_THIS_REQUEST'],
+    [r => { r.supplemental.record.content = 'TEST TEXT: accepted.'; return r; }, 'DECISION_RECORD_NOT_THIS_REQUEST'],
+    [r => { delete r.supplemental.record.content; return r; }, 'DECISION_RECORD_NOT_THIS_REQUEST'],
+    [r => { r.supplemental.record.record_type = 'task'; return r; }, 'DECISION_RECORD_NOT_A_DECISION'],
+    [r => { delete r.supplemental; return r; }, 'DECISION_RECORD_NOT_A_DECISION'],
+    [r => { r.supplemental.record.id = 'a1b2c3d4-0000-4000-8000-000000000009'; return r; }, 'DECISION_RECORD_NOT_ITS_TARGET'],
+    [r => { r.supplemental.record.receipt_id = 'a1b2c3d4-0000-4000-8000-00000000000a'; return r; }, 'DECISION_RECORD_NOT_ITS_TARGET'],
+    [r => { r.target_refs[0].id = r.supplemental.record.id = DRILL_RESERVED.decision; return r; }, 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
+    [r => { r.receipt_id = r.supplemental.record.receipt_id = DRILL_RESERVED.receipt; return r; }, 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
+  ];
+  for (const [i, [edit, code]] of cases.entries()) await assert.rejects(w.sealIt({ decisionRecord: await w.recordFile(edit, `c${i}.json`) }), { code }, `case ${i}`);
+  assert.ok((await fs.readFile(w.index)).equals(before));
+  assert.equal((await uploadsOf(w)).length, n);
+  await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)));
+  // the drill's own acceptance file (acceptanceOf with DRILL_RESERVED): refused by the step under seal too
   const drillFile = path.join(w.d, 'drill', `${TAG}.acceptance.json`);
   await fs.mkdir(path.dirname(drillFile));
   await fs.writeFile(drillFile, JSON.stringify(acceptanceOf(JSON.parse(await fs.readFile(w.requestFile, 'utf8')), DRILL_RESERVED)));
   await assert.rejects(attachAcceptance({ version: VERSION, acceptance: drillFile, index: w.index, ghCommand: [process.execPath, w.fake] }), { code: 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN' });
-  await unchanged(w, before, n);
+  assert.equal((await uploadsOf(w)).length, n);
 });
 
-// ruling test 5: the request's hashes against the Release as it is now
-test('seal refuses a request whose tar, commit or kit is not the Release\'s, and a request or ids of another shape: nothing uploaded, nothing written', async t => {
+// ruling test 5 and blocking 2: the request against the Release as it is now (tar, release metadata, Source recomputed from the Release's tar, kit)
+test('seal refuses a request whose Source is well formed but not the Release tar\'s, whose commit is not the Release\'s metadata, or whose tar or kit is not the Release\'s', async t => {
   const w = await prepWorld(t);
   await w.prep();
   const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
   const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
   const cases = [
+    [{ ciSourceManifestSha256: 'c'.repeat(64) }, 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES'],
     [{ firstInstallKitSha256: 'f'.repeat(64) }, 'ACCEPTANCE_KIT_NOT_THE_ATTACHED'],
     [{ archive_sha256: 'f'.repeat(64) }, 'ACCEPTANCE_NOT_THIS_RELEASE'],
     [{ commit: 'b2'.repeat(20) }, 'ACCEPTANCE_NOT_THIS_RELEASE'],
-    [{ cluedDecision: w.decision }, 'REQUEST_REFUSED'],
-    [{ fleetRefs: { ...request.fleetRefs, ownerDecisionRef: w.decision } }, 'REQUEST_REFUSED'],
+    [{ cluedDecision: FIX_DECISION }, 'REQUEST_REFUSED'],
+    [{ fleetRefs: { ...request.fleetRefs, ownerDecisionRef: FIX_DECISION } }, 'REQUEST_REFUSED'],
     [{ ciSourceManifestSha256: 'x' }, 'REQUEST_REFUSED'],
     [{ repository: 'other/repo' }, 'ACCEPTANCE_NOT_THIS_REPOSITORY'],
   ];
   for (const [over, code] of cases) {
     await fs.writeFile(w.requestFile, JSON.stringify({ ...request, ...over }));
-    await assert.rejects(w.sealIt(), { code }, code);
+    await assert.rejects(w.sealIt({ decisionRecord: await w.recordFile() }), { code }, code);
   }
+  // the index row and the request agree on another commit, the Release's release.json does not
+  await fs.writeFile(w.requestFile, JSON.stringify({ ...request, commit: 'b2'.repeat(20) }));
+  const text = await fs.readFile(w.index, 'utf8');
+  await fs.writeFile(w.index, text.replace(`| ${COMMIT} |`, `| ${'b2'.repeat(20)} |`));
+  await assert.rejects(w.sealIt({ decisionRecord: await w.recordFile() }), { code: 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS' });
+  await fs.writeFile(w.index, text);
   await fs.writeFile(w.requestFile, JSON.stringify(request));
   // the Release's SHA256SUMS names another tar
-  const stateFile = path.join(w.d, 'gh-state.json');
-  const state = JSON.parse(await fs.readFile(stateFile, 'utf8'));
-  const sums = state.assets.find(a => a.name === 'SHA256SUMS'), kept = sums.b64;
-  sums.b64 = Buffer.from(Buffer.from(kept, 'base64').toString('utf8').replace(w.source.archive_sha256, '9'.repeat(64))).toString('base64');
-  await fs.writeFile(stateFile, JSON.stringify(state));
-  await assert.rejects(w.sealIt(), { code: 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES' });
-  const fixed = JSON.parse(await fs.readFile(stateFile, 'utf8'));
-  fixed.assets.find(a => a.name === 'SHA256SUMS').b64 = kept;
-  await fs.writeFile(stateFile, JSON.stringify(fixed));
+  let kept;
+  await w.setState(st => { const s0 = st.assets.find(a => a.name === 'SHA256SUMS'); kept = s0.b64; s0.b64 = b64Of(Buffer.from(kept, 'base64').toString('utf8').replace(w.source.archive_sha256, '9'.repeat(64))); });
+  await assert.rejects(w.sealIt({ decisionRecord: await w.recordFile() }), { code: 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES' });
+  await w.setState(st => { st.assets.find(a => a.name === 'SHA256SUMS').b64 = kept; });
   const wrongName = path.join(w.out, 'request.json');
   await fs.writeFile(wrongName, JSON.stringify(request));
-  for (const [over, code] of [[{ decision: 'b5d041d2' }, 'SEAL_IDS_REFUSED'], [{ receipt: w.decision }, 'SEAL_IDS_REFUSED'], [{ acceptedAt: '2999-01-01T00:00:00Z' }, 'ACCEPTANCE_REFUSED'],
-    [{ acceptedAt: '2026-11-19 12:22' }, 'ACCEPTANCE_REFUSED'], [{ request: wrongName }, 'REQUEST_FILE_NAME_REFUSED']]) {
-    await assert.rejects(w.sealIt(over), { code }, JSON.stringify(over));
-  }
+  await assert.rejects(w.sealIt({ request: wrongName, decisionRecord: await w.recordFile() }), { code: 'REQUEST_FILE_NAME_REFUSED' });
   assert.ok((await fs.readFile(w.index)).equals(before));
   assert.equal((await uploadsOf(w)).length, n, 'nothing uploaded');
   await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)));
@@ -576,15 +729,22 @@ test('seal refuses a request whose tar, commit or kit is not the Release\'s, and
   assert.equal((await w.sealIt()).status, 'FLEET_ACCEPTANCE_SEALED');
 });
 
-test('seal --drill-receipt: a PASS receipt of these three hashes is named in the index row; FAIL, another package or another contract is refused first', async t => {
+// blocking 4: a candidate drill's receipt is taken only with one of two conclusions and candidate true; the set is defined once and exported
+test('seal --drill-receipt: PASS_A_FULL or PASS_A_PER_NODE_STEPS_REMAIN of a candidate with these three hashes; anything else is refused first; the cell is never replaced', async t => {
+  assert.deepEqual(publishModule.DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
+  assert.ok(Object.isFrozen(publishModule.DRILL_PASS_CONCLUSIONS));
   const w = await prepWorld(t);
   await w.prep();
   const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
+  assert.equal(publishModule.namesDrillReserved?.(acceptanceOf(request, DRILL_RESERVED)), true);
+  assert.equal(publishModule.namesDrillReserved?.(acceptanceOf(request, { decision: FIX_DECISION, receipt: FIX_RECEIPT, acceptedAt: FIX_ACCEPTED_AT })), false);
   const receiptFile = path.join(w.d, 'receipt.json');
   const pass = { contract: 'clued.independent-ci.drill-receipt/1', version: VERSION, candidate: true, conclusion: 'PASS_A_FULL', tarSha256: request.archive_sha256,
     ciSourceManifestSha256: request.ciSourceManifestSha256, firstInstallKitSha256: request.firstInstallKitSha256, kitSha256: 'd'.repeat(64) };
   const before = await fs.readFile(w.index), n = (await w.calls()).length;
   for (const [over, code] of [[{ conclusion: 'FAIL' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'], [{ conclusion: 'PENDING_PRODUCTION_READBACK' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'],
+    [{ conclusion: 'PASS_A_PENDING_PRODUCTION_READBACK' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'], [{ conclusion: 'PASS_ANYTHING' }, 'SEAL_DRILL_RECEIPT_NOT_PASS'],
+    [{ candidate: undefined }, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE'], [{ candidate: false }, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE'], [{ candidate: 'true' }, 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE'],
     [{ firstInstallKitSha256: 'f'.repeat(64) }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'], [{ tarSha256: 'f'.repeat(64) }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'],
     [{ ciSourceManifestSha256: 'f'.repeat(64) }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'], [{ firstInstallKitSha256: undefined }, 'SEAL_DRILL_RECEIPT_NOT_THIS_PACKAGE'],
     [{ version: '2026.11.12-2' }, 'SEAL_DRILL_RECEIPT_REFUSED'], [{ contract: 'x' }, 'SEAL_DRILL_RECEIPT_REFUSED']]) {
@@ -592,10 +752,17 @@ test('seal --drill-receipt: a PASS receipt of these three hashes is named in the
     await assert.rejects(w.sealIt({ drillReceipt: receiptFile }), { code }, JSON.stringify(over));
   }
   await unchanged(w, before, n);
-  assert.equal((await w.calls()).length, n, 'refused before gh');
-  const bytes = Buffer.from(JSON.stringify(pass));
+  const bytes = Buffer.from(JSON.stringify({ ...pass, conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN' }));
   await fs.writeFile(receiptFile, bytes);
   const r = await w.sealIt({ drillReceipt: receiptFile });
-  assert.equal(r.drill, `PASS_A_FULL receipt ${sha(bytes)}`);
-  assert.ok((await fs.readFile(w.index, 'utf8')).split('\r\n')[2].endsWith(`| ${w.decision} | PASS_A_FULL receipt ${sha(bytes)} |`));
+  assert.equal(r.drill, `PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(bytes)}`);
+  assert.ok((await fs.readFile(w.index, 'utf8')).split('\r\n')[2].endsWith(`| ${FIX_DECISION} | PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(bytes)} |`));
+  // the same receipt again: nothing changes; another receipt, or none: refused, the cell stays
+  assert.equal((await w.sealIt({ drillReceipt: receiptFile })).already, true);
+  const index = await fs.readFile(w.index);
+  const other = path.join(w.d, 'receipt-2.json');
+  await fs.writeFile(other, JSON.stringify(pass));
+  await assert.rejects(w.sealIt({ drillReceipt: other }), { code: 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED' });
+  await assert.rejects(w.sealIt({ drillReceipt: null }), { code: 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED' });
+  assert.ok((await fs.readFile(w.index)).equals(index));
 });

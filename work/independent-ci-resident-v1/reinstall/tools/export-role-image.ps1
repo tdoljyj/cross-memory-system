@@ -13,7 +13,7 @@
     2. elevated, the archive is copied (no link followed) into -Destination (a new directory) and checked by its content: the image's
        target index/manifest (containerd) or config (classic) hashes to the ID (Test-RoleImageArchive). Every descriptor's size and
        digest, config and layer are checked; classic layers are held to the config's diff_ids. Linux B checks the exact loaded ID.
-    3. one JSON line: status ROLE_IMAGE_EXPORTED, the asset's name, sha256 and size (publish.mjs attach-first-install-kit uploads it).
+    3. one JSON line: status ROLE_IMAGE_EXPORTED, the asset's name, sha256 and size (publish.mjs prepare uploads it with the kit).
   The out, in and staging directories are removed at the end, whatever the outcome; the registrar build too.
 
   powershell -NoProfile -ExecutionPolicy Bypass -File <tree>\work\independent-ci-resident-v1\reinstall\tools\export-role-image.ps1
