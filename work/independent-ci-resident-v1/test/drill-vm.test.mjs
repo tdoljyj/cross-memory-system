@@ -207,7 +207,7 @@ test('a candidate drills on a kit-carried acceptance: the drill stand-ins and th
       [ordered]@{ candidate = $p.candidate; acceptance = [string]$p.acceptance; kit = $p.firstInstallKitSha256; source = $p.ciSourceManifestSha256
         files = @(Get-DrillReleaseFiles $p $k | ForEach-Object { [string]$_ }) }`);
     assert.equal(r.candidate, true); assert.equal(r.acceptance, path.join(f.out, accName)); assert.equal(r.kit, kitSha); assert.equal(r.source, S);
-    assert.equal(r.files.length, 10); assert.ok(r.files.includes(path.join(f.out, accName)));
+    assert.equal(r.files.length, 9); assert.ok(r.files.includes(path.join(f.out, accName)));   // the same nine assets, the acceptance the kit's
     // the accepted (old) path is unchanged: without the kit, a From with no acceptance is refused as before
     assert.equal(psCode(`Test-DrillPackageDir ${q(f.from)} ${q(f.version)}`), 'DRILL_PACKAGE_FILE_MISSING');
     // a candidate kit with an acceptance in From too: which one would be meant is not guessed
