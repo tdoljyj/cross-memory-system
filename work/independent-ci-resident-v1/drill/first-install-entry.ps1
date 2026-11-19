@@ -108,7 +108,9 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
         if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
         $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
       } else { $file = Get-Prereq $item $pre }
-      if (@('node', 'python', 'git') -ccontains [string]$item['name']) { $tools[$item['name']] = Expand-Cached $file $item['name'] $item['sha256'] }
+      # the package's own Expand-Cached, called as its bootstrap calls it (rollout/fleet/bootstrap.ps1): the zip's longest entry path from the
+      # pinned manifest is its fourth argument, without which it refuses (PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH)
+      if (@('node', 'python', 'git') -ccontains [string]$item['name']) { $tools[$item['name']] = Expand-Cached $file ([string]$item['name']) ([string]$item['sha256']) (Get-Key $item 'maxEntryPathLength') }
     }
     $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir)
     foreach ($item in $manifest['debs']) {

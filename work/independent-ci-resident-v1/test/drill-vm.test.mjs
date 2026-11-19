@@ -1196,6 +1196,28 @@ test('the guest entry shadows no package function and hands over the companion t
   assert.match(text, /@\('companion-github\.token', 'companion-github\.token'\)/);
 });
 
+// Codex review of ced480363, high 1: with the stand-in gone the entry calls the package's real Expand-Cached, whose fourth parameter (the
+// pinned manifest's maxEntryPathLength) it refuses to go without. Every call in the entry passes every parameter the package's function
+// declares, read from the package's bootstrap itself, the last one from the manifest item.
+test('the guest entry calls the package\'s Expand-Cached with every parameter it declares, the path limit from the pinned manifest', opts, () => {
+  const bootstrap = fileURLToPath(new URL('../rollout/fleet/bootstrap.ps1', import.meta.url));
+  const r = ps(`
+    $isFn = { param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq 'Expand-Cached' }
+    $isCall = { param($a) $a -is [Management.Automation.Language.CommandAst] -and $a.GetCommandName() -ceq 'Expand-Cached' }
+    $package = [Management.Automation.Language.Parser]::ParseFile(${q(bootstrap)}, [ref]$null, [ref]$null)
+    $fn = @($package.FindAll($isFn, $true))[0]
+    $entry = [Management.Automation.Language.Parser]::ParseFile(${q(entryScript)}, [ref]$null, [ref]$null)
+    @{ declared = @($fn.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
+      shadowed = @($entry.FindAll($isFn, $true)).Count
+      calls = @($entry.FindAll($isCall, $true) | ForEach-Object { , [string[]]@($_.CommandElements | Select-Object -Skip 1 | ForEach-Object { $_.Extent.Text }) }) }`);
+  assert.deepEqual(r.declared, ['zip', 'name', 'sha256', 'maxEntryPathLength']);
+  assert.equal(r.shadowed, 0);
+  const calls = Array.isArray(r.calls[0]) ? r.calls : [r.calls];
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].length, r.declared.length, calls[0].join(' '));
+  assert.match(calls[0][3], /Get-Key \$item 'maxEntryPathLength'/);
+});
+
 // No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
 test('drill/ holds no literal of the drill stand-ins', () => {
   const dir = fileURLToPath(new URL('../drill/', import.meta.url));
