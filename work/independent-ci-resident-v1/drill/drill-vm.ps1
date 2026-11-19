@@ -45,6 +45,8 @@ $script:DrillScriptPath = $PSCommandPath
 $script:HostGuard = $null
 # The three stages before a boot, each with its own sample (Invoke-DrillPreBootRelease, Start-DrillGuardedVm), for the receipt.
 $script:DrillPreBoot = $null
+# The guest password an interactive run set (Wait-DrillInteractive), for the evidence collection after it.
+$script:DrillInteractiveCredential = $null
 
 # ---------------------------------------------------------------- constants (the one place each fact lives)
 $script:Drill = [ordered]@{
@@ -657,6 +659,13 @@ function ConvertFrom-DrillFirstInstallSteps([string[]]$EntryLines, $StageEvidenc
       if ($o -isnot [pscustomobject]) { continue }
       $name = Get-DrillField $o 'name'
       if ($name -isnot [string]) { $name = Get-DrillField $o 'step' }
+      $status = Get-DrillField $o 'status'; $refusal = Get-DrillField $o 'code'
+      if (($name -isnot [string] -or -not $name) -and $status -is [string] -and $status -and $refusal -is [string] -and $refusal) {
+        # the package's refusal verdict {status, code, detail} (first-install-host.ps1 Stop-Host): a refused step named by its status
+        [void]$steps.Add([ordered]@{ stage = $Stage; name = $status; result = 'refused'; rejectCode = $refusal; detail = (Get-DrillField $o 'detail') })
+        $n++
+        continue
+      }
       if ($name -isnot [string] -or -not $name -or $null -eq $o.PSObject.Properties['result']) { continue }
       $reject = Get-DrillField $o 'rejectCode'
       if ($reject -isnot [string] -or -not $reject) { $reject = $null }
@@ -715,6 +724,7 @@ function Wait-DrillInteractive([string]$RunDir, $Paths, [pscredential]$Cred) {
   if ($password.Length -eq 0) { throw (New-DrillError 'DRILL_INTERACTIVE_PASSWORD_EMPTY') }
   Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { param($p) Set-LocalUser -Name 'drill' -Password $p } -ArgumentList $password | Out-Null
   $Cred = New-Object pscredential ('drill', $password); $password = $null
+  $script:DrillInteractiveCredential = $Cred
   $command = "powershell -NoProfile -ExecutionPolicy Bypass -File C:\drill\from\fleet-node-$($Paths.version).bootstrap.ps1 -From C:\drill\from"
   [Console]::Error.WriteLine("请在 VM 内以 drill 登录，打开普通 PowerShell，运行：$command")
   [Console]::Error.WriteLine('凭据仅在 VM 内读取 C:\drill\fake：app-key.pem、ci-admission.token、resident-upgrade.token、public.json；心跳留空点确定。关闭凭据窗口后，保存结局截图 C:\drill\work\interactive-screen.png。')
@@ -786,7 +796,11 @@ function Get-DrillVerdict($E) {
   $items = New-Object System.Collections.ArrayList
   $now = [DateTimeOffset]$E.now
   $entry = $E.entry
-  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode -and $entry.status -ceq 'FIRST_INSTALL_DONE'
+  # the step record (Read-DrillFirstInstallSteps) must be there: a first install whose steps cannot be shown does not pass (Codex review of
+  # ced480363, medium 7)
+  $steps = Get-Prop $E 'firstInstallSteps'
+  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode -and $entry.status -ceq 'FIRST_INSTALL_DONE' -and
+    ($null -ne $steps) -and ((Get-Prop $steps 'missing') -eq $false)
   [void]$items.Add((New-DrillItem 'A1' $a1 $(if ($null -eq $entry) { 'no entry result' } else { "exit=$($entry.exitCode) status=$($entry.status) stopCode=$($entry.stopCode)" })))
   $vs = [string](Get-Prop $E.verify 'status')
   [void]$items.Add((New-DrillItem 'A2' ($vs -ceq 'RESIDENT_VERIFIED') "verify=$vs"))
@@ -2068,7 +2082,9 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
 
   $timings = $null
   if ($Interactive) {
-    $interactiveRun = Wait-DrillInteractive $RunDir $paths $Cred
+    # the guest evidence on a timeout or a cancel as well (Codex review of ced480363, medium 8)
+    try { $interactiveRun = Wait-DrillInteractive $RunDir $paths $Cred }
+    finally { $collected = Save-DrillGuestEvidence $RunDir $Cred $null }
     $entry = $interactiveRun.entry; $Cred = $interactiveRun.credential
   } else {
   # A1: the kit entry, once, bounded. No retry.
@@ -2147,6 +2163,10 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   $names = @($script:Drill.GuestEntryLog, 'stage-timings.json', 'host-result.json', 'launcher-result.json')
   $record = [ordered]@{ ok = $false; code = $null; detail = $null; missing = @(); at = [DateTimeOffset]::UtcNow.ToString('o') }
   $timings = $null
+  # what the entry already returned is kept first: a failed collection below loses the stage files only (Codex review of ced480363, medium 6)
+  if ($null -ne $EntryOut) { try { [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]@($EntryOut.lines)) } catch { } }
+  # an interactive run sets its own password for the guest account (Wait-DrillInteractive); the collection logs on with it
+  if ($script:DrillInteractiveCredential) { $Cred = $script:DrillInteractiveCredential }
   try {
     $got = Invoke-DrillGuest $Cred {
       param($Work, $Names)
@@ -2157,11 +2177,11 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
     $text = { param($n) $v = Get-DrillField $got $n; if ($v -is [string]) { $v } else { $null } }
     $json = { param($n) $t = & $text $n; if ($null -eq $t) { return $null }; try { $t | ConvertFrom-Json } catch { [ordered]@{ unreadable = $true } } }
     $record.missing = @($names | Where-Object { $null -eq (& $text $_) })
-    $lines = @()
     $log = & $text $script:Drill.GuestEntryLog
-    if ($null -ne $EntryOut) { $lines = @($EntryOut.lines) }
-    elseif ($null -ne $log) { $lines = @($log -split "`r?`n" | Where-Object { $_ -ne '' }) }
-    [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]$lines)
+    if ($null -eq $EntryOut) {
+      $lines = @(); if ($null -ne $log) { $lines = @($log -split "`r?`n" | Where-Object { $_ -ne '' }) }
+      [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]$lines)
+    }
     $timings = & $json 'stage-timings.json'
     Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings
     Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') ([ordered]@{ 'host-result.json' = (& $json 'host-result.json'); 'launcher-result.json' = (& $json 'launcher-result.json') })
@@ -2186,7 +2206,10 @@ function Invoke-DrillMain {
       throw (New-DrillError 'DRILL_RECEIPT_NOT_FINALIZABLE' 'receipt failed or checkpoint restore was not confirmed')
     }
     $prod = Get-DrillProductionVerdict $receipt (Read-DrillJson $ProductionReadback)
-    $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else { [ordered]@{ id = $i.id; pass = $i.pass; detail = $i.detail } } })
+    $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else {
+      $kept = [ordered]@{ id = $i.id; pass = $i.pass; detail = $i.detail }
+      $steps = $i.PSObject.Properties['firstInstallSteps']; if ($steps) { $kept.firstInstallSteps = $steps.Value }
+      $kept } })
     $receipt.items = $items
     $receipt.conclusion = Get-DrillConclusion $items (Get-Prop $receipt 'm5') ((Get-Prop $receipt 'candidate') -eq $true)
     $receipt | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('o')) -Force
@@ -2245,14 +2268,14 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
 
   $evidence = [ordered]@{ localSource = $null; hostExecutorStates = $o.hostExecutorStates; hostPreBoot = (Get-Prop $o 'preBoot') }
   $items = @()
+  # The first install's step record (Fable renew-key ruling, supplement "companion account and evidence" section 2.3), read from what the
+  # run directory holds whatever the run's end: under A1 (which needs it), or in the evidence when the run ended before there was a verdict.
+  $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps }
   }
-  # The first install's step record (Fable renew-key ruling, supplement "companion account and evidence" section 2.3), read from what the
-  # run directory holds whatever the run's end: under A1, or in the evidence when the run ended before there was a verdict.
-  $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })

@@ -195,8 +195,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     try { $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $bootstrap, '-Stage', 'launcher', '-Result', $launcherResult,
       '-Launcher', $drillLauncher['path'], '-LauncherSha256', $drillLauncher['sha256'], '-ExpectedOperatorSid', $operatorSid) $LauncherLimitSeconds }
     finally { $measurements.launcher = $watch.Elapsed.TotalSeconds }
-    $terminal = Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult))
     $launcherText = if ([IO.File]::Exists($launcherResult)) { [IO.File]::ReadAllText($launcherResult) } else { $null }
+    $terminal = Get-LastJsonLine $launcherText
     [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; resultText = $launcherText })), (New-Object Text.UTF8Encoding($false)))
     $verdict = Get-LauncherVerdict $true $terminal
     return (ConvertTo-FirstInstallEntryResult $verdict $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit }) $entryTree $entryNode)
