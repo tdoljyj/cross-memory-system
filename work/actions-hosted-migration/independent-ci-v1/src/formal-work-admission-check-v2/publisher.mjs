@@ -41,7 +41,9 @@
 //     it), the same rule as the scanner roles (staged-check-publisher-v2.mjs#slotBindingFor). Which slot and which main tip stay
 //     bound: main moving under the publication still voids it;
 //   - a front job's HEAD_PUBLISHED_ON_GITHUB counts only the role checks of its own front subject's jobs (external ids carry the
-//     job id, which covers S; job-v2.mjs#frontJobIdsV2): the non-front run H normally has first does not refuse it (§41.4).
+//     job id, which covers S; job-v2.mjs#frontJobIdsV2): the non-front run H normally has first does not refuse it (§41.4);
+//   - a front job's SETTLED result names, from the same read, the scans H already carries (headScans, resident DESIGN §75): the
+//     resident runs none of them again when S's tree is H's tree. A read that does not fit names none; it never changes the ending.
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
@@ -49,7 +51,7 @@ import { freshStamp } from '../clock-skew.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
-import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
+import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, headScansOf, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
 import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVerificationRetryable } from '../withdrawal-text.mjs';
 
@@ -216,7 +218,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     }
   }
   async function publishOnce(input) {
-    let job, key = null, externalId = null, previous = null, before, claimed = null, scheduling = null;
+    let job, key = null, externalId = null, previous = null, before, claimed = null, scheduling = null, headScans = [];
+    // Rule 41ab823a (resident DESIGN §75): a front batch's admission also reports which scans H already carries (published-on-github-v2.mjs#headScansOf),
+    // from the read-back it already made: no request of its own.
+    const settled = r => headScans.length ? { ...r, headScans } : r;
     // 'boundary' while the first evaluation runs; a refusal there with no batch claim recorded is safe to re-run.
     let step = 'start';
     try {
@@ -245,6 +250,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         // check ran. Nothing of the head ran, so it is not "executed": HEAD_INTERRUPTED_ON_GITHUB, and the resident's one automatic
         // attempt 2 (new job ids, so a new admission identity) runs the head again. Posting this attempt's identity again stays refused.
         if (ownAdmission) throw Object.assign(new Error(HEAD_INTERRUPTED_ON_GITHUB), { code: HEAD_INTERRUPTED_ON_GITHUB, publishedChecks: published });
+        if (front !== null) headScans = headScansOf(appChecks, front, job.headSha);
       }
       step = 'boundary';
       let evaluated;
@@ -293,7 +299,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         previous = await journal.read(key);
         if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
       }
-      if (previous) { await reverified(job, () => readback(job, externalId, previous.details.checkRunId, 'success')); return { status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production, scheduling }; }
+      if (previous) { await reverified(job, () => readback(job, externalId, previous.details.checkRunId, 'success')); return settled({ status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production, scheduling }); }
     } catch (e) {
       if (previous?.state === 'settled' && Number.isSafeInteger(previous.details?.checkRunId) && previous.details.checkRunId > 0)
         return revoke({ job, key, externalId, known: { id: previous.details.checkRunId }, phase: 'settled', cause: safe(e), sideEffects: 0, admissionDiagnostic: diagnosticOf(e) });
@@ -333,7 +339,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       });
       await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, bindingSha256: after.bindingSha256 });
       record('native_check_settled', { effectKey: key, checkRunId: known.id, beforeSha256: before.facts.observationSha256, afterSha256: after.facts.observationSha256 });
-      return { status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, sideEffects, productionAuthorized: production, scheduling };
+      return settled({ status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, nativeObservationAfterSha256: after.facts.observationSha256, sideEffects, productionAuthorized: production, scheduling });
     } catch (e) {
       if (sent && !known && sideEffects === 1 && nativePublicationNoPostProof(e)?.notSent === true) {
         await transition(key, phase, 'revoked', { reason: 'native_publication_not_sent', notSent: true, externalId });

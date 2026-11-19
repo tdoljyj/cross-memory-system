@@ -79,7 +79,13 @@ test('typed C1 audit transport: actual database authorization and transaction bo
   // That change only runs the resume/renew inbox-summary read beside the live-claims read (Task 8ba4ef85); C1 audit tool, RPC mapping, error mapping and REST route are unchanged.
   // T3 changes scheduled dispatch and post-write projection wakeups; #1161 adds the exact /v1/github/events
   // dispatch before ordinary tracing. Other paths still go through the original CI and audit handling.
-  assert.equal(hash(workerSource),'eb04c7a77572982d30979c928759c627e1af62fdb8f2f0c183c89621911a7005');
+  // Database configuration now shares the same defaults with both Worker gateways. C1 audit transport is unchanged.
+  // Prior pin (#1173 shared database configuration, before D1): d4bfa2ad260fddff58ae7a40d8684d59aa0264c72fa9b6c04a5001b0a264f3a2.
+  // D1 dispatches the signed node renewal route before ordinary tracing, using the shared database transport.
+  // Prior pin (D1 before merging #1173): ef2ce85811741d2220e000d84302549628b768ef1f2b9f3c4752dead1d18b5a3.
+  // The renewal route's gateway fetch now passes redirect "manual" (workerd does not implement "error"; Task 942adbdb).
+  // Prior pin (before that one-literal change): dbecf6920f7d592abe0751c8e11da1fcd2108368bd92412a1341b46a1b0ed0e3.
+  assert.equal(hash(workerSource),'2087d718c3f9cc99e854a97e80f2e5e2dfd9b515b2e5065579c477b95c83b594');
   // The historical 8afae4cb pin predates the comment-only Global -> personal records (global) clarification.
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/permission-guidance.ts'),'utf8')),'7615083917d9cd19460caa1ca23fd531eec804a6a15acea4a821a6eabb03c40c');
   assert.equal(hash(await fs.readFile(path.join(cloud,'worker/result-sanitization.ts'),'utf8')),'0e34c15fcb327f65a6195dec9ded24fae7c96f6d2cb38f36e6a2694db0cf70ff');

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { INDEX_DIRECTORY, PASS_CONTRACT, PASS_DIRECTORY, SEGMENTS_CONTRACT, TRAIN_REVIEW_CONTRACT, closeOutcomeMonths, pruneArea, readTrainReview,
-  stateRetention } from '../src/resident-v2/state-retention.mjs';
+  stateRetention, LANDING_BATCH_KEEP, LANDING_STATE_KEEP } from '../src/resident-v2/state-retention.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
 
@@ -178,4 +178,30 @@ test('the daily pass: one record a day, readable in receipts\\retention; out of 
   assert.deepEqual(await stateRetention({ runId: RUN, roots: broken, reviewFile: review, clock: () => now, log: (k, d) => errs.push([k, d]) }), { error: 'RETENTION_AREA_REDIRECTED' });
   assert.deepEqual(errs, [['state_retention_failed', { code: 'RETENTION_AREA_REDIRECTED' }]]);
   assert.deepEqual(await stateRetention({ runId: 'x', roots: r, clock: () => now }), { error: 'RETENTION_RUN_ID_INVALID' });
+});
+
+// D6 §8.4 (c), field 2026-11-19: landing batches and landing states were never pruned (the area's names did not include them). They now
+// expire like the other sweep records, the newest of each kind always staying, and each kind keeps at most its cap however young.
+test('landing retention: landing-batch keeps at most LANDING_BATCH_KEEP, newest first', async t => {
+  const r = roots(await tempDir(t)), now = Date.parse('2027-03-01T00:00:00Z');
+  const names = Array.from({ length: LANDING_BATCH_KEEP + 3 }, (_, i) => sweepName('landing-batch', now - (i + 1) * 60_000, i));
+  const expired = sweepName('landing-batch', now - 100 * DAY, 9999);
+  for (const n of [...names, expired]) await put(path.join(r.trainSweep, n), now);
+  const pass = await pruneArea({ area: 'train-sweep', roots: r, now });
+  assert.equal(pass.refused, null);
+  assert.deepEqual(pass.names.sort(), [...names.slice(LANDING_BATCH_KEEP), expired].sort());
+  assert.deepEqual(await ls(r.trainSweep), names.slice(0, LANDING_BATCH_KEEP).sort());
+});
+
+test('landing retention: landing-state keeps at most LANDING_STATE_KEEP, newest first (a refused one counts like any other)', async t => {
+  const r = roots(await tempDir(t)), now = Date.parse('2027-03-01T00:00:00Z');
+  const names = Array.from({ length: LANDING_STATE_KEEP + 2 }, (_, i) => sweepName('landing-state', now - (i + 1) * 60_000, i));
+  const aged = sweepName('landing-state', now - 100 * DAY, 9999);
+  for (const n of [...names, aged]) await put(path.join(r.trainSweep, n), now);
+  const lone = sweepName('landing-batch', now - 400 * DAY);
+  await put(path.join(r.trainSweep, lone), now);
+  const pass = await pruneArea({ area: 'train-sweep', roots: r, now });
+  assert.equal(pass.refused, null);
+  assert.deepEqual(pass.names.sort(), [...names.slice(LANDING_STATE_KEEP), aged].sort());
+  assert.deepEqual(await ls(r.trainSweep), [...names.slice(0, LANDING_STATE_KEEP), lone].sort(), 'the newest landing batch stays however old');
 });

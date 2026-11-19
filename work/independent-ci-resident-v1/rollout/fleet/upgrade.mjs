@@ -254,7 +254,8 @@ export async function fetchAndUpgrade(argv, deps = {}) {
   const work = path.resolve(values.work);
   const fetched = await fetchPackage({ ...deps.fetch, version: values.version, dir: path.join(work, 'dl'), from: values.from ? path.resolve(values.from) : null, repo: values.repo ?? DEFAULT_REPO });
   const acceptance = jsonOf(await fs.readFile(fetched.acceptance));
-  validateAcceptance(acceptance, deps.now ?? Date.now());
+  // shape only, no kit rule: this copy may be newer than the package (a rollback to one with no kit field); the unpacked package's own upgrade.mjs holds its own rule
+  validateAcceptance(acceptance, deps.now ?? Date.now(), { requireKit: false });
   const { entries } = readArchive(await fs.readFile(fetched.artifact), fetched.artifactSha256, acceptance);   // the hash again, then the strict read
   const unpacked = path.join(work, 'unpacked');
   await fs.rm(unpacked, { recursive: true, force: true });   // this command's own scratch, so the same --work can be run again

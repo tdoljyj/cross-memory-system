@@ -1043,3 +1043,19 @@ test('defect 15894c2a: trainNodesView takes on-mode facts /2 with a nodes list o
   assert.equal(parseTrainNodes({ ...v, nodes: [{ node: 'x', sourceManifestSha256: 'zz', state: null, lastHeartbeatAt: null }] }), null);
   assert.deepEqual(parseTrainNodes(JSON.parse(JSON.stringify(v))), v);
 });
+
+// D6 §8.4 (b), field 2026-11-19: a landing state stage 10 cannot read while this node has landing batches is its own decision, no longer
+// TRAIN_SWEEP_INCOMPLETE; the Owner is told (one notice a day) and the error stays in state\status.json's train.last.
+test('executor, on: TRAIN_LANDING_STATE_UNREADABLE tells the Owner and keeps landing.error in the status', async t => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const landing = { error: 'TRAIN_LANDING_STATE_UNREADABLE' };
+  const f = await executorFixture(t, { policy: policyV8(), status,
+    engine: fakeEngine({ train: mode => answer(mode, mode === 'on' ? { ...DONE, decision: 'TRAIN_LANDING_STATE_UNREADABLE', landing } : DONE, 1) }) });
+  assert.ok(DECISIONS.includes('TRAIN_LANDING_STATE_UNREADABLE') && SOURCE_DECISIONS.includes('TRAIN_LANDING_STATE_UNREADABLE'));
+  await f.exec.tick();
+  assert.equal(await f.ledger.halted(), null);
+  assert.ok(f.queue.notices.some(n => n.kind === 'train-owner' && n.code === 'TRAIN_LANDING_STATE_UNREADABLE'), JSON.stringify(f.queue.notices));
+  const last = parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last;
+  assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', landing]);
+  assert.equal(trainSummary({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing: { error: 'not a code' } })?.landing, undefined, 'only a code is kept');
+});

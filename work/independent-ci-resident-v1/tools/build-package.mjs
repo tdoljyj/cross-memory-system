@@ -47,6 +47,18 @@ import { nodeIdentityOf, nodeIdentitySha256 } from '../src/node-identity.mjs';
 
 const HERE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const RESIDENT_FILES = ['src', 'tools', 'windows'];
+// Files of the resident generation whose one source lies outside the resident tree (D2c ruling B1): the renewal contract the Broker
+// reads is the server's own file. This table is the only list (rollout/fleet/facts.mjs and universal.mjs read it); each entry is
+// copied from its repository-relative source to resident\<path> after the three directories, in this order. A file at the same
+// path inside the resident tree is refused (PACKAGE_RESIDENT_DUPLICATE), so a second copy cannot come back.
+export const RESIDENT_EXTERNAL = Object.freeze([
+  Object.freeze({ path: 'windows/ci-connection-renew.contract.json', source: 'apps/clued-cloud/worker/ci-connection-renew.contract.json' }),
+]);
+// listed: the resident tree's walked paths. Returns [{ path, file }] with file the absolute source under the checkout of `base`.
+export function residentExternal(listed, base = HERE) {
+  for (const e of RESIDENT_EXTERNAL) check(!listed.includes(e.path), 'PACKAGE_RESIDENT_DUPLICATE', e.path);
+  return RESIDENT_EXTERNAL.map(e => ({ path: e.path, file: path.resolve(base, '..', '..', ...e.source.split('/')) }));
+}
 const LINUX_FILES = [
   ['bin/clued-ci-resident-linux', '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux'],
   ['systemd/clued-ci-worker@.service', '/etc/systemd/system/clued-ci-worker@.service'],
@@ -163,6 +175,9 @@ export async function buildPackage({ out, policyFile, companionFile, nodeExe, re
   const residentEntries = [];
   for (const rel of RESIDENT_FILES) for (const f of await listFiles(HERE, rel)) {
     residentEntries.push({ path: f, ...await copyNew(path.join(HERE, f), path.join(out, 'resident', f)) });
+  }
+  for (const e of residentExternal(residentEntries.map(x => x.path))) {
+    residentEntries.push({ path: e.path, ...await copyNew(e.file, path.join(out, 'resident', ...e.path.split('/'))) });
   }
   const residentManifest = { contract: INSTALLED_MANIFEST_CONTRACT, root: 'resident', files: residentEntries };
   const residentManifestSha256 = sha256(Buffer.from(canonicalJson(residentManifest) + '\n'));

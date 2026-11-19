@@ -1,4 +1,5 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { EPHEMERAL_INITDB_FLAGS, EPHEMERAL_POSTGRES_FLAGS, stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { createPhaseClock } from './phase-clock.fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -45,6 +46,9 @@ import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary, assertAuthorizationSuccessorBoundary, findGatewayCloseoutMigration, setWorkerGatewayCaller, workerGatewayRpc,
   snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 
+const DATABASE_SETUP_LIMIT_MS = 60000;
+const FIXTURE_LIMIT_MS = 75000;
+
 const USER = "10000000-0000-4000-8000-000000000071";
 const PROJECT = "20000000-0000-4000-8000-000000000071";
 const DECISION = "30000000-0000-4000-8000-000000000071";
@@ -57,7 +61,7 @@ const tokenHash = crypto.createHash("sha256").update("clued_rcb_test_token").dig
 // The imported resource fixtures retain historical upgrade and retired-alias
 // assertions. Close that history with the actual current G6 migration, then
 // exercise current callers; historical PASS is not current-chain qualification.
-async function qualifyCurrentCallers(t, admin, server, closeoutSql) {
+async function qualifyCurrentCallers(t, admin, client, closeoutSql) {
   await t.test("historical resource setup closes with actual G6 apply/replay and exact GW80/CI8", async () => {
     await replayGatewayCloseout(admin, closeoutSql);
     await assertGatewayCloseoutBoundary(admin);
@@ -73,76 +77,74 @@ async function qualifyCurrentCallers(t, admin, server, closeoutSql) {
     }
     await assertAuthorizationSuccessorBoundary(admin, authorizationBefore);
   });
-  const gateway = server.getPgClient(), native = server.getPgClient(), ci = server.getPgClient();
+  const gateway = client(), native = client(), ci = client();
   await gateway.connect(); await native.connect(); await ci.connect();
-  try {
-    await setWorkerGatewayCaller(gateway);
-    const nonce = crypto.randomUUID(), proof = crypto.createHash("sha256").update(nonce).digest("hex");
-    const managedRoot = "/g6-" + nonce + "/Clued_资料中心", track = managedRoot + "/20_P_产品与体验";
-    const rootId = "g6-root-" + nonce, parentId = "g6-parent-" + nonce, trackId = "g6-track-" + nonce;
-    const register = async input => (await admin.query("select public.clued_resource_center_admin_v1($1,$2::jsonb) value",
-      [USER, JSON.stringify({ source_decision_id: DECISION, idempotency_key: crypto.randomUUID(), ...input })])).rows[0].value;
-    const profile = await register({ action: "profile_register", project_id: PROJECT, profile_version: "g6/1",
-      managed_root: managedRoot, root_folder_id: rootId, root_parent_id: parentId, root_folder_version: "1" });
-    assert.equal(profile.status, "committed");
-    const profileId = profile.target_refs.find(ref => ref.role === "primary").id;
-    assert.equal((await register({ action: "artifact_register", profile_id: profileId, path: track,
-      provider_file_id: trackId, provider_file_version: "1", target_kind: "directory",
-      governance_class: "ordinary", delete_authority: false })).status, "committed");
-    assert.equal((await register({ action: "binding_issue", profile_id: profileId, token_hash: proof,
-      expires_at: new Date(Date.now() + 3600000).toISOString() })).status, "committed");
-    const request = { contract: "clued.resource-center-authority/1", nonce: crypto.randomUUID(),
-      policy_version: "clued.resource-center-mutation-policy/1", profile_id: profileId, profile_version: "g6/1",
-      provider_identity: { root_folder_id: rootId, root_parent_id: parentId, root_folder_version: "1",
-        source_file_id: null, source_file_version: null, destination_parent_id: trackId, destination_parent_version: "1",
-        destination_file_id: null, destination_file_version: null, provider_version: "a".repeat(64) },
-      mutation: { operation: "create", source_path: null, destination_path: track + "/current.txt", artifact_role: "clued_resource",
-        target_kind: "file", directory_semantics: null, artifact_id: null, governance_class: null,
-        delete_authority: false, artifact_authority_version: null, duplicate_bytes: false,
-        currentness_identity: null, workspace_version: null } };
-    await t.test("current gateway resolves real registered authority while invalid proof and old callers remain denied", async () => {
-      const result = await workerGatewayRpc(gateway, "clued_resource_center_authority_v1", proof, request);
-      assert.equal(result.status, "resolved");
-      assert.match(result.authority.currentness_identity, /^decision:/);
-      const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
-      assert.equal((await workerGatewayRpc(gateway, "clued_resource_center_authority_v1", "f".repeat(64), request)).status, "denied");
-      for (const role of ["anon", "authenticated"]) {
-        await ci.query(`set role ${role}`);
-        await assert.rejects(ci.query("select public.clued_resource_center_authority_v1($1,$2::jsonb)", [proof, JSON.stringify(request)]), /permission denied/);
-      }
-      assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n, before);
-    });
-    await t.test("current Native account list and scoped anon CI holders are legal without gateway impersonation", async () => {
-      const session = crypto.randomUUID(), ciProof = crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex");
-      await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, USER]);
-      await native.query("set role authenticated");
-      await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
-        [USER, JSON.stringify({ sub: USER, role: "authenticated", session_id: session })]);
-      const listed = (await native.query("select public.clued_storage_account_v1($1::jsonb) value", [JSON.stringify({ action: "list" })])).rows[0].value;
-      assert.ok(Array.isArray(listed.connections));
-      const binding = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
-        values($1,'synthetic','Current G6 CI fixture',$2,array['context:read','context:write'],array['*']) returning id`, [USER, ciProof])).rows[0].id;
-      const receipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
-        values($1,'global','binding_role_set','binding',$2,'{}') returning id`, [USER, binding])).rows[0].id;
-      await admin.query("insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id) values($1,$2,'ci-admission',now(),$3)",
-        [USER, binding, receipt]);
-      await ci.query("set role anon");
-      const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
-      const holders = (await ci.query("select public.clued_work_merge_slot_holders_v1($1,$2::jsonb) value",
-        [ciProof, JSON.stringify({ scope: "global", repository: "synthetic/resource-center-g6" })])).rows[0].value;
-      assert.equal(holders.status, "ok"); assert.deepEqual(holders.holders, []);
-      assert.equal(holders.reason, undefined, "a real CI-admission Binding must pass authority, not return a denied empty result");
-      assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n, before);
-    });
-    await t.test("retired jobs_v2 and project aliases stay inaccessible to every API role after closeout", async () => {
-      for (const signature of ["public.clued_storage_jobs_v2(text,jsonb)", "public.clued_project_mutate(text,jsonb)"]) {
-        for (const role of ["anon", "authenticated", "service_role", "clued_worker_gateway"])
-          assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') yes", [role, signature])).rows[0].yes, false);
-      }
-      await assert.rejects(gateway.query("select public.clued_storage_jobs_v2($1,'{}'::jsonb)", [proof]), /permission denied/);
-      await assertGatewayCloseoutBoundary(admin);
-    });
-  } finally { await gateway.end(); await native.end(); await ci.end(); }
+  await setWorkerGatewayCaller(gateway);
+  const nonce = crypto.randomUUID(), proof = crypto.createHash("sha256").update(nonce).digest("hex");
+  const managedRoot = "/g6-" + nonce + "/Clued_资料中心", track = managedRoot + "/20_P_产品与体验";
+  const rootId = "g6-root-" + nonce, parentId = "g6-parent-" + nonce, trackId = "g6-track-" + nonce;
+  const register = async input => (await admin.query("select public.clued_resource_center_admin_v1($1,$2::jsonb) value",
+    [USER, JSON.stringify({ source_decision_id: DECISION, idempotency_key: crypto.randomUUID(), ...input })])).rows[0].value;
+  const profile = await register({ action: "profile_register", project_id: PROJECT, profile_version: "g6/1",
+    managed_root: managedRoot, root_folder_id: rootId, root_parent_id: parentId, root_folder_version: "1" });
+  assert.equal(profile.status, "committed");
+  const profileId = profile.target_refs.find(ref => ref.role === "primary").id;
+  assert.equal((await register({ action: "artifact_register", profile_id: profileId, path: track,
+    provider_file_id: trackId, provider_file_version: "1", target_kind: "directory",
+    governance_class: "ordinary", delete_authority: false })).status, "committed");
+  assert.equal((await register({ action: "binding_issue", profile_id: profileId, token_hash: proof,
+    expires_at: new Date(Date.now() + 3600000).toISOString() })).status, "committed");
+  const request = { contract: "clued.resource-center-authority/1", nonce: crypto.randomUUID(),
+    policy_version: "clued.resource-center-mutation-policy/1", profile_id: profileId, profile_version: "g6/1",
+    provider_identity: { root_folder_id: rootId, root_parent_id: parentId, root_folder_version: "1",
+      source_file_id: null, source_file_version: null, destination_parent_id: trackId, destination_parent_version: "1",
+      destination_file_id: null, destination_file_version: null, provider_version: "a".repeat(64) },
+    mutation: { operation: "create", source_path: null, destination_path: track + "/current.txt", artifact_role: "clued_resource",
+      target_kind: "file", directory_semantics: null, artifact_id: null, governance_class: null,
+      delete_authority: false, artifact_authority_version: null, duplicate_bytes: false,
+      currentness_identity: null, workspace_version: null } };
+  await t.test("current gateway resolves real registered authority while invalid proof and old callers remain denied", async () => {
+    const result = await workerGatewayRpc(gateway, "clued_resource_center_authority_v1", proof, request);
+    assert.equal(result.status, "resolved");
+    assert.match(result.authority.currentness_identity, /^decision:/);
+    const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
+    assert.equal((await workerGatewayRpc(gateway, "clued_resource_center_authority_v1", "f".repeat(64), request)).status, "denied");
+    for (const role of ["anon", "authenticated"]) {
+      await ci.query(`set role ${role}`);
+      await assert.rejects(ci.query("select public.clued_resource_center_authority_v1($1,$2::jsonb)", [proof, JSON.stringify(request)]), /permission denied/);
+    }
+    assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n, before);
+  });
+  await t.test("current Native account list and scoped anon CI holders are legal without gateway impersonation", async () => {
+    const session = crypto.randomUUID(), ciProof = crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex");
+    await admin.query("insert into auth.sessions(id,user_id) values($1,$2)", [session, USER]);
+    await native.query("set role authenticated");
+    await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+      [USER, JSON.stringify({ sub: USER, role: "authenticated", session_id: session })]);
+    const listed = (await native.query("select public.clued_storage_account_v1($1::jsonb) value", [JSON.stringify({ action: "list" })])).rows[0].value;
+    assert.ok(Array.isArray(listed.connections));
+    const binding = (await admin.query(`insert into public.clued_agent_bindings(user_id,vendor,agent_name,token_hash,scopes,context_keys)
+      values($1,'synthetic','Current G6 CI fixture',$2,array['context:read','context:write'],array['*']) returning id`, [USER, ciProof])).rows[0].id;
+    const receipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,metadata)
+      values($1,'global','binding_role_set','binding',$2,'{}') returning id`, [USER, binding])).rows[0].id;
+    await admin.query("insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id) values($1,$2,'ci-admission',now(),$3)",
+      [USER, binding, receipt]);
+    await ci.query("set role anon");
+    const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
+    const holders = (await ci.query("select public.clued_work_merge_slot_holders_v1($1,$2::jsonb) value",
+      [ciProof, JSON.stringify({ scope: "global", repository: "synthetic/resource-center-g6" })])).rows[0].value;
+    assert.equal(holders.status, "ok"); assert.deepEqual(holders.holders, []);
+    assert.equal(holders.reason, undefined, "a real CI-admission Binding must pass authority, not return a denied empty result");
+    assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n, before);
+  });
+  await t.test("retired jobs_v2 and project aliases stay inaccessible to every API role after closeout", async () => {
+    for (const signature of ["public.clued_storage_jobs_v2(text,jsonb)", "public.clued_project_mutate(text,jsonb)"]) {
+      for (const role of ["anon", "authenticated", "service_role", "clued_worker_gateway"])
+        assert.equal((await admin.query("select has_function_privilege($1,$2,'EXECUTE') yes", [role, signature])).rows[0].yes, false);
+    }
+    await assert.rejects(gateway.query("select public.clued_storage_jobs_v2($1,'{}'::jsonb)", [proof]), /permission denied/);
+    await assertGatewayCloseoutBoundary(admin);
+  });
 }
 
 async function freePort() {
@@ -162,150 +164,201 @@ const focusedAdopt = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-ado
 const focusedWorkClaim = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-work-claim";
 const focusedConnections = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-connections";
 const focusedAncestors = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-ancestors";
-for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections || focusedAncestors ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, { timeout: 180000 }, async (t) => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
-  const server = new EmbeddedPostgres({
-    databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
-    port: await freePort(), persistent: false, postgresFlags: ["-c", "io_method=sync"],
-    onLog() {}, onError(message) { process.stderr.write(message + "\n"); },
-  });
-  let admin;
-  let anon;
-  try {
-    await server.initialise();
-    await server.start();
-    admin = server.getPgClient();
-    await admin.connect();
-    await admin.query("create role anon nologin; create role authenticated nologin;" +
-      "create role service_role nologin bypassrls; create role authenticator nologin noinherit;" +
-      "create schema auth; create schema extensions; create extension pgcrypto with schema extensions;" +
-      "create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz);" +
-      "create table auth.sessions(id uuid primary key,user_id uuid not null,not_after timestamptz);" +
-      "create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;" +
-      "create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;" +
-      "grant usage on schema auth,extensions to anon,authenticated,service_role;" +
-      "grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
-    const migrationDir = path.join(process.cwd(), "supabase", "migrations");
-    const closeout = await findGatewayCloseoutMigration(process.cwd());
-    const closeoutSql = await fs.readFile(path.join(migrationDir, closeout), "utf8");
-    let refreshUpgrade;
-    for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
-      try {
-        if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
-        if (name === "20260927232454_resource_center_binding_expiry_compat_v1.sql" && bindingSchema === "production-no-legacy-expiry") {
-          // Model the deployed shape only in this ephemeral database. Prove the
-          // native readback fails before this successor and works after it.
-          await admin.query("alter table public.clued_agent_bindings drop column expires_at restrict");
-          const native = server.getPgClient(); await native.connect();
-          try {
-            await native.query("set role authenticated");
-            await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
-              [refreshUpgrade.user,JSON.stringify({sub:refreshUpgrade.user,session_id:refreshUpgrade.session})]);
-            const read = () => native.query("select public.clued_storage_account_v1($1::jsonb) value",
-              [JSON.stringify({action:"client_grants",connection_id:refreshUpgrade.connections[0].id})]);
-            const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
-            await t.test("deployed missing-column readback reproduces before the exact successor",async()=>{
-              await assert.rejects(read(),/column b\.expires_at does not exist/);
-            });
-            await admin.query(await fs.readFile(path.join(migrationDir,name),"utf8"));
-            await t.test("the same native readback succeeds after the successor without a receipt or schema expansion",async()=>{
-              assert.deepEqual((await read()).rows[0].value.grants,[]);
-              assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n,before);
-            });
-          } finally {await native.end();}
-          continue;
-        }
-        await admin.query(await fs.readFile(path.join(migrationDir, name), "utf8"));
-      } catch (error) {
-        throw new Error("Migration " + name + ": " + error.message, { cause: error });
-      }
+for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections || focusedAncestors ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, async (t) => {
+  const clock = createPhaseClock(bindingSchema);
+  const { phase } = clock;
+  const fixture = (fn, ...args) => phase(fn.name, FIXTURE_LIMIT_MS, () => fn(t, ...args));
+  const check = (name, title, fn) => phase(name, FIXTURE_LIMIT_MS, (signal) => t.test(title, { signal }, fn));
+  let assertionFailed = false;
+  t.afterEach((child) => {
+    if (child.error) {
+      assertionFailed = true;
+      clock.noteFailure();
     }
-    await allowRawTestBindings(admin);
-    await allowTestIssuerCredentials(admin);
-    await t.test("Binding schema explicitly covers deployed missing-column and optional legacy shapes",async()=>{
-      const has=(await admin.query("select exists(select 1 from information_schema.columns where table_schema='public' and table_name='clued_agent_bindings' and column_name='expires_at') present")).rows[0].present;
-      assert.equal(has,bindingSchema==="legacy-expiry");
+  });
+
+  let directory, server, admin, anon;
+  let preparingServer = false;
+  let cleanupDeferred = false;
+  let bodyFailed = false;
+  const clients = [];
+  const client = () => {
+    const connection = server.getPgClient();
+    clients.push(connection);
+    return connection;
+  };
+  const cleanCluster = () => clock.measure("clusterCleanup", async () => {
+    if (!directory) return;
+    if (!await stopCluster(server, { directory, removeDirectory: true, mark: clock.mark })) {
+      throw new Error("Resource Center DB cluster cleanup failed");
+    }
+  });
+
+  try {
+    const closeoutSql = await phase("databaseSetup", DATABASE_SETUP_LIMIT_MS, async (signal) => {
+      preparingServer = true;
+      try {
+        await clock.measure("initialise", async () => {
+          directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-resource-center-db-"));
+          const port = await freePort();
+          signal.throwIfAborted();
+          // Keep directory removal separate from the library's stop promise.
+          server = new EmbeddedPostgres({
+            databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
+            port, persistent: true, postgresFlags: EPHEMERAL_POSTGRES_FLAGS, initdbFlags: EPHEMERAL_INITDB_FLAGS,
+            onLog: clock.postgresLog, onError: clock.postgresLog,
+          });
+          await server.initialise();
+        });
+        signal.throwIfAborted();
+        await clock.measure("start", () => server.start());
+      } finally {
+        preparingServer = false;
+        // Never remove the directory while initdb or a late start still owns it.
+        if (cleanupDeferred) {
+          try { await cleanCluster(); } catch (error) { t.diagnostic(String(error)); }
+        }
+      }
+      signal.throwIfAborted();
+      return clock.measure("migrationReplay", async () => {
+        admin = client();
+        await admin.connect();
+        await admin.query("create role anon nologin; create role authenticated nologin;" +
+          "create role service_role nologin bypassrls; create role authenticator nologin noinherit;" +
+          "create schema auth; create schema extensions; create extension pgcrypto with schema extensions;" +
+          "create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz);" +
+          "create table auth.sessions(id uuid primary key,user_id uuid not null,not_after timestamptz);" +
+          "create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;" +
+          "create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;" +
+          "grant usage on schema auth,extensions to anon,authenticated,service_role;" +
+          "grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
+        const migrationDir = path.join(process.cwd(), "supabase", "migrations");
+        const closeout = await findGatewayCloseoutMigration(process.cwd());
+        const closeoutSql = await fs.readFile(path.join(migrationDir, closeout), "utf8");
+        let refreshUpgrade;
+        for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
+          signal.throwIfAborted();
+          try {
+            if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
+            if (name === "20260927232454_resource_center_binding_expiry_compat_v1.sql" && bindingSchema === "production-no-legacy-expiry") {
+              // Model the deployed shape only in this ephemeral database. Prove the
+              // native readback fails before this successor and works after it.
+              await admin.query("alter table public.clued_agent_bindings drop column expires_at restrict");
+              const native = server.getPgClient();
+              try {
+                await native.connect();
+                await native.query("set role authenticated");
+                await native.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+                  [refreshUpgrade.user,JSON.stringify({sub:refreshUpgrade.user,session_id:refreshUpgrade.session})]);
+                const read = () => native.query("select public.clued_storage_account_v1($1::jsonb) value",
+                  [JSON.stringify({action:"client_grants",connection_id:refreshUpgrade.connections[0].id})]);
+                const before = (await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n;
+                await t.test("deployed missing-column readback reproduces before the exact successor",async()=>{
+                  await assert.rejects(read(),/column b\.expires_at does not exist/);
+                });
+                await admin.query(await fs.readFile(path.join(migrationDir,name),"utf8"));
+                await t.test("the same native readback succeeds after the successor without a receipt or schema expansion",async()=>{
+                  assert.deepEqual((await read()).rows[0].value.grants,[]);
+                  assert.equal((await admin.query("select count(*)::int n from public.clued_audit_receipts")).rows[0].n,before);
+                });
+              } finally {await native.end();}
+              continue;
+            }
+            await admin.query(await fs.readFile(path.join(migrationDir, name), "utf8"));
+          } catch (error) {
+            throw new Error("Migration " + name + ": " + error.message, { cause: error });
+          }
+        }
+        signal.throwIfAborted();
+        await allowRawTestBindings(admin);
+        await allowTestIssuerCredentials(admin);
+        await t.test("Binding schema explicitly covers deployed missing-column and optional legacy shapes",async()=>{
+          const has=(await admin.query("select exists(select 1 from information_schema.columns where table_schema='public' and table_name='clued_agent_bindings' and column_name='expires_at') present")).rows[0].present;
+          assert.equal(has,bindingSchema==="legacy-expiry");
+        });
+        await t.test("actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop",async()=>{
+          assert.ok(refreshUpgrade);
+          await verifyRefreshUpgrade(admin,server,refreshUpgrade);
+        });
+        await admin.query("insert into auth.users(id,email) values($1,'owner@example.invalid')", [USER]);
+        await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)" +
+          " values($1,$2,'Resource Center','resource center',$3,'confirmed',now())",
+        [PROJECT, USER, "project:" + PROJECT]);
+        await admin.query("insert into public.clued_memories(" +
+          "id,user_id,title,content,scope,project_id,record_type,status,record_schema_version,lifecycle_status," +
+          "canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)" +
+          " values($1,$2,'Owner approval','Temporary test objects only','project',$3,'decision','active',1,'active'," +
+          "$4,'{\"rationale\":\"Test registration\"}','{}','{}','user_explicit','Owner confirmed')",
+        [DECISION, USER, PROJECT, "project:" + PROJECT]);
+        return closeoutSql;
+      });
     });
-    await t.test("actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop",async()=>{
-      assert.ok(refreshUpgrade);
-      await verifyRefreshUpgrade(admin,server,refreshUpgrade);
-    });
-    await admin.query("insert into auth.users(id,email) values($1,'owner@example.invalid')", [USER]);
-    await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)" +
-      " values($1,$2,'Resource Center','resource center',$3,'confirmed',now())",
-    [PROJECT, USER, "project:" + PROJECT]);
-    await admin.query("insert into public.clued_memories(" +
-      "id,user_id,title,content,scope,project_id,record_type,status,record_schema_version,lifecycle_status," +
-      "canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)" +
-      " values($1,$2,'Owner approval','Temporary test objects only','project',$3,'decision','active',1,'active'," +
-      "$4,'{\"rationale\":\"Test registration\"}','{}','{}','user_explicit','Owner confirmed')",
-    [DECISION, USER, PROJECT, "project:" + PROJECT]);
 
     // Fast local diagnosis only. CI leaves this unset and runs both complete
     // schema shapes plus every existing Resource Center regression.
     if (focusedCloud) {
-      await testAccountCloud(t, admin, server, USER, DECISION,{demandRenewal:true});
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testAccountCloud, admin, server, USER, DECISION,{demandRenewal:true});
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
     if (focusedRead) {
-      await testStorageRead(t, admin, server, USER, DECISION,{demandRenewal:true});
-      await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
-      await testStorageReadContent(t, admin, server, USER, DECISION);
-      await testStorageModifyLevel(t, admin, server, USER, DECISION);
-      await testStorageModifyExecution(t, admin, server, USER, DECISION);
-      await testStorageReplace(t, admin, server, USER, DECISION);
-      await testStorageDestructive(t, admin, server, USER, DECISION);
-      await testStorageDirectoryMove(t, admin, server, USER, DECISION);
-      await testStorageAdopt(t, admin, server, USER, DECISION);
-      await testStorageWorkClaim(t, admin, server, USER, DECISION);
-      await testStorageNormalUse(t, admin, server, USER, DECISION);
-      await testStorageBinaryUpload(t, admin, server, USER, DECISION);
-      await testStorageBudget(t, admin, server, USER);
-      await testStorageOnboard(t, admin, server, USER, DECISION);
-      await testStorageConnections(t, admin, server);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageRead, admin, server, USER, DECISION,{demandRenewal:true});
+      await fixture(testStorageClientRedirectIdentity, admin, server, USER, DECISION);
+      await fixture(testStorageReadContent, admin, server, USER, DECISION);
+      await fixture(testStorageModifyLevel, admin, server, USER, DECISION);
+      await fixture(testStorageModifyExecution, admin, server, USER, DECISION);
+      await fixture(testStorageReplace, admin, server, USER, DECISION);
+      await fixture(testStorageDestructive, admin, server, USER, DECISION);
+      await fixture(testStorageDirectoryMove, admin, server, USER, DECISION);
+      await fixture(testStorageAdopt, admin, server, USER, DECISION);
+      await fixture(testStorageWorkClaim, admin, server, USER, DECISION);
+      await fixture(testStorageNormalUse, admin, server, USER, DECISION);
+      await fixture(testStorageBinaryUpload, admin, server, USER, DECISION);
+      await fixture(testStorageBudget, admin, server, USER);
+      await fixture(testStorageOnboard, admin, server, USER, DECISION);
+      await fixture(testStorageConnections, admin, server);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
     if (focusedDirectoryMove) {
-      await testStorageDirectoryMove(t, admin, server, USER, DECISION);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageDirectoryMove, admin, server, USER, DECISION);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
     if (focusedWorkClaim) {
-      await testStorageWorkClaim(t, admin, server, USER, DECISION);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageWorkClaim, admin, server, USER, DECISION);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
     if (focusedConnections) {
-      await testStorageConnections(t, admin, server);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageConnections, admin, server);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
     if (focusedAdopt) {
-      await testStorageAdopt(t, admin, server, USER, DECISION);
-      await testStorageNormalUse(t, admin, server, USER, DECISION);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageAdopt, admin, server, USER, DECISION);
+      await fixture(testStorageNormalUse, admin, server, USER, DECISION);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
     if (focusedOnboard) {
-      await testStorageOnboard(t, admin, server, USER, DECISION);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageOnboard, admin, server, USER, DECISION);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
     if (focusedAdmin) {
-      await testStorageAdmin(t, admin, server, USER, PROJECT);
-      await testStorageClientCapability(t, admin, server, USER, DECISION);
-      await testStorageSourceReader(t, admin);
-      await testStoragePolicyTransition(t, admin, server, USER, DECISION);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageAdmin, admin, server, USER, PROJECT);
+      await fixture(testStorageClientCapability, admin, server, USER, DECISION);
+      await fixture(testStorageSourceReader, admin);
+      await fixture(testStoragePolicyTransition, admin, server, USER, DECISION);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
@@ -315,35 +368,38 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         idempotency_key: crypto.randomUUID(), source_decision_id: DECISION, ...input,
       })],
     )).rows[0].value;
-    const registered = await adminCall({
-      action: "profile_register", project_id: PROJECT, profile_version: "test/1",
-      managed_root: ROOT, root_folder_id: ROOT_ID, root_parent_id: "my-drive",
-      root_folder_version: "1",
-    });
-    assert.equal(registered.status, "committed");
-    assert.equal(registered.event_ids.length, 1);
-    const profileId = registered.target_refs.find((ref) => ref.role === "primary").id;
-    assert.ok(profileId);
-    assert.equal((await admin.query(
-      "select status from public.clued_audit_receipts where id=$1", [registered.receipt_id],
-    )).rows[0].status, "committed");
+    const { profileId, bindingId, trackId } = await phase("registerAuthority", FIXTURE_LIMIT_MS, async () => {
+      const registered = await adminCall({
+        action: "profile_register", project_id: PROJECT, profile_version: "test/1",
+        managed_root: ROOT, root_folder_id: ROOT_ID, root_parent_id: "my-drive",
+        root_folder_version: "1",
+      });
+      assert.equal(registered.status, "committed");
+      assert.equal(registered.event_ids.length, 1);
+      const profileId = registered.target_refs.find((ref) => ref.role === "primary").id;
+      assert.ok(profileId);
+      assert.equal((await admin.query(
+        "select status from public.clued_audit_receipts where id=$1", [registered.receipt_id],
+      )).rows[0].status, "committed");
 
-    const track = await adminCall({
-      action: "artifact_register", profile_id: profileId, path: TRACK,
-      provider_file_id: TRACK_ID, provider_file_version: "2",
-      target_kind: "directory", governance_class: "ordinary", delete_authority: false,
-    });
-    assert.equal(track.status, "committed");
-    const issued = await adminCall({
-      action: "binding_issue", profile_id: profileId, token_hash: tokenHash,
-      expires_at: new Date(Date.now() + 3600000).toISOString(),
-    });
-    assert.equal(issued.status, "committed");
-    const bindingId = issued.target_refs.find((ref) => ref.role === "primary").id;
+      const track = await adminCall({
+        action: "artifact_register", profile_id: profileId, path: TRACK,
+        provider_file_id: TRACK_ID, provider_file_version: "2",
+        target_kind: "directory", governance_class: "ordinary", delete_authority: false,
+      });
+      assert.equal(track.status, "committed");
+      const issued = await adminCall({
+        action: "binding_issue", profile_id: profileId, token_hash: tokenHash,
+        expires_at: new Date(Date.now() + 3600000).toISOString(),
+      });
+      assert.equal(issued.status, "committed");
+      const bindingId = issued.target_refs.find((ref) => ref.role === "primary").id;
 
-    anon = server.getPgClient();
-    await anon.connect();
-    await setWorkerGatewayCaller(anon);
+      anon = client();
+      await anon.connect();
+      await setWorkerGatewayCaller(anon);
+      return { profileId, bindingId, trackId: track.target_refs.find((ref) => ref.role === "primary").id };
+    });
     const providerIdentity = {
       root_folder_id: ROOT_ID, root_parent_id: "my-drive", root_folder_version: "1",
       source_file_id: null, source_file_version: null,
@@ -371,12 +427,15 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         [tokenHash, JSON.stringify(request)],
       )).rows[0].value;
     };
-    const allowed = await resolve();
-    assert.equal(allowed.status, "resolved");
-    assert.equal(allowed.authority.artifact_id, null);
-    assert.equal(allowed.authority.governance_class, "ordinary");
-    assert.match(allowed.authority.currentness_identity, /^decision:/);
-    assert.match(allowed.authority.authority_version, /:1:1$/);
+    const allowed = await phase("initialAuthority", FIXTURE_LIMIT_MS, async () => {
+      const result = await resolve();
+      assert.equal(result.status, "resolved");
+      assert.equal(result.authority.artifact_id, null);
+      assert.equal(result.authority.governance_class, "ordinary");
+      assert.match(result.authority.currentness_identity, /^decision:/);
+      assert.match(result.authority.authority_version, /:1:1$/);
+      return result;
+    });
     const exactRequest = (digest) => ({ mutation, binding: {
       ...mutation, profile_id: profileId, profile_version: "test/1",
       policy_version: "clued.resource-center-mutation-policy/1", request_sha256: digest,
@@ -387,7 +446,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
 
     // Storage step 3 (Task 469700eb): a request that carries
     // provider_identity.ancestors is matched by identity and digest.
-    const ancestorIdentity = () => t.test("a new-shape request matches its ancestors by identity and digest, not by Drive version", async () => {
+    const ancestorIdentity = () => check("ancestorIdentity", "a new-shape request matches its ancestors by identity and digest, not by Drive version", async () => {
       const ACCESS = "a1".repeat(32), OTHER = "b2".repeat(32), SHARED = "c3".repeat(32);
       const MID = TRACK + "/中间", MID_ID = "drive-mid-id";
       const query = async (sql, args) => (await admin.query(sql, args)).rows[0];
@@ -532,12 +591,12 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
     });
     if (focusedAncestors) {
       await ancestorIdentity();
-      await testStorageModifyExecution(t, admin, server, USER, DECISION);
-      await qualifyCurrentCallers(t, admin, server, closeoutSql);
+      await fixture(testStorageModifyExecution, admin, server, USER, DECISION);
+      await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
       return;
     }
 
-    await t.test("durable journal fences restart, start replay and uncertain effects", async () => {
+    await check("journalRecovery", "durable journal fences restart, start replay and uncertain effects", async () => {
       const journal = async (input, client = admin) => (await client.query(
         "select public.clued_resource_center_mutation_journal_v1($1,$2::jsonb) value",
         [USER, JSON.stringify({ profile_id: profileId, source_decision_id: DECISION,
@@ -602,7 +661,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         artifact_id: artifact.id, base_version: artifact.version })).status, "committed");
     });
 
-    await t.test("expired unstarted journal can cancel but cannot execute", async () => {
+    await check("expiredJournal", "expired unstarted journal can cancel but cannot execute", async () => {
       const journal = async (input) => (await admin.query(
         "select public.clued_resource_center_mutation_journal_v1($1,$2::jsonb) value",
         [USER, JSON.stringify({ profile_id: profileId, source_decision_id: DECISION,
@@ -619,14 +678,14 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       assert.equal((await journal({ ...bound, action: "cancel" })).state, "cancelled");
     });
 
-    await t.test("a second profile cannot bypass the fence for the same provider root", async () => {
+    await check("providerRootFence", "a second profile cannot bypass the fence for the same provider root", async () => {
       const alias = await adminCall({ action: "profile_register", project_id: PROJECT,
         profile_version: "alias/1", managed_root: "G:/Alias/Clued_资料中心",
         root_folder_id: ROOT_ID, root_parent_id: "my-drive", root_folder_version: "1" });
       assert.equal(alias.status, "rejected");
     });
 
-    await t.test("writer revocation wins a waiting start and exact fenced recovery releases no-effect intent", async () => {
+    await check("writerRevocation", "writer revocation wins a waiting start and exact fenced recovery releases no-effect intent", async () => {
       const writerHash = crypto.createHash("sha256").update("revocation-race").digest("hex");
       const issue = (await admin.query("select public.clued_resource_center_writer_admin_v1($1,$2::jsonb) value",
         [USER, JSON.stringify({ action: "issue", authority_binding_id: bindingId,
@@ -718,7 +777,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       }
     });
 
-    await t.test("new Owner authority can cancel prepared intent after original profile and Decision revocation", async () => {
+    await check("cancelPreparedIntent", "new Owner authority can cancel prepared intent after original profile and Decision revocation", async () => {
       const recoveryId = crypto.randomUUID();
       await admin.query("insert into public.clued_memories(id,user_id,title,content,scope,project_id,record_type,status," +
         "record_schema_version,lifecycle_status,canonical_scope,type_fields,relations,source_refs,authority,confidence_reason)" +
@@ -748,7 +807,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       }
     });
 
-    await t.test("file registration and CAS update bind current provider version", async () => {
+    await check("fileRegistration", "file registration and CAS update bind current provider version", async () => {
       const filePath = TRACK + "/logo.svg";
       const file = await adminCall({
         action: "artifact_register", profile_id: profileId, path: filePath,
@@ -793,7 +852,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       assert.equal(stale.status, "rejected");
     });
 
-    await t.test("registration is receipt-backed, idempotent and rejects ambiguous paths", async () => {
+    await check("profileRegistration", "registration is receipt-backed, idempotent and rejects ambiguous paths", async () => {
       const input = {
         action: "artifact_register", profile_id: profileId,
         path: ROOT + "/30_R_基础研究", provider_file_id: "drive-research-id",
@@ -821,7 +880,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       });
       assert.equal(missingParent.status, "rejected");
     });
-    await t.test("Canonical Decision version changes the returned Currentness identity", async () => {
+    await check("decisionCurrentness", "Canonical Decision version changes the returned Currentness identity", async () => {
       await admin.query("update public.clued_memories set version=version+1 where id=$1", [DECISION]);
       const changed = await resolve();
       assert.equal(changed.status, "resolved");
@@ -833,7 +892,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       assert.equal((await resolve()).status, "resolved");
     });
 
-    await t.test("unregistered paths, wrong IDs/versions and profile fail closed", async () => {
+    await check("denyInvalidAuthority", "unregistered paths, wrong IDs/versions and profile fail closed", async () => {
       assert.deepEqual(await resolve({ profile_version: "other" }), { status: "denied", reason: "profile_mismatch" });
       assert.deepEqual(await resolve({ provider_identity: {
         ...providerIdentity, destination_parent_id: "same-name-other-id",
@@ -854,7 +913,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         ...mutation, destination_path: "/elsewhere/topic",
       } }), { status: "denied", reason: "destination_outside_root" });
     });
-    await t.test("a generic Clued hash cannot substitute for the dedicated Binding", async () => {
+    await check("bindingProof", "a generic Clued hash cannot substitute for the dedicated Binding", async () => {
       const generic = crypto.randomBytes(32).toString("hex");
       const denied = (await anon.query(
         "select public.clued_resource_center_authority_v1($1,$2::jsonb) value",
@@ -862,14 +921,13 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       )).rows[0].value;
       assert.deepEqual(denied, { status: "denied", reason: "request_invalid" });
     });
-    await t.test("administrative writes and tables are inaccessible to anon", async () => {
+    await check("anonWritesDenied", "administrative writes and tables are inaccessible to anon", async () => {
       assert.equal((await admin.query("select has_function_privilege('anon'," +
         "'public.clued_resource_center_admin_v1(uuid,jsonb)','EXECUTE') allowed")).rows[0].allowed, false);
       assert.equal((await admin.query("select has_table_privilege('anon'," +
         "'clued_private.resource_center_bindings_v1','SELECT') allowed")).rows[0].allowed, false);
     });
-    const trackId = track.target_refs.find((ref) => ref.role === "primary").id;
-    await t.test("directory metadata can refresh without permitting a subtree move", async () => {
+    await check("directoryMetadata", "directory metadata can refresh without permitting a subtree move", async () => {
       const moved = await adminCall({
         action: "artifact_update", profile_id: profileId, artifact_id: trackId,
         base_version: 1, path: ROOT + "/another-track",
@@ -889,7 +947,7 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         ...providerIdentity, destination_parent_version: "3",
       } })).status, "resolved");
     });
-    await t.test("temporary Host/Worker/DB chain denies read-only then atomically finalizes qualified create", async (child) => {
+    await check("hostWorkerChain", "temporary Host/Worker/DB chain denies read-only then atomically finalizes qualified create", async (child) => {
       const tempParent = await fs.mkdtemp(path.join(os.tmpdir(), "clued-rc-acceptance-"));
       child.after(() => removeTestDirectory(tempParent));
       const nativeRoot = path.join(tempParent, "Clued_资料中心");
@@ -1116,33 +1174,33 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         await gateway.end();
       }
     });
-    await testRenewalDatabase(t, admin, server, USER, DECISION);
-    await testStorageAccount(t, admin, server, USER, DECISION);
-    await testStorageOAuth(t, admin, server, USER, DECISION);
-    await testAccountRefresh(t, admin, server, USER, DECISION);
-    await testDirectoryProbe(t, admin, server, USER, DECISION);
-    await testAccountPolicy(t, admin, server, USER, DECISION);
-    await testStorageAdmin(t, admin, server, USER, PROJECT);
-    await testStorageClientCapability(t, admin, server, USER, DECISION);
-    await testStorageSourceReader(t, admin);
-    await testStoragePolicyTransition(t, admin, server, USER, DECISION);
-    await testAccountCloud(t, admin, server, USER, DECISION,{demandRenewal:true});
-    await testStorageRead(t, admin, server, USER, DECISION,{demandRenewal:true});
-    await testStorageClientRedirectIdentity(t, admin, server, USER, DECISION);
-    await testStorageReadContent(t, admin, server, USER, DECISION);
-    await testStorageModifyLevel(t, admin, server, USER, DECISION);
-    await testStorageModifyExecution(t, admin, server, USER, DECISION);
-    await testStorageReplace(t, admin, server, USER, DECISION);
-    await testStorageDestructive(t, admin, server, USER, DECISION);
-    await testStorageDirectoryMove(t, admin, server, USER, DECISION);
-    await testStorageAdopt(t, admin, server, USER, DECISION);
-    await testStorageWorkClaim(t, admin, server, USER, DECISION);
-    await testStorageNormalUse(t, admin, server, USER, DECISION);
-    await testStorageBinaryUpload(t, admin, server, USER, DECISION);
-    await testStorageBudget(t, admin, server, USER);
-    await testStorageOnboard(t, admin, server, USER, DECISION);
-    await testStorageConnections(t, admin, server);
-    await t.test("a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
+    await fixture(testRenewalDatabase, admin, server, USER, DECISION);
+    await fixture(testStorageAccount, admin, server, USER, DECISION);
+    await fixture(testStorageOAuth, admin, server, USER, DECISION);
+    await fixture(testAccountRefresh, admin, server, USER, DECISION);
+    await fixture(testDirectoryProbe, admin, server, USER, DECISION);
+    await fixture(testAccountPolicy, admin, server, USER, DECISION);
+    await fixture(testStorageAdmin, admin, server, USER, PROJECT);
+    await fixture(testStorageClientCapability, admin, server, USER, DECISION);
+    await fixture(testStorageSourceReader, admin);
+    await fixture(testStoragePolicyTransition, admin, server, USER, DECISION);
+    await fixture(testAccountCloud, admin, server, USER, DECISION,{demandRenewal:true});
+    await fixture(testStorageRead, admin, server, USER, DECISION,{demandRenewal:true});
+    await fixture(testStorageClientRedirectIdentity, admin, server, USER, DECISION);
+    await fixture(testStorageReadContent, admin, server, USER, DECISION);
+    await fixture(testStorageModifyLevel, admin, server, USER, DECISION);
+    await fixture(testStorageModifyExecution, admin, server, USER, DECISION);
+    await fixture(testStorageReplace, admin, server, USER, DECISION);
+    await fixture(testStorageDestructive, admin, server, USER, DECISION);
+    await fixture(testStorageDirectoryMove, admin, server, USER, DECISION);
+    await fixture(testStorageAdopt, admin, server, USER, DECISION);
+    await fixture(testStorageWorkClaim, admin, server, USER, DECISION);
+    await fixture(testStorageNormalUse, admin, server, USER, DECISION);
+    await fixture(testStorageBinaryUpload, admin, server, USER, DECISION);
+    await fixture(testStorageBudget, admin, server, USER);
+    await fixture(testStorageOnboard, admin, server, USER, DECISION);
+    await fixture(testStorageConnections, admin, server);
+    await check("directorySharingDigest", "a directory with a recorded sharing digest is matched by sharing, not Drive version", async () => {
       const shared = "d".repeat(64), changed = "e".repeat(64);
       const rowVersion = async (id) => Number((await admin.query(
         "select version from clued_private.resource_center_artifacts_v1 where id=$1", [id])).rows[0].version);
@@ -1204,32 +1262,54 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       }
     });
     await ancestorIdentity();
-    const removed = await adminCall({
-      action: "artifact_revoke", profile_id: profileId, artifact_id: trackId,
-      base_version: Number((await admin.query(
-        "select version from clued_private.resource_center_artifacts_v1 where id=$1", [trackId])).rows[0].version),
+    await phase("revokeAuthority", FIXTURE_LIMIT_MS, async () => {
+      const removed = await adminCall({
+        action: "artifact_revoke", profile_id: profileId, artifact_id: trackId,
+        base_version: Number((await admin.query(
+          "select version from clued_private.resource_center_artifacts_v1 where id=$1", [trackId])).rows[0].version),
+      });
+      assert.equal(removed.status, "committed");
+      assert.equal((await resolve()).status, "denied");
+      assert.equal((await resolve({
+        mutation: {
+          ...mutation, operation: "replace", destination_path: TRACK + "/logo.svg",
+          target_kind: "file", directory_semantics: null,
+        },
+        provider_identity: {
+          ...providerIdentity, destination_parent_version: "3",
+          destination_file_id: "drive-logo-id", destination_file_version: "6",
+        },
+      })).status, "denied");
+      const revoked = await adminCall({
+        action: "binding_revoke", profile_id: profileId, binding_id: bindingId,
+      });
+      assert.equal(revoked.status, "committed");
+      assert.equal((await resolve()).status, "denied");
     });
-    assert.equal(removed.status, "committed");
-    assert.equal((await resolve()).status, "denied");
-    assert.equal((await resolve({
-      mutation: {
-        ...mutation, operation: "replace", destination_path: TRACK + "/logo.svg",
-        target_kind: "file", directory_semantics: null,
-      },
-      provider_identity: {
-        ...providerIdentity, destination_parent_version: "3",
-        destination_file_id: "drive-logo-id", destination_file_version: "6",
-      },
-    })).status, "denied");
-    const revoked = await adminCall({
-      action: "binding_revoke", profile_id: profileId, binding_id: bindingId,
-    });
-    assert.equal(revoked.status, "committed");
-    assert.equal((await resolve()).status, "denied");
-    await qualifyCurrentCallers(t, admin, server, closeoutSql);
+    await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
+  } catch (error) {
+    bodyFailed = true;
+    clock.noteFailure();
+    throw error;
   } finally {
-    if (anon) await anon.end();
-    if (admin) await admin.end();
-    await stopCluster(server);
+    let cleanupFailed = false;
+    try {
+      try {
+        await clock.measure("closeConnections", async () => {
+          const results = await Promise.allSettled(clients.map(async (connection) => connection.end()));
+          const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+          if (errors.length) throw new AggregateError(errors, "Resource Center DB connection cleanup failed");
+        });
+      } finally {
+        if (preparingServer && !server?.process) cleanupDeferred = true;
+        else await cleanCluster();
+      }
+    } catch (error) {
+      cleanupFailed = true;
+      if (!bodyFailed) throw error;
+      t.diagnostic(String(error));
+    } finally {
+      clock.report(bodyFailed || assertionFailed || cleanupFailed);
+    }
   }
 });

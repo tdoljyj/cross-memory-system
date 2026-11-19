@@ -17,6 +17,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// These clusters are discarded after the test and never used for crash recovery.
+export const EPHEMERAL_POSTGRES_FLAGS = Object.freeze([
+  '-c', 'io_method=sync',
+  '-c', 'fsync=off',
+  '-c', 'synchronous_commit=off',
+  '-c', 'full_page_writes=off',
+]);
+export const EPHEMERAL_INITDB_FLAGS = Object.freeze(['--no-sync']);
+
 export const CLEANUP_DEFAULTS = Object.freeze({
   attempts: 8, // outer attempts, each with fs.rm's own retries
   attemptDelayMs: 500,
@@ -83,13 +92,17 @@ export async function waitForPidExit(pid, overrides = {}) {
 async function removeWhatCan(directory, o) {
   let left = 0;
   let entries = [];
-  try { entries = await o.readdir(directory); } catch { return left; }
+  try { entries = await o.readdir(directory); } catch { return { removed: false, left }; }
   for (const name of entries) {
     try { await o.rm(path.join(directory, name), { recursive: true, force: true, maxRetries: o.maxRetries, retryDelay: o.retryDelay }); }
     catch { left += 1; }
   }
-  try { await o.rm(directory, { recursive: true, force: true }); } catch { /* still locked */ }
-  return left;
+  try {
+    await o.rm(directory, { recursive: true, force: true });
+    return { removed: true, left: 0 };
+  } catch {
+    return { removed: false, left };
+  }
 }
 
 // Removes a test directory (cluster data, scratch parents, bundles) that lies
@@ -108,29 +121,56 @@ export async function removeTestDirectory(directory, overrides = {}) {
       if (attempt < o.attempts) await o.sleep(o.attemptDelayMs);
     }
   }
-  const left = await removeWhatCan(target, o);
+  const { removed, left } = await removeWhatCan(target, o);
+  if (removed) return true;
   o.log(`could not remove ${target} after ${o.attempts} attempts (${last?.code ?? last?.message}); ${left} entr${left === 1 ? 'y' : 'ies'} left`);
   return false;
 }
 
-// Stops an embedded-postgres server and, for a non-persistent cluster, makes
-// sure its directory is gone even when the library's own remove hit a lock.
-// A persistent cluster's directory is left to the test, which may restart it.
+async function cleanupStep(o, name, fn) {
+  const mark = (event) => {
+    try { o.mark?.(name, event); } catch { /* timing is diagnostic only */ }
+  };
+  mark('start');
+  try { return await fn(); } finally { mark('end'); }
+}
+
+// A slow stop is harmless once the owned process has exited and its directory
+// can be cleaned up. Report other failures to callers while keeping cleanup best effort.
+// A persistent cluster stays available for restart unless removal was explicitly requested.
 export async function stopCluster(server, overrides = {}) {
-  if (!server) return;
   const o = options(overrides);
-  const directory = overrides.directory ?? server.options?.databaseDir;
-  const child = server.process;
+  const directory = o.directory ?? server?.options?.databaseDir;
+  const child = server?.process;
   const pid = child?.pid;
+  const libraryRemovesDirectory = server?.options?.persistent === false;
+  const removeDirectory = o.removeDirectory ?? libraryRemovesDirectory;
+  let slow = false;
+  let stopped = true;
   // stop() waits for an 'exit' event, which an already exited child never emits again.
   const exited = !child || (child.exitCode !== null && child.exitCode !== undefined) || typeof child.signalCode === 'string';
-  if (!exited) {
-    try { await server.stop(); }
-    catch (error) {
-      // The library's own unretried remove of a non-persistent cluster is the usual cause.
-      if (!['EBUSY', 'EPERM', 'ENOTEMPTY', 'EACCES'].includes(error?.code)) o.log(`stop() failed: ${error?.code ?? error?.message}`);
+  await cleanupStep(o, 'stop', async () => {
+    if (exited) return;
+    const timeout = Symbol('stop timeout');
+    let timer;
+    try {
+      const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(timeout), o.exitTimeoutMs); });
+      slow = (await Promise.race([server.stop(), deadline])) === timeout;
+    } catch (error) {
+      // Recover a lock error from the library's own unretried removal below.
+      if (libraryRemovesDirectory && removeDirectory && ['EBUSY', 'EPERM', 'ENOTEMPTY', 'EACCES'].includes(error?.code)) return;
+      stopped = false;
+      o.log(`stop() failed: ${error?.code ?? error?.message ?? String(error)}`);
+    } finally {
+      clearTimeout(timer);
     }
+  });
+  if (!(await cleanupStep(o, 'waitForExit', () => waitForPidExit(pid, o)))) {
+    o.log(`postmaster ${pid} is still running ${o.exitTimeoutMs} ms after stop(); keeping its directory`);
+    return false;
   }
-  if (!(await waitForPidExit(pid, o))) o.log(`postmaster ${pid} is still running ${o.exitTimeoutMs} ms after stop()`);
-  if (typeof directory === 'string' && server.options?.persistent === false) await removeTestDirectory(directory, o);
+  if (slow) o.log(`stop() exceeded ${o.exitTimeoutMs} ms; postmaster ${pid} exited`);
+  const removed = await cleanupStep(o, 'removeDirectory', () => removeDirectory
+    ? removeTestDirectory(directory, o) : true);
+  return stopped && removed;
 }

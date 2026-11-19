@@ -13,6 +13,39 @@ using Microsoft.Win32.SafeHandles;
 
 // C1: public node identity only. No runtime/key/Source/qualification identity is derived here.
 // The canonical hash is the existing C1a SHA256(canonical(node) UTF8), without a trailing LF.
+// Shared by the controller helper and the broker's read-only diagnostic. Check under the caller's own token.
+internal static class RenewalKeyAccessV2 {
+    internal const string Name="Clued-CI-Node-Identity-v1";
+    internal static readonly string[] Providers={"Microsoft Platform Crypto Provider","Microsoft Software Key Storage Provider"};
+    internal const CngKeyOpenOptions Flags=CngKeyOpenOptions.MachineKey|CngKeyOpenOptions.Silent;
+    internal static bool Absent(int error) {
+        return error==unchecked((int)0x80090016) || error==unchecked((int)0x80090011) || error==unchecked((int)0x80090013) || error==unchecked((int)0x8028400f);
+    }
+    internal static string FormatHResult(int error) {
+        return "0x"+error.ToString("X8",CultureInfo.InvariantCulture);
+    }
+    static string Check(string provider, out string hresult) {
+        hresult=null;
+        try { using(CngKey.Open(Name,new CngProvider(provider),Flags)) return "OPEN"; }
+        catch(CryptographicException e) {
+            hresult=FormatHResult(e.HResult);
+            if(e.HResult==unchecked((int)0x80090010) || e.HResult==unchecked((int)0x80070005))return "DENIED";
+            return Absent(e.HResult)?"ABSENT":"UNKNOWN";
+        }
+        catch(Exception e) {hresult=FormatHResult(e.HResult);return "UNKNOWN";}
+    }
+    internal static Dictionary<string,object> Observation() {
+        using(var id=WindowsIdentity.GetCurrent()) {
+            string at=DateTime.UtcNow.ToString("o"), sid=id.User.Value;
+            string tpmHResult, softwareHResult;
+            string tpm=Check(Providers[0],out tpmHResult), software=Check(Providers[1],out softwareHResult);
+            return new Dictionary<string,object> {
+                {"at",at},{"sid",sid},{"tpm",tpm},{"software",software},
+                {"hresults",new Dictionary<string,string>{{"tpm",tpmHResult},{"software",softwareHResult}}}
+            };
+        }
+    }
+}
 public sealed class NodeProfileV2 {
  public const string Contract="clued.independent-ci.node-profile/1";
  public const string FixedResidentRoot="C:\\ProgramData\\CluedIndependentCI\\resident";
