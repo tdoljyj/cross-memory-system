@@ -1915,6 +1915,44 @@ test('firstInstallSteps come from the complete stdout logs only; a stage result 
   assert.equal(fin.items.find(i => i.id === 'A1').firstInstallSteps.missing, false);
 });
 
+// Codex review of 1cedea9ef, medium 2: "incomplete" is not only a missing file. A stage that ran (its result file or its log is there) is
+// incomplete when its log is missing or empty, holds no step line (only its verdict), or ends without its verdict line ("the stage gave
+// no verdict": cut off). Whatever the log holds is still read.
+test('a stage that ran is incomplete when its log is missing, empty, holds only its verdict or ends without one', opts, () => {
+  const dir = path.join(tmp, 'steps-incomplete'); fs.mkdirSync(dir, { recursive: true });
+  const step = n => JSON.stringify({ name: n, result: 'ok' });
+  const put = (name, text) => text === null ? fs.rmSync(path.join(dir, name), { force: true }) : fs.writeFileSync(path.join(dir, name), text);
+  put('first-install.log', JSON.stringify({ status: 'FIRST_INSTALL_STOPPED', stopCode: 'X', tree: '', node: '' }) + '\r\n');
+  const hostRan = JSON.stringify({ 'host-result.json': { exit: 1, terminal: { status: 'FIRST_INSTALL_HOST_REFUSED' } }, 'launcher-result.json': null });
+  put('stage-evidence.json', hostRan);
+  const read = () => ps(`Read-DrillFirstInstallSteps ${q(dir)}`);
+  for (const [reason, hostLog, why] of [
+    ['empty log', '', ['log-empty']],
+    ['only the verdict line', JSON.stringify({ status: 'FIRST_INSTALL_HOST_REFUSED' }) + '\r\n', ['no-step-lines']],
+    ['cut off: steps without a verdict line', [step('residue'), step('stage')].join('\r\n') + '\r\n', ['no-verdict']],
+  ]) {
+    put('host.stdout.log', hostLog);
+    const r = read();
+    assert.equal(r.incomplete, true, reason);
+    assert.deepEqual(r.incompleteStages, ['host'], reason);
+    assert.deepEqual(r.incompleteReasons.host, why, reason);
+  }
+  // what a cut-off log holds is read all the same, and the stage is named as one that gave no verdict
+  const cut = read();
+  assert.deepEqual(cut.steps.map(s => s.name), ['residue', 'stage']);
+  assert.deepEqual(cut.noStageVerdict, ['host']);
+  // the launcher stage timed out: no launcher-result.json, but its output file holds what it printed: read, and incomplete
+  put('host.stdout.log', [step('stage'), JSON.stringify({ status: 'FIRST_INSTALL_HOST_READY' })].join('\r\n') + '\r\n');
+  put('launcher.stdout.log', step('install') + '\r\n');
+  const timedOut = read();
+  assert.deepEqual(timedOut.incompleteStages, ['launcher']);
+  assert.deepEqual(timedOut.noStageVerdict, ['launcher']);
+  assert.ok(timedOut.steps.some(s => s.stage === 'launcher' && s.name === 'install'));
+  // a stage that did not run at all is not incomplete
+  put('launcher.stdout.log', null);
+  assert.equal(read().incomplete, false);
+});
+
 // Codex review of 1cedea9ef, high 1: the step record is read first and A1 needs it: a first install whose steps cannot be shown (none
 // parsed, or a stage that ran without its complete log) does not pass, and the receipt keeps why. Branch one (74e7a65e7) holds the same.
 test('A1 needs a complete step record: missing, incomplete or absent is no pass, and the receipt says why', opts, () => {

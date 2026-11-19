@@ -648,13 +648,28 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
   }
   $stages = [ordered]@{ entry = $null; host = $null; launcher = $null }
   foreach ($stage in @('entry', 'host', 'launcher')) { $text = Get-DrillField $Logs $stage; if ($text -is [string]) { $stages[$stage] = & $read $stage $text } }
-  $stageVerdicts = [ordered]@{ host = $null; launcher = $null }; $incomplete = @()
+  # A stage ran when its result file or its log is there. It is incomplete (Codex review of 1cedea9ef, medium 2) when its log is missing
+  # or empty, holds no step line (only its verdict), or ends without its verdict line -- the stage gave no verdict (cut off, a timeout):
+  # what that log holds is read all the same, never taken for the whole record.
+  $stageVerdicts = [ordered]@{ host = $null; launcher = $null }; $incomplete = @(); $reasons = [ordered]@{}; $noStageVerdict = @()
   foreach ($pair in @(@('host', 'host-result.json'), @('launcher', 'launcher-result.json'))) {
+    $stage = $pair[0]
     $result = Get-DrillField $StageEvidence $pair[1]
-    if ($null -eq $result) { continue }
+    $text = Get-DrillField $Logs $stage
+    if ($null -eq $result -and $text -isnot [string]) { continue }
     $s = Get-DrillField (Get-DrillField $result 'terminal') 'status'
-    if ($s -is [string] -and $s) { $stageVerdicts[$pair[0]] = $s }
-    if ($null -eq $stages[$pair[0]]) { $incomplete += $pair[0] }
+    if ($s -is [string] -and $s) { $stageVerdicts[$stage] = $s }
+    $why = @()
+    if ($text -isnot [string]) { $why += 'log-missing' }
+    elseif ([string]::IsNullOrWhiteSpace($text)) { $why += 'log-empty' }
+    else {
+      if ($stages[$stage] -eq 0) { $why += 'no-step-lines' }
+      $tail = @($text -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -Last 1
+      $doc = $null; try { $doc = $tail | ConvertFrom-Json } catch { $doc = $null }
+      $logVerdict = Get-DrillField $doc 'status'
+      if ($logVerdict -isnot [string] -or -not $logVerdict) { $why += 'no-verdict'; $noStageVerdict += $stage }
+    }
+    if ($why.Count) { $incomplete += $stage; $reasons[$stage] = $why }
   }
   $verdict = $null
   $entryText = Get-DrillField $Logs 'entry'
@@ -672,7 +687,7 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
   if ($all.Count) { $lastStep = $all[$all.Count - 1].name }
   if ($completed.Count) { $lastCompleted = $completed[$completed.Count - 1].name }
   if ($rejected.Count) { $firstRejected = $rejected[0].name }
-  return [ordered]@{ missing = ($all.Count -eq 0); incomplete = ($incomplete.Count -gt 0); incompleteStages = $incomplete; stages = $stages; steps = $all
+  return [ordered]@{ missing = ($all.Count -eq 0); incomplete = ($incomplete.Count -gt 0); incompleteStages = $incomplete; incompleteReasons = $reasons; noStageVerdict = $noStageVerdict; stages = $stages; steps = $all
     lastStep = $lastStep; lastCompletedStep = $lastCompleted; firstRejected = $firstRejected; verdict = $verdict; stageVerdicts = $stageVerdicts; noVerdict = ($null -eq $verdict) }
 }
 
