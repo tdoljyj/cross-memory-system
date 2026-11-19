@@ -101,6 +101,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
+import { KEEP_VARIABLE } from './ci-required-selection.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -323,10 +324,7 @@ export function dependencyKey({ lock, packageJson, npmrc = '', nodeVersion = pro
   return sha256(JSON.stringify({ lock: sha256(lock), fields, npmrc: String(npmrc), node: nodeVersion.split('.')[0], platform })).slice(0, 16);
 }
 
-// The variables the suites' commands get: what a program needs to run, find
-// its tools, temp and home directories, and the network, not the caller's
-// tokens or Clued settings (CI's jobs have none of them either).
-const KEEP_VARIABLE = /^(PATH|PATHEXT|SYSTEMROOT|SYSTEMDRIVE|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|COMMONPROGRAMFILES\(X86\)|USERNAME|USER|LOGNAME|SHELL|TERM|LANG|LANGUAGE|LC_[A-Z]+|TZ|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|HTTPS?_PROXY|NO_PROXY|ALL_PROXY|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
+// The variables the suites' commands get: the selector's one list (KEEP_VARIABLE), not the caller's tokens or Clued settings.
 // On Windows Python's own UTF-8 mode stands in for the runners' UTF-8 locale.
 export function testEnvironment(env, extra = {}, platform = process.platform) {
   return { ...Object.fromEntries(Object.entries(env).filter(([name]) => KEEP_VARIABLE.test(name))),
