@@ -84,17 +84,20 @@ function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$Lim
   try {
     $proc = [Diagnostics.Process]::Start($psi)
     $err = $proc.StandardError.ReadToEndAsync()
+    # One deadline for every wait (Codex review of c1497e0a1, medium 1): the next line, the child's exit and the end of its stderr. Past
+    # it the result is a timeout at once, even while lines keep coming.
     $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(0, $LimitSeconds))
+    $left = { if ($LimitSeconds -gt 0) { [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds) } else { -1 } }
+    $timeout = { [ordered]@{ exit = $null; timedOut = $true; pid = $proc.Id; stdout = $out.ToString(); stderr = $null; last = [ordered]@{ status = 'STAGE_CHILD_STILL_RUNNING'; pid = $proc.Id; note = 'nothing was killed' } } }
     while ($true) {
+      if ($LimitSeconds -gt 0 -and [DateTime]::UtcNow -ge $deadline) { return (& $timeout) }
       $next = $proc.StandardOutput.ReadLineAsync()
-      $wait = if ($LimitSeconds -gt 0) { [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds) } else { -1 }
-      if (-not $next.Wait($wait)) {
-        return [ordered]@{ exit = $null; timedOut = $true; pid = $proc.Id; stdout = $out.ToString(); stderr = $null; last = [ordered]@{ status = 'STAGE_CHILD_STILL_RUNNING'; pid = $proc.Id; note = 'nothing was killed' } }
-      }
+      if (-not $next.Wait((& $left))) { return (& $timeout) }
       if ($null -eq $next.Result) { break }
       $writer.WriteLine($next.Result); [void]$out.AppendLine($next.Result)
     }
-    $proc.WaitForExit()   # the asynchronous stderr read ends with the child
+    if (-not $proc.WaitForExit((& $left))) { return (& $timeout) }
+    if (-not $err.Wait((& $left))) { return (& $timeout) }
     $e = [string]$err.Result
     $text = $out.ToString()
     [ordered]@{ exit = $proc.ExitCode; timedOut = $false; pid = $proc.Id; stdout = $text; stderr = $(if ($e.Length -gt 4000) { $e.Substring($e.Length - 4000) } else { $e }); last = (& $lastOf $text) }

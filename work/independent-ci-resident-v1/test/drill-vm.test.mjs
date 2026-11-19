@@ -1951,6 +1951,15 @@ test('the entry writes a stage child\'s stdout to its log line by line: a stage 
     [ordered]@{ timedOut = $r.timedOut; exit = $r.exit; stderr = ([string]$r.stderr).Trim(); lines = @($r.stdout.Trim() -split "\`r?\`n").Count }`);
   assert.deepEqual(done, { timedOut: false, exit: 3, stderr: 'a note', lines: 3 });
   assert.equal(fs.readFileSync(log, 'utf8').trim().split(/\r?\n/).length, 3);
+  // one deadline for every wait (Codex review of c1497e0a1, medium 1): a child that keeps printing past it is still a timeout, at once
+  const flood = path.join(tmp, 'stage-flood.ps1');
+  fs.writeFileSync(flood, "for ($i = 0; $i -lt 3000000; $i++) { [Console]::Out.WriteLine('{\"name\":\"x\",\"result\":\"ok\"}') }\n");
+  const floodLog = path.join(tmp, 'stage-flood.log');
+  const flooded = entryPs(`$clock = [Diagnostics.Stopwatch]::StartNew(); $r = Invoke-EntryStreamedChild ${q(powershell)} @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ${q(flood)}) 3 ${q(floodLog)} @{} -NoWindow
+    [ordered]@{ timedOut = $r.timedOut; seconds = $clock.Elapsed.TotalSeconds }`);
+  assert.equal(flooded.timedOut, true);
+  assert.ok(flooded.seconds < 20, String(flooded.seconds));
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /if \(-not \$proc\.WaitForExit\(\(& \$left\)\)\) \{ return \(& \$timeout\) \}/);
   // the prepare log is one of the complete logs the step record is read from
   const dir = path.join(tmp, 'steps-prepare'); fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'prepare.stdout.log'), JSON.stringify({ name: 'rehearse', result: 'ok' }) + '\r\n');
