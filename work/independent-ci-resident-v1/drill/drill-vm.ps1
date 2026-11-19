@@ -1705,12 +1705,18 @@ function Write-DrillWatchdogOutcome([string]$Signal, [string]$Why, $Stopped) {
   try { Write-DrillJson "$Signal.outcome.json" $r } catch { }
 }
 
-# What of the run's evidence the run directory holds after an emergency restore: none, all or part of it.
+# What of the run's evidence the run directory holds after an emergency restore: none, all or part of it, from the files really there
+# (Codex review of c1497e0a1, medium 3). M5 counts when its seven observations are there (a directory made before any was read is not
+# evidence; some of them is part of it); the stage logs taken back are listed, and any of them is evidence too.
+$script:DrillM5Names = @('profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json', 'record.json')
 function Get-DrillAbortEvidence([string]$RunDir) {
   $expected = @('first-install.log', 'stage-evidence.json', 'read-after-install.json', 'read-after-reboot.json', 'm5')
-  $taken = @($expected | Where-Object { Test-Path -LiteralPath (Join-Path $RunDir $_) })
-  [ordered]@{ evidence = $(if ($taken.Count -eq 0) { 'NOT_TAKEN' } elseif ($taken.Count -eq $expected.Count) { 'TAKEN' } else { 'PARTIAL' }); taken = $taken
-    notTaken = @($expected | Where-Object { $taken -notcontains $_ }) }
+  $m5 = @($script:DrillM5Names | Where-Object { Test-Path -LiteralPath (Join-Path (Join-Path $RunDir 'm5') $_) -PathType Leaf })
+  $taken = @($expected | Where-Object { if ($_ -ceq 'm5') { $m5.Count -eq $script:DrillM5Names.Count } else { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf } })
+  $stageLogs = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log') | Where-Object { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf }
+  $any = $taken.Count + $m5.Count + @($stageLogs).Count
+  [ordered]@{ evidence = $(if ($any -eq 0) { 'NOT_TAKEN' } elseif ($taken.Count -eq $expected.Count) { 'TAKEN' } else { 'PARTIAL' }); taken = $taken
+    notTaken = @($expected | Where-Object { $taken -notcontains $_ }); m5Observations = $m5; stageLogs = @($stageLogs) }
 }
 
 # The host guard's emergency restore, as it ended (its host-guard.json, DRILL_ABORTED): restored, restore failed, or not known (a record
@@ -1725,7 +1731,7 @@ function Get-DrillGuardOutcome([string]$RunDir) {
   $head = @{ RESTORED = '由守护紧急还原'; RESTORE_FAILED = '守护紧急还原失败'; UNKNOWN = '守护紧急还原，结局未记下' }[$restore]
   $tail = @{ NOT_TAKEN = '证据未取'; TAKEN = '证据已取'; PARTIAL = '证据部分已取' }[$ev.evidence]
   [ordered]@{ note = ($head + '，' + $tail); code = (Get-Prop $g 'code'); restore = $restore; cleanupFailure = (Get-Prop $g 'cleanupFailure')
-    evidence = $ev.evidence; taken = $ev.taken; notTaken = $ev.notTaken }
+    evidence = $ev.evidence; taken = $ev.taken; notTaken = $ev.notTaken; m5Observations = $ev.m5Observations; stageLogs = $ev.stageLogs }
 }
 
 # Seconds from asking WMI for the watchdog until it must have signalled ready; the WMI calls count against it.
@@ -1983,7 +1989,7 @@ $script:GuestM5Files = {
 function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
   $dir = Join-Path $RunDir 'm5'
   New-Item -ItemType Directory -Path $dir | Out-Null
-  $names = @('profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json', 'record.json')
+  $names = $script:DrillM5Names
   $missing = @(); $code = $null
   try { $files = Invoke-DrillGuest $Cred $script:GuestM5Files -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'm5-observations' }
   catch { $files = $null; $code = (Get-DrillCode $_).code }

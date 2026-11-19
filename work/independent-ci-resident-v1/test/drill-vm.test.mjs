@@ -2155,7 +2155,11 @@ test('an emergency restore is written as it ended: restored or not, evidence tak
   const outcome = (name, guard, files = []) => {
     const dir = path.join(tmp, `guard-${name}`); fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'host-guard.json'), JSON.stringify({ status: 'DRILL_ABORTED', code: 'DRILL_HOST_CI_BUSY', ...guard }));
-    for (const f of files) { if (f === 'm5') fs.mkdirSync(path.join(dir, 'm5'), { recursive: true }); else fs.writeFileSync(path.join(dir, f), '{}'); }
+    for (const f of files) {
+      if (f === 'm5' || f === 'm5-empty') fs.mkdirSync(path.join(dir, 'm5'), { recursive: true });
+      if (f === 'm5') for (const n of ['profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json', 'record.json']) fs.writeFileSync(path.join(dir, 'm5', n), '{}');
+      else if (f !== 'm5-empty') fs.writeFileSync(path.join(dir, f), '{}');
+    }
     return ps(`Get-DrillGuardOutcome ${q(dir)}`);
   };
   const all = ['first-install.log', 'stage-evidence.json', 'read-after-install.json', 'read-after-reboot.json', 'm5'];
@@ -2171,6 +2175,11 @@ test('an emergency restore is written as it ended: restored or not, evidence tak
   // the guard tripped late (during A7, A8 or M5): the evidence was taken
   const late = outcome('late', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, all);
   assert.deepEqual({ note: late.note, evidence: late.evidence }, { note: '由守护紧急还原，证据已取', evidence: 'TAKEN' });
+  // Codex review of c1497e0a1, medium 3: an empty M5 directory is no evidence; a stage log alone is part of it, and is listed
+  const emptyM5 = outcome('empty-m5', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, [...all.filter(f => f !== 'm5'), 'm5-empty']);
+  assert.deepEqual({ evidence: emptyM5.evidence, notTaken: emptyM5.notTaken }, { evidence: 'PARTIAL', notTaken: ['m5'] });
+  const logOnly = outcome('log-only', { restoredToCheckpoint: true, stopped: true, cleanupDone: true }, ['host.stdout.log']);
+  assert.deepEqual({ evidence: logOnly.evidence, stageLogs: logOnly.stageLogs, note: logOnly.note }, { evidence: 'PARTIAL', stageLogs: ['host.stdout.log'], note: '由守护紧急还原，证据部分已取' });
   // the guard writes whether its cleanup ran
   assert.match(fs.readFileSync(script, 'utf8'), /\$receipt\.cleanupDone = \$true/);
 
