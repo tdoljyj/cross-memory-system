@@ -437,47 +437,60 @@ test('production release deploys only when deploy is chosen explicitly', () => {
 });
 
 test('deploy and migrate consume an Owner Grant before they change production', () => {
-  // Owner Credential v0.1 §6.1 (Task 2a31ca2a): the grant step comes first.
+  // Release door v1 (FABLE-release-identity-autonomous-20261119 §1.2): the door
+  // is clued_private.release_door_v1, called with the migration database login
+  // of the clued-release environment (no token). migrate consumes inside the
+  // transaction of its first file; deploy consumes in its own step first.
   const steps = productionWorkflow.split(/\n      - /).slice(1);
   const names = steps.map((step) => step.split('\n')[0]);
-  const migrateGrant = names.indexOf('name: Consume the Owner Grant for the named migrations');
+  const migrateGrant = names.indexOf('name: Apply the named migrations');
   const deployGrant = names.indexOf('name: Consume the Owner Grant for this commit');
   assert.ok(migrateGrant > 0 && deployGrant > 0);
+  assert.equal(names.indexOf('name: Consume the Owner Grant for the named migrations'), -1,
+    'no grant is consumed outside the migration transaction');
   assert.match(steps[migrateGrant], /if: \$\{\{ inputs\.mode == 'migrate' \}\}/);
   assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \}\}/);
   for (const grant of [migrateGrant, deployGrant]) {
-    assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
-    assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
+    assert.match(steps[grant], /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
+    assert.match(steps[grant], /clued-release-grant\.mjs input --mode (deploy|migrate)/);
+    assert.match(steps[grant], /clued_private\.release_door_v1\(/);
   }
   assert.match(steps[migrateGrant], /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
-  // Steps that change production come after their grant; the credential
-  // checks come before it, so a run that cannot proceed uses no grant
-  // (re-review N6). deploy also runs the release gate first: run 37329072487
-  // used its grant and then stopped at the gate.
+  // Steps that change production come after their grant. deploy also runs the
+  // release gate first: run 37329072487 used its grant and then stopped at the gate.
   const gate = names.indexOf('name: Verify database prerequisites and record projection state');
   assert.ok(gate > 0 && gate < deployGrant);
   assert.match(steps[gate], /if: \$\{\{[^\n]*inputs\.mode == 'deploy'/);
   assert.match(steps[deployGrant], /NODE_OPTIONS: ''/);
   steps.forEach((step, index) => {
-    if (/Apply the named migrations/.test(step)) assert.ok(index > migrateGrant, names[index]);
     if (/wrangler (deploy|queues create)/.test(step)) assert.ok(index > deployGrant, names[index]);
-    if (/^name: Check migration database credential/.test(step)) assert.ok(index < migrateGrant, names[index]);
+    if (/^name: Record migration database login role/.test(step)) assert.ok(index < migrateGrant, names[index]);
     if (/^name: Check (production database|Cloudflare deployment) credential/.test(step)) {
       assert.ok(index < deployGrant, names[index]);
     }
   });
-  // The migration credential check connects, so a bad password stops the run
-  // before a grant is used (trial run 37155374056).
-  const check = steps.find((step) => step.startsWith('name: Check migration database credential'));
-  assert.match(check, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1'/);
+  // The migration login connects once and records its database role (a name,
+  // not a secret) before anything changes production.
+  const check = steps.find((step) => step.startsWith('name: Record migration database login role'));
+  assert.match(check, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select current_user'/);
   // The file reaches the server as COPY data on psql's standard input, never
   // through \\i or -f, so psql meta-commands in a file are not executed, and
   // the server checks its md5 against the file before it runs it.
   const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
   assert.match(apply, /copy migration_lines\(line\) from stdin with \(format csv, delimiter e'\\x01', quote e'\\x02'\)/);
-  assert.match(apply, /commit;" < "\$file"/);
-  // Activation readiness must succeed in the same transaction before the ledger.
-  assert.match(apply, /if md5\(s\) is distinct from '\$expected' then raise exception[^\n]*\n\s*execute s;\n(?:\s*--[^\n]*\n)*\s*if to_regprocedure\('clued_private\.storage_conflict_require_scheduler_v1\(\)'\) is not null then\n\s*perform clued_private\.storage_conflict_require_scheduler_v1\(\);\n\s*end if;\n\s*insert into supabase_migrations\.schema_migrations/);
+  // The door's input is the first COPY line, the file follows: neither is SQL text.
+  assert.match(apply, /\{ printf '%s\\n' "\$door_input"; cat -- "\$file"; \} \| psql /);
+  // One transaction per file, in this order: md5, consume (first file, door
+  // present), execute, consume (bootstrap install), activation readiness,
+  // probe, ledger. A file that breaks the door, or a missing grant, rolls back.
+  const order = ["if md5(s) is distinct from '$expected' then raise exception",
+    "if '$order' = 'consume' then", 'answer := clued_private.release_door_v1(door_input);', 'execute s;',
+    "if '$order' = 'install' then", "to_regprocedure('clued_private.storage_conflict_require_scheduler_v1()')",
+    "perform clued_private.storage_conflict_require_scheduler_v1();", "raise exception 'release_door_probe_failed'",
+    'insert into supabase_migrations.schema_migrations', 'commit;'];
+  const at = order.map((text) => apply.indexOf(text));
+  assert.ok(at.every((value, index) => value >= 0 && (index === 0 || value > at[index - 1])), JSON.stringify(at));
+  assert.match(apply, /if answer->>'consumed' is distinct from 'true' then raise exception 'release_grant_not_consumed'/);
   assert.match(apply, /\[\[ "\$expected" =~ \^\[0-9a-f\]\{32\}\$ \]\]/);
   assert.match(apply, /grep -q \$'\[\\r\\x01\\x02\]' "\$file" \|\| grep -qx '\\\\\\\.' "\$file"/);
   assert.match(apply, /\[ -z "\$\(tail -c1 "\$file"\)" \]/);
@@ -545,9 +558,9 @@ test('migration cannot consume a grant or apply without a successful verified en
   const target=index('Verify backup and migration database identity');
   const backup=index('Create and verify encrypted pre-migration backup');
   const gate=index('Require verified backup before migration');
-  const grant=index('Consume the Owner Grant for the named migrations');
+  // The grant is consumed inside the apply step's transaction (release door v1).
   const apply=index('Apply the named migrations');
-  assert.ok(encryption>=0&&encryption<target&&target<backup&&backup<gate&&gate<grant&&grant<apply);
+  assert.ok(encryption>=0&&encryption<target&&target<backup&&backup<gate&&gate<apply);
   for(const i of [encryption,backup])assert.match(steps[i],/if: \$\{\{ inputs\.mode == 'backup' \|\| inputs\.mode == 'migrate' \}\}/);
   assert.match(steps[backup],/id: pre_migration_backup/);
   assert.match(steps[gate],/BACKUP_OUTCOME: \$\{\{ steps\.pre_migration_backup\.outcome \}\}/);
@@ -596,4 +609,28 @@ test('backup identity checks actual trusted connection routing, not a project la
     assert.equal(path.dirname(temp),os.tmpdir());assert.ok(path.basename(temp).startsWith('clued-backup-identity-'));
     await rm(temp,{recursive:true,force:true});
   }
+});
+
+// Release door v1 bootstrap (FABLE-release-identity-autonomous-20261119 §2):
+// while the door does not exist, only a first file whose md5 equals
+// RELEASE_DOOR_INSTALL_MD5 may run. The value is the md5 of the one install
+// migration (*_release_door_db_identity_v1.sql, LF bytes as the runner checks
+// them out). Before that file is in the repository the value is 32 zeros, which
+// no file has, so the bootstrap cannot open. Once the file is here this test
+// fails until the pin names its md5: a one-line change of the workflow.
+test('the release workflow pins the md5 of the release door install migration', async () => {
+  const pins = [...productionWorkflow.matchAll(/^ {10}RELEASE_DOOR_INSTALL_MD5: '([0-9a-f]{32})'$/gm)].map((match) => match[1]);
+  assert.equal(pins.length, 1, 'exactly one pin, on the apply step');
+  const applyStep = productionWorkflow.split(/\n      - /).find((step) => step.startsWith('name: Apply the named migrations\n'));
+  assert.ok(applyStep.includes(`RELEASE_DOOR_INSTALL_MD5: '${pins[0]}'`));
+  const installs = migrationFiles.filter((name) => name.endsWith('_release_door_db_identity_v1.sql'));
+  assert.ok(installs.length <= 1, installs.join(', '));
+  if (installs.length === 0) {
+    assert.equal(pins[0], '0'.repeat(32), 'no install migration yet: the placeholder keeps the bootstrap closed');
+    return;
+  }
+  const bytes = Buffer.from((await readFile(new URL(`../supabase/migrations/${installs[0]}`, import.meta.url), 'utf8'))
+    .replace(/\r\n/g, '\n'), 'utf8');
+  assert.equal(pins[0], createHash('md5').update(bytes).digest('hex'),
+    `set RELEASE_DOOR_INSTALL_MD5 in .github/workflows/clued-cloud-production-release.yml to the md5 of ${installs[0]}`);
 });
