@@ -24,7 +24,7 @@ foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.F
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
     'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator', 'Test-CredentialsToClear',
     'Sha256File', 'Invoke-StageChild', 'Test-ParentAlive', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
-    'Get-NeededPrereqs', 'Expand-Cached')) {
+    'Get-NeededPrereqs', 'Expand-Cached', 'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Out-Result')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 # the constants the functions read, from the script itself
@@ -33,7 +33,7 @@ foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.A
 }
 Yes ($PrereqContract -ceq 'clued.independent-ci.fleet-node-prereq-manifest/1' -and $PrereqNames.Count -eq 7 -and $PrereqNames -ccontains 'wsl') 'constants'
 $text = [IO.File]::ReadAllText($file)
-$js = New-Object Web.Script.Serialization.JavaScriptSerializer
+$js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = [int]::MaxValue   # reads lines longer than the default 2,097,152
 $h1 = 'a' * 64; $h2 = 'b' * 64; $h3 = 'c' * 64; $img = 'd' * 64
 $v = '2026.11.16-1'; $t = 'fleet-node-' + $v
 
@@ -325,6 +325,45 @@ try {
     Yes ((Test-PrereqManifest $m (Get-NeededPrereqs $false) $false).Count -eq 0) 'm6:reinstall-ignores-first-install-pins'
     Yes ((Test-PrereqManifest $m) -ccontains 'PREREQ_NOT_PINNED:wsl') 'm6:first-install-still-refuses'
     Yes ($main -match 'Get-NeededPrereqs \$firstInstall' -and $main -match 'if \(\$firstInstall\) \{[^\r\n]*debs') 'm6:the-bootstrap-fetches-by-need'
+  }
+
+  # The one JSON writer (Fable ruling 11-19 renew-key section 4.4a; the same defect as first-install-host.ps1, drill 3bc571a6 A1): under
+  # Windows PowerShell 5.1 the Work directory (Join-Path, :459) is a string in a PSObject shell, and every Out-Result after it (each
+  # refusal, the reset result, RESTART_THEN_RUN_THE_SAME_COMMAND, the final verdict) threw a PSParameterizedProperty circular reference
+  # instead of printing its line. Every bootstrap output is progress-grade: never an exception, never a change of control flow (the
+  # credential clean-up order stays); a value that is not plain data is printed as its type name.
+  Case 'json:out-result-prints-the-work-directory' {
+    $saved = Get-Variable -Name Work -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    try {
+      $script:Work = Join-Path 'C:\ProgramData\CluedBootstrap' 'abc'
+      $line = Out-Result 'BOOTSTRAP_DONE' 'launcher' ([ordered]@{ firstInstall = $true; codes = (@('A', 'B') | Where-Object { $_ }); dir = (Split-Path -Parent 'C:\a\b') })
+      $o = $js.DeserializeObject($line)
+      Yes ($o['status'] -ceq 'BOOTSTRAP_DONE' -and $o['workDir'] -ceq 'C:\ProgramData\CluedBootstrap\abc' -and (@($o['codes']) -join ',') -ceq 'A,B' -and $o['dir'] -ceq 'C:\a') ('json:done ' + $line)
+      $odd = Out-Result 'BOOTSTRAP_REFUSED' 'assets' ([ordered]@{ code = 'X'; detail = (Get-Item -LiteralPath $env:SystemRoot) })
+      $o = $js.DeserializeObject($odd)
+      Yes ($o['code'] -ceq 'X' -and [string]$o['detail'] -clike '*DirectoryInfo*') ('json:not-plain-is-printed-by-type ' + $odd)
+      # Codex review of PR-甲 (blocking 2): a verdict of plain data longer than the serializer's default 2,097,152 characters (the
+      # stage child's result is read up to 16,777,216) threw instead of printing; the writer's limit is at least the reader's
+      $big = 'x' * 2500000
+      $long = Out-Result 'BOOTSTRAP_REFUSED' 'host' ([ordered]@{ code = 'LONG'; detail = $big })
+      $o = $js.DeserializeObject($long)
+      Yes ($null -ne $o -and $o['code'] -ceq 'LONG' -and ([string]$o['detail']).Length -eq 2500000) ('json:longer-than-2M ' + $(if ($long) { $long.Length } else { 'none' }))
+    } finally { $script:Work = $saved }
+    $inWriter = [regex]::Matches($functions['ConvertTo-JsonLine'], '\.Serialize\(').Count
+    Yes ($inWriter -ge 1 -and ([regex]::Matches($text, '\.Serialize\(')).Count -eq $inWriter) 'json:every-serialize-is-in-the-writer'
+    # every output of the bootstrap is the progress grade (it never throws)
+    $calls = @([regex]::Matches($text, '(?m)^(?!\s*#).*?ConvertTo-JsonLine [^\r\n]*'))
+    Yes (@($calls | Where-Object { $_.Value -notmatch '-Progress\b' }).Count -eq 0) ('json:every-call-is-progress ' + (@($calls | Where-Object { $_.Value -notmatch '-Progress\b' } | ForEach-Object { $_.Value }) -join ' | '))
+  }
+  # bootstrap.ps1 is downloaded on its own (the first hop) and cannot load a file of the package: the writer is a copy of
+  # windows/first-install-host.ps1's, held to it character for character.
+  Case 'json:the-same-writer-as-first-install-host' {
+    $hostFile = Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $here))) 'windows\first-install-host.ps1'
+    $hostAst = [Management.Automation.Language.Parser]::ParseFile($hostFile, [ref]$tokens, [ref]$errors)
+    foreach ($name in @('ConvertTo-PlainData', 'ConvertTo-JsonLine')) {
+      $theirs = @($hostAst.FindAll({ param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq $name }, $true))
+      Yes ($theirs.Count -eq 1 -and $functions.ContainsKey($name) -and $theirs[0].Extent.Text -ceq $functions[$name]) ('json:same-text:' + $name)
+    }
   }
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 

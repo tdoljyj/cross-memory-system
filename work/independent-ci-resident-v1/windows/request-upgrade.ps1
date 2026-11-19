@@ -31,7 +31,11 @@ $Root = 'C:\ProgramData\CluedIndependentCI\resident'
 $RequestContract = 'clued.independent-ci.resident-upgrade-request/1'
 $CancelContract = 'clued.independent-ci.resident-upgrade-cancel/1'
 $MaxRequestBytes = 2048
+# Clued Task fe8a2cbf (ruling 11-19, layer B): the root above is always the production root, so a process that carries a test marker
+# (the names are production-root-guard.mjs TEST_MARKERS; a test keeps the two lists equal) is refused before any file is read or written.
+$TestMarkers = @('NODE_TEST_CONTEXT', 'CLUED_UNDER_TEST')
 
+function Assert-NotUnderTest { foreach ($m in $TestMarkers) { if (-not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($m))) { throw 'REFUSED_UNDER_TEST' } } }
 function Sha256Bytes([byte[]]$b) { $s = [Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($s.ComputeHash($b))).Replace('-', '').ToLowerInvariant() } finally { $s.Dispose() } }
 function Get-Field($o, [string]$k) { if (($o -is [pscustomobject]) -and (@($o.PSObject.Properties.Name) -ccontains $k)) { $o.$k } else { $null } }
 # A3 packageDirectory: a local absolute path (drive letter), no UNC or device path, no "." or ".." segment, at most 260 characters.
@@ -95,6 +99,7 @@ function Get-OperatorSid($node) {
   [string](Get-Field $a 'operatorSid')
 }
 
+Assert-NotUnderTest
 $installedNode = Get-InstalledNode
 $inbox = Join-Path $Root 'upgrade\inbox'
 if (-not (Test-Path -LiteralPath $inbox -PathType Container)) { throw 'UPGRADE_CHANNEL_NOT_INSTALLED' }
