@@ -254,9 +254,10 @@ const gateUntil = '2026-11-19T03:20:00Z';
 const gateHold = { holder: 'drill', since: gateNow, until: gateUntil };
 
 function gateActions(statuses, { running = true, memory = '64GB' } = {}) {
-  return ps(`$now = [DateTimeOffset]${q(gateNow)}; $until = [DateTimeOffset]${q(gateUntil)}; @(
+  const verdicts = ps(`$now = [DateTimeOffset]${q(gateNow)}; $until = [DateTimeOffset]${q(gateUntil)}; @(
     ${statuses.map(status => `(Test-DrillHostSafety ${q(status)} ${memory} -Running:$${running} -Now $now -HoldUntil $until)`).join(',\n')}
-  )`).map(x => x.action);
+  )`);
+  return [verdicts].flat().map(x => x.action);
 }
 
 test('the active drill continues while the executor is idle with no current batch', opts, () => {
@@ -298,6 +299,7 @@ test('the active drill continues from the parked stage-8 start checks through re
   await f.drop(triggerBytes());
   assert.equal((await f.exec.tick()).state, 'PARKED');
   await f.drop(JSON.stringify(intakePauseRequest({ holder: 'drill', minutes: 120, reason: 'drill' }, f.clock)), 'requests');
+  await f.drop(triggerBytes({ pr: 900, headSha: '4'.repeat(40) }));
   assert.equal((await f.exec.tick()).reason, 'INTAKE_PAUSED');
   f.advance(tenMinutes);
 
