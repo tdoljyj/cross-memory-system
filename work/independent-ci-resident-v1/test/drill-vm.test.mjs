@@ -1207,31 +1207,43 @@ test('the PASS conclusions of drill-vm.ps1 are exactly publish.mjs DRILL_PASS_CO
   for (const c of DRILL_PASS_CONCLUSIONS) assert.ok(sealLine.includes(c), c);
 });
 
-// Fable renew-key ruling, supplement "package branch, two points", B4: the name of every fake credential file the drill puts into the
-// credential directory is in the package's fixed list ($CredentialFiles, windows/first-install-host.ps1), so the two cannot drift apart.
-// The package adds companion-github.token to its list on claude/first-install-fixes (not merged yet): until then that one name is a todo
-// ("pending the package"), any other name missing from the list fails.
-const CREDENTIAL_NAMES_PENDING_IN_PACKAGE = new Set(['companion-github.token']);
-function credentialNameDrift(drillNames, packageNames) {
-  const missing = drillNames.filter(n => !packageNames.includes(n));
-  return { pending: missing.filter(n => CREDENTIAL_NAMES_PENDING_IN_PACKAGE.has(n)), drift: missing.filter(n => !CREDENTIAL_NAMES_PENDING_IN_PACKAGE.has(n)) };
+// Fable renew-key ruling, supplement "package branch, two points", B4, and Codex review of 1cedea9ef, medium 3: the fake credential files
+// are checked at all three places -- what the drill generates (New-DrillFakeCredentials), how the entry hands them over (its copy table:
+// app-key.pem becomes app-private-key.pem, the one mapping there is; public.json is written by the entry), and what the package consumes
+// ($CredentialFiles, windows/first-install-host.ps1). A generated file the entry does not hand over, a copied file nobody generates, and a
+// handed-over name the package does not list all fail: no todo. With branch one's companion-github.token stand-in this stays red until
+// the package lists the name (claude/first-install-fixes).
+function credentialNameCheck(generated, pairs, publicHanded, packageNames) {
+  const handed = [];
+  const notHanded = [];
+  for (const name of generated) {
+    if (name === 'public.json' && publicHanded) { handed.push('public.json'); continue; }
+    const pair = pairs.find(([from]) => from === name);
+    if (pair) handed.push(pair[1]); else notHanded.push(name);
+  }
+  return { handed, notHanded, notGenerated: pairs.map(([from]) => from).filter(n => !generated.includes(n)),
+    notInPackage: handed.filter(n => !packageNames.includes(n)) };
 }
-test('every fake credential file name the drill writes is in the package\'s fixed credential file list', t => {
+test('every fake credential file the drill generates is handed over under a name the package\'s fixed list holds', () => {
   const hostText = fs.readFileSync(fileURLToPath(new URL('../windows/first-install-host.ps1', import.meta.url)), 'utf8');
   const list = /\$CredentialFiles = \[ordered\]@\{([^}]*)\}/.exec(hostText);
   assert.ok(list, 'the package\'s $CredentialFiles');
   const packageNames = [...list[1].matchAll(/=\s*'([^']+)'/g)].map(m => m[1]);
+  const drillText = fs.readFileSync(script, 'utf8');
+  const generator = drillText.slice(drillText.indexOf('function New-DrillFakeCredentials'), drillText.indexOf('\n}', drillText.indexOf('function New-DrillFakeCredentials')));
+  const generated = [...new Set([...generator.matchAll(/Join-Path \$OutDir '([^']+)'/g)].map(m => m[1]))];
   const entryText = fs.readFileSync(entryScript, 'utf8');
-  const pairs = entryText.slice(entryText.indexOf('foreach ($pair in @('), entryText.indexOf('[IO.File]::Copy((Join-Path $FakeInputs'));
-  const drillNames = [...pairs.matchAll(/@\('([^']+)', '([^']+)'\)/g)].map(m => m[2]);
-  if (/Join-Path \$inputCredentials 'public\.json'/.test(entryText)) drillNames.push('public.json');
-  assert.ok(drillNames.length >= 4, JSON.stringify(drillNames));
-  // the check itself: a name the package does not list is caught; the pending one is only a todo
-  assert.deepEqual(credentialNameDrift(['ci-admission.token', 'other.token', 'companion-github.token'], ['ci-admission.token']),
-    { pending: ['companion-github.token'], drift: ['other.token'] });
-  const { pending, drift } = credentialNameDrift(drillNames, packageNames);
-  assert.deepEqual(drift, [], `drill ${JSON.stringify(drillNames)} package ${JSON.stringify(packageNames)}`);
-  if (pending.length) t.todo(`pending the package (claude/first-install-fixes adds it to $CredentialFiles): ${pending.join(', ')}`);
+  const table = entryText.slice(entryText.indexOf('foreach ($pair in @('), entryText.indexOf('[IO.File]::Copy((Join-Path $FakeInputs'));
+  const pairs = [...table.matchAll(/@\('([^']+)', '([^']+)'\)/g)].map(m => [m[1], m[2]]);
+  const publicHanded = /Join-Path \$FakeInputs 'public\.json'/.test(entryText) && /Join-Path \$inputCredentials 'public\.json'/.test(entryText);
+  assert.ok(generated.length >= 4 && pairs.length >= 3, JSON.stringify({ generated, pairs }));
+  // the check itself catches each kind of drift
+  assert.deepEqual(credentialNameCheck(['a.pem', 'b.token', 'public.json'], [['a.pem', 'a-key.pem'], ['c.token', 'c.token']], true, ['a-key.pem']),
+    { handed: ['a-key.pem', 'public.json'], notHanded: ['b.token'], notGenerated: ['c.token'], notInPackage: ['public.json'] });
+  const r = credentialNameCheck(generated, pairs, publicHanded, packageNames);
+  assert.deepEqual({ notHanded: r.notHanded, notGenerated: r.notGenerated, notInPackage: r.notInPackage }, { notHanded: [], notGenerated: [], notInPackage: [] },
+    `generated ${JSON.stringify(generated)} handed ${JSON.stringify(r.handed)} package ${JSON.stringify(packageNames)}`);
+  assert.ok(r.handed.includes('app-private-key.pem'));
 });
 
 // No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
