@@ -1647,6 +1647,32 @@ test('A7 needs the self-check observed after this boot, not only a status writte
   assert.equal(pass(verdictOf(evidence({ reboot: noBoot }))).A7, false, 'no boot time: not judged a pass');
 });
 
+// Codex review of 58136df61, high 1: the reboot read is restartable, so the guest can restart again between the first boot's self-check
+// and the sample. Each sample carries the boot it was read in (the same guest call) and is judged against THAT boot, within the same
+// window: a PASS the first boot left in a status the second boot rewrote is no pass; the second boot's own self-check is.
+test('A7 judges each sample against the boot it was read in: a PASS left between two boots is no pass', opts, () => {
+  const boot1 = '2026-11-16T02:40:00.0000000Z', boot2 = '2026-11-16T02:50:00.0000000Z';
+  const status = (writtenAt, observedAt) => ({ writtenAt, node: { mode: 'UNCERTAIN' }, versions: { selfcheck: { result: 'PASS', observedAt } } });
+  const between = { status: status('2026-11-16T02:51:00Z', '2026-11-16T02:45:00Z'), readAt: '2026-11-16T02:51:30Z', boot: boot2 };
+  const fresh = { status: status('2026-11-16T02:56:00Z', '2026-11-16T02:55:00Z'), readAt: '2026-11-16T02:56:30Z', boot: boot2 };
+  const wait = samples => ps(`
+    $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify(samples))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
+    function Start-Sleep { }
+    Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot1}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]::UtcNow.AddSeconds(2))`);
+  const stuck = wait([between]);
+  assert.equal(stuck.boot, boot2);
+  assert.equal(stuck.bootChanged, true);
+  assert.equal(pass(verdictOf(evidence({ reboot: stuck }))).A7, false, 'the first boot\'s PASS');
+  const later = wait([between, fresh]);
+  assert.equal(later.readAt, fresh.readAt);
+  assert.equal(pass(verdictOf(evidence({ reboot: later }))).A7, true, 'the second boot\'s own self-check');
+  // one boot, as before
+  const once = wait([{ ...fresh, boot: boot1 }]);
+  assert.equal(once.bootChanged, false);
+  assert.equal(pass(verdictOf(evidence({ reboot: once }))).A7, true);
+});
+
 test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {
   const { reinstall } = JSON.parse(evidence());
   const { launcherExit, launcherStatus, launcherVerdict, ...withoutLauncher } = reinstall;

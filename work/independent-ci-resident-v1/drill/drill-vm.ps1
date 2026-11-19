@@ -1840,6 +1840,38 @@ function Get-DrillM5Verdict([string]$RunDir, $M5) {
   return $M5
 }
 
+# A7's read after the reboot: the status and the boot it was read in, from the same guest call. The read is restartable, so the guest may
+# have restarted again since the boot the drill waited for (Codex review of 58136df61, high 1): every sample is judged against its own boot.
+$script:GuestReadStatus = {
+  param($Root) $p = Join-Path $Root 'state\status.json'
+  $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+  [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o'); boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o') }
+}
+
+# One A7 sample: the status rewritten after the boot it was read in, and a passing self-check observed after that same boot (never one an
+# earlier boot left in the status). bootChanged: the guest restarted again after the boot the drill waited for.
+function Get-DrillRebootSample($Sample, [DateTimeOffset]$WaitedBoot) {
+  $boot = [string](Get-Prop $Sample 'boot')
+  $known = $false; $changed = $false
+  try { $b = [DateTimeOffset]::Parse($boot, [Globalization.CultureInfo]::InvariantCulture); $known = $b -ge $WaitedBoot; $changed = $b -gt $WaitedBoot } catch { $known = $false }
+  $status = Get-Prop $Sample 'status'
+  $ok = $known -and (Test-DrillAfterBoot ([string](Get-Prop $status 'writtenAt')) $boot)
+  $done = $ok -and [string](Get-Prop $status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $status 'versions.selfcheck.observedAt')) $boot)
+  [ordered]@{ ok = $ok; status = $status; readAt = (Get-Prop $Sample 'readAt'); boot = $(if ($known) { $boot } else { $null }); waitedBoot = $WaitedBoot.ToString('o'); bootChanged = $changed; done = $done }
+}
+
+# Within the window of the boot the drill waited for ($Deadline), until a sample of the boot it was read in passes; the last sample otherwise.
+function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [DateTimeOffset]$Deadline) {
+  $reboot = $null
+  while ([DateTimeOffset]::UtcNow -lt $Deadline) {
+    $r = Invoke-DrillGuest $Cred $script:GuestReadStatus -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'read-status' -Restartable
+    $reboot = Get-DrillRebootSample $r $Boot
+    if ($reboot.done) { break }
+    Start-Sleep -Seconds 30
+  }
+  return $reboot
+}
+
 # A1's kit entry in the guest, once, bounded, read apart (Invoke-DrillNative): its last stdout line is the result, its stderr is kept.
 $script:GuestEntry = {
   param($Entry, $EntryArgs, $Minutes, $NativeText)
@@ -1908,20 +1940,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   $beforeReboot = [DateTimeOffset]::UtcNow
   try { Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
   $boot = Wait-DrillGuest $Cred 15 $beforeReboot
-  $deadline = $boot.AddMinutes($script:Drill.UnattendedRebootMinutes); $reboot = $null
-  while ([DateTimeOffset]::UtcNow -lt $deadline) {
-    $r = Invoke-DrillGuest $Cred {
-      param($Root) $p = Join-Path $Root 'state\status.json'
-      $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
-      [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
-    } -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'read-status' -Restartable
-    $bootAt = $boot.ToString('o')
-    $ok = Test-DrillAfterBoot ([string](Get-Prop $r.status 'writtenAt')) $bootAt
-    $reboot = @{ ok = $ok; status = $r.status; readAt = $r.readAt; boot = $bootAt }
-    # wait for a self-check of this boot, never one the boot before left in the status (A7)
-    if ($ok -and [string](Get-Prop $r.status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) $bootAt)) { break }
-    Start-Sleep -Seconds 30
-  }
+  $reboot = Wait-DrillRebootRefresh $Cred $boot ($boot.AddMinutes($script:Drill.UnattendedRebootMinutes))
   Write-DrillJson (Join-Path $RunDir 'read-after-reboot.json') $reboot
 
   # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
