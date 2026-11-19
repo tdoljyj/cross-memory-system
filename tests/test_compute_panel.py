@@ -1644,6 +1644,18 @@ class TreeDuplicateTests(unittest.TestCase):
     def test_guard_a_main_push_whose_heavy_jobs_were_skipped_is_no_run(self) -> None:
         self.assertEqual(scan_recorded(1178, skipped_push=True), [])
 
+    def test_two_copies_at_once_or_one_still_running_are_parallel_not_after_a_pass(self) -> None:
+        (item,) = findings([check("validate", 30, run=21), check("validate", 29.5, run=23)])  # the first ended at 29
+        self.assertEqual(item["kind"], "parallel")
+        (item,) = findings([check("validate", 30, None, run=21), check("validate", 20, "failure", run=23)])
+        self.assertEqual(item["kind"], "parallel")
+        self.assertIn("并行或前一次未结束又跑", panel.duplicate_event(item)[1])
+        # after a pass it is a rerun, whatever ran alongside; after failures only, a retry
+        (item,) = findings([check("validate", 30, run=21), check("validate", 25, None, run=23), check("validate", 24, run=21)])
+        self.assertEqual(item["kind"], "rerun")
+        (item,) = findings([check("validate", 30, "failure", run=21), check("validate", 20, run=23)])
+        self.assertEqual(item["kind"], "retry")
+
     def test_a_retry_after_a_failure_is_listed_but_not_announced(self) -> None:
         state: dict = {"duplicates": {"as_of": panel.iso(REC_NOW - timedelta(hours=2))}}
 

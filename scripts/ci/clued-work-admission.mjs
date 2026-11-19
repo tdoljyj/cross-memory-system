@@ -3441,13 +3441,13 @@ function workflowFileOf(env) {
 
 // Rule 41ab823a by tree (FABLE-main-push-tree-reuse §2.2): the first attempt of a main push of a required-test
 // workflow in the reuse table (proof "ancestry") reuses the merged PR head's passing run of the same tree.
-// scripts/ci/clued-push-reuse.mjs decides; it reads only GitHub's own records with this job's token and
+// scripts/ci/clued-tree-reuse.mjs decides (no repository imports); it reads only GitHub's own records with this job's token and
 // returns run_heavy=true on anything it cannot prove. Null: not a subject, nothing was read.
 async function mainPushTreeReuse({ env, fetchImpl }) {
   const workflow = workflowFileOf(env);
   let reuse;
   try {
-    reuse = await import("./clued-push-reuse.mjs");
+    reuse = await import("./clued-tree-reuse.mjs");
   } catch (error) {
     return { run_heavy: true, reason: `reuse table unreadable (${error instanceof Error ? error.message : String(error)})` };
   }

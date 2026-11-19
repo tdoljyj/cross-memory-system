@@ -4189,7 +4189,7 @@ test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the h
 });
 
 test('T2: every required job of both required-test workflows is in the reuse table, and so is every Actions-bound required check', async () => {
-  const { TARGETS } = await import('./clued-push-reuse.mjs');
+  const { TARGETS } = await import('./clued-tree-reuse.mjs');
   const covered = new Set();
   for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
     const target = TARGETS[workflow];
@@ -4267,4 +4267,14 @@ test('tree reuse guard: a re-run, staging, another branch or a workflow outside 
     assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], label);
     assert.deepEqual(ctx.calls, [], label);
   }
+});
+
+test('the gate loads only the pure reuse judgement: clued-tree-reuse.mjs imports no repository file', () => {
+  // clued-work-admission.mjs is a Source v2 walk entry: whatever its gate imports ships in every resident package.
+  const gateText = fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-work-admission.mjs'), 'utf8');
+  assert.match(gateText, /await import\("\.\/clued-tree-reuse\.mjs"\)/);
+  assert.doesNotMatch(gateText, /clued-push-reuse\.mjs/);
+  const text = fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-tree-reuse.mjs'), 'utf8');
+  const specifiers = [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  assert.deepEqual(specifiers.filter((spec) => !spec.startsWith('node:')), []);
 });

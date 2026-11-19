@@ -682,15 +682,21 @@ def short_name(name: str) -> str:
 FAILED_CONCLUSIONS = frozenset({"failure", "timed_out"})
 
 
-def retry_after_failure(runs: list[dict]) -> bool:
-    """True when every run after the first started only once every earlier run had finished and failed: a retry
-    of a failure, which the rule allows. Anything else ran again after a pass, or alongside another run."""
+def duplicate_kind(runs: list[dict]) -> str:
+    """How the runs of one tree and check (sorted by start) came about, judged at each later run's start:
+    "rerun" when an earlier run had already passed; otherwise "parallel" when an earlier run had not yet finished
+    (two copies at once, or a copy still running); otherwise "retry": every earlier run had finished and failed,
+    a retry of a failure, which the rule allows. "rerun" and "parallel" both break the rule."""
+    kind = "retry"
     for index, run in enumerate(runs[1:], 1):
+        started = parse_time(run["at"])
         for earlier in runs[:index]:
-            if earlier["conclusion"] not in FAILED_CONCLUSIONS or earlier["done"] is None \
-                    or parse_time(earlier["done"]) > parse_time(run["at"]):
-                return False
-    return True
+            finished = parse_time(earlier["done"]) if earlier["done"] is not None else None
+            if finished is None or finished > started:
+                kind = "parallel"
+            elif earlier["conclusion"] not in FAILED_CONCLUSIONS:
+                return "rerun"
+    return kind
 
 
 def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dict[int, dict],
@@ -736,8 +742,9 @@ def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dic
         found.append({
             "head": head[:12], "tree": tree[:12] if tree else None, "pr": pull.get("number"), "check": short_name(key),
             "label": short_name(runs[0]["label"]), "count": len(runs), "mix": mix, "causes": causes,
-            # "rerun": ran again after a pass (breaks the rule, announced); "retry": a retry after failures (listed only).
-            "kind": "retry" if retry_after_failure(runs) else "rerun",
+            # "rerun" (after a pass) and "parallel" (alongside an unfinished run) break the rule and are announced;
+            # "retry" (after failures only) is listed.
+            "kind": duplicate_kind(runs),
             "first": runs[0]["at"], "last": runs[-1]["at"],
             "runs": [{k: run[k] for k in ("executor", "at", "conclusion", "attempt", "run", "event")}
                      for run in runs[:DUP_RUNS_SHOWN]],
@@ -770,7 +777,7 @@ def duplicate_event(finding: dict) -> tuple[str, str]:
 
 CAUSE_TEXT = {"main-push": "合入后 main push", "after-merge": "合并后又被调度", "cross-executor": "托管与常驻各跑一次",
               "same-executor": "同一执行方重复"}
-KIND_TEXT = {"rerun": "通过后又跑", "retry": "失败后重试"}
+KIND_TEXT = {"rerun": "通过后又跑", "parallel": "并行或前一次未结束又跑", "retry": "失败后重试"}
 
 
 def short_finding(finding: dict) -> dict:
@@ -830,7 +837,9 @@ def read_run_jobs(client: GitHub, run_id: int) -> list[dict]:
 def merge_push_checks(client: GitHub, merge: str, tree: str, paths: set[str]) -> tuple[list[dict], dict[int, dict]]:
     """The jobs of the main push runs of a merge commit with the PR head's tree, as check runs, for the workflows that
     also ran on the head (only those can repeat a head's check). Read through the runs, not the commit's check runs:
-    main's tip collects scheduled runs (the panel itself) that would push the push runs out of the listed pages."""
+    main's tip collects scheduled runs (the panel itself) that would push the push runs out of the listed pages.
+    Scope: only the GitHub Actions runs of the push event; resident checks and workflow_dispatch runs on the merge
+    commit are not counted (the resident does not publish on main's merge commits; a dispatch is a deliberate run)."""
     reply = retrying(lambda: client.get("/actions/runs", {"head_sha": merge, "event": "push", "per_page": 100})) or {}
     checks: list[dict] = []
     workflows: dict[int, dict] = {}
@@ -1125,7 +1134,7 @@ def render(report: dict, state: dict) -> str:
         lines.append(f"没有发现：读了 {duplicates.get('heads_read', 0)} 个提交，没有同一检查真跑两次及以上。"
                      "取消、跳过、常驻的准入与第 8 段复查不算真跑。")
     else:
-        lines += ["“通过后又跑”违反规则并告警；“失败后重试”只列出。", "",
+        lines += ["“通过后又跑”“并行或前一次未结束又跑”违反规则并告警；“失败后重试”只列出。", "",
                   "| PR | 提交 | 检查 | 真跑次数 | 类别 | 构成 | 原因 | 最近一次 |", "|---|---|---|---|---|---|---|---|"]
         for item in duplicates["found"]:
             who = {"resident": "常驻", "hosted": "托管"}
