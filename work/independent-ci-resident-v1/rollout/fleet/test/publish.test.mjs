@@ -419,3 +419,30 @@ test('acceptance-draft: an upload that stopped half way is resumed by the same c
   await w2.draft({ deps: { kitOf: async () => ({ ...w2.kit, marker: 1 }), readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: 'b'.repeat(64) }) }, out: path.join(w2.d, 'other') }).catch(() => null);
   await assert.rejects(w2.draft(), e => e.code === 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT');
 });
+
+// ---------------------------------------------------------------- Fable 3bc571a6 ruling section 3 (Task 758989fa): the two defects of the one entry, as found
+// 1. before the Owner's acceptance the entry must produce what the Owner reviews; it needs nothing the acceptance makes (no Decision, receipt or time)
+test('before acceptance: the entry takes no Decision, receipt or time and writes the request the Owner reviews', async t => {
+  const w = await draftWorld(t);
+  const { ownerDecisionRef, installationReceiptRef, ownerReceiptRef, ...known } = w.base.fleetRefs;
+  const r = await w.draft({ base: { fleetRefs: known } });
+  const request = JSON.parse(await fs.readFile(r.request ?? r.acceptance, 'utf8'));
+  for (const k of ['cluedDecision', 'acceptedAt']) assert.ok(!(k in request), k);
+  for (const k of ['ownerDecisionRef', 'installationReceiptRef', 'ownerReceiptRef']) assert.ok(!(k in request.fleetRefs), k);
+});
+
+// 2. the kit a node gives is new bytes on every read (template.versionFacts carries observedAt): a second run after a stop must use the Release's kit
+test('a second run after a stop: the node gives other kit bytes (observedAt), the Release\'s kit is used, nothing refused, the kit uploaded once', async t => {
+  const w = await draftWorld(t);
+  let reads = 0;
+  const kitOf = async () => ({ ...w.kit, template: { versionFacts: Buffer.from(JSON.stringify({ observedAt: new Date(Date.UTC(2026, 10, 19, 12, 0, reads++)).toISOString() })).toString('base64') } });
+  const deps = { kitOf, readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: 'b'.repeat(64) }) };
+  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';   // the kit goes up, the role image fails
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  await assert.rejects(w.draft({ deps }), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
+  delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+  const r = await w.draft({ deps });
+  const kits = (await w.assets()).filter(a => a.name === `${TAG}.first-install-kit.json`);
+  assert.equal(kits.length, 1);
+  assert.equal(JSON.parse(await fs.readFile(r.request ?? r.acceptance, 'utf8')).firstInstallKitSha256, kits[0].sha256, 'the Release\'s kit');
+});

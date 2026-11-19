@@ -369,3 +369,53 @@ test('acceptance-draft, whole: the draft\'s kit hash is the uploaded kit\'s byte
     assert.equal(again, 'ACCEPTANCE_DRAFT_TEMPLATE_IS_THIS_SOURCE');
     await assert.rejects(fs.access(path.join(d, 'draft2')));
   });
+
+// Fable 3bc571a6 ruling section 3 (Task 758989fa), end to end on a real installed template node: the release flow as it was really run for 3bc571a6.
+async function releaseWorld(t, w) {
+  const d = await tempDir(t, 'fleetaccept');
+  const index = path.join(d, 'index.md');
+  await fs.writeFile(index, `| 版本 | Release | tar sha256 | commit | 接受时间 | Decision |\n|---|---|---|---|---|---|\n| ${VERSION} | u | ${w.release.source.archive_sha256} | ${w.commit} |  |  |\n`);
+  const fake = path.join(d, 'fake-gh.mjs'), state = path.join(d, 'gh-state.json');
+  await fs.writeFile(fake, FAKE_GH);
+  await fs.writeFile(state, JSON.stringify({ calls: [], assets: [] }));
+  const saved = process.env.FAKE_GH_STATE;
+  process.env.FAKE_GH_STATE = state;
+  t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
+  const assets = () => JSON.parse(fsSync.readFileSync(state, 'utf8')).assets;
+  return { d, index, fake, state, assets, images: w.kit.images.local.map(l => path.join(w.from, l.asset)), outDir: path.join(w.d, 'out') };
+}
+// the companion writes its version facts again (a new observedAt): the next kit taken from this node is other bytes
+async function factsObservedAgain(w, at) {
+  const f = path.join(w.template.root, 'upgrade', 'mailbox', 'responses', 'version-facts.json');
+  await fs.writeFile(f, JSON.stringify({ ...readJson(f), observedAt: at }));
+}
+
+test('3bc571a6, before acceptance: on the installed node, with no Decision, receipt or time, the entry writes what the Owner reviews', { timeout: 600_000 }, async t => {
+  const w = await getWorld();
+  const r0 = await releaseWorld(t, w);
+  const { ownerDecisionRef, installationReceiptRef, ownerReceiptRef, ...known } = w.acceptance.fleetRefs;
+  const r = await publishModule.acceptanceDraft({ version: VERSION, dir: r0.outDir, base: { fleetRefs: known }, out: path.join(r0.d, 'request'), images: r0.images, index: r0.index,
+    root: w.template.root, ghCommand: [process.execPath, r0.fake] });
+  const request = readJson(r.request ?? r.acceptance);
+  assert.ok(!('cluedDecision' in request) && !('acceptedAt' in request));
+  assert.equal(request.firstInstallKitSha256, r0.assets().find(a => a.name === `fleet-node-${VERSION}.first-install-kit.json`).sha256);
+});
+
+test('3bc571a6, a second run after a stop: the node\'s version facts were observed again, the kit on the Release is used, not refused', { timeout: 600_000 }, async t => {
+  const w = await getWorld();
+  const r0 = await releaseWorld(t, w);
+  const base = { cluedDecision: w.acceptance.cluedDecision, acceptedAt: w.acceptance.acceptedAt, fleetRefs: w.acceptance.fleetRefs };
+  const run = () => publishModule.acceptanceDraft({ version: VERSION, dir: r0.outDir, base, out: path.join(r0.d, 'request'), images: r0.images, index: r0.index,
+    root: w.template.root, ghCommand: [process.execPath, r0.fake] });
+  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';   // the kit goes up, the role image does not (acceptance-draft.log: the network stopped it)
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  await factsObservedAgain(w, new Date(Date.now() - 60_000).toISOString().replace(/\.\d+Z$/, 'Z'));
+  await assert.rejects(run(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
+  delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+  const attached = r0.assets().find(a => a.name === `fleet-node-${VERSION}.first-install-kit.json`).sha256;
+  await factsObservedAgain(w, new Date().toISOString().replace(/\.\d+Z$/, 'Z'));
+  assert.notEqual(sha(Buffer.from(JSON.stringify(await firstInstallKitOf({ root: w.template.root })) + '\n')), attached, 'the node now gives other kit bytes');
+  const r = await run();   // acceptance-draft.1.log: PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT
+  assert.equal(readJson(r.request ?? r.acceptance).firstInstallKitSha256, attached, 'the Release\'s kit');
+  assert.equal(r0.assets().filter(a => a.name === `fleet-node-${VERSION}.first-install-kit.json`).length, 1);
+});
