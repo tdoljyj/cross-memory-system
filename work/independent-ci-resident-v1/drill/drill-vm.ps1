@@ -2291,10 +2291,16 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
 
   try { $baseline = Invoke-DrillBaseline $runDir -ExistingOnly:($Window.holdUntil -ne [DateTimeOffset]::MinValue) }
   catch {
-    # a failed baseline keeps what was sampled before its boot -- the three stages, the probe-start record (Codex review of f734afe7e, medium 3)
+    # a failed baseline keeps what was sampled before its boot -- the three stages (Codex review of f734afe7e, medium 3); the failure that
+    # goes on says whether that record was saved, and a record that could not be written is reported on stderr (round four, low 1)
     $failed = Get-DrillCode $_
-    try { Write-DrillJson (Join-Path $runDir 'baseline.json') ([ordered]@{ action = 'failed'; failure = $failed; hostPreBoot = $script:DrillPreBoot }) } catch { }
-    throw
+    $file = Join-Path $runDir 'baseline.json'
+    $saveError = $null
+    try { Write-DrillJson $file ([ordered]@{ action = 'failed'; failure = $failed; hostPreBoot = $script:DrillPreBoot }) }
+    catch { $saveError = [string]$_.Exception.Message; [Console]::Error.WriteLine("drill: baseline.json not written ($file): $saveError") }
+    $savedTo = $null
+    if ($null -eq $saveError) { $savedTo = $file }
+    throw (New-DrillError $failed.code ([ordered]@{ failure = $failed.detail; baselineSaved = ($null -eq $saveError); baselineEvidence = $savedTo; baselineSaveError = $saveError }))
   }
   if ($baseline -is [Collections.IDictionary]) { $baseline.hostPreBoot = $script:DrillPreBoot }   # a built baseline's three stages
   if ($BaselineOnly) {

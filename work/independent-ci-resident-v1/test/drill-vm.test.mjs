@@ -1785,23 +1785,31 @@ test('no memory figure where none was read, and baseline.json keeps the pre-boot
   assert.deepEqual(r.baseline.hostPreBoot, { early: 'e', release: 'r', bootGate: { freeGB: 20 } });
 });
 
-// Codex review of f734afe7e, medium 3: a baseline that fails keeps what was sampled before its boot (the three stages, the probe-start
-// record) in baseline.json, and the failure still stops the run.
-test('a failed baseline keeps its pre-boot stages in baseline.json', opts, () => {
+// Codex review of f734afe7e, medium 3: a baseline that fails keeps what was sampled before its boot in baseline.json, and the failure
+// still stops the run, saying whether that record was saved (round four, low 1).
+test('a failed baseline keeps its pre-boot stages in baseline.json, and says whether it could', opts, () => {
   const runs = fs.mkdtempSync(path.join(tmp, 'baseline-failed-'));
   const r = ps(`
     function Assert-DrillHost { @{ ok = $true } }
     function Invoke-DrillBaseline { param($RunDir, [switch]$ExistingOnly)
-      $script:DrillPreBoot = [ordered]@{ early = 'e'; release = 'r'; bootGate = [ordered]@{ code = 'DRILL_HOST_MEMORY_SHORT'; wslStartedByProbe = @('Fixture-CI') } }
+      $script:DrillPreBoot = [ordered]@{ early = 'e'; release = 'r'; bootGate = [ordered]@{ code = 'DRILL_HOST_MEMORY_SHORT' } }
       throw (New-DrillError 'DRILL_HOST_MEMORY_SHORT' @{ freeGB = 9 }) }
     $script:Drill.Runs = ${q(runs)}
     $script:BaselineOnly = $true
-    $code = try { Invoke-DrillPreparedRun @{ safeToResume = $true; deadline = [DateTimeOffset]::MinValue; holdUntil = [DateTimeOffset]::MinValue } $null $null $null; 'NO THROW' } catch { (Get-DrillCode $_).code }
-    @{ code = $code; baseline = (Read-DrillJson (Join-Path (Get-ChildItem -LiteralPath ${q(runs)} -Directory)[0].FullName 'baseline.json')) }`);
-  assert.equal(r.code, 'DRILL_HOST_MEMORY_SHORT');
-  assert.equal(r.baseline.action, 'failed');
-  assert.equal(r.baseline.failure.code, 'DRILL_HOST_MEMORY_SHORT');
-  assert.deepEqual(r.baseline.hostPreBoot, { early: 'e', release: 'r', bootGate: { code: 'DRILL_HOST_MEMORY_SHORT', wslStartedByProbe: ['Fixture-CI'] } });
+    $saved = try { Invoke-DrillPreparedRun @{ safeToResume = $true; deadline = [DateTimeOffset]::MinValue; holdUntil = [DateTimeOffset]::MinValue } $null $null $null; 'NO THROW' } catch { Get-DrillCode $_ }
+    $file = Join-Path (Get-ChildItem -LiteralPath ${q(runs)} -Directory)[0].FullName 'baseline.json'
+    $baseline = Read-DrillJson $file
+    function Write-DrillJson { param($Path, $Value) throw 'disk full' }
+    $unsaved = try { Invoke-DrillPreparedRun @{ safeToResume = $true; deadline = [DateTimeOffset]::MinValue; holdUntil = [DateTimeOffset]::MinValue } $null $null $null; 'NO THROW' } catch { Get-DrillCode $_ }
+    @{ saved = $saved; baseline = $baseline; unsaved = $unsaved }`);
+  assert.equal(r.saved.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.equal(r.saved.detail.baselineSaved, true);
+  assert.deepEqual(r.saved.detail.failure, { freeGB: 9 });
+  assert.deepEqual([r.baseline.action, r.baseline.failure.code], ['failed', 'DRILL_HOST_MEMORY_SHORT']);
+  assert.deepEqual(r.baseline.hostPreBoot, { early: 'e', release: 'r', bootGate: { code: 'DRILL_HOST_MEMORY_SHORT' } });
+  assert.equal(r.unsaved.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.equal(r.unsaved.detail.baselineSaved, false);
+  assert.match(r.unsaved.detail.baselineSaveError, /disk full/);
 });
 
 test('the baseline action comes from the scene: only the VM whose name and notes are ours is ever touched', opts, () => {
