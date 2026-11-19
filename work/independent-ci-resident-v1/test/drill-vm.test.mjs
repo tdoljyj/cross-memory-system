@@ -191,6 +191,46 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
   if (windows) assert.equal(psCode(`$p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)}; Get-DrillReleaseFiles $p (Read-DrillKit ${q(f.out)})`), 'DRILL_RELEASE_ASSET_CHANGED');
 });
 
+// The package branch's two constants as they stand at 913be48ca (work/independent-ci-resident-v1/windows/first-install-host.ps1:114-115),
+// verbatim: the companion token is in the required group, the heartbeat token the only optional one. (The fixture PACKAGE_CREDENTIALS
+// above is an older shape without it; the integration report's "not in the required group" was read from that fixture -- corrected here.)
+const HOST_LINES_913BE48CA = [
+  "$RequiredCredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; public = 'public.json'; companionToken = 'companion-github.token' }",
+  "$OptionalCredentialFiles = [ordered]@{ heartbeatToken = 'ci-node-heartbeat.token' }"];
+test('the package at 913be48ca: the kit reads companionToken as required, the drill makes and hands it over, the heartbeat stays withheld', opts, async () => {
+  const hostText = `# host preparation (913be48ca, lines 114-115)\r\n${HOST_LINES_913BE48CA.join('\r\n')}\r\n`;
+  assert.deepEqual(drillKit.packageCredentials(hostText), {
+    required: { appKey: 'app-private-key.pem', ciToken: 'ci-admission.token', upgradeToken: 'resident-upgrade.token', public: 'public.json', companionToken: 'companion-github.token' },
+    optional: { heartbeatToken: 'ci-node-heartbeat.token' } });
+  // the kit built over a package carrying these two lines
+  const f = firstInstallAssets('assembly-913be48ca', { hostText });
+  prepareFrom({ ...f, out: f.from });
+  await makeDrillKit(f);
+  const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
+  assert.equal(manifest.credentials.required.companionToken, 'companion-github.token');
+  assert.deepEqual(manifest.credentials.optional, { heartbeatToken: 'ci-node-heartbeat.token' });
+  assert.equal(manifest.perNodeSteps.length, 4);
+  assert.match(manifest.perNodeSteps[3], /^陪伴 GitHub 经典令牌替身/);
+  // the run's plan from that kit: the companion token given and made; the heartbeat withheld by design, nothing made for it
+  const plan = ps(`Get-DrillCredentialPlan (Read-DrillKit ${q(f.out)})`);
+  assert.ok(plan.given.includes('companion-github.token') && plan.fake.includes('companion-github.token'), JSON.stringify(plan));
+  assert.deepEqual(plan.withheld.map(w => w.name), ['ci-node-heartbeat.token']);
+  assert.match(plan.withheld[0].reason, /production heartbeat endpoint/);
+  assert.ok(!plan.fake.includes('ci-node-heartbeat.token'));
+  // the gate that rebinds the kit to the drilled package's tar takes this kit
+  const tar = path.join(f.from, `fleet-node-${f.version}.tar`);
+  assert.equal(ps(`Assert-DrillKitCredentialsBound (Read-DrillKit ${q(f.out)}) ${q(tar)}; 'bound'`), 'bound');
+  // made as the run makes it (the plan's fake list): the stand-in in the classic token's shape, named in public.json
+  const out = path.join(tmp, 'fake-913be48ca');
+  ps(`New-DrillFakeCredentials ${q(out)} @(${plan.fake.map(q).join(', ')}); 'ok'`);
+  assert.deepEqual(fs.readdirSync(out).sort(), [...plan.fake].sort());
+  assert.match(fs.readFileSync(path.join(out, 'companion-github.token'), 'utf8'), /^ghp_CLUEDDRILLFAKE[A-Za-z0-9]{22}$/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'public.json'), 'utf8')).files.companionGithubToken, 'companion-github.token');
+  assert.equal(fs.existsSync(path.join(out, 'ci-node-heartbeat.token')), false);
+  // and the entry hands it over to the package (its copy table, copied when the drill made it)
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /@\('companion-github\.token', 'companion-github\.token'\)/);
+});
+
 test('assembly rejects a different acceptance, extra assets and missing images', () => {
   const f = firstInstallAssets('assembly-bad'); prepareFrom({ ...f, out: f.from });
   const accPath = path.join(f.from, `fleet-node-${f.version}.acceptance.json`);
