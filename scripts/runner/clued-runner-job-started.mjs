@@ -10,7 +10,8 @@
 //     dispatch on main. Those workflow files are main's own. A
 //     pull_request_target run counts only for a pull request into main
 //     (re-review 7, m1).
-//   - clued-train/staging: only clued-required-tests.yml pushed by the
+//   - clued-train/staging: only clued-required-tests.yml or
+//     clued-required-tests-windows.yml (STAGING_WORKFLOWS) pushed by the
 //     App 5368905 bot (ADR 0018), with a merge chain rooted at live main T.
 //     Every second-parent member must be an open, current, same-repository
 //     PR into main with exact-head Native admission from App 5368905.
@@ -298,7 +299,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const HOOK_VERSION = "required-tests-dispatch-v1";
-export const COMPONENT_VERSION = "1.0.6";
+export const COMPONENT_VERSION = "1.0.7";
 
 // Transient reads (see the header).
 export const READ_ATTEMPTS = 3;
@@ -561,6 +562,12 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
     .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
+// The workflows whose required checks the train needs on S (ADR 0018 §8):
+// every required check of main must succeed there, and ci-suites-windows is
+// one (D6 N1). Each reads its own member PR runs below.
+const STAGING_WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml',
+  '.github/workflows/clued-required-tests-windows.yml']);
+
 // Installed alone and loaded from main: do not import candidate policy/code.
 // Requiring admission for ALL members covers protected paths (including any
 // additions in main's policy), changed workflow bytes and unavailable diffs.
@@ -615,7 +622,7 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
     const pr = candidates[0];
     // Preserve the PR route's same-event lower bound: an older success on
     // the same head must not authorize a close/reopen or a new workflow run.
-    const runs = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&event=pull_request&per_page=100`);
+    const runs = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/${workflow.slice('.github/workflows/'.length)}/runs?head_sha=${head}&event=pull_request&per_page=100`);
     if (!Array.isArray(runs?.workflow_runs) || !Number.isSafeInteger(runs.total_count)
       || runs.total_count !== runs.workflow_runs.length || runs.total_count >= 100)
       return refuse('member PR workflow runs are unavailable or truncated');
@@ -884,7 +891,7 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
   if (!workflow) throw new Error(`GITHUB_WORKFLOW_REF is not a workflow path: ${env.GITHUB_WORKFLOW_REF}`);
   const event = result.event;
   if (event === 'push' && result.ref === 'refs/heads/clued-train/staging' &&
-    workflow === '.github/workflows/clued-required-tests.yml' &&
+    STAGING_WORKFLOWS.has(workflow) &&
     env.GITHUB_ACTOR === 'clued-ci-checks-turing-20261018[bot]') {
     return stagingAdmission({ env, fetchImpl, readFile, now, sleep, repository, defaultBranch, workflow, result });
   }

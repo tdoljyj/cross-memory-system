@@ -20,18 +20,23 @@ name: clued-required-tests-windows
 # clued-required-tests.yml: an untrusted actor, a pull request the gate did not
 # admit, or a failed gate gives ci-suites-windows-skipped, so the required check
 # stays missing (fail closed). Never rerun failed or single jobs.
+#
+# The train App's push to clued-train/staging runs it too (ADR 0018 §8, D6 N1),
+# exactly as clued-required-tests.yml: ci-suites-windows is required on main, so
+# a batch lands only when it succeeded on S. The trusted base is T = S^1,
+# checked to be an ancestor of main before any trusted command loads.
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, clued-train/staging]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # A push to main never cancels a running main run (GitHub still keeps only
-  # the newest queued run of a group).
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.ref == 'refs/heads/clued-train/staging' && github.sha) || github.ref }}
+  # Staging has one group per S, so later batches cannot replace queued CI.
+  # Main pushes never cancel a running main run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -73,12 +78,15 @@ jobs:
           CLUED_ADMISSION_GATE_WAIT_SECONDS: "600"
         run: node scripts/ci/clued-work-admission.mjs --mode gate
 
-  # One step selects and runs, on the runner's own Node 24 and Python 3.12
-  # (cap-node24, cap-python312; nothing is downloaded).
+  # After the push baseline (git only), one step selects and runs, on the
+  # runner's own Node 24 and Python 3.12 (cap-node24, cap-python312; nothing is
+  # downloaded).
   ci-suites-windows:
     name: >-
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
           ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+            github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
            (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
             github.event.pull_request.head.repo.full_name == github.repository &&
             (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -87,6 +95,8 @@ jobs:
     if: >-
       needs.admission-gate.outputs.admitted == 'true' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&
+        github.actor == 'clued-ci-checks-turing-20261018[bot]') ||
        (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
         (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))
@@ -96,25 +106,51 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - name: Check out the trusted base (selection and commands)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-          path: trusted
       - name: Check out the candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
           fetch-depth: 0
           path: candidate
+      - name: Resolve push baseline before loading trusted commands
+        id: train-base
+        working-directory: candidate
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+          STAGING_SHA: ${{ github.sha }}
+          PUSH_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:EVENT_NAME -ne 'push') { exit 0 }
+          $base = git rev-parse "$($env:STAGING_SHA)^1"
+          if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }
+          if ($env:PUSH_REF -eq 'refs/heads/clued-train/staging') {
+            # Checkout fetched full history; no candidate code has run.
+            # The first parent must be an already trusted main ancestor.
+            git merge-base --is-ancestor $base origin/main
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "sha=$base`n")
+          }
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "ci_base=$base`n")
+      - name: Check out the trusted base (selection and commands)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}
+          path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select and run the suites declared for Windows
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
           $ErrorActionPreference = 'Stop'
