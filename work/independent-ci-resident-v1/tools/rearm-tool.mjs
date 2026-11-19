@@ -23,6 +23,8 @@
 // limited rights (quiescence on both hosts, rename-only archive, HALT compare-and-swap), so no file
 // operation on an Owner-writable tree ever runs elevated (independent review X1). The intake requests are the exception
 // in where they go (requests\, see above), never in what they may do: they only hold new batches.
+// Under a test marker (NODE_TEST_CONTEXT, CLUED_UNDER_TEST) no mode but inspect runs against C:\ProgramData\CluedIndependentCI or below
+// it: REFUSED_UNDER_TEST before anything is checked or written (src/production-root-guard.mjs; Clued Task fe8a2cbf).
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -38,6 +40,7 @@ import { readVersionInputs, versionsView } from '../src/status.mjs';
 import { validatePolicy } from '../src/policy.mjs';
 import { intakePauseRequest, intakeResumeRequest, readIntakePause } from '../src/intake-pause.mjs';
 import { probeRequest, revokeHeadRequest } from '../src/resident-requests.mjs';
+import { refuseUnderTest } from '../src/production-root-guard.mjs';
 
 const SID = /^S-1-5-21-\d+-\d+-\d+-\d+$/;
 // The review mark Source v2 stage 10 reads (state-retention.mjs TRAIN_REVIEW_*; a test keeps the two equal).
@@ -185,6 +188,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     'batch-key': { type: 'string' }, 'expected-ledger-entry-sha256': { type: 'string' }, holder: { type: 'string' }, minutes: { type: 'string' }, ref: { type: 'string' } } });
   try {
     check(typeof values.root === 'string' && path.isAbsolute(values.root), 'ROOT_REQUIRED');
+    // Clued Task fe8a2cbf (ruling 11-19, layer B): every mode but inspect writes a request a running resident acts on, so a
+    // process carrying a test marker may not aim one at the fixed production root (REFUSED_UNDER_TEST, production-root-guard.mjs).
+    if (positionals[0] !== 'inspect') refuseUnderTest(values.root);
     const state = path.join(values.root, 'state');
     if (positionals[0] === 'inspect') {
       const ledger = new Ledger(state, Date.now);
