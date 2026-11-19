@@ -537,7 +537,7 @@ function Read-DrillKit([string]$Dir) {
       $candidate[$k] = $v
     }
   }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials') }
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials'); credentialFilesSha256 = (Get-Prop $kit 'credentialFilesSha256') }
 }
 
 # The drill's decision for each credential file name a package may declare (Fable renew-key ruling, supplements "merge order" and
@@ -548,7 +548,7 @@ function Read-DrillKit([string]$Dir) {
 # one source make-drill-kit.mjs reads too: a name given there with a perNodeStep is registered in the kit's per-node steps whenever the
 # package names it, required or optional, exactly as the run makes and hands it over (Codex review of f33fc33e5, medium 4).
 # Looked up by file name ordinally and case-sensitively (6th review round, low 1), as make-drill-kit.mjs looks it up (an object's own key)
-# and as the package's names are read and bound (packageCredentials; Assert-DrillKitCredentialsBound compares with -cne): a name the table
+# and as the package's names are bound (Assert-DrillKitCredentialsBound compares with -cne): a name the table
 # spells otherwise is no decision at either end.
 function Read-DrillCredentialDecisions([string]$File) {
   $t = [IO.File]::ReadAllText($File, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
@@ -559,20 +559,21 @@ function Read-DrillCredentialDecisions([string]$File) {
 }
 $script:DrillCredentialDecisions = Read-DrillCredentialDecisions (Join-Path $PSScriptRoot 'credential-decisions.json')
 
-# The kit's credential names bound again to the package being drilled (Codex review of e0a3cded5, high 2): derived from the verified tar
-# by the one reader (make-drill-kit.mjs --credentials-of) and compared with the kit's, group by group and name by name; any difference
-# refuses the drill before any boot, so an edited kit cannot drop a name the package needs.
+# The kit's credential names bound again to the package being drilled (Codex review of e0a3cded5, high 2): the package's
+# credential-files.json read from the verified tar by the one reader (make-drill-kit.mjs --credentials-of); the hash of its bytes and its
+# two groups, name by name, must be the kit's record; any difference refuses the drill before any boot.
 function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
   $reader = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'make-drill-kit.mjs'
   $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   $run = Invoke-DrillNode $node @($reader, '--credentials-of', $Tar) 60
   $derived = $null
   if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
-  if ($null -eq $derived) { throw (New-DrillError 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE' $Tar) }
+  if ($null -eq $derived -or [string](Get-Prop $derived 'sha256') -cnotmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE' $Tar) }
   $pairs = { param($c) foreach ($g in @('required', 'optional')) { $m = Get-Prop $c $g
     @(if ($m -is [Collections.IDictionary]) { foreach ($k in @($m.Keys)) { "$g.$k=$($m[$k])" } } elseif ($null -ne $m) { foreach ($p in $m.PSObject.Properties) { "$g.$($p.Name)=$($p.Value)" } }) | Sort-Object } }
-  $want = @(& $pairs $derived) -join "`n"; $have = @(& $pairs (Get-Prop $KitInfo 'credentials')) -join "`n"
-  if ($want -cne $have) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ package = $want; kit = $have }) }
+  $want = @(& $pairs (Get-Prop $derived 'credentials')) -join "`n"; $have = @(& $pairs (Get-Prop $KitInfo 'credentials')) -join "`n"
+  $bytes = [string](Get-Prop $derived 'sha256'); $recorded = [string](Get-Prop $KitInfo 'credentialFilesSha256')
+  if ($want -cne $have -or $bytes -cne $recorded) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ package = $want; kit = $have; packageSha256 = $bytes; kitSha256 = $recorded }) }
 }
 
 # The package's gh and Git for Windows installers in the kit, each with the hash the package's prerequisite manifest pins (Codex review of

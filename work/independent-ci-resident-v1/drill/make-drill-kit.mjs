@@ -54,80 +54,32 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
 // Pure manifest constructor: every payload byte is pinned, including release-pins.json. `candidate`: the candidate's acceptance among
 // the payloads and the three hashes it names (drill-vm.ps1 holds the run to them and writes them into the receipt).
 // Fable renew-key ruling, supplements "merge order" and "heartbeat token and restart code": the drill is held to the package it drills.
-// Its credential file names are read from that package's host preparation, from its two constants -- the required names and the optional
-// ones -- and recorded in the kit; a package that does not declare the two is refused (no kit). drill-vm.ps1 Get-DrillCredentialPlan
-// then refuses before any boot a required name the drill cannot make, and an optional name it has no decision for.
-export const HOST_SCRIPT = 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1';
+// Its credential file names are data the package ships (supplement "where the credential list comes from"): windows/credential-files.json
+// in the archive, read as it is and recorded in the kit with its bytes' hash; a package without it is refused (no kit). drill-vm.ps1
+// Get-DrillCredentialPlan then refuses before any boot a required name the drill cannot make, and an optional name it has no decision for.
+export const CREDENTIAL_FILES = 'tree/work/independent-ci-resident-v1/windows/credential-files.json';
+export const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
 // The prerequisite items (by name in the package's prereq-manifest.json) the drill injects and the guest never downloads.
 export const INJECTED_TOOLS = Object.freeze(['gh', 'git-for-windows']);
-// The script as PowerShell runs it, what is not code blanked (same length, line breaks kept): block comments, line comments and
-// here-strings -- a line of a declaration's shape in them declares nothing -- and, with strings, the contents of quoted strings.
-function blankNonCode(src, { strings }) {
-  const blank = s => s.replace(/[^\r\n]/g, ' ');
-  let out = '', i = 0;
-  while (i < src.length) {
-    const c = src[i];
-    let j = -1;
-    if (src.startsWith('<#', i)) { const e = src.indexOf('#>', i + 2); j = e < 0 ? src.length : e + 2; }
-    else if (c === '#') { const e = src.indexOf('\n', i); j = e < 0 ? src.length : e; }
-    else if (c === '@' && /^@(["'])[ \t]*\r?\n/.test(src.slice(i, i + 8))) {
-      const e = src.indexOf('\n' + src[i + 1] + '@', i + 2); j = e < 0 ? src.length : e + 3;
-    }
-    if (j >= 0) { out += blank(src.slice(i, j)); i = j; continue; }
-    if (c === "'" || c === '"') {
-      let k = i + 1;
-      while (k < src.length) {
-        if (c === '"' && src[k] === '`') { k += 2; continue; }
-        if (src[k] === c) { if (src[k + 1] === c) { k += 2; continue; } break; }
-        k++;
-      }
-      const end = Math.min(k + 1, src.length);
-      out += strings ? c + blank(src.slice(i + 1, end - 1)) + (end - 1 > i ? src[end - 1] : '') : src.slice(i, end);
-      i = end; continue;
-    }
-    out += c; i++;
-  }
-  return out;
-}
-
-// Read only when it reads one way (Codex reviews of e0a3cded5, medium 3, and of f33fc33e5, medium 1), the way PowerShell reads it: a
-// variable's name in any case is the same variable, so exactly one assignment of each constant in the code -- any case, scope-qualified
-// ($script:...) or braced (${...}), anywhere on a line, nor changed after by index, property or a mutating method, nor named to a
-// *-Variable cmdlet -- and that one at a line's start, a single-line literal of plain pairs, no key twice (PowerShell keys are
-// case-insensitive). Comments and here-strings are not code. Anything else is ambiguous and refused.
-export function packageCredentials(text) {
-  const src = String(text ?? '');
-  const code = blankNonCode(src, { strings: true }), lines = blankNonCode(src, { strings: false });
-  const pairRe = /([A-Za-z][A-Za-z0-9]*)\s*=\s*'([^'\r\n]+)'/g;
-  const group = name => {
-    const v = `(?:\\$(?:(?:script|global|local|private):)?${name}(?![A-Za-z0-9_])|\\$\\{(?:(?:script|global|local|private):)?${name}\\})`;
-    const assignments = [...code.matchAll(new RegExp(`${v}[ \\t]*(?:[-+*/%]|\\?\\?)?=(?!=)`, 'gi'))];
-    // changed after the declaration (6th review round, medium 1): any assignment -- plain or compound (+= -= *= /= %= ??=) -- to an
-    // index or a property reached from the constant, or a mutating method called on it or on what it holds
-    const access = `(?:[ \\t]*\\[[^\\]\\r\\n]*\\]|\\.[A-Za-z_][A-Za-z0-9_]*)+`;
-    const changed = new RegExp(`${v}${access}[ \\t]*(?:[-+*/%]|\\?\\?)?=(?!=)|${v}(?:${access})?\\.(?:Add|Remove|RemoveAt|Clear|Insert|Set_Item|Push|Pop|Enqueue|Dequeue)[ \\t]*\\(`, 'i').test(code);
-    const byCmdlet = new RegExp(`\\b(?:Set|New|Remove|Clear)-Variable\\b[^\\r\\n]*[\\s'"]${name}(?![A-Za-z0-9_])`, 'i').test(lines);
-    if (assignments.length !== 1 || changed || byCmdlet) return null;
-    const m = new RegExp(`^\\$${name}[ \\t]*=[ \\t]*\\[ordered\\]@\\{([^}\\r\\n]*)\\}[ \\t]*\\r?$`, 'mi').exec(lines);
-    if (!m || m.index !== assignments[0].index) return null;
-    const body = m[1];
-    if (body.replace(pairRe, '').replace(/[;\s]/g, '') !== '') return null;
-    const pairs = [...body.matchAll(pairRe)].map(p => [p[1], p[2]]);
-    if (new Set(pairs.map(([k]) => k.toLowerCase())).size !== pairs.length) return null;
-    return Object.fromEntries(pairs);
-  };
-  const required = group('RequiredCredentialFiles'), optional = group('OptionalCredentialFiles');
-  check(required && optional && Object.keys(required).length > 0, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
-  const names = [...Object.values(required), ...Object.values(optional)];
-  check(names.every(nameOK) && new Set(names).size === names.length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
-  return { required, optional };
-}
-
-// The two groups of a package archive (its host preparation script); the one reader the build and the run's gate both use.
+// The package's credential list from its archive, the one reader the build and the run's gate both use: exactly
+// { contract, required, optional }, each group an object of plain file names, a non-empty required group, no key twice, no name twice
+// (in a group, across the two, or by case). Anything else, or no list, is refused. Returns the list and the hash of its bytes.
 export function credentialsOfTar(tarBytes) {
-  const hostScript = readTar(tarBytes).find(e => e.path === HOST_SCRIPT);
-  check(hostScript, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
-  return packageCredentials(hostScript.data.toString('utf8'));
+  const entries = readTar(tarBytes).filter(e => e.path === CREDENTIAL_FILES);
+  check(entries.length === 1, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'no credential-files.json in the archive');
+  const text = entries[0].data.toString('utf8');
+  let c = null;
+  try { c = JSON.parse(text); } catch { c = null; }
+  const group = g => g !== null && typeof g === 'object' && !Array.isArray(g) && Object.values(g).every(v => typeof v === 'string' && nameOK(v));
+  check(c !== null && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).sort().join() === 'contract,optional,required' &&
+    c.contract === CREDENTIAL_FILES_CONTRACT && group(c.required) && group(c.optional) && Object.keys(c.required).length > 0,
+    'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json');
+  // JSON.parse keeps the last of a key given twice: every key written must be one read
+  const written = [...text.matchAll(/"((?:[^"\\]|\\.)*)"\s*:/g)].length;
+  check(written === 3 + Object.keys(c.required).length + Object.keys(c.optional).length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a key twice');
+  const names = [...Object.values(c.required), ...Object.values(c.optional)];
+  check(new Set(names.map(n => n.toLowerCase())).size === names.length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a name twice');
+  return { sha256: sha256(entries[0].data), credentials: { contract: c.contract, required: c.required, optional: c.optional } };
 }
 
 // The drill's decision for each credential name (give, with the fake file; or withhold, with the reason), the one table drill-vm.ps1 reads
@@ -138,7 +90,7 @@ const standInSteps = credentials => [...Object.values(credentials?.required ?? {
   .filter(n => Object.hasOwn(CREDENTIAL_DECISIONS, n) && CREDENTIAL_DECISIONS[n].give === true && typeof CREDENTIAL_DECISIONS[n].perNodeStep === 'string')
   .map(n => CREDENTIAL_DECISIONS[n].perNodeStep);
 
-export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null }) {
+export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null, credentialFilesSha256 = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
   const prereq = JSON.parse(prereqBytes.toString('utf8'));
   check(prereq.contract === 'clued.drill.prereq/1', 'DRILL_PREREQ_CONTRACT_REFUSED');
@@ -150,7 +102,7 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
     // a stand-in step for every name the package names and the drill makes and hands over (the decision table), required or optional
     timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', ...standInSteps(credentials)], prereqSha256: sha256(prereqBytes),
     // The real first-install host owns WSL import, Docker and accounts, from S0.
-    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(credentials ? { credentials } : {}) };
+    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(credentials ? { credentials } : {}), ...(credentialFilesSha256 ? { credentialFilesSha256 } : {}) };
 }
 
 // Validate a complete local Release directory, without treating a new sums file as acceptance. No acceptance file in it: a candidate
@@ -216,7 +168,7 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
       firstInstallKitSha256: acceptance.firstInstallKitSha256 };
   }
   payloads['release-pins.json'] = Buffer.from(JSON.stringify(pins, null, 2) + '\n');
-  const credentials = credentialsOfTar(read(from, `fleet-node-${version}.tar`));
+  const { sha256: credentialFilesSha256, credentials } = credentialsOfTar(read(from, `fleet-node-${version}.tar`));
   const prereqBytes = fs.readFileSync(prereq), p = JSON.parse(prereqBytes);
   const pm = JSON.parse(read(from, `fleet-node-${version}.prereq-manifest.json`));
   const available = [...(pm.items ?? []), ...(pm.debs ?? [])];
@@ -241,7 +193,7 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     const need = declared[0];
     check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${tool}`);
   }
-  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials });
+  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials, credentialFilesSha256 });
   fs.mkdirSync(out); // refuse an existing target, including a previous kit
   for (const [name, bytes] of Object.entries(payloads)) fs.writeFileSync(path.join(out, name), bytes, { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'kit.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
@@ -284,7 +236,7 @@ export function prepareFrom({ build, final, images, version, out }) {
 if (import.meta.main) {
   try {
     const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'request', 'build', 'final', 'images', 'credentials-of'].map(n => [n, { type: 'string' }])) });
-    // --credentials-of <tar>: the package's two credential groups, for drill-vm.ps1's gate (Assert-DrillKitCredentialsBound)
+    // --credentials-of <tar>: the package's credential list and its bytes' hash, for drill-vm.ps1's gate (Assert-DrillKitCredentialsBound)
     if (values['credentials-of']) console.log(JSON.stringify(credentialsOfTar(fs.readFileSync(values['credentials-of']))));
     else {
       check(values.version && values.out, 'USAGE: --version <v> --out <new-dir> (--from <release-dir> --prereq <prereq.json> [--request <fleet-node-<v>.acceptance-request.json>: a candidate] | --build <dir> --final <dir> --images <dir>) | --credentials-of <tar>');
