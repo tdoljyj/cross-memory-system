@@ -84,6 +84,8 @@ test('a declared entry blocker stops the full drill before its host or VM gate',
     function Read-DrillKit { @{ prereqSha256 = 'pin'; executionBlocker = 'DRILL_BOOTSTRAP_REQUIRES_INTERACTIVE_UNELEVATED_SESSION' } }
     function Get-DrillReleaseFiles { @('unused') }
     function Assert-DrillHost { throw 'HOST_GATE_MUST_NOT_RUN' }
+    function Invoke-DrillWithHostHold { throw 'HOST_HOLD_MUST_NOT_RUN' }
+    function Get-DrillIntakeTool { throw 'HOST_HOLD_MUST_NOT_RUN' }
     Invoke-DrillMain`);
   assert.equal(code, 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY');
 });
@@ -1062,6 +1064,9 @@ test('a candidate drill cannot skip: refused with -SkipReinstall; a candidate re
     function Test-DrillPackageDir { @{ tar = 'unused'; candidate = $true } }
     function Get-DrillReleaseFiles { @('unused') }
     function Assert-DrillHost { throw 'HOST_GATE_MUST_NOT_RUN' }
+    # never the real host hold (it reads this host's status and may ask the installed service to hold intake), whatever the code does
+    function Invoke-DrillWithHostHold { throw 'HOST_HOLD_MUST_NOT_RUN' }
+    function Get-DrillIntakeTool { throw 'HOST_HOLD_MUST_NOT_RUN' }
     Invoke-DrillMain`);
   assert.equal(code, 'DRILL_CANDIDATE_CANNOT_SKIP');
   const w = await sealWorld(t);
