@@ -683,7 +683,7 @@ function Test-DrillReinstallLauncher($Reinstall) {
 # A5's production half and A9 are judged by -Finalize from the production read-back).
 #   $E: entry (Read-DrillEntryResult), launcher (the launcher's terminal), pause (state\PAUSED.json: sha256, requestSha256),
 #       verify (@{status}), status (status.json), current (upgrade\current.json), facts (version-facts.json), acceptanceSource,
-#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (@{skipped, ...}), kit
+#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (@{skipped, ...}), skipReinstall (the option given), kit
 function Get-DrillVerdict($E) {
   $items = New-Object System.Collections.ArrayList
   $now = [DateTimeOffset]$E.now
@@ -721,8 +721,15 @@ function Get-DrillVerdict($E) {
     $scAfter = Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) ([string](Get-Prop $r 'boot'))
     [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail)"))
   }
+  # A8: the operator's choice (-SkipReinstall, $E.skipReinstall) and the run's A8 result reach here apart (Codex review of 58136df61,
+  # medium 2). Only the choice, with a result that says skipped, is "skipped"; no result, or a skip nobody chose, is FAIL.
   $ri = $E.reinstall
-  if ($null -eq $ri -or $ri.skipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall): same-package reinstall not drilled (同包重装未演练)')) }
+  $chosen = (Get-Prop $E 'skipReinstall') -eq $true
+  $saysSkipped = (Get-Prop $ri 'skipped') -eq $true
+  if ($chosen -and $saysSkipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall): same-package reinstall not drilled (同包重装未演练)')) }
+  elseif ($null -eq $ri) { [void]$items.Add((New-DrillItem 'A8' $false 'no A8 result: the run handed none over')) }
+  elseif ($saysSkipped) { [void]$items.Add((New-DrillItem 'A8' $false 'the A8 result says skipped, but the run was not started with the skip option')) }
+  elseif ($chosen) { [void]$items.Add((New-DrillItem 'A8' $false 'started with the skip option, but an A8 result came back')) }
   else {
     $a8 = ([string]$ri.upgradeStatus -ceq 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') -and ([string]$ri.prepareStatus -ceq 'FLEET_NODE_INSTALL_PREPARED') `
       -and (Test-DrillReinstallLauncher $ri) -and [bool]$ri.reverifyPassed -and ([string]$ri.prepareAgainStatus -ceq 'FLEET_NODE_INSTALL_PREPARED')
@@ -2036,7 +2043,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
   }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   try {

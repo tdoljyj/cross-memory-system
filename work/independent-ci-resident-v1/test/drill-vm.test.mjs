@@ -1069,7 +1069,8 @@ test('M5 collects the six public observations and the administrator\'s read of t
 
 // A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
 // M5 observations `missing` and a host checker that answers `checker`.
-function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null } = {}) {
+// skip: the run was started with -SkipReinstall; reinstall: 'absent' leaves the run without an A8 result at all.
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, skip = false } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -1083,7 +1084,9 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
   const e = JSON.parse(evidence());
   const run = { first: { ...e, readAt: e.now }, entry: e.entry, launcher: e.launcher, reboot: e.reboot, reinstall: reinstall ?? e.reinstall,
     timings: {}, m5: null };
+  if (reinstall === 'absent') delete run.reinstall;
   const receipt = ps(`
+    ${skip ? '$SkipReinstall = $true' : ''}
     $script:Drill.Runs = ${q(root)}
     $script:DrillScriptPath = ${q(path.join(root, 'drill', 'drill-vm.ps1'))}
     function Assert-DrillHost { @{ freeGB = 20 } }
@@ -1265,7 +1268,7 @@ test('a candidate that skipped A8 ends PASS_A_REINSTALL_NOT_DRILLED through the 
   const w = await sealWorld(t);
   const pkg = { tarSha256: w.request.archive_sha256, firstInstallKitSha256: w.request.firstInstallKitSha256 };
   // the receipt Invoke-DrillPreparedRun writes for a candidate whose A8 was skipped (no entry, no host hold: m5DrillReceipt stubs them)
-  const skipped = m5DrillReceipt('cand-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version: w.version, pkg, reinstall: { skipped: true } });
+  const skipped = m5DrillReceipt('cand-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version: w.version, pkg, reinstall: { skipped: true }, skip: true });
   const a8 = skipped.items.find(i => i.id === 'A8');
   assert.equal(a8.pass, null);
   assert.match(a8.detail, /^skipped \(-SkipReinstall\)/);
@@ -1282,7 +1285,7 @@ test('a candidate that skipped A8 ends PASS_A_REINSTALL_NOT_DRILLED through the 
   // a production write during the drill still fails the candidate
   assert.equal(finalize('cand-skip-a9', skipped, { ...notTheDrillsSource(), bindings_created: 1 }).output.conclusion, 'FAIL');
   // an accepted version's re-drill skipping A8: unchanged
-  const reDrill = m5DrillReceipt('acc-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], reinstall: { skipped: true } });
+  const reDrill = m5DrillReceipt('acc-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], reinstall: { skipped: true }, skip: true });
   assert.equal(reDrill.conclusion, 'PENDING_PRODUCTION_READBACK');
   assert.equal(finalize('acc-skip-finalize', reDrill).output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
 });
@@ -1607,8 +1610,37 @@ test('the verdict fails what the plan says fails', opts, () => {
   assert.equal(pass(verdictOf(evidence({ reboot: { ok: false, status: e.status, readAt: NOW } }))).A7, false);
   assert.equal(pass(verdictOf(evidence({ reinstall: { ...e.reinstall, upgradeStatus: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' } }))).A8, false);
   assert.equal(verdictOf(evidence({ verify: { status: 'X' } })).conclusion, 'FAIL');
-  const skipped = verdictOf(evidence({ reinstall: { skipped: true } }));
+  const skipped = verdictOf(evidence({ reinstall: { skipped: true }, skipReinstall: true }));
   assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PENDING_PRODUCTION_READBACK');
+});
+
+// Codex review of 58136df61, medium 2: the operator's choice (-SkipReinstall) and the run's A8 result reach the verdict apart. Only the
+// choice makes A8 "skipped"; an A8 result that is missing, or says skipped without the choice, is FAIL and never named -SkipReinstall.
+test('A8 is skipped only by the explicit option; a missing or unchosen skip is FAIL, through the real receipt', opts, () => {
+  const e = JSON.parse(evidence());
+  const a8 = over => { const r = verdictOf(evidence(over)); return { pass: pass(r).A8, detail: r.items.find(i => i.id === 'A8').detail, conclusion: r.conclusion }; };
+  for (const [reason, over] of [
+    ['no A8 result', { reinstall: null }],
+    ['skipped without the option', { reinstall: { skipped: true } }],
+    ['the option, but A8 ran', { reinstall: e.reinstall, skipReinstall: true }],
+  ]) {
+    const r = a8(over);
+    assert.equal(r.pass, false, reason);
+    assert.doesNotMatch(r.detail, /^skipped/, reason);
+    assert.equal(r.conclusion, 'FAIL', reason);
+  }
+  assert.doesNotMatch(a8({ reinstall: null }).detail, /SkipReinstall/);
+  // the real conversion: Invoke-DrillPreparedRun over a run that handed over no A8 result, a candidate whose other items all pass
+  const absent = m5DrillReceipt('cand-a8-absent', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, reinstall: 'absent' });
+  const item = absent.items.find(i => i.id === 'A8');
+  assert.equal(item.pass, false);
+  assert.doesNotMatch(item.detail, /SkipReinstall/);
+  assert.equal(absent.conclusion, 'FAIL');
+  assert.equal(finalize('cand-a8-absent-finalize', absent, notTheDrillsSource()).output.code, 'DRILL_RECEIPT_NOT_FINALIZABLE');
+  // a run whose A8 says skipped without the option: the same
+  const unchosen = m5DrillReceipt('cand-a8-unchosen', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, reinstall: { skipped: true } });
+  assert.equal(unchosen.items.find(i => i.id === 'A8').pass, false);
+  assert.equal(unchosen.conclusion, 'FAIL');
 });
 
 // Fable renew-key ruling, supplement "eight on the path", item 5: a successful launcher ends with its own pause confirmed, so A6 holds
