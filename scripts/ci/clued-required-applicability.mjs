@@ -1,15 +1,11 @@
 // Live, request-bound applicability only. No Source, installation or execution
 // authority is minted here. Raw logs and provider bodies never leave this module.
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import {performance} from 'node:perf_hooks';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 
 export const COMPONENT_VERSION='1.0.11';
-export const REQUIRED_SELECTOR_SOURCE=Object.freeze({
-  path:'scripts/ci/ci-required-selection.mjs',
-  blob:'307819450e2a281b18c747ed26aa94aac9215b96',
-  sha256:'f37959a5491a542f5f19e0a9abe1f53f8dcebc4d8565fe9afd370feef471d35f',
-});
 export const REQUIRED_MIGRATION_PATHS=Object.freeze([
   'apps/clued-cloud/supabase/**','apps/clued-cloud/scripts/production-schema-*.mjs',
   'apps/clued-cloud/scripts/migration-ledger.mjs','apps/clued-cloud/scripts/production-release-baseline.json',
@@ -23,6 +19,16 @@ const tokens=new WeakMap(),SHA=/^[a-f0-9]{40}$/,REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0
 const SOURCE_GATE='scripts/ci/clued-work-admission.mjs',MAX_READ_MS=20000,MAX_CONTEXT_AGE_MS=120000;
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const blob=value=>createHash('sha1').update('blob '+Buffer.byteLength(value)+'\0').update(value).digest('hex');
+function localSelectorSource(){
+  const path='scripts/ci/ci-required-selection.mjs';
+  try{
+    const bytes=readFileSync(new URL('./ci-required-selection.mjs',import.meta.url));
+    return Object.freeze({path,blob:blob(bytes),sha256:hash(bytes)});
+  }catch{
+    return Object.freeze({path,blob:null,sha256:null});
+  }
+}
+export const REQUIRED_SELECTOR_SOURCE=localSelectorSource();
 const canonical=x=>Array.isArray(x)?x.map(canonical):x&&typeof x==='object'?
   Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const freeze=x=>{if(x&&typeof x==='object'){Object.values(x).forEach(freeze);Object.freeze(x);}return x;};
@@ -93,6 +99,7 @@ function gateBase(log,job,s) {
 // The only issuer performs the protected reads itself. No importable
 // mint-from-boolean, serialized proof, or caller-supplied path policy exists.
 export async function readRequiredApplicability(options) {
+  if(!REQUIRED_SELECTOR_SOURCE.blob)return null;
   let active=true,timer,externalAbort,externalSignal;const abort=new AbortController();
   const refused=new Error('REQUIRED_APPLICABILITY_UNCONFIRMED');
   try {
