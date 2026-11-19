@@ -33,8 +33,7 @@ test('changed byte/Role, omitted dependency and claimed authority cannot become 
   const alterations=[s=>{s.executionAuthority=true;},s=>{s.hostQualification='qualified';},
     s=>{s.runnerHookException=true;},s=>{s.role.definition['runs-on']='ubuntu-slim';},
     s=>{s.role.definition.permissions={contents:'write'};s.role.sha256=hash(JSON.stringify(canonical(s.role.definition)));},
-    s=>{delete s.files['scripts/ci/clued-work-admission.mjs'];},
-    s=>{s.files['scripts/ci/clued-merge-executor.mjs']='0'.repeat(64);}];
+    s=>{s.files={};},s=>{s.files=null;},s=>{s.files=[];}];
   for(const alter of alterations){const changed=JSON.parse(manifest);alter(changed);
     assert.throws(()=>verifyReconcileSource(root,(name,encoding)=>name===path.join(root,SOURCE_FILE)?JSON.stringify(changed):fs.readFileSync(name,encoding)),/UNQUALIFIED/);}
   assert.throws(()=>verifyReconcileSource(root,(name,encoding)=>name===path.join(root,WORKFLOW_FILE)?raw()+'\n':fs.readFileSync(name,encoding)),/UNQUALIFIED/);
@@ -43,9 +42,8 @@ test('changed byte/Role, omitted dependency and claimed authority cannot become 
 test('mechanical policy bytes are part of the complete reconcile Source and cannot be omitted or substituted',()=>{
   const policy='config/clued-mechanical-files.json';
   const manifest=JSON.parse(fs.readFileSync(path.join(root,SOURCE_FILE),'utf8'));
-  assert.equal(manifest.files[policy],hash(fs.readFileSync(path.join(root,policy))));
-  const missing=structuredClone(manifest);delete missing.files[policy];
-  assert.throws(()=>verifyReconcileSource(root,(name,encoding)=>name===path.join(root,SOURCE_FILE)?JSON.stringify(missing):fs.readFileSync(name,encoding)),/UNQUALIFIED/);
+  assert.equal(Object.hasOwn(manifest,'files'),false);
+  assert.equal(verifyReconcileSource(root).files[policy],hash(fs.readFileSync(path.join(root,policy))));
   assert.throws(()=>verifyReconcileSource(root,(name,encoding)=>name===path.join(root,policy)?fs.readFileSync(name,'utf8')+'\n':fs.readFileSync(name,encoding)),/UNQUALIFIED/);
 });
 

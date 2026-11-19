@@ -3221,6 +3221,19 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   if (attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/clued-train/staging"
     && workflowFileOf(env) === "clued-required-tests.yml")
     return stagingRepairGate({ env, fetchImpl, outcome, attempt });
+  if (!attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/main") {
+    const reused = await mainPushTreeReuse({ env, fetchImpl });
+    if (reused && reused.run_heavy === false) {
+      outcome.verdict = "TREE_ALREADY_TESTED";
+      outcome.head_sha = env.GITHUB_SHA;
+      outcome.tree_reuse = reused;
+      outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} already passed ${workflowFileOf(env)} `
+        + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr}; `
+        + `prior PR evidence only, the skipped heavy jobs do not qualify this main commit; "Re-run all jobs" runs them`];
+      return outcome;
+    }
+    if (reused) outcome.notices.push(`main push tree reuse: ${reused.reason}; the heavy jobs run`);
+  }
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
@@ -3426,6 +3439,22 @@ export function dispatchTitle(workflow, ref, claimId) {
 function workflowFileOf(env) {
   const match = /\.github\/workflows\/([^@/]+)@/.exec(env.GITHUB_WORKFLOW_REF ?? "");
   return match ? match[1] : null;
+}
+
+// Rule 41ab823a by tree (FABLE-main-push-tree-reuse §2.2): the first attempt of a main push of a required-test
+// workflow in the reuse table (proof "ancestry") reuses the merged PR head's passing run of the same tree.
+// scripts/ci/clued-tree-reuse.mjs decides (no repository imports); it reads only GitHub's own records with this job's token and
+// returns run_heavy=true on anything it cannot prove. Null: not a subject, nothing was read.
+async function mainPushTreeReuse({ env, fetchImpl }) {
+  const workflow = workflowFileOf(env);
+  let reuse;
+  try {
+    reuse = await import("./clued-tree-reuse.mjs");
+  } catch (error) {
+    return { run_heavy: true, reason: `reuse table unreadable (${error instanceof Error ? error.message : String(error)})` };
+  }
+  if (!workflow || !Object.hasOwn(reuse.TARGETS, workflow) || reuse.TARGETS[workflow].proof !== "ancestry") return null;
+  return reuse.evaluatePush({ ...env, REUSE_WORKFLOW: workflow }, fetchImpl);
 }
 
 async function stagingRepairGate({ env, fetchImpl, outcome, attempt }) {
