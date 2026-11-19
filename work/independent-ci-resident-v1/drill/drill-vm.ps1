@@ -1817,7 +1817,7 @@ function Get-DrillGuardOutcome([string]$RunDir) {
   $head = @{ RESTORED = '由守护紧急还原'; RESTORE_FAILED = '守护紧急还原失败'; UNKNOWN = '守护紧急还原，结局未记下' }[$restore]
   $tail = @{ NOT_TAKEN = '证据未取'; TAKEN = '证据已取'; PARTIAL = '证据部分已取' }[$ev.evidence]
   [ordered]@{ note = ($head + '，' + $tail); code = (Get-Prop $g 'code'); restore = $restore; cleanupFailure = (Get-Prop $g 'cleanupFailure')
-    evidence = $ev.evidence; taken = $ev.taken; notTaken = $ev.notTaken; m5Observations = $ev.m5Observations; stageLogs = $ev.stageLogs }
+    evidence = $ev.evidence; taken = $ev.taken; notTaken = $ev.notTaken; m5Observations = $ev.m5Observations; stageLogs = $ev.stageLogs; stepsComplete = $ev.stepsComplete }
 }
 
 # Seconds from asking WMI for the watchdog until it must have signalled ready; the WMI calls count against it.
