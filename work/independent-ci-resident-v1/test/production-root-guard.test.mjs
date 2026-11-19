@@ -1,35 +1,41 @@
-// Layer B of the 11-19 ruling (Clued Task fe8a2cbf): the request modes of rearm-tool.mjs refuse under a test marker when
-// their --root is the fixed production root or below it. Every run here goes to the REPOSITORY copy of the tool and to
-// temporary directories only: the "fixed root" a CLI run sees is a temporary directory named through
-// CLUED_UNDER_TEST_FIXED_ROOT, never C:\ProgramData\CluedIndependentCI (that constant is only compared as a string below).
+// Layer B of the 11-19 ruling (Clued Task fe8a2cbf; "补：测试守卫判据"): under a test marker the request writers of rearm-tool.mjs
+// write only inside the temporary directory, judged by file system identity; anything they cannot place there is refused.
+// Every run here goes to the REPOSITORY copy of the tool. "Outside the temporary directory" is a scratch folder made in this
+// working tree (and removed after); the production root is never named, opened or resolved.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { EXTRA_FIXED_ROOT_VARIABLE, FIXED_PRODUCTION_ROOT, REFUSED_UNDER_TEST, TEST_MARKERS, isSameOrBelow, refuseUnderTest, underTest }
-  from '../src/production-root-guard.mjs';
+// The guard as a namespace: a name a fix adds fails only the test that uses it.
+import * as guard from '../src/production-root-guard.mjs';
 import { tempRoot } from './helpers.mjs';
 
+const { REFUSED_UNDER_TEST, TEST_MARKERS, underTest } = guard;
 const TOOL = fileURLToPath(new URL('../tools/rearm-tool.mjs', import.meta.url));
+const HERE = fileURLToPath(new URL('..', import.meta.url));
 const SID = 'S-1-5-21-1-2-3-1001';
 const HEX = 'a'.repeat(64);
+const REFUSED = { code: 1, out: { status: 'REFUSED', code: 'REFUSED_UNDER_TEST' } };
+const windows = process.platform === 'win32';
 
 // Every mode the tool dispatches, read from its source, so a mode added later is covered without editing this list.
 async function toolModes() {
   const text = await fs.readFile(TOOL, 'utf8');
   return [...new Set([...text.matchAll(/positionals\[0\] === '([a-z-]+)'/g)].map(m => m[1]))];
 }
-// Arguments that would let each mode write (so before the guard a run really writes into the fake fixed root).
+// Arguments that let each mode write (so before the guard a run really writes into the scratch folder).
 const ARGS = ['--reason', 'guard test', '--by', SID, '--expected-halt-sha256', HEX, '--expected-paused-sha256', HEX,
   '--batch-key', HEX, '--expected-ledger-entry-sha256', HEX, '--ref', 'guard-test'];
 
-// A resident-shaped root: the request folders the modes write into.
+// A resident-shaped root: the request folders the modes write into, and what inspect reads.
 async function residentRoot(parent) {
   const root = path.join(parent, 'resident');
-  for (const d of ['requests', 'owner', path.join('owner', 'train-review'), 'state']) await fs.mkdir(path.join(root, d), { recursive: true });
+  for (const d of ['requests', 'owner', path.join('owner', 'train-review')]) await fs.mkdir(path.join(root, d), { recursive: true });
+  for (const d of ['ledger', 'ledger-heads', 'ledger-unexecuted', 'ledger-flow-ends', 'halts', 'ledger-attempt2', 'receipts']) await fs.mkdir(path.join(root, 'state', d), { recursive: true });
   return root;
 }
 async function countFiles(dir) {
@@ -37,68 +43,147 @@ async function countFiles(dir) {
   for (const e of await fs.readdir(dir, { withFileTypes: true })) n += e.isDirectory() ? await countFiles(path.join(dir, e.name)) : 1;
   return n;
 }
+// A scratch folder in this working tree, outside the temporary directory (the test skips if the tree itself lies inside it).
+async function scratch(t) {
+  const dir = await fs.mkdtemp(path.join(HERE, '.guard-scratch-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const tmp = await fs.realpath(os.tmpdir()), real = await fs.realpath(dir);
+  const inside = path.relative(tmp, real);
+  if (!inside.startsWith('..') && !path.isAbsolute(inside)) { t.skip('this working tree lies inside the temporary directory'); return null; }
+  return dir;
+}
 // env: the markers given and nothing else of them (the inherited NODE_TEST_CONTEXT is removed unless named).
-function envWith(markers, extraRoot) {
+function envWith(markers) {
   const env = { ...process.env };
   for (const m of TEST_MARKERS) delete env[m];
-  delete env[EXTRA_FIXED_ROOT_VARIABLE];
-  Object.assign(env, markers);
-  if (extraRoot) env[EXTRA_FIXED_ROOT_VARIABLE] = extraRoot;
-  return env;
+  return Object.assign(env, markers);
 }
 async function run(env, ...args) {
   try { const r = await promisify(execFile)(process.execPath, [TOOL, ...args], { env }); return { code: 0, out: JSON.parse(r.stdout) }; }
   catch (e) { return { code: e.code, out: JSON.parse(e.stdout) }; }
 }
+const shortName = p => {
+  const r = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"for %I in ("${p}") do @echo %~sI"`], { encoding: 'utf8', windowsVerbatimArguments: true });
+  const s = r.status === 0 ? r.stdout.trim() : '';
+  return s && s.toLowerCase() !== p.toLowerCase() ? s : null;
+};
 
-test('the incident path: request-intake-pause under either marker, aimed at the fixed root, refuses and writes nothing', async t => {
-  const fixed = await tempRoot(t, 'clued-fixed-root-');
-  const root = await residentRoot(fixed);
+test('inside the temporary directory a marked run writes as before', async t => {
+  const root = await residentRoot(await tempRoot(t, 'clued-guard-tmp-'));
   for (const markers of [{ NODE_TEST_CONTEXT: 'child-v8' }, { CLUED_UNDER_TEST: '1' }]) {
-    const r = await run(envWith(markers, fixed), 'request-intake-pause', '--root', root, '--holder', 'drill', '--reason', 'first-install drill', '--minutes', '120');
-    assert.deepEqual(r, { code: 1, out: { status: 'REFUSED', code: REFUSED_UNDER_TEST } }, JSON.stringify(markers));
-    assert.equal(await countFiles(fixed), 0, 'no request file was written');
+    const r = await run(envWith(markers), 'request-intake-pause', '--root', root, '--reason', 'r');
+    assert.equal(r.out.status, 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES', JSON.stringify(markers));
   }
+  assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 2);
 });
 
-test('every writing mode of rearm-tool refuses under a marker at the fixed root, before any other check; inspect still reads', async t => {
-  const fixed = await tempRoot(t, 'clued-fixed-root-');
-  const root = await residentRoot(fixed);
+test('outside the temporary directory every writing mode refuses under either marker and writes nothing; inspect still reads', async t => {
+  const dir = await scratch(t); if (!dir) return;
+  const root = await residentRoot(dir);
   const modes = await toolModes();
   assert.ok(modes.includes('request-intake-pause') && modes.includes('mark-train-shadow-reviewed') && modes.length >= 11, modes.join(','));
-  const env = envWith({ CLUED_UNDER_TEST: '1' }, fixed);
-  for (const mode of modes.filter(m => m !== 'inspect')) {
-    assert.deepEqual(await run(env, mode, '--root', root, ...ARGS), { code: 1, out: { status: 'REFUSED', code: REFUSED_UNDER_TEST } }, mode);
-    // A mode with missing arguments refuses the same way: the guard comes first.
-    assert.deepEqual(await run(env, mode, '--root', root), { code: 1, out: { status: 'REFUSED', code: REFUSED_UNDER_TEST } }, `${mode} bare`);
+  // the incident's own command first
+  for (const markers of [{ NODE_TEST_CONTEXT: 'child-v8' }, { CLUED_UNDER_TEST: '1' }]) {
+    assert.deepEqual(await run(envWith(markers), 'request-intake-pause', '--root', root, '--holder', 'drill', '--reason', 'first-install drill', '--minutes', '120'), REFUSED);
   }
-  assert.equal(await countFiles(fixed), 0, 'no mode wrote a file');
+  const env = envWith({ CLUED_UNDER_TEST: '1' });
+  for (const mode of modes.filter(m => m !== 'inspect')) {
+    assert.deepEqual(await run(env, mode, '--root', root, ...ARGS), REFUSED, mode);
+    assert.deepEqual(await run(env, mode, '--root', root), REFUSED, `${mode} bare: the guard comes before any other check`);
+  }
   const inspected = await run(env, 'inspect', '--root', root);
-  assert.notEqual(inspected.out.code, REFUSED_UNDER_TEST, 'inspect writes nothing and is not guarded');
+  assert.equal(inspected.code, 0, `inspect writes nothing and is not guarded: ${JSON.stringify(inspected.out)}`);
+  assert.equal(await countFiles(dir), 0, 'nothing was written outside the temporary directory');
 });
 
-test('a link into the fixed root counts as the fixed root', { skip: process.platform !== 'win32' && 'junctions are Windows only' }, async t => {
-  const fixed = await tempRoot(t, 'clued-fixed-root-');
-  const root = await residentRoot(fixed);
-  const other = await tempRoot(t, 'clued-link-');
-  const link = path.join(other, 'via-junction');
-  await fs.symlink(root, link, 'junction');
-  const r = await run(envWith({ CLUED_UNDER_TEST: '1' }, fixed), 'request-intake-pause', '--root', link, '--reason', 'r');
-  assert.deepEqual(r, { code: 1, out: { status: 'REFUSED', code: REFUSED_UNDER_TEST } });
-  assert.equal(await countFiles(fixed), 0);
+test('a junction in the temporary directory that leads outside it is refused, as --root and as a write folder', { skip: !windows && 'junctions are Windows only' }, async t => {
+  const dir = await scratch(t); if (!dir) return;
+  const live = await residentRoot(dir);
+  const tmp = await tempRoot(t, 'clued-guard-tmp-');
+  const env = envWith({ NODE_TEST_CONTEXT: 'child-v8' });
+  // --root itself is the junction
+  await fs.symlink(live, path.join(tmp, 'via-junction'), 'junction');
+  assert.deepEqual(await run(env, 'request-intake-pause', '--root', path.join(tmp, 'via-junction'), '--reason', 'r'), REFUSED);
+  // --root is a real folder in the temporary directory; the folders the modes write into are junctions out of it
+  const fixture = path.join(tmp, 'resident');
+  await fs.mkdir(path.join(fixture, 'state'), { recursive: true });
+  await fs.symlink(path.join(live, 'requests'), path.join(fixture, 'requests'), 'junction');
+  await fs.symlink(path.join(live, 'owner'), path.join(fixture, 'owner'), 'junction');
+  for (const mode of (await toolModes()).filter(m => m !== 'inspect')) {
+    assert.deepEqual(await run(env, mode, '--root', fixture, ...ARGS), REFUSED, mode);
+  }
+  assert.equal(await countFiles(dir), 0, 'nothing reached the scratch folder through the junctions');
 });
 
-test('a fixture root under a marker, and the fixed root without a marker, write as before', async t => {
-  const fixture = await residentRoot(await tempRoot(t, 'clued-fixture-root-'));
-  const underMarker = await run(envWith({ NODE_TEST_CONTEXT: 'child-v8', CLUED_UNDER_TEST: '1' }), 'request-intake-pause', '--root', fixture, '--reason', 'r');
-  assert.equal(underMarker.out.status, 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES');
-  assert.equal((await fs.readdir(path.join(fixture, 'requests'))).length, 1);
-  // No marker: the extra root alone changes nothing (outside a test the tool behaves exactly as before).
-  const fixed = await tempRoot(t, 'clued-fixed-root-');
-  const root = await residentRoot(fixed);
-  const operator = await run(envWith({}, fixed), 'request-intake-resume', '--root', root, '--reason', 'r', '--holder', 'drill');
-  assert.equal(operator.out.status, 'INTAKE_RESUME_REQUESTED');
+test('other spellings of a folder outside: device prefixes, UNC, 8.3 name: all refused', { skip: !windows && 'Windows paths' }, async t => {
+  const dir = await scratch(t); if (!dir) return;
+  const root = await residentRoot(dir);
+  const env = envWith({ CLUED_UNDER_TEST: '1' });
+  const spellings = [`\\\\?\\${root}`, `\\\\.\\${root}`];
+  const unc = `\\\\localhost\\${root[0]}$${root.slice(2)}`;
+  try { await fs.access(unc); spellings.push(unc); } catch { t.diagnostic(`UNC case skipped: ${unc} is not reachable on this machine (no administrative share)`); }
+  const short = shortName(dir);
+  if (short) spellings.push(path.join(short, 'resident')); else t.diagnostic('8.3 case skipped: this volume gives no short names');
+  for (const r of spellings) assert.deepEqual(await run(env, 'request-intake-pause', '--root', r, '--reason', 'r'), REFUSED, r);
+  assert.equal(await countFiles(dir), 0);
+});
+
+test('the temporary directory in another spelling (device prefix, 8.3 name) is still inside: the judgment does not read text', { skip: !windows && 'Windows paths' }, async t => {
+  const parent = await tempRoot(t, 'clued-guard-long-name-tmp-');
+  const root = await residentRoot(parent);
+  const env = envWith({ CLUED_UNDER_TEST: '1' });
+  const spellings = [`\\\\?\\${root}`];
+  const short = shortName(parent);
+  if (short) spellings.push(path.join(short, 'resident')); else t.diagnostic('8.3 case skipped: this volume gives no short names');
+  for (const r of spellings) assert.equal((await run(env, 'request-intake-pause', '--root', r, '--reason', 'r')).out.status, 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES', r);
+  assert.equal((await fs.readdir(path.join(root, 'requests'))).length, spellings.length);
+});
+
+test('without a marker a folder outside is written as before', async t => {
+  const dir = await scratch(t); if (!dir) return;
+  const root = await residentRoot(dir);
+  const r = await run(envWith({}), 'request-intake-resume', '--root', root, '--reason', 'r', '--holder', 'drill');
+  assert.equal(r.out.status, 'INTAKE_RESUME_REQUESTED');
   assert.equal((await fs.readdir(path.join(root, 'requests'))).length, 1);
+});
+
+// The judgment itself on stubs: what it asks the file system, and that every failure refuses.
+test('the judgment: no marker touches nothing; under a marker any failure to resolve or identify refuses', () => {
+  const { writableUnderTest } = guard;
+  assert.equal(underTest({}), false);
+  assert.equal(underTest({ NODE_TEST_CONTEXT: '' }), false);
+  assert.equal(underTest({ NODE_TEST_CONTEXT: 'child' }), true);
+  assert.equal(underTest({ CLUED_UNDER_TEST: '1' }), true);
+  const calls = [];
+  const err = code => Object.assign(new Error(code), { code });
+  // A file system of stubs: realpath maps through `links`, stat gives each real folder an identity from `ids`.
+  const fsStub = ({ links = {}, ids = {}, realFail = null, statFail = null }) => ({
+    realpath: p => { calls.push(['realpath', p]); if (realFail) throw err(realFail); if (p in links) return links[p]; if (p in ids) return p; throw err('ENOENT'); },
+    stat: p => { calls.push(['stat', p]); if (statFail) throw err(statFail); if (!(p in ids)) throw err('ENOENT'); return { dev: ids[p][0], ino: ids[p][1] }; },
+  });
+  // Absolute on this platform: Z:\T on Windows, /T elsewhere (Z: need not exist: every access goes to the stubs).
+  const R = s => (windows ? `Z:${s.split('/').join('\\')}` : s);
+  const base = { [R('/T')]: [1n, 10n], [R('/T/fixture')]: [1n, 11n], [R('/W')]: [1n, 20n], [R('/W/scratch')]: [1n, 21n], [R('/')]: [1n, 1n] };
+  const opts = (stub, env = { CLUED_UNDER_TEST: '1' }) => ({ env, tmpdir: () => R('/T'), ...stub });
+  // no marker: true, and nothing asked
+  calls.length = 0;
+  assert.equal(writableUnderTest(R('/W/scratch'), opts(fsStub({ ids: base }), {})), true);
+  assert.deepEqual(calls, []);
+  // inside, also below a folder that does not exist yet
+  assert.equal(writableUnderTest(R('/T/fixture/requests'), opts(fsStub({ ids: base }))), true);
+  // outside
+  assert.equal(writableUnderTest(R('/W/scratch/requests'), opts(fsStub({ ids: base }))), false);
+  // a link inside the temporary directory that resolves outside
+  assert.equal(writableUnderTest(R('/T/link/requests'), opts(fsStub({ ids: base, links: { [R('/T/link')]: R('/W/scratch') } }))), false);
+  // the same folder under another name is the same identity (no text is compared)
+  assert.equal(writableUnderTest(R('/X/alias'), opts(fsStub({ ids: { ...base, [R('/X/alias')]: [1n, 10n], [R('/X')]: [1n, 30n] } }))), true);
+  // failures: resolution other than "not there", identity, a zero identity, nothing resolvable at all
+  assert.equal(writableUnderTest(R('/T/fixture'), opts(fsStub({ ids: base, realFail: 'EACCES' }))), false);
+  assert.equal(writableUnderTest(R('/T/fixture'), opts(fsStub({ ids: base, statFail: 'EPERM' }))), false);
+  assert.equal(writableUnderTest(R('/T/fixture'), opts(fsStub({ ids: { ...base, [R('/T/fixture')]: [1n, 0n], [R('/T')]: [1n, 0n] } }))), false);
+  assert.equal(writableUnderTest(R('/T/fixture'), opts({ realpath: () => { throw err('ENOENT'); }, stat: () => { throw err('ENOENT'); } })), false);
+  assert.equal(writableUnderTest('relative', opts(fsStub({ ids: base }))), false);
+  assert.throws(() => guard.refuseUnderTest(R('/W/scratch'), opts(fsStub({ ids: base }))), e => e.code === REFUSED_UNDER_TEST);
 });
 
 // windows/request-upgrade.ps1 (ruling 11-19, "补：PR-丁 余项"): its root is always the production root, so it refuses on a marker alone.
@@ -157,21 +242,4 @@ try { Assert-NotUnderTest; 'PASSED' } catch { $_.Exception.Message }`, envWith(m
   assert.equal(run({ CLUED_UNDER_TEST: '1' }), REFUSED_UNDER_TEST);
   assert.equal(run({}), 'PASSED');
   assert.equal(run({ CLUED_UNDER_TEST: '' }), 'PASSED');
-});
-
-test('the judgment: markers, the fixed root in its spellings, and what is not below it (strings only, no file system)', () => {
-  assert.equal(underTest({}), false);
-  assert.equal(underTest({ NODE_TEST_CONTEXT: '' }), false);
-  assert.equal(underTest({ NODE_TEST_CONTEXT: 'child' }), true);
-  assert.equal(underTest({ CLUED_UNDER_TEST: '1' }), true);
-  const w = path.win32;
-  for (const p of [FIXED_PRODUCTION_ROOT, 'C:\\ProgramData\\CluedIndependentCI\\', 'c:/programdata/cluedindependentci/resident',
-    'C:\\ProgramData\\CluedIndependentCI\\resident\\..\\resident\\requests', '\\\\?\\C:\\ProgramData\\CluedIndependentCI\\resident']) {
-    assert.equal(isSameOrBelow(p, FIXED_PRODUCTION_ROOT, w), true, p);
-  }
-  for (const p of ['C:\\ProgramData\\CluedIndependentCI-fixture', 'C:\\ProgramData', 'D:\\ProgramData\\CluedIndependentCI', 'D:\\agent-temp\\x']) {
-    assert.equal(isSameOrBelow(p, FIXED_PRODUCTION_ROOT, w), false, p);
-  }
-  // Without a marker the judgment never refuses, whatever the target (it does not even look at it).
-  assert.doesNotThrow(() => refuseUnderTest(FIXED_PRODUCTION_ROOT, {}));
 });

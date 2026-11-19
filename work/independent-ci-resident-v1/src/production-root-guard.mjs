@@ -1,68 +1,78 @@
-// The test boundary of the installed request tools (Clued Task fe8a2cbf; Fable ruling 2026-11-19, "补：测试碰生产", layer B).
-// On 11-19 a drill test reached the INSTALLED rearm-tool.mjs request-intake-pause and held the live DESK's intake for two
-// hours: tests run on the node, as the operator, so nothing told the two apart. A tool that writes a request a running
-// resident acts on refuses (REFUSED_UNDER_TEST) when the process carries a test marker AND its target is the fixed
-// production root or below it; a test pointed at a fixture root is not touched, and without a marker nothing changes.
+// The test boundary of the request writers (Clued Task fe8a2cbf; Fable rulings 2026-11-19 "补：测试碰生产" layer B and
+// "补：测试守卫判据"). On 11-19 a drill test reached the INSTALLED rearm-tool.mjs request-intake-pause and held the live DESK's
+// intake for two hours: tests run on the node, as the operator, so nothing told the two apart.
 //
-// Markers: NODE_TEST_CONTEXT (node --test sets it in every test process; children inherit it) or CLUED_UNDER_TEST (the
-// single test entry, scripts/ci/ci-required-selection.mjs --run, sets it for every suite, Python and PowerShell too).
-// It is a cooperative marker: it stops a mistake, not code that clears its own environment.
+// The rule: under a test marker a request is written only where a test plainly may write, the temporary directory; any place
+// that cannot be shown to lie inside it is refused (REFUSED_UNDER_TEST). Nothing here knows a production path or any spelling of
+// one: the folder about to be written is resolved by the file system (fs.realpathSync.native: links, junctions, 8.3 names,
+// device prefixes and UNC names are the system's business), and "inside" means that the resolved folder or one of its ancestors
+// IS the resolved os.tmpdir(), compared by identity (volume serial number and file ID: stat dev and ino, as bigint). Every
+// failure on the way (no resolution, no identity, a zero identity, not inside) refuses. There is no switch that widens it.
 //
-// CLUED_UNDER_TEST_FIXED_ROOT only ADDS a root that counts as fixed (a test names its own temporary directory, so it can
-// show the refusal without touching the real one); it never removes C:\ProgramData\CluedIndependentCI.
+// Markers: NODE_TEST_CONTEXT (node --test sets it in every test process; children inherit it) or CLUED_UNDER_TEST (the single
+// test entry, scripts/ci/ci-required-selection.mjs --run, sets it for every suite). windows/request-upgrade.ps1 names the same
+// two (a test keeps the lists equal); its root is fixed, so it refuses on the marker alone. Without a marker nothing is judged
+// and the file system is not touched. A cooperative marker: it stops a mistake, not code that clears its own environment; the
+// moment between the judgment and the write is not covered.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { check } from './canonical.mjs';
 
-export const FIXED_PRODUCTION_ROOT = 'C:\\ProgramData\\CluedIndependentCI';
 export const TEST_MARKERS = Object.freeze(['NODE_TEST_CONTEXT', 'CLUED_UNDER_TEST']);
-export const EXTRA_FIXED_ROOT_VARIABLE = 'CLUED_UNDER_TEST_FIXED_ROOT';
 export const REFUSED_UNDER_TEST = 'REFUSED_UNDER_TEST';
 
 export function underTest(env = process.env) {
   return TEST_MARKERS.some(name => typeof env[name] === 'string' && env[name] !== '');
 }
 
-// One spelling per path: resolved, no \\?\ prefix, no trailing separator, case-folded where the file system ignores case.
-function normal(p, api) {
-  let s = api.resolve(p);
-  if (api === path.win32) s = s.replace(/^\\\\\?\\(?=[A-Za-z]:)/, '').toLowerCase();
-  return s.length > api.parse(s).root.length ? s.replace(/[\\/]+$/, '') : s;
-}
+const MISSING = new Set(['ENOENT', 'ENOTDIR']);
+const realpathNative = p => fs.realpathSync.native(p);
+const statBig = p => fs.statSync(p, { bigint: true });
 
-// Pure: is target the root or below it (string form only; see sameOrBelowFixedRoot for links).
-export function isSameOrBelow(target, root, api = path) {
-  const t = normal(target, api), r = normal(root, api);
-  return t === r || t.startsWith(r.endsWith(api.sep) ? r : r + api.sep);
-}
-
-// The path as the file system resolves it: the nearest existing ancestor through its links (a junction into the
-// production root counts as the production root), the rest appended. Null when nothing of it can be resolved.
-function realForm(p) {
-  let head = path.resolve(p);
+// The folder as the file system resolves it: its nearest existing ancestor through realpath (only "not there" moves one level
+// up: names that do not exist yet cannot be links), the rest appended. Throws when that cannot be done.
+function resolved(dir, realpath) {
+  let head = dir;
   const rest = [];
   for (;;) {
-    try { return path.join(fs.realpathSync.native(head), ...rest); } catch { /* not there (yet): go up */ }
+    try { return path.join(realpath(head), ...rest); } catch (e) { if (!MISSING.has(e?.code)) throw e; }
     const up = path.dirname(head);
-    if (up === head) return null;
+    if (up === head) throw new Error('NOTHING_RESOLVES');
     rest.unshift(path.basename(head));
     head = up;
   }
 }
-
-export function fixedRoots(env = process.env) {
-  const extra = env[EXTRA_FIXED_ROOT_VARIABLE];
-  return typeof extra === 'string' && extra !== '' ? [FIXED_PRODUCTION_ROOT, extra] : [FIXED_PRODUCTION_ROOT];
+// The identity of an existing folder; a missing or zero one throws.
+function identity(p, stat) {
+  const s = stat(p);
+  if (typeof s?.dev !== 'bigint' || typeof s?.ino !== 'bigint' || s.ino === 0n) throw new Error('NO_IDENTITY');
+  return `${s.dev}:${s.ino}`;
 }
 
-export function sameOrBelowFixedRoot(target, env = process.env) {
-  const targets = [target, realForm(target)].filter(Boolean);
-  const roots = fixedRoots(env).flatMap(r => [r, realForm(r)]).filter(Boolean);
-  return targets.some(t => roots.some(r => isSameOrBelow(t, r)));
+// May a request be written into dir? Without a marker: yes, nothing is looked at. With one: only when dir, as resolved, lies in
+// the temporary directory by identity. realpath, stat and tmpdir can be replaced for the tests of the judgment itself.
+export function writableUnderTest(dir, { env = process.env, realpath = realpathNative, stat = statBig, tmpdir = os.tmpdir } = {}) {
+  if (!underTest(env)) return true;
+  try {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) return false;
+    const allowed = identity(realpath(tmpdir()), stat);
+    let at = resolved(path.resolve(dir), realpath);
+    // Up from the resolved folder to the volume's root; the parts not created yet have no identity and are skipped.
+    for (;;) {
+      let id = null;
+      try { id = identity(at, stat); } catch (e) { if (!MISSING.has(e?.code)) throw e; }
+      if (id === allowed) return true;
+      const up = path.dirname(at);
+      if (up === at) return false;
+      at = up;
+    }
+  } catch {
+    return false;
+  }
 }
 
-// The one judgment every guarded entry calls before it writes anything.
-export function refuseUnderTest(target, env = process.env) {
-  if (!underTest(env)) return;
-  check(!sameOrBelowFixedRoot(target, env), REFUSED_UNDER_TEST);
+// The one judgment every request writer calls on the folder it is about to write into.
+export function refuseUnderTest(dir, options = {}) {
+  check(writableUnderTest(dir, options), REFUSED_UNDER_TEST);
 }
