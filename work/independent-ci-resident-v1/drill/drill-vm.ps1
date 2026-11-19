@@ -612,6 +612,79 @@ function Read-DrillEntryResult([string[]]$Lines, [int]$ExitCode) {
   return [ordered]@{ exitCode = $ExitCode; status = [string](Get-Prop $doc 'status'); stopCode = (Get-Prop $doc 'stopCode'); tree = [string](Get-Prop $doc 'tree'); node = [string](Get-Prop $doc 'node'); parsed = ($null -ne $doc) }
 }
 
+# A property by its exact name (Get-Prop splits a path on '.', and these names are file names).
+function Get-DrillField($Object, [string]$Name) {
+  if ($null -eq $Object) { return $null }
+  if ($Object -is [Collections.IDictionary]) { if ($Object.Contains($Name)) { return $Object[$Name] }; return $null }
+  $p = $Object.PSObject.Properties[$Name]; if ($null -eq $p) { return $null }; return $p.Value
+}
+
+# The first install's step record (Fable renew-key ruling, supplements "companion account and evidence" section 2.3 and "package branch,
+# two points"): steps come from COMPLETE stdout logs only -- the entry's (first-install.log), the host preparation's (host.stdout.log) and
+# the launcher stage's (launcher.stdout.log). A stage result file (host-result.json keeps only the last 6000 characters of the output)
+# gives its verdict line and never steps, so a long record cut at its head is not read as "the earlier steps did not run": a stage that
+# ran (its result file is there) without its complete log is "incomplete". A step line is one JSON object with a name (older lines: step)
+# and a result, and a rejectCode when refused. Nothing parsed is "missing", never a pass; no verdict line (a run cut off) is said so.
+function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
+  $steps = New-Object System.Collections.ArrayList
+  $read = {
+    param([string]$Stage, [string]$Text)
+    $n = 0
+    foreach ($line in @($Text -split "`r?`n")) {
+      $t = $line.Trim()
+      if (-not $t.StartsWith('{')) { continue }
+      $o = $null
+      try { $o = $t | ConvertFrom-Json } catch { continue }
+      if ($o -isnot [pscustomobject]) { continue }
+      $name = Get-DrillField $o 'name'
+      if ($name -isnot [string]) { $name = Get-DrillField $o 'step' }
+      if ($name -isnot [string] -or -not $name -or $null -eq $o.PSObject.Properties['result']) { continue }
+      $reject = Get-DrillField $o 'rejectCode'
+      if ($reject -isnot [string] -or -not $reject) { $reject = $null }
+      [void]$steps.Add([ordered]@{ stage = $Stage; name = $name; result = $o.result; rejectCode = $reject; detail = (Get-DrillField $o 'detail') })
+      $n++
+    }
+    $n
+  }
+  $stages = [ordered]@{ entry = $null; host = $null; launcher = $null }
+  foreach ($stage in @('entry', 'host', 'launcher')) { $text = Get-DrillField $Logs $stage; if ($text -is [string]) { $stages[$stage] = & $read $stage $text } }
+  $stageVerdicts = [ordered]@{ host = $null; launcher = $null }; $incomplete = @()
+  foreach ($pair in @(@('host', 'host-result.json'), @('launcher', 'launcher-result.json'))) {
+    $result = Get-DrillField $StageEvidence $pair[1]
+    if ($null -eq $result) { continue }
+    $s = Get-DrillField (Get-DrillField $result 'terminal') 'status'
+    if ($s -is [string] -and $s) { $stageVerdicts[$pair[0]] = $s }
+    if ($null -eq $stages[$pair[0]]) { $incomplete += $pair[0] }
+  }
+  $verdict = $null
+  $entryText = Get-DrillField $Logs 'entry'
+  $last = if ($entryText -is [string]) { @($entryText -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -Last 1 }
+  if ($last) {
+    $doc = $null
+    try { $doc = $last | ConvertFrom-Json } catch { $doc = $null }
+    $status = Get-DrillField $doc 'status'
+    if ($status -is [string] -and $status) { $verdict = [ordered]@{ status = $status; stopCode = (Get-DrillField $doc 'stopCode') } }
+  }
+  $all = @($steps)
+  $completed = @($all | Where-Object { $null -eq $_.rejectCode })
+  $rejected = @($all | Where-Object { $null -ne $_.rejectCode })
+  $lastStep = $null; $lastCompleted = $null; $firstRejected = $null
+  if ($all.Count) { $lastStep = $all[$all.Count - 1].name }
+  if ($completed.Count) { $lastCompleted = $completed[$completed.Count - 1].name }
+  if ($rejected.Count) { $firstRejected = $rejected[0].name }
+  return [ordered]@{ missing = ($all.Count -eq 0); incomplete = ($incomplete.Count -gt 0); incompleteStages = $incomplete; stages = $stages; steps = $all
+    lastStep = $lastStep; lastCompletedStep = $lastCompleted; firstRejected = $firstRejected; verdict = $verdict; stageVerdicts = $stageVerdicts; noVerdict = ($null -eq $verdict) }
+}
+
+function Read-DrillFirstInstallSteps([string]$RunDir) {
+  $text = { param($n) $p = Join-Path $RunDir $n; if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
+  $logs = [ordered]@{ entry = (& $text 'first-install.log'); host = (& $text 'host.stdout.log'); launcher = (& $text 'launcher.stdout.log') }
+  $stage = $null
+  $evidence = Join-Path $RunDir 'stage-evidence.json'
+  if (Test-Path -LiteralPath $evidence -PathType Leaf) { try { $stage = Read-DrillJson $evidence } catch { $stage = $null } }
+  return ConvertFrom-DrillFirstInstallSteps $logs $stage
+}
+
 # Pure conversion. A1 is the launcher's terminal object, never an Owner-supplied success string.
 function ConvertFrom-DrillInteractiveEvidence($Evidence) {
   $ok = (Get-Prop $Evidence 'fileCount') -eq 1 -and (Get-Prop $Evidence 'qualified') -eq $true -and
@@ -1950,6 +2023,13 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $r
   } -TimeoutMinutes 2 -Step 'stage-evidence'
   Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence
+  # the stages' complete stdout logs, as files of the run (the step record: Read-DrillFirstInstallSteps)
+  $stageLogs = Invoke-DrillGuest $Cred {
+    $r = [ordered]@{}
+    foreach ($name in @('host.stdout.log', 'launcher.stdout.log')) { $p = Join-Path 'C:\drill\work' $name; $r[$name] = if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
+    $r
+  } -TimeoutMinutes 2 -Step 'stage-logs'
+  foreach ($name in @('host.stdout.log', 'launcher.stdout.log')) { $t = Get-DrillField $stageLogs $name; if ($t -is [string]) { [IO.File]::WriteAllText((Join-Path $RunDir $name), $t, (New-Object Text.UTF8Encoding($false))) } }
   # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json
   $launcherResult = if ($stageEvidence -is [System.Collections.IDictionary]) { $stageEvidence['launcher-result.json'] } elseif ($stageEvidence) { $stageEvidence.PSObject.Properties['launcher-result.json'].Value }
   $launcher = Get-Prop $launcherResult 'terminal'
@@ -1998,7 +2078,8 @@ function Invoke-DrillMain {
       throw (New-DrillError 'DRILL_RECEIPT_NOT_FINALIZABLE' 'receipt failed or checkpoint restore was not confirmed')
     }
     $prod = Get-DrillProductionVerdict $receipt (Read-DrillJson $ProductionReadback)
-    $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else { [ordered]@{ id = $i.id; pass = $i.pass; detail = $i.detail } } })
+    # every item but the ones the read-back judges stays as the run wrote it (A1 keeps its firstInstallSteps)
+    $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else { $i } })
     $receipt.items = $items
     $receipt.conclusion = Get-DrillConclusion $items (Get-Prop $receipt 'm5') ((Get-Prop $receipt 'candidate') -eq $true)
     $receipt | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('o')) -Force
@@ -2060,6 +2141,11 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     $evidence.stageTimingsSeconds = $run.timings
     $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
   }
+  # The first install's step record, from what the run directory holds whatever the run's end: under A1, or in the evidence when the run
+  # ended before there was a verdict.
+  $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
+  $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
+  if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   try {
     if ($run) { $m5 = Get-DrillM5Verdict $runDir $run.m5 }

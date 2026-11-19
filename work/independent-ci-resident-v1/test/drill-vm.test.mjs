@@ -1189,6 +1189,10 @@ test('the PASS conclusions of drill-vm.ps1 are exactly publish.mjs DRILL_PASS_CO
   const mine = [...new Set([...fn.matchAll(/'(PASS_[A-Z_]+)'/g)].map(m => m[1]))].sort();
   assert.deepEqual(mine, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN', 'PASS_A_REINSTALL_NOT_DRILLED']);
   assert.deepEqual([...DRILL_PASS_CONCLUSIONS].sort(), mine);
+  // the operator's guide to seal names the same set (Codex review of 58136df61, low 5)
+  const guide = fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/README.md', import.meta.url)), 'utf8');
+  const sealLine = guide.split('\n').find(l => l.includes('seal --drill-receipt'));
+  for (const c of DRILL_PASS_CONCLUSIONS) assert.ok(sealLine.includes(c), c);
 });
 
 // No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
@@ -1816,6 +1820,48 @@ test('the prerequisite step reads the MSI and wsl apart and keeps their output i
     Invoke-DrillPrereqInGuest ${q(runDir)} @{ dir = 'unused'; wsl = 'wsl.msi'; rootfs = 'r'; debs = @(); distribution = 'd'; wslVersion = 'v' } $null`);
   assert.equal(code, 'DRILL_PREREQ_FAILED');
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'prereq-facts.json'), 'utf8')).msi.exit, 1603);
+});
+
+// Fable renew-key ruling, supplement "package branch, two points" (to the drill): firstInstallSteps come from complete stdout logs only
+// (the entry's, the host preparation's, the launcher stage's); a stage result file keeps only the tail of the output (host-result.json: its
+// last 6000 characters) and gives its verdict line, never steps. A stage that ran without its complete log is "incomplete", not "not run".
+test('firstInstallSteps come from the complete stdout logs only; a stage result file gives its verdict line, never steps', opts, () => {
+  const dir = path.join(tmp, 'steps-run'); fs.mkdirSync(dir, { recursive: true });
+  const hostLines = Array.from({ length: 300 }, (_, i) => JSON.stringify({ name: `step-${String(i).padStart(3, '0')}`, result: 'ok' }));
+  hostLines.push(JSON.stringify({ name: 'credentials', result: 'refused', rejectCode: 'CREDENTIAL_MISSING' }));
+  hostLines.push(JSON.stringify({ status: 'HOST_PREPARATION_STOPPED', code: 'CREDENTIAL_MISSING', detail: 'one place only' }));
+  const hostLog = hostLines.join('\r\n') + '\r\n';
+  assert.ok(hostLog.length > 6000);
+  fs.writeFileSync(path.join(dir, 'first-install.log'), JSON.stringify({ status: 'FIRST_INSTALL_STOPPED', stopCode: 'HOST_PREPARATION_NOT_DONE', tree: '', node: '' }) + '\r\n');
+  fs.writeFileSync(path.join(dir, 'host.stdout.log'), hostLog);
+  fs.writeFileSync(path.join(dir, 'stage-evidence.json'), JSON.stringify({ 'host-result.json': { exit: 1, terminal: { status: 'HOST_PREPARATION_STOPPED' }, stdoutTail: hostLog.slice(-6000) }, 'launcher-result.json': null }));
+  const whole = ps(`Read-DrillFirstInstallSteps ${q(dir)}`);
+  assert.equal(whole.steps.length, 301);
+  assert.equal(whole.steps[0].name, 'step-000');
+  assert.equal(whole.lastCompletedStep, 'step-299');
+  assert.equal(whole.firstRejected, 'credentials');
+  assert.deepEqual(whole.stageVerdicts, { host: 'HOST_PREPARATION_STOPPED', launcher: null });
+  assert.equal(whole.verdict.status, 'FIRST_INSTALL_STOPPED');
+  assert.deepEqual({ missing: whole.missing, incomplete: whole.incomplete }, { missing: false, incomplete: false });
+  // the complete log gone: the tail in host-result.json is not read for steps; the record says incomplete
+  fs.rmSync(path.join(dir, 'host.stdout.log'));
+  const cut = ps(`Read-DrillFirstInstallSteps ${q(dir)}`);
+  assert.equal(cut.steps.length, 0);
+  assert.equal(cut.incomplete, true);
+  assert.deepEqual(cut.incompleteStages, ['host']);
+  assert.equal(cut.stageVerdicts.host, 'HOST_PREPARATION_STOPPED');
+  // the entry writes the complete logs beside the stage result files, and the drill takes them back into the run directory
+  const entryText = fs.readFileSync(entryScript, 'utf8');
+  assert.match(entryText, /'host\.stdout\.log'\), \[string\]\$hostRun\.stdout/);
+  assert.match(entryText, /\[IO\.File\]::Copy\(\$launcherResult, \(Join-Path \$Output 'launcher\.stdout\.log'\)/);
+  const drillText = fs.readFileSync(script, 'utf8');
+  for (const n of ['host.stdout.log', 'launcher.stdout.log']) assert.ok(drillText.includes(`'${n}'`), n);
+  // the receipt carries it under A1 (no logs in this run: missing, never a pass)
+  const receipt = m5DrillReceipt('steps-chain', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
+  assert.equal(receipt.items.find(i => i.id === 'A1').firstInstallSteps.missing, true);
+  // and -Finalize keeps it (it rewrites A5 and A9 only)
+  const fin = JSON.parse(finalize('steps-chain-finalize', receipt).bytes);
+  assert.equal(fin.items.find(i => i.id === 'A1').firstInstallSteps.missing, true);
 });
 
 test('the drill reads its children with stdout and stderr apart: a stderr line never stops a step', opts, () => {

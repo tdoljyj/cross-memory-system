@@ -187,6 +187,9 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
         '-KitSha256', $pins['kitSha256'], '-ToolchainNodeSha256', $pins['toolchainNodeSha256'], '-RegistrarSha256', $pins['registrarSha256'],
         '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) $HostLimitSeconds
     } finally { $measurements.host = $watch.Elapsed.TotalSeconds }
+    # The host preparation's whole stdout as it printed it: the step record (drill-vm.ps1 Read-DrillFirstInstallSteps reads steps from the
+    # complete stdout logs only; host-result.json below keeps only the tail and is read for its verdict line).
+    [IO.File]::WriteAllText((Join-Path $Output 'host.stdout.log'), [string]$hostRun.stdout, (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText((Join-Path $Output 'host-result.json'), (ConvertTo-JsonLine ([ordered]@{ exit = $hostRun.exit; terminal = $hostRun.last; stdoutTail = $(if ($hostRun.stdout) { $t = [string]$hostRun.stdout; $t.Substring([Math]::Max(0, $t.Length - 6000)) } else { $null }); stderrTail = $(if ($hostRun.stderr) { $t = [string]$hostRun.stderr; $t.Substring([Math]::Max(0, $t.Length - 3000)) } else { $null }) })), (New-Object Text.UTF8Encoding($false)))
     if ([string](Get-Key $hostRun.last 'status') -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { throw 'RESTART_THEN_RUN_THE_SAME_COMMAND' }
     if ($hostRun.exit -ne 0 -or [string](Get-Key $hostRun.last 'status') -cne 'FIRST_INSTALL_HOST_READY') { throw 'HOST_PREPARATION_NOT_DONE' }
@@ -201,6 +204,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     try { $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $bootstrap, '-Stage', 'launcher', '-Result', $launcherResult,
       '-Launcher', $drillLauncher['path'], '-LauncherSha256', $drillLauncher['sha256'], '-ExpectedOperatorSid', $operatorSid) $LauncherLimitSeconds }
     finally { $measurements.launcher = $watch.Elapsed.TotalSeconds }
+    # the launcher stage's result file is its whole printed output (bootstrap.ps1 -Stage launcher): kept as the launcher's complete log
+    if ([IO.File]::Exists($launcherResult)) { [IO.File]::Copy($launcherResult, (Join-Path $Output 'launcher.stdout.log'), $true) }
     $terminal = Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult))
     [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal })), (New-Object Text.UTF8Encoding($false)))
     $verdict = Get-LauncherVerdict $true $terminal
