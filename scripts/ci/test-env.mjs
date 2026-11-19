@@ -58,14 +58,50 @@ function taken(dir, run) {
     return false;
   }
 }
+// The exit clean-up tries every directory: one that cannot be removed does not stop the others (it returns those).
+export function removeEach(dirs, remove = (dir) => rmSync(dir, { recursive: true, force: true })) {
+  const failed = [];
+  for (const dir of dirs) {
+    try {
+      remove(dir);
+    } catch {
+      failed.push(dir);
+    }
+  }
+  return failed;
+}
 const made = new Set();
 let current = null;
+// What a killed run left (Codex second review of 2ee162c2, low 1): before making its directory a process removes, in the
+// same temporary area, every identity directory whose maker is no longer running. One with no record yet is being made
+// unless it is an hour old.
+const MAKING_MS = 60 * 60 * 1000;
+function sweep(base) {
+  let names;
+  try {
+    names = readdirSync(base);
+  } catch {
+    return;
+  }
+  for (const name of names.filter((entry) => entry.startsWith(PREFIX))) {
+    const dir = path.join(base, name);
+    try {
+      const maker = record(dir);
+      const gone = maker ? !(Number.isInteger(maker.pid) && running(maker.pid)) : Date.now() - lstatSync(dir).mtimeMs > MAKING_MS;
+      if (gone && !made.has(dir)) rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // the next run tries again
+    }
+  }
+}
 // own: a command line's own directory, never an inherited one.
 export function testIdentity(env = process.env, { own = false } = {}) {
   if (!own && taken(env.CLUED_TEST_IDENTITY_DIR, env.CLUED_TEST_IDENTITY_RUN)) return { dir: env.CLUED_TEST_IDENTITY_DIR, run: env.CLUED_TEST_IDENTITY_RUN };
   if (current && taken(current.dir, current.run)) return current;
-  if (made.size === 0) process.once('exit', () => { for (const dir of made) rmSync(dir, { recursive: true, force: true }); });
-  const dir = mkdtempSync(path.join(path.resolve(env.RUNNER_TEMP || os.tmpdir()), PREFIX));
+  if (made.size === 0) process.once('exit', () => removeEach(made));
+  const base = path.resolve(env.RUNNER_TEMP || os.tmpdir());
+  sweep(base);
+  const dir = mkdtempSync(path.join(base, PREFIX));
   made.add(dir);
   const run = randomUUID();
   mkdirSync(path.join(dir, 'gh'));

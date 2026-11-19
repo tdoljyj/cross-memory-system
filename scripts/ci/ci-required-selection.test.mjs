@@ -993,6 +993,30 @@ test('a command line makes its own identity directory; below it the inherited on
   });
 });
 
+// Codex second review of 2ee162c2, low 1: one directory the exit clean-up cannot remove does not stop the others, and a
+// directory a killed run left (its maker gone) is removed by the next run that makes one in the same temporary area.
+test('the exit clean-up tries every directory, and a killed run\'s directory goes with the next run', (t) => {
+  const tried = [];
+  const failed = selection.removeEach?.(['a', 'b', 'c'], (dir) => { tried.push(dir); if (dir === 'a') throw new Error('busy'); });
+  assert.deepEqual(tried, ['a', 'b', 'c']);
+  assert.deepEqual(failed, ['a']);
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-sweep-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
+  const probe = `import(${url}).then(({ testEnv }) => {
+    require('node:fs').writeSync(1, testEnv({ ...process.env, RUNNER_TEMP: process.argv[2] }, { own: true }).CLUED_TEST_IDENTITY_DIR);
+    if (process.argv[1] === 'killed') process.kill(process.pid, 'SIGKILL');
+  });`;
+  const start = (mode) => spawnSync(process.execPath, ['-e', probe, mode, temp], { encoding: 'utf8' }).stdout.trim();
+  const left = start('killed');
+  assert.ok(existsSync(left), 'a killed run leaves its directory');
+  const making = path.join(temp, 'clued-test-identity-making');
+  mkdirSync(making);
+  start('next');
+  assert.ok(!existsSync(left), 'the next run removes it');
+  assert.ok(existsSync(making), 'one still being made (no record yet, new) is left alone');
+});
+
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-run-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
