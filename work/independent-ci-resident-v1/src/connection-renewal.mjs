@@ -41,12 +41,11 @@ export async function observeOwnKey(root, companion = false) {
 }
 export function keyCheck(system, resident, controller, companion, profile, now, mode) {
   const fresh = (v, maxAge = 3*CHECK_INTERVAL) => typeof v?.at === 'string' && Date.parse(v.at) <= now && now-Date.parse(v.at) <= maxAge;
-  const provider = system?.provider === 'Microsoft Platform Crypto Provider' ? 'tpm'
-    : system?.provider === 'Microsoft Software Key Storage Provider' ? 'software' : null;
-  const denied = (v,sid,maxAge) => fresh(v,maxAge) && v.sid===sid && provider!==null && v[provider]==='DENIED'
+  const knownProvider = ['Microsoft Platform Crypto Provider','Microsoft Software Key Storage Provider'].includes(system?.provider);
+  const cannotOpen = (v,sid,maxAge) => fresh(v,maxAge) && v.sid===sid && knownProvider
     && [v.tpm,v.software].every(value => value==='DENIED' || value==='ABSENT');
-  const checks = {system:fresh(system) && system.sid==='S-1-5-18' && system.code===null && provider!==null,
-    resident:denied(resident,residentSid), controller:denied(controller,profile.controllerSid,mode==='ACTIVE' ? Infinity : undefined), companion:denied(companion,profile.ownerSid),
+  const checks = {system:fresh(system) && system.sid==='S-1-5-18' && system.code===null && knownProvider,
+    resident:cannotOpen(resident,residentSid), controller:cannotOpen(controller,profile.controllerSid,mode==='ACTIVE' ? Infinity : undefined), companion:cannotOpen(companion,profile.ownerSid),
     companionToken:['DENIED','ABSENT'].includes(companion?.['ci-admission.token']), companionRecord:['DENIED','ABSENT'].includes(companion?.['ci-admission.connection.json'])};
   return {result:Object.values(checks).every(Boolean)?'PASS':'FAIL',...checks};
 }
@@ -82,7 +81,7 @@ export function renewalWatch({root, profile, mode, drained, onHandover, clock=Da
       const [system,r,c,h]=await Promise.all([read(path.join(root,'broker','renew-key.json')),observe().catch(()=>null),
         read(controller),read(path.join(root,'mailbox','responses','renew-key.json'))]);
       if(r) await writeObservation(path.join(root,'state','renew-key-resident.json'),r);
-      book.keys=keyCheck(system,r,c,h,profile,now,mode());
+      book.keys={...keyCheck(system,r,c,h,profile,now,mode()),systemFailure:system?.failure??null};
       book.checkedAt=new Date(now).toISOString(); await save();
     }
     if (book.pending) {
