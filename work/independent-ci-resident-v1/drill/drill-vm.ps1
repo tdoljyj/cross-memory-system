@@ -2612,7 +2612,7 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   $names = @($script:Drill.GuestEntryLog)
   # entryLog: which copy of the entry's lines first-install.log holds -- 'returned' (what the entry gave back), 'guest-log' (the guest's
   # copy, fetched below), or $null (none written). ok only when everything was written, the returned lines included.
-  $record = [ordered]@{ ok = $false; code = $null; detail = $null; missing = @(); entryLog = $null; entryLogError = $null; at = [DateTimeOffset]::UtcNow.ToString('o') }
+  $record = [ordered]@{ ok = $false; code = $null; detail = $null; missing = @(); entryLog = $null; entryLogError = $null; launcherReadback = $null; at = [DateTimeOffset]::UtcNow.ToString('o') }
   $timings = $null
   $logFile = Join-Path $RunDir 'first-install.log'
   # what the entry already returned is kept first: a failed collection below loses the stage files only (Codex review of ced480363, medium 6);
@@ -2642,13 +2642,21 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   # the stage files that did not reach the run directory are missing too (their states: stage-files.json)
   $record.missing = @(@($record.missing) + @(@($stage.record.files.Keys) | Where-Object { [string]$stage.record.files[$_].state -cne 'saved' }))
   $record.stageFiles = $stage.record.files
-  # ok only after every file's state is summed (Codex review of f33fc33e5, medium 2): anything absent, unreadable or not saved makes it false
-  $record.ok = ($null -eq $record.code) -and ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog) -and ($null -eq $stage.record.collection) -and (@($record.missing).Count -eq 0)
-  # the launcher's verdict for A6 only as saved in the run directory and read back from there (same review): never the collected object
+  # the launcher's verdict for A6 only as saved in the run directory and read back from there (same review): never the collected object.
+  # A read-back that fails is recorded with its detail (6th review round, low 2).
   $launcher = $null
   if ([string](Get-DrillField (Get-DrillField $stage.record.files 'launcher-result.json') 'state') -ceq 'saved') {
-    try { $launcher = Get-Prop (Get-DrillField (Read-DrillJson (Join-Path $RunDir 'stage-evidence.json')) 'launcher-result.json') 'terminal' } catch { $launcher = $null }
+    try {
+      $back = Get-DrillField (Read-DrillJson (Join-Path $RunDir 'stage-evidence.json')) 'launcher-result.json'
+      if ($null -eq $back) { throw 'launcher-result.json is not in the saved stage-evidence.json' }
+      $launcher = Get-Prop $back 'terminal'
+      $record.launcherReadback = [ordered]@{ ok = $true; error = $null }
+    } catch { $launcher = $null; $record.launcherReadback = [ordered]@{ ok = $false; error = [string]$_.Exception.Message } }
   }
+  # ok only after every file's state is summed and the launcher's verdict read back (Codex review of f33fc33e5, medium 2; 6th round, low 2):
+  # anything absent, unreadable or not saved, or a failed read-back, makes it false
+  $record.ok = ($null -eq $record.code) -and ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog) -and ($null -eq $stage.record.collection) -and (@($record.missing).Count -eq 0) `
+    -and ((Get-DrillField (Get-DrillField $record 'launcherReadback') 'ok') -ne $false)
   try { Write-DrillJson (Join-Path $RunDir 'guest-evidence.json') $record } catch { }
   return @{ record = $record; timings = $timings; stageEvidence = $stage.stageEvidence; launcher = $launcher }
 }
