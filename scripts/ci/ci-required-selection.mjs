@@ -499,11 +499,6 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
   return exists(script) ? [nodePath, script, ...argv.slice(1)] : argv;
 }
 
-// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
-// CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
-// NODE_TEST_CONTEXT on its own; Python and PowerShell suites have only this one). The caller's env is not changed.
-export const testEnv = (env) => ({ ...env, CLUED_UNDER_TEST: '1' });
-
 export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
   const commands = SUITE_COMMANDS[id];
@@ -523,7 +518,7 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
     }
     log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(argv, { platform });
-    const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const result = spawn(run[0], run.slice(1), { cwd, env, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
       const text = result.stdout.toString();
@@ -609,7 +604,7 @@ function writeKnown(id, root, env, keep = false) {
   const out = path.join(dir, 'failures.jsonl');
   const index = argv.indexOf('--test');
   spawnSync(argv[0], [...argv.slice(1, index + 1), `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`,
-    `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env: testEnv(env), stdio: ['ignore', 'ignore', 'inherit'] });
+    `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env, stdio: ['ignore', 'ignore', 'inherit'] });
   const report = readReport(existsSync(out) ? readFileSync(out, 'utf8') : '', root);
   rmSync(dir, { recursive: true, force: true });
   if (!report.summary) throw new Error('the run did not finish; nothing written');
