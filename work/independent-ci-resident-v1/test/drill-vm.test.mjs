@@ -2174,6 +2174,34 @@ test('the stage files are read with read-write sharing, file by file, also while
   assert.match(fs.readFileSync(entryScript, 'utf8'), /Get-LastJsonLine \(Read-EntrySharedText \$launcherResult\)/);
 });
 
+// Codex review of e0a3cded5, medium 1: the first install's result is kept on its own (entry-result.json) and A1 is formed from it even when
+// a later step stops the run, so the receipt keeps the verdict the first install gave (here a restart with its installers' codes).
+test('A1 is kept from the first install\'s own result when a later step stops the run', opts, () => {
+  const root = path.join(tmp, 'a1-alone'); fs.mkdirSync(root, { recursive: true });
+  const stop = 'RESTART_THEN_RUN_THE_SAME_COMMAND:{"status":"RESTART_THEN_RUN_THE_SAME_COMMAND","step":"tools","installers":[{"name":"gh","exit":3010}]}';
+  const r = ps(`
+    $script:Drill.Runs = ${q(root)}
+    function Assert-DrillHost { @{ freeGB = 20 } }
+    function Invoke-DrillWithHostHold { throw 'HOST_HOLD_MUST_NOT_RUN' }
+    function Get-DrillIntakeTool { throw 'HOST_HOLD_MUST_NOT_RUN' }
+    function Invoke-DrillBaseline { @{ action = 'reuse' } }
+    $script:logs = ${q(JSON.stringify(STEP_LOGS))} | ConvertFrom-Json
+    function Invoke-DrillOnCheckpoint { param($Body, $RunDir, $Window)
+      foreach ($p in $script:logs.PSObject.Properties) { [IO.File]::WriteAllText((Join-Path $RunDir $p.Name), [string]$p.Value) }
+      Write-DrillJson (Join-Path $RunDir 'entry-result.json') ([ordered]@{ exitCode = 1; status = 'FIRST_INSTALL_STOPPED'; stopCode = ${q(stop)}; tree = ''; node = ''; parsed = $true })
+      @{ restored = $true; failure = @{ code = 'DRILL_GUEST_STEP_FAILED' }; result = $null; hostExecutorStates = @() } }
+    $package = @{ version = '1.2.3'; tar = 'unused'; tarSha256 = ${q(S)}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(L)}; candidate = $false }
+    $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package ([pscustomobject]@{ sha256 = 'fixture'; perNodeSteps = @() }) @{ sha256 = 'fixture' }
+    $rc = Read-DrillJson $out.receipt
+    [ordered]@{ conclusion = $rc.conclusion; ids = @($rc.items | ForEach-Object { $_.id }); a1 = @($rc.items)[0] }`);
+  assert.equal(r.conclusion, 'FAIL');
+  assert.deepEqual(r.ids, ['A1']);
+  assert.equal(r.a1.pass, false);
+  assert.ok(r.a1.detail.includes('"exit":3010'), r.a1.detail);
+  assert.equal(r.a1.firstInstallSteps.missing, false);
+  assert.match(fs.readFileSync(script, 'utf8'), /Write-DrillJson \(Join-Path \$RunDir 'entry-result\.json'\) \$entry/);
+});
+
 // Codex review of e0a3cded5, high 1: the entry reads the objects the package's own parser gives (bootstrap.ps1 Get-LastJsonLine: a
 // JavaScriptSerializer Dictionary), not only hand-made ones: a ready host, a restart verdict with its step and installers' exit codes, a
 // launcher terminal; the restart verdict reaches A1's detail as it is.

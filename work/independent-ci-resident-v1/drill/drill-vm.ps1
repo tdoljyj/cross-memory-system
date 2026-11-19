@@ -890,10 +890,7 @@ function Get-DrillVerdict($E) {
   # A1 needs the step record (Read-DrillFirstInstallSteps, read before this verdict): a first install whose steps cannot be shown -- none
   # parsed, or a stage that ran without its complete log -- does not pass, and the detail says why (Codex review of 1cedea9ef, high 1;
   # branch one 74e7a65e7 holds the same).
-  $steps = Get-Prop $E 'firstInstallSteps'
-  $stepsWhy = if ($null -eq $steps -or (Get-Prop $steps 'missing') -ne $false) { 'steps=missing' } elseif ((Get-Prop $steps 'incomplete') -ne $false) { 'steps=incomplete:' + (@(Get-Prop $steps 'incompleteStages') -join ',') } else { 'steps=complete' }
-  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode -and $entry.status -ceq 'FIRST_INSTALL_DONE' -and $stepsWhy -ceq 'steps=complete'
-  [void]$items.Add((New-DrillItem 'A1' $a1 $(if ($null -eq $entry) { "no entry result $stepsWhy" } else { "exit=$($entry.exitCode) status=$($entry.status) stopCode=$($entry.stopCode) $stepsWhy" })))
+  [void]$items.Add((Get-DrillA1Item $entry (Get-Prop $E 'firstInstallSteps')))
   $vs = [string](Get-Prop $E.verify 'status')
   [void]$items.Add((New-DrillItem 'A2' ($vs -ceq 'RESIDENT_VERIFIED') "verify=$vs"))
   [void]$items.Add((Test-DrillSelfcheck 'A3' $E.status $now))
@@ -953,6 +950,14 @@ function Get-DrillVerdict($E) {
 function Test-DrillAfterBoot([string]$At, [string]$Boot) {
   if (-not $At -or -not $Boot) { return $false }
   try { return [DateTimeOffset]::Parse($At, [Globalization.CultureInfo]::InvariantCulture) -gt [DateTimeOffset]::Parse($Boot, [Globalization.CultureInfo]::InvariantCulture) } catch { return $false }
+}
+
+# A1 on its own: the entry's result and the step record. Also formed when the run stops after the first install (Codex review of
+# e0a3cded5, medium 1), so a verdict the first install gave is never lost with the run.
+function Get-DrillA1Item($Entry, $Steps) {
+  $stepsWhy = if ($null -eq $Steps -or (Get-Prop $Steps 'missing') -ne $false) { 'steps=missing' } elseif ((Get-Prop $Steps 'incomplete') -ne $false) { 'steps=incomplete:' + (@(Get-Prop $Steps 'incompleteStages') -join ',') } else { 'steps=complete' }
+  $a1 = ($null -ne $Entry) -and (Get-Prop $Entry 'parsed') -eq $true -and (Get-Prop $Entry 'exitCode') -eq 0 -and $null -eq (Get-Prop $Entry 'stopCode') -and [string](Get-Prop $Entry 'status') -ceq 'FIRST_INSTALL_DONE' -and $stepsWhy -ceq 'steps=complete'
+  New-DrillItem 'A1' $a1 $(if ($null -eq $Entry) { "no entry result $stepsWhy" } else { "exit=$(Get-Prop $Entry 'exitCode') status=$(Get-Prop $Entry 'status') stopCode=$(Get-Prop $Entry 'stopCode') $stepsWhy" })
 }
 
 function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
@@ -2238,6 +2243,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json
   $launcher = Get-Prop (Get-DrillField $collected.stageEvidence 'launcher-result.json') 'terminal'
   }
+  # the first install's own result, kept on its own: A1 stands even when a later step stops the run (Get-DrillA1Item)
+  Write-DrillJson (Join-Path $RunDir 'entry-result.json') $entry
 
   $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
@@ -2358,6 +2365,11 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
     $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps }
+  }
+  # the run stopped after the first install gave its result: A1 from that result alone (the other items are missing, so the receipt fails)
+  $entryResultFile = Join-Path $runDir 'entry-result.json'
+  if (-not $run -and (Test-Path -LiteralPath $entryResultFile -PathType Leaf)) {
+    $items = @(Get-DrillA1Item $(try { Read-DrillJson $entryResultFile } catch { $null }) $firstInstallSteps)
   }
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
