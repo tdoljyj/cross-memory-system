@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 import {performance} from 'node:perf_hooks';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 
-export const COMPONENT_VERSION='1.0.11';
+export const COMPONENT_VERSION='1.0.15';
 export const REQUIRED_MIGRATION_PATHS=Object.freeze([
   'apps/clued-cloud/supabase/**','apps/clued-cloud/scripts/production-schema-*.mjs',
   'apps/clued-cloud/scripts/migration-ledger.mjs','apps/clued-cloud/scripts/production-release-baseline.json',
