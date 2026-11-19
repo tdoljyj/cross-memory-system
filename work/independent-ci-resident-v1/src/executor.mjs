@@ -569,13 +569,14 @@ export class ResidentExecutor {
     });
   }
 
-  // P1b: train on, this node on duty past the take-over, and the newest on-mode stage 10 named a bound front (PR and head), or a parked
-  // batch's last stage-8 try was the merge queue's first. Only orders a due run before the batch work; the cadence is unchanged.
-  async trainFrontWaits() {
+  // P1b: train on, this node on duty past the take-over, and the newest on-mode stage 10 of this process named a bound front (PR and head).
+  // Only orders a due run before the batch work; the cadence is unchanged. A parked batch that stage 8 found first in the merge queue is the
+  // front-open debt's (trainFrontOpenOwed: on the ledger, settled by one real decision); its stage-8 fact alone is never asked again, or a
+  // debt that stage 10 settled (the front left: NO_FRONT) would put stage 10 ahead of every busy tick once due.
+  trainFrontWaits() {
     if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone) return false;
     const l = this.trainLast;
-    if (l?.mode === 'on' && Number.isSafeInteger(l.front?.pr) && HEX40.test(l.front?.headSha ?? '')) return true;
-    return (await this.ledger.parkedEntries()).some(e => Ledger.parkedAt(e) && ResidentExecutor.lastTry(e)?.position === 1);
+    return l?.mode === 'on' && Number.isSafeInteger(l.front?.pr) && HEX40.test(l.front?.headSha ?? '');
   }
 
   // Whether the take-over sweep still holds this node (eligible, not done): new batches and parked ones wait (review R3 MINOR 6).
@@ -1991,9 +1992,9 @@ export class ResidentExecutor {
     // so the schedule and the front's yield after stage 1 (§62.6) read the train as it is now, never the revoke-only run under the pause;
     // otherwise the queue head's ordinary batch scanned H and the front batch scanned the same tree again on S.
     // PR #1142: a tested ordinary head at B gets the same priority, once, so a busy queue cannot starve its front batch.
-    // FABLE-ci-10min §3.2 P1b (field 2026-11-19 06:39, #1171): a due stage-10 run also goes first while a front is bound or a parked batch is
-    // the queue's first; otherwise a trigger of another PR in the same tick reserved its ordinary batch first and held stage 10 for 14-24 minutes.
-    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed() || await this.trainFrontWaits())) {
+    // FABLE-ci-10min §3.2 P1b (field 2026-11-19 06:39, #1171): a due stage-10 run also goes first while a front is bound; otherwise a trigger
+    // of another PR in the same tick reserved its ordinary batch first and held stage 10 for 14-24 minutes.
+    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed() || this.trainFrontWaits())) {
       const owed = await this.trainMaintenance({ routineOnly: true });
       if (owed) return owed;
     }
