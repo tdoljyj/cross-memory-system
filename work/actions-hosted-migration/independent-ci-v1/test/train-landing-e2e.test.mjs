@@ -63,7 +63,8 @@ async function world(t, { prs, bad = () => false, sharedClaim = false }) {
   };
   for (const pr of prs) {
     const head = commit(h(`head:${pr}`), [T0], [String(pr)]);
-    W.pulls.set(pr, { number: pr, head, state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr) });
+    // autoMerge: the author turned GitHub auto-merge on (every agent PR does, gh pr merge --auto); paths: its changed files (null: unreadable)
+    W.pulls.set(pr, { number: pr, head, state: 'open', merged: false, updated: iso(NOW - 3_600_000 + pr), body: body(pr), autoMerge: true, paths: ['a.txt'] });
     actions(head); // the PR's own CI on its head (pull_request)
     const id = W.nextCheck++; // stage 1 admitted it: App 5368905's kooyumi-work-admission on the head
     W.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-work-admission', head_sha: head, status: 'completed', conclusion: 'success' });
@@ -83,7 +84,13 @@ async function world(t, { prs, bad = () => false, sharedClaim = false }) {
     const p = W.pulls.get(n), main = W.refs.get('heads/main');
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
     return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
+      auto_merge: p.autoMerge ? { merge_method: 'merge' } : null,
       head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: main, repo: { full_name: REPO } } };
+  };
+  gh.readChangedPaths = async j => {
+    const p = W.pulls.get(j.pr);
+    if (!p || p.paths === null) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' });
+    return { complete: true, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, paths: [...p.paths] };
   };
   gh.readCompare = async (base, head) => base === head ? { status: 'identical', aheadBy: 0, behindBy: 0 }
     : ancestor(base, head) ? { status: 'ahead', aheadBy: 1, behindBy: 0 } : ancestor(head, base) ? { status: 'behind', aheadBy: 0, behindBy: 1 } : { status: 'diverged', aheadBy: 1, behindBy: 1 };
@@ -159,7 +166,7 @@ async function stage10(e, outcome = null) {
   const job = jobOf({ createdAt: iso(e.now), runId, sweep: 'audit', onSince: iso(NOW - 3_600_000),
     ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-    claimScope: SCOPE, layerOfPaths: () => 'code', landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
+    claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
 }
 async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal' } = {}) {
   e.now += 60_000;
@@ -222,6 +229,38 @@ test('push: an admission green and advisory trailer cannot admit an unbound ride
   assert.ok(batch);
   assert.deepEqual((await e.store.landingBatchByTest(batch.testSha)).members.map(m => m.pr), [910]);
   assert.equal(e.W.pulls.get(911).merged, false);
+});
+
+// D6 (Fable 2026-11-19 §1 items 7, 8): the first batch stage 10 opens, as the members it recorded (front first).
+async function firstBatchMembers(e) {
+  let batch;
+  for (let i = 0; i < 6 && !batch; i++) batch = (await stage10(e)).facts.openFrontBatch;
+  assert.ok(batch, 'a front batch opens');
+  return (await e.store.landingBatchByTest(batch.testSha)).members.map(m => m.pr);
+}
+const LAYER = paths => (paths.some(p => p.startsWith('scripts/ci/')) ? 'protected' : 'code');
+
+test('push D6 §1.7: a PR whose auto-merge is off never rides; the batch takes the next rider instead', async t => {
+  const e = await world(t, { prs: [910, 911, 912] });
+  e.W.pulls.get(911).autoMerge = false;
+  assert.deepEqual(await firstBatchMembers(e), [910, 912]);
+  assert.equal(e.W.pulls.get(911).merged, false);
+});
+
+test('push D6 §1.8: a protected-layer PR is never batched: a protected rider (or one whose paths cannot be read) is left out, a protected front goes alone', async t => {
+  const rider = await world(t, { prs: [910, 911, 912, 913] });
+  rider.layerOfPaths = LAYER;
+  rider.W.pulls.get(911).paths = ['scripts/ci/x.mjs'];
+  rider.W.pulls.get(912).paths = null; // unreadable counts as protected
+  assert.deepEqual(await firstBatchMembers(rider), [910, 913], 'protected and unreadable riders stay out');
+  const front = await world(t, { prs: [910, 911, 912] });
+  front.layerOfPaths = LAYER;
+  front.W.pulls.get(910).paths = ['a.txt', 'scripts/ci/x.mjs'];
+  assert.deepEqual(await firstBatchMembers(front), [910], 'a protected front is a batch of one');
+  const unread = await world(t, { prs: [910, 911] });
+  unread.layerOfPaths = LAYER;
+  unread.W.pulls.get(910).paths = null;
+  assert.deepEqual(await firstBatchMembers(unread), [910], 'a front whose paths cannot be read is a batch of one');
 });
 
 test('push: three queued PRs -> one batch -> main fast-forwarded to the tested S -> all three marked merged and adopted', async t => {
