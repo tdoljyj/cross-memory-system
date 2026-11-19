@@ -680,6 +680,18 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
     $status = Get-DrillField $doc 'status'
     if ($status -is [string] -and $status) { $verdict = [ordered]@{ status = $status; stopCode = (Get-DrillField $doc 'stopCode') } }
   }
+  # Codex review of c1497e0a1, high 1: a later stage reached, or an entry that says done, says the earlier stages ran (host preparation,
+  # then prepare, then the launcher stage). An earlier stage with neither its log nor its result is then incomplete too (no-evidence).
+  $order = @('host', 'prepare', 'launcher')
+  $ranStage = @{}
+  foreach ($st in $order) { $ranStage[$st] = ($null -ne (Get-DrillField $StageEvidence ($st + '-result.json'))) -or ((Get-DrillField $Logs $st) -is [string]) }
+  $entryDone = ($null -ne $verdict) -and ([string]$verdict.status -ceq 'FIRST_INSTALL_DONE')
+  for ($i = 0; $i -lt $order.Count; $i++) {
+    $laterRan = $entryDone
+    for ($j = $i + 1; $j -lt $order.Count; $j++) { if ($ranStage[$order[$j]]) { $laterRan = $true } }
+    if ($laterRan -and -not $ranStage[$order[$i]] -and $incomplete -notcontains $order[$i]) { $incomplete += $order[$i]; $reasons[$order[$i]] = @('no-evidence') }
+  }
+  $incomplete = @($order | Where-Object { $incomplete -contains $_ })
   $all = @($steps)
   $completed = @($all | Where-Object { $null -eq $_.rejectCode })
   $rejected = @($all | Where-Object { $null -ne $_.rejectCode })

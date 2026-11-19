@@ -1073,6 +1073,7 @@ test('M5 collects the six public observations and the administrator\'s read of t
 const STEP_LOGS = {
   'first-install.log': JSON.stringify({ status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe' }) + '\r\n',
   'host.stdout.log': [JSON.stringify({ name: 'stage', result: 'ok' }), JSON.stringify({ status: 'FIRST_INSTALL_HOST_READY' })].join('\r\n') + '\r\n',
+  'prepare.stdout.log': JSON.stringify({ status: 'FLEET_NODE_FIRST_INSTALL_PREPARED' }) + '\r\n',
   'launcher.stdout.log': [JSON.stringify({ name: 'install', result: 'ok' }), JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })].join('\r\n') + '\r\n',
   'stage-evidence.json': JSON.stringify({ 'host-result.json': { exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } },
     'launcher-result.json': { exit: 0, terminal: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' } } }),
@@ -1984,6 +1985,7 @@ test('a stage that ran is incomplete when its log is missing, empty, holds only 
   assert.deepEqual(cut.noStageVerdict, ['host']);
   // the launcher stage timed out: no launcher-result.json, but its output file holds what it printed: read, and incomplete
   put('host.stdout.log', [step('stage'), JSON.stringify({ status: 'FIRST_INSTALL_HOST_READY' })].join('\r\n') + '\r\n');
+  put('prepare.stdout.log', JSON.stringify({ status: 'FLEET_NODE_FIRST_INSTALL_PREPARED' }) + '\r\n');
   put('launcher.stdout.log', step('install') + '\r\n');
   const timedOut = read();
   assert.deepEqual(timedOut.incompleteStages, ['launcher']);
@@ -1992,6 +1994,34 @@ test('a stage that ran is incomplete when its log is missing, empty, holds only 
   // a stage that did not run at all is not incomplete
   put('launcher.stdout.log', null);
   assert.equal(read().incomplete, false);
+});
+
+// Codex review of c1497e0a1, high 1: a later stage reached, or an entry that says done, says the earlier stages ran. An earlier stage
+// with neither its log nor its result is then incomplete too (no-evidence), never skipped; A1 does not pass on it.
+test('a stage a later one or a done entry says ran is incomplete without any evidence of it', opts, () => {
+  const dir = path.join(tmp, 'steps-order'); fs.mkdirSync(dir, { recursive: true });
+  const put = (name, text) => text === null ? fs.rmSync(path.join(dir, name), { force: true }) : fs.writeFileSync(path.join(dir, name), text);
+  for (const [name, text] of Object.entries(STEP_LOGS)) put(name, text);
+  assert.equal(ps(`(Read-DrillFirstInstallSteps ${q(dir)}).incomplete`), false);
+  // the host preparation's log and result both gone, the launcher's kept, the entry done
+  put('host.stdout.log', null);
+  put('stage-evidence.json', JSON.stringify({ 'host-result.json': null, 'launcher-result.json': JSON.parse(STEP_LOGS['stage-evidence.json'])['launcher-result.json'] }));
+  const r = ps(`Read-DrillFirstInstallSteps ${q(dir)}`);
+  assert.equal(r.missing, false);
+  assert.equal(r.incomplete, true);
+  assert.deepEqual(r.incompleteStages, ['host']);
+  assert.deepEqual(r.incompleteReasons.host, ['no-evidence']);
+  // prepare's log gone as well: both earlier stages are named
+  put('prepare.stdout.log', null);
+  assert.deepEqual(ps(`(Read-DrillFirstInstallSteps ${q(dir)}).incompleteStages`), ['host', 'prepare']);
+  // only the entry says done, no stage evidence at all: every stage is named
+  put('launcher.stdout.log', null); put('stage-evidence.json', null);
+  const bare = ps(`Read-DrillFirstInstallSteps ${q(dir)}`);
+  assert.deepEqual(bare.incompleteStages, ['host', 'prepare', 'launcher']);
+  // and A1 does not pass on such a record
+  const a1 = verdictOf(evidence({ firstInstallSteps: r })).items.find(i => i.id === 'A1');
+  assert.equal(a1.pass, false);
+  assert.match(a1.detail, /steps=incomplete:host/);
 });
 
 // Codex review of 1cedea9ef, high 1: the step record is read first and A1 needs it: a first install whose steps cannot be shown (none
