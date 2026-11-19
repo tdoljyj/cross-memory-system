@@ -35,7 +35,7 @@ foreach ($name in @('Get-Key', 'Get-Rid', 'Get-NodeProfile', 'Get-Signer', 'Get-
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
   if ($a.Left.Extent.Text -cin @('$Distribution', '$ResidentRoot', '$FactsContract', '$Utf8', '$Strict8', '$SecretTargets', '$CiRoot', '$VhdxDirectory')) { . ([scriptblock]::Create($a.Extent.Text)) }
 }
-$js = New-Object Web.Script.Serialization.JavaScriptSerializer
+$js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = [int]::MaxValue   # reads lines longer than the default 2,097,152
 $res = Split-Path -Parent $here
 $text = [IO.File]::ReadAllText($file)
 $main = $text.Substring($text.IndexOf('function Invoke-HostPreparation'))
@@ -347,6 +347,10 @@ try {
     Yes ((ConvertTo-JsonLine $back) -ceq $line) 't1:deserialized-is-unchanged'
     Yes ((Step 'stage' $jp) -ceq ('{"step":"stage","result":' + (& $str $jp) + '}')) 't1:step-stage'
     Yes ((Step 'residue' $two) -ceq '{"step":"residue","result":["SERVICE:A","SERVICE:B"]}') 't1:step-residue-codes'
+    # longer than the serializer's default 2,097,152 characters (Codex review of PR-甲, blocking 2): plain data is written whole
+    $big = 'y' * 2500000
+    $bl = try { ConvertTo-JsonLine ([ordered]@{ facts = $big }) } catch { $null }
+    Yes ($null -ne $bl -and ([string]$js.DeserializeObject($bl)['facts']).Length -eq 2500000) 't1:longer-than-2M'
   }
   # Step is progress: whatever it is given, one line of JSON and no exception. A verdict line or facts.json is the contract: a value that is
   # not plain data is refused by name (HOST_OUTPUT_NOT_PLAIN_DATA), never written in a form someone has to guess at.
@@ -366,7 +370,8 @@ try {
   }
   Case 't2:one-serializer-in-the-script' {
     $calls = [regex]::Matches($text, '\.Serialize\(').Count
-    Yes ($calls -eq 1 -and $functions.ContainsKey('ConvertTo-JsonLine') -and $functions['ConvertTo-JsonLine'] -match '\.Serialize\(') ('t2:one-Serialize-call-in-ConvertTo-JsonLine (got ' + $calls + ')')
+    $inWriter = if ($functions.ContainsKey('ConvertTo-JsonLine')) { [regex]::Matches($functions['ConvertTo-JsonLine'], '\.Serialize\(').Count } else { 0 }
+    Yes ($inWriter -ge 1 -and $calls -eq $inWriter) ('t2:every-Serialize-call-is-in-ConvertTo-JsonLine (file ' + $calls + ', writer ' + $inWriter + ')')
     Yes ($functions.ContainsKey('Step') -and $functions['Step'] -match 'ConvertTo-JsonLine' -and $functions.ContainsKey('Stop-Host') -and $functions['Stop-Host'] -match 'ConvertTo-JsonLine') 't2:step-and-stop-host-use-it'
     Yes ($main -match "ConvertTo-JsonLine \(\[ordered\]@\{ status = 'FIRST_INSTALL_HOST_READY'") 't2:ready-uses-it'
   }

@@ -33,7 +33,7 @@ foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.A
 }
 Yes ($PrereqContract -ceq 'clued.independent-ci.fleet-node-prereq-manifest/1' -and $PrereqNames.Count -eq 7 -and $PrereqNames -ccontains 'wsl') 'constants'
 $text = [IO.File]::ReadAllText($file)
-$js = New-Object Web.Script.Serialization.JavaScriptSerializer
+$js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = [int]::MaxValue   # reads lines longer than the default 2,097,152
 $h1 = 'a' * 64; $h2 = 'b' * 64; $h3 = 'c' * 64; $img = 'd' * 64
 $v = '2026.11.16-1'; $t = 'fleet-node-' + $v
 
@@ -342,8 +342,15 @@ try {
       $odd = Out-Result 'BOOTSTRAP_REFUSED' 'assets' ([ordered]@{ code = 'X'; detail = (Get-Item -LiteralPath $env:SystemRoot) })
       $o = $js.DeserializeObject($odd)
       Yes ($o['code'] -ceq 'X' -and [string]$o['detail'] -clike '*DirectoryInfo*') ('json:not-plain-is-printed-by-type ' + $odd)
+      # Codex review of PR-甲 (blocking 2): a verdict of plain data longer than the serializer's default 2,097,152 characters (the
+      # stage child's result is read up to 16,777,216) threw instead of printing; the writer's limit is at least the reader's
+      $big = 'x' * 2500000
+      $long = Out-Result 'BOOTSTRAP_REFUSED' 'host' ([ordered]@{ code = 'LONG'; detail = $big })
+      $o = $js.DeserializeObject($long)
+      Yes ($null -ne $o -and $o['code'] -ceq 'LONG' -and ([string]$o['detail']).Length -eq 2500000) ('json:longer-than-2M ' + $(if ($long) { $long.Length } else { 'none' }))
     } finally { $script:Work = $saved }
-    Yes (([regex]::Matches($text, '\.Serialize\(')).Count -eq 1 -and $functions['ConvertTo-JsonLine'] -match '\.Serialize\(') 'json:one-serializer'
+    $inWriter = [regex]::Matches($functions['ConvertTo-JsonLine'], '\.Serialize\(').Count
+    Yes ($inWriter -ge 1 -and ([regex]::Matches($text, '\.Serialize\(')).Count -eq $inWriter) 'json:every-serialize-is-in-the-writer'
     # every output of the bootstrap is the progress grade (it never throws)
     $calls = @([regex]::Matches($text, '(?m)^(?!\s*#).*?ConvertTo-JsonLine [^\r\n]*'))
     Yes (@($calls | Where-Object { $_.Value -notmatch '-Progress\b' }).Count -eq 0) ('json:every-call-is-progress ' + (@($calls | Where-Object { $_.Value -notmatch '-Progress\b' } | ForEach-Object { $_.Value }) -join ' | '))

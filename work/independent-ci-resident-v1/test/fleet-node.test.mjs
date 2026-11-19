@@ -129,6 +129,24 @@ Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
   assert.equal(v.code, 'HOST_OUTPUT_NOT_PLAIN_DATA', notPlain.out);
   assert.equal(v.detail.code, 'INPUT_MISSING', notPlain.out);
 
+  // Invoke-Host, the script's entry (Codex review of PR-甲, suggestion 1): the real one around a stand-in Invoke-HostPreparation. A verdict
+  // that is not plain data is refused by name (exit 1); READY stays exit 0 and RESTART exit 3; any other exception passes through, even one
+  // whose text looks like the writer's.
+  const entry = body => hostScriptLines(`function Invoke-HostPreparation { ${body} }\nInvoke-Host`);
+  const odd = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Get-Item -LiteralPath $env:SystemRoot) })`);
+  assert.equal(odd.status, 1, odd.out);
+  const ov = JSON.parse(odd.lines.at(-1));
+  assert.deepEqual([ov.status, ov.code, ov.detail.at, ov.detail.type], ['FIRST_INSTALL_HOST_REFUSED', 'HOST_OUTPUT_NOT_PLAIN_DATA', '$.facts', 'System.IO.DirectoryInfo'], odd.out);
+  const fine = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Join-Path $FirstDir 'facts.json') })`);
+  assert.equal(fine.status, 0, fine.out);
+  assert.equal(JSON.parse(fine.lines.at(-1)).status, 'FIRST_INSTALL_HOST_READY', fine.out);
+  const restart = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'WSL installed' }); exit 3`);
+  assert.equal(restart.status, 3, restart.out);
+  const other = entry(`throw 'something else said OUTPUT_NOT_PLAIN_DATA:$.x:System.Object'`);
+  assert.notEqual(other.status, 0, other.out);
+  assert.ok(!other.lines.some(l => l.includes('HOST_OUTPUT_NOT_PLAIN_DATA')), other.out);
+  assert.match(other.out, /something else said/);
+
   // the READY verdict's shape: facts is Join-Path's output
   const ready = hostScriptLines(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Join-Path $FirstDir 'facts.json'); node = 'desk-w-591' })`);
   assert.equal(ready.status, 0, ready.out);

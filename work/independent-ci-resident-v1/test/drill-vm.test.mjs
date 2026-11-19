@@ -880,7 +880,7 @@ test('M5 collects the six public observations and requires the host checker for 
 
 // A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
 // M5 observations `missing` and a host checker that answers `checker`.
-function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {} } = {}) {
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -892,7 +892,7 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     files: files.map(({ path, data }) => ({ path, sha256: sha(data), bytes: data.length })) };
   fs.writeFileSync(archive, writeTar([...files, { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]));
   const e = JSON.parse(evidence());
-  const run = { first: { ...e, readAt: e.now }, entry: e.entry, reboot: e.reboot, reinstall: e.reinstall,
+  const run = { first: { ...e, readAt: e.now }, entry: e.entry, reboot: e.reboot, reinstall: reinstall ?? e.reinstall,
     timings: {}, m5: null };
   const receipt = ps(`
     $script:Drill.Runs = ${q(root)}
@@ -1049,6 +1049,35 @@ async function sealWorld(t) {
   const sealIt = drillReceipt => seal({ request: requestFile, decisionRecord, index, ghCommand: gh, deps, drillReceipt });
   return { d, version, request, index, sealIt };
 }
+
+// Codex review of PR-甲 (blocking 1): -SkipReinstall leaves A8 null ("skipped"), which the conclusion leaves out of the pending items, so a
+// candidate that never re-installed reached PASS after -Finalize and seal took it. A candidate's A1-A8 must each be true: a candidate
+// run with a skip option is refused before the host gate, and a candidate receipt with any of A1-A8 null is never a PASS (its -Finalize
+// and seal refuse it). An accepted version's re-drill keeps -SkipReinstall as the diagnosis it was.
+test('a candidate drill cannot skip: refused with -SkipReinstall; a candidate receipt with A8 skipped is never a PASS, nor sealed', opts, async t => {
+  const code = psCode(`
+    $Version = '1.2.3'; $From = 'unused'; $Kit = 'unused'; $SkipReinstall = $true
+    function Read-DrillPrereq { @{ sha256 = 'pin' } }
+    function Read-DrillKit { @{ prereqSha256 = 'pin'; executionBlocker = $null; candidate = @{ acceptance = 'x' } } }
+    function Test-DrillPackageDir { @{ tar = 'unused'; candidate = $true } }
+    function Get-DrillReleaseFiles { @('unused') }
+    function Assert-DrillHost { throw 'HOST_GATE_MUST_NOT_RUN' }
+    Invoke-DrillMain`);
+  assert.equal(code, 'DRILL_CANDIDATE_CANNOT_SKIP');
+  const w = await sealWorld(t);
+  const pkg = { tarSha256: w.request.archive_sha256, firstInstallKitSha256: w.request.firstInstallKitSha256 };
+  const skipped = m5DrillReceipt('cand-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version: w.version, pkg, reinstall: { skipped: true } });
+  assert.equal(skipped.items.find(i => i.id === 'A8').pass, null);
+  assert.equal(skipped.conclusion, 'FAIL');
+  // a receipt that says pending anyway (written before this rule) is judged again by -Finalize: FAIL, and seal refuses it
+  const done = finalize('cand-skip-finalize', { ...skipped, conclusion: 'PENDING_PRODUCTION_READBACK' }, notTheDrillsSource());
+  assert.equal(done.output.conclusion, 'FAIL');
+  await assert.rejects(w.sealIt(done.receiptFile), { code: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
+  // an accepted version's re-drill may still skip A8 (a diagnosis, never sealed)
+  const reDrill = m5DrillReceipt('acc-skip', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], reinstall: { skipped: true } });
+  assert.equal(reDrill.conclusion, 'PENDING_PRODUCTION_READBACK');
+  assert.equal(finalize('acc-skip-finalize', reDrill).output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+});
 
 test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the one not read back', opts, async t => {
   const w = await sealWorld(t);
