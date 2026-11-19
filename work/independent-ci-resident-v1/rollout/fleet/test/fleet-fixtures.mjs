@@ -176,6 +176,9 @@ const log = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : 
 const args = process.argv.slice(2);
 log.calls.push({ args, tokenSeen: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'].filter(k => process.env[k] !== undefined) });
 if (process.env.FAKE_GH_FAIL === '1') { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 422: fake failure'); process.exit(1); }
+const nth = Number(process.env.FAKE_GH_FAIL_UPLOAD_NTH || 0);
+if (nth && args[0] === 'release' && args[1] === 'upload' && log.calls.filter(c => c.args[1] === 'upload').length === nth) { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 502: fake upload failure'); process.exit(1); }
+if (args[0] === 'release' && args[1] === 'delete-asset') log.assets = log.assets.filter(a => a.name !== args[3]);
 const assetsOf = tag => (log.other && log.other[tag]) || log.assets;
 if (args[0] === 'release' && args[1] === 'create') {
   const files = args.slice(3, args.indexOf('--repo'));

@@ -387,3 +387,35 @@ test('acceptance-draft: the kit and images are on the Release, then the acceptan
   // the directory is new: a second draft into it is refused
   await assert.rejects(w.draft(), { code: 'ACCEPTANCE_DRAFT_OUT_NOT_NEW' });
 });
+
+// ---------------------------------------------------------------- review 6d46b5c5: A (an accepted version gets no kit), B (an upload that stopped is resumed)
+test('acceptance-draft refuses a version whose index row already has its acceptance: the kit is never added afterwards, nothing uploaded', async t => {
+  const w = await draftWorld(t);
+  const text = await fs.readFile(w.index, 'utf8');
+  assert.ok(text.includes('|  |  |'));
+  await fs.writeFile(w.index, text.split('|  |  |').join(`| 2026-11-12T08:00:00Z | ${DECISION} |`));
+  const before = await fs.readFile(w.index), n = (await w.calls()).length;
+  await assert.rejects(w.draft(), { code: 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED' });
+  await noDraft(w);
+  await unchanged(w, before, n);
+});
+
+test('acceptance-draft: an upload that stopped half way is resumed by the same command (the kit is not uploaded twice, nothing is refused as already attached)', async t => {
+  const w = await draftWorld(t);
+  process.env.FAKE_GH_FAIL_UPLOAD_NTH = '2';   // the kit goes up, the role image fails
+  t.after(() => { delete process.env.FAKE_GH_FAIL_UPLOAD_NTH; });
+  await assert.rejects(w.draft(), { code: 'PUBLISH_GH_RELEASE_UPLOAD_FAILED' });
+  await noDraft(w);
+  assert.deepEqual((await w.assets()).filter(a => a.name.includes('first-install') || a.name.startsWith('role-image-')).map(a => a.name), [`${TAG}.first-install-kit.json`]);
+  delete process.env.FAKE_GH_FAIL_UPLOAD_NTH;
+  const r = await w.draft();   // the same arguments, the same --out
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_DRAFT_WRITTEN');
+  const names = (await w.assets()).map(a => a.name);
+  for (const n of [`${TAG}.first-install-kit.json`, `role-image-${IMAGE}.tar.gz`, `${TAG}.first-install.SHA256SUMS`]) assert.equal(names.filter(x => x === n).length, 1, n);
+  const a = JSON.parse(await fs.readFile(r.acceptance, 'utf8'));
+  assert.equal(a.firstInstallKitSha256, (await w.assets()).find(x => x.name === `${TAG}.first-install-kit.json`).sha256);
+  // another kit already on the Release is never completed or replaced
+  const w2 = await draftWorld(t);
+  await w2.draft({ deps: { kitOf: async () => ({ ...w2.kit, marker: 1 }), readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: 'b'.repeat(64) }) }, out: path.join(w2.d, 'other') }).catch(() => null);
+  await assert.rejects(w2.draft(), e => e.code === 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT');
+});

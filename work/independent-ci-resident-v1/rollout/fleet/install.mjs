@@ -98,14 +98,16 @@ export const ACCEPTANCE_KEYS = Object.freeze(['contract', 'version', 'archive_sh
 // firstInstallKitSha256: the version's first-install kit the Owner accepts with it (firstInstallKitOf). Every acceptance of a version a
 // node is to install or upgrade to carries it (FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT: a package that cannot first-install a new node is
 // not accepted at all; publish.mjs attach-acceptance and acceptance-draft hold the same line). Only the draft source-hash reads (`draft`)
-// may lack it. The record of an OLDER installed version (recordcceptance.json) never goes through here, so a node installed before
+// may lack it, and so may the outer read of `upgrade.mjs fetch` (requireKit: false): that copy may be NEWER than the package it fetches, and
+// the rule of a package is its own (the unpacked upgrade.mjs reads the acceptance again, with the rule it was built with), so a rollback to an
+// older package with no kit field stays one command. The record of an OLDER installed version (record/acceptance.json) never goes through here, so a node installed before
 // the field existed stays readable and upgradable.
-export function validateAcceptance(a, now = Date.now(), { draft = false } = {}) {
+export function validateAcceptance(a, now = Date.now(), { draft = false, requireKit = true } = {}) {
   const keys = [...(draft ? ACCEPTANCE_KEYS.filter(k => k !== 'ciSourceManifestSha256' || Object.hasOwn(a ?? {}, k)) : ACCEPTANCE_KEYS),
     ...(Object.hasOwn(a ?? {}, 'firstInstallKitSha256') ? ['firstInstallKitSha256'] : [])];
   need(exact(a, keys) && a.contract === ACCEPTANCE_CONTRACT, 'FLEET_ACCEPTANCE_REFUSED', 'shape');
   need(a.firstInstallKitSha256 === undefined || HEX64.test(a.firstInstallKitSha256), 'FLEET_ACCEPTANCE_REFUSED', 'firstInstallKitSha256');
-  need(draft || a.firstInstallKitSha256 !== undefined, 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT');
+  need(draft || !requireKit || a.firstInstallKitSha256 !== undefined, 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT');
   need(VERSION.test(a.version ?? '') && HEX64.test(a.archive_sha256 ?? '') && /^[0-9a-f]{40}$/.test(a.commit ?? ''), 'FLEET_ACCEPTANCE_REFUSED', 'archive');
   need(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(a.repository ?? '') && (draft && a.ciSourceManifestSha256 === undefined || HEX64.test(a.ciSourceManifestSha256 ?? '')),
     'FLEET_ACCEPTANCE_REFUSED', 'source');

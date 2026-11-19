@@ -251,7 +251,9 @@ async function checkKitOnRelease({ ghCommand, repo, tag, kitSha256 }) {
 }
 
 // The first-install kit and the local role images it names, then one sums file over them (see the head of this file).
-export async function attachFirstInstallKit({ version, kit, images = [], repo = DEFAULT_REPO, ghCommand = ['gh'] }) {
+// resume (acceptance-draft only): the same kit may already be there from an upload that stopped half way; what is there is kept when it is the
+// same (the kit by its bytes, the others by size), a truncated image or sums file is replaced, and only what is missing is uploaded, the sums file last.
+export async function attachFirstInstallKit({ version, kit, images = [], repo = DEFAULT_REPO, ghCommand = ['gh'], resume = false }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
   const tag = tagOf(version);
@@ -272,13 +274,26 @@ export async function attachFirstInstallKit({ version, kit, images = [], repo = 
   check(want.length === have.length && want.every((x, i) => x === have[i]), 'FIRST_INSTALL_KIT_IMAGES_NOT_THE_KITS', { kit: want, given: have });
   const sumsName = `${tag}.first-install.SHA256SUMS`;
   const before = viewRelease(ghCommand, repo, tag);
-  check(!before.assets.some(a => a.name === sumsName || a.name === path.basename(kit)), 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED', tag);
+  const present = new Map(before.assets.map(a => [a.name, a.size]));
+  check(resume || !(present.has(sumsName) || present.has(path.basename(kit))), 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED', tag);
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-kit-'));
   try {
+    if (resume && present.has(path.basename(kit))) {
+      // a kit that is already there must be this one: another kit is never replaced or completed
+      const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, path.basename(kit), stage));
+      check(sha(there) === sha(kitBytes), 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT', tag);
+    }
     const sumsFile = path.join(stage, sumsName);
     await fs.writeFile(sumsFile, sumsText([[path.basename(kit), sha(kitBytes)], ...given.map(g => [path.basename(g.file), sha(g.bytes)])]), { flag: 'wx' });
     const uploads = [{ file: kit, size: kitBytes.length }, ...given.map(g => ({ file: g.file, size: g.bytes.length })), { file: sumsFile, size: (await fs.stat(sumsFile)).size }];
     for (const u of uploads) {
+      const name = path.basename(u.file);
+      if (resume && present.has(name)) {
+        if (present.get(name) === u.size) continue;
+        check(name !== path.basename(kit), 'PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT', tag);
+        const del = gh(ghCommand, ['release', 'delete-asset', tag, name, '--repo', repo, '--yes']);   // a truncated image or sums file of an upload that stopped
+        check(del.status === 0, 'PUBLISH_GH_RELEASE_DELETE_ASSET_FAILED', { asset: name, stderr: del.stderr });
+      }
       const up = gh(ghCommand, ['release', 'upload', tag, u.file, '--repo', repo]);
       check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: path.basename(u.file), stderr: up.stderr });
     }
@@ -324,14 +339,17 @@ export async function acceptanceDraft({ version, dir, base, out, images = [], re
   check(base !== null && typeof base === 'object' && !Array.isArray(base), 'ACCEPTANCE_DRAFT_BASE_REFUSED');
   check(Object.keys(base).every(k => ['cluedDecision', 'acceptedAt', 'fleetRefs', 'repository'].includes(k)), 'ACCEPTANCE_DRAFT_BASE_REFUSED', Object.keys(base));
   check((base.repository ?? repo) === repo, 'ACCEPTANCE_NOT_THIS_REPOSITORY', base.repository);
-  let present = true;
-  try { present = (await fs.readdir(out)).length > 0; } catch (e) { if (e?.code !== 'ENOENT') throw e; present = false; }
-  check(!present, 'ACCEPTANCE_DRAFT_OUT_NOT_NEW', out);
+  // --out may be the directory of an earlier run that stopped (kit and images there, no acceptance file yet): that run is resumed; one that finished is not redone
+  let finished = false;
+  try { await fs.access(path.join(out, `${tag}.acceptance.json`)); finished = true; } catch (e) { if (e?.code !== 'ENOENT') throw e; }
+  check(!finished, 'ACCEPTANCE_DRAFT_OUT_NOT_NEW', out);
   const idx = await readIndex(index);
   const at = findRow(idx.lines, version);
   check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', version);
   const c = cells(idx.lines[at]);
   check(c[2] === s.archive_sha256 && c[3] === s.commit, 'ACCEPTANCE_NOT_THIS_RELEASE');
+  // an accepted version is never given a kit afterwards (its acceptance is the Owner's, bound to the hashes it names)
+  check(c[4] === '' && c[5] === '', 'PUBLISH_ACCEPTANCE_ALREADY_ATTACHED', { acceptedAt: c[4], decision: c[5] });
   // 1. the kit, from the installed node, and held to what a new node will read
   const kit = await (deps.kitOf ?? firstInstallKitOf)(root === undefined ? {} : { root });
   const kitBytes = Buffer.from(JSON.stringify(kit) + '\n');
@@ -362,10 +380,10 @@ export async function acceptanceDraft({ version, dir, base, out, images = [], re
     // 4. all checks passed: the directory, the kit and the images in it, the upload and its read-back, and only then the acceptance file
     await fs.mkdir(out, { recursive: true });
     const kitFile = path.join(out, `${tag}.first-install-kit.json`);
-    await fs.writeFile(kitFile, kitBytes, { flag: 'wx' });
+    await fs.writeFile(kitFile, kitBytes);
     const placed = [];
     for (const [id, f] of files) { const to = path.join(out, `role-image-${id}.tar.gz`); await fs.copyFile(f, to); placed.push(to); }
-    const attached = await attachFirstInstallKit({ version, kit: kitFile, images: placed, repo, ghCommand });
+    const attached = await attachFirstInstallKit({ version, kit: kitFile, images: placed, repo, ghCommand, resume: true });
     await checkKitOnRelease({ ghCommand, repo, tag, kitSha256 });
     const acceptanceFile = path.join(out, `${tag}.acceptance.json`);
     await fs.writeFile(acceptanceFile, JSON.stringify(accepted, null, 2) + '\n', { flag: 'wx' });
