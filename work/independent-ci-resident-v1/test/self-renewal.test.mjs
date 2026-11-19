@@ -39,7 +39,7 @@ test('按冻结引用编译 Broker，离线执行续期、拒绝和崩溃恢复'
 });
 
 import { keyCheck, parseRenewalStatus, renewalWatch } from '../src/connection-renewal.mjs';
-test('自检按实际 KSP 与身份逐项判定，缺观察、未找到、错误身份或可打开均失败', () => {
+test('自检要求身份正确、观测新鲜，且两个 KSP 都打不开密钥', () => {
   const at=new Date().toISOString(), now=Date.parse(at);
   const service='S-1-5-80-'+Array.from({length:5},(_,i)=>sidHash.readUInt32LE(4*i)).join('-');
   const profile={ownerSid:'companion',controllerSid:'controller'};
@@ -49,7 +49,7 @@ test('自检按实际 KSP 与身份逐项判定，缺观察、未找到、错误
     'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'}];
   const verdict=(s,r)=>keyCheck(s,...r,profile,now).result;
   assert.equal(verdict(system,rows),'PASS');
-  for (let i=0;i<3;i++) for(const edit of [{tpm:'ABSENT'},{tpm:'UNKNOWN'},{tpm:'OPEN'},{software:'OPEN'},{sid:'wrong'},{at:'2000-01-01T00:00:00Z'}]) {
+  for (let i=0;i<3;i++) for(const edit of [{tpm:'UNKNOWN'},{software:'UNKNOWN'},{tpm:'OPEN'},{software:'OPEN'},{sid:'wrong'},{at:'2000-01-01T00:00:00Z'}]) {
     const changed=structuredClone(rows);Object.assign(changed[i],edit);assert.equal(verdict(system,changed),'FAIL');
   }
   for(const field of ['ci-admission.token','ci-admission.connection.json']) {
@@ -57,6 +57,18 @@ test('自检按实际 KSP 与身份逐项判定，缺观察、未找到、错误
   }
   assert.equal(verdict(null,rows),'FAIL');
   assert.equal(verdict({...system,sid:service},rows),'FAIL');
+});
+
+test('TURING 21:16 反向观测中常驻在两个 KSP 都找不到密钥时通过', () => {
+  const at='2026-11-19T13:16:50.000Z', now=Date.parse(at);
+  const service='S-1-5-80-'+Array.from({length:5},(_,i)=>sidHash.readUInt32LE(4*i)).join('-');
+  const profile={ownerSid:'companion',controllerSid:'controller'};
+  const origin={at,tpm:'DENIED',software:'ABSENT'};
+  const checks=keyCheck({at,sid:'S-1-5-18',provider:'Microsoft Platform Crypto Provider',code:null},
+    {...origin,sid:service,tpm:'ABSENT'}, {...origin,sid:profile.controllerSid},
+    {...origin,sid:profile.ownerSid,'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'},profile,now);
+  assert.equal(checks.resident,true);
+  assert.equal(checks.result,'PASS');
 });
 
 import { createHash } from 'node:crypto';
@@ -520,6 +532,9 @@ test('独立审查的 Broker 行为回归', {skip:process.platform !== 'win32'},
     assert.equal(r.status,0,r.stderr);
     return r.stdout.trim();
   };
+  await t.test('T1 TURING PCP 公钥块准入',()=>run('turing-key-admission',path.join(resident,'test/fixtures/renew-key-facts-turing-pcp.json')));
+  await t.test('T5 打不开密钥时记录两个 KSP 原始 HResult',()=>run('key-open-failure'));
+  await t.test('T5 准入失败指明拒绝项',()=>run('key-admit-failure'));
   const contract=JSON.parse(fs.readFileSync(serverContract,'utf8'));
   await t.test('S1 网关属于正式路由且路径与 D1 相同', () => {
     const url = new URL(run('route'));

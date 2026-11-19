@@ -80,21 +80,11 @@ public sealed class SwapBroker : ServiceBase
         new Thread(delegate() {
             DateTime nextProbe=DateTime.MinValue;
             while(!stopping) {
-                string provider=null, sid=null;
-                try {
-                    using(var id=System.Security.Principal.WindowsIdentity.GetCurrent())
-                    using(var key=RenewalKey.Open()) {
-                        sid=id.User.Value;
-                        if(id.IsSystem) {
-                            RenewalGateway.ActiveReceipt(root);
-                            key.Sign("clued.ci.renew-key-selfcheck/1");provider=key.Provider;
-                        }
-                    }
-                } catch(Exception) { /* report only the refusal */ }
-                try { WritePublicRecord(Path.Combine(root,"broker","renew-key.json"),Renewal.Json(new {
-                    at=Renewal.Stamp(DateTime.UtcNow),sid=sid,provider=provider,code=provider==null?"RENEW_IDENTITY_KEY_UNAVAILABLE":null
-                })); } catch(Exception) { }
-                if(provider!=null && DateTime.UtcNow>=nextProbe && Interlocked.CompareExchange(ref renewalBusy,1,0)==0) {
+                var observation=RenewalKey.SelfCheck(() => {
+                    using(var id=System.Security.Principal.WindowsIdentity.GetCurrent()) return id.User.Value;
+                }, () => RenewalGateway.ActiveReceipt(root));
+                try { WritePublicRecord(Path.Combine(root,"broker","renew-key.json"),Renewal.Json(observation)); } catch(Exception) { }
+                if(observation["provider"]!=null && DateTime.UtcNow>=nextProbe && Interlocked.CompareExchange(ref renewalBusy,1,0)==0) {
                     try {
                         foreach(string kind in new[]{"ci","upgrade"}) ObserveConnection(kind);
                         nextProbe=DateTime.UtcNow.AddDays(1);
@@ -682,17 +672,42 @@ internal sealed class RenewalKey : IDisposable
     internal readonly string Fingerprint, Provider;
     RenewalKey(CngKey value, string provider) {
         key=value; Provider=provider;
-        Renewal.Require(key.IsMachineKey && key.Algorithm==CngAlgorithm.ECDsaP256 && key.ExportPolicy==CngExportPolicies.None,"RENEW_IDENTITY_KEY_UNAVAILABLE");
         var blob=key.Export(CngKeyBlobFormat.EccPublicBlob);
-        Renewal.Require(blob.Length==72 && BitConverter.ToUInt32(blob,0)==0x31534345 && BitConverter.ToUInt32(blob,4)==32,"RENEW_IDENTITY_KEY_UNAVAILABLE");
+        Renewal.Require(Admit(key.IsMachineKey,key.Algorithm.Algorithm,key.ExportPolicy,blob)==null,"RENEW_IDENTITY_KEY_UNAVAILABLE");
         var x=new byte[32];var y=new byte[32];Array.Copy(blob,8,x,0,32);Array.Copy(blob,40,y,0,32);
         Fingerprint=Renewal.Digest("{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\""+Renewal.Base64Url(x)+"\",\"y\":\""+Renewal.Base64Url(y)+"\"}");
     }
 
-    internal static RenewalKey Open() {
+    internal static string Admit(bool isMachineKey, string algorithmName, CngExportPolicies exportPolicy, byte[] publicBlob) {
+        return isMachineKey && algorithmName==CngAlgorithm.ECDsaP256.Algorithm && exportPolicy==CngExportPolicies.None &&
+            publicBlob.Length==72 && BitConverter.ToUInt32(publicBlob,0)==0x31534345 && BitConverter.ToUInt32(publicBlob,4)==32
+            ? null : "RENEW_IDENTITY_KEY_UNAVAILABLE";
+    }
+
+    internal static Dictionary<string,object> SelfCheck(Func<string> identify, Action checkReceipt, Func<string,CngKey> open=null) {
+        string sid=null, provider=null;
+        try {
+            string identity=identify();
+            using(var key=Open(open)) {
+                sid=identity;
+                if(sid=="S-1-5-18") {
+                    checkReceipt();
+                    key.Sign("clued.ci.renew-key-selfcheck/1");
+                    provider=key.Provider;
+                }
+            }
+        } catch(Exception) { /* report only the refusal */ }
+        return new Dictionary<string,object> {
+            {"at",Renewal.Stamp(DateTime.UtcNow)},{"sid",sid},{"provider",provider},
+            {"code",provider==null?"RENEW_IDENTITY_KEY_UNAVAILABLE":null}
+        };
+    }
+
+    internal static RenewalKey Open(Func<string,CngKey> open=null) {
+        if(open==null) open=provider=>CngKey.Open(RenewalKeyAccessV2.Name,new CngProvider(provider),RenewalKeyAccessV2.Flags);
         foreach(string provider in RenewalKeyAccessV2.Providers) {
             CngKey key;
-            try { key=CngKey.Open(RenewalKeyAccessV2.Name,new CngProvider(provider),RenewalKeyAccessV2.Flags); }
+            try { key=open(provider); }
             catch(CryptographicException e) { if(RenewalKeyAccessV2.Absent(e.HResult)) continue; break; }
             try { return new RenewalKey(key,provider); } catch { key.Dispose(); break; }
         }

@@ -14,6 +14,37 @@ public static class RenewalTests {
         return RenewalGateway.DecodeResponse(status,json,Policy());
     }
     static void Check(bool yes, string label) { if (!yes) throw new Exception(label); }
+    static byte[] PublicBlob(uint magic, int cb, int length) {
+        var blob=new byte[length];
+        Array.Copy(BitConverter.GetBytes(magic),0,blob,0,4);
+        Array.Copy(BitConverter.GetBytes(cb),0,blob,4,4);
+        return blob;
+    }
+    static void TuringKeyAdmission(string fixturePath) {
+        var facts=Renewal.Object(File.ReadAllText(fixturePath));
+        var header=(Dictionary<string,object>)facts["publicBlob"];
+        var publicBlob=PublicBlob(Convert.ToUInt32((string)header["magic"],16),(int)header["cb"],(int)header["length"]);
+        var reason=RenewalKey.Admit((bool)facts["isMachineKey"],(string)facts["algorithm"],(CngExportPolicies)(int)facts["exportPolicy"],publicBlob);
+        Check(reason==null,"TURING PCP: expected ECDSA P-256 public blob to pass, got "+reason);
+    }
+    static void KeyOpenFailure() {
+        var observation=Renewal.Object(Renewal.Json(RenewalKey.SelfCheck(()=>"S-1-5-18",
+            ()=>{throw new Exception("receipt called after failed key open");},
+            provider=>{throw new CryptographicException(provider==RenewalKeyAccessV2.Providers[0]
+                ? unchecked((int)0x8028400F) : unchecked((int)0x80090016));})));
+        object diagnostic;
+        Check(observation.TryGetValue("failure",out diagnostic) && diagnostic!=null,"missing open failure diagnostic");
+        var failure=(Dictionary<string,object>)diagnostic;
+        Check((string)failure["step"]=="open","failure step");
+        var attempts=(System.Collections.ArrayList)failure["attempts"];
+        Check(attempts.Count==2,"both provider attempts required");
+        var tpm=(Dictionary<string,object>)attempts[0];
+        var software=(Dictionary<string,object>)attempts[1];
+        Check((string)tpm["provider"]=="tpm" && (string)tpm["hresult"]=="0x8028400F","TPM raw HResult");
+        Check((string)software["provider"]=="software" && (string)software["hresult"]=="0x80090016","software raw HResult");
+        Check((string)observation["sid"]=="S-1-5-18" && observation["provider"]==null &&
+            (string)observation["code"]=="RENEW_IDENTITY_KEY_UNAVAILABLE","failed self-check identity and code");
+    }
     static void Denies(Action invoke, string code) {
         try { invoke(); } catch (BrokerRefusal x) { Check(x.Code == code, code); return; }
         throw new Exception("expected refusal: " + code);
@@ -207,6 +238,13 @@ public static class RenewalTests {
     }
     static void Review(string[] args) {
         const string original="clued_bnd_fixture_old";
+        if(args[0]=="turing-key-admission") { TuringKeyAdmission(args[1]); return; }
+        if(args[0]=="key-open-failure") { KeyOpenFailure(); return; }
+        if(args[0]=="key-admit-failure") {
+            Check(RenewalKey.Admit(true,"ECDSA_P256",CngExportPolicies.AllowExport,PublicBlob(0x31534345,32,72))=="export-policy",
+                "admit failure must identify export-policy");
+            return;
+        }
         if(args[0]=="route") {
             string route=null;
             GlobalInstallation("upgrade",false,null,false,url=>{
