@@ -2074,6 +2074,24 @@ test('the returned entry output is kept when the stage files cannot be collected
   assert.equal(r.record2.ok, false);
 });
 
+// Codex review of 74e7a65e7, medium 2: the returned entry log that cannot be written is not swallowed: the record says so and is not ok,
+// and the guest's copy of the log, once fetched, is written in its place.
+test('an entry log that cannot be written is recorded as not saved, the guest copy written instead, and the collection not ok', opts, () => {
+  const runDir = path.join(tmp, 'evidence-unsaved'); fs.mkdirSync(runDir, { recursive: true });
+  const r = ps(`
+    $script:writes = 0
+    function Write-DrillLines { param($Path, $Lines) $script:writes++; if ($script:writes -eq 1) { throw 'disk full' }; [IO.File]::WriteAllLines($Path, [string[]]$Lines) }
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
+      [ordered]@{ 'first-install.stdout.log' = "guest line one\`r\`nguest line two\`r\`n"; 'stage-timings.json' = '{}'; 'host-result.json' = $null; 'launcher-result.json' = $null } }
+    $c = Save-DrillGuestEvidence ${q(runDir)} $null ([ordered]@{ lines = @('returned line'); exit = 0 })
+    @{ record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); writes = $script:writes }`);
+  assert.equal(r.record.ok, false);
+  assert.equal(r.record.entryLog, 'guest-log');
+  assert.match(r.record.entryLogError, /disk full/);
+  assert.equal(r.writes, 2);
+  assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean), ['guest line one', 'guest line two']);
+});
+
 // Medium 8: -Finalize rebuilds the items from the receipt; A1's step record stays on it.
 test('-Finalize keeps the first-install step record on A1', opts, () => {
   const steps = { missing: false, steps: [{ stage: 'host', name: 'residue', result: 'none', rejectCode: null, detail: null }], lastCompletedStep: 'residue' };

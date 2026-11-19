@@ -2209,12 +2209,21 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
 # the first install is taken on every end of it -- done, stopped, timed out -- before anything else happens to the guest, so always before
 # the checkpoint restore. Only what the entry wrote under the guest work directory: its printed lines, the stage timings and the two stage
 # result files (no credential file). A failed collection is recorded (guest-evidence.json) and never replaces the run's own outcome.
+function Write-DrillLines([string]$Path, [string[]]$Lines) { [IO.File]::WriteAllLines($Path, $Lines) }
+
 function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut) {
   $names = @($script:Drill.GuestEntryLog, 'stage-timings.json', 'host-result.json', 'launcher-result.json')
-  $record = [ordered]@{ ok = $false; code = $null; detail = $null; missing = @(); at = [DateTimeOffset]::UtcNow.ToString('o') }
+  # entryLog: which copy of the entry's lines first-install.log holds -- 'returned' (what the entry gave back), 'guest-log' (the guest's
+  # copy, fetched below), or $null (none written). ok only when everything was written, the returned lines included.
+  $record = [ordered]@{ ok = $false; code = $null; detail = $null; missing = @(); entryLog = $null; entryLogError = $null; at = [DateTimeOffset]::UtcNow.ToString('o') }
   $timings = $null
-  # what the entry already returned is kept first: a failed collection below loses the stage files only (Codex review of ced480363, medium 6)
-  if ($null -ne $EntryOut) { try { [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]@($EntryOut.lines)) } catch { } }
+  $logFile = Join-Path $RunDir 'first-install.log'
+  # what the entry already returned is kept first: a failed collection below loses the stage files only (Codex review of ced480363, medium 6);
+  # a failed write is not swallowed: recorded, and the guest's copy written in its place once fetched (review of 74e7a65e7, medium 2)
+  if ($null -ne $EntryOut) {
+    try { Write-DrillLines $logFile @($EntryOut.lines); $record.entryLog = 'returned' }
+    catch { $record.entryLogError = [string]$_.Exception.Message }
+  }
   # an interactive run sets its own password for the guest account (Wait-DrillInteractive); the collection logs on with it
   if ($script:DrillInteractiveCredential) { $Cred = $script:DrillInteractiveCredential }
   try {
@@ -2228,14 +2237,15 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
     $json = { param($n) $t = & $text $n; if ($null -eq $t) { return $null }; try { $t | ConvertFrom-Json } catch { [ordered]@{ unreadable = $true } } }
     $record.missing = @($names | Where-Object { $null -eq (& $text $_) })
     $log = & $text $script:Drill.GuestEntryLog
-    if ($null -eq $EntryOut) {
+    if ($null -eq $record.entryLog) {
       $lines = @(); if ($null -ne $log) { $lines = @($log -split "`r?`n" | Where-Object { $_ -ne '' }) }
-      [IO.File]::WriteAllLines((Join-Path $RunDir 'first-install.log'), [string[]]$lines)
+      Write-DrillLines $logFile $lines
+      $record.entryLog = 'guest-log'
     }
     $timings = & $json 'stage-timings.json'
     Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings
     Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') ([ordered]@{ 'host-result.json' = (& $json 'host-result.json'); 'launcher-result.json' = (& $json 'launcher-result.json') })
-    $record.ok = $true
+    $record.ok = ($null -eq $record.entryLogError)
   } catch {
     $c = Get-DrillCode $_
     $record.code = $c.code; $record.detail = $c.detail
@@ -2323,6 +2333,8 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   # The first install's step record (Fable renew-key ruling, supplement "companion account and evidence" section 2.3), read from what the
   # run directory holds whatever the run's end: under A1 (which needs it), or in the evidence when the run ended before there was a verdict.
   $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
+  $guestEvidence = Join-Path $runDir 'guest-evidence.json'
+  if (Test-Path -LiteralPath $guestEvidence -PathType Leaf) { try { $evidence.guestEvidence = Read-DrillJson $guestEvidence } catch { $evidence.guestEvidence = @{ unreadable = $true } } }
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
