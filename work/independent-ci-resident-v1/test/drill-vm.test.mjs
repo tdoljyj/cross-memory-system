@@ -3599,7 +3599,7 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
       if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); exit = 0; stderr = '' } }
       if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
       if ($Step -ceq 'read-after-install' -or $Step -ceq 'read-after-reinstall') { return $read }
-      if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 0; launcherVerdict = 'BOOTSTRAP_DONE' } }
+      if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 0; launcherVerdict = 'BOOTSTRAP_DONE' } }
       if ($Step -ceq 'prepare-again') { return @{ status = 'FLEET_NODE_INSTALL_PREPARED'; exit = 0; stderr = '' } }
       throw "unexpected step $Step"
     }
@@ -3607,11 +3607,16 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
     $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; perNodeSteps = @(); prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
     $code = try { $run = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; 'done' } catch { $c = Get-DrillCode $_; "$($c.code) $($c.detail)" }
     $re = Join-Path ${q(runDir)} 'reinstall.json'
-    @{ code = $code; steps = @($script:steps); reinstall = $(if (Test-Path -LiteralPath $re) { Read-DrillJson $re } else { $null }) }`);
+    # the final verdict as Invoke-DrillPreparedRun forms it from this run (6th review round, low 3)
+    $a8 = if ($run) { @(Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = $false; kit = $testKit; candidate = $false; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) } | Where-Object { $_.id -eq 'A8' })[0] } else { $null }
+    @{ code = $code; steps = @($script:steps); reinstall = $(if (Test-Path -LiteralPath $re) { Read-DrillJson $re } else { $null }); a8 = $a8 }`);
   assert.equal(r.code, 'done');
   assert.ok(r.steps.includes('prepare-again'), JSON.stringify(r.steps));
   assert.equal(r.reinstall.reverifyPassed, true);
   assert.equal(r.reinstall.prepareAgainStatus, 'FLEET_NODE_INSTALL_PREPARED');
+  // and the final A8 passes on it (6th review round, low 3)
+  assert.equal(r.a8.pass, true, r.a8.detail);
+  assert.match(r.a8.detail, /upgrade=FLEET_NODE_ALREADY_AT_THIS_PACKAGE .*reverify=True prepareAgain=FLEET_NODE_INSTALL_PREPARED/);
   // the re-verify's input carries the same launcher verdict and the pause read after the reinstall
   assert.match(fs.readFileSync(script, 'utf8'), /\$reVerdict = Get-DrillVerdict @\{[^\n]*launcher = \$launcher; pause = \$again\.pause/);
 });
