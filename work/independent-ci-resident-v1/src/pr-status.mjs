@@ -502,6 +502,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
 }
 const TRAIN_OWNER_TEXT = Object.freeze({
   TRAIN_LANDED_TREE_MISMATCH: { title: '紧急：车头合入的树与测过的不同', body: '第 10 段发现落地的合并树不等于测过的 S 的树，已暂停常驻执行器、没有 adopt。请检查后由 Owner 恢复。' },
+  TRAIN_LANDING_STATE_UNREADABLE: { title: '合并列车的落地状态读不出', body: '第 10 段读不出本节点的落地状态（state\\v2\\train-sweep 下的 landing-state），而本节点已有落地批次，为不丢调度记录不开车头批次；main 不受影响。需要查明该记录。' },
   TRAIN_SOURCE_MISMATCH: { title: '常驻节点的 Source 不一致', body: '24 小时内有心跳的常驻节点里有一个跑着别的 Source，本节点不跑 on 模式的第 10 段。请让全部常驻节点装同一个包。' },
 });
 

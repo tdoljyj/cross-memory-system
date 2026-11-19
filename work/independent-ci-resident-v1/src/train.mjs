@@ -24,13 +24,14 @@ export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUO
 export const RUN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
 export const DECISIONS = Object.freeze([...WOULD_DO, 'TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH',
   'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED', 'FRONT_ADOPTED', 'FRONT_RETURNED', 'FRONT_FAILED_REPORTED', 'REVOKE_ONLY_DONE',
-  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN']);
+  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN', 'TRAIN_LANDING_STATE_UNREADABLE']);
 // Stage 10's decisions after which the executor starts no new batch (DESIGN §41.6: no publication of any stage before the
 // take-over sweep; no on-mode duty while another node runs another Source, or while the nodes' Sources cannot be read).
 export const TRAIN_SCHEDULE_DEFERRALS = Object.freeze(['TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']);
 // The decisions the Owner hears of (a notice, one per key).
 // DESIGN §65: TRAIN_STRICT_OFF, strict read off in strict-permanent mode (sweep audit or off): PAUSE and an Owner notice.
-export const TRAIN_OWNER_NOTICE_DECISIONS = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_STRICT_OFF']);
+// D6 §8.4 (b): TRAIN_LANDING_STATE_UNREADABLE, push mode cannot read this node's landing state beside its landing batches (no batch opens).
+export const TRAIN_OWNER_NOTICE_DECISIONS = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_STRICT_OFF', 'TRAIN_LANDING_STATE_UNREADABLE']);
 export const REQUEST_PAUSE_CODES = Object.freeze(['TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_STRICT_OFF']);
 export const TRAIN_RUN_SWEEPS = Object.freeze(['gate', 'audit', 'off']);
 // Front batches per head (DESIGN §41.4: attempt 2 and both kinds of re-open count).
@@ -264,6 +265,8 @@ export function sweepOf(s) {
     ...(s.providerBudget !== undefined ? { providerBudget: providerBudgetOf(s.providerBudget) } : {}) });
 }
 
+// D6 §8.4 (b): of stage 10's landing facts (push mode) the summary and state\status.json keep the error code only, or nothing.
+const landingOf = l => (plain(l) && typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? Object.freeze({ error: l.error }) : null);
 const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunning === true, adopted: a.adopted === true, returned: a.returned === true, failedReported: a.failedReported === true,
   keptAlive: count(a.keptAlive) ?? 0, watermarkReported: a.watermarkReported === true,
   revokeHead: plain(a.revokeHead) && UUID.test(a.revokeHead.requestId ?? '') ? Object.freeze({ requestId: a.revokeHead.requestId, done: a.revokeHead.done === true }) : null }) : null);
@@ -296,8 +299,9 @@ export function trainSummary(f) {
   if ((f.sweep?.strictCoverage !== undefined || f.sweep?.strictFrontReadiness !== undefined) && !sweep) return null;
   // DESIGN §62.4: the take-over front binding observation, kept by the executor only (a malformed one is none: no exception).
   const frontBind = f.mode === 'on' && decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && f.wouldDo === 'FRONT_NOT_BOUND' ? frontBindOf(f.frontBind, f.front) : null;
+  const landing = f.mode === 'on' ? landingOf(f.landing) : null;
   return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch,
-    ...(frontBind ? { frontBind } : {}) });
+    ...(frontBind ? { frontBind } : {}), ...(landing ? { landing } : {}) });
 }
 
 function frontBindOf(b, front) {
@@ -330,6 +334,7 @@ const ON_TEXT = {
   TRAIN_SOURCE_UNREADABLE: '读不到各常驻节点的 Source，暂不开车',
   TRAIN_STRICT_OFF: 'main 的 strict 被关了：strict 永久开模式下不发绿，已停车，等 Owner 把 strict 开回',
   TRAIN_FRONT_NOT_PROVEN: '这一轮没能确认车头的严格检查条件，暂不开车头批次，下一轮再看',
+  TRAIN_LANDING_STATE_UNREADABLE: '本节点的落地状态读不出、又已有落地批次，暂不开车头批次，已告知 Owner',
 };
 // Generation 15 (DESIGN 60.2): why nothing goes green while the train re-sweeps everything after main was rewritten.
 export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
@@ -342,7 +347,9 @@ export function trainPageLine(summary, pr) {
     ? '车头采用严格检查路径，历史清扫仍单独进行。'
     : summary.sweep?.strictCoverage?.state === 'ready' && summary.sweep.strictCoverage.backgroundAllPending !== null
       ? '车头严格屏障已核验，后台全量清扫仍未完成。' : '';
-  return text ? `合并列车：你是车头。${text}。${background}` : null;
+  // D6 §8.4 (b): why the landing state could not be read or written (facts landing.error), named on the line.
+  const landingError = summary.landing?.error ? `（落地状态：${summary.landing.error}）` : '';
+  return text ? `合并列车：你是车头。${text}${landingError}。${background}` : null;
 }
 
 // The status reader's copy of a summary (untrusted bytes in state\status.json): the same fields with `at` in ms, or null.
@@ -357,8 +364,9 @@ export function parseTrainLast(l) {
     mainSha: SHA.test(l.mainSha ?? '') ? l.mainSha : null, strict: typeof l.strict === 'boolean' ? l.strict : null,
     wouldRevokeCount: Number.isSafeInteger(l.wouldRevokeCount) && l.wouldRevokeCount >= 0 ? l.wouldRevokeCount : 0 };
   if (!v2) return Object.freeze(base);
+  const landing = landingOf(l.landing);
   return Object.freeze({ ...base, decision: DECISIONS.includes(l.decision) ? l.decision : null, sweep: sweepOf(l.sweep),
-    requestPause: REQUEST_PAUSE_CODES.includes(l.requestPause) ? l.requestPause : null });
+    requestPause: REQUEST_PAUSE_CODES.includes(l.requestPause) ? l.requestPause : null, ...(landing ? { landing } : {}) });
 }
 
 // The status snapshot's `train.sweep` (DESIGN §41.7): when this node last completed a full sweep, whether that was after it

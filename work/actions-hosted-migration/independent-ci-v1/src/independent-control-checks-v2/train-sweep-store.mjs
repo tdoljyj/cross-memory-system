@@ -283,6 +283,10 @@ export class TrainSweepStore {
     if ([...this.tornNames.values()].some(t => t.kind === 'landing-state' && (p === null || t.ms >= Date.parse(p.writtenAt)))) fail('TRAIN_LANDING_STATE_UNREADABLE');
     return p ? { bad: p.bad, suspect: p.suspect, adopted: p.adopted, handled: p.handled } : { bad: [], suspect: null, adopted: [], handled: [] };
   }
+  // D6 §8.4 (a): whether this node has any landing batch, readable or not (a name of the kind is enough); a readdir that fails throws.
+  async anyLandingBatch() {
+    return (await fs.readdir(this.directory)).some(name => !name.endsWith('.tmp') && NAME.exec(name)?.[1] === 'landing-batch');
+  }
   async appendFrontBatch(r) { return this.write('front', { contract: FRONT_BATCH_CONTRACT, ...r }); }
   // Newest revision of each actual execution, newest first. A timestamp refresh preserves every tested identity
   // field and the attempt; its append-only record is not another execution or another consumed front attempt.

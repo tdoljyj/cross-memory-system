@@ -25,7 +25,8 @@
 //                        (install-resident.ps1 Get-AclPlan 'owner\train-review'; written by the Owner with tools/rearm-tool.mjs
 //                        mark-train-shadow-reviewed, §41.9 step 3); an install without that folder leaves the mark unreadable and
 //                        every shadow record stays.
-//   train-sweep          sweep proofs, full-sweep records and front batches: 90 days.
+//   train-sweep          sweep proofs, full-sweep records, front batches, landing batches and landing states: 90 days; landing batches
+//                        and landing states also at most LANDING_BATCH_KEEP and LANDING_STATE_KEEP, newest first (D6 §8.4 (c)).
 //   green-ledger\closed  a <yyyy-mm> directory one year after its month ended.
 //   receipts\retention   these pass records: 90 days.
 // As §35.3: planned first; only names of the area's own kinds directly below the area's own real directory; a redirected
@@ -59,7 +60,7 @@ export const DEFAULT_ROOTS = Object.freeze({ receipts: STATE_V2.receipts, trainS
 const RUN = '[0-9a-f]{16}-[0-9a-f]{12}';
 const RUN_ID = new RegExp(`^${RUN}$`);
 const STAMPED = new RegExp(`^(\\d{13})-${RUN}\\.json$`);
-const SWEPT = new RegExp(`^(scan-on|scan-shadow|scan-strict|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\\d{13})-${RUN}-[0-9a-f]{8}\\.json$`);
+const SWEPT = new RegExp(`^(landing-batch|landing-state|scan-on|scan-shadow|scan-strict|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\\d{13})-${RUN}-[0-9a-f]{8}\\.json$`);
 const MONTH = /^(\d{4})-(\d{2})$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };
@@ -71,10 +72,15 @@ const stamped = kind => n => { const m = STAMPED.exec(n); return m && { kind, ti
 const errorCode = e => (/^RETENTION_[A-Z0-9_]{1,60}$/.test(e?.code ?? '') ? e.code
   : ['EPERM', 'EACCES', 'EBUSY'].includes(e?.code) ? 'RETENTION_PERMISSION_REFUSED' : 'RETENTION_OPERATION_UNCONFIRMED');
 
+// D6 §8.4 (c): push mode's records (train-sweep-store.mjs) kept per kind however young: stage 10 reads the newest landing state only, and
+// at most the newest 20 landing batches (adoptLanded) besides the batch of a front's own S (a front batch of the last days).
+export const LANDING_BATCH_KEEP = 200;
+export const LANDING_STATE_KEEP = 20;
 // root: a DEFAULT_ROOTS key; parse(name) -> { kind, time (ms) } | null (not ours: never touched); keepNewest per kind.
 export const STATE_RETENTION_RULES = Object.freeze({
   'train-shadow': Object.freeze({ root: 'trainShadow', sub: [], directories: false, keepMs: 90 * DAY, keepNewest: 1, review: true, maxDeletes: 2000, parse: stamped('shadow') }),
   'train-sweep': Object.freeze({ root: 'trainSweep', sub: [], directories: false, keepMs: 90 * DAY, keepNewest: 1, review: false, maxDeletes: 2000,
+    keepAtMost: Object.freeze({ 'landing-batch': LANDING_BATCH_KEEP, 'landing-state': LANDING_STATE_KEEP }),
     parse: n => { const m = SWEPT.exec(n); return m && { kind: m[1], time: Number(m[2]) }; } }),
   // a month's time is its end (the first instant of the next month)
   'green-ledger-closed': Object.freeze({ root: 'greenLedger', sub: ['closed'], directories: true, keepMs: 365 * DAY, keepNewest: 0, review: false, maxDeletes: 4,
@@ -154,7 +160,8 @@ export async function pruneArea({ area, roots = DEFAULT_ROOTS, now, reviewedAt =
   const due = [];
   for (const kind of new Set(entries.map(e => e.kind))) {
     const newestFirst = entries.filter(e => e.kind === kind).sort((a, b) => (b.time - a.time) || (a.name < b.name ? 1 : -1));
-    due.push(...newestFirst.slice(rule.keepNewest).filter(e => e.time < now - rule.keepMs));
+    const most = rule.keepAtMost?.[kind] ?? Infinity;
+    due.push(...newestFirst.slice(rule.keepNewest).filter((e, i) => e.time < now - rule.keepMs || i + rule.keepNewest >= most));
   }
   due.sort((a, b) => (a.time - b.time) || (a.name < b.name ? -1 : 1));
   const go = due.filter(e => !e.linked);
