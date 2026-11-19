@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -64,7 +64,7 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
     await admin.query("insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id) values($1,$2,'ci-admission',now(),$3)", [user, ids.ci, roleReceipt]);
     const anon = server.getPgClient(); clients.push(anon); await anon.connect(); await anon.query('set role anon');
     const gateway = server.getPgClient(); clients.push(gateway); await gateway.connect(); await setWorkerGatewayCaller(gateway);
-    const call = async (who, name, input) => CI_SIGNATURES.includes(name + '(text,jsonb)')
+    const call = async (who, name, input) => [...CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE].includes(name + '(text,jsonb)')
       ? (await anon.query(`select public.${name}($1,$2) value`, [tokens[who], input])).rows[0].value
       : workerGatewayRpc(gateway, name, tokens[who], input);
     const committed = r => { assert.equal(r.status, 'committed', JSON.stringify(r)); return r; };
@@ -100,7 +100,8 @@ test('a merged PR ends its claim merge-slot turn; the claim joins again at the b
       assert.equal(j.joined, true, JSON.stringify(j));
     };
     const adopt = n => call('ci', 'clued_work_claim_adopt_v1', { scope: 'global', pr_ref: `${repo}#${n}`, merge_sha: 'f'.repeat(40) });
-    const reportClosed = n => call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#${n}`, github_state: 'closed' });
+    // GitHub shows the PR closed: the resident reports it (20261119140000); giving back a slot ends nothing.
+    const reportClosed = n => call('ci', 'clued_work_pr_lifecycle_report_v1', { scope: 'global', repository: repo, prs: [{ pr_number: n, state: 'closed' }] });
     const binding = async n => (await admin.query('select status from clued_private.work_claim_pr_task_bindings_v1 where repo_id=$1 and pr_number=$2', [repo, n])).rows[0]?.status;
     const queue = async () => (await admin.query('select clued_private.work_claim_merge_queue_current_v1($1,$2) v', [user, `merge:${repo}:main`])).rows[0].v;
     const entry = (q, r) => q.entries.find(e => e.claim_id === r.claim.claim_id);

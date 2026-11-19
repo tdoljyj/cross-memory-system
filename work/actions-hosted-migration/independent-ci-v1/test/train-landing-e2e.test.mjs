@@ -739,23 +739,91 @@ test('push: a member that moved to a new head after its batch landed is not adop
   assert.deepEqual(e.adopted.map(a => a[0]).sort(), [910, 911]);
 });
 
-// Field 2026-11-13: Native finishes a PR's Task binding only on adopt or return, and the holder releases its claim as soon as it
-// merges, so a PR the holder merged (or closed) itself was never adopted and its binding stayed active for good (25 such rows were
-// cleared by hand at 07:06Z). Stage 10 reads every bound PR of the holder; one GitHub has closed is ended with adopt or return.
-test('field 2026-11-13: bound PRs merged or closed outside the train are adopted or returned by stage 10, the open one stays front', async t => {
+// Field 2026-11-13: a PR the holder merged (or closed) itself was never adopted and its binding stayed active for good (25 such rows
+// were cleared by hand at 07:06Z). FABLE 11-19 L2: stage 10 reconciles every binding Native still holds open with GitHub, so the
+// holder's bound PRs GitHub has ended are reported (merged with the merge commit, closed) and the open one stays front.
+test('field 2026-11-13: bound PRs merged or closed outside the train are reported by stage 10, the open one stays front', async t => {
   const e = await world(t, { prs: [910, 911, 912], sharedClaim: true });
-  const returned = [];
-  e.native.port.returnSlot = async i => { returned.push(i.pr); e.queue.splice(e.queue.indexOf(i.pr), 1); return { onDuty: true, returned: false, claims: [] }; };
+  const reported = [];
+  e.native.port.lifecycleReport = async ({ prs }) => {
+    for (const p of prs) { reported.push([p.pr, p.state, p.mergeSha]); e.queue.splice(e.queue.indexOf(p.pr), 1); }
+    return { onDuty: true, deployed: true, tracked: [...e.queue] };
+  };
+  e.native.port.returnSlot = async () => assert.fail('giving back a slot ends no binding');
   const W = e.W, M = W.merge(e.main(), e.head(910), ':holder');
   W.refs.set('heads/main', M);
   Object.assign(W.pulls.get(910), { state: 'closed', merged: true, mergeSha: M });
   Object.assign(W.pulls.get(912), { state: 'closed', merged: false });
   let batch = null;
   for (let i = 0; i < 6 && !batch; i++) batch = (await stage10(e)).facts.openFrontBatch;
-  assert.deepEqual(e.adopted, [[910, M]]);
-  assert.deepEqual(returned, [912]);
+  assert.deepEqual(reported, [[912, 'closed', null], [910, 'merged', M]]);
+  assert.deepEqual(e.adopted, []);
   assert.deepEqual(e.queue, [911]);
   assert.equal(batch?.pr, 911);
+});
+
+// FABLE 11-19 §4.1 (7): stage 10 asks Native which bindings are still open (tracked), reads only those GitHub no longer lists as
+// open and reports what GitHub says, merged with its merge commit or closed, in one call; an open PR is never reported. D merged
+// after its holder had released the claim itself (#1173): it is reported like C, whatever the claim.
+test('pr lifecycle reconcile: one report per round names B closed, C and D merged with their merge commits, never the open A', async t => {
+  const e = await world(t, { prs: [910, 911, 912, 913] });
+  e.queue.splice(1);
+  const W = e.W, MC = W.merge(e.main(), e.head(912), ':c'), MD = W.merge(e.main(), e.head(913), ':d');
+  Object.assign(W.pulls.get(911), { state: 'closed', merged: false });
+  Object.assign(W.pulls.get(912), { state: 'closed', merged: true, mergeSha: MC });
+  Object.assign(W.pulls.get(913), { state: 'closed', merged: true, mergeSha: MD });
+  const reports = [], reads = [];
+  let tracked = [910, 911, 912, 913];
+  e.native.port.lifecycleReport = async ({ prs }) => {
+    reports.push(prs); tracked = tracked.filter(n => !prs.some(p => p.pr === n));
+    return { onDuty: true, deployed: true, tracked: [...tracked] };
+  };
+  const read = e.gh.readPullRequest;
+  e.gh.readPullRequest = async n => { reads.push(n); return read(n); };
+  await stage10(e);
+  assert.deepEqual(reports, [[], [{ pr: 913, state: 'merged', mergeSha: MD }, { pr: 912, state: 'merged', mergeSha: MC }, { pr: 911, state: 'closed', mergeSha: null }]]);
+  assert.deepEqual(reads.filter(n => n !== 910).sort(), [911, 912, 913]);
+  // Steady state: every tracked binding is open on GitHub, so a round asks once and reads no PR for it.
+  reports.length = 0; reads.length = 0;
+  await stage10(e);
+  assert.deepEqual(reports, [[]]);
+  assert.deepEqual(reads.filter(n => n !== 910), []);
+});
+
+// FABLE 11-19 §4.1 (9): the reconcile is auxiliary. An RPC that is not deployed (PGRST202), a GitHub read that throws or a reply that
+// cannot be read only means no reconcile this round: the round decides as it would without it and never asks for a pause.
+test('pr lifecycle reconcile is auxiliary: not deployed, a failed GitHub read or an unreadable reply skips it and changes no decision', async t => {
+  const unreadable = () => Object.assign(new Error('MERGE_TRAIN_NATIVE_UNREADABLE'), { code: 'MERGE_TRAIN_NATIVE_UNREADABLE' });
+  const round = async patch => {
+    const e = await world(t, { prs: [910, 911] });
+    e.queue.splice(1);
+    Object.assign(e.W.pulls.get(911), { state: 'closed', merged: false });
+    e.asked = [];
+    patch(e);
+    const r = await stage10(e);
+    return { e, facts: [r.facts.decision, r.facts.requestPause, r.facts.openFrontBatch?.pr ?? null] };
+  };
+  const answer = (e, reply) => { e.native.port.lifecycleReport = async ({ prs }) => { e.asked.push(prs); return reply(prs); }; };
+  const baseline = await round(e => answer(e, () => ({ onDuty: true, deployed: true, tracked: [] })));
+  assert.deepEqual(baseline.e.asked, [[]]);
+  assert.equal(baseline.facts[1], null);
+  const cases = {
+    'not deployed': e => answer(e, () => ({ onDuty: null, deployed: false, tracked: null })),
+    'first reply unreadable': e => answer(e, () => { throw unreadable(); }),
+    'github read throws': e => {
+      answer(e, () => ({ onDuty: true, deployed: true, tracked: [911] }));
+      const read = e.gh.readPullRequest;
+      e.gh.readPullRequest = async n => { if (n === 911) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return read(n); };
+    },
+    'report reply unreadable': e => answer(e, prs => { if (prs.length) throw unreadable(); return { onDuty: true, deployed: true, tracked: [911] }; }),
+    'tracked malformed': e => answer(e, () => ({ onDuty: true, deployed: true, tracked: 'all' })),
+  };
+  for (const [name, patch] of Object.entries(cases)) {
+    const r = await round(patch);
+    assert.ok(r.e.asked.length >= 1, `${name}: the reconcile was tried`);
+    assert.deepEqual(r.facts, baseline.facts, name);
+  }
+  assert.deepEqual((await round(cases['github read throws'])).e.asked, [[]], 'nothing readable from GitHub: no report');
 });
 
 // Field 2026-11-13 (#1087): the holder's CI head is a head its PR no longer has (the author pushed). No bound PR matches it, which

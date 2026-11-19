@@ -9,8 +9,8 @@
 //                or KooYomi, only its own cursor (state\v2\train-sweep, full-shadow records: never counted for on).
 //   on           (ACTIVE only; DESIGN §41.2-41.6) Source check over ci_nodes_status; the take-over sweep (always a full
 //                sweep since onSince: no watermark short cut, review R2 B1); the incremental sweep and a full-sweep
-//                segment, with revocations confirmed twice; the sweep proof; keepalive once; adopt, return or touch
-//                failed; the protected-layer check (H contains T); and for OPEN_FRONT_BATCH the hard-cap budget, touch
+//                segment, with revocations confirmed twice; the sweep proof; keepalive once; the PR lifecycle reconcile
+//                (reconcileLifecycle); adopt, return or touch failed; the protected-layer check (H contains T); and for OPEN_FRONT_BATCH the hard-cap budget, touch
 //                running and its read-back, then the front batch (the executor's one source of S), unless this node's
 //                batch of the same S is still running. The watermark (informational) after a confirmed full sweep. Generation 28
 //                (resident ADR 0017): a bound front that waits for its front batch, or whose front batch runs or is parked, gets
@@ -206,9 +206,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
-  const endedBound = [];
   if (holder?.boundPrs?.length > 1) {
-    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, ended: endedBound, landability });
+    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, landability });
     holder = selected ?? { ...holder, pr: null, boundPr: null };
     duty = { ...duty, holders: [holder] };
   }
@@ -570,17 +569,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       frontLanded = holder?.pr != null && l.adopted.includes(holder.pr);
       landingState = l.state;
     }
-    // Field 2026-11-13: Native finishes a PR's Task binding only on adopt or return, and a holder that merges or closes a PR itself
-    // releases its claim first, so nothing else ends that binding. A bound PR GitHub has closed is ended here, merged with its merge
-    // commit, otherwise returned; Native keeps the slot while the Task has another active PR (migration 20261108161615). A PR the
-    // landing above has just answered is not asked again.
-    for (const p of lostDuty ? [] : endedBound.filter(p => !landedNow.has(p.number))) {
-      try {
-        fx.n++;
-        const a = p.merged === true ? await native.adopt({ pr: p.number, mergeSha: p.merge_commit_sha }) : await native.returnSlot({ pr: p.number });
-        if (!a.onDuty) { lostDuty = true; fx.n--; break; }
-      } catch { /* unreadable reply: counted; the next round reads the PR again */ }
-    }
+    // FABLE 11-19 L2: a PR binding ends on GitHub's facts only. Every round reconciles Native's open bindings with GitHub (after the
+    // landing's adopts, so a PR it has just answered is no longer tracked); this replaces ending the holder's bound PRs here.
+    const lifecycle = lostDuty ? { reported: new Set() } : await reconcileLifecycle({ github, native, fx });
     if (!takeoverPending && !lostDuty && holder?.pr && front && !frontLanded) {
       try {
         const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
@@ -609,6 +600,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
             if (!a.onDuty) { lostDuty = true; fx.n--; } else actions.adopted = a.adopted === true;
           } else requestPause = 'TRAIN_LANDED_TREE_MISMATCH';
         } else if (front.state === 'closed') {
+          // Two calls, each its own: GitHub's closure ends the binding (unless this round's reconcile already reported it), and the
+          // merge slot is given back (giving it back ends nothing).
+          if (!lifecycle.reported.has(holder.pr)) await reportLifecycle(native, fx, [{ pr: holder.pr, state: 'closed', mergeSha: null }]);
           fx.n++;
           const r = await native.returnSlot({ pr: holder.pr });
           if (!r.onDuty) { lostDuty = true; fx.n--; } else actions.returned = r.returned === true;
@@ -719,14 +713,12 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
 // Task/current generation. Several PRs of that Task are normal scheduling choices;
 // contradictory Task/generation projections, unreadable data and deadline fail closed.
 async function findFrontBind({ github, native, fx, job, holder, rows, claimScope, until, clock, readOnly = false,
-  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, ended = null, preferLandable = false, landability }) {
+  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, preferLandable = false, landability }) {
   const matches = [], observed = [];
   for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, maxReads)) {
     if (clock() >= until) return null;
     let pull;
     try { pull = await github.readPullRequest(row.number, { until }); } catch { return null; }
-    if (ended && pull?.number === row.number && pull.state === 'closed' && pull.base?.ref === 'main'
-      && (pull.merged !== true || SHA.test(pull.merge_commit_sha ?? ''))) ended.push(pull);
     if (!eligibleBindingPull(pull, job.repo)) continue;
     let binding;
     try { binding = await projectPull({ native, fx, pull, job, claimScope, readOnly, until, clock }); } catch { return null; }
@@ -774,6 +766,55 @@ async function landable(github, pull, listed = null, { rules = null, appId = APP
   for (const c of listed.checks) if (c?.app?.id === ACTIONS_APP_ID && c.head_sha === pull.head.sha && Number.isSafeInteger(c.id)
     && !(latest.get(c.name)?.id > c.id)) latest.set(c.name, c);
   return ![...latest.values()].some(c => c.status === 'completed' && FAILED_CONCLUSIONS.has(c.conclusion));
+}
+
+// FABLE 11-19 L2: the PR's real lifecycle on GitHub is the only source of a binding's end. Native says which of this repository's PR
+// bindings it still holds open (tracked); every PR GitHub lists open now (all pages) is left out, at most LIFECYCLE_MAX_READS of the
+// rest are read (highest number first) and what GitHub says goes back in one report: merged with its merge commit, or closed. An
+// open PR is never reported. Steady state (tracked bindings are open PRs): one RPC and no PR read; a backlog drains
+// LIFECYCLE_MAX_READS a round. Auxiliary (never on the train's path): a port without the report, an RPC that is not deployed, a GitHub
+// read that fails or a reply that cannot be read only means no reconcile this round; it never pauses the train or touches admission.
+export const LIFECYCLE_MAX_READS = 25;
+const OPEN_PAGE = 100, OPEN_MAX_PAGES = 30;
+async function reconcileLifecycle({ github, native, fx }) {
+  const out = { reported: new Set() };
+  if (typeof native?.lifecycleReport !== 'function') return out;
+  let tracked;
+  try {
+    const asked = await native.lifecycleReport({ prs: [] });
+    if (asked?.onDuty !== true || !Array.isArray(asked.tracked) || !asked.tracked.every(n => Number.isSafeInteger(n) && n > 0)) return out;
+    tracked = asked.tracked;
+  } catch { return out; }
+  if (!tracked.length) return out;
+  const open = new Set();
+  try {
+    for (let page = 1; page <= OPEN_MAX_PAGES; page++) {
+      const pulls = (await github.readPullsPage({ state: 'open', sort: 'created', direction: 'desc', page, perPage: OPEN_PAGE }))?.pulls;
+      if (!Array.isArray(pulls)) return out;
+      for (const p of pulls) open.add(p?.number);
+      if (pulls.length < OPEN_PAGE) break;
+    }
+  } catch { return out; }
+  const facts = [];
+  for (const n of [...new Set(tracked)].filter(n => !open.has(n)).sort((a, b) => b - a).slice(0, LIFECYCLE_MAX_READS)) {
+    let pull;
+    try { pull = await github.readPullRequest(n); } catch { continue; }
+    if (pull?.number !== n || pull.state !== 'closed') continue;
+    if (pull.merged !== true) facts.push({ pr: n, state: 'closed', mergeSha: null });
+    else if (SHA.test(pull.merge_commit_sha ?? '')) facts.push({ pr: n, state: 'merged', mergeSha: pull.merge_commit_sha });
+  }
+  if (facts.length && await reportLifecycle(native, fx, facts)) for (const f of facts) out.reported.add(f.pr);
+  return out;
+}
+// One lifecycle report write -> whether Native took it. A lost reply may follow a commit: counted, and the next round asks again.
+async function reportLifecycle(native, fx, prs) {
+  if (typeof native?.lifecycleReport !== 'function') return false;
+  fx.n++;
+  try {
+    const r = await native.lifecycleReport({ prs });
+    if (r?.onDuty !== true) { fx.n--; return false; }
+    return true;
+  } catch { return false; }
 }
 
 async function selectProjectedHolder({ holder, ...ports }) {

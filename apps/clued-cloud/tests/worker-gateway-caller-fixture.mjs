@@ -32,6 +32,8 @@ export const SCAN_START_GATEWAY_SIGNATURES = ['clued_ci_scan_start_hosted_v1(jso
 export const CI_NODE_GATEWAY_SIGNATURES = ['clued_ci_node_command_v1(text,jsonb,jsonb,jsonb)', 'clued_ci_node_trust_v1(text,uuid)'].sort();
 export const WORKER_DUE_SIGNATURE = 'clued_worker_due_v1(text)';
 export const PR_MERGED_EVENT_SIGNATURE = 'clued_work_pr_merged_event_v1(jsonb)';
+// The resident's PR lifecycle report (20261119140000): one more anon CI door, ci-admission only inside.
+export const PR_LIFECYCLE_REPORT_SIGNATURE = 'clued_work_pr_lifecycle_report_v1(text,jsonb)';
 
 export async function findGatewayCloseoutMigration(cloudRoot=cloud) {
   const names=(await fs.readdir(path.join(cloudRoot,'supabase/migrations'))).filter(n=>n.endsWith('_worker_gateway_closeout_v1.sql'));
@@ -65,7 +67,8 @@ export async function snapshotCallerCatalog(db) {
 // that explicit later successors add on purpose: the two scan-start serving
 // doors for the Worker gateway (20261102151506), the two CI node gateway
 // doors (20261106090000), the Worker due query (20261118090000), the anon
-// connection-self reader (20261118100000) and the PR merge event (20261118213000). These are exactly those
+// connection-self reader (20261118100000), the PR merge event (20261118213000) and the anon PR lifecycle report
+// (20261119140000). These are exactly those
 // privileges; a later successor that adds one names it here.
 export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ['public.clued_ci_scan_start_hosted_v1(jsonb)', GATEWAY_ROLE],
@@ -75,6 +78,7 @@ export const CLOSEOUT_SUCCESSOR_GRANTS = [
   ['public.'+WORKER_DUE_SIGNATURE, GATEWAY_ROLE],
   ['public.' + PR_MERGED_EVENT_SIGNATURE, GATEWAY_ROLE],
   ['public.' + CONNECTION_SELF_SIGNATURE, 'anon'],
+  ['public.' + PR_LIFECYCLE_REPORT_SIGNATURE, 'anon'],
 ];
 // Replays the sealed closeout SQL unchanged. Where a successor is installed,
 // its own privilege is set aside for the replay and put back afterwards (same
@@ -109,7 +113,8 @@ export async function assertGatewayCloseoutBoundary(db) {
   assert.deepEqual(await signatures(GATEWAY_ROLE,false),expected,
     'Gateway grants match the historical closeout and the installed successor RPCs');
   const self = (await db.query('select to_regprocedure($1) is not null present', ['public.' + CONNECTION_SELF_SIGNATURE])).rows[0].present;
-  const anonymous = self ? [...CI_SIGNATURES, CONNECTION_SELF_SIGNATURE].sort() : CI_SIGNATURES;
+  const lifecycle = (await db.query('select to_regprocedure($1) is not null present', ['public.' + PR_LIFECYCLE_REPORT_SIGNATURE])).rows[0].present;
+  const anonymous = [...CI_SIGNATURES, ...(self ? [CONNECTION_SELF_SIGNATURE] : []), ...(lifecycle ? [PR_LIFECYCLE_REPORT_SIGNATURE] : [])].sort();
   assert.deepEqual(await signatures('anon',true), anonymous, '匿名角色的函数授权必须与该迁移阶段逐项一致');
 }
 

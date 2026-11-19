@@ -32,7 +32,7 @@ test('adopt/return send only the fixed fields and answer no release outcome (ter
 });
 
 test("merge-train port: only the four existing CI-identity functions; the token itself never leaves the process", async () => {
-  assert.deepEqual([...MERGE_TRAIN_NATIVE_RPCS].sort(), ["clued_work_claim_adopt_v1", "clued_work_merge_slot_return_v1", "clued_work_merge_slot_touch_v1", "clued_work_verify_v1"]);
+  assert.deepEqual([...MERGE_TRAIN_NATIVE_RPCS].sort(), ["clued_work_claim_adopt_v1", "clued_work_merge_slot_return_v1", "clued_work_merge_slot_touch_v1", "clued_work_pr_lifecycle_report_v1", "clued_work_verify_v1"]);
   const { calls, writer } = native(() => reply({ status: "ok", ci_state: "running", pr_ref: `${REPO}#910`, head_sha: H, touched: true, claims: [C1], merge_slot_until: "2026-10-31T10:00:00Z" }));
   assert.deepEqual(await writer.touch({ pr: 910, headSha: H, ciState: "running", hardCapMinutes: 120 }), { onDuty: true, touched: true, until: "2026-10-31T10:00:00Z", claims: [C1], returned: null });
   assert.equal(calls[0].url, "https://fixture.supabase.co/rest/v1/rpc/clued_work_merge_slot_touch_v1");
