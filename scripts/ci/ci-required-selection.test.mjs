@@ -68,7 +68,7 @@ function slotFixture(t) {
     rmSync(dir, { recursive: true, force: true });
   });
   return function start(name, {
-    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null,
+    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -129,14 +129,18 @@ function slotFixture(t) {
       Object.assign(env, { SLOT_FIXTURE_EVENT: '1', GITHUB_EVENT_NAME: 'pull_request',
         GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'fixture/repo', GITHUB_TOKEN: 'fixture' });
     }
-    const named = mode === '--run-files' ? ['scripts/ci/retrigger-counter.test.mjs'] : [];
+    for (const [file, text] of Object.entries(extraFiles)) {
+      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      writeFileSync(path.join(root, file), text);
+    }
+    const namedFiles = mode === '--run-files' ? (named ?? ['scripts/ci/retrigger-counter.test.mjs']) : [];
     const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, tool,
-      mode, target, ...named, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      mode, target, ...namedFiles, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (data) => { output += data; });
     child.stderr.on('data', (data) => { output += data; });
     const done = once(child, 'close');
-    const run = { child, done, output: () => output, ready: () => existsSync(path.join(root, 'ready')),
+    const run = { child, done, root, output: () => output, ready: () => existsSync(path.join(root, 'ready')),
       descendant: () => existsSync(path.join(root, 'descendant.pid')) ? Number(readFileSync(path.join(root, 'descendant.pid'))) : 0,
       release: () => writeFileSync(path.join(root, 'release'), '') };
     children.push(run);
@@ -1132,8 +1136,19 @@ test('run-files 9: the named test file decides the exit code in a real run', asy
   const red = start('red', { mode: '--run-files', body: 'throw new Error("fails before the fix");\n' });
   assert.deepEqual(await red.done, [1, null]);
   assert.match(red.output(), /scripts\/ci\/retrigger-counter\.test\.mjs/);
-  assert.match(red.output(), /not a suite verdict/);
+  assert.match(red.output(), /不是套件结论/);
   const green = start('green', { mode: '--run-files', body: 'process.exitCode = 0;\n' });
   assert.deepEqual(await green.done, [0, null]);
-  assert.match(green.output(), /not a suite verdict/);
+  assert.match(green.output(), /不是套件结论/);
+});
+
+test('run-files 10: only the named file of a multi-file suite reaches the worker and runs', async (t) => {
+  const start = slotFixture(t);
+  const marker = (name) => `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(name)}, '');
+`;
+  const run = start('multi', { mode: '--run-files', suite: 'ci-deps-entry', named: ['scripts/ci/ci-deps.test.mjs'],
+    extraFiles: { 'scripts/ci/ci-deps.test.mjs': marker('ran-named'), 'scripts/ci/check-ci-deps-entry.test.mjs': marker('ran-other') } });
+  assert.deepEqual(await run.done, [0, null]);
+  assert.ok(existsSync(path.join(run.root, 'ran-named')), 'the named file ran');
+  assert.ok(!existsSync(path.join(run.root, 'ran-other')), 'the other file of the suite did not run');
 });

@@ -751,7 +751,7 @@ async function main(argv, env = process.env) {
       return 2;
     }
     const status = await runSuite(id, { root, env, files: named });
-    if (status !== 2) console.log(`run-files ${id}: ${named.length} file(s), exit ${status} -- targeted result, not a suite verdict`);
+    if (status !== 2) console.log(`run-files ${id}: ${named.length} 个文件，退出 ${status} —— 定向结果，不是套件结论`);
     return status;
   }
   const writeIndex = argv.indexOf('--write-known');
