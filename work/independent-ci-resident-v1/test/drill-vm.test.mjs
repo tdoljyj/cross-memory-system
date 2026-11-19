@@ -1195,6 +1195,33 @@ test('the PASS conclusions of drill-vm.ps1 are exactly publish.mjs DRILL_PASS_CO
   for (const c of DRILL_PASS_CONCLUSIONS) assert.ok(sealLine.includes(c), c);
 });
 
+// Fable renew-key ruling, supplement "package branch, two points", B4: the name of every fake credential file the drill puts into the
+// credential directory is in the package's fixed list ($CredentialFiles, windows/first-install-host.ps1), so the two cannot drift apart.
+// The package adds companion-github.token to its list on claude/first-install-fixes (not merged yet): until then that one name is a todo
+// ("pending the package"), any other name missing from the list fails.
+const CREDENTIAL_NAMES_PENDING_IN_PACKAGE = new Set(['companion-github.token']);
+function credentialNameDrift(drillNames, packageNames) {
+  const missing = drillNames.filter(n => !packageNames.includes(n));
+  return { pending: missing.filter(n => CREDENTIAL_NAMES_PENDING_IN_PACKAGE.has(n)), drift: missing.filter(n => !CREDENTIAL_NAMES_PENDING_IN_PACKAGE.has(n)) };
+}
+test('every fake credential file name the drill writes is in the package\'s fixed credential file list', t => {
+  const hostText = fs.readFileSync(fileURLToPath(new URL('../windows/first-install-host.ps1', import.meta.url)), 'utf8');
+  const list = /\$CredentialFiles = \[ordered\]@\{([^}]*)\}/.exec(hostText);
+  assert.ok(list, 'the package\'s $CredentialFiles');
+  const packageNames = [...list[1].matchAll(/=\s*'([^']+)'/g)].map(m => m[1]);
+  const entryText = fs.readFileSync(entryScript, 'utf8');
+  const pairs = entryText.slice(entryText.indexOf('foreach ($pair in @('), entryText.indexOf('[IO.File]::Copy((Join-Path $FakeInputs'));
+  const drillNames = [...pairs.matchAll(/@\('([^']+)', '([^']+)'\)/g)].map(m => m[2]);
+  if (/Join-Path \$inputCredentials 'public\.json'/.test(entryText)) drillNames.push('public.json');
+  assert.ok(drillNames.length >= 4, JSON.stringify(drillNames));
+  // the check itself: a name the package does not list is caught; the pending one is only a todo
+  assert.deepEqual(credentialNameDrift(['ci-admission.token', 'other.token', 'companion-github.token'], ['ci-admission.token']),
+    { pending: ['companion-github.token'], drift: ['other.token'] });
+  const { pending, drift } = credentialNameDrift(drillNames, packageNames);
+  assert.deepEqual(drift, [], `drill ${JSON.stringify(drillNames)} package ${JSON.stringify(packageNames)}`);
+  if (pending.length) t.todo(`pending the package (claude/first-install-fixes adds it to $CredentialFiles): ${pending.join(', ')}`);
+});
+
 // No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
 test('drill/ holds no literal of the drill stand-ins', () => {
   const dir = fileURLToPath(new URL('../drill/', import.meta.url));
