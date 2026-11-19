@@ -334,8 +334,8 @@ export function readKnownFailures(file = KNOWN_FAILURES_PATH) {
   return data;
 }
 
-export function unitTestFiles(cwd, spawn = spawnSync) {
-  const result = spawn('node', ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8' });
+export function unitTestFiles(cwd, spawn = spawnSync, env = process.env) {
+  const result = spawn('node', ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8', env: testEnv(env) });
   if (result.status !== 0 || typeof result.stdout !== 'string') throw new Error('select-tests --list failed');
   return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
 }
@@ -503,6 +503,16 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
   return exists(script) ? [nodePath, script, ...argv.slice(1)] : argv;
 }
 
+// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
+// CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
+// NODE_TEST_CONTEXT on its own; Python and PowerShell suites have only this one). The caller's env is not changed.
+export const testEnv = (env) => ({ ...env, CLUED_UNDER_TEST: '1' });
+// The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
+// suites: --run, --run-selected, --write-known. --check runs nothing and is left as it is.
+export function markTestRun(argv, env) {
+  if (['--run', '--run-selected', '--write-known'].some((flag) => argv.includes(flag))) env.CLUED_UNDER_TEST = '1';
+}
+
 // --run-files: the suite's own commands with the test-file operands replaced by
 // the named files. Only the operands change, so the command is the one CI runs.
 // A command that cannot take a named file is skipped (lint, build, validators,
@@ -649,7 +659,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     }
     log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(argv, { platform });
-    const result = spawn(run[0], run.slice(1), { cwd, env, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
       const text = result.stdout.toString();
@@ -738,7 +748,7 @@ function writeKnown(id, root, env, keep = false) {
   const out = path.join(dir, 'failures.jsonl');
   const index = argv.indexOf('--test');
   spawnSync(argv[0], [...argv.slice(1, index + 1), `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`,
-    `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env, stdio: ['ignore', 'ignore', 'inherit'] });
+    `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env: testEnv(env), stdio: ['ignore', 'ignore', 'inherit'] });
   const report = readReport(existsSync(out) ? readFileSync(out, 'utf8') : '', root);
   rmSync(dir, { recursive: true, force: true });
   if (!report.summary) throw new Error('the run did not finish; nothing written');
@@ -754,6 +764,7 @@ const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suit
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
+  markTestRun(argv, env);
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE);
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);

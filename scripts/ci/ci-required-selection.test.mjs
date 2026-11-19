@@ -13,6 +13,7 @@ import {
   unitTestFiles,
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
+import * as selection from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 import { classifyTests } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 
@@ -778,6 +779,53 @@ test('a suite stops at its first failing command and reports a command that did 
   assert.equal(executeSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
   assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
   assert.throws(() => executeSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
+});
+
+// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command runs with CLUED_UNDER_TEST=1, Python and PowerShell
+// suites too, so the installed request tools can tell a test from the operator; the caller's env object is not changed.
+test('every suite command runs with the test marker CLUED_UNDER_TEST=1', () => {
+  const seen = [];
+  const spawn = (command, args, options) => {
+    seen.push(options.env.CLUED_UNDER_TEST);
+    return { status: 0 };
+  };
+  const env = { CI_BASE_SHA: 'b', KEEP: 'x' };
+  assert.equal(executeSuite('components', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(executeSuite('resident-python', { root: ROOT, env: { CLUED_UNDER_TEST: '' }, spawn, log }), 0);
+  assert.ok(seen.length >= 3);
+  assert.deepEqual([...new Set(seen)], ['1']);
+  assert.deepEqual(env, { CI_BASE_SHA: 'b', KEEP: 'x' });
+});
+
+// Codex review 5: the marker is in the environment before ANY child starts, the unit-test listing included.
+test('the marker is set before any child process: the run flags mark the environment, and the unit-test listing carries it', () => {
+  for (const flag of ['--run', '--run-selected', '--write-known']) {
+    const env = {};
+    selection.markTestRun(['x', flag, 'suite'], env);
+    assert.equal(env.CLUED_UNDER_TEST, '1', flag);
+  }
+  const plain = {};
+  selection.markTestRun(['--check', 'ci-suites'], plain);
+  assert.deepEqual(plain, {}, '--check runs no suite and is left as it is');
+  let seen;
+  const files = selection.unitTestFiles(ROOT, (command, args, options) => { seen = options.env?.CLUED_UNDER_TEST; return { status: 0, stdout: 'tests/a.test.mjs\n' }; });
+  assert.deepEqual(files, ['tests/a.test.mjs']);
+  assert.equal(seen, '1');
+});
+
+// Codex review 4: the required checks start the TRUSTED BASE's selector, which may predate the marker: every workflow step that
+// runs suites through it sets CLUED_UNDER_TEST itself.
+test('every workflow step that runs suites through the selector sets CLUED_UNDER_TEST', () => {
+  let steps = 0;
+  for (const name of readdirSync(path.join(ROOT, '.github', 'workflows')).filter((f) => /\.ya?ml$/.test(f))) {
+    const text = readFileSync(path.join(ROOT, '.github', 'workflows', name), 'utf8');
+    for (const step of text.split(/\n(?=\s*- (?:name|uses|id):)/)) {
+      if (!/ci-required-selection\.mjs --run|"\$SELECTOR" --run/.test(step)) continue;
+      steps += 1;
+      assert.match(step, /\n\s+CLUED_UNDER_TEST: "1"\n/, `${name}: ${step.trim().split('\n')[0]}`);
+    }
+  }
+  assert.ok(steps >= 4, `found ${steps} steps`);
 });
 
 // A real run through the reporter: the failure shapes round 2 found masked.
