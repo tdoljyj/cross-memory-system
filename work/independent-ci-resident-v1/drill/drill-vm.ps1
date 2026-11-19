@@ -2580,9 +2580,11 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
 
   if (Test-DrillReinstallLauncher $reinstall) {
+    # the re-verify runs the whole verdict: its input carries the launcher verdict and the pause, the same sources as the first install's A6
+    # (Codex review of f33fc33e5, medium 5: without them strict mode stopped it before prepare-again)
     $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
     Write-DrillJson (Join-Path $RunDir 'read-after-reinstall.json') $again
-    $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
+    $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; launcher = $launcher; pause = $again.pause; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
     $reinstall.reverifyPassed = @($reVerdict | Where-Object { $_.id -in @('A2', 'A3', 'A4') -and $_.pass -ne $true }).Count -eq 0 -and $null -eq (@($reVerdict | Where-Object { $_.id -eq 'A5' })[0].pass)
     $p2 = Invoke-DrillGuest $Cred $script:GuestPrepareAgain -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 60 -Step 'prepare-again'
     $reinstall.prepareAgainStatus = [string](Get-Prop $p2 'status'); $reinstall.prepareAgainExit = $p2.exit; $reinstall.prepareAgainStderr = $p2.stderr
