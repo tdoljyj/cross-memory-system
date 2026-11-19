@@ -714,8 +714,10 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 }
 
 # Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
-# A1-A9 hold and M5 passed; otherwise PENDING. M5 has no "not evaluated" exit (Fable ruling 11-19 section 2.2): a package without the
-# renewal leaves its observations missing and fails here; NOT_EVALUATED is only the mark of a run that stopped before M5 was read.
+# A1-A9 hold and M5 passed; PASS_A_PENDING_PRODUCTION_READBACK when everything the drill machine can show passed and only the production
+# half (A5's, A9: -Finalize) is left: the candidate drill PASS the Owner's acceptance follows (publish.mjs seal --drill-receipt takes a
+# PASS_* conclusion; Fable ruling 11-19 section 2.3: seal, then -Finalize). M5 has no "not evaluated" exit (section 2.2): a package
+# without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
 function Get-DrillConclusion($Items, $M5) {
   if ([string](Get-Prop $M5 'result') -cne 'PASS') { return 'FAIL' }
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
@@ -724,7 +726,7 @@ function Get-DrillConclusion($Items, $M5) {
     if (-not $byId.ContainsKey($id)) { return 'FAIL' }
   }
   if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
-  if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
+  if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PASS_A_PENDING_PRODUCTION_READBACK' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
 }

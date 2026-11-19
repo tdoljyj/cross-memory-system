@@ -227,7 +227,7 @@ export function readRequest(r) {
 }
 
 // Whether an acceptance names the drill's stand-in Decision or receipt (an 8-hex cluedDecision by its prefix).
-const namesDrillReserved = a => {
+export const namesDrillReserved = a => {
   const f = a?.fleetRefs && typeof a.fleetRefs === 'object' ? a.fleetRefs : {};
   return [a?.cluedDecision, ...Object.values(f)].some(v => typeof v === 'string'
     && (v === DRILL_RESERVED.decision || v === DRILL_RESERVED.receipt || (/^[0-9a-f]{8}$/.test(v) && DRILL_RESERVED.decision.startsWith(v))));

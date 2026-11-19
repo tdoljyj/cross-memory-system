@@ -80,20 +80,23 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的六份文件。
 回执记录 `m5.result`：核验通过为 `PASS`，观测缺失（包里没有续期组件也是这一种）、核验器缺失或核验失败为 `FAIL`；`NOT_EVALUATED` 只出现在中途已失败的回执里。
 回执 `conclusion` 只有在 `m5.result` 为 `PASS` 时才可能不是 `FAIL`；`-Finalize` 同样按回执里的 `m5` 判，旧回执没有 `m5` 即 `FAIL`。
+来宾能证明的全部通过、只剩生产半边（A5 生产侧、A9，由 `-Finalize` 回读）时，结论为 `PASS_A_PENDING_PRODUCTION_READBACK`（原 `PENDING_PRODUCTION_READBACK`）：
+这就是“候选演练 PASS”，`publish.mjs seal --drill-receipt` 收 `PASS_*` 结论（裁定 §2.3：seal 在先、`-Finalize` 在后）。
 
 ## 候选形态：先演练、再接受
 
 Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-From` 里**没有** `fleet-node-<v>.acceptance.json` 即为候选
-（`prepareFrom` 在 `final/` 没有接受文件时照样组装）。构建器此时生成一份只供来宾用的接受文件，放进 kit、钉进 `kit.json` 与 `release-pins.json`：
+（`prepareFrom` 在 `final/` 没有接受文件时照样组装；`final/` 就是 `publish.mjs prepare` 的 `--out`）。构建 kit 时多给一个
+`--request <prepare 的 --out>\fleet-node-<v>.acceptance-request.json`（候选必需，已接受的版本给了即拒绝）：
 
-- 三项哈希取自候选本身：tar、`first-install-kit.json`、Source（`install.mjs` 的 `sourceHashOf`，即只读的 `source-hash`；它与 Decision、回执、acceptedAt 无关，3bc571a6 上实测同为 03c51347…ac5f）。
-- fleetRefs 里各版不变的五项与 `formalRoles`、`repository` 取自本机已装记录（只读：`record/acceptance.json` 与 `install.mjs fleet-refs` 同一来源）。
-- Decision 与其回执填 `make-drill-kit.mjs` 的 `DRILL_CANDIDATE_REFS`（仓库里唯一定义处）。`publish.mjs` 的挂接受入口见到它即拒绝（PR-乙 落地；在那之前靠接受文件由 DESK 手工挂、不会取 kit 里这份），所以这份文件上不了 Release；`-From` 里出现指名它的接受文件，构建器也拒绝（`DRILL_ACCEPTANCE_IS_A_CANDIDATES`）。
-- `kit.json` 的 `candidate` 记下这份文件名与三项哈希；`drill-vm.ps1` 用它代替 `-From` 的接受文件，核三项哈希一致，`-From` 里另有接受文件则拒绝（`DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE`）。
-- 来宾里跑的仍是包内原样的安装代码，没有任何“演练模式”分支。回执写 `candidate: true` 与 `tarSha256`、`ciSourceManifestSha256`、`firstInstallKitSha256`。
-
-用法与正式形态相同，只是 `final/` 里没有接受文件；构建 kit 的那台机器须是已装节点（读它的已装记录）。
-
+- 来宾用的接受文件 = 接受请求经 `publish.mjs` 的 `acceptanceOf(request, DRILL_RESERVED)` 生成；保留值与生成函数只在 `publish.mjs` 定义。
+  三项哈希（tar、`first-install-kit.json`、Source）与 fleetRefs 都是请求里的，即 Owner 要接受的那几项；请求的 tar 与 kit 必须就是 `-From` 里的字节
+  （`DRILL_CANDIDATE_REQUEST_NOT_THIS_PACKAGE`）。Source 由 prepare 用 `sourceHashOf` 算，来宾的 `install.mjs prepare` 重算，不同即拒。
+- 这份文件放进 kit，钉进 `kit.json` 与 `release-pins.json`。`seal` 与挂接受文件的入口见到保留值即拒绝，所以它上不了 Release；
+  `-From` 里出现指名保留值的接受文件，构建器也拒绝（`DRILL_ACCEPTANCE_IS_A_CANDIDATES`）。
+- `kit.json` 的 `candidate` 记下这份文件名与三项哈希；`drill-vm.ps1` 用它代替 `-From` 的接受文件，核三项哈希一致，`-From` 里另有接受文件则拒绝
+  （`DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE`）。
+- 来宾里跑的仍是包内原样的安装代码，没有任何“演练模式”分支。回执写 `candidate: true` 与 `tarSha256`、`ciSourceManifestSha256`、`firstInstallKitSha256`，正是 `seal --drill-receipt` 核的三项。
 来宾关机计时器就绪前，由脱离宿主 Windows 作业的看门进程负责兜底。无法确认脱离时，脚本拒绝开机。
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。
 

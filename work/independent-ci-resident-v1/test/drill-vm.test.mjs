@@ -11,7 +11,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
-import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums, DRILL_CANDIDATE_REFS } from '../drill/make-drill-kit.mjs';
+import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
+import { DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf } from '../rollout/fleet/publish.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 import { intakePauseRequest } from '../src/intake-pause.mjs';
@@ -147,6 +148,8 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
     assert.equal(ps(`$p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)}; @(Get-DrillReleaseFiles $p (Read-DrillKit ${q(f.out)})).Count`), 9);
   }
   assert.equal(Object.hasOwn(manifest, 'candidate'), false);
+  // an accepted version takes no acceptance request (only a candidate is drilled on one)
+  await assert.rejects(() => makeDrillKit({ ...f, out: path.join(f.root, 'kit-with-request'), request: path.join(f.root, 'x.json') }), /DRILL_REQUEST_FOR_AN_ACCEPTED_VERSION/);
   await assert.rejects(() => makeDrillKit(f), /EEXIST/);
   fs.writeFileSync(path.join(f.root, 'wsl.msi'), 'changed');
   await assert.rejects(() => makeDrillKit({ ...f, out: path.join(f.root, 'changed-prereq-kit') }), /PREREQ_CHANGED/);
@@ -172,34 +175,35 @@ test('assembly rejects a different acceptance, extra assets and missing images',
 });
 
 // Fable ruling 11-19 section 2.3: candidate -> drill PASS -> the Owner accepts once. A From directory with no acceptance is a candidate:
-// the kit carries a drill-only acceptance that names the drill's stand-ins for the Decision and its receipt and the candidate's own three
-// hashes (archive, first-install kit, Source by source-hash); the run is held to them and the receipt names them with candidate: true.
-test('a candidate drills on a kit-carried acceptance: the drill stand-ins and the candidate\'s own three hashes', async () => {
+// the kit carries a drill-only acceptance, publish.mjs prepare's acceptance request made an acceptance with the drill's stand-ins
+// (publish.mjs acceptanceOf and DRILL_RESERVED, defined there only); the run is held to its three hashes and the receipt names them.
+test('a candidate drills on a kit-carried acceptance: the request with the drill stand-ins, held to the candidate\'s bytes', async () => {
   const f = firstInstallAssets('candidate', { candidate: true });
   prepareFrom({ ...f, out: f.from });
   const tag = `fleet-node-${f.version}`, accName = `${tag}.acceptance.json`;
   assert.equal(fs.existsSync(path.join(f.from, accName)), false);
   assert.equal(releasePins(f.from, f.version).candidate, true);
-  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
-  const refs = { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5) };
-  const formalRoles = { gitleaks: { image: 'g' }, trivy: { image: 't' }, 'contract-placement': { image: 'c' } };
-  const drafts = [];
-  const deps = { hostFleetRefs: async () => ({ repository: 'tdoljyj/cross-memory-system', refs, formalRoles }),
-    sourceHash: async ({ acceptance }) => { drafts.push(acceptance); return { ciSourceManifestSha256: S }; } };
-  const now = Date.parse('2026-11-20T00:00:00Z');
-  const made = await makeDrillKit({ ...f, now, deps });
   const tarSha = sha(fs.readFileSync(path.join(f.from, `${tag}.tar`)));
   const kitSha = sha(fs.readFileSync(path.join(f.from, `${tag}.first-install-kit.json`)));
+  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  const request = { contract: REQUEST_CONTRACT, version: f.version, archive_sha256: tarSha, commit: 'c'.repeat(40), repository: 'tdoljyj/cross-memory-system',
+    ciSourceManifestSha256: S, firstInstallKitSha256: kitSha, fleetRefs: { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5),
+      publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5), formalRoles: { gitleaks: { image: 'g' }, trivy: { image: 't' }, 'contract-placement': { image: 'c' } } } };
+  const requestFile = path.join(f.root, `${tag}.acceptance-request.json`);
+  fs.writeFileSync(requestFile, JSON.stringify(request));
+  // a candidate needs its request; a request for another package is refused before anything is written
+  await assert.rejects(() => makeDrillKit(f), /DRILL_CANDIDATE_REQUEST_REQUIRED/);
+  const other = path.join(f.root, 'other', `${tag}.acceptance-request.json`); fs.mkdirSync(path.dirname(other));
+  fs.writeFileSync(other, JSON.stringify({ ...request, archive_sha256: '0'.repeat(64) }));
+  await assert.rejects(() => makeDrillKit({ ...f, request: other }), /DRILL_CANDIDATE_REQUEST_NOT_THIS_PACKAGE/);
+  assert.ok(!fs.existsSync(f.out), 'refused before the kit is written');
+  const made = await makeDrillKit({ ...f, request: requestFile });
   assert.deepEqual(made.candidate, { acceptance: accName, tarSha256: tarSha, ciSourceManifestSha256: S, firstInstallKitSha256: kitSha });
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).candidate, made.candidate);
   const accBytes = fs.readFileSync(path.join(f.out, accName)), acc = JSON.parse(accBytes);
-  const { decision, receipt } = DRILL_CANDIDATE_REFS;
-  assert.deepEqual(acc, { contract: 'clued.independent-ci.fleet-node-acceptance/1', version: f.version, archive_sha256: tarSha, commit: 'c'.repeat(40),
-    repository: 'tdoljyj/cross-memory-system', ciSourceManifestSha256: S, cluedDecision: decision, acceptedAt: '2026-11-19T00:00:00Z',
-    fleetRefs: { ...refs, ownerDecisionRef: decision, installationReceiptRef: receipt, ownerReceiptRef: receipt, formalRoles }, firstInstallKitSha256: kitSha });
-  validateAcceptance(acc, now);   // what the guest's install.mjs reads, unchanged: no drill mode in the package
-  assert.equal(drafts.length, 1); assert.equal(drafts[0].ciSourceManifestSha256, undefined);
-  const pins = JSON.parse(fs.readFileSync(path.join(f.out, 'release-pins.json')));
+  assert.deepEqual(acc, acceptanceOf(request, DRILL_RESERVED));
+  assert.equal(acc.cluedDecision, DRILL_RESERVED.decision); assert.equal(acc.fleetRefs.ownerReceiptRef, DRILL_RESERVED.receipt);
+  validateAcceptance(acc);   // what the guest's install.mjs reads, unchanged: no drill mode in the package  const pins = JSON.parse(fs.readFileSync(path.join(f.out, 'release-pins.json')));
   assert.deepEqual(pins.files.find(x => x.path === accName), { path: accName, sha256: sha(accBytes) });
   assert.ok(JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).files.some(x => x.path === accName && x.sha256 === sha(accBytes)));
   if (windows) {
@@ -934,7 +938,7 @@ test('A1-A10 passing with M5 not PASS is never a PASS; with M5 PASS the A tier g
   assert.equal(passed.candidate, true);
   assert.equal(passed.ciSourceManifestSha256, S); assert.equal(passed.firstInstallKitSha256, L); assert.match(passed.tarSha256, /^[0-9a-f]{64}$/);
   assert.equal(m5DrillReceipt('m5-accepted', RENEWAL_3BC571A6).candidate, false);
-  assert.equal(passed.conclusion, 'PENDING_PRODUCTION_READBACK');
+  assert.equal(passed.conclusion, 'PASS_A_PENDING_PRODUCTION_READBACK');
   const done = finalize('m5-pass-finalize', passed);
   assert.equal(done.status, 0, JSON.stringify(done.output));
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
@@ -1142,7 +1146,7 @@ test('guest scripts parse under Windows PowerShell before any VM work', opts, ()
 test('the verdict: a clean drill passes A1-A8 and A10 reports the per-node steps; A5 production half and A9 wait for -Finalize', opts, () => {
   const r = verdictOf(evidence());
   assert.deepEqual(pass(r), { A1: true, A2: true, A3: true, A4: true, A5: null, A6: true, A7: true, A8: true, A9: null, A10: false });
-  assert.equal(r.conclusion, 'PENDING_PRODUCTION_READBACK');
+  assert.equal(r.conclusion, 'PASS_A_PENDING_PRODUCTION_READBACK');
   assert.match(r.items.find((i) => i.id === 'A10').detail, /8c step 2/);
 });
 
@@ -1160,7 +1164,7 @@ test('the verdict fails what the plan says fails', opts, () => {
   assert.equal(pass(verdictOf(evidence({ reinstall: { ...e.reinstall, upgradeStatus: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' } }))).A8, false);
   assert.equal(verdictOf(evidence({ verify: { status: 'X' } })).conclusion, 'FAIL');
   const skipped = verdictOf(evidence({ reinstall: { skipped: true } }));
-  assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PENDING_PRODUCTION_READBACK');
+  assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PASS_A_PENDING_PRODUCTION_READBACK');
 });
 
 test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {
@@ -1209,7 +1213,7 @@ const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bi
 const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });
 function finalize(name, fields) {
   const receipt = { contract: 'clued.independent-ci.drill-receipt/1', startedAt, evidence: { localSource: S },
-    failure: null, restoredToCheckpoint: true, conclusion: 'PENDING_PRODUCTION_READBACK', m5: { result: 'PASS' }, ...fields };
+    failure: null, restoredToCheckpoint: true, conclusion: 'PASS_A_PENDING_PRODUCTION_READBACK', m5: { result: 'PASS' }, ...fields };
   const receiptFile = path.join(tmp, `${name}.json`);
   const readback = path.join(tmp, 'readback.json');
   const original = JSON.stringify(receipt);
