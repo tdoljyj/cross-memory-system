@@ -400,7 +400,7 @@
 
     "scripts/ci/clued-registry-scan-guard.mjs": "630296844a6746b159e0ba128696e49ac5054c743829b58c141b00a55f1a5081",
 
-    "scripts/ci/clued-release-door.mjs": "89638f8c89fdb6088efc31de59b8e1fd165e829de569f148ad9e3ac3c2489314",
+    "scripts/ci/clued-release-door.mjs": "0ac823c488c7160c5b100f0490ee4c201fb69c61cf270ca22cf4bd58a4d36c42",
 
     "scripts/ci/clued-release-door.test.mjs": "ccb317654b8f930c1fbbc48d25749cb47936e7ee88ee479155cd5b264f05b355",
 
