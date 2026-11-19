@@ -29,19 +29,12 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'drill-vm-test-'));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
-// A package's two credential constants (Fable renew-key ruling, supplement "heartbeat token and restart code"), as the host preparation
-// script declares them; make-drill-kit.mjs packageCredentials reads them.
-// The drilled package's two credential groups as the package branch declares them (913be48ca, windows/first-install-host.ps1:114-115): the
-// companion token required, the heartbeat token the only optional one. The positive cases use this shape.
+// The drilled package's two credential groups (Fable renew-key ruling, supplement "where the credential list comes from"): data the package
+// ships in its archive (windows/credential-files.json), the companion token required, the heartbeat token the only optional one.
 const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', ciToken: 'ci-admission.token', upgradeToken: 'resident-upgrade.token', public: 'public.json', companionToken: 'companion-github.token' },
   optional: { heartbeatToken: 'ci-node-heartbeat.token' } };
-// The older one-constant form (no required/optional split): the one fixture of it, for the refusal "a package that does not tell required
-// from optional gets no kit".
-const ONE_CONSTANT_HOST_TEXT = "$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token' }\r\n";
-const hostScriptText = (c = PACKAGE_CREDENTIALS) => {
-  const lit = o => '[ordered]@{ ' + Object.entries(o).map(([k, v]) => `${k} = '${v}'`).join('; ') + ' }';
-  return `# host preparation\r\n$RequiredCredentialFiles = ${lit(c.required)}\r\n$OptionalCredentialFiles = ${lit(c.optional)}\r\n`;
-};
+const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
+const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, ...c }, null, 2) + '\n';
 
 // Dot-source the script (definitions only) and print the expression's value as JSON.
 function ps(expr) {
@@ -132,7 +125,8 @@ test('kit manifest is deterministic, pins exact bytes and uses only guest placeh
 });
 
 // dropManifest: prerequisite item names left out of the package's prereq-manifest.json (Codex review of f33fc33e5, medium 3)
-function firstInstallAssets(label, { candidate = false, hostText = hostScriptText(), dropManifest = [] } = {}) {
+// credentialFiles: the archive's windows/credential-files.json as text, or null for a package without one
+function firstInstallAssets(label, { candidate = false, credentialFiles = credentialFilesJson(), dropManifest = [] } = {}) {
   const root = path.join(tmp, label); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
@@ -144,7 +138,7 @@ function firstInstallAssets(label, { candidate = false, hostText = hostScriptTex
       { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 },
       { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }
     ].filter(i => !dropManifest.includes(i.name)), debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
-    { path: 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1', data: Buffer.from(hostText) },
+    ...(credentialFiles === null ? [] : [{ path: 'tree/work/independent-ci-resident-v1/windows/credential-files.json', data: Buffer.from(credentialFiles) }]),
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
   fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');
@@ -172,12 +166,13 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
   assert.equal((await makeDrillKit(f)).candidate, null);
   const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
   for (const item of manifest.files) assert.equal(sha(fs.readFileSync(path.join(f.out, item.path))), item.sha256);
-  // the drilled package's two credential groups go into the kit; a package that does not declare them gets no kit
-  assert.deepEqual(manifest.credentials, PACKAGE_CREDENTIALS);
-  const oneConstant = firstInstallAssets('assembly-one-constant', { hostText: ONE_CONSTANT_HOST_TEXT });
-  prepareFrom({ ...oneConstant, out: oneConstant.from });
-  await assert.rejects(() => makeDrillKit(oneConstant), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
-  assert.ok(!fs.existsSync(oneConstant.out), 'refused before writing a kit');
+  // the package's credential-files.json goes into the kit as it is, with the hash of its bytes; a package without one gets no kit
+  assert.deepEqual(manifest.credentials, { contract: CREDENTIAL_FILES_CONTRACT, ...PACKAGE_CREDENTIALS });
+  assert.equal(manifest.credentialFilesSha256, sha(credentialFilesJson()));
+  const none = firstInstallAssets('assembly-no-list', { credentialFiles: null });
+  prepareFrom({ ...none, out: none.from });
+  await assert.rejects(() => makeDrillKit(none), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
+  assert.ok(!fs.existsSync(none.out), 'refused before writing a kit');
   // the host's pinned installers (gh, Git for Windows) go into the guest through the same injection as WSL and the rootfs (Fable,
   // supplement "after the package branch" 3, 1): never downloaded in the guest
   assert.ok(manifest.files.some(i => i.path === 'gh.msi'), JSON.stringify(manifest.files.map(i => i.path)));
@@ -197,18 +192,10 @@ test('local assembly mirrors publication, preserves originals, builds a kit acce
   if (windows) assert.equal(psCode(`$p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)}; Get-DrillReleaseFiles $p (Read-DrillKit ${q(f.out)})`), 'DRILL_RELEASE_ASSET_CHANGED');
 });
 
-// The package branch's two constants as they stand at 913be48ca (work/independent-ci-resident-v1/windows/first-install-host.ps1:114-115),
-// verbatim: the companion token is in the required group, the heartbeat token the only optional one (PACKAGE_CREDENTIALS is this shape).
-const HOST_LINES_913BE48CA = [
-  "$RequiredCredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; public = 'public.json'; companionToken = 'companion-github.token' }",
-  "$OptionalCredentialFiles = [ordered]@{ heartbeatToken = 'ci-node-heartbeat.token' }"];
-test('the package at 913be48ca: the kit reads companionToken as required, the drill makes and hands it over, the heartbeat stays withheld', opts, async () => {
-  const hostText = `# host preparation (913be48ca, lines 114-115)\r\n${HOST_LINES_913BE48CA.join('\r\n')}\r\n`;
-  assert.deepEqual(drillKit.packageCredentials(hostText), {
-    required: { appKey: 'app-private-key.pem', ciToken: 'ci-admission.token', upgradeToken: 'resident-upgrade.token', public: 'public.json', companionToken: 'companion-github.token' },
-    optional: { heartbeatToken: 'ci-node-heartbeat.token' } });
-  // the kit built over a package carrying these two lines
-  const f = firstInstallAssets('assembly-913be48ca', { hostText });
+// The list as the package ships it (five required with the companion token, the heartbeat token the only optional one): the kit records
+// it, the drill makes and hands over the companion token, the heartbeat token is withheld by design.
+test('the shipped credential list: the kit records companionToken as required, the drill makes and hands it over, the heartbeat stays withheld', opts, async () => {
+  const f = firstInstallAssets('assembly-shipped-list');
   prepareFrom({ ...f, out: f.from });
   await makeDrillKit(f);
   const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
@@ -226,7 +213,7 @@ test('the package at 913be48ca: the kit reads companionToken as required, the dr
   const tar = path.join(f.from, `fleet-node-${f.version}.tar`);
   assert.equal(ps(`Assert-DrillKitCredentialsBound (Read-DrillKit ${q(f.out)}) ${q(tar)}; 'bound'`), 'bound');
   // made as the run makes it (the plan's fake list): the stand-in in the classic token's shape, named in public.json
-  const out = path.join(tmp, 'fake-913be48ca');
+  const out = path.join(tmp, 'fake-shipped-list');
   ps(`New-DrillFakeCredentials ${q(out)} @(${plan.fake.map(q).join(', ')}); 'ok'`);
   assert.deepEqual(fs.readdirSync(out).sort(), [...plan.fake].sort());
   assert.match(fs.readFileSync(path.join(out, 'companion-github.token'), 'utf8'), /^ghp_CLUEDDRILLFAKE[A-Za-z0-9]{22}$/);
@@ -1353,9 +1340,11 @@ test('the run binds the kit\'s credential names again to the package it drills: 
   assert.equal(planOf({ required: {}, optional: {} }).code, 'DRILL_KIT_REFUSED', 'an empty required group is no plan either');
   put(PACKAGE_CREDENTIALS);
   assert.equal(bound(), 'bound');
-  // a tar whose host preparation does not declare the two: unreadable
-  const old = firstInstallAssets('bound-credentials-old', { hostText: '# host preparation without credential groups\r\n' });
+  // a tar without the list: unreadable; a tar whose list has other bytes (the same names): not the package's
+  const old = firstInstallAssets('bound-credentials-old', { credentialFiles: null });
   assert.equal(bound(path.join(old.build, `fleet-node-${old.version}.tar`)), 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
+  const other = firstInstallAssets('bound-credentials-bytes', { credentialFiles: JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, ...PACKAGE_CREDENTIALS }) });
+  assert.equal(bound(path.join(other.build, `fleet-node-${other.version}.tar`)), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES');
   // the run calls it before the host gate, on the package's verified tar
   assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitCredentialsBound \$kitInfo \(Get-Prop \$package 'tar'\)/);
 });
@@ -1385,45 +1374,26 @@ test('gh and Git for Windows: in the kit with the package\'s hashes or no kit, n
   assert.match(fs.readFileSync(entryScript, 'utf8'), /\} elseif \(@\('gh', 'git-for-windows'\) -ccontains \[string\]\$item\['name'\]\) \{ throw \('DRILL_PREREQ_NOT_INJECTED:' \+ \$item\['name'\]\) \}\s*else \{ \$file = Get-Prereq \$item \$pre \}/);
 });
 
-test('the repository\'s package and the drill: required names the drill makes, optional names it decides; the hand-over agrees', opts, () => {
+test('the repository\'s package and the drill: required names the drill makes, optional names it decides; the hand-over agrees', opts, async () => {
   const read = rel => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
   const decisions = decisionsOf();
   const given = Object.keys(decisions).filter(n => decisions[n].give === true);
   const covers = c => ({ required: Object.values(c.required).filter(n => !given.includes(n)), optional: Object.values(c.optional).filter(n => !Object.hasOwn(decisions, n)) });
-  // the repository's package: with the two groups, every required name is one the drill makes and every optional one is decided; a package
-  // still on the one-constant form gets no kit (refused by name, never read as "nothing required")
-  const hostText = read('../windows/first-install-host.ps1');
-  let repo = null;
-  try { repo = drillKit.packageCredentials(hostText); } catch (e) { assert.equal(e.message, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE'); }
-  if (repo) assert.deepEqual(covers(repo), { required: [], optional: [] }, JSON.stringify(repo));
-  else assert.doesNotMatch(hostText, /^\$RequiredCredentialFiles/m);
-  // the check itself: the two-group form as the package branch declares it
-  assert.deepEqual(covers(drillKit.packageCredentials(hostScriptText())), { required: [], optional: [] });
-  assert.deepEqual(covers(drillKit.packageCredentials(hostScriptText({ required: { ...PACKAGE_CREDENTIALS.required, x: 'x.token' }, optional: { y: 'y.token' } }))),
-    { required: ['x.token'], optional: ['y.token'] });
-  assert.throws(() => drillKit.packageCredentials(hostScriptText({ required: { a: 'a.token' }, optional: { b: 'a.token' } })), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
-  // Codex review of e0a3cded5, medium 3: what does not read one way is refused -- a constant only in a block comment, a key twice, a
-  // second (indented) assignment. A decoy in a block comment beside the real one is no declaration: the real one is read (Codex review
-  // of f33fc33e5, medium 1: comments declare nothing)
-  const decoy = "<#\r\n$RequiredCredentialFiles = [ordered]@{ appKey = 'decoy.pem' }\r\n#>\r\n";
-  assert.deepEqual(drillKit.packageCredentials(decoy + hostScriptText()), PACKAGE_CREDENTIALS);
-  for (const [reason, text] of [
-    ['only in a block comment', '<#\r\n' + hostScriptText() + '#>\r\n'],
-    ['a key twice', "$RequiredCredentialFiles = [ordered]@{ appKey = 'a.pem'; AppKey = 'b.pem' }\r\n$OptionalCredentialFiles = [ordered]@{ }\r\n"],
-    ['a second, indented assignment', hostScriptText() + "function X {\r\n  $OptionalCredentialFiles = [ordered]@{ other = 'other.token' }\r\n}\r\n"],
-  ]) assert.throws(() => drillKit.packageCredentials(text), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
-  // the two lines as the package branch holds them (claude/first-install-fixes 913be48ca), read as they are, with its derived constant.
-  // Its required companion-github.token is made by branch one's generator, merged here with a decision for the name: every name covered
-  const branchLines = [
-    "$RequiredCredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; public = 'public.json'; companionToken = 'companion-github.token' }",
-    "$OptionalCredentialFiles = [ordered]@{ heartbeatToken = 'ci-node-heartbeat.token' }",
-    "$CredentialFiles = & { $o = [ordered]@{}; foreach ($m in @($RequiredCredentialFiles, $OptionalCredentialFiles)) { foreach ($k in @($m.Keys)) { $o[$k] = $m[$k] } }; $o }",
-  ].join('\r\n') + '\r\n';
-  const branch = drillKit.packageCredentials(branchLines);
-  assert.deepEqual(branch.optional, { heartbeatToken: 'ci-node-heartbeat.token' });
-  assert.equal(branch.required.companionToken, 'companion-github.token');
-  assert.ok(given.includes('companion-github.token'));
-  assert.deepEqual(covers(branch), { required: [], optional: [] });
+  // the repository's package (Fable renew-key ruling, supplement "where the credential list comes from"): with its credential-files.json,
+  // every required name is one the drill makes and every optional one is decided; without it, a kit for such a package is refused
+  const listFile = fileURLToPath(new URL('../windows/credential-files.json', import.meta.url));
+  if (fs.existsSync(listFile)) {
+    const list = JSON.parse(fs.readFileSync(listFile, 'utf8'));
+    assert.equal(list.contract, CREDENTIAL_FILES_CONTRACT);
+    assert.deepEqual(covers(list), { required: [], optional: [] }, JSON.stringify(list));
+  } else {
+    const f = firstInstallAssets('repository-without-list', { credentialFiles: null });
+    prepareFrom({ ...f, out: f.from });
+    await assert.rejects(() => makeDrillKit(f), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
+  }
+  // the check itself
+  assert.deepEqual(covers(PACKAGE_CREDENTIALS), { required: [], optional: [] });
+  assert.deepEqual(covers({ required: { ...PACKAGE_CREDENTIALS.required, x: 'x.token' }, optional: { y: 'y.token' } }), { required: ['x.token'], optional: ['y.token'] });
   // every name given is made by the generator and handed over by the entry under the package's name; one rename only, nothing twice
   const drillText = fs.readFileSync(script, 'utf8');
   const generator = drillText.slice(drillText.indexOf('function New-DrillFakeCredentials'), drillText.indexOf('\n}', drillText.indexOf('function New-DrillFakeCredentials')));
@@ -3452,37 +3422,6 @@ test('a first install cut off by the deadline leaves its printed lines in the gu
   assert.equal(r.steps.noVerdict, true);
 });
 
-// Codex review of f33fc33e5, medium 1: the credential constants are read the way PowerShell reads the script. A variable name in any case is
-// the same variable, so another assignment of it in another case (or scope-qualified, braced, or by Set-Variable) is ambiguous and refused;
-// a line of the declaration's shape inside a here-string or a comment is no declaration (not counted, and never the one read).
-test('the credential constants: any case is the same variable, here-strings and comments declare nothing, two assignments refuse', () => {
-  const base = hostScriptText();
-  for (const [reason, text] of [
-    ['assigned again in another case', base + "$requiredcredentialfiles = [ordered]@{ appKey = 'other.pem' }\r\n"],
-    ['assigned again in another case, indented in a function', base + "function X {\r\n  $OPTIONALCREDENTIALFILES = [ordered]@{ }\r\n}\r\n"],
-    ['assigned again scope-qualified', base + "$script:RequiredCredentialFiles = [ordered]@{ appKey = 'other.pem' }\r\n"],
-    ['assigned again braced', base + "${OptionalCredentialFiles} = [ordered]@{ }\r\n"],
-    ['assigned again mid-line', base + "if ($x) { $RequiredCredentialFiles = [ordered]@{ appKey = 'other.pem' } }\r\n"],
-    ['assigned again by Set-Variable', base + "Set-Variable -Name requiredCredentialFiles -Value ([ordered]@{})\r\n"],
-    ['declared only inside a here-string', "$doc = @'\r\n" + base + "'@\r\n"],
-    ['declared only inside a double-quoted here-string', '$doc = @"\r\n' + base + '"@\r\n'],
-    ['declared only in line comments', base.split('\r\n').filter(Boolean).map(l => '# ' + l).join('\r\n') + '\r\n'],
-  ]) assert.throws(() => drillKit.packageCredentials(text), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
-  // the shape in a here-string, a line comment or a block comment beside the real declarations: not counted, the real ones read
-  const shapes = "# $RequiredCredentialFiles = [ordered]@{ appKey = 'comment.pem' }\r\n" +
-    "$doc = @'\r\n$OptionalCredentialFiles = [ordered]@{ other = 'here.token' }\r\n'@\r\n" +
-    '$doc2 = @"\r\n$RequiredCredentialFiles = [ordered]@{ appKey = \'here2.pem\' }\r\n"@\r\n' +
-    "<#\r\n$OptionalCredentialFiles = [ordered]@{ other = 'block.token' }\r\n#>\r\n" + base;
-  assert.deepEqual(drillKit.packageCredentials(shapes), PACKAGE_CREDENTIALS);
-  // the declaration written in another case is still the one declaration
-  assert.deepEqual(drillKit.packageCredentials(base.replace('$RequiredCredentialFiles', '$requiredCredentialFiles')), PACKAGE_CREDENTIALS);
-  // the package branch's lines with its derived constant (which only reads them) and a here-string after them, as in 913be48ca
-  const pkg = `<#\r\n.SYNOPSIS host preparation\r\n#>\r\n${HOST_LINES_913BE48CA.join('\r\n')}\r\n` +
-    "$CredentialFiles = & { $o = [ordered]@{}; foreach ($m in @($RequiredCredentialFiles, $OptionalCredentialFiles)) { foreach ($k in @($m.Keys)) { $o[$k] = $m[$k] } }; $o }\r\n" +
-    "$CredUiSource = @'\r\nusing System;\r\n'@\r\n";
-  assert.equal(drillKit.packageCredentials(pkg).required.companionToken, 'companion-github.token');
-});
-
 // Codex review of f33fc33e5, medium 2: guest-evidence.json's ok is judged after the per-file states are summed: anything absent, unreadable
 // or not saved makes it false. A6 takes the launcher's verdict only from what was saved in the run directory and read back from there.
 test('guest-evidence ok is false on any missing file, and A6 reads the launcher verdict only as saved and read back', opts, () => {
@@ -3631,38 +3570,7 @@ test('the emergency restore counts stage-timings.json saved on its own as eviden
   assert.equal(r.stageTimings, true);
 });
 
-// Codex review of 6th round (f697c6a65), medium 1: any write to an entry or a property of a credential constant after its declaration --
-// plain or compound assignment, through an index or a property, or a mutating method -- changes the list the package uses: the builder
-// refuses the kit and the gate before boot refuses the drill.
-test('a credential constant changed after its declaration through an index, a property or a method: no kit, no boot', opts, async () => {
-  const base = hostScriptText();
-  const changes = [
-    ['index, compound +=', "$RequiredCredentialFiles['companionToken'] += '.old'"],
-    ['index, compound -=', "$RequiredCredentialFiles['n'] -= 1"],
-    ['index, ??=', "${RequiredCredentialFiles}['extra'] ??= 'extra.token'"],
-    ['index, plain, scope-qualified', "$script:OptionalCredentialFiles['heartbeatToken'] = 'other.token'"],
-    ['property, compound', "$OptionalCredentialFiles.heartbeatToken += '.x'"],
-    ['chained index and property', "$RequiredCredentialFiles['appKey'].Length = 3"],
-    ['Add, another case', "[void]$requiredcredentialfiles.Add('extra', 'extra.token')"],
-    ['Remove', "$RequiredCredentialFiles.Remove('companionToken')"],
-    ['Clear', "$OptionalCredentialFiles.Clear()"],
-    ['Insert', "$RequiredCredentialFiles.Insert(0, 'extra', 'extra.token')"],
-  ];
-  for (const [reason, line] of changes) assert.throws(() => drillKit.packageCredentials(base + line + '\r\n'), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
-  // reading them is no change: Contains, Keys, an index read
-  assert.deepEqual(drillKit.packageCredentials(base + "if ($RequiredCredentialFiles.Contains('companionToken')) { $f = $RequiredCredentialFiles['companionToken']; $k = @($OptionalCredentialFiles.Keys) }\r\n"), PACKAGE_CREDENTIALS);
-  // the builder and the gate before boot, on a package that changes its list after the declaration
-  const changed = firstInstallAssets('r6-changed-after', { hostText: base + changes[0][1] + '\r\n' });
-  prepareFrom({ ...changed, out: changed.from });
-  await assert.rejects(() => makeDrillKit(changed), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
-  const good = firstInstallAssets('r6-changed-gate');
-  prepareFrom({ ...good, out: good.from });
-  await makeDrillKit(good);
-  const tar = path.join(changed.from, `fleet-node-${changed.version}.tar`);
-  assert.equal(ps(`try { Assert-DrillKitCredentialsBound (Read-DrillKit ${q(good.out)}) ${q(tar)}; 'bound' } catch { (Get-DrillCode $_).code }`), 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
-});
-
-// 6th round, low 1: the decision table is looked up the same way at both ends, the way the package is read and bound: by file name,
+// 6th round, low 1: the decision table is looked up the same way at both ends, the way the package's names are bound: by file name,
 // ordinal and case-sensitive. A name the table spells otherwise is no decision at either end: the run refuses it, the kit registers nothing.
 test('the decision table is looked up ordinally and case-sensitively at both ends', opts, () => {
   const inputs = { payloads: { 'release-pins.json': Buffer.from('{}'), 'first-install-entry.ps1': Buffer.from('entry') },
@@ -3696,4 +3604,63 @@ test('a launcher verdict saved but not read back is recorded and makes the evide
   assert.equal(r.record.ok, false);
   assert.equal(r.record.launcherReadback.ok, false);
   assert.match(r.record.launcherReadback.error, /read back failed/);
+});
+
+// Fable renew-key ruling, supplement "where the credential list comes from" (7th review round): the list is data the package ships, read
+// from the archive as it is. No list, another contract, not JSON, another shape, a name twice (in a group, across the two, or by case), a
+// name that is no plain file name, an empty required group: no kit.
+test('the shipped credential list is read as data: any list that is not exactly the two groups refuses the kit', async () => {
+  const list = (c, contract = CREDENTIAL_FILES_CONTRACT) => JSON.stringify({ contract, ...c });
+  for (const [reason, text] of [
+    ['no list', null],
+    ['another contract', list(PACKAGE_CREDENTIALS, 'clued.independent-ci.credential-files/2')],
+    ['not JSON', '{"contract":'],
+    ['a group missing', JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, required: PACKAGE_CREDENTIALS.required })],
+    ['a third key', JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, ...PACKAGE_CREDENTIALS, extra: {} })],
+    ['a group that is a list', JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, required: ['a.token'], optional: {} })],
+    ['a name twice in a group', list({ required: { a: 'a.token', b: 'a.token' }, optional: {} })],
+    ['a name in both groups', list({ required: { a: 'a.token' }, optional: { b: 'a.token' } })],
+    ['a name twice by case', list({ required: { a: 'a.token' }, optional: { b: 'A.TOKEN' } })],
+    ['a key twice', `{"contract":"${CREDENTIAL_FILES_CONTRACT}","required":{"a":"a.token","a":"b.token"},"optional":{}}`],
+    ['a name that is a path', list({ required: { a: '..\\a.token' }, optional: {} })],
+    ['an empty required group', list({ required: {}, optional: {} })],
+  ]) {
+    const f = firstInstallAssets(`list-refused-${reason.replace(/\W+/g, '-')}`, { credentialFiles: text });
+    prepareFrom({ ...f, out: f.from });
+    await assert.rejects(() => makeDrillKit(f), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
+    assert.ok(!fs.existsSync(f.out), reason);
+  }
+  // the one reader the gate calls prints the list and its bytes' hash
+  const f = firstInstallAssets('list-cli');
+  const tar = path.join(f.build, `fleet-node-${f.version}.tar`);
+  assert.deepEqual(drillKit.credentialsOfTar(fs.readFileSync(tar)), { sha256: sha(credentialFilesJson()), credentials: { contract: CREDENTIAL_FILES_CONTRACT, ...PACKAGE_CREDENTIALS } });
+  assert.equal(Object.hasOwn(drillKit, 'packageCredentials'), false, 'no PowerShell source is read any more');
+});
+
+// 7th review round, low 2: a launcher result read back without its terminal field is no successful read-back (the entry writes terminal:
+// null itself when the stage gave no verdict, which is read back as it is).
+test('a launcher result read back without its terminal field is recorded as a failed read-back', opts, () => {
+  const e = JSON.parse(evidence());
+  const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
+    'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }), 'stage-timings.json': '{"host":1}' };
+  const collect = (name, launcher) => {
+    const guest = guestWorkDir(`r7-readback-${name}-guest`, { ...files, 'launcher-result.json': launcher });
+    const runDir = path.join(tmp, `r7-readback-${name}`); fs.mkdirSync(runDir, { recursive: true });
+    return ps(`
+      function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script ${q(guest)} $ArgumentList[1] }
+      $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+      @{ record = (Get-Content -Raw -LiteralPath (Join-Path ${q(runDir)} 'guest-evidence.json') | ConvertFrom-Json); launcher = $c.launcher }`);
+  };
+  const missing = collect('missing', JSON.stringify({ exit: 0 }));
+  assert.equal(missing.record.launcherReadback.ok, false);
+  assert.match(missing.record.launcherReadback.error, /terminal/);
+  assert.equal(missing.record.ok, false);
+  const none = collect('none', JSON.stringify({ exit: 1, terminal: null, stageGaveNoVerdict: true }));
+  assert.equal(none.record.launcherReadback.ok, true);
+  assert.equal(none.launcher, null);
+  assert.equal(none.record.ok, true);
+  const given = collect('given', JSON.stringify({ exit: 0, terminal: e.launcher }));
+  assert.deepEqual(given.launcher, e.launcher);
+  assert.equal(given.record.launcherReadback.ok, true);
 });
