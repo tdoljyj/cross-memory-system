@@ -173,7 +173,7 @@ Decision 记录要满足：已提交（`status: committed`）、恰一个目标�
 - `--drill-receipt`：要求见 4.2，且三项哈希与这份接受相同。索引“首装演练”格记它的结论与回执 sha256；没给，记“首装未演练”。已封的行，这一格不再改：换回执或去掉回执重跑都拒绝。
 - 同样的参数再跑一次：已挂上、已写索引就什么都不改；上传后、写索引前断了的，补写索引。同一版本换一个 Decision 再 seal：拒绝，且在上传之前。
 
-**交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）就是该版 Release 的资产，在 `seal` 之后用 `fetch.mjs` 或 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录。`prepare` 的 `--out`（含接受请求、Decision 记录）不是交付目录：bootstrap 会把其中没列在两份 sums 里的文件当作多出的文件拒绝。
+**交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）就是该版 Release 的全部资产，在 `seal` 之后用 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录（只取这一条，它取的就是 bootstrap 首装要的全部资产）。`prepare` 的 `--out`（含接受请求、Decision 记录）不是交付目录：bootstrap 会把其中没列在两份 sums 里的文件当作多出的文件拒绝。
 
 接受文件（合同 `clued.independent-ci.fleet-node-acceptance/1`，文件名 `fleet-node-<version>.acceptance.json`）由 `seal` 写出，形如：
 
@@ -200,7 +200,7 @@ Decision 记录要满足：已提交（`status: committed`）、恰一个目标�
 powershell -NoProfile -ExecutionPolicy Bypass -File <目录>\fleet-node-<v>.bootstrap.ps1 -From <目录>
 ```
 
-`<目录>` 放该版的 Release 资产（U 盘、共享盘、同步文件夹都可以，只认哈希；路径只许字母、数字、`.`、`_`、`-` 与 `\`）：`fleet-node-<v>.tar`、`fleet-node-<v>.release.json`、`SHA256SUMS`、`fleet-node-<v>.bootstrap.ps1`、`fleet-node-<v>.prereq-manifest.json`、`fleet-node-<v>.acceptance.json`；首装另要 `fleet-node-<v>.first-install-kit.json`、它列出的每个 `role-image-<64hex>.tar.gz` 与 `fleet-node-<v>.first-install.SHA256SUMS`。取资产可以用 `fetch.mjs`（0.3，断流续传、只认哈希）或 `gh release download`。
+`<目录>` 放该版的 Release 资产（U 盘、共享盘、同步文件夹都可以，只认哈希；路径只许字母、数字、`.`、`_`、`-` 与 `\`）：`fleet-node-<v>.tar`、`fleet-node-<v>.release.json`、`SHA256SUMS`、`fleet-node-<v>.bootstrap.ps1`、`fleet-node-<v>.prereq-manifest.json`、`fleet-node-<v>.acceptance.json`；首装另要 `fleet-node-<v>.first-install-kit.json`、它列出的每个 `role-image-<64hex>.tar.gz` 与 `fleet-node-<v>.first-install.SHA256SUMS`。取资产用第 4.3 节“交付目录”那一条 `gh release download`（`fetch.mjs` 只取 tar、接受文件与 `SHA256SUMS`，够原地升级，组不齐首装目录）。
 
 bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象）：
 

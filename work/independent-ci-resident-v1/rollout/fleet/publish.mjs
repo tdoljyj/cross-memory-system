@@ -64,6 +64,7 @@
 // gh's environment, and nothing here reads, writes or prints a token.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -315,11 +316,15 @@ export async function attachAcceptance({ version, acceptance, repo = DEFAULT_REP
   return { status: 'FLEET_ACCEPTANCE_ATTACHED', tag, url: v.url, version, acceptedAt: a.acceptedAt, cluedDecision: a.cluedDecision, drill: c[6], already: again, indexLine: idx.lines[at] };
 }
 
-// One release asset, downloaded (read-only) into `stage`; its path.
+// One release asset, downloaded (read-only) into a new directory of its own under `stage`; its path. gh refuses a file of that name already
+// in --dir (2.97.0, without --clobber): every download gets an empty directory, so reading the same asset again (prepare before and after it
+// attaches the kit, two images reused from one earlier Release) never lands on an earlier copy (review r2).
 function downloadAsset(ghCommand, repo, tag, name, stage) {
-  const r = gh(ghCommand, ['release', 'download', tag, '--repo', repo, '--pattern', name, '--dir', stage]);
+  mkdirSync(stage, { recursive: true });
+  const dir = mkdtempSync(path.join(stage, 'dl-'));
+  const r = gh(ghCommand, ['release', 'download', tag, '--repo', repo, '--pattern', name, '--dir', dir]);
   check(r.status === 0, 'PUBLISH_GH_RELEASE_DOWNLOAD_FAILED', { asset: name, stderr: r.stderr });
-  return path.join(stage, name);
+  return path.join(dir, name);
 }
 const sumsOf = text => new Map(text.split('\n').filter(Boolean).map(l => { const i = l.indexOf('  '); return [l.slice(i + 2), l.slice(0, i)]; }));
 const localImagesOf = k => {
@@ -574,7 +579,7 @@ export async function readDecisionRecord(file, line, now = Date.now()) {
   check(UUID.test(t?.id ?? '') && UUID.test(d.receipt_id ?? '') && t.id !== d.receipt_id, 'DECISION_RECORD_REFUSED', 'receipt_id and exactly one target, two different UUIDs');
   const decision = t.id, receipt = d.receipt_id, rec = d.supplemental?.record;
   check(rec !== null && typeof rec === 'object' && !Array.isArray(rec) && rec.record_type === 'decision', 'DECISION_RECORD_NOT_A_DECISION', { record_type: rec?.record_type ?? null });
-  check((rec.id === undefined || rec.id === decision) && (rec.receipt_id === undefined || rec.receipt_id === receipt), 'DECISION_RECORD_NOT_ITS_TARGET',
+  check((rec.id === undefined || rec.id === decision) && rec.receipt_id === receipt, 'DECISION_RECORD_NOT_ITS_TARGET',
     { target: decision, record: rec.id ?? null, receipt, recordReceipt: rec.receipt_id ?? null });
   const at = typeof rec.created_at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/.test(rec.created_at) ? Date.parse(rec.created_at) : NaN;
   check(Number.isFinite(at) && at <= now, 'DECISION_RECORD_REFUSED', { created_at: rec.created_at ?? null });
