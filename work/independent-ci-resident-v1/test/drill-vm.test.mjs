@@ -1302,7 +1302,7 @@ test('gh and Git for Windows: in the kit with the package\'s hashes or no kit, n
   const kitFile = path.join(f.out, 'kit.json');
   const kit = JSON.parse(fs.readFileSync(kitFile, 'utf8'));
   fs.writeFileSync(kitFile, JSON.stringify({ ...kit, files: kit.files.filter(i => i.path !== 'gh.msi') }, null, 2));
-  assert.equal(psCode(`try { Assert-DrillKitToolsBound (Read-DrillKit ${q(f.out)}) ${q(manifest)}; $null } catch { (Get-DrillCode $_).detail }`), 'gh');
+  assert.equal(ps(`try { Assert-DrillKitToolsBound (Read-DrillKit ${q(f.out)}) ${q(manifest)}; 'bound' } catch { (Get-DrillCode $_).detail }`), 'gh');
   assert.equal(gate(), 'DRILL_KIT_TOOL_NOT_INJECTED');
   // a prerequisite list without one of them: no kit
   const short = firstInstallAssets('tools-short');
@@ -2232,9 +2232,10 @@ test('the entry reads the package parser\'s own objects: a ready host, a restart
   const r = entryPs(`. ${q(bootstrap)} -From ${q(tmp)}
     $ready = Get-LastJsonLine ${q(JSON.stringify({ name: 'stage', result: 'ok' }) + '\r\n' + JSON.stringify({ status: 'FIRST_INSTALL_HOST_READY' }))}
     $restart = Get-LastJsonLine ${q(JSON.stringify(restartLine))}
-    $launcher = Get-LastJsonLine ${q(JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', pause: { confirmed: true } }))}
+    # not $launcher: the dot-sourced bootstrap declares a [string] $Launcher parameter
+    $terminal = Get-LastJsonLine ${q(JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', pause: { confirmed: true } }))}
     [ordered]@{ type = $ready.GetType().FullName; readyIsNull = ($null -eq (Get-EntryHostStopCode ([ordered]@{ exit = 0; last = $ready })));
-      restart = (Get-EntryHostStopCode ([ordered]@{ exit = 3; last = $restart })); launcher = (Test-EntryStageVerdict $launcher); host = (Test-EntryStageVerdict $ready) }`);
+      restart = (Get-EntryHostStopCode ([ordered]@{ exit = 3; last = $restart })); launcher = (Test-EntryStageVerdict $terminal); host = (Test-EntryStageVerdict $ready) }`);
   assert.match(r.type, /Dictionary/);
   assert.equal(r.readyIsNull, true);
   assert.match(r.restart, /^RESTART_THEN_RUN_THE_SAME_COMMAND:/);
