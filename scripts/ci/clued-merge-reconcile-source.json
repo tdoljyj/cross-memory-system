@@ -90,7 +90,7 @@
 
     ".github/workflows/clued-cloud-node22-install.yml": "fb844c6d2a1f2dd020679762452fde159125022ba60edcb6e7fd3e0f33837c97",
 
-    ".github/workflows/clued-cloud-production-release.yml": "83ce51b9222f2dd619946e253560b1add276748ce9f7ae76540bc78dde67eab9",
+    ".github/workflows/clued-cloud-production-release.yml": "11d20f51ff982dba82a37a7f6529d44aeeada5ce5bfb0aff4c123ed45fb65139",
 
     ".github/workflows/clued-compute-panel.yml": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
 
@@ -208,9 +208,9 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "fc7d4a5f7237f9ce1e007b0e745b1bc51cd4f94c8ba5cb0bd7f526af637057a7",
+    "scripts/ci/ci-required-selection.mjs": "848228a0acf9cef6ebb1cdd1fe6673a5c121ccb20164edc15007d3a00d57bbde",
 
-    "scripts/ci/ci-required-selection.test.mjs": "d5a6665dbe703ef0f0b8c6250484fc1f0e3227faead3d802593c4845d6404ed1",
+    "scripts/ci/ci-required-selection.test.mjs": "418a10e16bfec47dc6a8970fc749b3cfb9d9c928ab1ff4e593401c07a2bc8463",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
@@ -400,11 +400,15 @@
 
     "scripts/ci/clued-registry-scan-guard.mjs": "630296844a6746b159e0ba128696e49ac5054c743829b58c141b00a55f1a5081",
 
-    "scripts/ci/clued-release-grant.mjs": "1a9933b5195e794bf407ca854d7f21100826cb6f65bfa915071d859627c0f025",
+    "scripts/ci/clued-release-door.mjs": "89638f8c89fdb6088efc31de59b8e1fd165e829de569f148ad9e3ac3c2489314",
 
-    "scripts/ci/clued-release-grant.test.mjs": "63f2c4573389cbcad69096f11834487392b21b754830b4f7e5cd01ec7fefd7b2",
+    "scripts/ci/clued-release-door.test.mjs": "ccb317654b8f930c1fbbc48d25749cb47936e7ee88ee479155cd5b264f05b355",
 
-    "scripts/ci/clued-required-applicability.mjs": "1eb2fe2535774783562b98d70c6e35cfd6261c619b5786fabb4fa03f3d35c540",
+    "scripts/ci/clued-release-grant.mjs": "55b587d4e052b0281ce346c68ce1e4fc2c4f74d06287f0af1fa76481ca18c52e",
+
+    "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
+
+    "scripts/ci/clued-required-applicability.mjs": "927d7277648e8c1a015252e07d78df8b36e8df79ecc9d9e2722ddff0dd67b524",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
@@ -624,7 +628,7 @@
 
     "scripts/ci/test_validate_runner_budget_policy.py": "bffb1953f4c36f9f577934a91e17722e895b5c1f094e96ccd2e9489f5c743aae",
 
-    "scripts/ci/validate_runner_budget_policy.py": "c28bfb14dab63ab6471773de450e8a7b99223dca98c38bcfecd64eaaaa3cbf67",
+    "scripts/ci/validate_runner_budget_policy.py": "0df6d4ec1e43e23d8f35d7ab6f064cb31276c02212f30f9156eb193aa4f98590",
 
     "scripts/runner/clued-runner-hook-loader.mjs": "de10d6bc74f8d965ab86190c87949248295896f9bb6fbab0dc774333f0d1c978",
 
