@@ -707,8 +707,51 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
   for (const label of ['self-hosted', 'Windows', 'trust-internal', 'cap-node24', 'cap-python312']) assert.ok(labels.includes(label), label);
   assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
-  assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
-  assert.equal(job.match(/\brun: /g).length, 1, 'one command: nothing else can pass or fail the job');
+  // Two commands: the push baseline (git only, before any trusted code loads) and the selection's own entry point.
+  assert.deepEqual([...job.matchAll(/\n {6}- name: (.+)\n(?:(?! {6}- ).*\n)*? {8}run: /g)].map((m) => m[1]),
+    ['Resolve push baseline before loading trusted commands', 'Select and run the suites declared for Windows'],
+    'nothing else can pass or fail the job');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
+});
+
+// D6 N1: ci-suites-windows is a required check on main, and the train lands only when every required check
+// succeeded on S. The Windows workflow therefore runs on the train App's push to clued-train/staging under its
+// own name, exactly as clued-required-tests.yml does (ADR 0018 §8; ADR 0032 "counted the same way").
+test('bors staging, Windows side: the train App push to clued-train/staging publishes ci-suites-windows', () => {
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
+  assert.match(text, /\n {2}push:\n {4}branches: \[main, clued-train\/staging\]\n/);
+  assert.match(text, /group:.*github\.ref == 'refs\/heads\/clued-train\/staging' && github\.sha/);
+  assert.match(text, /cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}/);
+  const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
+  const expr = field => job.match(new RegExp(`^    ${field}: >-\\n([\\s\\S]*?)(?=^    [a-z])`, 'm'))[1]
+    .trim().replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.admission-gate', "needs['admission-gate']");
+  const evaluate = (field, change = {}, admitted = 'true') => Function('github', 'needs', `return (${expr(field)});`)(
+    { event_name: 'push', ref: 'refs/heads/clued-train/staging', actor: 'clued-ci-checks-turing-20261018[bot]',
+      repository: 'o/r', repository_owner: 'o', event: { pull_request: { base: {}, head: { repo: {} } } }, ...change },
+    { 'admission-gate': { outputs: { admitted } } });
+  for (const [change, admitted, allowed] of [[{}, 'true', true], [{ actor: 'owner' }, 'true', false],
+    [{ ref: 'refs/heads/clued-train/staging.tmp' }, 'true', false], [{ event_name: 'schedule' }, 'true', false],
+    [{}, 'false', false], [{ ref: 'refs/heads/main' }, 'true', true], [{ ref: 'refs/heads/main', actor: 'o' }, 'true', true]]) {
+    assert.equal(Boolean(evaluate('if', change, admitted)), allowed, JSON.stringify([change, admitted]));
+    assert.equal(evaluate('name', change, admitted), allowed ? 'ci-suites-windows' : 'ci-suites-windows-skipped');
+  }
+});
+
+test('bors staging, Windows side: S^1 is checked against main before the trusted selection loads, and is the base', () => {
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
+  assert.doesNotMatch(text, /github\.event\.before/);
+  const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
+  const candidate = job.indexOf('path: candidate');
+  const resolver = job.indexOf('id: train-base');
+  const trusted = job.indexOf('path: trusted');
+  assert.ok(candidate > 0 && candidate < resolver && resolver < trusted, 'candidate, then the baseline, then trusted');
+  assert.match(job.slice(0, resolver), /fetch-depth: 0/);
+  const verification = job.slice(resolver, trusted);
+  assert.match(verification, /\n {8}shell: powershell\n/);
+  assert.match(verification, /git rev-parse "\$\(\$env:STAGING_SHA\)\^1"/);
+  assert.match(verification, /git merge-base --is-ancestor \$base origin\/main/);
+  assert.ok(verification.indexOf('git merge-base --is-ancestor') < verification.indexOf('$env:GITHUB_OUTPUT'));
+  assert.match(job, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
+  assert.match(job, /CI_BASE_SHA: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| steps\.train-base\.outputs\.ci_base \}\}\n/);
 });

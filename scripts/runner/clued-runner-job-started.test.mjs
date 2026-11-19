@@ -34,6 +34,8 @@ test('bors staging: only the required-tests workflow pushed by App 5368905 may b
     { GITHUB_REF: 'refs/heads/clued-train/staging.tmp' }, { GITHUB_REF: 'refs/heads/feature' },
     { GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/other.yml@refs/heads/clued-train/staging' },
     { GITHUB_EVENT_NAME: 'schedule' }, { GITHUB_REPOSITORY: 'other/repo' },
+    ...[{ GITHUB_ACTOR: 'o' }, { GITHUB_REF: 'refs/heads/feature' }, { GITHUB_EVENT_NAME: 'schedule' }].map(change => ({ ...change,
+      GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests-windows.yml@refs/heads/clued-train/staging' })),
   ]) assert.equal((await check(changed)).allow, false, JSON.stringify(changed));
 });
 
@@ -237,6 +239,38 @@ test('bors staging: every member of a multi-PR chain must have its own admission
   };
   assert.equal((await stagingRun(script)).result.allow, true);
   assert.equal((await stagingRun({ ...script, [riderChecks]: { body: { total_count: 0, check_runs: [] } } })).result.allow, false);
+});
+
+// D6 N1: ci-suites-windows is required on main, so the train needs it on S too. The Windows workflow takes the
+// same staging route, bound to its own run and to its own pull_request runs for each member head.
+const WINDOWS_WORKFLOW = '.github/workflows/clued-required-tests-windows.yml';
+const windowsMemberRunsUrl = head => `${API}/actions/workflows/clued-required-tests-windows.yml/runs?head_sha=${head}&event=pull_request`;
+const windowsStagingScript = () => {
+  const script = stagingScript();
+  script[RUN].body.path = WINDOWS_WORKFLOW;
+  delete script[memberRunsUrl(HEAD)];
+  const runs = memberRuns();
+  runs.body.workflow_runs[0].path = WINDOWS_WORKFLOW;
+  script[windowsMemberRunsUrl(HEAD)] = runs;
+  return script;
+};
+const WINDOWS_STAGING_ENV = { GITHUB_WORKFLOW_REF: `o/r/${WINDOWS_WORKFLOW}@refs/heads/clued-train/staging`, GITHUB_JOB: 'ci-suites-windows' };
+test('bors staging: the Windows required workflow is admitted on S on the same terms as the Linux one', async () => {
+  const { result, calls } = await stagingRun(windowsStagingScript(), WINDOWS_STAGING_ENV);
+  assert.equal(result.allow, true, result.reason);
+  assert.ok(calls.some(call => call.url.startsWith(windowsMemberRunsUrl(HEAD))), 'reads its own PR runs');
+  assert.ok(!calls.some(call => call.url.startsWith(memberRunsUrl(HEAD))), 'not the Linux workflow runs');
+  // No weaker: no member admission, another actor, or a run of another workflow refuses.
+  assert.equal((await stagingRun({ ...windowsStagingScript(), [NATIVE]: { body: { total_count: 0, check_runs: [] } } },
+    WINDOWS_STAGING_ENV)).result.allow, false);
+  assert.equal((await stagingRun(windowsStagingScript(), { ...WINDOWS_STAGING_ENV, GITHUB_ACTOR: 'o' })).result.allow, false);
+  const linuxRun = windowsStagingScript();
+  linuxRun[RUN].body.path = '.github/workflows/clued-required-tests.yml';
+  assert.equal((await stagingRun(linuxRun, WINDOWS_STAGING_ENV)).result.allow, false);
+  // The member's PR runs must be of this workflow.
+  const linuxMemberRuns = windowsStagingScript();
+  linuxMemberRuns[windowsMemberRunsUrl(HEAD)] = memberRuns();
+  assert.equal((await stagingRun(linuxMemberRuns, WINDOWS_STAGING_ENV)).result.allow, false);
 });
 
 test('bors staging: an earlier success on the same head cannot authorize a later PR event', async () => {
