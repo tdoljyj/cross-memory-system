@@ -142,6 +142,19 @@ export function trainDue({ train, now, runs = [], busy, urgent = false, recheck 
   const last = recent.length ? Math.max(...recent) : null;
   return last === null || urgent === true || now - last >= (recheck === true ? Math.min(TRAIN_RECHECK_MS, train.maintenanceEveryMs) : train.maintenanceEveryMs);
 }
+// Field 2026-11-19 09:15-09:35 (#1172, FABLE-ci-10min §3.2 P1a): a bound front whose batch this run was to open but did not, where one
+// more run moves it on (an incomplete sweep, a returned slot), waited three full maintenanceEveryMs with the executor idle. Such a run's
+// next one comes TRAIN_RECHECK_MS later too, at most TRAIN_FRONT_RECHECK_MAX times per front head (the 7th goes back to the normal cadence),
+// so one stuck head can never spend the daily cap. The streak is per head: a run with another decision does not refill it.
+export const TRAIN_FRONT_RECHECK_DECISIONS = Object.freeze(['TRAIN_SWEEP_INCOMPLETE', 'FRONT_RETURNED']);
+export const TRAIN_FRONT_RECHECK_MAX = 6;
+// previous: the last streak or null; summary: the newest clean on-mode run's summary, or null (any other run). Returns { key, count, due } or null.
+export function trainFrontRecheckNext(previous, summary) {
+  const f = summary?.mode === 'on' && TRAIN_FRONT_RECHECK_DECISIONS.includes(summary.decision) ? summary.front : null;
+  if (!Number.isSafeInteger(f?.pr) || !SHA.test(f?.headSha ?? '')) return previous ? Object.freeze({ ...previous, due: false }) : null;
+  const key = `${f.pr}:${f.headSha}`, count = previous?.key === key ? previous.count + 1 : 1;
+  return Object.freeze({ key, count, due: count <= TRAIN_FRONT_RECHECK_MAX });
+}
 
 // A finite cadence exception for an already-required all/current round, not a new sweep or an urgent flag.
 // Reserve the number of normal cadence calls that fit in one day; every extra also pays the unchanged total cap.
