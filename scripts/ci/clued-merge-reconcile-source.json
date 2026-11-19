@@ -208,9 +208,9 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "05cd8e35c3b31d1addeb3195aa2f9fea4abe35b2ac5dd1572fa3d7656951c549",
+    "scripts/ci/ci-required-selection.mjs": "78c579afcf2fcdedcf721403fca91a2210bc698382c6169e4f424251dce91474",
 
-    "scripts/ci/ci-required-selection.test.mjs": "418a10e16bfec47dc6a8970fc749b3cfb9d9c928ab1ff4e593401c07a2bc8463",
+    "scripts/ci/ci-required-selection.test.mjs": "2f9fb5ea7845c5e6e1c03391c68d2fc5f9d3bc42e3ccd72c19353f3c81955715",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
@@ -408,7 +408,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "97363e4fdce31fb4aeba4872eb9e682db88eb7991406026fd740bbe949b76c71",
+    "scripts/ci/clued-required-applicability.mjs": "f0aaf4fdbfcc5efd8acafba8040d04418beea5b8b18e62b0fff4f6bdd222c441",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
