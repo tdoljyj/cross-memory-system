@@ -76,6 +76,8 @@ const REFUSALS = [
   [/release_door_not_installed/, () => "第一条文件的 md5 与钉死的安装迁移相同，执行后发布门却仍不存在；已回滚，生产没有变化。查安装迁移。"],
   [/function clued_private\.release_door_v1\(jsonb\) does not exist|schema "clued_private" does not exist/, () =>
     "发布门 clued_private.release_door_v1 不在这个数据库里。先触发一次 mode=migrate，migrations 只填安装迁移（*_release_door_db_identity_v1.sql）完成自举，再重跑本次。"],
+  [/\baccount_not_available\b/, () =>
+    "发布身份登记的账号当前不可用（已停用或已删除），发布门拒绝了这次调用，生产没有变化。账号恢复可用后重跑。"],
   [/permission denied for (function|schema)/, () =>
     "CLUED_MIGRATION_DATABASE_URL 的登录角色无权调用发布门。它必须是迁移用的数据库登录角色；不要换成别的口令。"],
   [/psql: error|connection to server|password authentication failed|could not translate host name|Connection refused/i, () =>

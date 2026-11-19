@@ -82,7 +82,9 @@ test("release door v1: a consumed grant admits, a pending request prints its lin
     ["ERROR:  release_door_probe_failed", /探门失败.*回滚/],
     ["ERROR:  release_door_not_installed", /发布门却仍不存在/],
     ["psql: error: connection to server failed: password authentication failed", /连不上生产库/],
-    ["ERROR:  release_door_resource_invalid", /发布门拒绝了这次调用：release_door_resource_invalid/],
+    ["ERROR:  release_door_resources_invalid", /发布门拒绝了这次调用：release_door_resources_invalid/],
+    // PR-A 4f4e7f6ee: the door refuses an account resolve_binding would refuse.
+    ["ERROR:  account_not_available", /账号当前不可用/],
     ["", /发布门没有回答/],
   ]) {
     r = explain({ mode: "deploy", answerText: "", errorText, env: env() });
