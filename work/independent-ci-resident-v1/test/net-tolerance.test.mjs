@@ -232,8 +232,7 @@ const keyOf = Object.fromEntries([1, 2, 3].map(n => [batchKey(subjectOf(n)), n])
 
 test('a 45-minute network outage: no head burned, no row stopped, no cap spent, every PR runs within 10 minutes of the network coming back', async t => {
   const { f, line, engine, opened } = await outage(t, { minutes: 45 });
-  // P1c: an ordinary batch's bundle follows its stage 1 (here admitted: the fake line cuts only the bundle); nothing ran past the bundle.
-  assert.deepEqual(engine.calls.filter(c => c[0] === 'stage' && ![1, 10].includes(c[1])), [], 'nothing ran past the bundle');
+  assert.deepEqual(engine.calls.filter(c => c[0] === 'stage' && c[1] !== 10), [], 'nothing ran past the bundle');
   assert.deepEqual([opened.cause, (opened.nextTrialAt - opened.at) / MIN], [NETWORK_CAUSE, 10], 'the network breaker waits 10 minutes');
   assert.equal(f.queue.breaker.level, 0, 'the same outage never stacked its delay');
   const u = await f.ledger.usage(0, { separateNetwork: true });

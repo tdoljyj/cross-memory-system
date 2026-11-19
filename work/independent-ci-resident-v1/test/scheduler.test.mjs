@@ -372,12 +372,10 @@ test('review m4: the release cap holds across a queue that started over; the reb
   const exec = new ResidentExecutor({ ...f.ports, queue });
   await f.drop(triggerBytes()); // the poller proposes the head again after the new generation
   f.advance(10 * MIN + 1);
-  // P1c: each of the two released batches ran its stage 1 before its bundle failed.
-  assert.deepEqual(stagesRun(engine), [1, 1]);
   const r = await exec.tick();
   assert.equal(r.reason, 'RELEASE_CAP_REACHED');
   assert.equal(queue.row(884).state, 'STOPPED');
-  assert.deepEqual(stagesRun(engine), [1, 1], 'the cap stops it before any stage can run');
+  assert.deepEqual(stagesRun(engine), [], 'the cap stops it before any stage can run');
   assert.equal(companion.calls.filter(c => c[0] === 'bundle').length, 2, 'never a third bundle release');
   assert.ok((await receiptTypes(f)).includes('queue-rebuilt'));
 });
