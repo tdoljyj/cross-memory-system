@@ -646,8 +646,8 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
     }
     $n
   }
-  $stages = [ordered]@{ entry = $null; host = $null; launcher = $null }
-  foreach ($stage in @('entry', 'host', 'launcher')) { $text = Get-DrillField $Logs $stage; if ($text -is [string]) { $stages[$stage] = & $read $stage $text } }
+  $stages = [ordered]@{ entry = $null; host = $null; prepare = $null; launcher = $null }
+  foreach ($stage in @('entry', 'host', 'prepare', 'launcher')) { $text = Get-DrillField $Logs $stage; if ($text -is [string]) { $stages[$stage] = & $read $stage $text } }
   # A stage ran when its result file or its log is there. It is incomplete (Codex review of 1cedea9ef, medium 2) when its log is missing
   # or empty, holds no step line (only its verdict), or ends without its verdict line -- the stage gave no verdict (cut off, a timeout):
   # what that log holds is read all the same, never taken for the whole record.
@@ -693,7 +693,7 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
 
 function Read-DrillFirstInstallSteps([string]$RunDir) {
   $text = { param($n) $p = Join-Path $RunDir $n; if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
-  $logs = [ordered]@{ entry = (& $text 'first-install.log'); host = (& $text 'host.stdout.log'); launcher = (& $text 'launcher.stdout.log') }
+  $logs = [ordered]@{ entry = (& $text 'first-install.log'); host = (& $text 'host.stdout.log'); prepare = (& $text 'prepare.stdout.log'); launcher = (& $text 'launcher.stdout.log') }
   $stage = $null
   $evidence = Join-Path $RunDir 'stage-evidence.json'
   if (Test-Path -LiteralPath $evidence -PathType Leaf) { try { $stage = Read-DrillJson $evidence } catch { $stage = $null } }
@@ -2085,10 +2085,10 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # the stages' complete stdout logs, as files of the run (the step record: Read-DrillFirstInstallSteps)
   $stageLogs = Invoke-DrillGuest $Cred {
     $r = [ordered]@{}
-    foreach ($name in @('host.stdout.log', 'launcher.stdout.log')) { $p = Join-Path 'C:\drill\work' $name; $r[$name] = if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
+    foreach ($name in @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log')) { $p = Join-Path 'C:\drill\work' $name; $r[$name] = if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
     $r
   } -TimeoutMinutes 2 -Step 'stage-logs'
-  foreach ($name in @('host.stdout.log', 'launcher.stdout.log')) { $t = Get-DrillField $stageLogs $name; if ($t -is [string]) { [IO.File]::WriteAllText((Join-Path $RunDir $name), $t, (New-Object Text.UTF8Encoding($false))) } }
+  foreach ($name in @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log')) { $t = Get-DrillField $stageLogs $name; if ($t -is [string]) { [IO.File]::WriteAllText((Join-Path $RunDir $name), $t, (New-Object Text.UTF8Encoding($false))) } }
   # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json
   $launcherResult = if ($stageEvidence -is [System.Collections.IDictionary]) { $stageEvidence['launcher-result.json'] } elseif ($stageEvidence) { $stageEvidence.PSObject.Properties['launcher-result.json'].Value }
   $launcher = Get-Prop $launcherResult 'terminal'

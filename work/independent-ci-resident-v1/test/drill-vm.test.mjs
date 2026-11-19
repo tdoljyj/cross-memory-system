@@ -1917,12 +1917,14 @@ test('firstInstallSteps come from the complete stdout logs only; a stage result 
   assert.equal(cut.incomplete, true);
   assert.deepEqual(cut.incompleteStages, ['host']);
   assert.equal(cut.stageVerdicts.host, 'HOST_PREPARATION_STOPPED');
-  // the entry writes the complete logs beside the stage result files, and the drill takes them back into the run directory
+  // the entry writes the complete logs line by line beside the stage result files, and the drill takes them back into the run directory
   const entryText = fs.readFileSync(entryScript, 'utf8');
-  assert.match(entryText, /'host\.stdout\.log'\), \[string\]\$hostRun\.stdout/);
-  assert.match(entryText, /\[IO\.File\]::Copy\(\$launcherResult, \(Join-Path \$Output 'launcher\.stdout\.log'\)/);
+  assert.match(entryText, /\$hostRun = Invoke-EntryStreamedChild [\s\S]*?\(Join-Path \$Output 'host\.stdout\.log'\)/);
+  assert.match(entryText, /\$prepared = Invoke-EntryStreamedChild [^\n]*\(Join-Path \$Output 'prepare\.stdout\.log'\)/);
+  assert.match(entryText, /\$launcherResult = Join-Path \$Output 'launcher\.stdout\.log'/);
+  assert.doesNotMatch(entryText, /WriteAllText\(\(Join-Path \$Output 'host\.stdout\.log'\)/);
   const drillText = fs.readFileSync(script, 'utf8');
-  for (const n of ['host.stdout.log', 'launcher.stdout.log']) assert.ok(drillText.includes(`'${n}'`), n);
+  for (const n of ['host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log']) assert.ok(drillText.includes(`'${n}'`), n);
   // the receipt carries it under A1, and -Finalize keeps it (it rewrites A5 and A9 only)
   const receipt = m5DrillReceipt('steps-chain', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
   const a1 = receipt.items.find(i => i.id === 'A1');
@@ -1930,6 +1932,28 @@ test('firstInstallSteps come from the complete stdout logs only; a stage result 
   assert.equal(a1.firstInstallSteps.missing, false);
   const fin = JSON.parse(finalize('steps-chain-finalize', receipt).bytes);
   assert.equal(fin.items.find(i => i.id === 'A1').firstInstallSteps.missing, false);
+});
+
+// Fable renew-key ruling, supplement "branch two, two points" 1 (the drill's side): the entry writes each stage child's stdout (the host
+// preparation, prepare) to its log line by line as it comes, so a stage cut off at its limit leaves what it printed; the launcher stage's
+// output file is launcher.stdout.log itself, read for whatever it holds.
+test('the entry writes a stage child\'s stdout to its log line by line: a stage cut off at its limit leaves what it printed', opts, () => {
+  const child = path.join(tmp, 'stage-child.ps1');
+  fs.writeFileSync(child, "Write-Output '{\"name\":\"a\",\"result\":\"ok\"}'\nWrite-Output '{\"name\":\"b\",\"result\":\"ok\"}'\n" +
+    "if ($args[0] -eq 'hang') { Start-Sleep -Seconds 15 }\n[Console]::Error.WriteLine('a note')\nWrite-Output '{\"status\":\"DONE\"}'\nexit 3\n");
+  const log = path.join(tmp, 'stage-child.log');
+  const cut = entryPs(`$r = Invoke-EntryStreamedChild ${q(powershell)} @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ${q(child)}, 'hang') 6 ${q(log)} @{} -NoWindow
+    [ordered]@{ timedOut = $r.timedOut; status = $r.last.status }`);
+  assert.deepEqual(cut, { timedOut: true, status: 'STAGE_CHILD_STILL_RUNNING' });
+  assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split(/\r?\n/), ['{"name":"a","result":"ok"}', '{"name":"b","result":"ok"}']);
+  const done = entryPs(`$r = Invoke-EntryStreamedChild ${q(powershell)} @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ${q(child)}, 'run') 60 ${q(log)} @{ CLUED_STREAM_TEST = '1' } -NoWindow
+    [ordered]@{ timedOut = $r.timedOut; exit = $r.exit; stderr = ([string]$r.stderr).Trim(); lines = @($r.stdout.Trim() -split "\`r?\`n").Count }`);
+  assert.deepEqual(done, { timedOut: false, exit: 3, stderr: 'a note', lines: 3 });
+  assert.equal(fs.readFileSync(log, 'utf8').trim().split(/\r?\n/).length, 3);
+  // the prepare log is one of the complete logs the step record is read from
+  const dir = path.join(tmp, 'steps-prepare'); fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'prepare.stdout.log'), JSON.stringify({ name: 'rehearse', result: 'ok' }) + '\r\n');
+  assert.deepEqual(ps(`$s = Read-DrillFirstInstallSteps ${q(dir)}; [ordered]@{ names = @($s.steps | ForEach-Object { $_.stage + ':' + $_.name }) }`).names, ['prepare:rehearse']);
 });
 
 // Codex review of 1cedea9ef, medium 2: "incomplete" is not only a missing file. A stage that ran (its result file or its log is there) is

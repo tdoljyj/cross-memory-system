@@ -68,6 +68,39 @@ function Assert-FirstInstallRelease {
   if (@(Get-ChildItem -LiteralPath $From -Force).Count -ne $seen.Count) { throw 'DRILL_RELEASE_UNLISTED_ASSET' }
 }
 
+# Fable renew-key ruling, supplement "branch two, two points" 1 (the drill's side): a stage child's stdout goes to its log line by line as
+# it comes, so a stage cut off at its limit still leaves what it printed. Otherwise as the package's Invoke-StageChild (the same argument
+# quoting; stdout and stderr apart; nothing killed at the limit) and, with -NoWindow and $EnvAdd, as its Invoke-NonElevated. A limit of 0
+# waits for the end.
+function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$LimitSeconds, [string]$Log, [hashtable]$EnvAdd = @{}, [switch]$NoWindow) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $Exe; $psi.Arguments = (($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = [bool]$NoWindow
+  foreach ($k in @($EnvAdd.Keys)) { $psi.EnvironmentVariables[$k] = $EnvAdd[$k] }
+  $writer = New-Object IO.StreamWriter -ArgumentList $Log, $false, (New-Object Text.UTF8Encoding($false))
+  $writer.AutoFlush = $true
+  $out = New-Object Text.StringBuilder
+  $lastOf = { param($t) if (Test-Path -LiteralPath 'function:Get-LastJsonLine') { Get-LastJsonLine $t } else { $null } }
+  try {
+    $proc = [Diagnostics.Process]::Start($psi)
+    $err = $proc.StandardError.ReadToEndAsync()
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(0, $LimitSeconds))
+    while ($true) {
+      $next = $proc.StandardOutput.ReadLineAsync()
+      $wait = if ($LimitSeconds -gt 0) { [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds) } else { -1 }
+      if (-not $next.Wait($wait)) {
+        return [ordered]@{ exit = $null; timedOut = $true; pid = $proc.Id; stdout = $out.ToString(); stderr = $null; last = [ordered]@{ status = 'STAGE_CHILD_STILL_RUNNING'; pid = $proc.Id; note = 'nothing was killed' } }
+      }
+      if ($null -eq $next.Result) { break }
+      $writer.WriteLine($next.Result); [void]$out.AppendLine($next.Result)
+    }
+    $proc.WaitForExit()   # the asynchronous stderr read ends with the child
+    $e = [string]$err.Result
+    $text = $out.ToString()
+    [ordered]@{ exit = $proc.ExitCode; timedOut = $false; pid = $proc.Id; stdout = $text; stderr = $(if ($e.Length -gt 4000) { $e.Substring($e.Length - 4000) } else { $e }); last = (& $lastOf $text) }
+  } finally { $writer.Dispose() }
+}
+
 # This is the README section 5 exception for CLUED-DRILL only. No accepted file is rewritten.
 # Load the accepted bootstrap's helpers, keeping its asset/prerequisite/check/prepare/launcher order.
 function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]$FakeInputs, [string]$Output, [string]$ReleaseVersion) {
@@ -182,32 +215,34 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $hostScript = Join-Path $hostTree 'work\independent-ci-resident-v1\windows\first-install-host.ps1'
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
-      $hostRun = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $hostScript, '-Tree', $hostTree,
+      # its stdout line by line into host.stdout.log: the step record (drill-vm.ps1 Read-DrillFirstInstallSteps reads steps from the
+      # complete stdout logs only; host-result.json below keeps only the tail and is read for its verdict line)
+      $hostRun = Invoke-EntryStreamedChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $hostScript, '-Tree', $hostTree,
         '-PrereqDirectory', $pre, '-PrereqManifest', $localManifest, '-PrereqManifestSha256', $sums["$prefix.prereq-manifest.json"],
         '-KitSha256', $pins['kitSha256'], '-ToolchainNodeSha256', $pins['toolchainNodeSha256'], '-RegistrarSha256', $pins['registrarSha256'],
-        '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) $HostLimitSeconds
+        '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) $HostLimitSeconds (Join-Path $Output 'host.stdout.log')
     } finally { $measurements.host = $watch.Elapsed.TotalSeconds }
-    # The host preparation's whole stdout as it printed it: the step record (drill-vm.ps1 Read-DrillFirstInstallSteps reads steps from the
-    # complete stdout logs only; host-result.json below keeps only the tail and is read for its verdict line).
-    [IO.File]::WriteAllText((Join-Path $Output 'host.stdout.log'), [string]$hostRun.stdout, (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText((Join-Path $Output 'host-result.json'), (ConvertTo-JsonLine ([ordered]@{ exit = $hostRun.exit; terminal = $hostRun.last; stdoutTail = $(if ($hostRun.stdout) { $t = [string]$hostRun.stdout; $t.Substring([Math]::Max(0, $t.Length - 6000)) } else { $null }); stderrTail = $(if ($hostRun.stderr) { $t = [string]$hostRun.stderr; $t.Substring([Math]::Max(0, $t.Length - 3000)) } else { $null }) })), (New-Object Text.UTF8Encoding($false)))
     if ([string](Get-Key $hostRun.last 'status') -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { throw 'RESTART_THEN_RUN_THE_SAME_COMMAND' }
     if ($hostRun.exit -ne 0 -or [string](Get-Key $hostRun.last 'status') -cne 'FIRST_INSTALL_HOST_READY') { throw 'HOST_PREPARATION_NOT_DONE' }
     $watch.Restart()
-    try { $prepared = Invoke-NonElevated $entryNode @($install, 'prepare', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'), '--from', $Assets) $childEnv }
+    try { $prepared = Invoke-EntryStreamedChild $entryNode @($install, 'prepare', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'), '--from', $Assets) 0 (Join-Path $Output 'prepare.stdout.log') $childEnv -NoWindow }
     finally { $measurements.prepare = $watch.Elapsed.TotalSeconds }
     $drillLauncher = Get-Key $prepared.last 'launcher'
     if ($prepared.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains [string](Get-Key $prepared.last 'status') -or
         -not (Test-SafePath ([string](Get-Key $drillLauncher 'path'))) -or [string](Get-Key $drillLauncher 'sha256') -cnotmatch '^[0-9a-f]{64}$') { throw 'PREPARE_REFUSED' }
-    $launcherResult = Join-Path $script:Work ('elevated-launcher-' + [guid]::NewGuid().ToString('N') + '.txt')
+    # The launcher stage's output file (bootstrap.ps1 -Stage launcher -Result) is its whole printed output, and here it is launcher.stdout.log
+    # itself: whatever it holds when the stage ends or is cut off is what the drill reads (Fable renew-key ruling, supplement "branch two,
+    # two points" 1; the package will write it line by line).
+    $launcherResult = Join-Path $Output 'launcher.stdout.log'
     $watch.Restart()
     try { $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $bootstrap, '-Stage', 'launcher', '-Result', $launcherResult,
       '-Launcher', $drillLauncher['path'], '-LauncherSha256', $drillLauncher['sha256'], '-ExpectedOperatorSid', $operatorSid) $LauncherLimitSeconds }
     finally { $measurements.launcher = $watch.Elapsed.TotalSeconds }
-    # the launcher stage's result file is its whole printed output (bootstrap.ps1 -Stage launcher): kept as the launcher's complete log
-    if ([IO.File]::Exists($launcherResult)) { [IO.File]::Copy($launcherResult, (Join-Path $Output 'launcher.stdout.log'), $true) }
-    $terminal = Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult))
-    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal })), (New-Object Text.UTF8Encoding($false)))
+    # no output file, or one whose last object is not a verdict (a stage cut off): the stage gave no verdict
+    $terminal = if ([IO.File]::Exists($launcherResult)) { Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult)) } else { $null }
+    if ($null -ne $terminal -and -not ((Get-Key $terminal 'status') -is [string])) { $terminal = $null }
+    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; stageGaveNoVerdict = ($null -eq $terminal) })), (New-Object Text.UTF8Encoding($false)))
     $verdict = Get-LauncherVerdict $true $terminal
     return (ConvertTo-FirstInstallEntryResult $verdict $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit }) $entryTree $entryNode)
   } finally {
