@@ -807,6 +807,7 @@ test('host reader uses only the pinned status file and accounts for an existing 
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = $script:freeBytes / 1KB } }
     function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 14GB; MemoryAssigned = $script:assignedBytes } }
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    function Get-DrillRunnerDistributions { param($HostName) }
     $script:freeBytes = 20GB + $script:Drill.BootMarginBytes; $script:assignedBytes = 0
     $safety = Get-DrillHostSafety
     $script:freeBytes = 10GB; $script:assignedBytes = 10GB
@@ -930,7 +931,8 @@ test('checkpoint caller discards a result after a guard failure and restores the
       'discard this result'
     } 'unused' @{ safeToResume = $true; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10); holdUntil = [DateTimeOffset]::MinValue }
     @{ outcome = $outcome; restores = $script:restores }`);
-  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true, hostExecutorStates: [] });
+  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true, hostExecutorStates: [],
+    wslCacheRelease: { distributions: [], released: [], failed: null } });
   assert.equal(r.restores, 1);
 });
 
@@ -1352,6 +1354,7 @@ test('the boot gate refuses while an Actions runner job is executing on the host
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
     function Get-VM { param($ErrorAction) @{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 8GB; MemoryAssigned = $script:assigned } }
     function Get-Process { param($ErrorAction) $script:names | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
+    function Get-DrillRunnerDistributions { param($HostName) }
     $script:assigned = 0
     $script:names = @('System', 'Runner.Listener', 'Runner.Listener', 'svchost')
     $listening = Get-DrillHostSafety
@@ -1365,6 +1368,187 @@ test('the boot gate refuses while an Actions runner job is executing on the host
   assert.equal(r.busy.code, 'DRILL_HOST_CI_BUSY');
   assert.equal(r.busy.busyWith, 'ACTIONS_RUNNER_JOB');
   assert.equal(r.running.action, 'continue');
+});
+
+// Fable renew-key ruling, supplement "WSL runner jobs": this host's Linux Actions runners execute their jobs inside a WSL distribution,
+// where the Windows process list does not see their Runner.Worker (the 02:0x candidate drill booted while two of them were busy). The
+// same criterion is read on both sides: a Runner.Worker in either process list refuses the boot; a WSL side that cannot be read refuses
+// it too (reading nothing there is the shape of that miss).
+test('the boot gate refuses a Runner.Worker in the runner distribution as on Windows, and refuses when that side is unreadable', opts, () => {
+  const r = ps(`
+    $s = ${q(idleHostStatus())}
+    @{ wslJob = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Listener') -WslProcessNames @('systemd', 'Runner.Listener', 'Runner.Worker'))
+      quiet = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Listener') -WslProcessNames @('systemd', 'Runner.Listener'))
+      nothingRunning = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Listener') -WslProcessNames @())
+      unreadable = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Listener') -WslProcessNames $null)
+      running = (Test-DrillHostSafety $s 64GB -Running -WslProcessNames @('Runner.Worker')) }`);
+  assert.equal(r.wslJob.action, 'refuse');
+  assert.equal(r.wslJob.code, 'DRILL_HOST_CI_BUSY');
+  assert.equal(r.wslJob.busyWith, 'WSL_ACTIONS_RUNNER_JOB');
+  assert.equal(r.quiet.action, 'start');
+  assert.equal(r.nothingRunning.action, 'start');
+  assert.equal(r.unreadable.action, 'refuse');
+  assert.equal(r.unreadable.code, 'DRILL_HOST_WSL_UNREADABLE');
+  assert.equal(r.running.action, 'continue');
+});
+
+// The distribution is the one this host's Linux runners are registered in (scripts/ci/self-hosted/node-profiles.json, the host entry by
+// host name: linux_runner and additional_linux_runners), not the resident's own distribution. Only a distribution that is running is
+// asked for its processes: a stopped one is "no job" without any command against it (a command would start it).
+test('the WSL side reads the runner distribution by host name and never executes in one that is not running', opts, () => {
+  const profiles = path.join(tmp, 'node-profiles-wsl.json');
+  fs.writeFileSync(profiles, JSON.stringify({ hosts: [
+    { hostname: 'FIXTURE-HOST', governance: { resident_distro: 'Fixture-Resident' }, linux_runner: { distro: 'Fixture-CI' },
+      additional_linux_runners: [{ distro: 'Fixture-CI' }, { distro: 'Fixture-CI' }] },
+    { hostname: 'OTHER-HOST', linux_runner: { distro: 'Other-CI' } }] }));
+  const r = ps(`
+    $pinned = $script:Drill.NodeProfiles
+    $real = @(Get-DrillRunnerDistributions 'desk-w-591')
+    $script:Drill.NodeProfiles = ${q(profiles)}
+    $script:calls = [Collections.Generic.List[string]]::new()
+    $script:DrillWslRunner = { param($a)
+      $script:calls.Add($a -join ' ')
+      if ($a[0] -ceq '--list') { return @{ exit = 0; stdout = $script:runningList } }
+      return @{ exit = 0; stdout = "systemd\`nRunner.Listener\`n" }
+    }
+    $script:runningList = "docker-desktop\`r\`nOther-CI\`r\`n"
+    $stopped = Get-DrillWslRunnerState 'fixture-host'
+    $stoppedCalls = @($script:calls); $script:calls.Clear()
+    $script:runningList = "Fixture-CI\`r\`n"
+    $running = Get-DrillWslRunnerState 'FIXTURE-HOST'
+    $runningCalls = @($script:calls); $script:calls.Clear()
+    $unlisted = Get-DrillWslRunnerState 'NOT-A-RUNNER-HOST'
+    @{ pinned = $pinned; real = $real; stopped = $stopped; stoppedCalls = $stoppedCalls; running = $running; runningCalls = $runningCalls
+      unlisted = $unlisted; unlistedCalls = @($script:calls) }`);
+  assert.match(r.pinned, /[\\/]scripts[\\/]ci[\\/]self-hosted[\\/]node-profiles\.json$/);
+  assert.deepEqual(r.real, ['CluedCI-Linux']);
+  assert.equal(r.stopped.ok, true);
+  assert.deepEqual(r.stopped.distributions, ['Fixture-CI']);
+  assert.deepEqual(r.stopped.running, []);
+  assert.deepEqual(r.stopped.names, []);
+  assert.deepEqual(r.stoppedCalls, ['--list --running --quiet']);
+  assert.equal(r.running.ok, true);
+  assert.deepEqual(r.running.running, ['Fixture-CI']);
+  assert.deepEqual(r.running.names, ['systemd', 'Runner.Listener']);
+  assert.deepEqual(r.runningCalls, ['--list --running --quiet', '--distribution Fixture-CI --exec ps -e -o comm=']);
+  assert.equal(r.unlisted.ok, true);
+  assert.deepEqual(r.unlisted.distributions, []);
+  assert.deepEqual(r.unlistedCalls, []);
+});
+
+test('every failure to read the WSL side refuses the boot by name', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
+    function Get-VM { param($ErrorAction) }
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    $script:DrillWslRunner = { param($a)
+      if ($a[0] -ceq '--list') { if ($script:mode -ceq 'list-fails') { return @{ exit = 1; stdout = '' } }; return @{ exit = 0; stdout = "Fixture-CI\`n" } }
+      switch ($script:mode) {
+        'throws' { throw 'wsl timed out' }
+        'exit' { return @{ exit = 1; stdout = '' } }
+        'empty' { return @{ exit = 0; stdout = "\`r\`n" } }
+        'job' { return @{ exit = 0; stdout = "systemd\`nRunner.Listener\`nRunner.Worker\`n" } }
+        default { return @{ exit = 0; stdout = "systemd\`nRunner.Listener\`n" } }
+      }
+    }
+    $out = [ordered]@{}
+    foreach ($m in @('quiet', 'job', 'list-fails', 'throws', 'exit', 'empty')) {
+      $script:mode = $m
+      $s = Get-DrillHostSafety
+      $out[$m] = @{ action = $s.action; code = $s.code; busyWith = $s.busyWith }
+    }
+    function Get-DrillRunnerDistributions { param($HostName) throw 'node-profiles.json unreadable' }
+    $script:mode = 'quiet'
+    $s = Get-DrillHostSafety
+    $out['profiles'] = @{ action = $s.action; code = $s.code; busyWith = $s.busyWith }
+    $out`);
+  assert.deepEqual(r.quiet, { action: 'start', code: null, busyWith: null });
+  assert.deepEqual(r.job, { action: 'refuse', code: 'DRILL_HOST_CI_BUSY', busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
+  for (const m of ['list-fails', 'throws', 'exit', 'empty', 'profiles']) {
+    assert.deepEqual(r[m], { action: 'refuse', code: 'DRILL_HOST_WSL_UNREADABLE', busyWith: null }, m);
+  }
+});
+
+// Like the intake request, no wsl.exe runs under a test marker: only an injected runner does, and without a marker an injected one is
+// refused. The cache release under a marker without a runner is not executed and is only recorded as not done.
+test('wsl.exe never runs under a test marker, and an injected runner never runs without one', opts, () => {
+  const r = ps(`
+    $script:Drill.NodeProfiles = 'Z:\\no-such-dir\\node-profiles.json'
+    $marked = try { Invoke-DrillWsl @('--list', '--running', '--quiet') | Out-Null; $null } catch { (Get-DrillCode $_).code }
+    $release = Invoke-DrillWslCacheRelease @('Fixture-CI')
+    $saved = $env:NODE_TEST_CONTEXT; $savedClued = $env:CLUED_UNDER_TEST
+    $env:NODE_TEST_CONTEXT = $null; $env:CLUED_UNDER_TEST = $null
+    $script:DrillWslRunner = { param($a) $script:ran = $true; @{ exit = 0; stdout = '' } }
+    $unmarked = try { Invoke-DrillWsl @('--list', '--running', '--quiet') | Out-Null; $null } catch { (Get-DrillCode $_).code }
+    $env:NODE_TEST_CONTEXT = $saved; $env:CLUED_UNDER_TEST = $savedClued
+    @{ marked = $marked; release = $release; unmarked = $unmarked; ran = [bool](Get-Variable -Name ran -Scope Script -ValueOnly -ErrorAction SilentlyContinue) }`);
+  assert.equal(r.marked, 'DRILL_HOST_ACCESS_UNDER_TEST');
+  assert.deepEqual(r.release.released, []);
+  assert.equal(r.release.failed.code, 'DRILL_HOST_ACCESS_UNDER_TEST');
+  assert.equal(r.unmarked, 'DRILL_WSL_RUNNER_WITHOUT_TEST_MARKER');
+  assert.equal(r.ran, false);
+});
+
+// Fable renew-key ruling, supplement "WSL runner jobs" item 3 (Decision 21db5a9c allows the release while idle): hold in force -> resident
+// idle -> no Runner.Worker on either side -> release the runner distribution's file cache -> memory gate -> boot. With a job running
+// there is neither a release nor a boot. A failed release does not stop the drill: the memory gate right after it judges what is free.
+test('before boot: idle and no job on either side, then the WSL file cache release, then the memory gate, then the boot', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { $script:events.Add('status'); ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) $script:events.Add('memory'); @{ FreePhysicalMemory = 64GB / 1KB } }
+    function Get-VM { param($ErrorAction) }
+    function Get-Process { param($ErrorAction) $script:events.Add('windows-processes'); [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) $script:events.Add('restore') }
+    function Assert-DrillHost { $script:events.Add('assert-host') }
+    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint, $Window)
+      $script:HostGuard = @{ state = @{ ready = $true; failure = $null; executorStates = [ordered]@{} }; pending = @{ IsCompleted = $false } }
+      return $script:HostGuard
+    }
+    function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
+    function Start-DrillBootWatchdog { @{ signal = ${q(path.join(tmp, 'wsl-order-test'))}; process = $null } }
+    function Start-DrillGuardedVm { $script:events.Add('boot') }
+    function Get-DrillCredential { }
+    function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
+    function Stop-DrillGuardedVm { param($Guard, [switch]$RestoreCheckpoint) $script:events.Add('restore-end'); return $true }
+    $script:DrillWslRunner = { param($a)
+      switch -CaseSensitive ($a -join ' ') {
+        '--list --running --quiet' { $script:events.Add('wsl-running'); return @{ exit = 0; stdout = "Fixture-CI\`n" } }
+        '--distribution Fixture-CI --exec ps -e -o comm=' { $script:events.Add('wsl-ps'); return @{ exit = 0; stdout = $script:wslPs } }
+        '--distribution Fixture-CI --user root --exec sync' { $script:events.Add('wsl-sync'); return @{ exit = $script:syncExit; stdout = '' } }
+        '--distribution Fixture-CI --user root --exec sysctl -w vm.drop_caches=1' { $script:events.Add('wsl-drop'); return @{ exit = 0; stdout = 'vm.drop_caches = 1' } }
+        default { $script:events.Add("unexpected: $_"); return @{ exit = 1; stdout = '' } }
+      }
+    }
+    function Invoke-Scenario($WslPs, $SyncExit) {
+      $script:events = [Collections.Generic.List[string]]::new(); $script:wslPs = $WslPs; $script:syncExit = $SyncExit
+      $o = Invoke-DrillOnCheckpoint { param($cred) 'ran' } 'unused' @{ safeToResume = $true; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10); holdUntil = [DateTimeOffset]::MinValue }
+      $failure = $null
+      if ($o.failure) { $failure = @{ code = $o.failure.code; busyWith = (Get-Prop $o.failure.detail 'busyWith') } }
+      @{ events = @($script:events); result = $o.result; failure = $failure; release = $o.wslCacheRelease }
+    }
+    @{ clean = (Invoke-Scenario "systemd\`nRunner.Listener\`n" 0)
+      releaseFails = (Invoke-Scenario "systemd\`nRunner.Listener\`n" 1)
+      wslJob = (Invoke-Scenario "systemd\`nRunner.Worker\`n" 0) }`);
+  const gate = ['status', 'windows-processes', 'wsl-running', 'wsl-ps'];
+  const boot = ['status', 'memory', 'windows-processes', 'wsl-running', 'wsl-ps', 'restore', 'assert-host', 'boot', 'restore-end'];
+  assert.deepEqual(r.clean.events, [...gate, 'wsl-sync', 'wsl-drop', ...boot]);
+  assert.equal(r.clean.result, 'ran');
+  assert.equal(r.clean.failure, null);
+  assert.deepEqual(r.clean.release.released, ['Fixture-CI']);
+  assert.equal(r.clean.release.failed, null);
+  assert.deepEqual(r.releaseFails.events, [...gate, 'wsl-sync', ...boot]);
+  assert.equal(r.releaseFails.result, 'ran');
+  assert.deepEqual(r.releaseFails.release.released, []);
+  assert.equal(r.releaseFails.release.failed.distribution, 'Fixture-CI');
+  assert.deepEqual(r.wslJob.events, gate);
+  assert.equal(r.wslJob.result, null);
+  assert.deepEqual(r.wslJob.failure, { code: 'DRILL_HOST_CI_BUSY', busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
+  assert.equal(r.wslJob.release, null);
 });
 
 test('the baseline action comes from the scene: only the VM whose name and notes are ours is ever touched', opts, () => {

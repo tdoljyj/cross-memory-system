@@ -126,6 +126,7 @@ Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-Fro
 
 来宾关机计时器就绪前，由不在任何 Windows 作业里的看门进程负责兜底：它经 WMI（`Win32_Process.Create`）拉起，不继承拉起方（例如代理会话）的作业。拉起后确认它仍在某个作业里时，脚本拒绝开机。
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。
+开机前门两侧都看 `Runner.Worker`：Windows 的进程表，以及本机 Linux runner 所在的 WSL 发行版（`scripts/ci/self-hosted/node-profiles.json` 按主机名取 `linux_runner`/`additional_linux_runners` 的 `distro`）。发行版没在运行就判无作业，不对它执行任何命令；在运行才只读列一次进程。有作业拒绝（`DRILL_HOST_CI_BUSY`，`busyWith` 为 `ACTIONS_RUNNER_JOB` 或 `WSL_ACTIONS_RUNNER_JOB`），读不出拒绝（`DRILL_HOST_WSL_UNREADABLE`）。顺序：保持生效 → 常驻空闲 → 两侧无作业 → 以 root 在该发行版内 `sync` 与 `sysctl -w vm.drop_caches=1`（只丢文件缓存，Decision 21db5a9c）→ 内存门 → 开机。释放失败不挡开机，由紧随其后的内存门按实况判；结果记在回执 `evidence.hostWslCacheRelease`。
 
 本次未启动/修改 Hyper-V；A1–A10 实机结果、重启、再装、A5/A9 生产只读核验均由 DESK 另做。
 
