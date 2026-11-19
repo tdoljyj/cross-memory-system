@@ -5,7 +5,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 // Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
 // CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
@@ -15,15 +14,46 @@ import { fileURLToPath } from 'node:url';
 // gh login; gh's configuration directory is an empty directory; git's global configuration is a file holding only a test
 // identity, the system configuration (where the credential helper is) is off, and git never prompts. It does not stop code
 // that reads a token file by its absolute path.
-// The version of this environment: the hash of this file, so a result made under another (local-verify's cache of main's
-// results) is not taken for one made under this, whoever changes it.
-export const TEST_ENV_VERSION = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
-export const FAKE_GITHUB_TOKEN = 'clued-test-fake-token-not-a-credential';
-export const TEST_GIT_IDENTITY = { name: 'Clued Test', email: 'clued-test@example.invalid' };
+// Every rule that shapes a suite child's environment, in one object (Codex third review of 2ee162c2, medium 2): the
+// variables passed on from the caller, the proxy rule, the fake identity, the test marker and what local-verify adds. The
+// environment version (environmentVersion, at the end) is the hash of these rules and of the code applying them, so a
+// change to any of them is another version and a result made under another environment is not taken for one made here.
+export const TEST_ENV_RULES = Object.freeze({
+  // The variables a suite's commands get from the caller (ruling 11-20 "补：测试身份根修" §3): what a program needs to run,
+  // find its tools, its temporary, home and toolchain directories and the network, and the run's own context. Nothing else
+  // is passed: a token, a credential-bearing setting (GIT_CONFIG_COUNT, an assistant's variables) or a Clued setting the
+  // caller has stays out, a new one too. Names, matched whole and in any case.
+  keep: Object.freeze([
+    'PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'OS', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
+    'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES\\(X86\\)', 'PROGRAMW6432', 'COMMONPROGRAMFILES', 'COMMONPROGRAMFILES\\(X86\\)',
+    'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'USER', 'LOGNAME',
+    'SHELL', 'TERM', 'LANG', 'LANGUAGE', 'LC_[A-Z]+', 'TZ',
+    'HTTPS?_PROXY', 'NO_PROXY', 'ALL_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+    // CI's job storage (ci-temporary-storage) and toolchain settings, and the run's base commit.
+    'PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX', 'PYTHONUTF8', 'PYTHONIOENCODING', 'WRANGLER_LOG_PATH', 'PROMPTFOO_CONFIG_DIR',
+    'CLUED_CI_NPM_CACHE', 'CI_BASE_SHA',
+    // The Actions runner marks every process of a job with RUNNER_TRACKING_ID and, when the job ends, ends the ones still
+    // carrying it; without it what a suite leaves running would outlive the job on a self-hosted node. Not a credential.
+    'RUNNER_TRACKING_ID',
+  ]),
+  // A proxy URL can carry a user name and password (Codex review of 2ee162c2, medium 5): such a variable is not passed, nor
+  // one that cannot be read as a URL and has an @ in it.
+  proxy: '^(HTTPS?|ALL)_PROXY$',
+  fakeToken: 'clued-test-fake-token-not-a-credential',
+  fakeTokenNames: Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']),
+  git: Object.freeze({ name: 'Clued Test', email: 'clued-test@example.invalid', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0' }),
+  marker: Object.freeze({ CLUED_UNDER_TEST: '1' }),
+  // local-verify's additions by platform (on Windows Python's own UTF-8 mode stands in for the runners' UTF-8 locale), and
+  // the only run values it may set.
+  localVerify: Object.freeze({ win32: Object.freeze({ PYTHONUTF8: '1' }), values: Object.freeze(['CI_BASE_SHA', 'TEMP', 'TMP', 'TMPDIR']) }),
+});
+export const FAKE_GITHUB_TOKEN = TEST_ENV_RULES.fakeToken;
+export const TEST_GIT_IDENTITY = { name: TEST_ENV_RULES.git.name, email: TEST_ENV_RULES.git.email };
 export function fakeIdentityEnv(dir, run) {
-  const token = FAKE_GITHUB_TOKEN;
-  return { GH_TOKEN: token, GITHUB_TOKEN: token, GH_ENTERPRISE_TOKEN: token, GITHUB_ENTERPRISE_TOKEN: token,
-    GH_CONFIG_DIR: path.join(dir, 'gh'), GIT_CONFIG_GLOBAL: path.join(dir, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0',
+  const { fakeToken, fakeTokenNames, git } = TEST_ENV_RULES;
+  return { ...Object.fromEntries(fakeTokenNames.map((name) => [name, fakeToken])),
+    GH_CONFIG_DIR: path.join(dir, 'gh'), GIT_CONFIG_GLOBAL: path.join(dir, 'gitconfig'),
+    GIT_CONFIG_NOSYSTEM: git.GIT_CONFIG_NOSYSTEM, GIT_TERMINAL_PROMPT: git.GIT_TERMINAL_PROMPT,
     CLUED_TEST_IDENTITY_DIR: dir, CLUED_TEST_IDENTITY_RUN: run };
 }
 // One directory per run, under the run's temporary directory. A command line (markTestRun) always makes its own, before any
@@ -161,26 +191,8 @@ export function testIdentity(env = process.env, { own = false } = {}) {
   current = { dir, run };
   return current;
 }
-// The variables a suite's commands get from the caller (ruling 11-20 "补：测试身份根修" §3; the one list, local-verify.mjs reads
-// it too): what a program needs to run, find its tools, its temporary, home and toolchain directories and the network, and
-// the run's own context. Nothing else is passed: a token, a credential-bearing setting (GIT_CONFIG_COUNT, an assistant's
-// variables) or a Clued setting the caller has stays out, a new one too.
-export const KEEP_VARIABLE = new RegExp(`^(${[
-  'PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'OS', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
-  'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES\\(X86\\)', 'PROGRAMW6432', 'COMMONPROGRAMFILES', 'COMMONPROGRAMFILES\\(X86\\)',
-  'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'USER', 'LOGNAME',
-  'SHELL', 'TERM', 'LANG', 'LANGUAGE', 'LC_[A-Z]+', 'TZ',
-  'HTTPS?_PROXY', 'NO_PROXY', 'ALL_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
-  // CI's job storage (ci-temporary-storage) and toolchain settings, and the run's base commit.
-  'PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX', 'PYTHONUTF8', 'PYTHONIOENCODING', 'WRANGLER_LOG_PATH', 'PROMPTFOO_CONFIG_DIR',
-  'CLUED_CI_NPM_CACHE', 'CI_BASE_SHA',
-  // The Actions runner marks every process of a job with RUNNER_TRACKING_ID and, when the job ends, ends the ones still
-  // carrying it; without it what a suite leaves running would outlive the job on a self-hosted node. Not a credential.
-  'RUNNER_TRACKING_ID',
-].join('|')})$`, 'i');
-// A proxy URL can carry a user name and password (Codex review of 2ee162c2, medium 5): such a variable is not passed, nor one
-// that cannot be read as a URL and has an @ in it.
-const PROXY = /^(HTTPS?|ALL)_PROXY$/i;
+export const KEEP_VARIABLE = new RegExp(`^(${TEST_ENV_RULES.keep.join('|')})$`, 'i');
+const PROXY = new RegExp(TEST_ENV_RULES.proxy, 'i');
 function credentialFree(value) {
   try {
     const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `http://${value}`);
@@ -193,5 +205,17 @@ export const keptVariables = (env) => Object.fromEntries(Object.entries(env)
   .filter(([name, value]) => KEEP_VARIABLE.test(name) && (!PROXY.test(name) || credentialFree(value))));
 export function testEnv(env, { own = false } = {}) {
   const { dir, run } = testIdentity(env, { own });
-  return { ...keptVariables(env), ...fakeIdentityEnv(dir, run), CLUED_UNDER_TEST: '1' };
+  return { ...keptVariables(env), ...fakeIdentityEnv(dir, run), ...TEST_ENV_RULES.marker };
 }
+// local-verify's environment: its own command line's (a directory of its own), its additions for the platform, and the run
+// values it may set (any other name is refused).
+export function localVerifyEnv(env, values = {}, platform = process.platform) {
+  const { localVerify } = TEST_ENV_RULES;
+  const unknown = Object.keys(values).filter((name) => !localVerify.values.includes(name));
+  if (unknown.length) throw new Error(`${unknown.join(', ')}: not a value local-verify sets (TEST_ENV_RULES.localVerify.values)`);
+  return { ...testEnv(env, { own: true }), ...(platform === 'win32' ? localVerify.win32 : {}), ...values };
+}
+const APPLY = [credentialFree, keptVariables, fakeIdentityEnv, testEnv, localVerifyEnv];
+export const environmentVersion = (rules = TEST_ENV_RULES) => createHash('sha256').update(JSON.stringify(rules))
+  .update(APPLY.map(String).join('\n')).digest('hex');
+export const TEST_ENV_VERSION = environmentVersion();

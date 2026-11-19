@@ -101,7 +101,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
-import { TEST_ENV_VERSION, testEnv } from './test-env.mjs';
+import { localVerifyEnv, TEST_ENV_VERSION, testEnv } from './test-env.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -326,13 +326,9 @@ export function dependencyKey({ lock, packageJson, npmrc = '', nodeVersion = pro
   return sha256(JSON.stringify({ lock: sha256(lock), fields, npmrc: String(npmrc), node: nodeVersion.split('.')[0], platform })).slice(0, 16);
 }
 
-// The environment the suites' commands get: the selector's (test-env.mjs: the listed variables, the fake identity, the test
-// marker), not the caller's tokens or Clued settings.
-// On Windows Python's own UTF-8 mode stands in for the runners' UTF-8 locale.
-export function testEnvironment(env, extra = {}, platform = process.platform) {
-  return { ...testEnv(env, { own: true }),
-    ...(platform === 'win32' ? { PYTHONUTF8: '1' } : {}), ...extra };
-}
+// The environment the suites' commands get: test-env.mjs's rules (the listed variables, the fake identity, the test marker,
+// local-verify's additions), not the caller's tokens or Clued settings.
+export const testEnvironment = localVerifyEnv;
 
 // A lock is a file that appears with its content at once (written aside, then
 // hard-linked into place). A lock whose process is gone, older than any run, or

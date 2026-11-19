@@ -254,6 +254,19 @@ test('runCommands checks the identity for each command: one a command changed is
   assert.deepEqual(fs.readdirSync(seen[1]), []);
 });
 
+// Codex third review of 2ee162c2, medium 2: every rule that shapes a suite child's environment, local-verify's own additions
+// included, is in one rules object, and the environment version is the hash of those rules and the code applying them, so
+// changing any of them (here PYTHONUTF8 on Windows) gives another version and main's cached results are not reused.
+test('the suite environment is built from one rules object, whose hash is the environment version', () => {
+  const rules = selection.TEST_ENV_RULES;
+  assert.ok(rules, 'one rules object');
+  assert.equal(selection.environmentVersion(rules), selection.TEST_ENV_VERSION);
+  const changed = { ...rules, localVerify: { ...rules.localVerify, win32: {} } };
+  assert.notEqual(selection.environmentVersion(changed), selection.TEST_ENV_VERSION, 'a changed local-verify addition is another version');
+  assert.equal(testEnvironment({ TEMP: '/t' }, {}, 'win32').PYTHONUTF8, rules.localVerify.win32.PYTHONUTF8, 'its additions come from the rules');
+  assert.throws(() => testEnvironment({}, { NODE_OPTIONS: '--x' }, 'linux'), /not a value local-verify sets/);
+});
+
 test('the Linux side gets local-verify with every module it imports, and that copy loads', async (t) => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const closure = new Set();
