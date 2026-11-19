@@ -120,9 +120,9 @@
 
     ".github/workflows/clued-release-tags.yml": "069b2c1d2a692e769234942c2d192079e0a2ed4fd03d084567b664c828c04a55",
 
-    ".github/workflows/clued-required-tests-windows.yml": "f3965775b404e926ec749b406529b5a8ed7285f0cf79c5d6670b58f27408c262",
+    ".github/workflows/clued-required-tests-windows.yml": "8ec25430b6db08be0a432df438341797e5b3d934b02911118dcfa01a1992b335",
 
-    ".github/workflows/clued-required-tests.yml": "299d3ff07d8b27be73dfafad94a47da03dde52ea99540af0830b647704133388",
+    ".github/workflows/clued-required-tests.yml": "addbc949447958e6c1594f64b64c6b500a8837511be1d984e6c70b844c91d3ab",
 
     ".github/workflows/clued-standard-runner-actor-qualification.yml": "9414d76960d096e786738c4470bcf32dd3e50ab2999eea59c922473436034b1d",
 
@@ -208,9 +208,9 @@
 
     "scripts/ci/ci-known-failures.json": "181adff3803b415071dcc768381b9a907f5339de26475d36b711580a67442b56",
 
-    "scripts/ci/ci-required-selection.mjs": "f37959a5491a542f5f19e0a9abe1f53f8dcebc4d8565fe9afd370feef471d35f",
+    "scripts/ci/ci-required-selection.mjs": "81b49565e68e0b623393fb8a1459fb50cb0ed7e01c59dc7ef180b0d4f0e0a915",
 
-    "scripts/ci/ci-required-selection.test.mjs": "2f9fb5ea7845c5e6e1c03391c68d2fc5f9d3bc42e3ccd72c19353f3c81955715",
+    "scripts/ci/ci-required-selection.test.mjs": "9bf5d044f7155b49fbba359eb2db22507209b61b567122acfdb2c2051209ddca",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
@@ -408,7 +408,7 @@
 
     "scripts/ci/clued-release-grant.test.mjs": "35b22b43cfeaddf48b97504063e6f0ebf62079a0d077df120bdfb25c5af0983c",
 
-    "scripts/ci/clued-required-applicability.mjs": "1f5f92ffb401e06792afa309b37fe927e28f927489290a8b0bef445b8f9b3436",
+    "scripts/ci/clued-required-applicability.mjs": "d45dbe59cc8ebf4f20592c99ed6834ed3d86b6949780294a65dba3fbfecf1bd4",
 
     "scripts/ci/clued-required-applicability.test.mjs": "bdbf29118f23f6a13e77081b99ed726b77d3e895948420ff617681074eaae9c6",
 
