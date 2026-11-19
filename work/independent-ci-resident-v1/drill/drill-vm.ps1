@@ -2128,11 +2128,11 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
 # ---------------------------------------------------------------- main
 function Invoke-DrillMain {
   if ($Interactive -and ($BaselineOnly -or $PrereqOnly -or $Finalize)) { throw (New-DrillError 'DRILL_USAGE' '-Interactive is a full first-install run only') }
-  # Fable renew-key ruling, supplement "interactive mode A1": A1's step record comes from the complete stdout log by the one parser
-  # (Read-DrillFirstInstallSteps), in both modes. In interactive mode the operator's window does not hold it: bootstrap.ps1 runs the host
-  # preparation and the launcher as elevated stages in their own window (Invoke-Elevated, Start-Process -Verb RunAs), their output goes
-  # to their result files (elevated-<stage>-*.txt) and only their verdict comes back. Until that source is connected, refused here,
-  # before anything is read, booted or held.
+  # Fable renew-key ruling, supplements "interactive mode A1" and "branch two, two points" 2: A1's step record has one parser
+  # (Read-DrillFirstInstallSteps); its source depends on the mode. In interactive mode the operator's window does not hold it: bootstrap.ps1
+  # runs the host preparation and the launcher as elevated stages in their own window (Invoke-Elevated, Start-Process -Verb RunAs), their
+  # output goes to the package's two stage output files (elevated-host-*.txt, elevated-launcher-*.txt) and only their verdict comes back.
+  # Those two files are the source to connect (drill branch three); until then refused here, before anything is read, booted or held.
   if ($Interactive) { throw (New-DrillError 'DRILL_INTERACTIVE_STEP_RECORD_NOT_CONNECTED' 'the step record of an interactive first install has no source yet (逐步记录来源尚未接上)') }
   if ($Finalize) {
     if (-not $ProductionReadback) { throw (New-DrillError 'DRILL_USAGE' '-Finalize needs -ProductionReadback') }

@@ -1327,6 +1327,11 @@ test('interactive mode is refused before the host gate while its step record has
   assert.equal(psCode(`${candidateStubs}; $Interactive = $true; Invoke-DrillMain`), 'DRILL_INTERACTIVE_STEP_RECORD_NOT_CONNECTED');
   assert.equal(psCode('$Interactive = $true; $BaselineOnly = $true; Invoke-DrillMain'), 'DRILL_USAGE');
   assert.equal(psCode(`${candidateStubs}; Invoke-DrillMain`), 'TEST_REACHED_HOST_HOLD');
+  // the guide says it as the ruling does: one parser, the source by mode, the interactive wiring in drill branch three (Codex review of
+  // 1cedea9ef, low 5)
+  const guide = fs.readFileSync(fileURLToPath(new URL('../drill/FIRST-INSTALL-KIT.md', import.meta.url)), 'utf8');
+  for (const words of ['解析器只有一个', '来源随模式不同', 'elevated-host-*.txt', '演练分支三']) assert.ok(guide.includes(words), words);
+  assert.ok(!guide.includes('同一来源、同一解析器'));
 });
 
 test('a candidate that skipped A8 ends PASS_A_REINSTALL_NOT_DRILLED through the real conclusion, -Finalize and seal', opts, async t => {
