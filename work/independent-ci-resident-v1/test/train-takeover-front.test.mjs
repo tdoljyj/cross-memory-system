@@ -8,13 +8,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
 import { executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes, SOURCE, CI_SOURCE } from './helpers.mjs';
 import { setup, holderOf, sha, iso, T, H, S, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
 import { tempDir, admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs';
 import { makeTrainRun } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
-import { batchJobsV2, claimGeneration } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
+import { batchJobsV2, claimGeneration, frontJobIdsV2, makeJobV2, scanExternalIdV2 } from '../../actions-hosted-migration/independent-ci-v1/src/job-v2.mjs';
+import { frontHeadScans, readPublishedChecks } from '../../actions-hosted-migration/independent-ci-v1/src/published-on-github-v2.mjs';
+import { writeOutcome } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-inputs.mjs';
+import { outcomeFacts } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
+import { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, parseStageOutcome, stageHeadScans } from '../src/engine-windows.mjs';
+import { HEAVY_ROLES } from '../src/policy.mjs';
+import { SCAN_CHECK_NAMES, SCAN_EXTERNAL_ID, validHeadScans } from '../../actions-hosted-migration/independent-ci-v1/src/published-on-github-v2.mjs';
 import { EffectJournal } from '../../actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
 import { digest } from '../../actions-hosted-migration/independent-ci-v1/src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
@@ -88,7 +95,11 @@ async function world(t, { quick = false } = {}) {
 // admission stage does) and publishes kooyumi-work-admission; stage 8 of a front batch is the real control publisher.
 // queueFacts (DESIGN §62.6): stage 1's outcome carries Native's merge-queue entry of the PR's claim (head when it is Native's holder), as
 // the Source's admission publisher reports it; false: no outcome (Native not reached, an older Source).
-function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true } = {}) {
+// scans (rule 41ab823a, DESIGN §75): every ordinary batch's publication stage (3, 5, 7) publishes its scan check on H as App 5368905 with
+// the staged external id, and a front batch's stage 1 reports the scans H carries exactly as the Source does (the read-back's inventory
+// through published-on-github-v2.mjs#frontHeadScans, then stage-inputs.mjs#writeOutcome, stage-fact.mjs#outcomeFacts and the engine's
+// parseStageOutcome). engine.beforeFrontStage1 (optional): runs right before a front batch's stage 1 (a scene change, e.g. an archive).
+function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, scans = false } = {}) {
   const subjects = new Map(), stages = [];
   let run = 0;
   const engine = fakeEngine(script);
@@ -123,6 +134,24 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true } =
     // A slow front batch (generation 22, PR #1029): its stages 2-7 take frontStageMs each on the simulated clock.
     if (subject.testSha && stage.number >= 2 && stage.number <= 7) at.advance(frontStageMs);
     const ok = { ok: true, factsSha256: 'd'.repeat(64), proof: PROOF };
+    const jobOf = role => makeJobV2({ repo: REPO, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha ?? subject.headSha,
+      role, sourceManifestSha256: CI_SOURCE, createdAt: iso(e.now), attempt: subject.attempt });
+    if (scans && !subject.testSha && [3, 5, 7].includes(stage.number)) {
+      const role = { 3: 'gitleaks', 5: 'trivy', 7: 'contract-placement' }[stage.number];
+      const id = 500 + e.gh.world.checks.size;
+      e.gh.world.checks.set(id, { id, app: { id: 5368905 }, name: role, head_sha: subject.headSha, status: 'completed', conclusion: 'success',
+        external_id: scanExternalIdV2(jobOf(role)), output: { title: `${role}: success`, summary: 'Independent CI job' } });
+      return ok;
+    }
+    if (scans && subject.testSha && stage.number === 1) {
+      await engine.beforeFrontStage1?.(subject);
+      const job = jobOf('work-admission');
+      const headScans = await frontHeadScans(e.gh, job, await readPublishedChecks(e.gh, subject.headSha), frontJobIdsV2(job));
+      e.gh.green(10, subject.headSha, { name: 'kooyumi-work-admission' });
+      const written = await writeOutcome({ receiptsRoot: await tempDir(at.t), nonce: 'a'.repeat(32), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [job.id],
+        result: { status: 'SETTLED', sideEffects: 1, scheduling: null, headScans } });
+      return { ...ok, outcome: parseStageOutcome(outcomeFacts(written)) };
+    }
     if (stage.number === 1) {
       const binding = await e.native.port.resolvePRBinding({ scope: SCOPE, repository: REPO, prNumber: subject.pr,
         headSha: subject.headSha, baseSha: subject.baseSha, targetBranch: 'main' });
@@ -265,10 +294,10 @@ for (const nonFrontRuns of [true, false]) test(`take-over front (gen 19 PR #1027
 // refused it (TRAIN_FRONT_PR_BUSY), stage 10 then said TRAIN_FRONT_BATCH_RUNNING, and no merge-slot green came within the hour.
 // queueFacts false: stage 1 reports no merge-queue entry, so the ordinary batch does not give way after stage 1 (DESIGN §62.6) and the
 // take-over at a parking point is what lets the front batch start.
-async function steadyState(t, { atA = false, queueFacts = true, pr = 910, claim = CLAIM, head = H } = {}) {
+async function steadyState(t, { atA = false, queueFacts = true, pr = 910, claim = CLAIM, head = H, scans = false } = {}) {
   const e = await world(t, { quick: true });
   const at = { t };
-  const engine = engineFor(e, at, {}, { queueFacts });
+  const engine = engineFor(e, at, {}, { queueFacts, scans });
   const f = await executorFixture(t, { policy: policy(true), engine, now: NOW });
   // atA: an ordinary batch (no S) rests at parking point A (helpers.mjs#holdAtA) right after its stage 1.
   if (atA) holdAtA(f.exec, { when: s => !Object.hasOwn(s, 'testSha') });
@@ -323,33 +352,111 @@ async function untilSlotGreen(e, f) {
   return green;
 }
 
+// Fable 2026-11-19 ("same tree, same check, one real run", §2.3): the evidence is H's own checks on GitHub (App 5368905, the ones the
+// merge gate reads), read by the front batch's stage 1, never the node's ledger, so it holds after an archive, a reinstall or another node.
+const SCAN_ROLES = ['gitleaks', 'trivy', 'contract-placement'];
+const scanChecksOn = (e, head) => [...e.gh.world.checks.values()].filter(c => c.head_sha === head && SCAN_ROLES.includes(c.name) && c.external_id);
+const ordinaryKeyOf = engine => engine.calls.find(c => c[0] === 'derive' && !engine.subjects.get(c[1]).testSha)[1];
+async function assertReusedFromGithub(e, f, engine) {
+  for (const stage of [2, 3, 4, 5, 6, 7]) {
+    assert.equal(engine.stages.filter(s => s.pr === 910 && s.stage === stage).length, 1, `stage ${stage} ran more than once: ${JSON.stringify(engine.stages)}`);
+  }
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 8]);
+  const frontKey = engine.calls.find(c => c[0] === 'derive' && engine.subjects.get(c[1]).testSha)[1];
+  const { plan } = await f.ledger.state(frontKey);
+  assert.deepEqual(plan?.local, [], 'the front batch plans no local scan');
+  const onH = scanChecksOn(e, H);
+  assert.deepEqual(onH.map(c => c.name).sort(), [...SCAN_ROLES].sort(), 'each scan has exactly one check on H');
+  const expected = SCAN_ROLES.map(role => ({ role, from: onH.find(c => c.name === role).external_id }));
+  assert.deepEqual(plan.reused, expected, 'reused from H\'s checks on GitHub (their external ids)');
+  const [receipt] = (await f.receipts.latest(['train-front-scans-reused'], 5)).map(r => r.value.body);
+  assert.deepEqual(receipt?.reused, expected);
+}
+
+test('rule 41ab823a: the engine reads stage 1\'s headScans in exactly the Source\'s shape, the resident\'s heavy roles', () => {
+  assert.deepEqual([...HEAD_SCAN_ROLES], [...HEAVY_ROLES]);
+  assert.deepEqual([...HEAD_SCAN_ROLES], [...SCAN_CHECK_NAMES]);
+  assert.equal(HEAD_SCAN_EXTERNAL_ID.source, SCAN_EXTERNAL_ID.source);
+  const id = n => `independent-ci:staged:v2:${n.repeat(64)}:a1`;
+  const samples = [[{ role: 'trivy', externalId: id('1') }, { role: 'gitleaks', externalId: id('2') }], [{ role: 'contract-placement', externalId: id('3') }],
+    [{ role: 'gitleaks' }], [{ role: 'gitleaks', externalId: id('1'), extra: 1 }], [{ role: 'kooyumi-merge-slot', externalId: id('1') }],
+    [{ role: 'gitleaks', externalId: `${id('1')}:x` }], [{ role: 'gitleaks', externalId: id('1') }, { role: 'gitleaks', externalId: id('2') }], null, {}, 'gitleaks'];
+  for (const v of samples) assert.deepEqual(stageHeadScans(v), validHeadScans(v), JSON.stringify(v));
+  // an empty list names nothing on either side (the Source leaves the field out, the engine reads none)
+  assert.equal(stageHeadScans([]), null);
+  const outcome = { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, headScans: samples[0] };
+  assert.deepEqual(parseStageOutcome(outcome).headScans.map(x => x.role), ['gitleaks', 'trivy']);
+  assert.equal('headScans' in parseStageOutcome({ ...outcome, status: 'BLOCKED', sideEffects: 0, mayHavePublished: false }), false);
+});
+
 test('rule 41ab823a (PR #1086): same head, same main, S with H\'s tree: the front batch runs no scan again and gets the merge-slot green', async t => {
-  const { e, f, engine, terminals } = await steadyState(t, { queueFacts: false });
+  const { e, f, engine, terminals } = await steadyState(t, { queueFacts: false, scans: true });
   const tree = e.gh.world.commits.get(S).tree;
   e.gh.world.commits.set(H, { sha: H, tree, parents: [T] });
   const green = await untilSlotGreen(e, f);
   assert.ok(green, `no kooyumi-merge-slot success; stages ${JSON.stringify(engine.stages)}`);
   assert.equal(engine.published.status, 'SETTLED');
   assert.ok((await terminals()).includes('TRAIN_FRONT_TAKES_OVER'), 'the ordinary batch rested at B and gave way');
-  for (const stage of [2, 3, 4, 5, 6, 7]) {
-    assert.equal(engine.stages.filter(s => s.pr === 910 && s.stage === stage).length, 1, `stage ${stage} ran more than once: ${JSON.stringify(engine.stages)}`);
-  }
-  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 8]);
   const [enqueued] = (await f.receipts.latest(['train-front-enqueued'], 5)).map(r => r.value.body);
   assert.deepEqual([enqueued.headTree, enqueued.testTree], [tree, tree], 'stage 10 named H\'s tree');
-  const [reused] = (await f.receipts.latest(['train-front-scans-reused'], 5)).map(r => r.value.body);
-  assert.deepEqual(reused.reused.map(x => x.role), ['gitleaks', 'trivy', 'contract-placement']);
-  const ordinaryKey = engine.calls.find(c => c[0] === 'derive' && !engine.subjects.get(c[1]).testSha)[1];
-  assert.ok(reused.reused.every(x => x.from === ordinaryKey), 'reused from the ordinary batch of (H, T)');
+  await assertReusedFromGithub(e, f, engine);
+});
+
+// Field #1170 (DIAG-duplicate-execution-20261119 §2, head 8086d0e4): the ordinary batch ran the three scans and rested at B, an upgrade drain
+// ended it and archived it into ledger-flow-ends, its successor ended at stage 1 with HEAD_PUBLISHED_ON_GITHUB; then the front batch, S with
+// H's tree, read its ordinary batch as ABSENT and ran all three scans again (and published them on H a second time).
+test('field #1170 (T3): the ordinary batch archived into ledger-flow-ends: the front batch still reuses H\'s scans, read on GitHub', async t => {
+  const { e, f, engine } = await steadyState(t, { queueFacts: false, scans: true });
+  e.gh.world.commits.set(H, { sha: H, tree: e.gh.world.commits.get(S).tree, parents: [T] });
+  engine.beforeFrontStage1 = async () => {
+    const key = ordinaryKeyOf(engine);
+    const ordinary = (await f.ledger.state(key)).reserved.subject;
+    // The archive (ledger.mjs#archiveFlowEnd's rename) and the successor's stage-1 ending (executor.mjs#recordPublishedOnGithub).
+    await fs.rename(f.ledger.dir(key), path.join(f.ledger.flowEnds, `${key}-2026-11-19T004825950Z-0123456789abcdef`));
+    await f.executedHeads.record(ordinary, { key, origin: 'publication', basis: 'head-published-on-github', stage: 1 });
+    assert.equal((await f.ledger.state(key)).state, 'ABSENT');
+  };
+  assert.ok(await untilSlotGreen(e, f), `no green: ${JSON.stringify(engine.stages)}`);
+  await assertReusedFromGithub(e, f, engine);
+});
+
+test('Fable §2.3 (T3b): no ledger of the head on this node (a reinstall, or the ordinary batch ran on another node): the front batch reuses H\'s scans', async t => {
+  const { e, f, engine } = await steadyState(t, { queueFacts: false, scans: true });
+  e.gh.world.commits.set(H, { sha: H, tree: e.gh.world.commits.get(S).tree, parents: [T] });
+  engine.beforeFrontStage1 = async () => {
+    await fs.rm(f.ledger.dir(ordinaryKeyOf(engine)), { recursive: true, force: true });
+    assert.deepEqual(await fs.readdir(f.ledger.flowEnds), []);
+  };
+  assert.ok(await untilSlotGreen(e, f), `no green: ${JSON.stringify(engine.stages)}`);
+  await assertReusedFromGithub(e, f, engine);
 });
 
 test('rule 41ab823a: a scan whose input changed runs again on the front batch (S\'s tree is not H\'s, or no H tree was named)', async t => {
   for (const headTree of [sha(0x7777), null]) {
-    const { e, f, engine } = await steadyState(t, { queueFacts: false });
+    const { e, f, engine } = await steadyState(t, { queueFacts: false, scans: true });
     if (headTree) e.gh.world.commits.set(H, { sha: H, tree: headTree, parents: [T] });
     assert.ok(await untilSlotGreen(e, f), `no green: ${JSON.stringify(engine.stages)}`);
     assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8], String(headTree));
     assert.equal((await f.receipts.latest(['train-front-scans-reused'], 5)).length, 0);
+  }
+});
+
+// Fable §2.3 guards: whatever H carries that is not a successful scanner check of App 5368905, or a base that is not H's ancestor, makes
+// the front batch scan again (the Source's read-back names nothing then); stage 1 itself ends as before.
+test('Fable §2.3 guards: a failed or withdrawn check, another App\'s, a non-scanner one, or T not in H: the front batch scans again', async t => {
+  const scenes = {
+    failed: e => { for (const c of scanChecksOn(e, H)) c.conclusion = 'failure'; },
+    otherApp: e => { for (const c of scanChecksOn(e, H)) c.app = { id: 15368 }; },
+    notScanner: e => { for (const c of scanChecksOn(e, H)) c.external_id = `independent-ci:control:x:v2:${'0'.repeat(64)}:a1`; },
+    baseNotInHead: e => { e.gh.world.behindHeads = new Set([H]); },
+  };
+  for (const [name, scene] of Object.entries(scenes)) {
+    const { e, f, engine } = await steadyState(t, { queueFacts: false, scans: true });
+    e.gh.world.commits.set(H, { sha: H, tree: e.gh.world.commits.get(S).tree, parents: [T] });
+    engine.beforeFrontStage1 = async () => scene(e);
+    for (let i = 0; i < 60 && !engine.stages.some(s => s.testSha === S && s.stage === 7); i++) { await f.exec.tick(); f.advance(MIN); }
+    assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage).slice(0, 7), [1, 2, 3, 4, 5, 6, 7], name);
+    assert.equal((await f.receipts.latest(['train-front-scans-reused'], 5)).length, 0, name);
   }
 });
 

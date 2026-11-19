@@ -139,6 +139,17 @@ function queueEntry(v) {
   return { entered: v.entered && (state === 'head' || state === 'waiting'), state, position: Number.isSafeInteger(v.position) && v.position > 0 && v.position <= 10_000 ? v.position : null };
 }
 const codeList = v => Array.isArray(v) ? [...new Set(v.slice(0, 64).filter(x => typeof x === 'string' && DCODE.test(x)))].sort() : [];
+// Rule 41ab823a (DESIGN §75): stage 1 of a front batch names the scans H already carries, read on GitHub (Source
+// published-on-github-v2.mjs#frontHeadScans, the same shape: [{ role, externalId }], each scan role once, the staged external id).
+// Mirrored here (a test cross-checks both): a value that does not have exactly that shape is none, so the front batch scans as before.
+export const HEAD_SCAN_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
+export const HEAD_SCAN_EXTERNAL_ID = /^independent-ci:staged:v2:[a-f0-9]{64}:a[1-9]$/;
+export function stageHeadScans(v) {
+  if (!Array.isArray(v) || v.length === 0 || v.length > HEAD_SCAN_ROLES.length) return null;
+  const ok = v.every(x => x && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).length === 2 && HEAD_SCAN_ROLES.includes(x.role)
+    && typeof x.externalId === 'string' && HEAD_SCAN_EXTERNAL_ID.test(x.externalId)) && new Set(v.map(x => x.role)).size === v.length;
+  return ok ? HEAD_SCAN_ROLES.flatMap(role => v.filter(x => x.role === role).map(x => ({ role, externalId: x.externalId }))) : null;
+}
 export function parseStageOutcome(o) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
   if (typeof o.status !== 'string' || !/^[A-Z][A-Z_]{1,60}$/.test(o.status) || !(o.reason === null || (typeof o.reason === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(o.reason)))
@@ -167,6 +178,8 @@ export function parseStageOutcome(o) {
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
     // Generation 28 (docs/adr/0015): the scanner publisher's "withdrawn for unavailability only, a republication may follow", only on REVOKED.
     ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
+    // Rule 41ab823a (DESIGN §75): only on a settled stage 1 of a front batch (executor.mjs#frontScansReused reads it).
+    ...(o.status === 'SETTLED' && stageHeadScans(o.headScans) ? { headScans: stageHeadScans(o.headScans) } : {}),
   };
 }
 

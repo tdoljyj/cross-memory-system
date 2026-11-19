@@ -5853,6 +5853,25 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - `actions-hosted-migration/independent-ci-v1/test/train-facts.test.mjs`：`headTree` 的形状与“只限单成员”。
 - `tests/test_compute_panel.py` “a resident check republished under its external_id is one run”：同一 external_id 的 failure + success 不算重复，另一个 job 的真重跑仍算。修复前失败。
 
+**改证据来源（Fable 2026-11-19“同一棵树的同一检查只真跑一次”，现场 #1170）**
+
+**现象**：PR #1170 head `8086d0e4`。普通批次 8d786687 跑完三项扫描停在 B，升级排空把它结束（`SUPERSEDED_AT_SAFE_POINT`）并改名进 `ledger-flow-ends`；后继批次在第 1 段以 `HEAD_PUBLISHED_ON_GITHUB` 结束；随后车头批次 ebb01d3a（`headTree == testTree`）读普通批次是 `ABSENT`，三项扫描又本地真跑一遍，又在 H 上各发一条（external_id 不同）。
+
+**根因**：上面的修法把“本节点账本 `ledger/` 里停过 B 的批次”当证据，而这份证据会消失：升级排空、停车超时、停车超容量都会把批次改名进 `ledger-flow-ends`；重装只带 00/10/25/80/90 五种记录（不带停车记录）；普通批次在另一台节点跑的本机根本没有。另外它要求 Source 相同，升级之后即使读得到也照样重跑。是一类问题，不是一个。
+
+**新修法**（证据只留一处：GitHub 上 H 的检查，也就是合入闸门读的那份）：
+- Source 第 1 段 `formal-work-admission-check-v2/publisher.mjs`：车头作业（S ≠ H）的 C4 回读已经读到 H 上 App 5368905 的全部检查。在同一次读取上，`published-on-github-v2.mjs#frontHeadScans` 对每个扫描名取“不属于本车头作业的最新一条”，要求已完成、成功、external_id 是扫描发布格式 `independent-ci:staged:v2:<job id>:a<n>`；再读一次 `compare/T...H`，要求 `behind_by == 0`（T 是 H 的祖先：H 上任何一次扫描，普通批次扫 H 自己，旧 main T′ 的车头扫 merge(T′, H)，T′ 也在 H 里，读的都是 H 的树）。结果作为 `headScans: [{role, externalId}]` 只放进 SETTLED 结果；读失败或不符就不给，绝不改变第 1 段的结局。
+- 通道：`stage-inputs.mjs#writeOutcome`（只在第 1 段 `work-admission` 的 SETTLED）→ `stage-fact.mjs#outcomeFacts` → 常驻 `engine-windows.mjs#parseStageOutcome`（`stageHeadScans` 镜像校验，测试与 Source 交叉核对）→ `executor.mjs#drive` 把它按批次 key 记在内存里。
+- `executor.mjs#frontScansReused`：单成员车头、绑定的 H、T 与批次一致、`headTree == testTree`、本批第 1 段给了 `headScans`，命中的角色记 `reused: [{role, from: 该检查的 external_id}]`，不再本地跑，也不在 H 上发第二条。external_id 里的 job id 是单向摘要，取不到批次 key，所以 `from` 填 external_id 原文。账本那条路删掉，不留“快路”。
+- **Source 不再是复用条件**（有意的取舍）：与 executed-heads 的既定立场一致，已发布在 H 上的绿灯在任何 Source 下都有效，新扫描器只管新提交。
+- **不改** `executed-heads` 的键（键里的 testSha 区分发布身份，没错；错的是证据放在会被归档的地方）。
+- 守卫（都是真跑，只会多跑）：H 上该名最新检查失败、被撤回（撤回改成 failure）、未完成、来自别的 App、不是扫描发布；T 不是 H 的祖先或 compare 读不到；多成员车头；树不等；第 1 段没走回读（批次 claim 已记录的重入）或重启丢了内存里的事实。
+- 残余：第 1 段到计划之间若有人撤回了 H 上的检查，车头不再重扫；第 8 段与 GitHub 的必需检查按名字实时把关，合不进去，与原修法相同。
+
+**测试**：
+- `test/train-takeover-front.test.mjs`（真实 executor + Source v2 第 10 段 + 第 8 段发布者；第 1 段的 `headScans` 走真实的 `frontHeadScans` → `writeOutcome` → `outcomeFacts` → `parseStageOutcome`）：“field #1170 (T3)…”普通批次停 B 后被改名进 `ledger-flow-ends`、后继批次记为已发布，车头批次只跑 [1, 8]，`25-plan` 的 `local` 为空、`reused` 三项（来自 H 上检查的 external_id），有 `train-front-scans-reused` 回执，H 上每项扫描只有一条检查；“Fable §2.3 (T3b)…”本机没有该 head 的任何批次账本，同样复用。修复前两条都红（车头批次又跑了 2–7）。“…guards…”失败、别的 App、非扫描 external_id、T 不在 H 里：车头照旧跑 1–7；树不同或没给 `headTree` 仍照旧跑。“the engine reads stage 1's headScans in exactly the Source's shape”：两边校验逐例一致。
+- `actions-hosted-migration/independent-ci-v1/test/train-single-green.test.mjs`：“rule 41ab823a, stage 1: …”车头第 1 段 SETTLED 带出三项、只读一次 compare，outcome 与阶段事实只在第 1 段 SETTLED 带它；“…stage 1 guards…”空、T 不是祖先、compare 失败、S = H 都不给；按名取最新，失败、撤回、别的 App、未完成、非扫描、本车头自己的检查都不算。
+
 ## 76. 托管转发已移除（Owner 2026-11-14，分支 `claude/remove-hosted-relay`）
 
 **原因**：托管转发（gitleaks、trivy 在 GitHub 托管机上跑，常驻 CI 核验后以 App 5368905 发布同名必需检查）从未在生产打开：两台节点 `policy.json` 的 `relay.enabled=false`，`gitleaks.yml`、`trivy.yml`、`contract-placement.yml` 是 `disabled_manually`，生产扫描许可（`scan-start-v1/grant.mjs` 的 `NATIVE_SCAN_START_REQUIRED=false`）也未激活。它关着时仍在必经路径上留下代价：每个批次在排程前检查里多起一个 node 进程读“转发资格窗口”（`invoke-stage.mjs --relay-qualification-window`），读失败就整轮暂缓（`RELAY_QUALIFICATION_WINDOW_UNCONFIRMED`）；执行器、companion、poller、邮箱、策略里各有一段只为它存在的分支。Owner 决定保持关闭并整体删除；Fable 独立判断同意（看板第 30 行）。

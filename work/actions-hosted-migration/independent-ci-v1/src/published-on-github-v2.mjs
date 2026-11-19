@@ -23,7 +23,8 @@
 //     K(head, role)): a check of the same name of this App ends that publication cleanly with ROLE_ALREADY_ON_GITHUB
 //     (nothing published for it, nothing revoked, no HALT). What this node knows keeps its existing path.
 // For a train front batch both count only the checks of that front batch's own jobs (ofJobIds), never a non-front run of H.
-// Pure apart from the one port read.
+// The same read also tells a front batch which scans H already carries (frontHeadScans below; resident DESIGN §75).
+// Pure apart from the port reads.
 export const PUBLISHER_APP_ID = 5368905;
 export const HEAD_PUBLISHED_ON_GITHUB = 'HEAD_PUBLISHED_ON_GITHUB';
 export const ROLE_ALREADY_ON_GITHUB = 'ROLE_ALREADY_ON_GITHUB';
@@ -66,4 +67,43 @@ export async function publishedNames(github, headSha, names, appId = PUBLISHER_A
   if (!Array.isArray(names) || names.length === 0 || names.some(n => typeof n !== 'string' || !n) || !(jobIds === null || jobIds instanceof Set)) fail('published_checks_unconfirmed');
   const checks = await readPublishedChecks(github, headSha, appId);
   return [...new Set(checks.filter(c => jobIds === null || ofJobIds(c, jobIds)).map(c => c.name).filter(n => names.includes(n)))].sort();
+}
+
+// Rule 41ab823a (resident DESIGN §75, Fable 2026-11-19 "same tree, same check, one real run"): the scans a train front batch (H, S)
+// need not run again because H already carries them, read from the same complete inventory as stage 1's read-back above (this App's
+// checks, the ones the merge gate reads), never from a node's own ledger, so an archived, reinstalled or other node's batch still counts.
+// Per scan role, the newest check of that name on H that is not one of this front batch's own jobs must be completed, successful and a
+// scanner publication (its external id the staged form, job-v2.mjs#scanExternalIdV2); and T must be an ancestor of H (compare behind_by
+// 0), so every earlier batch that scanned on H (ordinary: H itself; a front on an older main: merge(T', H) with T' in H) read H's tree.
+// The resident reuses them only when S's tree is H's tree. Anything that does not fit, or a read that fails, names nothing: the front
+// batch scans as before. It never changes stage 1's own ending.
+export const SCAN_CHECK_NAMES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
+export const SCAN_EXTERNAL_ID = /^independent-ci:staged:v2:[a-f0-9]{64}:a[1-9]$/;
+// [{ role, externalId }] in role order, each role once, or null when the value does not have exactly that shape.
+export function validHeadScans(v) {
+  if (!Array.isArray(v) || v.length > SCAN_CHECK_NAMES.length) return null;
+  const out = v.map(x => plain(x) && Object.keys(x).length === 2 && SCAN_CHECK_NAMES.includes(x.role) && SCAN_EXTERNAL_ID.test(x.externalId ?? '')
+    ? { role: x.role, externalId: x.externalId } : null);
+  if (out.some(x => x === null) || new Set(out.map(x => x.role)).size !== out.length) return null;
+  return SCAN_CHECK_NAMES.flatMap(role => out.filter(x => x.role === role));
+}
+// checks: this App's checks on H (readPublishedChecks); jobIds: the front subject's job ids (job-v2.mjs#frontJobIdsV2).
+export function headScansOf(checks, jobIds) {
+  if (!Array.isArray(checks) || !(jobIds instanceof Set)) return [];
+  const out = [];
+  for (const role of SCAN_CHECK_NAMES) {
+    const newest = checks.filter(c => c?.name === role && c.app?.id === PUBLISHER_APP_ID && !ofJobIds(c, jobIds)).sort((a, b) => b.id - a.id)[0];
+    if (newest && newest.status === 'completed' && newest.conclusion === 'success' && SCAN_EXTERNAL_ID.test(newest.external_id ?? ''))
+      out.push({ role, externalId: newest.external_id });
+  }
+  return out;
+}
+// job: the front batch's stage-1 job (T = job.baseSha, H = job.headSha). Never throws.
+export async function frontHeadScans(github, job, checks, jobIds) {
+  try {
+    const scans = headScansOf(checks, jobIds);
+    if (scans.length === 0) return [];
+    const c = await github.readCompare(job.baseSha, job.headSha);
+    return c?.behindBy === 0 && ['ahead', 'identical'].includes(c.status) ? scans : [];
+  } catch { return []; }
 }
