@@ -682,7 +682,7 @@ function Get-DrillVerdict($E) {
   $local = [string](Get-Prop $c 'ciSourceManifestSha256')
   $a5 = ($local -match '^[0-9a-f]{64}$') -and $local -ceq [string]$E.acceptanceSource
   # a candidate (Fable ruling 11-19 renew-key section 4.3) has no production half: A5 is the guest's Source against the request's, here
-  if ($E.candidate) { [void]$items.Add((New-DrillItem 'A5' $a5 "local=$local acceptance=$($E.acceptanceSource); candidate: no production half")) }
+  if ((Get-Prop $E 'candidate') -eq $true) { [void]$items.Add((New-DrillItem 'A5' $a5 "local=$local acceptance=$($E.acceptanceSource); candidate: no production half")) }
   else { [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize")) }
   $s = $E.status
   $a6 = ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') -and ([string](Get-Prop $s 'executor.state') -ceq 'IDLE') -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
