@@ -88,10 +88,11 @@ async function stage8AfterReturn(t, semantics, { fail = true } = {}) {
       opts.scheduling?.({ mergeQueue: { entered: native.queued, state: native.queued ? 'head' : null, position: native.queued ? 1 : null }, claimExpiresAt: iso(time + 60_000) });
       return admitted(job, c, packet, { mergeQueueHead: native.queued, observedAt: time });
     }) });
-  const first = fail ? await publisher().publishPair([jobsFor(1)['control-admission'], jobsFor(1)['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS }) : {};
+  const one = jobsFor(1), two = jobsFor(2);
+  const first = fail ? await publisher().publishPair([one['control-admission'], one['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS }) : {};
   if (fail) github.checks.push({ id: 2, head_sha: HEAD, name: 'ci-suites', app: { id: 15368 }, status: 'completed', conclusion: 'success' });
   native.queued = true; // the holder's claim joins its queue again (renew with the merge-slot trigger)
-  const second = await publisher().publishPair([jobsFor(2)['control-admission'], jobsFor(2)['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
+  const second = await publisher().publishPair([two['control-admission'], two['control-merge-slot']], { waitUntil: time + STAGE8_CHECK_MS });
   return { first: [first.status, first.reason], second: [second.status, second.reason], returns: native.returns, claim: native.status };
 }
 test('#1176: a stage-8 required check failure gives back only the merge slot; the same claim\'s next attempt goes on', async t => {
