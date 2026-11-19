@@ -165,7 +165,7 @@ function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
 
 # An absolute deadline keeps the required hold from moving forward at each poll.
 # Without a deadline this is the standby-only gate (baseline installation and runs that did not request a hold).
-# Any current batch (including WAITING/PARKED) still owns resources, even when executor.state is not RUNNING.
+# A drill hold leaves the parked stage-8 tries and revoke-only train maintenance on the Windows side.
 function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
   [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
   [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
@@ -195,9 +195,29 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
           if ($h.PSObject.Properties['since']) { $since = ConvertTo-DrillTimestamp $h.since }
           if ($h.PSObject.Properties['until']) { $until = ConvertTo-DrillTimestamp $h.until }
         }
-        if ($executor -cin @('RUNNING', 'PARKED') -or $null -ne $s.current) { $code = 'DRILL_HOST_CI_BUSY' }
-        elseif ($executor -cnotin @('IDLE', 'WAITING', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'STOPPED',
-          'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED')) { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
+        $quiet = $executor -cin @('IDLE', 'WAITING', 'DEFERRED', 'HALTED', 'PAUSED', 'BACKFILL_PENDING', 'STOPPED',
+          'COMPLETED', 'FAILED_CLEAN', 'NOT_ADMITTED', 'NOT_EXECUTED', 'IGNORED')
+        $stage8 = $false
+        if ($mode -ceq 'ACTIVE' -and $s.executor -is [pscustomobject]) {
+          $reason = $s.executor.PSObject.Properties['reason']
+          $maintenance = $executor -ceq 'RUNNING' -and $null -ne $reason -and
+            $reason.Value -is [string] -and $reason.Value -ceq 'TRAIN_MAINTENANCE'
+          $quiet = $quiet -or $executor -ceq 'PARKED' -or $maintenance
+
+          # resumeParkedB's start checks leave the status board alone. atStage publishes stage and phase together.
+          $runningBatch = $executor -ceq 'RUNNING' -and $null -ne $reason -and $null -eq $reason.Value
+          if ($Running -and $s.current -is [pscustomobject] -and ($quiet -or $runningBatch) -and
+              $s.current.PSObject.Properties['stage'] -and $s.current.PSObject.Properties['phase']) {
+            $stage = $s.current.stage
+            $phase = $s.current.phase
+            $stage8 = ($stage -is [int] -or $stage -is [long]) -and $stage -eq 8 -and
+              $phase -is [string] -and $phase -ceq 'stage'
+          }
+        }
+        if (-not (($quiet -and $null -eq $s.current) -or $stage8)) {
+          $code = if ($executor -cin @('RUNNING', 'PARKED') -or $null -ne $s.current) { 'DRILL_HOST_CI_BUSY' }
+            else { 'DRILL_HOST_STATUS_UNREADABLE' }
+        }
         elseif ($mode -ceq 'ACTIVE' -and ($HoldUntil -le $Now -or $null -eq $since -or $since -gt $Now -or
           $null -eq $until -or $until -lt $HoldUntil -or $until -gt $Now.AddMinutes($script:Drill.IntakeMaxMinutes))) {
           $code = 'DRILL_HOST_IS_ON_DUTY'
