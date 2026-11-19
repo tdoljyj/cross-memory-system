@@ -124,7 +124,7 @@ function Get-EntryHostStopCode($HostRun) {
 # e0a3cded5, high 1).
 function Get-EntryField($Object, [string]$Name) {
   if ($null -eq $Object) { return $null }
-  if ($Object -is [Collections.IDictionary]) { $d = [Collections.IDictionary]$Object; if ($d.Contains($Name)) { return $d[$Name] }; return $null }
+  if ($Object -is [Collections.IDictionary]) { if (([Collections.IDictionary]$Object).Contains($Name)) { return $Object[$Name] }; return $null }
   $p = $Object.PSObject.Properties[$Name]; if ($p) { return $p.Value }; return $null
 }
 
