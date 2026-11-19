@@ -4070,7 +4070,7 @@ export async function handleContinuityRequest(
   if (pathname === GITHUB_EVENTS_PATH) return handleGitHubEvents(request, env);
   if (pathname === CI_CONNECTION_RENEW_PATH) return handleCiConnectionRenew(request, env, (name, args, signal) =>
     supabaseRequest(env, "/rest/v1/rpc/" + name, {
-      method: "POST", body: JSON.stringify(args), signal, redirect: "error", cache: "no-store",
+      method: "POST", body: JSON.stringify(args), signal, redirect: "manual", cache: "no-store",
     }));
   if (isCiNodeGatewayPath(pathname)) return handleCiNodeGatewayV1(request, env);
   const trace = createNativeReadTrace(request);
