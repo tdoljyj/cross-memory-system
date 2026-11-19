@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -1015,6 +1015,50 @@ test('the exit clean-up tries every directory, and a killed run\'s directory goe
   start('next');
   assert.ok(!existsSync(left), 'the next run removes it');
   assert.ok(existsSync(making), 'one still being made (no record yet, new) is left alone');
+});
+
+// Codex third review of 2ee162c2, medium 1: an inherited directory is taken only at its full canonical path (a drive on
+// Windows, already resolved, the same as its real path through every ancestor), and that one path is the one handed on.
+test('an inherited identity directory is taken only at its full canonical path', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-canonical-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const link = path.join(temp, 'through-link');
+  symlinkSync(temp, link, process.platform === 'win32' ? 'junction' : 'dir');
+  const selector = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
+  const child = `import(${selector}).then(({ testEnv }) => require('node:fs').writeSync(1,
+    testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] }).CLUED_TEST_IDENTITY_DIR));`;
+  const below = (env) => spawnSync(process.execPath, ['-e', child, temp], { env, encoding: 'utf8' }).stdout.trim();
+  const fresh = { ...process.env };
+  for (const name of ['CLUED_TEST_IDENTITY_DIR', 'CLUED_TEST_IDENTITY_RUN']) delete fresh[name];
+  const live = spawn(process.execPath, ['-e', `import(${selector}).then(({ markTestRun, testEnv }) => {
+    const env = { ...process.env, RUNNER_TEMP: process.argv[1] };
+    markTestRun(['--run', 'x'], env);
+    console.log(JSON.stringify(testEnv(env)));
+    setInterval(() => {}, 1000);
+  });`, temp], { env: fresh, stdio: ['ignore', 'pipe', 'inherit'] });
+  t.after(() => live.kill());
+  return new Promise((resolve, reject) => {
+    let text = '';
+    live.stdout.on('data', (chunk) => {
+      text += chunk;
+      if (!text.includes('\n')) return;
+      try {
+        const env = JSON.parse(text);
+        const own = env.CLUED_TEST_IDENTITY_DIR;
+        assert.equal(own, realpathSync.native(own), 'made at its canonical path');
+        assert.equal(below(env), own, 'its canonical path is taken');
+        const variants = { dotted: `${path.dirname(own)}${path.sep}.${path.sep}${path.basename(own)}`, linked: path.join(link, path.basename(own)) };
+        if (process.platform === 'win32') variants.driveless = own.slice(2);
+        for (const [name, dir] of Object.entries(variants)) {
+          const got = below({ ...env, CLUED_TEST_IDENTITY_DIR: dir });
+          assert.ok(got && got !== dir && got !== own, `${name}: ${dir} is not taken (got ${got})`);
+        }
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
 });
 
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {

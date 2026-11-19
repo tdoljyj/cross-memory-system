@@ -1,7 +1,7 @@
 // The environment every suite child gets: the selector's (ci-required-selection.mjs) and local-verify's one source. Only
 // node: imports, so local-verify --linux can carry it with its own copy.
 import { createHash, randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,9 +50,20 @@ function record(dir) {
     return null;
   }
 }
+// The full canonical path (Codex third review of 2ee162c2, medium 1): absolute with a drive on Windows, already resolved, and
+// its own real path through every ancestor (no link, junction or short name on the way), so the path checked is the path
+// the children use, whatever their working directory.
+function canonical(dir) {
+  try {
+    return typeof dir === 'string' && path.isAbsolute(dir) && (process.platform !== 'win32' || /^[A-Za-z]:\\/.test(dir))
+      && path.resolve(dir) === dir && realpathSync.native(dir) === dir;
+  } catch {
+    return false;
+  }
+}
 function taken(dir, run) {
   try {
-    if (typeof dir !== 'string' || typeof run !== 'string' || !path.isAbsolute(dir) || !path.basename(dir).startsWith(PREFIX)) return false;
+    if (!canonical(dir) || typeof run !== 'string' || !path.basename(dir).startsWith(PREFIX)) return false;
     const [self, gh, git, file] = [dir, path.join(dir, 'gh'), path.join(dir, 'gitconfig'), path.join(dir, 'run')].map((entry) => lstatSync(entry));
     if (!self.isDirectory() || !gh.isDirectory() || !git.isFile() || !file.isFile()) return false;
     const made = record(dir);
@@ -105,7 +116,7 @@ export function testIdentity(env = process.env, { own = false } = {}) {
   if (made.size === 0) process.once('exit', () => removeEach(made));
   const base = path.resolve(env.RUNNER_TEMP || os.tmpdir());
   sweep(base);
-  const dir = mkdtempSync(path.join(base, PREFIX));
+  const dir = realpathSync.native(mkdtempSync(path.join(base, PREFIX)));
   made.add(dir);
   const run = randomUUID();
   mkdirSync(path.join(dir, 'gh'));
