@@ -247,14 +247,20 @@ begin
   return jsonb_build_object('status','ok','repository',v_repo,'finished',finished,'released',to_jsonb(released_ids),'tracked',tracked);
 end $$;
 
--- 旧的五参数结束入口不再有调用方。
-drop function clued_private.work_claim_pr_end_v1(public.clued_agent_bindings,text,text,text,text);
+-- 旧的五参数结束入口不再有调用方。签名保留（迁移不删上一版仍可能引用的签名），但不带来源的结束一律拒绝。
+create or replace function clued_private.work_claim_pr_end_v1(
+  b public.clued_agent_bindings,p_scope text,p_pr text,p_status text,p_merge_sha text)
+returns uuid language plpgsql volatile security definer set search_path='' as $$
+begin
+  raise exception 'work_claim_pr_end_source_required' using errcode='22023';
+end $$;
 
 revoke all on function
   clued_private.work_claim_pr_finish_before_lease_pin_v1(public.clued_agent_bindings,text,text,text,text),
   clued_private.work_claim_pr_finish_before_lease_pin_v1(public.clued_agent_bindings,text,text,text),
   clued_private.work_claim_pr_finish_v1(public.clued_agent_bindings,text,text,text,text),
   clued_private.work_claim_pr_finish_v1(public.clued_agent_bindings,text,text,text),
+  clued_private.work_claim_pr_end_v1(public.clued_agent_bindings,text,text,text,text),
   clued_private.work_claim_pr_end_v1(public.clued_agent_bindings,text,text,text,text,text)
   from public,anon,authenticated,service_role,clued_worker_gateway;
 revoke all on function public.clued_work_pr_lifecycle_report_v1(text,jsonb) from public,anon,authenticated,service_role,clued_worker_gateway;
