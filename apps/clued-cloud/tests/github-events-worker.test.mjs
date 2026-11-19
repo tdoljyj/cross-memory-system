@@ -28,7 +28,7 @@ test('原始字节验签后，合入和关闭未合入的投递各送达网关�
     calls.push(JSON.parse(init.body));
     assert.equal(target, env.SUPABASE_URL + '/rest/v1/rpc/clued_work_pr_merged_event_v1');
     assert.equal(init.method, 'POST');
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     const headers = new Headers(init.headers);
     assert.equal(headers.get('authorization'), 'Bearer test-gateway');
     assert.equal(headers.get('apikey'), 'test-key');

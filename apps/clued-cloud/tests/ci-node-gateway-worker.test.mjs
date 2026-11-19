@@ -63,7 +63,7 @@ test('a verified command makes two trust reads and exactly one mutation, with th
   assert.deepEqual(r.calls.map(c => c.name), ['clued_ci_node_trust_v1', 'clued_ci_node_trust_v1', 'clued_ci_node_command_v1']);
   for (const c of r.calls) {
     assert.equal(c.url, 'https://db.example.test/rest/v1/rpc/' + c.name); assert.equal(c.headers.authorization, 'Bearer gw');
-    assert.equal(c.headers.apikey, 'pk'); assert.equal(c.redirect, 'error'); assert.equal(c.body.p_token_hash, hex(token));
+    assert.equal(c.headers.apikey, 'pk'); assert.equal(c.redirect, 'manual'); assert.equal(c.body.p_token_hash, hex(token));
     assert.ok(!JSON.stringify(c.body).includes(token), 'the raw token never leaves the Worker');
   }
   const mutation = r.calls[2].body;

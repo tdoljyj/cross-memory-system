@@ -87,7 +87,7 @@ export async function handleGitHubEvents(request: Request, env: Env): Promise<Re
     const db = new URL(dbUrl);
     if (db.protocol !== 'https:' || db.username || db.password || db.pathname !== '/' || db.search || db.hash) return reply(500);
     const response = await fetch(db.origin + '/rest/v1/rpc/clued_work_pr_merged_event_v1', {
-      method: 'POST', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(10000),
+      method: 'POST', redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(10000),
       headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, apikey: dbKey },
       body: JSON.stringify({ p_input }),
     });
