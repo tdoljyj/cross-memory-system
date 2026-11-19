@@ -58,6 +58,8 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
 // ones -- and recorded in the kit; a package that does not declare the two is refused (no kit). drill-vm.ps1 Get-DrillCredentialPlan
 // then refuses before any boot a required name the drill cannot make, and an optional name it has no decision for.
 export const HOST_SCRIPT = 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1';
+// The prerequisite items (by name in the package's prereq-manifest.json) the drill injects and the guest never downloads.
+export const INJECTED_TOOLS = Object.freeze(['gh', 'git-for-windows']);
 export function packageCredentials(text) {
   const group = name => {
     const m = new RegExp(`^\\$${name}\\s*=\\s*\\[ordered\\]@\\{([^}]*)\\}\\s*$`, 'm').exec(String(text ?? ''));
@@ -172,6 +174,11 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     check(sha256(bytes) === item.sha256 && bytes.length === accepted.bytes, `DRILL_PREREQ_CHANGED:${name}`);
     check(!Object.hasOwn(payloads, name), 'DRILL_PREREQ_DUPLICATE');
     payloads[name] = bytes;
+  }
+  // the package's gh and Git for Windows installers are injected, both and with the package's hashes, or no kit (Codex review of
+  // e0a3cded5, high 3): the guest never fetches them
+  for (const need of (pm.items ?? []).filter(i => INJECTED_TOOLS.includes(i.name))) {
+    check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${need.name}`);
   }
   const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials });
   fs.mkdirSync(out); // refuse an existing target, including a previous kit

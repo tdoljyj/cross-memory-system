@@ -200,7 +200,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       if ([IO.File]::Exists($injected)) {
         if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
         $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
-      } else { $file = Get-Prereq $item $pre }
+      } elseif (@('gh', 'git-for-windows') -ccontains [string]$item['name']) { throw ('DRILL_PREREQ_NOT_INJECTED:' + $item['name']) }
+      else { $file = Get-Prereq $item $pre }
       if (@('node', 'python', 'git') -ccontains [string]$item['name']) { $tools[$item['name']] = Expand-Cached $file $item['name'] $item['sha256'] }
     }
     $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir)

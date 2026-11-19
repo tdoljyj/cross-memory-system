@@ -534,6 +534,19 @@ function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
   if ($want -cne $have) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ package = $want; kit = $have }) }
 }
 
+# The package's gh and Git for Windows installers in the kit, each with the hash the package's prerequisite manifest pins (Codex review of
+# e0a3cded5, high 3; make-drill-kit.mjs INJECTED_TOOLS): one missing refuses the drill before any boot, by name.
+function Assert-DrillKitToolsBound($KitInfo, [string]$ManifestFile) {
+  $pm = Read-DrillJson $ManifestFile
+  $kit = Read-DrillJson (Join-Path $KitInfo.dir 'kit.json')
+  foreach ($item in @(Get-Prop $pm 'items')) {
+    $name = [string](Get-Prop $item 'name')
+    if (@('gh', 'git-for-windows') -cnotcontains $name) { continue }
+    $in = @(@(Get-Prop $kit 'files') | Where-Object { [string](Get-Prop $_ 'path') -ceq [string](Get-Prop $item 'fileName') -and [string](Get-Prop $_ 'sha256') -ceq [string](Get-Prop $item 'sha256') })
+    if ($in.Count -ne 1) { throw (New-DrillError 'DRILL_KIT_TOOL_NOT_INJECTED' $name) }
+  }
+}
+
 # The kit's credential names (make-drill-kit.mjs, from the package) against the drill's decisions: what is given (and the fake file each
 # is made as), what is withheld and why. Throws by name for a required name the drill cannot give or an optional one it has no decision for.
 function Get-DrillCredentialPlan($Kit) {
@@ -2298,6 +2311,7 @@ function Invoke-DrillMain {
     # the package's credential names against the drill's decisions, before the host gate, the hold or any boot; the kit's names first bound
     # again to the package's verified tar
     Assert-DrillKitCredentialsBound $kitInfo $package.tar
+    Assert-DrillKitToolsBound $kitInfo (Join-Path $From "fleet-node-$Version.prereq-manifest.json")
     $kitInfo['credentialPlan'] = Get-DrillCredentialPlan $kitInfo
   }
   Invoke-DrillWithHostHold $RunTimeoutMinutes {

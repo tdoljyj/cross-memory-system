@@ -126,7 +126,8 @@ function firstInstallAssets(label, { candidate = false, hostText = hostScriptTex
   const archive = writeTar([...['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
     path: `tree/work/independent-ci-resident-v1/rollout/fleet/${n}`,
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
-      { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 }, { fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }
+      { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 },
+      { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }
     ], debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
     { path: 'tree/work/independent-ci-resident-v1/windows/first-install-host.ps1', data: Buffer.from(hostText) },
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
@@ -140,8 +141,8 @@ function firstInstallAssets(label, { candidate = false, hostText = hostScriptTex
   const prereq = path.join(root, 'prereq.json');
   fs.writeFileSync(prereq, JSON.stringify({ contract: 'clued.drill.prereq/1',
     wsl: { path: 'wsl.msi', sha256: sha('wsl') }, rootfs: { path: 'ubuntu.wsl', sha256: sha('rootfs') },
-    debs: [{ path: 'docker.deb', sha256: sha('deb') }], tools: [{ path: 'gh.msi', sha256: sha('gh') }] }));
-  for (const [name, bytes] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['docker.deb', 'deb'], ['gh.msi', 'gh']]) fs.writeFileSync(path.join(root, name), bytes);
+    debs: [{ path: 'docker.deb', sha256: sha('deb') }], tools: [{ path: 'gh.msi', sha256: sha('gh') }, { path: 'git.exe', sha256: sha('git') }] }));
+  for (const [name, bytes] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['docker.deb', 'deb'], ['gh.msi', 'gh'], ['git.exe', 'git']]) fs.writeFileSync(path.join(root, name), bytes);
   return { root, build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq,
     from: path.join(root, 'from'), out: path.join(root, 'kit') };
 }
@@ -963,6 +964,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
     function Read-DrillKit { @{ sha256 = 'kit'; prereqSha256 = 'prereq'; executionBlocker = $null; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) } }
     function Get-DrillReleaseFiles { }
     function Assert-DrillKitCredentialsBound { }
+    function Assert-DrillKitToolsBound { }
     function Assert-DrillHost { @{ freeGB = 16 } }
     function Invoke-DrillBaseline { @{ action = 'ready' } }
     function Read-DrillHostStatus { ${q(idleHostStatus())} }
@@ -1288,6 +1290,31 @@ test('the run binds the kit\'s credential names again to the package it drills: 
   assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitCredentialsBound \$kitInfo \$package\.tar/);
 });
 
+// Codex review of e0a3cded5, high 3: the package's gh and Git for Windows installers are injected, both and with the package's hashes, or
+// there is no kit and no boot; the entry never fetches them in the guest.
+test('gh and Git for Windows: in the kit with the package\'s hashes or no kit, no boot; never downloaded in the guest', opts, async () => {
+  const f = firstInstallAssets('tools-bound');
+  prepareFrom({ ...f, out: f.from });
+  await makeDrillKit(f);
+  const manifest = path.join(f.from, `fleet-node-${f.version}.prereq-manifest.json`);
+  const gate = () => psCode(`Assert-DrillKitToolsBound (Read-DrillKit ${q(f.out)}) ${q(manifest)}`);
+  assert.equal(gate(), null);
+  const kitFile = path.join(f.out, 'kit.json');
+  const kit = JSON.parse(fs.readFileSync(kitFile, 'utf8'));
+  fs.writeFileSync(kitFile, JSON.stringify({ ...kit, files: kit.files.filter(i => i.path !== 'gh.msi') }, null, 2));
+  assert.equal(psCode(`try { Assert-DrillKitToolsBound (Read-DrillKit ${q(f.out)}) ${q(manifest)}; $null } catch { (Get-DrillCode $_).detail }`), 'gh');
+  assert.equal(gate(), 'DRILL_KIT_TOOL_NOT_INJECTED');
+  // a prerequisite list without one of them: no kit
+  const short = firstInstallAssets('tools-short');
+  const p = JSON.parse(fs.readFileSync(short.prereq, 'utf8'));
+  fs.writeFileSync(short.prereq, JSON.stringify({ ...p, tools: p.tools.filter(t => t.path !== 'git.exe') }));
+  prepareFrom({ ...short, out: short.from });
+  await assert.rejects(() => makeDrillKit(short), /DRILL_PREREQ_TOOLS_INCOMPLETE:git-for-windows/);
+  // the run calls the gate; the entry stops on a missing injected one instead of downloading it
+  assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitToolsBound \$kitInfo \(Join-Path \$From "fleet-node-\$Version\.prereq-manifest\.json"\)/);
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /\} elseif \(@\('gh', 'git-for-windows'\) -ccontains \[string\]\$item\['name'\]\) \{ throw \('DRILL_PREREQ_NOT_INJECTED:' \+ \$item\['name'\]\) \}\s*else \{ \$file = Get-Prereq \$item \$pre \}/);
+});
+
 test('the repository\'s package and the drill: required names the drill makes, optional names it decides; the hand-over agrees', opts, () => {
   const read = rel => fs.readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
   const decisions = decisionsOf();
@@ -1403,7 +1430,8 @@ const candidateStubs = `
     # never the real host hold, whatever the code does (Clued Task fe8a2cbf)
     function Invoke-DrillWithHostHold { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
     function Get-DrillIntakeTool { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
-    function Assert-DrillKitCredentialsBound { }`;
+    function Assert-DrillKitCredentialsBound { }
+    function Assert-DrillKitToolsBound { }`;
 test('a candidate run with -SkipReinstall is no longer refused before the host gate; without it, as before', opts, () => {
   assert.equal(psCode(`${candidateStubs}; $SkipReinstall = $true; Invoke-DrillMain`), 'TEST_REACHED_HOST_HOLD');
   assert.equal(psCode(`${candidateStubs}; Invoke-DrillMain`), 'TEST_REACHED_HOST_HOLD');
