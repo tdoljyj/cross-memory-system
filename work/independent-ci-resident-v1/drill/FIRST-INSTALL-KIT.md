@@ -16,13 +16,13 @@
 （`DRILL_CREDENTIAL_OPTIONAL_UNDECIDED`）。包没声明的名字不生成、不交付。决定写在 `drill/credential-decisions.json`（`drill-vm.ps1` 读成 `$script:DrillCredentialDecisions`，建 kit 也读它：给出且带 `perNodeStep` 的名字，不论在必需组还是可选组，都在 kit 的单节点步骤里登记一步），
 回执 `credentials` 列出本次给了的与本次未给的可选凭据（含理由）。
 
-构建器把三处绕过写进 perNodeSteps，被演练的包把陪伴令牌列为必需时再加陪伴令牌替身一条；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。
+构建器把三处绕过写进 perNodeSteps；被演练的包列出的名字（必需组或可选组均可）凡决定表给出并带 `perNodeStep` 的，各再加一条替身登记（现为陪伴令牌替身）；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。
 
 替身登记（入口不再盖住任何包内函数；`Expand-Cached` 的旧替身已删，#1154 修好了包里的真函数）：
 
 | 替身 | 替的是什么 | 为什么 | 因此没验到 | 何时可删 |
 |---|---|---|---|---|
-| `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读；仅当被演练的包把它列为必需时生成） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
+| `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读；仅当被演练的包在必需组或可选组列出它时生成并交付，kit 同时登记这一步） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
 
 按设计不给的可选凭据：
 
