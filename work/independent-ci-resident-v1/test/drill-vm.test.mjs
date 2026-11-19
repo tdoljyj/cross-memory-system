@@ -13,6 +13,10 @@ import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
+import { intakePauseRequest } from '../src/intake-pause.mjs';
+import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
+import { StatusBoard } from '../src/status.mjs';
+import { executorFixture, fakeEngine, rawPolicy, triggerBytes, WINDOWS_CLEAN } from './helpers.mjs';
 
 const windows = process.platform === 'win32';
 const script = fileURLToPath(new URL('../drill/drill-vm.ps1', import.meta.url));
@@ -36,8 +40,8 @@ function psCode(expr) {
 const opts = { skip: !windows };
 const idleHostStatus = (writtenAt = new Date().toISOString()) =>
   JSON.stringify({ node: { mode: 'STANDBY' }, executor: { state: 'IDLE' }, current: null, writtenAt });
-const activeHostStatus = (hold, { writtenAt = '2026-11-19T02:00:00Z', executor = 'IDLE', current = null } = {}) =>
-  JSON.stringify({ node: { mode: 'ACTIVE' }, executor: { state: executor }, current, writtenAt,
+const activeHostStatus = (hold, { writtenAt = '2026-11-19T02:00:00Z', executor = 'IDLE', reason = null, current = null } = {}) =>
+  JSON.stringify({ node: { mode: 'ACTIVE' }, executor: { state: executor, reason }, current, writtenAt,
     intakePause: hold && { until: '2026-11-19T04:00:00Z', holders: [hold] } });
 const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
 const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
@@ -227,8 +231,8 @@ test('an active host with fresh idle status must have its own hold through the r
   const r = ps(`$now = [DateTimeOffset]${q(now)}; $required = [DateTimeOffset]${q(required)}; @(
     ${calls.map(v => `(Test-DrillHostSafety ${q(v)} 64GB -Now $now -HoldUntil $required)`).join(',\n')}
   )`);
-  assert.deepEqual(r.map(x => x.action), ['refuse', 'start', 'refuse', 'refuse', 'refuse']);
-  assert.deepEqual(r.map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', null, 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_STATUS_STALE']);
+  assert.deepEqual(r.map(x => x.action), ['refuse', 'start', 'start', 'refuse', 'refuse']);
+  assert.deepEqual(r.map(x => x.code), ['DRILL_HOST_IS_ON_DUTY', null, null, 'DRILL_HOST_CI_BUSY', 'DRILL_HOST_STATUS_STALE']);
 });
 
 test('the active runtime gate aborts for a short hold or a different holder', opts, () => {
@@ -243,6 +247,96 @@ test('the active runtime gate aborts for a short hold or a different holder', op
     ${calls.map(v => `(Test-DrillHostSafety ${q(v)} 64GB -Running -Now $now -HoldUntil $required)`).join(',\n')}
   )`);
   assert.deepEqual(r.map(x => x.action), ['abort', 'abort', 'continue']);
+});
+
+const gateNow = '2026-11-19T02:00:00Z';
+const gateUntil = '2026-11-19T03:20:00Z';
+const gateHold = { holder: 'drill', since: gateNow, until: gateUntil };
+
+function gateActions(statuses, { running = true, memory = '64GB' } = {}) {
+  return ps(`$now = [DateTimeOffset]${q(gateNow)}; $until = [DateTimeOffset]${q(gateUntil)}; @(
+    ${statuses.map(status => `(Test-DrillHostSafety ${q(status)} ${memory} -Running:$${running} -Now $now -HoldUntil $until)`).join(',\n')}
+  )`).map(x => x.action);
+}
+
+test('the active drill continues while the executor is idle with no current batch', opts, () => {
+  assert.deepEqual(gateActions([activeHostStatus(gateHold)]), ['continue']);
+});
+
+test('the active drill continues while the executor is parked with no current batch', opts, () => {
+  assert.deepEqual(gateActions([activeHostStatus(gateHold, { executor: 'PARKED' })]), ['continue']);
+});
+
+test('the active drill can start and continue during revoke-only train maintenance', opts, async t => {
+  const now = Date.parse(gateNow);
+  const board = new StatusBoard({ clock: () => now });
+  const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { ...rawPolicy().train, ...TRAIN_DEFAULTS, enabled: 'on' } });
+  board.setNode(policy.node.nodeName, policy.sourceManifestSha256, 'ACTIVE');
+  let during;
+  const engine = fakeEngine({ train: mode => {
+    assert.equal(mode, 'revoke-only');
+    during = board.snapshot();
+    return fakeEngine().runTrainStage(mode);
+  } });
+  const f = await executorFixture(t, { now, status: board, engine, policy });
+  await f.drop(JSON.stringify(intakePauseRequest({ holder: 'drill', minutes: 120, reason: 'drill' }, f.clock)), 'requests');
+  await f.exec.tick();
+  assert.deepEqual([during.executor.state, during.executor.reason, during.current], ['RUNNING', 'TRAIN_MAINTENANCE', null]);
+  assert.deepEqual(gateActions([JSON.stringify(during)], { running: false }), ['start']);
+  assert.deepEqual(gateActions([JSON.stringify(during)]), ['continue']);
+});
+
+test('the active drill continues from the parked stage-8 start checks through re-parking', opts, async t => {
+  const now = Date.parse(gateNow);
+  const tenMinutes = 600_000;
+  const board = new StatusBoard({ clock: () => now });
+  board.setNode(rawPolicy().node.nodeName, rawPolicy().sourceManifestSha256, 'ACTIVE');
+  const blocked = { ok: false, code: 'RESIDENT_MERGE_QUEUE_NOT_JOINED', proof: WINDOWS_CLEAN,
+    outcome: { status: 'BLOCKED', sideEffects: 0, mayHavePublished: false } };
+  const engine = fakeEngine({ stages: { 8: blocked } });
+  const f = await executorFixture(t, { now: now - tenMinutes, status: board, engine });
+  await f.drop(triggerBytes());
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  await f.drop(JSON.stringify(intakePauseRequest({ holder: 'drill', minutes: 120, reason: 'drill' }, f.clock)), 'requests');
+  assert.equal((await f.exec.tick()).reason, 'INTAKE_PAUSED');
+  f.advance(tenMinutes);
+
+  let checking, trying;
+  const check = f.exec.batchStartChecks.bind(f.exec);
+  f.exec.batchStartChecks = async subject => { checking = board.snapshot(); return check(subject); };
+  const run = engine.runStage.bind(engine);
+  engine.runStage = async (batch, stage, options) => { trying = board.snapshot(); return run(batch, stage, options); };
+  assert.equal((await f.exec.tick()).state, 'PARKED');
+  const parked = board.snapshot();
+  assert.equal(checking.current, null, 'the start checks have yet to publish a current batch');
+  assert.deepEqual([trying.current.stage, trying.current.phase], [8, 'stage']);
+  assert.deepEqual([parked.executor.state, parked.current], ['PARKED', null]);
+
+  const sequence = [checking, trying, parked];
+  assert.deepEqual(gateActions(sequence.map(s => JSON.stringify(s))), ['continue', 'continue', 'continue']);
+  assert.deepEqual(gateActions([JSON.stringify(trying)], { running: false }), ['refuse']);
+  for (const intakePause of [null, { ...trying.intakePause, holders: [{ ...gateHold, holder: 'owner' }] }]) {
+    assert.deepEqual(gateActions(sequence.map(s => JSON.stringify({ ...s, intakePause }))), ['abort', 'abort', 'abort']);
+  }
+});
+
+test('the active drill aborts for stages 1–7, unrecognized shapes, stale status or low memory', opts, () => {
+  const stage8 = { stage: 8, phase: 'stage' };
+  const states = [
+    ...Array.from({ length: 7 }, (_, i) => ({ current: { ...stage8, stage: i + 1 } })),
+    { current: { pr: 1170 } }, { current: { ...stage8, stage: '8' } }, { current: { stage: 8 } },
+    { executor: 'UNKNOWN', current: stage8 }, { executor: 'UNKNOWN' },
+    { executor: 'RUNNING', reason: 'OTHER' }, { executor: 'RUNNING', reason: ['TRAIN_MAINTENANCE'] },
+    { executor: 'RUNNING', reason: 'TRAIN_MAINTENANCE', current: { pr: 1170 } },
+    { executor: 'PARKED', writtenAt: '2026-11-19T01:54:59Z' },
+  ];
+  assert.deepEqual(gateActions(states.map(s => activeHostStatus(gateHold, s))), states.map(() => 'abort'));
+  assert.deepEqual(gateActions([activeHostStatus(gateHold, { current: stage8 })], { memory: '(6GB - 1)' }), ['abort']);
+  const standby = [
+    { executor: 'PARKED' }, { executor: 'RUNNING', reason: 'TRAIN_MAINTENANCE' }, { current: stage8 },
+  ].map(s => activeHostStatus(gateHold, s).replace('"ACTIVE"', '"STANDBY"'));
+  assert.deepEqual(gateActions(standby), ['abort', 'abort', 'abort']);
+  assert.deepEqual(gateActions(standby, { running: false }), ['refuse', 'refuse', 'refuse']);
 });
 
 test('intake wait timeout releases only the drill hold without starting the VM', opts, () => {
