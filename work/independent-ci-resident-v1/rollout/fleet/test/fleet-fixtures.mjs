@@ -162,3 +162,37 @@ export async function nodeSite(t, letter, fleet, { now = Date.now(), companionAc
 }
 
 export const targetOf = (release, over = {}) => ({ id: randomUUID(), receipt_id: randomUUID(), ...release.source, ...over });
+
+// publish.mjs's fake gh (a script run with node: ghCommand = [process.execPath, file]; never the real gh, never the network). It records its argv
+// and whether a token variable reached it; "release view" answers from what "release create" and "release upload" put into FAKE_GH_STATE
+// (assets of the release being published), or from state.other[<tag>] (the assets of another, earlier release, seeded by the test);
+// "release download --pattern <name> --dir <dir>" writes that asset (its bytes kept as base64) into <dir>.
+export const FAKE_GH = `import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+const asset = f => { const b = fs.readFileSync(f), name = f.split(/[\\\\/]/).pop(); return { name, size: b.length, sha256: createHash('sha256').update(b).digest('hex'), b64: b.toString('base64'), ...(name.endsWith('SHA256SUMS') ? { text: b.toString('utf8') } : {}) }; };
+const state = process.env.FAKE_GH_STATE;
+const log = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, 'utf8')) : { calls: [], assets: [] };
+const args = process.argv.slice(2);
+log.calls.push({ args, tokenSeen: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'].filter(k => process.env[k] !== undefined) });
+if (process.env.FAKE_GH_FAIL === '1') { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 422: fake failure'); process.exit(1); }
+const nth = Number(process.env.FAKE_GH_FAIL_UPLOAD_NTH || 0);
+if (nth && args[0] === 'release' && args[1] === 'upload' && log.calls.filter(c => c.args[1] === 'upload').length === nth) { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 502: fake upload failure'); process.exit(1); }
+if (args[0] === 'release' && args[1] === 'delete-asset') log.assets = log.assets.filter(a => a.name !== args[3]);
+const assetsOf = tag => (log.other && log.other[tag]) || log.assets;
+if (args[0] === 'release' && args[1] === 'create') {
+  const files = args.slice(3, args.indexOf('--repo'));
+  log.assets = files.map(asset);
+  console.log('https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2]);
+}
+if (args[0] === 'release' && args[1] === 'upload') log.assets.push(asset(args[3]));
+if (args[0] === 'release' && args[1] === 'view') console.log(JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: assetsOf(args[2]).map(a => ({ name: a.name, size: a.size })) }));
+if (args[0] === 'release' && args[1] === 'download') {
+  const name = args[args.indexOf('--pattern') + 1], dir = args[args.indexOf('--dir') + 1];
+  const a = assetsOf(args[2]).find(x => x.name === name);
+  if (!a) { fs.writeFileSync(state, JSON.stringify(log)); console.error('no assets match the file pattern'); process.exit(1); }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), Buffer.from(a.b64, 'base64'));
+}
+fs.writeFileSync(state, JSON.stringify(log));
+`;

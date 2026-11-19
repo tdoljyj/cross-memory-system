@@ -47,3 +47,11 @@ test('L4: continue.py says how a stopped first install continues (the same boots
   const comment = text.slice(text.lastIndexOf('\n    need(lit(', at), at);
   assert.match(comment, /the same bootstrap command/);
 });
+
+test('the kit is part of the acceptance draft: the README\'s release flow has one entry (publish.mjs acceptance-draft), no separate take-the-kit / attach-the-kit step', () => {
+  assert.match(readme, /^node [^\n]*publish\.mjs acceptance-draft --version <version> --dir /m);
+  assert.ok(!/attach-first-install-kit/.test(readme), 'the manual attach step is gone from the README');
+  assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');
+  assert.ok(!/^node [^\n]*first-install-kit/m.test(readme), 'no command line of the README runs a kit step by hand');
+  assert.match(readme, /publish release -> publish acceptance-draft[^\n]*-> Owner [^\n]*-> publish attach-acceptance/);
+});

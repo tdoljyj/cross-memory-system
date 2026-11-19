@@ -225,9 +225,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     // §41.4 (MergeAdmission v0.2 §2.4), on only: a protected-layer front whose H does not contain T needs main merged in
     // first. The layer is read only when H does not contain T; paths that cannot be read count as protected.
     if (job.mode === 'on' && front.state === 'open' && headSha && front.headContainsMain !== true) {
-      let layer = 'protected';
-      try { layer = layerOfPaths((await github.readChangedPaths({ repo: job.repo, pr: holder.pr, headSha, baseSha: pull.base.sha })).paths); } catch { layer = 'protected'; }
-      front = { ...front, protectedLayer: layer === 'protected' };
+      front = { ...front, protectedLayer: await protectedPull({ github, job, layerOfPaths, pr: holder.pr, headSha, baseSha: pull.base.sha }) };
     }
   }
   let entries = [], summary = null, ledgerReason = null;
@@ -657,8 +655,23 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
     const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
-      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
+      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState,
+        layerOfPaths, frontBaseSha: pull?.base?.sha ?? null } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
+    // turn_short (Fable 2026-11-19; field 2026-11-19, #1169 -> #1173): the hard cap leaves this turn less than the front batch needs,
+    // and a new turn would fit it. Nothing else ends such a turn (renewFrontSlot stops renewing it, it lapses idle before the cap,
+    // and the cannot_land yield writes nothing while nobody waits), so before this a person released the claim, claimed again,
+    // authorized the head again and edited the PR body. Native ends the turn instead: the same claim joins again, behind any waiting
+    // claim, or alone head again at once with a whole turn; the next round opens the batch. Only when no slot write happened this
+    // round. A server without turn_short writes nothing: the round stays TRAIN_FRONT_BUDGET_SHORT, as before.
+    if (o.turnShort === true && !fx.slotTouched && typeof native.yieldSlot === 'function') {
+      fx.n++;
+      let y = null;
+      try { y = await native.yieldSlot({ pr: holder.pr, headSha: front.headSha, reason: 'turn_short' }); } catch { y = null; /* unreadable: counted */ }
+      if (y?.onDuty === false) { lostDuty = true; fx.n--; decision = 'NOT_ON_DUTY'; }
+      else if (y && (y.onDuty === null || y.yielded !== true)) fx.n--;
+      else if (y) { actions.returned = true; decision = 'FRONT_RETURNED'; }
+    }
   } else decision = wouldDo;
   // Generation 28 (resident ADR 0017): the merge slot of a bound front that waits for its front batch, or whose front batch is still
   // running or parked, is renewed with touch running when less than SLOT_RENEW_BELOW_MS of it is left; at most one slot write a round.
@@ -865,7 +878,13 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
   const since = normal(holder.since ?? holder.takenAt), expires = normal(keptAlive.find(k => k.claimId === holder.claimId)?.expiresAt);
   const need = job.frontBatchBudgetMs + STAGE8_ATTEMPT_MS + STAGE_MARGIN_MS;
   const left = now => Math.min(now + RUNNING_CLOCK_MS, Date.parse(since) + job.slotHardCapMinutes * 60_000, expires ? Date.parse(expires) : Infinity) - now;
-  if (!since || !(left(clock()) >= need)) return { refusal: 'TRAIN_FRONT_BUDGET_SHORT' };
+  if (!since || !(left(clock()) >= need)) {
+    // turnShort (Fable 2026-11-19): the hard cap is why (not the claim lease, not an unreadable since), and a new turn fits the batch
+    // (the cap and Native's running clock each leave it its need). Stage 10 then ends the turn (merge_queue_yield turn_short).
+    const capLeft = since ? Date.parse(since) + job.slotHardCapMinutes * 60_000 - clock() : NaN;
+    const turnShort = capLeft < need && job.slotHardCapMinutes * 60_000 >= need && RUNNING_CLOCK_MS >= need;
+    return { refusal: 'TRAIN_FRONT_BUDGET_SHORT', ...(turnShort ? { turnShort: true } : {}) };
+  }
   return { refusal: null, since, need };
 }
 
@@ -885,7 +904,7 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
     used = previous.length;
     if (pushing) { used = 0; for (const r of previous) { const b = await sweepStore.landingBatchByTest(r.testSha); if (!b || b.members.length === 1) used++; } }
   } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
-  const { refusal, need, running } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
+  const { refusal, need, running, turnShort = false } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
   if (running && normal(running.since) !== normal(holder.takenAt)) {
     // #1144: Native may reset takenAt after the certificate was written. The current round has freshly
     // proved this holder; reanchor the original tested S, never substitute a regenerated S with the same tree.
@@ -901,7 +920,7 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
       await sweepStore.appendFrontBatch({ ...running, writtenAt: isoOf(clock()), runId: job.runId, since: currentSince });
     } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   }
-  if (refusal) return no(refusal);
+  if (refusal) return { ...no(refusal), turnShort };
   let composed = null;
   if (pushing) {
     composed = await composeBatch({ ...pushing, job, holder, front, mainSha, fx });
@@ -944,11 +963,18 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
   return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...batch, ...(members ? { members } : {}), ...(headTree ? { headTree } : {}) } };
 }
 
-// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose Native binding names a current claim of this install and
-// whose current head carries App 5368905's newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim); in
-// PR-number order, at most `want`. A read that fails ends the search (fewer riders, never a guess).
+// The PR's merge-admission layer is protected: its changed paths by the held policy (layerOfPaths), and a read that fails counts as protected.
+async function protectedPull({ github, job, layerOfPaths, pr, headSha, baseSha }) {
+  try { return layerOfPaths((await github.readChangedPaths({ repo: job.repo, pr, headSha, baseSha })).paths) === 'protected'; } catch { return true; }
+}
+
+// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, with GitHub auto-merge on (the author's will to
+// merge; D6 2026-11-19 §1 item 7), whose Native binding names a current claim of this install and whose current head carries App 5368905's
+// newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim), and whose changes are not protected-layer (D6 §1
+// item 8: a protected change lands only alone, under its own Grant for its exact head); in PR-number order, at most `want`. A read that
+// fails ends the search (fewer riders, never a guess); a layer that cannot be read only leaves that PR out.
 export const RIDER_MAX_READS = 10;
-async function findRiders({ github, native, fx, job, rows, claimScope, holder, want }) {
+async function findRiders({ github, native, fx, job, rows, claimScope, holder, want, layerOfPaths }) {
   const out = [];
   if (want <= 0) return out;
   const open = rows.filter(r => r?.state === 'open' && r.baseRef === 'main' && r.number !== holder.pr).sort((a, b) => a.number - b.number).slice(0, RIDER_MAX_READS);
@@ -956,14 +982,16 @@ async function findRiders({ github, native, fx, job, rows, claimScope, holder, w
     if (out.length >= want) break;
     try {
       const pull = await github.readPullRequest(row.number);
-      if (!eligibleBindingPull(pull, job.repo)) continue;
+      if (!eligibleBindingPull(pull, job.repo) || pull.auto_merge == null) continue;
       const binding = await projectPull({ native, fx, pull, job, claimScope });
       if (binding.binding_status === 'conflict') fail('TRAIN_PR_BINDING_CONFLICT');
       if (binding.binding_status !== 'bound' || binding.claim.claim_id === holder.claimId) continue;
       const listed = await github.readChecks(pull.head.sha);
       const admitted = (listed?.checks ?? []).filter(c => c?.app?.id === APP_ID && c.name === 'kooyumi-work-admission' && c.head_sha === pull.head.sha)
         .sort((a, b) => b.id - a.id)[0];
-      if (admitted?.status === 'completed' && admitted.conclusion === 'success') out.push({ pr: pull.number, headSha: pull.head.sha, claimId: binding.claim.claim_id });
+      if (admitted?.status !== 'completed' || admitted.conclusion !== 'success') continue;
+      if (await protectedPull({ github, job, layerOfPaths, pr: pull.number, headSha: pull.head.sha, baseSha: pull.base.sha })) continue;
+      out.push({ pr: pull.number, headSha: pull.head.sha, claimId: binding.claim.claim_id });
     } catch (error) { if (error?.code === 'TRAIN_PR_BINDING_CONFLICT') throw error; break; }
   }
   return out;
@@ -972,10 +1000,14 @@ async function findRiders({ github, native, fx, job, rows, claimScope, holder, w
 // ADR 0018 §3: the members, S and S's tree of the batch push opens, with the landing port's writes (counted). One member: GitHub's test merge.
 // Several: clued-train/staging.tmp forced to T, each member merged in (a conflict or a head already in T leaves that member out), the
 // chain read back. Either way clued-train/staging is forced to S (the CI trigger for the required checks other Apps produce on S).
-async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
-  if (!state) return { refusal: 'TRAIN_SWEEP_INCOMPLETE' };
+async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx, layerOfPaths, frontBaseSha }) {
+  // D6 §8.4 (b): the landing state could not be read while this node has landing batches (adoptLanded): its own decision, not a sweep's.
+  if (!state) return { refusal: 'TRAIN_LANDING_STATE_UNREADABLE' };
   const frontMember = { pr: holder.pr, headSha: front.headSha, claimId: holder.claimId };
-  const candidates = max > 1 ? await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1 }) : [];
+  // D6 §1 item 8: a protected-layer front (or one whose layer cannot be read) takes no riders.
+  const alone = max <= 1 || front.protectedLayer === true
+    || await protectedPull({ github, job, layerOfPaths, pr: holder.pr, headSha: front.headSha, baseSha: frontBaseSha });
+  const candidates = alone ? [] : await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1, layerOfPaths });
   const picked = pickMembers({ front: frontMember, candidates, bad: state.bad, suspect: state.suspect, max });
   let members = picked.members, testSha = front.testMerge?.sha ?? null, testTree = front.testMerge?.tree ?? null;
   try {
@@ -1009,7 +1041,15 @@ async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx
   const out = { facts: null, adopted: [], lostDuty: false, state: null };
   let state, batches;
   try { state = await sweepStore.readLandingState(); batches = await sweepStore.landingBatches(20); }
-  catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
+  catch (error) {
+    // D6 §8.4: the landing state only schedules (riders kept out, the bisection suspect, batches adopted or handled); main's safety is S's
+    // checks and each member's own admission. (a) A state that cannot be read while this node has no landing batch at all loses nothing:
+    // it is read as empty and a valid one is written this round, read back before anything uses it (the validator stays strict).
+    // (b) Otherwise the refusal stays: TRAIN_LANDING_STATE_UNREADABLE in the facts and, at the front batch, as the decision.
+    state = error?.code === 'TRAIN_LANDING_STATE_UNREADABLE' ? await resetLandingState({ sweepStore, job, clock }) : null;
+    if (!state) { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
+    batches = [];
+  }
   const notMarkedMerged = [], landed = [];
   let changed = false;
   for (const b of [...batches].reverse()) {
@@ -1044,6 +1084,16 @@ async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx
   out.state = state;
   out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
   return out;
+}
+
+// D6 §8.4 (a): no landing batch of this node (readable or not) -> an empty landing state written and read back, or null (refuse).
+async function resetLandingState({ sweepStore, job, clock }) {
+  try {
+    if (await sweepStore.anyLandingBatch()) return null;
+    await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, bad: [], suspect: null, adopted: [], handled: [] });
+    const again = await sweepStore.readLandingState();
+    return again.bad.length === 0 && again.suspect === null && again.adopted.length === 0 && again.handled.length === 0 ? again : null;
+  } catch { return null; }
 }
 
 // Generation 28 (resident ADR 0017, the 45-minute gap of ADR 0016): from the moment a claim becomes the queue head until stage 10's

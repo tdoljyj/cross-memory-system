@@ -73,6 +73,20 @@ test('a verified command makes two trust reads and exactly one mutation, with th
   assert.equal(r.headers.get('cache-control'), 'no-store');
 });
 
+test('a verified command reaches the default database with the production environment shape', async () => {
+  const command = await signed();
+  const r = await call({ command, payload }, { environment: { CLUED_DB_GATEWAY_TOKEN: 'gw' } });
+
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'committed');
+  assert.deepEqual(r.calls.map(c => c.name), ['clued_ci_node_trust_v1', 'clued_ci_node_trust_v1', 'clued_ci_node_command_v1']);
+  for (const c of r.calls) {
+    assert.equal(c.url, 'https://ccxsikzwxlolxqlosril.supabase.co/rest/v1/rpc/' + c.name);
+    assert.equal(c.headers.authorization, 'Bearer gw');
+    assert.match(c.headers.apikey, /^sb_publishable_/);
+  }
+});
+
 test('route, method, content type, token and body bounds are refused before any database call', async () => {
   const command = await signed();
   for (const [options, code, status] of [

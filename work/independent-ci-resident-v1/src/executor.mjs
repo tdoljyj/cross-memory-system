@@ -138,7 +138,7 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQ
 import { INTAKE_PAUSE_CONTRACT, INTAKE_PAUSE_MAX_MINUTES, INTAKE_RESUME_CONTRACT, IntakePause, UNCONFIRMED_HOLDER } from './intake-pause.mjs';
 import { TRAIN_STAGE } from './policy.mjs';
 import { classifyFailure } from './classify.mjs';
-import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
+import { FRONT_BATCHES_PER_HEAD, TRAIN_OWNER_NOTICE_DECISIONS, TRAIN_SCHEDULE_DEFERRALS, chainOfFront, openFrontBatchOf, strictCoverageMatches, strictFrontReadinessMatches, TRAIN_RECHECK_DECISIONS, trainDue, trainFrontRecheckNext, trainIdleExtraDue, trainNodesView, trainRunInput, trainRunMode, trainSummary, trainSweepView, claimBindingObservationOf } from './train.mjs';
 import { ROLE_PROBE_CODES, RoleProbe, roleBookFact, validateRoleProbeFact } from './role-probe.mjs';
 import { NODE_MODES, leaseShort } from './status.mjs';
 import { RevocationMaintenanceBook,validateRevocationFacts,validateRevocationQualification,
@@ -567,6 +567,16 @@ export class ResidentExecutor {
       return row?.running?.key === e.key && row.running.headSha === s.headSha
         && ![row.current, row.running].some(r => Object.hasOwn(r ?? {}, 'testSha'));
     });
+  }
+
+  // P1b: train on, this node on duty past the take-over, and the newest on-mode stage 10 of this process named a bound front (PR and head).
+  // Only orders a due run before the batch work; the cadence is unchanged. A parked batch that stage 8 found first in the merge queue is the
+  // front-open debt's (trainFrontOpenOwed: on the ledger, settled by one real decision); its stage-8 fact alone is never asked again, or a
+  // debt that stage 10 settled (the front left: NO_FRONT) would put stage 10 ahead of every busy tick once due.
+  trainFrontWaits() {
+    if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone) return false;
+    const l = this.trainLast;
+    return l?.mode === 'on' && Number.isSafeInteger(l.front?.pr) && HEX40.test(l.front?.headSha ?? '');
   }
 
   // Whether the take-over sweep still holds this node (eligible, not done): new batches and parked ones wait (review R3 MINOR 6).
@@ -1982,8 +1992,10 @@ export class ResidentExecutor {
     // so the schedule and the front's yield after stage 1 (§62.6) read the train as it is now, never the revoke-only run under the pause;
     // otherwise the queue head's ordinary batch scanned H and the front batch scanned the same tree again on S.
     // PR #1142: a tested ordinary head at B gets the same priority, once, so a busy queue cannot starve its front batch.
-    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed())) {
-      const owed = await this.trainMaintenance();
+    // FABLE-ci-10min §3.2 P1b (field 2026-11-19 06:39, #1171): a due stage-10 run also goes first while a front is bound; otherwise a trigger
+    // of another PR in the same tick reserved its ordinary batch first and held stage 10 for 14-24 minutes.
+    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed() || this.trainFrontWaits())) {
+      const owed = await this.trainMaintenance({ routineOnly: true });
       if (owed) return owed;
     }
     // Batches at a parking point go first (design v0.5 §4.3 step 3): each one waiting for hosted signals is evaluated
@@ -2410,7 +2422,8 @@ export class ResidentExecutor {
   // The train on (DESIGN §41): the run mode is train.mjs#trainRunMode's (on, or revoke-only under PAUSE and an intake pause;
   // only on an ACTIVE node); there a bound TRAIN_FACTS outcome with side effects and facts /2 that validate in that mode is a
   // normal ending; any other ending with a side effect HALTs as before. paused: called from the PAUSE path of the tick.
-  async trainMaintenance({ paused = false } = {}) {
+  // routineOnly: a call ahead of the batch work (tick, P1b) runs only a routine or urgent run, never an idle-progress extra.
+  async trainMaintenance({ paused = false, routineOnly = false } = {}) {
     const train = this.policy.train;
     const observationOnly = train.enabled === 'off' && !paused && this.queue.claimChecks().length > 0;
     if (!this.trainRuns || (train.enabled === 'off' && !observationOnly)) return null;
@@ -2429,13 +2442,14 @@ export class ResidentExecutor {
       if (held === null) this.trainUrgent = true;
     }
     const urgent = train.enabled === 'on' && this.trainUrgent === true;
-    const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on' && TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision);
+    const recheck = train.enabled === 'on' && this.trainLast?.mode === 'on'
+      && (TRAIN_RECHECK_DECISIONS.includes(this.trainLast.decision) || this.trainFrontRecheck?.due === true);
     if (this.trainRuns.length >= train.maintenanceMaxPerDay) this.queue.notice(boundedNotice({ code: 'TRAIN_DAILY_LIMIT', used: this.trainRuns.length,
       limit: train.maintenanceMaxPerDay, now, resetsAt: this.trainRuns.length ? Math.min(...this.trainRuns) + DAY : null, recovery: null }));
     const routineDue = trainDue({ train: cadence, now, runs: this.trainRuns, busy: false, urgent, recheck });
     let idleProgressExtra = false;
     // DESIGN §65: in strict-permanent mode a full round is a background audit, never hurried, unless a rewritten main waits for it.
-    if (!routineDue && !paused && train.enabled === 'on' && this.trainProgressReady === true && (this.trainSweepGates() || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN')) {
+    if (!routineDue && !paused && !routineOnly && train.enabled === 'on' && this.trainProgressReady === true && (this.trainSweepGates() || this.trainSweep?.fullAllPending === 'TRAIN_MAIN_REWRITTEN')) {
       const frontWork = this.queue.candidates(now).some(row => Object.hasOwn(row, 'testSha') && !this.trainGate(row))
         || (await this.ledger.parkedEntries()).some(e => Object.hasOwn(e.reserved?.subject ?? {}, 'testSha')
           && Ledger.parkedAt(e) && this.parkedDueAt(e) <= now && !this.trainGate(e.reserved?.subject));
@@ -2536,6 +2550,8 @@ export class ResidentExecutor {
         if (front?.pr) await this.hintParkedHead(front, { changed });
       }
     }
+    // P1a: the fast look of a bound front that did not open (train.mjs#trainFrontRecheckNext); any other run ends the current one.
+    this.trainFrontRecheck = trainFrontRecheckNext(this.trainFrontRecheck ?? null, mode === 'on' && clean ? summary : null);
     if (acting && (!summary || !clean)) {
       this.trainStrictReadiness = null; this.trainStrictFrontReadiness = null;
       // DESIGN §62.4: a binding observation never outlives a stage-10 run that could not confirm it again.
