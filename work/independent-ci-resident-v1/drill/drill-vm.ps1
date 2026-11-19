@@ -66,7 +66,6 @@ $script:Drill = [ordered]@{
   HostGuardSeconds = 30
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
-  ProductionRoot = 'C:\ProgramData\CluedIndependentCI'   # the fixed root a test never reaches (Test-DrillProductionPath)
   IntakeHolder = 'drill'
   IntakeWaitMinutes = 40
   IntakeMarginMinutes = 10
@@ -839,56 +838,7 @@ function Get-DrillVmInfo {
 
 function Get-DrillTime { [DateTimeOffset]::UtcNow }
 
-# Clued Task fe8a2cbf (Fable renew-key ruling, supplement 1, layer A): a test that reached the real Invoke-DrillMain asked the installed
-# service of the host it ran on (the node on duty, the operator's own account) to hold intake. The three points where the drill crosses
-# into the host (reading its status, locating the installed CLI, sending an intake request) refuse by name when a test marker is set and
-# the target is under the fixed production root. The markers: NODE_TEST_CONTEXT, which the node test runner gives every test process
-# and its children inherit; CLUED_UNDER_TEST, honoured here too (the one test entry is to set it for every suite: PR-丁, not yet). A
-# fixture root is never refused. A cooperative marker: it stops a mistake, not code that clears the environment on purpose.
-#
-# Test-DrillProductionPath is the rule, a pure function (nothing read: the path, whether a marker is set, the root). Under a marker it
-# reduces a Windows path by text alone (forward slashes, the \\?\ and \\.\ prefixes, doubled separators, . and .., trailing dots and
-# spaces of a name, case, the All Users alias of ProgramData) and compares it with the root segment by segment. What text alone cannot
-# settle counts as the production root (Codex review r3, item 2): a segment that may be an 8.3 short name (it holds a ~) where the root's
-# segment stands, a UNC or device path, a relative or drive-relative path, a stream name. A ~ elsewhere (a short TEMP such as
-# C:\Users\RUNNER~1\...) settles nothing about the root and is not refused.
-function Get-DrillPathSegments([string]$Path) {
-  # @{ drive; segments } of a path reduced by text alone, or $null for a form that cannot be
-  if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
-  $p = $Path.Replace('/', '\')
-  if ($p.StartsWith('\\?\') -or $p.StartsWith('\\.\')) { $p = $p.Substring(4) }
-  if ($p -cnotmatch '^[A-Za-z]:\\') { return $null }   # UNC (\\server, \\?\UNC\...), device, drive-relative or relative
-  $parts = New-Object Collections.Generic.List[string]
-  foreach ($seg in $p.Substring(3).Split('\')) {
-    if ($seg -eq '' -or $seg -eq '.') { continue }
-    if ($seg -eq '..') { if ($parts.Count) { $parts.RemoveAt($parts.Count - 1) }; continue }
-    $name = $seg.TrimEnd('.', ' ')
-    if ($name -eq '' -or $name.Contains(':')) { return $null }
-    $parts.Add($name)
-  }
-  foreach ($alias in @(@('Users', 'All Users'), @('Documents and Settings', 'All Users'))) {
-    if ($parts.Count -ge 2 -and $parts[0] -ieq $alias[0] -and $parts[1] -ieq $alias[1]) { $parts.RemoveAt(0); $parts[0] = 'ProgramData' }
-  }
-  return @{ drive = $p.Substring(0, 1).ToUpperInvariant(); segments = @($parts) }
-}
-function Test-DrillProductionPath([string]$Path, [bool]$Marked, [string]$Root) {
-  if (-not $Marked) { return $false }
-  $x = Get-DrillPathSegments $Path
-  if ($null -eq $x) { return $true }
-  $r = Get-DrillPathSegments $Root
-  if ($x.drive -cne $r.drive -or $x.segments.Count -lt $r.segments.Count) { return $false }
-  for ($i = 0; $i -lt $r.segments.Count; $i++) {
-    if ($x.segments[$i] -ieq $r.segments[$i]) { continue }
-    if ($x.segments[$i].Contains('~')) { continue }   # may be the short name of the root's segment: not settled by text
-    return $false
-  }
-  return $true
-}function Assert-DrillNotProductionUnderTest([string]$Path) {
-  $marked = [bool]($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)
-  if (Test-DrillProductionPath -Path $Path -Marked $marked -Root $script:Drill.ProductionRoot) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' $Path) }
-}
 function Read-DrillHostStatus {
-  Assert-DrillNotProductionUnderTest $script:Drill.HostStatus
   try { Get-Content -LiteralPath $script:Drill.HostStatus -Raw -Encoding UTF8 -ErrorAction Stop } catch { $null }
 }
 
@@ -929,7 +879,6 @@ function Assert-DrillHostSafety([DateTimeOffset]$HoldUntil = [DateTimeOffset]::M
 function Get-DrillIntakeTool {
   # Follow the same installed generation and runtime as windows/rearm-resident.ps1's unprivileged inspect.
   $root = Split-Path -Parent (Split-Path -Parent $script:Drill.HostStatus)
-  Assert-DrillNotProductionUnderTest $root
   try {
     $receipt = Read-DrillJson (Join-Path $root 'install\install-receipt.json')
     $manifest = $receipt.residentManifestSha256
@@ -965,21 +914,31 @@ function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeco
   } finally { $child.Dispose() }
 }
 
+# Clued Task fe8a2cbf (Fable renew-key ruling, supplements "test touching production" and "the test guard criterion"): the one act of
+# the drill that changes the host is executing the installed intake tool (it writes a request the service on duty acts on). Under a test
+# marker -- NODE_TEST_CONTEXT, which the node test runner gives every test process and its children inherit, or CLUED_UNDER_TEST,
+# honoured here as well (the one test entry is to set it for every suite: PR-丁, not yet) -- no tool is executed, whatever its paths:
+# nothing about a path is judged, so no spelling of a root can slip through. A test that needs the hold logic injects the sender
+# ($script:DrillIntakeSender: { param($Tool, $Verb, $Minutes, $Arguments) ... returns @{ exit; stdout } }). Reading the host status and
+# locating the tool are read-only and not fenced. The boot watchdog (started through WMI, so it inherits no environment) never executes
+# the intake tool: it only stops and restores the drill VM (Stop-DrillOwnedVm), so it needs no marker of its own. Cooperative: the marker
+# stops a mistake, not code that clears it on purpose.
+$script:DrillIntakeSender = $null
+function Get-DrillIntakeArguments($Tool, [ValidateSet('pause', 'resume')][string]$Verb, [int]$Minutes = 0) {
+  $a = @($Tool.tool, "request-intake-$Verb", '--root', $Tool.root, '--holder', $script:Drill.IntakeHolder, '--reason', 'first-install drill')
+  if ($Verb -ceq 'pause') { $a += @('--minutes', [string]$Minutes) }
+  , $a
+}
 function Request-DrillIntake($Tool, [ValidateSet('pause', 'resume')][string]$Verb, [int]$Minutes = 0) {
-  foreach ($p in @($Tool.root, $Tool.node, $Tool.tool)) { Assert-DrillNotProductionUnderTest ([string]$p) }
-  $argsForTool = @($Tool.tool, "request-intake-$Verb", '--root', $Tool.root, '--holder', $script:Drill.IntakeHolder, '--reason', 'first-install drill')
-  $expected = 'INTAKE_RESUME_REQUESTED'
-  if ($Verb -ceq 'pause') {
-    $argsForTool += @('--minutes', [string]$Minutes)
-    $expected = 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES'
-  }
+  $argsForTool = Get-DrillIntakeArguments $Tool $Verb $Minutes
+  $expected = if ($Verb -ceq 'pause') { 'INTAKE_PAUSE_REQUESTED_SERVICE_WILL_HOLD_NEW_BATCHES' } else { 'INTAKE_RESUME_REQUESTED' }
+  if ($null -eq $script:DrillIntakeSender -and ($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' "request-intake-$Verb") }
   try {
-    $run = Invoke-DrillNode $Tool.node $argsForTool 15
+    $run = if ($null -ne $script:DrillIntakeSender) { & $script:DrillIntakeSender $Tool $Verb $Minutes $argsForTool } else { Invoke-DrillNode $Tool.node $argsForTool 15 }
     $status = Get-Prop (ConvertFrom-Json -InputObject $run.stdout) 'status'
     if ($run.exit -ne 0 -or $status -cne $expected) { throw 'request refused' }
   } catch { throw (New-DrillError "DRILL_HOST_INTAKE_$($Verb.ToUpperInvariant())_FAILED") }
 }
-
 function Invoke-DrillWithHostHold([int]$Minutes, [scriptblock]$Body, [switch]$StandbyOnly) {
   # Serialize all invocations using the same VM and the fixed public holder, across logon sessions.
   $mutex = [Threading.Mutex]::new($false, $script:Drill.HostMutex)
