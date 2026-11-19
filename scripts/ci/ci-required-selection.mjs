@@ -505,7 +505,7 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
 }
 
 // The environment of every suite child (test marker, listed variables, fake identity) is test-env.mjs; local-verify.mjs reads it too.
-export { FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, removeEach, testEnv, testIdentity } from './test-env.mjs';
+export { FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, removeEach, TEST_ENV_VERSION, testEnv, testIdentity } from './test-env.mjs';
 // The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
 // suites: --run, --run-selected, --write-known, --run-files; it also makes the run's fake identity directory (Task 2ee162c2).
 // --check runs nothing and is left as it is.

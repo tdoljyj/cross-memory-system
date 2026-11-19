@@ -101,7 +101,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
-import { testEnv } from './test-env.mjs';
+import { TEST_ENV_VERSION, testEnv } from './test-env.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -1436,9 +1436,10 @@ export function compareSuite(head, base, { selector, knownLists = {} }) {
 const pythonVersion = () => String(spawnSync(PYTHON, ['--version'], { encoding: 'utf8', windowsHide: true }).stdout ?? '').trim();
 
 // main's results are kept per main commit, platform, suite, tool version, Node
-// and Python versions and main's own dependencies (--fresh-base runs them again).
-export function mainResultsFile(home, { main, id, platform = process.platform, node = process.version, python, dependencies }) {
-  const key = sha256(JSON.stringify({ version: CACHE_VERSION, main, platform, id, node, python, dependencies })).slice(0, 16);
+// and Python versions, main's own dependencies and the suites' environment
+// (test-env.mjs's version) (--fresh-base runs them again).
+export function mainResultsFile(home, { main, id, platform = process.platform, node = process.version, python, dependencies, environment = TEST_ENV_VERSION }) {
+  const key = sha256(JSON.stringify({ version: CACHE_VERSION, main, platform, id, node, python, dependencies, environment })).slice(0, 16);
   return path.join(home, 'main-results', `${main.slice(0, 16)}-${id}-${key}.json`);
 }
 export function readCached(file) {

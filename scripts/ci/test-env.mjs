@@ -1,9 +1,10 @@
 // The environment every suite child gets: the selector's (ci-required-selection.mjs) and local-verify's one source. Only
 // node: imports, so local-verify --linux can carry it with its own copy.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
 // CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
@@ -13,6 +14,9 @@ import path from 'node:path';
 // gh login; gh's configuration directory is an empty directory; git's global configuration is a file holding only a test
 // identity, the system configuration (where the credential helper is) is off, and git never prompts. It does not stop code
 // that reads a token file by its absolute path.
+// The version of this environment: the hash of this file, so a result made under another (local-verify's cache of main's
+// results) is not taken for one made under this, whoever changes it.
+export const TEST_ENV_VERSION = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
 export const FAKE_GITHUB_TOKEN = 'clued-test-fake-token-not-a-credential';
 export const TEST_GIT_IDENTITY = { name: 'Clued Test', email: 'clued-test@example.invalid' };
 export function fakeIdentityEnv(dir, run) {

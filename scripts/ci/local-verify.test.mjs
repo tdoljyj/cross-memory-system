@@ -622,9 +622,14 @@ test('main: the newest copy; main results kept per main, platform, suite, versio
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const at = { main: a, id: 'clued-cloud', platform: 'linux', node: 'v24.19.0', python: 'Python 3.12.3', dependencies: 'd' };
   const file = mainResultsFile(home, at);
-  for (const changed of [{ main: b }, { id: 'components' }, { platform: 'win32' }, { node: 'v24.21.0' }, { python: 'Python 3.13.0' }, { dependencies: null }]) {
+  for (const changed of [{ main: b }, { id: 'components' }, { platform: 'win32' }, { node: 'v24.21.0' }, { python: 'Python 3.13.0' }, { dependencies: null },
+    { environment: 'another' }]) {
     assert.notEqual(mainResultsFile(home, { ...at, ...changed }), file, JSON.stringify(changed));
   }
+  // Codex second review of 2ee162c2, medium 2: the suites' environment is part of the key, so main's results run under
+  // another environment (variable list, fake identity) are not compared with this one's. Its version is test-env.mjs's.
+  assert.match(String(selection.TEST_ENV_VERSION), /^[0-9a-f]{64}$/);
+  assert.equal(mainResultsFile(home, { ...at, environment: selection.TEST_ENV_VERSION }), file, 'by default the version in force');
   assert.equal(readCached(file), null);
   writeCached(file, [{ status: 0 }]);
   assert.deepEqual(readCached(file), [{ status: 0 }]);
