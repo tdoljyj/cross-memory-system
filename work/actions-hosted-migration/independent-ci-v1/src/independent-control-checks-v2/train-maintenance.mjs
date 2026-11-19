@@ -659,6 +659,20 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
       pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
+    // turn_short (Fable 2026-11-19; field 2026-11-19, #1169 -> #1173): the hard cap leaves this turn less than the front batch needs,
+    // and a new turn would fit it. Nothing else ends such a turn (renewFrontSlot stops renewing it, it lapses idle before the cap,
+    // and the cannot_land yield writes nothing while nobody waits), so before this a person released the claim, claimed again,
+    // authorized the head again and edited the PR body. Native ends the turn instead: the same claim joins again, behind any waiting
+    // claim, or alone head again at once with a whole turn; the next round opens the batch. Only when no slot write happened this
+    // round. A server without turn_short writes nothing: the round stays TRAIN_FRONT_BUDGET_SHORT, as before.
+    if (o.turnShort === true && !fx.slotTouched && typeof native.yieldSlot === 'function') {
+      fx.n++;
+      let y = null;
+      try { y = await native.yieldSlot({ pr: holder.pr, headSha: front.headSha, reason: 'turn_short' }); } catch { y = null; /* unreadable: counted */ }
+      if (y?.onDuty === false) { lostDuty = true; fx.n--; decision = 'NOT_ON_DUTY'; }
+      else if (y && (y.onDuty === null || y.yielded !== true)) fx.n--;
+      else if (y) { actions.returned = true; decision = 'FRONT_RETURNED'; }
+    }
   } else decision = wouldDo;
   // Generation 28 (resident ADR 0017): the merge slot of a bound front that waits for its front batch, or whose front batch is still
   // running or parked, is renewed with touch running when less than SLOT_RENEW_BELOW_MS of it is left; at most one slot write a round.
@@ -865,7 +879,13 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
   const since = normal(holder.since ?? holder.takenAt), expires = normal(keptAlive.find(k => k.claimId === holder.claimId)?.expiresAt);
   const need = job.frontBatchBudgetMs + STAGE8_ATTEMPT_MS + STAGE_MARGIN_MS;
   const left = now => Math.min(now + RUNNING_CLOCK_MS, Date.parse(since) + job.slotHardCapMinutes * 60_000, expires ? Date.parse(expires) : Infinity) - now;
-  if (!since || !(left(clock()) >= need)) return { refusal: 'TRAIN_FRONT_BUDGET_SHORT' };
+  if (!since || !(left(clock()) >= need)) {
+    // turnShort (Fable 2026-11-19): the hard cap is why (not the claim lease, not an unreadable since), and a new turn fits the batch
+    // (the cap and Native's running clock each leave it its need). Stage 10 then ends the turn (merge_queue_yield turn_short).
+    const capLeft = since ? Date.parse(since) + job.slotHardCapMinutes * 60_000 - clock() : NaN;
+    const turnShort = capLeft < need && job.slotHardCapMinutes * 60_000 >= need && RUNNING_CLOCK_MS >= need;
+    return { refusal: 'TRAIN_FRONT_BUDGET_SHORT', ...(turnShort ? { turnShort: true } : {}) };
+  }
   return { refusal: null, since, need };
 }
 
@@ -885,7 +905,7 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
     used = previous.length;
     if (pushing) { used = 0; for (const r of previous) { const b = await sweepStore.landingBatchByTest(r.testSha); if (!b || b.members.length === 1) used++; } }
   } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
-  const { refusal, need, running } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
+  const { refusal, need, running, turnShort = false } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
   if (running && normal(running.since) !== normal(holder.takenAt)) {
     // #1144: Native may reset takenAt after the certificate was written. The current round has freshly
     // proved this holder; reanchor the original tested S, never substitute a regenerated S with the same tree.
@@ -901,7 +921,7 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
       await sweepStore.appendFrontBatch({ ...running, writtenAt: isoOf(clock()), runId: job.runId, since: currentSince });
     } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   }
-  if (refusal) return no(refusal);
+  if (refusal) return { ...no(refusal), turnShort };
   let composed = null;
   if (pushing) {
     composed = await composeBatch({ ...pushing, job, holder, front, mainSha, fx });
