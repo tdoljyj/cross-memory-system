@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
-import { DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf } from '../rollout/fleet/publish.mjs';
+import { DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, publish, readAcceptance, seal } from '../rollout/fleet/publish.mjs';
+import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 import { intakePauseRequest } from '../src/intake-pause.mjs';
@@ -204,6 +205,8 @@ test('a candidate drills on a kit-carried acceptance: the request with the drill
   assert.deepEqual(acc, acceptanceOf(request, DRILL_RESERVED));
   assert.equal(acc.cluedDecision, DRILL_RESERVED.decision); assert.equal(acc.fleetRefs.ownerReceiptRef, DRILL_RESERVED.receipt);
   validateAcceptance(acc);   // what the guest's install.mjs reads, unchanged: no drill mode in the package
+  // and the real file the kit carries is never taken for an Owner's acceptance (cross test, ruling renew-key 4.1 row 3)
+  await assert.rejects(readAcceptance(path.join(f.out, accName), f.version), { code: 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN' });
   const pins =JSON.parse(fs.readFileSync(path.join(f.out, 'release-pins.json')));
   assert.deepEqual(pins.files.find(x => x.path === accName), { path: accName, sha256: sha(accBytes) });
   assert.ok(JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).files.some(x => x.path === accName && x.sha256 === sha(accBytes)));
@@ -877,7 +880,7 @@ test('M5 collects the six public observations and requires the host checker for 
 
 // A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
 // M5 observations `missing` and a host checker that answers `checker`.
-function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false } = {}) {
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {} } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -885,7 +888,7 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     : `console.log(JSON.stringify({ result: 'FAIL' })); process.exitCode = 1;`);
   const archive = path.join(root, 'package.tar');
   const files = ['tree/work/independent-ci-resident-v1/windows/install-resident.ps1', ...paths].map(p => ({ path: p, data: Buffer.from(p) }));
-  const manifest = { contract: 'clued.independent-ci.fleet-universal/1', version: '1.2.3',
+  const manifest = { contract: 'clued.independent-ci.fleet-universal/1', version,
     files: files.map(({ path, data }) => ({ path, sha256: sha(data), bytes: data.length })) };
   fs.writeFileSync(archive, writeTar([...files, { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify(manifest)) }]));
   const e = JSON.parse(evidence());
@@ -899,7 +902,7 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
     $fixture.m5 = @{ directory = 'm5'; missing = @(${missing.map(q).join(', ')}); collectionCode = $null }
     function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
-    $package = @{ version = '1.2.3'; tar = ${q(archive)}; tarSha256 = ${q(sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(L)}; candidate = ${candidate ? '$true' : '$false'} }
+    $package = @{ version = ${q(version)}; tar = ${q(archive)}; tarSha256 = ${q(pkg.tarSha256 ?? sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(pkg.firstInstallKitSha256 ?? L)}; candidate = ${candidate ? '$true' : '$false'} }
     $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
     Read-DrillJson $out.receipt
   `);
@@ -939,7 +942,7 @@ test('A1-A10 passing with M5 not PASS is never a PASS; with M5 PASS the A tier g
   assert.equal(passed.candidate, true);
   assert.equal(passed.ciSourceManifestSha256, S); assert.equal(passed.firstInstallKitSha256, L); assert.match(passed.tarSha256, /^[0-9a-f]{64}$/);
   assert.equal(m5DrillReceipt('m5-accepted', RENEWAL_3BC571A6).candidate, false);
-  assert.equal(passed.conclusion, 'PASS_A_PENDING_PRODUCTION_READBACK');
+  assert.equal(passed.conclusion, 'PENDING_PRODUCTION_READBACK');
   const done = finalize('m5-pass-finalize', passed);
   assert.equal(done.status, 0, JSON.stringify(done.output));
   assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
@@ -955,6 +958,112 @@ test('A1-A10 passing with M5 not PASS is never a PASS; with M5 PASS the A tier g
     assert.equal(JSON.parse(r.bytes).conclusion, 'FAIL', name);
   }
   assert.deepEqual(ps(`@((Get-DrillConclusion @() @{ result = 'PASS' }), (Get-DrillConclusion (${q(JSON.stringify(items.map(i => ({ ...i, pass: true }))))} | ConvertFrom-Json) @{ result = 'NOT_EVALUATED' }))`), ['FAIL', 'FAIL']);
+});
+
+// Fable ruling 11-19 renew-key section 4.3: a candidate's receipt is final BEFORE the Owner accepts. Its A5 is judged in the guest at
+// once (the local Source is the request's; that the fleet runs it is the nodes' own concern: they install only the accepted Release and
+// recompute the Source), and -Finalize, run right after the drill, judges only A9 (the drill wrote nothing to production). Order:
+// drill -> -Finalize -> the Owner accepts -> seal. A re-drill of an accepted version (not a candidate) keeps A5's production half.
+const notTheDrillsSource = { ...readbackRow, live_sources: ['6'.repeat(64)] };
+test('a candidate receipt: A5 in the guest only, -Finalize judges A9 alone; an accepted re-drill keeps the production half', opts, () => {
+  const cand = m5DrillReceipt('cand-a5', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true });
+  assert.equal(cand.candidate, true);
+  assert.equal(cand.items.find(i => i.id === 'A5').pass, true);
+  assert.equal(cand.items.find(i => i.id === 'A9').pass, null);
+  assert.equal(cand.conclusion, 'PENDING_PRODUCTION_READBACK', 'not read back yet: not a PASS');
+  // the fleet runs another Source (the nodes are not on this generation yet): no matter for a candidate
+  const done = finalize('cand-a5-finalize', cand, notTheDrillsSource);
+  assert.equal(done.status, 0, JSON.stringify(done.output));
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  const final = JSON.parse(done.bytes);
+  assert.equal(final.items.find(i => i.id === 'A5').pass, true);
+  assert.equal(final.items.find(i => i.id === 'A9').pass, true);
+  // A9 is still read: a production write during the drill fails the candidate
+  assert.equal(finalize('cand-a9-finalize', cand, { ...notTheDrillsSource, bindings_created: 1 }).output.conclusion, 'FAIL');
+  // an accepted version's re-drill: A5 waits for the production half, which compares the live Sources as before
+  const accepted = m5DrillReceipt('acc-a5', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
+  assert.equal(accepted.items.find(i => i.id === 'A5').pass, null);
+  assert.equal(finalize('acc-a5-finalize', accepted, notTheDrillsSource).output.conclusion, 'FAIL');
+  assert.equal(finalize('acc-a5-finalize-same', accepted).output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+});
+
+// The two PASS conclusions a receipt can end in are the set seal takes (publish.mjs exports it; one definition there): held equal here so
+// neither side can rename one alone.
+test('the PASS conclusions of drill-vm.ps1 are exactly the set publish.mjs exports for seal', opts, async () => {
+  const text = fs.readFileSync(script, 'utf8');
+  const fn = text.slice(text.indexOf('function Get-DrillConclusion'), text.indexOf('\n}', text.indexOf('function Get-DrillConclusion')));
+  const mine = [...new Set([...fn.matchAll(/'(PASS_[A-Z_]+)'/g)].map(m => m[1]))].sort();
+  assert.deepEqual(mine, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
+  const pub = await import("../rollout/fleet/publish.mjs");
+  const sets = Object.entries(pub).filter(([, v]) => (Array.isArray(v) || v instanceof Set) && [...v].length && [...v].every(x => typeof x === 'string' && x.startsWith('PASS_')));
+  assert.equal(sets.length, 1, `publish.mjs exports one set of PASS conclusions (found: ${sets.map(([k]) => k).join(',') || 'none'})`);
+  assert.deepEqual([...sets[0][1]].sort(), mine);
+});
+
+// No second copy of the drill's stand-ins anywhere under drill/: they live in publish.mjs only (ruling renew-key section 4.1 row 3).
+test('drill/ holds no literal of the drill stand-ins', () => {
+  const dir = fileURLToPath(new URL('../drill/', import.meta.url));
+  const values = [DRILL_RESERVED.decision, DRILL_RESERVED.receipt, DRILL_RESERVED.decision.slice(0, 8)];
+  for (const name of fs.readdirSync(dir)) {
+    const file = path.join(dir, name);
+    if (!fs.statSync(file).isFile()) continue;
+    const text = fs.readFileSync(file, 'latin1');
+    for (const v of values) assert.ok(!text.includes(v), `${name} names ${v}`);
+  }
+});
+
+// The candidate path end to end against the real seal (cross test, ruling renew-key 4.5 item 3): receipts that drill-vm.ps1's own
+// conclusion function wrote, fed to publish.mjs seal --drill-receipt. Finalized: taken. Not read back yet: refused, nothing changes.
+async function sealWorld(t) {
+  const d = fs.mkdtempSync(path.join(tmp, 'seal-'));
+  const version = '2026.11.12-1', tag = `fleet-node-${version}`, commit = 'a1'.repeat(20), fleet = 'tree/work/independent-ci-resident-v1/rollout/fleet/';
+  const out = path.join(d, 'out'); fs.mkdirSync(out);
+  const tar = writeTar([{ path: `${fleet}bootstrap.ps1`, data: Buffer.from('# bootstrap\r\n') },
+    { path: `${fleet}prereq-manifest.json`, data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-prereq-manifest/1', items: [] }) + '\n') },
+    { path: 'universal-manifest.json', data: Buffer.from('{}') }]);
+  const source = { version, release_tag: tag, archive_sha256: sha(tar), commit, resident_manifest_sha256: '2'.repeat(64), source_manifest_sha256: '3'.repeat(64),
+    upgrader_manifest_sha256: '4'.repeat(64), bundle_sha256: '5'.repeat(64), universal_files_sha256: '6'.repeat(64) };
+  const release = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-release/1', source, archive: { name: `${tag}.tar`, bytes: tar.length, sha256: sha(tar) } }) + '\n');
+  fs.writeFileSync(path.join(out, `${tag}.tar`), tar);
+  fs.writeFileSync(path.join(out, `${tag}.release.json`), release);
+  fs.writeFileSync(path.join(out, 'SHA256SUMS'), `${sha(release)}  ${tag}.release.json\n${sha(tar)}  ${tag}.tar\n`);
+  const index = path.join(d, 'index.md');
+  fs.writeFileSync(index, '| 版本 | Release | tar sha256 | commit | 接受时间 |\r\n|---|---|---|---|---|\r\n');
+  const fake = path.join(d, 'fake-gh.mjs'); fs.writeFileSync(fake, FAKE_GH);
+  const saved = { FAKE_GH_STATE: process.env.FAKE_GH_STATE, GH_TOKEN: process.env.GH_TOKEN };
+  process.env.FAKE_GH_STATE = path.join(d, 'gh-state.json'); delete process.env.GH_TOKEN;
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  const gh = [process.execPath, fake];
+  await publish({ dir: out, repo: 'tdoljyj/cross-memory-system', index, ghCommand: gh });
+  const image = 'e'.repeat(64), imageFile = path.join(d, `role-image-${image}.tar.gz`); fs.writeFileSync(imageFile, 'gzip of a docker save');
+  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  const deps = { readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: S }),
+    kitOf: async () => ({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', template: {}, config: { ciSourceManifestSha256: L }, images: { pull: [], local: [{ id: image, asset: `role-image-${image}.tar.gz` }] } }),
+    fleetMaterial: async () => ({ formalRoles: { gitleaks: {}, trivy: {}, 'contract-placement': {} },
+      installed: { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5), ciSourceManifestSha256: L } }) };
+  const accept = path.join(d, 'accept');
+  await prepare({ version, dir: out, out: accept, images: [imageFile], index, ghCommand: gh, deps });
+  const requestFile = path.join(accept, `${tag}.acceptance-request.json`);
+  const request = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
+  const sealIt = drillReceipt => seal({ request: requestFile, decision: 'c556370f-b0fc-404b-b164-0f06699e4c7a', receipt: '0b5e1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d',
+    acceptedAt: '2026-11-19T12:22:39Z', index, ghCommand: gh, drillReceipt });
+  return { d, version, request, index, sealIt };
+}
+
+test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the one not read back', opts, async t => {
+  const w = await sealWorld(t);
+  const pkg = { tarSha256: w.request.archive_sha256, firstInstallKitSha256: w.request.firstInstallKitSha256 };
+  assert.equal(w.request.ciSourceManifestSha256, S);
+  const cand = m5DrillReceipt('seal-cand', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version: w.version, pkg });
+  const pending = path.join(w.d, 'receipt-pending.json'); fs.writeFileSync(pending, JSON.stringify(cand));
+  const before = fs.readFileSync(w.index);
+  await assert.rejects(w.sealIt(pending), { code: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
+  assert.deepEqual(fs.readFileSync(w.index), before, 'refused before anything is written');
+  const done = finalize('seal-cand-finalize', cand, notTheDrillsSource);
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  const r = await w.sealIt(done.receiptFile);
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(r.drill, `PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(fs.readFileSync(done.receiptFile))}`);
 });
 
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
@@ -1147,7 +1256,7 @@ test('guest scripts parse under Windows PowerShell before any VM work', opts, ()
 test('the verdict: a clean drill passes A1-A8 and A10 reports the per-node steps; A5 production half and A9 wait for -Finalize', opts, () => {
   const r = verdictOf(evidence());
   assert.deepEqual(pass(r), { A1: true, A2: true, A3: true, A4: true, A5: null, A6: true, A7: true, A8: true, A9: null, A10: false });
-  assert.equal(r.conclusion, 'PASS_A_PENDING_PRODUCTION_READBACK');
+  assert.equal(r.conclusion, 'PENDING_PRODUCTION_READBACK');
   assert.match(r.items.find((i) => i.id === 'A10').detail, /8c step 2/);
 });
 
@@ -1165,7 +1274,7 @@ test('the verdict fails what the plan says fails', opts, () => {
   assert.equal(pass(verdictOf(evidence({ reinstall: { ...e.reinstall, upgradeStatus: 'FLEET_NODE_UPGRADE_NEEDS_REINSTALL' } }))).A8, false);
   assert.equal(verdictOf(evidence({ verify: { status: 'X' } })).conclusion, 'FAIL');
   const skipped = verdictOf(evidence({ reinstall: { skipped: true } }));
-  assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PASS_A_PENDING_PRODUCTION_READBACK');
+  assert.equal(pass(skipped).A8, null); assert.equal(skipped.conclusion, 'PENDING_PRODUCTION_READBACK');
 });
 
 test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {
@@ -1212,14 +1321,14 @@ test('A8 captures the current launcher exit and indented terminal JSON from the 
 const startedAt = '2026-11-16T02:00:00Z';
 const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bindings_created: 0, drill_liveness: 0, live_sources: [S] };
 const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });
-function finalize(name, fields) {
+function finalize(name, fields, row = readbackRow) {
   const receipt = { contract: 'clued.independent-ci.drill-receipt/1', startedAt, evidence: { localSource: S },
-    failure: null, restoredToCheckpoint: true, conclusion: 'PASS_A_PENDING_PRODUCTION_READBACK', m5: { result: 'PASS' }, ...fields };
+    failure: null, restoredToCheckpoint: true, conclusion: 'PENDING_PRODUCTION_READBACK', m5: { result: 'PASS' }, ...fields };
   const receiptFile = path.join(tmp, `${name}.json`);
   const readback = path.join(tmp, 'readback.json');
   const original = JSON.stringify(receipt);
   fs.writeFileSync(receiptFile, original);
-  fs.writeFileSync(readback, JSON.stringify(readbackFor(readbackRow, receipt.startedAt)));
+  fs.writeFileSync(readback, JSON.stringify(readbackFor(row, receipt.startedAt)));
   const run = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Finalize', receiptFile, '-ProductionReadback', readback], { encoding: 'utf8', timeout: 120000 });
   const bytes = fs.readFileSync(receiptFile, 'utf8');
   return { receipt, receiptFile, original, bytes, status: run.status, output: JSON.parse(run.stdout.trim()) };
