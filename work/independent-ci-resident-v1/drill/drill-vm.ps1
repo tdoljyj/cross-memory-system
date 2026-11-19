@@ -2650,6 +2650,9 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
     try {
       $back = Get-DrillField (Read-DrillJson (Join-Path $RunDir 'stage-evidence.json')) 'launcher-result.json'
       if ($null -eq $back) { throw 'launcher-result.json is not in the saved stage-evidence.json' }
+      # the field itself must be there (the entry writes terminal: null when the stage gave no verdict; 7th review round, low 2)
+      $hasTerminal = if ($back -is [Collections.IDictionary]) { $back.Contains('terminal') } else { $null -ne $back.PSObject.Properties['terminal'] }
+      if (-not $hasTerminal) { throw 'launcher-result.json read back has no terminal field' }
       $launcher = Get-Prop $back 'terminal'
       $record.launcherReadback = [ordered]@{ ok = $true; error = $null }
     } catch { $launcher = $null; $record.launcherReadback = [ordered]@{ ok = $false; error = [string]$_.Exception.Message } }
