@@ -887,6 +887,52 @@ test("under Actions a suite child gets the fake token, not the job's, and keeps 
   assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
 });
 
+// Codex review of 2ee162c2, medium 4: an inherited CLUED_TEST_IDENTITY_DIR was taken whenever it held a gitconfig. Now only
+// a directory this code made for the run the env names, still as made (the git file as written, gh empty), is reused;
+// anything else gets a new directory, and every directory a process makes is removed when it exits.
+test('an inherited identity directory is reused only when it is the run\'s and untouched; otherwise a new one is made', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-own-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
+  const child = `import(${url}).then(({ testEnv }) => console.log(testEnv(process.env).CLUED_TEST_IDENTITY_DIR));`;
+  const script = `import(${url}).then(({ testEnv }) => {
+    const { spawnSync } = require('node:child_process');
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const below = (env) => spawnSync(process.execPath, ['-e', ${JSON.stringify(child)}], { env: { ...env, RUNNER_TEMP: process.argv[1] }, encoding: 'utf8' }).stdout.trim();
+    const env = testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] });
+    const own = env.CLUED_TEST_IDENTITY_DIR;
+    const forged = path.join(process.argv[1], 'clued-test-identity-forged');
+    fs.mkdirSync(path.join(forged, 'gh'), { recursive: true });
+    fs.writeFileSync(path.join(forged, 'gitconfig'), '[credential]\\n\\thelper = owner-helper\\n');
+    const seen = {
+      own,
+      reused: below(env),
+      otherRun: below({ ...env, CLUED_TEST_IDENTITY_RUN: '00000000-0000-4000-8000-000000000000' }),
+      forged: below({ ...env, CLUED_TEST_IDENTITY_DIR: forged }),
+    };
+    fs.writeFileSync(path.join(own, 'gh', 'hosts.yml'), 'github.com:\\n');
+    seen.changed = below(env);
+    seen.ownAfterChange = testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] }).CLUED_TEST_IDENTITY_DIR;
+    fs.rmSync(forged, { recursive: true });
+    console.log(JSON.stringify(seen));
+  });`;
+  const fresh = { ...process.env };
+  delete fresh.CLUED_TEST_IDENTITY_DIR;
+  delete fresh.CLUED_TEST_IDENTITY_RUN;
+  const run = spawnSync(process.execPath, ['-e', script, temp], { env: fresh, encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const seen = JSON.parse(run.stdout);
+  assert.equal(path.dirname(seen.own), temp);
+  assert.equal(seen.reused, seen.own, 'the run\'s own directory, untouched, is reused below it');
+  for (const name of ['otherRun', 'forged', 'changed']) {
+    assert.ok(seen[name] && ![seen.own, path.join(temp, 'clued-test-identity-forged')].includes(seen[name]), `${name}: a new directory`);
+    assert.equal(path.dirname(seen[name]), temp, name);
+  }
+  assert.notEqual(seen.ownAfterChange, seen.own, 'a directory a suite changed is not used again');
+  assert.deepEqual(readdirSync(temp), [], 'every directory made is removed at exit');
+});
+
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {
   const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-run-'));
   t.after(() => rmSync(temp, { recursive: true, force: true }));
@@ -903,6 +949,7 @@ test('the command line makes one fake identity directory under the run temporary
   // A fresh command line: not below another run (this test itself may be).
   const fresh = { ...process.env };
   delete fresh.CLUED_TEST_IDENTITY_DIR;
+  delete fresh.CLUED_TEST_IDENTITY_RUN;
   const run = spawnSync(process.execPath, ['-e', script, temp], { env: fresh, encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   const { made, gh, git, nested: inner, count } = JSON.parse(run.stdout);

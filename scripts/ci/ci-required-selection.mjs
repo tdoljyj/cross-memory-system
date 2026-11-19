@@ -33,7 +33,7 @@ import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rea
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { testEnv, testIdentityDir } from './test-env.mjs';
+import { testEnv, testIdentity } from './test-env.mjs';
 
 // The resident layer imports Source v2, Source v2 imports scripts/ci (and
 // through it scripts/runner) and the resident's node profile, the admission
@@ -505,14 +505,16 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
 }
 
 // The environment of every suite child (test marker, listed variables, fake identity) is test-env.mjs; local-verify.mjs reads it too.
-export { FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, testEnv, testIdentityDir } from './test-env.mjs';
+export { FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, testEnv, testIdentity } from './test-env.mjs';
 // The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
 // suites: --run, --run-selected, --write-known, --run-files; it also makes the run's fake identity directory (Task 2ee162c2).
 // --check runs nothing and is left as it is.
 export function markTestRun(argv, env) {
   if (!['--run', '--run-selected', '--write-known', '--run-files'].some((flag) => argv.includes(flag))) return;
   env.CLUED_UNDER_TEST = '1';
-  env.CLUED_TEST_IDENTITY_DIR = testIdentityDir(env);
+  const { dir, run } = testIdentity(env);
+  env.CLUED_TEST_IDENTITY_DIR = dir;
+  env.CLUED_TEST_IDENTITY_RUN = run;
 }
 
 // --run-files: the suite's own commands with the test-file operands replaced by
