@@ -625,6 +625,15 @@ function Get-DrillField($Object, [string]$Name) {
 # gives its verdict line and never steps, so a long record cut at its head is not read as "the earlier steps did not run": a stage that
 # ran (its result file is there) without its complete log is "incomplete". A step line is one JSON object with a name (older lines: step)
 # and a result, and a rejectCode when refused. Nothing parsed is "missing", never a pass; no verdict line (a run cut off) is said so.
+# A stage's verdict: an object whose status is a non-empty string and not one of the package's own "no verdict" codes (bootstrap.ps1:
+# STAGE_CHILD_PRINTED_NO_VERDICT -- the stage shell speaks, its child printed none -- and STAGE_GAVE_NO_VERDICT). The entry holds the
+# same rule (first-install-entry.ps1 Test-EntryStageVerdict).
+$script:DrillStageNoVerdictCodes = @('STAGE_CHILD_PRINTED_NO_VERDICT', 'STAGE_GAVE_NO_VERDICT')
+function Test-DrillStageVerdict($Doc) {
+  $s = Get-DrillField $Doc 'status'
+  return ($s -is [string]) -and ($s.Length -gt 0) -and ($script:DrillStageNoVerdictCodes -cnotcontains $s)
+}
+
 function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
   $steps = New-Object System.Collections.ArrayList
   $read = {
@@ -651,24 +660,31 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
   # A stage ran when its result file or its log is there. It is incomplete (Codex review of 1cedea9ef, medium 2) when its log is missing
   # or empty, holds no step line (only its verdict), or ends without its verdict line -- the stage gave no verdict (cut off, a timeout):
   # what that log holds is read all the same, never taken for the whole record.
+  # "The stage gave no verdict" means one thing here and in the entry (Codex review of c1497e0a1, medium 4; Test-DrillStageVerdict): a
+  # missing or empty log, a last object that is no verdict, a package "no verdict" code, or the entry's own stageGaveNoVerdict.
+  # prepare prints only its verdict (no step lines): it is complete when its log ends with one.
   $stageVerdicts = [ordered]@{ host = $null; launcher = $null }; $incomplete = @(); $reasons = [ordered]@{}; $noStageVerdict = @()
-  foreach ($pair in @(@('host', 'host-result.json'), @('launcher', 'launcher-result.json'))) {
+  foreach ($pair in @(@('host', 'host-result.json', $true), @('prepare', $null, $false), @('launcher', 'launcher-result.json', $true))) {
     $stage = $pair[0]
-    $result = Get-DrillField $StageEvidence $pair[1]
+    $result = if ($pair[1]) { Get-DrillField $StageEvidence $pair[1] } else { $null }
     $text = Get-DrillField $Logs $stage
     if ($null -eq $result -and $text -isnot [string]) { continue }
+    $why = @()
     $s = Get-DrillField (Get-DrillField $result 'terminal') 'status'
     if ($s -is [string] -and $s) { $stageVerdicts[$stage] = $s }
-    $why = @()
+    if ((Get-DrillField $result 'stageGaveNoVerdict') -eq $true) { $why += 'entry-saw-no-verdict' }
     if ($text -isnot [string]) { $why += 'log-missing' }
     elseif ([string]::IsNullOrWhiteSpace($text)) { $why += 'log-empty' }
     else {
-      if ($stages[$stage] -eq 0) { $why += 'no-step-lines' }
+      if ($pair[2] -and $stages[$stage] -eq 0) { $why += 'no-step-lines' }
       $tail = @($text -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -Last 1
       $doc = $null; try { $doc = $tail | ConvertFrom-Json } catch { $doc = $null }
       $logVerdict = Get-DrillField $doc 'status'
-      if ($logVerdict -isnot [string] -or -not $logVerdict) { $why += 'no-verdict'; $noStageVerdict += $stage }
+      if (Test-DrillStageVerdict $doc) { }
+      elseif ($logVerdict -is [string] -and $script:DrillStageNoVerdictCodes -ccontains $logVerdict) { $why += ('stage-reported-no-verdict:' + $logVerdict) }
+      else { $why += 'no-verdict' }
     }
+    if (@($why | Where-Object { $_ -cne 'no-step-lines' }).Count -and $noStageVerdict -notcontains $stage) { $noStageVerdict += $stage }
     if ($why.Count) { $incomplete += $stage; $reasons[$stage] = $why }
   }
   $verdict = $null

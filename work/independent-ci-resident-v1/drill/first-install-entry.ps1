@@ -101,6 +101,14 @@ function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$Lim
   } finally { $writer.Dispose() }
 }
 
+# A launcher stage's verdict, by the drill's rule (drill-vm.ps1 Test-DrillStageVerdict): a status that is a non-empty string and not one
+# of the package's "no verdict" codes.
+function Test-EntryStageVerdict($Terminal) {
+  if ($null -eq $Terminal) { return $false }
+  $s = if ($Terminal -is [Collections.IDictionary]) { if ($Terminal.Contains('status')) { $Terminal['status'] } else { $null } } else { $p = $Terminal.PSObject.Properties['status']; if ($p) { $p.Value } else { $null } }
+  return ($s -is [string]) -and ($s.Length -gt 0) -and (@('STAGE_CHILD_PRINTED_NO_VERDICT', 'STAGE_GAVE_NO_VERDICT') -cnotcontains $s)
+}
+
 # This is the README section 5 exception for CLUED-DRILL only. No accepted file is rewritten.
 # Load the accepted bootstrap's helpers, keeping its asset/prerequisite/check/prepare/launcher order.
 function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]$FakeInputs, [string]$Output, [string]$ReleaseVersion) {
@@ -241,8 +249,9 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     finally { $measurements.launcher = $watch.Elapsed.TotalSeconds }
     # no output file, or one whose last object is not a verdict (a stage cut off): the stage gave no verdict
     $terminal = if ([IO.File]::Exists($launcherResult)) { Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult)) } else { $null }
-    if ($null -ne $terminal -and -not ((Get-Key $terminal 'status') -is [string])) { $terminal = $null }
-    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; stageGaveNoVerdict = ($null -eq $terminal) })), (New-Object Text.UTF8Encoding($false)))
+    $stageGaveNoVerdict = -not (Test-EntryStageVerdict $terminal)
+    if ($stageGaveNoVerdict) { $terminal = $null }
+    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; stageGaveNoVerdict = $stageGaveNoVerdict })), (New-Object Text.UTF8Encoding($false)))
     $verdict = Get-LauncherVerdict $true $terminal
     return (ConvertTo-FirstInstallEntryResult $verdict $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit }) $entryTree $entryNode)
   } finally {

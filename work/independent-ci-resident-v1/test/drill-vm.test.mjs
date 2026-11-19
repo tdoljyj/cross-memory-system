@@ -1996,6 +1996,51 @@ test('a stage that ran is incomplete when its log is missing, empty, holds only 
   assert.equal(read().incomplete, false);
 });
 
+// Codex review of c1497e0a1, medium 4: "the stage gave no verdict" means one thing everywhere. A verdict is an object whose status is a
+// non-empty string other than the package's own "no verdict" codes (STAGE_CHILD_PRINTED_NO_VERDICT: the stage shell speaks, its child did
+// not; STAGE_GAVE_NO_VERDICT); a missing or empty log gives none either; the entry's stageGaveNoVerdict is read; prepare, which prints only
+// its verdict, is cut off when its log does not end with one.
+test('no verdict is read the same way in the entry and the receipt, the package\'s no-verdict codes and prepare included', opts, () => {
+  const dir = path.join(tmp, 'steps-verdict'); fs.mkdirSync(dir, { recursive: true });
+  const put = (name, text) => text === null ? fs.rmSync(path.join(dir, name), { force: true }) : fs.writeFileSync(path.join(dir, name), text);
+  const lines = (...l) => l.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join('\r\n') + '\r\n';
+  const read = () => ps(`Read-DrillFirstInstallSteps ${q(dir)}`);
+  put('first-install.log', lines({ status: 'FIRST_INSTALL_STOPPED', stopCode: 'X', tree: '', node: '' }));
+  put('host.stdout.log', lines({ name: 'stage', result: 'ok' }, { status: 'FIRST_INSTALL_HOST_READY' }));
+  put('prepare.stdout.log', lines({ status: 'FLEET_NODE_FIRST_INSTALL_PREPARED' }));
+  const evidenceWith = launcher => JSON.stringify({ 'host-result.json': { exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }, 'launcher-result.json': launcher });
+  // prepare's log holding only its verdict is complete (prepare prints no step lines)
+  put('stage-evidence.json', evidenceWith(null));
+  assert.equal(read().incomplete, false);
+  for (const [reason, launcherLog, launcherResult, why] of [
+    ['an empty status is no verdict', lines({ name: 'install', result: 'ok' }, { status: '' }), null, 'no-verdict'],
+    ['the package says its child printed none', lines({ name: 'install', result: 'ok' }, { status: 'STAGE_CHILD_PRINTED_NO_VERDICT', child: 'launcher', exit: 1 }), null, 'stage-reported-no-verdict:STAGE_CHILD_PRINTED_NO_VERDICT'],
+    ['the package says the stage gave none', lines({ name: 'install', result: 'ok' }, { status: 'STAGE_GAVE_NO_VERDICT' }), null, 'stage-reported-no-verdict:STAGE_GAVE_NO_VERDICT'],
+    ['an empty log', '', { exit: null, terminal: null, stageGaveNoVerdict: true }, 'log-empty'],
+    ['no log, the entry saw no verdict', null, { exit: null, terminal: null, stageGaveNoVerdict: true }, 'log-missing'],
+  ]) {
+    put('launcher.stdout.log', launcherLog);
+    put('stage-evidence.json', evidenceWith(launcherResult));
+    const r = read();
+    assert.deepEqual(r.noStageVerdict, ['launcher'], reason);
+    assert.ok(r.incompleteReasons.launcher.includes(why), `${reason}: ${JSON.stringify(r.incompleteReasons.launcher)}`);
+  }
+  // the entry's stageGaveNoVerdict alone (its log ends with a verdict the entry did not see) is still no verdict
+  put('launcher.stdout.log', lines({ name: 'install', result: 'ok' }, { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' }));
+  put('stage-evidence.json', evidenceWith({ exit: null, terminal: null, stageGaveNoVerdict: true }));
+  assert.deepEqual(read().noStageVerdict, ['launcher']);
+  // prepare cut off: its log does not end with its verdict
+  put('stage-evidence.json', evidenceWith(null)); put('launcher.stdout.log', null);
+  put('prepare.stdout.log', '{"status":"FLE');
+  const cut = read();
+  assert.deepEqual(cut.noStageVerdict, ['prepare']);
+  assert.deepEqual(cut.incompleteReasons.prepare, ['no-verdict']);
+  // the entry's own test of a launcher terminal is the same rule
+  assert.deepEqual(entryPs(`@(@{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' }, @{ status = '' }, @{ status = 'STAGE_CHILD_PRINTED_NO_VERDICT' }, @{ status = 'STAGE_GAVE_NO_VERDICT' }, @{ name = 'x'; result = 'ok' }, $null) | ForEach-Object { Test-EntryStageVerdict $_ }`),
+    [true, false, false, false, false, false]);
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /stageGaveNoVerdict = -not \(Test-EntryStageVerdict \$terminal\)/);
+});
+
 // Codex review of c1497e0a1, high 1: a later stage reached, or an entry that says done, says the earlier stages ran. An earlier stage
 // with neither its log nor its result is then incomplete too (no-evidence), never skipped; A1 does not pass on it.
 test('a stage a later one or a done entry says ran is incomplete without any evidence of it', opts, () => {
