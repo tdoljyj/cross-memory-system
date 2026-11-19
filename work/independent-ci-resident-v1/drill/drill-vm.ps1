@@ -186,15 +186,15 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
         $reason = $s.executor.PSObject.Properties['reason']
         $executorObservation = [ordered]@{
           state = $executor
-          reason = $(if ($reason -and $reason.Value -is [string]) { $reason.Value })
+          reason = $(if ($reason -and $reason.Value -is [string]) { $reason.Value } else { $null })
           current = $null
         }
         if ($null -ne $s.current) {
           $stageProperty = $s.current.PSObject.Properties['stage']
           $phaseProperty = $s.current.PSObject.Properties['phase']
           $executorObservation.current = [ordered]@{
-            stage = $(if ($stageProperty -and ($stageProperty.Value -is [int] -or $stageProperty.Value -is [long])) { $stageProperty.Value })
-            phase = $(if ($phaseProperty -and $phaseProperty.Value -is [string]) { $phaseProperty.Value })
+            stage = $(if ($stageProperty -and ($stageProperty.Value -is [int] -or $stageProperty.Value -is [long])) { $stageProperty.Value } else { $null })
+            phase = $(if ($phaseProperty -and $phaseProperty.Value -is [string]) { $phaseProperty.Value } else { $null })
           }
         }
         $pause = $s.PSObject.Properties['intakePause']
