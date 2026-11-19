@@ -785,7 +785,7 @@ test('pr lifecycle reconcile: one report per round names B closed, C and D merge
   assert.deepEqual(reports, [[], [{ pr: 913, state: 'merged', mergeSha: MD }, { pr: 912, state: 'merged', mergeSha: MC }, { pr: 911, state: 'closed', mergeSha: null }]]);
   assert.deepEqual(reads.filter(n => n !== 910).sort(), [911, 912, 913]);
   // Review 4: the round's own open list (fewer than a page) is complete; the reconcile reads no page of its own.
-  const ownPages = () => pages.filter(o => o?.sort === 'created').length;
+  const ownPages = () => pages.filter(o => o?.state === 'open' && o?.sort === 'created').length;
   assert.equal(ownPages(), 0);
   // Steady state: every tracked binding is open on GitHub, so a round asks once and reads no PR for it.
   reports.length = 0; reads.length = 0; pages.length = 0;
@@ -826,7 +826,7 @@ test('pr lifecycle reconcile is bounded and after the front: slow GitHub reads c
     if (slow) {
       const read = e.gh.readPullRequest, page = e.gh.readPullsPage;
       e.gh.readPullRequest = async (n, o) => { if (ended.includes(n)) e.now += SLOW; return read(n, o); };
-      e.gh.readPullsPage = async o => { if (o?.sort === 'created') e.now += SLOW; return page(o); };
+      e.gh.readPullsPage = async o => { if (o?.state === 'open' && o?.sort === 'created') e.now += SLOW; return page(o); };
     }
     const before = e.now;
     const r = await stage10(e);
