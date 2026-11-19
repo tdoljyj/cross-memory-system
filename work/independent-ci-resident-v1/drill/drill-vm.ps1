@@ -2085,12 +2085,14 @@ function Get-DrillAbortEvidence([string]$RunDir) {
   $m5 = @($script:DrillM5Names | Where-Object { Test-Path -LiteralPath (Join-Path (Join-Path $RunDir 'm5') $_) -PathType Leaf })
   $taken = @($expected | Where-Object { if ($_ -ceq 'm5') { $m5.Count -eq $script:DrillM5Names.Count } else { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf } })
   $stageLogs = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log') | Where-Object { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf }
-  $any = $taken.Count + $m5.Count + @($stageLogs).Count
+  # the stage timings saved on their own are evidence taken too (Codex review of f33fc33e5, low 1)
+  $stageTimings = Test-Path -LiteralPath (Join-Path $RunDir 'stage-timings.json') -PathType Leaf
+  $any = $taken.Count + $m5.Count + @($stageLogs).Count + [int]$stageTimings
   # all of it only with the step record complete too (Codex review of e0a3cded5, medium 2): the stage logs this run needed are there
   $steps = try { Read-DrillFirstInstallSteps $RunDir } catch { $null }
   $stepsComplete = ($null -ne $steps) -and ((Get-Prop $steps 'missing') -eq $false) -and ((Get-Prop $steps 'incomplete') -eq $false)
   [ordered]@{ evidence = $(if ($any -eq 0) { 'NOT_TAKEN' } elseif ($taken.Count -eq $expected.Count -and $stepsComplete) { 'TAKEN' } else { 'PARTIAL' }); taken = $taken
-    notTaken = @($expected | Where-Object { $taken -notcontains $_ }); m5Observations = $m5; stageLogs = @($stageLogs); stepsComplete = $stepsComplete }
+    notTaken = @($expected | Where-Object { $taken -notcontains $_ }); m5Observations = $m5; stageLogs = @($stageLogs); stageTimings = $stageTimings; stepsComplete = $stepsComplete }
 }
 
 # The host guard's emergency restore, as it ended (its host-guard.json, DRILL_ABORTED): restored, restore failed, or not known (a record
