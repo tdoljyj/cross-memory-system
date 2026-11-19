@@ -188,7 +188,7 @@
 
     "scripts/ci/check-pinned-registries.mjs": "68eaeb1971047ddc8c69cfc71ffd40d27dd223857adb9b0325681d88e79c9280",
 
-    "scripts/ci/check-pinned-registries.test.mjs": "13e41d637f0ac3480cce621123498f3b88c1f690167724248a7752f915c300ae",
+    "scripts/ci/check-pinned-registries.test.mjs": "720f22b5d8b81c6a8de95d2416a3269c9cddc24ff2ab9a224c1b8a5afaad49aa",
 
     "scripts/ci/check-powershell-count.mjs": "ea43513930daa146dd1a08256b2d12bc2e0594a7aa0f8c78f3d6a4eb998f99a9",
 
