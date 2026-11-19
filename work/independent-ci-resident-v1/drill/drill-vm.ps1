@@ -777,7 +777,11 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
   for ($i = 0; $i -lt $order.Count; $i++) {
     $laterRan = $entryDone
     for ($j = $i + 1; $j -lt $order.Count; $j++) { if ($ranStage[$order[$j]]) { $laterRan = $true } }
-    if ($laterRan -and -not $ranStage[$order[$i]] -and $incomplete -notcontains $order[$i]) { $incomplete += $order[$i]; $reasons[$order[$i]] = @('no-evidence') }
+    if ($laterRan -and -not $ranStage[$order[$i]] -and $incomplete -notcontains $order[$i]) {
+      $incomplete += $order[$i]; $reasons[$order[$i]] = @('no-evidence')
+      # no evidence is no verdict either (Codex review of e0a3cded5, low 1)
+      if ($noStageVerdict -notcontains $order[$i]) { $noStageVerdict += $order[$i] }
+    }
   }
   $incomplete = @($order | Where-Object { $incomplete -contains $_ })
   $all = @($steps)

@@ -2328,6 +2328,7 @@ test('a stage a later one or a done entry says ran is incomplete without any evi
   assert.equal(r.incomplete, true);
   assert.deepEqual(r.incompleteStages, ['host']);
   assert.deepEqual(r.incompleteReasons.host, ['no-evidence']);
+  assert.ok(r.noStageVerdict.includes('host'), 'no evidence is no verdict either (Codex review of e0a3cded5, low 1)');
   // prepare's log gone as well: both earlier stages are named
   put('prepare.stdout.log', null);
   assert.deepEqual(ps(`(Read-DrillFirstInstallSteps ${q(dir)}).incompleteStages`), ['host', 'prepare']);
