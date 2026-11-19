@@ -27,6 +27,7 @@
 //   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
 //     regenerates that suite's ci-known-failures.json entries from a real run
 //     (--keep also keeps the entries already listed).
+// All three run modes wait for a machine-wide suite slot outside GitHub Actions.
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -41,11 +42,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const RESIDENT_AND_SOURCE = ['work/independent-ci-resident-v1/**', 'work/actions-hosted-migration/independent-ci-v1/**',
   'scripts/ci/**', 'scripts/runner/**', 'config/merge-admission-policy.json', '.gitleaks.toml'];
 
-// Files whose bytes a pinned registry holds (check-pinned-registries.mjs): the R9 registry pins files under
-// scripts/ci, .github/workflows and the admission policy; the reconcile registry pins all of scripts/ci,
-// scripts/runner, .github/workflows, the temporary-storage action and four more files; the component
-// manifest pins its own files. The generated files the same script checks add their generators and inputs: the agent
-// contract, the generated worker modules, the imprint rule source and its migration, and the plugin build script.
+// Select the registry checks for the R9 inputs, the reconcile source closure and
+// the component manifest. Generated outputs also select on their generators and inputs.
 // check-pinned-registries.test.mjs checks that every pinned file matches.
 export const PINNED_REGISTRY_PATHS = ['scripts/ci/**', 'scripts/runner/**', '.github/workflows/**', '.github/actions/ci-temporary-storage/**',
   'config/merge-admission-policy.json', 'apps/clued-cloud/app/supabase-public-config.ts', 'apps/clued-cloud/package.json',
@@ -172,7 +170,9 @@ export const SUITES = {
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     // Its test checks that every database test of apps/clued-cloud/tests runs in a required suite or is exempted, so a
     // new or changed test there, or the classifier, selects it.
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-test-failures-reporter.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+      'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
+      'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
       'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
@@ -270,7 +270,10 @@ export const SUITE_COMMANDS = {
     'scripts/runner/clued-runner-job-started.test.mjs', 'scripts/runner/clued-runner-hook-loader.test.mjs', 'scripts/runner/install-hook-loader.test.mjs', 'scripts/ci/clued-merge-slot-ci.test.mjs',
     'scripts/ci/clued-front-main-merge.test.mjs'] }],
   // Stale pinned registries fail clued-cloud-tests 16 minutes in; this says so in seconds and names the command that fixes each.
-  'pinned-registries': [{ cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] }],
+  'pinned-registries': [
+    { cwd: '.', argv: ['node', 'scripts/ci/check-pinned-registries.mjs', '--base', '{base}'] },
+    { cwd: '.', argv: ['node', '--test', 'scripts/ci/generated-registry-merge.test.mjs'] },
+  ],
   // Integrates a throwaway worktree. It never installs into the checkout: there
   // node_modules may be a link to a shared store (local-verify), which npm ci would empty.
   // It installs the worktree through ci-deps.mjs (offline from the runner's store).
@@ -284,7 +287,8 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: ['node', 'scripts/ci/check-cron-budget.mjs'] }],
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
-  'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs'] }],
+  'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs',
+    'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'ledger:verify'] },
@@ -330,8 +334,8 @@ export function readKnownFailures(file = KNOWN_FAILURES_PATH) {
   return data;
 }
 
-export function unitTestFiles(cwd, spawn = spawnSync) {
-  const result = spawn('node', ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8' });
+export function unitTestFiles(cwd, spawn = spawnSync, env = process.env) {
+  const result = spawn('node', ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8', env: testEnv(env) });
   if (result.status !== 0 || typeof result.stdout !== 'string') throw new Error('select-tests --list failed');
   return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
 }
@@ -499,14 +503,151 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
   return exists(script) ? [nodePath, script, ...argv.slice(1)] : argv;
 }
 
-export function runSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
-  known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
+// CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
+// NODE_TEST_CONTEXT on its own; Python and PowerShell suites have only this one). The caller's env is not changed.
+export const testEnv = (env) => ({ ...env, CLUED_UNDER_TEST: '1' });
+// The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
+// suites: --run, --run-selected, --write-known. --check runs nothing and is left as it is.
+export function markTestRun(argv, env) {
+  if (['--run', '--run-selected', '--write-known'].some((flag) => argv.includes(flag))) env.CLUED_UNDER_TEST = '1';
+}
+
+// --run-files: the suite's own commands with the test-file operands replaced by
+// the named files. Only the operands change, so the command is the one CI runs.
+// A command that cannot take a named file is skipped (lint, build, validators,
+// drills); a named file no command takes is refused before anything starts.
+const posixPath = (file) => file.replaceAll('\\', '/');
+const operandsAfter = (argv, index) => argv.slice(index + 1).filter((arg) => !arg.startsWith('-'));
+const optionValue = (argv, flag) => argv[argv.indexOf(flag) + 1];
+
+export function filterCommand(command, argv, named) {
+  const repo = (operand) => path.posix.join(command.cwd, posixPath(operand));
+  const result = { runs: [], matched: [], accepts: [] };
+  const testAt = argv.indexOf('--test');
+  const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
+  if (testAt >= 0) {
+    const files = operandsAfter(argv, testAt);
+    result.accepts = files.map(repo);
+    const kept = new Set(files.filter((file) => named.has(repo(file))));
+    if (kept.size > 0) {
+      result.runs = [argv.filter((arg, i) => i <= testAt || arg.startsWith('-') || kept.has(arg))];
+      result.matched = [...kept].map(repo);
+    }
+  } else if (unittestAt >= 0 && argv[unittestAt + 1] === 'discover') {
+    const directory = repo(optionValue(argv, '-s'));
+    const pattern = optionValue(argv, '-p') ?? 'test*.py';
+    result.accepts = [`${directory}/${pattern}`];
+    for (const file of named) {
+      if (!file.startsWith(`${directory}/`) || !globToRegExp(pattern).test(path.posix.basename(file))) continue;
+      const argvFor = [...argv];
+      argvFor[argv.indexOf('-p') + 1] = path.posix.basename(file);
+      result.runs.push(argvFor);
+      result.matched.push(file);
+    }
+  } else if (unittestAt >= 0) {
+    const files = operandsAfter(argv, unittestAt).filter((arg) => /[\\/]/.test(arg) || arg.endsWith('.py'));
+    result.accepts = files.map(repo);
+    const kept = new Set(files.filter((file) => named.has(repo(file))));
+    if (kept.size > 0) {
+      result.runs = [argv.filter((arg, i) => i <= unittestAt || arg.startsWith('-') || kept.has(arg))];
+      result.matched = [...kept].map(repo);
+    }
+  } else {
+    const operands = operandsAfter(argv, 0);
+    if (operands.length === 1 && /\.(mjs|py)$/.test(operands[0])) {
+      result.accepts = [repo(operands[0])];
+      if (named.has(repo(operands[0]))) {
+        result.runs = [argv];
+        result.matched = [repo(operands[0])];
+      }
+    }
+  }
+  return result;
+}
+
+export class RunFilesError extends Error {}
+
+export function planFiles(id, { root, files, env = process.env }) {
   const commands = SUITE_COMMANDS[id];
-  if (!commands) throw new Error(`unknown suite: ${id}`);
+  if (!commands) throw new RunFilesError(`unknown suite: ${id}`);
+  const list = (files ?? []).map(posixPath);
+  if (list.length === 0) throw new RunFilesError('no test file named');
+  for (const file of list) {
+    if (path.posix.isAbsolute(file) || /^[a-z]:/i.test(file) || path.posix.normalize(file).startsWith('..')) {
+      throw new RunFilesError(`name test files by repository path, relative to the checkout: ${file}`);
+    }
+  }
+  const named = new Set(list.map((file) => path.posix.normalize(file)));
+  const missing = [...named].filter((file) => !existsSync(path.join(root, file)));
+  if (missing.length > 0) throw new RunFilesError(`not found under ${root}: ${missing.join(', ')}`);
+  const steps = [];
+  const matched = new Set();
+  const accepts = [];
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   for (const command of commands) {
     const cwd = path.join(root, command.cwd);
-    let argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report });
+    // {base} is not a test file; a placeholder keeps commands that need it plannable (they are skipped).
+    const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA || 'unset', report });
+    const filtered = filterCommand(command, argv, named);
+    accepts.push(...filtered.accepts);
+    filtered.matched.forEach((file) => matched.add(file));
+    steps.push(...filtered.runs.map((run) => ({ command, argv: run })));
+  }
+  const unmatched = [...named].filter((file) => !matched.has(file));
+  if (unmatched.length > 0) {
+    throw new RunFilesError(`suite ${id} does not run: ${unmatched.join(', ')}\nit runs: ${[...new Set(accepts)].join(' ') || '(no test file)'}`);
+  }
+  return { steps, named };
+}
+
+export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null } = {}) {
+  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
+  if (files) {
+    if (env.GITHUB_ACTIONS === 'true') {
+      log('run-files: refused under GITHUB_ACTIONS; a targeted run is never a suite verdict, use --run');
+      return 2;
+    }
+    try {
+      planFiles(id, { root, files, env });
+    } catch (error) {
+      if (!(error instanceof RunFilesError)) throw error;
+      log(`run-files ${id}: ${error.message}`);
+      return 2;
+    }
+  }
+  if (captureKnown && !SUITE_COMMANDS[id].some((command) => command.known)) {
+    throw new Error(`suite ${id} has no known-failure command`);
+  }
+  if (env.GITHUB_ACTIONS === 'true') return executeSuite(id, { root, env, log, captureKnown, keep });
+  const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
+  return withLocalSuiteSlot(id, {
+    root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
+    work: { selectorUrl: import.meta.url, captureKnown, keep, files },
+  });
+}
+
+// The CI process or the already guarded worker executes the suite here.
+export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
+  captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  if (captureKnown) return writeKnown(id, root, env, keep);
+  const commands = SUITE_COMMANDS[id];
+  if (!commands) throw new Error(`unknown suite: ${id}`);
+  const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
+  let steps = commands.map((command) => ({ command, argv: null }));
+  let named = null;
+  if (files) {
+    try {
+      ({ steps, named } = planFiles(id, { root, files, env }));
+    } catch (error) {
+      if (!(error instanceof RunFilesError)) throw error;
+      log(`run-files ${id}: ${error.message}`);
+      return 2;
+    }
+  }
+  for (const { command, argv: planned } of steps) {
+    const cwd = path.join(root, command.cwd);
+    let argv = planned ?? expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report });
     let reportDir = null;
     if (command.known) {
       reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
@@ -518,7 +659,7 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
     }
     log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(argv, { platform });
-    const result = spawn(run[0], run.slice(1), { cwd, env, stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
       const text = result.stdout.toString();
@@ -530,7 +671,7 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
       return 1;
     }
     if (command.known) {
-      const list = (known ?? readKnownFailures())[command.known] ?? [];
+      const list = ((known ?? readKnownFailures())[command.known] ?? []).filter((entry) => !named || named.has(entry.file));
       const text = readReportFile(path.join(reportDir, 'failures.jsonl'));
       rmSync(reportDir, { recursive: true, force: true });
       const status = result.signal ? 128 : result.status;
@@ -561,14 +702,17 @@ export function runSuite(id, { root, env = process.env, spawn = spawnSync, log =
 // one fails (so the summary names each); any failure fails the step, and with
 // it the check. Nothing selected is a pass: the change touches no suite of
 // this platform.
-export function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {} } = {}) {
+export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {} } = {}) {
   const failed = [];
+  let timedOut = false;
   for (const id of suites) {
-    const status = run(id, { root, env, log });
+    const status = await run(id, { root, env, log });
+    if (env.GITHUB_ACTIONS !== 'true' && status === LOCAL_TIMEOUT_EXIT) timedOut = true;
     summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
     if (status !== 0) failed.push(id);
   }
   if (failed.length > 0) log(`::error title=${hostPlatform()} suites::failed: ${failed.join(' ')}`);
+  if (timedOut) return LOCAL_TIMEOUT_EXIT;
   return failed.length > 0 ? 1 : 0;
 }
 
@@ -604,7 +748,7 @@ function writeKnown(id, root, env, keep = false) {
   const out = path.join(dir, 'failures.jsonl');
   const index = argv.indexOf('--test');
   spawnSync(argv[0], [...argv.slice(1, index + 1), `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`,
-    `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env, stdio: ['ignore', 'ignore', 'inherit'] });
+    `--test-reporter-destination=${out}`, ...argv.slice(index + 1)], { cwd, env: testEnv(env), stdio: ['ignore', 'ignore', 'inherit'] });
   const report = readReport(existsSync(out) ? readFileSync(out, 'utf8') : '', root);
   rmSync(dir, { recursive: true, force: true });
   if (!report.summary) throw new Error('the run did not finish; nothing written');
@@ -616,22 +760,57 @@ function writeKnown(id, root, env, keep = false) {
   return unexplained ? 1 : 0;
 }
 
+const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>]';
+export const LOCAL_TIMEOUT_EXIT = 75;
+
 async function main(argv, env = process.env) {
+  markTestRun(argv, env);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(USAGE);
+    console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
+    console.log('--run-files runs only the named test files (repository paths) with the suite command CI runs, takes a local slot, and is refused under GITHUB_ACTIONS (exit 2): its result is not a suite verdict.');
+    return 0;
+  }
+  const filesIndex = argv.indexOf('--run-files');
+  if (filesIndex >= 0) {
+    const rootIndex = argv.indexOf('--root');
+    const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
+    const id = argv[filesIndex + 1];
+    const named = [];
+    for (const arg of argv.slice(filesIndex + 2)) {
+      if (arg.startsWith('--')) break;
+      named.push(arg);
+    }
+    if (env.GITHUB_ACTIONS === 'true') {
+      console.error('run-files: refused under GITHUB_ACTIONS; a targeted run is never a suite verdict, use --run');
+      return 2;
+    }
+    if (!Object.hasOwn(SUITE_COMMANDS, id) || named.length === 0) {
+      console.error(`run-files: needs a known suite and at least one test file\n${USAGE}`);
+      return 2;
+    }
+    const status = await runSuite(id, { root, env, files: named });
+    if (status !== 2) console.log(`run-files ${id}: ${named.length} 个文件，退出 ${status} —— 定向结果，不是套件结论`);
+    return status;
+  }
   const writeIndex = argv.indexOf('--write-known');
   if (writeIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
-    return writeKnown(argv[writeIndex + 1], rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env, argv.includes('--keep'));
+    return runSuite(argv[writeIndex + 1], {
+      root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env, captureKnown: true, keep: argv.includes('--keep'),
+    });
   }
   const runIndex = argv.indexOf('--run');
   if (runIndex >= 0) {
     const rootIndex = argv.indexOf('--root');
-    return runSuite(argv[runIndex + 1], { root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env });
+    const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
+    return runSuite(argv[runIndex + 1], { root, env });
   }
   const selectedIndex = argv.indexOf('--run-selected');
   const index = selectedIndex >= 0 ? selectedIndex : argv.indexOf('--check');
   const check = index >= 0 ? argv[index + 1] : undefined;
   if (!SUITES[check]) {
-    console.error('usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>]');
+    console.error(USAGE);
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};

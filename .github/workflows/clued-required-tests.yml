@@ -192,6 +192,8 @@ jobs:
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: node "$SELECTOR" --run clued-cloud --root candidate
 
   ci-suites:
@@ -282,6 +284,8 @@ jobs:
           SUITES: ${{ steps.select.outputs.suites }}
           CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: |
           failed=""
           for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do
@@ -394,6 +398,8 @@ jobs:
         if: steps.select.outputs.run_production_schema == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: |
           status=0
           node "$SELECTOR" --run production-schema --root candidate || status=$?
