@@ -168,6 +168,7 @@ export const targetOf = (release, over = {}) => ({ id: randomUUID(), receipt_id:
 // (assets of the release being published), or from state.other[<tag>] (the assets of another, earlier release, seeded by the test);
 // "release download --pattern <name> --dir <dir>" writes that asset (its bytes kept as base64) into <dir>.
 // FAKE_GH_FAIL_DOWNLOAD=<asset name>: that one download fails as a dropped connection does (acceptance-draft.log).
+// A download into a --dir that already holds a file of that name fails, as the real gh does without --clobber (review r2).
 export const FAKE_GH = `import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -193,6 +194,10 @@ if (args[0] === 'release' && args[1] === 'download') {
   if (process.env.FAKE_GH_FAIL_DOWNLOAD === name) { fs.writeFileSync(state, JSON.stringify(log)); console.error('net/http: TLS handshake timeout'); process.exit(1); }
   const a = assetsOf(args[2]).find(x => x.name === name);
   if (!a) { fs.writeFileSync(state, JSON.stringify(log)); console.error('no assets match the file pattern'); process.exit(1); }
+  // as gh 2.97.0 does: a file of that name already in --dir is an error unless --clobber or --skip-existing is given
+  if (fs.existsSync(path.join(dir, name)) && !args.includes('--clobber') && !args.includes('--skip-existing')) {
+    fs.writeFileSync(state, JSON.stringify(log)); console.error(name + ' already exists (use --clobber to overwrite file or --skip-existing to skip file)'); process.exit(1);
+  }
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, name), Buffer.from(a.b64, 'base64'));
 }

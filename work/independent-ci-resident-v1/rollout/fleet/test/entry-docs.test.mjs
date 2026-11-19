@@ -79,3 +79,23 @@ test('no file of the package names a publish.mjs command that no longer exists',
     assert.ok(!/publish\.mjs (attach-first-install-kit|attach-acceptance|acceptance-draft)/.test(fs.readFileSync(f, 'utf8')), f);
   }
 });
+
+// review r2: the README's delivery directory is fetched by a command whose patterns take every asset bootstrap.ps1 requires for a first install
+// (the list read from bootstrap.ps1's own Get-RequiredAssets), and a role image; no other way of fetching it is named there
+test('the README\'s delivery directory: its one command takes every asset bootstrap.ps1 requires for a first install, and role images', () => {
+  const boot = fs.readFileSync(path.join(FLEET, 'bootstrap.ps1'), 'utf8');
+  const body = boot.slice(boot.indexOf('function Get-RequiredAssets'), boot.indexOf('function Test-AssetSet'));
+  const v = '2026.11.19-0123abcd', t = `fleet-node-${v}`;
+  const required = [...body.matchAll(/"\$t\.([^"]+)"|'([^']+)'/g)].map(m => (m[1] ? `${t}.${m[1]}` : m[2])).filter(n => n !== 'fleet-node-');
+  assert.deepEqual(required.sort(), [`${t}.acceptance.json`, `${t}.bootstrap.ps1`, `${t}.first-install-kit.json`, `${t}.first-install.SHA256SUMS`, `${t}.prereq-manifest.json`,
+    `${t}.release.json`, `${t}.tar`, 'SHA256SUMS'].sort(), 'bootstrap.ps1\'s list as this test reads it');
+  const para = readme.split('\n').find(l => l.startsWith('**交付目录**'));
+  assert.ok(para, 'the README has its delivery directory paragraph');
+  assert.ok(!/fetch\.mjs/.test(para), 'fetch.mjs takes only the tar, the acceptance and SHA256SUMS: not a way to a delivery directory');
+  const commands = [...para.matchAll(/`(gh release download [^`]+)`/g)].map(m => m[1]);
+  assert.equal(commands.length, 1, 'one command');
+  const patterns = [...commands[0].matchAll(/--pattern "([^"]+)"/g)].map(m => m[1].replaceAll('<version>', v));
+  const glob = p => new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*').replaceAll('?', '.')}$`);
+  for (const n of [...required, `role-image-${'c'.repeat(64)}.tar.gz`]) assert.ok(patterns.some(p => glob(p).test(n)), `${n} is fetched`);
+  assert.match(commands[0], /^gh release download fleet-node-<version> /);
+});

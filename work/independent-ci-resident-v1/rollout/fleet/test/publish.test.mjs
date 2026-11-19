@@ -672,6 +672,8 @@ test('seal refuses a Decision whose text names another candidate\'s request or n
     [r => { delete r.supplemental; return r; }, 'DECISION_RECORD_NOT_A_DECISION'],
     [r => { r.supplemental.record.id = 'a1b2c3d4-0000-4000-8000-000000000009'; return r; }, 'DECISION_RECORD_NOT_ITS_TARGET'],
     [r => { r.supplemental.record.receipt_id = 'a1b2c3d4-0000-4000-8000-00000000000a'; return r; }, 'DECISION_RECORD_NOT_ITS_TARGET'],
+    // review r2: the record's own receipt must be there to be held to the outer one
+    [r => { delete r.supplemental.record.receipt_id; return r; }, 'DECISION_RECORD_NOT_ITS_TARGET'],
     [r => { r.target_refs[0].id = r.supplemental.record.id = DRILL_RESERVED.decision; return r; }, 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
     [r => { r.receipt_id = r.supplemental.record.receipt_id = DRILL_RESERVED.receipt; return r; }, 'ACCEPTANCE_IS_THE_DRILLS_STAND_IN'],
   ];
@@ -765,4 +767,38 @@ test('seal --drill-receipt: PASS_A_FULL or PASS_A_PER_NODE_STEPS_REMAIN of a can
   await assert.rejects(w.sealIt({ drillReceipt: other }), { code: 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED' });
   await assert.rejects(w.sealIt({ drillReceipt: null }), { code: 'SEAL_DRILL_RECEIPT_NOT_THE_RECORDED' });
   assert.ok((await fs.readFile(w.index)).equals(index));
+});
+
+// review r2, blocking: a second download of the same asset (prepare reads the Release before and after it attaches the kit) must not land on
+// the first one's file: the real gh refuses a file that is already there (the fake one now does too)
+test('prepare reads the Release twice (before and after the kit) without a download landing on an earlier one; the request is written', async t => {
+  const w = await prepWorld(t);
+  const r = await w.prep();
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const sumsDownloads = (await w.calls()).filter(c => c.args[1] === 'download' && c.args[c.args.indexOf('--pattern') + 1] === 'SHA256SUMS');
+  assert.ok(sumsDownloads.length >= 2, 'the Release is read again after the kit is attached');
+  const dirs = sumsDownloads.map(c => c.args[c.args.indexOf('--dir') + 1]);
+  assert.equal(new Set(dirs).size, dirs.length, 'every download into a directory of its own');
+  // and seal, whose check reads the same assets again
+  assert.equal((await w.sealIt()).status, 'FLEET_ACCEPTANCE_SEALED');
+});
+
+// review r2, the same gap before the rework: two images reused from the previous Release read its first-install sums twice
+test('prepare reuses two role images from the previous Release: its sums file is read for each without a download landing on an earlier one', async t => {
+  const w = await prepWorld(t);
+  const IMAGE2 = 'd'.repeat(64);
+  const kitOf = async () => ({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', template: { versionFacts: 'e30=' }, config: { ciSourceManifestSha256: 'a'.repeat(64) },
+    images: { pull: [], local: [{ id: IMAGE, asset: `role-image-${IMAGE}.tar.gz` }, { id: IMAGE2, asset: `role-image-${IMAGE2}.tar.gz` }] } });
+  const prev = '2026.11.11-1', prevTag = `fleet-node-${prev}`;
+  const one = Buffer.from('gzip of a docker save'), two = Buffer.from('gzip of another docker save');
+  const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
+  await fs.writeFile(w.index, [lines[0], lines[1], `| ${prev} | u | ${'1'.repeat(64)} | ${'2'.repeat(40)} | 2026-11-11T00:00:00Z | b5d041d2 |  |`, ...lines.slice(2)].join('\r\n'));
+  const sumsText = `${sha(one)}  role-image-${IMAGE}.tar.gz\n${sha(two)}  role-image-${IMAGE2}.tar.gz\n`;
+  await w.setState(st => { st.other = { [prevTag]: [{ name: `role-image-${IMAGE}.tar.gz`, size: one.length, b64: one.toString('base64') },
+    { name: `role-image-${IMAGE2}.tar.gz`, size: two.length, b64: two.toString('base64') }, { name: `${prevTag}.first-install.SHA256SUMS`, size: sumsText.length, b64: b64Of(sumsText) }] }; });
+  const r = await w.prep({ images: [], deps: { ...w.deps, kitOf } });
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  assert.deepEqual(r.images, [IMAGE, IMAGE2].sort());
+  const up = Object.fromEntries((await w.assets()).map(a => [a.name, a.sha256]));
+  assert.deepEqual([up[`role-image-${IMAGE}.tar.gz`], up[`role-image-${IMAGE2}.tar.gz`]], [sha(one), sha(two)]);
 });
