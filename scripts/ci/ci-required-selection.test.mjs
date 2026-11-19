@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -1059,6 +1059,31 @@ test('an inherited identity directory is taken only at its full canonical path',
       }
     });
   });
+});
+
+// Codex third review of 2ee162c2, medium 3: the sweep removes only a directory it can tell is a run's whose maker has exited:
+// a real directory holding a run record that is a regular file naming its maker. Anything else with the name is left.
+test('the sweep leaves every directory whose run it cannot confirm ended', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-sweep-keep-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const keep = {
+    'no-record': (dir) => mkdirSync(dir),
+    'record-without-maker': (dir) => { mkdirSync(dir); writeFileSync(path.join(dir, 'run'), JSON.stringify({ run: 'x' })); },
+    'unreadable-record': (dir) => { mkdirSync(dir); writeFileSync(path.join(dir, 'run'), '{"run":'); },
+    'record-not-a-file': (dir) => { mkdirSync(path.join(dir, 'run'), { recursive: true }); },
+    'not-a-directory': (dir) => writeFileSync(dir, ''),
+  };
+  for (const [name, make] of Object.entries(keep)) {
+    const dir = path.join(temp, `clued-test-identity-${name}`);
+    make(dir);
+    utimesSync(dir, old, old);
+  }
+  const url = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/test-env.mjs')).href);
+  const run = spawnSync(process.execPath, ['-e', `import(${url}).then(({ testEnv }) => testEnv({ ...process.env, RUNNER_TEMP: process.argv[1] }, { own: true }));`, temp],
+    { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(readdirSync(temp).sort(), Object.keys(keep).map((name) => `clued-test-identity-${name}`).sort());
 });
 
 test('the command line makes one fake identity directory under the run temporary directory, its children reuse it, and it is removed at exit', (t) => {

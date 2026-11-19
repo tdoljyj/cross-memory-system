@@ -88,9 +88,18 @@ export function removeEach(dirs, remove = (dir) => rmSync(dir, { recursive: true
 const made = new Set();
 let current = null;
 // What a killed run left (Codex second review of 2ee162c2, low 1): before making its directory a process removes, in the
-// same temporary area, every identity directory whose maker is no longer running. One with no record yet is being made
-// unless it is an hour old.
-const MAKING_MS = 60 * 60 * 1000;
+// same temporary area, the identity directories whose run has ended. Only one it can tell is a run's (Codex third review,
+// medium 3): a real directory (no link) whose run record is a regular file naming its maker, and that maker has exited.
+// Anything else with the name (no record yet, a record without a maker, an unreadable one, another kind of entry) is left.
+function ended(dir) {
+  try {
+    if (!lstatSync(dir).isDirectory() || !lstatSync(path.join(dir, 'run')).isFile()) return false;
+    const maker = JSON.parse(readFileSync(path.join(dir, 'run'), 'utf8'));
+    return Number.isInteger(maker?.pid) && maker.pid > 0 && !running(maker.pid);
+  } catch {
+    return false;
+  }
+}
 function sweep(base) {
   let names;
   try {
@@ -101,9 +110,7 @@ function sweep(base) {
   for (const name of names.filter((entry) => entry.startsWith(PREFIX))) {
     const dir = path.join(base, name);
     try {
-      const maker = record(dir);
-      const gone = maker ? !(Number.isInteger(maker.pid) && running(maker.pid)) : Date.now() - lstatSync(dir).mtimeMs > MAKING_MS;
-      if (gone && !made.has(dir)) rmSync(dir, { recursive: true, force: true });
+      if (!made.has(dir) && ended(dir)) rmSync(dir, { recursive: true, force: true });
     } catch {
       // the next run tries again
     }
