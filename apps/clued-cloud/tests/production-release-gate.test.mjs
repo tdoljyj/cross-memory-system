@@ -302,7 +302,8 @@ test('发布门不依赖心跳，两个发布入口使用部署后状态模式',
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
   const scripts = [...productionWorkflow.matchAll(/node -e '((?:const|let) url[^']*)'/g)].map((m) => m[1]);
-  assert.equal(scripts.length, 3);
+  // Backup, migration login role, apply and (release door v1) the deploy grant step.
+  assert.equal(scripts.length, 4);
   for (const script of scripts) {
     const run = (value) => spawnSync(process.execPath, ['-e', script], {
       env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: value, CLUED_MIGRATION_DATABASE_URL: value },
@@ -452,7 +453,7 @@ test('deploy and migrate consume an Owner Grant before they change production', 
   assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \}\}/);
   for (const grant of [migrateGrant, deployGrant]) {
     assert.match(steps[grant], /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
-    assert.match(steps[grant], /clued-release-grant\.mjs/);
+    assert.match(steps[grant], /clued-release-door\.mjs/);
     assert.match(steps[grant], /input --mode (deploy|migrate)/);
     assert.match(steps[grant], /clued_private\.release_door_v1\(/);
   }

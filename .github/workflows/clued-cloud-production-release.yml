@@ -265,7 +265,7 @@ jobs:
           database_url=$(node -e 'const url = new URL(process.env.CLUED_MIGRATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
           psql() { docker run --rm -i --user "$(id -u):$(id -g)" -e DATABASE_URL="$database_url" \
             -v "$PWD:/work:ro" -w /work postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
-          grant() { node ../../scripts/ci/clued-release-grant.mjs "$@"; }
+          grant() { node ../../scripts/ci/clued-release-door.mjs "$@"; }
           door_call() { psql -q -tA -v VERBOSITY=terse \
             -c "create temp table door_input(line text)" \
             -c "copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
@@ -450,12 +450,12 @@ jobs:
           psql() { docker run --rm -i --user "$(id -u):$(id -g)" postgres:17-alpine psql "$database_url" -v ON_ERROR_STOP=1 -X "$@"; }
           err=$(mktemp "$RUNNER_TEMP/clued-release-door-XXXXXX")
           trap 'rm -f -- "$err"' EXIT
-          answer=$(node scripts/ci/clued-release-grant.mjs input --mode deploy | psql -q -tA -v VERBOSITY=terse \
+          answer=$(node scripts/ci/clued-release-door.mjs input --mode deploy | psql -q -tA -v VERBOSITY=terse \
             -c "create temp table door_input(line text)" \
             -c "copy door_input(line) from stdin with (format csv, delimiter e'\x01', quote e'\x02')" \
             -c "select clued_private.release_door_v1(line::jsonb)::text from door_input" 2>"$err") || true
           cat -- "$err" >&2
-          printf '%s\n' "$answer" | node scripts/ci/clued-release-grant.mjs report --mode deploy --error-file "$err"
+          printf '%s\n' "$answer" | node scripts/ci/clued-release-door.mjs report --mode deploy --error-file "$err"
       - name: Ensure Storage job queue exists
         if: ${{ inputs.mode == 'deploy' }}
         env:

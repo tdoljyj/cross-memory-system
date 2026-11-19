@@ -54,7 +54,7 @@ backup artifact may be needed. Keep the reviewed schedule and existing Worker bi
 资源是这次点名的每个迁移文件，并捎带同一提交的 `deploy`，一次批准两件）。门是数据库函数
 `clued_private.release_door_v1(jsonb)`，只有 `clued-release` 环境里 `CLUED_MIGRATION_DATABASE_URL`
 的数据库登录角色能调用；它不在 PostgREST 上，没有发布令牌，也没有到期和轮换。工作流用 psql
-调它，输入以 COPY 数据传入，不拼进 SQL；`scripts/ci/clued-release-grant.mjs` 只负责组装输入、
+调它，输入以 COPY 数据传入，不拼进 SQL；`scripts/ci/clued-release-door.mjs` 只负责组装输入、
 解析回答、写运行摘要，并把拒绝原因翻成中文的下一步。没有“仅提示”模式：没消费到授权就停。
 
 - `migrate`：消费发生在第一条迁移文件的事务里，顺序是消费 → 执行文件 → 探门（`probe`）→

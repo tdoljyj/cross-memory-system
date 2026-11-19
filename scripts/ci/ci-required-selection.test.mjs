@@ -716,7 +716,7 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
 // The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
 // either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
 test('the release workflow and its grant script select the release door flow database test', () => {
-  for (const file of ['.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-grant.mjs',
+  for (const file of ['.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
     'apps/clued-cloud/tests/production-release-door-flow-db.test.mjs', 'apps/clued-cloud/tests/release-door-psql-fixture.mjs']) {
     assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
   }

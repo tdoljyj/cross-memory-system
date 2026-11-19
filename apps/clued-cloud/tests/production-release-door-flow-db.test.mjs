@@ -145,7 +145,7 @@ test('release door v1: the release workflow consumes, probes and boots the door 
         const migrations = path.join(checkout, 'apps/clued-cloud/supabase/migrations');
         await fs.mkdir(migrations, { recursive: true });
         await fs.mkdir(path.join(checkout, 'scripts/ci'), { recursive: true });
-        await fs.copyFile(path.join(repoRoot, 'scripts/ci/clued-release-grant.mjs'), path.join(checkout, 'scripts/ci/clued-release-grant.mjs'));
+        await fs.copyFile(path.join(repoRoot, 'scripts/ci/clued-release-door.mjs'), path.join(checkout, 'scripts/ci/clued-release-door.mjs'));
         const summary = path.join(checkout, 'summary.md');
         const write = (file, text) => fs.writeFile(path.join(migrations, file), text);
         const run = (stepName, cwd, env) => {
@@ -240,7 +240,7 @@ test('release door v1: the release workflow consumes, probes and boots the door 
         // No step of migrate mode reaches the door outside the transaction that applies the files.
         const migrateSteps = steps.filter((s) => /inputs\.mode == 'migrate'/.test(s.split('\n').find((line) => /^\s*if:/.test(line)) ?? ''));
         const code = (s) => s.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
-        const doorSteps = migrateSteps.filter((s) => /clued-release-grant\.mjs|release_door_v1/.test(code(s))).map((s) => s.split('\n')[0]);
+        const doorSteps = migrateSteps.filter((s) => /clued-release-(grant|door)\.mjs|release_door_v1/.test(code(s))).map((s) => s.split('\n')[0]);
         assert.deepEqual(doorSteps, ['name: Apply the named migrations']);
 
         const c = await fresh({ door: true, autoApprove: false });
