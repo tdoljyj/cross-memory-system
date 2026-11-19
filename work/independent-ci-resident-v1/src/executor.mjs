@@ -3786,17 +3786,18 @@ export class ResidentExecutor {
     keepBatch(batch);
     await this.receipt('batch-derived', { key, batchId: batch.batchId, packageSha256: batch.packageSha256 });
 
-    // The bundle comes first: it needs only the Owner's own read credential, has no Windows or Linux
-    // effect and publishes nothing, so its failure can release the reservation.
-    this.atStage(0, 'bundle');
-    const bundle = await this.companion.buildBundle(batch);
-    // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
-    // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
-    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
-      : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
-    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
-      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
-      bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
+    // FABLE-ci-10min §3.2 P1c: stage 1 reads GitHub and Clued, never the bundle (its entry reads only its own stage package and the
+    // installed Source), and the bundle is first read by the workspace preparation. An ordinary batch (no S) runs stage 1 first, so the
+    // admission check (the hosted jobs' gate) is out a bundle's time (45-105 s in the field) earlier; its bundle follows, still before
+    // markStarted, so a bundle failure releases the reservation as before (stage 1 may run again on this head, as after every stage-1
+    // release). A front batch (S) keeps the bundle first (it is what finds a moved member or base before stage 1 touches the slot), and
+    // builds none when every scan is reused (DESIGN §75): no workspace is prepared then.
+    const ordinary = !Object.hasOwn(subject, 'testSha');
+    const reused = ordinary ? null : await this.frontScansReused(subject);
+    if (!ordinary && reused.length < HEAVY_ROLES.length) {
+      const failed = await this.firstBundle(batch, subject);
+      if (failed) return failed;
+    }
     const early = await this.abortIfRequested(key, batch, 'before-stage-1');
     if (early) return early;
     // Phase 2: a newer commit of the PR arrived while the bundle was built. Nothing of this batch ran: released, not
@@ -3827,6 +3828,12 @@ export class ResidentExecutor {
       try { await this.receipt('train-front-yield', { key, pr: subject.pr, headSha: subject.headSha, mergeQueue: first.outcome.scheduling.mergeQueue }); } catch { /* a view */ }
       return this.frontBindEnd(key);
     }
+    // P1c: the ordinary batch's bundle, after its stage 1 and before the head is burned. A newer commit that arrives meanwhile is, as
+    // during stage 1, the rule's (DESIGN §72): after stage 1 only a live read ends a superseded batch (endIfNotStanding).
+    if (ordinary) {
+      const failed = await this.firstBundle(batch, subject);
+      if (failed) return failed;
+    }
 
     // Admitted and published: from here on this head is burned.
     await this.ledger.markStarted(key, { batchId: batch.batchId });
@@ -3836,7 +3843,7 @@ export class ResidentExecutor {
     // The wait's anchor (t0) and the derived batch, durable before the first wait evaluation: a later tick,
     // or a restarted service, continues from here without deriving or running stage 1 again.
     await this.ledger.beginWait(key, { t0, batch, claimExpiresAt: this.leaseOf(subject) });
-    const outcome = await this.continueBatch(key, subject, batch, t0);
+    const outcome = await this.continueBatch(key, subject, batch, t0, { reused });
     if (outcome?.state === 'WAITING') await this.receipt('relay-waiting', { key, until: outcome.until, reason: outcome.reason });
     return outcome;
   }
@@ -3867,15 +3874,31 @@ export class ResidentExecutor {
     return this.afterBatch(subject, entry.reserved.origin ?? 'queued', outcome);
   }
 
+  // The batch's first bundle (stage 0): it needs only the Owner's own read credential, has no Windows or Linux effect and publishes
+  // nothing, so its failure releases the reservation (fail(): phase 'bundle', before markStarted). A StepFailure, or null when built.
+  async firstBundle(batch, subject) {
+    this.atStage(0, 'bundle');
+    const bundle = await this.companion.buildBundle(batch);
+    // ADR 0019 (review 2): a member of a batch of several PRs moved on (companion.mjs#BUNDLE_MEMBER_MOVED_REASONS): its own code.
+    // Field defect 2026-11-14: main is no longer this subject's base (the bundle checked GitHub's refs): its own code, never the breaker.
+    const bundleCode = bundle?.code === TRAIN_BATCH_MEMBER_MOVED && Object.hasOwn(subject, 'testSha') ? TRAIN_BATCH_MEMBER_MOVED
+      : bundle?.code === RESIDENT_BASE_MOVED ? RESIDENT_BASE_MOVED : 'BUNDLE_UNAVAILABLE';
+    if (!bundle || bundle.ok !== true) return Object.assign(new StepFailure(0, bundleCode, {}, 'bundle'), { companionJobTree: bundle?.jobTree ?? null,
+      // Generation 10 (DESIGN 53.3): the companion's own word that a GitHub step failed in git (companion.mjs#bundleNetworkRefusal).
+      bundleNetwork: bundle?.code === BUNDLE_NETWORK_UNAVAILABLE });
+    return null;
+  }
+
   // Everything after 15-relay-wait: 20-plan-intent, 25-plan, the local roles, stage 8 and the close.
   //   resumed: this call resumes a batch that rested at parking point A in an earlier tick (resumeWaiting), never the
   //   batch's own first pass (DESIGN §37: only a batch that waited is re-bundled; independent review M1).
-  async continueBatch(key, subject, batch, t0, { resumed = false } = {}) {
+  //   reused: the front batch's scans reused as drive() found them before its bundle (P1c), so the plan is the one the bundle was built for.
+  async continueBatch(key, subject, batch, t0, { resumed = false, reused = null } = {}) {
     let aborted = await this.abortIfRequested(key, batch, 'before-relay-plan');
     if (aborted) return aborted;
     if (this.frontBindKeys.has(key)) return this.frontBindEnd(key);
     if ((aborted = await this.endIfNotStanding(key, subject, batch, 'before-relay-plan', POSITIONS[1]))) return aborted;
-    const plan = await this.localPlan(key, subject, t0);
+    const plan = await this.localPlan(key, subject, t0, reused);
     const relayed = 0;
 
     // Only LOCAL_REQUIRED roles run locally, in the fixed role order; the protocol records of the previous
@@ -4069,11 +4092,11 @@ export class ResidentExecutor {
   // 20-plan-intent -> 25-plan: every heavy role is local (the hosted relay is removed, DESIGN §76). The records are written exactly as
   // relay.enabled = false wrote them (reason RELAY_DISABLED, no candidates, nothing relayed), so older readers keep their meaning.
   // Returns the plan { candidates: [], relayed: [], local: [{ role, reason, receipt, source }] }.
-  async localPlan(key, subject, t0) {
+  async localPlan(key, subject, t0, given = null) {
     // A train front batch (a subject with S, §41.4, §38.8 m1): every role stays local with its own reason.
     const front = Object.hasOwn(subject, 'testSha');
     // Rule 41ab823a (DESIGN §75): a scan whose exact input already passed in a batch of this node is not run again on the front.
-    const reused = front ? await this.frontScansReused(subject) : [];
+    const reused = front ? given ?? await this.frontScansReused(subject) : [];
     const roles = front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES];
     const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';
     const reasons = Object.fromEntries(roles.map(r => [r, reason]));
