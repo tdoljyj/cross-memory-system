@@ -572,13 +572,16 @@ function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
 }
 
 # The package's gh and Git for Windows installers in the kit, each with the hash the package's prerequisite manifest pins (Codex review of
-# e0a3cded5, high 3; make-drill-kit.mjs INJECTED_TOOLS): one missing refuses the drill before any boot, by name.
+# e0a3cded5, high 3; make-drill-kit.mjs INJECTED_TOOLS): one missing refuses the drill before any boot, by name. Both are prerequisites
+# the package's bootstrap requires: the manifest declaring either not exactly once refuses too, never "nothing to check" (Codex review
+# of f33fc33e5, medium 3).
 function Assert-DrillKitToolsBound($KitInfo, [string]$ManifestFile) {
   $pm = Read-DrillJson $ManifestFile
   $kit = Read-DrillJson (Join-Path $KitInfo.dir 'kit.json')
-  foreach ($item in @(Get-Prop $pm 'items')) {
-    $name = [string](Get-Prop $item 'name')
-    if (@('gh', 'git-for-windows') -cnotcontains $name) { continue }
+  foreach ($name in @('gh', 'git-for-windows')) {
+    $declared = @(@(Get-Prop $pm 'items') | Where-Object { $null -ne $_ -and [string](Get-Prop $_ 'name') -ceq $name })
+    if ($declared.Count -ne 1) { throw (New-DrillError 'DRILL_PACKAGE_TOOL_NOT_DECLARED' $name) }
+    $item = $declared[0]
     $in = @(@(Get-Prop $kit 'files') | Where-Object { [string](Get-Prop $_ 'path') -ceq [string](Get-Prop $item 'fileName') -and [string](Get-Prop $_ 'sha256') -ceq [string](Get-Prop $item 'sha256') })
     if ($in.Count -ne 1) { throw (New-DrillError 'DRILL_KIT_TOOL_NOT_INJECTED' $name) }
   }

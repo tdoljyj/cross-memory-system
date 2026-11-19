@@ -224,9 +224,13 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     payloads[name] = bytes;
   }
   // the package's gh and Git for Windows installers are injected, both and with the package's hashes, or no kit (Codex review of
-  // e0a3cded5, high 3): the guest never fetches them
-  for (const need of (pm.items ?? []).filter(i => INJECTED_TOOLS.includes(i.name))) {
-    check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${need.name}`);
+  // e0a3cded5, high 3): the guest never fetches them. Each is a prerequisite the package's bootstrap requires, so its manifest must
+  // declare each exactly once: one missing (or twice) is refused, never taken as nothing to check (Codex review of f33fc33e5, medium 3).
+  for (const tool of INJECTED_TOOLS) {
+    const declared = (pm.items ?? []).filter(i => i?.name === tool);
+    check(declared.length === 1, `DRILL_PREREQ_TOOL_NOT_DECLARED:${tool}`);
+    const need = declared[0];
+    check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${tool}`);
   }
   const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials });
   fs.mkdirSync(out); // refuse an existing target, including a previous kit
