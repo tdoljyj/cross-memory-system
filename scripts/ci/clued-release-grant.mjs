@@ -62,9 +62,9 @@ export function doorInput(env, mode, { requestOnly = false } = {}) {
   const input = { action, resources: mode === "migrate" ? migrationResources(env) : [commitResource(env)] };
   if (mode === "migrate") input.with = [{ action: ACTIONS.deploy, resources: [commitResource(env)] }];
   if (requestOnly) input.request_only = true;
-  for (const [key, name] of [["run_id", "GITHUB_RUN_ID"], ["run_attempt", "GITHUB_RUN_ATTEMPT"]]) {
+  for (const [key, name, shape] of [["run_id", "GITHUB_RUN_ID", /^[1-9][0-9]{0,19}$/], ["run_attempt", "GITHUB_RUN_ATTEMPT", /^[1-9][0-9]{0,5}$/]]) {
     const value = (env[name] ?? "").trim();
-    if (/^[0-9]{1,20}$/.test(value)) input[key] = value;
+    if (shape.test(value)) input[key] = value;
   }
   return input;
 }
@@ -106,6 +106,11 @@ export function explain({ mode, answerText, errorText, env }) {
   if (answer && answer.status === "ok" && answer.consumed === true) {
     result.consumed = true;
     result.grant = answer.grant && typeof answer.grant === "object" ? answer.grant : null;
+    return result;
+  }
+  if (answer && answer.status === "ok" && answer.consumed === false && answer.admitted === true) {
+    // request_only found a live grant that admits the run: nothing to approve.
+    result.reason = `已有可用授权覆盖这次${WHAT[mode] ?? mode}，但本次没有用上它，生产没有变化。直接重跑本运行即可。`;
     return result;
   }
   if (answer && answer.status === "ok" && answer.consumed === false) {

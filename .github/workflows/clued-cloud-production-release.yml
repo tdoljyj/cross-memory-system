@@ -335,7 +335,7 @@ jobs:
             end if;
             -- The door must still work before this file can commit.
             if to_regprocedure('clued_private.release_door_v1(jsonb)') is null then raise exception 'release_door_probe_failed'; end if;
-            if clued_private.release_door_v1(jsonb_build_object('probe', true, 'action', 'migration.production'))->>'status' is distinct from 'ok' then
+            if clued_private.release_door_v1(jsonb_build_object('probe', true))->>'status' is distinct from 'ok' then
               raise exception 'release_door_probe_failed';
             end if;
             insert into supabase_migrations.schema_migrations(version, name, statements) values ('$version', '$short', array[s]);

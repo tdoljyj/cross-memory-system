@@ -46,6 +46,8 @@ test("release door v1: deploy asks for the exact commit, migrate for the named f
     request_only: true, run_id: "123", run_attempt: "2" });
   // Run numbers are self-reported context; anything but digits is left out.
   assert.equal("run_id" in doorInput(env({ GITHUB_RUN_ID: "1; drop" }), "deploy"), false);
+  // The door (PR-A) takes ^[1-9][0-9]{0,19}$ and ^[1-9][0-9]{0,5}$ and refuses anything else.
+  assert.deepEqual(Object.keys(doorInput(env({ GITHUB_RUN_ID: "0", GITHUB_RUN_ATTEMPT: "1234567" }), "deploy")), ["action", "resources"]);
   for (const [migrations, message] of [["", /1 to 50/], ["x.sql", /Not a migration file name/], ["../a.sql", /Not a migration/]]) {
     assert.throws(() => migrationResources(env({ MIGRATIONS: migrations })), message);
   }
@@ -68,6 +70,11 @@ test("release door v1: a consumed grant admits, a pending request prints its lin
   assert.equal(r.confirm_url, `https://example.test/confirm/${REQUEST}`);
   r = explain({ mode: "deploy", answerText: JSON.stringify({ status: "ok", consumed: false, owner_request: { confirm_path: "https://evil/x" } }), errorText: "", env: env() });
   assert.equal(r.confirm_url, null, "only a /confirm/<id> path becomes a link");
+  // request_only that finds a live grant: nothing to approve, rerun.
+  r = explain({ mode: "migrate", answerText: JSON.stringify({ status: "ok", consumed: false, admitted: true, action: "migration.production" }),
+    errorText: "", env: env({ MIGRATIONS: "20261003170000_a.sql" }) });
+  assert.deepEqual([r.consumed, r.confirm_url], [false, null]);
+  assert.match(r.reason, /已有可用授权.*重跑/);
 
   for (const [errorText, expected] of [
     ["ERROR:  function clued_private.release_door_v1(jsonb) does not exist", /发布门.*不在这个数据库里.*自举/],

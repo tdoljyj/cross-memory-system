@@ -53,6 +53,14 @@ declare
   v_grant clued_private.release_door_fixture_grants;
   v_request uuid;
 begin
+  -- Input checks as PR-A's door (20261119130000_release_door_db_identity_v1): known keys only, probe alone.
+  if exists(select 1 from jsonb_object_keys(p_input) k
+        where k not in ('action', 'resources', 'with', 'probe', 'request_only', 'run_id', 'run_attempt'))
+      or (p_input ? 'probe' and exists(select 1 from jsonb_object_keys(p_input) k where k not in ('probe', 'run_id', 'run_attempt')))
+      or (p_input ? 'run_id' and p_input->>'run_id' !~ '^[1-9][0-9]{0,19}$')
+      or (p_input ? 'run_attempt' and p_input->>'run_attempt' !~ '^[1-9][0-9]{0,5}$') then
+    raise exception 'release_door_input_invalid';
+  end if;
   if coalesce((p_input->>'probe')::boolean, false) then
     return jsonb_build_object('status', 'ok', 'probe', true);
   end if;
