@@ -260,10 +260,9 @@ function New-FirstInstallFacts($nodeProfile, [string]$operatorSid, [string]$vhdx
 }
 # Two facts documents are the same install when everything but observedAt is equal (a re-run finds its own facts).
 function Test-SameFacts($a, $b) {
-  $js = New-Object Web.Script.Serialization.JavaScriptSerializer
   $strip = { param($d) $o = [ordered]@{}; foreach ($k in @($d.Keys | Sort-Object)) { if ($k -cne 'observedAt') { $o[$k] = $d[$k] } }; $o }
   $canon = { param($v) if ($v -is [Collections.IDictionary]) { $o = [ordered]@{}; foreach ($k in @($v.Keys | Sort-Object)) { $o[$k] = & $canon $v[$k] }; $o } else { $v } }
-  $js.Serialize((& $canon (& $strip $a))) -ceq $js.Serialize((& $canon (& $strip $b)))
+  (ConvertTo-JsonLine (& $canon (& $strip $a))) -ceq (ConvertTo-JsonLine (& $canon (& $strip $b)))
 }
 # The Linux facts first-install-facts.py printed, as P1 needs them: the codes when this is not a host the first install can use.
 # $ownKeyPem: facts.json's signer key, when this first install wrote it already: its own Linux CI (a stopped launch) is not refused.
@@ -285,8 +284,61 @@ function New-RandomPassword { $b = New-Object byte[] 33; $r = [Security.Cryptogr
 function ConvertTo-Secure([string]$t) { $s = New-Object Security.SecureString; foreach ($ch in $t.ToCharArray()) { $s.AppendChar($ch) }; $s.MakeReadOnly(); $s }
 function Sha256File([string]$p) { $s = [Security.Cryptography.SHA256]::Create(); $f = [IO.File]::OpenRead($p); try { (-join ($s.ComputeHash($f) | ForEach-Object { $_.ToString('x2') })) } finally { $f.Dispose(); $s.Dispose() } }
 function Sha256Bytes([byte[]]$b) { $s = [Security.Cryptography.SHA256]::Create(); try { -join ($s.ComputeHash($b) | ForEach-Object { $_.ToString('x2') }) } finally { $s.Dispose() } }
-function Step([string]$name, $result) { ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ step = $name; result = $result })) }
-function Stop-Host([string]$code, $detail) { Clear-Secrets; ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = $code; detail = $detail })); exit 1 }
+# The one JSON writer of P1 (bootstrap.ps1's name; drill 3bc571a6 A1, Fable ruling 11-19 section 2.1): every line it prints and every
+# JSON file it writes goes through ConvertTo-JsonLine, and nothing else here calls the serializer. Under Windows PowerShell 5.1 a
+# cmdlet's output (Join-Path, Where-Object, Split-Path) is a string in a PSObject shell, which JavaScriptSerializer walks as an object
+# (PSParameterizedProperty: a circular reference); `Step 'stage' $stage` ended P1 so, and the READY line (facts = Join-Path) would have
+# ended it after a whole install. ConvertTo-PlainData takes the shell off and keeps only plain data: a string, a bool, a number, null,
+# a dictionary with string keys (ordered, its key order kept), a list (an array). Anything else (a FileInfo, a DateTime, an enum, a
+# PSCustomObject, a structure deeper than 32) is not plain data: progress (-Progress, Step) prints its type name instead and never stops
+# P1; a verdict line or facts.json is a contract and is refused by name (HOST_OUTPUT_NOT_PLAIN_DATA), never written in a form someone
+# has to guess at. ConvertTo-Json is not the way out (5.1's depth limit, one-element arrays and escaping are another set of traps).
+function ConvertTo-PlainData($value, [bool]$progress, [string]$at = '$', [int]$depth = 0) {
+  if ($null -eq $value) { return $null }
+  $v = $value.PSObject.BaseObject
+  $t = $v.GetType()
+  if ($v -is [string] -or $v -is [bool]) { return $v }
+  $tc = [int][Type]::GetTypeCode($t)
+  if ($t.IsPrimitive -and -not $t.IsEnum -and $tc -ge 5 -and $tc -le 14 -or $v -is [decimal]) { return $v }   # SByte..Double, Decimal
+  if ($depth -lt 32) {
+    if ($v -is [Collections.IDictionary]) {
+      $o = [ordered]@{}
+      foreach ($k in @($v.Keys)) {
+        $key = if ($null -ne $k) { $k.PSObject.BaseObject } else { $null }
+        if ($key -isnot [string]) { $o = $null; break }
+        $r = ConvertTo-PlainData $v[$k] $progress ($at + '.' + $key) ($depth + 1)
+        if ($null -ne $r) { $r = $r.PSObject.BaseObject }   # an array a function returns comes back in a shell again
+        $o[$key] = $r
+      }
+      if ($null -ne $o) { return $o }
+    } elseif ($v -is [Collections.IEnumerable]) {
+      $items = @(foreach ($x in $v) { , $x })
+      $a = New-Object object[] $items.Count
+      for ($i = 0; $i -lt $items.Count; $i++) {
+        $r = ConvertTo-PlainData $items[$i] $progress ($at + '[' + $i + ']') ($depth + 1)
+        if ($null -ne $r) { $r = $r.PSObject.BaseObject }
+        $a[$i] = $r
+      }
+      return , $a
+    }
+  }
+  if ($progress) { return ('<not plain data: ' + $t.FullName + '>') }
+  throw ('HOST_OUTPUT_NOT_PLAIN_DATA:' + $at + ':' + $t.FullName)
+}
+function ConvertTo-JsonLine($value, [switch]$Progress) {
+  $plain = try { ConvertTo-PlainData $value $Progress.IsPresent } catch {
+    if ($Progress -or [string]$_.Exception.Message -cnotmatch '^HOST_OUTPUT_NOT_PLAIN_DATA:(.*):([^:]*)$') { throw }
+    Stop-Host 'HOST_OUTPUT_NOT_PLAIN_DATA' ([ordered]@{ status = [string](Get-Key $value 'status'); code = [string](Get-Key $value 'code'); at = $Matches[1]; type = $Matches[2] })
+  }
+  if ($null -ne $plain) { $plain = $plain.PSObject.BaseObject }
+  (New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize($plain)
+}
+# Progress (an aid): one JSON line whatever it is given; it never throws and never ends P1.
+function Step([string]$name, $result) {
+  try { ConvertTo-JsonLine ([ordered]@{ step = $name; result = $result }) -Progress } catch { ConvertTo-JsonLine ([ordered]@{ step = $name; result = '<not printable>' }) -Progress }
+}
+# The refusal verdict: one JSON line, exit 1. A detail that is not plain data is refused by name with the code it was refusing.
+function Stop-Host([string]$code, $detail) { Clear-Secrets; ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = $code; detail = $detail }); exit 1 }
 function Clear-Secrets { foreach ($k in @($script:Secrets.Keys)) { [Array]::Clear($script:Secrets[$k], 0, $script:Secrets[$k].Length) }; $script:Secrets.Clear() }
 function New-Dir([string]$path, [string]$sddl) {
   if ([IO.Directory]::Exists($path)) {
@@ -568,7 +620,7 @@ function Invoke-HostPreparation {
     $have = Get-WslVersion ((Invoke-Native $Wsl @('--version') 120 ([Text.Encoding]::Unicode)).stdout)
     if ($have -cne $wantWsl) {
       $mi = Invoke-Native 'C:\Windows\System32\msiexec.exe' @('/i', $staged['wsl'], '/qn', '/norestart') 1800
-      if ($mi.exit -eq 3010) { ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'WSL installed' })); exit 3 }
+      if ($mi.exit -eq 3010) { ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'WSL installed' }); exit 3 }
       if ($mi.exit -ne 0) { Stop-Host 'WSL_MSI_FAILED' ([ordered]@{ exit = $mi.exit; stderr = $mi.stderr }) }
       $have = Get-WslVersion ((Invoke-Native $Wsl @('--version') 120 ([Text.Encoding]::Unicode)).stdout)
       if ($have -cne $wantWsl) { Stop-Host 'WSL_VERSION_NOT_THE_PINNED' ([ordered]@{ want = $wantWsl; have = $have }) }
@@ -583,7 +635,7 @@ function Invoke-HostPreparation {
         if ($en.exit -eq 3010) { $needRestart = $true } elseif ($en.exit -ne 0) { Stop-Host 'WINDOWS_FEATURE_ENABLE_FAILED' ([ordered]@{ feature = $feature; exit = $en.exit; stderr = $en.stderr }) }
       }
     }
-    if ($needRestart) { ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'Windows features enabled' })); exit 3 }
+    if ($needRestart) { ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'Windows features enabled' }); exit 3 }
     $null = Invoke-Native 'C:\Windows\System32\powercfg.exe' @('/change', 'standby-timeout-ac', '0') 120; $null = Invoke-Native 'C:\Windows\System32\powercfg.exe' @('/hibernate', 'off') 120
     Step 'features' 'enabled; standby-ac 0, hibernate off'
     # accounts
@@ -717,21 +769,21 @@ function Invoke-HostPreparation {
     $facts = New-FirstInstallFacts $nodeProfile $operator $VhdxDirectory $nodeRecord $cred $signer ([ordered]@{ resultPublicKeySha256 = (Sha256Bytes ([Text.Encoding]::ASCII.GetBytes($pem))); toolchainNodeSha256 = $ToolchainNodeSha256 }) ([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))
     if ($null -ne $old -and -not (Test-SameFacts $old $facts)) { Stop-Host 'FACTS_ALREADY_WRITTEN_DIFFER' 'this host is not the one facts.json describes: run bootstrap.ps1 -Reset first' }
     $draft = Join-Path $stage 'facts-draft.json'
-    [IO.File]::WriteAllText($draft, $js.Serialize($facts) + "`n", $Utf8)
+    [IO.File]::WriteAllText($draft, (ConvertTo-JsonLine $facts) + "`n", $Utf8)
     $fc = Invoke-FactsCheck $draft
     if (-not $fc.ok) { Stop-Host 'FACTS_REFUSED' ([ordered]@{ result = $fc.result; stderr = $fc.stderr }) }
     # only now, in this order (M1): facts.json (whole or not at all, create-only), then the secrets, then the companion WSL record. A run
     # cut off between them leaves facts.json without (some) secrets: the next run asks for what is missing, held to the fingerprints it
     # records, and -Reset removes it; never the App key and the ci-admission token without the facts that say whose they are.
-    if ($null -eq $old) { Write-NewFile $factsFile ($Utf8.GetBytes($js.Serialize($facts) + "`n")) (Get-FirstInstallSddl $operator) }
+    if ($null -eq $old) { Write-NewFile $factsFile ($Utf8.GetBytes((ConvertTo-JsonLine $facts) + "`n")) (Get-FirstInstallSddl $operator) }
     Write-Secrets $controllerSid
     Clear-Secrets
     $cw = [ordered]@{ contract = 'clued.independent-ci.companion-wsl/1'; distro = $Distribution; target = ($ImportDirectory + '\ext4.vhdx'); companionSid = $nodeProfile.ownerSid; stage = 'owner-imported'; imported = $true; importedBy = $operator }
     $cwFile = Join-Path $FirstDir 'companion-wsl.json'
-    if ([IO.File]::Exists($cwFile)) { if ($Strict8.GetString([IO.File]::ReadAllBytes($cwFile)).Trim() -cne $js.Serialize($cw)) { Stop-Host 'COMPANION_WSL_RECORD_ALREADY_WRITTEN_DIFFERS' $cwFile } }
-    else { Write-NewFile $cwFile ($Utf8.GetBytes($js.Serialize($cw) + "`n")) (Get-FirstInstallSddl $operator) }
+    if ([IO.File]::Exists($cwFile)) { if ($Strict8.GetString([IO.File]::ReadAllBytes($cwFile)).Trim() -cne (ConvertTo-JsonLine $cw)) { Stop-Host 'COMPANION_WSL_RECORD_ALREADY_WRITTEN_DIFFERS' $cwFile } }
+    else { Write-NewFile $cwFile ($Utf8.GetBytes((ConvertTo-JsonLine $cw) + "`n")) (Get-FirstInstallSddl $operator) }
     Step 'credentials' $plan.mode
-    ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $factsFile; factsSha256 = (Sha256File $factsFile); node = $nodeProfile.nodeName; credentials = $plan.mode }))
+    ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $factsFile; factsSha256 = (Sha256File $factsFile); node = $nodeProfile.nodeName; credentials = $plan.mode })
   } finally {
     Clear-Secrets
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
@@ -767,7 +819,7 @@ function Invoke-Reset($old, $observed, [string]$operator) {
     }
     $done += $a
   }
-  ((New-Object Web.Script.Serialization.JavaScriptSerializer).Serialize([ordered]@{ status = 'FIRST_INSTALL_HOST_RESET'; removed = $done; kept = @($plan.kept) }))
+  ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_RESET'; removed = $done; kept = @($plan.kept) })
 }
 
 $script:NodeExe = $null; $script:FingerprintTool = $null; $script:InstallMjs = $null; $script:Secrets = [ordered]@{}

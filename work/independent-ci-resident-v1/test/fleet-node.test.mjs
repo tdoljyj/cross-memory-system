@@ -96,7 +96,7 @@ function global:Get-Service {
 // has, cmdlet output (Join-Path, Where-Object, Split-Path), which 5.1 hands over in a PSObject shell. Before the one JSON writer the
 // guest stopped at `Step 'stage' $stage` with a PSParameterizedProperty circular reference, and so does this test.
 function hostScriptLines(body) {
-  const command = `$ErrorActionPreference = 'Stop'\n. ${psLiteral(path.join(RES, 'windows', 'first-install-host.ps1'))}\n${body}`;
+  const command = `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n. ${psLiteral(path.join(RES, 'windows', 'first-install-host.ps1'))}\n${body}`;
   const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
     { cwd: RES, env: childEnv(), encoding: 'utf8', maxBuffer: 1 << 24, windowsHide: true, timeout: 300_000 });
   assert.ifError(r.error);

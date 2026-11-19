@@ -77,9 +77,22 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 保持预算为 40 分钟加整轮限时再加 10 分钟，超过 120 分钟会拒绝开机。开机前和运行中均检查宿主状态与内存。
 来宾按同一截止时间自关机，重启后沿用截止时间。脚本确认关机并还原检查点后请求恢复接新，未确认时保持到期自解。
 
-本次验收包的 `universal-manifest.json` 文件清单列有随续期交付新增的 `windows/ci-connection-renew.contract.json` 时，适用 M5。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的六份文件。
-回执独立记录 `m5.result`。核验通过为 `PASS`，观测缺失、核验器缺失或核验失败为 `FAIL`。文件清单无续期组件时为 `NOT_EVALUATED`，回执说明原因。
-D5 单独检查这份回执的 `m5.result`，只接受 `PASS`。A 档按回执的 `conclusion` 判定，`-Finalize` 继续只处理 A 档回读。
+M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的六份文件。
+回执记录 `m5.result`：核验通过为 `PASS`，观测缺失（包里没有续期组件也是这一种）、核验器缺失或核验失败为 `FAIL`；`NOT_EVALUATED` 只出现在中途已失败的回执里。
+回执 `conclusion` 只有在 `m5.result` 为 `PASS` 时才可能不是 `FAIL`；`-Finalize` 同样按回执里的 `m5` 判，旧回执没有 `m5` 即 `FAIL`。
+
+## 候选形态：先演练、再接受
+
+Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-From` 里**没有** `fleet-node-<v>.acceptance.json` 即为候选
+（`prepareFrom` 在 `final/` 没有接受文件时照样组装）。构建器此时生成一份只供来宾用的接受文件，放进 kit、钉进 `kit.json` 与 `release-pins.json`：
+
+- 三项哈希取自候选本身：tar、`first-install-kit.json`、Source（`install.mjs` 的 `sourceHashOf`，即只读的 `source-hash`；它与 Decision、回执、acceptedAt 无关，3bc571a6 上实测同为 03c51347…ac5f）。
+- fleetRefs 里各版不变的五项与 `formalRoles`、`repository` 取自本机已装记录（只读：`record/acceptance.json` 与 `install.mjs fleet-refs` 同一来源）。
+- Decision 与其回执填 `make-drill-kit.mjs` 的 `DRILL_CANDIDATE_REFS`（仓库里唯一定义处）。`publish.mjs` 的挂接受入口见到它即拒绝（PR-乙 落地；在那之前靠接受文件由 DESK 手工挂、不会取 kit 里这份），所以这份文件上不了 Release；`-From` 里出现指名它的接受文件，构建器也拒绝（`DRILL_ACCEPTANCE_IS_A_CANDIDATES`）。
+- `kit.json` 的 `candidate` 记下这份文件名与三项哈希；`drill-vm.ps1` 用它代替 `-From` 的接受文件，核三项哈希一致，`-From` 里另有接受文件则拒绝（`DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE`）。
+- 来宾里跑的仍是包内原样的安装代码，没有任何“演练模式”分支。回执写 `candidate: true` 与 `tarSha256`、`ciSourceManifestSha256`、`firstInstallKitSha256`。
+
+用法与正式形态相同，只是 `final/` 里没有接受文件；构建 kit 的那台机器须是已装节点（读它的已装记录）。
 
 来宾关机计时器就绪前，由脱离宿主 Windows 作业的看门进程负责兜底。无法确认脱离时，脚本拒绝开机。
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。

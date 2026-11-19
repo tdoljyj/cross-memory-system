@@ -11,7 +11,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
-import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
+import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums, DRILL_CANDIDATE_REFS } from '../drill/make-drill-kit.mjs';
+import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 import { intakePauseRequest } from '../src/intake-pause.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
@@ -103,22 +104,23 @@ test('kit manifest is deterministic, pins exact bytes and uses only guest placeh
   assert.throws(() => readSums(`${'a'.repeat(64)}  ../x\n`), /SUMS_REFUSED/);
 });
 
-function firstInstallAssets(label) {
+function firstInstallAssets(label, { candidate = false } = {}) {
   const root = path.join(tmp, label); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
   const image = `role-image-${id}.tar.gz`;
   const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] } }));
-  const archive = writeTar(['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
+  const archive = writeTar([...['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
     path: `tree/work/independent-ci-resident-v1/rollout/fleet/${n}`,
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
       { fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 }
-    ], debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })));
+    ], debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
+    { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
   fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');
   fs.writeFileSync(path.join(root, 'build', 'SHA256SUMS'), `${sha(archive)}  ${tag}.tar\n${sha('{}')}  ${tag}.release.json\n`);
   fs.writeFileSync(path.join(root, 'final', `${tag}.first-install-kit.json`), kit);
-  fs.writeFileSync(path.join(root, 'final', `${tag}.acceptance.json`), JSON.stringify({
+  if (!candidate) fs.writeFileSync(path.join(root, 'final', `${tag}.acceptance.json`), JSON.stringify({
     contract: 'clued.independent-ci.fleet-node-acceptance/1', version, archive_sha256: sha(archive), firstInstallKitSha256: sha(kit), ciSourceManifestSha256: 'a'.repeat(64) }));
   fs.writeFileSync(path.join(root, 'images', image), 'fake image fixture');
   const prereq = path.join(root, 'prereq.json');
@@ -130,22 +132,24 @@ function firstInstallAssets(label) {
     from: path.join(root, 'from'), out: path.join(root, 'kit') };
 }
 
-test('local assembly mirrors publication, preserves originals, builds a kit accepted by drill', () => {
+test('local assembly mirrors publication, preserves originals, builds a kit accepted by drill', async () => {
   const f = firstInstallAssets('assembly-good');
   const before = fs.readFileSync(path.join(f.build, 'SHA256SUMS'));
   prepareFrom({ ...f, out: f.from });
   assert.deepEqual(fs.readFileSync(path.join(f.build, 'SHA256SUMS')), before);
   assert.equal(releasePins(f.from, f.version).files.length, 9);
-  makeDrillKit(f);
+  assert.equal(releasePins(f.from, f.version).candidate, false);
+  assert.equal((await makeDrillKit(f)).candidate, null);
   const manifest = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json')));
   for (const item of manifest.files) assert.equal(sha(fs.readFileSync(path.join(f.out, item.path))), item.sha256);
   if (windows) {
     assert.equal(ps(`(Read-DrillKit ${q(f.out)}).prerequisiteMode`), 'first-install-host');
     assert.equal(ps(`$p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)}; @(Get-DrillReleaseFiles $p (Read-DrillKit ${q(f.out)})).Count`), 9);
   }
-  assert.throws(() => makeDrillKit(f), /EEXIST/);
+  assert.equal(Object.hasOwn(manifest, 'candidate'), false);
+  await assert.rejects(() => makeDrillKit(f), /EEXIST/);
   fs.writeFileSync(path.join(f.root, 'wsl.msi'), 'changed');
-  assert.throws(() => makeDrillKit({ ...f, out: path.join(f.root, 'changed-prereq-kit') }), /PREREQ_CHANGED/);
+  await assert.rejects(() => makeDrillKit({ ...f, out: path.join(f.root, 'changed-prereq-kit') }), /PREREQ_CHANGED/);
   assert.ok(!fs.existsSync(path.join(f.root, 'changed-prereq-kit')), 'validate before writing kit');
   fs.appendFileSync(path.join(f.from, `fleet-node-${f.version}.bootstrap.ps1`), '# tampered');
   assert.throws(() => releasePins(f.from, f.version), /ASSET_HASH_MISMATCH/);
@@ -165,6 +169,59 @@ test('assembly rejects a different acceptance, extra assets and missing images',
   const img = fs.readdirSync(f.from).find(n => n.startsWith('role-image-'));
   fs.unlinkSync(path.join(f.from, img));
   assert.throws(() => releasePins(f.from, f.version), /ASSET_MISSING/);
+});
+
+// Fable ruling 11-19 section 2.3: candidate -> drill PASS -> the Owner accepts once. A From directory with no acceptance is a candidate:
+// the kit carries a drill-only acceptance that names the drill's stand-ins for the Decision and its receipt and the candidate's own three
+// hashes (archive, first-install kit, Source by source-hash); the run is held to them and the receipt names them with candidate: true.
+test('a candidate drills on a kit-carried acceptance: the drill stand-ins and the candidate\'s own three hashes', async () => {
+  const f = firstInstallAssets('candidate', { candidate: true });
+  prepareFrom({ ...f, out: f.from });
+  const tag = `fleet-node-${f.version}`, accName = `${tag}.acceptance.json`;
+  assert.equal(fs.existsSync(path.join(f.from, accName)), false);
+  assert.equal(releasePins(f.from, f.version).candidate, true);
+  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  const refs = { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5) };
+  const formalRoles = { gitleaks: { image: 'g' }, trivy: { image: 't' }, 'contract-placement': { image: 'c' } };
+  const drafts = [];
+  const deps = { hostFleetRefs: async () => ({ repository: 'tdoljyj/cross-memory-system', refs, formalRoles }),
+    sourceHash: async ({ acceptance }) => { drafts.push(acceptance); return { ciSourceManifestSha256: S }; } };
+  const now = Date.parse('2026-11-20T00:00:00Z');
+  const made = await makeDrillKit({ ...f, now, deps });
+  const tarSha = sha(fs.readFileSync(path.join(f.from, `${tag}.tar`)));
+  const kitSha = sha(fs.readFileSync(path.join(f.from, `${tag}.first-install-kit.json`)));
+  assert.deepEqual(made.candidate, { acceptance: accName, tarSha256: tarSha, ciSourceManifestSha256: S, firstInstallKitSha256: kitSha });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).candidate, made.candidate);
+  const accBytes = fs.readFileSync(path.join(f.out, accName)), acc = JSON.parse(accBytes);
+  const { decision, receipt } = DRILL_CANDIDATE_REFS;
+  assert.deepEqual(acc, { contract: 'clued.independent-ci.fleet-node-acceptance/1', version: f.version, archive_sha256: tarSha, commit: 'c'.repeat(40),
+    repository: 'tdoljyj/cross-memory-system', ciSourceManifestSha256: S, cluedDecision: decision, acceptedAt: '2026-11-19T00:00:00Z',
+    fleetRefs: { ...refs, ownerDecisionRef: decision, installationReceiptRef: receipt, ownerReceiptRef: receipt, formalRoles }, firstInstallKitSha256: kitSha });
+  validateAcceptance(acc, now);   // what the guest's install.mjs reads, unchanged: no drill mode in the package
+  assert.equal(drafts.length, 1); assert.equal(drafts[0].ciSourceManifestSha256, undefined);
+  const pins = JSON.parse(fs.readFileSync(path.join(f.out, 'release-pins.json')));
+  assert.deepEqual(pins.files.find(x => x.path === accName), { path: accName, sha256: sha(accBytes) });
+  assert.ok(JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'))).files.some(x => x.path === accName && x.sha256 === sha(accBytes)));
+  if (windows) {
+    const r = ps(`$k = Read-DrillKit ${q(f.out)}; $p = Test-DrillPackageDir ${q(f.from)} ${q(f.version)} $k
+      [ordered]@{ candidate = $p.candidate; acceptance = [string]$p.acceptance; kit = $p.firstInstallKitSha256; source = $p.ciSourceManifestSha256
+        files = @(Get-DrillReleaseFiles $p $k | ForEach-Object { [string]$_ }) }`);
+    assert.equal(r.candidate, true); assert.equal(r.acceptance, path.join(f.out, accName)); assert.equal(r.kit, kitSha); assert.equal(r.source, S);
+    assert.equal(r.files.length, 10); assert.ok(r.files.includes(path.join(f.out, accName)));
+    // the accepted (old) path is unchanged: without the kit, a From with no acceptance is refused as before
+    assert.equal(psCode(`Test-DrillPackageDir ${q(f.from)} ${q(f.version)}`), 'DRILL_PACKAGE_FILE_MISSING');
+    // a candidate kit with an acceptance in From too: which one would be meant is not guessed
+    fs.copyFileSync(path.join(f.out, accName), path.join(f.from, accName));
+    assert.equal(psCode(`Test-DrillPackageDir ${q(f.from)} ${q(f.version)} (Read-DrillKit ${q(f.out)})`), 'DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE');
+  } else fs.copyFileSync(path.join(f.out, accName), path.join(f.from, accName));
+  // an acceptance that names the drill's stand-ins is never taken for an Owner's
+  assert.throws(() => releasePins(f.from, f.version), /DRILL_ACCEPTANCE_IS_A_CANDIDATES/);
+  // the hashes the kit names are the run's: an acceptance changed after the kit was made is refused
+  if (windows) {
+    fs.unlinkSync(path.join(f.from, accName));
+    fs.writeFileSync(path.join(f.out, accName), JSON.stringify({ ...acc, ciSourceManifestSha256: L }));
+    assert.equal(psCode(`Read-DrillKit ${q(f.out)}`), 'DRILL_KIT_FILE_CHANGED');
+  }
 });
 
 test('the answer file is well-formed and installs Windows 11 Pro, zh-CN, a local admin, no online account', opts, () => {
@@ -815,7 +872,7 @@ test('M5 collects the six public observations and requires the host checker for 
 
 // A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
 // M5 observations `missing` and a host checker that answers `checker`.
-function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'] } = {}) {
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -837,7 +894,7 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
     $fixture.m5 = @{ directory = 'm5'; missing = @(${missing.map(q).join(', ')}); collectionCode = $null }
     function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
-    $package = @{ version = '1.2.3'; tar = ${q(archive)}; tarSha256 = ${q(sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)} }
+    $package = @{ version = '1.2.3'; tar = ${q(archive)}; tarSha256 = ${q(sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(L)}; candidate = ${candidate ? '$true' : '$false'} }
     $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
     Read-DrillJson $out.receipt
   `);
@@ -871,8 +928,12 @@ test('M5 is collected and judged for every package: the 3bc571a6 layout and a pa
 });
 
 test('A1-A10 passing with M5 not PASS is never a PASS; with M5 PASS the A tier goes on to -Finalize', opts, () => {
-  const passed = m5DrillReceipt('m5-pass', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
+  const passed = m5DrillReceipt('m5-pass', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true });
   assert.equal(passed.m5.result, 'PASS');
+  // a candidate's receipt says so and names the three hashes an acceptance of it must name (seal holds the acceptance to them)
+  assert.equal(passed.candidate, true);
+  assert.equal(passed.ciSourceManifestSha256, S); assert.equal(passed.firstInstallKitSha256, L); assert.match(passed.tarSha256, /^[0-9a-f]{64}$/);
+  assert.equal(m5DrillReceipt('m5-accepted', RENEWAL_3BC571A6).candidate, false);
   assert.equal(passed.conclusion, 'PENDING_PRODUCTION_READBACK');
   const done = finalize('m5-pass-finalize', passed);
   assert.equal(done.status, 0, JSON.stringify(done.output));
