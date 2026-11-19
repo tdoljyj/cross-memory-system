@@ -35,7 +35,7 @@ const readJson = async f => JSON.parse(await fs.readFile(f, 'utf8'));
 async function acceptanceOf(w, over = {}) {
   const decision = randomUUID(), receipt = randomUUID();
   const draft = { contract: 'clued.independent-ci.fleet-node-acceptance/1', version: w.release.source.version, archive_sha256: w.release.source.archive_sha256,
-    commit: w.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-13T00:00:00Z',
+    commit: w.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-13T00:00:00Z', firstInstallKitSha256: 'd'.repeat(64),
     fleetRefs: { sourceAcceptanceRef: w.fleet.sourceAcceptanceRef, hostQualificationRef: w.fleet.hostQualificationRef, ownerAuthorizationRef: decision,
       publisherQualificationRef: decision, ownerPackageAcceptanceRef: decision, installationReceiptRef: receipt, ownerDecisionRef: decision, ownerReceiptRef: receipt,
       formalRoles: w.fleet.formalRoles, ...over } };
@@ -251,4 +251,25 @@ test('fleet upgrade fetch: one command takes the tar from the second source, che
   assert.equal(r2.status, 'FLEET_NODE_UPGRADE_REFUSED');
   await assert.rejects(fs.access(path.join(dir, 'w2', 'unpacked')));
   assert.equal(ran.length, 1);
+});
+
+test('fleet upgrade fetch: a rollback to a package whose acceptance has no kit field is not stopped by this (newer) copy; the unpacked package judges it, and a new package without a kit is still refused by its own rule', { timeout: 900_000 }, async t => {
+  const w = await getWorld();
+  const version = w.release.source.version, tag = `fleet-node-${version}`, sha256 = w.release.source.archive_sha256;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-fetch-old-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const from = path.join(dir, 'from');
+  await fs.mkdir(from);
+  await fs.copyFile(w.tar, path.join(from, `${tag}.tar`));
+  const { firstInstallKitSha256, ...old } = w.acceptance;   // the shape of the acceptance of an older package (26401d59, 78ad314b)
+  await fs.writeFile(path.join(from, `${tag}.acceptance.json`), JSON.stringify(old));
+  await fs.writeFile(path.join(from, 'SHA256SUMS'), `${sha256}  ${tag}.tar\n`);
+  const noNetwork = { fetch: { apiBase: 'http://127.0.0.1:1', getToken: () => { throw new Error('no token'); } } };
+  const ran = [];
+  const runChild = (exe, args) => { ran.push(args); return { status: 0, stdout: '', last: JSON.stringify({ contract: 'clued.independent-ci.fleet-node-upgrade/1', status: 'FLEET_NODE_UPGRADE_REQUESTED' }), stderr: '' }; };
+  const r = await main(['fetch', '--version', version, '--work', path.join(dir, 'w1'), '--from', from, '--no-request'], { ...noNetwork, runChild });
+  assert.equal(r.status, 'FLEET_NODE_UPGRADE_REQUESTED', JSON.stringify(r).slice(0, 800));
+  assert.equal(ran.length, 1, 'the unpacked upgrade.mjs is run');
+  // this package's own rule (what the unpacked upgrade.mjs does with the same file): no kit, no upgrade
+  await assert.rejects(upgradeNode({ artifactPath: w.tar, artifactSha256: sha256, acceptance: old, root: w.a.root, workDir: path.join(dir, 'w2') }), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
 });

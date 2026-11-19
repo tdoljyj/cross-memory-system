@@ -20,6 +20,7 @@ import { FLEET_REF_KEYS, FORMAL_ROLES, LINUX_SCRIPTS, OWN_MODULES, PLAN_CONTRACT
 import { rolesDerived } from '../ports.mjs';
 import { readTar, writeTar } from '../tar.mjs';
 import { buildUniversal } from '../universal.mjs';
+import { upgradeNode } from '../upgrade.mjs';
 import { readPackageOnce } from '../../../upgrader/src/package.mjs';
 import { assembleRecord } from '../../../../actions-hosted-migration/independent-ci-v1/src/resident-v2/prepare-record.mjs';
 import { roles } from '../../../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
@@ -38,7 +39,7 @@ export function acceptanceOf(release, over = {}) {
   const fleetRefs = { sourceAcceptanceRef: decision, hostQualificationRef: randomUUID(), ownerAuthorizationRef: decision, publisherQualificationRef: decision,
     ownerPackageAcceptanceRef: decision, installationReceiptRef: receipt, ownerDecisionRef: decision, ownerReceiptRef: receipt, formalRoles: roles() };
   return { contract: 'clued.independent-ci.fleet-node-acceptance/1', version: release.source.version, archive_sha256: release.source.archive_sha256,
-    commit: release.source.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-12T00:00:00Z', fleetRefs, ...over };
+    commit: release.source.commit, repository: 'tdoljyj/cross-memory-system', cluedDecision: decision.slice(0, 8), acceptedAt: '2026-11-12T00:00:00Z', fleetRefs, firstInstallKitSha256: 'd'.repeat(64), ...over };
 }
 
 // The package's Python tools: rehearse.py always a stub (it reads the real C:\ProgramData root and runs the installed tools; a fixture
@@ -560,3 +561,36 @@ test('ports: the upgrader configuration is upgrader-config.py\'s bytes; the rein
   assert.equal(r.status, 0, r.stderr);
   assert.ok((await upgraderConfigFor({ recordDir: path.join(w.a.root, 'record'), residentTree: RES })).equals(await fs.readFile(out)));
 });
+
+// ---------------------------------------------------------------- the kit is part of every acceptance a node installs or upgrades to
+test('guard: a node installed before the kit field existed (its record\'s acceptance.json has none) is read and reinstalled to a version whose acceptance has the kit', { timeout: 600_000 }, async () => {
+  const w = await getWorld();
+  const installed = readJson(path.join(w.a.root, 'record', 'acceptance.json'));
+  assert.ok(!('firstInstallKitSha256' in installed), 'the installed record is an older one: no kit field');
+  assert.ok(w.acceptance.firstInstallKitSha256, 'the target version\'s acceptance has it');
+  const node = await readNode({ root: w.a.root });
+  assert.equal(node.profile.nodeName, w.a.profile.nodeName);
+  const r = await prepare(w, w.a, path.join(w.a.dir, 'install-guard'), { python: pythonTools().fn });
+  assert.equal(r.status, 'FLEET_NODE_INSTALL_PREPARED');
+});
+
+test('the target version\'s acceptance without firstInstallKitSha256 is refused by prepare and by upgrade before anything is written; only the draft source-hash reads may lack it',
+  { timeout: 600_000 }, async t => {
+    const w = await getWorld();
+    const d = await tempDir(t, 'fleetnokit');
+    const { firstInstallKitSha256, ...noKit } = w.acceptance;
+    const notReached = () => { throw new Error('not reached'); };
+    const work = path.join(d, 'prepare-work');
+    await assert.rejects(prepare(w, w.a, work, { acceptance: noKit, python: notReached }), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    await assert.rejects(fs.access(work), 'nothing written');
+    const upWork = path.join(d, 'upgrade-work');
+    await assert.rejects(upgradeNode({ artifactPath: w.tar, artifactSha256: w.release.source.archive_sha256, acceptance: noKit, root: w.a.root, workDir: upWork, request: notReached }),
+      { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    await assert.rejects(fs.access(upWork), 'nothing written');
+    assert.throws(() => validateAcceptance(noKit), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    assert.throws(() => validateAcceptance({ ...noKit, firstInstallKitSha256: undefined }), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
+    assert.throws(() => validateAcceptance({ ...noKit, firstInstallKitSha256: 'xyz' }), { code: 'FLEET_ACCEPTANCE_REFUSED' });
+    const { ciSourceManifestSha256, ...draft } = noKit;
+    validateAcceptance(draft, Date.now(), { draft: true });   // source-hash reads the draft before the kit exists
+    validateAcceptance(w.acceptance);
+  });

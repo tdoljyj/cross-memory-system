@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { settleProjectionLag, verifyReleaseState } from '../scripts/production-release-gate.mjs';
+import { verifyProductionRenewRateLimits } from '../scripts/verify-production-renew-rate-limits.mjs';
 
 const baseline = JSON.parse(await readFile(new URL(
   '../scripts/production-release-baseline.json', import.meta.url), 'utf8'));
@@ -22,6 +23,27 @@ const productionWorkflow = await readFile(new URL(
   '../../../.github/workflows/clued-cloud-production-release.yml', import.meta.url), 'utf8');
 const now = new Date('2026-09-23T05:12:49Z');
 const OWNER = 'a'.repeat(64), OTHER = 'b'.repeat(64);
+
+// The production workflow already runs this file in preflight and deploy modes.
+test('N1 production preflight requires both renewal rate limit bindings', async t => {
+  const config = verifyProductionRenewRateLimits(await readFile(new URL(
+    '../wrangler.production.jsonc', import.meta.url), 'utf8'));
+  assert.equal(config.build.command,
+    'node scripts/verify-production-renew-rate-limits.mjs && node scripts/production-release-gate.mjs --pre-deploy');
+  for (const name of ['CI_RENEW_SOURCE_LIMIT', 'CI_RENEW_IDENTITY_LIMIT']) {
+    await t.test(name, () => {
+      const configWithoutBinding = {
+        ...config,
+        ratelimits: config.ratelimits.filter(binding => binding.name !== name),
+        vars: { ...config.vars, [name]: 'not-a-rate-limit-binding' },
+      };
+      assert.throws(() => verifyProductionRenewRateLimits(
+        '// Production bindings\n' + JSON.stringify(configWithoutBinding)), {
+        message: `production_release_blocked:renew_rate_limit_binding_missing:${name}`,
+      });
+    });
+  }
+});
 
 function healthy() {
   return {
