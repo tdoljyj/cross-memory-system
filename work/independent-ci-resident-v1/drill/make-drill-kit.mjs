@@ -94,8 +94,10 @@ function duplicateJsonKey(text) {
 export function credentialsOfTar(tarBytes) {
   const entries = readTar(tarBytes).filter(e => e.path === CREDENTIAL_FILES);
   check(entries.length === 1, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'no credential-files.json in the archive');
-  const text = entries[0].data.toString('utf8');
-  let c = null;
+  // strict UTF-8 (8th review round, low 2): a bad byte is unreadable, never patched to U+FFFD under the original bytes' hash
+  let text = null, c = null;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(entries[0].data); } catch { text = null; }
+  check(text !== null, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json is not UTF-8');
   try { c = JSON.parse(text); } catch { c = null; }
   const group = g => g !== null && typeof g === 'object' && !Array.isArray(g) && Object.values(g).every(v => typeof v === 'string' && nameOK(v));
   check(c !== null && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).sort().join() === 'contract,optional,required' &&
