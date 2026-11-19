@@ -146,7 +146,9 @@ const validMembers = (b, m) => m === undefined || (Array.isArray(m) && m.length 
 const validBatch = b => plain(b) && Number.isSafeInteger(b.pr) && b.pr > 0 && ['headSha', 'baseSha', 'testSha', 'testTree'].every(k => SHA.test(b[k] ?? ''))
   && UUID.test(b.claimId ?? '') && iso(b.since) && [1, 2].includes(b.attempt) && validMembers(b, b.members)
   // headTree (rule 41ab823a, resident DESIGN §75): H's own tree, only for a front of one member.
-  && (b.headTree === undefined || (SHA.test(b.headTree) && b.members === undefined));
+  && (b.headTree === undefined || (SHA.test(b.headTree) && b.members === undefined))
+  // baseInHead (resident DESIGN §75, the review ruling): stage 10's own compare of exactly (T, H) says T is in H; only true, one member only.
+  && (b.baseInHead === undefined || (b.baseInHead === true && b.members === undefined));
 const validNodes = n => n === null || (Array.isArray(n) && n.length <= 64 && n.every(x => plain(x) && (x.node === null || (typeof x.node === 'string' && x.node.length <= 200))
   && (x.sourceManifestSha256 === null || HEX64.test(x.sourceManifestSha256 ?? '')) && (x.state === null || (typeof x.state === 'string' && x.state.length <= 40))
   && (x.lastHeartbeatAt === null || iso(x.lastHeartbeatAt))));

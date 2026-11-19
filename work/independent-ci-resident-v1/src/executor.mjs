@@ -132,6 +132,7 @@ import { HEAVY_ROLES, RELAY_STAGE, ROLE_STAGES, trainSettings, trainSweepMode, t
 import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS, validateResidentRequest } from './resident-requests.mjs';
 import { ALERT_RECEIPT } from './retention.mjs';
 import { NODE_RESOURCE_HOLDER } from './host-capacity.mjs';
+import { stageHeadScans } from './head-scans.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
@@ -415,6 +416,8 @@ export const BUNDLE_MAX_AGE_AT_WORKSPACE_MS = 100 * 60_000;
 export const REBUNDLE_AFTER_MS = 30 * 60_000;
 // The status row reason of a batch that rests at parking point A (the hosted wait).
 export const PARKED_A_REASON = 'PARKED_A';
+// Rule 41ab823a: at most this many front batches' stage-1 scan facts are kept between their stage 1 and their plan (normally one).
+export const FRONT_HEAD_SCANS_KEPT = 8;
 const dayKey = ms => new Date(ms).toISOString().slice(0, 10);
 
 // The stage-terminal receipt's summary of a stage outcome: codes and flags only.
@@ -482,6 +485,9 @@ export class ResidentExecutor {
     this.frontBatches = new Map();
     this.frontKeys = new Map();
     this.frontBindings = new Map();
+    // Rule 41ab823a (DESIGN §75, Fable 2026-11-19): what a front batch's own stage 1 read on GitHub about the scans H already carries
+    // (batch key -> [{ role, externalId }]), used once by its plan (frontScansReused). Memory only: lost on a restart, the batch scans.
+    this.frontHeadScans = new Map();
     // Field defect PR #1035: the newest front batch offerFront refused only because the PR's row was busy (enqueueFront, trainActed).
     this.frontRetry = null;
     this.trainStrictReadiness = null;
@@ -2385,7 +2391,8 @@ export class ResidentExecutor {
     this.frontKeys.set(key, front.attempt);
     await this.persistQueue();
     await this.receipt('train-front-enqueued', { key, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, testTree: front.testTree,
-      attempt: front.attempt, claimId: front.claimId, since: front.since, ...(front.members ? { members: front.members } : {}), ...(front.headTree ? { headTree: front.headTree } : {}) });
+      attempt: front.attempt, claimId: front.claimId, since: front.since, ...(front.members ? { members: front.members } : {}), ...(front.headTree ? { headTree: front.headTree } : {}),
+      ...(front.baseInHead === true ? { baseInHead: true } : {}) });
     this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
     return key;
   }
@@ -3829,6 +3836,15 @@ export class ResidentExecutor {
       }
       return new StepFailure(1, first.code, first.proof, 'stage', 0, first);
     }
+    // Rule 41ab823a (DESIGN §75): stage 1 of a front batch names the scans H already carries on GitHub (head-scans.mjs#stageHeadScans); a
+    // stage 1 that named none leaves no older fact of this key behind.
+    if (Object.hasOwn(subject, 'testSha')) {
+      const scans = stageHeadScans(first.outcome?.headScans);
+      if (scans) {
+        this.frontHeadScans.set(key, scans);
+        while (this.frontHeadScans.size > FRONT_HEAD_SCANS_KEPT) this.frontHeadScans.delete(this.frontHeadScans.keys().next().value);
+      } else this.frontHeadScans.delete(key);
+    }
     // Defect a8910e41 (DESIGN §62.4): the take-over binding run ends right here, before markStarted would burn the head: only stage 1
     // ran (it may run again on this head, as every stage-1 release), and fail() releases the reservation (TRAIN_FRONT_BOUND). A binding
     // run that an older version left STARTED still ends in continueBatch, burned as before.
@@ -4048,35 +4064,23 @@ export class ResidentExecutor {
     return this.stage8Try(key, subject, batch);
   }
 
-  // Rule 41ab823a, DESIGN §75: which scans of this front batch (a subject with S) already ran on exactly the same input, here: a batch of
-  // this node with the same repo, PR, head H, base T and Source whose tested tree is S's tree, and that rested at parking point B (every
-  // stage of its local roles passed, their checks are on H). Those are its ordinary batch when stage 10 named H's tree and it equals S's
-  // tree (a single-member front: S = merge(T, H) adds nothing to H), and an earlier front batch of this head on this main whose S had the
-  // same tree (GitHub regenerated S). Each role a parked candidate ran locally is reused once: [{ role, from: its batch key }], in role
-  // order. Anything that does not fit or cannot be read reuses nothing (the front batch scans as before); a relayed role never counts
-  // (another provider: no trusted transfer, rule 41ab823a).
-  async frontScansReused(subject) {
+  // Rule 41ab823a, DESIGN §75 (Fable 2026-11-19, field #1170): which scans of this front batch (a subject with S) need not run, because
+  // H already carries them on GitHub. The evidence is what this batch's own stage 1 read there (frontHeadScans: App 5368905's newest
+  // check of each scan name on H, completed and successful, a scanner publication whose summary says it tested H itself; Source
+  // published-on-github-v2.mjs#headScansOf), the very checks the merge gate reads, never this node's ledger: an ordinary batch that
+  // was archived (upgrade drain, park age or capacity), lost with a reinstall or run on another node still counts. Its Source is not a
+  // condition (as executed-heads: a check published on H stays valid under any Source). A front of one member only, whose S has H's own
+  // tree (stage 10's headTree) and whose T is in H (stage 10's own compare of exactly this (T, H): baseInHead), on this batch's H and T,
+  // so S holds nothing H does not. Each such role is reused once: [{ role, from: the check's external id }] (the
+  // external id carries a job id, a one-way digest: the batch key cannot be read from it), in role order. Anything that does not fit, or
+  // no evidence (stage 1 named none, or a restart lost it): reuses nothing, the front batch scans as before.
+  frontScansReused(key, subject) {
+    const scans = stageHeadScans(this.frontHeadScans.get(key));
+    this.frontHeadScans.delete(key);
     const front = this.frontBindings.get(`${subject.pr}:${subject.testSha}`);
-    if (!front || front.members || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha || !HEX40.test(front.testTree ?? '')) return [];
-    const { testSha, ...ordinary } = subject;
-    const candidates = [];
-    if (front.headTree === front.testTree) candidates.push(ordinary);
-    for (const f of this.frontBindings.values()) {
-      if (f !== front && !f.members && f.pr === subject.pr && f.headSha === subject.headSha && f.baseSha === subject.baseSha && f.testSha !== testSha
-        && f.testTree === front.testTree) candidates.push({ ...ordinary, testSha: f.testSha });
-    }
-    const out = [];
-    for (const c of candidates) {
-      for (const attempt of [1, 2]) {
-        try {
-          const from = batchKey({ ...c, attempt }), s = await this.ledger.state(from), r = s.reserved?.subject;
-          if (!s.parked || !Array.isArray(s.parked.local) || !r || r.repo !== subject.repo || r.pr !== subject.pr || r.headSha !== subject.headSha
-            || r.baseSha !== subject.baseSha || r.sourceManifestSha256 !== subject.sourceManifestSha256 || r.testSha !== c.testSha || batchKey(r) !== from) continue;
-          for (const role of HEAVY_ROLES) if (s.parked.local.includes(role) && !out.some(x => x.role === role)) out.push({ role, from });
-        } catch { /* reuses nothing from it */ }
-      }
-    }
-    return HEAVY_ROLES.flatMap(role => out.filter(x => x.role === role));
+    if (!scans || !front || front.members || front.headSha !== subject.headSha || front.baseSha !== subject.baseSha || !HEX40.test(front.testTree ?? '')
+      || front.headTree !== front.testTree || front.baseInHead !== true) return [];
+    return HEAVY_ROLES.flatMap(role => scans.filter(x => x.role === role).map(x => ({ role, from: x.externalId })));
   }
 
   // 20-plan-intent -> 25-plan: every heavy role is local (the hosted relay is removed, DESIGN §76). The records are written exactly as
@@ -4085,8 +4089,8 @@ export class ResidentExecutor {
   async localPlan(key, subject, t0) {
     // A train front batch (a subject with S, §41.4, §38.8 m1): every role stays local with its own reason.
     const front = Object.hasOwn(subject, 'testSha');
-    // Rule 41ab823a (DESIGN §75): a scan whose exact input already passed in a batch of this node is not run again on the front.
-    const reused = front ? await this.frontScansReused(subject) : [];
+    // Rule 41ab823a (DESIGN §75): a scan whose check H already carries on GitHub (read by this batch's stage 1) is not run again on the front.
+    const reused = front ? this.frontScansReused(key, subject) : [];
     const roles = front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES];
     const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';
     const reasons = Object.fromEntries(roles.map(r => [r, reason]));

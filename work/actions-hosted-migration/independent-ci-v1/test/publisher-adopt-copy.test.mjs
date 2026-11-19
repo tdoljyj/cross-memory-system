@@ -10,6 +10,8 @@ import { EffectJournal } from '../src/effect-journal.mjs';
 import { ADOPT_READ_DELAYS_MS, adoptReadAllowed, createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult, admittedFacts } from './resident-v2-fixtures.mjs';
+// A namespace import: the tested-line pair (rule 41ab823a) is checked by its own test, so a Source without it fails only there.
+import * as onGithub from '../src/published-on-github-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
@@ -38,10 +40,10 @@ function lossyGithub({ visibleAfter = 2, alter = null } = {}) {
     async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
 }
 
-async function world(t, github) {
+async function world(t, github, { testSha = HEAD } = {}) {
   const { signer, docs } = fixtureRecord();
   const record = validateRecordV2(docs, { now: Date.now() });
-  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1 }).gitleaks;
+  const job = batchJobsV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1 }).gitleaks;
   const c = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) };
   const refs = Object.fromEntries(REFS.map(k => [k, record.accepted[k]]));
   const authority = { fixture: true, async observe(j) { return { ...subjectOfV2(j), ...refs, ciPrincipalBindingId: record.config.ciPrincipalBindingId, sourceAccepted: true,
@@ -120,4 +122,22 @@ test('which failed creates are looked for: a Native handle, a proof of not sendi
   assert.equal(adoptReadAllowed(Object.assign(new Error('github_http_422'), { code: 'github_http_422' }), null), false);
   assert.equal(adoptReadAllowed(Object.assign(new Error('github_transport_unconfirmed'), { code: 'github_transport_unconfirmed', retryable: true, unsent: true }), null), false);
   assert.equal(adoptReadAllowed(Object.assign(new Error('github_transport_unconfirmed'), { code: 'github_transport_unconfirmed', retryable: true, unsent: false }), null), true);
+});
+
+// R5 (rule 41ab823a, resident DESIGN §75; Fable's review ruling B1): every scanner check says which commit it tested, on a line of its own,
+// "tested <40 hex>": a batch that tests the head writes H, a train front batch its S. A check that does not say it, or says another commit,
+// is never reused for H (published-on-github-v2.mjs#headScansOf reads it with the same pair of functions).
+test('R5: the published scanner check names the tested commit once: H for a batch of the head, S for a train front batch', async t => {
+  const S = 'd'.repeat(40);
+  for (const [testSha, expected] of [[HEAD, HEAD], [S, S]]) {
+    const github = lossyGithub({ visibleAfter: 2 });
+    const w = await world(t, github, { testSha });
+    const r = await w.publish();
+    assert.equal(r.status, 'SETTLED', JSON.stringify(r));
+    const [check] = github.checks;
+    const lines = (check.output?.summary ?? '').split('\n').filter(l => /^tested /.test(l));
+    assert.deepEqual(lines, [`tested ${expected}`], check.output?.summary);
+    assert.equal(onGithub.scanTestedOf(check.output.summary), expected);
+    assert.equal(check.head_sha, HEAD, 'published on H either way');
+  }
 });

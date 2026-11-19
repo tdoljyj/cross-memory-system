@@ -25,10 +25,14 @@ import { validateJobV2, SCANNER_ROLES_V2, subjectOfV2, scanEffectKeyV2, scanExte
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from './full-admission-v2.mjs';
 import { claimRolePublication, rolePublicationKey } from './effect-journal.mjs';
-import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames } from './published-on-github-v2.mjs';
+import { ROLE_ALREADY_ON_GITHUB_REASON, publishedNames, scanTestedLine } from './published-on-github-v2.mjs';
 import { withdrawalTitle, withdrawalNote, verificationUnavailable, withdrawnForUnavailability } from './withdrawal-text.mjs';
 
 const HASH = /^[a-f0-9]{64}$/;
+// Rule 41ab823a (resident DESIGN §75): every scanner check says which commit it scanned, a line of its own (published-on-github-v2.mjs
+// #scanTestedLine): a train front batch its test merge S, every other batch the head H. A train front batch reuses on H only the checks
+// that tested H itself (published-on-github-v2.mjs#headScansOf).
+const testedLineOf = job => scanTestedLine(isTrainFrontJobV2(job) ? job.testSha : job.headSha);
 // Generation 28 (resident docs/adr/0015, defect 664cc8eb; field #1037 head 26ac75e4, stage 7): a publication withdrawn only because its
 // verification after the write could not be read (GitHub or Native did not answer in time) and with no change of its authorization observed
 // used to end the head for good (PUBLICATION_REVOKED, the head burned). Such a withdrawal is now followed, at the resident's next try of the
@@ -327,7 +331,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     try {
       sideEffects++;
       const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure',
-        output: { title: withdrawalTitle('Independent CI', whyWithdrawn), summary: `Staged Native observation; reconcile ${key}${withdrawalNote(whyWithdrawn)}` } });
+        output: { title: withdrawalTitle('Independent CI', whyWithdrawn), summary: `Staged Native observation; reconcile ${key}${withdrawalNote(whyWithdrawn)}\n${testedLineOf(job)}` } });
       if (!identity(patched, definition, job, externalId) || patched.status !== 'completed' || patched.conclusion !== 'failure') stop('revocation_unconfirmed');
       await readback(known, definition, job, externalId, 'failure');
       if (revocationLogged) await journal.transition(revocationKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
@@ -417,7 +421,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         if (!fresh(before.native, clock())) stop('lease_expired_before_write', true);
         const payload = { name: definition.name, head_sha: job.headSha, status: 'completed', conclusion: before.verified.payload.conclusion,
           external_id: externalId, output: { title: `${definition.name}: ${before.verified.payload.conclusion}`,
-            summary: `Independent CI job ${job.id} (attempt ${job.attempt}${republication ? `, republication ${republication} after a withdrawn verification` : ''}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}` } };
+            summary: `Independent CI job ${job.id} (attempt ${job.attempt}${republication ? `, republication ${republication} after a withdrawn verification` : ''}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}\n${testedLineOf(job)}` } };
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
         const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId, withdrawn);
