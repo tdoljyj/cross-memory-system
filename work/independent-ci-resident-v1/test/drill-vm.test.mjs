@@ -1660,13 +1660,7 @@ function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, initSecon
     function Invoke-DrillBaseline { param($RunDir, [switch]$ExistingOnly) [ordered]@{ action = 'ready' } }
     function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
     function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) $script:events.Add('restore') }
-    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint, $Window)
-      $state = [hashtable]::Synchronized(@{ stop = $false; ready = $true; armed = $false; failure = $null; cleanup = $null;
-        executorStates = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal); deadline = $Window.deadline; holdUntil = $Window.holdUntil })
-      $script:HostGuard = @{ state = $state; pending = @{ IsCompleted = $false } }
-      return $script:HostGuard
-    }
-    function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
+    # the real host guard (its own runspace, the status file above; its next check an hour away): before the boot it reads duty and hold only
     function Start-DrillBootWatchdog { @{ signal = ${q(path.join(tmp, 'preboot-signal'))}; process = $null } }
     function Assert-DrillWatchdogAlive { param($Watchdog) }
     function Start-VM { param($Name, $ErrorAction) $script:events.Add('boot') }
@@ -1683,10 +1677,10 @@ function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, initSecon
 }
 const early = ['status', 'windows-processes', 'wsl-running', 'wsl-ps'];
 const release = ['windows-processes', 'wsl-running', 'wsl-release-script exit 0'];
-// the entry's own early check, the release, the host checks after the restore, the boot gate (r1: the boot gate read memory first)
-const entryCheck = early;
-const hostCheck = early;
-const bootGate = ['status', 'memory', 'windows-processes', 'wsl-running', 'wsl-ps'];
+// the entry's and the post-restore host checks read the duty and the hold only; the boot gate samples both sides, then memory
+const entryCheck = ['status'];
+const hostCheck = ['status'];
+const bootGate = ['status', 'windows-processes', 'wsl-running', 'wsl-ps', 'memory'];
 
 test('from the real entry: early refusal without memory, the release, then the boot gate judges memory once; short before the release still boots', shOpts, () => {
   const r = ps(`${preBootWorld()}
@@ -1713,10 +1707,10 @@ test('from the real entry: early refusal without memory, the release, then the b
 
 test('the release looks for Runner.Worker itself: a job that appears after the early sample skips it, and the boot gate refuses', shOpts, () => {
   const r = ps(`${preBootWorld()}
-    $script:jobInDistributionAfter = 2
+    $script:jobInDistributionAfter = 1
     $wsl = Invoke-Entry
     $script:events.Clear(); $script:released = $false; $script:jobInDistributionAfter = -1
-    function Get-Process { param($ErrorAction) $script:events.Add('windows-processes'); $n = @('Runner.Listener'); if (@($script:events | Where-Object { $_ -ceq 'wsl-ps' }).Count -ge 2) { $n += 'Runner.Worker' }; $n | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
+    function Get-Process { param($ErrorAction) $script:events.Add('windows-processes'); $n = @('Runner.Listener'); if (@($script:events | Where-Object { $_ -ceq 'wsl-ps' }).Count -ge 1) { $n += 'Runner.Worker' }; $n | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
     $windows = Invoke-Entry
     @{ wsl = $wsl; windows = $windows }`);
   const at = r.wsl.events.indexOf('wsl-release-script exit 3');
@@ -1736,7 +1730,7 @@ test('a probe that found the distribution just started is recorded where it happ
   const r = ps(`${preBootWorld({ initSeconds: 3 })}
     Invoke-Entry`);
   assert.ok(!r.events.some(e => e.startsWith('STOP')), r.events.join(','));
-  assert.equal(r.events.filter(e => e === 'wsl-ps').length, 4, 'one probe per sample, no retry');
+  assert.equal(r.events.filter(e => e === 'wsl-ps').length, 2, 'one probe per sample, no retry');
   assert.deepEqual(r.out.hostPreBoot.early.wslStartedByProbe, ['Fixture-CI']);
   assert.deepEqual(r.out.hostPreBoot.release.wslStartedByProbe, ['Fixture-CI'], 'the release script\'s own list');
   assert.deepEqual(r.out.hostPreBoot.bootGate.wslStartedByProbe, ['Fixture-CI']);
@@ -1745,6 +1739,26 @@ test('a probe that found the distribution just started is recorded where it happ
 
 // Right before each distribution the release reads the Windows side and the running list again: a distribution that stopped since the
 // early sample gets no command (a command would start it), and a Windows job that appeared after the first distribution stops the rest.
+// Codex review of 74e7a65e7, medium 1: a refusal at the duty check carries no memory figure (nothing was read), and a built baseline
+// keeps its three stages in baseline.json.
+test('no memory figure where none was read, and baseline.json keeps the pre-boot stages', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} }
+    $onDuty = Get-DrillHostSafety
+    function Assert-DrillHost { @{ ok = $true } }
+    function Invoke-DrillBaseline { param($RunDir, [switch]$ExistingOnly)
+      $script:DrillPreBoot = [ordered]@{ early = 'e'; release = 'r'; bootGate = [ordered]@{ freeGB = 20 } }
+      [ordered]@{ action = 'build'; checkpoint = 'S0-clean-os' } }
+    $script:Drill.Runs = ${q(fs.mkdtempSync(path.join(tmp, 'baseline-')))}
+    $script:BaselineOnly = $true
+    $out = Invoke-DrillPreparedRun @{ safeToResume = $true; deadline = [DateTimeOffset]::MinValue; holdUntil = [DateTimeOffset]::MinValue } $null $null $null
+    @{ onDuty = $onDuty; out = $out; baseline = (Read-DrillJson $out.evidence) }`);
+  assert.equal(r.onDuty.code, 'DRILL_HOST_IS_ON_DUTY');
+  assert.equal(r.onDuty.freeGB, null);
+  assert.equal(r.out.hostFreeGB, 20);
+  assert.deepEqual(r.baseline.hostPreBoot, { early: 'e', release: 'r', bootGate: { freeGB: 20 } });
+});
+
 test('the release reads Windows and the running list again before each distribution, and leaves one that stopped alone', opts, () => {
   const r = ps(`
     $script:calls = [Collections.Generic.List[string]]::new()

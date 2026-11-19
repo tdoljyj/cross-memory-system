@@ -997,11 +997,17 @@ function Read-DrillHostStatus {
 function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly, [switch]$JobsOnly) {
   $json = Read-DrillHostStatus
   $duty = Test-DrillHostSafety $json ([long]::MaxValue) -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
-  if (-not $duty.ok -or $StatusOnly) { return $duty }
+  if (-not $duty.ok -or $StatusOnly) { $duty.freeGB = $null; $duty.requiredFreeBytes = $null; return $duty }   # no memory was read
   try {
     $free = [long]::MaxValue
     $target = $script:Drill.MemoryBytes
     $assigned = 0L
+    # both sides' processes first, memory after: the reading a boot rests on is the latest one (Codex review of 74e7a65e7, high 2)
+    $processes = @(); $wsl = @{ ok = $true; names = @(); running = @(); initSeconds = @{}; reason = $null }
+    if (-not $Running) {
+      $processes = @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName })
+      $wsl = Get-DrillWslRunnerState
+    }
     if (-not $JobsOnly) {
       $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 5 -ErrorAction Stop
       if ($null -eq $os.FreePhysicalMemory) { throw 'missing memory reading' }
@@ -1012,11 +1018,6 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
         $target = [Math]::Max($target, [long]$vm.MemoryStartup)
         $assigned = [long]$vm.MemoryAssigned
       }
-    }
-    $processes = @(); $wsl = @{ ok = $true; names = @(); running = @(); initSeconds = @{}; reason = $null }
-    if (-not $Running) {
-      $processes = @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName })
-      $wsl = Get-DrillWslRunnerState
     }
     $wslNames = $null
     if ($wsl.ok) { $wslNames = $wsl.names }
@@ -1036,10 +1037,11 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
   return $safety
 }
 
-# Before a boot: the duty, the hold and both sides' runner jobs, never memory (that is the boot gate's, once, after the cache release).
+# The duty and the hold only: runner jobs are sampled in the three recorded pre-boot stages and memory by the boot gate alone, so no
+# sample is taken that the receipt does not keep (Codex review of 74e7a65e7, medium 1).
 function Assert-DrillHostSafety([DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
   Assert-DrillGuard
-  $safety = Get-DrillHostSafety -HoldUntil $HoldUntil -JobsOnly
+  $safety = Get-DrillHostSafety -HoldUntil $HoldUntil -StatusOnly
   if (-not $safety.ok) { throw (New-DrillError $safety.code $safety) }
   return $safety
 }
@@ -1427,13 +1429,16 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
   }
 }
 
-function Get-DrillGuardSafety($State) {
+# Before the boot (not armed) the guard watches the duty and the hold only: runner jobs and memory are the boot gate's, judged once, in
+# Start-DrillGuardedVm (-BootGate). Armed, it is the running gate. (Codex review of 74e7a65e7, high 2.)
+function Get-DrillGuardSafety($State, [switch]$BootGate) {
   $deadline = Get-Prop $State 'deadline'
   if ($deadline -and $deadline -ne [DateTimeOffset]::MinValue -and (Get-DrillTime) -ge $deadline) {
     return @{ ok = $false; code = 'DRILL_RUN_TIMEOUT'; deadline = $deadline }
   }
   $holdUntil = Get-Prop $State 'holdUntil'
   if ($null -eq $holdUntil) { $holdUntil = [DateTimeOffset]::MinValue }
+  if (-not $State.armed -and -not $BootGate) { return Get-DrillHostSafety -HoldUntil $holdUntil -StatusOnly }
   return Get-DrillHostSafety -Running:$State.armed -HoldUntil $holdUntil
 }
 
@@ -1471,7 +1476,7 @@ function Start-DrillGuardedVm($Watchdog) {
   try {
     Assert-DrillGuard
     # the boot gate: both sides' runner jobs again, then memory, judged here once
-    $safety = Get-DrillGuardSafety $state
+    $safety = Get-DrillGuardSafety $state -BootGate
     if ($script:DrillPreBoot) { $script:DrillPreBoot.bootGate = ConvertTo-DrillGateTrace $safety }
     if (-not $safety.ok) { throw (New-DrillError $safety.code $safety) }
     if ($Watchdog) {
@@ -2283,13 +2288,15 @@ function Invoke-DrillMain {
 }
 
 function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
-  $mem = Assert-DrillHost -HoldUntil $Window.holdUntil
+  $script:DrillPreBoot = $null
+  [void](Assert-DrillHost -HoldUntil $Window.holdUntil)
   $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
   $label = if ($Version) { $Version } elseif ($PrereqOnly) { 'prereq' } else { 'baseline' }
   $runDir = Join-Path $script:Drill.Runs "$stamp-$label-$([guid]::NewGuid().ToString('N').Substring(0,8))"
   New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
   $baseline = Invoke-DrillBaseline $runDir -ExistingOnly:($Window.holdUntil -ne [DateTimeOffset]::MinValue)
+  if ($baseline -is [Collections.IDictionary]) { $baseline.hostPreBoot = $script:DrillPreBoot }   # a built baseline's three stages
   if ($BaselineOnly) {
     Write-DrillJson (Join-Path $runDir 'baseline.json') $baseline
     return [ordered]@{ status = 'DRILL_BASELINE_READY'; action = $baseline.action; checkpoint = $baseline.checkpoint; hostFreeGB = (Get-Prop $script:DrillPreBoot 'bootGate.freeGB'); evidence = (Join-Path $runDir 'baseline.json') }
