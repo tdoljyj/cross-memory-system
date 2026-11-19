@@ -1005,12 +1005,14 @@ function Assert-DrillHostSafety([DateTimeOffset]$HoldUntil = [DateTimeOffset]::M
 
 # ---------------------------------------------------------------- the runners' WSL distribution (Fable renew-key ruling, supplement "WSL runner jobs")
 # The distributions this host's Linux Actions runners are registered in: its entry by host name in scripts/ci/self-hosted/node-profiles.json
-# (linux_runner and additional_linux_runners). None for a host without an entry. An unreadable registry or an invalid name throws.
+# (linux_runner and additional_linux_runners); none for an entry without a Linux runner. A host with no entry throws (Fable renew-key
+# ruling, supplement "WSL distribution source": a drill host must be a registered one, and "not found" is not "found empty"), as do an
+# unreadable registry and an invalid name.
 function Get-DrillRunnerDistributions([string]$HostName = $env:COMPUTERNAME) {
   $profiles = Read-DrillJson $script:Drill.NodeProfiles
   $entries = @($profiles.hosts | Where-Object { $_ -and [string](Get-Prop $_ 'hostname') -ieq $HostName })
-  if ($entries.Count -gt 1) { throw 'more than one host entry' }
-  if ($entries.Count -eq 0) { return }
+  if ($entries.Count -gt 1) { throw (New-DrillError 'HOST_IN_NODE_PROFILES_TWICE' $HostName) }
+  if ($entries.Count -eq 0) { throw (New-DrillError 'HOST_NOT_IN_NODE_PROFILES' $HostName) }
   $runners = @(@(Get-Prop $entries[0] 'linux_runner') + @(Get-Prop $entries[0] 'additional_linux_runners') | Where-Object { $null -ne $_ })
   $names = @($runners | ForEach-Object { Get-Prop $_ 'distro' } | Select-Object -Unique)
   foreach ($n in $names) {
@@ -1032,28 +1034,64 @@ function Invoke-DrillWsl([string[]]$Arguments) {
   return Invoke-DrillProcess (Join-Path $env:SystemRoot 'System32\wsl.exe') $Arguments $script:Drill.WslTimeoutSeconds @{ WSL_UTF8 = '1' }
 }
 
+# `wsl --list --running --quiet`: one distribution name a line, nothing else. A zero exit with any other line (a message, a replacement
+# character from a wrong decoding) is not read as "not running": it throws (Codex review of ced480363, high 4).
+function ConvertFrom-DrillWslRunningList([string]$Text) {
+  foreach ($line in @(([string]$Text).Replace("`0", '') -split "`r?`n")) {
+    $t = $line.Trim()
+    if (-not $t) { continue }
+    if ($t -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$') { throw (New-DrillError 'WSL_RUNNING_LIST_UNREADABLE') }
+    $t
+  }
+}
+
+# `ps -e -o pid=,etimes=,comm=` in the distribution: "<pid> <seconds running> <name>" a line, a name of 1..15 characters (the kernel's comm),
+# no control or replacement character, and the list holds the ps itself; anything else throws. Returns the names and how long the
+# distribution's init (pid 1) has been running, $null when pid 1 is not in the list.
+function ConvertFrom-DrillWslProcessList([string]$Text) {
+  $names = New-Object System.Collections.Generic.List[string]
+  $initSeconds = $null
+  foreach ($line in @(([string]$Text) -split "`r?`n")) {
+    if (-not $line.Trim()) { continue }
+    $m = [regex]::Match($line, '^\s*(\d{1,10})\s+(\d{1,12})\s+(.+?)\s*$')
+    if (-not $m.Success) { throw (New-DrillError 'WSL_PROCESS_LIST_UNREADABLE') }
+    $name = $m.Groups[3].Value
+    if ($name.Length -gt 15 -or $name -match '[\x00-\x1F\x7F\uFFFD]') { throw (New-DrillError 'WSL_PROCESS_LIST_UNREADABLE') }
+    if ($m.Groups[1].Value -ceq '1') { $initSeconds = [long]$m.Groups[2].Value }
+    $names.Add($name)
+  }
+  if (-not $names.Contains('ps')) { throw (New-DrillError 'WSL_PROCESS_LIST_UNREADABLE') }
+  return @{ names = @($names); initSeconds = $initSeconds }
+}
+
 # Read-only. A distribution that is not running is "no job" without any command against it: a command would start it.
-# Returns @{ ok; distributions; running; names; reason }: ok false (reason set) when any step fails; the caller refuses the boot.
+# Returns @{ ok; distributions; running; names; initSeconds; reason }: ok false (reason set) when any step fails or any answer cannot be
+# explained; the caller refuses the boot.
 function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
-  $state = @{ ok = $false; distributions = @(); running = @(); names = @(); reason = 'NODE_PROFILES_UNREADABLE' }
+  $state = @{ ok = $false; distributions = @(); running = @(); names = @(); initSeconds = @{}; reason = 'NODE_PROFILES_UNREADABLE' }
   try {
     $state.distributions = @(Get-DrillRunnerDistributions $HostName)
     if ($state.distributions.Count -gt 0) {
       $state.reason = 'WSL_RUNNING_LIST_FAILED'
       $list = Invoke-DrillWsl @('--list', '--running', '--quiet')
       if ($list.exit -ne 0) { throw 'wsl --list --running failed' }
-      $runningNow = @(([string]$list.stdout).Replace("`0", '') -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+      $runningNow = @(ConvertFrom-DrillWslRunningList $list.stdout)
       $state.running = @($state.distributions | Where-Object { $runningNow -contains $_ })
       foreach ($d in $state.running) {
         $state.reason = 'WSL_PROCESS_LIST_FAILED'
-        $ps = Invoke-DrillWsl @('--distribution', $d, '--exec', 'ps', '-e', '-o', 'comm=')
-        $names = @(([string]$ps.stdout) -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-        if ($ps.exit -ne 0 -or $names.Count -eq 0) { throw 'process list unreadable' }
-        $state.names = @($state.names) + $names
+        $ps = Invoke-DrillWsl @('--distribution', $d, '--exec', 'ps', '-e', '-o', 'pid=,etimes=,comm=')
+        if ($ps.exit -ne 0) { throw 'ps failed' }
+        $listed = ConvertFrom-DrillWslProcessList $ps.stdout
+        $state.names = @($state.names) + @($listed.names)
+        $state.initSeconds[$d] = $listed.initSeconds
       }
     }
     $state.ok = $true; $state.reason = $null
-  } catch { $state.ok = $false }
+  } catch {
+    $state.ok = $false
+    $c = Get-DrillCode $_
+    if ($c.code -ne 'DRILL_UNEXPECTED') { $state.reason = $c.code }
+  }
   return $state
 }
 
