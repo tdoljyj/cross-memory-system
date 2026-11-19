@@ -1270,8 +1270,8 @@ test('the run binds the kit\'s credential names again to the package it drills: 
   prepareFrom({ ...f, out: f.from });
   await makeDrillKit(f);
   const tar = path.join(f.from, `fleet-node-${f.version}.tar`);
-  const bound = (t = tar) => psCode(`Assert-DrillKitCredentialsBound (Read-DrillKit ${q(f.out)}) ${q(t)}`);
-  assert.equal(bound(), null);
+  const bound = (t = tar) => ps(`try { Assert-DrillKitCredentialsBound (Read-DrillKit ${q(f.out)}) ${q(t)}; 'bound' } catch { (Get-DrillCode $_).code }`);
+  assert.equal(bound(), 'bound');
   const kitFile = path.join(f.out, 'kit.json');
   const kit = JSON.parse(fs.readFileSync(kitFile, 'utf8'));
   const put = credentials => fs.writeFileSync(kitFile, JSON.stringify({ ...kit, credentials }, null, 2));
@@ -1282,12 +1282,12 @@ test('the run binds the kit\'s credential names again to the package it drills: 
   assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'emptied');
   assert.equal(planOf({ required: {}, optional: {} }).code, 'DRILL_KIT_REFUSED', 'an empty required group is no plan either');
   put(PACKAGE_CREDENTIALS);
-  assert.equal(bound(), null);
+  assert.equal(bound(), 'bound');
   // a tar whose host preparation does not declare the two: unreadable
   const old = firstInstallAssets('bound-credentials-old', { hostText: "$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem' }\r\n" });
   assert.equal(bound(path.join(old.build, `fleet-node-${old.version}.tar`)), 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
   // the run calls it before the host gate, on the package's verified tar
-  assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitCredentialsBound \$kitInfo \$package\.tar/);
+  assert.match(fs.readFileSync(script, 'utf8'), /Assert-DrillKitCredentialsBound \$kitInfo \(Get-Prop \$package 'tar'\)/);
 });
 
 // Codex review of e0a3cded5, high 3: the package's gh and Git for Windows installers are injected, both and with the package's hashes, or

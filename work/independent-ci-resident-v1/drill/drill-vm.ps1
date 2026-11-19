@@ -2339,7 +2339,7 @@ function Invoke-DrillMain {
     if ($kitInfo.executionBlocker) { throw (New-DrillError 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY' $kitInfo.executionBlocker) }
     # the package's credential names against the drill's decisions, before the host gate, the hold or any boot; the kit's names first bound
     # again to the package's verified tar
-    Assert-DrillKitCredentialsBound $kitInfo $package.tar
+    Assert-DrillKitCredentialsBound $kitInfo (Get-Prop $package 'tar')
     Assert-DrillKitToolsBound $kitInfo (Join-Path $From "fleet-node-$Version.prereq-manifest.json")
     $kitInfo['credentialPlan'] = Get-DrillCredentialPlan $kitInfo
   }
