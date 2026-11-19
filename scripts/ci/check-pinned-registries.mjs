@@ -168,7 +168,7 @@ export function render({ base, results }) {
     out.push(`      regenerate: ${r.fix}`);
   }
   const stale = results.filter((r) => r.status === 'stale'), unchecked = results.filter((r) => r.status === 'unchecked');
-  if (stale.length > 1) {
+  if (stale.length > 0) {
     out.push('fix sequence:');
     let n = 1;
     if (stale.some((r) => r.id === 'r9')) out.push(`  ${n++}. ${R9_FIX.replace('<main commit>', base ?? '<main commit>')}`);
