@@ -1814,6 +1814,25 @@ test('no memory figure where none was read, and baseline.json keeps the pre-boot
   assert.deepEqual(r.baseline.hostPreBoot, { early: 'e', release: 'r', bootGate: { freeGB: 20 } });
 });
 
+// Codex review of f734afe7e, medium 3: a baseline that fails keeps what was sampled before its boot (the three stages, the probe-start
+// record) in baseline.json, and the failure still stops the run.
+test('a failed baseline keeps its pre-boot stages in baseline.json', opts, () => {
+  const runs = fs.mkdtempSync(path.join(tmp, 'baseline-failed-'));
+  const r = ps(`
+    function Assert-DrillHost { @{ ok = $true } }
+    function Invoke-DrillBaseline { param($RunDir, [switch]$ExistingOnly)
+      $script:DrillPreBoot = [ordered]@{ early = 'e'; release = 'r'; bootGate = [ordered]@{ code = 'DRILL_HOST_MEMORY_SHORT'; wslStartedByProbe = @('Fixture-CI') } }
+      throw (New-DrillError 'DRILL_HOST_MEMORY_SHORT' @{ freeGB = 9 }) }
+    $script:Drill.Runs = ${q(runs)}
+    $script:BaselineOnly = $true
+    $code = try { Invoke-DrillPreparedRun @{ safeToResume = $true; deadline = [DateTimeOffset]::MinValue; holdUntil = [DateTimeOffset]::MinValue } $null $null $null; 'NO THROW' } catch { (Get-DrillCode $_).code }
+    @{ code = $code; baseline = (Read-DrillJson (Join-Path (Get-ChildItem -LiteralPath ${q(runs)} -Directory)[0].FullName 'baseline.json')) }`);
+  assert.equal(r.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.equal(r.baseline.action, 'failed');
+  assert.equal(r.baseline.failure.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.deepEqual(r.baseline.hostPreBoot, { early: 'e', release: 'r', bootGate: { code: 'DRILL_HOST_MEMORY_SHORT', wslStartedByProbe: ['Fixture-CI'] } });
+});
+
 test('the release reads the running list, then Windows, again right before each distribution, and leaves one that stopped alone', opts, () => {
   const r = ps(`
     $script:calls = [Collections.Generic.List[string]]::new()
@@ -2155,6 +2174,20 @@ test('an entry log that cannot be written is recorded as not saved, the guest co
   assert.match(r.record.entryLogError, /disk full/);
   assert.equal(r.writes, 2);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean), ['guest line one', 'guest line two']);
+});
+
+// Codex review of f734afe7e, low 1: with no returned output and no guest log there is no entry log: no empty file, no 'guest-log'.
+test('with no entry output and no guest log, no entry log is written or claimed', opts, () => {
+  const runDir = path.join(tmp, 'evidence-no-log'); fs.mkdirSync(runDir, { recursive: true });
+  const r = ps(`
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
+      [ordered]@{ 'first-install.stdout.log' = $null; 'stage-timings.json' = '{}'; 'host-result.json' = $null; 'launcher-result.json' = $null } }
+    $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+    Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')`);
+  assert.equal(r.entryLog, null);
+  assert.equal(r.ok, false);
+  assert.ok(r.missing.includes('first-install.stdout.log'));
+  assert.equal(fs.existsSync(path.join(runDir, 'first-install.log')), false);
 });
 
 // Medium 8: -Finalize rebuilds the items from the receipt; A1's step record stays on it.

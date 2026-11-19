@@ -2274,15 +2274,15 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
     $json = { param($n) $t = & $text $n; if ($null -eq $t) { return $null }; try { $t | ConvertFrom-Json } catch { [ordered]@{ unreadable = $true } } }
     $record.missing = @($names | Where-Object { $null -eq (& $text $_) })
     $log = & $text $script:Drill.GuestEntryLog
-    if ($null -eq $record.entryLog) {
-      $lines = @(); if ($null -ne $log) { $lines = @($log -split "`r?`n" | Where-Object { $_ -ne '' }) }
-      Write-DrillLines $logFile $lines
+    # the guest's copy only when there is one: no empty file and no 'guest-log' without it (Codex review of f734afe7e, low 1)
+    if ($null -eq $record.entryLog -and $null -ne $log) {
+      Write-DrillLines $logFile @($log -split "`r?`n" | Where-Object { $_ -ne '' })
       $record.entryLog = 'guest-log'
     }
     $timings = & $json 'stage-timings.json'
     Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings
     Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') ([ordered]@{ 'host-result.json' = (& $json 'host-result.json'); 'launcher-result.json' = (& $json 'launcher-result.json') })
-    $record.ok = ($null -eq $record.entryLogError)
+    $record.ok = ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog)
   } catch {
     $c = Get-DrillCode $_
     $record.code = $c.code; $record.detail = $c.detail
@@ -2342,7 +2342,13 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   $runDir = Join-Path $script:Drill.Runs "$stamp-$label-$([guid]::NewGuid().ToString('N').Substring(0,8))"
   New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
-  $baseline = Invoke-DrillBaseline $runDir -ExistingOnly:($Window.holdUntil -ne [DateTimeOffset]::MinValue)
+  try { $baseline = Invoke-DrillBaseline $runDir -ExistingOnly:($Window.holdUntil -ne [DateTimeOffset]::MinValue) }
+  catch {
+    # a failed baseline keeps what was sampled before its boot -- the three stages, the probe-start record (Codex review of f734afe7e, medium 3)
+    $failed = Get-DrillCode $_
+    try { Write-DrillJson (Join-Path $runDir 'baseline.json') ([ordered]@{ action = 'failed'; failure = $failed; hostPreBoot = $script:DrillPreBoot }) } catch { }
+    throw
+  }
   if ($baseline -is [Collections.IDictionary]) { $baseline.hostPreBoot = $script:DrillPreBoot }   # a built baseline's three stages
   if ($BaselineOnly) {
     Write-DrillJson (Join-Path $runDir 'baseline.json') $baseline
