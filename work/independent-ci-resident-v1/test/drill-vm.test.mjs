@@ -1402,11 +1402,12 @@ test('the repository\'s package and the drill: required names the drill makes, o
   assert.deepEqual(covers(drillKit.packageCredentials(hostScriptText({ required: { ...PACKAGE_CREDENTIALS.required, x: 'x.token' }, optional: { y: 'y.token' } }))),
     { required: ['x.token'], optional: ['y.token'] });
   assert.throws(() => drillKit.packageCredentials(hostScriptText({ required: { a: 'a.token' }, optional: { b: 'a.token' } })), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/);
-  // Codex review of e0a3cded5, medium 3: what does not read one way is refused -- a decoy in a block comment, a constant only in a block
-  // comment, a key twice, a second (indented) assignment
+  // Codex review of e0a3cded5, medium 3: what does not read one way is refused -- a constant only in a block comment, a key twice, a
+  // second (indented) assignment. A decoy in a block comment beside the real one is no declaration: the real one is read (Codex review
+  // of f33fc33e5, medium 1: comments declare nothing)
   const decoy = "<#\r\n$RequiredCredentialFiles = [ordered]@{ appKey = 'decoy.pem' }\r\n#>\r\n";
+  assert.deepEqual(drillKit.packageCredentials(decoy + hostScriptText()), PACKAGE_CREDENTIALS);
   for (const [reason, text] of [
-    ['a decoy in a block comment beside the real one', decoy + hostScriptText()],
     ['only in a block comment', '<#\r\n' + hostScriptText() + '#>\r\n'],
     ['a key twice', "$RequiredCredentialFiles = [ordered]@{ appKey = 'a.pem'; AppKey = 'b.pem' }\r\n$OptionalCredentialFiles = [ordered]@{ }\r\n"],
     ['a second, indented assignment', hostScriptText() + "function X {\r\n  $OptionalCredentialFiles = [ordered]@{ other = 'other.token' }\r\n}\r\n"],
@@ -3603,7 +3604,7 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
       throw "unexpected step $Step"
     }
     $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ${q(e.acceptanceSource)} }
-    $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
+    $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; perNodeSteps = @(); prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
     $code = try { $run = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; 'done' } catch { $c = Get-DrillCode $_; "$($c.code) $($c.detail)" }
     $re = Join-Path ${q(runDir)} 'reinstall.json'
     @{ code = $code; steps = @($script:steps); reinstall = $(if (Test-Path -LiteralPath $re) { Read-DrillJson $re } else { $null }) }`);
