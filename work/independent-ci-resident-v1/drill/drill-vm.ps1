@@ -766,13 +766,19 @@ function Test-DrillReinstallLauncher($Reinstall) {
 # A5's production half and A9 are judged by -Finalize from the production read-back).
 #   $E: entry (Read-DrillEntryResult), launcher (the launcher's terminal), pause (state\PAUSED.json: sha256, requestSha256),
 #       verify (@{status}), status (status.json), current (upgrade\current.json), facts (version-facts.json), acceptanceSource,
-#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (@{skipped, ...}), skipReinstall (the option given), kit
+#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (@{skipped, ...}), skipReinstall (the option given), kit,
+#       firstInstallSteps (Read-DrillFirstInstallSteps)
 function Get-DrillVerdict($E) {
   $items = New-Object System.Collections.ArrayList
   $now = [DateTimeOffset]$E.now
   $entry = $E.entry
-  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode -and $entry.status -ceq 'FIRST_INSTALL_DONE'
-  [void]$items.Add((New-DrillItem 'A1' $a1 $(if ($null -eq $entry) { 'no entry result' } else { "exit=$($entry.exitCode) status=$($entry.status) stopCode=$($entry.stopCode)" })))
+  # A1 needs the step record (Read-DrillFirstInstallSteps, read before this verdict): a first install whose steps cannot be shown -- none
+  # parsed, or a stage that ran without its complete log -- does not pass, and the detail says why (Codex review of 1cedea9ef, high 1;
+  # branch one 74e7a65e7 holds the same).
+  $steps = Get-Prop $E 'firstInstallSteps'
+  $stepsWhy = if ($null -eq $steps -or (Get-Prop $steps 'missing') -ne $false) { 'steps=missing' } elseif ((Get-Prop $steps 'incomplete') -ne $false) { 'steps=incomplete:' + (@(Get-Prop $steps 'incompleteStages') -join ',') } else { 'steps=complete' }
+  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode -and $entry.status -ceq 'FIRST_INSTALL_DONE' -and $stepsWhy -ceq 'steps=complete'
+  [void]$items.Add((New-DrillItem 'A1' $a1 $(if ($null -eq $entry) { "no entry result $stepsWhy" } else { "exit=$($entry.exitCode) status=$($entry.status) stopCode=$($entry.stopCode) $stepsWhy" })))
   $vs = [string](Get-Prop $E.verify 'status')
   [void]$items.Add((New-DrillItem 'A2' ($vs -ceq 'RESIDENT_VERIFIED') "verify=$vs"))
   [void]$items.Add((Test-DrillSelfcheck 'A3' $E.status $now))
@@ -2142,14 +2148,14 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
 
   $evidence = [ordered]@{ localSource = $null; hostExecutorStates = $o.hostExecutorStates }
   $items = @()
+  # The first install's step record, read first from what the run directory holds whatever the run's end: A1 needs it (Get-DrillVerdict),
+  # and it is kept under A1, or in the evidence when the run ended before there was a verdict.
+  $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate'] }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps }
   }
-  # The first install's step record, from what the run directory holds whatever the run's end: under A1, or in the evidence when the run
-  # ended before there was a verdict.
-  $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
   # The host guard's emergency restore (it wrote host-guard.json, DRILL_ABORTED) may come before the evidence was taken (Fable renew-key

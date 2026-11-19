@@ -1069,8 +1069,17 @@ test('M5 collects the six public observations and the administrator\'s read of t
 
 // A receipt from Invoke-DrillPreparedRun over a package whose manifest lists `paths` (full archive paths), with A1-A8 passing, the
 // M5 observations `missing` and a host checker that answers `checker`.
-// skip: the run was started with -SkipReinstall; reinstall: 'absent' leaves the run without an A8 result at all.
-function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, skip = false } = {}) {
+// The complete stdout logs of a first install that went through (Read-DrillFirstInstallSteps reads them from the run directory).
+const STEP_LOGS = {
+  'first-install.log': JSON.stringify({ status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe' }) + '\r\n',
+  'host.stdout.log': [JSON.stringify({ name: 'stage', result: 'ok' }), JSON.stringify({ status: 'FIRST_INSTALL_HOST_READY' })].join('\r\n') + '\r\n',
+  'launcher.stdout.log': [JSON.stringify({ name: 'install', result: 'ok' }), JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' })].join('\r\n') + '\r\n',
+  'stage-evidence.json': JSON.stringify({ 'host-result.json': { exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } },
+    'launcher-result.json': { exit: 0, terminal: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' } } }),
+};
+// skip: the run was started with -SkipReinstall; reinstall: 'absent' leaves the run without an A8 result at all; steps: false leaves the
+// run directory without the first install's logs.
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, skip = false, steps = true } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -1095,7 +1104,10 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
     function Invoke-DrillBaseline { @{ action = 'reuse' } }
     $fixture = ${q(JSON.stringify(run))} | ConvertFrom-Json
     $fixture.m5 = @{ directory = 'm5'; missing = @(${missing.map(q).join(', ')}); collectionCode = $null }
-    function Invoke-DrillOnCheckpoint { @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
+    $script:stepLogs = ${q(JSON.stringify(steps ? STEP_LOGS : {}))} | ConvertFrom-Json
+    function Invoke-DrillOnCheckpoint { param($Body, $RunDir, $Window)
+      foreach ($p in $script:stepLogs.PSObject.Properties) { [IO.File]::WriteAllText((Join-Path $RunDir $p.Name), [string]$p.Value) }
+      @{ restored = $true; failure = $null; result = $fixture; hostExecutorStates = @() } }
     $package = @{ version = ${q(version)}; tar = ${q(archive)}; tarSha256 = ${q(pkg.tarSha256 ?? sha(fs.readFileSync(archive)))}; ciSourceManifestSha256 = ${q(S)}; firstInstallKitSha256 = ${q(pkg.firstInstallKitSha256 ?? L)}; candidate = ${candidate ? '$true' : '$false'} }
     $out = Invoke-DrillPreparedRun @{ holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::MaxValue } $package (${q(JSON.stringify({ ...e.kit, sha256: 'fixture' }))} | ConvertFrom-Json) @{ sha256 = 'fixture' }
     Read-DrillJson $out.receipt
@@ -1593,6 +1605,7 @@ function evidence(over = {}) {
     verify: { status: 'RESIDENT_VERIFIED' }, status, current: { generation: 1, ciSourceManifestSha256: S, linux: { manifestSha256: L } },
     facts: { generation: 1, staged: null, pinsOk: true, ciSourceManifestSha256: S, manifestSha256: L }, acceptanceSource: S,
     launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
+    firstInstallSteps: { missing: false, incomplete: false, incompleteStages: [] },
     pause: { sha256: '4'.repeat(64), requestSha256: PAUSE_REQUEST },
     reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z' }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
       launcherExit: 0, launcherStatus: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', launcherVerdict: 'BOOTSTRAP_DONE',
@@ -1893,12 +1906,37 @@ test('firstInstallSteps come from the complete stdout logs only; a stage result 
   assert.match(entryText, /\[IO\.File\]::Copy\(\$launcherResult, \(Join-Path \$Output 'launcher\.stdout\.log'\)/);
   const drillText = fs.readFileSync(script, 'utf8');
   for (const n of ['host.stdout.log', 'launcher.stdout.log']) assert.ok(drillText.includes(`'${n}'`), n);
-  // the receipt carries it under A1 (no logs in this run: missing, never a pass)
+  // the receipt carries it under A1, and -Finalize keeps it (it rewrites A5 and A9 only)
   const receipt = m5DrillReceipt('steps-chain', RENEWAL_3BC571A6, { checker: 'PASS', missing: [] });
-  assert.equal(receipt.items.find(i => i.id === 'A1').firstInstallSteps.missing, true);
-  // and -Finalize keeps it (it rewrites A5 and A9 only)
+  const a1 = receipt.items.find(i => i.id === 'A1');
+  assert.equal(a1.pass, true);
+  assert.equal(a1.firstInstallSteps.missing, false);
   const fin = JSON.parse(finalize('steps-chain-finalize', receipt).bytes);
-  assert.equal(fin.items.find(i => i.id === 'A1').firstInstallSteps.missing, true);
+  assert.equal(fin.items.find(i => i.id === 'A1').firstInstallSteps.missing, false);
+});
+
+// Codex review of 1cedea9ef, high 1: the step record is read first and A1 needs it: a first install whose steps cannot be shown (none
+// parsed, or a stage that ran without its complete log) does not pass, and the receipt keeps why. Branch one (74e7a65e7) holds the same.
+test('A1 needs a complete step record: missing, incomplete or absent is no pass, and the receipt says why', opts, () => {
+  const a1 = over => { const r = verdictOf(evidence(over)); return { pass: pass(r).A1, detail: r.items.find(i => i.id === 'A1').detail }; };
+  assert.equal(a1({}).pass, true);
+  for (const [reason, steps, says] of [
+    ['none parsed', { missing: true, incomplete: false, incompleteStages: [] }, /steps=missing/],
+    ['a stage without its complete log', { missing: false, incomplete: true, incompleteStages: ['launcher'] }, /steps=incomplete:launcher/],
+    ['no record at all', null, /steps=missing/],
+  ]) {
+    const r = a1({ firstInstallSteps: steps });
+    assert.equal(r.pass, false, reason);
+    assert.match(r.detail, says, reason);
+  }
+  // the real run: an entry that says done, every other item passing, but no logs in the run directory
+  const noLogs = m5DrillReceipt('a1-no-logs', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, steps: false });
+  const item = noLogs.items.find(i => i.id === 'A1');
+  assert.equal(item.pass, false);
+  assert.match(item.detail, /steps=missing/);
+  assert.equal(item.firstInstallSteps.missing, true);
+  assert.equal(noLogs.conclusion, 'FAIL');
+  assert.equal(finalize('a1-no-logs-finalize', noLogs, notTheDrillsSource()).output.code, 'DRILL_RECEIPT_NOT_FINALIZABLE');
 });
 
 // Fable renew-key ruling, supplement "interactive mode A1", second point: the host guard's emergency restore may come before the evidence
