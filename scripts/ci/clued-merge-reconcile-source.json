@@ -210,7 +210,7 @@
 
     "scripts/ci/ci-required-selection.mjs": "5e0fb81435e4413c333c27c830333035d6f13e853ba0009ca43f179b90c22f37",
 
-    "scripts/ci/ci-required-selection.test.mjs": "19f3621c53d44d02ef854f5e18a858bc19195ef647db14e768554e240655c6d1",
+    "scripts/ci/ci-required-selection.test.mjs": "9f40420529282c6e6bf9fb484248d4a21c069a99495356e4288397feb3dd60fc",
 
     "scripts/ci/ci-test-failures-reporter.mjs": "ebe45b96b6ceef8db86947833fb96fc1616c69a0764223269a19e9cfaa8f078d",
 
