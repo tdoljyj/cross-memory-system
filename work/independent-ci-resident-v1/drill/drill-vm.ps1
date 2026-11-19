@@ -66,6 +66,7 @@ $script:Drill = [ordered]@{
   HostGuardSeconds = 30
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
   HostStatus = 'C:\ProgramData\CluedIndependentCI\resident\state\status.json'
+  ProductionRoot = 'C:\ProgramData\CluedIndependentCI'   # the fixed root a test never reaches (Test-DrillProductionUnderTest)
   IntakeHolder = 'drill'
   IntakeWaitMinutes = 40
   IntakeMarginMinutes = 10
@@ -838,7 +839,24 @@ function Get-DrillVmInfo {
 
 function Get-DrillTime { [DateTimeOffset]::UtcNow }
 
+# Clued Task fe8a2cbf (Fable renew-key ruling, supplement 1, layer A): a test that reached the real Invoke-DrillMain asked the installed
+# service of the host it ran on (the node on duty, the operator's own account) to hold intake. The three points where the drill crosses
+# into the host (reading its status, locating the installed CLI, sending an intake request) refuse by name when a test marker is set
+# (NODE_TEST_CONTEXT, which the node test runner gives every test process and its children inherit, or CLUED_UNDER_TEST, which the one
+# test entry sets) and the target is under the fixed production root. A fixture root is never refused. A cooperative marker: it stops a
+# mistake, not code that clears the environment on purpose.
+function Test-DrillProductionUnderTest([string]$Path) {
+  if (-not $env:NODE_TEST_CONTEXT -and -not $env:CLUED_UNDER_TEST) { return $false }
+  $root = $script:Drill.ProductionRoot.TrimEnd('\')
+  $full = try { [IO.Path]::GetFullPath($Path).TrimEnd('\') } catch { return $true }   # a path that cannot be read as one is not let through
+  return ($full -ieq $root -or $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase))
+}
+function Assert-DrillNotProductionUnderTest([string]$Path) {
+  if (Test-DrillProductionUnderTest $Path) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' $Path) }
+}
+
 function Read-DrillHostStatus {
+  Assert-DrillNotProductionUnderTest $script:Drill.HostStatus
   try { Get-Content -LiteralPath $script:Drill.HostStatus -Raw -Encoding UTF8 -ErrorAction Stop } catch { $null }
 }
 
@@ -879,6 +897,7 @@ function Assert-DrillHostSafety([DateTimeOffset]$HoldUntil = [DateTimeOffset]::M
 function Get-DrillIntakeTool {
   # Follow the same installed generation and runtime as windows/rearm-resident.ps1's unprivileged inspect.
   $root = Split-Path -Parent (Split-Path -Parent $script:Drill.HostStatus)
+  Assert-DrillNotProductionUnderTest $root
   try {
     $receipt = Read-DrillJson (Join-Path $root 'install\install-receipt.json')
     $manifest = $receipt.residentManifestSha256
@@ -915,6 +934,7 @@ function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeco
 }
 
 function Request-DrillIntake($Tool, [ValidateSet('pause', 'resume')][string]$Verb, [int]$Minutes = 0) {
+  foreach ($p in @($Tool.root, $Tool.node, $Tool.tool)) { Assert-DrillNotProductionUnderTest ([string]$p) }
   $argsForTool = @($Tool.tool, "request-intake-$Verb", '--root', $Tool.root, '--holder', $script:Drill.IntakeHolder, '--reason', 'first-install drill')
   $expected = 'INTAKE_RESUME_REQUESTED'
   if ($Verb -ceq 'pause') {
