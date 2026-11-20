@@ -36,10 +36,14 @@ const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', ciToken
 const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
 const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, ...c }, null, 2) + '\n';
 
+// The drill's named mutexes are machine-wide (Global\): a fixture holding them would refuse a real drill on this host and fail while one
+// runs. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own right after loading it; the PowerShell processes one
+// test starts (a host and the watchdog it launches) load the same fixture, so they still share them.
+const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}`;
 // Dot-source the script (definitions only) and print the expression's value as JSON.
 function ps(expr) {
   const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
+    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ${ownMutexes}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim());
 }
@@ -592,6 +596,7 @@ test('the real background guard aborts while the foreground is blocked, without 
   const fixture = path.join(tmp, 'guard-fixture.ps1');
   const marker = path.join(tmp, 'guard-stopped.txt');
   fs.writeFileSync(fixture, `. ${q(script)}
+    ${ownMutexes}
     $script:DrillScriptPath = $PSCommandPath
     $script:Drill.HostGuardSeconds = 0.1
     $script:guardReads = 0
@@ -629,6 +634,7 @@ test('the drill receipt keeps each executor state first observed during the arme
   const train = activeHostStatus(hold, { executor: 'RUNNING', reason: 'TRAIN_MAINTENANCE' });
   const stage2 = activeHostStatus(hold, { executor: 'RUNNING', current: { stage: 2, phase: 'stage' } });
   fs.writeFileSync(fixture, `. ${q(script)}
+    ${ownMutexes}
     $script:DrillScriptPath = $PSCommandPath
     $script:Drill.HostGuardSeconds = 0
     $script:guardReads = 0
@@ -723,8 +729,8 @@ test('the boot watchdog still runs checkpoint cleanup after its parent job is te
   const cleanup = path.join(root, 'restored');
   const vmId = '8f87dbcb-9fbc-4fd6-adc4-7c6345192c50';
   fs.writeFileSync(fixture, `. ${q(script)}
+    ${ownMutexes}
     $script:DrillScriptPath = $PSCommandPath
-    $script:Drill.BootMutex = ${q(`Local\\DrillWatchdogTest-${path.basename(root)}`)}
     function Get-DrillVmInfo { @{ vm = @{ Id = [guid]'${vmId}' }; notes = $script:Drill.Marker; state = 'Running' } }
     function Stop-DrillOwnedVm {
       param([switch]$RestoreCheckpoint)
