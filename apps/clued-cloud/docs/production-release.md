@@ -34,8 +34,10 @@ as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
   `rollback_drill` fails a fully verified release on purpose.
 
 `deploy` and `release` record the version each Worker serves and the commit
-the edge serves before the grant. Any later failure, a step timeout included,
-rolls the changed Workers back to those versions; one propagation window
+the edge serves before the grant. Any failure from the first deploy on, a
+step timeout included, rolls the changed Workers back to those versions (a
+failure before it, such as a refused grant, changed nothing and rolls
+nothing back); one propagation window
 later the rollback reads all three versions and the edge commits once, and
 only that reading makes it `restored`. A rollback does not restore Worker
 settings someone changed by hand outside the repository. The G6 currentness

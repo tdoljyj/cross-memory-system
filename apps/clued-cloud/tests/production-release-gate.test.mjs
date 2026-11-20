@@ -448,7 +448,7 @@ test('production release deploys only when deploy is chosen explicitly', () => {
   assert.ok(deploySteps.length > 0);
   // Only deploy and release deploy (release: one run from preflight to verification).
   for (const step of deploySteps) {
-    assert.match(step, /\n        if: \$\{\{ (failure\(\) && \()?inputs\.mode == 'deploy' \|\| inputs\.mode == 'release'(\) && steps\.worker_versions\.outcome == 'success')? \}\}\n/, step.split('\n')[0]);
+    assert.match(step, /\n        if: \$\{\{ (failure\(\) && \()?inputs\.mode == 'deploy' \|\| inputs\.mode == 'release'(\) && steps\.worker_versions\.outcome == 'success'( && \(steps\.first_deploy\.outcome == 'success' \|\| steps\.first_deploy\.outcome == 'failure'\))?)? \}\}\n/, step.split('\n')[0]);
   }
 
   const validate = steps.find((step) => step.startsWith('name: Validate exclusive release mode'));
@@ -636,12 +636,15 @@ const releaseSteps = productionWorkflow.split(/\n      - /).slice(1).map((text) 
   condition: ((match) => match?.[1] ?? match?.[2] ?? null)(/(?:^|\n {8})if: (?:\$\{\{ (.+?) \}\}|(.+))\n/.exec(text)),
 }));
 
-function evaluateCondition(source, context) {
-  const tokens = source.match(/'[^']*'|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*|==|!=|&&|\|\||[()!]/g);
+// GitHub's && and || yield an operand, not a boolean, so `cond && 165 || 45`
+// is a number; a step's `if` takes the truthiness of the same value.
+function evaluateExpression(source, context) {
+  const tokens = source.match(/'[^']*'|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*|\d+|==|!=|&&|\|\||[()!]/g);
   assert.equal(tokens.join(''), source.replace(/\s+/g, ''), `unsupported condition: ${source}`);
   let at = 0;
   const value = (token) => {
     if (token.startsWith("'")) return token.slice(1, -1);
+    if (/^\d+$/.test(token)) return Number(token);
     if (token === 'failure()') return context.failed;
     if (token === 'success()') return !context.failed;
     if (token === 'always()') return true;
@@ -660,13 +663,26 @@ function evaluateCondition(source, context) {
       const op = tokens[at++]; const right = value(tokens[at++]);
       return (op === '==') === (String(left).toLowerCase() === String(right).toLowerCase());
     }
-    return Boolean(left);
+    return left;
   };
   const and = () => { let v = primary(); while (tokens[at] === '&&') { at++; const next = primary(); v = v && next; } return v; };
   or = () => { let v = and(); while (tokens[at] === '||') { at++; const next = and(); v = v || next; } return v; };
   const result = or();
   assert.equal(at, tokens.length, `unparsed condition: ${source}`);
   return result;
+}
+const evaluateCondition = (source, context) => Boolean(evaluateExpression(source, context));
+
+// The release job's timeout-minutes for one dispatch mode, a literal or an
+// expression over the inputs (GitHub allows `inputs` there).
+const RELEASE_MODES = ['preflight', 'backup', 'source-capture', 'deploy', 'migrate', 'release'];
+function jobTimeoutMinutes(mode) {
+  const source = /\n {4}timeout-minutes: (.+)\n/.exec(productionWorkflow)?.[1];
+  assert.ok(source, 'the release job has no timeout-minutes');
+  const expression = /^\$\{\{ (.+) \}\}$/.exec(source)?.[1];
+  const minutes = Number(expression ? evaluateExpression(expression, { inputs: { mode }, failed: false, outcomes: {} }) : source);
+  assert.ok(Number.isInteger(minutes) && minutes > 0, `${mode}: ${source}`);
+  return minutes;
 }
 
 function simulateRelease(inputs, failAt = null) {
@@ -682,7 +698,7 @@ function simulateRelease(inputs, failAt = null) {
     if (step.id) context.outcomes[step.id] = ok ? 'success' : 'failure';
     if (!ok) context.failed = true;
   }
-  return { ran: ran.map((step) => step.name), steps: ran, conclusion: context.failed ? 'failure' : 'success' };
+  return { mode: context.inputs.mode, ran: ran.map((step) => step.name), steps: ran, conclusion: context.failed ? 'failure' : 'success' };
 }
 
 const RELEASE_ORDER = [
@@ -756,7 +772,8 @@ test('the G6 attestation runs after the rollback step, only when everything succ
       const failed = simulateRelease({ mode }, failAt);
       assert.equal(failed.conclusion, 'failure');
       assert.deepEqual(failed.steps.filter(writesAttestation), [], `${mode}: ${failAt} wrote the attestation`);
-      assert.ok(failed.ran.includes(ROLLBACK_STEP), `${mode}: ${failAt}`);
+      // Before the first deploy nothing changed production: no rollback (review M1).
+      assert.equal(failed.ran.includes(ROLLBACK_STEP), !['Consume the Owner Grant for this commit', QUEUE_STEP].includes(failAt), `${mode}: ${failAt}`);
       assert.ok(!failed.ran.includes(G6_REPORT_STEP), `${mode}: ${failAt}`);
     }
     // The G6 step itself fails: the run fails, nothing rolls back, the summary says so.
@@ -813,7 +830,7 @@ test('only deploy and release reach production Workers; the single-step modes ke
 
 test('a failed deploy or post-deploy verification rolls the Workers back and the release still fails', () => {
   for (const mode of ['release', 'deploy']) {
-    for (const failAt of ['Consume the Owner Grant for this commit', QUEUE_STEP, ...DEPLOY_STEPS, ...VERIFY_STEPS]) {
+    for (const failAt of [...DEPLOY_STEPS, ...VERIFY_STEPS]) {
       const run = simulateRelease({ mode }, failAt);
       assert.equal(run.conclusion, 'failure', failAt);
       assert.ok(run.ran.includes(ROLLBACK_STEP), `${mode}: ${failAt} did not roll back`);
@@ -879,7 +896,6 @@ test('release never creates the Storage job queue; deploy still creates a missin
 test('every deploy and release step has a timeout, and the job timeout covers the longest path', async () => {
   const workers = await import('../scripts/release-worker-versions.mjs');
   const postflight = await import('../scripts/projection-postflight.mjs');
-  const jobTimeout = Number(/\n    timeout-minutes: (\d+)\n/.exec(productionWorkflow)?.[1]);
   const minutes = (step) => Number(/\n {8}timeout-minutes: (\d+)\n/.exec(`\n${step.text}\n`)?.[1]);
   // Every way through: success, the G6 step failing, and a failure at each
   // step after the record, which runs the rollback.
@@ -888,6 +904,7 @@ test('every deploy and release step has a timeout, and the job timeout covers th
     ...[...RELEASE_ORDER.slice(RELEASE_ORDER.indexOf(RECORD_STEP) + 1, -2)].map((name) => simulateRelease({ mode: 'release' }, name)),
     simulateRelease({ mode: 'release', rollback_drill: true }, DRILL_STEP)];
   for (const run of paths) {
+    const jobTimeout = jobTimeoutMinutes(run.mode);
     for (const step of run.steps) assert.ok(minutes(step) > 0, `${step.name} has no timeout-minutes`);
     const total = run.steps.reduce((sum, step) => sum + minutes(step), 0);
     // Five minutes for the runner's own set-up and post steps.
@@ -905,6 +922,42 @@ test('every deploy and release step has a timeout, and the job timeout covers th
   const windowMinutes = postflight.windowMs(postflight.cronPeriodMinutes(production)) / 60_000;
   assert.equal(minutes(step('Verify projection currentness after deployment')), windowMinutes + 5);
   assert.ok(windowMinutes * 60_000 + postflight.CALL_TIMEOUT_MS <= (windowMinutes + 5) * 60_000);
+});
+
+// Review of #1121 after main, B1: the longer job timeout is for a deploy or a
+// release with its rollback. Every other mode keeps main's 45 minutes: the
+// migrate steps have no step timeout, so a stalled migration (DDL waiting on a
+// lock) must still free the concurrency group that every deploy waits on.
+test('only deploy and release get the longer job timeout; every other mode keeps 45 minutes', () => {
+  const options = /\n {8}options:\n((?: {10}- \S+\n)+)/.exec(productionWorkflow)?.[1].trim().split('\n').map((line) => line.trim().slice(2));
+  assert.deepEqual(options, RELEASE_MODES, 'a new mode must be placed on one side of the job timeout');
+  for (const mode of RELEASE_MODES) {
+    if (mode === 'deploy' || mode === 'release') assert.ok(jobTimeoutMinutes(mode) > 45, mode);
+    else assert.equal(jobTimeoutMinutes(mode), 45, mode);
+  }
+});
+
+// Review of #1121 after main, M1: the versions are recorded before the grant,
+// but production changes only from the first deploy step. A failure before it
+// (the release door refusing the grant, the queue check) rolls nothing back,
+// so it reads nothing again, waits no propagation window and raises no
+// "rolled back" alarm for a run that never touched production.
+test('a failure before the first deploy step runs no rollback; from the first deploy on every failure does', () => {
+  const firstDeploy = releaseSteps.find((s) => /\bwrangler deploy\b/.test(s.text));
+  assert.equal(firstDeploy?.name, DEPLOY_STEPS[0]);
+  for (const mode of ['deploy', 'release']) {
+    for (const failAt of ['Consume the Owner Grant for this commit', QUEUE_STEP]) {
+      const run = simulateRelease({ mode }, failAt);
+      assert.equal(run.conclusion, 'failure', `${mode}: ${failAt}`);
+      assert.ok(!run.ran.includes(ROLLBACK_STEP), `${mode}: ${failAt} rolled back before any deploy`);
+      assert.ok(!run.ran.some((name) => DEPLOY_STEPS.includes(name)), `${mode}: ${failAt}`);
+    }
+    // The first deploy failing (a step timeout is a failure too) may have changed production.
+    for (const failAt of [...DEPLOY_STEPS, ...VERIFY_STEPS]) {
+      assert.ok(simulateRelease({ mode }, failAt).ran.includes(ROLLBACK_STEP), `${mode}: ${failAt} did not roll back`);
+    }
+  }
+  assert.ok(simulateRelease({ mode: 'release', rollback_drill: true }, DRILL_STEP).ran.includes(ROLLBACK_STEP));
 });
 
 const HEAD_COMMIT = 'c'.repeat(40), EDGE_COMMIT = 'e'.repeat(40);

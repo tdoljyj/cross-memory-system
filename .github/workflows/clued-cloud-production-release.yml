@@ -60,9 +60,11 @@ jobs:
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-24.04
-    # At least every step of a deploy or release plus the rollback (each has its
+    # deploy and release: at least every step plus the rollback (each has its
     # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
-    timeout-minutes: 165
+    # Every other mode keeps 45: the migrate steps have no step timeout, and a
+    # stalled migration must not hold the concurrency group longer than before.
+    timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || 45 }}
     # OwnerCredential §6.1: CLUED_MIGRATION_DATABASE_URL lives in this
     # environment (Owner setting: deployment branches main only). Its database
     # login is also the release identity: only it may call the release door.
@@ -534,6 +536,7 @@ jobs:
             npx wrangler queues create clued-storage-jobs
           fi
       - name: Deploy Clued PDF extractor Worker
+        id: first_deploy
         if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
         timeout-minutes: 5
         env:
@@ -603,14 +606,16 @@ jobs:
         run: |
           echo "::error title=Rollback drill::Every verification passed; failing on purpose so the Workers roll back to the recorded versions"
           exit 1
-      # Any failure after the versions were recorded (the grant, the queue, a
-      # deploy, the live commit, contract, PDF, Connect or projection check, a
-      # step timeout, the drill) rolls each changed Worker back to its recorded
-      # version, then reads all three versions and the edge commits once, after
-      # one propagation window; only that reading decides "restored". The run
-      # still fails. The database is forward-only; a release carries no migration.
+      # Any failure from the first deploy on (a deploy, the live commit,
+      # contract, PDF, Connect or projection check, a step timeout, the drill)
+      # rolls each changed Worker back to its recorded version, then reads all
+      # three versions and the edge commits once, after one propagation window;
+      # only that reading decides "restored". The run still fails. A failure
+      # before the first deploy (the grant, the queue) changed no Worker and
+      # rolls nothing back. The database is forward-only; a release carries no
+      # migration.
       - name: Roll back the Workers after a failed deploy or verification
-        if: ${{ failure() && (inputs.mode == 'deploy' || inputs.mode == 'release') && steps.worker_versions.outcome == 'success' }}
+        if: ${{ failure() && (inputs.mode == 'deploy' || inputs.mode == 'release') && steps.worker_versions.outcome == 'success' && (steps.first_deploy.outcome == 'success' || steps.first_deploy.outcome == 'failure') }}
         timeout-minutes: 35
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}

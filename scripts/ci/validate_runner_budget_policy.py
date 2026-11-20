@@ -114,7 +114,9 @@ LEGACY_HOSTED_DEBT = {
             # one-approval release without migrations or wrangler config changes, Worker rollback judged by
             # one final reading, G6 after the rollback step; the grant goes through the database login door.
             # main job da0654044b1ffd68e72ca867a3a8fe462583c2b9caa0cde7205269f77a829fcc, routing unchanged.
-            "release": "7335c49a7dabec4a8ce68ab4824e3d5f5bc5a851e4a12d7eee46fae29687b1d5"
+            # Review after main: the 165-minute job timeout only for deploy and release (others keep 45),
+            # and no rollback before the first deploy step ran.
+            "release": "fd4f674e1e1f17d6b38dd4ef8b2abe5bee32f41a2d39f45a9794920b1fb20b84"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {
