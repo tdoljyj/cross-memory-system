@@ -731,7 +731,7 @@ test('outputs name every suite of the check', () => {
 // (clued-gated-proof.mjs), so a step that is skipped when no selected suite needs dependencies would make every such run
 // unqualified. It decides from the selection's app_deps itself, with exactly the reviewed script below.
 const APP_DEPS_STEP = 'Install the application dependencies the selected suites need';
-const APP_DEPS_ENV = 'APP_DEPS: ${{ steps.select.outputs.app_deps }}';
+const appDepsEnv = (id) => 'APP_DEPS: ${{ steps.' + id + '.outputs.app_deps }}';
 const APP_DEPS_RUN = [
   `apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || "[]")) console.log(a)')`,
   'if [ -z "$apps" ]; then',
@@ -753,7 +753,8 @@ function workflowJobs(text) {
     const steps = job.split(/\n {6}- /).slice(1).map((step) => {
       const run = /(?:^|\n) {8}run: \|\n((?: {10}.*\n?| *\n)+)/.exec(step)?.[1].replace(/^ {10}/gm, '').trimEnd()
         ?? /(?:^|\n) {8}run: (.+)/.exec(step)?.[1];
-      return { text: step, name: /^name: (.+)/.exec(step)?.[1] ?? null, condition: /(?:^|\n) {8}if: (.+)/.exec(step)?.[1] ?? null, run };
+      return { text: step, name: /^name: (.+)/.exec(step)?.[1] ?? null, id: /(?:^|\n) {8}id: (\S+)/.exec(step)?.[1] ?? null,
+        condition: /(?:^|\n) {8}if: (.+)/.exec(step)?.[1] ?? null, run };
     });
     jobs.push({ name: parts[i], platform: labels.includes('Windows') ? 'win32' : 'linux', text: job, steps });
   }
@@ -772,6 +773,8 @@ function appDependencyFindings(file, text) {
     const where = `${file} ${job.name}`;
     const install = job.steps.findIndex((step) => step.name === APP_DEPS_STEP);
     const run = job.steps.findIndex((step) => / --run(-selected)? /.test(step.run ?? ''));
+    // The step that writes app_deps: the selection's --check, with an id its output is read by.
+    const select = job.steps.findIndex((step) => / --check [a-z][a-z-]*\b/.test(step.run ?? '') && step.id);
     const needing = [...suites].filter((id) => selection.SUITE_APP_DEPENDENCIES[id]).join(', ');
     if (install < 0) {
       findings.push(`${where}: can run ${needing}, which need ${apps.join(', ')}, and has no step "${APP_DEPS_STEP}"`);
@@ -779,8 +782,14 @@ function appDependencyFindings(file, text) {
     }
     const step = job.steps[install];
     if (step.condition !== null) findings.push(`${where}: "${APP_DEPS_STEP}" has a condition (${step.condition}); it must run every time`);
-    if (!step.text.includes(`\n        env:\n          ${APP_DEPS_ENV}\n`)) findings.push(`${where}: "${APP_DEPS_STEP}" does not read the selection's app_deps`);
+    if (select < 0) {
+      findings.push(`${where}: has no step with an id that selects the suites with --check, so nothing writes app_deps`);
+      continue;
+    }
+    const selectId = job.steps[select].id;
+    if (!step.text.includes(`\n        env:\n          ${appDepsEnv(selectId)}\n`)) findings.push(`${where}: "${APP_DEPS_STEP}" does not read the selection's app_deps`);
     if (step.run !== APP_DEPS_RUN) findings.push(`${where}: "${APP_DEPS_STEP}" is not the reviewed script`);
+    if (install < select) findings.push(`${where}: "${APP_DEPS_STEP}" does not come after the step that selects the suites (${selectId})`);
     if (run < 0 || install > run) findings.push(`${where}: "${APP_DEPS_STEP}" does not come before the step that runs the suites`);
   }
   return findings;
@@ -801,7 +810,16 @@ test('every job of any workflow that can run a suite needing application depende
   assert.deepEqual(broken((t) => t.replace(step, `${step}        if: steps.select.outputs.app_deps == '[]'\n`)),
     [`"${APP_DEPS_STEP}" has a condition (steps.select.outputs.app_deps == '[]'); it must run every time`]);
   assert.deepEqual(broken((t) => t.replace(`${selection.APP_DEPS_MARKER}=1`, 'X=1')), [`"${APP_DEPS_STEP}" is not the reviewed script`]);
-  assert.deepEqual(broken((t) => t.replace(APP_DEPS_ENV, 'APP_DEPS: "[]"')), [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  assert.deepEqual(broken((t) => t.replace(appDepsEnv('select'), 'APP_DEPS: "[]"')), [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  assert.deepEqual(broken((t) => t.replace('APP_DEPS: ${{ steps.select.outputs.app_deps }}', 'APP_DEPS: ${{ steps.other.outputs.app_deps }}')),
+    [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  // Moved before the step that selects (its app_deps output does not exist yet there), it never installs (Codex re-review).
+  const start = text.indexOf(step), end = text.indexOf('\n      - ', start + step.length) + 1;
+  const selectAt = text.indexOf('      - name: Select suites\n', text.indexOf('\n  ci-suites:\n'));
+  assert.ok(start > selectAt && selectAt > 0);
+  const moved = text.slice(0, selectAt) + text.slice(start, end) + text.slice(selectAt, start) + text.slice(end);
+  assert.deepEqual(appDependencyFindings('w', moved).map((finding) => finding.split(': ').slice(1).join(': ')),
+    [`"${APP_DEPS_STEP}" does not come after the step that selects the suites (select)`]);
   // A third workflow that runs such a suite is read too.
   const third = 'name: third\non:\n  pull_request:\njobs:\n  other:\n    runs-on: [self-hosted, Linux]\n    steps:\n'
     + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run pinned-registries --root candidate\n';
