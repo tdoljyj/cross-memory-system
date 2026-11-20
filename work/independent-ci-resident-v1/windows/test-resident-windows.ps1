@@ -15,7 +15,7 @@
     against the shared cases (test/fixtures/node-identity-cases.json), the package side, the receipt checks, the secret files'
     security descriptors, and the fingerprint check and create-only placement against a scratch package and scratch targets with a
     throw-away key and a made-up token (needs a node on this machine; the result says whether it ran).
-  powershell -NoProfile -File test-resident-windows.ps1 -Scratch <new empty directory>
+  powershell -NoProfile -ExecutionPolicy Bypass -File test-resident-windows.ps1 -Scratch <new empty directory>
 #>
 param([Parameter(Mandatory)][string]$Scratch)
 Set-StrictMode -Version 2.0
