@@ -1846,6 +1846,76 @@ test('a timed step that timed out with a runner job at boot is classed suspected
     'stopCodeOnly', 'noConfirmedJob', 'otherFailure', 'nothing']) assert.equal(r[k], null, k);
 });
 
+// Codex re-review of bde9aaa52, medium 1: a first install that ended refused (its terminal verdict, from the step record or the entry's
+// result) decides, whatever times out after it -- also when no step line carries the refusal (FIRST_INSTALL_STOPPED / PREPARE_REFUSED).
+// Only a refusal that is itself a bounded package step's time-out is classed. A first install that finished leaves the later steps to be judged.
+test('a first install that ended refused decides: no contention for a time-out after it, also without a refused step line', opts, () => {
+  const r = ps(`
+    $timeout = @{ code = 'DRILL_GUEST_STEP_TIMEOUT'; detail = @{ step = 'read-after-install'; minutes = 10 } }
+    $prepareRefused = @{ steps = @(@{ name = 'host'; result = 'ok'; rejectCode = $null }); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'PREPARE_REFUSED' } }
+    $done = @{ steps = @(@{ name = 'launcher'; result = 'ok'; rejectCode = $null }); verdict = @{ status = 'FIRST_INSTALL_DONE'; stopCode = $null } }
+    $timedOutStop = @{ steps = @(); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'FACTS_CHECK_TIMEOUT' } }
+    $entryRefused = @{ parsed = $true; exitCode = 1; status = 'FIRST_INSTALL_STOPPED'; stopCode = 'PREPARE_REFUSED' }
+    $entryDone = @{ parsed = $true; exitCode = 0; status = 'FIRST_INSTALL_DONE'; stopCode = $null }
+    [ordered]@{
+      verdictRefused = (Get-DrillHostContention $timeout $prepareRefused $true)
+      entryRefused = (Get-DrillHostContention $timeout @{ steps = @(); verdict = $null } $true $entryRefused)
+      entryRefusedNoSteps = (Get-DrillHostContention $timeout $null $true $entryRefused)
+      runDeadlineAfterRefusal = (Get-DrillHostContention @{ code = 'DRILL_RUN_TIMEOUT' } $prepareRefused $true $entryRefused)
+      refusedByPackageTimeout = (Get-DrillHostContention $timeout $timedOutStop $true)
+      doneThenTimeout = (Get-DrillHostContention $timeout $done $true $entryDone) }`);
+  for (const k of ['verdictRefused', 'entryRefused', 'entryRefusedNoSteps', 'runDeadlineAfterRefusal']) assert.equal(r[k], null, k);
+  assert.deepEqual(r.refusedByPackageTimeout, { class: 'SUSPECTED_HOST_CONTENTION', step: 'first-install', code: 'FACTS_CHECK_TIMEOUT' });
+  assert.deepEqual(r.doneThenTimeout, { class: 'SUSPECTED_HOST_CONTENTION', step: 'read-after-install', code: 'DRILL_GUEST_STEP_TIMEOUT' });
+});
+
+// Codex re-review of bde9aaa52, medium 2: a real command in the guest that reaches its own limit (A8's upgrade fetch, 3600 s) before the
+// step's outer bound comes back from Receive-Job as text. The drill's own runner writes that text (fixed, ASCII, never localized):
+// Invoke-DrillGuest keeps it as structured evidence -- DRILL_GUEST_COMMAND_TIMEOUT with the step, the command, the limit, reached --
+// instead of DRILL_GUEST_STEP_FAILED, and the contention class reads it. Any other text is still a step failure.
+test('a guest command that reached its own limit keeps step, command and limit, and is classed by them', opts, () => {
+  const r = ps(`
+    function Get-DrillGuestProbe { param($Credential) @{ boot = 'boot-1' } }
+    function Wait-DrillGuest { param($Credential, $Minutes) [DateTimeOffset]::Parse('2026-11-20T00:00:00Z') }
+    function Get-DrillStepFailureKind { param($Before, $After) 'failed' }
+    function Invoke-Command { param($VMName, $Credential, $ScriptBlock, $ArgumentList, [switch]$AsJob) 'job' }
+    function Wait-Job { param($Job, $Timeout) $true }
+    function Receive-Job { param($Job, $ErrorAction) throw $script:guestText }
+    function Remove-Job { param($Job, [switch]$Force, $ErrorAction) }
+    $run = { param($text) $script:guestText = $text
+      try { Invoke-DrillGuest $null { } @() -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'; $null } catch { Get-DrillCode $_ } }
+    $timedOut = & $run 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe after 3600 s'
+    $other = & $run 'something else failed in the guest'
+    [ordered]@{ timedOut = $timedOut; other = $other.code
+      parsed = (Get-DrillGuestCommandTimeout 'x COMMAND_TIMEOUT_NOTHING_KILLED: pwsh.exe after 120 s y'); unparsed = (Get-DrillGuestCommandTimeout 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe')
+      contention = (Get-DrillHostContention $timedOut $null $true)
+      afterRefusal = (Get-DrillHostContention $timedOut @{ steps = @(); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'PREPARE_REFUSED' } } $true) }`);
+  assert.deepEqual(r.timedOut, { code: 'DRILL_GUEST_COMMAND_TIMEOUT', detail: { step: 'reinstall', command: 'node.exe', limitSeconds: 3600, reached: true } });
+  assert.equal(r.other, 'DRILL_GUEST_STEP_FAILED');
+  assert.deepEqual(r.parsed, { command: 'pwsh.exe', limitSeconds: 120 });
+  assert.equal(r.unparsed, null);
+  assert.deepEqual(r.contention, { class: 'SUSPECTED_HOST_CONTENTION', step: 'reinstall', code: 'DRILL_GUEST_COMMAND_TIMEOUT' });
+  assert.equal(r.afterRefusal, null);
+});
+
+// Codex re-review of bde9aaa52, lows 1 and 2: a job confirmed in one runner distribution stays a confirmed job when another could not be
+// read; a sample the duty check refused before any job was read says nothing about jobs (not "no").
+test('a confirmed WSL job survives another distribution unread; a duty refusal carries no job reading', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
+    function Get-VM { param($ErrorAction) }
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    function Get-DrillWslRunnerState { param($HostName) @{ ok = $false; distributions = @('A', 'B'); running = @('A', 'B'); jobs = @('A'); reason = 'WSL_PROCESS_QUERY_FAILED' } }
+    $partial = Get-DrillHostSafety
+    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} }
+    $duty = Get-DrillHostSafety -JobsOnly
+    [ordered]@{ partial = [ordered]@{ action = $partial.action; busyWith = $partial.busyWith; runnerJob = $partial.runnerJob }
+      duty = [ordered]@{ code = $duty.code; busyWith = (Get-Prop $duty 'busyWith'); runnerJob = (Get-Prop $duty 'runnerJob') } }`);
+  assert.deepEqual(r.partial, { action: 'start', busyWith: 'WSL_ACTIONS_RUNNER_JOB', runnerJob: 'yes' });
+  assert.deepEqual(r.duty, { code: 'DRILL_HOST_IS_ON_DUTY', busyWith: null, runnerJob: null });
+});
+
 // The receipt keeps what the 6 GB is to be recalibrated from: free before boot and the tier, free once the guest is up (the running
 // guard's first reading) and the lowest while running.
 test('the receipt memory record: before boot, the tier, after boot and the lowest while running, and the contention class', opts, () => {
@@ -3565,7 +3635,7 @@ test('a first install cut off by the deadline leaves its printed lines in the gu
       $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
     } finally { $w.Dispose() }
     @{ code = $code; seconds = $seconds; record = $c.record; steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
-  assert.equal(r.code, 'COMMAND_TIMEOUT_NOTHING_KILLED: powershell.exe');
+  assert.equal(r.code, 'COMMAND_TIMEOUT_NOTHING_KILLED: powershell.exe after 2 s');
   assert.ok(r.seconds < 5, `the deadline holds: ${r.seconds}`);
   assert.equal(r.record.entryLogError ?? null, null);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean),
