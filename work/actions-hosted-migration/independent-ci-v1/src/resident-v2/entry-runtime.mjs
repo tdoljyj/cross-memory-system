@@ -209,7 +209,7 @@ export function immutableReadCache(fetchImpl, { live = () => {}, onHit = () => {
   cached.size = () => entries.size;
   return cached;
 }
-export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {} }) {
+export function controllerPorts({ record, appKey, nativeToken, bindingId, policyText, sourceRoot, live, signal, log, monotonic = () => performance.now(), baseFetch = globalThis.fetch, readRetry = {}, stagedScanJournal = null }) {
   const budgetObserver = guardedGitHubBudgetObserver(createGitHubBudgetObserver());
   // One timing line per network attempt and per cache hit (URL pattern, status, milliseconds), for later re-measurement.
   const timing = (url, data) => { try { log?.timing?.({ url: fetchUrlPattern(url), ...data }); } catch { /* best-effort */ } };
@@ -227,7 +227,7 @@ export function controllerPorts({ record, appKey, nativeToken, bindingId, policy
   // E3 (bf57ff10 P2): SHA-fixed GitHub reads are fetched once per entry process (immutableReadCache); all else as before.
   const fetchImpl = immutableReadCache(retryingFetch, { live, onHit: url => timing(url, { method: 'GET', status: 200, ms: 0, cache: true }) });
   const github = createGitHubChecksPort({ repository: record.config.repository, repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId,
-    installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true });
+    installationId: FIXED_APP.installationId, includeModeRead: true, privateKeyProvider: async () => appKey, fetchImpl, budgetObserver, budgetObservedAtFetch: true, stagedScanJournal });
   const admission = createFullAdmissionPortV2({ protectedConfig: { ...record.config, ciPrincipalBindingId: bindingId, domain: 'production', workspace: sourceRoot, policyText }, fetchImpl,
     modeProvider: () => github.readAdmissionMode(),
     tokenProvider: async () => ({ githubToken: await github.getInstallationToken(), ciAdmissionToken: nativeToken, ciPrincipalBindingId: bindingId, ciPrincipalQualificationRef: record.config.ciPrincipalQualificationRef }),

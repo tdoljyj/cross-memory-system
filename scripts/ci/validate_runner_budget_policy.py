@@ -110,10 +110,11 @@ LEGACY_HOSTED_DEBT = {
         # PR #1121 (Fable 1121 rework): release takes no migrations and gains the rollback_drill input.
         "control_sha256": "c9cd44da8c145047a0f9bb940c079f81d4f6b0e77daa9e61bd28a416e4d20f9c",
         "jobs": {
-            # PR #1121 after Fable 1121 §6: one-approval release without migrations or wrangler config
-            # changes, Worker rollback judged by one final reading, G6 after the rollback step.
-            # main job cacbc2d0b9c41b9eb3d5913c2f66a0c5b07ba5717989b0ab51a1022fd40ceccc, routing unchanged.
-            "release": "ada26c7e59b4e39f9849410a4e1171b86eaac789895cceed22e1d81732fcec12"
+            # PR #1121 after Fable 1121 §6 on top of release door v1 (FABLE-release-identity-autonomous-20261119):
+            # one-approval release without migrations or wrangler config changes, Worker rollback judged by
+            # one final reading, G6 after the rollback step; the grant goes through the database login door.
+            # main job da0654044b1ffd68e72ca867a3a8fe462583c2b9caa0cde7205269f77a829fcc, routing unchanged.
+            "release": "7335c49a7dabec4a8ce68ab4824e3d5f5bc5a851e4a12d7eee46fae29687b1d5"
         }
     },
     "clued-currentness-post-deploy-attestation.yml": {

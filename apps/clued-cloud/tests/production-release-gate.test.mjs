@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { settleProjectionLag, verifyReleaseState } from '../scripts/production-release-gate.mjs';
+import { verifyProductionRenewRateLimits } from '../scripts/verify-production-renew-rate-limits.mjs';
 
 const baseline = JSON.parse(await readFile(new URL(
   '../scripts/production-release-baseline.json', import.meta.url), 'utf8'));
@@ -24,6 +25,27 @@ const productionWorkflow = await readFile(new URL(
   '../../../.github/workflows/clued-cloud-production-release.yml', import.meta.url), 'utf8');
 const now = new Date('2026-09-23T05:12:49Z');
 const OWNER = 'a'.repeat(64), OTHER = 'b'.repeat(64);
+
+// The production workflow already runs this file in preflight and deploy modes.
+test('N1 production preflight requires both renewal rate limit bindings', async t => {
+  const config = verifyProductionRenewRateLimits(await readFile(new URL(
+    '../wrangler.production.jsonc', import.meta.url), 'utf8'));
+  assert.equal(config.build.command,
+    'node scripts/verify-production-renew-rate-limits.mjs && node scripts/production-release-gate.mjs --pre-deploy');
+  for (const name of ['CI_RENEW_SOURCE_LIMIT', 'CI_RENEW_IDENTITY_LIMIT']) {
+    await t.test(name, () => {
+      const configWithoutBinding = {
+        ...config,
+        ratelimits: config.ratelimits.filter(binding => binding.name !== name),
+        vars: { ...config.vars, [name]: 'not-a-rate-limit-binding' },
+      };
+      assert.throws(() => verifyProductionRenewRateLimits(
+        '// Production bindings\n' + JSON.stringify(configWithoutBinding)), {
+        message: `production_release_blocked:renew_rate_limit_binding_missing:${name}`,
+      });
+    });
+  }
+});
 
 function healthy() {
   return {
@@ -307,7 +329,8 @@ test('发布门不依赖心跳，两个发布入口使用部署后状态模式',
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
   const scripts = [...productionWorkflow.matchAll(/node -e '((?:const|let) url[^']*)'/g)].map((m) => m[1]);
-  assert.equal(scripts.length, 3);
+  // Backup, migration login role, apply and (release door v1) the deploy grant step.
+  assert.equal(scripts.length, 4);
   for (const script of scripts) {
     const run = (value) => spawnSync(process.execPath, ['-e', script], {
       env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: value, CLUED_MIGRATION_DATABASE_URL: value },
@@ -469,55 +492,71 @@ test('a release with migrations stops before any production credential is read',
 });
 
 test('deploy and migrate consume an Owner Grant before they change production', () => {
-  // Owner Credential v0.1 §6.1 (Task 2a31ca2a): the grant step comes first.
+  // Release door v1 (FABLE-release-identity-autonomous-20261119 §1.2): the door
+  // is clued_private.release_door_v1, called with the migration database login
+  // of the clued-release environment (no token). migrate consumes inside the
+  // transaction of its first file; deploy consumes in its own step first.
   const steps = productionWorkflow.split(/\n      - /).slice(1);
   const names = steps.map((step) => step.split('\n')[0]);
-  const migrateGrant = names.indexOf('name: Consume the Owner Grant for the named migrations');
+  const migrateGrant = names.indexOf('name: Apply the named migrations');
   const deployGrant = names.indexOf('name: Consume the Owner Grant for this commit');
   assert.ok(migrateGrant > 0 && deployGrant > 0);
+  assert.equal(names.indexOf('name: Consume the Owner Grant for the named migrations'), -1,
+    'no grant is consumed outside the migration transaction');
   // A release takes no migrations, so only migrate uses the migration grant;
   // a release calls the grant check as deploy: the same door call, used once.
   assert.match(steps[migrateGrant], /if: \$\{\{ inputs\.mode == 'migrate' \}\}/);
   assert.match(steps[deployGrant], /if: \$\{\{ inputs\.mode == 'deploy' \|\| inputs\.mode == 'release' \}\}/);
-  assert.match(steps[migrateGrant], /RELEASE_MODE: \$\{\{ inputs\.mode \}\}/);
-  assert.match(steps[deployGrant], /RELEASE_MODE: \$\{\{ inputs\.mode == 'release' && 'deploy' \|\| inputs\.mode \}\}/);
+  // The deploy grant step names deploy for both modes; nothing passes the mode through.
+  assert.match(steps[deployGrant], /clued-release-door\.mjs input --mode deploy \|/);
+  assert.match(steps[deployGrant], /clued-release-door\.mjs report --mode deploy /);
+  assert.doesNotMatch(steps[deployGrant], /RELEASE_MODE|--mode "/);
   // What production serves is recorded, and a release whose settings a version
   // rollback cannot undo is refused, before the deploy grant is used.
   assert.ok(names.indexOf('name: Record the Worker versions production serves') > 0);
   assert.ok(names.indexOf('name: Record the Worker versions production serves') < deployGrant);
   for (const grant of [migrateGrant, deployGrant]) {
-    assert.match(steps[grant], /node scripts\/ci\/clued-release-grant\.mjs --mode "\$RELEASE_MODE"/);
-    assert.match(steps[grant], /CLUED_RELEASE_TOKEN: \$\{\{ secrets\.CLUED_RELEASE_TOKEN \}\}/);
+    assert.match(steps[grant], /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
+    assert.match(steps[grant], /clued-release-door\.mjs/);
+    assert.match(steps[grant], /input --mode (deploy|migrate)/);
+    assert.match(steps[grant], /clued_private\.release_door_v1\(/);
   }
   assert.match(steps[migrateGrant], /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
-  // Steps that change production come after their grant; the credential
-  // checks come before it, so a run that cannot proceed uses no grant
-  // (re-review N6). deploy also runs the release gate first: run 37329072487
-  // used its grant and then stopped at the gate.
+  // Steps that change production come after their grant. deploy also runs the
+  // release gate first: run 37329072487 used its grant and then stopped at the gate.
   const gate = names.indexOf('name: Verify database prerequisites and record projection state');
   assert.ok(gate > 0 && gate < deployGrant);
   assert.match(steps[gate], /if: \$\{\{[^\n]*inputs\.mode == 'deploy'/);
   assert.match(steps[deployGrant], /NODE_OPTIONS: ''/);
   steps.forEach((step, index) => {
-    if (/Apply the named migrations/.test(step)) assert.ok(index > migrateGrant, names[index]);
     if (/wrangler (deploy|queues create)/.test(step)) assert.ok(index > deployGrant, names[index]);
-    if (/^name: Check migration database credential/.test(step)) assert.ok(index < migrateGrant, names[index]);
+    if (/^name: Record migration database login role/.test(step)) assert.ok(index < migrateGrant, names[index]);
     if (/^name: Check (production database|Cloudflare deployment) credential/.test(step)) {
       assert.ok(index < deployGrant, names[index]);
     }
   });
-  // The migration credential check connects, so a bad password stops the run
-  // before a grant is used (trial run 37155374056).
-  const check = steps.find((step) => step.startsWith('name: Check migration database credential'));
-  assert.match(check, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select 1'/);
+  // The migration login connects once and records its database role (a name,
+  // not a secret) before anything changes production.
+  const check = steps.find((step) => step.startsWith('name: Record migration database login role'));
+  assert.match(check, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA -c 'select current_user'/);
   // The file reaches the server as COPY data on psql's standard input, never
   // through \\i or -f, so psql meta-commands in a file are not executed, and
   // the server checks its md5 against the file before it runs it.
   const apply = steps.find((step) => step.startsWith('name: Apply the named migrations'));
   assert.match(apply, /copy migration_lines\(line\) from stdin with \(format csv, delimiter e'\\x01', quote e'\\x02'\)/);
-  assert.match(apply, /commit;" < "\$file"/);
-  // Activation readiness must succeed in the same transaction before the ledger.
-  assert.match(apply, /if md5\(s\) is distinct from '\$expected' then raise exception[^\n]*\n\s*execute s;\n(?:\s*--[^\n]*\n)*\s*if to_regprocedure\('clued_private\.storage_conflict_require_scheduler_v1\(\)'\) is not null then\n\s*perform clued_private\.storage_conflict_require_scheduler_v1\(\);\n\s*end if;\n\s*insert into supabase_migrations\.schema_migrations/);
+  // The door's input is the first COPY line, the file follows: neither is SQL text.
+  assert.match(apply, /\{ printf '%s\\n' "\$door_input"; cat -- "\$file"; \} \| psql /);
+  // One transaction per file, in this order: md5, consume (first file, door
+  // present), execute, consume (bootstrap install), activation readiness,
+  // probe, ledger. A file that breaks the door, or a missing grant, rolls back.
+  const order = ["if md5(s) is distinct from '$expected' then raise exception",
+    "if '$order' = 'consume' then", 'answer := clued_private.release_door_v1(door_input);', 'execute s;',
+    "if '$order' = 'install' then", "to_regprocedure('clued_private.storage_conflict_require_scheduler_v1()')",
+    "perform clued_private.storage_conflict_require_scheduler_v1();", "raise exception 'release_door_probe_failed'",
+    'insert into supabase_migrations.schema_migrations', 'commit;'];
+  const at = order.map((text) => apply.indexOf(text));
+  assert.ok(at.every((value, index) => value >= 0 && (index === 0 || value > at[index - 1])), JSON.stringify(at));
+  assert.match(apply, /if answer->>'consumed' is distinct from 'true' then raise exception 'release_grant_not_consumed'/);
   assert.match(apply, /\[\[ "\$expected" =~ \^\[0-9a-f\]\{32\}\$ \]\]/);
   assert.match(apply, /grep -q \$'\[\\r\\x01\\x02\]' "\$file" \|\| grep -qx '\\\\\\\.' "\$file"/);
   assert.match(apply, /\[ -z "\$\(tail -c1 "\$file"\)" \]/);
@@ -658,7 +697,9 @@ const QUEUE_STEP = 'Ensure Storage job queue exists';
 const VERIFY_STEPS = ['Wait until production serves this commit', 'Verify production serves the repository Agent contract',
   'Verify the PDF extractor service binding', 'Verify Kooyumi Connect production release', 'Verify projection currentness after deployment'];
 const DEPLOY_STEPS = ['Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker', 'Deploy Kooyumi Connect Worker'];
-const grantSteps = (run) => run.steps.filter((step) => /\n {8}run: node scripts\/ci\/clued-release-grant\.mjs /.test(step.text));
+// Release door v1: the steps that call clued-release-door.mjs consume a grant
+// (deploy in its own step, migrate inside the apply step's transaction).
+const grantSteps = (run) => run.steps.filter((step) => /\n {10}[^\n#]*node (?:\.\.\/\.\.\/)?scripts\/ci\/clued-release-door\.mjs /.test(step.text));
 const writesAttestation = (step) => /verify-currentness-transport\.mjs --production /.test(step.text);
 const MIGRATION = '20261003170000_owner_grants_release_door.sql';
 // The production wrangler configuration, read as Wrangler reads it (JSONC).
@@ -673,13 +714,14 @@ test('release mode runs preflight, deploy and verification in one run and uses i
   assert.deepEqual(grantSteps(run).map((step) => step.name), ['Consume the Owner Grant for this commit']);
   for (const name of ['Check production backup encryption credential', 'Verify backup and migration database identity',
     'Create and verify encrypted pre-migration backup', 'Require verified backup before migration',
-    'Check migration database credential', 'Consume the Owner Grant for the named migrations', 'Apply the named migrations']) {
+    'Record migration database login role', 'Apply the named migrations']) {
     assert.ok(!run.ran.includes(name), name);
   }
   for (const name of [ROLLBACK_STEP, DRILL_STEP, G6_REPORT_STEP]) assert.ok(!run.ran.includes(name), name);
   const [deployGrant] = grantSteps(run);
-  assert.match(deployGrant.text, /RELEASE_MODE: \$\{\{ inputs\.mode == 'release' && 'deploy' \|\| inputs\.mode \}\}/);
-  assert.match(deployGrant.text, /--mode "\$RELEASE_MODE"/);
+  // A release consumes as deploy: the step names deploy for both modes.
+  assert.match(deployGrant.text, /clued-release-door\.mjs input --mode deploy \|/);
+  assert.doesNotMatch(deployGrant.text, /RELEASE_MODE/);
   assert.match(deployGrant.text, /NODE_OPTIONS: ''/);
   // Every credential is checked before the grant is used.
   const grantAt = run.ran.indexOf('Consume the Owner Grant for this commit');
@@ -756,7 +798,7 @@ test('only deploy and release reach production Workers; the single-step modes ke
     }
   }
   assert.deepEqual(grantSteps(simulateRelease({ mode: 'migrate', migrations: MIGRATION })).map((s) => s.name),
-    ['Consume the Owner Grant for the named migrations']);
+    ['Apply the named migrations']);
   assert.deepEqual(grantSteps(simulateRelease({ mode: 'deploy' })).map((s) => s.name), ['Consume the Owner Grant for this commit']);
   assert.ok(!simulateRelease({ mode: 'deploy' }).ran.includes('Apply the named migrations'));
   assert.ok(simulateRelease({ mode: 'backup' }).ran.includes('Create and verify encrypted pre-migration backup'));
@@ -1157,9 +1199,9 @@ test('migration cannot consume a grant or apply without a successful verified en
   const target=index('Verify backup and migration database identity');
   const backup=index('Create and verify encrypted pre-migration backup');
   const gate=index('Require verified backup before migration');
-  const grant=index('Consume the Owner Grant for the named migrations');
+  // The grant is consumed inside the apply step's transaction (release door v1).
   const apply=index('Apply the named migrations');
-  assert.ok(encryption>=0&&encryption<target&&target<backup&&backup<gate&&gate<grant&&grant<apply);
+  assert.ok(encryption>=0&&encryption<target&&target<backup&&backup<gate&&gate<apply);
   for(const i of [encryption,backup])assert.match(steps[i],/if: \$\{\{ inputs\.mode == 'backup' \|\| inputs\.mode == 'migrate' \}\}/);
   assert.match(steps[backup],/id: pre_migration_backup/);
   assert.match(steps[gate],/BACKUP_OUTCOME: \$\{\{ steps\.pre_migration_backup\.outcome \}\}/);
@@ -1755,4 +1797,27 @@ test('the release-path guard fails every use of a configuration path but readWra
     + `if (!(await gitSameFiles(commit, CONFIGS))) throw new Error('changed');\n`
     + `const other = ${parse}(body);\nconst pattern = /'--config' "x"/;\n`;
   assert.deepEqual(configPathFindings(allowed), []);
+});
+
+// Release door v1 bootstrap (FABLE-release-identity-autonomous-20261119 §2):
+// while the door does not exist, only a first file whose md5 equals
+// RELEASE_DOOR_INSTALL_MD5 may run. The value is the md5 of the one install
+// migration, 20261119130000_release_door_db_identity_v1.sql (PR-A), as LF
+// bytes the way the runner checks them out. Wherever that file is in the
+// repository this test holds the pin to it; a changed file needs a new pin.
+test('the release workflow pins the md5 of the release door install migration', async () => {
+  const pins = [...productionWorkflow.matchAll(/^ {10}RELEASE_DOOR_INSTALL_MD5: '([0-9a-f]{32})'$/gm)].map((match) => match[1]);
+  assert.equal(pins.length, 1, 'exactly one pin, on the apply step');
+  const applyStep = productionWorkflow.split(/\n      - /).find((step) => step.startsWith('name: Apply the named migrations\n'));
+  assert.ok(applyStep.includes(`RELEASE_DOOR_INSTALL_MD5: '${pins[0]}'`));
+  assert.notEqual(pins[0], '0'.repeat(32), 'a real md5, not a placeholder');
+  const installs = migrationFiles.filter((name) => name.endsWith('_release_door_db_identity_v1.sql'));
+  assert.ok(installs.length <= 1, installs.join(', '));
+  // Before PR-A is merged into this checkout there is no file to compare with.
+  if (installs.length === 0) return;
+  assert.equal(installs[0], '20261119130000_release_door_db_identity_v1.sql');
+  const bytes = Buffer.from((await readFile(new URL(`../supabase/migrations/${installs[0]}`, import.meta.url), 'utf8'))
+    .replace(/\r\n/g, '\n'), 'utf8');
+  assert.equal(pins[0], createHash('md5').update(bytes).digest('hex'),
+    `set RELEASE_DOOR_INSTALL_MD5 in .github/workflows/clued-cloud-production-release.yml to the md5 of ${installs[0]}`);
 });

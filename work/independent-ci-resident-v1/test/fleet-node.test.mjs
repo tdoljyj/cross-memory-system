@@ -18,7 +18,20 @@ const windows = process.platform === 'win32';
 const skip = windows ? false : 'the node side of the universal package runs on the Windows host only';
 const tail = (s, n = 6000) => (String(s ?? '').length > n ? String(s).slice(-n) : String(s ?? ''));
 // a child of `node --test` must not think it reports to this runner
-const childEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; return e; };
+// and carries the test marker itself (Fable ruling 11-20 "补：止血 PR 第四轮" §4)
+const childEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; e.CLUED_UNDER_TEST = '1'; return e; };
+
+// Every child carries the test marker itself (Fable "补：发布工具测试入套件"; ruling 11-20 "补：止血 PR 第四轮" §4), also when
+// this file is started without the one entry.
+test('the fleet children carry the test marker CLUED_UNDER_TEST=1 whatever this process has', () => {
+  const saved = process.env.CLUED_UNDER_TEST;
+  delete process.env.CLUED_UNDER_TEST;
+  try {
+    assert.equal(childEnv().CLUED_UNDER_TEST, '1');
+  } finally {
+    if (saved !== undefined) process.env.CLUED_UNDER_TEST = saved;
+  }
+});
 
 const files = windows ? fs.readdirSync(FLEET_TESTS).filter(n => n.endsWith('.test.mjs')).sort() : [];
 test('rollout/fleet/test holds the fleet tests this file runs', { skip }, () => {
@@ -90,3 +103,66 @@ function global:Get-Service {
     t.diagnostic(JSON.stringify({ host, ...r.verdict, hostProbeCalls: 0 }));
   });
 }
+
+// The real windows/first-install-host.ps1 under Windows PowerShell 5.1 (drill 3bc571a6 A1; Fable ruling 11-19 section 2.1): dot-sourced
+// (definitions only: its main runs only when the file is invoked), its progress and refusal lines are printed from the values P1 really
+// has, cmdlet output (Join-Path, Where-Object, Split-Path), which 5.1 hands over in a PSObject shell. Before the one JSON writer the
+// guest stopped at `Step 'stage' $stage` with a PSParameterizedProperty circular reference, and so does this test.
+function hostScriptLines(body) {
+  const command = `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n. ${psLiteral(path.join(RES, 'windows', 'first-install-host.ps1'))}\n${body}`;
+  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+    { cwd: RES, env: childEnv(), encoding: 'utf8', maxBuffer: 1 << 24, windowsHide: true, timeout: 300_000 });
+  assert.ifError(r.error);
+  return { status: r.status, lines: String(r.stdout ?? '').split(/\r?\n/).filter(l => l.trim()), out: `${tail(r.stdout)}\n${tail(r.stderr, 3000)}` };
+}
+
+test('windows/first-install-host.ps1 under Windows PowerShell 5.1: its lines carry cmdlet output', { skip, timeout: 900_000 }, () => {
+  const steps = hostScriptLines(`
+$stage = Join-Path 'C:\\Windows\\Temp' ('clued-p1-' + '0123')
+Step 'residue' 'none'
+Step 'stage' $stage
+Step 'residue' (@('SERVICE:A', 'SERVICE:B') | Where-Object { $_ })
+Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
+  assert.equal(steps.status, 0, steps.out);
+  const parsed = steps.lines.map(l => JSON.parse(l));
+  assert.deepEqual(parsed.slice(0, 3), [{ step: 'residue', result: 'none' }, { step: 'stage', result: 'C:\\Windows\\Temp\\clued-p1-0123' },
+    { step: 'residue', result: ['SERVICE:A', 'SERVICE:B'] }], steps.out);
+  assert.match(parsed[3].result, /DirectoryInfo/, steps.out);
+
+  const refused = hostScriptLines(`Stop-Host 'INPUT_MISSING' ([ordered]@{ path = (Join-Path 'C:\\drill\\from' 'x.tar'); found = @(Split-Path -Parent 'C:\\a\\b') })`);
+  assert.equal(refused.status, 1, refused.out);
+  assert.deepEqual(JSON.parse(refused.lines.at(-1)),
+    { status: 'FIRST_INSTALL_HOST_REFUSED', code: 'INPUT_MISSING', detail: { path: 'C:\\drill\\from\\x.tar', found: ['C:\\a'] } }, refused.out);
+
+  // a refusal whose detail is not plain data is still one line and exit 1, refused by name with the code it was refusing
+  const notPlain = hostScriptLines(`Stop-Host 'INPUT_MISSING' (Get-Item -LiteralPath $env:SystemRoot)`);
+  assert.equal(notPlain.status, 1, notPlain.out);
+  const v = JSON.parse(notPlain.lines.at(-1));
+  assert.equal(v.status, 'FIRST_INSTALL_HOST_REFUSED', notPlain.out);
+  assert.equal(v.code, 'HOST_OUTPUT_NOT_PLAIN_DATA', notPlain.out);
+  assert.equal(v.detail.code, 'INPUT_MISSING', notPlain.out);
+
+  // Invoke-Host, the script's entry (Codex review of PR-甲, suggestion 1): the real one around a stand-in Invoke-HostPreparation. A verdict
+  // that is not plain data is refused by name (exit 1); READY stays exit 0 and RESTART exit 3; any other exception passes through, even one
+  // whose text looks like the writer's.
+  const entry = body => hostScriptLines(`function Invoke-HostPreparation { ${body} }\nInvoke-Host`);
+  const odd = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Get-Item -LiteralPath $env:SystemRoot) })`);
+  assert.equal(odd.status, 1, odd.out);
+  const ov = JSON.parse(odd.lines.at(-1));
+  assert.deepEqual([ov.status, ov.code, ov.detail.at, ov.detail.type], ['FIRST_INSTALL_HOST_REFUSED', 'HOST_OUTPUT_NOT_PLAIN_DATA', '$.facts', 'System.IO.DirectoryInfo'], odd.out);
+  const fine = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Join-Path $FirstDir 'facts.json') })`);
+  assert.equal(fine.status, 0, fine.out);
+  assert.equal(JSON.parse(fine.lines.at(-1)).status, 'FIRST_INSTALL_HOST_READY', fine.out);
+  const restart = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'WSL installed' }); exit 3`);
+  assert.equal(restart.status, 3, restart.out);
+  const other = entry(`throw 'something else said OUTPUT_NOT_PLAIN_DATA:$.x:System.Object'`);
+  assert.notEqual(other.status, 0, other.out);
+  assert.ok(!other.lines.some(l => l.includes('HOST_OUTPUT_NOT_PLAIN_DATA')), other.out);
+  assert.match(other.out, /something else said/);
+
+  // the READY verdict's shape: facts is Join-Path's output
+  const ready = hostScriptLines(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Join-Path $FirstDir 'facts.json'); node = 'desk-w-591' })`);
+  assert.equal(ready.status, 0, ready.out);
+  assert.deepEqual(JSON.parse(ready.lines.at(-1)),
+    { status: 'FIRST_INSTALL_HOST_READY', facts: 'C:\\ProgramData\\CluedIndependentCI\\first-install\\facts.json', node: 'desk-w-591' }, ready.out);
+});

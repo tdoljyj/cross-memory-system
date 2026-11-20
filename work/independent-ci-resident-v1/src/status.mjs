@@ -42,6 +42,7 @@ import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
+import { renewalStatus, parseRenewalStatus, RESPONSE_WAITING } from './connection-renewal.mjs';
 import { parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView } from './selfcheck.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
@@ -73,7 +74,7 @@ export const NOTICE_KINDS = Object.freeze(['budget', 'new-trigger', 'stopped', '
   // was rolled back (the node stays paused), or its rollback failed (the Owner must act).
   'version-skew', 'upgrade-grant-pending', 'upgrade-deferred', 'upgrade-rolled-back', 'upgrade-rollback-failed',
   // Task 4a: the node's own self-check (selfcheck.mjs) ran and failed.
-  'selfcheck-failed',
+  'selfcheck-failed', 'renewal-failed',
   // Step 3c-2b: stage 10's decisions for the Owner (code: the decision).
   'train-owner',
   // Generation 12 (DESIGN §56.3): the claim of a running or parked batch is about to end (or has ended); its holder must renew.
@@ -356,6 +357,7 @@ export function parseVersions(v) {
       manifestSha256: hexOrNull(l.manifestSha256), pinsOk: l.pinsOk === true } : null,
     consistent: [true, false].includes(v.consistent) ? v.consistent : null,
     // Task 4a: the node's self-check (selfcheck.mjs); null before the first one. Only shown, nothing decides on it.
+    ...(v.renewal ? {renewal:parseRenewalStatus(v.renewal)} : {}),
     selfcheck: parseSelfcheckView(v.selfcheck),
     upgrade: u ? { opId: u.opId, state: u.state, phase: typeof u.phase === 'string' && PHASE.test(u.phase) ? u.phase : null, since: isoMs(u.since),
       code: codeOrNull(u.code), confirmUrl: typeof u.confirmUrl === 'string' && CONFIRM_URL.test(u.confirmUrl) ? u.confirmUrl : null } : null,
@@ -400,7 +402,16 @@ export function versionsView({ current, facts, status, selfcheck = null }, { pol
 export async function readVersionState({ root, policy, policySha256 = null, clock = Date.now }) {
   const inputs = await readVersionInputs(root);
   const view = versionsView(inputs, { policy, policySha256, now: clock() });
-  return { view, notices: versionNotices(view, inputs.status) };
+  const renewal=await renewalStatus(root,clock());
+  if(renewal) view.renewal=renewal;
+  const notices=versionNotices(view, inputs.status);
+  if(renewal) {
+    // 等回包（未满一小时）不是失败：状态视图显示等待码，不发续期失败通知。
+    const codes=Object.values(renewal.connections).map(v=>v.code).filter(code=>code && code!==RESPONSE_WAITING);
+    if(renewal.keyCheck==='FAIL') codes.push('RENEW_KEY_CHECK_FAILED');
+    for(const code of new Set(codes)) notices.push({key:'renewal-failed:'+code,kind:'renewal-failed',code,pr:null,headSha:null,at:renewal.checkedAt,until:null});
+  }
+  return { view, notices };
 }
 
 // The upgrade's notices (one key per fact, so the companion shows each once): the two sides disagree; the op in upgrade\status.json

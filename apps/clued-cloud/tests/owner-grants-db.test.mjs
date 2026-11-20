@@ -224,7 +224,8 @@ test('owner grants: requests, Native two-step grants, consumption and revocation
     assert.equal(view.view.expires_seconds, 86400);
     assert.equal(view.view.max_uses, 1);
     assert.deepEqual((await admin.query(`select action,risk from clued_private.owner_grant_actions order by action`)).rows,
-      [{ action: 'ci.resident_upgrade', risk: 'high' }, { action: 'connection.permission', risk: 'high' }, { action: 'migration.production', risk: 'high' },
+      [{ action: 'ci.connection_renew', risk: 'high' }, { action: 'ci.resident_upgrade', risk: 'high' },
+        { action: 'connection.permission', risk: 'high' }, { action: 'migration.production', risk: 'high' },
         { action: 'model.dataset_split.bootstrap', risk: 'high' },
         { action: 'model.dataset_split.producer', risk: 'high' }, { action: 'model.dataset_split.recognize', risk: 'high' },
         { action: 'model.dataset_split.verify', risk: 'high' },

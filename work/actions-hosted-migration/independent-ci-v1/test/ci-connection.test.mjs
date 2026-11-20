@@ -172,12 +172,17 @@ for (const [role, rel] of Object.entries(entries)) test(role + ' 的正式入口
   entry.searchParams.set('fixture', role);
   const stop = new Error('fixture_ports_observed');
   let calls = 0;
+  let journalOpens = 0;
   const ctx = { inputs: { record, jobs: [{ id: 'fixture' }] }, held: { policyText: '{}' }, live() {}, sourceRoot: io.root };
   // 只替换入口的宿主依赖。在创建端口时结束，不创建效果日志、邮箱或外部请求。
   globalThis.ciConnectionEntryFixture = {
     runEntry: opts => opts.body(ctx),
     controllerPrincipal: r => controllerPrincipal(r, io),
     observationLog() {},
+    EffectJournal: { async open() {
+      journalOpens++;
+      assert.fail('效果账本只能在受保护端口构造成功后打开');
+    } },
     controllerPorts(opts) {
       calls++;
       assert.equal(opts.bindingId, connection.bindingId);
@@ -188,6 +193,7 @@ for (const [role, rel] of Object.entries(entries)) test(role + ' 的正式入口
   const exportsFor = new Map([
     ['entry-runtime.mjs', 'export const {runEntry, controllerPrincipal, observationLog, controllerPorts} = globalThis.ciConnectionEntryFixture;'],
     ['batch-claim-v2.mjs', 'export async function readBatchClaim() { return {}; }'],
+    ['effect-journal.mjs', 'export const {EffectJournal} = globalThis.ciConnectionEntryFixture;'],
     ['boundary.mjs', 'export const createWindowsContext = ({inputs}) => ({job: inputs.jobs[0]});'],
   ]);
   const hook = registerHooks({ resolve(spec, context, next) {
@@ -201,10 +207,12 @@ for (const [role, rel] of Object.entries(entries)) test(role + ' 的正式入口
     const { main } = await import(entry.href);
     await assert.rejects(main([]), error => error === stop);
     assert.equal(calls, 1);
+    assert.equal(journalOpens, 0);
     assert.deepEqual(io.reads.sort(), ['ci-admission.connection.json', 'ci-admission.token', 'fixture.pem']);
     await fs.writeFile(path.join(io.root, 'secrets', 'ci-admission.token'), oldToken);
     await assert.rejects(main([]), { code: 'ACTUAL_NATIVE_CHECK_PRINCIPAL_CHANGED' });
     assert.equal(calls, 1);
+    assert.equal(journalOpens, 0);
   } finally { hook.deregister(); delete globalThis.ciConnectionEntryFixture; }
 });
 

@@ -6379,7 +6379,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "f3965775b404e926ec749b406529b5a8ed7285f0cf79c5d6670b58f27408c262",
+      "source_sha256": "8ec25430b6db08be0a432df438341797e5b3d934b02911118dcfa01a1992b335",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6499,13 +6499,15 @@
 "          GITHUB_TOKEN: ${{ github.token }}",
 "          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}",
 "          PYTHONDONTWRITEBYTECODE: \"1\"",
+"          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
+"          CLUED_UNDER_TEST: \"1\"",
 "        run: |",
 "          $ErrorActionPreference = 'Stop'",
 "          & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate",
 "          exit $LASTEXITCODE",
 ""
       ],
-      "workflow_blob": "bf46c22f3ff1c9e491d181ca1464f174b4a21d9b"
+      "workflow_blob": "be7debe207654bbe30de28caefe863aecb51a366"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
@@ -6545,6 +6547,9 @@
         },
         {
           "command_digests": {
+            "Install the application dependencies the selected suites need": [
+              "511e1108529d91041e013a3cd32568c97b1b0e9cbca78d7c19dee5be3cb6933e"
+            ],
             "Resolve push baseline before loading trusted commands": [
               "614d7c1b253d4cdc2010130a1191b703d5d73164b4d860deec9a78985a636cf0"
             ],
@@ -6558,6 +6563,7 @@
           "job_id": "ci-suites",
           "name": "ci-suites",
           "required_steps": {
+            "Install the application dependencies the selected suites need": 1,
             "Resolve push baseline before loading trusted commands": 1,
             "Run the selected suites": 1,
             "Select suites": 1
@@ -6593,7 +6599,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "299d3ff07d8b27be73dfafad94a47da03dde52ea99540af0830b647704133388",
+      "source_sha256": "0a36849d74c2612f38d759cbc27304a7721786417e75c889a3417b56ce724d8b",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -6789,6 +6795,8 @@
 "        if: steps.select.outputs.run_clued_cloud == 'true'",
 "        env:",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
+"          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
+"          CLUED_UNDER_TEST: \"1\"",
 "        run: node \"$SELECTOR\" --run clued-cloud --root candidate",
 "",
 "  ci-suites:",
@@ -6873,12 +6881,31 @@
 "          fi",
 "          echo \"selector=$selector\" >> \"$GITHUB_OUTPUT\"",
 "          node \"$selector\" --check ci-suites",
+"      # Clued Task 10399304: the applications whose dependencies the selected suites need (SUITE_APP_DEPENDENCIES in the",
+"      # selection, written as app_deps), installed offline from the runner's store by the trusted ci-deps.mjs. The marker",
+"      # tells those suites a missing dependency is a failure, not a skip. A base selection without app_deps installs nothing.",
+"      # The step runs every time (the execution proof requires each registered step to succeed) and decides from app_deps.",
+"      - name: Install the application dependencies the selected suites need",
+"        env:",
+"          APP_DEPS: ${{ steps.select.outputs.app_deps }}",
+"        run: |",
+"          apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || \"[]\")) console.log(a)')",
+"          if [ -z \"$apps\" ]; then",
+"            echo \"No selected suite needs application dependencies; nothing installed.\"",
+"            exit 0",
+"          fi",
+"          for app in $apps; do",
+"            node trusted/scripts/ci/ci-deps.mjs install \"candidate/$app\"",
+"          done",
+"          echo \"CLUED_CI_APP_DEPS=1\" >> \"$GITHUB_ENV\"",
 "      - name: Run the selected suites",
 "        env:",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
 "          SUITES: ${{ steps.select.outputs.suites }}",
 "          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}",
 "          PYTHONDONTWRITEBYTECODE: \"1\"",
+"          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
+"          CLUED_UNDER_TEST: \"1\"",
 "        run: |",
 "          failed=\"\"",
 "          for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do",
@@ -6991,6 +7018,8 @@
 "        if: steps.select.outputs.run_production_schema == 'true'",
 "        env:",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
+"          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
+"          CLUED_UNDER_TEST: \"1\"",
 "        run: |",
 "          status=0",
 "          node \"$SELECTOR\" --run production-schema --root candidate || status=$?",
@@ -7007,7 +7036,7 @@
 "        run: echo \"No migration, ledger, snapshot or drift-check file changed; nothing to verify.\" >> \"$GITHUB_STEP_SUMMARY\"",
 ""
       ],
-      "workflow_blob": "90018809f94ceb6ba6ffcea8dcfac94a5d23b1e8"
+      "workflow_blob": "2e14516b6813ce3024d42ab5ffde63fb399fb20b"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

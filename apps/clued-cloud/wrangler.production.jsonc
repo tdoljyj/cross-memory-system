@@ -1,6 +1,10 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "clued-cloud",
+  "ratelimits": [
+    { "name": "CI_RENEW_SOURCE_LIMIT", "namespace_id": "26111901", "simple": { "limit": 60, "period": 60 } },
+    { "name": "CI_RENEW_IDENTITY_LIMIT", "namespace_id": "26111902", "simple": { "limit": 20, "period": 60 } }
+  ],
   "routes": [
     { "pattern": "clued.pixelgrav.com", "custom_domain": true },
     { "pattern": "kooyumi.pixelgrav.com", "custom_domain": true },
@@ -14,7 +18,7 @@
   },
   "main": "./dist/server/index.js",
   "build": {
-    "command": "node scripts/production-release-gate.mjs --pre-deploy"
+    "command": "node scripts/verify-production-renew-rate-limits.mjs && node scripts/production-release-gate.mjs --pre-deploy"
   },
   "no_bundle": true,
   "rules": [

@@ -1,19 +1,324 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   FILE_LIMIT, REPORTER_PATH, SELECT_ALL, SUITES, SUITE_COMMANDS, changedFiles, expandArgv, globToRegExp, knownFailureVerdict, knownKey,
-  knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, runSuite, selectSuites,
+  knownEntriesFromReport, listPullRequestFiles, outputLines, readKnownFailures, readReport, resolveCommand, executeSuite, selectSuites,
+  unitTestFiles,
   PLATFORMS, SUITE_PLATFORMS, hostPlatform, runSelected, suitePlatforms,
 } from './ci-required-selection.mjs';
+import * as selection from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
+import { classifyTests } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
+
+// Launch the real CLI in separate processes and use a different checkout for
+// each suite. Inject the queue location and short timing budgets.
+function slotFixture(t) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-suite-slots-test-'));
+  const children = [];
+  const selector = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
+  const slotModule = pathToFileURL(path.join(ROOT, 'scripts/ci/local-suite-slots.mjs')).href;
+  const loader = path.join(dir, 'loader.mjs');
+  writeFileSync(loader, `import { registerHooks } from 'node:module';
+    import childProcess from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    if (process.env.SLOT_FIXTURE_PROBE_ERROR) {
+      const original = childProcess.execFileSync;
+      let calls = 0;
+      childProcess.execFileSync = (file, args, options) => {
+        if (file === 'powershell.exe' && args.includes('-Command') && ++calls > Number(process.env.SLOT_FIXTURE_PROBE_AFTER)
+          && calls <= Number(process.env.SLOT_FIXTURE_PROBE_AFTER) + Number(process.env.SLOT_FIXTURE_PROBE_ERROR)) {
+          throw Object.assign(new Error('synthetic identity probe timeout'), { code: 'ETIMEDOUT' });
+        }
+        return original(file, args, options);
+      };
+      syncBuiltinESMExports();
+    }
+    if (process.env.SLOT_FIXTURE_EVENT) {
+      globalThis.fetch = async () => ({
+        ok: true, json: async () => [{ filename: 'fixture/wrangler.jsonc' }],
+      });
+    }
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier !== './local-suite-slots.mjs') return next(specifier, context);
+      const source = \`import { withLocalSuiteSlot as acquire } from \${JSON.stringify(${JSON.stringify(slotModule)})};
+        export const withLocalSuiteSlot = (id, run) => acquire(id, run, {
+          directory: \${JSON.stringify(process.env.SLOT_FIXTURE_QUEUE)}, waitMs: Number(process.env.SLOT_FIXTURE_WAIT),
+          holdMs: Number(process.env.SLOT_FIXTURE_HOLD), probeMs: 200,
+        });\`;
+      return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
+    }});
+  `);
+  const queue = path.join(dir, 'shared-queue');
+  mkdirSync(queue);
+  t.after(async () => {
+    for (const child of children) child.release();
+    await Promise.all(children.map(({ done }) => done));
+    for (const { descendant } of children) {
+      const deadline = performance.now() + 5_000;
+      while (pidAlive(descendant()) && performance.now() < deadline) await delay(20);
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return function start(name, {
+    waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
+  } = {}) {
+    const root = path.join(dir, name);
+    const scripts = path.join(root, 'scripts', 'ci');
+    mkdirSync(scripts, { recursive: true });
+    writeFileSync(path.join(root, 'descendant.mjs'), `
+      import { existsSync, writeFileSync } from 'node:fs';
+      writeFileSync('descendant.pid', String(process.pid));
+      const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
+      setTimeout(() => clearInterval(poll), 35_000).unref();
+    `);
+    const probe = `
+      import { spawnSync } from 'node:child_process';
+      import { existsSync, writeFileSync } from 'node:fs';
+      if (${tree}) {
+        const launched = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-c',
+          'import subprocess, sys; subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)',
+          process.execPath, 'descendant.mjs']);
+        if (launched.error || launched.status !== 0) throw new Error('cannot launch fixture descendant');
+      }
+      writeFileSync('ready', '');
+      const poll = setInterval(() => { if (existsSync('release')) clearInterval(poll); }, 20);
+      setTimeout(() => { clearInterval(poll); process.exitCode = 1; }, 35_000).unref();
+    `;
+    writeFileSync(path.join(scripts, 'retrigger-counter.test.mjs'), body ?? probe);
+    let tool = selector;
+    let target = suite;
+    if (mode === '--write-known') {
+      const tools = path.join(root, 'tools');
+      mkdirSync(tools);
+      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'ci-test-failures-reporter.mjs',
+        'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
+        copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
+      }
+      writeFileSync(path.join(tools, 'ci-known-failures.json'), '{}');
+      tool = path.join(tools, 'ci-required-selection.mjs');
+      target = 'admission-self-tests';
+      const files = SUITE_COMMANDS[target][0].argv.slice(2);
+      for (const [index, file] of files.entries()) {
+        const destination = path.join(root, file);
+        mkdirSync(path.dirname(destination), { recursive: true });
+        writeFileSync(destination, index === 0 ? probe : '');
+      }
+    }
+    writeFileSync(path.join(scripts, 'check-pinned-registries.mjs'), 'process.exitCode = 75;\n');
+    const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
+      SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
+    env.CI_BASE_SHA ||= 'fixture-base';
+    delete env.CI;
+    delete env.GITHUB_ACTIONS;
+    delete env.NODE_TEST_CONTEXT;
+    if (ci) env[ci] = 'true';
+    if (mode === '--run-selected') {
+      writeFileSync(path.join(scripts, 'check-cron-budget.test.mjs'), probe);
+      writeFileSync(path.join(scripts, 'check-cron-budget.mjs'), '');
+      target = 'ci-suites';
+      const event = path.join(root, 'event.json');
+      writeFileSync(event, '{"pull_request":{"number":1}}');
+      Object.assign(env, { SLOT_FIXTURE_EVENT: '1', GITHUB_EVENT_NAME: 'pull_request',
+        GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'fixture/repo', GITHUB_TOKEN: 'fixture' });
+    }
+    for (const [file, text] of Object.entries(extraFiles)) {
+      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      writeFileSync(path.join(root, file), text);
+    }
+    const namedFiles = mode === '--run-files' ? (named ?? ['scripts/ci/retrigger-counter.test.mjs']) : [];
+    const child = spawn(process.execPath, ['--import', pathToFileURL(loader).href, tool,
+      mode, target, ...namedFiles, '--root', root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (data) => { output += data; });
+    child.stderr.on('data', (data) => { output += data; });
+    const done = once(child, 'close');
+    const run = { child, done, root, output: () => output, ready: () => existsSync(path.join(root, 'ready')),
+      descendant: () => existsSync(path.join(root, 'descendant.pid')) ? Number(readFileSync(path.join(root, 'descendant.pid'))) : 0,
+      release: () => writeFileSync(path.join(root, 'release'), '') };
+    children.push(run);
+    return run;
+  };
+}
+
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+async function waitForSlotFixture(run, condition) {
+  const deadline = performance.now() + 10_000;
+  while (performance.now() < deadline && run.child.exitCode === null && run.child.signalCode === null) {
+    if (condition()) return;
+    await delay(20);
+  }
+  assert.ok(condition(), `fixture never reached the expected state: ${run.output()}`);
+}
+
+async function fillSuiteSlots(start) {
+  const first = start('first');
+  const second = start('second');
+  await waitForSlotFixture(first, first.ready);
+  await waitForSlotFixture(second, second.ready);
+  return [first, second];
+}
+
+async function waitForQueuedSuite(run, holders) {
+  await waitForSlotFixture(run, () => run.ready() || /queue position 1/.test(run.output()));
+  assert.equal(run.ready(), false, 'a third local invocation must wait before starting its suite');
+  for (const holder of holders) assert.match(run.output(), new RegExp(`retrigger-counter \\(PID ${holder.child.pid}\\)`));
+}
+
+test('third local --run queues and prints the position and holders until normal exit frees a slot', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  const waiting = start('waiting');
+  await waitForQueuedSuite(waiting, holders);
+  holders[0].release();
+  assert.deepEqual(await holders[0].done, [0, null]);
+  await waitForSlotFixture(waiting, waiting.ready);
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+});
+
+for (const mode of ['--run-selected', '--write-known']) {
+  test(`M3: local ${mode} queues until a slot is available`, async (t) => {
+    const start = slotFixture(t);
+    const holders = await fillSuiteSlots(start);
+    const waiting = start('waiting', { mode });
+    await waitForQueuedSuite(waiting, holders);
+    holders[0].release();
+    await waitForSlotFixture(waiting, waiting.ready);
+    waiting.release();
+    assert.deepEqual(await waiting.done, [0, null]);
+  });
+
+  test(`M3: GitHub Actions ${mode} bypasses an occupied local queue`, async (t) => {
+    const start = slotFixture(t);
+    await fillSuiteSlots(start);
+    const run = start('actions', { mode, ci: 'GITHUB_ACTIONS' });
+    await waitForSlotFixture(run, run.ready);
+    run.release();
+    assert.deepEqual(await run.done, [0, null]);
+    assert.doesNotMatch(run.output(), /queue position/);
+  });
+}
+
+test('local --run reclaims a slot after the holder is killed', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  const waiting = start('waiting');
+  await waitForQueuedSuite(waiting, holders);
+  assert.equal(holders[0].child.kill('SIGKILL'), true);
+  // The synthetic suite child can outlive its CLI, so let it close its own pipes.
+  holders[0].release();
+  assert.equal((await holders[0].done)[1], 'SIGKILL');
+  await waitForSlotFixture(waiting, waiting.ready);
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+});
+
+test('M1: killing only the entry drains its Python-launched descendant before admitting the waiter', async (t) => {
+  const start = slotFixture(t);
+  const holder = start('tree', { tree: true });
+  const other = start('other');
+  await waitForSlotFixture(holder, holder.descendant);
+  await waitForSlotFixture(other, other.ready);
+  const waiting = start('waiting');
+  await waitForQueuedSuite(waiting, [holder, other]);
+  assert.equal(holder.child.kill('SIGKILL'), true);
+  await waitForSlotFixture(waiting, waiting.ready);
+  assert.equal(pidAlive(holder.descendant()), false, 'a suite was admitted while the killed holder still had a live descendant');
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+});
+
+test('M2: a Windows identity-probe timeout keeps a waiting suite queued until a slot is free',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const holders = await fillSuiteSlots(start);
+    const waiting = start('waiting', { probeErrors: 2, probeAfter: 1 });
+    await waitForSlotFixture(waiting, () => /synthetic identity probe timeout/.test(waiting.output()));
+    assert.ok(!waiting.ready(), 'a failed probe cannot grant a slot');
+    await waitForQueuedSuite(waiting, holders);
+    holders[0].release();
+    await waitForSlotFixture(waiting, waiting.ready);
+    waiting.release();
+    assert.deepEqual(await waiting.done, [0, null]);
+  });
+
+test('M2: persistent identity-probe failure waits for the queue deadline and reports the cause',
+  { skip: process.platform !== 'win32' }, async (t) => {
+    const start = slotFixture(t);
+    const waiting = start('waiting', { probeErrors: 1000, waitMs: 1_500 });
+    await waitForSlotFixture(waiting, () => /synthetic identity probe timeout/.test(waiting.output()));
+    assert.equal(waiting.child.exitCode, null, 'the probe error must not exit before the queue deadline');
+    assert.deepEqual(await waiting.done, [75, null]);
+    assert.ok(!waiting.ready());
+    assert.match(waiting.output(), /LOCAL_SUITE_SLOT_TIMEOUT.*synthetic identity probe timeout/);
+  });
+
+test('L2: a held slot expires, reports the owner, and drains its descendants before admission', async (t) => {
+  const start = slotFixture(t);
+  const holder = start('hung', { holdMs: 6_000, tree: true });
+  const other = start('other');
+  await waitForSlotFixture(holder, holder.descendant);
+  await waitForSlotFixture(other, other.ready);
+  const waiting = start('waiting');
+  await waitForQueuedSuite(waiting, [holder, other]);
+  await waitForSlotFixture(waiting, waiting.ready);
+  assert.equal(pidAlive(holder.descendant()), false);
+  assert.deepEqual(await holder.done, [75, null]);
+  assert.match(holder.output(), new RegExp(`LOCAL_SUITE_HOLD_TIMEOUT.*retrigger-counter.*PID ${holder.child.pid}`));
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+});
+
+test('only GitHub Actions --run bypasses an occupied local queue', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  await waitForQueuedSuite(start('CI', { ci: 'CI' }), holders);
+  const run = start('GITHUB_ACTIONS', { ci: 'GITHUB_ACTIONS' });
+  await waitForSlotFixture(run, run.ready);
+  run.release();
+  assert.deepEqual(await run.done, [0, null]);
+  assert.doesNotMatch(run.output(), /queue position/);
+});
+
+test('L1: local --run times out without starting its suite and returns a dedicated exit code', async (t) => {
+  const start = slotFixture(t);
+  await fillSuiteSlots(start);
+  const waiting = start('waiting', { waitMs: 5_000 });
+  await waitForSlotFixture(waiting, () => waiting.ready() || /LOCAL_SUITE_SLOT_TIMEOUT/.test(waiting.output()));
+  assert.equal(waiting.ready(), false, 'a timed-out invocation must never start the suite');
+  assert.deepEqual(await waiting.done, [75, null]);
+  assert.match(waiting.output(), /LOCAL_SUITE_SLOT_TIMEOUT.*queue position 1/);
+});
+
+test('L1: selector help distinguishes suite failure from a local slot timeout', () => {
+  const help = spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', '--help'], { cwd: ROOT, encoding: 'utf8' });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /1 .*suite fail/i);
+  assert.match(help.stdout, /75 .*local suite.*timeout/i);
+});
+
+test('a command that exits 75 is still a suite failure rather than a slot timeout', async (t) => {
+  const run = slotFixture(t)('failed-command', { suite: 'pinned-registries' });
+  assert.deepEqual(await run.done, [1, null]);
+  assert.match(run.output(), /exited 75/);
+});
 
 for (const file of ['apps/clued-cloud/tests/fixtures/ci-connection-self-v1.json',
   'apps/clued-cloud/supabase/migrations/20261118100000_ci_connection_self_v1.sql',
@@ -265,6 +570,106 @@ test('every file a moved database test imports selects production-schema', () =>
   assert.ok(roots.length > 60 && seen.size > roots.length);
 });
 
+// A database test no required suite runs goes red on main unnoticed (the work-claim files of 20261108161615). Every
+// database test (classifyTests: it, or a test helper it imports, imports embedded-postgres) runs in a required suite
+// (listed in a suite command, or imported by a listed test file) or is exempted here. A new database test left out of
+// both fails this test; an exemption whose test now runs, or no longer exists, fails it too.
+// Each exemption: kind 'environment' (needs what the required checks do not have) or 'stale-or-suspect' (failed when
+// first run, 2026-11-19 in the production-schema command: a stale test or a suspected defect), a reason of at least 20
+// characters saying where it fails, and the Clued Task that fixes it. Fixed, it leaves this table for a production-schema list.
+const STALE_TESTS_TASK = '5ba48256-3a1d-4297-9936-b0fe257a70a8';
+const DB_TEST_EXEMPTIONS = {
+  // Environment.
+  'production-backup-scope-db': { kind: 'environment', task: STALE_TESTS_TASK, reason: '需要 pg_dump/pg_restore 或现成的 Docker PostgreSQL 17 镜像（CLUED_BACKUP_TEST_IMAGE），production-schema 两样都没有；clued-g4-database.yml 用镜像跑它。首跑 5 处失败：3 处 spawnSync pg_dump ENOENT，另 2 处是连带（toc 未生成；上一子测试中途失败留下 concurrent_extra 表）' },
+  'p5-real-postgres': { kind: 'environment', task: STALE_TESTS_TASK, reason: '运行中用 npx --yes supabase@2.115.0 从网络取 Supabase CLI 跑安全顾问，必需检查不联网；首跑失败于这一步（Supabase security advisors failed）' },
+  // Old PR binding input: work_claim_resolve_pr_v1 (20261108161615_work_claim_pr_task_binding_v1.sql) requires pr_ref,
+  // head_sha, base_sha and target_branch; production callers pass all four, these fixtures do not.
+  'ci-node-gateway-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '4 处：3 处 work_claim_pr_binding_input_invalid；1 处 assert.ok(queued?.length >= 1) 不成立（排队作业没建成，疑为同一入参问题的连带）' },
+  'ci-scheduling-stage1-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '18 处：14 处 work_claim_pr_binding_input_invalid；2 处期望 CI_SCHEDULING_NOT_ACTIVATED、CI_INPUT_INVALID|CI_JOB_SCALAR_INVALID 却先得到 work_claim_pr_binding_input_invalid；1 处 :258 读 undefined.j（连带）；1 处函数授权表多出 clued_ci_connection_renew_trust_v1 等（期望值过时）' },
+  'ci-scheduling-stage1-effects-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '10 处：7 处 work_claim_pr_binding_input_invalid；CI_INPUT_INVALID、CI_NONCE_INPUT_INVALID 各 1 处（根因未查，疑为入参契约收紧）；1 处 :23 读 undefined.job_id（连带）' },
+  'ci-scheduling-t2a2-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '13 处全部是 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
+  'ci-duty-holder-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '9 处：7 处 work_claim_pr_binding_input_invalid；1 处期望 open_green_in_ledger 实得 CI_PHASE_CAS_MISMATCH（根因未查）；1 处静态检查 :94 多出 clued_private.work_claim_merge_queue_yield_v1 等函数（期望值过时）' },
+  'work-claims-ci-queue-assist-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
+  'work-claims-handover-activation-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
+  'work-claims-handover-execution-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
+  'work-verify-shared-observation-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '2 处：1 处 work_claim_pr_binding_input_invalid；1 处期望错误码 work_claim_pr_ref_invalid 实得 work_claim_pr_binding_input_invalid（校验次序变了，先查是否有意再改断言）' },
+  // Execute on the old functions revoked from anon (20261010161848_worker_gateway_closeout_v1.sql): go through the Worker gateway.
+  'agent-messages-switch-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 permission denied for function clued_agent_inbox_summary_v1（测试以 anon 直连已收回执行权的旧函数）' },
+  'model-domain-successor-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 permission denied for function clued_project_mutate（测试以 anon 直连已收回执行权的旧函数）' },
+  'search-context-text-cache-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 permission denied for function clued_mcp_search_context（测试以 anon 直连已收回执行权的旧函数）' },
+  // Retired by design.
+  'merge-train-queue-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_legacy_pr_binding_retired：测试仍走按设计退役的旧 PR 绑定' },
+  'work-claims-pr-task-binding-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：最后一个 PR 结束后认领为 RELEASED（work_claim_pr_end_release_v1 的设计行为），测试仍期望不释放；由 PR 生命周期对账兜底的 PR 改期望并列入 AUTHORIZATION_DB_TESTS' },
+  // Expected values behind the schema.
+  'owner-auto-approve-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）' },
+  'resident-upgrade-auto-approve-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）' },
+  'resident-upgrade-auto-approve-v2-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）' },
+  'storage-owner-lifecycle-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '3 处：2 处网关函数数 88，测试期望 80（期望值过时）；1 处 :666 storage_demand_refresh_source_mismatch（根因未查）' },
+  'p6-shadow-canary': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：esbuild 打包 worker 失败 32 处，无法解析 node:util、node:crypto 等（测试的打包设置疑缺 node 平台；clued-cloud 套件的真实构建是绿的）' },
+  // Suspected defects, each with its own Task.
+  'registration-recovery-db': { kind: 'stale-or-suspect', task: '3ed34a7c-9716-4198-9a6a-f8950a87cd49', reason: '16 处：14 处 storage_root_has_unresolved_mutation；:181 生产 Worker 正常入口返回 unreconciled / PROVIDER_MUTATION_OUTCOME_UNKNOWN（期望完成一次原始替换）；:339 createOriginal 返回 unavailable（期望 committed）。14 处疑为同一未对账变更的连带；先二分哪条迁移之后变红' },
+  'raw-binding-fallback-db': { kind: 'stale-or-suspect', task: '28c9d784-ec96-4631-8686-fc100654975b', reason: '1 处 :112“第二次运行不改变任何东西”两次的指纹 f 不等：迁移重放不幂等，或指纹含时间，待查' },
+  'ci-admission-handover-db': { kind: 'stale-or-suspect', task: '0f86addc-55a4-4906-8dc1-5311b0a70137', reason: '1 处 :116：交接后 release-door 角色 live 期望 true 实为 false；角色是否现役的判定变了，待查是预期变化还是回归' },
+  'merge-train-failover-db': { kind: 'stale-or-suspect', task: 'aeefed92-1839-46a9-9e8d-9301e90c643b', reason: '5 处：:643“单次 4.9 分钟与单独 UNKNOWN 不触发”实得 handed_over（期望 holder_alive），疑为故障转移触发条件变了；:760、:886、:1255 得 rejected / ci_admission_target_not_heard；:468 夹具违反 20261115120000 新增的 ci_node_liveness_v1_steady_since_check 约束（过时）' },
+  'context-ownership-independent': { kind: 'stale-or-suspect', task: '41bdbc17-f78d-4d11-950b-7d3149f7192f', reason: '2 处，同一原因：/v1/development 和 /mcp 都返回 503（期望 200）；疑为新增网关配置缺失时失败即关闭，待读 worker 的 503 分支确认生产默认环境不会出现' },
+};
+// Coverage by import counts a top-level static import declaration of another test file only: a line that starts with
+// `import` outside block comments. An import written in a comment, a string or a function body is no coverage.
+const importedTests = (file) => [...readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  .matchAll(/^import\s+(?:[^'";]*?\bfrom\s*)?['"](\.{1,2}\/[^'"]+\.test\.mjs)['"]/gm)].map((match) => path.resolve(path.dirname(file), match[1]));
+const runningTests = (listed) => {
+  const seen = new Set();
+  const pending = [...listed];
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (seen.has(file) || !existsSync(file)) continue;
+    seen.add(file);
+    pending.push(...importedTests(file));
+  }
+  return seen;
+};
+test('coverage by import counts top-level static imports of test files only', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'db-cover-'));
+  try {
+    const write = (name, text) => writeFileSync(path.join(dir, name), text);
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(`${name}.test.mjs`, '');
+    write('helper.mjs', "import './f.test.mjs';\n");
+    write('root.test.mjs', ["import './a.test.mjs';", "import { x } from\n  './b.test.mjs';", "// import './c.test.mjs';",
+      "/*\nimport './d.test.mjs';\n*/", "const s = \"import './e.test.mjs'\";", "if (x) await import('./e.test.mjs');",
+      "import './helper.mjs';", ''].join('\n'));
+    const seen = [...runningTests([path.join(dir, 'root.test.mjs')])].map((file) => path.basename(file)).sort();
+    assert.deepEqual(seen, ['a.test.mjs', 'b.test.mjs', 'root.test.mjs']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+const EXEMPTION_KINDS = ['environment', 'stale-or-suspect'];
+const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const exemptionProblems = (exemptions) => Object.entries(exemptions).flatMap(([name, entry]) => [
+  ...(EXEMPTION_KINDS.includes(entry?.kind) ? [] : [`${name}: kind must be one of ${EXEMPTION_KINDS.join(', ')}`]),
+  ...(typeof entry?.reason === 'string' && [...entry.reason.trim()].length >= 20 ? [] : [`${name}: reason of at least 20 characters`]),
+  ...(typeof entry?.task === 'string' && TASK_ID.test(entry.task) ? [] : [`${name}: task must be a Clued Task id`]),
+]);
+test('an exemption without a kind, a reason of 20 characters or a Task id fails', () => {
+  const good = { kind: 'environment', reason: '需要 Docker 镜像，必需检查没有，所以只在别处跑', task: STALE_TESTS_TASK };
+  assert.deepEqual(exemptionProblems({ ok: good }), []);
+  assert.deepEqual(exemptionProblems({ a: { ...good, kind: 'later' }, b: { ...good, reason: 'x' }, c: { ...good, task: '' }, d: '待修：x' }), [
+    'a: kind must be one of environment, stale-or-suspect', 'b: reason of at least 20 characters', 'c: task must be a Clued Task id',
+    'd: kind must be one of environment, stale-or-suspect', 'd: reason of at least 20 characters', 'd: task must be a Clued Task id']);
+});
+test('every database test runs in a required suite or is exempted with its kind, reason and Task', () => {
+  const relative = (file) => path.relative(ROOT, file).split(path.sep).join('/');
+  const db = classifyTests(path.join(ROOT, 'apps/clued-cloud/tests')).db.map(relative);
+  const listed = Object.values(SUITE_COMMANDS).flatMap((commands) => commands.flatMap(({ cwd, argv }) =>
+    argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => path.join(ROOT, cwd, arg))));
+  const runs = new Set([...runningTests(listed)].map(relative));
+  const exempt = Object.keys(DB_TEST_EXEMPTIONS).map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
+  assert.deepEqual(db.filter((file) => !runs.has(file) && !exempt.includes(file)), [],
+    'database tests no required suite runs: list each in a production-schema list (ci-required-selection.mjs) or exempt it here');
+  assert.deepEqual(exempt.filter((file) => runs.has(file) || !db.includes(file)), [], 'exemptions of a test that runs or is no database test: remove them');
+  assert.deepEqual(exemptionProblems(DB_TEST_EXEMPTIONS), []);
+});
+
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
     ['production-schema']);
@@ -303,7 +708,7 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       calls.push([command, ...args]);
       return { status: 0 };
     };
-    assert.equal(runSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
+    assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn, log }), 0);
     assert.deepEqual(calls.slice(-2).map((argv) => argv.filter((arg) => arg.startsWith('--test-concurrency'))),
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
@@ -312,9 +717,154 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
 test('outputs name every suite of the check', () => {
   const lines = outputLines('ci-suites', { suites: ['offline-drill'] });
   assert.equal(lines[0], 'suites=["offline-drill"]');
+  assert.equal(lines[1], 'app_deps=[]');
   assert.ok(lines.includes('run_offline_drill=true'));
   assert.ok(lines.includes('run_resident_node=false'));
-  assert.equal(lines.length, 1 + Object.keys(SUITES['ci-suites']).length);
+  assert.equal(lines.length, 2 + Object.keys(SUITES['ci-suites']).length);
+  assert.ok(outputLines('ci-suites', { suites: ['offline-drill', 'pinned-registries'] }).includes('app_deps=["apps/clued-cloud"]'));
+});
+
+// Clued Task 10399304: a suite the selection says needs an application's dependencies (SUITE_APP_DEPENDENCIES) is run only
+// by a job that installs them first and tells the suite so (APP_DEPS_MARKER). Every workflow GitHub runs is read, so a new
+// suite with such a need, or a suite moved to another job or workflow, cannot run where nothing installs what it needs.
+// The step runs in every run (no if:): a required primary's registered steps must all succeed in the execution proof
+// (clued-gated-proof.mjs), so a step that is skipped when no selected suite needs dependencies would make every such run
+// unqualified. It decides from the selection's app_deps itself, with exactly the reviewed script below.
+const APP_DEPS_STEP = 'Install the application dependencies the selected suites need';
+const appDepsEnv = (id) => 'APP_DEPS: ${{ steps.' + id + '.outputs.app_deps }}';
+const APP_DEPS_RUN = [
+  `apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || "[]")) console.log(a)')`,
+  'if [ -z "$apps" ]; then',
+  '  echo "No selected suite needs application dependencies; nothing installed."',
+  '  exit 0',
+  'fi',
+  'for app in $apps; do',
+  '  node trusted/scripts/ci/ci-deps.mjs install "candidate/$app"',
+  'done',
+  `echo "${selection.APP_DEPS_MARKER}=1" >> "$GITHUB_ENV"`,
+].join('\n');
+function workflowJobs(text) {
+  const body = text.slice(text.indexOf('\njobs:\n') + 1);
+  const parts = body.split(/\n {2}([a-z][a-z0-9_-]*):\n/);
+  const jobs = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const job = parts[i + 1];
+    const labels = /\n {4}runs-on: \[([^\]]+)\]/.exec(`\n${job}`)?.[1].split(',').map((label) => label.trim()) ?? [];
+    const steps = job.split(/\n {6}- /).slice(1).map((step) => {
+      const run = /(?:^|\n) {8}run: \|\n((?: {10}.*\n?| *\n)+)/.exec(step)?.[1].replace(/^ {10}/gm, '').trimEnd()
+        ?? /(?:^|\n) {8}run: (.+)/.exec(step)?.[1];
+      return { text: step, name: /^name: (.+)/.exec(step)?.[1] ?? null, id: /(?:^|\n) {8}id: (\S+)/.exec(step)?.[1] ?? null,
+        condition: /(?:^|\n) {8}if: (.+)/.exec(step)?.[1] ?? null, run };
+    });
+    jobs.push({ name: parts[i], platform: labels.includes('Windows') ? 'win32' : 'linux', text: job, steps });
+  }
+  return jobs;
+}
+function appDependencyFindings(file, text) {
+  const findings = [];
+  for (const job of workflowJobs(text)) {
+    const suites = new Set();
+    for (const [, check] of job.text.matchAll(/ --(?:check|run-selected) ([a-z][a-z-]*)\b/g)) {
+      for (const id of Object.keys(SUITES[check] ?? {})) if (suitePlatforms(id).includes(job.platform)) suites.add(id);
+    }
+    for (const [, id] of job.text.matchAll(/ --run ([a-z][a-z-]*)\b/g)) if (SUITE_COMMANDS[id]) suites.add(id);
+    const apps = selection.appDependencies([...suites]);
+    if (apps.length === 0) continue;
+    const where = `${file} ${job.name}`;
+    const install = job.steps.findIndex((step) => step.name === APP_DEPS_STEP);
+    const run = job.steps.findIndex((step) => / --run(-selected)? /.test(step.run ?? ''));
+    // The step that writes app_deps: the selection's --check, with an id its output is read by.
+    const select = job.steps.findIndex((step) => / --check [a-z][a-z-]*\b/.test(step.run ?? '') && step.id);
+    const needing = [...suites].filter((id) => selection.SUITE_APP_DEPENDENCIES[id]).join(', ');
+    if (install < 0) {
+      findings.push(`${where}: can run ${needing}, which need ${apps.join(', ')}, and has no step "${APP_DEPS_STEP}"`);
+      continue;
+    }
+    const step = job.steps[install];
+    if (step.condition !== null) findings.push(`${where}: "${APP_DEPS_STEP}" has a condition (${step.condition}); it must run every time`);
+    if (select < 0) {
+      findings.push(`${where}: has no step with an id that selects the suites with --check, so nothing writes app_deps`);
+      continue;
+    }
+    const selectId = job.steps[select].id;
+    if (!step.text.includes(`\n        env:\n          ${appDepsEnv(selectId)}\n`)) findings.push(`${where}: "${APP_DEPS_STEP}" does not read the selection's app_deps`);
+    if (step.run !== APP_DEPS_RUN) findings.push(`${where}: "${APP_DEPS_STEP}" is not the reviewed script`);
+    if (install < select) findings.push(`${where}: "${APP_DEPS_STEP}" does not come after the step that selects the suites (${selectId})`);
+    if (run < 0 || install > run) findings.push(`${where}: "${APP_DEPS_STEP}" does not come before the step that runs the suites`);
+  }
+  return findings;
+}
+const workflowFiles = () => readdirSync(path.join(ROOT, '.github', 'workflows')).filter((name) => /\.ya?ml$/.test(name)).sort()
+  .map((name) => `.github/workflows/${name}`);
+
+test('every job of any workflow that can run a suite needing application dependencies installs them first, every time, and sets the marker', () => {
+  const findings = workflowFiles().flatMap((file) => appDependencyFindings(file, readFileSync(path.join(ROOT, file), 'utf8')));
+  assert.deepEqual(findings, []);
+  // The guard sees the jobs, and each way to break the step is a finding.
+  const file = '.github/workflows/clued-required-tests.yml';
+  const text = readFileSync(path.join(ROOT, file), 'utf8');
+  const step = `      - name: ${APP_DEPS_STEP}\n`;
+  assert.ok(text.includes(step));
+  const broken = (edit) => appDependencyFindings('w', edit(text)).map((finding) => finding.split(': ').slice(1).join(': '));
+  assert.deepEqual(broken((t) => t.replace(APP_DEPS_STEP, 'Install something')), [`can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  assert.deepEqual(broken((t) => t.replace(step, `${step}        if: steps.select.outputs.app_deps == '[]'\n`)),
+    [`"${APP_DEPS_STEP}" has a condition (steps.select.outputs.app_deps == '[]'); it must run every time`]);
+  assert.deepEqual(broken((t) => t.replace(`${selection.APP_DEPS_MARKER}=1`, 'X=1')), [`"${APP_DEPS_STEP}" is not the reviewed script`]);
+  assert.deepEqual(broken((t) => t.replace(appDepsEnv('select'), 'APP_DEPS: "[]"')), [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  assert.deepEqual(broken((t) => t.replace('APP_DEPS: ${{ steps.select.outputs.app_deps }}', 'APP_DEPS: ${{ steps.other.outputs.app_deps }}')),
+    [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  // Moved before the step that selects (its app_deps output does not exist yet there), it never installs (Codex re-review).
+  const start = text.indexOf(step), end = text.indexOf('\n      - ', start + step.length) + 1;
+  const selectAt = text.indexOf('      - name: Select suites\n', text.indexOf('\n  ci-suites:\n'));
+  assert.ok(start > selectAt && selectAt > 0);
+  const moved = text.slice(0, selectAt) + text.slice(start, end) + text.slice(selectAt, start) + text.slice(end);
+  assert.deepEqual(appDependencyFindings('w', moved).map((finding) => finding.split(': ').slice(1).join(': ')),
+    [`"${APP_DEPS_STEP}" does not come after the step that selects the suites (select)`]);
+  // A third workflow that runs such a suite is read too.
+  const third = 'name: third\non:\n  pull_request:\njobs:\n  other:\n    runs-on: [self-hosted, Linux]\n    steps:\n'
+    + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run pinned-registries --root candidate\n';
+  assert.deepEqual(appDependencyFindings('third.yml', third), [`third.yml other: can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  // The marker reaches the suites' processes through the environment the selection gives them.
+  assert.equal(selection.testEnv({ [selection.APP_DEPS_MARKER]: '1' })[selection.APP_DEPS_MARKER], '1');
+});
+
+// The execution proof requires every registered step of a required primary to succeed (clued-gated-proof.mjs); only
+// migration-verify's steps have an independent applicability branch there. A conditional step anywhere else must have a
+// condition that holds in every run, or a run that legitimately skips it is never qualified (Codex review of 10399304, high 2).
+test('the required primaries have no conditional step that a run can skip, except where the execution proof expects it', () => {
+  const file = '.github/workflows/clued-required-tests.yml';
+  const jobs = workflowJobs(readFileSync(path.join(ROOT, file), 'utf8'));
+  // clued-cloud-tests selects clued-cloud for every change, so its run_clued_cloud condition always holds.
+  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] });
+  const expected = {
+    'clued-cloud-tests': { 'Install from lockfile': "steps.select.outputs.run_clued_cloud == 'true'",
+      'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'" },
+    'ci-suites': {},
+    'migration-verify': { 'Install from lockfile': "steps.select.outputs.run_production_schema == 'true'",
+      'Verify migrations on the production schema': "steps.select.outputs.run_production_schema == 'true'",
+      'Not affected': "steps.select.outputs.run_production_schema != 'true'" },
+  };
+  const actual = Object.fromEntries(Object.keys(expected).map((name) => [name, Object.fromEntries(jobs.find((job) => job.name === name)
+    .steps.filter((step) => step.run !== undefined && step.condition !== null).map((step) => [step.name, step.condition]))]));
+  assert.deepEqual(actual, expected);
+});
+
+test('a missing application dependency fails when the job provided them and is skipped, saying why, when it did not', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'app-deps-'));
+  try {
+    const needs = ['apps/clued-cloud/node_modules/typescript/package.json'];
+    const { APP_DEPS_MARKER: marker, appDependencyGap } = selection;
+    const missing = appDependencyGap(root, needs, {});
+    assert.equal(missing.fail, false);
+    assert.equal(missing.reason, `${needs[0]} is missing: this run did not provide the application dependencies (${marker} is not set)`);
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }).fail, true);
+    mkdirSync(path.join(root, 'apps/clued-cloud/node_modules/typescript'), { recursive: true });
+    writeFileSync(path.join(root, needs[0]), '{}');
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }), null);
+    assert.equal(appDependencyGap(root, needs, {}), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 const page = (names, extra = {}) => ({ ok: true, json: async () => names.map((filename) => ({ filename, ...extra })) });
@@ -369,11 +919,204 @@ test('a suite stops at its first failing command and reports a command that did 
     calls.push([command, options.cwd]);
     return { status: calls.length === 1 ? 0 : 3 };
   };
-  assert.equal(runSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
+  assert.equal(executeSuite('components', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log }), 3);
   assert.equal(calls.length, 2);
-  assert.equal(runSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
-  assert.equal(runSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
-  assert.throws(() => runSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
+  assert.equal(executeSuite('selection', { root: ROOT, env: {}, spawn: () => ({ error: new Error('ENOENT') }), log }), 1);
+  assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: () => ({ status: 0 }), log }), 0);
+  assert.throws(() => executeSuite('nope', { root: ROOT, spawn, log }), /unknown suite/);
+});
+
+// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command runs with CLUED_UNDER_TEST=1, Python and PowerShell
+// suites too, so the installed request tools can tell a test from the operator; the caller's env object is not changed.
+test('every suite command runs with the test marker CLUED_UNDER_TEST=1', () => {
+  const seen = [];
+  const spawn = (command, args, options) => {
+    seen.push(options.env.CLUED_UNDER_TEST);
+    return { status: 0 };
+  };
+  const env = { CI_BASE_SHA: 'b', KEEP: 'x' };
+  assert.equal(executeSuite('components', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(executeSuite('resident-python', { root: ROOT, env: { CLUED_UNDER_TEST: '' }, spawn, log }), 0);
+  assert.ok(seen.length >= 3);
+  assert.deepEqual([...new Set(seen)], ['1']);
+  assert.deepEqual(env, { CI_BASE_SHA: 'b', KEEP: 'x' });
+});
+
+// Codex review 5: the marker is in the environment before ANY child starts, the unit-test listing included.
+test('the marker is set before any child process: the run flags mark the environment, and the unit-test listing carries it', () => {
+  for (const flag of ['--run', '--run-selected', '--write-known']) {
+    const env = {};
+    selection.markTestRun(['x', flag, 'suite'], env);
+    assert.equal(env.CLUED_UNDER_TEST, '1', flag);
+  }
+  const plain = {};
+  selection.markTestRun(['--check', 'ci-suites'], plain);
+  assert.deepEqual(plain, {}, '--check runs no suite and is left as it is');
+  let seen;
+  const files = selection.unitTestFiles(ROOT, (command, args, options) => { seen = options.env?.CLUED_UNDER_TEST; return { status: 0, stdout: 'tests/a.test.mjs\n' }; });
+  assert.deepEqual(files, ['tests/a.test.mjs']);
+  assert.equal(seen, '1');
+});
+
+// Clued Task 2ee162c2 (ruling 11-20 §2): a suite child runs under a fake identity, whatever the caller's is. The probe is a
+// real child process given the env the selector builds; it reads the GitHub token variables, lists gh's configuration
+// directory and asks the real git which global and system settings it sees.
+const IDENTITY_PROBE = `
+const { readdirSync } = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const git = spawnSync('git', ['config', '--list', '--show-scope'], { encoding: 'utf8', cwd: require('node:os').tmpdir() });
+const scoped = git.stdout.split('\\n').filter(Boolean).map((line) => line.split('\\t'));
+console.log(JSON.stringify({
+  tokens: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'].map((name) => process.env[name]),
+  gh: readdirSync(process.env.GH_CONFIG_DIR), git: git.status, prompt: process.env.GIT_TERMINAL_PROMPT,
+  global: scoped.filter(([scope]) => scope === 'global').map(([, entry]) => entry),
+  system: scoped.filter(([scope]) => scope === 'system').map(([, entry]) => entry),
+  command: scoped.filter(([scope]) => scope === 'command').map(([, entry]) => entry),
+  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT', 'NODE_OPTIONS'].filter((name) => name in process.env),
+  kept: ['CI_BASE_SHA', 'PYTHONDONTWRITEBYTECODE', 'CLUED_CI_APP_DEPS'].map((name) => process.env[name]),
+}));`;
+test('suite children get only the listed variables and a fake identity: fake GitHub tokens, an empty gh configuration, a git global configuration with only the test identity, no system configuration', (t) => {
+  // The caller's identity, as a run on the Owner's own account inherits it.
+  const owner = mkdtempSync(path.join(os.tmpdir(), 'owner-identity-'));
+  t.after(() => rmSync(owner, { recursive: true, force: true }));
+  mkdirSync(path.join(owner, 'gh'));
+  writeFileSync(path.join(owner, 'gh', 'hosts.yml'), 'github.com:\n    user: owner\n');
+  writeFileSync(path.join(owner, 'gitconfig'), '[user]\n\tname = Owner\n\temail = owner@example.com\n[credential]\n\thelper = owner-helper\n');
+  const env = { ...process.env, GH_TOKEN: 'owner-token', GITHUB_TOKEN: 'owner-token', GH_ENTERPRISE_TOKEN: 'owner-token',
+    GITHUB_ENTERPRISE_TOKEN: 'owner-token', GH_CONFIG_DIR: path.join(owner, 'gh'), GIT_CONFIG_GLOBAL: path.join(owner, 'gitconfig'), CI_BASE_SHA: 'b',
+    // Not listed, so not passed (ruling 11-20 "补：测试身份根修" §3): another token, an assistant's key, a Clued setting, git's
+    // command-line configuration (a credential helper here), a Node option.
+    GITHUB_PAT_TOKEN: 'owner-pat', ANTHROPIC_API_KEY: 'owner-key', CLUED_HOME: owner, GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: 'owner-helper', NODE_OPTIONS: '--no-warnings', PYTHONDONTWRITEBYTECODE: '1',
+    // The job's marker that it installed the application dependencies (#1197): a test reads it to fail rather than skip.
+    CLUED_CI_APP_DEPS: '1' };
+  delete env.GIT_CONFIG_NOSYSTEM;
+  delete env.GIT_TERMINAL_PROMPT;
+  const before = { ...env };
+  const seen = [];
+  const spawn = (command, args, options) => {
+    const probe = spawnSync(process.execPath, ['-e', IDENTITY_PROBE], { cwd: options.cwd, env: options.env, encoding: 'utf8' });
+    assert.equal(probe.status, 0, probe.stderr);
+    seen.push(JSON.parse(probe.stdout));
+    return { status: 0 };
+  };
+  assert.equal(executeSuite('node-governance', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(executeSuite('resident-python', { root: ROOT, env, spawn, log }), 0);
+  assert.ok(seen.length >= 4);
+  const fake = selection.FAKE_GITHUB_TOKEN;
+  for (const child of seen) {
+    assert.deepEqual(child.leaked, [], 'only the listed variables are passed');
+    assert.deepEqual(child.tokens.filter((token) => token === 'owner-token'), [], "the caller's GitHub tokens are not passed");
+    assert.match(String(fake), /fake/, 'the fake token says what it is');
+    assert.deepEqual(child.tokens, [fake, fake, fake, fake]);
+    assert.deepEqual(child.gh, [], 'gh finds no stored login');
+    assert.equal(child.git, 0);
+    assert.deepEqual(child.global, [`user.name=${selection.TEST_GIT_IDENTITY?.name}`, `user.email=${selection.TEST_GIT_IDENTITY?.email}`]);
+    assert.deepEqual(child.system, [], 'no system configuration (its credential helper) is read');
+    assert.deepEqual(child.command, [], "no configuration from the caller's environment");
+    assert.deepEqual(child.kept, ['b', '1', '1'], 'the listed ones are');
+    assert.equal(child.prompt, '0');
+  }
+  assert.deepEqual(env, before, "the caller's env is not changed");
+});
+
+// Codex review of 2ee162c2, high 2 and medium 3: in Actions the selector starts suites itself. The job's token the workflow
+// gives the step stays with the selector (it lists the PR's files) and never reaches a suite child; the runner's
+// RUNNER_TRACKING_ID does, so the runner still finds and ends what a suite leaves running when the job ends.
+test("under Actions a suite child gets the fake token, not the job's, and keeps the runner's orphan-process marker", () => {
+  const seen = [];
+  const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+  const env = { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 'job-token', RUNNER_TRACKING_ID: 'github_1234', CI_BASE_SHA: 'b', PATH: '/bin' };
+  assert.equal(executeSuite('retrigger-counter', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
+  assert.equal(seen[0].RUNNER_TRACKING_ID, 'github_1234');
+  assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
+});
+
+// Codex review of 2ee162c2, medium 5: a proxy URL may carry a user name and password; such a variable is not passed.
+test('a proxy variable whose URL carries a user name or password is not passed; one without is', () => {
+  const kept = selection.keptVariables({ HTTPS_PROXY: 'http://user:secret@proxy:8080', http_proxy: 'http://proxy:3128',
+    ALL_PROXY: 'socks5://user@proxy:1080', https_proxy: 'user:pw@proxy:8080', all_proxy: 'http://%zz@proxy', NO_PROXY: 'localhost',
+    HTTP_PROXY: 'proxy.local:8080' });
+  assert.deepEqual(kept, { http_proxy: 'http://proxy:3128', NO_PROXY: 'localhost', HTTP_PROXY: 'proxy.local:8080' });
+});
+
+// Fable ruling 11-20 "补：止血 PR 第四轮": one identity directory per run, randomly named under the run's temporary
+// directory, its place handed to the children in the environment, removed when the run ends, and no ownership check.
+const IDENTITY_SELECTOR = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
+const runIdentity = (temp, { fail = false } = {}) => {
+  const nested = `import(${IDENTITY_SELECTOR}).then(({ testEnv }) => console.log(testEnv(process.env).GH_CONFIG_DIR));`;
+  const script = `import(${IDENTITY_SELECTOR}).then(({ markTestRun, testEnv }) => {
+    const env = { ...process.env, RUNNER_TEMP: process.argv[1] };
+    markTestRun(['--run', 'selection'], env);
+    const child = testEnv(env);
+    const inner = require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(nested)}], { env: child, encoding: 'utf8' });
+    console.log(JSON.stringify({ made: env.CLUED_TEST_IDENTITY_DIR, gh: child.GH_CONFIG_DIR, git: child.GIT_CONFIG_GLOBAL, nested: inner.stdout.trim(),
+      there: require('node:fs').existsSync(env.CLUED_TEST_IDENTITY_DIR) }));
+    if (${fail}) process.exitCode = 1;
+  });`;
+  const fresh = { ...process.env };
+  delete fresh.CLUED_TEST_IDENTITY_DIR;
+  const run = spawnSync(process.execPath, ['-e', script, temp], { env: fresh, encoding: 'utf8' });
+  assert.equal(run.status, fail ? 1 : 0, run.stderr);
+  return JSON.parse(run.stdout);
+};
+test('each run makes its own identity directory under the run temporary directory, hands it to its children, and removes it when it ends', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-run-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const first = runIdentity(temp);
+  assert.equal(path.dirname(first.made), temp);
+  assert.ok(path.basename(first.made).startsWith('clued-test-identity-'));
+  assert.ok(first.there);
+  assert.deepEqual([path.dirname(first.gh), path.dirname(first.git), path.dirname(first.nested)], [first.made, first.made, first.made],
+    'the children get the run\'s directory through the environment');
+  const failed = runIdentity(temp, { fail: true });
+  assert.notEqual(failed.made, first.made, 'every run has a directory of its own');
+  assert.deepEqual(readdirSync(temp), [], 'removed when the run ends, failed or not');
+});
+
+test('a run removes identity directories older than two days and keeps newer ones and other names', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-old-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const day = 24 * 60 * 60 * 1000;
+  const at = { 'clued-test-identity-old': 3, 'clued-test-identity-recent': 1, 'other-old': 3 };
+  for (const [name, days] of Object.entries(at)) {
+    mkdirSync(path.join(temp, name));
+    const when = new Date(Date.now() - days * day);
+    utimesSync(path.join(temp, name), when, when);
+  }
+  runIdentity(temp);
+  assert.deepEqual(readdirSync(temp).sort(), ['clued-test-identity-recent', 'other-old']);
+});
+
+test('a run whose identity directory cannot be made does not start', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-fail-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const notADirectory = path.join(temp, 'file');
+  writeFileSync(notADirectory, '');
+  const fresh = { ...process.env, RUNNER_TEMP: notADirectory };
+  delete fresh.CLUED_TEST_IDENTITY_DIR;
+  const run = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), '--run', 'retrigger-counter', '--root', ROOT],
+    { env: fresh, encoding: 'utf8' });
+  assert.equal(run.status, selection.TEST_IDENTITY_EXIT, run.stderr);
+  assert.match(run.stderr, /test identity/);
+  assert.doesNotMatch(run.stdout, /::group::/, 'no suite command started');
+});
+
+// Codex review 4: the required checks start the TRUSTED BASE's selector, which may predate the marker: every workflow step that
+// runs suites through it sets CLUED_UNDER_TEST itself.
+test('every workflow step that runs suites through the selector sets CLUED_UNDER_TEST', () => {
+  let steps = 0;
+  for (const name of readdirSync(path.join(ROOT, '.github', 'workflows')).filter((f) => /\.ya?ml$/.test(f))) {
+    const text = readFileSync(path.join(ROOT, '.github', 'workflows', name), 'utf8');
+    for (const step of text.split(/\n(?=\s*- (?:name|uses|id):)/)) {
+      if (!/ci-required-selection\.mjs --run|"\$SELECTOR" --run/.test(step)) continue;
+      steps += 1;
+      assert.match(step, /\n\s+CLUED_UNDER_TEST: "1"\n/, `${name}: ${step.trim().split('\n')[0]}`);
+    }
+  }
+  assert.ok(steps >= 4, `found ${steps} steps`);
 });
 
 // A real run through the reporter: the failure shapes round 2 found masked.
@@ -461,23 +1204,23 @@ test('a known-failure command adds the trusted reporter, warns on known failures
   const abs = (file) => path.join(ROOT, file);
   const summary = { type: 'summary', counts: {}, success: false };
   const env = { RUNNER_TEMP: os.tmpdir() };
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log: (line) => lines.push(line),
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn, known, log: (line) => lines.push(line),
     readReportFile: report([{ type: 'fail', file: abs(entry.file), path: entry.path, fingerprint: entry.fingerprint }, summary]) }), 0);
   assert.ok(seen.includes(`--test-reporter=${pathToFileURL(REPORTER_PATH).href}`));
   assert.ok(seen.some((arg) => arg.startsWith('--test-reporter-destination=') && arg.endsWith('failures.jsonl')));
   assert.ok(lines.some((line) => line.startsWith('::warning title=admission-self-tests known failure::scripts/ci/x.test.mjs :: old a')));
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log,
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn, known, log,
     readReportFile: report([{ type: 'fail', file: abs(entry.file), path: entry.path, fingerprint: entry.fingerprint },
       { type: 'fail', file: abs('scripts/ci/x.test.mjs'), path: ['b'], fingerprint: 'b'.repeat(16) }, summary]) }), 1);
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn, known, log, readReportFile: () => '' }), 1, 'no report fails');
-  assert.equal(runSuite('admission-self-tests', { root: ROOT, env, spawn: () => ({ status: null, signal: 'SIGKILL' }), known, log,
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn, known, log, readReportFile: () => '' }), 1, 'no report fails');
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env, spawn: () => ({ status: null, signal: 'SIGKILL' }), known, log,
     readReportFile: report([summary]) }), 128, 'a killed run fails');
 });
 
 test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
   const calls = [];
   const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
-  assert.equal(runSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
 });
 
@@ -497,7 +1240,7 @@ test('on Windows the entry starts npm and npx through node, not the .cmd shim; e
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, exists: () => false }), ['npm', 'run', 'lint']);
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, platform: 'linux' }), ['npm', 'run', 'lint']);
   const calls = [];
-  runSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
+  executeSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
   assert.equal(calls.length, 1);
   if (process.platform === 'win32') {
     assert.equal(calls[0][0], process.execPath, 'the first step starts npm via node');
@@ -624,15 +1367,15 @@ test('each platform is selected only the suites declared for it, by changed path
   assert.throws(() => selectSuites('ci-suites', null, 'darwin'), /unknown platform/);
 });
 
-test('a platform step runs every selected suite, names each result, fails when any suite fails and passes when nothing is selected', () => {
+test('a platform step runs every selected suite, names each result, fails when any suite fails and passes when nothing is selected', async () => {
   const ran = [];
   const lines = [];
   const run = (id) => { ran.push(id); return id === 'offline-drill' ? 3 : 0; };
-  assert.equal(runSelected(['resident-node', 'offline-drill', 'selection'], { root: ROOT, env: {}, run, log, summary: (text) => lines.push(text) }), 1);
+  assert.equal(await runSelected(['resident-node', 'offline-drill', 'selection'], { root: ROOT, env: {}, run, log, summary: (text) => lines.push(text) }), 1);
   assert.deepEqual(ran, ['resident-node', 'offline-drill', 'selection'], 'a failure does not hide the suites after it');
   assert.deepEqual(lines, ['- `resident-node`: passed\n', '- `offline-drill`: **failed**\n', '- `selection`: passed\n']);
-  assert.equal(runSelected(['resident-node'], { root: ROOT, env: {}, run, log }), 0);
-  assert.equal(runSelected([], { root: ROOT, env: {}, run: () => assert.fail('nothing to run'), log }), 0);
+  assert.equal(await runSelected(['resident-node'], { root: ROOT, env: {}, run, log }), 0);
+  assert.equal(await runSelected([], { root: ROOT, env: {}, run: () => assert.fail('nothing to run'), log }), 0);
 });
 
 // End to end (defect board row 14; #1092 was the mirror case, green on Windows and broken on Linux): a change that
@@ -650,7 +1393,7 @@ function windowsJob() {
   return { published, platform: labels.includes('Windows') ? 'win32' : 'linux', check, root };
 }
 
-test('a change that breaks only on Windows fails ci-suites-windows and passes the Linux side, through the same selection and commands', (t) => {
+test('a change that breaks only on Windows fails ci-suites-windows and passes the Linux side, through the same selection and commands', async (t) => {
   const job = windowsJob();
   assert.deepEqual(job, { published: 'ci-suites-windows', platform: 'win32', check: 'ci-suites', root: 'candidate' });
   const candidate = mkdtempSync(path.join(os.tmpdir(), 'ci-both-platforms-'));
@@ -681,8 +1424,8 @@ test('a change that breaks only on Windows fails ci-suites-windows and passes th
   // The step of the job on this host: the real commands, in the candidate checkout.
   const quiet = (command, args, options) => spawnSync(command, args, { ...options, stdio: 'pipe' });
   const lines = [];
-  const status = runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
-    run: (id, options) => runSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
+  const status = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
+    run: (id, options) => executeSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
   if (process.platform === 'win32') {
     assert.equal(hostPlatform(), job.platform, 'this host is the platform of the ci-suites-windows job');
     assert.equal(status, 1, 'ci-suites-windows fails: this is the failure a Linux-only CI never saw');
@@ -711,4 +1454,151 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
   assert.equal(job.match(/\brun: /g).length, 1, 'one command: nothing else can pass or fail the job');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
+});
+
+// The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
+// either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
+test('the release workflow and its grant script select the release door flow database test', () => {
+  for (const file of ['.github/workflows/clued-cloud-production-release.yml', 'scripts/ci/clued-release-door.mjs',
+    'apps/clued-cloud/tests/production-release-door-flow-db.test.mjs', 'apps/clued-cloud/tests/release-door-psql-fixture.mjs']) {
+    assert.deepEqual(selectSuites('migration-verify', [file], 'linux').suites, ['production-schema'], file);
+  }
+  assert.ok(SUITE_COMMANDS['production-schema'].at(-1).argv.includes('tests/production-release-door-flow-db.test.mjs'));
+});
+
+// --run-files: point-in-time reproduction of named test files through the same suite command.
+const RESIDENT_DIR = 'work/independent-ci-resident-v1';
+const spawnRecorder = (status = 0) => {
+  const calls = [];
+  const spawn = (command, args, options) => { calls.push({ command, args, cwd: options.cwd }); return { status }; };
+  return { calls, spawn };
+};
+const spawnForbidden = () => { throw new Error('no command may start'); };
+
+test('run-files 1: resident-node runs only the named file with the CI command shape', () => {
+  const all = readdirSync(path.join(ROOT, RESIDENT_DIR, 'test')).filter((name) => name.endsWith('.test.mjs')).sort();
+  assert.ok(all.length > 1);
+  const { calls, spawn } = spawnRecorder();
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn, log, files: [`${RESIDENT_DIR}/test/${all[0]}`] }), 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args, ['--test', `test/${all[0]}`]);
+  assert.equal(calls[0].cwd, path.join(ROOT, RESIDENT_DIR));
+});
+
+test('run-files 2: a file the suite does not run is refused with the accepted range, nothing starts', () => {
+  const lines = [];
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log: (line) => lines.push(line),
+    files: ['scripts/ci/ci-required-selection.test.mjs'] }), 2);
+  assert.match(lines.join('\n'), /scripts\/ci\/ci-required-selection\.test\.mjs/);
+  assert.match(lines.join('\n'), new RegExp(`${RESIDENT_DIR}/test/`));
+});
+
+test('run-files 3: a file that does not exist is refused, nothing starts', () => {
+  const lines = [];
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log: (line) => lines.push(line),
+    files: [`${RESIDENT_DIR}/test/no-such-file.test.mjs`] }), 2);
+  assert.match(lines.join('\n'), /no-such-file\.test\.mjs/);
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log, files: [] }), 2, 'no files named');
+  assert.equal(executeSuite('resident-node', { root: ROOT, env: {}, spawn: spawnForbidden, log, files: ['../outside.test.mjs'] }), 2);
+});
+
+test('run-files 4: resident-python discovers the named file only and skips the other directory', () => {
+  const named = readdirSync(path.join(ROOT, RESIDENT_DIR, 'test')).find((name) => /^test_.*\.py$/.test(name));
+  const { calls, spawn } = spawnRecorder();
+  assert.equal(executeSuite('resident-python', { root: ROOT, env: {}, spawn, log, files: [`${RESIDENT_DIR}/test/${named}`] }), 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(-5), ['discover', '-s', 'test', '-p', named]);
+  assert.equal(calls[0].cwd, path.join(ROOT, RESIDENT_DIR));
+});
+
+test('run-files 5: validators, lint, typecheck and build are skipped; the test runner flags stay', () => {
+  const governance = readdirSync(path.join(ROOT, 'scripts/ci/self-hosted/node-governance')).find((name) => name.endsWith('.test.mjs'));
+  const node = spawnRecorder();
+  assert.equal(executeSuite('node-governance', { root: ROOT, env: {}, spawn: node.spawn, log,
+    files: [`scripts/ci/self-hosted/node-governance/${governance}`] }), 0);
+  assert.equal(node.calls.length, 1);
+  assert.ok(!node.calls.some((call) => call.args.some((arg) => /validate_node_profiles/.test(arg))));
+
+  const unit = unitTestFiles(path.join(ROOT, 'apps/clued-cloud'))[0];
+  const cloud = spawnRecorder();
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn: cloud.spawn, log, platform: 'linux',
+    readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }), files: [`apps/clued-cloud/${unit}`] }), 0);
+  assert.equal(cloud.calls.length, 1);
+  assert.ok(cloud.calls[0].args.includes(unit));
+  assert.ok(!cloud.calls.some((call) => ['lint', 'typecheck', 'build', 'ledger:verify'].some((word) => call.args.includes(word))));
+
+  const guarded = SUITE_COMMANDS['production-schema'].find((command) => command.argv.includes('--test-force-exit')).argv.at(-1);
+  const schema = spawnRecorder();
+  assert.equal(executeSuite('production-schema', { root: ROOT, env: {}, spawn: schema.spawn, log, files: [`apps/clued-cloud/${guarded}`] }), 0);
+  const kept = schema.calls.find((call) => call.args.includes(guarded));
+  assert.ok(kept.args.includes('--test-force-exit'));
+  assert.ok(kept.args.some((arg) => arg.startsWith('--test-concurrency=')));
+  assert.ok(!kept.args.includes('tests/production-schema-drift.test.mjs'));
+});
+
+test('run-files 6: known failures count only for the named files', () => {
+  const a = 'scripts/ci/clued-work-admission.test.mjs';
+  const b = 'scripts/ci/merge-admission-policy.test.mjs';
+  const entry = (file) => ({ file, path: ['old'], fingerprint: '2'.repeat(16), reason: 'r' });
+  const known = { 'admission-self-tests': [entry(a), entry(b)] };
+  const summary = { type: 'summary', counts: {}, success: true };
+  const report = (events) => () => events.map((event) => JSON.stringify(event)).join('\n');
+  const abs = (file) => path.join(ROOT, file);
+  const lines = [];
+  const first = spawnRecorder(0);
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn: first.spawn, known, files: [a],
+    log: (line) => lines.push(line), readReportFile: report([{ type: 'pass', file: abs(a), path: ['old'] }, summary]) }), 0);
+  assert.ok(first.calls[0].args.includes(a) && !first.calls[0].args.includes(b));
+  assert.ok(!lines.some((line) => line.includes(b)), 'the entry of the file that did not run is not reported');
+  const second = spawnRecorder(1);
+  assert.equal(executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, spawn: second.spawn, known, files: [a], log,
+    readReportFile: report([{ type: 'fail', file: abs(a), path: ['new one'], fingerprint: '3'.repeat(16) }, summary]) }), 1);
+});
+
+test('run-files 7: command line refuses GitHub Actions and a missing file list and documents itself', () => {
+  const run = (args, env = {}) => spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', ...args],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '', ...env } });
+  const ci = run(['--run-files', 'retrigger-counter', 'scripts/ci/retrigger-counter.test.mjs'], { GITHUB_ACTIONS: 'true' });
+  assert.equal(ci.status, 2);
+  assert.match(ci.stdout + ci.stderr, /GITHUB_ACTIONS/);
+  const none = run(['--run-files', 'retrigger-counter']);
+  assert.equal(none.status, 2);
+  assert.match(none.stdout + none.stderr, /run-files/);
+  assert.equal(run(['--run-files', 'no-such-suite', 'x.test.mjs']).status, 2);
+  const help = run(['--help']);
+  assert.match(help.stdout, /--run-files <suite> <file>/);
+});
+
+test('run-files 8: a targeted run takes a slot and queues behind two holders', async (t) => {
+  const start = slotFixture(t);
+  const holders = await fillSuiteSlots(start);
+  const waiting = start('waiting', { mode: '--run-files' });
+  await waitForQueuedSuite(waiting, holders);
+  holders[0].release();
+  await waitForSlotFixture(waiting, waiting.ready);
+  waiting.release();
+  assert.deepEqual(await waiting.done, [0, null]);
+  assert.match(waiting.output(), /run-files retrigger-counter: 1 .*0/);
+});
+
+test('run-files 9: the named test file decides the exit code in a real run', async (t) => {
+  const start = slotFixture(t);
+  const red = start('red', { mode: '--run-files', body: 'throw new Error("fails before the fix");\n' });
+  assert.deepEqual(await red.done, [1, null]);
+  assert.match(red.output(), /scripts\/ci\/retrigger-counter\.test\.mjs/);
+  assert.match(red.output(), /不是套件结论/);
+  const green = start('green', { mode: '--run-files', body: 'process.exitCode = 0;\n' });
+  assert.deepEqual(await green.done, [0, null]);
+  assert.match(green.output(), /不是套件结论/);
+});
+
+test('run-files 10: only the named file of a multi-file suite reaches the worker and runs', async (t) => {
+  const start = slotFixture(t);
+  const marker = (name) => `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(name)}, '');
+`;
+  const run = start('multi', { mode: '--run-files', suite: 'ci-deps-entry', named: ['scripts/ci/ci-deps.test.mjs'],
+    extraFiles: { 'scripts/ci/ci-deps.test.mjs': marker('ran-named'), 'scripts/ci/check-ci-deps-entry.test.mjs': marker('ran-other') } });
+  assert.deepEqual(await run.done, [0, null]);
+  assert.ok(existsSync(path.join(run.root, 'ran-named')), 'the named file ran');
+  assert.ok(!existsSync(path.join(run.root, 'ran-other')), 'the other file of the suite did not run');
 });

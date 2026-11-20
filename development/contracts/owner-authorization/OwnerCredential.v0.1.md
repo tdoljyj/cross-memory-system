@@ -206,8 +206,8 @@ Owner 同一天内同类的确认，只需要在第一次时选"管一段时间"
   文件经 psql 标准输入以 COPY 数据送到服务器，psql 不会把其中内容当元命令执行，也没有大小上限；服务器先核对重建文本的 md5 与文件一致，再执行（2026-10-05，Decision 8956d3f3：原先整段事务用一个 `psql -c` 参数，单个参数最多 128 KiB，装不下 174 KB 的迁移）。
   应用后的行以应用时刻为 `version`，不是文件时间戳；行与文件的对应关系记录在 `apps/clued-cloud/supabase/ledger/production-history.json`（迁移账本，`docs/maintenance/migration-ledger.md`）。新增迁移文件不用改账本（文件须是 `migrate` 模式能应用的：14 位时间戳、新的短名、LF 正文且以换行结尾）；`migrate` 跑完后，下一个 PR 把新行补进账本并更新 `history_through`。发布前门先校验账本本身，再与生产历史比对：`history_through` 及之前账本缺的行一律拦下；之后的行只有正好是 `migrate` 模式为待应用文件记下的样子（14 位版本号、行名等于文件短名、正文就是文件原文、账本里没有同名行、生产里也没有其他同名行）才只提示，其他对不上的行一律拦下。
 - **`deploy` 与 `migrate` 改动生产之前先做授权检查**（传话口）：`migrate` 在迁移凭据检查之后、应用之前；`deploy` 在发布前门与部署凭据检查都通过之后、第一个改动生产的步骤之前，所以被门拦下的发布不消耗授权（2026-10-05，run 37329072487 消耗了授权后才被门拦下）。
-  - 调用 Clued 的 `clued_owner_grant_door_consume_v1`，动作分别是 `release.production`、`migration.production`，资源是 `repo:tdoljyj/cross-memory-system/<40 位提交>`。
-  - 调用使用 `clued-release` environment 里的 Binding token（`CLUED_RELEASE_TOKEN`）。这个 environment 限 `main`，与 `clued-admission` 的做法相同。
+  - 调用 Clued 的 `clued_private.release_door_v1`，动作分别是 `release.production`、`migration.production`，资源是 `repo:tdoljyj/cross-memory-system/<40 位提交>`（迁移是该提交下的 `apps/clued-cloud/supabase/migrations/<文件>`），只认登记仓库下这两种形状。
+  - 发布身份是数据库登录，不是令牌（2026-11-19，迁移 `20261119130000_release_door_db_identity_v1`）：工作流用 `clued-release` environment 里本来就有的 `CLUED_MIGRATION_DATABASE_URL` 直连调用；该函数只有这个登录角色能执行，不在 PostgREST 上。发布身份登记在 `clued_private.release_identity_v1`（账号、仓库、门口请求挂靠的连接行；没有密钥、没有到期），所以没有签发、轮换和到期。另有 `probe`（只查门可用，不写任何行）与 `request_only`（只复用或新开待确认请求，不消费）两个模式；回执记下工作流自述的 `run_id`、`run_attempt`，标为未验证。公开的 `clued_owner_grant_door_consume_v1` 对这两个动作一律拒绝（`owner_grant_door_release_token_retired`）；原 `CLUED_RELEASE_TOKEN` 与"发布门口"连接、角色行已由该迁移撤销。下面 Owner 设置里的令牌与标"发布门口"两条随之作废。
   - 门口只看动作和提交，不看是哪个 Agent 申请的、挂在哪个 Task 上（Owner 选择 2026-10-03）。
   - 没有授权时在运行摘要里给出确认链接；Owner 设 `CLUED_RELEASE_GRANT_ENFORCE=true` 之后才失败，之前只提示（Owner 选择 2026-10-03）。
 - **`backup` 与 `preflight` 不需要授权**：它们不改变生产。

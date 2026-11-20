@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
-import { CI_SIGNATURES, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
+import { CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE, setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 
 const cloud = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uuid = () => crypto.randomUUID();
@@ -71,10 +71,12 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [user, JSON.stringify(claims)]);
       return (await human.query(`select public.${name}($1) value`, [input])).rows[0].value;
     };
-    const call = async (who, name, input) => CI_SIGNATURES.includes(name + '(text,jsonb)')
+    const call = async (who, name, input) => [...CI_SIGNATURES, PR_LIFECYCLE_REPORT_SIGNATURE].includes(name + '(text,jsonb)')
       ? (await anon.query(`select public.${name}($1,$2) value`, [tokens[who], input])).rows[0].value
       : workerGatewayRpc(gateway, name, tokens[who], input);
     const committed = r => { assert.equal(r.status, 'committed', JSON.stringify(r)); return r; };
+    // GitHub shows the PR closed: the resident's lifecycle report ends its binding (20261119140000).
+    const reportClosed = n => call('ci', 'clued_work_pr_lifecycle_report_v1', { scope: 'global', repository: repo, prs: [{ pr_number: n, state: 'closed' }] });
     const task = async (scope = 'global') => committed(await call('holder', 'clued_record_mutate', {
       operation: 'create', record_type: 'task', record_schema_version: 1, lifecycle_status: 'active', scope,
       idempotency_key: uuid(), authority: 'observed', confidence_reason: 'isolated binding fixture', source_refs: [], source_unavailable_reason: 'fixture',
@@ -222,7 +224,8 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
         fence: r.claim.fence, lease_version: r.claim.lease_version, lease_key: r.lease_key,
         progress_ref: 'queue:' + uuid(), trigger_refs: [`merge:${repo}:main`] }));
       const beforeClose = (await admin.query('select trigger_refs,merge_queued_at,admitted_heads from clued_private.work_claims_v1 where claim_id=$1', [r.claim.claim_id])).rows[0];
-      const closed = await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#2` });
+      assert.equal((await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#2` })).status, 'ok');
+      const closed = await reportClosed(2);
       assert.equal(closed.status, 'ok');
       const terminal = await resolve('reader', 2, head);
       assert.equal(terminal.binding_status, 'no_live_claim'); assert.equal(terminal.task_id, r.claim.task_id);
@@ -321,7 +324,7 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       const r = await claim(await task()), head = '6'.repeat(40), otherRepo = 'fixture/other';
       for (const number of [30, 31, 32, 33]) committed(await authorize(r, head, number));
       for (const number of [30, 31, 33]) assert.equal((await resolve('ci', number, head)).binding_status, 'bound');
-      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#33` });
+      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#33` }); await reportClosed(33);
       committed(await authorize(r, head, 40, { repository: otherRepo }));
       assert.equal((await resolve('ci', 40, head, { pr_ref: `${otherRepo}#40` })).binding_status, 'bound');
       committed(await call('holder', 'clued_work_renew_v1', { scope: 'global', claim_id: r.claim.claim_id,
@@ -339,7 +342,7 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       const other = await holders(otherRepo);
       assert.equal(other.task_id, r.claim.task_id); assert.deepEqual(other.bound_prs, [`${otherRepo}#40`]);
       assert.equal(other.bound_pr, `${otherRepo}#40`); assert.deepEqual(other.merge_refs, [`merge:${otherRepo}:main`]);
-      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#30` });
+      await call('ci', 'clued_work_merge_slot_return_v1', { scope: 'global', pr_ref: `${repo}#30` }); await reportClosed(30);
       const remaining = await holders(repo);
       assert.deepEqual(remaining.bound_prs, [`${repo}#31`]); assert.equal(remaining.bound_pr, `${repo}#31`);
       assert.deepEqual((await holders(otherRepo)).bound_prs, [`${otherRepo}#40`]);

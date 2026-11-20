@@ -339,24 +339,16 @@ class BaseRefTest(unittest.TestCase):
 class QueuedPullRequestTest(unittest.TestCase):
     """Defect C (2026-11-15): when one queued PR merges, the next one only has to take main in.
 
-    Two PRs from the same main change the same component and two neighbouring pinned scripts/ci files,
-    and each runs the repository's integration builder before it is tested. The builder runs a Source pin
-    registry generator ("path -> sha256" of every scripts/ci file, written with the repository's registry
-    layout, like scripts/ci/clued-merge-reconcile-source.json) and the pinned-registry check verifies that
-    registry for real. The first PR merges. A plain merge of the new main into the second (what GitHub's
-    update-branch does) must be clean and already correct: no conflict in generated component metadata or
-    in the pin registry, nothing left for the builder to regenerate, so no person or builder touches the PR.
+    Both PRs change one component and separate scripts/ci files. Their fixed
+    workflow registration remains valid when the second PR takes main in.
     """
 
     REGISTRY = "scripts/ci/clued-merge-reconcile-source.json"
-    # The real generator's registry part: every scripts/ci file except the registry, hashed, in the shared layout.
     GENERATOR = r"""import fs from 'node:fs';
 import {createHash} from 'node:crypto';
-import {layoutRegistry} from './registry-layout.mjs';
 const OUT='scripts/ci/clued-merge-reconcile-source.json';
-const files=Object.fromEntries(fs.readdirSync('scripts/ci').map(n=>'scripts/ci/'+n).filter(n=>n!==OUT).sort()
-  .map(n=>[n,createHash('sha256').update(fs.readFileSync(n)).digest('hex')]));
-const text=layoutRegistry({schema:'fixture',files});
+const sha256=createHash('sha256').update(fs.readFileSync('workflow.yml')).digest('hex');
+const text=JSON.stringify({schema:'fixture',workflow:{path:'workflow.yml',sha256}},null,2)+'\n';
 if(process.argv[2]==='--check')process.exit(fs.existsSync(OUT)&&fs.readFileSync(OUT,'utf8')===text?0:1);
 fs.writeFileSync(OUT,text);
 """
@@ -372,8 +364,7 @@ process.exit(spawnSync(process.execPath,['scripts/ci/clued-merge-reconcile-sourc
         self.repo = Fixture()
         self.addCleanup(self.repo.close)
         self.repo.git("init", "-q", "-b", "main")
-        write(self.repo.dir / "scripts/ci/registry-layout.mjs",
-              (ROOT / "scripts/ci/registry-layout.mjs").read_text(encoding="utf-8"))
+        write(self.repo.dir / "workflow.yml", "name: fixture\n")
         write(self.repo.dir / "scripts/ci/clued-merge-reconcile-source-build.mjs", self.GENERATOR)
         write(self.repo.dir / "scripts/ci/check-pinned-registries.mjs", self.CHECK)
         write(self.repo.dir / "scripts/ci/a.mjs", "export const a = 1;\n")

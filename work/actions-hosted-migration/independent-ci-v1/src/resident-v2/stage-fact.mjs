@@ -10,7 +10,7 @@ import { validateTrainFacts } from '../independent-control-checks-v2/train-facts
 import { roleProbeFact } from './role-probe-run.mjs';
 import { validateRevocationFacts } from './revocation-run.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
-import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON } from '../published-on-github-v2.mjs';
+import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, ROLE_ALREADY_ON_GITHUB, ROLE_ALREADY_ON_GITHUB_REASON, validHeadScans } from '../published-on-github-v2.mjs';
 import { admissionVerificationRetryable } from '../withdrawal-text.mjs';
 
 export const STAGE_FACT_CONTRACT = 'clued.independent-ci.resident-stage-fact/2';
@@ -135,6 +135,9 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
   if (outcome.status === 'UNCERTAIN') return 'PUBLICATION_UNCERTAIN';
   if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
+  // A staged scan had only a pending run, or sent its final conclusion after
+  // verification but could not confirm it. End the head without a HALT.
+  if (outcome.status === 'STAGED_SCAN_FAILED' && [3, 5, 7].includes(stageNumber)) return 'PUBLICATION_REVOKED';
   // Generation 10: only stage 1's own admission check, only when it was withdrawn because it could not be verified for a passing cause
   // (withdrawal-text.mjs#admissionVerificationRetryable, with the outcome's bound diagnostic: the entry's own result names it
   // admissionDiagnostic, the bound outcome diagnostic), is transient. Every other withdrawal, and every one at any other stage (a role
@@ -214,7 +217,9 @@ export function outcomeFacts(o) {
     diagnostic: sanitizeAdmissionDiagnosticV2(o.diagnostic), scheduling: sanitizeSchedulingV2(o.scheduling),
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
     // Generation 28 (resident docs/adr/0015): the check publisher's own republishSafe, only on a REVOKED ending (stage-inputs.mjs#writeOutcome).
-    ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}) };
+    ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
+    // Rule 41ab823a (resident DESIGN §75): stage 1's report of the scans H already carries (stage-inputs.mjs#writeOutcome), validated again.
+    ...(o.status === 'SETTLED' && validHeadScans(o.headScans)?.length ? { headScans: validHeadScans(o.headScans) } : {}) };
 }
 // The broker's refusals that it gives before any start, with the runner re-read as the original (no launch, state
 // restored): the second way a stage may be released (v0.6 §9 phase 1, item 2). BROKER_BUSY and BROKER_UNCONFIRMED
