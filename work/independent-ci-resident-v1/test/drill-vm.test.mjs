@@ -2869,7 +2869,8 @@ test('A8 captures the current launcher exit and indented terminal JSON from the 
     $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(commands.map(c => JSON.stringify(c))))}
     @($cases | ForEach-Object {
       [IO.File]::WriteAllText(${q(path.join(fleet, 'run-command.json'))}, $_)
-      $ri = & $script:GuestReinstall ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText
+      $up = & $script:GuestReinstallUpgrade ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' $script:DrillNativeText
+      $ri = & $script:GuestReinstall ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText $up
       @{ exit = $ri.launcherExit; status = $ri.launcherStatus; verdict = $ri.launcherVerdict; pass = (Test-DrillReinstallLauncher $ri);
         upgrade = $ri.upgradeStatus; prepare = $ri.prepareStatus; upgradeStderr = ([string]$ri.upgradeStderr).Trim(); prepareStderr = ([string]$ri.prepareStderr).Trim() }
     })`);
@@ -3688,6 +3689,7 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
       if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); exit = 0; stderr = '' } }
       if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
       if ($Step -ceq 'read-after-install' -or $Step -ceq 'read-after-reinstall') { return $read }
+      if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 0; stdout = '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; stderr = '' } }
       if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 0; launcherVerdict = 'BOOTSTRAP_DONE' } }
       if ($Step -ceq 'prepare-again') { return @{ status = 'FLEET_NODE_INSTALL_PREPARED'; exit = 0; stderr = '' } }
       throw "unexpected step $Step"
@@ -3708,6 +3710,61 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
   assert.match(r.a8.detail, /upgrade=FLEET_NODE_ALREADY_AT_THIS_PACKAGE .*reverify=True prepareAgain=FLEET_NODE_INSTALL_PREPARED/);
   // the re-verify's input carries the same launcher verdict and the pause read after the reinstall
   assert.match(fs.readFileSync(script, 'utf8'), /\$reVerdict = Get-DrillVerdict @\{[^\n]*launcher = \$launcher; pause = \$again\.pause/);
+});
+
+// Codex narrow review of 4190b0f8e, medium: A8's upgrade fetch can answer FLEET_NODE_UPGRADE_REFUSED with its code, and the prepare that
+// follows can then reach its own 3600 s limit: the step throws and reinstall.json is never written. The upgrade runs as its own guest step;
+// the host keeps its raw result (exit, status, code, stdout, stderr) in reinstall-upgrade.json before the next command starts, and the
+// receipt carries it (evidence.reinstallUpgrade) beside the later failure: both can be traced from the receipt.
+test('A8: an upgrade refused and then a prepare that times out -- both are kept, the refusal before the prepare starts', opts, () => {
+  const e = JSON.parse(evidence());
+  const runDir = path.join(tmp, 'a8-refused-then-timeout'); fs.mkdirSync(runDir, { recursive: true });
+  const guest = guestWorkDir('a8-refused-guest', { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
+    'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1}' });
+  const read = { status: e.status, current: e.current, facts: e.facts, pause: e.pause, verify: e.verify, readAt: e.now };
+  const refused = JSON.stringify({ status: 'FLEET_NODE_UPGRADE_REFUSED', code: 'UPGRADE_SAME_PACKAGE_REFUSED_FIXTURE', detail: 'fixture' });
+  const r = ps(`
+    $script:steps = [Collections.Generic.List[string]]::new()
+    $script:Interactive = $false; $SkipReinstall = $false
+    function New-PSSession { param($VMName, $Credential) 'session' }
+    function Remove-PSSession { param($Session) }
+    function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
+    function Invoke-Command { param($Session, $ScriptBlock, $ArgumentList, $VMName, $Credential, [switch]$AsJob, $ErrorAction) if ($ArgumentList -is [string]) { if ($ArgumentList -like '*.tar') { 'ab' } else { @{ contract = 'x' } } } }
+    function Wait-DrillGuest { param($Credential, $Minutes, $After) [DateTimeOffset]::UtcNow }
+    function Wait-DrillRebootRefresh { param($Cred, $Boot, $Deadline) (${q(JSON.stringify(e.reboot))} | ConvertFrom-Json) }
+    function Copy-DrillM5 { param($RunDir, $Cred) @{} }
+    $read = ${q(JSON.stringify(read))} | ConvertFrom-Json
+    $script:upgradeFileAtPrepare = $null
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
+      $script:steps.Add($Step)
+      if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); exit = 0; stderr = '' } }
+      if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
+      if ($Step -ceq 'read-after-install') { return $read }
+      if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 1; stdout = "fetching\`r\`n" + ${q(refused)} + "\`r\`n"; stderr = 'upgrade: refused' } }
+      if ($Step -ceq 'reinstall') {
+        $script:upgradeFileAtPrepare = Test-Path -LiteralPath (Join-Path ${q(runDir)} 'reinstall-upgrade.json')
+        throw (New-DrillError 'DRILL_GUEST_STEP_FAILED' @{ step = 'reinstall'; message = 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe' })
+      }
+      throw "unexpected step $Step"
+    }
+    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ${q(e.acceptanceSource)} }
+    $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; perNodeSteps = @(); prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
+    $failure = try { $null = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; $null } catch { Get-DrillCode $_ }
+    @{ failure = $failure; steps = @($script:steps); atPrepare = $script:upgradeFileAtPrepare
+      reinstallJson = (Test-Path -LiteralPath (Join-Path ${q(runDir)} 'reinstall.json')); evidence = (Read-DrillReinstallUpgradeEvidence ${q(runDir)}) }`);
+  assert.deepEqual(r.steps.slice(-2), ['reinstall-upgrade', 'reinstall'], JSON.stringify(r.steps));
+  assert.equal(r.atPrepare, true, 'the upgrade result is on the host before the next command starts');
+  // the later failure, raw, as the receipt's failure
+  assert.deepEqual(r.failure, { code: 'DRILL_GUEST_STEP_FAILED', detail: { step: 'reinstall', message: 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe' } });
+  assert.equal(r.reinstallJson, false, 'the step that failed wrote nothing');
+  // and the refusal before it, raw, as the receipt's evidence.reinstallUpgrade
+  assert.deepEqual([r.evidence.exit, r.evidence.status, r.evidence.code, r.evidence.stderr], [1, 'FLEET_NODE_UPGRADE_REFUSED', 'UPGRADE_SAME_PACKAGE_REFUSED_FIXTURE', 'upgrade: refused']);
+  assert.match(r.evidence.stdout, /FLEET_NODE_UPGRADE_REFUSED/);
+  assert.deepEqual(ps(`@{ v = (Read-DrillReinstallUpgradeEvidence ${q(path.join(tmp, 'a8-no-such-run'))}) }`), { v: null }, 'no upgrade ran: nothing');
+  // the receipt takes it from the run directory whatever the run's end
+  assert.match(fs.readFileSync(script, 'utf8'), /\$evidence\.reinstallUpgrade = Read-DrillReinstallUpgradeEvidence \$runDir/);
 });
 
 // Codex review of f33fc33e5, low 1: the stage timings saved on their own are evidence taken too (an emergency restore after them only is

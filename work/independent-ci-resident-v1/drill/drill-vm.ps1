@@ -1205,6 +1205,21 @@ function Get-DrillHostMemoryEvidence($PreBoot, $RunningMemory) {
     lowestFreeGB = $(if ($all.Count) { ($all | Measure-Object -Minimum).Minimum } else { $null }) }
 }
 
+# A8's upgrade, as it came back (exit, stdout, stderr), with the status and code of its last JSON line beside it: raw facts, kept by the host
+# in reinstall-upgrade.json before the prepare starts, and carried by the receipt (evidence.reinstallUpgrade) whatever the run's end.
+function ConvertTo-DrillReinstallUpgradeRecord($UpRun) {
+  $stdout = [string](Get-Prop $UpRun 'stdout')
+  $line = @($stdout -split "`r?`n" | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1
+  $doc = $null; if ($line) { try { $doc = $line | ConvertFrom-Json } catch { $doc = $null } }
+  [ordered]@{ exit = (Get-Prop $UpRun 'exit'); status = (Get-Prop $doc 'status'); code = (Get-Prop $doc 'code')
+    stdout = $(if ($stdout.Length -gt 8000) { $stdout.Substring($stdout.Length - 8000) } else { $stdout }); stderr = (Get-Prop $UpRun 'stderr') }
+}
+function Read-DrillReinstallUpgradeEvidence([string]$RunDir) {
+  $file = Join-Path $RunDir 'reinstall-upgrade.json'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+  try { Read-DrillJson $file } catch { [ordered]@{ unreadable = $true } }
+}
+
 # ---------------------------------------------------------------- Hyper-V side (needs the host; not unit-tested)
 
 function Get-DrillVmInfo {
@@ -2355,12 +2370,22 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) 
   return @{ result = $result; failure = $failure; restored = $restored; hostExecutorStates = $executorStates; preBoot = $script:DrillPreBoot; runningMemory = $running }
 }
 
+# A8's generic upgrade, a guest step of its own (Codex narrow review of 4190b0f8e, medium): its raw result comes back to the host, which keeps
+# it (reinstall-upgrade.json) before the next command starts -- a refusal stays on record even when the prepare after it fails or times out.
+$script:GuestReinstallUpgrade = {
+  param($Node, $Tree, $From, $Work, $Version, $NativeText)
+  $native = [scriptblock]::Create($NativeText)
+  $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
+  & $native $Node @((Join-Path $fleet 'upgrade.mjs'), 'fetch', '--version', $Version, '--work', (Join-Path $Work 'a8-upgrade'), '--from', $From, '--no-request') 3600
+}
+
+# $UpRun: the upgrade's raw result (GuestReinstallUpgrade), handed over by the host.
 $script:GuestReinstall = {
-  param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha, $NativeText)
+  param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha, $NativeText, $UpRun)
   $native = [scriptblock]::Create($NativeText)
   $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
   $last = { param($lines) $l = @($lines | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { try { $l | ConvertFrom-Json } catch { $null } } }
-  $upRun = & $native $Node @((Join-Path $fleet 'upgrade.mjs'), 'fetch', '--version', $Version, '--work', (Join-Path $Work 'a8-upgrade'), '--from', $From, '--no-request') 3600
+  $upRun = $UpRun
   $p1Run = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare')) 3600
   $up = @($upRun.stdout -split "`r?`n"); $p1 = @($p1Run.stdout -split "`r?`n")
   $upj = & $last $up; $p1j = & $last $p1
@@ -2661,7 +2686,10 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
   $reinstall = @{ skipped = $true }
   if (-not $SkipReinstall -and $entry.tree -and $entry.node) {
-    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
+    # the upgrade first, on its own; its raw result is on the host before the prepare starts (Codex narrow review of 4190b0f8e, medium)
+    $upRun = Invoke-DrillGuest $Cred $script:GuestReinstallUpgrade -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, $script:DrillNativeText) -TimeoutMinutes 65 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall-upgrade'
+    Write-DrillJson (Join-Path $RunDir 'reinstall-upgrade.json') (ConvertTo-DrillReinstallUpgradeRecord $upRun)
+    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText, $upRun) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
 
@@ -2844,6 +2872,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   # branch one's rule and this branch's: present, not missing, not incomplete), and it is kept under A1, or in the evidence when the run
   # ended before there was a verdict.
   $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
+  $evidence.reinstallUpgrade = Read-DrillReinstallUpgradeEvidence $runDir
   $guestEvidence = Join-Path $runDir 'guest-evidence.json'
   if (Test-Path -LiteralPath $guestEvidence -PathType Leaf) { try { $evidence.guestEvidence = Read-DrillJson $guestEvidence } catch { $evidence.guestEvidence = @{ unreadable = $true } } }
   if ($run) {
