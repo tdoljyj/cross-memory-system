@@ -6,10 +6,18 @@
 
 这是 README §5“不要绕过 bootstrap 手工运行 prepare”的**演练机内例外**，仅绕开普通令牌检查、RunAs、凭据窗口。
 凭据输入目录严格使用 O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)，把 app-key.pem 映射成 app-private-key.pem，
-只另放 ci-admission.token、resident-upgrade.token、public.json，不放心跳令牌；输入与正式临时凭据目录在所有结束路径清理。
+只另放 ci-admission.token、resident-upgrade.token、companion-github.token（陪伴令牌替身，见下）、public.json，不放心跳令牌；输入与正式临时凭据目录在所有结束路径清理。
 结局由接受版 Get-LauncherVerdict 判断，companion 切换未完成不会变成功。
 
-构建器把三处绕过写进 perNodeSteps；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。
+构建器把三处绕过和陪伴令牌替身写进 perNodeSteps；判定器对 prerequisiteMode=first-install-host 额外强制 A10 未通过。
+
+替身登记（入口不再盖住任何包内函数；`Expand-Cached` 的旧替身已删，#1154 修好了包里的真函数）：
+
+| 替身 | 替的是什么 | 为什么 | 因此没验到 | 何时可删 |
+|---|---|---|---|---|
+| `C:\drill\fake\companion-github.token`（`ghp_CLUEDDRILLFAKE…`，来宾里生成、来宾里读） | Owner 在凭据窗口给的陪伴 GitHub 经典令牌 | 演练不得使用真凭据 | 令牌被 GitHub 接受；陪伴访问 GitHub 的各个通道 | 不可删；没验到的部分由真机首装后的运行状态承担 |
+
+gh 本身不做替身，随前置清单真装进来宾。凭据窗口里令牌的文件名以包为准，入口现按其余假凭据的方式放进输入目录。
 清空 perNodeSteps 也不能得到 PASS_A_FULL。即使 A1–A9 全通过，仍不能勾掉“新节点首装实测一次”或证明服务端接纳。
 
 ## 两种 kit
@@ -125,7 +133,15 @@ Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-Fro
 - 来宾里跑的仍是包内原样的安装代码，没有任何“演练模式”分支。回执写 `candidate: true` 与 `tarSha256`、`ciSourceManifestSha256`、`firstInstallKitSha256`，正是 `seal --drill-receipt` 核的三项；回读后的终稿才摆给 Owner。
 
 来宾关机计时器就绪前，由不在任何 Windows 作业里的看门进程负责兜底：它经 WMI（`Win32_Process.Create`）拉起，不继承拉起方（例如代理会话）的作业。拉起后确认它仍在某个作业里时，脚本拒绝开机。
+来宾取证在首装的每一种结局（完成、停止、超时）之后、对来宾做任何别的事之前执行，所以总在还原检查点之前：取回入口打印的每一行
+（入口运行时同步写到来宾 `C:\drill\work\first-install.stdout.log`，超时也留得下）、`stage-timings.json`、`host-result.json`（含宿主准备的完整标准输出）、
+`launcher-result.json`（含启动器结果文本），写成运行目录里的 `first-install.log`、`stage-timings.json`、`stage-evidence.json`；不取任何凭据文件。
+取证失败只记进 `guest-evidence.json`，不挡还原，也不替换本轮自己的失败码。回执 A1 下的 `firstInstallSteps` 从这些文件解析：各阶段的逐步结果行
+（`name`、`result`、`rejectCode`、`detail`）、最后完成的一步、首个被拒的一步、判决行（没有判决行时 `noVerdict: true`）；一行也解析不到记 `missing: true`，不当通过。
+本轮没有判决就结束时（无 A1），它记在 `evidence.firstInstallSteps`。
+
 回执 `evidence.hostExecutorStates` 记录开机门和运行中守护采样的执行器状态、原因、阶段编号和相位，每种组合只保留首次观测的 UTC 时刻。
+开机前门两侧都看 `Runner.Worker`：Windows 的进程表，以及本机 Linux runner 所在的 WSL 发行版（`scripts/ci/self-hosted/node-profiles.json` 按主机名取 `linux_runner`/`additional_linux_runners` 的 `distro`；主机不在其中即拒绝开机；runner 发行版须是本账户已注册的发行版）。WSL 一侧只认退出码（Fable 裁定“补：分支一第四轮”）。**运行列表**是唯一还读输出的地方：`wsl --list --running --quiet` 须零退出、stderr 为空；按行切（CRLF 或 LF），只丢长度为零的行，其余每一行须整行、不修剪地等于本账户已注册的某个发行版名（HKCU Lxss 下各 DistributionName，只读），有一行不符即整次拒绝。发行版不在其中就判无作业，不对它发任何命令。**查进程**：在运行的发行版里执行 `pgrep -ix Runner[.]Worker`（模式常量 `WslJobPattern`，点是字面点；释放命令逐字带同一模式），标准输出不读；封闭表：退出 0 且 stderr 为空＝有作业，拒绝开机（`DRILL_HOST_CI_BUSY`/`WSL_ACTIONS_RUNNER_JOB`）；退出 1 且 stderr 为空＝无作业；其他任何退出码、stderr 非空、超时（只结束本次拉起的客户端进程）＝拒绝开机（`DRILL_HOST_WSL_UNREADABLE`）。每次开机前三段，各自采样（Fable 裁定“补：WSL 门竞态”，顺序不变）：**早拒**（保持生效、常驻空闲、两侧无作业；不读内存）→ **释放**（对每个 runner 发行版，先重读运行列表，再在调用前一刻重读 Windows 进程表；不在运行就不发命令；在运行则以 root 用 `sh -c` 执行写死的单引号命令 `DrillWslReleaseCommand`（运行时按本文件语法树核对未被改动、无双引号与反斜杠）：同一个 `pgrep -ix 'Runner[.]Worker'`，退出 0 即有作业，以 3 退出跳过；查找出错以 4 退出；只有“没找到”才 `sync` 并只丢页缓存 `echo 1 > /proc/sys/vm/drop_caches`，失败以 5 退出，成功以 0 退出。宿主只看退出码：0＝已释放，3＝已跳过，其余＝释放失败；跳过与失败都不算演练失败，Decision 21db5a9c）→ **开机门**（两侧再查一次，然后内存门，只判这一次，然后开机）。开机前的守护、入口处与还原后的宿主检查只看执勤与保持，三段之外不另取样。基线建成或失败时三段数据都写进 `baseline.json`（`hostPreBoot`）。三段各自的时间与结果记在回执 `evidence.hostPreBoot`（`early`、`release`、`bootGate`）。
 
 本次未启动/修改 Hyper-V；A1–A10 实机结果、重启、再装、A5/A9 生产只读核验均由 DESK 另做。
 

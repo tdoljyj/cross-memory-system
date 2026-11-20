@@ -188,6 +188,13 @@ if (args[0] === 'release' && args[1] === 'create') {
   console.log('https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2]);
 }
 if (args[0] === 'release' && args[1] === 'upload') log.assets.push(asset(args[3]));
+// "gh api repos/<repo>/compare/main...<commit>": where the commit stands against main, from the state's compare (default behind: on main);
+// fail: the call fails; garbled: an answer that is not the API's
+if (args[0] === 'api' && /^repos\\/[^/]+\\/[^/]+\\/compare\\/main\\.\\.\\.[0-9a-f]{40}$/.test(args[1] ?? '')) {
+  const c = log.compare || 'behind';
+  if (c === 'fail') { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 502: fake compare failure'); process.exit(1); }
+  console.log(c === 'garbled' ? '<html>' : JSON.stringify({ status: c, ahead_by: c === 'ahead' || c === 'diverged' ? 1 : 0 }));
+}
 if (args[0] === 'release' && args[1] === 'view') console.log(JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: assetsOf(args[2]).map(a => ({ name: a.name, size: a.size })) }));
 if (args[0] === 'release' && args[1] === 'download') {
   const name = args[args.indexOf('--pattern') + 1], dir = args[args.indexOf('--dir') + 1];
