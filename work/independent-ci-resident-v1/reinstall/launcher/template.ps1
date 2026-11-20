@@ -391,6 +391,12 @@ function Get-AclReadbackRefusals($acl) {
 # Every read-only check runs, whatever an earlier one found; a stop then carries all raw elevated values
 # (sc.exe texts, the elevated plan hash next to the pinned one and the differing plan fields, the migrate-acl
 # result), so no stop needs a blind second round. Also kept in <W>\launch\preflight-report.json.
+# 2026-10-30 / r5 X2: an installer that checks the controller's right to log on as a service says so in its dry run's preflight block;
+# anything there but true is refused. An older installer has no preflight block and no such refusal. One rule for every dry run read.
+function Test-ControllerLogonRightRefused($dryRun) {
+  $pf = Get-Key $dryRun 'preflight'; $l = Get-Key $pf 'controllerServiceLogonRight'
+  ($null -ne $pf) -and -not ($l -is [bool] -and $l)
+}
 function Step-Preflight {
   if ($FleetFirstInstall -and $Done.Contains('preflight')) { return $script:FirstInstallPreflightResult }   # ran before Linux A (Step-FirstInstallWindowsPreflight)
   $report = [ordered]@{}; $codes = New-Object Collections.Generic.List[string]
@@ -424,6 +430,9 @@ function Step-Preflight {
   if (-not $aclAfterUninstallOk -and ($m.exit -ne 0 -or (Get-Key $mv 'status') -cne 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN')) { $codes.Add('ACL_MIGRATION_PLAN_REFUSED') }
   $d = Invoke-Child 'install.dry-run' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs -NoToken)   # r5c: the reviewed plan has no token
   $dv = Parse-Json $d.stdout; $plan = Get-Key $dv 'plan'
+  # r5 X2: the installer refuses -Apply when the controller may not log on as a service; refused here, before anything is installed
+  $report['controllerServiceLogonRight'] = Get-Key (Get-Key $dv 'preflight') 'controllerServiceLogonRight'
+  if (Test-ControllerLogonRightRefused $dv) { $codes.Add('CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED') }
   $report['installDryRun'] = [ordered]@{ exit = $d.exit; status = (Get-Key $dv 'status'); elevatedPlanSha256 = (Get-Key $dv 'planSha256'); pinnedPlanSha256 = $PlanSha256
     runnerBefore = (Get-Key $plan 'runnerBefore'); rootExists = (Get-Key $plan 'rootExists'); servicesExist = (Get-Key $plan 'servicesExist'); openBatches = (Get-Key $plan 'openBatches')
     installScriptSha256 = (Get-Key $plan 'installScriptSha256'); stderr = (Tail $d.stderr) }
@@ -487,7 +496,38 @@ function Get-ScState([string]$name) {
   $nativeExit = $LASTEXITCODE
   [ordered]@{ name = $name; nativeExit = $nativeExit; gone = [bool]($nativeExit -eq 1060); state = $(if ($nativeExit -eq 0 -and $t -match 'STATE\s*:\s*(\d+)') { [int]$Matches[1] } else { $null }); pid = $(if ($nativeExit -eq 0 -and $t -match 'PID\s*:\s*(\d+)') { [int]$Matches[1] } else { $null }); text = $t.Trim() }
 }
+# r5 N9: the names in every ledger of a root (state\ledger and each state\backfill\<n>\ledger): $null when one of them, or a directory
+# above it, is not a plain directory, or state\ledger is not there (nothing read is never "empty").
+function Get-LedgerEntryNames([string]$root) {
+  $plainDirectory = { param([string]$p) [IO.Directory]::Exists($p) -and (([IO.File]::GetAttributes($p) -band [IO.FileAttributes]::ReparsePoint) -eq 0) }
+  $state = Join-Path $root 'state'; $live = Join-Path $state 'ledger'
+  foreach ($p in @($root, $state, $live)) { if (-not (& $plainDirectory $p)) { return $null } }
+  $names = New-Object Collections.Generic.List[string]
+  foreach ($e in [IO.Directory]::GetFileSystemEntries($live)) { $names.Add([IO.Path]::GetFileName($e)) }
+  $backfill = Join-Path $state 'backfill'
+  if (Test-Path -LiteralPath $backfill) {
+    if (-not (& $plainDirectory $backfill)) { return $null }
+    foreach ($g in [IO.Directory]::GetFileSystemEntries($backfill)) {
+      if (-not (& $plainDirectory $g)) { return $null }
+      $l = Join-Path $g 'ledger'
+      if (Test-Path -LiteralPath $l) {
+        if (-not (& $plainDirectory $l)) { return $null }
+        foreach ($e in [IO.Directory]::GetFileSystemEntries($l)) { $names.Add([IO.Path]::GetFileName($e)) }
+      }
+    }
+  }
+  , $names.ToArray()
+}
+# r5 N9: the one rule for the kept ledger. Generated over an empty ledger (no batch ever ran): no key and no terminal record pinned, and
+# the ledger still empty. Otherwise the pinned key is one of its entries. Entries not read ($null): never accepted.
+function Test-LedgerEvidence([bool]$pinnedEmpty, $pinnedKey, $pinnedTerminalSha256, $entries) {
+  if ($null -eq $entries) { return $false }
+  $names = @($entries)
+  if ($pinnedEmpty) { return (-not $pinnedKey -and -not $pinnedTerminalSha256 -and $names.Count -eq 0) }
+  ([string]$pinnedKey -cmatch '^[0-9a-f]{64}$') -and ($names -ccontains [string]$pinnedKey)
+}
 function Test-TerminalEvidence([string]$root) {
+  if ((Test-Path variable:LedgerEmptyAtGeneration) -and $LedgerEmptyAtGeneration -eq $true) { return (Test-LedgerEvidence $true $HaltedBatchKey $TerminalEvidenceSha256 (Get-LedgerEntryNames $root)) }
   if ($LedgerEvidenceRelativeDirectory -cnotmatch '^state\\(?:ledger|backfill\\[1-9][0-9]*\\ledger)$' -or $HaltedBatchKey -cnotmatch '^[0-9a-f]{64}$' -or $TerminalEvidenceSha256 -cnotmatch '^[0-9a-f]{64}$') { return $false }
   $relative = $LedgerEvidenceRelativeDirectory + '\' + $HaltedBatchKey + '\90-terminal.json'
   $p = $root
@@ -922,8 +962,8 @@ function Step-UninstallPreflight {
   if ($c.exit -ne 0 -or (Get-Key $cv 'status') -cne 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN' -or $null -eq $preview -or $preview -is [string]) { $codes.Add('CARRY_FORWARD_PREVIEW_REFUSED') }
   # 2026-10-30: an installer that checks the controller's right to log on as a service refuses -Apply without it; refused here, before
   # the uninstall, so the node is never left uninstalled. An older installer has no preflight and no such refusal.
-  $pf = Get-Key $cv 'preflight'; $logonOk = Get-Key $pf 'controllerServiceLogonRight'; $report['controllerServiceLogonRight'] = $logonOk
-  if ($null -ne $pf -and -not ($logonOk -is [bool] -and $logonOk)) { $codes.Add('CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED') }
+  $report['controllerServiceLogonRight'] = Get-Key (Get-Key $cv 'preflight') 'controllerServiceLogonRight'
+  if (Test-ControllerLogonRightRefused $cv) { $codes.Add('CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED') }
   $quiet = Test-OldRootQuiet; $report['oldRootQuiet'] = $quiet; foreach ($q in @($quiet.codes)) { $codes.Add($q) }   # r4 Q1
   $carryNow = Test-CurrentRootCarryShape; $report['currentRootCarryShape'] = $carryNow; foreach ($q in @($carryNow.codes)) { $codes.Add($q) }   # review m1
   if ($null -ne $preview -and $preview -isnot [string] -and @($preview).Count + 1 -gt 256) { $codes.Add('CARRY_FORWARD_TOO_MANY_STATES_AFTER_UNINSTALL') }
@@ -994,7 +1034,7 @@ function Step-Uninstall {
   Write-Json 'uninstall-report.json' $report
   $e = $report['evidence']
   if ($InstalledPausedSha256 -and $report['pausedKeptSha256'] -cne $InstalledPausedSha256) { Stop-Launch 'UNINSTALL_PAUSE_EVIDENCE_UNCONFIRMED' $report }   # review m6
-  if (-not $report['deletedAndRenamed'] -or $e.installReceiptSha256 -cne $InstalledReceiptSha256 -or $e.haltSha256 -cne $InstalledHaltSha256 -or -not $e.uninstallReceiptSha256 -or -not $e.terminalEvidenceMatches -or @($e.ledgerEntries) -notcontains $HaltedBatchKey) { Stop-Launch 'UNINSTALL_EVIDENCE_OR_DELETION_UNCONFIRMED' $report }
+  if (-not $report['deletedAndRenamed'] -or $e.installReceiptSha256 -cne $InstalledReceiptSha256 -or $e.haltSha256 -cne $InstalledHaltSha256 -or -not $e.uninstallReceiptSha256 -or -not $e.terminalEvidenceMatches -or -not (Test-LedgerEvidence ($LedgerEmptyAtGeneration -eq $true) $HaltedBatchKey $TerminalEvidenceSha256 $e.ledgerEntries)) { Stop-Launch 'UNINSTALL_EVIDENCE_OR_DELETION_UNCONFIRMED' $report }
   $Done.Add('uninstall')
   [ordered]@{ keptAt = $kept; planSha256 = $sha; uninstallReceiptSha256 = $e.uninstallReceiptSha256; haltSha256 = $e.haltSha256 }
 }
@@ -1194,7 +1234,11 @@ function Invoke-FleetProcess([string]$file, [string]$arguments, [int]$seconds) {
 function Get-FleetScriptPin([string]$name) {
   switch ($name) { 'A' { , @($FleetScriptA, $FleetScriptASha256, $FleetTimeoutA) } 'B' { , @($FleetScriptB, $FleetScriptBSha256, $FleetTimeoutB) } 'BResume' { , @($FleetScriptBResume, $FleetScriptBResumeSha256, $FleetTimeoutB) } default { Stop-Launch 'LINUX_SCRIPT_NAME_REFUSED' $name } }
 }
-# <root>\install\linux-run-<32hex>\ (new, SYSTEM and Administrators only; the companion account may read it) with script.sh (the
+# r5 X1: where the Linux run directories are made. A reinstall: <root>\install (the registrar's root-run and write-probe require it). A
+# first install: the CI root itself, so nothing is made under a resident root the installer after Linux B must find absent (a first
+# install has no companion account and no registrar); Step-SweepCarry removes them on the next launch.
+function Get-FleetRunParent { if ($FleetFirstInstall) { $CarryParent } else { Join-Path $ResidentRoot 'install' } }
+# <parent>\linux-run-<32hex>\ (Get-FleetRunParent; new, SYSTEM and Administrators only; the companion account may read it) with script.sh (the
 # pinned bytes copied in and read back), out\ and captured\. out\ holds the two files the redirection writes: made here, each with its
 # own protected ACL (the account may write and append; it cannot delete, replace or re-ACL them, nor make anything else in out\).
 # captured\ is SYSTEM and Administrators only: the registrar copies the two files into it once the process has exited, opening each
@@ -1222,7 +1266,7 @@ function New-FleetRunDirectory([string]$name, [switch]$Probe) {
     if ((Sha256Bytes $bytes) -cne $pin[1]) { Stop-Launch 'LINUX_SCRIPT_CHANGED' $name }
   }
   $base = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
-  $dir = Join-Path $ResidentRoot ('install\linux-run-' + [Guid]::NewGuid().ToString('N') + $(if ($Probe) { '-probe' } else { '' }))
+  $dir = Join-Path (Get-FleetRunParent) ('linux-run-' + [Guid]::NewGuid().ToString('N') + $(if ($Probe) { '-probe' } else { '' }))
   if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) { Stop-Launch 'LINUX_RUN_DIRECTORY_EXISTS' $dir }
   $ds = New-Object Security.AccessControl.DirectorySecurity; $ds.SetSecurityDescriptorSddlForm($base + $(if ($FleetCompanionAccount) { '(A;OICI;0x1200a9;;;' + $OwnerSid + ')' } else { '' }))
   [void][IO.Directory]::CreateDirectory($dir, $ds)
@@ -1425,8 +1469,8 @@ function Step-WindowsPreflightBeforeLinux {
     $report['planFieldsBeforeUninstall'] = $s1; if ($s1.Count) { $codes.Add('PLAN_FIELDS_WOULD_DIFFER_AFTER_UNINSTALL') }
     if ($c.exit -ne 0 -or (Get-Key $cv 'status') -cne 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN' -or $null -eq $preview -or $preview -is [string]) { $codes.Add('CARRY_FORWARD_PREVIEW_REFUSED') }
     elseif (@($preview).Count + 1 -gt 256) { $codes.Add('CARRY_FORWARD_TOO_MANY_STATES_AFTER_UNINSTALL') }
-    $pf = Get-Key $cv 'preflight'; $logonOk = Get-Key $pf 'controllerServiceLogonRight'; $report['controllerServiceLogonRight'] = $logonOk
-    if ($null -ne $pf -and -not ($logonOk -is [bool] -and $logonOk)) { $codes.Add('CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED') }
+    $report['controllerServiceLogonRight'] = Get-Key (Get-Key $cv 'preflight') 'controllerServiceLogonRight'
+    if (Test-ControllerLogonRightRefused $cv) { $codes.Add('CONTROLLER_SERVICE_LOGON_RIGHT_NOT_CONFIRMED') }
   }
   $sec = Test-SecretsAsVerify; $report['secretsAsVerify'] = $sec; foreach ($q in @($sec.codes)) { $codes.Add($q) }
   $quiet = Test-OldRootQuiet; $report['oldRootQuiet'] = $quiet; foreach ($q in @($quiet.codes)) { $codes.Add($q) }
@@ -1507,6 +1551,24 @@ function Step-SweepCarry {
       if (-not $r.ours -or ($FleetOutDir -and $d -ceq $FleetOutDir)) { if ($r.ours) { continue }; $found += , $r; continue }
       $r.reparse = (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0)
       if ($r.reparse) { [IO.Directory]::Delete($d, $false) } else { $r.entries = @([IO.Directory]::GetFileSystemEntries($d)).Count; [IO.Directory]::Delete($d, $true) }
+      $r.removed = -not [IO.Directory]::Exists($d)
+    } catch { $r.error = $_.Exception.GetType().Name; $r.removed = -not [IO.Directory]::Exists($d) }
+    $found += , $r
+  }
+  # r5 X1: a first install's Linux run directories (linux-run-<32hex>, -probe) in the CI root, the same clean-up point as the out
+  # directories. One that a process still names (a Linux step that may still run), or whose processes cannot be read, is kept.
+  foreach ($d in @([IO.Directory]::GetDirectories($CarryParent, 'linux-run-*') | Sort-Object)) {
+    $r = [ordered]@{ name = [IO.Path]::GetFileName($d); kind = 'linux-run'; ours = $false; reparse = $null; entries = $null; inUse = $null; removed = $false; error = $null }
+    try {
+      $r.ours = ($r.name -cmatch '^linux-run-[0-9a-f]{32}(?:-probe)?$')
+      if (-not $r.ours) { $found += , $r; continue }
+      $r.reparse = (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+      if ($r.reparse) { [IO.Directory]::Delete($d, $false) }
+      else {
+        $r.inUse = try { $procs = Get-FleetRunProcesses $d; $procs.Count -ne 0 } catch { $null }   # (its result is one array: never @(...) it)
+        if ($r.inUse -ne $false) { $r.removed = $false; $found += , $r; continue }
+        $r.entries = @([IO.Directory]::GetFileSystemEntries($d)).Count; [IO.Directory]::Delete($d, $true)
+      }
       $r.removed = -not [IO.Directory]::Exists($d)
     } catch { $r.error = $_.Exception.GetType().Name; $r.removed = -not [IO.Directory]::Exists($d) }
     $found += , $r
@@ -1607,10 +1669,61 @@ function Step-FileLocks {
 # A first install (generate.py --fleet-plan with plan.firstInstall): nothing of a resident on this host, read elevated before anything
 # changes (the same three services and root install-resident.ps1 creates; Step-Preflight's dry run checks the rest), and the host
 # preparation's token directory as it made it: SYSTEM and Administrators only, not a link.
+# What of a resident is on this host: its root (a directory or a file by that name) and each of the three services install-resident.ps1
+# creates. Read before anything changes (Step-FirstInstallPreflight) and again right before Linux B (Step-LinuxRoot, r5 X1).
+function Get-FirstInstallResidue {
+  $r = [ordered]@{ root = ([IO.Directory]::Exists($ResidentRoot) -or [IO.File]::Exists($ResidentRoot)); services = [ordered]@{} }
+  foreach ($n in @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader')) { $r.services[$n] = [bool](Get-Service -Name $n -ErrorAction SilentlyContinue) }
+  $r
+}
+function Test-FirstInstallResiduePresent($residue) { [bool]($residue.root -or @($residue.services.Values | Where-Object { $_ }).Count) }
+# r5 N7: the node identity keys, as the rule reads them: each name of $names (role = key name) looked up with $finder, which returns
+# @{ key; origin } or $null. keys: role = origin ('tpm' | 'software') or $null; missing: the names not found; any missing is
+# NODE_IDENTITY_KEY_MISSING; all there and any not in the TPM is NODE_IDENTITY_KEY_NOT_TPM (M5 accepts TPM keys only: the host
+# preparation's rule, Fable 11-21). A key found is disposed of again.
+function Test-NodeIdentityKeys($names, [scriptblock]$finder) {
+  $keys = [ordered]@{}; $missing = New-Object Collections.Generic.List[string]
+  foreach ($role in @($names.Keys)) {
+    $found = & $finder $names[$role]
+    if ($null -eq $found) { $keys[$role] = $null; $missing.Add([string]$names[$role]); continue }
+    $keys[$role] = $found.origin
+    if ($found.key -is [IDisposable]) { $found.key.Dispose() }
+  }
+  $notTpm = @($keys.Values | Where-Object { $null -ne $_ -and $_ -cne 'tpm' }).Count
+  [ordered]@{ keys = $keys; missing = @($missing); code = $(if ($missing.Count) { 'NODE_IDENTITY_KEY_MISSING' } elseif ($notTpm) { 'NODE_IDENTITY_KEY_NOT_TPM' } else { $null }) }
+}
+# r5 N7: read with the pinned registration script's own key names ($KeyNames, $TpmProviderName) and finder (Get-Providers,
+# Find-MachineKey), taken from its pinned bytes by AST; its Fail (which exits) is replaced by a throw first. Nothing else of it runs.
+function Get-NodeIdentityKeyCheck {
+  $bytes = try { [IO.File]::ReadAllBytes([string]$FirstInstallRegistrationScript) } catch { $null }
+  if ($null -eq $bytes -or (Sha256Bytes $bytes) -cne $FirstInstallRegistrationScriptSha256) { return [ordered]@{ keys = $null; missing = $null; code = 'NODE_REGISTRATION_SCRIPT_CHANGED' } }
+  try {
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Strict8.GetString($bytes).TrimStart([char]0xFEFF), [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw 'REGISTRATION_SCRIPT_PARSE_ERRORS' }
+    $parts = @()
+    foreach ($n in @('Get-Providers', 'Find-MachineKey')) {
+      $f = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq $n }, $false))
+      if ($f.Count -ne 1) { throw ('REGISTRATION_FUNCTION_NOT_ONE:' + $n) }
+      $parts += $f[0].Extent.Text
+    }
+    foreach ($n in @('KeyNames', 'TpmProviderName')) {
+      $a = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] -and $x.Left.Extent.Text -ceq ('$' + $n) }, $false))
+      if ($a.Count -ne 1) { throw ('REGISTRATION_ASSIGNMENT_NOT_ONE:' + $n) }
+      $parts += $a[0].Extent.Text
+    }
+    Add-Type -AssemblyName System.Core
+    function Fail([string]$Code, [string]$Detail) { throw ($Code + ': ' + $Detail) }
+    foreach ($t in $parts) { . ([scriptblock]::Create($t)) }
+    Test-NodeIdentityKeys $KeyNames { param($n) Find-MachineKey $n }
+  } catch { [ordered]@{ keys = $null; missing = $null; code = 'NODE_IDENTITY_KEY_UNREADABLE'; error = [string]$_.Exception.Message } }
+}
 function Step-FirstInstallPreflight {
-  $report = [ordered]@{ root = [IO.Directory]::Exists($ResidentRoot); services = [ordered]@{}; directory = $FleetFirstInstallDirectory; directoryOk = $false; codes = @() }
-  foreach ($n in @('CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader')) { $report.services[$n] = [bool](Get-Service -Name $n -ErrorAction SilentlyContinue) }
-  if ($report.root -or @($report.services.Values | Where-Object { $_ }).Count) { $report.codes += 'FIRST_INSTALL_RESIDUE_PRESENT' }
+  $residue = Get-FirstInstallResidue
+  $report = [ordered]@{ root = $residue.root; services = $residue.services; directory = $FleetFirstInstallDirectory; directoryOk = $false; identityKeys = $null; codes = @() }
+  if (Test-FirstInstallResiduePresent $residue) { $report.codes += 'FIRST_INSTALL_RESIDUE_PRESENT' }
+  $report.identityKeys = Get-NodeIdentityKeyCheck   # r5 N7: the registration after install signs with them; a node without them is refused before anything changes
+  if ($report.identityKeys.code) { $report.codes += [string]$report.identityKeys.code }
   try {
     $acl = [IO.Directory]::GetAccessControl($FleetFirstInstallDirectory)
     $sids = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
@@ -1669,6 +1782,12 @@ function Step-LinuxRoot {
     if ($a.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
     if (-not (Test-FleetRun $a 'PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED')) { & $stop 'LINUX_PHASE_A_NOT_COMPLETED' }
     $Done.Add('linux-A')
+    # r5 X1: a first install's B ends in the installer, which refuses a resident root that is there; whatever made one (or a service)
+    # since the preflight, B does not start over it
+    if ($FleetFirstInstall) {
+      $residue = Get-FirstInstallResidue; $report['beforeLinuxB'] = $residue
+      if (Test-FirstInstallResiduePresent $residue) { & $stop 'FIRST_INSTALL_ROOT_PRESENT_BEFORE_LINUX_B' }
+    }
     $b = Invoke-FleetLinuxScript 'B' $exe; $report.runs += ,(Get-FleetRunReport $b)
     if ($b.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
     # B ran and exited, and its output could not be captured: whether it completed is not known here. Not "B did not complete" (no

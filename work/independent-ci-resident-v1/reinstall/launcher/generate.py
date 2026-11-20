@@ -263,6 +263,10 @@ if FLEET_PLAN:
                 and _facts.get('operatorSid') == FIRST['operatorSid'] and (_facts.get('companionWsl') or {}).get('vhdxDirectory') == FIRST['wslVhdxDirectory']
                 and FIRST['operatorSid'] != OWNER), 'FIRST_INSTALL_FACTS_NOT_THE_PLANS'
         OPERATOR, VHDX_DIR = FIRST['operatorSid'], FIRST['wslVhdxDirectory']
+        # r5 N7: the launcher's first-install preflight reads the node identity keys with this script's own key names and finder; it
+        # comes from the unpacked package (the universal tree carries it), its bytes pinned below
+        _reg = os.path.abspath(os.path.join(HERE, '..', '..', 'registration', 'export-node-registration.ps1'))
+        FIRST_REGISTRATION = (_reg, sha(_reg))
     if PLAN['companionAccount']:
         with open(_account_file, encoding='utf-8-sig') as _stream:
             _acct = json.load(_stream)
@@ -646,6 +650,7 @@ lines = [
     '$LedgerEvidenceRelativeDirectory = ' + q(terminal_evidence['relativeDirectory'].replace('/', BS)),
     '$TerminalEvidenceSha256 = ' + _qn(terminal_evidence['terminalSha256']),
     '$BackfillEvidenceManifestSha256 = ' + (q(terminal_evidence['backfillManifestSha256']) if terminal_evidence['backfillManifestSha256'] else '$null'),
+    '$LedgerEmptyAtGeneration = ' + ('$true' if terminal_evidence.get('empty') else '$false') + '   # r5 N9: no batch ever ran; the kept ledger must still be empty (no key, no terminal record)',
     '$LaunchOutPin = ' + q(LAUNCH_DIR) + '   # F1: output directory of this generation',
     '$PauseRequestDacl = ' + q(pause_dacl) + '   # F2: the DACL a request in requests\\ inherits',
     '$LinuxLiveSourceManifestSha256 = ' + (q(linux_live) if linux_live else '$null') + '   # Q5b: formal-source-manifest-v2.json (evidence file below)',
@@ -710,6 +715,8 @@ lines += [
     '$FleetRegistrarSha256 = ' + _fq(FLEET and FLEET['registrarSha256']) + '   # the package CompanionTaskRegistrar.cs (root-run)',
     '$FleetFirstInstall = ' + ('$true' if FIRST else '$null') + '   # set: no resident is installed (no W1, no uninstall); the tokens are the host preparation\'s',
     '$FleetFirstInstallDirectory = ' + (q(FIRST_DIR + BS + 'credentials') if FIRST else '$null') + '   # the host preparation\'s two tokens; deleted once the installer has run',
+    '$FirstInstallRegistrationScript = ' + _fq(FIRST and FIRST_REGISTRATION[0]) + '   # r5 N7: registration/export-node-registration.ps1 of the unpacked package; its key names and finder read the identity keys',
+    '$FirstInstallRegistrationScriptSha256 = ' + _fq(FIRST and FIRST_REGISTRATION[1]),
 ]
 assert template.count('#PINS#') == 1
 text = template.replace('#PINS#', '\n'.join(lines))
