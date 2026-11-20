@@ -2261,13 +2261,13 @@ function Get-DrillGuardOutcome([string]$RunDir) {
 # Seconds from asking WMI for the watchdog until it must have signalled ready; the WMI calls count against it.
 $script:DrillWatchdogReadySeconds = 15
 
-function Get-DrillWatchdogTimeout([Diagnostics.Stopwatch]$Clock) {
-  $left = [Math]::Ceiling($script:DrillWatchdogReadySeconds - $Clock.Elapsed.TotalSeconds)
+function Get-DrillWatchdogTimeout([DateTimeOffset]$ReadyBy) {
+  $left = [Math]::Ceiling(($ReadyBy - (Get-DrillTime)).TotalSeconds)
   if ($left -lt 1) { throw (New-DrillError 'DRILL_WATCHDOG_READY_TIMEOUT') }
   return [uint32]$left
 }
 
-function Start-DrillDetachedWatchdog([string]$EncodedCommand, [Diagnostics.Stopwatch]$Clock) {
+function Start-DrillDetachedWatchdog([string]$EncodedCommand, [DateTimeOffset]$ReadyBy) {
   if (-not ('CluedDrill.WatchdogJob' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -2287,7 +2287,7 @@ namespace CluedDrill {
   $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand"
   try {
     $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
-    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -OperationTimeoutSec (Get-DrillWatchdogTimeout $Clock) -ErrorAction Stop -Arguments @{
+    $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -OperationTimeoutSec (Get-DrillWatchdogTimeout $ReadyBy) -ErrorAction Stop -Arguments @{
       CommandLine = "`"$image`" $arguments"; CurrentDirectory = "$env:SystemRoot\System32"; ProcessStartupInformation = $startup
     }
   } catch {
@@ -2304,7 +2304,7 @@ namespace CluedDrill {
   try {
     $worker = [Diagnostics.Process]::GetProcessById($id)
     [void]$worker.Handle
-    $seen = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$id" -OperationTimeoutSec (Get-DrillWatchdogTimeout $Clock) -ErrorAction Stop
+    $seen = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$id" -OperationTimeoutSec (Get-DrillWatchdogTimeout $ReadyBy) -ErrorAction Stop
     $line = ([string](Get-Prop $seen 'CommandLine')).TrimEnd()
     if ($worker.HasExited -or -not $line.EndsWith($arguments, [StringComparison]::Ordinal)) { throw 'not this launch' }
   } catch {
@@ -2333,12 +2333,12 @@ function Start-DrillBootWatchdog([string]$RunDir, [guid]$VmId, [DateTimeOffset]$
   $escapedSignal = $signal.Replace("'", "''")
   $command = ". '$file'; Invoke-DrillBootWatchdog '$escapedSignal' $PID $parentStarted '$VmId' '$($Deadline.ToString('o'))'"
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-  $clock = [Diagnostics.Stopwatch]::StartNew()
-  try { $worker = Start-DrillDetachedWatchdog $encoded $clock }
+  $readyBy = (Get-DrillTime).AddSeconds($script:DrillWatchdogReadySeconds)
+  try { $worker = Start-DrillDetachedWatchdog $encoded $readyBy }
   catch { throw (New-DrillError 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY' (Get-DrillCode $_)) }
   $ready = $false
   try {
-    while (-not $worker.HasExited -and $clock.Elapsed.TotalSeconds -lt $script:DrillWatchdogReadySeconds) {
+    while (-not $worker.HasExited -and (Get-DrillTime) -lt $readyBy) {
       # Ready counts only while the watchdog is still alive after the signal was seen.
       if ((Test-Path -LiteralPath "$signal.ready") -and -not $worker.HasExited) { $ready = $true; return @{ signal = $signal; process = $worker } }
       Start-Sleep -Milliseconds 100
