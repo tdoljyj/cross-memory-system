@@ -3726,9 +3726,10 @@ test('a launcher result read back without its terminal field is recorded as a fa
 });
 
 // Fable 11-21 clock ruling §3: drill-vm.ps1 learns "now" only from Get-DrillTime, and these tests never read the real clock, so no
-// assertion can depend on how much real time passed. The reads that predate the rule are pinned at today's count and may only go down
-// (step 2 clears them); one more turns this red. The words are assembled so the scan does not count its own patterns.
-test('the real clock is read only through Get-DrillTime; the reads that predate the rule may only decrease', () => {
+// assertion can depend on how much real time passed. The reads that predate the rule are pinned at exactly today's count (step 2 clears
+// them): one more is red, and so is one fewer until the pin is lowered with it. The words are assembled so the scan does not count its
+// own patterns.
+test('the real clock is read only through Get-DrillTime; the reads that predate the rule are pinned at their count', () => {
   const word = (...parts) => parts.join('');
   const NOW = word('Utc', 'Now'), GET_DATE = word('Get-', 'Date'), SW = word('Stop', 'watch'), BARE_NOW = word('No', 'w');
   const count = (lines, re) => lines.flatMap((text, i) => [...text.matchAll(re)].map(() => i + 1));
@@ -3736,6 +3737,7 @@ test('the real clock is read only through Get-DrillTime; the reads that predate 
     for (const [kind, re] of Object.entries(kinds)) {
       const at = count(lines, re);
       assert.ok(at.length <= pins[kind], `${file}: ${at.length} ${kind} reads, pinned at ${pins[kind]} (lines ${at.join(', ')}). ${use}`);
+      assert.equal(at.length, pins[kind], `${file}: ${kind} reads went down to ${at.length}; lower the pin from ${pins[kind]} to ${at.length}.`);
     }
   };
 
@@ -3771,4 +3773,16 @@ test('the real clock is read only through Get-DrillTime; the reads that predate 
     [SW]: new RegExp(SW, 'gi'),
   }, { newDate: 4, dateNow: 1, [NOW]: 10, dateTimeNow: 0, [GET_DATE]: 0, [SW]: 4 },
   'Use the constant 2026-11-19T02:00:00Z in fixtures and Get-DrillTime inside PowerShell snippets.');
+  // The drill's machine-wide mutex names stay out of the tests (Fable clock-seam points ruling, point 5): fixtures use their own names.
+  const mutexName = word('CluedFirst', 'InstallDrill');
+  const named = tests.flatMap((text, i) => text.includes(mutexName) ? [i + 1] : []);
+  assert.deepEqual(named, [], `drill-vm.test.mjs names the drill's machine-wide mutex (lines ${named.join(', ')}); fixtures take their own names`);
+});
+
+// Fable clock-seam points ruling, point 5: the drill's named mutexes are machine-wide, so a test holding them refused a real drill on this
+// host, and failed while one ran. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own.
+test('the fixtures never take the drill\'s machine-wide mutexes', opts, () => {
+  const names = ps('@($script:Drill.HostMutex, $script:Drill.BootMutex)');
+  assert.equal(names.length, 2);
+  for (const name of names) assert.ok(/^Local\\/.test(name) && !/^Global\\/i.test(name), `a fixture holds the mutex ${name}`);
 });
