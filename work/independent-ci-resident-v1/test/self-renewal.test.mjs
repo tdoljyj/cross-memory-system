@@ -232,8 +232,8 @@ function handoverFixture(t, {now = Date.now(), currentBinding = bindingId, mode,
   };
   f.restart();
   f.book = () => JSON.parse(fs.readFileSync(path.join(root, 'state/connection-renewal.json')));
-  f.request = kind => {
-    const {pending} = f.book();
+  f.request = kind => { // 在途请求；已放弃、只待换号的旧请求号不算在途
+    const pending = f.book().pending?.abandoned ? null : f.book().pending;
     assert.equal(pending?.kind ?? null, kind);
     if (!kind) return;
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'broker/requests', pending.id + '.json'))), {kind});
