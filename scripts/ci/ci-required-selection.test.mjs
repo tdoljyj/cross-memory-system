@@ -717,9 +717,70 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
 test('outputs name every suite of the check', () => {
   const lines = outputLines('ci-suites', { suites: ['offline-drill'] });
   assert.equal(lines[0], 'suites=["offline-drill"]');
+  assert.equal(lines[1], 'app_deps=[]');
   assert.ok(lines.includes('run_offline_drill=true'));
   assert.ok(lines.includes('run_resident_node=false'));
-  assert.equal(lines.length, 1 + Object.keys(SUITES['ci-suites']).length);
+  assert.equal(lines.length, 2 + Object.keys(SUITES['ci-suites']).length);
+  assert.ok(outputLines('ci-suites', { suites: ['offline-drill', 'pinned-registries'] }).includes('app_deps=["apps/clued-cloud"]'));
+});
+
+// Clued Task 10399304: a suite the selection says needs an application's dependencies (SUITE_APP_DEPENDENCIES) is run only
+// by a job that installs them first and tells the suite so (APP_DEPS_MARKER). Read from the workflows GitHub runs, so a new
+// suite with such a need, or a suite moved to another job, cannot run where nothing installs what it needs.
+const REQUIRED_WORKFLOWS = ['.github/workflows/clued-required-tests.yml', '.github/workflows/clued-required-tests-windows.yml'];
+function appDependencyFindings(file, text) {
+  const findings = [];
+  const body = text.slice(text.indexOf('\njobs:\n') + 1);
+  const parts = body.split(/\n {2}([a-z][a-z0-9-]*):\n/);
+  for (let i = 1; i < parts.length; i += 2) {
+    const [name, job] = [parts[i], parts[i + 1]];
+    const labels = /\n {4}runs-on: \[([^\]]+)\]/.exec(`\n${job}`)?.[1].split(',').map((label) => label.trim()) ?? [];
+    const platform = labels.includes('Windows') ? 'win32' : 'linux';
+    const suites = new Set();
+    for (const [, check] of job.matchAll(/ --(?:check|run-selected) ([a-z][a-z-]*)\b/g)) {
+      for (const id of Object.keys(SUITES[check] ?? {})) if (suitePlatforms(id).includes(platform)) suites.add(id);
+    }
+    for (const [, id] of job.matchAll(/ --run ([a-z][a-z-]*)\b/g)) suites.add(id);
+    const apps = selection.appDependencies([...suites]);
+    if (apps.length === 0) continue;
+    const steps = job.split(/\n {6}- /);
+    const install = steps.findIndex((step) => /ci-deps\.mjs"? install /.test(step) && step.includes('outputs.app_deps')
+      && step.includes(`${selection.APP_DEPS_MARKER}=1`) && step.includes('GITHUB_ENV'));
+    const run = steps.findIndex((step) => / --run(-selected)? /.test(step));
+    const needing = [...suites].filter((id) => selection.SUITE_APP_DEPENDENCIES[id]).join(', ');
+    if (install < 0) {
+      findings.push(`${file} ${name}: can run ${needing}, which need ${apps.join(', ')}, and has no step that installs them with ci-deps.mjs and sets ${selection.APP_DEPS_MARKER}=1`);
+    } else if (run >= 0 && install > run) findings.push(`${file} ${name}: installs the application dependencies after the step that runs the suites`);
+  }
+  return findings;
+}
+
+test('every required-tests job that can run a suite needing application dependencies installs them first and sets the marker', () => {
+  const findings = REQUIRED_WORKFLOWS.flatMap((file) => appDependencyFindings(file, readFileSync(path.join(ROOT, file), 'utf8')));
+  assert.deepEqual(findings, []);
+  // The guard sees the jobs: without the step, the Linux ci-suites job is a finding.
+  const text = readFileSync(path.join(ROOT, REQUIRED_WORKFLOWS[0]), 'utf8');
+  assert.deepEqual(appDependencyFindings('w', text.replaceAll(`${selection.APP_DEPS_MARKER}=1`, 'X=1')).map((f) => f.split(':')[0]), ['w ci-suites']);
+  // The marker reaches the suites' processes through the environment the selection gives them.
+  assert.equal(selection.testEnv({ [selection.APP_DEPS_MARKER]: '1' })[selection.APP_DEPS_MARKER], '1');
+});
+
+test('a missing application dependency fails when the job provided them and is skipped, saying why, when it did not', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'app-deps-'));
+  try {
+    const needs = ['apps/clued-cloud/node_modules/typescript/package.json'];
+    const { APP_DEPS_MARKER: marker, appDependencyGap } = selection;
+    const missing = appDependencyGap(root, needs, {});
+    assert.equal(missing.fail, false);
+    assert.equal(missing.reason, `${needs[0]} is missing: this run did not provide the application dependencies (${marker} is not set)`);
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }).fail, true);
+    mkdirSync(path.join(root, 'apps/clued-cloud/node_modules/typescript'), { recursive: true });
+    writeFileSync(path.join(root, needs[0]), '{}');
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }), null);
+    assert.equal(appDependencyGap(root, needs, {}), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 const page = (names, extra = {}) => ({ ok: true, json: async () => names.map((filename) => ({ filename, ...extra })) });

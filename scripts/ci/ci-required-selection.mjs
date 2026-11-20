@@ -16,7 +16,8 @@
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
 //     API (GITHUB_TOKEN, pull-requests: read); a push, a listing it cannot
 //     read or a listing at GitHub's 3000-file limit selects everything.
-//     Writes suites=<json> and run_<suite>=true|false to GITHUB_OUTPUT. Only
+//     Writes suites=<json>, app_deps=<json> (SUITE_APP_DEPENDENCIES) and
+//     run_<suite>=true|false to GITHUB_OUTPUT. Only
 //     the suites declared for the host's platform (SUITE_PLATFORMS) are listed.
 //   node scripts/ci/ci-required-selection.mjs --run-selected <check> [--root <checkout>]
 //     selects as --check does, then runs every selected suite in turn and fails
@@ -225,6 +226,26 @@ export const SUITE_PLATFORMS = {
 export const hostPlatform = (platform = process.platform) => (platform === 'win32' ? 'win32' : 'linux');
 export const suitePlatforms = (id) => SUITE_PLATFORMS[id]?.platforms ?? PLATFORMS;
 
+// The suites whose commands need an application's npm dependencies in the checkout, and that application (Clued Task
+// 10399304). This is the only place that says so. --check writes app_deps=<json> for the suites it selected; the job that
+// runs them installs those applications (scripts/ci/ci-deps.mjs install, offline) and then sets APP_DEPS_MARKER=1 for the
+// suites' processes. The selection test fails a required-tests job that can run one of these suites without that step.
+export const SUITE_APP_DEPENDENCIES = {
+  'pinned-registries': 'apps/clued-cloud',
+};
+export const APP_DEPS_MARKER = 'CLUED_CI_APP_DEPS';
+export const appDependencies = (suites) => [...new Set(suites.map((id) => SUITE_APP_DEPENDENCIES[id]).filter(Boolean))].sort();
+// A command that needs files of an application's dependencies (paths under the checkout) and finds one missing. With the
+// marker the job said it installed them, so that is a failure; without it this run did not provide them, and the command
+// says so and checks nothing. null when nothing is missing.
+export function appDependencyGap(root, needs, env = process.env) {
+  const missing = needs.find((file) => !existsSync(path.join(root, file)));
+  if (!missing) return null;
+  return env[APP_DEPS_MARKER] === '1'
+    ? { fail: true, reason: `${missing} is missing although this job provided the application dependencies (${APP_DEPS_MARKER}=1)` }
+    : { fail: false, reason: `${missing} is missing: this run did not provide the application dependencies (${APP_DEPS_MARKER} is not set)` };
+}
+
 // What each suite runs; cwd is relative to the checkout root. Source v2 tests
 // resolve paths from the root, so they run there. {tests:<dir>} expands to the
 // sorted *.test.mjs files directly in <dir> (relative to cwd), {unit-tests}
@@ -406,6 +427,7 @@ export async function changedFiles({ event, env, fetchImpl = fetch }) {
 export function outputLines(check, selection) {
   return [
     `suites=${JSON.stringify(selection.suites)}`,
+    `app_deps=${JSON.stringify(appDependencies(selection.suites))}`,
     ...Object.keys(SUITES[check]).map((id) => `run_${id.replace(/-/g, '_')}=${selection.suites.includes(id)}`),
   ];
 }

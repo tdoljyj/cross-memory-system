@@ -278,6 +278,18 @@ jobs:
           fi
           echo "selector=$selector" >> "$GITHUB_OUTPUT"
           node "$selector" --check ci-suites
+      # Clued Task 10399304: the applications whose dependencies the selected suites need (SUITE_APP_DEPENDENCIES in the
+      # selection, written as app_deps), installed offline from the runner's store by the trusted ci-deps.mjs. The marker
+      # tells those suites a missing dependency is a failure, not a skip. A base selection without app_deps installs nothing.
+      - name: Install the application dependencies the selected suites need
+        if: steps.select.outputs.app_deps != '' && steps.select.outputs.app_deps != '[]'
+        env:
+          APP_DEPS: ${{ steps.select.outputs.app_deps }}
+        run: |
+          for app in $(node -e 'for (const a of JSON.parse(process.env.APP_DEPS)) console.log(a)'); do
+            node trusted/scripts/ci/ci-deps.mjs install "candidate/$app"
+          done
+          echo "CLUED_CI_APP_DEPS=1" >> "$GITHUB_ENV"
       - name: Run the selected suites
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
