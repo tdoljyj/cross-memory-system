@@ -38,8 +38,8 @@
              text; what the companion checks when it starts), nothing on the network.
   -GhExe is required (no default): the caller passes the companion configuration's ghExe, the one source of gh's path.
 
-  powershell.exe -NoProfile -File companion-gh-login.ps1 -Login -GhExe <companion.json ghExe>
-  powershell.exe -NoProfile -File companion-gh-login.ps1 -Check -GhExe <companion.json ghExe>
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File companion-gh-login.ps1 -Login -GhExe <companion.json ghExe>
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File companion-gh-login.ps1 -Check -GhExe <companion.json ghExe>
 #>
 [CmdletBinding()]
 param([switch]$Login, [switch]$Check, [switch]$CopyFromOwner, [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repo = 'tdoljyj/cross-memory-system',
@@ -252,7 +252,7 @@ if ($Login) {
   }
   [GC]::Collect()
   [ordered]@{ status = 'COMPANION_GH_LOGIN_STORED'; ghConfigDir = $dirs.gh; home = $dirs.home; tokenKind = 'classic'; tokenLength = $length; source = $(if ($TokenFromStdin) { 'stdin' } else { 'clipboard' }); clipboardCleared = (-not $TokenFromStdin); clipboardHistoryCleared = [bool]$historyCleared
-    next = 'powershell.exe -NoProfile -File companion-gh-login.ps1 -Check' } | ConvertTo-Json
+    next = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File companion-gh-login.ps1 -Check' } | ConvertTo-Json
   exit 0
 }
 

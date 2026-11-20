@@ -20,6 +20,7 @@ import { ABORTABLE_IN_FLIGHT, EXECUTION_RETRY_STAGES, LINUX_MEMORY_NOT_READY } f
 import { pinnedNodeProfile, validateNodeProfile } from './node-profile.mjs';
 import { validateRoleProbeFact } from './role-probe.mjs';
 import { RELAY_TIMEOUT_MS } from './companion.mjs';
+import { powershellArgv } from './powershell-argv.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
@@ -513,7 +514,7 @@ export class WindowsEngine {
   // verdict with that code also when it exits 2), or the engine's own fixed code when the tool said none (windowsArchiveCode).
   async archiveWindows(batch, reason) {
     const tool = await this.requireV2('archive-windows-spool.ps1');
-    const r = await this.run([this.paths.powershellExe, '-NoProfile', '-NonInteractive', '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256], { timeoutMs: 120_000 });
+    const r = await this.run(powershellArgv(this.paths.powershellExe, '-File', tool, '-BatchKey', batch.key, '-Reason', reason, '-ExpectedNodeProfileSha256', this.nodeProfileSha256), { timeoutMs: 120_000 });
     let v = null;
     if (r.code === 0) v = parseBoundedJson(Buffer.from(r.stdout, 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED');
     else if (r.code !== null) { try { v = parseBoundedJson(Buffer.from(r.stdout ?? '', 'utf8'), 65536, 'WINDOWS_ARCHIVE_UNCONFIRMED'); } catch { v = null; } }

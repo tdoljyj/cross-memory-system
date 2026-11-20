@@ -7,7 +7,7 @@
     exit code pass through, arguments arrive exactly, a child and its grandchildren (also a detached one) past the limit
     or left behind are ended, a process outside the job lives on, and a git fetch hanging on a silent local server is
     ended whole at the limit. -Wsl adds the companion's real wsl, powershell and git chains (needs Ubuntu-24.04).
-  powershell -NoProfile -File test-job-host.ps1 -Scratch <new empty directory> [-Node <node.exe>] [-Wsl]
+  powershell -NoProfile -ExecutionPolicy Bypass -File test-job-host.ps1 -Scratch <new empty directory> [-Node <node.exe>] [-Wsl]
 #>
 param([Parameter(Mandatory)][string]$Scratch, [string]$Node = 'node', [switch]$Wsl)
 Set-StrictMode -Version 2.0

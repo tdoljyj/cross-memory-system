@@ -735,7 +735,7 @@ export const RESIDENT_SERVICE_SID = serviceSid('CluedCIResident');
 // The CI root's DACL as Windows PowerShell 5.1 reads it (Get-Acl, read-only); no CI root yet: ''; unreadable: null (residue, not absence).
 export const defaultCiRootSddl = dir => {
   if (!fsSync.existsSync(dir)) return '';
-  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:FI_CI_ROOT).Sddl'],
+  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '(Get-Acl -LiteralPath $env:FI_CI_ROOT).Sddl'],
     { env: { ...process.env, FI_CI_ROOT: dir, PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules' }, encoding: 'utf8', windowsHide: true });
   const sddl = String(r.stdout ?? '').trim();
   return r.status === 0 && sddl.startsWith('O:') ? sddl : null;

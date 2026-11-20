@@ -24,7 +24,7 @@
   interactive token within 8 minutes when they do not hold, so running the switch is the field check; this probe shows the details.
   Q5 (log-off) and Q6 (fast startup) are the runbook's T2 and T7.
 
-  powershell.exe -NoProfile -File probe-companion-headless.ps1 [-Distribution <name>]
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File probe-companion-headless.ps1 [-Distribution <name>]
 #>
 [CmdletBinding()]
 param([ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')][string]$Distribution, [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repo = 'tdoljyj/cross-memory-system')

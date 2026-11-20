@@ -32,6 +32,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { canonicalJson } from '../src/canonical.mjs';
 import { parseTrainNodes } from '../src/train.mjs';
+import { powershellArgs } from '../src/powershell-argv.mjs';
 
 export const PRECHECK_CONTRACT = 'clued.independent-ci.upgrade-precheck/1';
 // Defect 15894c2a: stage 10's §41.6 Source check (train-maintenance.mjs SOURCE_HEARTBEAT_WINDOW_MS): every node heard within 24 hours
@@ -106,8 +107,8 @@ const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.e
 // PowerShell 5.1 then cannot autoload Microsoft.PowerShell.Security (Get-Acl: CouldNotAutoloadMatchingModule).
 export const WINDOWS_POWERSHELL_MODULES = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules';
 export async function readSddl(dir) {
-  const { stdout, stderr } = await execFileP(POWERSHELL, ['-NoProfile', '-NonInteractive', '-Command',
-    "$ErrorActionPreference='Stop'; (Get-Acl -LiteralPath $env:CLUED_RELAY_PARENT).Sddl"],
+  const { stdout, stderr } = await execFileP(POWERSHELL, powershellArgs('-Command',
+    "$ErrorActionPreference='Stop'; (Get-Acl -LiteralPath $env:CLUED_RELAY_PARENT).Sddl"),
   { windowsHide: true, timeout: 60_000, env: { ...process.env, PSModulePath: WINDOWS_POWERSHELL_MODULES, CLUED_RELAY_PARENT: dir } });
   const sddl = stdout.trim();
   if (stderr.trim() !== '' || !sddl.startsWith('O:')) throw new Error('RELAY_PARENT_SDDL_UNREADABLE');

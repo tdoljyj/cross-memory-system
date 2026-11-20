@@ -434,7 +434,7 @@ assert len(win_paths) >= 2
 os.makedirs(os.path.join(R4, 'dryrun'), exist_ok=True)
 dry_file = os.path.join(R4, 'dryrun', 'install.dry-run.post-uninstall.' + COMMIT[:8] + '.' + GEN_UTC + '.json')
 SECRETS_EXIST = ['true' if x else 'false' for x in CFG['secretTargetsExist']]   # r5 S1: app key target, ci token target (elevated truth, checked by the launcher)
-p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-File', EXPECTED_PLAN, '-View', 'post-uninstall', '-PackageRoot', PKG, '-PackageManifestSha256', pkg_sha,
+p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', EXPECTED_PLAN, '-View', 'post-uninstall', '-PackageRoot', PKG, '-PackageManifestSha256', pkg_sha,
                     '-AppKeyTargetExists', SECRETS_EXIST[0], '-CiTokenTargetExists', SECRETS_EXIST[1], '-OwnerSid', OWNER, '-ControllerSid', CONTROLLER, '-OperatorSid', OPERATOR],
                    capture_output=True, check=False)
 write_new(dry_file, p.stdout)
@@ -519,7 +519,7 @@ if FIRST:   # nothing installed: its root must not exist (Linux A and the launch
     halt_present = halt_accepted = paused_present = False
     terminal_evidence = {'key': None, 'relativeDirectory': '', 'terminalSha256': None, 'backfillManifestSha256': None}
     PARENT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
-    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
+    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
                                    capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
     quiet = {'firstInstall': True, 'residentRootExists': os.path.lexists(LIVE_ROOT)}
     refusals = ['FIRST_INSTALL_RESIDENT_ROOT_PRESENT'] if os.path.lexists(LIVE_ROOT) else []
@@ -536,7 +536,7 @@ if not FIRST:
     halt_doc = json.load(open(os.path.join(LIVE_ROOT, 'state', 'HALT.json'), encoding='utf-8-sig')) if halt_present else None
     halt_accepted = bool(halt_present and ACCEPT_HALT and halt_sha == ACCEPT_HALT)
     PARENT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
-    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
+    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
                                    capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
     paused_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'))
     paused_sha = sha(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json')) if paused_present else None   # review m6: pinned into the launcher
@@ -589,7 +589,7 @@ if FINAL and refusals:
     print(json.dumps({'status': 'REFUSED', 'codes': refusals, 'quiet': quiet, 'dryRun': dry_file, 'runnerBefore': rb}, indent=1))
     sys.exit(3)
 # r4.1 C2: the parent ACL before/after, computed exactly as the launcher does (Get-Acl + AddAccessRule), pinned
-parent_after = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command',
+parent_after = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
     '$a=New-Object Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm($env:R41_BEFORE); '
     '$r=New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($env:R41_SID)),[Security.AccessControl.FileSystemRights]0x120080,[Security.AccessControl.InheritanceFlags]::None,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow); '
     '$a.AddAccessRule($r); $a.GetSecurityDescriptorSddlForm("All")'], capture_output=True, text=True,
@@ -735,7 +735,7 @@ cmd = ("$env:PSModulePath='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modul
        "if ($h -cne '" + launcher_sha + "') { throw ('LAUNCHER_CHANGED ' + $h) }; & ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($b))) -RunApprovedInstall\n")
 if FLEET_PLAN:
     # One line of JSON for rollout/fleet/install.mjs prepare, which puts path and sha256 into the plan's `launcher` and builds its runCommand
-    # around elevatedCommand (hash-checked bytes, run from memory, in an elevated Windows PowerShell 5.1 started with -NoProfile).
+    # around elevatedCommand (hash-checked bytes, run from memory, in an elevated Windows PowerShell 5.1 started with -NoProfile -ExecutionPolicy Bypass).
     print(json.dumps({'status': 'FLEET_LAUNCHER_GENERATED', 'launcher': {'path': out, 'sha256': launcher_sha}, 'bytes': len(data), 'node': node['nodeName'], 'version': PLAN['version'], 'commit': COMMIT,
                       'installPlan': FLEET_PLAN, 'installPlanSha256': CFG['_sha256'], 'templateSha256': TEMPLATE_SHA, 'elevatedCommand': cmd.strip(), 'launchDir': LAUNCH_DIR,
                       'companionAccount': FLEET['companionAccount'], 'operatorSid': OPERATOR, 'linux': {'inDir': FLEET['inDir'], 'outDir': FLEET['outDir'], 'wslOutDir': FLEET['wslOutDir'], 'timeoutSeconds': FLEET['timeouts']},
