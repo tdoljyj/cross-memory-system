@@ -1,5 +1,6 @@
-// Units of push mode (resident ADR 0018): the stage file, the shape of S, the other-App checks on S, main's rules, composing and
-// bisecting, the one write to main, the landing port's token and refs, the landing records, and the never-published check.
+// Units of push mode (resident ADR 0018): the stage file, the shape of S, the other-App checks on S, which way to land (three ways,
+// Fable 2026-11-20) and the rehearsal on S, composing and bisecting, the one write to main, the landing port's token and refs, the
+// landing records, and the never-published check.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -131,13 +132,106 @@ test('N9: only the newest verdict on S counts; inconclusive checks do not fail t
   assert.equal(d([run(1, 'failure', '2026-11-18T09:55:00.000Z')]), L.TRAIN_LANDING_CHECK_FAILED);
 });
 
-test('landingRulesDecision and the never-published train-only check', async () => {
-  const req = { type: 'required_status_checks', parameters: { required_status_checks: [{ context: L.TRAIN_ONLY_CHECK, integration_id: APP }] } };
-  assert.equal(L.landingRulesDecision([{ type: 'non_fast_forward' }, { type: 'deletion' }, req], APP), null);
-  assert.equal(L.landingRulesDecision([{ type: 'deletion' }, req], APP), L.TRAIN_LANDING_RULES_MISSING);
-  assert.equal(L.landingRulesDecision([{ type: 'non_fast_forward' }, req], APP), L.TRAIN_LANDING_RULES_MISSING);
-  assert.equal(L.landingRulesDecision([{ type: 'non_fast_forward' }, { type: 'deletion' },
-    { type: 'required_status_checks', parameters: { required_status_checks: [{ context: L.TRAIN_ONLY_CHECK, integration_id: 1 }] } }], APP), L.TRAIN_LANDING_RULES_MISSING, 'pinned to this App only');
+// Fable 2026-11-20 三态选路: landingRoute reads main's rules (GET /rules/branches/main, each rule with its ruleset) and each of those
+// rulesets' bypass (GET /rulesets/{id}) and answers push, github-merge (the current path) or park, with what push still misses.
+const MAIN_RS = 24182890, FF_RS = 27500001, ACTIONS = 15368;
+const FOUR = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'];
+const appOnly = [{ actor_id: APP, actor_type: 'Integration', bypass_mode: 'always' }];
+function ruleState({ independent = true, trainLanded = true, mainBypass = appOnly, mainCan = 'always', ffBypass = [], ffCan = 'never', drop = null, trainApp = APP } = {}) {
+  const checks = [...REQUIRED_CHECK_NAMES.map(context => ({ context, integration_id: APP })), ...(trainLanded ? [{ context: L.TRAIN_ONLY_CHECK, integration_id: trainApp }] : []),
+    ...FOUR.map(context => ({ context, integration_id: ACTIONS }))].filter(c => c.context !== drop);
+  const rules = [{ type: 'deletion', rulesetId: MAIN_RS, parameters: null }, { type: 'non_fast_forward', rulesetId: MAIN_RS, parameters: null },
+    { type: 'pull_request', rulesetId: MAIN_RS, parameters: { allowed_merge_methods: ['merge'] } },
+    { type: 'required_status_checks', rulesetId: MAIN_RS, parameters: { strict_required_status_checks_policy: true, required_status_checks: checks } },
+    ...(independent ? [{ type: 'deletion', rulesetId: FF_RS, parameters: null }, { type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }] : [])];
+  const rulesets = new Map([[MAIN_RS, { id: MAIN_RS, bypassActors: mainBypass, currentUserCanBypass: mainCan }],
+    ...(independent ? [[FF_RS, { id: FF_RS, bypassActors: ffBypass, currentUserCanBypass: ffCan }]] : [])]);
+  return { rules, rulesets, appId: APP };
+}
+const TODAY = { independent: false, trainLanded: false, mainBypass: [], mainCan: 'never' };
+
+test('landingRoute: the four conditions -> push; exactly the state before the Owner\'s steps -> github-merge; anything else parks with what is missing', () => {
+  assert.deepEqual(L.landingRoute(ruleState()), { route: 'push', missing: [] });
+  assert.deepEqual(L.landingRoute(ruleState({ mainBypass: null, ffBypass: null })), { route: 'push', missing: [] }, 'lists hidden: the App\'s own bypass');
+  // today: main's own non_fast_forward and deletion (the ruleset the App will bypass) are not the independent ruleset
+  assert.deepEqual(L.landingRoute(ruleState(TODAY)), { route: 'github-merge', missing: ['independent_ruleset_missing', 'train_landed_check_missing', 'main_bypass_not_app_only'] });
+  assert.equal(L.landingRoute(ruleState({ ...TODAY, mainBypass: null })).route, 'github-merge', 'list hidden, the App cannot bypass');
+  // the current path is only exactly today's state: also with the independent ruleset already there
+  assert.equal(L.landingRoute(ruleState({ trainLanded: false, mainBypass: [], mainCan: 'never' })).route, 'github-merge');
+  // kooyumi-train-landed read: never the current path
+  const park = (o, missing) => assert.deepEqual(L.landingRoute(ruleState(o)), { route: 'park', missing }, JSON.stringify(o));
+  park({ independent: false }, ['independent_ruleset_missing']);
+  park({ ffBypass: [{ actor_id: 1, actor_type: 'OrganizationAdmin', bypass_mode: 'always' }] }, ['independent_ruleset_bypass_not_empty']);
+  park({ ffBypass: null, ffCan: 'always' }, ['independent_ruleset_bypass_not_empty']);
+  park({ mainBypass: [], mainCan: 'never' }, ['main_bypass_not_app_only']);
+  park({ mainBypass: [...appOnly, { actor_id: 2, actor_type: 'Team', bypass_mode: 'always' }] }, ['main_bypass_not_app_only']);
+  park({ mainBypass: [{ ...appOnly[0], bypass_mode: 'pull_request' }], mainCan: 'pull_requests_only' }, ['main_bypass_not_app_only']);
+  park({ drop: 'ci-suites-windows' }, ['main_required_check_missing:ci-suites-windows']);
+  park({ drop: 'migration-verify' }, ['main_required_check_missing:migration-verify']);
+  park({ trainApp: 1 }, ['train_landed_check_missing']);
+  park({ independent: false, mainBypass: [], mainCan: 'never' }, ['independent_ruleset_missing', 'main_bypass_not_app_only']);
+  // no kooyumi-train-landed, but a bypass on main: half of the Owner's second step
+  park({ ...TODAY, mainBypass: appOnly, mainCan: 'always' }, ['independent_ruleset_missing', 'train_landed_check_missing', 'main_bypass_not_empty']);
+  park({ ...TODAY, mainBypass: null, mainCan: 'always' }, ['independent_ruleset_missing', 'train_landed_check_missing', 'main_bypass_not_empty']);
+});
+
+test('landingRoute, fail closed: what cannot be read is never today\'s state', () => {
+  const unread = (input, missing) => assert.deepEqual(L.landingRoute(input), { route: 'park', missing }, JSON.stringify(missing));
+  const today = ruleState(TODAY);
+  unread({ ...today, rules: null }, ['rules_unreadable']);
+  unread({ ...today, rules: [] }, ['rules_unreadable']);
+  unread({ ...today, rules: today.rules.map((r, i) => (i === 0 ? { ...r, rulesetId: null } : r)) }, ['rules_unreadable']);
+  unread({ ...today, rules: today.rules.map(r => (r.type === 'required_status_checks' ? { ...r, parameters: { required_status_checks: [null] } } : r)) }, ['rules_unreadable']);
+  unread({ ...today, rulesets: null }, [`ruleset_bypass_unreadable:${MAIN_RS}`]);
+  unread({ ...today, rulesets: new Map() }, [`ruleset_bypass_unreadable:${MAIN_RS}`]);
+  unread({ ...today, rulesets: new Map([[MAIN_RS, { id: MAIN_RS, bypassActors: null, currentUserCanBypass: null }]]) }, [`ruleset_bypass_unreadable:${MAIN_RS}`]);
+  unread({ ...today, rulesets: new Map([[MAIN_RS, { id: MAIN_RS, bypassActors: [{ actor_id: APP }], currentUserCanBypass: 'never' }]]) }, [`ruleset_bypass_unreadable:${MAIN_RS}`]);
+  // a list that contradicts what GitHub says this App may do (an empty list beside an App that can bypass): unreadable
+  unread({ ...today, rulesets: new Map([[MAIN_RS, { id: MAIN_RS, bypassActors: [], currentUserCanBypass: 'always' }]]) }, [`ruleset_bypass_unreadable:${MAIN_RS}`]);
+  // the main ruleset (the one holding the six checks this App publishes) must be exactly one
+  unread({ ...today, rules: today.rules.filter(r => r.type !== 'required_status_checks') }, ['main_ruleset_unidentified']);
+});
+
+test('rehearsalOf: the newest run by id of each of the four Actions checks on S itself, by its own name', () => {
+  const run = (id, name, conclusion, status = 'completed', o = {}) => ({ id, name, head_sha: S1, app: { id: ACTIONS }, status, conclusion, ...o });
+  const all = FOUR.map((n, i) => run(i + 1, n, 'success'));
+  assert.deepEqual(L.MAIN_ACTIONS_CHECKS, FOUR);
+  assert.deepEqual(L.rehearsalOf({ inventory: { complete: true, checks: all }, testSha: S1 }),
+    { testSha: S1, checks: Object.fromEntries(FOUR.map(n => [n, 'success'])), allFour: true });
+  const r = L.rehearsalOf({ inventory: { complete: true, checks: [...all.slice(0, 3), run(9, 'ci-suites', 'failure'), run(10, 'ci-suites-windows', null, 'in_progress'),
+    run(11, 'migration-verify', 'success', 'completed', { head_sha: S2 }), run(12, 'clued-cloud-tests', 'success', 'completed', { app: { id: APP } })] }, testSha: S1 });
+  assert.deepEqual([r.checks, r.allFour], [{ 'ci-suites': 'failure', 'clued-cloud-tests': 'success', 'migration-verify': 'success', 'ci-suites-windows': 'pending' }, false]);
+  assert.deepEqual(L.rehearsalOf({ inventory: { complete: true, checks: all.slice(1) }, testSha: S1 }).checks['ci-suites'], 'missing');
+  assert.deepEqual(L.rehearsalOf({ inventory: { complete: false, checks: all }, testSha: S1 }), { testSha: S1, checks: Object.fromEntries(FOUR.map(n => [n, 'unreadable'])), allFour: false });
+  assert.deepEqual(L.rehearsalOf({ inventory: null, testSha: S1 }).allFour, false);
+});
+
+test('GitHub port: one ruleset\'s bypass, normalized; a list the token may not see is null, never empty; a malformed reply refused', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const now = Date.parse('2026-11-20T03:00:00Z'), seen = [];
+  let body = { id: 24182890, name: 'main write policy (#292)', enforcement: 'active', bypass_actors: [{ actor_id: 77, actor_type: 'Integration', bypass_mode: 'always' }], current_user_can_bypass: 'always' };
+  const reply = b => ({ ok: true, status: 200, json: async () => b });
+  const fetchImpl = async (url, options) => {
+    const u = new URL(url); seen.push(`${options.method} ${u.pathname}${u.search}`);
+    if (u.pathname === '/app') return reply({ id: 77 });
+    if (u.pathname === '/app/installations/99/access_tokens') return reply({ token: 't', expires_at: new Date(now + 3_600_000).toISOString(), permissions: { checks: 'write', contents: 'read', pull_requests: 'read', metadata: 'read' } });
+    if (u.pathname === '/installation/repositories') return reply({ total_count: 1, repositories: [{ id: 41, full_name: 'owner/repo' }] });
+    if (u.pathname === '/repos/owner/repo/rulesets/24182890') return reply(body);
+    throw new Error('unexpected');
+  };
+  const port = createGitHubChecksPort({ repository: 'owner/repo', repositoryId: 41, appId: 77, installationId: 99, privateKeyProvider: async () => privateKey, fetchImpl, clock: () => now });
+  assert.deepEqual(await port.readRuleset(24182890), { id: 24182890, bypassActors: [{ actor_id: 77, actor_type: 'Integration', bypass_mode: 'always' }], currentUserCanBypass: 'always' });
+  assert.ok(seen.includes('GET /repos/owner/repo/rulesets/24182890?includes_parents=true'));
+  body = { id: 24182890, current_user_can_bypass: 'never' };
+  assert.deepEqual(await port.readRuleset(24182890), { id: 24182890, bypassActors: null, currentUserCanBypass: 'never' });
+  await assert.rejects(port.readRuleset(0), e => e.code === 'invalid_ruleset');
+  for (const bad of [{ id: 1 }, { id: 24182890, bypass_actors: {} }, { id: 24182890, bypass_actors: Array.from({ length: 101 }, () => ({})) }, { id: 24182890, current_user_can_bypass: 3 }]) {
+    body = bad;
+    await assert.rejects(port.readRuleset(24182890), e => e.code === 'invalid_ruleset_reply', JSON.stringify(bad));
+  }
+});
+
+test('the never-published train-only check', async () => {
   assert.equal(RULES_TRAIN_ONLY, L.TRAIN_ONLY_CHECK);
   assert.ok(!REQUIRED_CHECK_NAMES.includes(L.TRAIN_ONLY_CHECK), 'not one of the six the train publishes');
   // stage 8's queue check: a required kooyumi-train-landed that never reports is neither a failure nor an unknown provider

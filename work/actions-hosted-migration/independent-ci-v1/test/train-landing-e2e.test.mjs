@@ -41,7 +41,27 @@ const body = pr => `Change.\n\nClued-Work-Claim: ${claimOf(pr)}\nClued-Work-Scop
 const healthy = { nodes: [{ node: { name: 'turing', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }] };
 
 // ---- the world ----
-async function world(t, { prs, bad = () => false, sharedClaim = false }) {
+// main's rulesets (Fable 2026-11-20 三态选路): 'push' is the state after the Owner's two steps (an independent fast-forward-only ruleset
+// with an empty bypass list, and the main ruleset with kooyumi-train-landed and App 5368905 as its only bypass); 'today' is production
+// before them (the main ruleset alone holds non_fast_forward and deletion, no kooyumi-train-landed, an empty bypass list).
+const MAIN_RS = 24182890, FF_RS = 27500001;
+const FOUR = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'];
+const appBypass = [{ actor_id: 5368905, actor_type: 'Integration', bypass_mode: 'always' }];
+function rulesOf(kind) {
+  const push = kind === 'push';
+  return [{ type: 'pull_request', rulesetId: MAIN_RS, parameters: { allowed_merge_methods: ['merge'] } },
+    { type: 'non_fast_forward', rulesetId: MAIN_RS, parameters: null }, { type: 'deletion', rulesetId: MAIN_RS, parameters: null },
+    ...(push ? [{ type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null }] : []),
+    { type: 'required_status_checks', rulesetId: MAIN_RS, parameters: { strict_required_status_checks_policy: true, required_status_checks: [
+      ...['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot', ...(push ? ['kooyumi-train-landed'] : [])]
+        .map(context => ({ context, integration_id: 5368905 })),
+      ...FOUR.map(context => ({ context, integration_id: 15368 }))] } }];
+}
+const rulesetsOf = kind => new Map(kind === 'push'
+  ? [[MAIN_RS, { id: MAIN_RS, bypassActors: appBypass, currentUserCanBypass: 'always' }], [FF_RS, { id: FF_RS, bypassActors: [], currentUserCanBypass: 'never' }]]
+  : [[MAIN_RS, { id: MAIN_RS, bypassActors: [], currentUserCanBypass: 'never' }]]);
+
+async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push' }) {
   const e = await setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 });
   e.claimFor = sharedClaim ? () => claimOf(prs[0]) : claimOf;
   e.native.bindings = new Map(prs.map(pr => [pr, { claimId: e.claimFor(pr), scope: SCOPE, headAuthorizationId: claimOf(pr) }]));
@@ -56,10 +76,13 @@ async function world(t, { prs, bad = () => false, sharedClaim = false }) {
   W.merge = merge; W.ancestor = ancestor;
   const T0 = commit(h('T0'), [], []);
   W.refs.set('heads/main', T0);
+  // GitHub Actions: the four required checks of the main ruleset, by their own names (S's rehearsal reads exactly these)
   const actions = sha => {
-    const id = W.nextCheck++;
-    W.checks.set(id, { id, app: { id: ACTIONS }, name: 'ci-suites', head_sha: sha, status: 'completed',
-      conclusion: bad(W.content.get(sha)) ? 'failure' : 'success', completed_at: iso(e.now - 5 * 60_000) });
+    for (const name of FOUR) {
+      const id = W.nextCheck++;
+      W.checks.set(id, { id, app: { id: ACTIONS }, name, head_sha: sha, status: 'completed',
+        conclusion: bad(W.content.get(sha)) ? 'failure' : 'success', completed_at: iso(e.now - 5 * 60_000) });
+    }
   };
   for (const pr of prs) {
     const head = commit(h(`head:${pr}`), [T0], [String(pr)]);
@@ -75,11 +98,15 @@ async function world(t, { prs, bad = () => false, sharedClaim = false }) {
   gh.world.pulls.clear();
   Object.defineProperty(gh.world, 'main', { get: () => W.refs.get('heads/main'), set: () => {} });
   gh.readBranchHead = async () => ({ name: 'main', sha: W.refs.get('heads/main') });
-  gh.readBranchRules = async () => ({ complete: true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
-    { type: 'non_fast_forward' }, { type: 'deletion' },
-    { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true, required_status_checks: [
-      ...['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot', 'kooyumi-train-landed'].map(context => ({ context, integration_id: APP })),
-      { context: 'ci-suites', integration_id: ACTIONS }] } }] });
+  W.rules = rulesOf(rules); W.rulesets = rulesetsOf(rules);
+  W.setRules = kind => { W.rules = rulesOf(kind); W.rulesets = rulesetsOf(kind); };
+  gh.readBranchRules = async () => ({ complete: true, branch: 'main', rules: structuredClone(W.rules) });
+  // GET /rulesets/{id} as github.mjs#readRuleset answers it (bypassActors null: the list is not visible to this token)
+  gh.readRuleset = async id => {
+    const r = W.rulesets.get(id);
+    if (!r) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' });
+    return structuredClone(r);
+  };
   gh.readPullRequest = async n => {
     const p = W.pulls.get(n), main = W.refs.get('heads/main');
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
@@ -650,7 +677,7 @@ test('push, fail closed: a batch of several PRs never gets a merge-slot green fr
   untouched(e, T); assert.equal(e.W.pushes.length, 0);
 });
 
-test('push, fail closed: main without the fast-forward-only, no-deletion or train-only rule parks the batch (TRAIN_LANDING_RULES_MISSING)', async t => {
+test('push, fail closed: main without the fast-forward-only, no-deletion or train-only rule parks the batch (TRAIN_LANDING_RULES_MISSING), never a current-path green', async t => {
   for (const drop of ['non_fast_forward', 'deletion', 'kooyumi-train-landed']) await t.test(drop, async t => {
     const { e, b, T } = await opened(t);
     const read = e.gh.readBranchRules;
@@ -664,6 +691,158 @@ test('push, fail closed: main without the fast-forward-only, no-deletion or trai
     assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0]);
     untouched(e, T); assert.equal(e.W.pushes.length, 0);
   });
+});
+
+// ---- Fable 2026-11-20 三态选路: which way a batch lands is read from main's live rules each time, by the one function ----
+// A merge-slot green that stage 8 wrote on H, as GitHub's auto-merge then merges it: a merge commit [T, H] with S's tree (its own SHA).
+function githubMerges(e, b) {
+  const p = e.W.pulls.get(b.pr), M = e.W.merge(b.baseSha, b.headSha, ':github');
+  assert.equal(e.W.commits.get(M).tree, e.W.commits.get(b.testSha).tree);
+  e.W.refs.set('heads/main', M);
+  Object.assign(p, { state: 'closed', merged: true, mergeSha: M });
+  return M;
+}
+const greens = (e, sha) => [...e.gh.world.checks.values()].filter(c => c.head_sha === sha && c.name === 'kooyumi-merge-slot' && c.conclusion === 'success');
+const PUSH1 = Object.freeze({ landing: 'push', batchMax: 1, unreadable: false });
+const TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing', 'main_bypass_not_app_only'];
+
+test('three ways, today (no independent ruleset, no kooyumi-train-landed, empty bypass): a push-capable package lands through GitHub as today and never parks', async t => {
+  const { e, b, T } = await opened(t, [910], { rules: 'today' });
+  // stage 10 still built the candidate merge commit S and pointed clued-train/staging at it: the four checks ran on S by their own names
+  assert.equal(e.W.refs.get('heads/clued-train/staging'), b.testSha, 'the rehearsal S is on the staging ref');
+  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
+  assert.equal(e.main(), T);
+  assert.equal(greens(e, b.headSha).length, 1, 'the merge-slot green of the current path, on H');
+  // the receipt: what a push of this S would have needed on S itself
+  assert.deepEqual(p.rehearsal, { testSha: b.testSha, checks: { 'ci-suites': 'success', 'clued-cloud-tests': 'success', 'migration-verify': 'success', 'ci-suites-windows': 'success' },
+    allFour: true, missing: TODAY_MISSING });
+  // GitHub merges it; the next stage 10 adopts it and says which way it read: the train went on
+  const M = githubMerges(e, b);
+  const s10 = (await stage10(e)).facts;
+  assert.deepEqual([s10.landing?.route, s10.landing?.missing], ['github-merge', TODAY_MISSING], JSON.stringify(s10.landing));
+  assert.deepEqual(e.adopted, [[910, M]]);
+  assert.equal(e.queue.length, 0);
+});
+
+test('three ways, today: three queued PRs go one by one through GitHub, none parks, every S rehearsed', async t => {
+  const e = await world(t, { prs: [910, 911, 912], rules: 'today' });
+  const log = [];
+  for (let i = 0; i < 12 && e.queue.length; i++) {
+    const r = await stage10(e);
+    const b = r.facts.openFrontBatch;
+    if (!b) continue;
+    const p = await stage8(t, e, b, { trainLanding: { landing: 'push', batchMax: 4, unreadable: false } });
+    log.push([b.pr, p.status, p.reason ?? null, p.rehearsal?.allFour ?? null]);
+    if (p.status === 'SETTLED') githubMerges(e, b);
+  }
+  assert.deepEqual(log, [[910, 'SETTLED', null, true], [911, 'SETTLED', null, true], [912, 'SETTLED', null, true]], JSON.stringify(log));
+  assert.deepEqual(e.W.pushes, []);
+  assert.deepEqual(e.adopted.map(a => a[0]), [910, 911, 912]);
+});
+
+test('three ways: the four conditions all read back -> push lands, the stage-10 facts say so', async t => {
+  const { e, b } = await opened(t, [910]);
+  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.deepEqual(e.W.pushes, [b.testSha]);
+  assert.equal(greens(e, b.headSha).length, 0);
+  const s10 = (await stage10(e)).facts;
+  assert.deepEqual([s10.landing?.route, s10.landing?.missing], ['push', []], JSON.stringify(s10.landing));
+});
+
+test('three ways, fail closed: rules that cannot be read, or read only in part, park with the missing item named; no check, no push', async t => {
+  const cases = {
+    'rules reply incomplete': e => { e.gh.readBranchRules = async () => ({ complete: false, branch: 'main', rules: [] }); },
+    'ruleset read fails': e => { e.gh.readRuleset = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; },
+    'rule without its ruleset': e => { const r = e.gh.readBranchRules; e.gh.readBranchRules = async () => { const x = await r(); delete x.rules[0].rulesetId; return x; }; },
+  };
+  for (const [name, breakIt] of Object.entries(cases)) for (const kind of ['today', 'push']) await t.test(`${name} (${kind})`, async t => {
+    const { e, b, T } = await opened(t, [910], { rules: kind });
+    breakIt(e);
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.equal(p.status, 'BLOCKED', JSON.stringify(p));
+    assert.equal(p.sideEffects, 0);
+    assert.ok(['TRAIN_LANDING_RULES_MISSING', 'RULESET_UNREADABLE'].includes(p.reason), JSON.stringify(p));
+    if (p.reason === 'TRAIN_LANDING_RULES_MISSING') assert.ok(Array.isArray(p.missing) && p.missing.length > 0 && p.missing.every(m => /unreadable/.test(m)), JSON.stringify(p.missing));
+    untouched(e, T); assert.deepEqual(e.W.pushes, []);
+  });
+});
+
+test('three ways, fail closed: kooyumi-train-landed read while the rest is not complete -> no current-path green, no push, parked with what is missing', async t => {
+  const cases = {
+    // the main ruleset holds non_fast_forward and deletion itself (the App bypasses it): not the independent ruleset push relies on
+    'no independent ruleset': W => { W.rules = W.rules.filter(r => r.rulesetId !== FF_RS); W.rulesets.delete(FF_RS); },
+    'independent ruleset with a bypass': W => { W.rulesets.get(FF_RS).bypassActors = [{ actor_id: 7, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; },
+    'main bypass empty': W => { Object.assign(W.rulesets.get(MAIN_RS), { bypassActors: [], currentUserCanBypass: 'never' }); },
+    'main bypass with another actor': W => { W.rulesets.get(MAIN_RS).bypassActors = [...appBypass, { actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; },
+    'ci-suites-windows dropped': W => { const rc = W.rules.find(r => r.type === 'required_status_checks'); rc.parameters.required_status_checks = rc.parameters.required_status_checks.filter(c => c.context !== 'ci-suites-windows'); },
+    'train-landed pinned to another App': W => { W.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.find(x => x.context === 'kooyumi-train-landed').integration_id = 1; },
+  };
+  const expected = { 'no independent ruleset': 'independent_ruleset_missing', 'independent ruleset with a bypass': 'independent_ruleset_bypass_not_empty',
+    'main bypass empty': 'main_bypass_not_app_only', 'main bypass with another actor': 'main_bypass_not_app_only',
+    'ci-suites-windows dropped': 'main_required_check_missing:ci-suites-windows', 'train-landed pinned to another App': 'train_landed_check_missing' };
+  for (const [name, change] of Object.entries(cases)) await t.test(name, async t => {
+    const { e, b, T } = await opened(t, [910]);
+    change(e.W);
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
+    untouched(e, T); assert.deepEqual(e.W.pushes, []);
+  });
+});
+
+test('three ways, fail closed: a main bypass list that is not empty without kooyumi-train-landed parks (half of the Owner\'s second step)', async t => {
+  const { e, b, T } = await opened(t, [910], { rules: 'today' });
+  Object.assign(e.W.rulesets.get(MAIN_RS), { bypassActors: appBypass, currentUserCanBypass: 'always' });
+  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+  assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0], JSON.stringify(p));
+  assert.ok(p.missing.includes('main_bypass_not_empty'), JSON.stringify(p.missing));
+  untouched(e, T); assert.deepEqual(e.W.pushes, []);
+});
+
+test('three ways: a bypass list this token cannot see is read as the App\'s own bypass; a list that contradicts it is unreadable', async t => {
+  await t.test('today, list hidden, the App cannot bypass main -> current path', async t => {
+    const { e, b } = await opened(t, [910], { rules: 'today' });
+    Object.assign(e.W.rulesets.get(MAIN_RS), { bypassActors: null, currentUserCanBypass: 'never' });
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.equal(p.status, 'SETTLED', JSON.stringify(p)); assert.deepEqual(e.W.pushes, []);
+  });
+  await t.test('push state, lists hidden -> push', async t => {
+    const { e, b } = await opened(t, [910]);
+    for (const r of e.W.rulesets.values()) r.bypassActors = null;
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.equal(p.status, 'SETTLED', JSON.stringify(p)); assert.deepEqual(e.W.pushes, [b.testSha]);
+  });
+  await t.test('an empty list beside an App that can bypass -> unreadable, parked', async t => {
+    const { e, b, T } = await opened(t, [910]);
+    e.W.rulesets.get(MAIN_RS).bypassActors = [];
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.deepEqual([p.reason, p.missing], ['TRAIN_LANDING_RULES_MISSING', [`ruleset_bypass_unreadable:${MAIN_RS}`]]);
+    untouched(e, T);
+  });
+});
+
+test('three ways, rehearsal: S without all four checks green still lands through GitHub; the receipt says which one', async t => {
+  for (const [what, change] of [['missing', (W, id) => W.checks.delete(id)], ['pending', (W, id) => Object.assign(W.checks.get(id), { status: 'in_progress', conclusion: null })],
+    ['failure', (W, id) => Object.assign(W.checks.get(id), { conclusion: 'failure' })]]) await t.test(what, async t => {
+    const { e, b } = await opened(t, [910], { rules: 'today' });
+    const [id] = [...e.W.checks].find(([, c]) => c.head_sha === b.testSha && c.name === 'ci-suites-windows');
+    change(e.W, id);
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+    assert.deepEqual([p.rehearsal.allFour, p.rehearsal.checks['ci-suites-windows'], p.rehearsal.checks['ci-suites']], [false, what, 'success']);
+    assert.equal(greens(e, b.headSha).length, 1);
+  });
+});
+
+test('three ways, fail closed: a batch of several members never takes the current path (the merge-slot green would name a tree H was not tested as)', async t => {
+  const { e, b, T } = await opened(t);
+  assert.equal((await e.store.landingBatchByTest(b.testSha)).members.length, 3);
+  e.W.setRules('today');
+  const p = await stage8(t, e, b);
+  assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_BATCH_WITHOUT_PUSH', 0], JSON.stringify(p));
+  untouched(e, T); assert.deepEqual(e.W.pushes, []);
 });
 
 test('push, fail closed: a rider that is frozen, left the queue, moved to a new head or closed ends the batch (TRAIN_BATCH_CHANGED)', async t => {
