@@ -1231,3 +1231,61 @@ test('9aba97c1: a required job no runner took is re-run; the gate job no runner 
   taken.runs[0].attempts[0].jobs[1].runner_name = 'clued-ci-company-linux-01';
   assert.equal((await decide({ gh: taken.gh, headSha: HEAD })).action, 'final');
 });
+
+// Independent review (Codex, 051b7d585). High 2: the re-run budget is the head and the workflow's (every run of that workflow on the head,
+// a person's re-runs included: three attempts in all), never one run ID's.
+test('review high 2: two runs of one workflow on one head share one budget of three attempts', async t => {
+  const runs = [ownerRun([attempt(), attempt()]), run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } })];
+  const w = world({ runs, fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'final', d.reason);
+  assert.match(d.reason, /three attempts/);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, []);
+  // the same with one attempt less still re-runs the newest run
+  const w2 = world({ runs: [ownerRun([attempt()]), run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } })], fail: ghRefusesEscapes });
+  const d2 = await decide({ gh: w2.gh, headSha: HEAD });
+  assert.deepEqual([d2.action, d2.runId], ['rerun', 701], d2.reason);
+});
+
+// High 3 (the clear parts): a gate no runner took, with its downstream jobs cancelled as GitHub records it (run 44658316395: the gate and
+// every job after it cancelled, steps [], runner_id 0 or null), ran nothing: re-run. A Bot's run whose gate never ran is re-run as well,
+// never re-dispatched for the actor.
+const neverTaken = (name, conclusion = 'cancelled') => ({ name, head_sha: HEAD, status: 'completed', conclusion, steps: [], runner_id: 0, runner_name: null });
+test('review high 3: a gate no runner took and its cancelled downstream jobs ran nothing: one re-run', async () => {
+  const jobs = { notes: [], jobs: [neverTaken('admission-gate'), ...HEAVY.map(n => neverTaken(n))] };
+  const w = world({ runs: [ownerRun([jobs])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId], ['rerun', 700], d.reason);
+  const bot = world({ runs: [botRun({ attempts: [{ notes: [], jobs: [neverTaken('admission-gate'), ...HEAVY.map(n => ({ name: n, head_sha: HEAD, status: 'completed', conclusion: 'skipped' }))] }] })], fail: ghRefusesEscapes });
+  const b = await decide({ gh: bot.gh, headSha: HEAD });
+  assert.equal(b.action, 'rerun', b.reason);
+  assert.deepEqual(bot.dispatches, []);
+});
+
+// Medium: the admission is read again right before the POST.
+test('review medium: an admission withdrawn between the first read and the POST stops the re-run', async () => {
+  let reads = 0;
+  const w = world({ runs: [ownerRun([attempt()])], fail: (target, method, st, argv) => {
+    if (target.includes('check_name=kooyumi-work-admission') && ++reads > 1) {
+      const revoked = nativeCheck({ id: 51, conclusion: 'failure' });
+      return { code: 0, stdout: JSON.stringify({ total_count: 2, check_runs: [nativeCheck(), revoked] }) };
+    }
+    return ghRefusesEscapes(target, method, st, argv);
+  } });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'skip', d.reason);
+  assert.match(d.reason, /no longer admitted/);
+});
+
+// Medium: an earlier verdict under the older repair rule is judged again (the never-taken classification is new).
+test('review medium: a head settled final under the older repair rule is looked at again', async t => {
+  const jobs = { notes: [], jobs: [neverTaken('admission-gate'), ...HEAVY.map(n => neverTaken(n))] };
+  const w = world({ runs: [ownerRun([jobs])], fail: ghRefusesEscapes });
+  const l = await lane(t, w);
+  l.state.data.heads[HEAD] = { firstSeen: new Date(T0).toISOString(), lastCandidateAt: new Date(T0).toISOString(), lookedAt: null,
+    final: 'attempt 1 already ran a heavy job', repairRuleVersion: 4 };
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+});

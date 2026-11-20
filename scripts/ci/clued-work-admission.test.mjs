@@ -4279,3 +4279,14 @@ test("independent gate repair re-run: a required job or a gate job that no runne
   taken.jobs[1] = { ...taken.jobs[1], conclusion: "failure", steps: [], runner_id: 7, runner_name: "clued-ci-company-linux-01" };
   assert.equal((await repairGate([taken])).outcome.admitted, false);
 });
+
+// Independent review (Codex, 051b7d585) high 3: GitHub records a gate no runner took with every job after it cancelled the same way (run
+// 44658316395: steps [], runner_id 0 or null, runner_name null). Nothing ran: the repair re-run is admitted, as for the gate alone.
+test("independent gate repair re-run: a gate no runner took with its downstream jobs cancelled unrun admits one re-run", async () => {
+  const gate = unassigned(attemptJob(100, "admission-gate", "cancelled"));
+  const earlier = ranAttempt(1, [{ conclusion: "cancelled" }, { conclusion: "cancelled" }, { conclusion: "cancelled" }], { gate });
+  earlier.jobs = earlier.jobs.map((job) => job.name === "admission-gate" ? job : unassigned(job));
+  const { outcome, extra } = await repairGate([earlier]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
+  assert.ok(extra.every((call) => !/\/logs|\/annotations/.test(call.url)), "nothing ran: no log or annotation is evidence");
+});
