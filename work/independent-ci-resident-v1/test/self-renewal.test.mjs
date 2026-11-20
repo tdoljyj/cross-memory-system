@@ -832,7 +832,7 @@ test('一小时内回包始终不出现：满一小时才按回包不可用处�
   f.now += 1; await f.tick();
   assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.holds], ['RENEW_RESPONSE_UNAVAILABLE', true, 0]);
   f.reply('upgrade', {}); await f.tick(); f.request(null);
-  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()}); // 上限之后才到：不再认
+  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()}); // 已放弃、状态里不再记着这个请求号：不再认
   f.now += HOUR - 1; await f.tick(); f.request(null);
   assert.equal(f.holds, 0);
   f.now += 1; await f.tick(); assert.notEqual(f.request('ci'), id);
@@ -867,21 +867,23 @@ test('等回包期间常驻重启：恢复同一请求号继续等，启动宽�
   assert.equal(f.book().lanes.ci.code, 'RENEW_HANDOVER_WAITING');
 });
 
-// Codex 独审 4a83b3e08（中1）：一小时是硬边界——满一小时的那一轮即按回包不可用，哪怕此刻回包文件已经在了（含重启后）。
-test('一小时边界：第 3599 秒空读、第 3601 秒才写入让班、第 3610 秒检查——按回包不可用，不交出接单', async t => {
-  for (const restart of [false, true]) {
+// Fable 11-20“让班回包迟到——一小时截止的语义”：采纳与否不看时间，只看是不是状态里还在等的那个请求号的回包。
+// 很晚才读到的已让班照常处理：生效时刻已过也立即交出接单资格（含重启后）。
+test('按请求号采纳：第 3599 秒空读、第 3601 秒写入让班、第 3610 秒读到——采纳；生效时刻已过也立即交出接单', async t => {
+  for (const [restart, effectiveIn] of [[false, 300_000], [true, 300_000], [false, -3_000_000]]) {
     const f = handoverFixture(t);
     await f.tick(); const id = f.request('ci');
     const at = f.now;
     f.now = at + 3_599_000; await f.tick();
     assert.equal(f.book().pending?.id, id);
     f.now = at + 3_601_000;
-    answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+    const effectiveAt = new Date(f.now + effectiveIn).toISOString();
+    answer(f, id, 'ci', {outcome: 'yielded', effectiveAt});
     f.now = at + 3_610_000;
     if (restart) { f.startedAt = f.now; f.restart(); }
     await f.tick();
-    assert.equal(f.holds, 0, '满一小时后才看到的让班回包不采纳' + (restart ? '（重启后）' : ''));
-    assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.book().lanes.ci.effectiveAt], ['RENEW_RESPONSE_UNAVAILABLE', true, null]);
+    assert.equal(f.holds, 1, JSON.stringify({restart, effectiveIn}));
+    assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.book().lanes.ci.effectiveAt], ['RENEW_HANDOVER_WAITING', true, effectiveAt]);
   }
 });
 // 中2：在途请求归属投出它的那一代。B 代消费 A 代请求的拒绝，通道记录记 A 代的 Source，B 代不按本代退避；旧格式在途记录（无 Source）按跨代。
@@ -939,8 +941,8 @@ test('拒绝的回包在第 160 秒到达：原码落盘，不交出当班，按
   f.now += 1; await f.tick(); assert.notEqual(f.request('ci'), id);
 });
 
-// Codex 复审 3d59ee58e（中1）：一小时按“读到回包文件的那一刻”判，不按轮次开头的时刻。截止前读到匹配回包 → 采纳；截止后读到 → 不采纳，按不可用。
-test('一小时边界按读到回包的时刻：重启首轮第 3599 秒开始、自检期间第 3601 秒写入让班、第 3603 秒读到——不采纳', async t => {
+// Codex 复审 3d59ee58e 的两个跨界时序，按 Fable 截止语义一律采纳。
+test('按请求号采纳：重启首轮第 3599 秒开始、自检期间第 3601 秒写入让班、第 3603 秒读到——采纳', async t => {
   const f = handoverFixture(t);
   await f.tick(); const id = f.request('ci');
   const at = f.now;
@@ -953,10 +955,10 @@ test('一小时边界按读到回包的时刻：重启首轮第 3599 秒开始�
     return null;
   };
   f.restart(); await f.tick();
-  assert.equal(f.holds, 0, '截止后才读到的让班回包不采纳');
-  assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting], ['RENEW_RESPONSE_UNAVAILABLE', true]);
+  assert.equal(f.holds, 1);
+  assert.equal(f.book().lanes.ci.code, 'RENEW_HANDOVER_WAITING');
 });
-test('一小时边界按读到回包的时刻：第 3590 秒空读、第 3599 秒写入让班、第 3605 秒才读到——截止后读到，不采纳', async t => {
+test('按请求号采纳：第 3590 秒空读、第 3599 秒写入让班、第 3605 秒读到——采纳', async t => {
   const f = handoverFixture(t);
   await f.tick(); const id = f.request('ci');
   const at = f.now;
@@ -965,10 +967,10 @@ test('一小时边界按读到回包的时刻：第 3590 秒空读、第 3599 �
   f.now = at + 3_599_000;
   answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
   f.now = at + 3_605_000; await f.tick();
-  assert.equal(f.holds, 0);
-  assert.equal(f.book().lanes.ci.code, 'RENEW_RESPONSE_UNAVAILABLE');
+  assert.equal(f.holds, 1);
+  assert.equal(f.book().lanes.ci.code, 'RENEW_HANDOVER_WAITING');
 });
-test('一小时边界按读到回包的时刻：第 3599 秒开始的一轮在截止前读到让班——采纳', async t => {
+test('按请求号采纳：第 3599 秒开始的一轮读到让班——采纳', async t => {
   const f = handoverFixture(t);
   await f.tick(); const id = f.request('ci');
   const at = f.now;
@@ -977,6 +979,33 @@ test('一小时边界按读到回包的时刻：第 3599 秒开始的一轮在�
   f.now = at + 3_599_000; await f.tick();
   assert.equal(f.holds, 1);
   assert.equal(f.book().lanes.ci.code, 'RENEW_HANDOVER_WAITING');
+});
+test('一小时到点的那一轮回包恰好出现：采纳，不进入回包不可用', async t => {
+  for (const reply of [{outcome: 'yielded', effectiveAt: null}, {code: 'RENEW_HANDOVER_NO_CANDIDATE'}]) {
+    const f = handoverFixture(t);
+    await f.tick(); const id = f.request('ci');
+    const at = f.now;
+    f.now = at + HOUR - 15_000; await f.tick();
+    f.now = at + HOUR;
+    answer(f, id, 'ci', {...reply, ...(reply.outcome ? {effectiveAt: new Date(f.now + 300_000).toISOString()} : {})});
+    await f.tick();
+    assert.deepEqual([f.book().lanes.ci.code, f.holds], reply.outcome ? ['RENEW_HANDOVER_WAITING', 1] : ['RENEW_HANDOVER_NO_CANDIDATE', 0]);
+  }
+});
+test('放弃后已换成新请求号：旧请求号的回包不采纳，只认新请求号', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const old = f.request('ci');
+  f.now += HOUR; await f.tick(); // 满一小时仍无回包：放弃，按回包不可用
+  assert.equal(f.book().lanes.ci.code, 'RENEW_RESPONSE_UNAVAILABLE');
+  f.reply('upgrade', {}); await f.tick();
+  f.now += HOUR; await f.tick(); const fresh = f.request('ci');
+  assert.notEqual(fresh, old);
+  answer(f, old, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+  f.now += 15_000; await f.tick();
+  assert.deepEqual([f.holds, f.book().pending?.id], [0, fresh]);
+  answer(f, fresh, 'ci', {});
+  f.now += 15_000; await f.tick();
+  assert.deepEqual([f.holds, f.book().lanes.ci.code, f.book().pending], [0, null, null]);
 });
 // 低1：没有回包时常驻自己记下的“回包不可用”不是服务端的拒绝，按结清它的当前代记，照常每小时复核；只有服务端回包里的拒绝才按投递代记。
 test('A 代投出升级请求、B 代重启后满一小时仍无回包：按当前代记回包不可用，每小时复核，不当轮重投', async t => {
