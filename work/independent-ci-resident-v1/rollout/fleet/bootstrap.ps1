@@ -262,12 +262,21 @@ function Test-UnderDirectory([string]$path, [string]$dir) {
 # M4: the run's verdict from the launcher's terminal. A first install is done only when the M5-b switch moved the distribution to the
 # companion account (companion-headless COMPANION_HEADLESS_QUALIFIED): until then it is the operator's (wsl-first-install), which the
 # profile's ownerSid (the companion) does not match. A reinstall's verdict is as before.
+# code (Fable ruling 11-20 "first install r4" section 5(a), E5): why the launcher did not end done, as the launcher said it -- a terminal
+# that stopped gives its own code, a companion switch not done the switch's code (else its status), no terminal an empty code; a done
+# verdict has none. The status words stay as they are; the step line and the result line carry the code (Out-LauncherVerdict), and the
+# drill's entry takes it as its stop code from this verdict.
 function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
   $ts = [string](Get-Key $terminal 'status')
-  $ch = [string](Get-Key (Get-Key $terminal 'companionHeadless') 'status')
-  if ($ts -cne 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED') { return [ordered]@{ status = 'BOOTSTRAP_LAUNCHER_ENDED'; companionSwitch = $ch; next = $null } }
+  $chh = Get-Key $terminal 'companionHeadless'
+  $ch = [string](Get-Key $chh 'status')
+  if ($ts -cne 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED') {
+    $code = Get-Key $terminal 'code'
+    return [ordered]@{ status = 'BOOTSTRAP_LAUNCHER_ENDED'; code = $(if ($code -is [string] -and $code.Length) { $code } else { $null }); companionSwitch = $ch; next = $null }
+  }
   if ($firstInstall -and $ch -cne 'COMPANION_HEADLESS_QUALIFIED') {
-    return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE'; companionSwitch = $ch
+    $chc = Get-Key $chh 'code'
+    return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE'; code = $(if ($chc -is [string] -and $chc.Length) { $chc } elseif ($ch) { $ch } else { $null }); companionSwitch = $ch
       next = 'installed and verified, but the distribution is still the operator''s: the companion switch (the installed rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <facts.companionWsl.vhdxDirectory>, elevated) has to pass; see companion-headless-report.json of this launch' }
   }
   [ordered]@{ status = 'BOOTSTRAP_DONE'; companionSwitch = $ch; next = $null }
@@ -343,6 +352,17 @@ function Out-Result([string]$status, [string]$step, $extra) {
 function Out-Step([string]$name, [string]$result, $rejectCode, $detail) {
   try { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail }) -Progress }
   catch { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $(if ($rejectCode -is [string]) { $rejectCode } else { $null }); detail = '<not printable>' }) -Progress }
+}
+# The launcher's verdict as the run's last two lines (Get-LauncherVerdict): its step, failed with the launcher's code (the status when there
+# is none), and the result, which carries that code beside the status as Stop-Bootstrap's result does; a done verdict has no code.
+function Out-LauncherVerdict($v, $extra) {
+  $done = $v.status -ceq 'BOOTSTRAP_DONE'
+  $code = Get-Key $v 'code'
+  Out-Step 'launcher' $(if ($done) { 'ok' } else { 'failed' }) $(if ($done) { $null } elseif ($code) { $code } else { $v.status }) $(if ($done) { [ordered]@{ launcher = $extra['launcher']; companionSwitch = $v.companionSwitch; exit = $extra['exit'] } } else { $null })
+  $r = [ordered]@{}
+  if (([Collections.IDictionary]$v).Contains('code')) { $r['code'] = $code }
+  foreach ($k in @($extra.Keys)) { $r[$k] = $extra[$k] }
+  Out-Result $v.status 'launcher' $r
 }
 function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Step $step 'failed' $code $null; Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
 # One elevated stage of this same file (-File, arguments one by one). Returns its exit, its last JSON object and the output file;
@@ -631,8 +651,7 @@ function Invoke-Bootstrap {
   $ls = [string](Get-Key $l.last 'status')
   # M4: a first install is done only with the companion switch passed (Get-LauncherVerdict)
   $v = Get-LauncherVerdict $firstInstall $l.last
-  Out-Step 'launcher' $(if ($v.status -ceq 'BOOTSTRAP_DONE') { 'ok' } else { 'failed' }) $(if ($v.status -ceq 'BOOTSTRAP_DONE') { $null } else { $v.status }) $(if ($v.status -ceq 'BOOTSTRAP_DONE') { [ordered]@{ launcher = $ls; companionSwitch = $v.companionSwitch; exit = $l.exit } } else { $null })
-  Out-Result $v.status 'launcher' ([ordered]@{ firstInstall = $firstInstall; prepare = $ps; launcher = $ls; companionSwitch = $v.companionSwitch; next = $v.next
+  Out-LauncherVerdict $v ([ordered]@{ firstInstall = $firstInstall; prepare = $ps; launcher = $ls; companionSwitch = $v.companionSwitch; next = $v.next
     residueUnchecked = (Get-Key $pr.last 'residueUnchecked'); exit = $l.exit; output = $l.output })
   if ($v.status -cne 'BOOTSTRAP_DONE') { exit 1 }
 }

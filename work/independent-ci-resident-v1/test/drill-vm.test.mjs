@@ -3422,7 +3422,8 @@ test('-Finalize judges A5 and A9 from one read-only production read-back and rew
   const items = verdictOf(evidence()).items;
   const { receipt, receiptFile, status, output, bytes } = finalize('receipt', { items });
   assert.equal(status, 0);
-  assert.deepEqual(output, { status: 'DRILL_FINALIZED', conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN', receipt: receiptFile });
+  // failedItems and reason: the summary line names why a FAIL failed (Fable ruling 11-20 "first install r4" 5(b)); none here
+  assert.deepEqual(output, { status: 'DRILL_FINALIZED', conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN', failedItems: [], reason: null, receipt: receiptFile });
   const done = JSON.parse(bytes);
   assert.equal(done.items.find((i) => i.id === 'A9').pass, true);
   assert.equal(done.items.find((i) => i.id === 'A5').pass, true);

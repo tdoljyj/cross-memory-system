@@ -1006,6 +1006,7 @@ function Get-DrillVerdict($E) {
   # A7: the status rewritten after this boot, and a self-check that passed, is fresh AND was observed after this boot (never the boot before's).
   $r = $E.reboot
   if ($null -eq $r) { [void]$items.Add((New-DrillItem 'A7' $false 'not run')) }
+  elseif ((Get-Prop $r 'skipped') -eq $true) { [void]$items.Add((New-DrillItem 'A7' $false ([string](Get-Prop $r 'reason')))) }
   else {
     $sc = Test-DrillSelfcheck 'A7' $r.status ([DateTimeOffset]$r.readAt)
     $scAfter = Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) ([string](Get-Prop $r 'boot'))
@@ -1068,20 +1069,56 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 # candidate must not look like a full one; the value tells them apart, in the receipt and in the index seal writes). It is reported even
 # when per-node steps remain too (the larger gap; A10's detail still names them). An accepted version's re-drill keeps "skipped" as the
 # diagnosis it was.
+# The items that make the conclusion FAIL, in order (A1..A10, then M5): a missing item, a core item that failed, for a candidate any of
+# A1-A8 not true (A8 skipped by choice excepted), and M5 not PASS. Empty: no item fails. Get-DrillConclusion's FAIL is exactly "not empty",
+# and the run's summary line names them (Get-DrillRunSummary): one rule for both.
+function Get-DrillFailedItems($Items, $M5, [bool]$Candidate = $false) {
+  $byId = @{}; foreach ($i in $Items) { $byId[[string]$i.id] = $i }
+  $core = @('A1','A2','A3','A4','A5','A6','A7','A8','A9')
+  $a8Skipped = $byId.ContainsKey('A8') -and $null -eq $byId['A8'].pass -and [string]$byId['A8'].detail -match '^skipped'
+  $failed = @()
+  foreach ($id in ($core + 'A10')) {
+    if (-not $byId.ContainsKey($id)) { $failed += $id; continue }
+    if ($core -ccontains $id -and $byId[$id].pass -eq $false) { $failed += $id; continue }
+    if ($Candidate -and $id -cne 'A9' -and $id -cne 'A10' -and $byId[$id].pass -ne $true -and -not ($id -eq 'A8' -and $a8Skipped)) { $failed += $id }
+  }
+  if ([string](Get-Prop $M5 'result') -cne 'PASS') { $failed += 'M5' }
+  $failed   # unrolled: the callers collect it with @()
+}
+
 function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
-  if ([string](Get-Prop $M5 'result') -cne 'PASS') { return 'FAIL' }
+  if (@(Get-DrillFailedItems $Items $M5 $Candidate).Count) { return 'FAIL' }
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
   $core = @('A1','A2','A3','A4','A5','A6','A7','A8','A9')
-  foreach ($id in ($core + 'A10')) {
-    if (-not $byId.ContainsKey($id)) { return 'FAIL' }
-  }
-  if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
   $a8Skipped = $null -eq $byId['A8'].pass -and [string]$byId['A8'].detail -match '^skipped'
-  if ($Candidate -and @(@('A1','A2','A3','A4','A5','A6','A7','A8') | Where-Object { $byId[$_].pass -ne $true -and -not ($_ -eq 'A8' -and $a8Skipped) }).Count) { return 'FAIL' }
   if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
   if ($Candidate -and $a8Skipped) { return 'PASS_A_REINSTALL_NOT_DRILLED' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
+}
+
+# Fable ruling 11-20 "first install r4" section 5(b) (E5): the summary line of a run says why it failed, from the receipt just written
+# (nothing judged again). failedItems: Get-DrillFailedItems of its items and m5; reason: the first one as <id>:<code> -- A1 from its step
+# record (<first rejected step>:<its rejectCode>; without a rejected step its detail), M5 from its detail, any other item from its detail --
+# or, with no failed item, a checkpoint restore not confirmed. Both empty for a conclusion that is not FAIL. The run's code keeps its
+# meaning (the drill machine's own failure only); a FAIL always has a code or a reason.
+function Get-DrillRunSummary($Receipt) {
+  if ([string](Get-Prop $Receipt 'conclusion') -cne 'FAIL') { return [ordered]@{ failedItems = @(); reason = $null } }
+  $items = @(Get-Prop $Receipt 'items'); $m5 = Get-Prop $Receipt 'm5'
+  $failed = @(Get-DrillFailedItems $items $m5 ((Get-Prop $Receipt 'candidate') -eq $true))
+  $reason = $null
+  if ($failed.Count) {
+    $id = $failed[0]
+    $item = @($items | Where-Object { [string]$_.id -ceq $id }) | Select-Object -First 1
+    if ($id -ceq 'M5') { $reason = 'M5:' + [string](Get-Prop $m5 'detail') }
+    elseif ($null -eq $item) { $reason = $id + ':missing' }
+    elseif ($id -ceq 'A1') {
+      $steps = Get-Prop $item 'firstInstallSteps'
+      $rejected = @(@(Get-Prop $steps 'steps') | Where-Object { $null -ne $_ -and $null -ne (Get-Prop $_ 'rejectCode') }) | Select-Object -First 1
+      $reason = if ($rejected) { 'A1:' + [string](Get-Prop $rejected 'name') + ':' + [string](Get-Prop $rejected 'rejectCode') } else { 'A1:' + [string](Get-Prop $item 'detail') }
+    } else { $reason = $id + ':' + [string](Get-Prop $item 'detail') }
+  } elseif ((Get-Prop $Receipt 'restoredToCheckpoint') -ne $true) { $reason = 'DRILL_RESTORE_NOT_CONFIRMED' }
+  [ordered]@{ failedItems = $failed; reason = $reason }
 }
 
 # The production read-back (one read-only query after the drill, by DESK; plan 2.3/A9). The SQL is carried in the receipt.
@@ -1245,7 +1282,7 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     $target = $script:Drill.MemoryBytes
     $assigned = 0L
     # both sides' processes first, memory after: the reading a boot rests on is the latest one (Codex review of 74e7a65e7, high 2)
-    $processes = @(); $wsl = @{ ok = $true; running = @(); jobs = @(); reason = $null }; $windowsUnreadable = $null
+    $processes = @(); $wsl = @{ ok = $true; running = @(); jobs = @(); reason = $null; listCall = $null }; $windowsUnreadable = $null
     if (-not $Running) {
       # a Windows process list that cannot be read is a job query that failed, as on the WSL side: the high tier, never a refusal by itself
       # (Codex review of f9ab1bb26, medium 1); memory and the VM are still read, and their failures still refuse below
@@ -1271,6 +1308,7 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     $safety.wslRunnerDistributions = $wsl.running
     $safety.wslJobs = $wsl.jobs
     $safety.wslUnreadable = $wsl.reason
+    $safety.wslListCall = Get-Prop $wsl 'listCall'   # a state without it (a stand-in) has none
     $safety.windowsUnreadable = $windowsUnreadable
   } catch {
     $c = Get-DrillCode $_
@@ -1297,7 +1335,7 @@ function ConvertTo-DrillGateTrace($Safety) {
   [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); ok = [bool](Get-Prop $Safety 'ok'); code = (Get-Prop $Safety 'code'); busyWith = (Get-Prop $Safety 'busyWith')
     runnerJob = (Get-Prop $Safety 'runnerJob'); requiredFreeGB = $(if ($null -ne $required) { [Math]::Round([long]$required / 1GB, 1) } else { $null })
     freeGB = (Get-Prop $Safety 'freeGB'); wslRunning = @(Get-Prop $Safety 'wslRunnerDistributions'); wslJobs = @(Get-Prop $Safety 'wslJobs')
-    wslUnreadable = (Get-Prop $Safety 'wslUnreadable'); windowsUnreadable = (Get-Prop $Safety 'windowsUnreadable') }
+    wslUnreadable = (Get-Prop $Safety 'wslUnreadable'); wslListCall = (Get-Prop $Safety 'wslListCall'); windowsUnreadable = (Get-Prop $Safety 'windowsUnreadable') }
 }
 
 # Fable renew-key ruling, supplements "WSL runner jobs" item 3 and "WSL gate race" item 3: before every boot, three stages, each sampling for
@@ -1417,14 +1455,18 @@ function Get-DrillWslJobVerdict($Result) {
 # Read-only. A distribution that is not running is "no job" without any command against it: a command would start it.
 # Returns @{ ok; distributions; running; jobs; reason }: ok false (reason set) when any step fails; the caller takes the high memory tier.
 function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
-  $state = @{ ok = $false; distributions = @(); running = @(); jobs = @(); reason = 'NODE_PROFILES_UNREADABLE' }
+  # listCall: the list call's raw answer -- its exit and the bytes of its stdout -- so the exit wsl.exe gives when nothing runs (never
+  # measured: Fable ruling 11-20 "first install r4" section 2) is calibrated from the receipt the first time it happens
+  $state = @{ ok = $false; distributions = @(); running = @(); jobs = @(); reason = 'NODE_PROFILES_UNREADABLE'; listCall = $null }
   try {
     $state.distributions = @(Get-DrillRunnerDistributions $HostName)
     if ($state.distributions.Count -gt 0) {
       $state.reason = 'WSL_REGISTRY_UNREADABLE'
       $registered = Get-DrillWslRegisteredRunners $state.distributions
       $state.reason = 'WSL_RUNNING_LIST_FAILED'
-      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')) $registered)
+      $list = Invoke-DrillWsl @('--list', '--running', '--quiet')
+      $state.listCall = [ordered]@{ exit = (Get-DrillField $list 'exit'); stdoutBytes = [Text.Encoding]::UTF8.GetByteCount([string](Get-DrillField $list 'stdout')) }
+      $runningNow = @(ConvertFrom-DrillWslRunningList $list $registered)
       $state.running = @($state.distributions | Where-Object { Test-DrillNameIn $_ $runningNow })
       foreach ($d in $state.running) {
         $state.reason = 'WSL_PROCESS_QUERY_FAILED'
@@ -1540,6 +1582,13 @@ function Invoke-DrillNative {
   [ordered]@{ exit = $p.ExitCode; stdout = ($out.ToString() -replace "`0", ''); stderr = $(if ($err.Length -gt 4000) { $err.Substring($err.Length - 4000) } else { $err }) }
 }
 $script:DrillNativeText = ${function:Invoke-DrillNative}.ToString()
+# The one quoting rule for every child the drill starts (Fable ruling 11-20 "first install r4" section 2, E2): an argument is quoted only
+# when it is empty or holds white space or a quote. It is written once, inside Invoke-DrillNative (which the guest receives as text), and
+# taken from there for the host's children (Invoke-DrillProcess): wsl.exe reads its raw command line and takes a quoted "--list" for a
+# command to run in the default distribution, so an unconditional quote made every WSL query fail.
+$script:DrillArgumentQuote = @(${function:Invoke-DrillNative}.Ast.FindAll({ param($a) $a -is [Management.Automation.Language.AssignmentStatementAst] -and
+  $a.Left.Extent.Text -ceq '$quote' }, $true))[0].Right.Expression.ScriptBlock.GetScriptBlock()
+function Get-DrillArgumentLine([string[]]$Arguments) { (@($Arguments | ForEach-Object { & $script:DrillArgumentQuote $_ }) -join ' ') }
 
 function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeconds) {
   Invoke-DrillProcess $Node $Arguments $TimeoutSeconds @{} @('NODE_OPTIONS', 'NODE_PATH')
@@ -1550,8 +1599,8 @@ function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutS
   $child = [Diagnostics.Process]::new()
   try {
     $child.StartInfo.FileName = $File
-    # All arguments are fixed literals, Windows file paths or validated names.
-    $child.StartInfo.Arguments = ($Arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
+    # All arguments are fixed literals, Windows file paths or validated names; quoted by the one rule, only where needed.
+    $child.StartInfo.Arguments = Get-DrillArgumentLine $Arguments
     $child.StartInfo.UseShellExecute = $false
     $child.StartInfo.CreateNoWindow = $true
     $child.StartInfo.RedirectStandardOutput = $true
@@ -2482,7 +2531,10 @@ function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
   catch { $files = $null; $code = (Get-DrillCode $_).code }
   foreach ($name in $names) {
     $data = if ($files -is [System.Collections.IDictionary]) { $files[$name] }
-    if (-not $data) { $missing += $name; continue }
+    # Fable ruling 11-20 "first install r4" section 3 (E3): an observation is a non-empty string, nothing else. What the guest did not
+    # read comes back through remoting as an empty object, not $null; a file it read empty is an empty string: both are missing, never a
+    # file written here (an empty file would send M5 to the checker with the cause named wrong).
+    if ($data -isnot [string] -or $data.Length -eq 0) { $missing += $name; continue }
     [IO.File]::WriteAllBytes((Join-Path $dir $name), [Convert]::FromBase64String($data))
   }
   return @{ directory = 'm5'; missing = $missing; collectionCode = $code }
@@ -2532,6 +2584,11 @@ function Get-DrillRebootSample($Sample, [DateTimeOffset]$WaitedBoot) {
   $done = $ok -and [string](Get-Prop $status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $status 'versions.selfcheck.observedAt')) $boot)
   [ordered]@{ ok = $ok; status = $status; readAt = (Get-Prop $Sample 'readAt'); boot = $(if ($known) { $boot } else { $null }); waitedBoot = $WaitedBoot.ToString('o'); bootChanged = $changed; done = $done }
 }
+
+# Fable ruling 11-20 "first install r4" section 4 (E4): whether the first install left anything a reboot could expose, from the guest's raw
+# read after it (GuestRead), never from A1's verdict: the status (state\status.json) or the installed pointer (upgrade\current.json) is there.
+# Both absent: nothing was installed, A7 is not run. Either one there (a half install too): A7 runs, its reboot is what is to be seen.
+function Test-DrillInstallProduced($Read) { ($null -ne (Get-Prop $Read 'status')) -or ($null -ne (Get-Prop $Read 'current')) }
 
 # Within the window of the boot the drill waited for ($Deadline), until a sample of the boot it was read in passes; the last sample otherwise.
 function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [DateTimeOffset]$Deadline) {
@@ -2676,11 +2733,14 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
 
-  # A7: reboot, nobody logs in; within 10 minutes the status is rewritten after the boot and the self-check still passes.
-  $beforeReboot = [DateTimeOffset]::UtcNow
-  try { Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
-  $boot = Wait-DrillGuest $Cred 15 $beforeReboot
-  $reboot = Wait-DrillRebootRefresh $Cred $boot ($boot.AddMinutes($script:Drill.UnattendedRebootMinutes))
+  # A7: reboot, nobody logs in; within 10 minutes the status is rewritten after the boot and the self-check still passes. Only when the
+  # install left something (Test-DrillInstallProduced): with nothing installed a reboot exposes nothing, and A7 says why it did not run.
+  if (Test-DrillInstallProduced $first) {
+    $beforeReboot = [DateTimeOffset]::UtcNow
+    try { Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
+    $boot = Wait-DrillGuest $Cred 15 $beforeReboot
+    $reboot = Wait-DrillRebootRefresh $Cred $boot ($boot.AddMinutes($script:Drill.UnattendedRebootMinutes))
+  } else { $reboot = [ordered]@{ skipped = $true; reason = 'DRILL_A7_BLOCKED_NOTHING_INSTALLED' } }
   Write-DrillJson (Join-Path $RunDir 'read-after-reboot.json') $reboot
 
   # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
@@ -2798,7 +2858,8 @@ function Invoke-DrillMain {
     $receipt | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('o')) -Force
     $receipt | Add-Member -NotePropertyName productionReadbackSha256 -NotePropertyValue (Get-Sha256Hex $ProductionReadback) -Force
     Write-DrillJson $Finalize $receipt
-    return [ordered]@{ status = 'DRILL_FINALIZED'; conclusion = $receipt.conclusion; receipt = $Finalize }
+    $summary = Get-DrillRunSummary $receipt
+    return [ordered]@{ status = 'DRILL_FINALIZED'; conclusion = $receipt.conclusion; failedItems = $summary.failedItems; reason = $summary.reason; receipt = $Finalize }
   }
 
   $full = -not $BaselineOnly -and -not $PrereqOnly
@@ -2924,7 +2985,8 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   }
   $receiptPath = Join-Path $runDir 'receipt.json'
   Write-DrillJson $receiptPath $receipt
-  return [ordered]@{ status = 'DRILL_DONE'; conclusion = $receipt.conclusion; code = $(if ($failure) { $failure.code } else { $null }); restored = $restored; receipt = $receiptPath }
+  $summary = Get-DrillRunSummary $receipt
+  return [ordered]@{ status = 'DRILL_DONE'; conclusion = $receipt.conclusion; code = $(if ($failure) { $failure.code } else { $null }); failedItems = $summary.failedItems; reason = $summary.reason; restored = $restored; receipt = $receiptPath }
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by the offline tests: definitions only

@@ -207,7 +207,9 @@ test('bootstrap.ps1 and the launcher print their step lines in the host preparat
   const main = text.slice(text.indexOf('function Invoke-Bootstrap'));
   const refused = [...new Set([...main.matchAll(/Stop-Bootstrap '([a-z-]+)'/g)].map(m => m[1]))];
   assert.ok(refused.length >= 7, refused.join(','));
-  for (const s of refused) assert.match(main, new RegExp(`Out-Step '${s}' (?:'ok'|\\$\\(if)`), `bootstrap step ${s} prints its line when it ends`);
+  // the launcher's step line is printed by Out-LauncherVerdict, with the launcher's own code (Fable ruling 11-20 "first install r4" 5(a))
+  assert.match(text, /function Out-LauncherVerdict\(\$v, \$extra\) \{\n[^]*?Out-Step 'launcher' \$\(if \(\$done\)/);
+  for (const s of refused) if (s === 'launcher') assert.match(main, /\n\s*Out-LauncherVerdict \$v /, 'bootstrap step launcher prints its line when it ends'); else assert.match(main, new RegExp(`Out-Step '${s}' (?:'ok'|\\$\\(if)`), `bootstrap step ${s} prints its line when it ends`);
 
   const TPL = path.join(RES, 'reinstall', 'launcher', 'template.ps1');
   const launcher = psLines(`$tokens = $null; $errors = $null

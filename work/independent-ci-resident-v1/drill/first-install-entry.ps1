@@ -149,13 +149,20 @@ function Test-EntryStageVerdict($Terminal) {
   return ($s -is [string]) -and ($s.Length -gt 0) -and (@('STAGE_CHILD_PRINTED_NO_VERDICT', 'STAGE_GAVE_NO_VERDICT') -cnotcontains $s)
 }
 
-# This is the README section 5 exception for CLUED-DRILL only. No accepted file is rewritten.
-# Load the accepted bootstrap's helpers, keeping its asset/prerequisite/check/prepare/launcher order.
-function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]$FakeInputs, [string]$Output, [string]$ReleaseVersion) {
+# The one loader of the release's bootstrap: dot-source it (helpers only: its main runs only when it is not dot-sourced), then the entry's
+# own Stop-Bootstrap over the package's. Called dot-sourced (". Import-EntryBootstrap"), so everything lands in the caller's scope; a
+# test loads the repository's real bootstrap.ps1 through it (test/drill-r4-defects.test.mjs).
+function Import-EntryBootstrap([string]$Assets, [string]$ReleaseVersion) {
   $bootstrap = Join-Path $Assets "fleet-node-$ReleaseVersion.bootstrap.ps1"
   . $bootstrap -From $Assets
   # Helpers normally terminate the bootstrap process. Here the entry owns the single terminal result and cleanup.
   function Stop-Bootstrap([string]$step, [string]$code, $detail) { throw ($code + $(if ($null -ne $detail) { ':' + (@($detail) -join ',') } else { '' })) }
+}
+
+# This is the README section 5 exception for CLUED-DRILL only. No accepted file is rewritten.
+# Load the accepted bootstrap's helpers, keeping its asset/prerequisite/check/prepare/launcher order.
+function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]$FakeInputs, [string]$Output, [string]$ReleaseVersion) {
+  . Import-EntryBootstrap $Assets $ReleaseVersion
   # No package function is shadowed here: the package's own Expand-Cached runs (#1154 fixed its MAX_PATH defect; the drill-only stand-in
   # that kept covering it was removed, Fable renew-key ruling, supplement "companion account and evidence" section 3).
   $script:From = $Assets
