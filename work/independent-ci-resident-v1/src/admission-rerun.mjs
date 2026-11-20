@@ -54,15 +54,17 @@ export const POST_TIMEOUT_MS = 30_000;
 export const HEADS_PER_STEP = 5;
 export const HEAD_CANDIDATE_MARK_MS = 60 * 60_000;
 const REQUEST_RETRY_MS = 10 * 60_000;
-// Fable 11-20 补“车头缺必需检查”: at most two re-runs of a workflow's run on one head, whatever their cause (this lane's, a person's); a run
-// at attempt 3 or later is final here. The train yields a front whose required check is still missing REQUIRED_MISSING_GRACE_MS after the
-// last movement (train-facts.mjs). Why two: the process causes seen (the gate timed out while the node was down, #1192; a job no runner took,
-// 9aba97c1) are gone once one re-run is made after the cause cleared; the second covers a cause still clearing. It also matches the gate's
-// own repair budget (a third heavy attempt is refused: clued-work-admission.mjs#requiredTestsRepairHistory).
+// Fable 11-20 补“车头缺必需检查” and its independent review: at most two re-runs per head and workflow, counted on GitHub over every run of
+// that workflow on the head (each run's attempts; a person's re-runs and a re-dispatched run included): three attempts in all, then final.
+// The train reads the same budget from the check runs and yields the front at once when it is used up (train-facts.mjs REQUIRED_ATTEMPTS_MAX).
+// Why two: the process causes seen (the gate timed out while the node was down, #1192; a job no runner took, 9aba97c1) are gone once one
+// re-run is made after the cause cleared; the second covers a cause still clearing. It also matches the gate's own repair budget (a third
+// heavy attempt is refused: clued-work-admission.mjs#requiredTestsRepairHistory).
 export const MAX_RERUNS_PER_WORKFLOW = 2;
 const RECENT_OTHER_HEADS = 3;
 const MAX_RECOVERY_PAGES = 50;
-const REPAIR_RULE_VERSION = 4;
+// 5: jobs no runner took ran nothing (9aba97c1), and the budget is per head and workflow; verdicts of 4 are judged again.
+const REPAIR_RULE_VERSION = 5;
 const MAX_PAGES = 10;
 const MAX_TEXT = 3_500_000;
 // Runner refusals before any child ran (runner.mjs): nothing reached GitHub.
@@ -290,7 +292,8 @@ async function repairAllowed(gh, workflowId, runId, headSha, attempt, attempts) 
     if (listed.length !== jobs.length || gates.length !== 1 || heavy.length === 0) return { allowed: false, reason: `attempt ${earlier} does not list one ${GATE_JOB_NAME} job and its heavy jobs` };
     if (listed.some(j => j.head_sha !== headSha || (j.run_attempt != null && Number(j.run_attempt) !== earlier)))
       return { allowed: false, reason: `attempt ${earlier} has a job of another head or attempt` };
-    if (heavy.some(j => !(j.status === 'completed' && j.conclusion === 'skipped'))) {
+    // A job no runner took (9aba97c1) ran nothing, like a skipped one: an attempt of only such jobs used no repair.
+    if (heavy.some(j => !(j.status === 'completed' && j.conclusion === 'skipped') && !neverAssigned(j))) {
       const failed = heavy.filter(j => ['failure', 'cancelled'].includes(j.conclusion));
       const settled = failed.length > 0 && gates[0].status === 'completed' && gates[0].conclusion === 'success'
         && heavy.every(j => j.status === 'completed' && ['success', 'skipped', 'failure', 'cancelled'].includes(j.conclusion));
@@ -306,8 +309,8 @@ async function repairAllowed(gh, workflowId, runId, headSha, attempt, attempts) 
       previousEnd = Math.max(...listed.map(j => Date.parse(j.completed_at)));
       continue;
     }
-    // the gate job died in the runner's setup, or no runner took it (9aba97c1): it ran nothing and left no verdict
-    if (diedInSetup(gates[0]) || neverAssigned(gates[0])) continue;
+    // the gate job died in the runner's setup, or no runner took it or a job after it (9aba97c1): nothing ran, a process cause
+    if (diedInSetup(gates[0]) || neverAssigned(gates[0]) || heavy.some(neverAssigned)) continue;
     if (!positive(gates[0].id)) unreadable(`the gate job of attempt ${earlier} has no id`);
     const notes = await gh.paged(`/check-runs/${gates[0].id}/annotations`);
     if (!notes.some(n => n && ((n.title === GATE_JOB_NAME && NOT_ADMITTED_VERDICT.test(String(n.message ?? '')))
@@ -439,7 +442,7 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
       const jobs = run.id === runId && n === attempt ? recentJobs : await jobsOf(gh, run, n);
       if (!hasGate(jobs) || jobs.some(j => j.status !== 'completed'))
         unreadable('run ' + run.id + ' attempt ' + n + ' has an incomplete or unfinished job inventory');
-      const didWork = jobs.some(j => j.name !== GATE_JOB_NAME && j.conclusion !== 'skipped');
+      const didWork = jobs.some(j => j.name !== GATE_JOB_NAME && j.conclusion !== 'skipped' && !neverAssigned(j));
       if (run.id !== runId && didWork) return say('final', 'another run of the workflow already ran its heavy jobs');
       if (run.id === runId) attempts.push(jobs);
       if (didWork) allSkipped = false;
@@ -450,9 +453,10 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
     out.neverRan = allSkipped;
     if (allSkipped && runs.some(r => r.event !== 'pull_request')) return say('final', 'a previous dispatch or non-PR run already exists');
     if (allSkipped) {
-      let skippedByActor = newest.actor?.type === 'Bot';
-      // Only a gate that ran has a verdict in its log (one no runner took has no log at all).
-      if (!skippedByActor && positive(latestGate?.id) && latestGate.conclusion === 'success') {
+      // Only a gate that ran can have skipped the heavy jobs for the actor (and has a verdict in its log); a gate no runner took ran nothing.
+      const gateRan = latestGate?.status === 'completed' && latestGate.conclusion === 'success';
+      let skippedByActor = gateRan && newest.actor?.type === 'Bot';
+      if (!skippedByActor && gateRan && positive(latestGate?.id)) {
         const log = await gh.text('/actions/jobs/' + latestGate.id + '/logs');
         skippedByActor = /"verdict"\s*:\s*"ADMITTED"/.test(log) && /"automation_self_hosted"\s*:\s*false/.test(log);
       }
@@ -468,8 +472,9 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
     return say(repair.waiting ? 'skip' : 'final', repair.reason);
   }
   // The repair rule's own verdicts (exhausted environment failures, systemic timeouts) come first, so their notices stay as they were.
-  if (attempt > MAX_RERUNS_PER_WORKFLOW)
-    return say('final', `two re-runs of run ${runId} were already made on this head (attempt ${attempt}): no more automatic re-runs`);
+  const used = runs.reduce((n, r) => n + r.run_attempt, 0);
+  if (used > MAX_RERUNS_PER_WORKFLOW)
+    return say('final', `three attempts of this workflow were already made on this head (${used} over ${runs.length} run(s)): no more automatic re-runs`);
   const current = await gh.get('/pulls/' + pull);
   if (!boundPr(current, pull, headSha, defaultBranch, gh.repo) || current.base.sha !== base)
     return say('skip', 'the pull request or base moved');
@@ -480,6 +485,8 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
   const again = await gh.get('/actions/runs/' + runId);
   if (!sameRun(again, newest) || (testSha && (again.head_branch !== STAGING_BRANCH || again.conclusion !== newest.conclusion)))
     return say('skip', 'the run changed since it was read');
+  // The admission is read again right before the request (independent review): one withdrawn since the first read stops it.
+  if (!testSha && !(await admissionOf(gh, headSha, pull)).admitted) return say('skip', 'the pull request is no longer admitted');
   Object.assign(out, { environment: repair.environment, failures: repair.failures });
   return say('rerun', '"Re-run all jobs" of run ' + runId + ' (attempt ' + next + ') for #' + pull);
 }
@@ -707,16 +714,7 @@ export class AdmissionRerunner {
   constructor(ports) { Object.assign(this, ports); this.workflowMemo = newWorkflowMemo(); }
   // Whether the latest receipt for the head is an accepted re-run.
   done(headSha) { const r = this.state.record(headSha); return r?.outcome === 'sent' && !r.kind; }
-  // How many re-runs this lane made that GitHub accepted for the head (or the train's staging commit of it), the most of any one run: the
-  // train line's 补跑中（第 n 次） (train.mjs#frontChecksText; Fable 11-20).
-  reruns(headSha) {
-    const perRun = new Map();
-    for (const r of Object.values(this.state.data.records)) {
-      if (r.kind || r.outcome !== 'sent' || (r.headSha !== headSha && r.frontHeadSha !== headSha)) continue;
-      perRun.set(r.runId, (perRun.get(r.runId) ?? 0) + 1);
-    }
-    return perRun.size ? Math.max(...perRun.values()) : 0;
-  }
+
   // What the PR page says of this head (pr-status.mjs#withRerunLine).
   line(headSha) {
     const seen = this.state.data.heads[headSha];

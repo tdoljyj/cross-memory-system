@@ -204,7 +204,7 @@ test('PR page words: wait for checks, re-run in progress (count), and the yield 
   assert.match(trainPageLine(summary('FRONT_CHECKS_WAIT', { reruns: 2 }), 910, ['ci-suites（进行中）']), /^合并列车：你是车头。合并位已绿，补跑中（第 2 次）/);
   assert.match(trainPageLine(summary('FRONT_CHECKS_MISSING'), 910, ['ci-suites（未出现）']), /缺检查.*等自动补跑/);
   assert.match(trainPageLine(summary('FRONT_CHECKS_MISSING_YIELDED', { yieldReason: 'REQUIRED_RERUNS_EXHAUSTED' }), 910), /补跑两次仍缺/);
-  assert.match(trainPageLine(summary('FRONT_CHECKS_MISSING_YIELDED', { yieldReason: 'REQUIRED_CHECKS_DEADLINE' }), 910), /60 分钟/);
+  assert.match(trainPageLine(summary('FRONT_CHECKS_MISSING_YIELDED', { yieldReason: 'REQUIRED_CHECKS_DEADLINE' }), 910), /到时限仍无结果/);
   for (const d of ['FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING', 'FRONT_CHECKS_MISSING_YIELDED'])
     assert.doesNotMatch(trainPageLine(summary(d, { reruns: 1 }), 910, ['ci-suites（未出现）']), /等合并|等合入/);
 });

@@ -50,7 +50,7 @@ import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
-import { decideShadow, frontPullFacts, requiredMissingExpired, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
+import { decideShadow, frontPullFacts, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
@@ -614,14 +614,15 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
         } else if (front.state === 'open' && typeof native.yieldSlot === 'function' && SHA.test(pull?.head?.sha ?? '')
           && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks }, landability))
-            || (missingYield = requiredMissingExpired(front, clock())))) {
+            || (missingYield = requiredYieldReason(front, clock(), holder.takenAt ?? null)))) {
           // A front that cannot land as it stands (draft, auto-merge off, a required check failed) never
           // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
-          // Fable 11-20 (#1192): nor does a merge-slot-green front whose required check stayed missing with nothing moving for
-          // REQUIRED_MISSING_GRACE_MS (the repair lane's re-runs used up, or no channel to re-run): FRONT_CHECKS_MISSING_YIELDED.
+          // Fable 11-20 (#1192) and its independent review: nor does a merge-slot-green front that is not green once a missing check's re-run
+          // budget is used up, or at the longest wait (train-facts.mjs#requiredYieldReason): FRONT_CHECKS_MISSING_YIELDED, with the reason.
           fx.n++;
           const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
           if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
+          if (missingYield && actions.returned) front = { ...front, requiredYieldReason: missingYield };
         }
       } catch { /* unreadable reply: the write may have happened; counted, and the next run sees the outcome */ }
     }

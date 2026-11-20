@@ -1194,14 +1194,13 @@ test('#1192: a gate-skipped run of a head the Owner pushed is re-run once the ad
   const l = await lane(t, w);
   await l.r.step();
   assert.deepEqual(w.posts, [700]);
-  assert.equal(l.r.reruns(HEAD), 1, 'the PR page counts the re-runs: 补跑中（第 1 次）');
 });
 
 test('at most two re-runs of one workflow on one head: the third attempt that is still skipped is final', async t => {
   const w = world({ runs: [ownerRun([attempt(), attempt({ notes: [{ ...pendingNote }] }), attempt({ notes: [{ ...pendingNote }] })])], fail: ghRefusesEscapes });
   const d = await decide({ gh: w.gh, headSha: HEAD });
   assert.equal(d.action, 'final', d.reason);
-  assert.match(d.reason, /two re-runs/);
+  assert.match(d.reason, /three attempts/);
   const l = await lane(t, w);
   await l.r.step();
   assert.deepEqual(w.posts, []);

@@ -251,7 +251,8 @@ async function requiredTestsRepairHistory({ read, readLog, repository, runId, he
       if (jobs.some(job => job.run_attempt != null && Number(job.run_attempt) !== earlier))
         return refuse(`attempt ${earlier} has a job of another attempt`);
       const [gateJob] = gates;
-      const ran = heavy.filter(job => job.status !== "completed" || job.conclusion !== "skipped");
+      // A job no runner took (9aba97c1) ran nothing, like a skipped one.
+      const ran = heavy.filter(job => (job.status !== "completed" || job.conclusion !== "skipped") && !neverAssigned(job));
       if (ran.length > 0) {
         realAttempts += 1;
         if (realAttempts === 3) return refuse("three real attempts have already run");
@@ -265,7 +266,8 @@ async function requiredTestsRepairHistory({ read, readLog, repository, runId, he
           environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
         continue;
       }
-      const setup = diedInSetup(gateJob) || neverAssigned(gateJob);
+      // Nothing ran: the gate died in setup, or no runner took it or a job after it (GitHub then records them all cancelled, unrun).
+      const setup = diedInSetup(gateJob) || neverAssigned(gateJob) || heavy.some(neverAssigned);
       const notes = !setup && gateJob.status === "completed" ? await repairAnnotations(read, repository, gateJob.id) : [];
       if (!setup && !notes.some(note =>
         (note?.title === REPAIR_GATE_JOB && REPAIR_NOT_ADMITTED.test(note.message ?? "")) ||
