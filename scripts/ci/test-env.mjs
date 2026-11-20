@@ -33,6 +33,9 @@ export const TEST_ENV_RULES = Object.freeze({
     // CI's job storage (ci-temporary-storage) and toolchain settings, and the run's base commit.
     'PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX', 'PYTHONUTF8', 'PYTHONIOENCODING', 'WRANGLER_LOG_PATH', 'PROMPTFOO_CONFIG_DIR',
     'CLUED_CI_NPM_CACHE', 'CI_BASE_SHA',
+    // The job installed the application dependencies a selected suite declares (ci-required-selection APP_DEPS_MARKER): a
+    // test that needs them fails rather than skips when this is set and they are missing. A marker, not a credential.
+    'CLUED_CI_APP_DEPS',
     // The Actions runner marks every process of a job with RUNNER_TRACKING_ID and, when the job ends, ends the ones still
     // carrying it; without it what a suite leaves running would outlive the job on a self-hosted node. Not a credential.
     'RUNNER_TRACKING_ID',

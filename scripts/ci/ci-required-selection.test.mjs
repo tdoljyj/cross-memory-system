@@ -973,7 +973,7 @@ console.log(JSON.stringify({
   system: scoped.filter(([scope]) => scope === 'system').map(([, entry]) => entry),
   command: scoped.filter(([scope]) => scope === 'command').map(([, entry]) => entry),
   leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT', 'NODE_OPTIONS'].filter((name) => name in process.env),
-  kept: ['CI_BASE_SHA', 'PYTHONDONTWRITEBYTECODE'].map((name) => process.env[name]),
+  kept: ['CI_BASE_SHA', 'PYTHONDONTWRITEBYTECODE', 'CLUED_CI_APP_DEPS'].map((name) => process.env[name]),
 }));`;
 test('suite children get only the listed variables and a fake identity: fake GitHub tokens, an empty gh configuration, a git global configuration with only the test identity, no system configuration', (t) => {
   // The caller's identity, as a run on the Owner's own account inherits it.
@@ -987,7 +987,9 @@ test('suite children get only the listed variables and a fake identity: fake Git
     // Not listed, so not passed (ruling 11-20 "补：测试身份根修" §3): another token, an assistant's key, a Clued setting, git's
     // command-line configuration (a credential helper here), a Node option.
     GITHUB_PAT_TOKEN: 'owner-pat', ANTHROPIC_API_KEY: 'owner-key', CLUED_HOME: owner, GIT_CONFIG_COUNT: '1',
-    GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: 'owner-helper', NODE_OPTIONS: '--no-warnings', PYTHONDONTWRITEBYTECODE: '1' };
+    GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: 'owner-helper', NODE_OPTIONS: '--no-warnings', PYTHONDONTWRITEBYTECODE: '1',
+    // The job's marker that it installed the application dependencies (#1197): a test reads it to fail rather than skip.
+    CLUED_CI_APP_DEPS: '1' };
   delete env.GIT_CONFIG_NOSYSTEM;
   delete env.GIT_TERMINAL_PROMPT;
   const before = { ...env };
@@ -1012,7 +1014,7 @@ test('suite children get only the listed variables and a fake identity: fake Git
     assert.deepEqual(child.global, [`user.name=${selection.TEST_GIT_IDENTITY?.name}`, `user.email=${selection.TEST_GIT_IDENTITY?.email}`]);
     assert.deepEqual(child.system, [], 'no system configuration (its credential helper) is read');
     assert.deepEqual(child.command, [], "no configuration from the caller's environment");
-    assert.deepEqual(child.kept, ['b', '1'], 'the listed ones are');
+    assert.deepEqual(child.kept, ['b', '1', '1'], 'the listed ones are');
     assert.equal(child.prompt, '0');
   }
   assert.deepEqual(env, before, "the caller's env is not changed");
