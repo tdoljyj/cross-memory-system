@@ -44,7 +44,7 @@ import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
 import { renewalStatus, parseRenewalStatus } from './connection-renewal.mjs';
 import { parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView } from './selfcheck.mjs';
-import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_OUTCOMES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
+import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
 
 // Contract /8 (optimisation plan P1, Clued bf57ff10): a new top-level key `timing` (stage-timing.mjs): the newest finished batch's segment
@@ -397,13 +397,15 @@ export function versionsView({ current, facts, status, selfcheck = null }, { pol
   });
 }
 
-// Task eb73b396: when this node's own upgrade settled, from the upgrade's own records (readVersionInputs). null (not settled): an op
-// in upgrade\status.json has not ended, or the two sides are known to run different packages (consistent false; unknown does not hold).
+// Task eb73b396: when this node's own upgrade settled, from the upgrade's own records (readVersionInputs). null (not settled): the op
+// in upgrade\status.json is in the stretch where this node's Source changes (RUNNING: stop to verify; ROLLING_BACK; Fable 11-20: waiting
+// for the grant or the drain, or deferred, the node runs the old generation as always and renews as always), or the two sides are known
+// to run different packages (consistent false; unknown does not hold).
 // Else the newest of current.json `at` (the generation made current; the install writes it for generation 1) and the end of every op
 // in status.json `recent`; 0 when neither can be read now.
 export function upgradeSettledAt({ current, facts, status }, now = Date.now()) {
   const op = plain(status?.op) ? status.op : null;
-  if (op && !UPGRADE_OUTCOMES.includes(op.state)) return null;
+  if (op && ['RUNNING', 'ROLLING_BACK'].includes(op.state)) return null;
   if (versionsConsistent(current, facts, now) === false) return null;
   const ended = Array.isArray(status?.recent) ? status.recent.map(r => r?.at) : [];
   return Math.max(0, ...[current?.at, ...ended].map(v => typeof v === 'string' ? Date.parse(v) : NaN).filter(Number.isFinite));

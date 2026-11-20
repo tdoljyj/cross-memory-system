@@ -774,8 +774,11 @@ test('落定时刻取升级记录：首装第一代取安装完成时刻；升�
   const status = op => ({contract: 'clued.independent-ci.resident-upgrade-status/1', op,
     recent: [{opId: confirmationId, outcome: 'REFUSED', at: '2026-11-19T01:00:00.000Z'}, {opId: bindingId, outcome: 'SUCCEEDED', at: ended}]});
   assert.equal(upgradeSettledAt({current, facts: null, status: status(null)}, now), Date.parse(ended), '升级判成功的时刻');
-  for (const state of ['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED', 'RUNNING', 'ROLLING_BACK'])
+  // Fable 11-20“未落定的范围”：只有 Source 正在变的停服段（RUNNING、ROLLING_BACK）未落定；等批准、等排空、延期时节点稳跑旧代，照常投。
+  for (const state of ['RUNNING', 'ROLLING_BACK'])
     assert.equal(upgradeSettledAt({current, facts: null, status: status({opId: bindingId, state})}, now), null, state);
+  for (const state of ['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED'])
+    assert.equal(upgradeSettledAt({current, facts: null, status: status({opId: bindingId, state})}, now), Date.parse(ended), state);
   assert.equal(upgradeSettledAt({current, facts: null, status: status({opId: bindingId, state: 'SUCCEEDED'})}, now), Date.parse(ended));
   assert.equal(upgradeSettledAt({current: null, facts: null, status: null}, now), 0, '读不到升级记录不挡续期');
   const sha = c => c.repeat(64);
