@@ -124,7 +124,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = 'f339a70d114db3351439085afbb38fe9b6b1569d8cecdbc8b0c6b97593502920'
+TEMPLATE_SHA = 'e960e7720c9eb6acded4f669811e1ee82a5b97667d2733d1045504a4d64d2063'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -673,7 +673,15 @@ lines = [
     '$R5c = @{ applyPlanSha256 = $null; factsStaged = $null }   # r5c: set by Test-TokenPlan / Get-VerifyFactsArgs',
 ]
 # The generic node package (--fleet-plan): all null otherwise, and the launcher then runs no Linux step.
-_fq = lambda v: q(v) if FLEET and v is not None else '$null'
+# `FLEET and <condition> and <value>` is False when the condition does not hold (a first install: `not FIRST`): no value, as None is.
+# Anything else that is not a string is no value to write (refused by name, never a silent $null). Probe round two (5be766cd): the
+# False of $FleetInstalledRearmSha256 for a first install reached q() and stopped prepare (LAUNCHER_CHECK_FAILED, TypeError).
+def _fq(v):
+    if not FLEET or v is None or v is False:
+        return '$null'
+    if not isinstance(v, str):
+        sys.exit('VALUE_NOT_A_STRING %r' % (v,))
+    return q(v)
 _fs = lambda k, i: q(FLEET['scripts'][k][i]) if FLEET else '$null'
 lines += [
     '$FleetPlanSha256 = ' + _fq(FLEET and FLEET['planSha256']) + '   # the install plan as it was at generation; set, the launcher runs Linux A and B itself',

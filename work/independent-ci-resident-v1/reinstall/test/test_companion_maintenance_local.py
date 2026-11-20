@@ -59,7 +59,8 @@ $CompanionMaintenance=$Case -cne 'default';$verify=@{status='RESIDENT_VERIFIED'}
 $script:starts=0;$script:switches=0
 function Step-StartCompanion {$script:starts++;return @{started=$true}}
 function Step-CompanionHeadless {$script:switches++;return @{ran=$true}}
-foreach($name in @('maintenanceDeferred','firstInstallSwitch','companion','companionHeadless')){
+. ([scriptblock]::Create(@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-Key'},$true))[0].Extent.Text))
+foreach($name in @('maintenanceDeferred','companion','companionHeadless')){
   $nodes=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq ('$'+$name)},$true))
   if($nodes.Count -ne 1){throw 'ASSIGNMENT_NOT_UNIQUE'}
   . ([scriptblock]::Create($nodes[0].Extent.Text))

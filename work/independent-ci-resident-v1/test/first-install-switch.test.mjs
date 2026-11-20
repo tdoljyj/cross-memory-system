@@ -22,11 +22,15 @@ $ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(TPL)}, [re
 $FleetFirstInstall = ${firstInstall ? '$true' : '$null'}; $CompanionMaintenance = ${maintenance ? '$true' : '$false'}
 $verify = @{ status = ${verified ? "'RESIDENT_VERIFIED'" : "'R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED'"} }; $pause = @{ confirmed = ${paused ? '$true' : '$false'} }
 $script:starts = 0; $script:switches = 0
-function Step-StartCompanion { $script:starts++; @{ started = $false; error = 'interactive token: the account is not logged on' } }
+$fn = { param($name) @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))[0] }
+. ([scriptblock]::Create((& $fn 'Get-Key').Extent.Text))
+# the real Step-StartCompanion's first statement (a first install steps aside there, as every old-resident step does), then a counter
+# for the interactive start it would make
+$first = (& $fn 'Step-StartCompanion').Body.EndBlock.Statements[0].Extent.Text
+. ([scriptblock]::Create('function Step-StartCompanion { ' + $first + "\`n" + '$script:starts++; @{ started = $false; error = ''interactive token: the account is not logged on'' } }'))
 function Step-CompanionHeadless { $script:switches++; @{ ran = $true } }
-foreach ($name in @('maintenanceDeferred', 'firstInstallSwitch', 'companion', 'companionHeadless')) {
+foreach ($name in @('maintenanceDeferred', 'companion', 'companionHeadless')) {
   $nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq ('$' + $name) }, $true))
-  if ($nodes.Count -eq 0 -and $name -ceq 'firstInstallSwitch') { $firstInstallSwitch = $false; continue }   # a template before it
   if ($nodes.Count -ne 1) { throw ('ASSIGNMENT_NOT_UNIQUE:' + $name + ':' + $nodes.Count) }
   . ([scriptblock]::Create($nodes[0].Extent.Text))
 }

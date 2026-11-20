@@ -967,7 +967,13 @@ function Step-Uninstall {
 }
 # After a verified install the companion is started as its task defines it (the Owner, not elevated, conhost
 # --headless); a failure here is recorded, it does not undo the install.
+# A first install (Fable ruling 11-19 renew-key, "eight on the path" 3) steps aside here, from the function's first line, as every
+# old-resident step does on $FleetFirstInstall (the main region stays the reinstall's text): the install registered the companion's first
+# task with the companion account's interactive token, which an account that never logs on cannot run; the account switch replaces it and
+# qualifies the companion itself (its new process in session 0: heartbeat and facts). So after verify and the confirmed pause a first
+# install goes straight to the switch (Step-CompanionHeadless, on firstInstallSwitch); nothing is started first.
 function Step-StartCompanion {
+  if ($FleetFirstInstall) { return [ordered]@{ started = $false; firstInstallSwitch = $true; error = $null } }
   Import-Module 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules\ScheduledTasks\ScheduledTasks.psd1'
   $r = [ordered]@{ started = $false; error = $null; state = $null }
   try { Start-CompanionTask; $r.started = $true } catch { $r.error = $_.Exception.Message }
@@ -1719,15 +1725,11 @@ try {
   $maintenanceDeferred = $CompanionMaintenance -and $verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed
   # The controlled maintenance path must reach a genuinely empty process tree.
   # Its account switch starts/qualifies the companion after the move itself.
-  # A first install (Fable ruling 11-19 renew-key, "eight on the path" 3): the install registered the companion's first task with the
-  # companion account's interactive token, which an account that never logs on cannot run; the account switch below replaces it and
-  # qualifies the companion itself (its new process in session 0: heartbeat and facts). So after verify and the confirmed pause a first
-  # install goes straight to the switch; nothing is started first. A reinstall is unchanged.
-  $firstInstallSwitch = [bool]$FleetFirstInstall -and $verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed -and -not $maintenanceDeferred
-  $companion = if ($maintenanceDeferred) { [ordered]@{ started = $false; maintenanceDeferred = $true; error = $null } } elseif ($firstInstallSwitch) { [ordered]@{ started = $false; firstInstallSwitch = $true; error = $null } } elseif ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
+  # A first install's switch: Step-StartCompanion steps aside and says so (firstInstallSwitch); the account switch below qualifies it.
+  $companion = if ($maintenanceDeferred) { [ordered]@{ started = $false; maintenanceDeferred = $true; error = $null } } elseif ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
   $rearm = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-Rearm } else { [ordered]@{ requested = $false; cleared = $false; error = 'NOT_REQUESTED_VERIFY_OR_COMPANION_NOT_PASSED' } }
   if ($CompanionWslVhdxDirectory) { Write-Json 'companion-wsl-carry-report.json' (Step-CarryCompanionWslRecord ([string](Get-Key $uninstall 'keptAt'))) }
-  $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred -or $firstInstallSwitch)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
+  $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred -or (Get-Key $companion 'firstInstallSwitch') -eq $true)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
 } catch {
   Remove-FleetCarry
   Restore-W1Pause
