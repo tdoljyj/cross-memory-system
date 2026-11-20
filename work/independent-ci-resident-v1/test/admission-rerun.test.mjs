@@ -404,13 +404,14 @@ test('three proven environmental failures stop the lane and notify the Owner onc
   assert.deepEqual(restarted.toasts, []);
   assert.deepEqual(w.posts, []);
 });
-async function lane(t, w, { st = status(), stateFile = null } = {}) {
+async function lane(t, w, { st = status(), stateFile = null, openPulls = pulls } = {}) {
   let now = T0;
-  const toasts = [];
+  const toasts = [], bodies = [];
   const file = stateFile ?? path.join(await tempRoot(t), 'rerun.json');
   const state = await AdmissionRerunState.open(file, () => now);
-  const r = new AdmissionRerunner({ gh: w.gh, state, clock: () => now, readStatus: async () => ({ ...st, writtenAt: now }), pulls: () => pulls, notify: async (k, title) => toasts.push(title) });
-  return { r, state, toasts, file, advance: ms => { now += ms; } };
+  const r = new AdmissionRerunner({ gh: w.gh, state, clock: () => now, readStatus: async () => ({ ...st, writtenAt: now }), pulls: () => openPulls,
+    notify: async (k, title, body) => { toasts.push(title); bodies.push(body); } });
+  return { r, state, toasts, bodies, file, advance: ms => { now += ms; } };
 }
 
 test('N9: a live push-mode front offers S to the repair lane before and during parking', () => {
@@ -1573,6 +1574,79 @@ test('54a2b67a: the required checks all present do not settle a head whose gated
   l.advance(HEAD_RECHECK_MS);
   await l.r.step();
   assert.deepEqual(w.posts, [g4.runId], 'the G4 run is re-run once its attempt ended having run nothing');
+});
+
+// Review NB 1: an unadmitted head has no window and stays due every 2 minutes; with more due heads than two steps take, a head listed
+// after them is still reached, because each step takes the heads looked at longest ago first.
+test('54a2b67a review NB 1: eleven unadmitted heads looked at forever do not starve a later admitted head', async t => {
+  const others = Array.from({ length: 11 }, (_, i) => ({ pr: 600 + i, headSha: (0x10 + i).toString(16).repeat(20) }));
+  const w = world({ fail: target => {
+    const m = /\/commits\/([a-f0-9]{40})\/(pulls|check-runs\?check_name=)/.exec(target);
+    const other = m && others.find(o => o.headSha === m[1]);
+    if (!other) return null;
+    return { code: 0, stdout: JSON.stringify(m[2] === 'pulls'
+      ? [pullRequest({ number: other.pr, head: { sha: other.headSha, ref: 'claude/o', repo: { full_name: REPO } } })]
+      : { total_count: 0, check_runs: [] }) };
+  } });
+  const listed = [...others, { pr: 452, headSha: HEAD }];
+  const l = await lane(t, w, { st: status({ pending: listed.map(p => ({ ...p, state: 'PARKED' })) }), openPulls: listed });
+  for (let i = 0; i < 3; i++) {
+    assert.equal((await l.r.step()).looked, 5);
+    l.advance(HEAD_RECHECK_MS);
+  }
+  assert.deepEqual(w.posts, [700], 'the admitted head listed last is reached by the third step');
+  assert.ok(listed.every(p => l.state.data.heads[p.headSha].lookedAt), 'every head was looked at');
+});
+
+// Review NB 3: a receipt the old companion wrote has no checks field; it is a required re-run, never "outside the required checks".
+test('54a2b67a review NB 3: a receipt with no checks field (old companion) is shown as the required re-run', async t => {
+  const l = await lane(t, world());
+  l.state.data.records['700:2'] = { pr: 452, headSha: HEAD, runId: 700, attempt: 2, outcome: 'sent', at: iso(T0), why: null };
+  assert.equal(l.r.line(HEAD), '已自动补跑一次必需测试');
+  l.state.data.records['702:2'] = { pr: 452, headSha: HEAD, runId: 702, attempt: 2, outcome: 'sent', at: iso(T0 + 1000), why: null, checks: [] };
+  assert.equal(l.r.line(HEAD), '已自动补跑一次必需测试', 'the newer receipt outside the required checks does not hide the old required one');
+});
+
+// Review NB 4: a gated run outside the required checks judged final (or skipped for its actor) is not read again at the next look while
+// the head waits for its required checks: no gate log, no job list; a new attempt of it is judged again.
+test('54a2b67a review NB 4: a gated run outside the required checks already judged final is not read again until it has a new attempt', async t => {
+  const admitted = '{"verdict":"ADMITTED","automation_self_hosted":false}';
+  for (const hosted of [{ ...workflowAttempt('gitleaks'), notes: [], logs: { 0: admitted } }, { ...workflowAttempt('gitleaks'), notes: [otherNote] }]) {
+    const w = world({ runs: [run(700, [attempt({ heavy: ['in_progress', 'in_progress', 'in_progress'], notes: [] })], { status: 'in_progress' }),
+      run(702, [hosted], { workflow_id: HOSTED_WORKFLOW })] });
+    const l = await lane(t, w);
+    await l.r.step();
+    assert.equal(w.logReads, 1, 'the gate log is read once');
+    const from = w.calls.length;
+    l.advance(HEAD_RECHECK_MS);
+    await l.r.step();
+    const later = w.calls.slice(from).map(c => c.target);
+    assert.ok(later.some(target => target.includes('/actions/runs/700/')), 'the required run is looked at again');
+    assert.deepEqual(later.filter(target => /\/actions\/(runs\/702\/|jobs\/)/.test(target)), [], 'neither the job list nor the gate log of run 702');
+    assert.equal(w.logReads, 1);
+    assert.equal(l.state.data.heads[HEAD].final, null);
+    // A new attempt (re-run by hand) is judged again.
+    w.runs[1].attempts.push({ ...workflowAttempt('gitleaks'), notes: [], logs: { 0: admitted } });
+    l.advance(HEAD_RECHECK_MS);
+    await l.r.step();
+    assert.ok(w.calls.some(c => c.target.includes('/actions/runs/702/attempts/2/jobs')), 'attempt 2 is read');
+    assert.deepEqual(w.posts, []);
+  }
+});
+
+// Review NB 5: a failed request for a gated run outside the required checks names its workflow, as the sent one does.
+test('54a2b67a review NB 5: an unsent, refused or unknown re-run outside the required checks names the workflow file', async t => {
+  const cases = [[() => 'throw', 'PR #452：自动补跑没有发出'],
+    [() => ({ code: 1, stdout: '', stderr: 'gh: Resource not accessible by integration (HTTP 403)' }), 'PR #452：自动补跑被 GitHub 拒绝'],
+    [() => ({ code: 1, stdout: '', stderr: 'connection reset by peer' }), 'PR #452：自动补跑结果不确定']];
+  for (const [fail, toast] of cases) {
+    const w = world({ rules: [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'gitleaks', integration_id: 5368905 }] } }],
+      runs: [run(702, [workflowAttempt('gitleaks')], { workflow_id: HOSTED_WORKFLOW })], fail: (target, method) => (method === 'POST' ? fail() : null) });
+    const l = await lane(t, w);
+    await l.r.step();
+    assert.deepEqual(l.toasts, [toast]);
+    assert.match(l.bodies[0], /^gitleaks\.yml。/, l.bodies[0]);
+  }
 });
 
 // T2, the scope guard: every workflow in the repository that defines an admission-gate job is in the lane's scope. A new gated workflow, or
