@@ -13,14 +13,17 @@ const RUN = [step('Set up job', 'success'), step('Run tests', 'failure')];
 
 // Fable 11-20 (单一判定, B1): this module is the one failure rule; the gate imports it (no copy of its own) and the runner hook, which its
 // loader runs as one file from main, keeps a copy equal to it byte for byte.
-test('the failure classifier is one module: the gate re-exports it, the runner hook copy equals it', async () => {
+test('the failure classifier is one protected module: the gate re-exports it, the companion and the runner hook copy it byte for byte', async () => {
   const classifier = text => text.replaceAll('\r\n', '\n').match(/^export const SETUP_STEPS[\s\S]*?^export function jobFailureKind[\s\S]*?^}/m)?.[0];
   const [gate, copy, hook] = await Promise.all(['../../../scripts/ci/clued-work-admission.mjs', '../src/env-failure.mjs',
     '../../../scripts/runner/clued-runner-job-started.mjs'].map(async file => classifier(await fs.readFile(new URL(file, import.meta.url), 'utf8'))));
   assert.equal(gate, undefined, 'the gate keeps no copy');
   assert.ok(copy.includes('export function jobFailureKind') && copy.length > 1500);
   assert.equal(hook, copy);
-  assert.equal(gateFailureKind, jobFailureKind, 'the gate re-exports the one function');
+  // review 2 high 4: the one rule lives under the protected scripts/ci/**; this module is the same file byte for byte (the package cannot import it)
+  const canonical = await fs.readFile(new URL('../../../scripts/ci/required-tests-failure-rule.mjs', import.meta.url), 'utf8');
+  assert.equal(await fs.readFile(new URL('../src/env-failure.mjs', import.meta.url), 'utf8'), canonical);
+  assert.equal(typeof gateFailureKind, 'function', 'the gate re-exports the protected module');
 });
 
 test('a job that died in the runner\'s setup is an environment failure with no log; any other failed step needs the log', () => {

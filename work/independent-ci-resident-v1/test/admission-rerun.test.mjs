@@ -11,9 +11,6 @@ import { tempRoot } from './helpers.mjs';
 import { gate, resolvePublicSupabaseConfig } from '../../../scripts/ci/clued-work-admission.mjs';
 import { decideWithCurrentEpoch } from '../../../scripts/runner/clued-runner-job-started.mjs';
 import { fileURLToPath } from 'node:url';
-import { NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
-import { MIN, front } from './train-front-fixture.mjs';
-import { trainPageLine, trainSummary } from '../src/train.mjs';
 
 const REPO = 'o/r';
 const HEAD = 'a'.repeat(40);
@@ -1306,27 +1303,7 @@ test('A3 active half: the train front is a candidate of its own, first, even wit
   assert.deepEqual(candidateHeads(st, [{ pr: 452, headSha: 'd'.repeat(40) }, other], T0), [other]);
 });
 
-// The incident end to end on the offline ports: #1192's runs were skipped by the gate -> the companion lane asks for the re-run ->
-// stage 10 sees the new attempt inside its observation window and says re-run in progress; with no re-run it yields at the window.
-test('A3 end to end (#1192): skipped -> the companion re-runs the front -> the train sees the new attempt in its window', async t => {
-  const w = world({ runs: [ownerRun([attempt()])], fail: ghRefusesEscapes });
-  const l = await lane(t, w, { st: frontStatus() });
-  await l.r.step();
-  assert.deepEqual(w.posts, [700], 'the lane found the front itself and asked GitHub to re-run run 700');
-  // GitHub's answer to that request, on the train's side: the re-run's gate check run is queued on the head 12 minutes after the admission.
-  const rerun = await front(t, { slotAt: NOW - 9 * MIN });
-  rerun.check('admission-gate', { status: 'queued', at: NOW - MIN });
-  const seen = await rerun.e.run();
-  assert.equal(rerun.yields(), 0);
-  assert.equal(seen.facts.decision, 'FRONT_CHECKS_WAIT');
-  assert.equal(seen.facts.front.required.reruns, 1);
-  assert.match(trainPageLine(trainSummary(seen.facts), 910, ['ci-suites（未出现）']), /补跑中（第 1 次）/);
-  // the companion did not ask: the window passes with no new attempt and the front yields, saying why
-  const none = await front(t, { slotAt: NOW - 9 * MIN });
-  const r = await none.e.run();
-  assert.equal(none.yields(), 1);
-  assert.equal(r.facts.front.required.yieldReason, 'REQUIRED_CHECK_NOT_RERUN');
-});
+// The incident end to end, as one event stream over one model of GitHub: train-front-joint-1192.test.mjs.
 
 // One budget of three attempts per head and workflow for both kinds of process cause (no result, and the environment rule's failures).
 test('one budget: a skipped attempt and an environment failure share the three attempts', async () => {
@@ -1338,21 +1315,56 @@ test('one budget: a skipped attempt and an environment failure share the three a
   assert.match(d.reason, /three attempts/);
 });
 
-// The judgement is made in one place: the gate imports the companion's module, the hook keeps a copy the admission self-tests lock.
-test('one judgement: the gate and the lane take the same verdict from the same function', async () => {
+// The judgement is made in one place: scripts/ci/required-tests-failure-rule.mjs (a protected path), which the gate imports; the companion's
+// env-failure.mjs and the runner hook hold copies the self-tests lock byte for byte (review 2, high 4).
+test('one judgement: the gate and the lane take the same verdict from the same rule', async () => {
   const shared = await import('../src/env-failure.mjs');
+  const canonical = await import('../../../scripts/ci/required-tests-failure-rule.mjs');
   const gateModule = await import('../../../scripts/ci/clued-work-admission.mjs');
-  assert.equal(gateModule.requiredTestsRepairHistory, shared.requiredTestsRepairHistory, 'the gate re-exports the one function, no copy of its own');
-  assert.equal(gateModule.jobFailureKind, shared.jobFailureKind);
-  // an environment failure: the lane re-runs, and the shared rule allows the gate's repair
+  assert.equal(gateModule.requiredTestsRepairHistory, canonical.requiredTestsRepairHistory, 'the gate re-exports the protected module, no copy of its own');
+  assert.equal(await fs.readFile(new URL('../src/env-failure.mjs', import.meta.url), 'utf8'),
+    await fs.readFile(new URL('../../../scripts/ci/required-tests-failure-rule.mjs', import.meta.url), 'utf8'), 'the companion copy is the protected module, byte for byte');
   for (const [label, attempts, allowed] of [['a network failure', [ran([netFail, ok, ok])], true],
     ['a failed test', [ran([{ conclusion: 'failure', steps: TESTS_DIED, log: TEST_LOG }, ok, ok])], false]]) {
     const w = world({ runs: [ownerRun(attempts)], fail: ghRefusesEscapes });
     const d = await decide({ gh: w.gh, headSha: HEAD });
     assert.equal(d.action, allowed ? 'rerun' : 'final', label);
     const strip = route => route.replace(`/repos/${REPO}`, '');
-    const history = await shared.requiredTestsRepairHistory({ repository: REPO, runId: 700, head: HEAD, attempt: 2, workflowId: LINUX_WORKFLOW,
-      read: route => w.gh.get(strip(route)), readLog: route => w.gh.text(strip(route)) });
-    assert.equal(history.allowed, allowed, `${label}: ${history.reason}`);
+    for (const rule of [shared, canonical]) {
+      const history = await rule.requiredTestsRepairHistory({ repository: REPO, runId: 700, head: HEAD, attempt: 2, workflowId: LINUX_WORKFLOW,
+        read: route => w.gh.get(strip(route)), readLog: route => w.gh.text(strip(route)) });
+      assert.equal(history.allowed, allowed, `${label}: ${history.reason}`);
+    }
   }
 });
+
+// Review 2, high 3: the three-attempt budget holds on every path, the Bot re-dispatch included; a workflow or an attempt count that
+// cannot be read counts as the budget reached.
+test('review 2 high 3: a Bot run already at three attempts is not re-dispatched', async t => {
+  const w = world({ runs: [botRun({ attempts: [attempt({ notes: [] }), attempt({ notes: [] }), attempt({ notes: [] })] })], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'final', d.reason);
+  assert.match(d.reason, /three attempts/);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.dispatches, []);
+});
+
+test('review 2 high 3: the shared rule counts an unreadable workflow or attempt number as the budget reached', async () => {
+  const shared = await import('../src/env-failure.mjs');
+  const w = world({ runs: [ownerRun([attempt()]), run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } })], fail: ghRefusesEscapes });
+  const strip = route => route.replace(`/repos/${REPO}`, '');
+  const ask = (workflowId, read = route => w.gh.get(strip(route))) => shared.requiredTestsRepairHistory({ repository: REPO, runId: 700, head: HEAD, attempt: 2, workflowId,
+    read, readLog: route => w.gh.text(strip(route)) });
+  assert.equal((await ask(LINUX_WORKFLOW)).allowed, true, 'two runs of the workflow, one attempt each, and this second attempt: three in all');
+  for (const id of [null, 0, -1, 'x']) {
+    const h = await ask(id);
+    assert.deepEqual([h.allowed, h.budget], [false, true], String(id));
+  }
+  const odd = await ask(LINUX_WORKFLOW, async route => {
+    const reply = await w.gh.get(strip(route));
+    return /head_sha=/.test(route) ? { ...reply, workflow_runs: reply.workflow_runs.map(r => r.id === 701 ? { ...r, run_attempt: null } : r) } : reply;
+  });
+  assert.deepEqual([odd.allowed, odd.budget], [false, true]);
+});
+

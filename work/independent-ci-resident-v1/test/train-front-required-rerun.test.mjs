@@ -9,7 +9,7 @@ import { frontPullFacts, decideShadow } from '../../actions-hosted-migration/ind
 import { trainPageLine, trainSummary, TRAIN_FRONT_RECHECK_DECISIONS } from '../src/train.mjs';
 
 import { sha, iso, H, NOW, APP } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
-import { ACTIONS_APP, ACTIONS, MIN, SKIPPED_NAME, front } from './train-front-fixture.mjs';
+import { ACTIONS_APP, ACTIONS, MIN, SKIPPED_NAME, LINUX_RUN, WINDOWS_RUN, front } from './train-front-fixture.mjs';
 
 test('#1192: the merge slot is green but four required Actions checks never appeared: not "green, wait for merge"', async t => {
   const { e, yields, queue } = await front(t);
@@ -42,10 +42,10 @@ test('required checks queued or running: wait for checks while within the longes
 
 test('a re-run whose gate is still running shows as a re-run in progress, without a yield inside the longest wait', async t => {
   const { e, check, yields } = await front(t, { slotAt: NOW - 30 * MIN });
-  check('admission-gate', { status: 'queued', at: NOW - 2 * MIN });
+  for (const run of [LINUX_RUN, WINDOWS_RUN]) check('admission-gate', { status: 'in_progress', at: NOW - 2 * MIN, run });
   const r = await e.run();
   assert.equal(r.facts.decision, 'FRONT_CHECKS_WAIT');
-  assert.equal(r.facts.front.required.reruns, 1, 'one earlier attempt of each missing check, and a gate in flight: the first re-run');
+  assert.equal(r.facts.front.required.reruns, 1, 'one earlier attempt of each missing check, and its own run\'s gate in flight: the first re-run');
   assert.equal(yields(), 0);
 });
 
@@ -148,12 +148,13 @@ test('one re-run made (two attempts on GitHub): still missing, the count reaches
   assert.match(trainPageLine(s, 910, ['ci-suites（已跳过）']), /第 1 次补跑后仍缺/);
 });
 
-test('the first gate of a head in flight with no earlier attempt is a wait for checks, not a re-run', async t => {
-  const { e, check } = await front(t, { slotAt: NOW - 4 * MIN, others: false });
-  check('admission-gate', { status: 'in_progress', at: NOW - MIN });
+test('a gate no missing check can be tied to (no earlier attempt names its run) is not counted as a re-run', async t => {
+  const { e, check, yields } = await front(t, { slotAt: NOW - 4 * MIN, others: false });
+  check('admission-gate', { status: 'in_progress', at: NOW - MIN, run: LINUX_RUN });
   const r = await e.run();
-  assert.equal(r.facts.decision, 'FRONT_CHECKS_WAIT');
+  assert.equal(r.facts.decision, 'FRONT_CHECKS_MISSING');
   assert.equal(r.facts.front.required.reruns, 0);
+  assert.equal(yields(), 0, 'inside the window that began when the merge slot went green');
 });
 
 test('pure decision: rules that could not be read never make a slot-green head green', () => {
@@ -193,4 +194,77 @@ test('PR page words: wait for checks, re-run in progress (count), and the yield 
 
 test('a yield for missing checks gets the quick front re-check, like any returned slot', () => {
   assert.ok(TRAIN_FRONT_RECHECK_DECISIONS.includes('FRONT_CHECKS_MISSING_YIELDED'));
+});
+
+// Second independent review (Codex, 58b9825fe), high 1: the observation window starts no earlier than the later of the claim becoming the
+// front and its merge slot going green, so the companion has at least one full discovery round once the head is the front. #1192's own
+// times (Beijing time): the first attempt's jobs ended 07:09:10, the newest admission 09:45:46, the merge slot 09:56:00.
+const AT_1192 = { skippedAt: NOW - (2 * 60 + 46) * MIN - 50_000, admittedAt: NOW - 10 * MIN - 14_000, slotAt: NOW };
+test('review 2 high 1 (#1192 times): the first round right after the merge slot went green leaves the companion its whole window', async t => {
+  const first = await front(t, AT_1192);
+  const r = await first.e.run();
+  assert.equal(first.yields(), 0, 'the window from 09:45:46 would have ended at 09:55:46, before the merge slot went green');
+  assert.equal(r.facts.decision, 'FRONT_CHECKS_MISSING');
+  // still no re-run 10 minutes after the merge slot: the front yields
+  const later = await front(t, { ...AT_1192, skippedAt: AT_1192.skippedAt - 10 * MIN - 1000, admittedAt: AT_1192.admittedAt - 10 * MIN - 1000, slotAt: NOW - 10 * MIN - 1000 });
+  const r2 = await later.e.run();
+  assert.equal(later.yields(), 1);
+  assert.equal(r2.facts.front.required.yieldReason, 'REQUIRED_CHECK_NOT_RERUN');
+});
+
+// High 2: a new attempt counts only in the workflow run of the missing check (GitHub's details_url names it).
+test('review 2 high 2: a gate of another workflow does not excuse the Linux failure', async t => {
+  const { e, check, yields } = await front(t, { others: false, slotAt: NOW - 30 * MIN });
+  for (const c of ACTIONS) check(c, { at: NOW - 20 * MIN, conclusion: c === 'ci-suites' ? 'failure' : 'success' });
+  check('admission-gate', { status: 'in_progress', at: NOW - MIN, run: WINDOWS_RUN });
+  const r = await e.run();
+  assert.equal(yields(), 1);
+  assert.equal(r.facts.decision, 'FRONT_RETURNED');
+});
+
+test('review 2 high 2: a gate that is queued and has not started is not a re-run', async t => {
+  const { e, check, yields } = await front(t, { slotAt: NOW - 30 * MIN });
+  for (const run of [LINUX_RUN, WINDOWS_RUN]) check('admission-gate', { status: 'queued', at: NOW - MIN, run });
+  const r = await e.run();
+  assert.equal(yields(), 1);
+  assert.equal(r.facts.front.required.yieldReason, 'REQUIRED_CHECK_NOT_RERUN');
+});
+
+test('review 2 high 2: the same workflow\'s new gate succeeded and its jobs are not listed yet: still a re-run in progress', async t => {
+  const { e, check, yields } = await front(t, { slotAt: NOW - 30 * MIN });
+  for (const run of [LINUX_RUN, WINDOWS_RUN]) check('admission-gate', { at: NOW - 2 * MIN, run });
+  const r = await e.run();
+  assert.equal(yields(), 0);
+  assert.equal(r.facts.decision, 'FRONT_CHECKS_WAIT');
+  assert.equal(r.facts.front.required.reruns, 1);
+});
+
+// Medium 1: a check inventory that cannot be read no longer ends the round before the yield; the front time bounds the wait.
+for (const how of ['throws', 'incomplete']) test(`review 2 medium 1: the front's checks cannot be read (${how}): no batch, and the front yields at the longest wait`, async t => {
+  const failing = async () => { if (how === 'throws') throw new Error('offline'); return { complete: false, checks: [] }; };
+  const within = await front(t, { slotAt: NOW - 30 * MIN });
+  const read = within.e.gh.readChecks;
+  within.e.gh.readChecks = async head => (head === H ? failing() : read(head));
+  const r1 = await within.e.run();
+  assert.equal(r1.facts.decision, 'FRONT_CHECKS_WAIT');
+  assert.equal(r1.facts.front.checksUnreadable, true);
+  assert.equal(r1.facts.openFrontBatch, null);
+  assert.equal(within.yields(), 0);
+  const past = await front(t, { slotAt: NOW - 30 * MIN, takenAt: iso(NOW - 61 * MIN) });
+  const read2 = past.e.gh.readChecks;
+  past.e.gh.readChecks = async head => (head === H ? failing() : read2(head));
+  const r2 = await past.e.run();
+  assert.equal(past.yields(), 1);
+  assert.equal(r2.facts.front.required.yieldReason, 'REQUIRED_CHECKS_DEADLINE');
+});
+
+// Medium 3: the yield for missing checks is made only while the PR's head is still the one whose checks were read.
+test('review 2 medium 3: the head moved after the checks were read: the front is not yielded on the old evidence', async t => {
+  const { e, yields } = await front(t, { slotAt: NOW - 25 * MIN });
+  const read = e.gh.readPullRequest;
+  let reads = 0;
+  e.gh.readPullRequest = async n => { const p = await read(n); return n === 910 && ++reads > 1 ? { ...p, head: { ...p.head, sha: sha(0x7777) } } : p; };
+  const r = await e.run();
+  assert.equal(yields(), 0);
+  assert.equal(r.facts.front.requiredYieldHeld, 'FRONT_HEAD_MOVED');
 });

@@ -3615,14 +3615,16 @@ test("staging gate: the required-tests push uses the same repair budget on S wit
   }
 });
 
-// Fable 11-20 (单一判定, B1): the one failure rule is the companion's env-failure.mjs, which the gate imports. The runner hook, run by its
-// loader as one file from main, keeps a copy of the classifier and the repair history that must equal the module byte for byte.
-test("required-tests failure rule: one module the gate imports, and the hook's copy equals it byte for byte", () => {
+// Fable 11-20 (单一判定, B1) and review 2 high 4: the one failure rule is scripts/ci/required-tests-failure-rule.mjs, under the protected
+// scripts/ci/** path, which the gate imports. The companion's env-failure.mjs is the same file byte for byte (its package cannot import
+// scripts/ci), and the runner hook, run by its loader as one file from main, keeps a copy of the classifier and the repair history.
+test("required-tests failure rule: one protected module the gate imports; the companion's and the hook's copies equal it byte for byte", () => {
   const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
   const classifier = text => text.match(/export const SETUP_STEPS[\s\S]*?\nexport function jobFailureKind[\s\S]*?\n\}/)?.[0];
   const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nexport async function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
-  const moduleSource = source("../../work/independent-ci-resident-v1/src/env-failure.mjs");
+  const moduleSource = source("./required-tests-failure-rule.mjs");
   const hookSource = source("../runner/clued-runner-job-started.mjs");
+  assert.equal(source("../../work/independent-ci-resident-v1/src/env-failure.mjs"), moduleSource, "the companion's copy is the module, byte for byte");
   assert.match(classifier(moduleSource), /kind: "timeout"/);
   assert.match(history(moduleSource), /hasRepairRecovery/);
   assert.match(history(moduleSource), /REPAIR_ATTEMPTS_MAX/);
@@ -4322,5 +4324,6 @@ test("one judgement: the gate defines no failure rule of its own, and the hook's
   const gateSource = source("./clued-work-admission.mjs");
   for (const name of ["jobFailureKind", "diedInSetup", "neverAssigned", "requiredTestsRepairHistory", "repairEnvironmentFailures", "hasRepairRecovery"])
     assert.doesNotMatch(gateSource, new RegExp(`function ${name}\\b`), `the gate keeps no copy of ${name}`);
-  assert.match(gateSource, /from "\.\.\/\.\.\/work\/independent-ci-resident-v1\/src\/env-failure\.mjs"/);
+  assert.match(gateSource, /from "\.\/required-tests-failure-rule\.mjs"/, "the gate imports the rule from the protected scripts/ci path");
+  assert.doesNotMatch(gateSource, /work\/independent-ci-resident-v1/, "and nothing outside it");
 });
