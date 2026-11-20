@@ -132,7 +132,7 @@ function Invoke-FleetLinuxScript([string]$name, [string]$registrar) {
 }
 try { $null = Step-LinuxRoot } catch { if (-not $script:stopped) { throw } }
 $report = $(if ([IO.File]::Exists((Join-Path $Out 'linux-report.json'))) { Get-Content -LiteralPath (Join-Path $Out 'linux-report.json') -Raw | ConvertFrom-Json } else { $null })
-ConvertTo-Json -Depth 6 -Compress -InputObject ([ordered]@{ missing = $Missing; stopped = $script:stopped; calls = @($calls); done = @($Done); codes = $(if ($report) { @($report.codes) } else { $null }) })`;
+ConvertTo-Json -Depth 6 -Compress -InputObject ([ordered]@{ missing = $Missing; stopped = $script:stopped; calls = @($calls); done = @($Done); codes = $(if ($report) { , @($report.codes) } else { $null }) })`;
 
 test('X1: right before Linux B a first install stops when the resident root or one of its services is there', { skip, timeout: 300_000 }, (t) => {
   const dir = tempDir(t, 'r5-x1b-');
@@ -168,6 +168,27 @@ ConvertTo-Json -Depth 5 -Compress -InputObject ([ordered]@{ missing = $Missing; 
   assert.deepEqual(r.cases['Id-v1+Enc-v1'].keys, { identity: 'tpm', encryption: 'tpm' });
   for (const k of ['Enc-v1', 'Id-v1', '']) assert.equal(r.cases[k].code, 'NODE_IDENTITY_KEY_MISSING', k);
   assert.deepEqual(r.cases['Enc-v1'].missing, ['Id-v1']);
+});
+
+// Fable ruling 11-21 "r5 a2 points" 3: the launcher's check is the host preparation's rule (M5 accepts TPM keys only): both keys there
+// and either not in the TPM is NODE_IDENTITY_KEY_NOT_TPM; a missing key is named first.
+test('N7: both keys there but one not in the TPM is NODE_IDENTITY_KEY_NOT_TPM; a missing key comes first (the finder injected)', { skip, timeout: 300_000 }, () => {
+  const r = ps(`${PRELUDE}
+${load(['Get-Key'], [], ['Test-NodeIdentityKeys'])}
+if ($Missing.Count) { ConvertTo-Json -Compress -InputObject ([ordered]@{ missing = $Missing }); return }
+$names = [ordered]@{ identity = 'Id-v1'; encryption = 'Enc-v1' }
+$cases = [ordered]@{}
+foreach ($c in @(@('tpm', @{ 'Id-v1' = 'tpm'; 'Enc-v1' = 'tpm' }), @('softwareIdentity', @{ 'Id-v1' = 'software'; 'Enc-v1' = 'tpm' }), @('missingAndSoftware', @{ 'Enc-v1' = 'software' }))) {
+  $have = $c[1]
+  $finder = { param($n) if ($have.ContainsKey($n)) { @{ key = $null; origin = $have[$n] } } else { $null } }.GetNewClosure()
+  $cases[$c[0]] = Test-NodeIdentityKeys $names $finder
+}
+ConvertTo-Json -Depth 5 -Compress -InputObject ([ordered]@{ missing = $Missing; cases = $cases })`);
+  assert.deepEqual(r.missing, [], 'the launcher has the rule');
+  assert.equal(r.cases.tpm.code, null);
+  assert.equal(r.cases.softwareIdentity.code, 'NODE_IDENTITY_KEY_NOT_TPM');
+  assert.deepEqual(r.cases.softwareIdentity.keys, { identity: 'software', encryption: 'tpm' }, 'the report keeps each origin');
+  assert.equal(r.cases.missingAndSoftware.code, 'NODE_IDENTITY_KEY_MISSING');
 });
 
 test('N7: the launcher reads the keys with the pinned registration script\'s own names and finder, and a first install\'s preflight refuses a node without them', { skip, timeout: 300_000 }, (t) => {
