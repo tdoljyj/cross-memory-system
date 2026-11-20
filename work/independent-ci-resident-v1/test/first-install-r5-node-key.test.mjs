@@ -74,8 +74,8 @@ test('T1: -SelfTest -KeyProvider tpm on the real providers: identity from the TP
   const exists = powershell(encoded(`$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.Core
 $tpm = New-Object System.Security.Cryptography.CngProvider 'Microsoft Platform Crypto Provider'
 $out = @(); foreach ($n in @(${result.self_test_key_names.map(n => `'${n}'`).join(', ')})) { foreach ($p in @($tpm, [System.Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider)) { if ([System.Security.Cryptography.CngKey]::Exists($n, $p)) { $out += $n } } }
-'LEFT ' + ($out -join ',')`));
-  assert.equal(String(exists.stdout).trim().split(/\r?\n/).at(-1), 'LEFT ', String(exists.stderr));
+'LEFT=' + ($out -join ',')`));
+  assert.equal(String(exists.stdout).trim().split(/\r?\n/).at(-1), 'LEFT=', String(exists.stderr));
   assert.deepEqual(after, before);
 });
 
