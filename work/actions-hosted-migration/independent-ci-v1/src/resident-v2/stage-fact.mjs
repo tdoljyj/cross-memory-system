@@ -135,6 +135,9 @@ export function outcomeFailureCode(outcome, stageNumber) {
   if (!plain(outcome)) return 'STAGE_OUTCOME_MISSING';
   if (outcome.status === 'UNCERTAIN') return 'PUBLICATION_UNCERTAIN';
   if (outcome.status === 'RECONCILIATION_REQUIRED') return 'RECONCILIATION_REQUIRED';
+  // A staged scan had only a pending run, or sent its final conclusion after
+  // verification but could not confirm it. End the head without a HALT.
+  if (outcome.status === 'STAGED_SCAN_FAILED' && [3, 5, 7].includes(stageNumber)) return 'PUBLICATION_REVOKED';
   // Generation 10: only stage 1's own admission check, only when it was withdrawn because it could not be verified for a passing cause
   // (withdrawal-text.mjs#admissionVerificationRetryable, with the outcome's bound diagnostic: the entry's own result names it
   // admissionDiagnostic, the bound outcome diagnostic), is transient. Every other withdrawal, and every one at any other stage (a role

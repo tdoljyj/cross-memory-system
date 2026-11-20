@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -100,7 +100,7 @@ function slotFixture(t) {
     if (mode === '--write-known') {
       const tools = path.join(root, 'tools');
       mkdirSync(tools);
-      for (const file of ['ci-required-selection.mjs', 'ci-test-failures-reporter.mjs',
+      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'ci-test-failures-reporter.mjs',
         'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
         copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
       }
@@ -717,9 +717,154 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
 test('outputs name every suite of the check', () => {
   const lines = outputLines('ci-suites', { suites: ['offline-drill'] });
   assert.equal(lines[0], 'suites=["offline-drill"]');
+  assert.equal(lines[1], 'app_deps=[]');
   assert.ok(lines.includes('run_offline_drill=true'));
   assert.ok(lines.includes('run_resident_node=false'));
-  assert.equal(lines.length, 1 + Object.keys(SUITES['ci-suites']).length);
+  assert.equal(lines.length, 2 + Object.keys(SUITES['ci-suites']).length);
+  assert.ok(outputLines('ci-suites', { suites: ['offline-drill', 'pinned-registries'] }).includes('app_deps=["apps/clued-cloud"]'));
+});
+
+// Clued Task 10399304: a suite the selection says needs an application's dependencies (SUITE_APP_DEPENDENCIES) is run only
+// by a job that installs them first and tells the suite so (APP_DEPS_MARKER). Every workflow GitHub runs is read, so a new
+// suite with such a need, or a suite moved to another job or workflow, cannot run where nothing installs what it needs.
+// The step runs in every run (no if:): a required primary's registered steps must all succeed in the execution proof
+// (clued-gated-proof.mjs), so a step that is skipped when no selected suite needs dependencies would make every such run
+// unqualified. It decides from the selection's app_deps itself, with exactly the reviewed script below.
+const APP_DEPS_STEP = 'Install the application dependencies the selected suites need';
+const appDepsEnv = (id) => 'APP_DEPS: ${{ steps.' + id + '.outputs.app_deps }}';
+const APP_DEPS_RUN = [
+  `apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || "[]")) console.log(a)')`,
+  'if [ -z "$apps" ]; then',
+  '  echo "No selected suite needs application dependencies; nothing installed."',
+  '  exit 0',
+  'fi',
+  'for app in $apps; do',
+  '  node trusted/scripts/ci/ci-deps.mjs install "candidate/$app"',
+  'done',
+  `echo "${selection.APP_DEPS_MARKER}=1" >> "$GITHUB_ENV"`,
+].join('\n');
+function workflowJobs(text) {
+  const body = text.slice(text.indexOf('\njobs:\n') + 1);
+  const parts = body.split(/\n {2}([a-z][a-z0-9_-]*):\n/);
+  const jobs = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const job = parts[i + 1];
+    const labels = /\n {4}runs-on: \[([^\]]+)\]/.exec(`\n${job}`)?.[1].split(',').map((label) => label.trim()) ?? [];
+    const steps = job.split(/\n {6}- /).slice(1).map((step) => {
+      const run = /(?:^|\n) {8}run: \|\n((?: {10}.*\n?| *\n)+)/.exec(step)?.[1].replace(/^ {10}/gm, '').trimEnd()
+        ?? /(?:^|\n) {8}run: (.+)/.exec(step)?.[1];
+      return { text: step, name: /^name: (.+)/.exec(step)?.[1] ?? null, id: /(?:^|\n) {8}id: (\S+)/.exec(step)?.[1] ?? null,
+        condition: /(?:^|\n) {8}if: (.+)/.exec(step)?.[1] ?? null, run };
+    });
+    jobs.push({ name: parts[i], platform: labels.includes('Windows') ? 'win32' : 'linux', text: job, steps });
+  }
+  return jobs;
+}
+function appDependencyFindings(file, text) {
+  const findings = [];
+  for (const job of workflowJobs(text)) {
+    const suites = new Set();
+    for (const [, check] of job.text.matchAll(/ --(?:check|run-selected) ([a-z][a-z-]*)\b/g)) {
+      for (const id of Object.keys(SUITES[check] ?? {})) if (suitePlatforms(id).includes(job.platform)) suites.add(id);
+    }
+    for (const [, id] of job.text.matchAll(/ --run ([a-z][a-z-]*)\b/g)) if (SUITE_COMMANDS[id]) suites.add(id);
+    const apps = selection.appDependencies([...suites]);
+    if (apps.length === 0) continue;
+    const where = `${file} ${job.name}`;
+    const install = job.steps.findIndex((step) => step.name === APP_DEPS_STEP);
+    const run = job.steps.findIndex((step) => / --run(-selected)? /.test(step.run ?? ''));
+    // The step that writes app_deps: the selection's --check, with an id its output is read by.
+    const select = job.steps.findIndex((step) => / --check [a-z][a-z-]*\b/.test(step.run ?? '') && step.id);
+    const needing = [...suites].filter((id) => selection.SUITE_APP_DEPENDENCIES[id]).join(', ');
+    if (install < 0) {
+      findings.push(`${where}: can run ${needing}, which need ${apps.join(', ')}, and has no step "${APP_DEPS_STEP}"`);
+      continue;
+    }
+    const step = job.steps[install];
+    if (step.condition !== null) findings.push(`${where}: "${APP_DEPS_STEP}" has a condition (${step.condition}); it must run every time`);
+    if (select < 0) {
+      findings.push(`${where}: has no step with an id that selects the suites with --check, so nothing writes app_deps`);
+      continue;
+    }
+    const selectId = job.steps[select].id;
+    if (!step.text.includes(`\n        env:\n          ${appDepsEnv(selectId)}\n`)) findings.push(`${where}: "${APP_DEPS_STEP}" does not read the selection's app_deps`);
+    if (step.run !== APP_DEPS_RUN) findings.push(`${where}: "${APP_DEPS_STEP}" is not the reviewed script`);
+    if (install < select) findings.push(`${where}: "${APP_DEPS_STEP}" does not come after the step that selects the suites (${selectId})`);
+    if (run < 0 || install > run) findings.push(`${where}: "${APP_DEPS_STEP}" does not come before the step that runs the suites`);
+  }
+  return findings;
+}
+const workflowFiles = () => readdirSync(path.join(ROOT, '.github', 'workflows')).filter((name) => /\.ya?ml$/.test(name)).sort()
+  .map((name) => `.github/workflows/${name}`);
+
+test('every job of any workflow that can run a suite needing application dependencies installs them first, every time, and sets the marker', () => {
+  const findings = workflowFiles().flatMap((file) => appDependencyFindings(file, readFileSync(path.join(ROOT, file), 'utf8')));
+  assert.deepEqual(findings, []);
+  // The guard sees the jobs, and each way to break the step is a finding.
+  const file = '.github/workflows/clued-required-tests.yml';
+  const text = readFileSync(path.join(ROOT, file), 'utf8');
+  const step = `      - name: ${APP_DEPS_STEP}\n`;
+  assert.ok(text.includes(step));
+  const broken = (edit) => appDependencyFindings('w', edit(text)).map((finding) => finding.split(': ').slice(1).join(': '));
+  assert.deepEqual(broken((t) => t.replace(APP_DEPS_STEP, 'Install something')), [`can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  assert.deepEqual(broken((t) => t.replace(step, `${step}        if: steps.select.outputs.app_deps == '[]'\n`)),
+    [`"${APP_DEPS_STEP}" has a condition (steps.select.outputs.app_deps == '[]'); it must run every time`]);
+  assert.deepEqual(broken((t) => t.replace(`${selection.APP_DEPS_MARKER}=1`, 'X=1')), [`"${APP_DEPS_STEP}" is not the reviewed script`]);
+  assert.deepEqual(broken((t) => t.replace(appDepsEnv('select'), 'APP_DEPS: "[]"')), [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  assert.deepEqual(broken((t) => t.replace('APP_DEPS: ${{ steps.select.outputs.app_deps }}', 'APP_DEPS: ${{ steps.other.outputs.app_deps }}')),
+    [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  // Moved before the step that selects (its app_deps output does not exist yet there), it never installs (Codex re-review).
+  const start = text.indexOf(step), end = text.indexOf('\n      - ', start + step.length) + 1;
+  const selectAt = text.indexOf('      - name: Select suites\n', text.indexOf('\n  ci-suites:\n'));
+  assert.ok(start > selectAt && selectAt > 0);
+  const moved = text.slice(0, selectAt) + text.slice(start, end) + text.slice(selectAt, start) + text.slice(end);
+  assert.deepEqual(appDependencyFindings('w', moved).map((finding) => finding.split(': ').slice(1).join(': ')),
+    [`"${APP_DEPS_STEP}" does not come after the step that selects the suites (select)`]);
+  // A third workflow that runs such a suite is read too.
+  const third = 'name: third\non:\n  pull_request:\njobs:\n  other:\n    runs-on: [self-hosted, Linux]\n    steps:\n'
+    + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run pinned-registries --root candidate\n';
+  assert.deepEqual(appDependencyFindings('third.yml', third), [`third.yml other: can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  // The marker reaches the suites' processes through the environment the selection gives them.
+  assert.equal(selection.testEnv({ [selection.APP_DEPS_MARKER]: '1' })[selection.APP_DEPS_MARKER], '1');
+});
+
+// The execution proof requires every registered step of a required primary to succeed (clued-gated-proof.mjs); only
+// migration-verify's steps have an independent applicability branch there. A conditional step anywhere else must have a
+// condition that holds in every run, or a run that legitimately skips it is never qualified (Codex review of 10399304, high 2).
+test('the required primaries have no conditional step that a run can skip, except where the execution proof expects it', () => {
+  const file = '.github/workflows/clued-required-tests.yml';
+  const jobs = workflowJobs(readFileSync(path.join(ROOT, file), 'utf8'));
+  // clued-cloud-tests selects clued-cloud for every change, so its run_clued_cloud condition always holds.
+  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] });
+  const expected = {
+    'clued-cloud-tests': { 'Install from lockfile': "steps.select.outputs.run_clued_cloud == 'true'",
+      'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'" },
+    'ci-suites': {},
+    'migration-verify': { 'Install from lockfile': "steps.select.outputs.run_production_schema == 'true'",
+      'Verify migrations on the production schema': "steps.select.outputs.run_production_schema == 'true'",
+      'Not affected': "steps.select.outputs.run_production_schema != 'true'" },
+  };
+  const actual = Object.fromEntries(Object.keys(expected).map((name) => [name, Object.fromEntries(jobs.find((job) => job.name === name)
+    .steps.filter((step) => step.run !== undefined && step.condition !== null).map((step) => [step.name, step.condition]))]));
+  assert.deepEqual(actual, expected);
+});
+
+test('a missing application dependency fails when the job provided them and is skipped, saying why, when it did not', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'app-deps-'));
+  try {
+    const needs = ['apps/clued-cloud/node_modules/typescript/package.json'];
+    const { APP_DEPS_MARKER: marker, appDependencyGap } = selection;
+    const missing = appDependencyGap(root, needs, {});
+    assert.equal(missing.fail, false);
+    assert.equal(missing.reason, `${needs[0]} is missing: this run did not provide the application dependencies (${marker} is not set)`);
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }).fail, true);
+    mkdirSync(path.join(root, 'apps/clued-cloud/node_modules/typescript'), { recursive: true });
+    writeFileSync(path.join(root, needs[0]), '{}');
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }), null);
+    assert.equal(appDependencyGap(root, needs, {}), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 const page = (names, extra = {}) => ({ ok: true, json: async () => names.map((filename) => ({ filename, ...extra })) });
@@ -811,6 +956,152 @@ test('the marker is set before any child process: the run flags mark the environ
   const files = selection.unitTestFiles(ROOT, (command, args, options) => { seen = options.env?.CLUED_UNDER_TEST; return { status: 0, stdout: 'tests/a.test.mjs\n' }; });
   assert.deepEqual(files, ['tests/a.test.mjs']);
   assert.equal(seen, '1');
+});
+
+// Clued Task 2ee162c2 (ruling 11-20 §2): a suite child runs under a fake identity, whatever the caller's is. The probe is a
+// real child process given the env the selector builds; it reads the GitHub token variables, lists gh's configuration
+// directory and asks the real git which global and system settings it sees.
+const IDENTITY_PROBE = `
+const { readdirSync } = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const git = spawnSync('git', ['config', '--list', '--show-scope'], { encoding: 'utf8', cwd: require('node:os').tmpdir() });
+const scoped = git.stdout.split('\\n').filter(Boolean).map((line) => line.split('\\t'));
+console.log(JSON.stringify({
+  tokens: ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'].map((name) => process.env[name]),
+  gh: readdirSync(process.env.GH_CONFIG_DIR), git: git.status, prompt: process.env.GIT_TERMINAL_PROMPT,
+  global: scoped.filter(([scope]) => scope === 'global').map(([, entry]) => entry),
+  system: scoped.filter(([scope]) => scope === 'system').map(([, entry]) => entry),
+  command: scoped.filter(([scope]) => scope === 'command').map(([, entry]) => entry),
+  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT', 'NODE_OPTIONS'].filter((name) => name in process.env),
+  kept: ['CI_BASE_SHA', 'PYTHONDONTWRITEBYTECODE', 'CLUED_CI_APP_DEPS'].map((name) => process.env[name]),
+}));`;
+test('suite children get only the listed variables and a fake identity: fake GitHub tokens, an empty gh configuration, a git global configuration with only the test identity, no system configuration', (t) => {
+  // The caller's identity, as a run on the Owner's own account inherits it.
+  const owner = mkdtempSync(path.join(os.tmpdir(), 'owner-identity-'));
+  t.after(() => rmSync(owner, { recursive: true, force: true }));
+  mkdirSync(path.join(owner, 'gh'));
+  writeFileSync(path.join(owner, 'gh', 'hosts.yml'), 'github.com:\n    user: owner\n');
+  writeFileSync(path.join(owner, 'gitconfig'), '[user]\n\tname = Owner\n\temail = owner@example.com\n[credential]\n\thelper = owner-helper\n');
+  const env = { ...process.env, GH_TOKEN: 'owner-token', GITHUB_TOKEN: 'owner-token', GH_ENTERPRISE_TOKEN: 'owner-token',
+    GITHUB_ENTERPRISE_TOKEN: 'owner-token', GH_CONFIG_DIR: path.join(owner, 'gh'), GIT_CONFIG_GLOBAL: path.join(owner, 'gitconfig'), CI_BASE_SHA: 'b',
+    // Not listed, so not passed (ruling 11-20 "补：测试身份根修" §3): another token, an assistant's key, a Clued setting, git's
+    // command-line configuration (a credential helper here), a Node option.
+    GITHUB_PAT_TOKEN: 'owner-pat', ANTHROPIC_API_KEY: 'owner-key', CLUED_HOME: owner, GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: 'owner-helper', NODE_OPTIONS: '--no-warnings', PYTHONDONTWRITEBYTECODE: '1',
+    // The job's marker that it installed the application dependencies (#1197): a test reads it to fail rather than skip.
+    CLUED_CI_APP_DEPS: '1' };
+  delete env.GIT_CONFIG_NOSYSTEM;
+  delete env.GIT_TERMINAL_PROMPT;
+  const before = { ...env };
+  const seen = [];
+  const spawn = (command, args, options) => {
+    const probe = spawnSync(process.execPath, ['-e', IDENTITY_PROBE], { cwd: options.cwd, env: options.env, encoding: 'utf8' });
+    assert.equal(probe.status, 0, probe.stderr);
+    seen.push(JSON.parse(probe.stdout));
+    return { status: 0 };
+  };
+  assert.equal(executeSuite('node-governance', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(executeSuite('resident-python', { root: ROOT, env, spawn, log }), 0);
+  assert.ok(seen.length >= 4);
+  const fake = selection.FAKE_GITHUB_TOKEN;
+  for (const child of seen) {
+    assert.deepEqual(child.leaked, [], 'only the listed variables are passed');
+    assert.deepEqual(child.tokens.filter((token) => token === 'owner-token'), [], "the caller's GitHub tokens are not passed");
+    assert.match(String(fake), /fake/, 'the fake token says what it is');
+    assert.deepEqual(child.tokens, [fake, fake, fake, fake]);
+    assert.deepEqual(child.gh, [], 'gh finds no stored login');
+    assert.equal(child.git, 0);
+    assert.deepEqual(child.global, [`user.name=${selection.TEST_GIT_IDENTITY?.name}`, `user.email=${selection.TEST_GIT_IDENTITY?.email}`]);
+    assert.deepEqual(child.system, [], 'no system configuration (its credential helper) is read');
+    assert.deepEqual(child.command, [], "no configuration from the caller's environment");
+    assert.deepEqual(child.kept, ['b', '1', '1'], 'the listed ones are');
+    assert.equal(child.prompt, '0');
+  }
+  assert.deepEqual(env, before, "the caller's env is not changed");
+});
+
+// Codex review of 2ee162c2, high 2 and medium 3: in Actions the selector starts suites itself. The job's token the workflow
+// gives the step stays with the selector (it lists the PR's files) and never reaches a suite child; the runner's
+// RUNNER_TRACKING_ID does, so the runner still finds and ends what a suite leaves running when the job ends.
+test("under Actions a suite child gets the fake token, not the job's, and keeps the runner's orphan-process marker", () => {
+  const seen = [];
+  const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+  const env = { GITHUB_ACTIONS: 'true', GITHUB_TOKEN: 'job-token', RUNNER_TRACKING_ID: 'github_1234', CI_BASE_SHA: 'b', PATH: '/bin' };
+  assert.equal(executeSuite('retrigger-counter', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
+  assert.equal(seen[0].RUNNER_TRACKING_ID, 'github_1234');
+  assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
+});
+
+// Codex review of 2ee162c2, medium 5: a proxy URL may carry a user name and password; such a variable is not passed.
+test('a proxy variable whose URL carries a user name or password is not passed; one without is', () => {
+  const kept = selection.keptVariables({ HTTPS_PROXY: 'http://user:secret@proxy:8080', http_proxy: 'http://proxy:3128',
+    ALL_PROXY: 'socks5://user@proxy:1080', https_proxy: 'user:pw@proxy:8080', all_proxy: 'http://%zz@proxy', NO_PROXY: 'localhost',
+    HTTP_PROXY: 'proxy.local:8080' });
+  assert.deepEqual(kept, { http_proxy: 'http://proxy:3128', NO_PROXY: 'localhost', HTTP_PROXY: 'proxy.local:8080' });
+});
+
+// Fable ruling 11-20 "补：止血 PR 第四轮": one identity directory per run, randomly named under the run's temporary
+// directory, its place handed to the children in the environment, removed when the run ends, and no ownership check.
+const IDENTITY_SELECTOR = JSON.stringify(pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href);
+const runIdentity = (temp, { fail = false } = {}) => {
+  const nested = `import(${IDENTITY_SELECTOR}).then(({ testEnv }) => console.log(testEnv(process.env).GH_CONFIG_DIR));`;
+  const script = `import(${IDENTITY_SELECTOR}).then(({ markTestRun, testEnv }) => {
+    const env = { ...process.env, RUNNER_TEMP: process.argv[1] };
+    markTestRun(['--run', 'selection'], env);
+    const child = testEnv(env);
+    const inner = require('node:child_process').spawnSync(process.execPath, ['-e', ${JSON.stringify(nested)}], { env: child, encoding: 'utf8' });
+    console.log(JSON.stringify({ made: env.CLUED_TEST_IDENTITY_DIR, gh: child.GH_CONFIG_DIR, git: child.GIT_CONFIG_GLOBAL, nested: inner.stdout.trim(),
+      there: require('node:fs').existsSync(env.CLUED_TEST_IDENTITY_DIR) }));
+    if (${fail}) process.exitCode = 1;
+  });`;
+  const fresh = { ...process.env };
+  delete fresh.CLUED_TEST_IDENTITY_DIR;
+  const run = spawnSync(process.execPath, ['-e', script, temp], { env: fresh, encoding: 'utf8' });
+  assert.equal(run.status, fail ? 1 : 0, run.stderr);
+  return JSON.parse(run.stdout);
+};
+test('each run makes its own identity directory under the run temporary directory, hands it to its children, and removes it when it ends', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-run-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const first = runIdentity(temp);
+  assert.equal(path.dirname(first.made), temp);
+  assert.ok(path.basename(first.made).startsWith('clued-test-identity-'));
+  assert.ok(first.there);
+  assert.deepEqual([path.dirname(first.gh), path.dirname(first.git), path.dirname(first.nested)], [first.made, first.made, first.made],
+    'the children get the run\'s directory through the environment');
+  const failed = runIdentity(temp, { fail: true });
+  assert.notEqual(failed.made, first.made, 'every run has a directory of its own');
+  assert.deepEqual(readdirSync(temp), [], 'removed when the run ends, failed or not');
+});
+
+test('a run removes identity directories older than two days and keeps newer ones and other names', (t) => {
+  const temp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'identity-old-')));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const day = 24 * 60 * 60 * 1000;
+  const at = { 'clued-test-identity-old': 3, 'clued-test-identity-recent': 1, 'other-old': 3 };
+  for (const [name, days] of Object.entries(at)) {
+    mkdirSync(path.join(temp, name));
+    const when = new Date(Date.now() - days * day);
+    utimesSync(path.join(temp, name), when, when);
+  }
+  runIdentity(temp);
+  assert.deepEqual(readdirSync(temp).sort(), ['clued-test-identity-recent', 'other-old']);
+});
+
+test('a run whose identity directory cannot be made does not start', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'identity-fail-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const notADirectory = path.join(temp, 'file');
+  writeFileSync(notADirectory, '');
+  const fresh = { ...process.env, RUNNER_TEMP: notADirectory };
+  delete fresh.CLUED_TEST_IDENTITY_DIR;
+  const run = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), '--run', 'retrigger-counter', '--root', ROOT],
+    { env: fresh, encoding: 'utf8' });
+  assert.equal(run.status, selection.TEST_IDENTITY_EXIT, run.stderr);
+  assert.match(run.stderr, /test identity/);
+  assert.doesNotMatch(run.stdout, /::group::/, 'no suite command started');
 });
 
 // Codex review 4: the required checks start the TRUSTED BASE's selector, which may predate the marker: every workflow step that

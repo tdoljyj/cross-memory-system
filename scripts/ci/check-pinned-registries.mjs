@@ -38,6 +38,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { POLICY, readMechanicalPolicy } from './component-version-integration-policy.mjs';
+import { appDependencyGap } from './ci-required-selection.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(HERE, '../..');
@@ -104,9 +105,11 @@ export const GENERATED = [
     cmd: ['node', 'apps/clued-cloud/scripts/generate-imprint-domain-rules.mjs', '--check'], fix: 'node apps/clued-cloud/scripts/generate-imprint-domain-rules.mjs' + CLOUD_DEPS_HINT },
 ];
 
-function checkGenerated(root, g) {
-  const missing = g.needs.find((file) => !fs.existsSync(path.join(root, file)));
-  if (missing) return { id: g.id, status: 'unchecked', reason: `${missing} is missing; run npm ci in apps/clued-cloud`, fix: g.fix };
+// A missing dependency is a failure when the job provided the application dependencies (the selection's marker), and
+// otherwise not checked here, saying why (appDependencyGap; Clued Task 10399304).
+function checkGenerated(root, g, env = process.env) {
+  const gap = appDependencyGap(root, g.needs, env);
+  if (gap) return { id: g.id, status: gap.fail ? 'missing' : 'unchecked', reason: gap.fail ? gap.reason : `${gap.reason}; run npm ci in apps/clued-cloud`, fix: g.fix };
   const result = spawnSync(g.cmd[0], g.cmd.slice(1), { cwd: root, encoding: 'utf8' });
   if (result.error) return { id: g.id, status: 'unchecked', reason: `${g.cmd[0]} did not run: ${result.error.message}`, fix: g.fix };
   if (result.status === 0) return { id: g.id, status: 'ok' };
@@ -152,7 +155,7 @@ export async function checkAll({ root = DEFAULT_ROOT, base = null, only = [], en
   if (want('r9')) results.push(await checkR9(root, resolved));
   if (want('reconcile')) results.push(await checkReconcile(root));
   if (want('components')) results.push(checkComponents(root, resolved));
-  for (const g of GENERATED) if (want(g.id)) results.push(checkGenerated(root, g));
+  for (const g of GENERATED) if (want(g.id)) results.push(checkGenerated(root, g, env));
   if (want('mechanical-policy')) results.push(checkMechanicalPolicy(root));
   if (want('control-source-pins')) results.push(await checkControlPins(root, resolved));
   return { base: resolved, results };
@@ -162,7 +165,7 @@ export function render({ base, results }) {
   const out = [`pinned registries (base ${base ? base.slice(0, 12) : 'none'}):`];
   for (const r of results) {
     if (r.status === 'ok') { out.push(`  ok         ${r.id}`); continue; }
-    out.push(`  ${r.status === 'stale' ? 'STALE     ' : 'UNCHECKED '} ${r.id}${r.registry ? `  (${r.registry})` : ''}`);
+    out.push(`  ${{ stale: 'STALE     ', missing: 'MISSING   ' }[r.status] ?? 'UNCHECKED '} ${r.id}${r.registry ? `  (${r.registry})` : ''}`);
     if (r.reason) out.push(`      ${r.reason}`);
     for (const d of r.details ?? []) out.push(`      - ${d}`);
     out.push(`      regenerate: ${r.fix}`);
@@ -178,8 +181,10 @@ export function render({ base, results }) {
     out.push(`  ${n}. node scripts/ci/check-pinned-registries.mjs --base ${base ?? '<main commit>'}`);
   }
   if (stale.length) out.push(`${stale.length} registr${stale.length === 1 ? 'y is' : 'ies are'} stale; review the findings before committing.`);
+  const missing = results.filter((r) => r.status === 'missing');
+  if (missing.length) out.push(`${missing.length} could not be checked although the job provided the application dependencies.`);
   if (unchecked.length) out.push(`${unchecked.length} could not be checked.`);
-  if (!stale.length && !unchecked.length) out.push('all pinned registries are up to date.');
+  if (!stale.length && !unchecked.length && !missing.length) out.push('all pinned registries are up to date.');
   return out.join('\n');
 }
 
@@ -187,7 +192,7 @@ export function exitCode(results, env = process.env) {
   // This check closes a real integration blind spot. An unavailable trusted
   // baseline or validator must fail early in CI, never become a warning-only skip.
   if (results.some((r) => r.id === 'control-source-pins' && r.status !== 'ok')) return 1;
-  if (results.some((r) => r.status === 'stale')) return 1;
+  if (results.some((r) => r.status === 'stale' || r.status === 'missing')) return 1;
   if (results.some((r) => r.status === 'unchecked')) return env.GITHUB_ACTIONS === 'true' ? 0 : 2;
   return 0;
 }

@@ -16,7 +16,8 @@
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
 //     API (GITHUB_TOKEN, pull-requests: read); a push, a listing it cannot
 //     read or a listing at GitHub's 3000-file limit selects everything.
-//     Writes suites=<json> and run_<suite>=true|false to GITHUB_OUTPUT. Only
+//     Writes suites=<json>, app_deps=<json> (SUITE_APP_DEPENDENCIES) and
+//     run_<suite>=true|false to GITHUB_OUTPUT. Only
 //     the suites declared for the host's platform (SUITE_PLATFORMS) are listed.
 //   node scripts/ci/ci-required-selection.mjs --run-selected <check> [--root <checkout>]
 //     selects as --check does, then runs every selected suite in turn and fails
@@ -33,6 +34,7 @@ import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rea
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { ownIdentityDir, testEnv } from './test-env.mjs';
 
 // The resident layer imports Source v2, Source v2 imports scripts/ci (and
 // through it scripts/runner) and the resident's node profile, the admission
@@ -170,7 +172,7 @@ export const SUITES = {
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     // Its test checks that every database test of apps/clued-cloud/tests runs in a required suite or is exempted, so a
     // new or changed test there, or the classifier, selects it.
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
@@ -224,6 +226,26 @@ export const SUITE_PLATFORMS = {
 };
 export const hostPlatform = (platform = process.platform) => (platform === 'win32' ? 'win32' : 'linux');
 export const suitePlatforms = (id) => SUITE_PLATFORMS[id]?.platforms ?? PLATFORMS;
+
+// The suites whose commands need an application's npm dependencies in the checkout, and that application (Clued Task
+// 10399304). This is the only place that says so. --check writes app_deps=<json> for the suites it selected; the job that
+// runs them installs those applications (scripts/ci/ci-deps.mjs install, offline) and then sets APP_DEPS_MARKER=1 for the
+// suites' processes. The selection test fails a required-tests job that can run one of these suites without that step.
+export const SUITE_APP_DEPENDENCIES = {
+  'pinned-registries': 'apps/clued-cloud',
+};
+export const APP_DEPS_MARKER = 'CLUED_CI_APP_DEPS';
+export const appDependencies = (suites) => [...new Set(suites.map((id) => SUITE_APP_DEPENDENCIES[id]).filter(Boolean))].sort();
+// A command that needs files of an application's dependencies (paths under the checkout) and finds one missing. With the
+// marker the job said it installed them, so that is a failure; without it this run did not provide them, and the command
+// says so and checks nothing. null when nothing is missing.
+export function appDependencyGap(root, needs, env = process.env) {
+  const missing = needs.find((file) => !existsSync(path.join(root, file)));
+  if (!missing) return null;
+  return env[APP_DEPS_MARKER] === '1'
+    ? { fail: true, reason: `${missing} is missing although this job provided the application dependencies (${APP_DEPS_MARKER}=1)` }
+    : { fail: false, reason: `${missing} is missing: this run did not provide the application dependencies (${APP_DEPS_MARKER} is not set)` };
+}
 
 // What each suite runs; cwd is relative to the checkout root. Source v2 tests
 // resolve paths from the root, so they run there. {tests:<dir>} expands to the
@@ -406,6 +428,7 @@ export async function changedFiles({ event, env, fetchImpl = fetch }) {
 export function outputLines(check, selection) {
   return [
     `suites=${JSON.stringify(selection.suites)}`,
+    `app_deps=${JSON.stringify(appDependencies(selection.suites))}`,
     ...Object.keys(SUITES[check]).map((id) => `run_${id.replace(/-/g, '_')}=${selection.suites.includes(id)}`),
   ];
 }
@@ -503,15 +526,20 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
   return exists(script) ? [nodePath, script, ...argv.slice(1)] : argv;
 }
 
-// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
-// CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
-// NODE_TEST_CONTEXT on its own; Python and PowerShell suites have only this one). The caller's env is not changed.
-export const testEnv = (env) => ({ ...env, CLUED_UNDER_TEST: '1' });
+// The environment of every suite child (test marker, listed variables, fake identity) is test-env.mjs; local-verify.mjs reads it too.
+export {
+  FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_ENV_RULES, TEST_ENV_VERSION, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, ownIdentityDir, testEnv,
+} from './test-env.mjs';
 // The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
-// suites: --run, --run-selected, --write-known. --check runs nothing and is left as it is.
+// suites: --run, --run-selected, --write-known, --run-files; it also makes the run's fake identity directory (Task 2ee162c2).
+// --check runs nothing and is left as it is.
 export function markTestRun(argv, env) {
-  if (['--run', '--run-selected', '--write-known'].some((flag) => argv.includes(flag))) env.CLUED_UNDER_TEST = '1';
+  if (!['--run', '--run-selected', '--write-known', '--run-files'].some((flag) => argv.includes(flag))) return;
+  env.CLUED_UNDER_TEST = '1';
+  env.CLUED_TEST_IDENTITY_DIR = ownIdentityDir(env);
 }
+// A run whose identity directory cannot be made does not start (ruling 11-20 "补：止血 PR 第四轮" §1).
+export const TEST_IDENTITY_EXIT = 71;
 
 // --run-files: the suite's own commands with the test-file operands replaced by
 // the named files. Only the operands change, so the command is the one CI runs.
@@ -764,7 +792,12 @@ const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suit
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
-  markTestRun(argv, env);
+  try {
+    markTestRun(argv, env);
+  } catch (error) {
+    console.error(`test identity: cannot make the run's directory, nothing started: ${error.message}`);
+    return TEST_IDENTITY_EXIT;
+  }
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE);
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
