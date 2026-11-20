@@ -36,10 +36,14 @@ const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', ciToken
 const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
 const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, ...c }, null, 2) + '\n';
 
+// The drill's named mutexes are machine-wide (Global\): a fixture holding them would refuse a real drill on this host and fail while one
+// runs. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own right after loading it; the PowerShell processes one
+// test starts (a host and the watchdog it launches) load the same fixture, so they still share them.
+const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}`;
 // Dot-source the script (definitions only) and print the expression's value as JSON.
 function ps(expr) {
   const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
+    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ${ownMutexes}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim());
 }
@@ -592,6 +596,7 @@ test('the real background guard aborts while the foreground is blocked, without 
   const fixture = path.join(tmp, 'guard-fixture.ps1');
   const marker = path.join(tmp, 'guard-stopped.txt');
   fs.writeFileSync(fixture, `. ${q(script)}
+    ${ownMutexes}
     $script:DrillScriptPath = $PSCommandPath
     $script:Drill.HostGuardSeconds = 0.1
     $script:guardReads = 0
@@ -629,6 +634,7 @@ test('the drill receipt keeps each executor state first observed during the arme
   const train = activeHostStatus(hold, { executor: 'RUNNING', reason: 'TRAIN_MAINTENANCE' });
   const stage2 = activeHostStatus(hold, { executor: 'RUNNING', current: { stage: 2, phase: 'stage' } });
   fs.writeFileSync(fixture, `. ${q(script)}
+    ${ownMutexes}
     $script:DrillScriptPath = $PSCommandPath
     $script:Drill.HostGuardSeconds = 0
     $script:guardReads = 0
@@ -723,8 +729,8 @@ test('the boot watchdog still runs checkpoint cleanup after its parent job is te
   const cleanup = path.join(root, 'restored');
   const vmId = '8f87dbcb-9fbc-4fd6-adc4-7c6345192c50';
   fs.writeFileSync(fixture, `. ${q(script)}
+    ${ownMutexes}
     $script:DrillScriptPath = $PSCommandPath
-    $script:Drill.BootMutex = ${q(`Local\\DrillWatchdogTest-${path.basename(root)}`)}
     function Get-DrillVmInfo { @{ vm = @{ Id = [guid]'${vmId}' }; notes = $script:Drill.Marker; state = 'Running' } }
     function Stop-DrillOwnedVm {
       param([switch]$RestoreCheckpoint)
@@ -820,7 +826,7 @@ test('the watchdog launcher never terminates a process it cannot tie to this lau
     try {
       # WMI hands back a PID that now belongs to someone else (the launched process exited and the PID was reused).
       function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) [pscustomobject]@{ ReturnValue = 0; ProcessId = $decoy.Id } }
-      $c = try { [void](Start-DrillDetachedWatchdog 'AAAA' ([Diagnostics.Stopwatch]::StartNew())); $null } catch { Get-DrillCode $_ }
+      $c = try { [void](Start-DrillDetachedWatchdog 'AAAA' ((Get-DrillTime).AddSeconds(15))); $null } catch { Get-DrillCode $_ }
       @{ code = (Get-Prop $c 'code'); alive = (-not $decoy.HasExited) }
     } finally { if (-not $decoy.HasExited) { $decoy.Kill() }; $decoy.Dispose() }`);
   assert.deepEqual(r, { code: 'DRILL_WATCHDOG_IDENTITY_UNCONFIRMED', alive: true });
@@ -835,7 +841,7 @@ test('a launched watchdog found inside a job is terminated and confirmed gone be
     try {
       if (-not [DrillTestJob]::AssignProcessToJobObject($job, $decoy.Handle)) { throw [ComponentModel.Win32Exception]::new() }
       function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) [pscustomobject]@{ ReturnValue = 0; ProcessId = $decoy.Id } }
-      $c = try { [void](Start-DrillDetachedWatchdog '${encoded}' ([Diagnostics.Stopwatch]::StartNew())); $null } catch { Get-DrillCode $_ }
+      $c = try { [void](Start-DrillDetachedWatchdog '${encoded}' ((Get-DrillTime).AddSeconds(15))); $null } catch { Get-DrillCode $_ }
       @{ code = (Get-Prop $c 'code'); inJob = (Get-Prop $c 'detail.inJob'); terminated = (Get-Prop $c 'detail.terminated'); exited = $decoy.HasExited }
     } finally {
       if (-not $decoy.HasExited) { $decoy.Kill() }
@@ -846,13 +852,25 @@ test('a launched watchdog found inside a job is terminated and confirmed gone be
 });
 
 test('asking WMI for the watchdog is bounded by the ready budget and fails by name', opts, () => {
+  // The clock is pinned (Fable 11-21 clock ruling §2): the first read sets the ready-by, every later read is $Later seconds on,
+  // so the timeout handed to WMI is exact however slow the host is.
   const root = fs.mkdtempSync(path.join(tmp, 'watchdog-wmi-'));
   const r = ps(`
-    $script:timeout = $null
-    function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) $script:timeout = $OperationTimeoutSec; throw 'WMI did not answer' }
-    $c = try { [void](Start-DrillBootWatchdog ${q(root)} ([guid]::Empty) ([DateTimeOffset]::UtcNow.AddMinutes(1))); $null } catch { Get-DrillCode $_ }
-    @{ code = (Get-Prop $c 'code'); inner = (Get-Prop $c 'detail.code'); timeout = $script:timeout }`);
-  assert.deepEqual(r, { code: 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY', inner: 'DRILL_WATCHDOG_WMI_CREATE_FAILED', timeout: 15 });
+    $script:t0 = [DateTimeOffset]'2026-11-19T02:00:00Z'
+    function Get-DrillTime { $script:reads++; if ($script:reads -eq 1) { $script:t0 } else { $script:t0.AddSeconds($script:later) } }
+    function Invoke-CimMethod { param($ClassName, $MethodName, $Arguments, $OperationTimeoutSec, $ErrorAction) $script:asked = $true; $script:timeout = $OperationTimeoutSec; throw 'WMI did not answer' }
+    function Test-WatchdogAt([double]$Later) {
+      $script:reads = 0; $script:later = $Later; $script:asked = $false; $script:timeout = $null
+      $c = try { [void](Start-DrillBootWatchdog ${q(root)} ([guid]::Empty) ($script:t0.AddMinutes(1))); $null } catch { Get-DrillCode $_ }
+      @{ code = (Get-Prop $c 'code'); inner = (Get-Prop $c 'detail.code'); asked = $script:asked; timeout = $script:timeout }
+    }
+    @{ still = (Test-WatchdogAt 0); spent = (Test-WatchdogAt 4.2); gone = (Test-WatchdogAt 15) }`);
+  const failed = (timeout) => ({ code: 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY', inner: 'DRILL_WATCHDOG_WMI_CREATE_FAILED', asked: true, timeout });
+  assert.deepEqual(r, {
+    still: failed(15),
+    spent: failed(11),
+    gone: { code: 'DRILL_GUEST_SHUTDOWN_WATCHDOG_NOT_READY', inner: 'DRILL_WATCHDOG_READY_TIMEOUT', asked: false, timeout: null },
+  });
 });
 
 test('host reader uses only the pinned status file and accounts for an existing larger VM', opts, () => {
@@ -3711,4 +3729,66 @@ test('a launcher result read back without its terminal field is recorded as a fa
   const given = collect('given', JSON.stringify({ exit: 0, terminal: e.launcher }));
   assert.deepEqual(given.launcher, e.launcher);
   assert.equal(given.record.launcherReadback.ok, true);
+});
+
+// Fable 11-21 clock ruling §3: drill-vm.ps1 learns "now" only from Get-DrillTime, and these tests never read the real clock, so no
+// assertion can depend on how much real time passed. The reads that predate the rule are pinned at exactly today's count (step 2 clears
+// them): one more is red, and so is one fewer until the pin is lowered with it. The words are assembled so the scan does not count its
+// own patterns.
+test('the real clock is read only through Get-DrillTime; the reads that predate the rule are pinned at their count', () => {
+  const word = (...parts) => parts.join('');
+  const NOW = word('Utc', 'Now'), GET_DATE = word('Get-', 'Date'), SW = word('Stop', 'watch'), BARE_NOW = word('No', 'w');
+  const count = (lines, re) => lines.flatMap((text, i) => [...text.matchAll(re)].map(() => i + 1));
+  const over = (file, lines, kinds, pins, use) => {
+    for (const [kind, re] of Object.entries(kinds)) {
+      const at = count(lines, re);
+      assert.ok(at.length <= pins[kind], `${file}: ${at.length} ${kind} reads, pinned at ${pins[kind]} (lines ${at.join(', ')}). ${use}`);
+      assert.equal(at.length, pins[kind], `${file}: ${kind} reads went down to ${at.length}; lower the pin from ${pins[kind]} to ${at.length}.`);
+    }
+  };
+
+  // Product side: the Get-DrillTime definition, and the two lines the guest runs on its own clock (no Get-DrillTime there).
+  const product = fs.readFileSync(script, 'utf8').split(/\r?\n/);
+  const allowed = [`function Get-DrillTime { [DateTimeOffset]::${NOW} }`,
+    `if ($when -le [DateTimeOffset]::${NOW}) { throw 'DRILL_RUN_TIMEOUT' }`,
+    `$seconds = [Math]::Ceiling(($when - [DateTimeOffset]::${NOW}).TotalSeconds)`];
+  const timerAt = product.indexOf('$script:GuestShutdownTimer = {');
+  const timerEnd = product.indexOf('}', timerAt);
+  assert.ok(timerAt >= 0 && timerEnd > timerAt, 'drill-vm.ps1 must hold $script:GuestShutdownTimer');
+  for (const [i, line] of allowed.entries()) {
+    const at = product.flatMap((text, n) => text.trim() === line ? [n] : []);
+    assert.equal(at.length, 1, `drill-vm.ps1 must hold exactly one: ${line}`);
+    if (i > 0) assert.ok(at[0] > timerAt && at[0] < timerEnd, `outside $script:GuestShutdownTimer: ${line}`);
+  }
+  over('drill-vm.ps1', product.map(text => allowed.includes(text.trim()) ? '' : text), {
+    wallClock: new RegExp(String.raw`\[(?:System\.)?DateTime(?:Offset)?\]::(?:${NOW}|Now)\b`, 'gi'),
+    [GET_DATE]: new RegExp(String.raw`\b${GET_DATE}\b`, 'gi'),
+    [SW]: new RegExp(SW, 'gi'),
+  }, { wallClock: 32, [GET_DATE]: 0, [SW]: 2 },
+  'Read the time through Get-DrillTime; a budget becomes a deadline, (Get-DrillTime).AddSeconds(n), compared against Get-DrillTime.');
+
+  // Test side: no read of the real clock at all. Fixture times are the constant 2026-11-19T02:00:00Z; a PowerShell snippet that needs
+  // "now" calls Get-DrillTime (pinned with a stand-in where the value matters).
+  const tests = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split(/\r?\n/);
+  over('drill-vm.test.mjs', tests, {
+    newDate: new RegExp(String.raw`\bnew\s+Date\s*\(\s*\)`, 'g'),
+    dateNow: new RegExp(String.raw`\bDate\.now\s*\(`, 'g'),
+    [NOW]: new RegExp(String.raw`\b${NOW}\b`, 'gi'),
+    dateTimeNow: new RegExp(String.raw`\]::${BARE_NOW}\b`, 'gi'),
+    [GET_DATE]: new RegExp(String.raw`\b${GET_DATE}\b`, 'gi'),
+    [SW]: new RegExp(SW, 'gi'),
+  }, { newDate: 4, dateNow: 1, [NOW]: 10, dateTimeNow: 0, [GET_DATE]: 0, [SW]: 4 },
+  'Use the constant 2026-11-19T02:00:00Z in fixtures and Get-DrillTime inside PowerShell snippets.');
+  // The drill's machine-wide mutex names stay out of the tests (Fable clock-seam points ruling, point 5): fixtures use their own names.
+  const mutexName = word('CluedFirst', 'InstallDrill');
+  const named = tests.flatMap((text, i) => text.includes(mutexName) ? [i + 1] : []);
+  assert.deepEqual(named, [], `drill-vm.test.mjs names the drill's machine-wide mutex (lines ${named.join(', ')}); fixtures take their own names`);
+});
+
+// Fable clock-seam points ruling, point 5: the drill's named mutexes are machine-wide, so a test holding them refused a real drill on this
+// host, and failed while one ran. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own.
+test('the fixtures never take the drill\'s machine-wide mutexes', opts, () => {
+  const names = ps('@($script:Drill.HostMutex, $script:Drill.BootMutex)');
+  assert.equal(names.length, 2);
+  for (const name of names) assert.ok(/^Local\\/.test(name) && !/^Global\\/i.test(name), `a fixture holds the mutex ${name}`);
 });
