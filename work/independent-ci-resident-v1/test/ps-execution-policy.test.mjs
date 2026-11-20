@@ -102,7 +102,7 @@ const unguardedLines = text => text.split(/\r?\n/).map((line, i) => [i + 1, line
 //  - SOURCE: a file of the accepted Source closure (source-closure.json); its bytes are pinned by ciSourceManifestSha256, the package cannot change one.
 //  - TEXT: a line that talks about the option and starts nothing.
 // A listed file with another count, or one that no longer needs its entry, is red: the set cannot go stale.
-const SOURCE = 'the file is in source-closure.json: pinned by ciSourceManifestSha256, a change needs a new Source acceptance (open point for the design owner)';
+const SOURCE = 'bytes frozen: the file is in source-closure.json (ciSourceManifestSha256); covered by the execution-policy baseline the host preparation sets and checks';
 const A = 'work/actions-hosted-migration/independent-ci-v1';
 const EXCEPTIONS = Object.freeze({
   'scripts/ci/clued-independent-supervisor.mjs': { count: 1, kind: 'SOURCE', reason: SOURCE },
