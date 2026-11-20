@@ -57,6 +57,13 @@ test('自检要求身份正确、观测新鲜，且两个 KSP 都打不开密钥
   }
   assert.equal(verdict(null,rows),'FAIL');
   assert.equal(verdict({...system,sid:service},rows),'FAIL');
+  const maxAge=30*60_000;
+  for (const [offset, expected] of [[-maxAge,true],[-maxAge-1,false],[1,false],[86_400_000,false]]) {
+    const retime = row => ({...row,at:new Date(now+offset).toISOString()});
+    const checks=keyCheck(retime(system),...rows.map(retime),profile,now);
+    assert.deepEqual([checks.system,checks.resident,checks.controller,checks.companion],
+      [expected,expected,expected,expected],`观测时间偏移 ${offset} 毫秒`);
+  }
 });
 
 test('TURING 21:16 反向观测中常驻在两个 KSP 都找不到密钥时通过', () => {
@@ -69,6 +76,36 @@ test('TURING 21:16 反向观测中常驻在两个 KSP 都找不到密钥时通�
     {...origin,sid:profile.ownerSid,'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'},profile,now);
   assert.equal(checks.resident,true);
   assert.equal(checks.result,'PASS');
+});
+
+test('常驻轮次开始后产生的四项密钥观测仍可通过自检', async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'renew-fresh-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const root=path.join(directory,'resident');
+  for (const dir of ['resident/state','resident/broker/requests','resident/mailbox/responses','state/v2/receipts'])
+    fs.mkdirSync(path.join(directory,dir),{recursive:true});
+  const service='S-1-5-80-'+Array.from({length:5},(_,i)=>sidHash.readUInt32LE(4*i)).join('-');
+  const profile={ownerSid:'companion',controllerSid:'controller'};
+  let now=Date.parse('2026-11-20T00:32:06.000Z');
+  const iso=()=>new Date(now).toISOString();
+  const row=sid=>({at:iso(),sid,tpm:'DENIED',software:'ABSENT'});
+  const put=(file,value)=>fs.writeFileSync(path.join(directory,file),JSON.stringify(value));
+  const step=renewalWatch({root,profile,mode:()=>'STANDBY',clock:()=>now,observe:async()=>{
+    now+=40;
+    return row(service);
+  }});
+  // 启动轮次先读时钟，挂起读取状态后，独立的写入方发布另外三项观测。
+  const checking=step();
+  now+=80;
+  put('resident/broker/renew-key.json',{at:iso(),sid:'S-1-5-18',provider:'Microsoft Platform Crypto Provider',code:null});
+  put('state/v2/receipts/renew-key-controller.json',row(profile.controllerSid));
+  put('resident/mailbox/responses/renew-key.json',{...row(profile.ownerSid),
+    'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
+  await checking;
+  const {keys,checkedAt}=JSON.parse(fs.readFileSync(path.join(root,'state','connection-renewal.json'),'utf8'));
+  assert.deepEqual({resident:keys.resident,system:keys.system,controller:keys.controller,companion:keys.companion,result:keys.result},
+    {resident:true,system:true,controller:true,companion:true,result:'PASS'});
+  assert.equal(checkedAt,iso());
 });
 
 test('常驻状态原样记录 SYSTEM 失败诊断，并在 Broker 恢复后清空', async t => {
@@ -632,6 +669,10 @@ test('M3 陪伴文件缺席与当班控制观测', () => {
   const check=mode=>keyCheck(system,row(service),controller,companion,{controllerSid:'controller',ownerSid:'helper'},now,mode);
   assert.equal(check('ACTIVE').result,'PASS');
   assert.equal(check('STANDBY').controller,false);
+  const priorAt=controller.at;
+  controller.at=new Date(now+86_400_000).toISOString();
+  assert.equal(check('ACTIVE').controller,false);
+  controller.at=priorAt;
   controller.tpm='OPEN'; assert.equal(check('ACTIVE').controller,false);
 });
 
