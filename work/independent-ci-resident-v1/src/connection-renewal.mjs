@@ -85,15 +85,17 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
   let nextCheck=0, book=null;
   const save=()=>writeObservation(stateFile,book);
   const requestFile=id=>path.join(root,'broker','requests',id+'.json');
-  // Codex 复审 076827ffe 中1：准备投递与已成功投出分开。新请求号先记为 book.next 落盘，旧号（在途或已放弃）留在 book.pending；
-  // 请求文件确实建成才换号。请求文件只增不删（Broker 不删、常驻无删除权），所以文件在 = 已投出：在则换号，确实不存在则按未投出丢弃
-  // 准备记录、旧号照旧；查不清（其他错误）就留着下一轮再判，期间不投新请求。
+  const requestBody=kind=>JSON.stringify({kind}); // Broker 的 MatchKind 只认 {"kind":...} 这一种正文；请求号就是文件名
+  // Codex 复审 076827ffe 中1、第四轮中1：准备投递与已成功投出分开。新请求号先记为 book.next 落盘，旧号（在途或已放弃）留在
+  // book.pending；读回请求文件、正文与该号应有的正文逐字相同才算投出并换号。文件不存在、为空或只写了一半都按未投出：丢弃准备记录，
+  // 旧号照旧可采纳，残件不再复用（常驻对已有请求文件只读，改不了也删不掉），下次投递另取新号。读不清（其他错误）留到下一轮再判，
+  // 期间不投新请求。不采用“写完再原子出现”：请求邮箱的 ACL 只许新建、不许改名，从别处移入会带进常驻可写的 ACL，破坏“交出后不可改”。
   const settleNext = async () => {
     if (!book.next) return;
-    let posted;
-    try { await fs.access(requestFile(book.next.id)); posted=true; }
-    catch (e) { if (e?.code!=='ENOENT' && e?.code!=='ENOTDIR') return; posted=false; }
-    if (posted) book.pending=book.next;
+    let body;
+    try { body=await fs.readFile(requestFile(book.next.id),'utf8'); }
+    catch (e) { if (e?.code!=='ENOENT' && e?.code!=='ENOTDIR') return; body=null; }
+    if (body===requestBody(book.next.kind)) book.pending=book.next;
     book.next=null; await save();
   };
   const post = async (kind, at, confirmationId) => {
@@ -101,7 +103,7 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
     // 在途请求记下投出它的那一代（中2）：结清时通道记录归这一代，换代后读到的旧代拒绝不计本代退避。
     book.next = {id, kind, at, confirming: confirmationId !== undefined, source};
     await save();
-    try { await fs.writeFile(requestFile(id), JSON.stringify({kind}), {flag:'wx'}); }
+    try { await fs.writeFile(requestFile(id), requestBody(kind), {flag:'wx'}); }
     finally { await settleNext(); }
   };
   return async () => {
