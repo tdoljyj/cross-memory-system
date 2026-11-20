@@ -185,7 +185,7 @@ test('the first install accepts only COMPANION_ACCOUNT_PREPARED from the account
   assert.equal(r.status, 1, r.out);
   assert.equal(JSON.parse(r.lines.at(-1)).code, 'COMPANION_ACCOUNT_NOT_PREPARED', r.out);
   const text = fs.readFileSync(HOST, 'utf8');
-  assert.match(text, /'-RegistrarSha256', \$RegistrarSha256, '-AccountOnly'\)/, 'the first install runs the account script account-only');
+  assert.match(text, /'-RegistrarSha256', \$RegistrarSha256, '-AccountOnly'[,)]/, 'the first install runs the account script account-only');
 });
 
 test('the drill\'s fake credential file names are all in the package\'s fixed list', { skip, timeout: 120_000 }, () => {

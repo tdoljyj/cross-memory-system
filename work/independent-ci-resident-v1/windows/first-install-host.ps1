@@ -702,6 +702,14 @@ function Assert-CompanionPrepared($prepRun) {
   }
   $pr
 }
+# clued-control's right to log on as a service, as the companion account script granted it and read it back (its steps.serviceLogon):
+# granted, or the host preparation stops with the step it stopped in (resolve, open, grant, readback) and the system's raw status.
+function Assert-ServiceLogonGranted($pr) {
+  $s = Get-Key (Get-Key $pr 'steps') 'serviceLogon'
+  if ([string](Get-Key $s 'status') -ceq 'SERVICE_LOGON_GRANTED') { return }
+  Stop-Host 'SERVICE_LOGON_RIGHT_NOT_GRANTED' ([ordered]@{ step = (Get-Key $s 'step'); ntStatus = (Get-Key $s 'ntStatus'); win32 = (Get-Key $s 'win32')
+    registrarCode = (Get-Key $s 'registrarCode'); detail = (Get-Key $s 'detail'); rights = (Get-Key $s 'rights'); recorded = ($null -ne $s) })
+}
 # The error id a PowerShell child that threw printed on stderr ("+ FullyQualifiedErrorId : <id>"): its code when it threw one.
 function Get-ChildErrorId([string]$stderr) {
   $m = [regex]::Match([string]$stderr, '(?m)^\s*\+\s*FullyQualifiedErrorId\s*:\s*([A-Za-z][A-Za-z0-9_.:,-]{0,120})\s*$')
@@ -898,24 +906,22 @@ function Invoke-HostPreparation {
       if (@(Get-LocalGroupMember -SID 'S-1-5-32-544' | Where-Object { $_.SID.Value -ceq $u.SID.Value }).Count) { Stop-Host 'SERVICE_ACCOUNT_IS_AN_ADMINISTRATOR' $name }
     }
     $controllerSid = (Get-LocalUser -Name 'clued-control').SID.Value
-    # the companion account by the package's own tool, its registrar held to the archive's pin (L2)
+    # clued-control never denied the right to log on as a service (install-resident.ps1 Test-ServiceLogonRight): read only, a USER_RIGHTS
+    # export -- the policy is never written back here (Fable renew-key ruling, supplement "service logon grant")
+    $rights = Join-Path $stage 'rights'; $null = New-Dir $rights (Get-AdminOnlySddl)
+    $seExport = Invoke-Native 'C:\Windows\System32\secedit.exe' @('/export', '/areas', 'USER_RIGHTS', '/cfg', (Join-Path $rights 'now.inf')) 300
+    if ($seExport.exit -ne 0 -or -not [IO.File]::Exists((Join-Path $rights 'now.inf'))) { Stop-Host 'USER_RIGHTS_UNREADABLE' ([ordered]@{ exit = $seExport.exit; stdout = $seExport.stdout; stderr = $seExport.stderr }) }
+    $now = [IO.File]::ReadAllText((Join-Path $rights 'now.inf'))
+    if (Test-DenyServiceLogon $now $controllerSid) { Stop-Host 'CONTROLLER_DENIED_LOGON_AS_A_SERVICE' 'SeDenyServiceLogonRight names clued-control: remove it (a policy decision, never made here)' }
+    # the companion account by the package's own tool, its registrar held to the archive's pin (L2); the same registrar grants clued-control
+    # its right to log on as a service and reads it back (-ServiceLogonSid)
     # (it keeps this console: its token step may read the clipboard; its own output in the console's code page)
-    $prepRun = Invoke-Native $PowerShellExe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $R 'windows\prepare-companion-account.ps1'), '-LogDirectory', (Join-Path $stage 'companion-log'), '-RegistrarSha256', $RegistrarSha256, '-AccountOnly') 1800 ([Console]::OutputEncoding) $true
+    $prepRun = Invoke-Native $PowerShellExe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $R 'windows\prepare-companion-account.ps1'), '-LogDirectory', (Join-Path $stage 'companion-log'), '-RegistrarSha256', $RegistrarSha256, '-AccountOnly', '-ServiceLogonSid', $controllerSid) 1800 ([Console]::OutputEncoding) $true
     $pr = Assert-CompanionPrepared $prepRun
+    Assert-ServiceLogonGranted $pr
     $companionSid = [string](Get-Key (Get-Key $pr 'nodeProfile') 'ownerSid'); $companionProfile = [string](Get-Key (Get-Key $pr 'nodeProfile') 'ownerProfileDirectory')
     $nodeProfile = try { Get-NodeProfile ([Environment]::MachineName) $controllerSid $companionSid $companionProfile } catch { Stop-Host ([string]$_.Exception.Message) 'rename the machine to a name of 1-15 letters, digits and inner hyphens; no parameter changes it' }
     if ($operator -ceq $companionSid -or $operator -ceq $controllerSid) { Stop-Host 'OPERATOR_IS_A_SERVICE_ACCOUNT' $operator }
-    # clued-control's right to log on as a service, never denied (install-resident.ps1 Test-ServiceLogonRight)
-    $rights = Join-Path $stage 'rights'; $null = New-Dir $rights (Get-AdminOnlySddl)
-    $null = Invoke-Native 'C:\Windows\System32\secedit.exe' @('/export', '/areas', 'USER_RIGHTS', '/cfg', (Join-Path $rights 'now.inf')) 300
-    $now = [IO.File]::ReadAllText((Join-Path $rights 'now.inf'))
-    if (Test-DenyServiceLogon $now $controllerSid) { Stop-Host 'CONTROLLER_DENIED_LOGON_AS_A_SERVICE' 'SeDenyServiceLogonRight names clued-control: remove it (a policy decision, never made here)' }
-    if ($now -notmatch ('(?m)^SeServiceLogonRight\s*=.*\*' + [regex]::Escape($controllerSid) + '\b') -and $now -notmatch '(?m)^SeServiceLogonRight\s*=.*\bclued-control\b') {
-      $line = if ($now -match '(?m)^SeServiceLogonRight\s*=\s*(.*)$') { 'SeServiceLogonRight = ' + $Matches[1].Trim() + ',*' + $controllerSid } else { 'SeServiceLogonRight = *' + $controllerSid }
-      [IO.File]::WriteAllText((Join-Path $rights 'add.inf'), "[Unicode]`r`nUnicode=yes`r`n[Version]`r`nsignature=`"`$CHICAGO`$`"`r`nRevision=1`r`n[Privilege Rights]`r`n$line`r`n", [Text.Encoding]::Unicode)
-      $seConf = Invoke-Native 'C:\Windows\System32\secedit.exe' @('/configure', '/db', (Join-Path $rights 'add.sdb'), '/cfg', (Join-Path $rights 'add.inf'), '/areas', 'USER_RIGHTS') 600
-      if ($seConf.exit -ne 0) { Stop-Host 'SERVICE_LOGON_RIGHT_NOT_GRANTED' ([ordered]@{ exit = $seConf.exit; stderr = $seConf.stderr }) }
-    }
     Step 'accounts' ([ordered]@{ controllerSid = $controllerSid; companionSid = $companionSid; operatorSid = $operator })
     Enter-Step 'ci-root'
     # CI root, formal-spool, first-install, credentials, the two secret folders

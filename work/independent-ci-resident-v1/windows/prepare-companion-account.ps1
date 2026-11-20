@@ -35,7 +35,8 @@ param([ValidatePattern('^[a-z][a-z0-9-]{2,19}$')][string]$AccountName = 'clued-c
   [Parameter(Mandatory)][string]$LogDirectory,
   [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$RegistrarSha256,
   [ValidatePattern('^[0-9]{1,3}GB$')][string]$WslMemory = '16GB', [ValidateRange(1, 64)][int]$WslProcessors = 8, [ValidatePattern('^[0-9]{1,3}GB$')][string]$WslSwap = '4GB',
-  [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe, [switch]$AccountOnly, [switch]$Plan)
+  [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe, [switch]$AccountOnly, [switch]$Plan,
+  [ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$ServiceLogonSid)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
@@ -62,6 +63,33 @@ function Invoke-PrepRegistrar([string]$exe, [string[]]$arguments) {
   $p = [Diagnostics.Process]::Start($psi)
   $o = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
   $o.Trim()
+}
+# A field of what ConvertFrom-Json gave, $null when absent (strict mode reads no missing property).
+function Get-PrepField($o, [string]$name) { if ($null -ne $o -and $o.PSObject.Properties[$name]) { $o.PSObject.Properties[$name].Value } else { $null } }
+# Fable renew-key ruling, supplement "service logon grant": a local account's right to log on as a service (the first install's
+# clued-control, -ServiceLogonSid), by the registrar's grant -- the one that gives the companion its batch logon -- and judged by the result:
+# the account's rights read back must hold it. Two steps, each its own function. Returns the outcome; never throws, the caller decides.
+function Invoke-PrepGrantServiceLogon([string]$exe, [string]$sid) { (Invoke-PrepRegistrar $exe @('grant-service-logon', $sid)) | ConvertFrom-Json }
+function Read-PrepAccountRights([string]$exe, [string]$sid) { (Invoke-PrepRegistrar $exe @('account-facts', $sid)) | ConvertFrom-Json }
+function Grant-PrepServiceLogon([string]$exe, [string]$sid) {
+  $out = [ordered]@{ status = 'SERVICE_LOGON_RIGHT_NOT_GRANTED'; step = 'grant'; ntStatus = $null; win32 = $null; registrarCode = $null; detail = $null; rights = $null }
+  $grant = try { Invoke-PrepGrantServiceLogon $exe $sid } catch { $null }
+  $out.registrarCode = Get-PrepField $grant 'code'; $out.detail = Get-PrepField $grant 'detail'
+  if ([string]$out.registrarCode -cne 'RIGHT_GRANTED') {
+    # the registrar's detail: resolve | open:<NTSTATUS>:<win32> | grant:<NTSTATUS>:<win32>
+    $parts = @(([string]$out.detail) -split ':')
+    if ($parts[0] -cin @('resolve', 'open', 'grant')) { $out.step = $parts[0] }
+    if ($parts.Count -ge 3) { $out.ntStatus = $parts[1]; $out.win32 = $parts[2] }
+    return $out
+  }
+  $out.step = 'readback'
+  $facts = try { Read-PrepAccountRights $exe $sid } catch { $null }
+  $out.registrarCode = Get-PrepField $facts 'code'; $out.detail = Get-PrepField $facts 'detail'
+  if ([string]$out.registrarCode -cne 'ACCOUNT_FACTS') { return $out }
+  $out.rights = @(Get-PrepField $facts 'rights')
+  if (@($out.rights) -cnotcontains 'SeServiceLogonRight') { return $out }
+  $out.status = 'SERVICE_LOGON_GRANTED'; $out.step = $null; $out.registrarCode = $null; $out.detail = $null
+  $out
 }
 # H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
 # text): stdout, stderr and the exit code read apart; a child's stderr line is text, never an error that ends this script under Stop.
@@ -192,6 +220,8 @@ try {
   if ([string]$prep.code -cne 'ACCOUNT_PREPARED') { throw ('ACCOUNT_NOT_PREPARED:' + [string]$prep.code) }
   $sid = [string]$prep.sid; $profileDir = [string]$prep.profileDirectory
   if ($profileDir -cnotmatch '^C:\\Users\\[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?\z') { throw 'PROFILE_DIRECTORY_REFUSED' }
+  # 2b. The first install's clued-control: its right to log on as a service, granted and read back (the caller judges the outcome).
+  if ($ServiceLogonSid) { $log.steps.serviceLogon = Grant-PrepServiceLogon $exe $ServiceLogonSid }
   # 3. Not on the sign-in screen (it never signs in interactively; the root shell uses its own logon).
   $ul = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList'
   if (-not (Test-Path -LiteralPath $ul)) { $null = New-Item -Path $ul -Force }
