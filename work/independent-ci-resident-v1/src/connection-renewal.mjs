@@ -81,8 +81,9 @@ export function renewalWatch({root, profile, mode, drained, onHandover, clock=Da
       const [system,r,c,h]=await Promise.all([read(path.join(root,'broker','renew-key.json')),observe().catch(()=>null),
         read(controller),read(path.join(root,'mailbox','responses','renew-key.json'))]);
       if(r) await writeObservation(path.join(root,'state','renew-key-resident.json'),r);
-      book.keys={...keyCheck(system,r,c,h,profile,now,mode()),systemFailure:system?.failure??null};
-      book.checkedAt=new Date(now).toISOString(); await save();
+      const checkedAt=clock();
+      book.keys={...keyCheck(system,r,c,h,profile,checkedAt,mode()),systemFailure:system?.failure??null};
+      book.checkedAt=new Date(checkedAt).toISOString(); await save();
     }
     if (book.pending) {
       const {id,kind,at,confirming}=book.pending;
