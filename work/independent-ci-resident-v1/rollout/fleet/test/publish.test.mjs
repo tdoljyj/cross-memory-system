@@ -756,8 +756,8 @@ test('seal refuses a candidate whose commit is not on main, or whose place canno
 });
 
 // blocking 4: a candidate drill's receipt is taken only with one of two conclusions and candidate true; the set is defined once and exported
-test('seal --drill-receipt: PASS_A_FULL or PASS_A_PER_NODE_STEPS_REMAIN of a candidate with these three hashes; anything else is refused first; the cell is never replaced', async t => {
-  assert.deepEqual(publishModule.DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
+test('seal --drill-receipt: one of the three PASS conclusions of a candidate with these three hashes; anything else is refused first; the cell is never replaced', async t => {
+  assert.deepEqual(publishModule.DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN', 'PASS_A_REINSTALL_NOT_DRILLED']);
   assert.ok(Object.isFrozen(publishModule.DRILL_PASS_CONCLUSIONS));
   const w = await prepWorld(t);
   await w.prep();

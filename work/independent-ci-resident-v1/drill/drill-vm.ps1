@@ -537,7 +537,107 @@ function Read-DrillKit([string]$Dir) {
       $candidate[$k] = $v
     }
   }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate }
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials'); credentialFilesSha256 = (Get-Prop $kit 'credentialFilesSha256') }
+}
+
+# The drill's decision for each credential file name a package may declare (Fable renew-key ruling, supplements "merge order" and
+# "heartbeat token and restart code"): give it -- New-DrillFakeCredentials makes the file under `fake`, the entry's copy table hands it
+# over under the package's name -- or withhold it by design, with the reason. Neither side has a default: a required name the drill
+# cannot give, or an optional name with no decision here, refuses the drill before any boot (Get-DrillCredentialPlan). Registered in
+# FIRST-INSTALL-KIT.md (stand-in register); the receipt lists the optional ones withheld. The table is drill/credential-decisions.json, the
+# one source make-drill-kit.mjs reads too: a name given there with a perNodeStep is registered in the kit's per-node steps whenever the
+# package names it, required or optional, exactly as the run makes and hands it over (Codex review of f33fc33e5, medium 4).
+# Looked up by file name ordinally and case-sensitively (6th review round, low 1), as make-drill-kit.mjs looks it up (an object's own key)
+# and as the package's names are bound (Assert-DrillKitCredentialsBound compares with -cne): a name the table
+# spells otherwise is no decision at either end.
+function Read-DrillCredentialDecisions([string]$File) {
+  $t = [IO.File]::ReadAllText($File, [Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+  if ([string]$t.contract -cne 'clued.drill.credential-decisions/1') { throw (New-DrillError 'DRILL_CREDENTIAL_DECISIONS_REFUSED' $File) }
+  $o = New-Object System.Collections.Specialized.OrderedDictionary -ArgumentList ([StringComparer]::Ordinal)
+  foreach ($p in $t.decisions.PSObject.Properties) { $d = [ordered]@{}; foreach ($f in $p.Value.PSObject.Properties) { $d[$f.Name] = $f.Value }; $o[$p.Name] = $d }
+  $o
+}
+$script:DrillCredentialDecisions = Read-DrillCredentialDecisions (Join-Path $PSScriptRoot 'credential-decisions.json')
+
+# The kit's credential names bound again to the package being drilled (Codex review of e0a3cded5, high 2): the package's
+# credential-files.json read from the verified tar by the one reader (make-drill-kit.mjs --credentials-of); the hash of its bytes and its
+# two groups, name by name, must be the kit's record; any difference refuses the drill before any boot.
+function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
+  $reader = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'make-drill-kit.mjs'
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $run = Invoke-DrillNode $node @($reader, '--credentials-of', $Tar) 60
+  $derived = $null
+  if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
+  if ($null -eq $derived -or [string](Get-Prop $derived 'sha256') -cnotmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE' $Tar) }
+  # the list's bytes by their hash, and the two groups member by member (8th review round, medium 1: never through a joined text)
+  $bytes = [string](Get-Prop $derived 'sha256'); $recorded = [string](Get-Prop $KitInfo 'credentialFilesSha256')
+  $same = Test-DrillCredentialGroupsEqual (Get-Prop $derived 'credentials') (Get-Prop $KitInfo 'credentials')
+  # the recorded hash a lowercase hex digest, compared ordinally (9th review round, low 2: -cne is culture-aware and ignores some characters)
+  $hashSame = ($recorded -cmatch '^[0-9a-f]{64}$') -and [string]::Equals($bytes, $recorded, [StringComparison]::Ordinal)
+  if (-not $same -or -not $hashSame) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ groupsEqual = $same; packageSha256 = $bytes; kitSha256 = $recorded }) }
+}
+
+# A credential group's members as written: each key with its value (a dictionary or a parsed JSON object).
+function Get-DrillCredentialMembers($Group) {
+  $list = New-Object 'System.Collections.Generic.List[object]'
+  if ($Group -is [Collections.IDictionary]) { foreach ($k in @($Group.Keys)) { $list.Add(@{ key = [string]$k; value = $Group[$k] }) } }
+  elseif ($null -ne $Group) { foreach ($p in $Group.PSObject.Properties) { $list.Add(@{ key = [string]$p.Name; value = $p.Value }) } }
+  , $list
+}
+# The two groups of two lists the same: in each group the same number of members, and for every member of one the member of the other with
+# the same key (ordinal) holds the same string value (ordinal).
+function Test-DrillCredentialGroupsEqual($A, $B) {
+  foreach ($g in @('required', 'optional')) {
+    $ga = Get-Prop $A $g; $gb = Get-Prop $B $g
+    if ($null -eq $ga -or $null -eq $gb) { return $false }
+    $x = Get-DrillCredentialMembers $ga; $y = Get-DrillCredentialMembers $gb
+    if ($x.Count -ne $y.Count) { return $false }
+    foreach ($m in $x) {
+      $match = @($y | Where-Object { [string]::Equals($_.key, $m.key, [StringComparison]::Ordinal) })
+      if ($match.Count -ne 1 -or $m.value -isnot [string] -or $match[0].value -isnot [string] -or -not [string]::Equals($match[0].value, $m.value, [StringComparison]::Ordinal)) { return $false }
+    }
+  }
+  return $true
+}
+
+# The package's gh and Git for Windows installers in the kit, each with the hash the package's prerequisite manifest pins (Codex review of
+# e0a3cded5, high 3; make-drill-kit.mjs INJECTED_TOOLS): one missing refuses the drill before any boot, by name. Both are prerequisites
+# the package's bootstrap requires: the manifest declaring either not exactly once refuses too, never "nothing to check" (Codex review
+# of f33fc33e5, medium 3).
+function Assert-DrillKitToolsBound($KitInfo, [string]$ManifestFile) {
+  $pm = Read-DrillJson $ManifestFile
+  $kit = Read-DrillJson (Join-Path $KitInfo.dir 'kit.json')
+  foreach ($name in @('gh', 'git-for-windows')) {
+    $declared = @(@(Get-Prop $pm 'items') | Where-Object { $null -ne $_ -and [string](Get-Prop $_ 'name') -ceq $name })
+    if ($declared.Count -ne 1) { throw (New-DrillError 'DRILL_PACKAGE_TOOL_NOT_DECLARED' $name) }
+    $item = $declared[0]
+    $in = @(@(Get-Prop $kit 'files') | Where-Object { [string](Get-Prop $_ 'path') -ceq [string](Get-Prop $item 'fileName') -and [string](Get-Prop $_ 'sha256') -ceq [string](Get-Prop $item 'sha256') })
+    if ($in.Count -ne 1) { throw (New-DrillError 'DRILL_KIT_TOOL_NOT_INJECTED' $name) }
+  }
+}
+
+# The kit's credential names (make-drill-kit.mjs, from the package) against the drill's decisions: what is given (and the fake file each
+# is made as), what is withheld and why. Throws by name for a required name the drill cannot give or an optional one it has no decision for.
+function Get-DrillCredentialPlan($Kit) {
+  $c = Get-Prop $Kit 'credentials'
+  $req = Get-Prop $c 'required'; $opt = Get-Prop $c 'optional'
+  if ($null -eq $req -or $null -eq $opt) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'credentials') }
+  $names = { param($g) @(if ($g -is [Collections.IDictionary]) { $g.Values } else { $g.PSObject.Properties | ForEach-Object { $_.Value } }) | ForEach-Object { [string]$_ } }
+  # the shape (Codex review of e0a3cded5, high 2): a non-empty required group; every name a plain file name
+  if (@(& $names $req).Count -eq 0) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'credentials.required') }
+  foreach ($n in @(@(& $names $req) + @(& $names $opt))) { if ($n -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' "credentials $n") } }
+  $give = @(); $withheld = @()
+  foreach ($n in @(& $names $req)) {
+    $d = $script:DrillCredentialDecisions[$n]
+    if ($null -eq $d -or $d.give -ne $true) { throw (New-DrillError 'DRILL_CREDENTIAL_REQUIRED_NOT_MADE' $n) }
+    $give += $n
+  }
+  foreach ($n in @(& $names $opt)) {
+    $d = $script:DrillCredentialDecisions[$n]
+    if ($null -eq $d) { throw (New-DrillError 'DRILL_CREDENTIAL_OPTIONAL_UNDECIDED' $n) }
+    if ($d.give -eq $true) { $give += $n } else { $withheld += [ordered]@{ name = $n; reason = $d.reason } }
+  }
+  [ordered]@{ given = $give; fake = @($give | ForEach-Object { $script:DrillCredentialDecisions[$_].fake }); withheld = $withheld }
 }
 
 # A generated kit binds the complete Release directory, not just the old package triple.
@@ -577,9 +677,9 @@ function Read-DrillPrereq([string]$Dir) {
   if ($distro -notmatch '^[A-Za-z][A-Za-z0-9._-]{0,63}$') { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'distribution') }
   $root = [IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\'
   $check = {
-    param($f, [string]$what, [string]$suffix)
+    param($f, [string]$what, [string]$suffix, [string]$urlPattern = '^https?://(github\.com/microsoft/WSL/|releases\.ubuntu\.com/|archive\.ubuntu\.com/ubuntu/|security\.ubuntu\.com/ubuntu/)')
     $rel = [string](Get-Prop $f 'path'); $want = [string](Get-Prop $f 'sha256'); $url = [string](Get-Prop $f 'url')
-    if ($rel -notmatch '^[A-Za-z0-9._+~\-\\]+$' -or $rel -match '(^|\\)\.\.(\\|$)' -or -not $rel.EndsWith($suffix) -or $want -notmatch '^[0-9a-f]{64}$' -or $url -notmatch '^https?://(github\.com/microsoft/WSL/|releases\.ubuntu\.com/|archive\.ubuntu\.com/ubuntu/|security\.ubuntu\.com/ubuntu/)') {
+    if ($rel -notmatch '^[A-Za-z0-9._+~\-\\]+$' -or $rel -match '(^|\\)\.\.(\\|$)' -or -not $rel.EndsWith($suffix) -or $want -notmatch '^[0-9a-f]{64}$' -or $url -notmatch $urlPattern) {
       throw (New-DrillError 'DRILL_PREREQ_REFUSED' "$what $rel") }
     $full = [IO.Path]::GetFullPath((Join-Path $Dir $rel))
     if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' "$what $rel") }
@@ -593,7 +693,13 @@ function Read-DrillPrereq([string]$Dir) {
   if ($debs.Count -lt 1) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'debs') }
   $debPaths = @($debs | ForEach-Object { & $check $_ 'deb' '.deb' })
   if (@($debPaths | Where-Object { $_ -notmatch '^debs\\[^\\]+$' }).Count) { throw (New-DrillError 'DRILL_PREREQ_REFUSED' 'debs live in debs\') }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); distribution = $distro; wsl = $wsl; rootfs = $rootfs; debs = $debPaths; wslVersion = [string](Get-Prop $p 'wsl.version') }
+  # the host's pinned installers of gh and Git for Windows (Fable renew-key ruling, supplement "after the package branch" 3, 1): injected
+  # into the guest like WSL and the rootfs (make-drill-kit.mjs puts each into the kit when the Release's prerequisite manifest pins it),
+  # never downloaded there; from their official releases only
+  $toolPaths = @(@(Get-Prop $p 'tools') | Where-Object { $null -ne $_ } | ForEach-Object {
+    $suffix = if ([string](Get-Prop $_ 'path') -like '*.msi') { '.msi' } else { '.exe' }
+    & $check $_ 'tool' $suffix '^https://github\.com/(cli/cli|git-for-windows/git)/releases/download/' })
+  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); distribution = $distro; wsl = $wsl; rootfs = $rootfs; debs = $debPaths; tools = $toolPaths; wslVersion = [string](Get-Prop $p 'wsl.version') }
 }
 
 # Inside the VM (elevated PowerShell Direct session): install the pinned WSL package, register the pinned Ubuntu image under the
@@ -601,26 +707,38 @@ function Read-DrillPrereq([string]$Dir) {
 # Returns facts only; the host judges them. Never downloads: dpkg installs exactly the pinned files. (apt-get, even with
 # --no-download, resolved against the apt lists the Ubuntu image ships and wanted archives from the network: 2026-11-16 12:58.)
 $script:GuestPrereq = {
-  param($Dir, $Wsl, $Rootfs, $Distro, $WslVersion)
+  param($Dir, $Wsl, $Rootfs, $Distro, $WslVersion, $NativeText)
   $ErrorActionPreference = 'Stop'
+  $native = [scriptblock]::Create($NativeText)
   $wslExe = "$env:SystemRoot\System32\wsl.exe"
-  $p = Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList @('/i', (Join-Path $Dir $Wsl), '/qn', '/norestart') -Wait -PassThru
-  if ($p.ExitCode -notin @(0, 3010)) { throw "PREREQ_WSL_MSI_EXIT_$($p.ExitCode)" }
-  $ver = ((& $wslExe --version) -join ' ') -replace [char]0, ''
-  if ($WslVersion -and $ver -notmatch [regex]::Escape($WslVersion)) { throw "PREREQ_WSL_VERSION_NOT_PINNED" }
-  & $wslExe --install --from-file (Join-Path $Dir $Rootfs) --name $Distro --no-launch | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "PREREQ_DISTRO_INSTALL_EXIT_$LASTEXITCODE" }
+  # Every child here is read apart (Invoke-DrillNative) and kept in the facts, a refusal included: a refusal returns the facts with its
+  # code in `failure` (the host writes them, then stops by that code), never a bare exception (Codex review of 58136df61, medium 3).
+  # wsl's own output is UTF-16LE (the package reads wsl --version so: first-install-host.ps1); the MSI writes its log to wsl-msi.log.
+  $f = [ordered]@{ failure = $null; distribution = $Distro }
+  $msiLog = Join-Path $Dir 'wsl-msi.log'
+  $mi = & $native "$env:SystemRoot\System32\msiexec.exe" @('/i', (Join-Path $Dir $Wsl), '/qn', '/norestart', '/L*v', $msiLog) 1800
+  $f.msi = [ordered]@{ exit = $mi.exit; stdout = $mi.stdout; stderr = $mi.stderr; logTail = @(if (Test-Path -LiteralPath $msiLog -PathType Leaf) { Get-Content -LiteralPath $msiLog -Tail 40 | ForEach-Object { [string]$_ } }) }
+  if ($mi.exit -notin @(0, 3010)) { $f.failure = "PREREQ_WSL_MSI_EXIT_$($mi.exit)"; return $f }
+  $vr = & $native $wslExe @('--version') 120 'utf-16'
+  $ver = (@($vr.stdout -split "`r?`n" | Where-Object { $_ -ne '' }) -join ' ')
+  $f.wslVersion = $ver; $f.wslVersionRun = [ordered]@{ exit = $vr.exit; stderr = $vr.stderr }
+  if ($WslVersion -and $ver -notmatch [regex]::Escape($WslVersion)) { $f.failure = 'PREREQ_WSL_VERSION_NOT_PINNED'; return $f }
+  $ir = & $native $wslExe @('--install', '--from-file', (Join-Path $Dir $Rootfs), '--name', $Distro, '--no-launch') 1800 'utf-16'
+  $f.install = [ordered]@{ exit = $ir.exit; stdout = $ir.stdout; stderr = $ir.stderr }
+  if ($ir.exit -ne 0) { $f.failure = "PREREQ_DISTRO_INSTALL_EXIT_$($ir.exit)"; return $f }
   # --exec: the arguments go to env as they are (with `--` WSL runs the command line through root's shell, which split the
-  # bash -c text at its | and ; - 2026-11-16 13:07). Continue: in Windows PowerShell a native stderr line under 2>&1 would
-  # otherwise become a terminating error; the output is judged as data.
-  $root = { param([string]$cmd) $ErrorActionPreference = 'Continue'; $o = @(& $wslExe -d $Distro -u root --exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C DEBIAN_FRONTEND=noninteractive /bin/bash -c $cmd 2>&1 | ForEach-Object { ([string]$_) -replace [char]0, '' }); [ordered]@{ exit = $LASTEXITCODE; out = $o } }
+  # bash -c text at its | and ; - 2026-11-16 13:07). stdout and stderr apart (Invoke-DrillNative): the stdout lines are judged as data,
+  # stderr is kept beside them.
+  $root = { param([string]$cmd) $n = & $native $wslExe @('-d', $Distro, '-u', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', 'LC_ALL=C', 'DEBIAN_FRONTEND=noninteractive', '/bin/bash', '-c', $cmd) 3600
+    [ordered]@{ exit = $n.exit; out = @($n.stdout -split "`r?`n" | Where-Object { $_ -ne '' }); err = $n.stderr } }
   $debDir = '/mnt/' + $Dir.Substring(0, 1).ToLowerInvariant() + ($Dir.Substring(2) -replace '\\', '/') + '/debs'
   $dpkg = & $root "dpkg -i --force-confold $debDir/*.deb 2>&1 | tail -n 25; echo DPKG_EXIT=`${PIPESTATUS[0]}; echo AUDIT=`$(dpkg --audit | wc -l)"
   $dpkgExit = @($dpkg.out | Where-Object { $_ -match '^DPKG_EXIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
   $audit = @($dpkg.out | Where-Object { $_ -match '^AUDIT=(\d+)$' } | ForEach-Object { [int]$Matches[1] }) | Select-Object -Last 1
   $facts = & $root "for i in `$(seq 1 30); do systemctl is-active --quiet docker.service && break; sleep 2; done; grep ^PRETTY_NAME /usr/lib/os-release; ps -p 1 -o comm=; systemctl is-active docker.service; dpkg-query -W -f='`${Package} `${Version}\n' docker.io containerd runc"
-  [ordered]@{ wslVersion = $ver; distribution = $Distro; dpkgExit = $dpkgExit; dpkgAuditLines = $audit; dpkgTail = @($dpkg.out); facts = $facts.out
-    dockerActive = (@($facts.out) -contains 'active'); systemdPid1 = (@($facts.out) -contains 'systemd') }
+  $f.dpkgExit = $dpkgExit; $f.dpkgAuditLines = $audit; $f.dpkgTail = @($dpkg.out); $f.dpkgStderr = $dpkg.err; $f.facts = $facts.out; $f.factsStderr = $facts.err
+  $f.dockerActive = (@($facts.out) -contains 'active'); $f.systemdPid1 = (@($facts.out) -contains 'systemd')
+  $f
 }
 
 # The kit entry's arguments with the fixed guest paths in place.
@@ -642,11 +760,22 @@ function Get-DrillField($Object, [string]$Name) {
   $p = $Object.PSObject.Properties[$Name]; if ($null -eq $p) { return $null }; return $p.Value
 }
 
-# Fable renew-key ruling, supplement "companion account and evidence" section 2.3: the first install's step record, from what was already
-# taken back from the guest -- the entry's printed lines and the two stage result files (the host preparation's stdout, the launcher's
-# result text). A step line is one JSON object with a name (older lines: step) and a result, and a rejectCode and detail when refused.
-# Nothing parsed is "missing": recorded so, never read as a pass. No verdict line (a run cut off) is said so, with the last step printed.
-function ConvertFrom-DrillFirstInstallSteps([string[]]$EntryLines, $StageEvidence) {
+# The first install's step record (Fable renew-key ruling, supplements "companion account and evidence" section 2.3 and "package branch,
+# two points"): steps come from COMPLETE stdout logs only -- the entry's (first-install.log), the host preparation's (host.stdout.log) and
+# the launcher stage's (launcher.stdout.log). A stage result file (host-result.json keeps only the last 6000 characters of the output)
+# gives its verdict line and never steps, so a long record cut at its head is not read as "the earlier steps did not run": a stage that
+# ran (its result file is there) without its complete log is "incomplete". A step line is one JSON object with a name (older lines: step)
+# and a result, and a rejectCode when refused. Nothing parsed is "missing", never a pass; no verdict line (a run cut off) is said so.
+# A stage's verdict: an object whose status is a non-empty string and not one of the package's own "no verdict" codes (bootstrap.ps1:
+# STAGE_CHILD_PRINTED_NO_VERDICT -- the stage shell speaks, its child printed none -- and STAGE_GAVE_NO_VERDICT). The entry holds the
+# same rule (first-install-entry.ps1 Test-EntryStageVerdict).
+$script:DrillStageNoVerdictCodes = @('STAGE_CHILD_PRINTED_NO_VERDICT', 'STAGE_GAVE_NO_VERDICT')
+function Test-DrillStageVerdict($Doc) {
+  $s = Get-DrillField $Doc 'status'
+  return ($s -is [string]) -and ($s.Length -gt 0) -and ($script:DrillStageNoVerdictCodes -cnotcontains $s)
+}
+
+function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
   $steps = New-Object System.Collections.ArrayList
   $read = {
     param([string]$Stage, [string]$Text)
@@ -659,13 +788,6 @@ function ConvertFrom-DrillFirstInstallSteps([string[]]$EntryLines, $StageEvidenc
       if ($o -isnot [pscustomobject]) { continue }
       $name = Get-DrillField $o 'name'
       if ($name -isnot [string]) { $name = Get-DrillField $o 'step' }
-      $status = Get-DrillField $o 'status'; $refusal = Get-DrillField $o 'code'
-      if (($name -isnot [string] -or -not $name) -and $status -is [string] -and $status -and $refusal -is [string] -and $refusal) {
-        # the package's refusal verdict {status, code, detail} (first-install-host.ps1 Stop-Host): a refused step named by its status
-        [void]$steps.Add([ordered]@{ stage = $Stage; name = $status; result = 'refused'; rejectCode = $refusal; detail = (Get-DrillField $o 'detail') })
-        $n++
-        continue
-      }
       if ($name -isnot [string] -or -not $name -or $null -eq $o.PSObject.Properties['result']) { continue }
       $reject = Get-DrillField $o 'rejectCode'
       if ($reject -isnot [string] -or -not $reject) { $reject = $null }
@@ -674,22 +796,63 @@ function ConvertFrom-DrillFirstInstallSteps([string[]]$EntryLines, $StageEvidenc
     }
     $n
   }
-  $stages = [ordered]@{ entry = 0; host = $null; launcher = $null }
-  $stages.entry = & $read 'entry' (@($EntryLines) -join "`n")
-  $hostResult = Get-DrillField $StageEvidence 'host-result.json'
-  $hostText = Get-DrillField $hostResult 'stdout'
-  if ($hostText -isnot [string]) { $hostText = Get-DrillField $hostResult 'stdoutTail' }
-  if ($hostText -is [string]) { $stages.host = & $read 'host' $hostText }
-  $launcherText = Get-DrillField (Get-DrillField $StageEvidence 'launcher-result.json') 'resultText'
-  if ($launcherText -is [string]) { $stages.launcher = & $read 'launcher' $launcherText }
+  $stages = [ordered]@{ entry = $null; host = $null; prepare = $null; launcher = $null }
+  foreach ($stage in @('entry', 'host', 'prepare', 'launcher')) { $text = Get-DrillField $Logs $stage; if ($text -is [string]) { $stages[$stage] = & $read $stage $text } }
+  # A stage ran when its result file or its log is there. It is incomplete (Codex review of 1cedea9ef, medium 2) when its log is missing
+  # or empty, holds no step line (only its verdict), or ends without its verdict line -- the stage gave no verdict (cut off, a timeout):
+  # what that log holds is read all the same, never taken for the whole record.
+  # "The stage gave no verdict" means one thing here and in the entry (Codex review of c1497e0a1, medium 4; Test-DrillStageVerdict): a
+  # missing or empty log, a last object that is no verdict, a package "no verdict" code, or the entry's own stageGaveNoVerdict.
+  # prepare prints only its verdict (no step lines): it is complete when its log ends with one.
+  $stageVerdicts = [ordered]@{ host = $null; launcher = $null }; $incomplete = @(); $reasons = [ordered]@{}; $noStageVerdict = @()
+  foreach ($pair in @(@('host', 'host-result.json', $true), @('prepare', $null, $false), @('launcher', 'launcher-result.json', $true))) {
+    $stage = $pair[0]
+    $result = if ($pair[1]) { Get-DrillField $StageEvidence $pair[1] } else { $null }
+    $text = Get-DrillField $Logs $stage
+    if ($null -eq $result -and $text -isnot [string]) { continue }
+    $why = @()
+    $s = Get-DrillField (Get-DrillField $result 'terminal') 'status'
+    if ($s -is [string] -and $s) { $stageVerdicts[$stage] = $s }
+    if ((Get-DrillField $result 'stageGaveNoVerdict') -eq $true) { $why += 'entry-saw-no-verdict' }
+    if ($text -isnot [string]) { $why += 'log-missing' }
+    elseif ([string]::IsNullOrWhiteSpace($text)) { $why += 'log-empty' }
+    else {
+      if ($pair[2] -and $stages[$stage] -eq 0) { $why += 'no-step-lines' }
+      $tail = @($text -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -Last 1
+      $doc = $null; try { $doc = $tail | ConvertFrom-Json } catch { $doc = $null }
+      $logVerdict = Get-DrillField $doc 'status'
+      if (Test-DrillStageVerdict $doc) { }
+      elseif ($logVerdict -is [string] -and $script:DrillStageNoVerdictCodes -ccontains $logVerdict) { $why += ('stage-reported-no-verdict:' + $logVerdict) }
+      else { $why += 'no-verdict' }
+    }
+    if (@($why | Where-Object { $_ -cne 'no-step-lines' }).Count -and $noStageVerdict -notcontains $stage) { $noStageVerdict += $stage }
+    if ($why.Count) { $incomplete += $stage; $reasons[$stage] = $why }
+  }
   $verdict = $null
-  $last = @($EntryLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -Last 1
+  $entryText = Get-DrillField $Logs 'entry'
+  $last = if ($entryText -is [string]) { @($entryText -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) | Select-Object -Last 1 }
   if ($last) {
     $doc = $null
     try { $doc = $last | ConvertFrom-Json } catch { $doc = $null }
     $status = Get-DrillField $doc 'status'
     if ($status -is [string] -and $status) { $verdict = [ordered]@{ status = $status; stopCode = (Get-DrillField $doc 'stopCode') } }
   }
+  # Codex review of c1497e0a1, high 1: a later stage reached, or an entry that says done, says the earlier stages ran (host preparation,
+  # then prepare, then the launcher stage). An earlier stage with neither its log nor its result is then incomplete too (no-evidence).
+  $order = @('host', 'prepare', 'launcher')
+  $ranStage = @{}
+  foreach ($st in $order) { $ranStage[$st] = ($null -ne (Get-DrillField $StageEvidence ($st + '-result.json'))) -or ((Get-DrillField $Logs $st) -is [string]) }
+  $entryDone = ($null -ne $verdict) -and ([string]$verdict.status -ceq 'FIRST_INSTALL_DONE')
+  for ($i = 0; $i -lt $order.Count; $i++) {
+    $laterRan = $entryDone
+    for ($j = $i + 1; $j -lt $order.Count; $j++) { if ($ranStage[$order[$j]]) { $laterRan = $true } }
+    if ($laterRan -and -not $ranStage[$order[$i]] -and $incomplete -notcontains $order[$i]) {
+      $incomplete += $order[$i]; $reasons[$order[$i]] = @('no-evidence')
+      # no evidence is no verdict either (Codex review of e0a3cded5, low 1)
+      if ($noStageVerdict -notcontains $order[$i]) { $noStageVerdict += $order[$i] }
+    }
+  }
+  $incomplete = @($order | Where-Object { $incomplete -contains $_ })
   $all = @($steps)
   $completed = @($all | Where-Object { $null -eq $_.rejectCode })
   $rejected = @($all | Where-Object { $null -ne $_.rejectCode })
@@ -697,17 +860,17 @@ function ConvertFrom-DrillFirstInstallSteps([string[]]$EntryLines, $StageEvidenc
   if ($all.Count) { $lastStep = $all[$all.Count - 1].name }
   if ($completed.Count) { $lastCompleted = $completed[$completed.Count - 1].name }
   if ($rejected.Count) { $firstRejected = $rejected[0].name }
-  return [ordered]@{ missing = ($all.Count -eq 0); stages = $stages; steps = $all; lastStep = $lastStep; lastCompletedStep = $lastCompleted;
-    firstRejected = $firstRejected; verdict = $verdict; noVerdict = ($null -eq $verdict) }
+  return [ordered]@{ missing = ($all.Count -eq 0); incomplete = ($incomplete.Count -gt 0); incompleteStages = $incomplete; incompleteReasons = $reasons; noStageVerdict = $noStageVerdict; stages = $stages; steps = $all
+    lastStep = $lastStep; lastCompletedStep = $lastCompleted; firstRejected = $firstRejected; verdict = $verdict; stageVerdicts = $stageVerdicts; noVerdict = ($null -eq $verdict) }
 }
 
 function Read-DrillFirstInstallSteps([string]$RunDir) {
-  $lines = @(); $stage = $null
-  $log = Join-Path $RunDir 'first-install.log'
-  if (Test-Path -LiteralPath $log -PathType Leaf) { $lines = @([IO.File]::ReadAllLines($log)) }
+  $text = { param($n) $p = Join-Path $RunDir $n; if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
+  $logs = [ordered]@{ entry = (& $text 'first-install.log'); host = (& $text 'host.stdout.log'); prepare = (& $text 'prepare.stdout.log'); launcher = (& $text 'launcher.stdout.log') }
+  $stage = $null
   $evidence = Join-Path $RunDir 'stage-evidence.json'
   if (Test-Path -LiteralPath $evidence -PathType Leaf) { try { $stage = Read-DrillJson $evidence } catch { $stage = $null } }
-  return ConvertFrom-DrillFirstInstallSteps $lines $stage
+  return ConvertFrom-DrillFirstInstallSteps $logs $stage
 }
 
 # Pure conversion. A1 is the launcher's terminal object, never an Owner-supplied success string.
@@ -778,7 +941,7 @@ function Wait-DrillInteractive([string]$RunDir, $Paths, [pscredential]$Cred) {
     try { Copy-Item -LiteralPath 'C:\drill\work\interactive-screen.png' -Destination (Join-Path $RunDir 'interactive-screen.png') -FromSession $session }
     finally { Remove-PSSession -Session $session }
   }
-  return @{ entry = (ConvertFrom-DrillInteractiveEvidence $observed); credential = $Cred }
+  return @{ entry = (ConvertFrom-DrillInteractiveEvidence $observed); launcher = $observed.terminal; credential = $Cred }
 }
 
 function New-DrillItem([string]$Id, $Pass, [string]$Detail) { [ordered]@{ id = $Id; pass = $Pass; detail = $Detail } }
@@ -790,18 +953,18 @@ function Test-DrillReinstallLauncher($Reinstall) {
 
 # The phase-A verdict (plan section 3) from what the drill read in the guest. pass: $true, $false, or $null (not judged here:
 # A5's production half and A9 are judged by -Finalize from the production read-back).
-#   $E: entry (Read-DrillEntryResult), verify (@{status}), status (status.json), current (upgrade\current.json),
-#       facts (version-facts.json), acceptanceSource, now (DateTimeOffset), reboot (@{ok, status}), reinstall (@{skipped, ...}), kit
+#   $E: entry (Read-DrillEntryResult), launcher (the launcher's terminal), pause (state\PAUSED.json: sha256, requestSha256),
+#       verify (@{status}), status (status.json), current (upgrade\current.json), facts (version-facts.json), acceptanceSource,
+#       now (DateTimeOffset), reboot (@{ok, status, readAt, boot}), reinstall (@{skipped, ...}), skipReinstall (the option given), kit,
+#       firstInstallSteps (Read-DrillFirstInstallSteps)
 function Get-DrillVerdict($E) {
   $items = New-Object System.Collections.ArrayList
   $now = [DateTimeOffset]$E.now
   $entry = $E.entry
-  # the step record (Read-DrillFirstInstallSteps) must be there: a first install whose steps cannot be shown does not pass (Codex review of
-  # ced480363, medium 7)
-  $steps = Get-Prop $E 'firstInstallSteps'
-  $a1 = ($null -ne $entry) -and $entry.parsed -and $entry.exitCode -eq 0 -and $null -eq $entry.stopCode -and $entry.status -ceq 'FIRST_INSTALL_DONE' -and
-    ($null -ne $steps) -and ((Get-Prop $steps 'missing') -eq $false)
-  [void]$items.Add((New-DrillItem 'A1' $a1 $(if ($null -eq $entry) { 'no entry result' } else { "exit=$($entry.exitCode) status=$($entry.status) stopCode=$($entry.stopCode)" })))
+  # A1 needs the step record (Read-DrillFirstInstallSteps, read before this verdict): a first install whose steps cannot be shown -- none
+  # parsed, or a stage that ran without its complete log -- does not pass, and the detail says why (Codex review of 1cedea9ef, high 1;
+  # branch one 74e7a65e7 holds the same).
+  [void]$items.Add((Get-DrillA1Item $entry (Get-Prop $E 'firstInstallSteps')))
   $vs = [string](Get-Prop $E.verify 'status')
   [void]$items.Add((New-DrillItem 'A2' ($vs -ceq 'RESIDENT_VERIFIED') "verify=$vs"))
   [void]$items.Add((Test-DrillSelfcheck 'A3' $E.status $now))
@@ -816,14 +979,32 @@ function Get-DrillVerdict($E) {
   # a candidate (Fable ruling 11-19 renew-key section 4.3) has no production half: A5 is the guest's Source against the request's, here
   if ((Get-Prop $E 'candidate') -eq $true) { [void]$items.Add((New-DrillItem 'A5' $a5 "local=$local acceptance=$($E.acceptanceSource); candidate: no production half")) }
   else { [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize")) }
+  # A6 (Fable renew-key ruling, supplement "eight on the path", item 5): a successful launcher ends with its own pause confirmed, so the
+  # node holds THAT pause: the request the launcher's terminal confirmed (pause.requestSha256, the one source) is the one state\PAUSED.json
+  # names, the status says paused and the executor rests PAUSED, with UNCERTAIN, no current batch, live 0 and no HALT. Idle is no pass.
   $s = $E.status
-  $a6 = ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') -and ([string](Get-Prop $s 'executor.state') -ceq 'IDLE') -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
-  [void]$items.Add((New-DrillItem 'A6' $a6 "mode=$(Get-Prop $s 'node.mode') executor=$(Get-Prop $s 'executor.state') live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
+  $want = [string](Get-Prop $E.launcher 'pause.requestSha256'); $held = [string](Get-Prop $E.pause 'requestSha256')
+  $ownPause = ((Get-Prop $E.launcher 'pause.confirmed') -eq $true) -and ($want -cmatch '^[0-9a-f]{64}$') -and ($held -ceq $want)
+  $a6 = $ownPause -and ((Get-Prop $s 'paused') -eq $true) -and ([string](Get-Prop $s 'executor.state') -ceq 'PAUSED') -and ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') `
+    -and ($null -eq (Get-Prop $s 'current')) -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
+  [void]$items.Add((New-DrillItem 'A6' $a6 "pause=$held confirmedByLauncher=$want paused=$(Get-Prop $s 'paused') executor=$(Get-Prop $s 'executor.state') mode=$(Get-Prop $s 'node.mode') current=$($null -ne (Get-Prop $s 'current')) live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
+  # A7: the status rewritten after this boot, and a self-check that passed, is fresh AND was observed after this boot (never the boot before's).
   $r = $E.reboot
   if ($null -eq $r) { [void]$items.Add((New-DrillItem 'A7' $false 'not run')) }
-  else { $sc = Test-DrillSelfcheck 'A7' $r.status ([DateTimeOffset]$r.readAt); [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass) "refreshedAfterBoot=$($r.ok) $($sc.detail)")) }
+  else {
+    $sc = Test-DrillSelfcheck 'A7' $r.status ([DateTimeOffset]$r.readAt)
+    $scAfter = Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) ([string](Get-Prop $r 'boot'))
+    [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail)"))
+  }
+  # A8: the operator's choice (-SkipReinstall, $E.skipReinstall) and the run's A8 result reach here apart (Codex review of 58136df61,
+  # medium 2). Only the choice, with a result that says skipped, is "skipped"; no result, or a skip nobody chose, is FAIL.
   $ri = $E.reinstall
-  if ($null -eq $ri -or $ri.skipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall)')) }
+  $chosen = (Get-Prop $E 'skipReinstall') -eq $true
+  $saysSkipped = (Get-Prop $ri 'skipped') -eq $true
+  if ($chosen -and $saysSkipped) { [void]$items.Add((New-DrillItem 'A8' $null 'skipped (-SkipReinstall): same-package reinstall not drilled (同包重装未演练)')) }
+  elseif ($null -eq $ri) { [void]$items.Add((New-DrillItem 'A8' $false 'no A8 result: the run handed none over')) }
+  elseif ($saysSkipped) { [void]$items.Add((New-DrillItem 'A8' $false 'the A8 result says skipped, but the run was not started with the skip option')) }
+  elseif ($chosen) { [void]$items.Add((New-DrillItem 'A8' $false 'started with the skip option, but an A8 result came back')) }
   else {
     $a8 = ([string]$ri.upgradeStatus -ceq 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE') -and ([string]$ri.prepareStatus -ceq 'FLEET_NODE_INSTALL_PREPARED') `
       -and (Test-DrillReinstallLauncher $ri) -and [bool]$ri.reverifyPassed -and ([string]$ri.prepareAgainStatus -ceq 'FLEET_NODE_INSTALL_PREPARED')
@@ -839,6 +1020,20 @@ function Get-DrillVerdict($E) {
   return ,$items.ToArray()
 }
 
+# $At (a status or self-check time) later than $Boot (this boot); either missing or unreadable is not later.
+function Test-DrillAfterBoot([string]$At, [string]$Boot) {
+  if (-not $At -or -not $Boot) { return $false }
+  try { return [DateTimeOffset]::Parse($At, [Globalization.CultureInfo]::InvariantCulture) -gt [DateTimeOffset]::Parse($Boot, [Globalization.CultureInfo]::InvariantCulture) } catch { return $false }
+}
+
+# A1 on its own: the entry's result and the step record. Also formed when the run stops after the first install (Codex review of
+# e0a3cded5, medium 1), so a verdict the first install gave is never lost with the run.
+function Get-DrillA1Item($Entry, $Steps) {
+  $stepsWhy = if ($null -eq $Steps -or (Get-Prop $Steps 'missing') -ne $false) { 'steps=missing' } elseif ((Get-Prop $Steps 'incomplete') -ne $false) { 'steps=incomplete:' + (@(Get-Prop $Steps 'incompleteStages') -join ',') } else { 'steps=complete' }
+  $a1 = ($null -ne $Entry) -and (Get-Prop $Entry 'parsed') -eq $true -and (Get-Prop $Entry 'exitCode') -eq 0 -and $null -eq (Get-Prop $Entry 'stopCode') -and [string](Get-Prop $Entry 'status') -ceq 'FIRST_INSTALL_DONE' -and $stepsWhy -ceq 'steps=complete'
+  New-DrillItem 'A1' $a1 $(if ($null -eq $Entry) { "no entry result $stepsWhy" } else { "exit=$(Get-Prop $Entry 'exitCode') status=$(Get-Prop $Entry 'status') stopCode=$(Get-Prop $Entry 'stopCode') $stepsWhy" })
+}
+
 function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
   $sc = Get-Prop $Status 'versions.selfcheck'
   $result = [string](Get-Prop $sc 'result'); $at = [string](Get-Prop $sc 'observedAt')
@@ -848,13 +1043,16 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 }
 
 # Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
-# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The two PASS values are the
+# A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The three PASS values are the
 # set publish.mjs seal --drill-receipt takes (test/drill-vm.test.mjs holds them equal); a candidate is shown to the Owner only after its
 # -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
 # without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
-# A candidate (its receipt is what the Owner's acceptance and seal rest on) has no "skipped": each of A1-A8 must be true, so a candidate
-# run with A8 skipped (-SkipReinstall, which Invoke-DrillMain refuses for a candidate anyway) or any other item not judged is FAIL, at the
-# run and at -Finalize (Codex review of PR-甲, blocking 1). An accepted version's re-drill keeps "skipped" as the diagnosis it was.
+# A candidate (its receipt is what the Owner's acceptance and seal rest on): each of A1-A7 must be true, and A8 true unless the run chose
+# to skip it (-SkipReinstall, an explicit option, never the default; Fable renew-key ruling, supplement "candidate skips A8"). A candidate
+# that skipped A8 ends in its own value, PASS_A_REINSTALL_NOT_DRILLED, never in the two others (Codex review of PR-甲, blocking 1: a skipped
+# candidate must not look like a full one; the value tells them apart, in the receipt and in the index seal writes). It is reported even
+# when per-node steps remain too (the larger gap; A10's detail still names them). An accepted version's re-drill keeps "skipped" as the
+# diagnosis it was.
 function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
   if ([string](Get-Prop $M5 'result') -cne 'PASS') { return 'FAIL' }
   $byId = @{}; foreach ($i in $Items) { $byId[$i.id] = $i }
@@ -863,8 +1061,10 @@ function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
     if (-not $byId.ContainsKey($id)) { return 'FAIL' }
   }
   if (@($core | Where-Object { $byId[$_].pass -eq $false }).Count) { return 'FAIL' }
-  if ($Candidate -and @(@('A1','A2','A3','A4','A5','A6','A7','A8') | Where-Object { $byId[$_].pass -ne $true }).Count) { return 'FAIL' }
+  $a8Skipped = $null -eq $byId['A8'].pass -and [string]$byId['A8'].detail -match '^skipped'
+  if ($Candidate -and @(@('A1','A2','A3','A4','A5','A6','A7','A8') | Where-Object { $byId[$_].pass -ne $true -and -not ($_ -eq 'A8' -and $a8Skipped) }).Count) { return 'FAIL' }
   if (@($core | Where-Object { $null -eq $byId[$_].pass -and $byId[$_].detail -notmatch '^skipped' }).Count) { return 'PENDING_PRODUCTION_READBACK' }
+  if ($Candidate -and $a8Skipped) { return 'PASS_A_REINSTALL_NOT_DRILLED' }
   if ($byId['A10'].pass) { return 'PASS_A_FULL' }
   return 'PASS_A_PER_NODE_STEPS_REMAIN'
 }
@@ -913,8 +1113,10 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
 # Generates, inside the VM, the CI token, upgrade token and an RSA App key nobody registered, and prints only public values.
 # Fingerprints use the package's formulas (tools/secret-fingerprint.mjs; the offline test cross-checks them).
 function New-DrillFakeCredentials {
-  param([string]$OutDir)   # in the body: the guest receives this function as a script block, which keeps only the body
+  # $Make: the fake files to write (Get-DrillCredentialPlan .fake): none other is made
+  param([string]$OutDir, [string[]]$Make)   # in the body: the guest receives this function as a script block, which keeps only the body
   $ErrorActionPreference = 'Stop'
+  if ($null -eq $Make) { throw 'FAKE_CREDENTIALS_NAMES_REQUIRED' }
   if (Test-Path -LiteralPath $OutDir) { throw 'FAKE_CREDENTIALS_DIR_EXISTS' }
   New-Item -ItemType Directory -Path $OutDir | Out-Null
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -940,15 +1142,19 @@ function New-DrillFakeCredentials {
   $pem = "{0}BEGIN {1}{0}`n{2}`n{0}END {1}{0}`n" -f $pemFence, $pemLabel, $pemBody
   $ci = & $token; $up = & $token
   $enc = New-Object System.Text.UTF8Encoding $false
-  [IO.File]::WriteAllText((Join-Path $OutDir 'ci-admission.token'), $ci, $enc)
-  [IO.File]::WriteAllText((Join-Path $OutDir 'resident-upgrade.token'), $up, $enc)
-  [IO.File]::WriteAllText((Join-Path $OutDir 'app-key.pem'), $pem, $enc)
-  # The companion GitHub classic token stand-in (Fable renew-key ruling, supplement "token pending" 1C; kit perNodeSteps): the shape of a
-  # classic token (ghp_ and 36 letters or digits), fake at a glance (CLUEDDRILLFAKE), made and read in the guest only; GitHub refuses it.
-  $alnum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  $r22 = New-Object byte[] 22; $rng.GetBytes($r22)
-  $gh = 'ghp_CLUEDDRILLFAKE' + (-join ($r22 | ForEach-Object { $alnum[$_ % 62] }))
-  [IO.File]::WriteAllText((Join-Path $OutDir 'companion-github.token'), $gh, $enc)
+  if ($Make -contains 'ci-admission.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'ci-admission.token'), $ci, $enc) }
+  if ($Make -contains 'resident-upgrade.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'resident-upgrade.token'), $up, $enc) }
+  if ($Make -contains 'app-key.pem') { [IO.File]::WriteAllText((Join-Path $OutDir 'app-key.pem'), $pem, $enc) }
+  # The companion GitHub classic token stand-in (Fable renew-key ruling, supplement "token pending" 1C), made only when the drilled package
+  # requires it ($Make, Get-DrillCredentialPlan): the shape of a classic token (ghp_ and 36 letters or digits), fake at a glance
+  # (CLUEDDRILLFAKE), made and read in the guest only; GitHub refuses it.
+  $gh = $null
+  if ($Make -contains 'companion-github.token') {
+    $alnum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    $r22 = New-Object byte[] 22; $rng.GetBytes($r22)
+    $gh = 'ghp_CLUEDDRILLFAKE' + (-join ($r22 | ForEach-Object { $alnum[$_ % 62] }))
+    [IO.File]::WriteAllText((Join-Path $OutDir 'companion-github.token'), $gh, $enc)
+  }
   $public = [ordered]@{
     contract = 'clued.drill.fake-credentials/1'
     note = 'generated inside the drill VM; registered nowhere; the service refuses them'
@@ -959,9 +1165,13 @@ function New-DrillFakeCredentials {
     upgradeTokenFingerprint = (& $pin $up)
     appKeyId = 1
     appPublicKeySha256Base64 = [Convert]::ToBase64String((& $sha $spki))
-    files = [ordered]@{ ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; appKey = 'app-key.pem'; companionGithubToken = 'companion-github.token' }
+    files = [ordered]@{}
   }
-  [IO.File]::WriteAllText((Join-Path $OutDir 'public.json'), ($public | ConvertTo-Json -Depth 4), $enc)
+  # the files this run made, and only they
+  foreach ($pair in @(@('ciToken', 'ci-admission.token'), @('upgradeToken', 'resident-upgrade.token'), @('appKey', 'app-key.pem'), @('companionGithubToken', 'companion-github.token'))) {
+    if ($Make -contains $pair[1]) { $public.files[$pair[0]] = $pair[1] }
+  }
+  if ($Make -contains 'public.json') { [IO.File]::WriteAllText((Join-Path $OutDir 'public.json'), ($public | ConvertTo-Json -Depth 4), $enc) }
   $ci = $null; $up = $null; $pem = $null; $gh = $null
   return $public
 }
@@ -1233,6 +1443,43 @@ function Get-DrillIntakeTool {
   } catch { throw (New-DrillError 'DRILL_HOST_INTAKE_TOOL_UNAVAILABLE') }
 }
 
+# Every child the drill starts in the guest (the kit entry, verify, the A8 tools, root in the prerequisite distribution) runs here, by the
+# package's rule (Invoke-Native, windows/first-install-host.ps1): stdout and stderr read apart, so a line a tool writes on stderr is text,
+# never a PowerShell error that ends the step under Stop (the merged 2>&1 reads did that: Fable renew-key ruling, supplement "eight on
+# the path", risks taken in). A child still running at $Seconds is left running (nothing is killed) and the step stops by name.
+# Self-contained: the guest receives it as text ($script:DrillNativeText) and makes it a script block there.
+function Invoke-DrillNative {
+  # $Log: every stdout line is also written there as it comes (the kit entry's guest log: a run cut off still leaves what it printed)
+  param([string]$Exe, [string[]]$Arguments, [int]$Seconds = 3600, [string]$Encoding = 'utf-8', [string]$Log = '')
+  $quote = { param([string]$a) if ($a.Length -gt 0 -and $a -notmatch '[\s"]') { $a } else { '"' + (($a -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"' } }
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $Exe; $psi.Arguments = (@($Arguments | ForEach-Object { & $quote $_ }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+  # 'utf-16': a child that writes UTF-16LE (wsl.exe's own messages); UTF-8 otherwise
+  $enc = if ($Encoding -ceq 'utf-16') { [Text.Encoding]::Unicode } else { New-Object Text.UTF8Encoding($false) }
+  $psi.StandardOutputEncoding = $enc; $psi.StandardErrorEncoding = $enc
+  $p = [Diagnostics.Process]::Start($psi)
+  $e = $p.StandardError.ReadToEndAsync()
+  $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+  $left = { [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds) }
+  $out = New-Object Text.StringBuilder
+  $w = $null
+  if ($Log) { $w = New-Object IO.StreamWriter -ArgumentList $Log, $false, (New-Object Text.UTF8Encoding($false)); $w.AutoFlush = $true }
+  try {
+    while ($true) {
+      $next = $p.StandardOutput.ReadLineAsync()
+      if (-not $next.Wait((& $left))) { throw ('COMMAND_TIMEOUT_NOTHING_KILLED: ' + [IO.Path]::GetFileName($Exe)) }
+      if ($null -eq $next.Result) { break }
+      [void]$out.AppendLine($next.Result); if ($w) { $w.WriteLine($next.Result) }
+    }
+  } finally { if ($w) { $w.Dispose() } }
+  if (-not $p.WaitForExit((& $left))) { throw ('COMMAND_TIMEOUT_NOTHING_KILLED: ' + [IO.Path]::GetFileName($Exe)) }
+  $p.WaitForExit()   # the asynchronous stderr read ends with the child
+  $err = ([string]$e.Result) -replace "`0", ''
+  [ordered]@{ exit = $p.ExitCode; stdout = ($out.ToString() -replace "`0", ''); stderr = $(if ($err.Length -gt 4000) { $err.Substring($err.Length - 4000) } else { $err }) }
+}
+$script:DrillNativeText = ${function:Invoke-DrillNative}.ToString()
+
 function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeconds) {
   Invoke-DrillProcess $Node $Arguments $TimeoutSeconds @{} @('NODE_OPTIONS', 'NODE_PATH')
 }
@@ -1416,13 +1663,15 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
       if ($State.failure -and $State.armed) {
         $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
           hostExecutorStates = @($State.executorStates.Values);
-          abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null }
+          abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null; cleanupDone = $false }
         # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
         try {
           $receipt.stopped = Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint
           $receipt.restoredToCheckpoint = $RestoreCheckpoint -and $receipt.stopped
         } catch { $receipt.cleanupFailure = Get-DrillCode $_ }
+        # the record says the cleanup ran (Get-DrillGuardOutcome): one left from before it says "not known", never "restored"
+        $receipt.cleanupDone = $true
         $State.cleanup = $receipt
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { $State.receiptFailure = $true }
       }
@@ -1754,24 +2003,33 @@ function Invoke-DrillBaseline([string]$RunDir, [switch]$ExistingOnly) {
 
 # The guest reads of one verdict pass: status, current, facts, verify. Inside the VM only.
 $script:GuestRead = {
-  param($Root)
+  param($Root, $NativeText)
   $ErrorActionPreference = 'Stop'
+  $native = [scriptblock]::Create($NativeText)
   $read = { param($p) if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null } }
   $status = & $read (Join-Path $Root 'state\status.json')
   $current = & $read (Join-Path $Root 'upgrade\current.json')
   $factsFile = Join-Path $Root 'upgrade\mailbox\responses\version-facts.json'
   $facts = & $read $factsFile
-  $verify = [ordered]@{ status = 'NOT_RUN'; exit = $null; tail = @() }
+  # the pause the node holds (A6 holds it to the one the launcher confirmed): the file's sha256 and the request it names
+  $pausedFile = Join-Path $Root 'state\PAUSED.json'
+  $pause = $null
+  if (Test-Path -LiteralPath $pausedFile -PathType Leaf) {
+    $pausedSource = try { (Get-Content -LiteralPath $pausedFile -Raw -Encoding UTF8 | ConvertFrom-Json).source } catch { $null }
+    $pause = [ordered]@{ sha256 = (Get-FileHash -LiteralPath $pausedFile -Algorithm SHA256).Hash.ToLowerInvariant()
+      requestSha256 = $(if ($pausedSource -and $pausedSource.PSObject.Properties['requestSha256']) { [string]$pausedSource.requestSha256 } else { $null }) }
+  }
+  $verify = [ordered]@{ status = 'NOT_RUN'; exit = $null; tail = @(); stderr = $null }
   $receipt = Join-Path $Root 'install\install-receipt.json'
   if ($current -and (Test-Path -LiteralPath $receipt)) {
     $script = Join-Path $Root ("resident\" + $current.residentManifestSha256 + "\windows\verify-resident.ps1")
     $rs = (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
-    $out = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $script -ExpectedInstallReceiptSha256 $rs -LinuxVersionFactsFile $factsFile 2>&1 | ForEach-Object { [string]$_ })
-    $code = $LASTEXITCODE
+    $n = & $native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script, '-ExpectedInstallReceiptSha256', $rs, '-LinuxVersionFactsFile', $factsFile) 840
+    $out = @($n.stdout -split "`r?`n")
     $verdict = @($out | Where-Object { $_ -match 'RESIDENT_VERIF' }) | Select-Object -Last 1
-    $verify = [ordered]@{ status = $(if ($verdict -match '(RESIDENT_[A-Z_]+)') { $Matches[1] } else { 'UNPARSED' }); exit = $code; tail = @($out | Select-Object -Last 40) }
+    $verify = [ordered]@{ status = $(if ($verdict -match '(RESIDENT_[A-Z_]+)') { $Matches[1] } else { 'UNPARSED' }); exit = $n.exit; tail = @($out | Select-Object -Last 40); stderr = $n.stderr }
   }
-  [ordered]@{ status = $status; current = $current; facts = $facts; verify = $verify; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
+  [ordered]@{ status = $status; current = $current; facts = $facts; pause = $pause; verify = $verify; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
 }
 
 # Copy the pinned prerequisites into the VM, re-check their hashes there, install them (GuestPrereq). Stops on any miss.
@@ -1786,9 +2044,10 @@ function Invoke-DrillPrereqInGuest([string]$RunDir, $Prereq, [pscredential]$Cred
     $bad = Invoke-Command -Session $session -ScriptBlock { param($d, $w) @($w.Keys | Where-Object { (Get-FileHash -LiteralPath (Join-Path $d $_) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $w[$_] }) } -ArgumentList $dest, $want
     if (@($bad).Count) { throw (New-DrillError 'DRILL_PREREQ_CHANGED_IN_COPY' @($bad)) }
   } finally { Remove-PSSession -Session $session }
-  try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' -Step 'prereq' }
+  try { $facts = Invoke-DrillGuest $Cred $script:GuestPrereq -ArgumentList @($dest, $Prereq.wsl, $Prereq.rootfs, $Prereq.distribution, $Prereq.wslVersion, $script:DrillNativeText) -TimeoutMinutes $script:Drill.PrereqTimeoutMinutes -Code 'DRILL_PREREQ_TIMEOUT' -Step 'prereq' }
   catch { $c = Get-DrillCode $_; if ($c.code -ne 'DRILL_GUEST_STEP_FAILED') { throw }; throw (New-DrillError 'DRILL_PREREQ_FAILED' $c.detail) }
   Write-DrillJson (Join-Path $RunDir 'prereq-facts.json') $facts
+  if (Get-Prop $facts 'failure') { throw (New-DrillError 'DRILL_PREREQ_FAILED' (Get-Prop $facts 'failure')) }
   if ($facts.dpkgExit -ne 0 -or $facts.dpkgAuditLines -ne 0 -or -not $facts.dockerActive -or -not $facts.systemdPid1) {
     throw (New-DrillError 'DRILL_PREREQ_NOT_READY' @{ dpkgExit = $facts.dpkgExit; audit = $facts.dpkgAuditLines; docker = $facts.dockerActive; systemd = $facts.systemdPid1 }) }
   return $facts
@@ -1812,9 +2071,11 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
         try {
           $info = Get-DrillVmInfo
           if ($info -and $info.vm.Id -eq $VmId -and $info.notes -ceq $script:Drill.Marker -and $info.state -ne 'Off') {
-            if (Stop-DrillOwnedVm -RestoreCheckpoint) { return }
+            $stopped = Stop-DrillOwnedVm -RestoreCheckpoint
+            Write-DrillWatchdogOutcome $Signal 'PARENT_GONE' $stopped
+            if ($stopped) { return }
           }
-        } catch { }
+        } catch { Write-DrillWatchdogOutcome $Signal 'PARENT_GONE' $false }
         Start-Sleep -Milliseconds 500
       }
     }
@@ -1822,7 +2083,8 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
     if (-not (Test-Path -LiteralPath "$Signal.armed")) {
       $info = Get-DrillVmInfo
       if ($info -and $info.vm.Id -eq $VmId -and $info.notes -ceq $script:Drill.Marker) {
-        [void](Stop-DrillOwnedVm -RestoreCheckpoint)
+        $stopped = $false
+        try { $stopped = Stop-DrillOwnedVm -RestoreCheckpoint } finally { Write-DrillWatchdogOutcome $Signal 'TIMER_NOT_ARMED_BY_DEADLINE' $stopped }
       }
     }
   } finally {
@@ -1830,6 +2092,50 @@ function Invoke-DrillBootWatchdog([string]$Signal, [int]$ParentId, [long]$Parent
     if ($locked) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
   }
+}
+
+# The boot watchdog's record of a restore it made (Codex review of 1cedea9ef, medium 4): its parent is gone, so there is no receipt; the
+# record sits beside the run as <signal>.outcome.json. It acts only before the guest's own timer is armed, that is before the run's first
+# step, so no evidence was taken.
+function Write-DrillWatchdogOutcome([string]$Signal, [string]$Why, $Stopped) {
+  $restore = if ($Stopped -eq $true) { 'RESTORED' } else { 'RESTORE_FAILED' }
+  $r = [ordered]@{ status = 'DRILL_WATCHDOG_RESTORE'; why = $Why; restore = $restore; evidence = 'NOT_TAKEN'
+    note = $(if ($restore -ceq 'RESTORED') { '由开机看门进程紧急还原，证据未取' } else { '开机看门进程紧急还原失败，证据未取' }); at = [DateTimeOffset]::UtcNow.ToString('o') }
+  try { Write-DrillJson "$Signal.outcome.json" $r } catch { }
+}
+
+# What of the run's evidence the run directory holds after an emergency restore: none, all or part of it, from the files really there
+# (Codex review of c1497e0a1, medium 3). M5 counts when its seven observations are there (a directory made before any was read is not
+# evidence; some of them is part of it); the stage logs taken back are listed, and any of them is evidence too.
+$script:DrillM5Names = @('profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json', 'record.json')
+function Get-DrillAbortEvidence([string]$RunDir) {
+  $expected = @('first-install.log', 'stage-evidence.json', 'read-after-install.json', 'read-after-reboot.json', 'm5')
+  $m5 = @($script:DrillM5Names | Where-Object { Test-Path -LiteralPath (Join-Path (Join-Path $RunDir 'm5') $_) -PathType Leaf })
+  $taken = @($expected | Where-Object { if ($_ -ceq 'm5') { $m5.Count -eq $script:DrillM5Names.Count } else { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf } })
+  $stageLogs = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log') | Where-Object { Test-Path -LiteralPath (Join-Path $RunDir $_) -PathType Leaf }
+  # the stage timings saved on their own are evidence taken too (Codex review of f33fc33e5, low 1)
+  $stageTimings = Test-Path -LiteralPath (Join-Path $RunDir 'stage-timings.json') -PathType Leaf
+  $any = $taken.Count + $m5.Count + @($stageLogs).Count + [int]$stageTimings
+  # all of it only with the step record complete too (Codex review of e0a3cded5, medium 2): the stage logs this run needed are there
+  $steps = try { Read-DrillFirstInstallSteps $RunDir } catch { $null }
+  $stepsComplete = ($null -ne $steps) -and ((Get-Prop $steps 'missing') -eq $false) -and ((Get-Prop $steps 'incomplete') -eq $false)
+  [ordered]@{ evidence = $(if ($any -eq 0) { 'NOT_TAKEN' } elseif ($taken.Count -eq $expected.Count -and $stepsComplete) { 'TAKEN' } else { 'PARTIAL' }); taken = $taken
+    notTaken = @($expected | Where-Object { $taken -notcontains $_ }); m5Observations = $m5; stageLogs = @($stageLogs); stageTimings = $stageTimings; stepsComplete = $stepsComplete }
+}
+
+# The host guard's emergency restore, as it ended (its host-guard.json, DRILL_ABORTED): restored, restore failed, or not known (a record
+# from before its cleanup); and what evidence the run had taken by then.
+function Get-DrillGuardOutcome([string]$RunDir) {
+  $file = Join-Path $RunDir 'host-guard.json'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+  $g = try { Read-DrillJson $file } catch { $null }
+  if ([string](Get-Prop $g 'status') -cne 'DRILL_ABORTED') { return $null }
+  $restore = if ((Get-Prop $g 'restoredToCheckpoint') -eq $true) { 'RESTORED' } elseif ((Get-Prop $g 'cleanupDone') -eq $true) { 'RESTORE_FAILED' } else { 'UNKNOWN' }
+  $ev = Get-DrillAbortEvidence $RunDir
+  $head = @{ RESTORED = '由守护紧急还原'; RESTORE_FAILED = '守护紧急还原失败'; UNKNOWN = '守护紧急还原，结局未记下' }[$restore]
+  $tail = @{ NOT_TAKEN = '证据未取'; TAKEN = '证据已取'; PARTIAL = '证据部分已取' }[$ev.evidence]
+  [ordered]@{ note = ($head + '，' + $tail); code = (Get-Prop $g 'code'); restore = $restore; cleanupFailure = (Get-Prop $g 'cleanupFailure')
+    evidence = $ev.evidence; taken = $ev.taken; notTaken = $ev.notTaken; m5Observations = $ev.m5Observations; stageLogs = $ev.stageLogs; stepsComplete = $ev.stepsComplete }
 }
 
 # Seconds from asking WMI for the watchdog until it must have signalled ready; the WMI calls count against it.
@@ -1994,17 +2300,20 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) 
 }
 
 $script:GuestReinstall = {
-  param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha)
+  param($Node, $Tree, $From, $Work, $Version, $TarName, $AccName, $TarSha, $NativeText)
+  $native = [scriptblock]::Create($NativeText)
   $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
   $last = { param($lines) $l = @($lines | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { try { $l | ConvertFrom-Json } catch { $null } } }
-  $up = @(& $Node (Join-Path $fleet 'upgrade.mjs') fetch --version $Version --work (Join-Path $Work 'a8-upgrade') --from $From --no-request 2>&1 | ForEach-Object { [string]$_ })
-  $p1 = @(& $Node (Join-Path $fleet 'install.mjs') prepare --artifact (Join-Path $From $TarName) --artifact-sha $TarSha --acceptance (Join-Path $From $AccName) --work (Join-Path $Work 'a8-prepare') 2>&1 | ForEach-Object { [string]$_ })
+  $upRun = & $native $Node @((Join-Path $fleet 'upgrade.mjs'), 'fetch', '--version', $Version, '--work', (Join-Path $Work 'a8-upgrade'), '--from', $From, '--no-request') 3600
+  $p1Run = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare')) 3600
+  $up = @($upRun.stdout -split "`r?`n"); $p1 = @($p1Run.stdout -split "`r?`n")
   $upj = & $last $up; $p1j = & $last $p1
   $reinstall = [ordered]@{ skipped = $false;
     upgradeStatus = $(if ($upj -and $upj.PSObject.Properties['status']) { [string]$upj.status });
     prepareStatus = $(if ($p1j -and $p1j.PSObject.Properties['status']) { [string]$p1j.status });
     launcherVerdict = 'NOT_RUN_MISSING_RUN_COMMAND'; launcherStatus = $null; launcherExit = $null; launcherTail = @(); launcherStderr = $null;
-    upgradeTail = @($up | Select-Object -Last 5); prepareTail = @($p1 | Select-Object -Last 5);
+    upgradeTail = @($up | Where-Object { $_ -ne '' } | Select-Object -Last 5); prepareTail = @($p1 | Where-Object { $_ -ne '' } | Select-Object -Last 5);
+    upgradeExit = $upRun.exit; upgradeStderr = $upRun.stderr; prepareExit = $p1Run.exit; prepareStderr = $p1Run.stderr;
     reverifyPassed = $false; prepareAgainStatus = $null }
   $runCommand = if ($p1j) { $p1j.PSObject.Properties['runCommand'] }
   if ($runCommand -and $runCommand.Value -is [string] -and -not [string]::IsNullOrWhiteSpace($runCommand.Value)) {
@@ -2073,13 +2382,20 @@ $script:GuestM5Files = {
       if ($at -gt $latest) { $latest = $at; $public['probe.json'] = $data }
     } catch { }
   }
+  # record.json: the connection record as this administrator reads it (Fable renew-key ruling, supplement "eight on the path", item 8).
+  # Whether it is there, never its content: PRESENT, or ABSENT when the file or its directory is not found (install-resident.ps1's
+  # baseline reads it the same way); any other answer leaves the observation missing, so M5 fails.
+  try {
+    [void][IO.File]::GetAttributes((Join-Path (Split-Path -Parent $Root) 'secrets\ci-admission.connection.json')); $record = 'PRESENT'
+  } catch [IO.FileNotFoundException] { $record = 'ABSENT' } catch [IO.DirectoryNotFoundException] { $record = 'ABSENT' } catch { $record = $null }
+  if ($record) { $public['record.json'] = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{"ci-admission.connection.json":"' + $record + '"}')) }
   return $public
 }
 
 function Copy-DrillM5([string]$RunDir, [pscredential]$Cred) {
   $dir = Join-Path $RunDir 'm5'
   New-Item -ItemType Directory -Path $dir | Out-Null
-  $names = @('profile.json', 'system.json', 'resident.json', 'controller.json', 'companion.json', 'probe.json')
+  $names = $script:DrillM5Names
   $missing = @(); $code = $null
   try { $files = Invoke-DrillGuest $Cred $script:GuestM5Files -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'm5-observations' }
   catch { $files = $null; $code = (Get-DrillCode $_).code }
@@ -2116,6 +2432,121 @@ function Get-DrillM5Verdict([string]$RunDir, $M5) {
   return $M5
 }
 
+# A7's read after the reboot: the status and the boot it was read in, from the same guest call. The read is restartable, so the guest may
+# have restarted again since the boot the drill waited for (Codex review of 58136df61, high 1): every sample is judged against its own boot.
+$script:GuestReadStatus = {
+  param($Root) $p = Join-Path $Root 'state\status.json'
+  $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
+  [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o'); boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o') }
+}
+
+# One A7 sample: the status rewritten after the boot it was read in, and a passing self-check observed after that same boot (never one an
+# earlier boot left in the status). bootChanged: the guest restarted again after the boot the drill waited for.
+function Get-DrillRebootSample($Sample, [DateTimeOffset]$WaitedBoot) {
+  $boot = [string](Get-Prop $Sample 'boot')
+  $known = $false; $changed = $false
+  try { $b = [DateTimeOffset]::Parse($boot, [Globalization.CultureInfo]::InvariantCulture); $known = $b -ge $WaitedBoot; $changed = $b -gt $WaitedBoot } catch { $known = $false }
+  $status = Get-Prop $Sample 'status'
+  $ok = $known -and (Test-DrillAfterBoot ([string](Get-Prop $status 'writtenAt')) $boot)
+  $done = $ok -and [string](Get-Prop $status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $status 'versions.selfcheck.observedAt')) $boot)
+  [ordered]@{ ok = $ok; status = $status; readAt = (Get-Prop $Sample 'readAt'); boot = $(if ($known) { $boot } else { $null }); waitedBoot = $WaitedBoot.ToString('o'); bootChanged = $changed; done = $done }
+}
+
+# Within the window of the boot the drill waited for ($Deadline), until a sample of the boot it was read in passes; the last sample otherwise.
+function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [DateTimeOffset]$Deadline) {
+  $reboot = $null
+  while ([DateTimeOffset]::UtcNow -lt $Deadline) {
+    $r = Invoke-DrillGuest $Cred $script:GuestReadStatus -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'read-status' -Restartable
+    $reboot = Get-DrillRebootSample $r $Boot
+    if ($reboot.done) { break }
+    Start-Sleep -Seconds 30
+  }
+  return $reboot
+}
+
+# The stage files the entry writes under the guest's work directory, read in the guest file by file with read-write sharing (a stage still
+# writing holds its log open: the entry's line-by-line writer, the package's appending one; Read-StageResult in bootstrap.ps1 reads them
+# the same way). One that cannot be read is named with its error, never taking the others with it.
+$script:DrillStageFiles = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log', 'host-result.json', 'launcher-result.json', 'stage-timings.json')
+$script:GuestStageFiles = {
+  param($Work, $Names)
+  $r = [ordered]@{}
+  foreach ($name in @($Names)) {
+    $p = Join-Path $Work $name
+    try {
+      if (-not [IO.File]::Exists($p)) { $r[$name] = [ordered]@{ present = $false; text = $null; error = $null }; continue }
+      $fs = New-Object IO.FileStream -ArgumentList $p, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
+      try { $text = (New-Object IO.StreamReader -ArgumentList $fs, (New-Object Text.UTF8Encoding($false))).ReadToEnd() } finally { $fs.Dispose() }
+      $r[$name] = [ordered]@{ present = $true; text = $text; error = $null }
+    } catch { $r[$name] = [ordered]@{ present = $true; text = $null; error = [string]$_.Exception.Message } }
+  }
+  $r
+}
+
+# Takes the stage files back into the run directory, each on its own (the logs under their names, the two stage results as
+# stage-evidence.json, the timings as stage-timings.json), and records each one's outcome in stage-files.json: saved, absent, unreadable
+# in the guest, or not saved here. A failed collection is recorded and never replaces the run's own outcome.
+function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
+  $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); collection = $null; files = [ordered]@{} }
+  $got = $null
+  try { $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), $script:DrillStageFiles) -TimeoutMinutes 2 -Step 'stage-files' }
+  catch { $record.collection = (Get-DrillCode $_) }
+  $json = [ordered]@{}
+  foreach ($name in $script:DrillStageFiles) {
+    $f = Get-DrillField $got $name
+    if ($null -eq $f) { $record.files[$name] = [ordered]@{ state = 'not-collected' }; continue }
+    if ((Get-DrillField $f 'present') -ne $true) { $record.files[$name] = [ordered]@{ state = 'absent' }; continue }
+    $err = Get-DrillField $f 'error'
+    if ($err) { $record.files[$name] = [ordered]@{ state = 'unreadable'; error = [string]$err }; continue }
+    $text = [string](Get-DrillField $f 'text')
+    # a stage JSON is evidence only when it reads as JSON (a cut one is named so, never "saved"); it is written below with the others
+    if ($name.EndsWith('.json')) {
+      $parsed = $null; try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $null }
+      if ($null -eq $parsed) { $record.files[$name] = [ordered]@{ state = 'unreadable-json'; bytes = $text.Length } }
+      else { $json[$name] = $parsed; $record.files[$name] = [ordered]@{ state = 'read'; bytes = $text.Length } }
+      continue
+    }
+    try {
+      [IO.File]::WriteAllText((Join-Path $RunDir $name), $text, (New-Object Text.UTF8Encoding($false)))
+      $record.files[$name] = [ordered]@{ state = 'saved'; bytes = $text.Length }
+    } catch { $record.files[$name] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
+  }
+  # Written only from what was really read (Codex review of e0a3cded5, medium 2): no stage-evidence.json or stage-timings.json from nothing,
+  # and every file's state says whether it reached the run directory.
+  $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json'] }
+  $timings = $json['stage-timings.json']
+  $results = @(@('host-result.json', 'launcher-result.json') | Where-Object { $json.Contains($_) })
+  if ($results.Count) {
+    try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' } }
+    catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } } }
+  }
+  if ($json.Contains('stage-timings.json')) {
+    try { Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings; $record.files['stage-timings.json'].state = 'saved' }
+    catch { $record.files['stage-timings.json'] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
+  }
+  try { Write-DrillJson (Join-Path $RunDir 'stage-files.json') $record } catch { }
+  return @{ stageEvidence = $stageEvidence; timings = $timings; record = $record }
+}
+
+# A1's kit entry in the guest, once, bounded, read apart (Invoke-DrillNative): its last stdout line is the result, its stderr is kept.
+$script:GuestEntry = {
+  param($Entry, $EntryArgs, $Minutes, $NativeText, $Log)
+  $native = [scriptblock]::Create($NativeText)
+  $n = & $native "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $Entry) + @($EntryArgs)) ([int]$Minutes * 60) 'utf-8' $Log
+  [ordered]@{ lines = @($n.stdout -split "`r?`n"); stderr = $n.stderr; exit = $n.exit }
+}
+
+# A8's second prepare after the reinstall, read the same way.
+$script:GuestPrepareAgain = {
+  param($Node, $Tree, $From, $Work, $TarName, $AccName, $TarSha, $NativeText)
+  $native = [scriptblock]::Create($NativeText)
+  $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
+  $n = & $native $Node @((Join-Path $fleet 'install.mjs'), 'prepare', '--artifact', (Join-Path $From $TarName), '--artifact-sha', $TarSha, '--acceptance', (Join-Path $From $AccName), '--work', (Join-Path $Work 'a8-prepare-again')) 3600
+  $l = @($n.stdout -split "`r?`n" | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1
+  # the status, with the exit code and stderr beside it for reinstall.json (Codex review of 58136df61, low 4)
+  [ordered]@{ status = $(if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }); exit = $n.exit; stderr = $n.stderr }
+}
+
 function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred) {
   $g = $script:Drill.GuestWork
   $prereqFacts = if ($Interactive -or $KitInfo.prerequisiteMode -ceq 'first-install-host') { @{ mode = 'first-install-host'; preparedByEntry = (-not $Interactive) } } else { Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred }
@@ -2127,83 +2558,71 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Copy-Item -Path (Join-Path $KitInfo.dir '*') -Destination $paths.kit -ToSession $session -Recurse
     $tarInGuest = Invoke-Command -Session $session -ScriptBlock { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() } -ArgumentList (Join-Path $paths.from ([IO.Path]::GetFileName($Package.tar)))
     if ($tarInGuest -cne $Package.tarSha256) { throw (New-DrillError 'DRILL_TAR_CHANGED_IN_COPY') }
-    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake
+    # only the files of the names this package declares and the drill gives (Get-DrillCredentialPlan)
+    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake, ([string[]]@((Get-DrillCredentialPlan $KitInfo).fake))
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
 
-  $timings = $null
+  $timings = $null; $launcher = $null
   if ($Interactive) {
     # the guest evidence on a timeout or a cancel as well (Codex review of ced480363, medium 8)
     try { $interactiveRun = Wait-DrillInteractive $RunDir $paths $Cred }
     finally { $collected = Save-DrillGuestEvidence $RunDir $Cred $null }
-    $entry = $interactiveRun.entry; $Cred = $interactiveRun.credential
+    $entry = $interactiveRun.entry; $launcher = $interactiveRun.launcher; $Cred = $interactiveRun.credential
   } else {
-  # A1: the kit entry, once, bounded. No retry.
+  # A1: the kit entry, once, bounded. No retry. Read apart (Invoke-DrillNative), its printed lines also written to the guest's
+  # first-install.stdout.log as they come (a first install cut off still leaves them).
   $entryArgs = Resolve-DrillKitArguments $KitInfo.arguments $paths
+  # The guest evidence -- the entry's printed lines and the stage files -- is taken back on every end of this call: done, stopped, timed
+  # out (Save-DrillGuestEvidence; Codex reviews of ced480363 and c1497e0a1); the original error is thrown on after.
   $entryOut = $null
   try {
-    $entryOut = Invoke-DrillGuest $Cred {
-      param($Entry, $EntryArgs, $Log)
-      $enc = New-Object Text.UTF8Encoding($false)
-      [IO.File]::WriteAllText($Log, '', $enc)
-      $out = @(& "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Entry @EntryArgs 2>&1 |
-        ForEach-Object { $line = [string]$_; [IO.File]::AppendAllText($Log, $line + "`r`n", $enc); $line })
-      [ordered]@{ lines = $out; exit = $LASTEXITCODE }
-    } -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs, (Join-Path $paths.work $script:Drill.GuestEntryLog)) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
+    $entryOut = Invoke-DrillGuest $Cred $script:GuestEntry -ArgumentList @((Join-Path $paths.kit $KitInfo.entryFile), $entryArgs, $KitInfo.timeoutMinutes, $script:DrillNativeText, (Join-Path $paths.work $script:Drill.GuestEntryLog)) -TimeoutMinutes $KitInfo.timeoutMinutes -Code 'DRILL_FIRST_INSTALL_TIMEOUT' -Step 'first-install'
   } finally {
-    # on every end of the first install -- done, stopped, timed out -- and before anything else happens to the guest
+    # on every end of the first install, before anything else happens to the guest
     $collected = Save-DrillGuestEvidence $RunDir $Cred $entryOut
   }
+  # first-install.log is written by Save-DrillGuestEvidence (the returned lines, or the guest's copy)
+  [IO.File]::WriteAllText((Join-Path $RunDir 'first-install.stderr.log'), [string]$entryOut.stderr)
   $entry = Read-DrillEntryResult @($entryOut.lines) ([int]$entryOut.exit)
-  $timings = $collected.timings
+  # the launcher's terminal (what A6 reads the confirmed pause from), as the entry kept it in launcher-result.json, saved here and read back
+  $launcher = $collected.launcher
   }
+  $timings = $collected.timings
+  # the first install's own result, kept on its own: A1 stands even when a later step stops the run (Get-DrillA1Item)
+  Write-DrillJson (Join-Path $RunDir 'entry-result.json') $entry
 
-  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
+  $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
 
   # A7: reboot, nobody logs in; within 10 minutes the status is rewritten after the boot and the self-check still passes.
   $beforeReboot = [DateTimeOffset]::UtcNow
   try { Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
   $boot = Wait-DrillGuest $Cred 15 $beforeReboot
-  $deadline = $boot.AddMinutes($script:Drill.UnattendedRebootMinutes); $reboot = $null
-  while ([DateTimeOffset]::UtcNow -lt $deadline) {
-    $r = Invoke-DrillGuest $Cred {
-      param($Root) $p = Join-Path $Root 'state\status.json'
-      $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
-      [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o') }
-    } -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 2 -Step 'read-status' -Restartable
-    $written = Get-Prop $r.status 'writtenAt'
-    $ok = $false; if ($written) { try { $ok = [DateTimeOffset]::Parse([string]$written) -gt $boot } catch { $ok = $false } }
-    $reboot = @{ ok = $ok; status = $r.status; readAt = $r.readAt }
-    if ($ok -and [string](Get-Prop $r.status 'versions.selfcheck.result') -ceq 'PASS') { break }
-    Start-Sleep -Seconds 30
-  }
+  $reboot = Wait-DrillRebootRefresh $Cred $boot ($boot.AddMinutes($script:Drill.UnattendedRebootMinutes))
   Write-DrillJson (Join-Path $RunDir 'read-after-reboot.json') $reboot
 
   # A8: same package again: the generic upgrade answers "already at this package"; prepare -> launcher -> verify -> prepare.
   $reinstall = @{ skipped = $true }
   if (-not $SkipReinstall -and $entry.tree -and $entry.node) {
-    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
+    $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   } elseif (-not $SkipReinstall) { $reinstall = @{ skipped = $false; upgradeStatus = 'NOT_RUN_ENTRY_GAVE_NO_TREE_OR_NODE'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null } }
 
   if (Test-DrillReinstallLauncher $reinstall) {
-    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList $script:Drill.GuestRoot -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
+    # the re-verify runs the whole verdict: its input carries the launcher verdict and the pause, the same sources as the first install's A6
+    # (Codex review of f33fc33e5, medium 5: without them strict mode stopped it before prepare-again)
+    $again = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-reinstall' -Restartable
     Write-DrillJson (Join-Path $RunDir 'read-after-reinstall.json') $again
-    $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
+    $reVerdict = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($again.readAt); entry = $entry; launcher = $launcher; pause = $again.pause; verify = $again.verify; status = $again.status; current = $again.current; facts = $again.facts; acceptanceSource = $Package.ciSourceManifestSha256; reboot = $null; reinstall = $null; kit = $KitInfo }
     $reinstall.reverifyPassed = @($reVerdict | Where-Object { $_.id -in @('A2', 'A3', 'A4') -and $_.pass -ne $true }).Count -eq 0 -and $null -eq (@($reVerdict | Where-Object { $_.id -eq 'A5' })[0].pass)
-    $p2 = Invoke-DrillGuest $Cred {
-      param($Node, $Tree, $From, $Work, $TarName, $AccName, $TarSha)
-      $fleet = Join-Path $Tree 'work\independent-ci-resident-v1\rollout\fleet'
-      $o = @(& $Node (Join-Path $fleet 'install.mjs') prepare --artifact (Join-Path $From $TarName) --artifact-sha $TarSha --acceptance (Join-Path $From $AccName) --work (Join-Path $Work 'a8-prepare-again') 2>&1 | ForEach-Object { [string]$_ })
-      $l = @($o | Where-Object { $_ -match '^\s*\{' }) | Select-Object -Last 1; if ($l) { [string]($l | ConvertFrom-Json).status } else { 'UNPARSED' }
-    } -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256) -TimeoutMinutes 60 -Step 'prepare-again'
-    $reinstall.prepareAgainStatus = [string]$p2
+    $p2 = Invoke-DrillGuest $Cred $script:GuestPrepareAgain -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText) -TimeoutMinutes 60 -Step 'prepare-again'
+    $reinstall.prepareAgainStatus = [string](Get-Prop $p2 'status'); $reinstall.prepareAgainExit = $p2.exit; $reinstall.prepareAgainStderr = $p2.stderr
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   }
 
   $m5 = try { Copy-DrillM5 $RunDir $Cred } catch { @{ collectionCode = (Get-DrillCode $_).code } }
-  return @{ entry = $entry; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
+  return @{ entry = $entry; launcher = $launcher; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }
 }
 
 # Fable renew-key ruling, supplement "companion account and evidence" section 2 (defect 0de212cb, the drill's half): the guest's evidence of
@@ -2213,10 +2632,12 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
 function Write-DrillLines([string]$Path, [string[]]$Lines) { [IO.File]::WriteAllLines($Path, $Lines) }
 
 function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut) {
-  $names = @($script:Drill.GuestEntryLog, 'stage-timings.json', 'host-result.json', 'launcher-result.json')
+  # the entry's guest log here; the stage files (three complete stage logs, two stage results, the timings) by Save-DrillStageEvidence:
+  # each read with read-write sharing and saved on its own, its state in stage-files.json (this branch's reading, branch two)
+  $names = @($script:Drill.GuestEntryLog)
   # entryLog: which copy of the entry's lines first-install.log holds -- 'returned' (what the entry gave back), 'guest-log' (the guest's
   # copy, fetched below), or $null (none written). ok only when everything was written, the returned lines included.
-  $record = [ordered]@{ ok = $false; code = $null; detail = $null; missing = @(); entryLog = $null; entryLogError = $null; at = [DateTimeOffset]::UtcNow.ToString('o') }
+  $record = [ordered]@{ ok = $false; code = $null; detail = $null; missing = @(); entryLog = $null; entryLogError = $null; launcherReadback = $null; at = [DateTimeOffset]::UtcNow.ToString('o') }
   $timings = $null
   $logFile = Join-Path $RunDir 'first-install.log'
   # what the entry already returned is kept first: a failed collection below loses the stage files only (Codex review of ced480363, medium 6);
@@ -2227,15 +2648,11 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   }
   # an interactive run sets its own password for the guest account (Wait-DrillInteractive); the collection logs on with it
   if ($script:DrillInteractiveCredential) { $Cred = $script:DrillInteractiveCredential }
+  $stage = Save-DrillStageEvidence $RunDir $Cred
+  $timings = $stage.timings
   try {
-    $got = Invoke-DrillGuest $Cred {
-      param($Work, $Names)
-      $r = [ordered]@{}
-      foreach ($name in $Names) { $p = Join-Path $Work $name; $r[$name] = if (Test-Path -LiteralPath $p -PathType Leaf) { [IO.File]::ReadAllText($p) } else { $null } }
-      $r
-    } -ArgumentList @(($script:Drill.GuestWork + '\work'), $names) -TimeoutMinutes 2 -Step 'guest-evidence'
-    $text = { param($n) $v = Get-DrillField $got $n; if ($v -is [string]) { $v } else { $null } }
-    $json = { param($n) $t = & $text $n; if ($null -eq $t) { return $null }; try { $t | ConvertFrom-Json } catch { [ordered]@{ unreadable = $true } } }
+    $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), $names) -TimeoutMinutes 2 -Step 'guest-evidence'
+    $text = { param($n) $f = Get-DrillField $got $n; if ((Get-DrillField $f 'present') -eq $true -and -not (Get-DrillField $f 'error')) { [string](Get-DrillField $f 'text') } else { $null } }
     $record.missing = @($names | Where-Object { $null -eq (& $text $_) })
     $log = & $text $script:Drill.GuestEntryLog
     # the guest's copy only when there is one: no empty file and no 'guest-log' without it (Codex review of f734afe7e, low 1)
@@ -2243,21 +2660,44 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
       Write-DrillLines $logFile @($log -split "`r?`n" | Where-Object { $_ -ne '' })
       $record.entryLog = 'guest-log'
     }
-    $timings = & $json 'stage-timings.json'
-    Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings
-    Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') ([ordered]@{ 'host-result.json' = (& $json 'host-result.json'); 'launcher-result.json' = (& $json 'launcher-result.json') })
-    $record.ok = ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog)
   } catch {
     $c = Get-DrillCode $_
     $record.code = $c.code; $record.detail = $c.detail
   }
+  # the stage files that did not reach the run directory are missing too (their states: stage-files.json)
+  $record.missing = @(@($record.missing) + @(@($stage.record.files.Keys) | Where-Object { [string]$stage.record.files[$_].state -cne 'saved' }))
+  $record.stageFiles = $stage.record.files
+  # the launcher's verdict for A6 only as saved in the run directory and read back from there (same review): never the collected object.
+  # A read-back that fails is recorded with its detail (6th review round, low 2).
+  $launcher = $null
+  if ([string](Get-DrillField (Get-DrillField $stage.record.files 'launcher-result.json') 'state') -ceq 'saved') {
+    try {
+      $back = Get-DrillField (Read-DrillJson (Join-Path $RunDir 'stage-evidence.json')) 'launcher-result.json'
+      if ($null -eq $back) { throw 'launcher-result.json is not in the saved stage-evidence.json' }
+      # the field itself must be there (the entry writes terminal: null when the stage gave no verdict; 7th review round, low 2)
+      $hasTerminal = if ($back -is [Collections.IDictionary]) { $back.Contains('terminal') } else { $null -ne $back.PSObject.Properties['terminal'] }
+      if (-not $hasTerminal) { throw 'launcher-result.json read back has no terminal field' }
+      $launcher = Get-Prop $back 'terminal'
+      $record.launcherReadback = [ordered]@{ ok = $true; error = $null }
+    } catch { $launcher = $null; $record.launcherReadback = [ordered]@{ ok = $false; error = [string]$_.Exception.Message } }
+  }
+  # ok only after every file's state is summed and the launcher's verdict read back (Codex review of f33fc33e5, medium 2; 6th round, low 2):
+  # anything absent, unreadable or not saved, or a failed read-back, makes it false
+  $record.ok = ($null -eq $record.code) -and ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog) -and ($null -eq $stage.record.collection) -and (@($record.missing).Count -eq 0) `
+    -and ((Get-DrillField (Get-DrillField $record 'launcherReadback') 'ok') -ne $false)
   try { Write-DrillJson (Join-Path $RunDir 'guest-evidence.json') $record } catch { }
-  return @{ record = $record; timings = $timings }
+  return @{ record = $record; timings = $timings; stageEvidence = $stage.stageEvidence; launcher = $launcher }
 }
 
 # ---------------------------------------------------------------- main
 function Invoke-DrillMain {
   if ($Interactive -and ($BaselineOnly -or $PrereqOnly -or $Finalize)) { throw (New-DrillError 'DRILL_USAGE' '-Interactive is a full first-install run only') }
+  # Fable renew-key ruling, supplements "interactive mode A1" and "branch two, two points" 2: A1's step record has one parser
+  # (Read-DrillFirstInstallSteps); its source depends on the mode. In interactive mode the operator's window does not hold it: bootstrap.ps1
+  # runs the host preparation and the launcher as elevated stages in their own window (Invoke-Elevated, Start-Process -Verb RunAs), their
+  # output goes to the package's two stage output files (elevated-host-*.txt, elevated-launcher-*.txt) and only their verdict comes back.
+  # Those two files are the source to connect (drill branch three); until then refused here, before anything is read, booted or held.
+  if ($Interactive) { throw (New-DrillError 'DRILL_INTERACTIVE_STEP_RECORD_NOT_CONNECTED' 'the step record of an interactive first install has no source yet (逐步记录来源尚未接上)') }
   if ($Finalize) {
     if (-not $ProductionReadback) { throw (New-DrillError 'DRILL_USAGE' '-Finalize needs -ProductionReadback') }
     $receipt = Read-DrillJson $Finalize
@@ -2267,10 +2707,8 @@ function Invoke-DrillMain {
       throw (New-DrillError 'DRILL_RECEIPT_NOT_FINALIZABLE' 'receipt failed or checkpoint restore was not confirmed')
     }
     $prod = Get-DrillProductionVerdict $receipt (Read-DrillJson $ProductionReadback)
-    $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else {
-      $kept = [ordered]@{ id = $i.id; pass = $i.pass; detail = $i.detail }
-      $steps = $i.PSObject.Properties['firstInstallSteps']; if ($steps) { $kept.firstInstallSteps = $steps.Value }
-      $kept } })
+    # every item but the ones the read-back judges stays as the run wrote it (A1 keeps its firstInstallSteps)
+    $items = @($receipt.items | ForEach-Object { $i = $_; $p = @($prod | Where-Object { $_.id -eq $i.id }); if ($p.Count) { $p[0] } else { $i } })
     $receipt.items = $items
     $receipt.conclusion = Get-DrillConclusion $items (Get-Prop $receipt 'm5') ((Get-Prop $receipt 'candidate') -eq $true)
     $receipt | Add-Member -NotePropertyName finalizedAt -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString('o')) -Force
@@ -2285,12 +2723,15 @@ function Invoke-DrillMain {
   if (-not $BaselineOnly) { $prereq = Read-DrillPrereq $script:Drill.PrereqDir }
   if ($full) {
     $kitInfo = Read-DrillKit $Kit; $package = Test-DrillPackageDir $From $Version $kitInfo
-    # a candidate's receipt is what the acceptance rests on: no item of it may be skipped (Codex review of PR-甲, blocking 1)
-    if ($package['candidate'] -and $SkipReinstall) { throw (New-DrillError 'DRILL_CANDIDATE_CANNOT_SKIP' '-SkipReinstall') }
     if ($Interactive -and $kitInfo.prerequisiteMode -cne 'first-install-host') { throw (New-DrillError 'DRILL_INTERACTIVE_REQUIRES_RELEASE_KIT') }
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
     if ($kitInfo.executionBlocker) { throw (New-DrillError 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY' $kitInfo.executionBlocker) }
+    # the package's credential names against the drill's decisions, before the host gate, the hold or any boot; the kit's names first bound
+    # again to the package's verified tar
+    Assert-DrillKitCredentialsBound $kitInfo (Get-Prop $package 'tar')
+    Assert-DrillKitToolsBound $kitInfo (Join-Path $From "fleet-node-$Version.prereq-manifest.json")
+    $kitInfo['credentialPlan'] = Get-DrillCredentialPlan $kitInfo
   }
   Invoke-DrillWithHostHold $RunTimeoutMinutes {
     param($window)
@@ -2343,18 +2784,30 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
 
   $evidence = [ordered]@{ localSource = $null; hostExecutorStates = $o.hostExecutorStates; hostPreBoot = (Get-Prop $o 'preBoot') }
   $items = @()
-  # The first install's step record (Fable renew-key ruling, supplement "companion account and evidence" section 2.3), read from what the
-  # run directory holds whatever the run's end: under A1 (which needs it), or in the evidence when the run ended before there was a verdict.
+  # The first install's step record, read first from what the run directory holds whatever the run's end: A1 needs it (Get-DrillVerdict;
+  # branch one's rule and this branch's: present, not missing, not incomplete), and it is kept under A1, or in the evidence when the run
+  # ended before there was a verdict.
   $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
   $guestEvidence = Join-Path $runDir 'guest-evidence.json'
   if (Test-Path -LiteralPath $guestEvidence -PathType Leaf) { try { $evidence.guestEvidence = Read-DrillJson $guestEvidence } catch { $evidence.guestEvidence = @{ unreadable = $true } } }
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = $run.reinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps }
+  }
+  # the run stopped after the first install gave its result: A1 from that result alone (the other items are missing, so the receipt fails)
+  $entryResultFile = Join-Path $runDir 'entry-result.json'
+  if (-not $run -and (Test-Path -LiteralPath $entryResultFile -PathType Leaf)) {
+    $items = @(Get-DrillA1Item $(try { Read-DrillJson $entryResultFile } catch { $null }) $firstInstallSteps)
   }
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
+  # An emergency restore may come before the evidence was taken (Fable renew-key ruling, supplement "interactive mode A1", second point):
+  # accepted, and written as it ended (Codex review of 1cedea9ef, medium 4) -- the host guard's, and the boot watchdog's record.
+  $guardOutcome = Get-DrillGuardOutcome $runDir
+  if ($guardOutcome) { $evidence.guardEmergencyRestore = $guardOutcome }
+  $watchdogFile = Join-Path $runDir 'guest-shutdown.outcome.json'
+  if (Test-Path -LiteralPath $watchdogFile -PathType Leaf) { $evidence.watchdogRestore = try { Read-DrillJson $watchdogFile } catch { [ordered]@{ unreadable = $true } } }
   $files = @(Get-ChildItem -LiteralPath $runDir -File | Where-Object { $_.Name -ne 'receipt.json' } | ForEach-Object { [ordered]@{ name = $_.Name; sha256 = (Get-Sha256Hex $_.FullName) } })
   try {
     if ($run) { $m5 = Get-DrillM5Verdict $runDir $run.m5 }
@@ -2379,6 +2832,8 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     failure = $failure; restoredToCheckpoint = $restored
     evidence = $evidence; files = $files; items = $items; m5 = $m5
     conclusion = $(if ($failure -or -not $restored) { 'FAIL' } else { Get-DrillConclusion $items $m5 ([bool]$package['candidate']) })
+    # the package's credential names as given or withheld by design (the optional ones not given this run, with why)
+    credentials = $(try { Get-DrillCredentialPlan $kitInfo } catch { $null })
     productionReadbackSql = (Get-DrillReadbackSql $startedAt)
   }
   $receiptPath = Join-Path $runDir 'receipt.json'

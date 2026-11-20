@@ -4,11 +4,15 @@ import { collectPRPaths } from '../../../../scripts/ci/clued-pr-write-set.mjs';
 // module dependency to the legacy v1 Source's frozen closure.
 const READ_REQUEST_DEADLINE = Symbol.for('clued-read-request-deadline');
 const READ_REQUEST_GUARD = Symbol.for('clued-read-request-guard');
+const READ_REQUEST_NO_RETRY = Symbol.for('clued-read-request-no-retry');
 
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const sha = /^[a-f0-9]{40}$/;
 const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const stagedScanNames = ['gitleaks', 'trivy', 'contract-placement'];
+const stagedScanExternalId = /^independent-ci:staged:v2:[a-f0-9]{64}:a[12]$/;
+const STAGED_SCAN_REQUEST_MS = 2_000;
 // Bounded transport retry. A transport failure is a fetch() rejection or a body
 // cut off mid-read whose cause carries one of the network codes below. An HTTP
 // status, a redirect (refused by redirect:'error'), an unparsable body and any
@@ -59,7 +63,8 @@ function jwt(appId, key, now) {
 // it is never passed to worker processes, manifests, PRs or loggers.
 export function createGitHubChecksPort({ repository, repositoryId, appId, installationId,
   privateKeyProvider, fetchImpl = globalThis.fetch, clock = Date.now, maxPages = 10,
-  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false } = {}) {
+  forbiddenAppIds = [5365273, 5164952], includeModeRead = false, retryWindowMs = 4_000, sleep = wait, budgetObserver = null, budgetObservedAtFetch = false,
+  stagedScanJournal = null } = {}) {
   if (!repoPattern.test(repository ?? '') || ![repositoryId, appId, installationId].every(positive)
     || [5365273, 5164952].includes(appId) || !Array.isArray(forbiddenAppIds)
     || forbiddenAppIds.includes(appId) || typeof privateKeyProvider !== 'function'
@@ -98,21 +103,24 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     for (let i = spent.length - 1; i >= 0; i--) if (spent[i].at + spent[i].ms <= now - RETRY_SPAN_MS) spent.splice(i, 1);
     return retryWindowMs - spent.reduce((sum, entry) => sum + entry.ms, 0);
   }
-  async function send(url, method, bearer, body, timeoutMs, requestDeadline = null) {
+  async function send(url, method, bearer, body, timeoutMs, requestDeadline = null, beforeSend = null, noRetry = false) {
     if (!(timeoutMs >= 1)) fail('github_transport_unconfirmed');
     // Only the maintenance consumer opts in. Once the provider has told it to
     // wait, another read/write in this invocation must not ignore that deadline.
     respectProviderHold();
-    let response;
-    try {
-      if (!budgetObservedAtFetch) budget.begin(url);
-      response = await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(Math.min(30_000, timeoutMs)),
+    const options = { method, redirect: 'error', signal: AbortSignal.timeout(Math.min(30_000, timeoutMs)),
         ...(Number.isFinite(requestDeadline) ? { [READ_REQUEST_DEADLINE]: requestDeadline } : {}),
         ...(maintenanceRateControl ? { [READ_REQUEST_GUARD]: respectProviderHold } : {}),
+        ...(noRetry ? { [READ_REQUEST_NO_RETRY]: true } : {}),
         headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${bearer}`,
           'x-github-api-version': '2022-11-28', 'user-agent': 'clued-independent-ci',
           ...(body ? { 'content-type': 'application/json' } : {}) },
-        ...(body ? { body: JSON.stringify(body) } : {}) });
+        ...(body ? { body: JSON.stringify(body) } : {}) };
+    if (!budgetObservedAtFetch) budget.begin(url);
+    beforeSend?.();
+    let response;
+    try {
+      response = await fetchImpl(url, options);
     } catch (error) { if (error?.code === 'github_rate_limited') throw error; throw transport(error, false); }
     if (!budgetObservedAtFetch) budget.observe(url, response);
     if (!response.ok) {
@@ -130,12 +138,12 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
   // it is sent again only when the failure was a connect-phase fetch() rejection
   // and the read-back shows no copy. A failed read-back keeps the original
   // failure. `until` bounds a read-back's own requests by the retry it serves.
-  async function request(url, method, bearer, body, { repeatable = method === 'GET', readBack = null, until = null } = {}) {
+  async function request(url, method, bearer, body, { repeatable = method === 'GET', readBack = null, until = null, beforeSend = null, noRetry = false } = {}) {
     const parsed = new URL(url);
     if (parsed.origin !== 'https://api.github.com' || parsed.username || parsed.password) fail('invalid_github_origin');
     let failure;
-    try { return await send(url, method, bearer, body, until === null ? 30_000 : until - clock(), until); } catch (error) { failure = error; }
-    if (!failure?.retryable || (!repeatable && !readBack)) throw failure;
+    try { return await send(url, method, bearer, body, until === null ? 30_000 : until - clock(), until, beforeSend, noRetry); } catch (error) { failure = error; }
+    if (noRetry || !failure?.retryable || (!repeatable && !readBack)) throw failure;
     const opened = clock(), left = Math.min(available(opened), until === null ? Infinity : until - opened);
     if (!(left >= RETRY_DELAYS_MS[0] + MIN_ATTEMPT_MS)) throw failure;
     const reservation = { at: opened, ms: left }, retryUntil = opened + left;
@@ -197,6 +205,38 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
   async function scoped(route, method = 'GET', body, options) {
     if (!route.startsWith('/') || route.includes('..')) fail('invalid_github_route');
     return request(`${root}${route}`, method, await credential(options?.until ?? null), body, options);
+  }
+  const nonPendingScans = new Set();
+  async function stagedScanRecord(key, id) {
+    const record = await stagedScanJournal.read(key);
+    const { subject, details } = record ?? {};
+    if (!['created', 'completing'].includes(record?.state) || !positive(id) || details?.checkRunId !== id
+      || subject?.stagedScan !== true || subject.subject?.repo !== repository || subject.definition?.appId !== appId
+      || !stagedScanNames.includes(subject.definition.name) || subject.definition.name !== subject.subject.role || !sha.test(subject.subject.headSha)
+      || !stagedScanExternalId.test(subject.externalId) || !['success', 'failure'].includes(details.conclusion)
+      || typeof details.output?.summary !== 'string' || details.output.title !== `${subject.definition.name}: in progress`)
+      fail('staged_scan_journal_conflict');
+    return record;
+  }
+  function scanBody(record, conclusion = record.details.conclusion) {
+    return { status: 'completed', conclusion, output: { title: `${record.subject.definition.name}: ${conclusion}`,
+      summary: record.details.output.summary } };
+  }
+  async function readStagedScan(key, id) {
+    const record = await stagedScanRecord(key, id);
+    const actual = await scoped(`/check-runs/${id}`, 'GET', undefined, { until: clock() + STAGED_SCAN_REQUEST_MS, noRetry: true });
+    nonPendingScans.add(key);
+    const { subject, details } = record;
+    if (actual?.id !== id || actual.app?.id !== appId || actual.head_sha !== subject.subject.headSha
+      || actual.name !== subject.definition.name || actual.external_id !== subject.externalId
+      || actual.output?.summary !== details.output.summary) fail('staged_scan_readback_unconfirmed');
+    if (actual.status === 'in_progress' && actual.conclusion === null && actual.output.title === details.output.title) {
+      nonPendingScans.delete(key);
+      return 'pending';
+    }
+    const expected = scanBody(record);
+    if (actual.status === expected.status && actual.conclusion === expected.conclusion && actual.output.title === expected.output.title) return 'completed';
+    fail('staged_scan_readback_unconfirmed');
   }
   // base.sha: the batch base T for every job that tests the head (v1 jobs have no testSha); a v2 train front batch
   // (S != H) accepts what GitHub reads (job-v2.mjs#prBaseAcceptedV2, inlined: the v1 one-shot closure never loads
@@ -296,6 +336,40 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     return { headSha: p.headRefOid, updatedAt: new Date(Date.parse(p.updatedAt)).toISOString(), count, rows, next };
   }
   return Object.freeze({
+    ...(stagedScanJournal ? { readStagedScan,
+      async completeStagedScan(key, id, verify) {
+        const record = await stagedScanRecord(key, id);
+        if (record.state !== 'created' || typeof verify !== 'function') fail('staged_scan_completion_refused');
+        await stagedScanJournal.transition(key, 'created', 'completing', record.details);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            if (await readStagedScan(key, id) !== 'pending') fail('staged_scan_completion_refused');
+            const beforeSend = await verify();
+            if (typeof beforeSend !== 'function') fail('staged_scan_completion_refused');
+            if (await readStagedScan(key, id) !== 'pending') fail('staged_scan_completion_refused');
+            return await scoped(`/check-runs/${id}`, 'PATCH', scanBody(record), {
+              noRetry: true, until: clock() + STAGED_SCAN_REQUEST_MS,
+              beforeSend() {
+                beforeSend();
+                // The pre-send pending observation is spent. Only a later
+                // positive observation of the pending state permits cleanup.
+                nonPendingScans.add(key);
+              },
+            });
+          } catch (error) {
+            // Only a local freshness refusal can repeat. No request has been sent on that path.
+            if (error?.code !== 'staged_scan_verification_aged' || attempt === 1) throw error;
+          }
+        }
+      },
+      async failStagedScan(key, id) {
+        const record = await stagedScanRecord(key, id);
+        // Creation can prove pending until we attempt the completion write.
+        if (nonPendingScans.has(key)) fail('staged_scan_cleanup_refused');
+        nonPendingScans.add(key);
+        return scoped(`/check-runs/${id}`, 'PATCH', scanBody(record, 'failure'), { noRetry: true, until: clock() + STAGED_SCAN_REQUEST_MS });
+      },
+    } : {}),
     rateBudget() { return budget.snapshot(); },
     async readRateBudget({ until = null } = {}) {
       if (until !== null && (!Number.isSafeInteger(until) || until <= clock())) fail('invalid_rate_budget_deadline');
@@ -477,11 +551,14 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       fail('force_push_events_page_limit');
     },
     async createCheck(body) {
-      if (!body || !sha.test(body.head_sha) || body.status !== 'completed'
-        || !['success', 'failure'].includes(body.conclusion) || typeof body.name !== 'string'
+      const pending = stagedScanJournal && body?.status === 'in_progress' && !Object.hasOwn(body, 'conclusion')
+        && stagedScanNames.includes(body.name) && stagedScanExternalId.test(body.external_id ?? '');
+      if (!body || !sha.test(body.head_sha) || (!pending && (body.status !== 'completed' || !['success', 'failure'].includes(body.conclusion)))
+        || typeof body.name !== 'string'
         || !body.external_id?.startsWith('independent-ci:')
         // resident ADR 0018 §8 item 3: the never-published required check that keeps PR-page merges out in push mode
         || body.name === 'kooyumi-train-landed') fail('invalid_check_publication');
+      if (pending) return scoped('/check-runs', 'POST', body, { noRetry: true });
       // Dedupe by external_id: one complete inventory of the head decides whether
       // this App already holds the run. Two copies, or a copy with a different
       // result or output, refuse.

@@ -57,6 +57,13 @@ test('自检要求身份正确、观测新鲜，且两个 KSP 都打不开密钥
   }
   assert.equal(verdict(null,rows),'FAIL');
   assert.equal(verdict({...system,sid:service},rows),'FAIL');
+  const maxAge=30*60_000;
+  for (const [offset, expected] of [[-maxAge,true],[-maxAge-1,false],[1,false],[86_400_000,false]]) {
+    const retime = row => ({...row,at:new Date(now+offset).toISOString()});
+    const checks=keyCheck(retime(system),...rows.map(retime),profile,now);
+    assert.deepEqual([checks.system,checks.resident,checks.controller,checks.companion],
+      [expected,expected,expected,expected],`观测时间偏移 ${offset} 毫秒`);
+  }
 });
 
 test('TURING 21:16 反向观测中常驻在两个 KSP 都找不到密钥时通过', () => {
@@ -71,6 +78,36 @@ test('TURING 21:16 反向观测中常驻在两个 KSP 都找不到密钥时通�
   assert.equal(checks.result,'PASS');
 });
 
+test('常驻轮次开始后产生的四项密钥观测仍可通过自检', async t => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'renew-fresh-'));
+  t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const root=path.join(directory,'resident');
+  for (const dir of ['resident/state','resident/broker/requests','resident/mailbox/responses','state/v2/receipts'])
+    fs.mkdirSync(path.join(directory,dir),{recursive:true});
+  const service='S-1-5-80-'+Array.from({length:5},(_,i)=>sidHash.readUInt32LE(4*i)).join('-');
+  const profile={ownerSid:'companion',controllerSid:'controller'};
+  let now=Date.parse('2026-11-20T00:32:06.000Z');
+  const iso=()=>new Date(now).toISOString();
+  const row=sid=>({at:iso(),sid,tpm:'DENIED',software:'ABSENT'});
+  const put=(file,value)=>fs.writeFileSync(path.join(directory,file),JSON.stringify(value));
+  const step=renewalWatch({root,profile,mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,uptime:()=>10*60_000,observe:async()=>{
+    now+=40;
+    return row(service);
+  }});
+  // 启动轮次先读时钟，挂起读取状态后，独立的写入方发布另外三项观测。
+  const checking=step();
+  now+=80;
+  put('resident/broker/renew-key.json',{at:iso(),sid:'S-1-5-18',provider:'Microsoft Platform Crypto Provider',code:null});
+  put('state/v2/receipts/renew-key-controller.json',row(profile.controllerSid));
+  put('resident/mailbox/responses/renew-key.json',{...row(profile.ownerSid),
+    'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
+  await checking;
+  const {keys,checkedAt}=JSON.parse(fs.readFileSync(path.join(root,'state','connection-renewal.json'),'utf8'));
+  assert.deepEqual({resident:keys.resident,system:keys.system,controller:keys.controller,companion:keys.companion,result:keys.result},
+    {resident:true,system:true,controller:true,companion:true,result:'PASS'});
+  assert.equal(checkedAt,iso());
+});
+
 test('常驻状态原样记录 SYSTEM 失败诊断，并在 Broker 恢复后清空', async t => {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'renew-failure-'));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -80,7 +117,7 @@ test('常驻状态原样记录 SYSTEM 失败诊断，并在 Broker 恢复后清�
   const systemFile=path.join(root,'broker/renew-key.json');
   fs.writeFileSync(systemFile,JSON.stringify({at:new Date(now).toISOString(),sid:'S-1-5-18',provider:null,
     code:'RENEW_IDENTITY_KEY_UNAVAILABLE',failure}));
-  const step=renewalWatch({root,profile:{},mode:()=>'STANDBY',clock:()=>now,observe:async()=>null});
+  const step=renewalWatch({root,profile:{},mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,uptime:()=>10*60_000,observe:async()=>null});
   const keys=()=>JSON.parse(fs.readFileSync(path.join(root,'state/connection-renewal.json'))).keys;
   await step();
   assert.deepEqual(keys().systemFailure,failure);
@@ -101,7 +138,7 @@ test('两类连接每天各投一次；续期请求只含类别，拒绝不会�
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   for(const d of ['state','broker/requests','broker/responses']) fs.mkdirSync(path.join(root,d),{recursive:true});
   let mode='ACTIVE',idle=false,now=Date.now();
-  const step=renewalWatch({root,profile:{},mode:()=>mode,drained:async()=>idle,clock:()=>now,observe:async()=>null});
+  const step=renewalWatch({root,profile:{},mode:()=>mode,drained:async()=>idle,clock:()=>now,source:CI_SOURCE,uptime:()=>10*60_000,observe:async()=>null});
   await step();
   const req=kind=>{
     const book=JSON.parse(fs.readFileSync(path.join(root,'state/connection-renewal.json')));
@@ -129,8 +166,9 @@ function drillFixture(t) {
   put('controller',row(profile.controllerSid));
   put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
   put('probe',{at,code:'RENEW_IDENTITY_REFUSED'});
+  put('record',{'ci-admission.connection.json':'PRESENT'});
   const drill=()=>spawnSync(process.execPath,[path.join(resident,'test','renewal-drill.mjs'),dir],{encoding:'utf8'});
-  return {drill, put, profile, row};
+  return {drill, put, profile, row, dir};
 }
 test('演练以未登记来宾收到的网关拒绝观测判定可达性', async t=>{
   const {drill, put}=drillFixture(t);
@@ -166,6 +204,36 @@ test('演练夹具只凭公开的同轮身份和网关观测判定', t=>{
   result=drill();assert.equal(result.status,1);assert.equal(JSON.parse(result.stdout).result,'FAIL');
 });
 
+// 裁定补“对路八处”第 8 处：连接记录以来宾管理员侧实读为准（record.json）。存在则陪伴必须“拒绝访问”，不存在则必须报“不存在”，
+// 对不上即失败；记录不存在时“记录的拒绝访问”如实登记为未验到。令牌文件仍必须“拒绝访问”。
+test('M5 连接记录以管理员侧实读为准：存在须拒绝访问，不存在须报不存在，对不上即失败', t=>{
+  const {drill, put, profile, row, dir} = drillFixture(t);
+  const run=(admin,companion,token='DENIED')=>{
+    put('record',{'ci-admission.connection.json':admin});
+    put('companion',{...row(profile.ownerSid),'ci-admission.token':token,'ci-admission.connection.json':companion});
+    const r=drill(); return {status:r.status, verdict:JSON.parse(r.stdout)};
+  };
+  for (const [name,admin,companion,token,result,denial] of [
+    ['首装：记录不存在，陪伴报不存在','ABSENT','ABSENT','DENIED','PASS','NOT_VERIFIED_RECORD_ABSENT'],
+    ['记录存在，陪伴拒绝访问','PRESENT','DENIED','DENIED','PASS','VERIFIED'],
+    ['记录不存在，陪伴却报拒绝访问','ABSENT','DENIED','DENIED','FAIL',null],
+    ['记录存在，陪伴却报不存在','PRESENT','ABSENT','DENIED','FAIL',null],
+    ['令牌文件不存在仍不行','ABSENT','ABSENT','ABSENT','FAIL','NOT_VERIFIED_RECORD_ABSENT'],
+    ['管理员侧读数不认识','UNREADABLE','ABSENT','DENIED','FAIL',null],
+  ]) {
+    const {status,verdict}=run(admin,companion,token);
+    assert.equal(verdict.result,result,name);
+    assert.equal(status,result==='PASS'?0:1,name);
+    assert.deepEqual(verdict.record,{admin,companion,consistent:denial!==null,denial},name);
+  }
+  // 缺管理员侧读数：观测不全，失败
+  fs.rmSync(path.join(dir,'record.json'));
+  put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'ABSENT'});
+  const r=drill();
+  assert.equal(r.status,1);
+  assert.equal(JSON.parse(r.stdout).code,'DRILL_EVIDENCE_UNAVAILABLE');
+});
+
 test('M5 来宾使用软件 KSP 时即使日常自检通过也会拒绝', t=>{
   const {drill,put}=drillFixture(t);
   put('system',{at:new Date().toISOString(),sid:'S-1-5-18',provider:'Microsoft Software Key Storage Provider',code:null});
@@ -185,12 +253,13 @@ function handoverFixture(t, {now = Date.now(), currentBinding = bindingId, mode,
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'renew-handover-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   for (const dir of ['state', 'broker/requests', 'broker/responses']) fs.mkdirSync(path.join(root, dir), {recursive: true});
-  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0};
+  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0, source: CI_SOURCE, startedAt: now - 10 * 60_000};
   const expiresAt = new Date(f.now + 10 * 24 * HOUR).toISOString();
   const put = (name, value) => fs.writeFileSync(path.join(root, name), JSON.stringify(value));
   f.restart = () => {
     f.tick = renewalWatch({root, profile: {}, mode: mode ?? (() => f.mode), drained: drained ?? (async () => f.drained),
-      clock: () => f.now, observe: async () => null, onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; })});
+      clock: () => f.now, observe: async () => null, onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; }), source: f.source,
+      uptime: () => f.now - f.startedAt});
   };
   f.restart();
   f.book = () => JSON.parse(fs.readFileSync(path.join(root, 'state/connection-renewal.json')));
@@ -632,6 +701,10 @@ test('M3 陪伴文件缺席与当班控制观测', () => {
   const check=mode=>keyCheck(system,row(service),controller,companion,{controllerSid:'controller',ownerSid:'helper'},now,mode);
   assert.equal(check('ACTIVE').result,'PASS');
   assert.equal(check('STANDBY').controller,false);
+  const priorAt=controller.at;
+  controller.at=new Date(now+86_400_000).toISOString();
+  assert.equal(check('ACTIVE').controller,false);
+  controller.at=priorAt;
   controller.tpm='OPEN'; assert.equal(check('ACTIVE').controller,false);
 });
 
@@ -653,4 +726,90 @@ test('M3 续期通知独立于用完即弃自检', async t=>{
   const toast=events({status:{writtenAt:f.now,pending:[],notices:[notice]},now:f.now});
   assert.match(toast[0].title,/连接续期/);
   assert.match(toast[0].body,/versions\.renewal/);
+});
+
+// 缺陷 c7ea4ea1（Fable 11-20“补：续期不等”B）：升级正是为修上一代得到的拒绝，上一代写下的拒绝不再让本代等满退避；
+// 通道记录跨升级保留，让班等待、生效时间、绑定、到期原样生效。代的标识是本代 Source 摘要（policy.ciSourceManifestSha256）。
+const OTHER_SOURCE = 'a'.repeat(64);
+const refusedLane = (at, extra = {}) => ({at, waiting: false, effectiveAt: null, code: 'RENEW_IDENTITY_KEY_UNAVAILABLE', bindingId: null,
+  expiresAt: null, renewalWindowOpensAt: null, grantRequestId: null, retryAfterSeconds: null, ...extra});
+const seedBook = (f, lanes) => fs.writeFileSync(path.join(f.root, 'state/connection-renewal.json'), JSON.stringify({lanes, pending: null}));
+test('上一代写下的拒绝（标识不同或缺失）不计退避：本代启动第一轮即投，两类连接依次重投', async t => {
+  for (const marker of [{}, {source: OTHER_SOURCE}]) {
+    const f = handoverFixture(t);
+    seedBook(f, {ci: refusedLane(f.now - HOUR, marker), upgrade: refusedLane(f.now - HOUR, marker)});
+    f.restart();
+    await f.tick(); f.request('ci');
+    f.reply('ci', {code: 'RENEW_IDENTITY_KEY_UNAVAILABLE'});
+    await f.tick(); f.request('upgrade');
+    assert.equal(f.book().lanes.ci.source, CI_SOURCE, '本代写下的通道记录带本代标识');
+    f.reply('upgrade', {code: 'RENEW_IDENTITY_KEY_UNAVAILABLE'});
+    await f.tick(); f.request(null);
+    assert.equal(f.book().lanes.upgrade.source, CI_SOURCE);
+    f.now += 24 * HOUR - 1; await f.tick(); f.request(null);
+    f.now++; await f.tick(); f.request('ci');
+  }
+});
+test('本代写下的拒绝仍按原退避：密钥不可用一小时前，满一天才重投', async t => {
+  const f = handoverFixture(t);
+  seedBook(f, {ci: refusedLane(f.now - HOUR, {source: CI_SOURCE}), upgrade: refusedLane(f.now - HOUR, {source: CI_SOURCE})});
+  f.restart();
+  await f.tick(); f.request(null);
+  f.now += 23 * HOUR - 1; await f.tick(); f.request(null);
+  f.now++; await f.tick(); f.request('ci');
+});
+test('上一代的让班等待、生效时间、绑定、到期跨代原样生效，不因换代提前投递；上一代的成功续期仍按日', async t => {
+  const f = handoverFixture(t);
+  f.mode = 'UNCERTAIN';
+  const ci = {at: f.now - 10 * 60_000, waiting: true, effectiveAt: new Date(f.now + 300_000).toISOString(), code: 'RENEW_HANDOVER_WAITING',
+    bindingId, expiresAt: new Date(f.now + 10 * 24 * HOUR).toISOString(), renewalWindowOpensAt: null, grantRequestId: null, retryAfterSeconds: null};
+  const upgrade = {...refusedLane(f.now - HOUR), code: null, bindingId: confirmationId, expiresAt: new Date(f.now + 20 * 24 * HOUR).toISOString()};
+  seedBook(f, {ci, upgrade});
+  f.restart();
+  await f.tick(); f.request(null);
+  assert.deepEqual(f.book().lanes, {ci, upgrade});
+  f.now += HOUR; await f.tick(); f.request(null); // 旧连接仍可用：等角色探询，不投
+  assert.deepEqual(f.book().lanes, {ci, upgrade});
+  f.now += 23 * HOUR - 10 * 60_000; await f.tick(); f.request('upgrade');
+});
+test('常驻必须带上本代 Source 摘要才能续期', () => {
+  for (const source of [undefined, null, 'E'.repeat(64), 'e'.repeat(63)])
+    assert.throws(() => renewalWatch({root: os.tmpdir(), profile: {}, mode: () => 'STANDBY', source}), /RENEW_SOURCE_REQUIRED/);
+});
+
+// Task eb73b396（Fable 11-20“补：升级中续期——不读升级状态，改用本进程启动后的宽限”）：换代必然重启常驻进程；
+// 本进程启动后满一个检查周期才发起第一条新的续期。判据只用进程启动时刻与单调时钟。让班等待中的重投与确认、自检不受宽限约束。
+const CHECK = 10 * 60_000;
+const requestFiles = f => fs.readdirSync(path.join(f.root, 'broker/requests'));
+test('进程刚启动未满一个检查周期：不投、请求邮箱无新文件、不写通道记录、不计退避；自检照写', async t => {
+  const f = handoverFixture(t);
+  f.startedAt = f.now; f.restart();
+  await f.tick(); f.request(null);
+  assert.deepEqual([requestFiles(f), f.book().lanes, f.book().pending], [[], {}, null]);
+  assert.deepEqual([typeof f.book().keys?.result, f.book().checkedAt], ['string', new Date(f.now).toISOString()], '宽限内自检照写');
+  f.now += CHECK - 1; await f.tick(); f.request(null);
+  assert.deepEqual([requestFiles(f), f.book().lanes], [[], {}]);
+  f.now += 1; await f.tick(); f.request('ci');
+  assert.equal(requestFiles(f).length, 1);
+});
+test('进程已启动满一个检查周期：第一轮即投', async t => {
+  const f = handoverFixture(t);
+  f.startedAt = f.now - CHECK; f.restart();
+  await f.tick(); f.request('ci');
+});
+test('让班等待中进程重启：已有的等待重投与确认不受宽限影响，宽限只挡新的投递', async t => {
+  const f = handoverFixture(t);
+  f.mode = 'STANDBY'; f.drained = true;
+  seedBook(f, {ci: {at: f.now - HOUR, source: CI_SOURCE, waiting: true, effectiveAt: null, code: 'CI_REBIND_NOT_DRAINED', bindingId,
+    expiresAt: new Date(f.now + 10 * 24 * HOUR).toISOString(), renewalWindowOpensAt: null, grantRequestId: null, retryAfterSeconds: null},
+  upgrade: {...refusedLane(f.now - 24 * HOUR, {source: CI_SOURCE}), code: null}});
+  f.startedAt = f.now; f.restart();
+  await f.tick();
+  f.reply('ci', {outcome: 'confirm-standby', confirmationId});
+  await f.tick(); assert.equal(f.request('ci'), confirmationId);
+  f.reply('ci', {}); await f.tick();
+  assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting], [null, false]);
+  f.request(null);
+  assert.equal(requestFiles(f).length, 2, '宽限内只有等待重投与确认两份请求');
+  f.now = f.startedAt + CHECK; await f.tick(); f.request('upgrade');
 });
