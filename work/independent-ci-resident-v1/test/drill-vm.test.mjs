@@ -1863,9 +1863,10 @@ test('no automatic contention class is left in the drill', () => {
 });
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,
-// or a throw as a time out does), a running list answering `list`.
+// or a throw as a time out does), a running list answering `list`. Its host status is written by the drill's clock when it is read, never
+// when this file loads: the world is built once, and its tests may run long after that (CI run 44746396297).
 const wslWorld = `
-    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Read-DrillHostStatus { ${q(idleHostStatus('WRITTEN_AT'))}.Replace('WRITTEN_AT', (Get-DrillTime).ToString('o')) }
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
     function Get-VM { param($ErrorAction) }
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
