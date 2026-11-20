@@ -99,6 +99,7 @@ test('D1+D3: the host table makes the whole spool baseline; the launcher invento
   const r = ps(`${fixture(root)}
 # 1. the launcher's inventory on what the host made
 $inv = $null; try { $found = Get-SpoolLeftovers $spool; $rem = Get-SpoolRemainder $spool $found; $inv = [ordered]@{ records = $found.Count; remainder = @($rem) } } catch { $inv = [ordered]@{ error = $_.Exception.GetType().Name + ': ' + $_.Exception.Message } }
+if ($inv.Contains('error')) { ConvertTo-Json -Depth 4 -Compress -InputObject ([ordered]@{ made = $made; inventory = $inv }); return }   # the rest stands on it
 # 2. migrate-acl before the install made resident\\broker: the missing target is the broker's, and the launcher accepts exactly that
 $dry = Invoke-Migrate
 $baseline = Get-SpoolBaseline ${psLiteral(MODEL)} $fx
@@ -120,8 +121,8 @@ ConvertTo-Json -Depth 8 -Compress -InputObject ([ordered]@{ made = $made; invent
   dry = [ordered]@{ exit = $dry.exit; status = (Get-Key $dry.result 'status'); code = (Get-Key $dry.result 'code') }; baseline = $baseline; accepted = $accepted
   plan = [ordered]@{ exit = $plan.exit; status = (Get-Key $plan.result 'status'); code = (Get-Key $plan.result 'code') }
   apply = [ordered]@{ exit = $apply.exit; status = (Get-Key $apply.result 'status'); code = (Get-Key $apply.result 'code') }; moved = $moved })`);
-  assert.ok(r.made.includes('\\formal-spool\\outgoing') && r.made.includes('\\formal-spool\\incoming'), JSON.stringify(r.made));
   assert.deepEqual(r.inventory, { records: 0, remainder: [] }, 'the inventory reads an empty baseline');
+  assert.ok(r.made.includes('\\formal-spool\\outgoing') && r.made.includes('\\formal-spool\\incoming'), JSON.stringify(r.made));
   assert.deepEqual(r.dry, { exit: 2, status: 'REFUSED', code: 'ACL_TARGET_MISSING' }, 'before the install only the broker is missing');
   assert.deepEqual(r.baseline, { code: null, missing: [] });
   assert.equal(r.accepted, true, 'the launcher accepts the missing broker on a complete baseline');
