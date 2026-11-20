@@ -25,7 +25,9 @@ export const V1_REQUIRED_SOURCE = Object.freeze([...['runtime/one-shot.mjs', 'ru
   ...['clued-work-admission.mjs', 'clued-pr-task-binding.mjs', 'clued-pr-write-set.mjs', 'component-version-integration-policy.mjs', 'clued-control-workflow-source.mjs', 'clued-control-workflow-sources.json', 'clued-production-publisher-source.mjs',
     'clued-production-publisher-sources.json', 'clued-publisher-qualification-source.mjs', 'clued-publisher-qualification-sources.json',
     'clued-standard-runner-actor-source.mjs', 'clued-standard-runner-actor-sources.json', 'clued-workflow-profile.mjs', 'merge-admission-measurement-history.mjs', 'merge-admission-policy.mjs', 'merge-admission-source-producer.mjs'].map(p => 'scripts/ci/' + p),
-  'scripts/runner/clued-runner-job-started.mjs', 'config/clued-mechanical-files.json'].sort());
+  'scripts/runner/clued-runner-job-started.mjs', 'config/clued-mechanical-files.json',
+  // Fable 11-20 (单一判定): the gate imports the one failure rule from the companion's module.
+  'work/independent-ci-resident-v1/src/env-failure.mjs'].sort());
 export const INSTALL_ROOT = process.platform === 'win32' ? 'C:\\ProgramData\\CluedIndependentCI' : '/etc/clued-independent-ci';
 export const APP_KEY_FILE = process.platform === 'win32' ? 'C:\\ProgramData\\CluedControl\\trusted\\controller-checks-app.pem' : '/etc/clued-control/trusted/controller-checks-app.pem';
 const SOURCE_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));

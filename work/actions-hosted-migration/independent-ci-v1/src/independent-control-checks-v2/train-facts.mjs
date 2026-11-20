@@ -145,6 +145,8 @@ export function requiredOnHead({ rules, checks, headSha, appId }) {
 // head's admission; with neither, fallbackStart (the merge slot's time, else the holder's front time); with nothing, it has passed.
 export function requiredWindowExpired(required, m, now, fallbackStart = null) {
   if (!required || !m || m.rerunning) return false;
+  // A failed check whose end GitHub did not record cannot start a window: when in doubt it is a real failure.
+  if (m.state === 'failed' && !Number.isFinite(m.lastEndAt)) return true;
   const known = [m.lastEndAt, required.admittedAt].filter(Number.isFinite);
   const start = known.length ? Math.max(...known) : fallbackStart;
   return !Number.isFinite(start) || !Number.isFinite(now) || now - start >= REQUIRED_RERUN_WINDOW_MS;
