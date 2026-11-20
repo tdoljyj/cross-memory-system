@@ -61,7 +61,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     assert.equal(argv[0], 'C:\\gh.exe'); assert.equal(argv[1], 'api'); assert.ok(Number.isSafeInteger(o?.timeoutMs));
     const method = argv[3], target = argv.at(-1);
     st.calls.push({ method, target });
-    const f = fail(target, method, st);
+    const f = fail(target, method, st, argv);
     if (f === 'throw') throw new Error('spawn failed');
     if (f) return f;
     assert.ok(target.startsWith(`repos/${REPO}/`), target);
@@ -1172,4 +1172,62 @@ test('lost run: GitHub refuses the dispatch (no workflow_dispatch entry yet) or 
   await again.r.step();
   assert.deepEqual(again.toasts, ['PR #452：必需测试没有运行，自动补发结果不确定']);
   assert.deepEqual(w.dispatches, []);
+});
+
+// Fable 11-20“补：车头缺必需检查”（#1192，运行 44633481108、44633481239）：gh 2.97 不肯输出含终端转义序列的作业日志（退出码 1），除非给
+// --allow-escape-sequences；而每个 `run:` 步骤的 Actions 日志都含（\x1b[36;1m）。本通道对 Owner 推送、重作业全被跳过的运行要读准入门日志，
+// 于是每次都读失败、永不补跑。这里按真实 gh 的行为脚本化。
+const ESCAPED_LOG = '2026-11-19T22:58:31Z \x1b[36;1mnode scripts/ci/clued-work-admission.mjs --mode gate\x1b[0m\n  "verdict": "ADMISSION_PENDING",\n  "automation_self_hosted": false\n';
+const GH_ESCAPE_REFUSAL = { code: 1, stdout: '', stderr: 'the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway' };
+const ghRefusesEscapes = (target, method, st, argv) => /\/logs$/.test(target) && !argv.includes('--allow-escape-sequences') ? GH_ESCAPE_REFUSAL : null;
+const ownerRun = (attempts, o = {}) => run(700, attempts, { actor: { login: 'tdoljyj', type: 'User' }, ...o });
+
+test('#1192: the gh port reads a job log that holds terminal escape sequences', async () => {
+  const gh = ghPort({ ghExe: 'C:\gh.exe', repo: REPO, run: async argv => argv.includes('--allow-escape-sequences') ? { code: 0, stdout: ESCAPED_LOG } : GH_ESCAPE_REFUSAL });
+  assert.equal(await gh.text('/actions/jobs/1/logs'), ESCAPED_LOG);
+});
+
+test('#1192: a gate-skipped run of a head the Owner pushed is re-run once the admission came, with the real gh behaviour', async t => {
+  const w = world({ runs: [ownerRun([attempt()])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 700, 1], d.reason);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+  assert.equal(l.r.reruns(HEAD), 1, 'the PR page counts the re-runs: 补跑中（第 1 次）');
+});
+
+test('at most two re-runs of one workflow on one head: the third attempt that is still skipped is final', async t => {
+  const w = world({ runs: [ownerRun([attempt(), attempt({ notes: [{ ...pendingNote }] }), attempt({ notes: [{ ...pendingNote }] })])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'final', d.reason);
+  assert.match(d.reason, /two re-runs/);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, []);
+  // the second re-run is still allowed
+  const w2 = world({ runs: [ownerRun([attempt(), attempt({ notes: [{ ...pendingNote }] })])], fail: ghRefusesEscapes });
+  assert.equal((await decide({ gh: w2.gh, headSha: HEAD })).action, 'rerun');
+});
+
+// 9aba97c1: a required job no runner ever took ran nothing (no step, no runner; real samples: job 136029949967 of run 44658316395 and
+// job 134948221590 of run 44345691588, both cancelled with steps [] and runner_id 0). It is a process cause: re-run. A job that ran a step
+// and failed stays a real failure.
+const unassignedJob = conclusion => ({ conclusion, steps: [] });
+test('9aba97c1: a required job no runner took is re-run; the gate job no runner took ran nothing', async () => {
+  for (const conclusion of ['cancelled', 'failure']) {
+    const w = world({ runs: [ownerRun([ran([unassignedJob(conclusion), ok, ok])])], fail: ghRefusesEscapes });
+    const d = await decide({ gh: w.gh, headSha: HEAD });
+    assert.deepEqual([d.action, d.failures], ['rerun', [{ name: HEAVY[0], kind: 'unassigned' }]], `${conclusion}: ${d.reason}`);
+    assert.equal(w.calls.filter(c => /logs|annotations/.test(c.target)).length, 0, 'nothing ran: no log or annotation is evidence');
+  }
+  const gate = { name: 'admission-gate', status: 'completed', conclusion: 'cancelled', head_sha: HEAD, steps: [], runner_id: 0, runner_name: null };
+  const skipped = { conclusion: 'skipped' };
+  const w = world({ runs: [ownerRun([ran([skipped, skipped, skipped], { gate })])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.environment], ['rerun', null], d.reason);
+  // a job a runner took that failed with no failed step on record is not proven to be the environment
+  const taken = world({ runs: [ownerRun([ran([{ conclusion: 'failure', steps: [] }, ok, ok])])] });
+  taken.runs[0].attempts[0].jobs[1].runner_name = 'clued-ci-company-linux-01';
+  assert.equal((await decide({ gh: taken.gh, headSha: HEAD })).action, 'final');
 });

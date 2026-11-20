@@ -4256,3 +4256,26 @@ test('the gate loads only the pure reuse judgement: clued-tree-reuse.mjs imports
   const specifiers = [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g)].map((m) => m[1]);
   assert.deepEqual(specifiers.filter((spec) => !spec.startsWith('node:')), []);
 });
+
+// 9aba97c1 (Fable 11-20, 补：车头缺必需检查): a job no runner ever took ran nothing: no step, runner_id 0, runner_name null (GitHub's record
+// of job 136029949967 of run 44658316395 and job 134948221590 of run 44345691588). Like a setup death it is the process, not the change:
+// one repair re-run is admitted, with no log and no annotation read. The same for a gate job no runner took.
+const unassigned = (job) => ({ ...job, steps: [], runner_id: 0, runner_name: null });
+test("independent gate repair re-run: a required job or a gate job that no runner took admits one re-run", async () => {
+  for (const conclusion of ["cancelled", "failure"]) {
+    const earlier = ranAttempt(1, [pass, pass, pass]);
+    earlier.jobs[1] = unassigned({ ...earlier.jobs[1], conclusion });
+    const { outcome, extra } = await repairGate([earlier]);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], `${conclusion}: ${outcome.reasons.join("; ")}`);
+    assert.deepEqual(outcome.repair_rerun.earlier_attempts[0].environment_failure_kinds, { [earlier.jobs[1].name]: "unassigned" });
+    assert.ok(extra.every((call) => !/\/logs|\/annotations/.test(call.url)), "nothing ran: no log or annotation is evidence");
+  }
+  const gateNeverTaken = ranAttempt(1, [{ conclusion: "skipped" }, { conclusion: "skipped" }, { conclusion: "skipped" }],
+    { gate: unassigned(attemptJob(100, "admission-gate", "cancelled")) });
+  const { outcome } = await repairGate([gateNeverTaken]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
+  // A job a runner took that failed with no failed step on record is not proven to be the environment.
+  const taken = ranAttempt(1, [pass, pass, pass]);
+  taken.jobs[1] = { ...taken.jobs[1], conclusion: "failure", steps: [], runner_id: 7, runner_name: "clued-ci-company-linux-01" };
+  assert.equal((await repairGate([taken])).outcome.admitted, false);
+});
