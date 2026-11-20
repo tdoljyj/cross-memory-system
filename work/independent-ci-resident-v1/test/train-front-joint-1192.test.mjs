@@ -58,7 +58,7 @@ async function laneGh(e, m) {
       let r;
       if (route === `/pulls/${PR}`) return structuredClone(pull);
       if ((r = /^\/actions\/runs\/(\d+)$/.exec(route))) return m.shown(m.run(Number(r[1])));
-      if ((r = /^\/contents\/(\.github\/workflows\/[\w.-]+)\?ref=([0-9a-f]{40})$/.exec(route))) return { path: r[1], sha: 'f'.repeat(40), encoding: 'base64', content: sources[r[1]].toString('base64') };
+      if ((r = /^\/contents\/(\.github\/workflows\/[\w.-]+)\?ref=([0-9a-f]{40})$/.exec(route))) return { path: r[1], sha: (r[1].includes('windows') ? '2' : '1').repeat(40), encoding: 'base64', content: sources[r[1]].toString('base64') };
       if (route.startsWith('/actions/workflows/')) return { total_count: 0, workflow_runs: [] };
       assert.fail(`GET ${route}`);
     },
@@ -105,8 +105,8 @@ test('#1192 as one stream: skipped -> the merge slot -> the lane re-runs both wo
   const lane = new AdmissionRerunner({ gh: await laneGh(f.e, f.m), state, clock: () => now, notify: async () => {},
     readStatus: async () => ({ node: { mode: 'ACTIVE' }, halt: null, current: null, pending: [], recent: [], writtenAt: now, train: { enabled: 'on', last: trainSummary(r1) } }),
     pulls: () => [{ pr: PR, headSha: H }] });
-  await lane.step();
-  assert.deepEqual(f.m.posts.sort(), [LINUX_RUN, WINDOWS_RUN].sort(), 'the lane re-ran both workflows of the front');
+  const stepped = await lane.step();
+  assert.deepEqual(f.m.posts.sort(), [LINUX_RUN, WINDOWS_RUN].sort(), `the lane re-ran both workflows of the front: ${JSON.stringify(stepped)}`);
   // GitHub queued the re-runs: not yet a new attempt; still inside the window that began with the merge slot
   const r2 = await roundAt(f, NOW + 3 * MIN);
   assert.equal(r2.decision, 'FRONT_CHECKS_MISSING');

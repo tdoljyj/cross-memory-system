@@ -90,9 +90,9 @@ import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { proxyBootstrapArguments } from "../runner/clued-runner-job-started.mjs";
-// The one failure rule (Fable 11-20, 单一判定): the classifier and the repair history live in the companion's module, imported here.
-import { MAX_LOG_CHARS, requiredTestsRepairHistory } from "../../work/independent-ci-resident-v1/src/env-failure.mjs";
-export { SETUP_STEPS, MAX_LOG_CHARS, failedSteps, diedInSetup, neverAssigned, jobFailureKind, requiredTestsRepairHistory } from "../../work/independent-ci-resident-v1/src/env-failure.mjs";
+// The one failure rule (Fable 11-20, 单一判定): the classifier and the repair history, in the protected scripts/ci/** path.
+import { MAX_LOG_CHARS, requiredTestsRepairHistory } from "./required-tests-failure-rule.mjs";
+export { SETUP_STEPS, MAX_LOG_CHARS, failedSteps, diedInSetup, neverAssigned, jobFailureKind, requiredTestsRepairHistory } from "./required-tests-failure-rule.mjs";
 import { resolvePRTaskBinding, claimReferenceFromBinding, PRTaskBindingError } from './clued-pr-task-binding.mjs';
 
 import {

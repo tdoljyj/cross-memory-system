@@ -1,5 +1,8 @@
-// The one failure rule (Fable 11-20, 单一判定): the classifier and the repair history. The gate imports this module; the companion's lane
-// calls it; the runner hook, which its loader runs as one file from main, holds a copy the admission self-tests lock byte for byte.
+// The one failure rule (Fable 11-20, 单一判定): the classifier and the repair history of the required tests. It lives at
+// scripts/ci/required-tests-failure-rule.mjs, under the protected scripts/ci/** path, which the admission gate imports. The companion's
+// work/independent-ci-resident-v1/src/env-failure.mjs is this same file byte for byte (its package cannot import scripts/ci), and the runner
+// hook, which its loader runs as one file from main, holds a copy of the classifier and the history; the admission self-tests and the
+// resident tests lock all of them, so none can drift.
 export const SETUP_STEPS = ["Set up job", "Set up runner"];
 // A log longer than this is never classified (the tail with the verdict may be missing): not environment.
 export const MAX_LOG_CHARS = 3_500_000;
@@ -124,14 +127,21 @@ async function hasRepairRecovery({ read, repository, runId, workflowId, head, af
   return false;
 }
 
-// Attempts of the workflow on the head, this one included: the run's attempt and every other run of the same workflow on the head.
+// Attempts of the workflow on the head, this one included: the run's attempt and every other run of the same workflow on the head. A count
+// that cannot be proven (no valid workflow id or attempt number, a run whose attempt number is not one) is the budget reached (Infinity).
+// What it cannot close: a person's re-run between this read and the next request is counted only from the next read on.
 async function headAttempts({ read, repository, runId, head, attempt, workflowId }) {
-  if (!Number.isSafeInteger(workflowId) || workflowId <= 0) return attempt;
+  if (!Number.isSafeInteger(workflowId) || workflowId <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) return Infinity;
   const listing = await read(`/repos/${repository}/actions/runs?head_sha=${head}&per_page=100&page=1`);
   const runs = listing?.workflow_runs;
   if (!Array.isArray(runs) || runs.length > 100 || listing.total_count !== runs.length) throw new Error("the head's runs are unreadable");
-  return attempt + runs.filter(run => run?.workflow_id === workflowId && run.head_sha === head && String(run.id) !== String(runId))
-    .reduce((n, run) => n + (Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0 ? run.run_attempt : 1), 0);
+  let total = attempt;
+  for (const run of runs) {
+    if (run?.workflow_id !== workflowId || run.head_sha !== head || String(run.id) === String(runId)) continue;
+    if (!Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0) return Infinity;
+    total += run.run_attempt;
+  }
+  return total;
 }
 
 // The one answer to "may this attempt be a repair" (the gate imports it, the companion's lane calls it, the runner hook holds a copy the
@@ -186,7 +196,7 @@ export async function requiredTestsRepairHistory({ read, readLog, repository, ru
     }
     const total = await headAttempts({ read, repository, runId, head, attempt, workflowId });
     if (total > REPAIR_ATTEMPTS_MAX)
-      return refuse(`three attempts of this workflow have already been made on this head (${total} with this one)`, { budget: true });
+      return refuse(`three attempts of this workflow have already been made on this head (${Number.isFinite(total) ? `${total} with this one` : "the count cannot be proven"})`, { budget: true });
     if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
       return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit", { waiting: true });
   } catch (error) {

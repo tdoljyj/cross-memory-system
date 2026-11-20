@@ -6,7 +6,8 @@ import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/i
 
 async function queued(t, { required = 'ci-suites', unreadable = null } = {}) {
   const e = await setup(t, { strict: true, tick: 1,
-    native: { nodes: [{ node: { name: 'fixture', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }] } });
+    // A3 window floor (review 2 high 1): the claim has been the front for 20 minutes, so a failure 11 minutes old is past its window.
+    native: { nodes: [{ node: { name: 'fixture', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }], holder: { takenAt: iso(NOW - 20 * 60_000) } } });
   const read = e.gh.readPullRequest;
   e.gh.readPullRequest = async n => ({ ...(await read(n)), auto_merge: { merge_method: 'merge' } });
   const rules = e.gh.readBranchRules;

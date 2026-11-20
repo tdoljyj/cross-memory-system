@@ -219,12 +219,16 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     const compare = headSha ? await github.readCompare(mainSha, headSha) : null;
     frontCompare = compare;
     mergeCommit = SHA.test(pull?.merge_commit_sha ?? '') ? await github.readGitCommit(pull.merge_commit_sha) : null;
-    const listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] };
-    if (listed?.complete !== true || !Array.isArray(listed.checks)) fail('TRAIN_FRONT_CHECKS_UNREADABLE');
-    frontChecks = listed.checks;
+    // Review 2 medium 1: an unreadable check inventory (a failed read, or one GitHub did not give whole) no longer ends the round here:
+    // the front is not green, opens nothing, and its wait is bounded by its front time (train-facts.mjs#requiredYieldReason).
+    let listed = null;
+    try { listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] }; } catch { listed = null; }
+    const checksReadable = listed?.complete === true && Array.isArray(listed.checks);
+    frontChecks = checksReadable ? listed.checks : [];
     // Fable 11-20 (#1192): green is every check main's live rules require on the head (this run's rules read; null when unreadable). Push mode
     // lands its own merge, so there the merge slot alone stays green.
-    front = frontPullFacts({ pull, mergeCommit, compare, checks: listed.checks, mainSha, appId, ...(push ? {} : { rules: landability.rules }) });
+    front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, ...(push ? {} : { rules: landability.rules }) });
+    if (!checksReadable) front = { ...front, green: false, checksUnreadable: true, ...(front.required !== undefined ? { required: null } : {}) };
     // §41.4 (MergeAdmission v0.2 §2.4), on only: a protected-layer front whose H does not contain T needs main merged in
     // first. The layer is read only when H does not contain T; paths that cannot be read count as protected.
     if (job.mode === 'on' && front.state === 'open' && headSha && front.headContainsMain !== true) {
@@ -620,10 +624,17 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
           // Fable 11-20 (#1192) and its independent review: nor does a merge-slot-green front that is not green once a missing check's re-run
           // budget is used up, or at the longest wait (train-facts.mjs#requiredYieldReason): FRONT_CHECKS_MISSING_YIELDED, with the reason.
-          fx.n++;
-          const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
-          if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
-          if (missingYield && actions.returned) front = { ...front, requiredYieldReason: missingYield };
+          // Review 2 medium 3: Native matches the front by claim and PR, so a missing-check yield is made only while the PR's head is still the
+          // head whose checks were read; a head that moved since keeps the slot (its own checks are read next round).
+          let moved = false;
+          if (missingYield) { try { moved = (await github.readPullRequest(holder.pr))?.head?.sha !== pull.head.sha; } catch { moved = true; } }
+          if (moved) { front = { ...front, requiredYieldHeld: 'FRONT_HEAD_MOVED' }; missingYield = null; }
+          else {
+            fx.n++;
+            const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
+            if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
+            if (missingYield && actions.returned) front = { ...front, requiredYieldReason: missingYield };
+          }
         }
       } catch { /* unreadable reply: the write may have happened; counted, and the next run sees the outcome */ }
     }

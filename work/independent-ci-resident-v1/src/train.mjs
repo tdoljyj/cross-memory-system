@@ -488,6 +488,8 @@ export function withTrainLine(want, last, pull, now, max = 140, gap = null) {
   if (!line) return want;
   // A gap goes first (a clipped text keeps its start), and the duty word another node reads is added before it by node-duty.mjs; all green or
   // unknown goes after the text as before.
-  const d = Array.isArray(gap) && gap.length > 0 ? `${line}；${want.description}` : `${want.description}；${line}`;
+  // The missing-check lines go first too (review 2, low): a clipped text keeps the reason.
+  const first = (Array.isArray(gap) && gap.length > 0) || FRONT_CHECKS_DECISIONS.includes(last.decision);
+  const d = first ? `${line}；${want.description}` : `${want.description}；${line}`;
   return { ...want, description: d.length <= max ? d : `${d.slice(0, max - 1)}…` };
 }
