@@ -281,7 +281,7 @@ test('无候选与未确认类失败（含升级道回包丢失）1 小时后重
     const f = handoverFixture(t);
     await f.tick();
     if (kind === 'upgrade') { f.reply('ci', {}); await f.tick(); }
-    if (code === 'RENEW_RESPONSE_UNAVAILABLE') { f.request(kind); f.now += 120_000; } // 回包丢失
+    if (code === 'RENEW_RESPONSE_UNAVAILABLE') { f.request(kind); f.now += HOUR; } // 回包满一小时未到
     else f.reply(kind, {code});
     await f.tick();
     if (kind === 'ci') { f.reply('upgrade', {}); await f.tick(); }
@@ -393,7 +393,7 @@ test('服务端先见待命，本机角色仍为当班时不能确认换令牌',
 test('回包丢失不停止当班，每小时复核；失效的排空确认不连续投递', async t => {
   const f = handoverFixture(t);
   await f.tick(); f.request('ci');
-  f.now += 120_000; await f.tick();
+  f.now += HOUR; await f.tick();
   assert.equal(f.holds, 0);
   assert.equal(f.book().lanes.ci.code, 'RENEW_RESPONSE_UNAVAILABLE');
   f.reply('upgrade', {}); await f.tick(); f.request(null);
