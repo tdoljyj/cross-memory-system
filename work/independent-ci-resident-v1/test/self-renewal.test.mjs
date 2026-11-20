@@ -794,12 +794,12 @@ test('让班回包在第 160 秒到达（120 秒内无回包）：按已让班�
   await f.tick(); const id = f.request('ci');
   f.now += 120_000; await f.tick(); // 到点无回包
   f.now += 40_000;
+  assert.equal(requestFiles(f).length, 1, '等回包期间没有投新请求');
   const effectiveAt = new Date(f.now + 301_000).toISOString();
   answer(f, id, 'ci', {outcome: 'yielded', effectiveAt});
   await f.tick();
   assert.equal(f.holds, 1, '迟到的让班回包照常交出接单资格');
   assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.book().lanes.ci.effectiveAt], ['RENEW_HANDOVER_WAITING', true, effectiveAt]);
-  assert.equal(requestFiles(f).length, 1, '等回包期间没有投新请求');
 });
 test('已续上的回包在第 150 秒到达：按已续上处理，记新绑定与到期', async t => {
   const f = handoverFixture(t);
