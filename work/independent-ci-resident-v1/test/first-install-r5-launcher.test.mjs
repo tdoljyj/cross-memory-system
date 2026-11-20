@@ -260,6 +260,7 @@ function Get-SpoolLeftovers($spool) { [ordered]@{} }
 function Get-SpoolRemainder($spool, $found) { , @() }
 function Test-AclMissingTargetAccepted { $true }
 function Test-TokenPlan($stdout) { [ordered]@{ codes = @() } }
+function Get-InstallArgs([switch]$Apply, [switch]$NoToken, [switch]$NoHeartbeat) { , @() }
 function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
   if ($name -ceq 'install.dry-run') {
     $doc = [ordered]@{ status = 'DRY_RUN_PLAN_ONLY_NOTHING_WRITTEN'; planSha256 = ('9' * 64); plan = [ordered]@{ installScriptSha256 = ('8' * 64); residentSid = 'S-1-5-80-1'; rootExists = $false; servicesExist = $false; openBatches = 0 }; carryForwardPreview = @() }
