@@ -77,19 +77,32 @@ export function companionKeyWatch(root, clock = Date.now) {
 // One in-flight request. The resident can only create a new UUID file in this mailbox.
 // Persist the UUID first so that restarting either service never loses track of an answer.
 // source: this generation's Source digest (policy.ciSourceManifestSha256), the one the fleet upgrade names each generation by.
-// uptime: how long this process has run, on a monotonic clock (the tests inject it).
+// uptime: how long this process has run, on a monotonic clock (the tests inject it). readResponse: reads one Broker answer (tests inject it).
 export function renewalWatch({root, profile, mode, drained, onHandover, source, clock=Date.now, uptime=()=>performance.now(),
-  observe=()=>observeOwnKey(root)}) {
+  observe=()=>observeOwnKey(root), readResponse=read}) {
   if (!HEX64.test(source ?? '')) throw new Error('RENEW_SOURCE_REQUIRED');
   const stateFile=path.join(root,'state','connection-renewal.json');
   let nextCheck=0, book=null;
   const save=()=>writeObservation(stateFile,book);
+  const requestFile=id=>path.join(root,'broker','requests',id+'.json');
+  // Codex 复审 076827ffe 中1：准备投递与已成功投出分开。新请求号先记为 book.next 落盘，旧号（在途或已放弃）留在 book.pending；
+  // 请求文件确实建成才换号。请求文件只增不删（Broker 不删、常驻无删除权），所以文件在 = 已投出：在则换号，确实不存在则按未投出丢弃
+  // 准备记录、旧号照旧；查不清（其他错误）就留着下一轮再判，期间不投新请求。
+  const settleNext = async () => {
+    if (!book.next) return;
+    let posted;
+    try { await fs.access(requestFile(book.next.id)); posted=true; }
+    catch (e) { if (e?.code!=='ENOENT' && e?.code!=='ENOTDIR') return; posted=false; }
+    if (posted) book.pending=book.next;
+    book.next=null; await save();
+  };
   const post = async (kind, at, confirmationId) => {
     const id = confirmationId ?? randomUUID();
     // 在途请求记下投出它的那一代（中2）：结清时通道记录归这一代，换代后读到的旧代拒绝不计本代退避。
-    book.pending = {id, kind, at, confirming: confirmationId !== undefined, source};
+    book.next = {id, kind, at, confirming: confirmationId !== undefined, source};
     await save();
-    await fs.writeFile(path.join(root,'broker','requests',id+'.json'), JSON.stringify({kind}), {flag:'wx'});
+    try { await fs.writeFile(requestFile(id), JSON.stringify({kind}), {flag:'wx'}); }
+    finally { await settleNext(); }
   };
   return async () => {
     const now=clock();
@@ -104,12 +117,14 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
       book.keys={...keyCheck(system,r,c,h,profile,checkedAt,mode()),systemFailure:system?.failure??null};
       book.checkedAt=new Date(checkedAt).toISOString(); await save();
     }
+    await settleNext(); // 上一轮准备了却没判清的新请求（含两步之间退出）
+    if (book.next) return;
     let reply=null;
     if (book.pending) {
       const {id,kind,at,abandoned}=book.pending;
       if (!UUID.test(id) || !KINDS.includes(kind)) throw new Error('RENEW_STATE_REFUSED');
       // 只认状态里记着的这个请求号；没有结论前不为任何通道投新请求（Broker 那边本来也只处理一条）。重启后从状态恢复同一请求号。
-      const readReply=async()=>{ const r=await read(path.join(root,'broker','responses',id+'.json')); return r?.requestId===id ? r : null; };
+      const readReply=async()=>{ const r=await readResponse(path.join(root,'broker','responses',id+'.json')); return r?.requestId===id ? r : null; };
       reply=await readReply();
       if (!reply && !abandoned) {
         if (now-at<REPLY_LIMIT) return;
@@ -136,10 +151,11 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
       const uncertain = ['RENEW_RESPONSE_UNAVAILABLE', 'RENEW_GATEWAY_UNAVAILABLE', 'RENEW_INTERRUPTED'].includes(refused);
       const waitForDrain = prior?.waiting === true && ['CI_REBIND_NOT_DRAINED','RENEW_BUSY'].includes(refused);
       const waiting = yielded || confirmation || (kind === 'ci' && !done && (uncertain || waitForDrain));
+      // 服务端回包里的结论归投出请求的那一代；常驻自己判下的“回包不可用”（无回包、信封或业务字段不合格）归当前代，照常每小时复核。
+      const answered = yielded || confirmation || done || (valid && refused === reply.code);
       if (yielded) await onHandover();
       book.lanes[kind] = {
-        // 服务端回包里的结论归投出请求的那一代；常驻自己记下的“回包不可用”归当前代，照常每小时复核（复审低1）。
-        at: now, source: valid ? owner : source, waiting, effectiveAt: yielded ? reply.effectiveAt : waiting ? prior?.effectiveAt ?? null : null,
+        at: now, source: answered ? owner : source, waiting, effectiveAt: yielded ? reply.effectiveAt : waiting ? prior?.effectiveAt ?? null : null,
         code: yielded ? 'RENEW_HANDOVER_WAITING' : confirmation ? 'CI_REBIND_NOT_DRAINED' : done ? null : refused,
         bindingId: bound ? reply.bindingId : prior?.bindingId ?? null,
         expiresAt: bound ? reply.expiresAt : prior?.expiresAt ?? null,
