@@ -132,6 +132,12 @@ export function diedInSetup(job) {
   const failed = failedSteps(job);
   return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
 }
+// Did GitHub end the job before any runner took it (9aba97c1)? No step ran and the record says no runner (runner_id 0 or null and runner_name
+// null or empty, as GitHub records it); a record without those fields proves nothing.
+export function neverAssigned(job) {
+  return !!job && job.status === "completed" && ["failure", "cancelled"].includes(job.conclusion) && Array.isArray(job.steps)
+    && job.steps.length === 0 && [0, null].includes(job.runner_id) && [null, ""].includes(job.runner_name);
+}
 // The timeout annotation is emitted on the cancelled job's check run, independently of its log.
 function hasTimeoutAnnotation(annotations) {
   return Array.isArray(annotations) && annotations.some(note =>
@@ -141,6 +147,7 @@ export function jobFailureKind(job, log = null, annotations = null) {
   const no = (why) => ({ environment: false, kind: "unknown", why });
   if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
   if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
+  if (neverAssigned(job)) return { environment: true, kind: "unassigned", why: "no runner took the job and no step ran" };
   const failed = failedSteps(job);
   const cancelled = job.conclusion === "cancelled";
   if (cancelled) {
@@ -178,8 +185,10 @@ async function repairEnvironmentFailures({ read, readLog, repository, heavy }) {
   const failures = [];
   for (const job of heavy) {
     if (job.conclusion === "success" || job.conclusion === "skipped") continue;
-    const setup = diedInSetup(job);
-    const cancelled = job.conclusion === "cancelled";
+    // A job no runner took (9aba97c1) ran nothing, like a setup death: no log, no annotation.
+    const unassigned = neverAssigned(job);
+    const setup = diedInSetup(job) || unassigned;
+    const cancelled = job.conclusion === "cancelled" && !unassigned;
     const steps = failedSteps(job);
     if (!setup && (!Number.isSafeInteger(job.id) || job.id <= 0 || !steps || (cancelled ? steps.length > 0 : steps.length === 0))) return null;
     const annotations = cancelled ? await repairAnnotations(read, repository, job.id) : null;
@@ -256,7 +265,7 @@ async function requiredTestsRepairHistory({ read, readLog, repository, runId, he
           environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
         continue;
       }
-      const setup = diedInSetup(gateJob);
+      const setup = diedInSetup(gateJob) || neverAssigned(gateJob);
       const notes = !setup && gateJob.status === "completed" ? await repairAnnotations(read, repository, gateJob.id) : [];
       if (!setup && !notes.some(note =>
         (note?.title === REPAIR_GATE_JOB && REPAIR_NOT_ADMITTED.test(note.message ?? "")) ||

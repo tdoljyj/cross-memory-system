@@ -50,7 +50,7 @@ import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
-import { decideShadow, frontPullFacts, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
+import { decideShadow, frontPullFacts, requiredMissingExpired, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
@@ -222,7 +222,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     const listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] };
     if (listed?.complete !== true || !Array.isArray(listed.checks)) fail('TRAIN_FRONT_CHECKS_UNREADABLE');
     frontChecks = listed.checks;
-    front = frontPullFacts({ pull, mergeCommit, compare, checks: listed.checks, mainSha, appId });
+    // Fable 11-20 (#1192): green is every check main's live rules require on the head (this run's rules read; null when unreadable). Push mode
+    // lands its own merge, so there the merge slot alone stays green.
+    front = frontPullFacts({ pull, mergeCommit, compare, checks: listed.checks, mainSha, appId, ...(push ? {} : { rules: landability.rules }) });
     // §41.4 (MergeAdmission v0.2 §2.4), on only: a protected-layer front whose H does not contain T needs main merged in
     // first. The layer is read only when H does not contain T; paths that cannot be read count as protected.
     if (job.mode === 'on' && front.state === 'open' && headSha && front.headContainsMain !== true) {
@@ -548,6 +550,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingFacts = null, landingState = null;
+  let missingYield = false;
   if (job.mode === 'on') {
     // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
     // watermark (every take-over sweeps from onSince), so nothing reads it. actions.watermarkReported stays in the facts, always false.
@@ -610,9 +613,12 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
         } else if (front.state === 'open' && typeof native.yieldSlot === 'function' && SHA.test(pull?.head?.sha ?? '')
-          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks }, landability)))) {
+          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks }, landability))
+            || (missingYield = requiredMissingExpired(front, clock())))) {
           // A front that cannot land as it stands (draft, auto-merge off, a required check failed) never
           // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
+          // Fable 11-20 (#1192): nor does a merge-slot-green front whose required check stayed missing with nothing moving for
+          // REQUIRED_MISSING_GRACE_MS (the repair lane's re-runs used up, or no channel to re-run): FRONT_CHECKS_MISSING_YIELDED.
           fx.n++;
           const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
           if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
@@ -642,7 +648,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (job.mode === 'revoke-only') decision = 'REVOKE_ONLY_DONE';
   else if (takeoverPending) decision = 'TRAIN_TAKEOVER_SWEEP_PENDING';
   else if (actions.adopted) decision = 'FRONT_ADOPTED';
-  else if (actions.returned) decision = 'FRONT_RETURNED';
+  else if (actions.returned) decision = missingYield ? 'FRONT_CHECKS_MISSING_YIELDED' : 'FRONT_RETURNED';
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {

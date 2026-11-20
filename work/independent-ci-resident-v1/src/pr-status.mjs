@@ -37,7 +37,7 @@ import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { ghPort } from './admission-rerun.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 export { RULES_UNREADABLE_REPORT_AFTER_MS };
-import { MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
+import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
@@ -47,6 +47,8 @@ export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
 export const REQUIRED_CACHE_MS = 30 * 60_000;
 export const HEAD_CHECKS_CACHE_MS = 60_000;
+// The train decisions whose PR page line lists the front head's required-check gap (frontGap).
+const GAP_DECISIONS = Object.freeze(['FRONT_GREEN_WAIT_MERGE', ...FRONT_CHECKS_DECISIONS.filter(d => d !== 'FRONT_CHECKS_MISSING_YIELDED')]);
 // What the PR page says while main's ruleset cannot be read: a status is auxiliary, so the failure is said, never a silent stop.
 export const RULES_UNREADABLE_TEXT = '无法读取 main 规则集，暂不判断必需检查';
 const RULES_UNREADABLE_WANT = Object.freeze({ state: 'pending', description: RULES_UNREADABLE_TEXT, kind: null });
@@ -657,10 +659,11 @@ export class PrStatusReporter {
     return value;
   }
 
-  // Only the front PR whose train line says "green, wait for merge" needs the head's checks.
+  // Only the front PR whose train line names the head's required checks needs them: green, wait for merge, or (Fable 11-20, #1192) a
+  // merge-slot-green front still waiting for, or missing, a required check. FRONT_CHECKS_MISSING_YIELDED names none: the slot was given away.
   async frontGap(pull, last, rules) {
     const t = last && last.front?.headSha === pull.headSha ? (last.decision ?? last.wouldDo) : null;
-    if (t !== 'FRONT_GREEN_WAIT_MERGE' || this.stalled || !this.inBudget()) return null;
+    if (!GAP_DECISIONS.includes(t) || this.stalled || !this.inBudget()) return null;
     try { return requiredGap(rules, await this.headChecks(pull.headSha)); } catch { return null; }
   }
 
@@ -746,7 +749,7 @@ export class PrStatusReporter {
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
           const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
-          const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules))),
+          const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules), this.rerunCount?.(pull.headSha) ?? 0)),
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);

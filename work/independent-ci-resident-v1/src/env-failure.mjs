@@ -21,6 +21,12 @@ export function diedInSetup(job) {
   const failed = failedSteps(job);
   return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
 }
+// Did GitHub end the job before any runner took it (9aba97c1)? No step ran and the record says no runner (runner_id 0 or null and runner_name
+// null or empty, as GitHub records it); a record without those fields proves nothing.
+export function neverAssigned(job) {
+  return !!job && job.status === "completed" && ["failure", "cancelled"].includes(job.conclusion) && Array.isArray(job.steps)
+    && job.steps.length === 0 && [0, null].includes(job.runner_id) && [null, ""].includes(job.runner_name);
+}
 // The timeout annotation is emitted on the cancelled job's check run, independently of its log.
 function hasTimeoutAnnotation(annotations) {
   return Array.isArray(annotations) && annotations.some(note =>
@@ -30,6 +36,7 @@ export function jobFailureKind(job, log = null, annotations = null) {
   const no = (why) => ({ environment: false, kind: "unknown", why });
   if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
   if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
+  if (neverAssigned(job)) return { environment: true, kind: "unassigned", why: "no runner took the job and no step ran" };
   const failed = failedSteps(job);
   const cancelled = job.conclusion === "cancelled";
   if (cancelled) {

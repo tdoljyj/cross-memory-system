@@ -20,11 +20,12 @@ import { fail } from './canonical.mjs';
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/1';
 export const TRAIN_FACTS_CONTRACT_V2 = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
-  'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH']);
+  'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH', 'FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING']);
 export const RUN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
 export const DECISIONS = Object.freeze([...WOULD_DO, 'TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH',
   'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED', 'FRONT_ADOPTED', 'FRONT_RETURNED', 'FRONT_FAILED_REPORTED', 'REVOKE_ONLY_DONE',
-  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN', 'TRAIN_LANDING_STATE_UNREADABLE']);
+  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN', 'TRAIN_LANDING_STATE_UNREADABLE',
+  'FRONT_CHECKS_MISSING_YIELDED']);
 // Stage 10's decisions after which the executor starts no new batch (DESIGN §41.6: no publication of any stage before the
 // take-over sweep; no on-mode duty while another node runs another Source, or while the nodes' Sources cannot be read).
 export const TRAIN_SCHEDULE_DEFERRALS = Object.freeze(['TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']);
@@ -328,12 +329,26 @@ function frontBindOf(b, front) {
 // the merge slot is known green), [] (every required check of main is green on this head) or the missing / unfinished ones, as words.
 // The first missing check is always named in full; further ones are added while they fit GAP_NAMES_MAX, and the count says how many there are.
 export const GAP_NAMES_MAX = 90;
+const gapList = gap => {
+  let names = gap[0], shown = 1;
+  while (shown < gap.length && names.length + 1 + gap[shown].length <= GAP_NAMES_MAX) names += `、${gap[shown++]}`;
+  return `缺 ${gap.length} 项：${names}${shown < gap.length ? '…' : ''}`;
+};
 export function frontGreenText(gap) {
   if (!Array.isArray(gap)) return '合并位已绿，等合并';
   if (gap.length === 0) return '全部必需检查已绿，等合并';
-  let names = gap[0], shown = 1;
-  while (shown < gap.length && names.length + 1 + gap[shown].length <= GAP_NAMES_MAX) names += `、${gap[shown++]}`;
-  return `合并位已绿；缺 ${gap.length} 项：${names}${shown < gap.length ? '…' : ''}`;
+  return `合并位已绿；${gapList(gap)}`;
+}
+// Fable 11-20 补“车头缺必需检查” (#1192): a front whose merge slot is green is never "等合并" while a required check is missing. Words differ
+// by what the gap is: queued or running (等检查); missing with nothing running (缺检查: the companion's repair lane re-runs it, 补跑中（第 n 次）
+// counts its accepted re-runs of this head); the front gave the slot away after the grace time (FRONT_CHECKS_MISSING_YIELDED).
+export const FRONT_CHECKS_DECISIONS = Object.freeze(['FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING', 'FRONT_CHECKS_MISSING_YIELDED']);
+export function frontChecksText(key, gap = null, reruns = 0) {
+  const list = Array.isArray(gap) && gap.length ? `；${gapList(gap)}` : '';
+  if (key === 'FRONT_CHECKS_WAIT') return `合并位已绿，等检查${list}`;
+  if (key === 'FRONT_CHECKS_MISSING') return `合并位已绿，缺检查${list}；${Number.isSafeInteger(reruns) && reruns > 0 ? `补跑中（第 ${reruns} 次）` : '等自动补跑，补不上到时限即让出车头'}`;
+  if (key === 'FRONT_CHECKS_MISSING_YIELDED') return '必需检查缺失，重跑无效，已让出车头，列车继续下一个';
+  return null;
 }
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).
 const TEXT = {
@@ -362,9 +377,10 @@ const ON_TEXT = {
 };
 // Generation 15 (DESIGN 60.2): why nothing goes green while the train re-sweeps everything after main was rewritten.
 export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
-export function trainPageLine(summary, pr, gap = null) {
+export function trainPageLine(summary, pr, gap = null, reruns = 0) {
   if (!summary || summary.front?.pr !== pr) return null;
-  const words = (table, key) => key === 'FRONT_GREEN_WAIT_MERGE' ? frontGreenText(gap) : table[key];
+  const words = (table, key) => key === 'FRONT_GREEN_WAIT_MERGE' ? frontGreenText(gap)
+    : FRONT_CHECKS_DECISIONS.includes(key) ? frontChecksText(key, gap, reruns) : table[key];
   if (summary.mode === 'shadow') return words(TEXT, summary.wouldDo) ? `列车影子（只记录，不执行）：你是合并队列车头。${words(TEXT, summary.wouldDo)}。` : null;
   const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
     : words(ON_TEXT, summary.decision) ?? null;
@@ -450,9 +466,9 @@ export function parseTrainNodes(v) { return plain(v) ? nodesOf(v.nodes, v.droppe
 // TRAIN_PAGE_MAX_AGE_MS old) saw this very head at the front. Never on a failure or an error, never instead of the
 // executor's own words.
 export const TRAIN_PAGE_MAX_AGE_MS = 30 * 60_000;
-export function withTrainLine(want, last, pull, now, max = 140, gap = null) {
+export function withTrainLine(want, last, pull, now, max = 140, gap = null, reruns = 0) {
   if (!want || ['failure', 'error'].includes(want.state) || !last || now - last.at > TRAIN_PAGE_MAX_AGE_MS || !last.front?.headSha || last.front.headSha !== pull?.headSha) return want;
-  const line = trainPageLine(last, pull.pr, gap);
+  const line = trainPageLine(last, pull.pr, gap, reruns);
   if (!line) return want;
   // A gap goes first (a clipped text keeps its start), and the duty word another node reads is added before it by node-duty.mjs; all green or
   // unknown goes after the text as before.

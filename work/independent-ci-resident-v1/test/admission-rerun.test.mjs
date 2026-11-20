@@ -987,7 +987,7 @@ const netFail = { conclusion: 'failure', steps: TESTS_DIED, log: NET_LOG };
 const setupFail = { conclusion: 'failure', steps: SETUP_DIED };
 // An attempt that ran: specs = [{ conclusion, steps, log }] for the three heavy jobs; logs are keyed by the job's index (the gate is 0).
 const ran = (specs, { gate = { name: 'admission-gate', status: 'completed', conclusion: 'success', head_sha: HEAD } } = {}) => ({ notes: [],
-  jobs: [gate, ...specs.map((sp, i) => ({ name: HEAVY[i], head_sha: HEAD, status: 'completed', conclusion: sp.conclusion, ...(sp.steps ? { steps: sp.steps } : {}) }))],
+  jobs: [gate, ...specs.map((sp, i) => ({ name: HEAVY[i], head_sha: HEAD, status: 'completed', conclusion: sp.conclusion, ...(sp.steps ? { steps: sp.steps } : {}), ...(sp.runner ?? {}) }))],
   logs: Object.fromEntries(specs.flatMap((sp, i) => sp.log === undefined ? [] : [[i + 1, sp.log]])) });
 
 test('environment failure: a network failure is re-run once; another needs recovery evidence', async t => {
@@ -1183,7 +1183,7 @@ const ghRefusesEscapes = (target, method, st, argv) => /\/logs$/.test(target) &&
 const ownerRun = (attempts, o = {}) => run(700, attempts, { actor: { login: 'tdoljyj', type: 'User' }, ...o });
 
 test('#1192: the gh port reads a job log that holds terminal escape sequences', async () => {
-  const gh = ghPort({ ghExe: 'C:\gh.exe', repo: REPO, run: async argv => argv.includes('--allow-escape-sequences') ? { code: 0, stdout: ESCAPED_LOG } : GH_ESCAPE_REFUSAL });
+  const gh = ghPort({ ghExe: 'C:\\gh.exe', repo: REPO, run: async argv => argv.includes('--allow-escape-sequences') ? { code: 0, stdout: ESCAPED_LOG } : GH_ESCAPE_REFUSAL });
   assert.equal(await gh.text('/actions/jobs/1/logs'), ESCAPED_LOG);
 });
 
@@ -1213,7 +1213,7 @@ test('at most two re-runs of one workflow on one head: the third attempt that is
 // 9aba97c1: a required job no runner ever took ran nothing (no step, no runner; real samples: job 136029949967 of run 44658316395 and
 // job 134948221590 of run 44345691588, both cancelled with steps [] and runner_id 0). It is a process cause: re-run. A job that ran a step
 // and failed stays a real failure.
-const unassignedJob = conclusion => ({ conclusion, steps: [] });
+const unassignedJob = conclusion => ({ conclusion, steps: [], runner: { runner_id: 0, runner_name: null } });
 test('9aba97c1: a required job no runner took is re-run; the gate job no runner took ran nothing', async () => {
   for (const conclusion of ['cancelled', 'failure']) {
     const w = world({ runs: [ownerRun([ran([unassignedJob(conclusion), ok, ok])])], fail: ghRefusesEscapes });

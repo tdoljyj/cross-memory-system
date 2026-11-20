@@ -330,6 +330,8 @@ export async function main(args = process.argv.slice(2)) {
     notify });
   // The PR page says when this lane re-ran a head's required tests, or what came of a lost run's dispatch (pr-status.mjs#PrStatusReporter).
   reporter.rerunLine = headSha => rerunner.line(headSha);
+  // Fable 11-20 (#1192): the train line of a front missing a required check says 补跑中（第 n 次） from this lane's accepted re-runs.
+  reporter.rerunCount = headSha => rerunner.reruns(headSha);
   keepalive(companionArgv(cfg).keepalive());
   // M5 (ADR 0022 §6 Q1, Q2): the WSL instance this session sees, for the Owner's read-only probe. In the background; never blocks.
   sessionFacts({ wsl: (...l) => [cfg.wslExe, '--distribution', cfg.distribution, '--user', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LANG=C', 'LC_ALL=C', ...l],

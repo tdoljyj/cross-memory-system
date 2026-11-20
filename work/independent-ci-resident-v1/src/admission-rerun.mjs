@@ -20,7 +20,7 @@ import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
 import { LIVE_STATES } from './queue.mjs';
-import { diedInSetup, failedSteps, jobFailureKind } from './env-failure.mjs';
+import { diedInSetup, failedSteps, jobFailureKind, neverAssigned } from './env-failure.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 
 export const RERUN_RECORD_CONTRACT = 'clued.independent-ci.admission-rerun/1';
@@ -54,6 +54,12 @@ export const POST_TIMEOUT_MS = 30_000;
 export const HEADS_PER_STEP = 5;
 export const HEAD_CANDIDATE_MARK_MS = 60 * 60_000;
 const REQUEST_RETRY_MS = 10 * 60_000;
+// Fable 11-20 补“车头缺必需检查”: at most two re-runs of a workflow's run on one head, whatever their cause (this lane's, a person's); a run
+// at attempt 3 or later is final here. The train yields a front whose required check is still missing REQUIRED_MISSING_GRACE_MS after the
+// last movement (train-facts.mjs). Why two: the process causes seen (the gate timed out while the node was down, #1192; a job no runner took,
+// 9aba97c1) are gone once one re-run is made after the cause cleared; the second covers a cause still clearing. It also matches the gate's
+// own repair budget (a third heavy attempt is refused: clued-work-admission.mjs#requiredTestsRepairHistory).
+export const MAX_RERUNS_PER_WORKFLOW = 2;
 const RECENT_OTHER_HEADS = 3;
 const MAX_RECOVERY_PAGES = 50;
 const REPAIR_RULE_VERSION = 4;
@@ -94,7 +100,7 @@ function validState(v) {
     if (!r.kind && (!positive(r.runId) || !positive(r.attempt) || r.attempt < 2 || ![undefined, 1, 2].includes(r.requests))) return false;
     if (r.frontHeadSha !== undefined && (r.kind || !HEX40.test(r.frontHeadSha ?? '') || r.frontHeadSha === r.headSha)) return false;
     if (r.failures !== undefined && (!Array.isArray(r.failures) || r.failures.some(f =>
-      !plainObject(f) || typeof f.name !== 'string' || !['setup', 'network', 'timeout'].includes(f.kind)))) return false;
+      !plainObject(f) || typeof f.name !== 'string' || !['setup', 'network', 'timeout', 'unassigned'].includes(f.kind)))) return false;
     if (r.workflowId !== undefined && (r.kind !== REDISPATCH_KIND || !positive(r.workflowId))) return false;
     if (r.checks !== undefined && !stringList(r.checks)) return false;
     if (r.http !== undefined && (!Number.isInteger(r.http) || r.http < 400 || r.http > 499)) return false;
@@ -126,10 +132,13 @@ export function ghPort({ ghExe, repo, run }) {
   }
   // A job log: plain text (gh follows GitHub's redirect). The runner keeps at most MAX_TEXT characters of stdout; a log that long may have lost
   // its verdict, so it is answered as empty, which never proves an environment failure.
+  // #1192 (Fable 11-20): gh 2.97 refuses to print a response holding terminal escape sequences (exit 1) unless --allow-escape-sequences is
+  // given, and every Actions log of a `run:` step holds them; without it every log read failed and the lane never re-ran. The text goes to a
+  // string here, never to a terminal.
   async function text(route) {
     check(routeOk(route), 'ADMISSION_RERUN_ROUTE_REFUSED');
     let r;
-    try { r = await run([ghExe, 'api', '--method', 'GET', '-H', 'Accept: application/vnd.github+json', `repos/${repo}${route}`], { timeoutMs: READ_TIMEOUT_MS }); }
+    try { r = await run([ghExe, 'api', '--method', 'GET', '--allow-escape-sequences', '-H', 'Accept: application/vnd.github+json', `repos/${repo}${route}`], { timeoutMs: READ_TIMEOUT_MS }); }
     catch { return unreadable(`GET ${route} could not start`); }
     if (r?.code !== 0 || typeof r.stdout !== 'string') unreadable(`GET ${route} failed`);
     return r.stdout.length >= MAX_TEXT ? '' : r.stdout;
@@ -297,7 +306,8 @@ async function repairAllowed(gh, workflowId, runId, headSha, attempt, attempts) 
       previousEnd = Math.max(...listed.map(j => Date.parse(j.completed_at)));
       continue;
     }
-    if (diedInSetup(gates[0])) continue; // the gate job died in the runner's setup: it ran nothing and left no verdict
+    // the gate job died in the runner's setup, or no runner took it (9aba97c1): it ran nothing and left no verdict
+    if (diedInSetup(gates[0]) || neverAssigned(gates[0])) continue;
     if (!positive(gates[0].id)) unreadable(`the gate job of attempt ${earlier} has no id`);
     const notes = await gh.paged(`/check-runs/${gates[0].id}/annotations`);
     if (!notes.some(n => n && ((n.title === GATE_JOB_NAME && NOT_ADMITTED_VERDICT.test(String(n.message ?? '')))
@@ -441,7 +451,8 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
     if (allSkipped && runs.some(r => r.event !== 'pull_request')) return say('final', 'a previous dispatch or non-PR run already exists');
     if (allSkipped) {
       let skippedByActor = newest.actor?.type === 'Bot';
-      if (!skippedByActor && positive(latestGate?.id)) {
+      // Only a gate that ran has a verdict in its log (one no runner took has no log at all).
+      if (!skippedByActor && positive(latestGate?.id) && latestGate.conclusion === 'success') {
         const log = await gh.text('/actions/jobs/' + latestGate.id + '/logs');
         skippedByActor = /"verdict"\s*:\s*"ADMITTED"/.test(log) && /"automation_self_hosted"\s*:\s*false/.test(log);
       }
@@ -456,6 +467,9 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
     Object.assign(out, { systemic: repair.systemic, exhausted: repair.exhausted });
     return say(repair.waiting ? 'skip' : 'final', repair.reason);
   }
+  // The repair rule's own verdicts (exhausted environment failures, systemic timeouts) come first, so their notices stay as they were.
+  if (attempt > MAX_RERUNS_PER_WORKFLOW)
+    return say('final', `two re-runs of run ${runId} were already made on this head (attempt ${attempt}): no more automatic re-runs`);
   const current = await gh.get('/pulls/' + pull);
   if (!boundPr(current, pull, headSha, defaultBranch, gh.repo) || current.base.sha !== base)
     return say('skip', 'the pull request or base moved');
@@ -693,6 +707,16 @@ export class AdmissionRerunner {
   constructor(ports) { Object.assign(this, ports); this.workflowMemo = newWorkflowMemo(); }
   // Whether the latest receipt for the head is an accepted re-run.
   done(headSha) { const r = this.state.record(headSha); return r?.outcome === 'sent' && !r.kind; }
+  // How many re-runs this lane made that GitHub accepted for the head (or the train's staging commit of it), the most of any one run: the
+  // train line's 补跑中（第 n 次） (train.mjs#frontChecksText; Fable 11-20).
+  reruns(headSha) {
+    const perRun = new Map();
+    for (const r of Object.values(this.state.data.records)) {
+      if (r.kind || r.outcome !== 'sent' || (r.headSha !== headSha && r.frontHeadSha !== headSha)) continue;
+      perRun.set(r.runId, (perRun.get(r.runId) ?? 0) + 1);
+    }
+    return perRun.size ? Math.max(...perRun.values()) : 0;
+  }
   // What the PR page says of this head (pr-status.mjs#withRerunLine).
   line(headSha) {
     const seen = this.state.data.heads[headSha];
