@@ -273,6 +273,29 @@ test('bors staging: the Windows required workflow is admitted on S on the same t
   assert.equal((await stagingRun(linuxMemberRuns, WINDOWS_STAGING_ENV)).result.allow, false);
 });
 
+// ADR 0019 §3: one walk of the member chain for every reader. The hook roots it at live main; the required workflows'
+// push-baseline step runs the same export, read from main, over its checkout and checks out the root T.
+test('bors staging: the member chain walk is one export, rooted by its reader', async () => {
+  const hook = await import('./clued-runner-job-started.mjs');
+  assert.equal(typeof hook.trainMemberChain, 'function');
+  assert.equal(typeof hook.stagingBaseFromCheckout, 'function');
+  const [T, H1, H2, M1, S] = ['1', '2', '3', '4', '5'].map((c) => c.repeat(40));
+  const graph = { [S]: [M1, H2], [M1]: [T, H1] };
+  const readCommit = async (at) => graph[at] ? { sha: at, parents: graph[at].map((sha) => ({ sha })) } : null;
+  assert.deepEqual(await hook.trainMemberChain(S, { isRoot: (at) => at === T, readCommit }), { root: T, heads: [H2, H1] });
+  assert.deepEqual(await hook.trainMemberChain(M1, { isRoot: (at) => at === T, readCommit }), { root: T, heads: [H1] });
+  // Another root, a member head on main, no member, an unreadable step: no root.
+  for (const [sha, isRoot] of [[S, (at) => at === H1], [S, (at) => at === T || at === H2], [T, (at) => at === T], [S, () => false]]) {
+    const chain = await hook.trainMemberChain(sha, { isRoot, readCommit });
+    assert.equal(chain.root, undefined, JSON.stringify(chain));
+    assert.match(chain.error, /chain|members/);
+  }
+  const source = fs.readFileSync(fileURLToPath(new URL('./clued-runner-job-started.mjs', import.meta.url)), 'utf8');
+  const admission = source.slice(source.indexOf('async function stagingAdmission('));
+  assert.match(admission.slice(0, admission.indexOf('\n}\n')), /await trainMemberChain\(sha, \{ isRoot: at => at === base,/,
+    'the hook walks with the shared export, rooted at live main');
+});
+
 test('bors staging: an earlier success on the same head cannot authorize a later PR event', async () => {
   assert.equal((await stagingRun({ [memberRunsUrl(HEAD)]: memberRuns(HEAD, 9, '2026-10-04T05:01:00Z') })).result.allow, false);
   for (const body of [{ total_count: 0, workflow_runs: [] }, { total_count: 101, workflow_runs: [] }]) {

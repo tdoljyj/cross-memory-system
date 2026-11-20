@@ -1499,6 +1499,103 @@ test('bors staging, Windows side: S^1 is checked against main before the trusted
   assert.match(job, /CI_BASE_SHA: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| steps\.train-base\.outputs\.ci_base \}\}\n/);
 });
 
+// A batch of N members is S = merge(...merge(T, H1)..., HN) (ADR 0019 §3): S^1 is an intermediate train merge, not on
+// main, and only T, the root of the member chain, is a trusted base. Each required job's push-baseline step runs here as
+// it does on the runner: its own script, its own shell, a real Git checkout whose origin/main is T and holds this
+// change's runner hook (the step's walk is the hook's, read from main).
+const LINUX_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
+const BASELINE_JOBS = [[LINUX_WORKFLOW, 'clued-cloud-tests'], [LINUX_WORKFLOW, 'ci-suites'], [LINUX_WORKFLOW, 'migration-verify'],
+  [WINDOWS_WORKFLOW, 'ci-suites-windows']];
+function baselineStep(file, id) {
+  const text = readFileSync(file, 'utf8');
+  const start = text.indexOf(`\n  ${id}:\n`);
+  assert.ok(start > 0, `${path.basename(file)} has job ${id}`);
+  const rest = text.slice(start + 1);
+  const end = rest.slice(1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+  const job = end < 0 ? rest : rest.slice(0, end + 1);
+  const step = job.slice(job.indexOf('        id: train-base\n'));
+  const shell = /\n {8}shell: (bash|powershell)\n/.exec(step)[1];
+  const lines = step.slice(step.indexOf('        run: |\n') + '        run: |\n'.length).split('\n');
+  const body = [];
+  for (const line of lines) { if (line.trim() && !line.startsWith(' '.repeat(10))) break; body.push(line.slice(10)); }
+  return { shell, script: body.join('\n').trimEnd() + '\n' };
+}
+// Never the bash on PATH under Windows (it may be WSL's): Git for Windows' own bash, or none.
+function shellCommand(shell) {
+  if (shell === 'powershell') return process.platform === 'win32' ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']] : null;
+  if (process.platform !== 'win32') return ['bash', []];
+  const exec = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout?.trim();
+  const bash = exec && path.resolve(exec, '..', '..', '..', 'bin', 'bash.exe');
+  return bash && existsSync(bash) ? [bash, []] : null;
+}
+function trainCheckout(t) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-train-base-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@invalid', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=', ...args],
+      { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git('init', '-q', '-b', 'work');
+  mkdirSync(path.join(dir, 'scripts', 'runner'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'scripts', 'runner', 'clued-runner-job-started.mjs'), path.join(dir, 'scripts', 'runner', 'clued-runner-job-started.mjs'));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'T');
+  const T = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
+  const commit = (...parents) => git('commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-m', `c${parents.length}`);
+  const [H1, H2, H3, X] = [commit(T), commit(T), commit(T), commit()];
+  git('update-ref', 'refs/remotes/origin/main', T);
+  const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
+  return { dir, T, H1, H2, one, two, three, commit, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
+}
+function runBaseline(t, { shell, script }, repo, env) {
+  const command = shellCommand(shell);
+  const output = path.join(repo, `output-${Math.random().toString(16).slice(2)}`);
+  const file = path.join(repo, `step-${Math.random().toString(16).slice(2)}.${shell === 'bash' ? 'sh' : 'ps1'}`);
+  writeFileSync(output, '');
+  writeFileSync(file, script);
+  const r = spawnSync(command[0], [...command[1], file], { cwd: repo, encoding: 'utf8',
+    env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: output, ...env } });
+  const outputs = Object.fromEntries(readFileSync(output, 'utf8').split('\n').filter(Boolean).map((line) => line.split('=')));
+  return { status: r.status, outputs, log: r.stdout + r.stderr };
+}
+const STAGING = { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/clued-train/staging' };
+for (const [file, id] of BASELINE_JOBS) {
+  const label = `${path.basename(file)} ${id}`;
+  const step = baselineStep(file, id);
+  const skip = shellCommand(step.shell) ? false : `no ${step.shell} for this platform`;
+  test(`bors staging, ${label}: the trusted base of a multi-member S is the chain root T, never S^1`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    for (const s of [repo.two, repo.three]) {
+      const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
+      assert.equal(r.status, 0, r.log);
+      assert.deepEqual(r.outputs, { sha: repo.T, ci_base: repo.T }, r.log);
+    }
+  });
+  test(`bors staging, ${label}: a one-member S keeps T = S^1; main pushes and pull requests are unchanged`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    const one = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: repo.one });
+    assert.equal(one.status, 0, one.log);
+    assert.deepEqual(one.outputs, { sha: repo.T, ci_base: repo.T }, one.log);
+    const main = runBaseline(t, step, repo.dir, { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.one });
+    assert.equal(main.status, 0, main.log);
+    assert.deepEqual(main.outputs, { ci_base: repo.T }, main.log);
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.one });
+    assert.equal(pr.status, 0, pr.log);
+    assert.deepEqual(pr.outputs, {}, pr.log);
+  });
+  test(`bors staging, ${label}: a chain that does not reach main through train merges gives no trusted base`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    // Rooted off main; a non-merge step; a member head already on main; S itself on main.
+    for (const s of [repo.offMain, repo.single, repo.commit(repo.T, repo.T), repo.commit(repo.one, repo.T), repo.T]) {
+      const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
+      assert.notEqual(r.status, 0, `${s}: ${r.log}`);
+      assert.equal(r.outputs.sha, undefined, r.log);
+    }
+  });
+}
+
 // The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
 // either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
 test('the release workflow and its grant script select the release door flow database test', () => {
