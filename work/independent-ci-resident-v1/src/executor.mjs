@@ -3669,7 +3669,7 @@ export class ResidentExecutor {
       const networkReleases24h = (this.tickUsage?.networkReleasesByHead?.get(subject.headSha) ?? 0) + (network && !UNCAPPED_RELEASES.includes(s.reason) ? 1 : 0);
       const ciRetryAfter = typeof s?.ciRetryAfter === 'string' && Number.isFinite(Date.parse(s.ciRetryAfter)) ? Date.parse(s.ciRetryAfter) : null;
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter, outcomeReason: s.outcomeReason ?? null,
-        releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
+        reasonCodes: s.reasonCodes ?? null, releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
       if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
@@ -4199,6 +4199,8 @@ export class ResidentExecutor {
       if (row?.class === 'node-role') await this.setNodeMode('STANDBY', 'role-not-held');
       else if (failure.stageNumber !== 1 && ROLE_LOST_SUSPECT_CODES.includes(failure.code)) this.roleProbe.markUrgent();
       const settle = { code: failure.code, klass: row?.class ?? 'unknown', breaker: row?.breaker ?? 'counts', breakerState, pos, ciRetryAfter: facts.ciRetryAfter, outcomeReason: facts.reason, network: facts.network,
+        // Task 0ca0479d: the stage fact's reason codes, for the PR page only (queue.mjs#reasonCodeList).
+        reasonCodes: [facts.reasonCodes, facts.nativeReasonCodes].flatMap(c => (Array.isArray(c) ? c : [])),
         ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
       if (!started && release) {
         await this.closeOrThrow(batch);
