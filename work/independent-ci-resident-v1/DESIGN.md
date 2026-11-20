@@ -4442,8 +4442,8 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **做法**（`src/admission-rerun.mjs`，伴随进程里自己的 lane、自己的 Runner、自己的记忆文件 `companion-admission-rerun.json`）：
   - 伴随进程用写 PR 状态的 Owner 会话 gh 登录请求“Re-run all jobs”：`gh api --method POST repos/<repo>/actions/runs/<id>/rerun`。不新增 workflow、令牌或常驻 App 权限。
   - 只在本节点 ACTIVE、没有 HALT、状态文件是最近 5 分钟（`STATUS_STALE_MS`）内写的时候（更旧的状态证明不了角色：执行器可能已停、另一节点已接手；面板触发和 PR 状态也这样读），只看本节点跑过或排过的 head（状态里的 current、排队行、最近结果），且这个 head 是轮询器看到的开着的 PR。
-  - 每分钟一步；同一个 head 至多每 2 分钟看一次；每步至多看 5 个 head。PR head 从该 head 的 `kooyumi-work-admission` 成功检查的 `completed_at` 起看 12 小时，准入未到不计时（仍每 2 分钟看一次）；列车暂存提交仍从首见起算。
-  - 每次观察从 `rules/branches/main` 读取有效规则，取 App 15368 的必需检查名。通过该 App 在精确 SHA 上发出的同名 check run 确认检查已出现。PR head 在必需 Actions 检查全部出现、且没有待补的带门运行、且没有待处理的补跑时记 `final`。暂存 SHA 等自己实际触发的范围内工作流结束，未触发的工作流不计为缺项。
+  - 每分钟一步；同一个 head 至多每 2 分钟看一次；每步至多看 5 个 head，车头（及列车暂存提交）最先，其余按上次看的时间从早到晚挑，长期未获准入的 head 不会挤掉排在后面的 head。PR head 从该 head 的 `kooyumi-work-admission` 成功检查的 `completed_at` 起看 12 小时，准入未到不计时（仍每 2 分钟看一次）；列车暂存提交仍从首见起算。
+  - 每次观察从 `rules/branches/main` 读取有效规则，取 App 15368 的必需检查名。通过该 App 在精确 SHA 上发出的同名 check run 确认检查已出现。PR head 在必需 Actions 检查全部出现、且没有待补的带门运行、且没有待处理的补跑时记 `final`。非必需带门运行在其最新尝试上已判 final（含门放行而重型按条件跳过）后，按“规则版本:运行:尝试号”记入该 head 的记忆，之后复看不再读它的作业列表和门日志，直到它出现新尝试或改属必需范围。暂存 SHA 等自己实际触发的范围内工作流结束，未触发的工作流不计为缺项。
   - 用带门运行的 `workflow_id` 和 `path` 定位默认分支的工作流 blob。范围从运行本身读出：PR head 上凡“恰有一个 `admission-gate` 且至少一个其他作业”的运行都在补跑范围。带门作业的检查名与 main 必需检查有交集的工作流，修复种类不变（从未真跑、环境类失败、丢事件补发）；无交集的只补“此前每个尝试都什么也没跑”这一种，不写 STUCK、不通知。列车暂存提交不变（仍只管必需检查）。解析结果按 blob SHA 复用，同一 base 和路径的读取也会复用。必需作业采用单行 `needs: admission-gate`，检查名用作业 ID、字面 `name`，或现有的 `&& 'x' || 'x-skipped'` 命名表达式。
   - 规则读不出、为空或形状错误，或者缺失的必需检查无法映射时，暂停该 head 的补跑和补发。PR 状态显示一条原因，下一观察周期仍有同样问题时告知 Owner 一次。之后继续核对，恢复后清除提示。
   - 一个 head 只要还是候选，它的记录就一直留着（不论多久），所以窗口（起点是准入完成时间）不会重新开始，“永久放弃”也不会忘。记录里还记着它最后一次是候选的时间（至多每小时更新一次）。不是候选时，记录只在两种情况下去掉：完整的一步（状态新、本节点 ACTIVE、没有 HALT、轮询器已经看到开着的 PR）里它不在候选之列；或者它最后一次是候选已过 24 小时。伴随进程刚启动（轮询器还没跑过）、节点暂时 STANDBY 或 UNCERTAIN、HALT、状态过旧，都不算完整的一步。所以伴随进程刚启动、节点暂时 STANDBY 或 UNCERTAIN、HALT 时，12 小时的窗口和“永久放弃”的结论都不会被重置。
