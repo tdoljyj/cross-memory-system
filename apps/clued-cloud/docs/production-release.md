@@ -26,6 +26,27 @@ as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
 - `source-capture` captures one reviewed nonsecret storage client source and
   requires `source_request_id` and `source_request_digest`.
 - `deploy` builds, gates, deploys `clued-cloud` and runs the post-deploy checks.
+- `release` is the same deploy from one approval, for a commit a Worker
+  version rollback fully undoes: it takes no migrations (apply them with
+  `migrate` first), runs only when the three wrangler production
+  configurations are byte for byte those of the commit the edge serves, and
+  never creates the Storage job queue (use `deploy` otherwise).
+  `rollback_drill` fails a fully verified release on purpose.
+
+`deploy` and `release` record the version each Worker serves and the commit
+the edge serves before the grant. Any failure from the first deploy on, a
+step timeout included, rolls the changed Workers back to those versions (a
+failure before it, such as a refused grant, changed nothing and rolls
+nothing back); one propagation window
+later the rollback reads all three versions and the edge commits once, and
+only that reading makes it `restored`. A rollback does not restore Worker
+settings someone changed by hand outside the repository. The G6 currentness
+attestation step runs after the rollback step and only when everything
+before it succeeded; if it fails, the release stays deployed and the summary
+asks for the standalone attestation workflow. After a deploy,
+`scripts/projection-postflight.mjs` calls the gate's `--post-deploy` again
+while its only findings are a backlog, for one Cron period plus two minutes
+(period from `wrangler.production.jsonc`, `*/N * * * *` only).
 
 The workflow needs the `CLUED_ATTESTATION_DATABASE_URL_V2` secret, a
 `CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2` secret scoped to edit the existing `clued-cloud`
