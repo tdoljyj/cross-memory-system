@@ -80,8 +80,13 @@ $script:Drill = [ordered]@{
   # "drill host memory" item 2). The boot gate is guest + running gate + this margin; nothing else holds the value. PROVISIONAL, to be recalibrated from the first receipt taken
   # under clean conditions (Fable, 2026-11-20). The receipts' "free at start - free after boot - guest 8 GB" (5.9 GB in run
   # 20261119T172257Z, 3.3 GB in run 20261119T030253Z) is not counted: it was the production WSL growing under a CI job of the host's
-  # Actions runners, which the Runner.Worker refusal below now keeps from overlapping a boot.
+  # Actions runners, which the runner-job tier below now covers.
   BootMarginBytes = 1GB
+  # A runner job on either side at boot (or a job query that failed) does not refuse the boot: it raises the boot gate by this much, the
+  # measured growth of the production WSL under a job (5.9 GB, run 20261119T172257Z): 15 GB without a job, 21 GB with one (Fable renew-key
+  # ruling, supplement "drill boot gate and the train both want DESK"). One measurement: the receipt's evidence.hostMemory keeps the
+  # figures to recalibrate it. The running gate does not use it.
+  RunnerJobExtraBytes = 6GB
   HostGuardSeconds = 30
   # Which WSL distribution this host's Linux Actions runners live in: the host's entry (by host name) in the self-hosted node registry of
   # this checkout. Not the installed node profile's wslDistribution: that is the resident's own distribution, registered for its
@@ -163,13 +168,14 @@ function Get-Prop($Object, [string]$Path) {
 
 # ---------------------------------------------------------------- pure decisions (unit-tested offline)
 
-function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0) {
+# -RunnerJob (before boot only): a runner job on either side, or a job query that failed -- the high tier (RunnerJobExtraBytes more).
+function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0, [switch]$RunnerJob) {
   $target = [Math]::Max($script:Drill.MemoryBytes, $VmMemoryBytes)
   $vmFreeRequired = if ($Running) {
     # Hyper-V's assigned memory has already been deducted from the host's free memory.
     [Math]::Max(0L, $target - $MemoryAssigned)
   } else {
-    [Math]::Max($target, $MemoryAssigned) + $script:Drill.BootMarginBytes
+    [Math]::Max($target, $MemoryAssigned) + $script:Drill.BootMarginBytes + $(if ($RunnerJob) { $script:Drill.RunnerJobExtraBytes } else { 0L })
   }
   $required = $vmFreeRequired + $script:Drill.ProductionReserveBytes
   return @{ ok = ($FreeBytes -ge $required); code = $(if ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null });
@@ -216,9 +222,13 @@ function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
 function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
   [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
   [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [string[]]$ProcessNames = @(), $WslJob = $false) {
-  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned
+  # Before boot only: a runner job on either side (or a side that could not be read) selects the boot gate's high memory tier; it refuses
+  # nothing by itself (Fable renew-key ruling, supplement "drill boot gate and the train both want DESK"). A job picked up after the boot
+  # is left to the running memory gate, as before.
+  $busyWith = if ($Running) { $null } else { Get-DrillRunnerJob $ProcessNames $WslJob }
+  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned -RunnerJob:($null -ne $busyWith)
   $code = 'DRILL_HOST_STATUS_UNREADABLE'
-  $mode = $null; $since = $null; $until = $null; $busyWith = $null
+  $mode = $null; $since = $null; $until = $null
   $executorObservation = $null
   try {
     if (-not $StatusJson.TrimStart().StartsWith('{')) { throw 'expected a status object' }
@@ -283,16 +293,12 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
           $null -eq $until -or $until -lt $HoldUntil -or $until -gt $Now.AddMinutes($script:Drill.IntakeMaxMinutes))) {
           $code = 'DRILL_HOST_IS_ON_DUTY'
         }
-        # Before boot only (Clued Task e71ceb33): the hold does not cover the host's Actions runners, and a job they pick up after the
-        # boot is left to the running memory gate. Both sides: Windows and the runners' WSL distribution.
-        elseif (-not $Running -and $null -ne ($job = Get-DrillRunnerJob $ProcessNames $WslJob)) {
-          if ($job -ceq 'WSL_UNREADABLE') { $code = 'DRILL_HOST_WSL_UNREADABLE' } else { $code = 'DRILL_HOST_CI_BUSY'; $busyWith = $job }
-        }
         else { $code = $memory.code }
       }
     }
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
-  return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; mode = $mode; holdSince = $since; holdUntil = $until;
+  return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; runnerJob = $(if ($Running) { $null } else { $null -ne $busyWith });
+    mode = $mode; holdSince = $since; holdUntil = $until;
     freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes;
     executorObservation = $executorObservation; observedAt = $Now.ToUniversalTime().ToString('o');
     action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
@@ -1176,6 +1182,26 @@ function New-DrillFakeCredentials {
   return $public
 }
 
+# Fable renew-key ruling, supplement "drill boot gate and the train both want DESK": a timed guest step that ran out while a runner job
+# was beside the boot is "suspected host contention" -- rerun at another time before concluding anything, never fixed as a package defect.
+# The run's own timeout codes (*_TIMEOUT) and a first-install step or verdict whose code says TIMEOUT; anything else, or no job at boot: none.
+function Get-DrillHostContention($Failure, $FirstInstallSteps, $RunnerJobAtBoot) {
+  if ($RunnerJobAtBoot -ne $true) { return $null }
+  $codes = @([string](Get-Prop $Failure 'code'), [string](Get-Prop $FirstInstallSteps 'verdict.stopCode'))
+  $codes += @(@(Get-Prop $FirstInstallSteps 'steps') | Where-Object { $null -ne $_ } | ForEach-Object { [string](Get-Prop $_ 'rejectCode') })
+  if (@($codes | Where-Object { $_ -cmatch 'TIMEOUT' }).Count) { return 'SUSPECTED_HOST_CONTENTION' }
+  return $null
+}
+
+# The receipt's memory record: free before boot (the boot gate's reading), whether a runner job was there and the tier it required, free
+# once the guest was up and the lowest while running, and the contention class.
+function Get-DrillHostMemoryEvidence($PreBoot, $RunningMemory, $Failure, $FirstInstallSteps) {
+  $job = Get-Prop $PreBoot 'bootGate.runnerJob'
+  [ordered]@{ beforeBootFreeGB = (Get-Prop $PreBoot 'bootGate.freeGB'); runnerJobAtBoot = $job; runnerJobBefore = (Get-Prop $PreBoot 'bootGate.busyWith')
+    requiredFreeGB = (Get-Prop $PreBoot 'bootGate.requiredFreeGB'); afterBootFreeGB = (Get-Prop $RunningMemory 'afterBootFreeGB')
+    minRunningFreeGB = (Get-Prop $RunningMemory 'minRunningFreeGB'); contention = (Get-DrillHostContention $Failure $FirstInstallSteps $job) }
+}
+
 # ---------------------------------------------------------------- Hyper-V side (needs the host; not unit-tested)
 
 function Get-DrillVmInfo {
@@ -1245,7 +1271,9 @@ function Assert-DrillHostSafety([DateTimeOffset]$HoldUntil = [DateTimeOffset]::M
 
 # What the receipt keeps of one stage's sample.
 function ConvertTo-DrillGateTrace($Safety) {
+  $required = Get-Prop $Safety 'requiredFreeBytes'
   [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); ok = [bool](Get-Prop $Safety 'ok'); code = (Get-Prop $Safety 'code'); busyWith = (Get-Prop $Safety 'busyWith')
+    runnerJob = (Get-Prop $Safety 'runnerJob'); requiredFreeGB = $(if ($null -ne $required) { [Math]::Round([long]$required / 1GB, 1) } else { $null })
     freeGB = (Get-Prop $Safety 'freeGB'); wslRunning = @(Get-Prop $Safety 'wslRunnerDistributions'); wslJobs = @(Get-Prop $Safety 'wslJobs')
     wslUnreadable = (Get-Prop $Safety 'wslUnreadable') }
 }
@@ -1258,6 +1286,14 @@ function Invoke-DrillPreBootRelease([DateTimeOffset]$HoldUntil = [DateTimeOffset
   $early = Get-DrillHostSafety -HoldUntil $HoldUntil -JobsOnly
   $script:DrillPreBoot.early = ConvertTo-DrillGateTrace $early
   if (-not $early.ok) { throw (New-DrillError $early.code $early) }
+  # the release only when neither side has a job (Decision 21db5a9c: while idle); with one -- or a side that could not be read -- the
+  # boot gate's high tier decides alone
+  $earlyJob = Get-Prop $early 'busyWith'
+  if ($null -ne $earlyJob) {
+    $script:DrillPreBoot.release = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); distributions = @(); results = @(); released = @()
+      skipped = [ordered]@{ where = 'early'; reason = $earlyJob }; failed = $null }
+    return
+  }
   $script:DrillPreBoot.release = Invoke-DrillWslCacheRelease
 }
 
@@ -1635,6 +1671,15 @@ function Add-DrillExecutorObservation($State, $Safety) {
   }
 }
 
+# The receipt's free memory once the guest is up: the running gate's first reading and its lowest (Fable renew-key ruling, supplement
+# "drill boot gate and the train both want DESK": kept to recalibrate the runner-job tier).
+function Add-DrillRunningMemory($State, $Safety) {
+  $free = Get-Prop $Safety 'freeGB'
+  if ($null -eq $free -or $State -isnot [Collections.IDictionary]) { return }
+  if ($null -eq $State['afterBootFreeGB']) { $State['afterBootFreeGB'] = $free }
+  if ($null -eq $State['minRunningFreeGB'] -or $free -lt $State['minRunningFreeGB']) { $State['minRunningFreeGB'] = $free }
+}
+
 # A separate runspace owns this loop: guest jobs, Copy-Item, Read-Host and long waits cannot delay host protection.
 # The start and abort share a lock, so an abort can never be followed by a late Start-VM.
 function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreCheckpoint) {
@@ -1647,7 +1692,7 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
         try {
           if ($State.stop) { return }
           $safety = Get-DrillGuardSafety $State
-          if ($State.armed) { Add-DrillExecutorObservation $State $safety }
+          if ($State.armed) { Add-DrillExecutorObservation $State $safety; Add-DrillRunningMemory $State $safety }
           if (-not $safety.ok) { $State.failure = @{ code = $safety.code; detail = $safety } }
           $State.ready = $true
         } finally { [Threading.Monitor]::Exit($State.SyncRoot) }
@@ -1693,7 +1738,7 @@ function Get-DrillGuardSafety($State, [switch]$BootGate) {
 }
 
 function Start-DrillHostGuard([string]$RunDir, [switch]$RestoreCheckpoint, $Window) {
-  $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $false; failure = $null; cleanup = $null;
+  $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $false; failure = $null; cleanup = $null; afterBootFreeGB = $null; minRunningFreeGB = $null;
     executorStates = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal);
     deadline = (Get-Prop $Window 'deadline'); holdUntil = (Get-Prop $Window 'holdUntil') })
   $worker = [PowerShell]::Create()
@@ -2258,10 +2303,10 @@ $script:GuestShutdownTimer = {
 # and restored, whatever happened. Returns the outcome and guard observations.
 function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) {
   $result = $null; $failure = $null; $restored = $false; $guard = $null; $cleanupNeeded = $false; $signal = $null; $watchdog = $null
-  $executorStates = @(); $script:DrillPreBoot = $null
+  $executorStates = @(); $script:DrillPreBoot = $null; $running = [ordered]@{ afterBootFreeGB = $null; minRunningFreeGB = $null }
   try {
-    # hold in force -> resident idle -> no Runner.Worker on either side (early refusal) -> release the runners' WSL page cache -> the boot gate
-    # in Start-DrillGuardedVm (both sides again, memory once, boot). With a job running there is neither a release nor a boot.
+    # hold in force -> resident idle -> runner jobs on either side sampled (early) -> release the runners' WSL page cache when neither side
+    # has one -> the boot gate in Start-DrillGuardedVm (both sides again, then memory against the tier they select, once, boot).
     Invoke-DrillPreBootRelease $Window.holdUntil
     $info = Get-DrillVmInfo
     $decision = Get-DrillBaselineAction $info
@@ -2293,10 +2338,11 @@ function Invoke-DrillOnCheckpoint([scriptblock]$Body, [string]$RunDir, $Window) 
     Stop-DrillHostGuard $guard
     if ($guard) {
       $executorStates = @($guard.state.executorStates.Values)
+      $running = [ordered]@{ afterBootFreeGB = (Get-Prop $guard.state 'afterBootFreeGB'); minRunningFreeGB = (Get-Prop $guard.state 'minRunningFreeGB') }
       if ($guard.state.failure) { $failure = $guard.state.failure; $result = $null }
     }
   }
-  return @{ result = $result; failure = $failure; restored = $restored; hostExecutorStates = $executorStates; preBoot = $script:DrillPreBoot }
+  return @{ result = $result; failure = $failure; restored = $restored; hostExecutorStates = $executorStates; preBoot = $script:DrillPreBoot; runningMemory = $running }
 }
 
 $script:GuestReinstall = {
@@ -2802,6 +2848,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   }
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
+  $evidence.hostMemory = Get-DrillHostMemoryEvidence (Get-Prop $o 'preBoot') (Get-Prop $o 'runningMemory') $failure $firstInstallSteps
   # An emergency restore may come before the evidence was taken (Fable renew-key ruling, supplement "interactive mode A1", second point):
   # accepted, and written as it ended (Codex review of 1cedea9ef, medium 4) -- the host guard's, and the boot watchdog's record.
   $guardOutcome = Get-DrillGuardOutcome $runDir
