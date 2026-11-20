@@ -222,12 +222,12 @@ function handoverFixture(t, {now = Date.now(), currentBinding = bindingId, mode,
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'renew-handover-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   for (const dir of ['state', 'broker/requests', 'broker/responses']) fs.mkdirSync(path.join(root, dir), {recursive: true});
-  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0, source: CI_SOURCE, startedAt: now - 10 * 60_000};
+  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0, source: CI_SOURCE, startedAt: now - 10 * 60_000, observe: async () => null};
   const expiresAt = new Date(f.now + 10 * 24 * HOUR).toISOString();
   const put = (name, value) => fs.writeFileSync(path.join(root, name), JSON.stringify(value));
   f.restart = () => {
     f.tick = renewalWatch({root, profile: {}, mode: mode ?? (() => f.mode), drained: drained ?? (async () => f.drained),
-      clock: () => f.now, observe: async () => null, onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; }), source: f.source,
+      clock: () => f.now, observe: () => f.observe(), onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; }), source: f.source,
       uptime: () => f.now - f.startedAt});
   };
   f.restart();
@@ -937,4 +937,62 @@ test('拒绝的回包在第 160 秒到达：原码落盘，不交出当班，按
   f.reply('upgrade', {}); await f.tick(); f.request(null);
   f.now += HOUR - 1; await f.tick(); f.request(null);
   f.now += 1; await f.tick(); assert.notEqual(f.request('ci'), id);
+});
+
+// Codex 复审 3d59ee58e（中1）：一小时按“读到回包文件的那一刻”判，不按轮次开头的时刻。截止前读到匹配回包 → 采纳；截止后读到 → 不采纳，按不可用。
+test('一小时边界按读到回包的时刻：重启首轮第 3599 秒开始、自检期间第 3601 秒写入让班、第 3603 秒读到——不采纳', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  const at = f.now;
+  f.now = at + 3_590_000; await f.tick();
+  f.now = at + 3_599_000; f.startedAt = f.now;
+  f.observe = async () => { // 重启后的首轮先做自检（最长 10 秒），Broker 在这期间发布回包
+    f.now = at + 3_601_000;
+    answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+    f.now = at + 3_603_000;
+    return null;
+  };
+  f.restart(); await f.tick();
+  assert.equal(f.holds, 0, '截止后才读到的让班回包不采纳');
+  assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting], ['RENEW_RESPONSE_UNAVAILABLE', true]);
+});
+test('一小时边界按读到回包的时刻：第 3590 秒空读、第 3599 秒写入让班、第 3605 秒才读到——截止后读到，不采纳', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  const at = f.now;
+  f.now = at + 3_590_000; await f.tick();
+  assert.equal(f.book().pending?.id, id);
+  f.now = at + 3_599_000;
+  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+  f.now = at + 3_605_000; await f.tick();
+  assert.equal(f.holds, 0);
+  assert.equal(f.book().lanes.ci.code, 'RENEW_RESPONSE_UNAVAILABLE');
+});
+test('一小时边界按读到回包的时刻：第 3599 秒开始的一轮在截止前读到让班——采纳', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  const at = f.now;
+  f.now = at + 3_598_000;
+  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+  f.now = at + 3_599_000; await f.tick();
+  assert.equal(f.holds, 1);
+  assert.equal(f.book().lanes.ci.code, 'RENEW_HANDOVER_WAITING');
+});
+// 低1：没有回包时常驻自己记下的“回包不可用”不是服务端的拒绝，按结清它的当前代记，照常每小时复核；只有服务端回包里的拒绝才按投递代记。
+test('A 代投出升级请求、B 代重启后满一小时仍无回包：按当前代记回包不可用，每小时复核，不当轮重投', async t => {
+  for (const legacy of [false, true]) {
+    const f = handoverFixture(t);
+    await f.tick(); f.reply('ci', {}); await f.tick();
+    const id = f.request('upgrade'), at = f.now;
+    if (legacy) {
+      const book = f.book(); delete book.pending.source;
+      fs.writeFileSync(path.join(f.root, 'state/connection-renewal.json'), JSON.stringify(book));
+    }
+    f.now = at + 10 * 60_000; f.source = OTHER_SOURCE; f.startedAt = f.now; f.restart(); await f.tick();
+    f.now = at + HOUR; await f.tick();
+    assert.deepEqual([f.book().lanes.upgrade.code, f.book().lanes.upgrade.waiting, f.book().lanes.upgrade.source], ['RENEW_RESPONSE_UNAVAILABLE', false, OTHER_SOURCE]);
+    f.request(null);
+    f.now += HOUR - 1; await f.tick(); f.request(null);
+    f.now += 1; await f.tick(); assert.notEqual(f.request('upgrade'), id);
+  }
 });
