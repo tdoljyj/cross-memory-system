@@ -69,7 +69,7 @@ function Read-ContinueCaptured([string]$registrar, [string]$source, [string]$dir
 # $capture: $null, or the registrar and this continuation's capture directory (a companion node).
 function Get-ContinuePriorRunResult($report, [scriptblock]$stop, [string]$runDirectory, [string]$final, [string]$failedCode, $capture, [string]$label) {
   $processes = $null
-  try { $processes = @(Get-FleetRunProcesses $runDirectory) } catch { $report.state['runProcessQuery'] = [string]$_.Exception.Message }
+  try { $processes = Get-FleetRunProcesses $runDirectory } catch { $report.state['runProcessQuery'] = [string]$_.Exception.Message }
   if ($null -eq $processes) { & $stop 'RUN_PROCESS_QUERY_FAILED' }
   $report.state['runProcesses'] = $processes
   if ($processes.Count) { & $stop 'LINUX_PHASE_STILL_RUNNING_RETRY' }
