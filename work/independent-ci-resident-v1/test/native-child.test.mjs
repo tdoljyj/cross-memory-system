@@ -198,3 +198,106 @@ finally { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyC
   assert.ok(!('facts' in v.detail), 'only the declared fields are inlined');
   assert.deepEqual(r.lines.flatMap(leaks), [], r.out);
 });
+
+// ---- A child's stdin carries our bytes and nothing before them (run 44705707829). Windows PowerShell 5.1 (.NET Framework) opens a
+// redirected stdin as a StreamWriter in Console.InputEncoding and writes that encoding's preamble at Process.Start: on a UTF-8 console
+// (code page 65001) a BOM. Every start with a redirected stdin carries the same guard, the one text below: while the child starts,
+// Console's cached input encoding is a UTF-8 without a preamble, put back after.
+const NO_BOM_GUARD = [
+  "$cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }",
+  '$was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }',
+  'if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }',
+];
+const NO_BOM_START = /^try \{ \$[A-Za-z]+ = \[Diagnostics\.Process\]::Start\(\$psi\) \} finally \{ if \(\$null -ne \$cie\) \{ \$cie\.SetValue\(\$null, \$was\) \} \}$/;
+
+test('package .ps1: every process start whose function redirects stdin carries the no-BOM guard, the same text', { skip, timeout: 600_000 }, (t) => {
+  const files = packagePs1();
+  const list = path.join(tempDir(t, 'no-bom-'), 'files.txt');
+  fs.writeFileSync(list, files.map(f => path.join(REPO, f)).join('\n'), 'utf8');
+  const r = ps(`$ErrorActionPreference = 'Stop'
+$sites = New-Object Collections.Generic.List[object]
+foreach ($f in [IO.File]::ReadAllLines(${psLiteral(list)})) {
+  $tokens = $null; $errors = $null
+  $ast = [Management.Automation.Language.Parser]::ParseFile($f, [ref]$tokens, [ref]$errors)
+  $scopes = [ordered]@{}
+  foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Left -is [Management.Automation.Language.MemberExpressionAst] -and $x.Left.Member.Extent.Text -ceq 'RedirectStandardInput' }, $true)) {
+    $s = $a.Parent; while ($null -ne $s -and $s -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $s = $s.Parent }
+    if ($null -eq $s) { $s = $ast }
+    $scopes[[string]$s.Extent.StartOffset] = $s
+  }
+  foreach ($s in $scopes.Values) {
+    $starts = @($s.FindAll({ param($x) $x -is [Management.Automation.Language.InvokeMemberExpressionAst] -and $x.Static -and $x.Member.Extent.Text -ceq 'Start' -and $x.Expression.Extent.Text -match '^\\[(System\\.)?Diagnostics\\.Process\\]$' }, $true))
+    if (-not $starts.Count) { $sites.Add([ordered]@{ file = [string]$f; line = [int]$s.Extent.StartLineNumber; start = $null; prev = [string[]]@() }); continue }
+    foreach ($x in $starts) {
+      $try = $x.Parent.Parent.Parent.Parent; $prev = @()
+      if ($try -is [Management.Automation.Language.TryStatementAst] -and ($try.Parent -is [Management.Automation.Language.StatementBlockAst] -or $try.Parent -is [Management.Automation.Language.NamedBlockAst])) {
+        $all = @($try.Parent.Statements); $i = [array]::IndexOf($all, $try)
+        if ($i -ge 3) { $prev = @($all[($i - 3)..($i - 1)] | ForEach-Object { $_.Extent.Text }) }
+        $text = $try.Extent.Text
+      } else { $text = $x.Parent.Parent.Extent.Text }
+      $sites.Add([ordered]@{ file = [string]$f; line = [int]$x.Extent.StartLineNumber; start = [string]$text; prev = [string[]]$prev })
+    }
+  }
+}
+ConvertTo-Json -InputObject $sites.ToArray() -Depth 4 -Compress`);
+  assert.equal(r.status, 0, r.out);
+  const sites = [JSON.parse(r.lines.at(-1))].flat().map(s => ({ ...s, file: path.relative(REPO, s.file).replaceAll('\\', '/') }));
+  for (const f of ['windows/first-install-host.ps1', 'windows/install-resident.ps1', 'reinstall/tools/place-app-key.ps1', 'windows/prepare-companion-account.ps1']) {
+    assert.ok(sites.some(s => s.file === `work/independent-ci-resident-v1/${f}`), `${f}: a start with a redirected stdin is seen (${sites.map(s => s.file).join(', ')})`);
+  }
+  for (const s of sites) {
+    const at = `${s.file}:${s.line}`;
+    assert.ok(s.start !== null, `${at}: redirects stdin but no [Diagnostics.Process]::Start($psi) is found`);
+    assert.match(s.start, NO_BOM_START, `${at}: the start is not the guarded one (try { $p = [Diagnostics.Process]::Start($psi) } finally { ...SetValue($null, $was)... })`);
+    assert.deepEqual(s.prev, NO_BOM_GUARD, `${at}: the three guard lines are not right before the start`);
+  }
+});
+
+// The secret-fingerprint children, each the real function (taken by AST, or first-install-host.ps1 dot-sourced), with the real node and a
+// stand-in tool that answers the bytes it got on stdin as hex; the console's input encoding put in the code page 65001 state on any machine.
+const FP_STANDIN = `const chunks = []; for await (const c of process.stdin) chunks.push(c);
+process.stdout.write(JSON.stringify({ kind: process.argv[2], fingerprint: Buffer.concat(chunks).toString('hex') }) + '\\n');\n`;
+const SECRET = 'clued-test-secret-on-stdin\n';
+const UTF8_CONSOLE = `[Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static').SetValue($null, [Text.Encoding]::UTF8)
+if ([Console]::InputEncoding.GetPreamble().Length -ne 3) { throw 'NOT_A_UTF8_CONSOLE_ENCODING_WITH_A_BOM' }`;
+const functionsFrom = (file, names) => `$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(file)}, [ref]$tokens, [ref]$errors)
+foreach ($name in @(${names.map(psLiteral).join(', ')})) {
+  $f = @($ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq $name }, $true))
+  if ($f.Count -ne 1) { throw ('FUNCTION_MISSING:' + $name) }
+  . ([scriptblock]::Create($f[0].Extent.Text))
+}`;
+function fingerprintStdin(t, body) {
+  const dir = tempDir(t, 'stdin-bytes-');
+  const tool = path.join(dir, 'secret-fingerprint.mjs'); fs.writeFileSync(tool, FP_STANDIN, 'utf8');
+  const r = ps(`$ErrorActionPreference = 'Stop'
+$tNode = ${psLiteral(process.execPath)}; $tTool = ${psLiteral(tool)}; $tDir = ${psLiteral(dir)}; $secret = [Text.Encoding]::ASCII.GetBytes(${psLiteral(SECRET)})
+${UTF8_CONSOLE}
+${body}`);
+  assert.equal(r.status, 0, r.out);
+  const line = r.lines.find(l => l.startsWith('FP=')) ?? '';
+  assert.equal(line.slice(3), Buffer.from(SECRET, 'ascii').toString('hex'), `the tool's stdin holds the secret's bytes and nothing before them\n${r.out}`);
+}
+
+test('first-install-host.ps1 Get-SecretFingerprint on a UTF-8 console: the secret reaches the tool byte for byte, no BOM', { skip, timeout: 300_000 }, (t) => {
+  fingerprintStdin(t, `. ${psLiteral(path.join(RES, 'windows', 'first-install-host.ps1'))}
+$script:NodeExe = $tNode; $script:FingerprintTool = $tTool
+'FP=' + (Get-SecretFingerprint $secret 'ci-token')`);
+});
+
+test('install-resident.ps1 Get-SecretFingerprint on a UTF-8 console: the secret reaches the tool byte for byte, no BOM', { skip, timeout: 300_000 }, (t) => {
+  fingerprintStdin(t, `${functionsFrom(path.join(RES, 'windows', 'install-resident.ps1'), ['Get-SecretFingerprint'])}
+$pkgBytes = [Text.Encoding]::UTF8.GetBytes('{"files":[{"target":"resident\\\\${'a'.repeat(64)}\\\\tools\\\\secret-fingerprint.mjs"}]}')
+function Read-PackageRecordFile([string]$target) { if ($target -ceq 'runtime\\node.exe') { , [IO.File]::ReadAllBytes($tNode) } else { , [IO.File]::ReadAllBytes($tTool) } }
+function New-SecretWorkDirectory([string]$parent, [string]$sddl) { $d = Join-Path $tDir ('w' + [guid]::NewGuid().ToString('N')); [void][IO.Directory]::CreateDirectory($d); $d }
+function Write-New([string]$path, [byte[]]$bytes) { [IO.File]::WriteAllBytes($path, $bytes) }
+$SecretWorkParent = $tDir; $SecretWorkSddl = ''
+'FP=' + (Get-SecretFingerprint 'ci-token' $secret)`);
+});
+
+test('place-app-key.ps1 Get-AppKeyFingerprint on a UTF-8 console: the key reaches the tool byte for byte, no BOM', { skip, timeout: 300_000 }, (t) => {
+  fingerprintStdin(t, `${functionsFrom(path.join(RES, 'reinstall', 'tools', 'place-app-key.ps1'), ['Get-AppKeyFingerprint'])}
+$nodeBytes = [IO.File]::ReadAllBytes($tNode); $toolBytes = [IO.File]::ReadAllBytes($tTool)
+function New-WorkDirectory { $d = Join-Path $tDir ('w' + [guid]::NewGuid().ToString('N')); [void][IO.Directory]::CreateDirectory($d); $d }
+'FP=' + (Get-AppKeyFingerprint $secret)`);
+});

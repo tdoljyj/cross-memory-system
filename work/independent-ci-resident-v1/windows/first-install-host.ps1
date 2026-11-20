@@ -537,7 +537,7 @@ function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 
   # encoding's preamble at once: on a UTF-8 console (code page 65001) the child reads a BOM before $stdin (run 44705707829). While the
   # child starts, Console's cached input encoding (what its getter returns) is a UTF-8 without one; .NET Core has no such field and
   # writes no preamble. Our bytes go to the base stream, so the writer's encoding is otherwise unused.
-  $cie = if ($null -ne $stdin) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
   $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
   if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
   try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
@@ -568,7 +568,11 @@ function Get-SecretFingerprint([byte[]]$secret, [string]$kind) {
   $psi.FileName = $script:NodeExe; $psi.Arguments = '"' + $script:FingerprintTool + '" ' + $kind; $psi.WorkingDirectory = 'C:\Windows\System32'
   $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
   $psi.EnvironmentVariables.Clear(); $psi.EnvironmentVariables['SystemRoot'] = 'C:\Windows'; $psi.EnvironmentVariables['WINDIR'] = 'C:\Windows'; $psi.EnvironmentVariables['PATH'] = 'C:\Windows\System32'
-  $p = [Diagnostics.Process]::Start($psi)
+  # No BOM before the secret on a UTF-8 console: the guard every start with a redirected stdin carries (see Invoke-NativeChild, test/native-child.test.mjs).
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+  if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+  try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
   try { $p.StandardInput.BaseStream.Write($secret, 0, $secret.Length) } finally { $p.StandardInput.Close() }
   $o = $p.StandardOutput.ReadToEndAsync(); $null = $p.StandardError.ReadToEndAsync()
   if (-not $p.WaitForExit(60000)) { try { $p.Kill() } catch { }; Stop-Host 'SECRET_FINGERPRINT_TIMEOUT' $kind }

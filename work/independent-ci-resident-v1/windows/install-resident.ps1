@@ -568,7 +568,11 @@ function Get-SecretFingerprint([string]$kind, [byte[]]$secret) {
     $psi.WorkingDirectory = 'C:\Windows\System32'
     # A cleared, fixed environment (no NODE_OPTIONS or other variable of the Owner's session), as verify-resident.ps1 runs node.
     $psi.EnvironmentVariables.Clear(); foreach ($kv in @(@('SystemRoot', 'C:\Windows'), @('WINDIR', 'C:\Windows'), @('PATH', 'C:\Windows\System32'))) { $psi.EnvironmentVariables[$kv[0]] = $kv[1] }
-    $p = [Diagnostics.Process]::Start($psi)
+    # No BOM before the secret on a UTF-8 console: the guard every start with a redirected stdin carries (see Invoke-NativeChild, test/native-child.test.mjs).
+    $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+    $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+    if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+    try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
     try {
       try { $p.StandardInput.BaseStream.Write($secret, 0, $secret.Length); $p.StandardInput.Close() } catch { }   # a refusing tool may have exited already
       $out = $p.StandardOutput.ReadToEndAsync(); $err = $p.StandardError.ReadToEndAsync()

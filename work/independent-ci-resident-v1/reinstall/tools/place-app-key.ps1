@@ -70,7 +70,11 @@ function Get-AppKeyFingerprint([byte[]]$key) {
     $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
     $psi.EnvironmentVariables.Clear()   # no NODE_OPTIONS, NODE_PATH or any other inherited variable reaches the process holding the key
     $psi.EnvironmentVariables['SystemRoot'] = 'C:\Windows'; $psi.EnvironmentVariables['WINDIR'] = 'C:\Windows'; $psi.EnvironmentVariables['PATH'] = 'C:\Windows\System32'
-    $proc = [Diagnostics.Process]::Start($psi)
+    # No BOM before the secret on a UTF-8 console: the guard every start with a redirected stdin carries (see Invoke-NativeChild, test/native-child.test.mjs).
+    $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+    $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+    if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+    try { $proc = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
     try { $proc.StandardInput.BaseStream.Write($key, 0, $key.Length) } finally { $proc.StandardInput.Close() }
     $outTask = $proc.StandardOutput.ReadToEndAsync(); $errTask = $proc.StandardError.ReadToEndAsync()
     if (-not $proc.WaitForExit(60000)) { try { $proc.Kill() } catch {}; throw 'SECRET_FINGERPRINT_TIMEOUT' }
