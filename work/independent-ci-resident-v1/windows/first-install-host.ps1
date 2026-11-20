@@ -32,8 +32,8 @@
     v1-base        what the installer needs from Windows itself (Get-V1BaseCodes: .NET Framework 4 csc.exe, the LocalAccounts,
                    NetSecurity and ScheduledTasks modules, secedit) and cannot be added here: refused by name when missing;
     node-key-check the node's two identity keys (registration\export-node-registration.ps1, in the archive), read with that script's own
-                   Find-MachineKey: one of them, one not in the TPM, not valid or not readable, or none and no usable TPM, is refused
-                   (Get-NodeKeyPlan) before anything is installed;
+                   Find-MachineKey: one of them, the identity key not in the TPM, either not valid or not readable, or none and no
+                   usable TPM, is refused (Get-NodeKeyPlan) before anything is installed;
     wsl            WSL itself at the pinned version (the manifest's wsl item): installed from the pinned MSI when `wsl --version` is
                    not that version (msiexec /i /qn /norestart), then `wsl --version` must name it (M7); a restart: exit 3;
     features       VirtualMachinePlatform (and Microsoft-Windows-Subsystem-Linux) enabled (/norestart); a needed restart:
@@ -41,8 +41,9 @@
     accounts       .\clued-control and .\clued-runner (made when absent, random password nobody knows, not administrators), the
                    companion account by the package's own windows\prepare-companion-account.ps1 (-RegistrarSha256: the archive's pin,
                    L2); clued-control's right to log on as a service, and no deny-logon-as-a-service entry for it;
-    node-key       neither key there: the packaged script's init-keys -ConfirmCreateKeys -KeyProvider tpm (non-exportable, in the TPM;
-                   never a software key), then both must be found in the TPM; both there: kept. -Reset never removes them;
+    node-key       neither key there: the packaged script's init-keys -ConfirmCreateKeys -KeyProvider tpm (non-exportable; the identity
+                   key in the TPM, never in software; the encryption key in software, where the TPM provider leaves it), then both
+                   must be found, the identity key in the TPM; both there: kept. -Reset never removes them;
     ci-root        C:\ProgramData\CluedIndependentCI and formal-spool with the baseline DACL the installer appends to, formal-spool\outgoing
                    and \incoming (the v1 one-shot table, the operator in the Owner's place), first-install\, first-install\credentials\,
                    the secrets folder (installer's Get-SecretDirectorySddl): Get-CiRootDirectories, one table;
@@ -241,18 +242,20 @@ function Get-PolicyProbeResult($run) {
   }
   [ordered]@{ code = 'HOST_EXECUTION_POLICY_NOT_EFFECTIVE'; effective = $null }
 }
-# N7 (Fable 11-21 "r5 preflight gaps" section 2.2): what the key step does with the node's two keys as Get-NodeKeyObservation found them
-# (each $null: absent, 'unreadable', or {origin, valid}; tpmUsable). Both in the TPM and valid: present (kept). Neither: create, only with a
-# usable TPM (-KeyProvider tpm: never a software key; M5 accepts only TPM keys), else HOST_TPM_NOT_USABLE. One of them
-# (HOST_NODE_KEY_INCOMPLETE), one not in the TPM (HOST_NODE_KEY_NOT_TPM), not valid (HOST_NODE_KEY_INVALID) or not readable
-# (HOST_NODE_KEY_UNREADABLE): refused; init-keys never replaces a key, and nothing here deletes one.
+# N7 (Fable 11-21 "r5 preflight gaps" section 2.2, as "r5 node key" 3.2 corrects it): what the key step does with the node's two keys as
+# Get-NodeKeyObservation found them (each $null: absent, 'unreadable', or {origin, valid}; tpmUsable). Both valid, the identity key in the
+# TPM: present (kept). Neither: create, only with a usable TPM (-KeyProvider tpm: the identity key never in software; M5 accepts only a
+# TPM identity key), else HOST_TPM_NOT_USABLE. One of them (HOST_NODE_KEY_INCOMPLETE), the identity key not in the TPM
+# (HOST_NODE_KEY_NOT_TPM), either not valid (HOST_NODE_KEY_INVALID) or not readable (HOST_NODE_KEY_UNREADABLE): refused; init-keys never
+# replaces a key, and nothing here deletes one. The encryption key's provider is not judged: the TPM provider makes no key-agreement key
+# (NTE_NOT_SUPPORTED), so init-keys puts it in software, as on both nodes in service.
 function Get-NodeKeyPlan($observed) {
   $i = Get-Key $observed 'identity'; $e = Get-Key $observed 'encryption'
   $refuse = { param($c) [ordered]@{ action = $null; code = $c } }
   if ($i -is [string] -or $e -is [string]) { return (& $refuse 'HOST_NODE_KEY_UNREADABLE') }
   if ($null -eq $i -and $null -eq $e) { if ((Get-Key $observed 'tpmUsable') -eq $true) { return [ordered]@{ action = 'create'; code = $null } } else { return (& $refuse 'HOST_TPM_NOT_USABLE') } }
   if ($null -eq $i -or $null -eq $e) { return (& $refuse 'HOST_NODE_KEY_INCOMPLETE') }
-  foreach ($k in @($i, $e)) { if ([string](Get-Key $k 'origin') -cne 'tpm') { return (& $refuse 'HOST_NODE_KEY_NOT_TPM') } }
+  if ([string](Get-Key $i 'origin') -cne 'tpm') { return (& $refuse 'HOST_NODE_KEY_NOT_TPM') }
   foreach ($k in @($i, $e)) { if ((Get-Key $k 'valid') -ne $true) { return (& $refuse 'HOST_NODE_KEY_INVALID') } }
   [ordered]@{ action = 'present'; code = $null }
 }
@@ -959,9 +962,10 @@ function Get-NodeKeyObservation([string]$registrationScript, $names = $null) {
   }
   $o
 }
-# The key step: observe, decide (Get-NodeKeyPlan); only when both are absent the packaged script's init-keys, in the TPM only, then the
-# same observation and rule again: both present, or HOST_NODE_KEY_NOT_CREATED. The private keys never leave the TPM; nothing is printed
-# but their origins. The keys are not removed by -Reset or an uninstall: a re-run finds them and keeps them.
+# The key step: observe, decide (Get-NodeKeyPlan); only when both are absent the packaged script's init-keys, the identity key in the TPM
+# only, then the same observation and rule again: both present, or HOST_NODE_KEY_NOT_CREATED. The private keys are never exported (the
+# identity key's never leaves the TPM); nothing is printed but their origins. The keys are not removed by -Reset or an uninstall: a re-run
+# finds them and keeps them.
 function Invoke-NodeKeyStep([string]$registrationScript, [string]$powershell) {
   $before = Get-NodeKeyObservation $registrationScript
   $plan = Get-NodeKeyPlan $before
@@ -1077,7 +1081,8 @@ function Invoke-HostPreparation {
     Step 'v1-base' 'present'
     Enter-Step 'node-key-check'
     # N7, read only: the node's two identity keys as the packaged registration script finds them (Get-NodeKeyObservation). One of them,
-    # one not in the TPM, not valid or not readable, or none and no usable TPM, is refused here, before anything is installed.
+    # the identity key not in the TPM, either not valid or not readable, or none and no usable TPM, is refused here, before anything is
+    # installed.
     $NodeKeyScript = Join-Path $R 'registration\export-node-registration.ps1'
     $nodeKeys = try { Get-NodeKeyObservation $NodeKeyScript } catch { Stop-Host 'HOST_NODE_KEY_SCRIPT_REFUSED' ([string]$_.Exception.Message) }
     $nodeKeyPlan = Get-NodeKeyPlan $nodeKeys
@@ -1150,7 +1155,8 @@ function Invoke-HostPreparation {
     if ($operator -ceq $companionSid -or $operator -ceq $controllerSid) { Stop-Host 'OPERATOR_IS_A_SERVICE_ACCOUNT' $operator }
     Step 'accounts' ([ordered]@{ controllerSid = $controllerSid; companionSid = $companionSid; operatorSid = $operator })
     Enter-Step 'node-key'
-    # N7: the two keys made in the TPM by the packaged script (init-keys -KeyProvider tpm) when neither is there; both there: kept
+    # N7: the two keys made by the packaged script (init-keys -KeyProvider tpm: identity in the TPM, encryption in software) when neither
+    # is there; both there: kept
     $nodeKey = try { Invoke-NodeKeyStep $NodeKeyScript $PowerShellExe } catch { Stop-Host 'HOST_NODE_KEY_SCRIPT_REFUSED' ([string]$_.Exception.Message) }
     if ($nodeKey.code) { Stop-Host $nodeKey.code $nodeKey }
     Step 'node-key' $nodeKey

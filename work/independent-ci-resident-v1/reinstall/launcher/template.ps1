@@ -1679,8 +1679,9 @@ function Get-FirstInstallResidue {
 function Test-FirstInstallResiduePresent($residue) { [bool]($residue.root -or @($residue.services.Values | Where-Object { $_ }).Count) }
 # r5 N7: the node identity keys, as the rule reads them: each name of $names (role = key name) looked up with $finder, which returns
 # @{ key; origin } or $null. keys: role = origin ('tpm' | 'software') or $null; missing: the names not found; any missing is
-# NODE_IDENTITY_KEY_MISSING; all there and any not in the TPM is NODE_IDENTITY_KEY_NOT_TPM (M5 accepts TPM keys only: the host
-# preparation's rule, Fable 11-21). A key found is disposed of again.
+# NODE_IDENTITY_KEY_MISSING; all there and the identity key not in the TPM is NODE_IDENTITY_KEY_NOT_TPM (M5 accepts a TPM identity key
+# only: the host preparation's rule, Fable 11-21 "r5 node key" 3.3; the encryption key is in software, the TPM provider makes no
+# key-agreement key). A key found is disposed of again.
 function Test-NodeIdentityKeys($names, [scriptblock]$finder) {
   $keys = [ordered]@{}; $missing = New-Object Collections.Generic.List[string]
   foreach ($role in @($names.Keys)) {
@@ -1689,7 +1690,7 @@ function Test-NodeIdentityKeys($names, [scriptblock]$finder) {
     $keys[$role] = $found.origin
     if ($found.key -is [IDisposable]) { $found.key.Dispose() }
   }
-  $notTpm = @($keys.Values | Where-Object { $null -ne $_ -and $_ -cne 'tpm' }).Count
+  $notTpm = $null -ne $keys['identity'] -and [string]$keys['identity'] -cne 'tpm'
   [ordered]@{ keys = $keys; missing = @($missing); code = $(if ($missing.Count) { 'NODE_IDENTITY_KEY_MISSING' } elseif ($notTpm) { 'NODE_IDENTITY_KEY_NOT_TPM' } else { $null }) }
 }
 # r5 N7: read with the pinned registration script's own key names ($KeyNames, $TpmProviderName) and finder (Get-Providers,
