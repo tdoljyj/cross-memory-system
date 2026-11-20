@@ -90,12 +90,20 @@ export const CLAIM_REASONS = Object.freeze(['CLAIM_NOT_CURRENT']);
 export const CLAIM_WAIT_MAX_MS = 24 * 60 * MIN;
 const CLAIM_MISSING_REASONS = ['claim_trailer_missing', 'claim_not_found', 'full_admission_claim_missing'];
 export const claimWaitText = reason => (CLAIM_MISSING_REASONS.includes(reason) ? '等认领授权此提交' : '认领在推送后变动或队位过期，等下一次检查');
-// Task 0ca0479d (FABLE-authorize-target-branch §2.2): the stage fact's diagnostic reason codes of the row's last release (the stage-1
-// refusal's reasonCodes, then nativeReasonCodes), kept on the row for its commit only, so the PR page can say which claim reason
-// CLAIM_NOT_CURRENT stands for. A view only: nothing schedules on it, and whatever does not fit is dropped (never a refusal).
-export const REASON_CODES_MAX = 16;
-export const reasonCodeList = v => (Array.isArray(v)
-  ? [...new Set(v.filter(c => typeof c === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(c)))].slice(0, REASON_CODES_MAX) : []);
+// Task 0ca0479d (FABLE-authorize-target-branch §2.2): CLAIM_NOT_CURRENT stands for many claim reasons (Source
+// resident-v2/stage-fact.mjs DIAG), one code for scheduling. The PR page names which one it is and what to do, from the row's
+// stage-fact reason codes: the first line of this table that one of them matches. Only codes in this table are ever kept
+// (so a stored row is bounded by the table), and only for a CLAIM_REASONS release.
+export const CLAIM_WHY = Object.freeze([
+  [['pr_task_binding_head_not_authorized'], '当前提交未授权：认领持有人对这个提交做 authorize_head 后自动继续'],
+  [['pr_task_binding_unbound'], 'PR 没有绑定到任何任务认领：对这个提交带 pr_ref 授权'],
+  [['pr_task_binding_no_live_claim', 'claim_not_current', 'fence_superseded'], '认领已过期或被取代：重新认领并授权'],
+  [['pr_task_binding_handover_pending'], '认领交接中：交接完成后自动继续'],
+  [['claim_bound_to_other_pr'], '认领绑在另一个 PR 上'],
+]);
+const CLAIM_WHY_CODES = Object.freeze(CLAIM_WHY.flatMap(([codes]) => codes));
+// A view only: nothing schedules on it, and whatever does not fit is dropped (never a refusal).
+export const reasonCodeList = v => (Array.isArray(v) ? [...new Set(v.filter(c => CLAIM_WHY_CODES.includes(c)))] : []);
 const claimsOk = c => Array.isArray(c) && c.length <= SEEN_MAX && c.every(x => typeof x === 'string' && UUID.test(x));
 // claimsOk validates old snapshots only; current scheduling never consumes them.
 
@@ -446,9 +454,9 @@ export class RunQueue {
         return null;
       case 'released': {
         r.order = this.seq(); // to the tail
-        const reasonCodes = reasonCodeList(outcome.reasonCodes);
-        if (reasonCodes.length > 0) r.diagnostic = { headSha, reasonCodes };
         const claimWait = CLAIM_REASONS.includes(outcome.code);
+        const reasonCodes = claimWait ? reasonCodeList(outcome.reasonCodes) : [];
+        if (reasonCodes.length > 0) r.diagnostic = { headSha, reasonCodes };
         if (claimWait) {
           const since = r.current.firstAt ?? r.lastEvalAt ?? now;
           if (now - since >= CLAIM_WAIT_MAX_MS) {

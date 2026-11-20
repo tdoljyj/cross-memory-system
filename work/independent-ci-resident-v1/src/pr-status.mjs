@@ -35,7 +35,7 @@ import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { FAILURE_TABLE } from './classify.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { ghPort } from './admission-rerun.mjs';
-import { CLAIM_REASONS } from './queue.mjs';
+import { CLAIM_REASONS, CLAIM_WHY } from './queue.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 export { RULES_UNREADABLE_REPORT_AFTER_MS };
 import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
@@ -90,7 +90,7 @@ export function statusSignature(status) {
   // a stop or a retry reaches the PR page at once, not at the next minute pass; and the parking places, a gate the page names
   // (review round 22, NIT 2).
   const rows = Array.isArray(status.pending) ? status.pending.slice(0, 100).map(r => [r.pr ?? null, r.headSha ?? null, r.state ?? null, r.deferred ?? null, r.nextAt ?? null,
-    r.watched === true, r.claimExpiresAt ?? null, r.network === true, r.heldBy ?? null, claimWhy(r.deferred, r.reasonCodes)]) : [];
+    r.watched === true, r.claimExpiresAt ?? null, r.network === true, r.heldBy ?? null]) : [];
   return canonicalJson({ current: c ? { pr: c.pr ?? null, headSha: c.headSha ?? null, attempt: c.attempt ?? null, stage: c.stage ?? null } : null, rows,
     breaker: status.breaker ? { state: status.breaker.state ?? null, nextTrialAt: status.breaker.nextTrialAt ?? null } : null,
     intakePause: status.intakePause ? canonicalJson(status.intakePause) : null, halt: status.halt?.code ?? null, paused: status.paused === true,
@@ -178,17 +178,8 @@ const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
 const NETWORK_CAUSE_TEXT = Object.freeze({ BUNDLE_UNAVAILABLE: '打包失败', REFS_GATE_UNCONFIRMED: 'refs 闸门没有答复',
   NATIVE_ADMISSION_UNAVAILABLE: '准入服务连不上', ADMISSION_VERIFICATION_UNAVAILABLE: '准入核验没有答复', GITHUB_TRANSIENT_UNAVAILABLE: 'GitHub 暂时不可用' });
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
-// Task 0ca0479d (FABLE-authorize-target-branch §2.2): CLAIM_NOT_CURRENT stands for many claim reasons (Source
-// resident-v2/stage-fact.mjs DIAG), one code for scheduling. The PR page and the notifications name which one it is and what to do,
-// from the row's stage-fact reason codes (queue.mjs#view reasonCodes): the first line of this table that one of them matches.
-// Without one (an older status, a reason not named here, anything malformed) the text is the code alone, as before.
-const CLAIM_WHY = Object.freeze([
-  [['pr_task_binding_head_not_authorized'], '当前提交未授权：认领持有人对这个提交做 authorize_head 后自动继续'],
-  [['pr_task_binding_unbound'], 'PR 没有绑定到任何任务认领：对这个提交带 pr_ref 授权'],
-  [['pr_task_binding_no_live_claim', 'claim_not_current', 'fence_superseded'], '认领已过期或被取代：重新认领并授权'],
-  [['pr_task_binding_handover_pending'], '认领交接中：交接完成后自动继续'],
-  [['claim_bound_to_other_pr'], '认领绑在另一个 PR 上'],
-]);
+// Task 0ca0479d: the text for CLAIM_NOT_CURRENT's claim reasons (queue.mjs#CLAIM_WHY). Without a reason code (an older status,
+// a reason not named there, anything malformed) the text is the code alone, as before.
 export const claimWhy = (code, reasonCodes) => (CLAIM_REASONS.includes(code) && Array.isArray(reasonCodes)
   ? CLAIM_WHY.find(([codes]) => codes.some(c => reasonCodes.includes(c)))?.[1] ?? '' : '');
 // The code as the page shows it in parentheses: "CODE" or "CODE，<why>".

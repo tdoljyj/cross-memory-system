@@ -14,6 +14,7 @@ import { parsePull, readPullArgv } from '../src/companion.mjs';
 import { mailboxCompanion } from '../src/service-ports.mjs';
 import { describe as prPage, events } from '../src/pr-status.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
+import { RunQueue } from '../src/queue.mjs';
 import { BASE, SAFE_REFUSAL, SOURCE, CI_SOURCE, rawPolicy, executorFixture, fakeCompanion, fakeEngine, notAdmitted } from './helpers.mjs';
 import { trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 
@@ -383,4 +384,48 @@ test('claim refusal without a known reason, or with a malformed one, keeps the o
     assert.equal(events({ status: stopped, now: f.clock() }).find(e => e.key.startsWith('notice:stopped:')).body,
       `提交 ${HEAD.slice(0, 8)}：24 小时内多次未准入或未执行（CLAIM_NOT_CURRENT）。请修正后推新提交。`);
   }
+});
+
+// Non-blocking review 2 of task 0ca0479d: the reason codes are a view. Whatever the stage fact carries, and whatever a stored
+// diagnostic looks like once the queue file is read back, the queue file is kept as it is (never renamed unreadable) and the page
+// falls back to the code alone; a row that has moved to a new head shows no reason of the old one.
+test('claim refusal: malformed reason codes from the stage fact and a malformed stored diagnostic never touch the queue file and fall back to the code', async t => {
+  const odd = ['pr_task_binding_unbound', 7, null, {}, 'X'.repeat(5000), 'PR_TASK_BINDING_UNBOUND', ['pr_task_binding_unbound']];
+  const { f, board, page } = await boardField(t, refusalWith(odd, { nativeReasonCodes: 'pr_task_binding_unbound' }));
+  // From the stage fact only the table's own codes are kept on the row.
+  assert.deepEqual(f.queue.row(PR).diagnostic, { headSha: HEAD, reasonCodes: ['pr_task_binding_unbound'] });
+  const dir = path.join(f.root, 'state', 'queue');
+  const status = async () => {
+    const q = await RunQueue.open(dir, f.clock);
+    assert.equal(q.rebuilt, null, 'the queue file was read as it is');
+    assert.deepEqual(await fs.readdir(dir), ['queue.json'], 'no queue.unreadable-* file');
+    board.setPending(q.view(f.clock(), { etaBatchMs: MIN }));
+    return parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
+  };
+  assert.ok(page(await status()).description.includes('PR 没有绑定到任何任务认领'), 'read back through RunQueue.open, parseStatus and the page');
+  // A stored diagnostic of any shape: the file still reads, the page shows the code alone.
+  const file = path.join(dir, 'queue.json');
+  for (const bad of [undefined, null, 'x', 7, [], {}, { headSha: HEAD }, { headSha: HEAD, reasonCodes: 'pr_task_binding_unbound' }, { headSha: HEAD, reasonCodes: [7, null, {}, 'UNKNOWN', 'x'.repeat(100000)] },
+    { headSha: HEAD, reasonCodes: Array.from({ length: 100000 }, (_, i) => `c${i}`) }]) {
+    const stored = JSON.parse(await fs.readFile(file, 'utf8'));
+    if (bad === undefined) delete stored.rows[0].diagnostic; else stored.rows[0].diagnostic = bad;
+    await fs.writeFile(file, JSON.stringify(stored));
+    assert.match(page(await status()).description, OLD_WAIT_TEXT, JSON.stringify(bad)?.slice(0, 80));
+  }
+  // A valid diagnostic of another head (and a row that has moved to a new head) shows no reason of the old one.
+  const stored = JSON.parse(await fs.readFile(file, 'utf8'));
+  stored.rows[0].diagnostic = { headSha: 'f'.repeat(40), reasonCodes: ['pr_task_binding_unbound'] };
+  await fs.writeFile(file, JSON.stringify(stored));
+  assert.match(page(await status()).description, OLD_WAIT_TEXT, 'a diagnostic of another head');
+  stored.rows[0].diagnostic = { headSha: HEAD, reasonCodes: ['pr_task_binding_unbound'] };
+  await fs.writeFile(file, JSON.stringify(stored));
+  assert.ok(page(await status()).description.includes('PR 没有绑定到任何任务认领'));
+  const q = await RunQueue.open(dir, f.clock);
+  const NEW_HEAD = 'a'.repeat(40);
+  assert.equal(q.offer({ repo: 'tdoljyj/cross-memory-system', pr: PR, headSha: NEW_HEAD, baseSha: BASE, prUpdatedAt: null }, f.clock(), { depth: 100, cooldownMs: 10 * MIN }).action, 'superseded');
+  await q.save();
+  const moved = await status();
+  assert.equal(moved.pending.find(r => r.pr === PR).headSha, NEW_HEAD);
+  assert.equal(moved.pending.find(r => r.pr === PR).reasonCodes, undefined, 'no reason of the old head');
+  assert.ok(!page(moved).description.includes('PR 没有绑定'));
 });
