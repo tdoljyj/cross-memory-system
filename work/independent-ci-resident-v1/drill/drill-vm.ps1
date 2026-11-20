@@ -572,7 +572,9 @@ function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
   # the list's bytes by their hash, and the two groups member by member (8th review round, medium 1: never through a joined text)
   $bytes = [string](Get-Prop $derived 'sha256'); $recorded = [string](Get-Prop $KitInfo 'credentialFilesSha256')
   $same = Test-DrillCredentialGroupsEqual (Get-Prop $derived 'credentials') (Get-Prop $KitInfo 'credentials')
-  if (-not $same -or $bytes -cne $recorded) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ groupsEqual = $same; packageSha256 = $bytes; kitSha256 = $recorded }) }
+  # the recorded hash a lowercase hex digest, compared ordinally (9th review round, low 2: -cne is culture-aware and ignores some characters)
+  $hashSame = ($recorded -cmatch '^[0-9a-f]{64}$') -and [string]::Equals($bytes, $recorded, [StringComparison]::Ordinal)
+  if (-not $same -or -not $hashSame) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ groupsEqual = $same; packageSha256 = $bytes; kitSha256 = $recorded }) }
 }
 
 # A credential group's members as written: each key with its value (a dictionary or a parsed JSON object).
