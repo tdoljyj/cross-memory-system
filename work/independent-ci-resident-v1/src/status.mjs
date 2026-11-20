@@ -397,20 +397,6 @@ export function versionsView({ current, facts, status, selfcheck = null }, { pol
   });
 }
 
-// Task eb73b396: when this node's own upgrade settled, from the upgrade's own records (readVersionInputs). null (not settled): the op
-// in upgrade\status.json is in the stretch where this node's Source changes (RUNNING: stop to verify; ROLLING_BACK; Fable 11-20: waiting
-// for the grant or the drain, or deferred, the node runs the old generation as always and renews as always), or the two sides are known
-// to run different packages (consistent false; unknown does not hold).
-// Else the newest of current.json `at` (the generation made current; the install writes it for generation 1) and the end of every op
-// in status.json `recent`; 0 when neither can be read now.
-export function upgradeSettledAt({ current, facts, status }, now = Date.now()) {
-  const op = plain(status?.op) ? status.op : null;
-  if (op && ['RUNNING', 'ROLLING_BACK'].includes(op.state)) return null;
-  if (versionsConsistent(current, facts, now) === false) return null;
-  const ended = Array.isArray(status?.recent) ? status.recent.map(r => r?.at) : [];
-  return Math.max(0, ...[current?.at, ...ended].map(v => typeof v === 'string' ? Date.parse(v) : NaN).filter(Number.isFinite));
-}
-
 // The executor's port (service-main.mjs): { view, notices } of one root, read now. The engine's gate before the first Linux stage
 // uses the view only.
 export async function readVersionState({ root, policy, policySha256 = null, clock = Date.now }) {

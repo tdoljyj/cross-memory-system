@@ -90,7 +90,7 @@ test('常驻轮次开始后产生的四项密钥观测仍可通过自检', async
   const iso=()=>new Date(now).toISOString();
   const row=sid=>({at:iso(),sid,tpm:'DENIED',software:'ABSENT'});
   const put=(file,value)=>fs.writeFileSync(path.join(directory,file),JSON.stringify(value));
-  const step=renewalWatch({root,profile,mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,settledAt:async()=>0,observe:async()=>{
+  const step=renewalWatch({root,profile,mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,uptime:()=>10*60_000,observe:async()=>{
     now+=40;
     return row(service);
   }});
@@ -117,7 +117,7 @@ test('常驻状态原样记录 SYSTEM 失败诊断，并在 Broker 恢复后清�
   const systemFile=path.join(root,'broker/renew-key.json');
   fs.writeFileSync(systemFile,JSON.stringify({at:new Date(now).toISOString(),sid:'S-1-5-18',provider:null,
     code:'RENEW_IDENTITY_KEY_UNAVAILABLE',failure}));
-  const step=renewalWatch({root,profile:{},mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,settledAt:async()=>0,observe:async()=>null});
+  const step=renewalWatch({root,profile:{},mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,uptime:()=>10*60_000,observe:async()=>null});
   const keys=()=>JSON.parse(fs.readFileSync(path.join(root,'state/connection-renewal.json'))).keys;
   await step();
   assert.deepEqual(keys().systemFailure,failure);
@@ -138,7 +138,7 @@ test('两类连接每天各投一次；续期请求只含类别，拒绝不会�
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   for(const d of ['state','broker/requests','broker/responses']) fs.mkdirSync(path.join(root,d),{recursive:true});
   let mode='ACTIVE',idle=false,now=Date.now();
-  const step=renewalWatch({root,profile:{},mode:()=>mode,drained:async()=>idle,clock:()=>now,source:CI_SOURCE,settledAt:async()=>0,observe:async()=>null});
+  const step=renewalWatch({root,profile:{},mode:()=>mode,drained:async()=>idle,clock:()=>now,source:CI_SOURCE,uptime:()=>10*60_000,observe:async()=>null});
   await step();
   const req=kind=>{
     const book=JSON.parse(fs.readFileSync(path.join(root,'state/connection-renewal.json')));
@@ -222,13 +222,13 @@ function handoverFixture(t, {now = Date.now(), currentBinding = bindingId, mode,
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'renew-handover-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   for (const dir of ['state', 'broker/requests', 'broker/responses']) fs.mkdirSync(path.join(root, dir), {recursive: true});
-  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0, source: CI_SOURCE, settledAt: 0};
+  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0, source: CI_SOURCE, startedAt: now - 10 * 60_000};
   const expiresAt = new Date(f.now + 10 * 24 * HOUR).toISOString();
   const put = (name, value) => fs.writeFileSync(path.join(root, name), JSON.stringify(value));
   f.restart = () => {
     f.tick = renewalWatch({root, profile: {}, mode: mode ?? (() => f.mode), drained: drained ?? (async () => f.drained),
       clock: () => f.now, observe: async () => null, onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; }), source: f.source,
-      settledAt: async () => f.settledAt});
+      uptime: () => f.now - f.startedAt});
   };
   f.restart();
   f.book = () => JSON.parse(fs.readFileSync(path.join(root, 'state/connection-renewal.json')));
@@ -746,65 +746,39 @@ test('常驻必须带上本代 Source 摘要才能续期', () => {
     assert.throws(() => renewalWatch({root: os.tmpdir(), profile: {}, mode: () => 'STANDBY', source}), /RENEW_SOURCE_REQUIRED/);
 });
 
-// Task eb73b396（Fable 11-20“补：升级中续期”）：本节点自己的升级未落定（有在途操作，或两侧已知不是同一个包）时不发起新的续期；
-// 落定后再等满一个检查周期才投第一条。落定与落定时刻只从升级自己的记录读（upgrade\current.json、upgrade\status.json）。
+// Task eb73b396（Fable 11-20“补：升级中续期——不读升级状态，改用本进程启动后的宽限”）：换代必然重启常驻进程；
+// 本进程启动后满一个检查周期才发起第一条新的续期。判据只用进程启动时刻与单调时钟。让班等待中的重投与确认、自检不受宽限约束。
 const CHECK = 10 * 60_000;
-test('升级未落定的轮次不发起续期：不投、不写通道记录、不计退避', async t => {
+const requestFiles = f => fs.readdirSync(path.join(f.root, 'broker/requests'));
+test('进程刚启动未满一个检查周期：不投、请求邮箱无新文件、不写通道记录、不计退避；自检照写', async t => {
   const f = handoverFixture(t);
-  f.settledAt = null;
+  f.startedAt = f.now; f.restart();
   await f.tick(); f.request(null);
-  assert.deepEqual([f.book().lanes, f.book().pending], [{}, null]);
-  f.now += 2 * HOUR; await f.tick(); f.request(null);
-  assert.deepEqual([f.book().lanes, f.book().pending], [{}, null]);
-  f.settledAt = f.now - CHECK; await f.tick(); f.request('ci');
-});
-test('落定后不足一个检查周期不投，满一个检查周期即投第一条', async t => {
-  const f = handoverFixture(t);
-  f.settledAt = f.now - CHECK + 1;
-  await f.tick(); f.request(null);
-  assert.deepEqual(f.book().lanes, {});
+  assert.deepEqual([requestFiles(f), f.book().lanes, f.book().pending], [[], {}, null]);
+  assert.deepEqual([typeof f.book().keys?.result, f.book().checkedAt], ['string', new Date(f.now).toISOString()], '宽限内自检照写');
+  f.now += CHECK - 1; await f.tick(); f.request(null);
+  assert.deepEqual([requestFiles(f), f.book().lanes], [[], {}]);
   f.now += 1; await f.tick(); f.request('ci');
+  assert.equal(requestFiles(f).length, 1);
 });
-test('落定时刻取升级记录：首装第一代取安装完成时刻；升级在途或两侧已知不一致为未落定', async () => {
-  const { upgradeSettledAt } = await import('../src/status.mjs');
-  const now = Date.parse('2026-11-20T01:43:00.000Z');
-  const installed = '2026-11-20T01:00:00.000Z', ended = '2026-11-20T01:43:21.000Z';
-  const current = {contract: 'clued.independent-ci.resident-generation/1', generation: 1, opId: null, at: installed};
-  assert.equal(upgradeSettledAt({current, facts: null, status: null}, now), Date.parse(installed), '首装第一代：安装完成时刻');
-  const status = op => ({contract: 'clued.independent-ci.resident-upgrade-status/1', op,
-    recent: [{opId: confirmationId, outcome: 'REFUSED', at: '2026-11-19T01:00:00.000Z'}, {opId: bindingId, outcome: 'SUCCEEDED', at: ended}]});
-  assert.equal(upgradeSettledAt({current, facts: null, status: status(null)}, now), Date.parse(ended), '升级判成功的时刻');
-  // Fable 11-20“未落定的范围”：只有 Source 正在变的停服段（RUNNING、ROLLING_BACK）未落定；等批准、等排空、延期时节点稳跑旧代，照常投。
-  for (const state of ['RUNNING', 'ROLLING_BACK'])
-    assert.equal(upgradeSettledAt({current, facts: null, status: status({opId: bindingId, state})}, now), null, state);
-  for (const state of ['WAITING_GRANT', 'WAITING_DRAIN', 'DEFERRED'])
-    assert.equal(upgradeSettledAt({current, facts: null, status: status({opId: bindingId, state})}, now), Date.parse(ended), state);
-  assert.equal(upgradeSettledAt({current, facts: null, status: status({opId: bindingId, state: 'SUCCEEDED'})}, now), Date.parse(ended));
-  assert.equal(upgradeSettledAt({current: null, facts: null, status: null}, now), 0, '读不到升级记录不挡续期');
-  const sha = c => c.repeat(64);
-  const both = {...current, generation: 14, packageManifestSha256: sha('1'), residentManifestSha256: sha('2'), ciSourceManifestSha256: sha('3'),
-    policySha256: sha('4'), installReceiptSha256: sha('5'), stateCompat: {schema: 1, readableBySchemas: [1]},
-    linux: {generation: 14, manifestSha256: sha('6'), ciSourceManifestSha256: sha('3')}};
-  const facts = gen => ({contract: 'clued.independent-ci.linux-version-facts/1', generation: gen, ciSourceManifestSha256: sha('3'), sourceCommit: null,
-    manifestSha256: sha('6'), roles: {}, pinsOk: true, staged: null, upgradeToolSha256: sha('7'), observedAt: new Date(now).toISOString()});
-  assert.equal(upgradeSettledAt({current: both, facts: facts(14), status: null}, now), Date.parse(installed), '两侧同一个包');
-  assert.equal(upgradeSettledAt({current: both, facts: facts(13), status: null}, now), null, '两侧已知不是同一个包');
-});
-test('让班等待中发生未落定：已有的等待重投与确认照旧，只挡新的投递', async t => {
+test('进程已启动满一个检查周期：第一轮即投', async t => {
   const f = handoverFixture(t);
-  f.mode = 'STANDBY'; f.drained = true; f.settledAt = null;
+  f.startedAt = f.now - CHECK; f.restart();
+  await f.tick(); f.request('ci');
+});
+test('让班等待中进程重启：已有的等待重投与确认不受宽限影响，宽限只挡新的投递', async t => {
+  const f = handoverFixture(t);
+  f.mode = 'STANDBY'; f.drained = true;
   seedBook(f, {ci: {at: f.now - HOUR, source: CI_SOURCE, waiting: true, effectiveAt: null, code: 'CI_REBIND_NOT_DRAINED', bindingId,
     expiresAt: new Date(f.now + 10 * 24 * HOUR).toISOString(), renewalWindowOpensAt: null, grantRequestId: null, retryAfterSeconds: null},
   upgrade: {...refusedLane(f.now - 24 * HOUR, {source: CI_SOURCE}), code: null}});
-  f.restart();
+  f.startedAt = f.now; f.restart();
   await f.tick();
   f.reply('ci', {outcome: 'confirm-standby', confirmationId});
   await f.tick(); assert.equal(f.request('ci'), confirmationId);
   f.reply('ci', {}); await f.tick();
   assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting], [null, false]);
   f.request(null);
-  f.settledAt = f.now - CHECK; await f.tick(); f.request('upgrade');
-});
-test('常驻必须带上升级落定的读取口才能续期', () => {
-  assert.throws(() => renewalWatch({root: os.tmpdir(), profile: {}, mode: () => 'STANDBY', source: CI_SOURCE}), /RENEW_SETTLE_REQUIRED/);
+  assert.equal(requestFiles(f).length, 2, '宽限内只有等待重投与确认两份请求');
+  f.now = f.startedAt + CHECK; await f.tick(); f.request('upgrade');
 });

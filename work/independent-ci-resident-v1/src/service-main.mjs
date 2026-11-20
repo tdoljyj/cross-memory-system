@@ -26,7 +26,7 @@ import { KEEP_FILE, RetentionWatch, measureWindows, pruneSpool, readKeepList } f
 import { SETTINGS_FILE, readRetentionSettings } from './retention-settings.mjs';
 import { NODE_STATUS_FILE, createNodeResourceReader } from './host-capacity.mjs';
 import { ExecutedHeads } from './executed-heads.mjs';
-import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer, upgradeSettledAt } from './status.mjs';
+import { STATUS_FILE, STATUS_MAX_BYTES, StatusBoard, StatusFile, readVersionState, readVersionInputs, startStatusTimer } from './status.mjs';
 import { RunQueue } from './queue.mjs';
 import { renewalWatch } from './connection-renewal.mjs';
 import { CompanionPresence, PRESENCE_EVERY_MS } from './companion-presence.mjs';
@@ -139,7 +139,6 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
     }),
   });
   const renew = renewalWatch({root,profile:policy.node,source:policy.ciSourceManifestSha256,clock,mode:()=>exec.renewalMode(),
-    settledAt:async()=>upgradeSettledAt(await readVersionInputs(root),clock()),
     onHandover:()=>exec.requestHandoverProbe(),
     drained:async()=>!runner.busy && (await ledger.open()).length===0});
   const spool = path.join(path.dirname(root), 'formal-spool');
