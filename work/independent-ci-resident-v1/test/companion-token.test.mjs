@@ -140,6 +140,18 @@ test('companion token: neither, the credential directory has companion-github.to
   assert.ok(!r.commandLines.includes(FAKE) && !r.commandLines.includes('ghp_'), 'no command line carries the token');
 });
 
+// On a UTF-8 console (code page 65001: the CI runner's, a UTF-8 terminal's) Windows PowerShell 5.1's Console.InputEncoding is a UTF-8
+// with a BOM, and Process.Start writes that BOM into a redirected stdin before any byte of ours (run 44705707829). The console's encoding
+// is put in that state here on any machine, without touching the shared console: Console's cached field, what the getter returns.
+test('companion token on a UTF-8 console: the token reaches the login script byte for byte, no BOM before it', { skip, timeout: 300_000 }, (t) => {
+  const r = hostRun(t, { tokenFile: `${FAKE}\n`, body: `[Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static').SetValue($null, [Text.Encoding]::UTF8)
+if ([Console]::InputEncoding.GetPreamble().Length -ne 3) { throw 'NOT_A_UTF8_CONSOLE_ENCODING_WITH_A_BOM' }
+${RESOLVE_AND_WRITE}` });
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.calls, ['Check:Offline', 'CopyFromOwner', 'Login:TokenFromStdin', 'Check:Offline']);
+  assert.deepEqual([...r.stdin], [...Buffer.from(FAKE, 'utf8')], 'the bytes on the login script\'s standard input are the token\'s, nothing before them');
+});
+
 test('companion token: none anywhere: refused in the credentials step by name, nothing written', { skip, timeout: 300_000 }, (t) => {
   const r = hostRun(t, { body: `Enter-Step 'credentials'\n${RESOLVE_AND_WRITE}` });
   assert.equal(r.status, 1, r.out);
