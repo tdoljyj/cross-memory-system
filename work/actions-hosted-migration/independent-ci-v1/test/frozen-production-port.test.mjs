@@ -177,11 +177,15 @@ test('staged: stale evidence is fully re-evaluated once and still too little tim
 
 test('staged: a 25-second evaluation completes with freshly reobserved protected facts',async t=>{
  const w=await world(t);
- // The PR read spends four seconds of the first protected answer's lifetime.
- w.state.onCreate=()=>{w.state.onReadPr=()=>{w.time.now+=4_000;};};
+ // Charge four seconds only once, to the PR read after the first completion observation.
+ w.state.onCreate=()=>{w.state.onReadPr=()=>{
+  if(w.calls.verify!==2)return;
+  w.time.now+=4_000;
+  w.state.onReadPr=null;
+ };};
  w.state.onEvaluate=()=>{if(w.calls.evaluate>1)w.time.now+=25_000;};
  const r=await w.publisher.publish(w.input);
- assert.equal(r.status,'SETTLED');
+ assert.equal(r.status,'SETTLED',r.reason);
  assert.equal(w.calls.evaluate,2);
  assert.deepEqual(w.trace.slice(w.trace.lastIndexOf('evaluate')),['evaluate','observe',['read',200],['patch',200,'success'],['read',200]]);
 });
