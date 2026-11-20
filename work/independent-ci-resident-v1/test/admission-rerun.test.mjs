@@ -1674,3 +1674,92 @@ test('54a2b67a T2: every real workflow with an admission-gate job is re-run when
   }
   assert.ok(['clued-g4-database.yml', 'clued-required-tests.yml', 'clued-required-tests-windows.yml'].every(f => gated.includes(f)), gated.join(', '));
 });
+
+// Fable 11-20 “finalRuns 读得太早”: a run that ran nothing is refused on its gate's evidence alone (the annotations, env-failure.mjs), which
+// GitHub may hang on the check run a while after the job ended. A refusal read within ten minutes of the latest attempt's end is no verdict:
+// neither the run (finalRuns) nor the head (seen.final) is closed on it, nor a STUCK receipt written; the next look judges it again.
+const endedAt = (a, at) => ({ ...a, jobs: a.jobs.map(j => ({ ...j, started_at: at, completed_at: at })) });
+const allChecksShown = () => [nativeCheck(), ...CHECK_NAMES.map(name => actionCheck(name))];
+const gitleaksRun = (notes, at) => run(702, [endedAt({ ...workflowAttempt('gitleaks'), notes }, at)], { workflow_id: HOSTED_WORKFLOW });
+const judgedFinal = (l, runId) => (l.state.data.heads[HEAD]?.finalRuns ?? []).some(key => key.endsWith(`:${runId}:1`));
+
+test('finalRuns read too early 1: a gated run outside the required checks read 1 minute after it ended is re-run when ADMISSION_PENDING shows 3 minutes after', async t => {
+  const w = world({ checks: allChecksShown(), runs: [gitleaksRun([], iso(T0 - 60_000))] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, []);
+  assert.equal(l.state.data.heads[HEAD].final, null, 'the head is not closed on an early read');
+  assert.ok(!judgedFinal(l, 702), 'the run is not remembered final');
+  w.runs[0].attempts[0].notes = [pendingNote];
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.deepEqual(w.posts, [702]);
+  assert.equal(l.state.data.records['702:2'].outcome, 'sent');
+});
+
+test('finalRuns read too early 2: the quiet spell ends; past ten minutes the refusal is final, remembered, and the run is not read again', async t => {
+  const w = world({ checks: allChecksShown(), runs: [gitleaksRun([], iso(T0 - 60_000))] });
+  const l = await lane(t, w);
+  for (const minutes of [1, 3, 5, 7, 9]) {
+    await l.r.step();
+    assert.equal(l.state.data.heads[HEAD].final, null, `${minutes} minutes after the end`);
+    assert.ok(!judgedFinal(l, 702), `${minutes} minutes after the end`);
+    l.advance(HEAD_RECHECK_MS);
+  }
+  await l.r.step();
+  assert.ok(l.state.data.heads[HEAD].final, '11 minutes after the end the head is closed');
+  assert.ok(judgedFinal(l, 702), '11 minutes after the end the run is remembered final');
+  const from = w.calls.length;
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.deepEqual(w.calls.slice(from).map(c => c.target).filter(target => /\/actions\/(runs\/702\/|jobs\/)/.test(target)), [],
+    'neither the job list nor the gate log of run 702');
+  assert.deepEqual(w.posts, []);
+});
+
+test('finalRuns read too early 3: a required run read 1 minute after it ended writes no STUCK receipt and tells no one; it is re-run once the note shows', async t => {
+  const w = world({ runs: [run(700, [endedAt(attempt({ notes: [] }), iso(T0 - 60_000))])] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, []);
+  assert.equal(l.state.data.records[HEAD], undefined, 'no STUCK receipt');
+  assert.deepEqual(l.toasts, []);
+  w.runs[0].attempts[0].notes = [pendingNote];
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+});
+
+test('finalRuns read too early 4: a structural final is not delayed (a heavy job ran, 1 minute ago)', async t => {
+  // Outside the required checks: the heavy job ran (only a run that never ran is re-run there).
+  const w = world({ checks: allChecksShown(), runs: [run(702, [{ notes: [], jobs: [admittedGate(iso(T0 - 2 * 60_000)),
+    ranJob('gitleaks-hosted-executor', 'success', iso(T0 - 60_000))] }], { workflow_id: HOSTED_WORKFLOW })] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.ok(judgedFinal(l, 702), 'remembered final at the first look');
+  assert.ok(l.state.data.heads[HEAD].final);
+  // A required run whose heavy job failed a test: the repair rule refuses on the jobs, not on a note that may come late.
+  const wb = world({ checks: allChecksShown(), runs: [run(700, [endedAt(ran([{ conclusion: 'failure', steps: TESTS_DIED, log: TEST_LOG }, ok, ok]), iso(T0 - 60_000))])] });
+  const lb = await lane(t, wb);
+  await lb.r.step();
+  assert.ok(lb.state.data.heads[HEAD].final, 'the head is closed at the first look');
+  assert.deepEqual(wb.posts, []);
+});
+
+test('finalRuns read too early 5 (review NB 2): a run remembered final is read again once main requires its check', async t => {
+  const admitted = '{"verdict":"ADMITTED","automation_self_hosted":false}';
+  const longAgo = iso(T0 - 60 * 60_000);
+  for (const hosted of [endedAt({ ...workflowAttempt('gitleaks'), notes: [], logs: { 0: admitted } }, longAgo),
+    endedAt({ ...workflowAttempt('gitleaks'), notes: [otherNote] }, longAgo)]) {
+    const w = world({ runs: [run(700, [attempt({ heavy: ['in_progress', 'in_progress', 'in_progress'], notes: [] })], { status: 'in_progress' }),
+      run(702, [hosted], { workflow_id: HOSTED_WORKFLOW })] });
+    const l = await lane(t, w);
+    await l.r.step();
+    assert.ok(judgedFinal(l, 702), 'remembered final at the first look');
+    w.rules = [requiredRule(...CHECK_NAMES, 'gitleaks-hosted-executor')];
+    const from = w.calls.length;
+    l.advance(HEAD_RECHECK_MS);
+    await l.r.step();
+    assert.ok(w.calls.slice(from).some(c => c.target.includes('/actions/runs/702/attempts/1/jobs')), 'the job list of run 702 is read again');
+  }
+});
