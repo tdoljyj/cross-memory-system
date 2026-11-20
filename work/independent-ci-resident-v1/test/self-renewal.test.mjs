@@ -1025,3 +1025,33 @@ test('A 代投出升级请求、B 代重启后满一小时仍无回包：按当�
     f.now += 1; await f.tick(); assert.notEqual(f.request('upgrade'), id);
   }
 });
+
+// 协调者按裁定字面对齐（规则 3）：放弃（记回包不可用、每小时复核）时旧请求号仍留在状态里，直到投出新请求换成新号；
+// 期间任何一轮读到旧号的匹配回包照常采纳（让班生效已过也立即交出接单资格）；换号后旧号的回包不采纳。
+test('放弃后、新请求投出前读到旧号回包：采纳；新号投出后再读到旧号回包：不采纳', async t => {
+  const upgradeFresh = f => ({upgrade: {...refusedLane(f.now - HOUR, {source: CI_SOURCE}), code: null}}); // 升级通道一天内不到期
+  for (const effectiveIn of [300_000, -3_000_000]) {
+    const f = handoverFixture(t);
+    seedBook(f, upgradeFresh(f)); f.restart();
+    await f.tick(); const old = f.request('ci');
+    f.now += HOUR; await f.tick(); // 满一小时仍无回包：放弃
+    assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.holds], ['RENEW_RESPONSE_UNAVAILABLE', true, 0]);
+    assert.equal(requestFiles(f).length, 1, '放弃后尚未投新请求');
+    assert.equal((await renewalStatus(f.root, f.now)).connections.ci.code, 'RENEW_RESPONSE_UNAVAILABLE', '放弃后对外显示不可用而非等回包');
+    f.now += 20 * 60_000; await f.tick();
+    const effectiveAt = new Date(f.now + effectiveIn).toISOString();
+    answer(f, old, 'ci', {outcome: 'yielded', effectiveAt});
+    f.now += 15_000; await f.tick();
+    assert.equal(f.holds, 1, '放弃后、换号前读到的旧号让班照常采纳' + effectiveIn);
+    assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.effectiveAt, f.book().pending], ['RENEW_HANDOVER_WAITING', effectiveAt, null]);
+  }
+  const f = handoverFixture(t);
+  seedBook(f, upgradeFresh(f)); f.restart();
+  await f.tick(); const old = f.request('ci');
+  f.now += HOUR; await f.tick();
+  f.now += HOUR; await f.tick(); const fresh = f.request('ci');
+  assert.notEqual(fresh, old);
+  answer(f, old, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+  f.now += 15_000; await f.tick();
+  assert.deepEqual([f.holds, f.book().pending?.id], [0, fresh], '换号后旧号回包不采纳');
+});
