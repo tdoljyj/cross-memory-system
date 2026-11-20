@@ -16,6 +16,21 @@ if (Test-Path -LiteralPath $Scratch) { if (@(Get-ChildItem -LiteralPath $Scratch
 $here = $PSScriptRoot
 $n = 0
 function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $what) }; $script:n++ }
+# H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
+# text and no package .ps1 merging a stream into its output): stdout, stderr and the exit code read apart; never an error from stderr.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  $p = [Diagnostics.Process]::Start($psi)
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
+}
 
 foreach ($file in @('test-job-host.ps1', 'install-resident.ps1', 'verify-resident.ps1')) {
   $tokens = $null; $errors = $null
@@ -73,8 +88,9 @@ Yes ((@($ok.stderr.Trim() -split "`n")[-1]) -match ('^clued-job-host ' + $nonce 
 $env:CLUED_JOB_HOST_EXE = $hostExe
 $env:CLUED_JOB_HOST_WSL = $(if ($Wsl) { '1' } else { '0' })
 $suite = Join-Path (Split-Path -Parent $here) 'test\job-host.test.mjs'
-$lines = & $node --test $suite 2>&1 | ForEach-Object { [string]$_ }
-Yes ($LASTEXITCODE -eq 0) ('node-suite:' + (($lines | Select-Object -Last 30) -join "`n"))
+$suiteRun = Invoke-NativeChild $node @('--test', $suite) 3600
+$lines = @(([string]$suiteRun.stdout + "`n" + [string]$suiteRun.stderr) -split "`r?`n")
+Yes ($suiteRun.exit -eq 0) ('node-suite:' + (($lines | Select-Object -Last 30) -join "`n"))
 function Skipped([string]$text) { $m = [regex]::Match($text, '(?m)^\S+ skipped (\d+)\s*$'); if (-not $m.Success) { throw 'FAILED:skipped-count-not-found' }; return [int]$m.Groups[1].Value }
 Yes ((Skipped ($lines -join "`n")) -eq $(if ($Wsl) { 0 } else { 1 })) 'live-cases-ran'
 

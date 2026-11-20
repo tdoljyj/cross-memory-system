@@ -53,7 +53,78 @@ export function candidateAcceptance({ from, version, request, now = Date.now() }
 
 // Pure manifest constructor: every payload byte is pinned, including release-pins.json. `candidate`: the candidate's acceptance among
 // the payloads and the three hashes it names (drill-vm.ps1 holds the run to them and writes them into the receipt).
-export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null }) {
+// Fable renew-key ruling, supplements "merge order" and "heartbeat token and restart code": the drill is held to the package it drills.
+// Its credential file names are data the package ships (supplement "where the credential list comes from"): windows/credential-files.json
+// in the archive, read as it is and recorded in the kit with its bytes' hash; a package without it is refused (no kit). drill-vm.ps1
+// Get-DrillCredentialPlan then refuses before any boot a required name the drill cannot make, and an optional name it has no decision for.
+export const CREDENTIAL_FILES = 'tree/work/independent-ci-resident-v1/windows/credential-files.json';
+export const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
+// The prerequisite items (by name in the package's prereq-manifest.json) the drill injects and the guest never downloads.
+export const INJECTED_TOOLS = Object.freeze(['gh', 'git-for-windows']);
+// The first key written twice in one object of a JSON text -- by case too, as for file names -- or null. Scanned as JSON (strings with their
+// escapes, objects and arrays nested), never counted by a pattern: JSON.parse keeps the last of a key given twice and cannot show it
+// (8th review round, medium 2 and low 1). Called on a text JSON.parse has taken.
+function duplicateJsonKey(text) {
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '{') stack.push(new Set());
+    else if (c === '[') stack.push(null);
+    else if (c === '}' || c === ']') stack.pop();
+    else if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      let k = j + 1;
+      while (k < text.length && /\s/.test(text[k])) k++;
+      const top = stack[stack.length - 1];
+      if (text[k] === ':' && top) {
+        // ASCII's case rule only: the keys that reach here are in the allow-list (credentialsOfTar checks it first)
+        const key = JSON.parse(text.slice(i, j + 1)).replace(/[A-Z]/g, ch => ch.toLowerCase());
+        if (top.has(key)) return key;
+        top.add(key);
+      }
+      i = j;
+    }
+  }
+  return null;
+}
+
+// The package's credential list from its archive, the one reader the build and the run's gate both use: exactly
+// { contract, required, optional }, each group an object of plain file names, a non-empty required group, no key twice, no name twice
+// (in a group, across the two, or by case). Anything else, or no list, is refused. Returns the list and the hash of its bytes.
+export function credentialsOfTar(tarBytes) {
+  const entries = readTar(tarBytes).filter(e => e.path === CREDENTIAL_FILES);
+  check(entries.length === 1, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'no credential-files.json in the archive');
+  // strict UTF-8 (8th review round, low 2): a bad byte is unreadable, never patched to U+FFFD under the original bytes' hash
+  let text = null, c = null;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(entries[0].data); } catch { text = null; }
+  check(text !== null, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json is not UTF-8');
+  try { c = JSON.parse(text); } catch { c = null; }
+  // allow-lists, not case rules (9th review round, medium 1; the package branch holds the same): a group's key ^[A-Za-z][A-Za-z0-9]*$; a
+  // credential file name ^[A-Za-z0-9][A-Za-z0-9._-]*$, not ending in a dot, no reserved device name (CON, PRN, AUX, NUL, COM0-9, LPT0-9,
+  // with or without an extension; 8th review round, low 3). Inside them everything is ASCII, so comparing without case is ASCII's rule.
+  const keyOK = k => /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(k);
+  const fileName = v => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(v) && !v.endsWith('.') && !/^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?$/i.test(v);
+  const group = g => g !== null && typeof g === 'object' && !Array.isArray(g) && Object.keys(g).every(keyOK) && Object.values(g).every(fileName);
+  check(c !== null && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).sort().join() === 'contract,optional,required' &&
+    c.contract === CREDENTIAL_FILES_CONTRACT && group(c.required) && group(c.optional) && Object.keys(c.required).length > 0,
+    'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json');
+  // a key written twice in one object, by case too (JSON.parse keeps the last; Windows PowerShell refuses such an object)
+  check(duplicateJsonKey(text) === null, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a key twice');
+  const names = [...Object.values(c.required), ...Object.values(c.optional)];
+  check(new Set(names.map(n => n.replace(/[A-Z]/g, ch => ch.toLowerCase()))).size === names.length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a name twice');
+  return { sha256: sha256(entries[0].data), credentials: { contract: c.contract, required: c.required, optional: c.optional } };
+}
+
+// The drill's decision for each credential name (give, with the fake file; or withhold, with the reason), the one table drill-vm.ps1 reads
+// as well. A name given with a perNodeStep is a stand-in the run makes and hands over: the kit registers that step (Codex review of
+// f33fc33e5, medium 4). Looked up by the name's own key, ordinal and case-sensitive, as drill-vm.ps1 does (6th review round, low 1).
+export const CREDENTIAL_DECISIONS = Object.freeze(JSON.parse(fs.readFileSync(new URL('./credential-decisions.json', import.meta.url), 'utf8')).decisions);
+const standInSteps = credentials => [...Object.values(credentials?.required ?? {}), ...Object.values(credentials?.optional ?? {})]
+  .filter(n => Object.hasOwn(CREDENTIAL_DECISIONS, n) && CREDENTIAL_DECISIONS[n].give === true && typeof CREDENTIAL_DECISIONS[n].perNodeStep === 'string')
+  .map(n => CREDENTIAL_DECISIONS[n].perNodeStep);
+
+export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, candidate = null, credentials = null, credentialFilesSha256 = null }) {
   check(Number.isInteger(timeoutMinutes) && timeoutMinutes >= 5 && timeoutMinutes <= 240, 'DRILL_KIT_TIMEOUT_REFUSED');
   const prereq = JSON.parse(prereqBytes.toString('utf8'));
   check(prereq.contract === 'clued.drill.prereq/1', 'DRILL_PREREQ_CONTRACT_REFUSED');
@@ -62,10 +133,10 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
   return { contract: 'clued.drill.first-install-kit/1',
     files: names.map(name => ({ path: name, sha256: sha256(payloads[name]) })),
     entry: { file: 'first-install-entry.ps1', arguments: ['-From', '{from}', '-Kit', '{kit}', '-Fake', '{fake}', '-Work', '{work}', '-Version', '{version}'] },
-    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口',
-      '陪伴 GitHub 经典令牌替身（替的是 Owner 在凭据窗口给的陪伴 GitHub 经典令牌；因为演练不得使用真凭据；因此没验到令牌被 GitHub 接受、陪伴访问 GitHub 的各个通道；不可删，没验到的部分由真机首装后的运行状态承担）'], prereqSha256: sha256(prereqBytes),
+    // a stand-in step for every name the package names and the drill makes and hands over (the decision table), required or optional
+    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', ...standInSteps(credentials)], prereqSha256: sha256(prereqBytes),
     // The real first-install host owns WSL import, Docker and accounts, from S0.
-    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}) };
+    prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(credentials ? { credentials } : {}), ...(credentialFilesSha256 ? { credentialFilesSha256 } : {}) };
 }
 
 // Validate a complete local Release directory, without treating a new sums file as acceptance. No acceptance file in it: a candidate
@@ -131,10 +202,12 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
       firstInstallKitSha256: acceptance.firstInstallKitSha256 };
   }
   payloads['release-pins.json'] = Buffer.from(JSON.stringify(pins, null, 2) + '\n');
+  const { sha256: credentialFilesSha256, credentials } = credentialsOfTar(read(from, `fleet-node-${version}.tar`));
   const prereqBytes = fs.readFileSync(prereq), p = JSON.parse(prereqBytes);
   const pm = JSON.parse(read(from, `fleet-node-${version}.prereq-manifest.json`));
   const available = [...(pm.items ?? []), ...(pm.debs ?? [])];
-  for (const item of [p.wsl, p.rootfs, ...(p.debs ?? [])]) {
+  // tools: the host's pinned gh and Git for Windows installers, injected like WSL and the rootfs (never downloaded in the guest)
+  for (const item of [p.wsl, p.rootfs, ...(p.debs ?? []), ...(p.tools ?? [])]) {
     check(item && typeof item.path === 'string' && /^[A-Za-z0-9._+~\\-]+$/.test(item.path) &&
       !item.path.split('\\').includes('..') && !path.win32.isAbsolute(item.path), 'DRILL_PREREQ_PATH_REFUSED');
     const name = path.win32.basename(item.path);
@@ -145,7 +218,16 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     check(!Object.hasOwn(payloads, name), 'DRILL_PREREQ_DUPLICATE');
     payloads[name] = bytes;
   }
-  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate });
+  // the package's gh and Git for Windows installers are injected, both and with the package's hashes, or no kit (Codex review of
+  // e0a3cded5, high 3): the guest never fetches them. Each is a prerequisite the package's bootstrap requires, so its manifest must
+  // declare each exactly once: one missing (or twice) is refused, never taken as nothing to check (Codex review of f33fc33e5, medium 3).
+  for (const tool of INJECTED_TOOLS) {
+    const declared = (pm.items ?? []).filter(i => i?.name === tool);
+    check(declared.length === 1, `DRILL_PREREQ_TOOL_NOT_DECLARED:${tool}`);
+    const need = declared[0];
+    check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${tool}`);
+  }
+  const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials, credentialFilesSha256 });
   fs.mkdirSync(out); // refuse an existing target, including a previous kit
   for (const [name, bytes] of Object.entries(payloads)) fs.writeFileSync(path.join(out, name), bytes, { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'kit.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
@@ -187,8 +269,12 @@ export function prepareFrom({ build, final, images, version, out }) {
 
 if (import.meta.main) {
   try {
-    const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'request', 'build', 'final', 'images'].map(n => [n, { type: 'string' }])) });
-    check(values.version && values.out, 'USAGE: --version <v> --out <new-dir> (--from <release-dir> --prereq <prereq.json> [--request <fleet-node-<v>.acceptance-request.json>: a candidate] | --build <dir> --final <dir> --images <dir>)');
-    console.log(JSON.stringify(values.build ? prepareFrom(values) : await makeDrillKit(values)));
+    const { values } = parseArgs({ options: Object.fromEntries(['from', 'version', 'prereq', 'out', 'request', 'build', 'final', 'images', 'credentials-of'].map(n => [n, { type: 'string' }])) });
+    // --credentials-of <tar>: the package's credential list and its bytes' hash, for drill-vm.ps1's gate (Assert-DrillKitCredentialsBound)
+    if (values['credentials-of']) console.log(JSON.stringify(credentialsOfTar(fs.readFileSync(values['credentials-of']))));
+    else {
+      check(values.version && values.out, 'USAGE: --version <v> --out <new-dir> (--from <release-dir> --prereq <prereq.json> [--request <fleet-node-<v>.acceptance-request.json>: a candidate] | --build <dir> --final <dir> --images <dir>) | --credentials-of <tar>');
+      console.log(JSON.stringify(values.build ? prepareFrom(values) : await makeDrillKit(values)));
+    }
   } catch (e) { console.error(e.message); process.exitCode = 1; }
 }

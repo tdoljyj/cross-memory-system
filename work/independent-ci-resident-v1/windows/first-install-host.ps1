@@ -84,7 +84,7 @@
   Step-CompanionHeadless) moves it to the companion account and writes install\companion-wsl.json itself.
 #>
 param([string]$Tree, [string]$PrereqDirectory, [string]$PrereqManifest, [string]$PrereqManifestSha256, [string]$KitSha256, [string]$ToolchainNodeSha256,
-  [string]$RegistrarSha256, [string]$ExpectedOperatorSid, [string]$CredentialDirectory, [switch]$Reset)
+  [string]$RegistrarSha256, [string]$ExpectedOperatorSid, [string]$CredentialDirectory, [string]$Kit, [switch]$Reset)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -107,8 +107,19 @@ $PowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $FactsContract = 'clued.independent-ci.first-install-facts/1'
 # install-resident.ps1 $SecretTargets: placed here, never passed to the installer (a reinstall finds them in place the same way)
 $SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
-# -CredentialDirectory's fixed input names; only upgradeToken and heartbeatToken are placed under first-install\credentials\
-$CredentialFiles = [ordered]@{ appKey = 'app-private-key.pem'; ciToken = 'ci-admission.token'; upgradeToken = 'resident-upgrade.token'; heartbeatToken = 'ci-node-heartbeat.token'; public = 'public.json' }
+# The credentials a first install takes, and -CredentialDirectory's fixed input names, are data: windows\credential-files.json next to
+# this script, in the archive under its hash ("credential list source"; contract clued.independent-ci.credential-files/1): required (a
+# run without one stops in the credentials step: CREDENTIAL_MISSING) and optional (a first run without one records none). P1 reads it
+# first (Read-CredentialFiles into $script:CredentialList: required, optional, files = both); every "missing: stop or not" reads that
+# and nothing else, and this script names no credential file. Only upgradeToken and heartbeatToken are placed under
+# first-install\credentials\; companionToken goes to the companion's own gh configuration.
+$CredentialFilesContract = 'clued.independent-ci.credential-files/1'
+# The secrets facts.json records (by fingerprint); whether each is required is the data's.
+$FactsSecrets = @('appKey', 'ciToken', 'upgradeToken', 'heartbeatToken')
+# Git for Windows where the companion expects it (the three places that name it: install-resident.ps1 and companion-headless.ps1
+# Get-CompanionPathDirs, companion-gh-login.ps1 $Git; not refactored here, a defect is registered). gh's path is the kit's companion
+# configuration's ghExe (the one source; Get-KitGhExe).
+$GitExe = 'C:\Program Files\Git\cmd\git.exe'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 $Strict8 = New-Object Text.UTF8Encoding($false, $true)
 
@@ -337,18 +348,36 @@ function ConvertTo-JsonLine($value, [switch]$Progress) {
   try { $js.Serialize($plain) } catch {
     # progress never throws: a line that cannot be written is replaced by one that keeps its status, step and code and names why
     $kept = [ordered]@{}
-    if ($plain -is [Collections.IDictionary]) { foreach ($k in @('status', 'step', 'code')) { if ($plain.Contains($k) -and $plain[$k] -is [string]) { $kept[$k] = $plain[$k] } } }
+    if ($plain -is [Collections.IDictionary]) { foreach ($k in @('status', 'step', 'code', 'name', 'result', 'rejectCode')) { if ($plain.Contains($k) -and $plain[$k] -is [string]) { $kept[$k] = $plain[$k] } } }
     $kept['notWritten'] = [string]$_.Exception.GetType().FullName
     $js.Serialize($kept)
   }
 }
-# Progress (an aid): one JSON line whatever it is given; it never throws and never ends P1.
-function Step([string]$name, $result) {
-  try { ConvertTo-JsonLine ([ordered]@{ step = $name; result = $result }) -Progress } catch { ConvertTo-JsonLine ([ordered]@{ step = $name; result = '<not printable>' }) -Progress }
+# The step lines (an aid; Fable ruling 11-19 renew-key, "evidence goes with the verdict" 2.3): one JSON line per step that ends, the same
+# shape in the three stages of a first install (this host preparation, bootstrap.ps1, the launcher): {name, result: ok|failed, rejectCode,
+# detail}. Enter-Step names the step that runs now: a refusal, a restart or an exception is printed as that step failed, before the
+# verdict. A step line never throws and never ends P1.
+function Get-StepLine([string]$name, [string]$result, $rejectCode, $detail) {
+  try { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail }) -Progress }
+  catch { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $(if ($rejectCode -is [string]) { $rejectCode } else { $null }); detail = '<not printable>' }) -Progress }
 }
-# The refusal verdict: one JSON line, exit 1. A detail that is not plain data is refused by name, with the code it was refusing.
+function Enter-Step([string]$name) { $script:StepNow = $name }
+function Step([string]$name, $detail) { $script:StepNow = $null; Get-StepLine $name 'ok' $null $detail }
+# A failed step's line carries its name and code only: the detail is the verdict's, once (a stage keeps only the tail of stdout).
+function Get-FailedStepLine($rejectCode) { $n = if ($script:StepNow) { [string]$script:StepNow } else { 'host' }; $script:StepNow = $null; Get-StepLine $n 'failed' $rejectCode $null }
+# A restart Windows asks for (exit 3): the step it ended, then the verdict; the same command is run again after the restart. The verdict
+# says which install step asked and each installer's own exit code ($installers: {installer, exit}; "heartbeat token and restart code" 2).
+function Exit-Restart([string]$why, $installers) {
+  $step = $script:StepNow
+  Get-FailedStepLine 'RESTART_THEN_RUN_THE_SAME_COMMAND'
+  ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = $why; step = $step; installers = @($installers) })
+  exit 3
+}
+# The refusal verdict: one JSON line, exit 1, after the line of the step it ended. A detail that is not plain data is refused by name,
+# with the code it was refusing.
 function Stop-Host([string]$code, $detail) {
   Clear-Secrets
+  Get-FailedStepLine $code
   $line = try { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = $code; detail = $detail }) } catch {
     ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_REFUSED'; code = 'HOST_OUTPUT_NOT_PLAIN_DATA'; detail = [ordered]@{ code = $code; why = [string]$_.Exception.Message } }) -Progress
   }
@@ -361,9 +390,14 @@ function Invoke-Host {
   try { Invoke-HostPreparation } catch {
     $x = $_.Exception
     if ($x.Data['OutputNotPlainData'] -eq $true -and [string]$x.Message -cmatch '^OUTPUT_NOT_PLAIN_DATA:(.*):([^:]*)$') { Stop-Host 'HOST_OUTPUT_NOT_PLAIN_DATA' ([ordered]@{ at = $Matches[1]; type = $Matches[2] }) }
+    # any other exception passes through as it is (stderr, no verdict), after the line of the step it ended
+    Get-FailedStepLine $null
     throw
   }
-}function Clear-Secrets { foreach ($k in @($script:Secrets.Keys)) { [Array]::Clear($script:Secrets[$k], 0, $script:Secrets[$k].Length) }; $script:Secrets.Clear() }
+}function Clear-Secrets {
+  foreach ($k in @($script:Secrets.Keys)) { [Array]::Clear($script:Secrets[$k], 0, $script:Secrets[$k].Length) }; $script:Secrets.Clear()
+  if ($null -ne $script:CompanionToken) { [Array]::Clear($script:CompanionToken, 0, $script:CompanionToken.Length); $script:CompanionToken = $null }
+}
 function New-Dir([string]$path, [string]$sddl) {
   if ([IO.Directory]::Exists($path)) {
     if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { Stop-Host 'DIRECTORY_IS_A_LINK' $path }
@@ -439,8 +473,47 @@ function Expand-Verified([string]$zip, [string]$dir, [string]$marker, [string]$s
 # L3: what a run must have been given before anything is written: a first run (collect-all) the App key, the ci-admission token and the
 # upgrade token (the heartbeat token is optional: facts then record none); a re-run (ask-missing) everything it asked for, which
 # facts.json records (a recorded heartbeat token left empty reached READY and stopped the launcher at Step-CarryTokens).
+# The credential list (the data file): the two groups, each name to one file name. Refused by name before anything is done: missing
+# (CREDENTIAL_FILES_MISSING), not JSON (_UNREADABLE), another contract (_CONTRACT), a top-level key other than contract, required and
+# optional (_SHAPE), a name not ^[A-Za-z][A-Za-z0-9]*$ (_NAME_REFUSED), a file name Test-CredentialFileName refuses (_FILE_NAME_REFUSED),
+# one file name twice (_DUPLICATE_FILE), one name twice in a group
+# (_DUPLICATE_NAME) or in both groups (_NAME_IN_BOTH), case-insensitively, and an empty required group (_REQUIRED_EMPTY).
+# A credential file name the list may give (the drill's kit build holds the same file to the same rule; ASCII only, so "the same name
+# up to case" means the same in both readers): ^[A-Za-z0-9][A-Za-z0-9._-]*$, not ending in '.', and not a Windows device name (CON, PRN,
+# AUX, NUL, COM1-9, LPT1-9) with or without an extension.
+function Test-CredentialFileName($f) {
+  if ($f -isnot [string] -or $f -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\z' -or $f.EndsWith('.')) { return $false }
+  -not ($f.Split('.')[0] -match '^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])\z')
+}
+function Read-CredentialFiles([string]$path) {
+  if (-not $path -or -not [IO.File]::Exists($path)) { throw 'CREDENTIAL_FILES_MISSING' }
+  $d = try { (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject((New-Object Text.UTF8Encoding($false, $true)).GetString([IO.File]::ReadAllBytes($path)).TrimStart([char]0xFEFF)) } catch { $null }
+  if ($d -isnot [Collections.IDictionary]) { throw 'CREDENTIAL_FILES_UNREADABLE' }
+  if ([string](Get-Key $d 'contract') -cne $CredentialFilesContract) { throw 'CREDENTIAL_FILES_CONTRACT' }
+  $r = [ordered]@{ required = [ordered]@{}; optional = [ordered]@{}; files = [ordered]@{} }
+  if (@($d.Keys | Where-Object { @('contract', 'required', 'optional') -cnotcontains $_ }).Count) { throw 'CREDENTIAL_FILES_SHAPE' }
+  # the rules the drill's kit build holds the same file to: exactly these three top-level keys (nothing else is ever added to the file;
+  # what it means is said here and in the drill's documentation), names and file names unique also when they differ only in case (a
+  # name twice in one group: _DUPLICATE_NAME; in both groups: _NAME_IN_BOTH), plain file names, a non-empty required group.
+  $seenFiles = @{}; $seenNames = @{}
+  foreach ($g in @('required', 'optional')) {
+    $m = Get-Key $d $g
+    if ($m -isnot [Collections.IDictionary]) { throw 'CREDENTIAL_FILES_SHAPE' }
+    foreach ($k in @($m.Keys)) {
+      $f = $m[$k]
+      if ($k -cnotmatch '^[A-Za-z][A-Za-z0-9]*\z') { throw 'CREDENTIAL_FILES_NAME_REFUSED' }
+      if (-not (Test-CredentialFileName $f)) { throw 'CREDENTIAL_FILES_FILE_NAME_REFUSED' }
+      $lk = $k.ToLowerInvariant()
+      if ($seenNames.ContainsKey($lk)) { if ($seenNames[$lk] -ceq $g) { throw 'CREDENTIAL_FILES_DUPLICATE_NAME' } else { throw 'CREDENTIAL_FILES_NAME_IN_BOTH' } }
+      if ($seenFiles.ContainsKey($f.ToLowerInvariant())) { throw 'CREDENTIAL_FILES_DUPLICATE_FILE' }
+      $seenNames[$lk] = $g; $seenFiles[$f.ToLowerInvariant()] = $true; $r[$g][$k] = $f; $r.files[$k] = $f
+    }
+  }
+  if ($r.required.Count -eq 0) { throw 'CREDENTIAL_FILES_REQUIRED_EMPTY' }
+  $r
+}
 function Get-MissingCredentials($plan, [string[]]$given) {
-  $required = if ([string]$plan.mode -ceq 'collect-all') { @('appKey', 'ciToken', 'upgradeToken') } else { @($plan.ask) }
+  $required = if ([string]$plan.mode -ceq 'collect-all') { @($FactsSecrets | Where-Object { $script:CredentialList.required.Contains($_) }) } else { @($plan.ask) }
   , @($required | Where-Object { @($given) -cnotcontains $_ })
 }
 function Get-HeartbeatPrompt([bool]$recorded) { if ($recorded) { 'heartbeat (the one facts.json records; required)' } else { 'heartbeat (leave empty for none)' } }
@@ -450,18 +523,29 @@ function Copy-Verified([string]$from, [string]$to, [string]$sha, $bytes) {
   if ((Sha256File $to) -cne $sha -or ($null -ne $bytes -and (Get-Item -LiteralPath $to).Length -ne [long]$bytes)) { Stop-Host 'INPUT_NOT_THE_PINNED_BYTES' ([IO.Path]::GetFileName($to)) }
   $to
 }
-# H1: every tool P1 starts runs here, stdout and stderr read apart: a line a tool writes on stderr is text, never a PowerShell error that
-# would end P1 under Stop. $shareConsole: the child keeps this console (a tool that may show a window or read the clipboard).
-function Invoke-Native([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = $Utf8, [bool]$shareConsole = $false) {
+# H1, one rule for every child a package script starts (test/native-child.test.mjs holds every copy of this function the same text and no
+# package .ps1 merging a stream into its output): stdout, stderr and the exit code read apart. A line a child writes on stderr is text,
+# never a PowerShell error (Windows PowerShell 5.1 turns a native stderr line under 2>&1 into one, which ends the caller under Stop). On
+# timeout nothing is killed: timedOut, exit $null. $shareConsole: the child keeps this console (a tool that may show a window or read the
+# clipboard). stderr is its last 1500 characters.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
-  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
   $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
   $p = [Diagnostics.Process]::Start($psi)
   $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
-  if (-not $p.WaitForExit($seconds * 1000)) { Stop-Host 'COMMAND_TIMEOUT_NOTHING_KILLED' ([IO.Path]::GetFileName($exe) + ' ' + ($arguments -join ' ')) }
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
   $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
-  [ordered]@{ exit = $p.ExitCode; stdout = ($o.Result -replace "`0", ''); stderr = (& $tail $e.Result) }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
+}
+# Every tool P1 starts (review H1): Invoke-NativeChild; a child still running after $seconds ends P1 refused by name.
+function Invoke-Native([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = $Utf8, [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $r = Invoke-NativeChild $exe $arguments $seconds $encoding $shareConsole $stdin
+  if ($r.timedOut) { Stop-Host 'COMMAND_TIMEOUT_NOTHING_KILLED' ([IO.Path]::GetFileName($exe) + ' ' + ($arguments -join ' ')) }
+  $r
 }
 function Invoke-Wsl([string[]]$arguments, [int]$seconds = 3600) { Invoke-Native $Wsl $arguments $seconds }
 # As root in the distribution, by --exec (the arguments reach env as they are: no shell between), with a cleared environment.
@@ -504,10 +588,46 @@ function Read-SecureBytes([Security.SecureString]$s) {
   try { $chars = New-Object char[] $s.Length; [Runtime.InteropServices.Marshal]::Copy($p, $chars, 0, $s.Length); $b = $Utf8.GetBytes($chars); [Array]::Clear($chars, 0, $chars.Length); , $b }
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeGlobalAllocUnicode($p) }
 }
+# The one way a token is asked for (Fable ruling 11-19 renew-key, "eight on the path" 1): the Windows credential dialog itself
+# (credui.dll CredUIPromptForCredentialsW: generic credentials, always shown, never saved), never PowerShell's host prompt. P1 runs with
+# -NonInteractive (an unexpected prompt never holds an unattended stage), which refuses that prompt before any window opens. The token is
+# the password: read into unmanaged memory, copied out as UTF-8 bytes, the memory and the characters cleared. The dialog's answers by code:
+# cancelled CREDENTIAL_DIALOG_CANCELLED; any other CREDENTIAL_DIALOG_FAILED:<Win32 code>; the dialog not loadable CREDENTIAL_DIALOG_UNAVAILABLE.
+# The synthetic input of the drill (-CredentialDirectory) never comes here and is held to the same checks after it.
+function Get-CredentialDialogCode([int]$rc) { if ($rc -eq 0) { $null } elseif ($rc -eq 1223) { 'CREDENTIAL_DIALOG_CANCELLED' } else { 'CREDENTIAL_DIALOG_FAILED:' + $rc } }
+$CredUiSource = @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class CluedFirstInstallCredUi {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct Info { public int cbSize; public IntPtr hwndParent; public string pszMessageText; public string pszCaptionText; public IntPtr hbmBanner; }
+  [DllImport("credui.dll", CharSet = CharSet.Unicode)]
+  static extern int CredUIPromptForCredentialsW(ref Info info, string target, IntPtr reserved, int authError, StringBuilder user, int userMax, IntPtr password, int passwordMax, ref bool save, int flags);
+  [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+  public const int PasswordChars = 257;   // CREDUI_MAX_PASSWORD_LENGTH + 1, as PowerShell's own credential prompt
+  // GENERIC_CREDENTIALS 0x40000 | KEEP_USERNAME 0x100000 | ALWAYS_SHOW_UI 0x80 | EXCLUDE_CERTIFICATES 0x8 | DO_NOT_PERSIST 0x2
+  public const int Flags = 0x40000 | 0x100000 | 0x80 | 0x8 | 0x2;
+  public static int Prompt(string user, string caption, string message, IntPtr password) {
+    Info i = new Info(); i.cbSize = Marshal.SizeOf(typeof(Info)); i.hwndParent = GetConsoleWindow(); i.pszCaptionText = caption; i.pszMessageText = message;
+    StringBuilder u = new StringBuilder(user, 514); bool save = false;
+    return CredUIPromptForCredentialsW(ref i, "Clued first install", IntPtr.Zero, 0, u, 514, password, PasswordChars, ref save, Flags);
+  }
+}
+'@
 function Read-TokenFromDialog([string]$what) {
-  $c = Get-Credential -UserName $what -Message ("Clued first install: paste the $what connection token as the password (it is fingerprinted and stored for SYSTEM and Administrators only; never shown).")
-  if ($null -eq $c) { Stop-Host 'CREDENTIAL_DIALOG_CANCELLED' $what }
-  Read-SecureBytes $c.Password
+  try { if (-not ('CluedFirstInstallCredUi' -as [type])) { Add-Type -TypeDefinition $CredUiSource } } catch { Stop-Host 'CREDENTIAL_DIALOG_UNAVAILABLE' $what }
+  $size = [CluedFirstInstallCredUi]::PasswordChars * 2
+  $zero = New-Object byte[] $size
+  $buf = [Runtime.InteropServices.Marshal]::AllocHGlobal($size)
+  try {
+    [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size)
+    $rc = try { [CluedFirstInstallCredUi]::Prompt($what, 'Clued first install', ("Paste the $what token as the password (it is fingerprinted and stored for SYSTEM and Administrators only; never shown)."), $buf) } catch { -1 }
+    $code = Get-CredentialDialogCode $rc
+    if ($code) { Stop-Host $code $what }
+    $n = 0; while ($n -lt [CluedFirstInstallCredUi]::PasswordChars -and [Runtime.InteropServices.Marshal]::ReadInt16($buf, $n * 2) -ne 0) { $n++ }
+    $chars = New-Object char[] $n
+    if ($n) { [Runtime.InteropServices.Marshal]::Copy($buf, $chars, 0, $n) }
+    try { , $Utf8.GetBytes($chars) } finally { [Array]::Clear($chars, 0, $chars.Length) }
+  } finally { [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size); [Runtime.InteropServices.Marshal]::FreeHGlobal($buf) }
 }
 function Read-PublicFromDialog([string]$prompt) {
   Add-Type -AssemblyName Microsoft.VisualBasic
@@ -528,7 +648,7 @@ function Get-SecretState([string]$name, $facts, [string]$controllerSid) {
     'appKey' { [string](Get-Key (Get-Key $facts 'nodeRecord') 'appPublicKeySha256Base64') } 'ciToken' { [string](Get-Key (Get-Key $facts 'nodeRecord') 'ciTokenPinSha256') }
     'upgradeToken' { [string](Get-Key (Get-Key (Get-Key $facts 'credentials') 'upgradeToken') 'fingerprint') }
     'heartbeatToken' { $h = Get-Key (Get-Key $facts 'credentials') 'heartbeatToken'; if ($null -eq $h) { return 'none' }; [string](Get-Key $h 'fingerprint') } }
-  $file = if ($SecretTargets.Contains($name)) { $SecretTargets[$name] } else { Join-Path $CredDir $CredentialFiles[$name] }
+  $file = if ($SecretTargets.Contains($name)) { $SecretTargets[$name] } else { Join-Path $CredDir $script:CredentialList.files[$name] }
   if (-not [IO.File]::Exists($file)) { return 'missing' }
   $item = Get-Item -LiteralPath $file -Force
   if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'differs' }
@@ -544,7 +664,7 @@ function Get-SecretFingerprintOf([string]$name, [byte[]]$bytes) {
 function Write-Secrets([string]$controllerSid) {
   foreach ($name in @($script:Secrets.Keys)) {
     $bytes = $script:Secrets[$name]
-    $target = if ($SecretTargets.Contains($name)) { $SecretTargets[$name] } else { Join-Path $CredDir $CredentialFiles[$name] }
+    $target = if ($SecretTargets.Contains($name)) { $SecretTargets[$name] } else { Join-Path $CredDir $script:CredentialList.files[$name] }
     $sddl = if ($SecretTargets.Contains($name)) { Get-SecretFileSddl $controllerSid } else { Get-AdminOnlySddl }
     if ([IO.File]::Exists($target)) {
       $have = [IO.File]::ReadAllBytes($target)
@@ -568,6 +688,85 @@ function Get-CompanionDistributionState {
   if ($l.exit -ne 0) { return 'unknown' }
   try { & $read ('HKEY_USERS\' + $mount.Substring(4)) } catch { 'unknown' } finally { [GC]::Collect(); $null = Invoke-Native 'C:\Windows\System32\reg.exe' @('unload', $mount) 60 }
 }
+# The companion account script's answer (one JSON document on stdout): prepared, or P1 ends refused with the evidence inline. Its log file
+# lies in P1's stage, which is removed when P1 ends: the refusal names no file there and carries the log's error and steps (the script's
+# own non-secret fields, printed with its status) instead; an answer that is not that JSON is kept as it came (stdout, stderr, exit).
+function Assert-CompanionPrepared($prepRun) {
+  $js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = [int]::MaxValue
+  $prep = [string]$prepRun.stdout
+  $pr = try { $js.DeserializeObject($prep) } catch { try { $js.DeserializeObject(@($prep -split "`r?`n" | Where-Object { $_.Trim() })[-1]) } catch { $null } }
+  if ($pr -isnot [Collections.IDictionary]) { Stop-Host 'COMPANION_ACCOUNT_NOT_PREPARED' ([ordered]@{ exit = $prepRun.exit; stdout = $prep; stderr = $prepRun.stderr }) }
+  # -AccountOnly: the account alone; its token is the credentials step's. ..._TOKEN_PENDING (the token step ran after all) is refused.
+  if ([string](Get-Key $pr 'status') -cne 'COMPANION_ACCOUNT_PREPARED') {
+    Stop-Host 'COMPANION_ACCOUNT_NOT_PREPARED' ([ordered]@{ exit = $prepRun.exit; status = (Get-Key $pr 'status'); error = (Get-Key $pr 'error'); steps = (Get-Key $pr 'steps'); stderr = $prepRun.stderr })
+  }
+  $pr
+}
+# The error id a PowerShell child that threw printed on stderr ("+ FullyQualifiedErrorId : <id>"): its code when it threw one.
+function Get-ChildErrorId([string]$stderr) {
+  $m = [regex]::Match([string]$stderr, '(?m)^\s*\+\s*FullyQualifiedErrorId\s*:\s*([A-Za-z][A-Za-z0-9_.:,-]{0,120})\s*$')
+  if ($m.Success) { $m.Groups[1].Value } else { $null }
+}
+# ---- the companion's GitHub token ("package branch, two points" B): taken in the credentials step with the other credentials, kept nowhere but the companion's
+# own isolated gh configuration (never in facts.json: whether it is in place is read from that configuration itself). Its one writer is the
+# package's login script (windows\companion-gh-login.ps1), run as a child (Invoke-Native, H1) with the kit's ghExe; a token goes to it on
+# standard input only. Every check after a write is the script's offline one (shape and isolation; nothing on the network).
+function Invoke-CompanionGhLogin([string]$gl, [string]$mode, [string[]]$more, [string]$profileDir, [string]$sid, [string]$ghExe, [byte[]]$stdin = $null) {
+  $r = Invoke-Native $PowerShellExe (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $gl, ('-' + $mode)) + @($more) + @('-ProfileDirectory', $profileDir, '-AccountSid', $sid, '-GhExe', $ghExe)) 900 $Utf8 $false $stdin
+  [ordered]@{ mode = $mode; exit = $r.exit; status = $(if ([string]$r.stdout -match '"status":\s*"([A-Za-z_:,-]+)"') { $Matches[1] } else { $null }); errorId = (Get-ChildErrorId $r.stderr) }
+}
+# Where the token comes from, in this order (B3): in place in the companion's profile (nothing to do); the Owner's own companion token
+# (the login script copies it; no dialog: a node reinstalled from scratch, TURING's fallback, asks the Owner for nothing); else it is asked
+# for with the other credentials ('ask'). An Owner token the script refuses to copy for any other reason (a link, a hard link, another
+# SID, a refused profile) ends P1 by name: it never falls through to a dialog.
+function Resolve-CompanionTokenSource([string]$gl, [string]$profileDir, [string]$sid, [string]$ghExe) {
+  $c = Invoke-CompanionGhLogin $gl 'Check' @('-Offline') $profileDir $sid $ghExe
+  if ($c.exit -eq 0 -and $c.status -ceq 'COMPANION_GH_LOGIN_READY') { return 'in-place' }
+  $o = Invoke-CompanionGhLogin $gl 'CopyFromOwner' @() $profileDir $sid $ghExe
+  if ($o.exit -eq 0 -and $o.status -ceq 'COMPANION_GH_LOGIN_COPIED') {
+    $c = Invoke-CompanionGhLogin $gl 'Check' @('-Offline') $profileDir $sid $ghExe
+    if ($c.exit -eq 0 -and $c.status -ceq 'COMPANION_GH_LOGIN_READY') { return 'owner-copied' }
+    Stop-Host 'COMPANION_TOKEN_NOT_IN_PLACE' $c
+  }
+  if ($null -eq $o.errorId -and @('COMPANION_GH_OWNER_TOKEN_MISSING', 'COMPANION_GH_OWNER_TOKEN_NOT_CLASSIC') -ccontains [string]$o.status) { return 'ask' }
+  Stop-Host 'COMPANION_TOKEN_OWNER_COPY_REFUSED' $o
+}
+# 'ask': the credential directory's companion-github.token (the drill's synthetic input; the directory is held to its ACL by the caller),
+# else the Windows credential dialog. Nothing given: CREDENTIAL_MISSING; not a classic token: CREDENTIAL_NOT_ITS_KIND. Never written here.
+function Read-CompanionTokenInput([string]$credentialDirectory) {
+  $b = $null
+  if ($credentialDirectory) { $f = Join-Path $credentialDirectory $script:CredentialList.files['companionToken']; if ([IO.File]::Exists($f)) { $b = [IO.File]::ReadAllBytes($f) } }
+  else { $b = Read-TokenFromDialog 'companion GitHub (classic token, repo scope)' }
+  if ($null -eq $b -or $b.Length -eq 0) { if ($script:CredentialList.required.Contains('companionToken')) { Stop-Host 'CREDENTIAL_MISSING' @('companionToken') }; return $null }
+  $ok = try { $Strict8.GetString($b).Trim() -cmatch '^ghp_[A-Za-z0-9]{36}\z' } catch { $false }
+  if (-not $ok) { [Array]::Clear($b, 0, $b.Length); Stop-Host 'CREDENTIAL_NOT_ITS_KIND' 'companionToken' }
+  , ([byte[]]$Utf8.GetBytes($Strict8.GetString($b).Trim()))
+}
+function Write-CompanionToken([string]$gl, [string]$profileDir, [string]$sid, [string]$ghExe, [byte[]]$token) {
+  $w = Invoke-CompanionGhLogin $gl 'Login' @('-TokenFromStdin') $profileDir $sid $ghExe $token
+  if ($w.exit -ne 0 -or $w.status -cne 'COMPANION_GH_LOGIN_STORED') { Stop-Host 'COMPANION_TOKEN_NOT_WRITTEN' $w }
+  $c = Invoke-CompanionGhLogin $gl 'Check' @('-Offline') $profileDir $sid $ghExe
+  if ($c.exit -ne 0 -or $c.status -cne 'COMPANION_GH_LOGIN_READY') { Stop-Host 'COMPANION_TOKEN_NOT_IN_PLACE' $c }
+}
+# gh's path: the kit's companion configuration (config.companion, base64 of the companion input) ghExe, the field the companion and the
+# installer read: the one source. Throws KIT_GH_EXE_REFUSED.
+function Get-KitGhExe([string]$kitText) {
+  $p = try {
+    $k = (New-Object Web.Script.Serialization.JavaScriptSerializer -Property @{ MaxJsonLength = [int]::MaxValue }).DeserializeObject($kitText)
+    $c = (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject((New-Object Text.UTF8Encoding($false, $true)).GetString([Convert]::FromBase64String([string](Get-Key (Get-Key $k 'config') 'companion'))).TrimStart([char]0xFEFF))
+    [string](Get-Key $c 'ghExe')
+  } catch { '' }
+  if ($p -cnotmatch '^[A-Z]:\\[^"''\r\n;]+\\gh\.exe\z') { throw 'KIT_GH_EXE_REFUSED' }
+  $p
+}
+# The two Windows tools the companion runs (B5), installed from the pinned, staged installer only when absent; then the file must be at its
+# path. $run: the installer's run (or $null: present already); a restart the installer asks for: RESTART (the same command after it).
+function Get-ToolInstallCode([string]$tool, $run, [bool]$present, [int[]]$restartExits) {
+  if ($null -ne $run -and @($restartExits) -contains [int]$run.exit) { return 'RESTART' }
+  if ($null -ne $run -and $run.exit -ne 0) { return ($tool + '_INSTALL_FAILED') }
+  if (-not $present) { return ($tool + '_NOT_AT_THE_EXPECTED_PATH') }
+  $null
+}
 function Get-ObservedResidue([bool]$factsPresent) {
   $sddl = try { (Get-Acl -LiteralPath $CiRoot).Sddl } catch { '' }
   [ordered]@{ services = @(Get-Service -Name 'CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
@@ -590,15 +789,22 @@ function Assert-CiInstallBaseline([string]$ciRoot) {
 }
 
 function Invoke-HostPreparation {
+  # the credential list (data next to this script, in the archive under its hash), read before anything else is done
+  Enter-Step 'credential-files'
+  $script:CredentialList = try { Read-CredentialFiles (Join-Path $PSScriptRoot 'credential-files.json') } catch { Stop-Host ([string]$_.Exception.Message) $PSScriptRoot }
+  Step 'credential-files' ([ordered]@{ required = @($script:CredentialList.required.Keys); optional = @($script:CredentialList.optional.Keys) })
   # the operator: elevated, and the account the bootstrap ran as (M4), before anything else
+  Enter-Step 'operator'
   $wi = [Security.Principal.WindowsIdentity]::GetCurrent()
   if (-not (New-Object Security.Principal.WindowsPrincipal($wi)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Stop-Host 'RUN_ELEVATED' $null }
   Assert-CiInstallBaseline $CiRoot
   $operator = $wi.User.Value
   $oc = Test-ExpectedOperator $operator $ExpectedOperatorSid
   if ($oc) { Stop-Host $oc ([ordered]@{ elevatedAs = $operator; bootstrapRanAs = $ExpectedOperatorSid }) }
-  foreach ($a in @($Tree, $PrereqDirectory, $PrereqManifest)) { if (-not $a) { Stop-Host 'USAGE' $null } }
+  foreach ($a in @($Tree, $PrereqDirectory, $PrereqManifest, $Kit)) { if (-not $a) { Stop-Host 'USAGE' $null } }
   foreach ($h in @($PrereqManifestSha256, $KitSha256, $ToolchainNodeSha256, $RegistrarSha256)) { if ($h -cnotmatch '^[0-9a-f]{64}$') { Stop-Host 'USAGE' 'pinned sha256 required (install.mjs first-install-check)' } }
+  Step 'operator' $operator
+  Enter-Step 'residue'
   $factsFile = Join-Path $FirstDir 'facts.json'
   $js = New-Object Web.Script.Serialization.JavaScriptSerializer
   $old = if ([IO.File]::Exists($factsFile)) { $js.DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes($factsFile))) } else { $null }
@@ -607,6 +813,7 @@ function Invoke-HostPreparation {
   $res = Get-ResidueCodes $observed
   if (-not $Reset -and $res.Count) { Stop-Host 'FIRST_INSTALL_RESIDUE_PRESENT' ([ordered]@{ found = $res; next = 'a first install needs a clean machine: a node with a resident is reinstalled; leftovers of an uninstalled one (named above) are removed by a person first' }) }
   Step 'residue' $(if ($res.Count) { $res } else { 'none' })
+  Enter-Step 'stage'
   # stage: what this elevated run uses, copied into an admin-only directory and held to the pins
   $stage = Join-Path 'C:\Windows\Temp' ('clued-p1-' + [Guid]::NewGuid().ToString('N'))
   $null = New-Dir $stage (Get-AdminOnlySddl)
@@ -614,7 +821,7 @@ function Invoke-HostPreparation {
     $man = $js.DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes((Copy-Verified $PrereqManifest (Join-Path $stage 'prereq-manifest.json') $PrereqManifestSha256 $null))))
     $items = @{}; foreach ($i in @(Get-Key $man 'items')) { $items[[string](Get-Key $i 'name')] = $i }
     $staged = @{}
-    foreach ($n in @('node', 'ubuntu-rootfs', 'actions-runner', 'linux-node', 'wsl')) {
+    foreach ($n in @('node', 'ubuntu-rootfs', 'actions-runner', 'linux-node', 'wsl', 'gh', 'git-for-windows')) {
       $i = $items[$n]; if ($null -eq $i -or [string](Get-Key $i 'sha256') -cnotmatch '^[0-9a-f]{64}$') { Stop-Host 'PREREQ_NOT_PINNED' $n }
       $staged[$n] = Copy-Verified (Join-Path $PrereqDirectory $i['fileName']) (Join-Path $stage $i['fileName']) $i['sha256'] $i['bytes']
     }
@@ -629,8 +836,11 @@ function Invoke-HostPreparation {
     $R = Join-Path $Tree 'work\independent-ci-resident-v1'
     $script:FingerprintTool = Join-Path $R 'tools\secret-fingerprint.mjs'
     $script:InstallMjs = Join-Path $R 'rollout\fleet\install.mjs'
+    $kitCopy = Copy-Verified $Kit (Join-Path $stage 'first-install-kit.json') $KitSha256 $null
+    $GhExe = try { Get-KitGhExe ($Strict8.GetString([IO.File]::ReadAllBytes($kitCopy))) } catch { Stop-Host 'KIT_GH_EXE_REFUSED' $null }
     Step 'stage' $stage
-    if ($Reset) { Invoke-Reset $old $observed $operator; return }
+    if ($Reset) { Enter-Step 'reset'; Invoke-Reset $old $observed $operator; return }
+    Enter-Step 'v1-base'
     # v1 base: what Windows itself must have for the installer
     $base = [ordered]@{ csc = [IO.File]::Exists('C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe')
       localAccounts = [IO.Directory]::Exists('C:\Windows\System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.LocalAccounts')
@@ -639,29 +849,47 @@ function Invoke-HostPreparation {
     $vb = Get-V1BaseCodes $base
     if ($vb.Count) { Stop-Host 'V1_BASE_MISSING' $vb }
     Step 'v1-base' 'present'
+    Enter-Step 'wsl'
     # WSL at the pinned version (M7)
     $wantWsl = [string](Get-Key $items['wsl'] 'version')
     $have = Get-WslVersion ((Invoke-Native $Wsl @('--version') 120 ([Text.Encoding]::Unicode)).stdout)
     if ($have -cne $wantWsl) {
       $mi = Invoke-Native 'C:\Windows\System32\msiexec.exe' @('/i', $staged['wsl'], '/qn', '/norestart') 1800
-      if ($mi.exit -eq 3010) { ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'WSL installed' }); exit 3 }
+      if ($mi.exit -eq 3010) { Exit-Restart 'WSL installed' @([ordered]@{ installer = ('msiexec /i ' + [IO.Path]::GetFileName($staged['wsl'])); exit = $mi.exit }) }
       if ($mi.exit -ne 0) { Stop-Host 'WSL_MSI_FAILED' ([ordered]@{ exit = $mi.exit; stderr = $mi.stderr }) }
       $have = Get-WslVersion ((Invoke-Native $Wsl @('--version') 120 ([Text.Encoding]::Unicode)).stdout)
       if ($have -cne $wantWsl) { Stop-Host 'WSL_VERSION_NOT_THE_PINNED' ([ordered]@{ want = $wantWsl; have = $have }) }
     }
     Step 'wsl' $have
+    Enter-Step 'features'
     # features (a restart: run the same command again), power
-    $needRestart = $false
+    $needRestart = $false; $restarts = @()
     foreach ($feature in @('VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux')) {
       $info = Invoke-Native 'C:\Windows\System32\dism.exe' @('/English', '/online', '/get-featureinfo', ('/featurename:' + $feature)) 600
       if ($info.stdout -notmatch 'State : Enabled') {
         $en = Invoke-Native 'C:\Windows\System32\dism.exe' @('/English', '/online', '/enable-feature', ('/featurename:' + $feature), '/all', '/norestart') 3600
-        if ($en.exit -eq 3010) { $needRestart = $true } elseif ($en.exit -ne 0) { Stop-Host 'WINDOWS_FEATURE_ENABLE_FAILED' ([ordered]@{ feature = $feature; exit = $en.exit; stderr = $en.stderr }) }
+        if ($en.exit -eq 3010) { $needRestart = $true; $restarts += [ordered]@{ installer = ('dism /enable-feature /featurename:' + $feature); exit = $en.exit } } elseif ($en.exit -ne 0) { Stop-Host 'WINDOWS_FEATURE_ENABLE_FAILED' ([ordered]@{ feature = $feature; exit = $en.exit; stderr = $en.stderr }) }
       }
     }
-    if ($needRestart) { ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'Windows features enabled' }); exit 3 }
+    if ($needRestart) { Exit-Restart 'Windows features enabled' $restarts }
     $null = Invoke-Native 'C:\Windows\System32\powercfg.exe' @('/change', 'standby-timeout-ac', '0') 120; $null = Invoke-Native 'C:\Windows\System32\powercfg.exe' @('/hibernate', 'off') 120
     Step 'features' 'enabled; standby-ac 0, hibernate off'
+    Enter-Step 'tools'
+    # gh (at the kit's ghExe) and Git for Windows: the companion runs both; installed from the pinned installers when absent, then checked
+    $tools = [ordered]@{}
+    foreach ($t in @(@('GH', $GhExe, 'gh', @(3010)), @('GIT', $GitExe, 'git-for-windows', @(8)))) {
+      $run = $null
+      if (-not [IO.File]::Exists($t[1])) {
+        $run = if ($t[2] -ceq 'gh') { Invoke-Native 'C:\Windows\System32\msiexec.exe' @('/i', $staged['gh'], '/qn', '/norestart') 1800 }
+          else { Invoke-Native $staged['git-for-windows'] @('/VERYSILENT', '/NORESTART', '/NOCANCEL', '/SP-', '/SUPPRESSMSGBOXES') 1800 }
+      }
+      $code = Get-ToolInstallCode $t[0] $run ([IO.File]::Exists($t[1])) $t[3]
+      if ($code -ceq 'RESTART') { Exit-Restart ($t[2] + ' installed') @([ordered]@{ installer = $(if ($t[2] -ceq 'gh') { 'msiexec /i ' + [IO.Path]::GetFileName($staged['gh']) } else { [IO.Path]::GetFileName($staged['git-for-windows']) + ' /VERYSILENT /NORESTART' }); exit = $run.exit }) }
+      if ($code) { Stop-Host $code ([ordered]@{ path = $t[1]; exit = $(if ($run) { $run.exit } else { $null }); stderr = $(if ($run) { $run.stderr } else { $null }) }) }
+      $tools[$t[2]] = [ordered]@{ path = $t[1]; action = $(if ($run) { 'installed' } else { 'present' }) }
+    }
+    Step 'tools' $tools
+    Enter-Step 'accounts'
     # accounts
     foreach ($name in @('clued-control', 'clued-runner')) {
       $u = Get-LocalUser -Name $name -ErrorAction SilentlyContinue
@@ -672,10 +900,8 @@ function Invoke-HostPreparation {
     $controllerSid = (Get-LocalUser -Name 'clued-control').SID.Value
     # the companion account by the package's own tool, its registrar held to the archive's pin (L2)
     # (it keeps this console: its token step may read the clipboard; its own output in the console's code page)
-    $prepRun = Invoke-Native $PowerShellExe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $R 'windows\prepare-companion-account.ps1'), '-LogDirectory', (Join-Path $stage 'companion-log'), '-RegistrarSha256', $RegistrarSha256) 1800 ([Console]::OutputEncoding) $true
-    $prep = [string]$prepRun.stdout
-    $pr = try { $js.DeserializeObject($prep) } catch { try { $js.DeserializeObject(@($prep -split "`r?`n" | Where-Object { $_.Trim() })[-1]) } catch { $null } }
-    if ([string](Get-Key $pr 'status') -notlike 'COMPANION_ACCOUNT_PREPARED*') { Stop-Host 'COMPANION_ACCOUNT_NOT_PREPARED' ([ordered]@{ exit = $prepRun.exit; stdout = $prep; stderr = $prepRun.stderr }) }
+    $prepRun = Invoke-Native $PowerShellExe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $R 'windows\prepare-companion-account.ps1'), '-LogDirectory', (Join-Path $stage 'companion-log'), '-RegistrarSha256', $RegistrarSha256, '-AccountOnly') 1800 ([Console]::OutputEncoding) $true
+    $pr = Assert-CompanionPrepared $prepRun
     $companionSid = [string](Get-Key (Get-Key $pr 'nodeProfile') 'ownerSid'); $companionProfile = [string](Get-Key (Get-Key $pr 'nodeProfile') 'ownerProfileDirectory')
     $nodeProfile = try { Get-NodeProfile ([Environment]::MachineName) $controllerSid $companionSid $companionProfile } catch { Stop-Host ([string]$_.Exception.Message) 'rename the machine to a name of 1-15 letters, digits and inner hyphens; no parameter changes it' }
     if ($operator -ceq $companionSid -or $operator -ceq $controllerSid) { Stop-Host 'OPERATOR_IS_A_SERVICE_ACCOUNT' $operator }
@@ -691,6 +917,7 @@ function Invoke-HostPreparation {
       if ($seConf.exit -ne 0) { Stop-Host 'SERVICE_LOGON_RIGHT_NOT_GRANTED' ([ordered]@{ exit = $seConf.exit; stderr = $seConf.stderr }) }
     }
     Step 'accounts' ([ordered]@{ controllerSid = $controllerSid; companionSid = $companionSid; operatorSid = $operator })
+    Enter-Step 'ci-root'
     # CI root, formal-spool, first-install, credentials, the two secret folders
     $ci = [ordered]@{}
     $ci[$CiRoot] = New-Dir $CiRoot (Get-CiRootSddl $operator $controllerSid)
@@ -699,6 +926,7 @@ function Invoke-HostPreparation {
     $ci['credentials'] = New-Dir $CredDir (Get-AdminOnlySddl)
     $ci['secrets'] = New-Dir (Split-Path -Parent $SecretTargets['ciToken']) (Get-SecretDirectorySddl $controllerSid)
     Step 'ci-root' $ci
+    Enter-Step 'runner'
     # the carrier runner: binaries and a stopped, manual service as .\clued-control; never registered with GitHub
     $runnerDir = Join-Path $ControlRoot 'runner'
     $null = New-Dir $ControlRoot ('O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $controllerSid + ')')
@@ -717,6 +945,7 @@ function Invoke-HostPreparation {
     $bin = if ($qc -match 'BINARY_PATH_NAME\s*:\s*(.+)') { $Matches[1].Trim() } else { $null }
     if ($bin -cne $OriginalBinary -or $qc -notmatch 'START_TYPE\s*:\s*3\s' -or $qc -notmatch 'SERVICE_START_NAME\s*:\s*\.\\clued-control' -or $q -notmatch 'STATE\s*:\s*1\s') { Stop-Host 'RUNNER_SERVICE_NOT_AS_THE_INSTALLER_EXPECTS' $qc }
     Step 'runner' $nodeProfile.runnerService
+    Enter-Step 'distribution'
     # the distribution (the operator's WSL until the M5-b switch)
     $listed = (Invoke-Wsl @('--list', '--quiet') 120).stdout
     if (@($listed -split "`r?`n" | Where-Object { $_.Trim() -ceq $Distribution }).Count -eq 0) {
@@ -727,6 +956,7 @@ function Invoke-HostPreparation {
       if ($imp.exit -ne 0) { Stop-Host 'DISTRIBUTION_INSTALL_FAILED' ([ordered]@{ exit = $imp.exit; stderr = $imp.stderr; stdout = $imp.stdout }) }
     }
     Step 'distribution' ([ordered]@{ name = $Distribution; importDirectory = $ImportDirectory; switchTarget = $VhdxDirectory; account = 'operator' })
+    Enter-Step 'linux'
     # Linux, as root (--exec)
     $hp = $null
     foreach ($attempt in 1..2) {
@@ -743,6 +973,10 @@ function Invoke-HostPreparation {
     if ($ff.exit -ne 0 -or $lc.Count) { Stop-Host 'LINUX_NOT_A_FIRST_INSTALL_HOST' ([ordered]@{ codes = $lc; stderr = $ff.stderr }) }
     $pem = ([string]$lf['resultPublicKey']['pem']).Replace("`r`n", "`n")
     Step 'linux' 'ready'
+    Enter-Step 'credentials'
+    # the companion's token: in place, else the Owner's copied by the login script, else asked for below with the others (B3)
+    $gl = Join-Path $R 'windows\companion-gh-login.ps1'
+    $companionSource = Resolve-CompanionTokenSource $gl $nodeProfile.ownerProfileDirectory $nodeProfile.ownerSid $GhExe
     # credentials (H2): what is in place and recorded is only checked; what is asked for is checked whole before anything is written
     $state = [ordered]@{}
     foreach ($k in @('appKey', 'ciToken', 'upgradeToken', 'heartbeatToken')) { $state[$k] = if ($null -ne $old) { Get-SecretState $k $old $controllerSid } else { 'missing' } }
@@ -752,15 +986,15 @@ function Invoke-HostPreparation {
     if ($plan.mode -cne 'verify-only') {
       if ($CredentialDirectory) {
         if (-not (Test-SddlIs (Get-Acl -LiteralPath $CredentialDirectory).Sddl (Get-AdminOnlySddl))) { Stop-Host 'CREDENTIAL_DIRECTORY_NOT_ADMIN_ONLY' $CredentialDirectory }
-        foreach ($k in @($plan.ask)) { $f = Join-Path $CredentialDirectory $CredentialFiles[$k]; if ([IO.File]::Exists($f)) { $script:Secrets[$k] = [IO.File]::ReadAllBytes($f) } }
-        if ($plan.mode -ceq 'collect-all') { $public = $js.DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes((Join-Path $CredentialDirectory $CredentialFiles['public'])))) }
+        foreach ($k in @($plan.ask)) { $f = Join-Path $CredentialDirectory $script:CredentialList.files[$k]; if ([IO.File]::Exists($f)) { $script:Secrets[$k] = [IO.File]::ReadAllBytes($f) } }
+        if ($plan.mode -ceq 'collect-all') { $public = $js.DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes((Join-Path $CredentialDirectory $script:CredentialList.files['public'])))) }
       } else {
         foreach ($k in @($plan.ask)) {
           switch ($k) {
             'appKey' { $script:Secrets['appKey'] = Read-AppKeyFromDialog }
             'ciToken' { $script:Secrets['ciToken'] = Read-TokenFromDialog 'ci-admission' }
             'upgradeToken' { $script:Secrets['upgradeToken'] = Read-TokenFromDialog 'resident-upgrade' }
-            'heartbeatToken' { $b = Read-TokenFromDialog (Get-HeartbeatPrompt ($null -ne $old)); if ($b.Length) { $script:Secrets['heartbeatToken'] = $b } }
+            'heartbeatToken' { $b = Read-TokenFromDialog (Get-HeartbeatPrompt ($null -ne $old -or $script:CredentialList.required.Contains('heartbeatToken'))); if ($b.Length) { $script:Secrets['heartbeatToken'] = $b } }
           }
         }
         if ($plan.mode -ceq 'collect-all') {
@@ -773,6 +1007,10 @@ function Invoke-HostPreparation {
       $miss = Get-MissingCredentials $plan @($script:Secrets.Keys)
       if ($miss.Count) { Stop-Host 'CREDENTIAL_MISSING' $miss }
     }
+    if ($companionSource -ceq 'ask') {
+      if ($CredentialDirectory -and -not (Test-SddlIs (Get-Acl -LiteralPath $CredentialDirectory).Sddl (Get-AdminOnlySddl))) { Stop-Host 'CREDENTIAL_DIRECTORY_NOT_ADMIN_ONLY' $CredentialDirectory }
+      $script:CompanionToken = Read-CompanionTokenInput $CredentialDirectory
+    }
     $fps = [ordered]@{}
     foreach ($k in @($script:Secrets.Keys)) { $fps[$k] = Get-SecretFingerprintOf $k $script:Secrets[$k]; if (-not $fps[$k]) { Stop-Host 'CREDENTIAL_NOT_ITS_KIND' $k } }
     if ($null -ne $old) {
@@ -780,7 +1018,7 @@ function Invoke-HostPreparation {
       foreach ($k in @($fps.Keys)) { if ($state[$k] -cne 'missing' -or $fps[$k] -cne (Get-SecretRecorded $k $old)) { Stop-Host 'SECRET_GIVEN_IS_NOT_THE_FACTS' $k } }
       $nodeRecord = $old['nodeRecord']; $cred = $old['credentials']; $keyId = [string]$old['signer']['keyId']
     } else {
-      foreach ($k in @('appKey', 'ciToken', 'upgradeToken')) { if (-not $fps.Contains($k)) { Stop-Host 'CREDENTIAL_MISSING' $k } }
+      foreach ($k in @($FactsSecrets | Where-Object { $script:CredentialList.required.Contains($_) })) { if (-not $fps.Contains($k)) { Stop-Host 'CREDENTIAL_MISSING' $k } }
       $appKeyId = 0L; if (-not [long]::TryParse([string](Get-Key $public 'appKeyId'), [ref]$appKeyId)) { Stop-Host 'APP_KEY_ID_NOT_A_NUMBER' $null }
       $hbId = [string](Get-Key $public 'heartbeatBindingId'); if ($hbId -ceq '') { $hbId = $null }
       $nodeRecord = [ordered]@{ appKeyId = $appKeyId; appPublicKeySha256Base64 = $fps['appKey']; ciPrincipalBindingId = [string](Get-Key $public 'ciPrincipalBindingId')
@@ -801,12 +1039,14 @@ function Invoke-HostPreparation {
     # records, and -Reset removes it; never the App key and the ci-admission token without the facts that say whose they are.
     if ($null -eq $old) { Write-NewFile $factsFile ($Utf8.GetBytes((ConvertTo-JsonLine $facts) + "`n")) (Get-FirstInstallSddl $operator) }
     Write-Secrets $controllerSid
+    # then the companion's token into its own isolated configuration (the login script; never in facts.json, never in credentials\)
+    if ($companionSource -ceq 'ask' -and $null -ne $script:CompanionToken) { Write-CompanionToken $gl $nodeProfile.ownerProfileDirectory $nodeProfile.ownerSid $GhExe $script:CompanionToken }
     Clear-Secrets
     $cw = [ordered]@{ contract = 'clued.independent-ci.companion-wsl/1'; distro = $Distribution; target = ($ImportDirectory + '\ext4.vhdx'); companionSid = $nodeProfile.ownerSid; stage = 'owner-imported'; imported = $true; importedBy = $operator }
     $cwFile = Join-Path $FirstDir 'companion-wsl.json'
     if ([IO.File]::Exists($cwFile)) { if ($Strict8.GetString([IO.File]::ReadAllBytes($cwFile)).Trim() -cne (ConvertTo-JsonLine $cw)) { Stop-Host 'COMPANION_WSL_RECORD_ALREADY_WRITTEN_DIFFERS' $cwFile } }
     else { Write-NewFile $cwFile ($Utf8.GetBytes((ConvertTo-JsonLine $cw) + "`n")) (Get-FirstInstallSddl $operator) }
-    Step 'credentials' $plan.mode
+    Step 'credentials' ([ordered]@{ plan = $plan.mode; companionToken = $companionSource })
     ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $factsFile; factsSha256 = (Sha256File $factsFile); node = $nodeProfile.nodeName; credentials = $plan.mode })
   } finally {
     Clear-Secrets
@@ -843,8 +1083,9 @@ function Invoke-Reset($old, $observed, [string]$operator) {
     }
     $done += $a
   }
+  Step 'reset' ([ordered]@{ removed = $done; kept = @($plan.kept) })
   ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_RESET'; removed = $done; kept = @($plan.kept) })
 }
 
-$script:NodeExe = $null; $script:FingerprintTool = $null; $script:InstallMjs = $null; $script:Secrets = [ordered]@{}
+$script:NodeExe = $null; $script:FingerprintTool = $null; $script:InstallMjs = $null; $script:Secrets = [ordered]@{}; $script:StepNow = $null; $script:CompanionToken = $null; $script:CredentialList = $null
 if ($MyInvocation.InvocationName -ne '.') { Invoke-Host }

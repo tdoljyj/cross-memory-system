@@ -124,7 +124,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '7cad34ddacad4bd14cb0b487a7857f020bc4e398e750a9dedf4b98d20ed4ad26'
+TEMPLATE_SHA = 'f339a70d114db3351439085afbb38fe9b6b1569d8cecdbc8b0c6b97593502920'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])

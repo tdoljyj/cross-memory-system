@@ -75,6 +75,28 @@
       "sha256": "a3505a50f4cc585551d11d9de824ba4375448d7a68f2e71d3fb315fa986fc754",
       "bytes": 258985984,
       "pinSource": "GitHub release asset digest (sha256); Authenticode Valid, CN=Microsoft Corporation"
+    },
+    {
+      "name": "gh",
+      "use": "the GitHub CLI the companion runs (its own API calls and git's credential helper): installed by first-install-host.ps1 (msiexec /i /qn /norestart) when the kit's companion ghExe is absent, then ghExe must exist",
+      "url": "https://github.com/cli/cli/releases/download/v2.103.3/gh_2.103.3_windows_amd64.msi",
+      "fileName": "gh_2.103.3_windows_amd64.msi",
+      "kind": "msi",
+      "version": "2.103.3",
+      "sha256": "5073112b7abb5ffbba24b76aee7e89269af531218c0a42751f5f0bfb6440c2cc",
+      "bytes": 15450112,
+      "pinSource": "GitHub release asset digest (sha256) = gh_2.103.3_checksums.txt; Authenticode Valid, CN=GitHub, Inc. (DESK, 2026-11-20)"
+    },
+    {
+      "name": "git-for-windows",
+      "use": "Git for Windows at C:\\Program Files\\Git (the companion's PATH and git): installed by first-install-host.ps1 (/VERYSILENT /NORESTART) when cmd\\git.exe is absent, then it must exist",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.3/Git-2.55.0.3-64-bit.exe",
+      "fileName": "Git-2.55.0.3-64-bit.exe",
+      "kind": "exe",
+      "version": "2.55.0.3",
+      "sha256": "af12577d0fdff74243a5988197aa49b957d5044edc17004f6ddf0768996f1dca",
+      "bytes": 65388144,
+      "pinSource": "GitHub release asset digest (sha256); Authenticode Valid, CN=Johannes Schindelin (DESK, 2026-11-20)"
     }
   ],
   "debs": [

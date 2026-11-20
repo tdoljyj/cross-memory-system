@@ -24,6 +24,21 @@ if (Test-Path -LiteralPath $Scratch) { if (@(Get-ChildItem -LiteralPath $Scratch
 $here = $PSScriptRoot
 $n = 0
 function Yes([bool]$ok, [string]$what) { if (-not $ok) { throw ('FAILED:' + $what) }; $script:n++ }
+# H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
+# text and no package .ps1 merging a stream into its output): stdout, stderr and the exit code read apart; never an error from stderr.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  $p = [Diagnostics.Process]::Start($psi)
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
+}
 
 # 1. Parse, and take the helpers from the real scripts.
 $functions = @{}
@@ -563,8 +578,8 @@ if (Test-Path -LiteralPath $probeNode) {
   try {
     $control = Join-Path $Scratch 'dll-control'; [void][IO.Directory]::CreateDirectory($control); Copy-Item -LiteralPath $probeNode -Destination (Join-Path $control 'node.exe')
     foreach ($dll in $dlls) { [IO.File]::WriteAllBytes((Join-Path $control ($dll + '.dll')), [byte[]](1..64)) }
-    $null = & (Join-Path $control 'node.exe') -v 2>&1
-    Yes ($LASTEXITCODE -ne 0) 'sideload-control:planted-dlls-break-a-node-run-from-its-own-directory'
+    $sideload = Invoke-NativeChild (Join-Path $control 'node.exe') @('-v') 120
+    Yes ($sideload.exit -ne 0) 'sideload-control:planted-dlls-break-a-node-run-from-its-own-directory'
     Remove-Item -LiteralPath $control -Recurse -Force
     # The same files next to the PACKAGE's node.exe: they are not in the manifest, so the hash checks cannot see them, and the fingerprint
     # still comes out right because the copy in the fresh directory is what runs.

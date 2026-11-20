@@ -54,7 +54,7 @@
 #>
 param([string]$From, [ValidateSet('', 'host', 'launcher', 'cleanup')][string]$Stage = '', [string]$Result, [string]$Tar, [string]$ArchiveSha256,
   [string]$PrereqDirectory, [string]$PrereqManifest, [string]$PrereqManifestSha256, [string]$KitSha256, [string]$ToolchainNodeSha256, [string]$RegistrarSha256,
-  [string]$ExpectedOperatorSid, [string]$Launcher, [string]$LauncherSha256, [int]$ParentProcessId = 0, [long]$ParentStartTicks = 0, [switch]$Reset)
+  [string]$ExpectedOperatorSid, [string]$Launcher, [string]$LauncherSha256, [int]$ParentProcessId = 0, [long]$ParentStartTicks = 0, [string]$Kit, [switch]$Reset)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Web.Extensions   # JavaScriptSerializer (Windows PowerShell 5.1 does not load it by itself)
@@ -66,7 +66,7 @@ $PowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $TarExe = 'C:\Windows\System32\tar.exe'
 $Resident = 'tree/work/independent-ci-resident-v1'
 $PrereqContract = 'clued.independent-ci.fleet-node-prereq-manifest/1'
-$PrereqNames = @('node', 'python', 'git', 'ubuntu-rootfs', 'actions-runner', 'linux-node', 'wsl')
+$PrereqNames = @('node', 'python', 'git', 'ubuntu-rootfs', 'actions-runner', 'linux-node', 'wsl', 'gh', 'git-for-windows')
 $AdminOnlySddl = 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'
 $HostLimitSeconds = 4 * 3600      # P1: Windows features, WSL, accounts, the distribution, docker in it
 $LauncherLimitSeconds = 6 * 3600  # Linux A (1800 s) + B (7200 s) + first-train wait + verify, with margin
@@ -328,7 +328,7 @@ function ConvertTo-JsonLine($value, [switch]$Progress) {
   try { $js.Serialize($plain) } catch {
     # progress never throws: a line that cannot be written is replaced by one that keeps its status, step and code and names why
     $kept = [ordered]@{}
-    if ($plain -is [Collections.IDictionary]) { foreach ($k in @('status', 'step', 'code')) { if ($plain.Contains($k) -and $plain[$k] -is [string]) { $kept[$k] = $plain[$k] } } }
+    if ($plain -is [Collections.IDictionary]) { foreach ($k in @('status', 'step', 'code', 'name', 'result', 'rejectCode')) { if ($plain.Contains($k) -and $plain[$k] -is [string]) { $kept[$k] = $plain[$k] } } }
     $kept['notWritten'] = [string]$_.Exception.GetType().FullName
     $js.Serialize($kept)
   }
@@ -338,7 +338,13 @@ function Out-Result([string]$status, [string]$step, $extra) {
   if ($null -ne $extra) { foreach ($k in @($extra.Keys)) { $r[$k] = $extra[$k] } }
   ConvertTo-JsonLine $r -Progress
 }
-function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
+# The step lines (an aid), the shape windows/first-install-host.ps1 and the launcher print: {name, result: ok|failed, rejectCode, detail}.
+# One per step of this run that ends; a refusal prints its step as failed before the verdict. Never throws.
+function Out-Step([string]$name, [string]$result, $rejectCode, $detail) {
+  try { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail }) -Progress }
+  catch { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $(if ($rejectCode -is [string]) { $rejectCode } else { $null }); detail = '<not printable>' }) -Progress }
+}
+function Stop-Bootstrap([string]$step, [string]$code, $detail) { Out-Step $step 'failed' $code $null; Out-Result 'BOOTSTRAP_REFUSED' $step ([ordered]@{ code = $code; detail = $detail }); exit 1 }
 # One elevated stage of this same file (-File, arguments one by one). Returns its exit, its last JSON object and the output file;
 # declined: { declined = $true } (the caller decides what follows).
 function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [string[]]$switches = @()) {
@@ -347,9 +353,14 @@ function Invoke-Elevated([string]$step, [string[]]$named, [int]$limitSeconds, [s
   $p = $null
   try { $p = Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs -PassThru -WindowStyle Normal }
   catch { if (Test-UacDeclined $_.Exception) { return [ordered]@{ declined = $true; exit = $null; last = $null; output = $null } }; throw }
-  if (-not $p.WaitForExit($limitSeconds * 1000)) { Stop-Bootstrap $step 'ELEVATED_RUN_STILL_RUNNING' ([ordered]@{ pid = $p.Id; output = $result; note = 'nothing was killed' }) }
-  $text = if ([IO.File]::Exists($result)) { [IO.File]::ReadAllText($result) } else { $null }
-  [ordered]@{ declined = $false; exit = $p.ExitCode; last = (Get-LastJsonLine $text); output = $result }
+  if (-not $p.WaitForExit($limitSeconds * 1000)) {
+    foreach ($l in @((Read-StageResult $result).lines)) { [Console]::Out.WriteLine($l) }   # what the stage printed so far, as it is (never this function's value)
+    Stop-Bootstrap $step 'ELEVATED_RUN_STILL_RUNNING' ([ordered]@{ pid = $p.Id; output = $result; note = 'nothing was killed' })
+  }
+  $read = Read-StageResult $result
+  foreach ($l in @($read.lines)) { [Console]::Out.WriteLine($l) }   # the stage's lines, as they are (the child's step lines, the stage's notes, its verdict)
+  if ($step -cne 'cleanup' -and $null -eq $read.last) { Stop-Bootstrap $step 'STAGE_GAVE_NO_VERDICT' ([ordered]@{ exit = $p.ExitCode; output = $result; lines = @($read.lines).Count }) }
+  [ordered]@{ declined = $false; exit = $p.ExitCode; last = $read.last; output = $result }
 }
 function Invoke-NonElevated([string]$exe, [string[]]$arguments, [hashtable]$envAdd) {
   $psi = New-Object Diagnostics.ProcessStartInfo
@@ -365,18 +376,50 @@ function Invoke-NonElevated([string]$exe, [string[]]$arguments, [hashtable]$envA
 # launcher's Stop-Launch rethrown, an unhandled exception, any tool below it) stays text and never becomes a PowerShell error, which under
 # $ErrorActionPreference = 'Stop' ended the stage and lost the child's verdict (`& powershell ... 2>&1`). The child shares this stage's
 # console (CreateNoWindow off: P1's dialogs keep the window they had) and its own stdin. $limitSeconds 0: wait for it to end.
-function Invoke-StageChild([string]$exe, [string[]]$arguments, [int]$limitSeconds) {
+# Defect 0e004509: stdout is read line by line as the child prints it, and each line is appended to $appendTo (the stage's output file)
+# and flushed at once, so a child still running at the limit, or one that ends without a verdict, leaves every line it printed on disk
+# and in stdout here (ReadToEndAsync held them all until the child's end). At the limit: timedOut, the lines so far, nothing killed.
+function Invoke-StageChild([string]$exe, [string[]]$arguments, [int]$limitSeconds, [string]$appendTo = $null) {
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
   $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $false
   $proc = [Diagnostics.Process]::Start($psi)
-  $o = $proc.StandardOutput.ReadToEndAsync(); $e = $proc.StandardError.ReadToEndAsync()
-  if ($limitSeconds -gt 0 -and -not $proc.WaitForExit($limitSeconds * 1000)) {
-    return [ordered]@{ exit = $null; timedOut = $true; pid = $proc.Id; stdout = $null; stderr = $null; last = [ordered]@{ status = 'STAGE_CHILD_STILL_RUNNING'; pid = $proc.Id; note = 'nothing was killed' } }
+  $e = $proc.StandardError.ReadToEndAsync()
+  $out = New-Object Text.StringBuilder
+  $deadline = if ($limitSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($limitSeconds) } else { [DateTime]::MaxValue }
+  $read = $proc.StandardOutput.ReadLineAsync()
+  while ($true) {
+    if ($read.Wait(250)) {
+      $line = $read.Result
+      if ($null -eq $line) { break }   # the end of stdout: the child (and anything that held its stdout) is done
+      [void]$out.Append($line).Append("`n"); Add-ResultLine $appendTo $line
+      $read = $proc.StandardOutput.ReadLineAsync()
+    } elseif ([DateTime]::UtcNow -gt $deadline -and -not $proc.HasExited) {
+      return [ordered]@{ exit = $null; timedOut = $true; pid = $proc.Id; stdout = $out.ToString(); stderr = $null; last = [ordered]@{ status = 'STAGE_CHILD_STILL_RUNNING'; pid = $proc.Id; note = 'nothing was killed' } }
+    }
   }
-  $proc.WaitForExit()   # the asynchronous reads end with the child
+  $proc.WaitForExit()
   $err = [string]$e.Result
-  [ordered]@{ exit = $proc.ExitCode; timedOut = $false; pid = $proc.Id; stdout = [string]$o.Result; stderr = $(if ($err.Length -gt 4000) { $err.Substring($err.Length - 4000) } else { $err }); last = (Get-LastJsonLine ([string]$o.Result)) }
+  [ordered]@{ exit = $proc.ExitCode; timedOut = $false; pid = $proc.Id; stdout = $out.ToString(); stderr = $(if ($err.Length -gt 4000) { $err.Substring($err.Length - 4000) } else { $err }); last = (Get-LastJsonLine $out.ToString()) }
+}
+# One line appended to a stage's output file and flushed to disk (the outer run reads the file while the stage runs: shared for reading).
+function Add-ResultLine([string]$path, [string]$line) {
+  if (-not $path) { return }
+  $b = (New-Object Text.UTF8Encoding($false)).GetBytes($line + "`r`n")
+  $f = New-Object IO.FileStream($path, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+  try { $f.Write($b, 0, $b.Length); $f.Flush($true) } finally { $f.Dispose() }
+}
+# A child's verdict is the last object it printed that has a status; a step line ({name, result, ...}) or nothing is no verdict:
+# STAGE_CHILD_PRINTED_NO_VERDICT, by name (the lines it printed are in the stage's output file already).
+function Get-StageVerdict($run, [string]$child) {
+  if ($run.last -is [Collections.IDictionary] -and [string](Get-Key $run.last 'status')) { return $run.last }
+  [ordered]@{ status = 'STAGE_CHILD_PRINTED_NO_VERDICT'; child = $child; exit = $run.exit; timedOut = $run.timedOut }
+}
+# The outer run's reading of a stage's output file: every line, and the verdict (the last object with a status) or $null.
+function Read-StageResult([string]$path) {
+  $text = if ($path -and [IO.File]::Exists($path)) { $fs = New-Object IO.FileStream($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite); try { (New-Object IO.StreamReader($fs, (New-Object Text.UTF8Encoding($false)))).ReadToEnd() } finally { $fs.Dispose() } } else { $null }
+  $last = Get-LastJsonLine $text
+  [ordered]@{ lines = @(([string]$text) -split "`r?`n" | Where-Object { $_ -ne '' }); last = $(if ($last -is [Collections.IDictionary] -and [string](Get-Key $last 'status')) { $last } else { $null }) }
 }
 # One prerequisite file into $dest: <From>\<fileName> when it has the pinned hash, else downloaded; held to sha256 and size either way.
 function Get-Prereq($item, [string]$dest) {
@@ -411,7 +454,8 @@ function Expand-Cached([string]$zip, [string]$name, [string]$sha256, $maxEntryPa
 
 # ------------------------------------------------------------------ the elevated stages (this file, -Stage)
 function Invoke-Stage {
-  $lines = New-Object Collections.Generic.List[string]; $stageDir = $null; $status = $null; $verdict = $null
+  $stageDir = $null; $status = $null; $verdict = $null
+  $out = if ($Result -and (Test-SafePath $Result)) { $Result } else { $null }   # every line below is appended to it when it is made
   try {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent()
     if (-not (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'STAGE_NOT_ELEVATED' }
@@ -423,12 +467,12 @@ function Invoke-Stage {
       [void][IO.Directory]::CreateDirectory($stageDir, $ds)
     }
     if ($Stage -ceq 'host') {
-      foreach ($p in @($Tar, $PrereqDirectory, $PrereqManifest)) { if (-not (Test-SafePath $p)) { throw ('STAGE_ARGUMENT_REFUSED:' + $p) } }
+      foreach ($p in @($Tar, $PrereqDirectory, $PrereqManifest, $Kit)) { if (-not (Test-SafePath $p)) { throw ('STAGE_ARGUMENT_REFUSED:' + $p) } }
       foreach ($h in @($ArchiveSha256, $PrereqManifestSha256, $KitSha256, $ToolchainNodeSha256, $RegistrarSha256)) { if ($h -cnotmatch '^[0-9a-f]{64}$') { throw 'STAGE_ARGUMENT_REFUSED:sha256' } }
       # H2: tokens an earlier run left (it gave up waiting, its window was closed, its cleanup was declined) never outlive this start:
       # P1 asks for them again and holds them to the fingerprints facts.json records
       $swept = Clear-CredentialDirectory $CredentialDirectory
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ credentialsLeftByAnEarlierRun = $swept.existed; removed = $swept.cleared; directory = $CredentialDirectory }) -Progress))
+      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ credentialsLeftByAnEarlierRun = $swept.existed; removed = $swept.cleared; directory = $CredentialDirectory }) -Progress)
       if (-not $swept.cleared) { throw ('CREDENTIALS_LEFT_BY_AN_EARLIER_RUN_NOT_REMOVED:' + $CredentialDirectory) }
       $copy = Join-Path $stageDir 'a.tar'
       [IO.File]::Copy($Tar, $copy, $false)
@@ -438,38 +482,35 @@ function Invoke-Stage {
       $p1 = Join-Path $stageDir ($Resident.Replace('/', '\') + '\windows\first-install-host.ps1')
       $p1Args = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $p1, '-Tree', (Join-Path $stageDir 'tree'), '-PrereqDirectory', $PrereqDirectory,
         '-PrereqManifest', $PrereqManifest, '-PrereqManifestSha256', $PrereqManifestSha256, '-KitSha256', $KitSha256, '-ToolchainNodeSha256', $ToolchainNodeSha256,
-        '-RegistrarSha256', $RegistrarSha256, '-ExpectedOperatorSid', $ExpectedOperatorSid)
+        '-RegistrarSha256', $RegistrarSha256, '-ExpectedOperatorSid', $ExpectedOperatorSid, '-Kit', $Kit)   # the kit: P1 holds it to -KitSha256 and reads gh's path from it
       if ($Reset) { $p1Args += '-Reset' }
-      $run = Invoke-StageChild $PowerShellExe $p1Args 0
-      foreach ($l in @(([string]$run.stdout) -split "`r?`n" | Where-Object { $_ -ne '' })) { $lines.Add($l) }
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ child = 'first-install-host.ps1'; exit = $run.exit; stderr = $run.stderr }) -Progress))
-      $verdict = $(if ($null -ne $run.last) { $run.last } else { [ordered]@{ status = 'STAGE_CHILD_PRINTED_NO_VERDICT'; child = 'first-install-host.ps1'; exit = $run.exit } })
+      $run = Invoke-StageChild $PowerShellExe $p1Args 0 $out
+      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ child = 'first-install-host.ps1'; exit = $run.exit; stderr = $run.stderr }) -Progress)
+      $verdict = Get-StageVerdict $run 'first-install-host.ps1'
       $status = [string](Get-Key $verdict 'status')
     } elseif ($Stage -ceq 'launcher') {
       if (-not (Test-SafePath $Launcher) -or $LauncherSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'STAGE_ARGUMENT_REFUSED:launcher' }
       $copy = Join-Path $stageDir 'launcher.ps1'
       [IO.File]::Copy($Launcher, $copy, $false)
       if ((Sha256File $copy) -cne $LauncherSha256) { throw 'LAUNCHER_CHANGED' }
-      $run = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $copy, '-RunApprovedInstall') 0
-      foreach ($l in @(([string]$run.stdout) -split "`r?`n" | Where-Object { $_ -ne '' })) { $lines.Add($l) }
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ child = 'launcher'; exit = $run.exit; stderr = $run.stderr }) -Progress))
-      $verdict = $(if ($null -ne $run.last) { $run.last } else { [ordered]@{ status = 'STAGE_CHILD_PRINTED_NO_VERDICT'; child = 'launcher'; exit = $run.exit } })
+      $run = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $copy, '-RunApprovedInstall') 0 $out
+      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ child = 'launcher'; exit = $run.exit; stderr = $run.stderr }) -Progress)
+      $verdict = Get-StageVerdict $run 'launcher'
       $status = [string](Get-Key $verdict 'status')
     } else { $status = 'CLEANUP' }
   } catch {
     $f = Get-StageFailure $Stage $_.Exception
-    $lines.Add((ConvertTo-JsonLine $f -Progress)); $status = $f.status; $verdict = $f
+    Add-ResultLine $out (ConvertTo-JsonLine $f -Progress); $status = $f.status; $verdict = $f
   } finally {
     if ($stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
     $parentAlive = Test-ParentAlive $ParentProcessId $ParentStartTicks
     if (Test-CredentialsToClear $Stage $status $parentAlive) {
       $c = Clear-CredentialDirectory $CredentialDirectory
-      $lines.Add((ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $c.cleared; directory = $CredentialDirectory; bootstrapStillWaiting = $parentAlive }) -Progress))
-      if ($Stage -ceq 'cleanup') { $lines.Add((ConvertTo-JsonLine ([ordered]@{ status = $(if ($c.cleared) { 'CREDENTIALS_CLEARED' } else { 'CREDENTIALS_LEFT' }); directory = $CredentialDirectory }) -Progress)) }
+      Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ credentialsCleared = $c.cleared; directory = $CredentialDirectory; bootstrapStillWaiting = $parentAlive }) -Progress)
+      if ($Stage -ceq 'cleanup') { Add-ResultLine $out (ConvertTo-JsonLine ([ordered]@{ status = $(if ($c.cleared) { 'CREDENTIALS_CLEARED' } else { 'CREDENTIALS_LEFT' }); directory = $CredentialDirectory }) -Progress) }
     }
     # the verdict stays the last object: the child's (or the stage's failure), repeated after the notes
-    if ($Stage -cne 'cleanup' -and $null -ne $verdict) { $lines.Add((ConvertTo-JsonLine $verdict -Progress)) }
-    if ($Result -and (Test-SafePath $Result)) { [IO.File]::WriteAllLines($Result, $lines.ToArray(), (New-Object Text.UTF8Encoding($false))) }
+    if ($Stage -cne 'cleanup' -and $null -ne $verdict) { Add-ResultLine $out (ConvertTo-JsonLine $verdict -Progress) }
   }
 }
 
@@ -490,6 +531,7 @@ function Invoke-Bootstrap {
   $t = 'fleet-node-' + $version
   $firstInstall = -not [IO.File]::Exists($ReceiptFile)
   if ($Reset -and -not $firstInstall) { Stop-Bootstrap 'arguments' 'RESET_ONLY_WITHOUT_A_RESIDENT' 'this node has an install receipt: it is reinstalled or uninstalled, never reset' }
+  Out-Step 'arguments' 'ok' $null ([ordered]@{ firstInstall = $firstInstall; version = $version })
   $sums = try { Read-Sha256Sums ([IO.File]::ReadAllText((Join-Path $script:From 'SHA256SUMS'))) } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null }
   $firstSumsFile = Join-Path $script:From "$t.first-install.SHA256SUMS"
   $firstSums = if ([IO.File]::Exists($firstSumsFile)) { try { Read-Sha256Sums ([IO.File]::ReadAllText($firstSumsFile)) } catch { Stop-Bootstrap 'assets' ([string]$_.Exception.Message) $null } } else { $null }
@@ -503,6 +545,7 @@ function Invoke-Bootstrap {
   if ($codes.Count) { Stop-Bootstrap 'assets' 'ASSET_SET_REFUSED' $codes }
   $all = [ordered]@{}; foreach ($k in @($sums.Keys)) { $all[$k] = $sums[$k] }; if ($null -ne $firstSums) { foreach ($k in @($firstSums.Keys)) { $all[$k] = $firstSums[$k] } }
   foreach ($n in @($all.Keys)) { if ((Sha256File (Join-Path $script:From $n)) -cne $all[$n]) { Stop-Bootstrap 'assets' 'ASSET_HASH_MISMATCH' $n } }
+  Out-Step 'assets' 'ok' $null @($all.Keys)
   # 2. the prerequisites
   $m = $js.DeserializeObject([IO.File]::ReadAllText($prereqFile))
   # M6: only what this run's path uses is fetched and must be pinned (a reinstall: node, python, git; a first install: everything)
@@ -523,6 +566,7 @@ function Invoke-Bootstrap {
   $pyExe = @(Get-ChildItem -LiteralPath $tools['python'] -Recurse -Filter python.exe | ForEach-Object { $_.FullName })
   $gitExe = @(Get-ChildItem -LiteralPath $tools['git'] -Recurse -Filter git.exe | Where-Object { $_.Directory.Name -ceq 'cmd' } | ForEach-Object { $_.FullName })
   if ($nodeExe.Count -ne 1 -or $pyExe.Count -ne 1 -or $gitExe.Count -ne 1) { Stop-Bootstrap 'prereq' 'PREREQ_TOOL_NOT_ONE' ([ordered]@{ node = $nodeExe.Count; python = $pyExe.Count; git = $gitExe.Count }) }
+  Out-Step 'prereq' 'ok' $null @($needed)
   $path = (Split-Path -Parent $pyExe[0]) + ';' + (Split-Path -Parent $gitExe[0]) + ';' + (Split-Path -Parent $nodeExe[0]) + ';C:\Windows\System32;C:\Windows'
   $childEnv = @{ PATH = $path; PSModulePath = $env:PSModulePath }
   # 3. the archive's tree (a new work directory every run: never a half one)
@@ -530,6 +574,7 @@ function Invoke-Bootstrap {
   $x = Join-Path $script:Work 'x'; [void][IO.Directory]::CreateDirectory($x)
   & $TarExe -x -f $tar -C $x 'tree' 'universal-manifest.json'
   if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'unpack' 'ARCHIVE_EXTRACT_FAILED' $LASTEXITCODE }
+  Out-Step 'unpack' 'ok' $null $null
   $install = Join-Path $x ($Resident.Replace('/', '\') + '\rollout\fleet\install.mjs')
   $acceptance = Join-Path $script:From "$t.acceptance.json"
   $archiveSha = $sums["$t.tar"]
@@ -544,20 +589,27 @@ function Invoke-Bootstrap {
     if ($c.exit -ne 0 -or $fc.Count) {
       Stop-Bootstrap 'first-install-check' $(if ($fc -ccontains 'CONTROLLER_NODE_NOT_THE_FLEETS') { 'CONTROLLER_NODE_NOT_THE_FLEETS' } else { 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' }) ([ordered]@{ codes = $fc; exit = $c.exit; last = $chk; stderr = $c.stderr })
     }
+    Out-Step 'first-install-check' 'ok' $null $null
     # M3: the elevated stage reads local copies only (the archive and the manifest copied into the work directory, held to their hashes;
     # the prerequisites are there already): an elevated token does not see a drive letter the Owner mapped
     $hostIn = Join-Path $script:Work 'host-inputs'
     $tarLocal = try { Copy-ToWork $tar $hostIn $archiveSha } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
     $prereqLocal = try { Copy-ToWork $prereqFile $hostIn $sums["$t.prereq-manifest.json"] } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
-    foreach ($p in @($tarLocal, $pre, $prereqLocal)) { if (-not (Test-UnderDirectory $p $script:Work)) { Stop-Bootstrap 'host' 'ELEVATED_INPUT_NOT_LOCAL' $p } }
+    $kitLocal = try { Copy-ToWork (Join-Path $script:From "$t.first-install-kit.json") $hostIn ([string]$chk['kitSha256']) } catch { Stop-Bootstrap 'host' 'LOCAL_COPY_REFUSED' ([string]$_.Exception.Message) }
+    foreach ($p in @($tarLocal, $pre, $prereqLocal, $kitLocal)) { if (-not (Test-UnderDirectory $p $script:Work)) { Stop-Bootstrap 'host' 'ELEVATED_INPUT_NOT_LOCAL' $p } }
     $hostArgs = @('-Tar', $tarLocal, '-ArchiveSha256', $archiveSha, '-PrereqDirectory', $pre, '-PrereqManifest', $prereqLocal, '-PrereqManifestSha256', $sums["$t.prereq-manifest.json"],
-      '-KitSha256', [string]$chk['kitSha256'], '-ToolchainNodeSha256', [string]$chk['toolchainNodeSha256'], '-RegistrarSha256', [string]$chk['registrarSha256'], '-ExpectedOperatorSid', $operator)
+      '-KitSha256', [string]$chk['kitSha256'], '-ToolchainNodeSha256', [string]$chk['toolchainNodeSha256'], '-RegistrarSha256', [string]$chk['registrarSha256'], '-ExpectedOperatorSid', $operator, '-Kit', $kitLocal)
     $h = Invoke-Elevated 'host' $hostArgs $HostLimitSeconds $(if ($Reset) { @('-Reset') } else { @() })
     if ($h.declined) { Stop-Bootstrap 'host' 'UAC_DECLINED' 'nothing elevated ran; run the same command again to continue' }
     $st = [string](Get-Key $h.last 'status')
-    if ($Reset) { Out-Result $(if ($st -ceq 'FIRST_INSTALL_HOST_RESET') { 'BOOTSTRAP_RESET_DONE' } else { 'BOOTSTRAP_RESET_NOT_DONE' }) 'host' ([ordered]@{ last = $h.last; output = $h.output }); return }
-    if ($st -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { Out-Result 'RESTART_THEN_RUN_THE_SAME_COMMAND' 'host' ([ordered]@{ detail = $h.last }); exit 3 }
+    if ($Reset) {
+      $resetDone = $st -ceq 'FIRST_INSTALL_HOST_RESET'
+      Out-Step 'host' $(if ($resetDone) { 'ok' } else { 'failed' }) $(if ($resetDone) { $null } else { 'BOOTSTRAP_RESET_NOT_DONE' }) $(if ($resetDone) { [ordered]@{ status = $st } } else { $null })
+      Out-Result $(if ($resetDone) { 'BOOTSTRAP_RESET_DONE' } else { 'BOOTSTRAP_RESET_NOT_DONE' }) 'host' ([ordered]@{ last = $h.last; output = $h.output }); return
+    }
+    if ($st -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { Out-Step 'host' 'failed' 'RESTART_THEN_RUN_THE_SAME_COMMAND' $null; Out-Result 'RESTART_THEN_RUN_THE_SAME_COMMAND' 'host' ([ordered]@{ detail = $h.last }); exit 3 }
     if ($h.exit -ne 0 -or $st -cne 'FIRST_INSTALL_HOST_READY') { Stop-Bootstrap 'host' 'HOST_PREPARATION_NOT_DONE' ([ordered]@{ exit = $h.exit; last = $h.last; output = $h.output }) }
+    Out-Step 'host' 'ok' $null ([ordered]@{ status = $st })
     $prepareArgs += @('--from', $script:From)
   }
   # 5. prepare (non-elevated), then its launcher elevated; after a first install's host preparation every failure clears the tokens
@@ -573,11 +625,13 @@ function Invoke-Bootstrap {
   if ($pr.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains $ps -or -not (Test-SafePath ([string](Get-Key $lch 'path'))) -or [string](Get-Key $lch 'sha256') -cnotmatch '^[0-9a-f]{64}$') {
     Stop-Bootstrap 'prepare' 'PREPARE_REFUSED' ([ordered]@{ exit = $pr.exit; last = $pr.last; stderr = $pr.stderr; cleanup = (& $clear 'prepare') })
   }
+  Out-Step 'prepare' 'ok' $null ([ordered]@{ status = $ps })
   $l = Invoke-Elevated 'launcher' @('-Launcher', [string]$lch['path'], '-LauncherSha256', [string]$lch['sha256'], '-ExpectedOperatorSid', $operator) $LauncherLimitSeconds
   if ($l.declined) { Stop-Bootstrap 'launcher' 'UAC_DECLINED' ([ordered]@{ note = 'the launcher did not run; run the same command again'; cleanup = (& $clear 'launcher declined') }) }
   $ls = [string](Get-Key $l.last 'status')
   # M4: a first install is done only with the companion switch passed (Get-LauncherVerdict)
   $v = Get-LauncherVerdict $firstInstall $l.last
+  Out-Step 'launcher' $(if ($v.status -ceq 'BOOTSTRAP_DONE') { 'ok' } else { 'failed' }) $(if ($v.status -ceq 'BOOTSTRAP_DONE') { $null } else { $v.status }) $(if ($v.status -ceq 'BOOTSTRAP_DONE') { [ordered]@{ launcher = $ls; companionSwitch = $v.companionSwitch; exit = $l.exit } } else { $null })
   Out-Result $v.status 'launcher' ([ordered]@{ firstInstall = $firstInstall; prepare = $ps; launcher = $ls; companionSwitch = $v.companionSwitch; next = $v.next
     residueUnchecked = (Get-Key $pr.last 'residueUnchecked'); exit = $l.exit; output = $l.output })
   if ($v.status -cne 'BOOTSTRAP_DONE') { exit 1 }

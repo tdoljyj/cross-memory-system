@@ -49,6 +49,8 @@ export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${
   // the resident files whose one source lies outside the resident tree (build-package.mjs RESIDENT_EXTERNAL): the node builds from this tree
   ...RESIDENT_EXTERNAL.map(e => e.source)]);
 const excluded = p => TREE_EXCLUDED.some(x => p.startsWith(x)) || (p.startsWith(`${RESIDENT}/`) && EXCLUDED_PART.test(p.slice(RESIDENT.length + 1)));
+// Whether a repository path is left out of the tree (the package's own rule; test/native-child.test.mjs walks the package's .ps1 by it).
+export const isExcludedFromTree = p => excluded(p);
 const IMPORT_RE = /\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]|new URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url/g;
 
 const sha = b => createHash('sha256').update(b).digest('hex');

@@ -70,6 +70,8 @@ $Done = New-Object Collections.ObjectModel.ObservableCollection[string]
 $Done.add_CollectionChanged({ param($sender, $e)
     if ($e.Action -ne [Collections.Specialized.NotifyCollectionChangedAction]::Add) { return }
     foreach ($step in @($e.NewItems)) {
+      $lineDetail = $Progress['detail']; $Progress['detail'] = $null   # what the step left for its own line (Step-WaitFirstTrain), once
+      try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = [string]$step; result = 'ok'; rejectCode = $null; detail = $lineDetail }) -Depth 6 -Compress)) } catch { }   # the step line (see Write-StepLine)
       $Progress.count++
       if (-not $Progress.out) { continue }   # before the launch directory exists (Step-Output): nothing of this launch has changed anything yet
       $leaf = $Progress.count.ToString('000') + '-' + ([string]$step -replace '[^A-Za-z0-9-]', '_') + '.json'
@@ -143,7 +145,15 @@ function Restore-W1Pause {
   } catch { $r.reason = 'RESTORE_FAILED:' + $_.Exception.GetType().Name }
   $W1Restore.result = $r
 }
+# The step lines (an aid; the shape windows/first-install-host.ps1 and rollout/fleet/bootstrap.ps1 print): {name, result: ok|failed,
+# rejectCode, detail}, one per completed step (the progress handler above) and one for a stop, written to stdout directly ([Console]::Out,
+# never the pipeline: no step function's return value carries them). Never throws.
+function Write-StepLine([string]$name, [string]$result, $rejectCode, $detail) {
+  try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail }) -Depth 6 -Compress)) }
+  catch { try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = [string]$rejectCode; detail = '<not printable>' }) -Compress)) } catch { } }
+}
 function Stop-Launch([string]$code, $detail) {
+  if (Test-Path -LiteralPath 'function:Write-StepLine') { Write-StepLine 'launcher' 'failed' $code $null }   # a harness that runs this function alone need not define it
   Remove-FleetCarry   # before the terminal is written, so that it says what became of the carried token copies
   # and whether the W1 pause was lifted again (only while armed: nothing of the node has changed). Asked for by name: the launcher
   # always defines $W1Restore; a harness that runs this function alone need not.
@@ -659,7 +669,11 @@ function Step-WaitFirstTrain {
   $r = [ordered]@{ observed = $false; notApplicable = $false; notApplicableObservation = $null; halted = $false; runnerQuiet = $false; seconds = $null; last = $null; error = $null }
   $sf = Join-Path $ResidentRoot 'state\status.json'
   $script:FirstTrainSeen = $null
+  # Evidence for the next ruling ("package branch, two points" A; the wait itself is unchanged): what the new resident's status showed during phase 1,
+  # each change once with the time it was first seen (executor state and reason, train, halt, node mode and role probe, live queue).
+  $script:FirstTrainObservations = New-Object Collections.ArrayList; $script:FirstTrainObservedKey = $null
   $t0 = [DateTime]::UtcNow
+  $iso = { param([DateTime]$d) $d.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture) }
   try {
     $r.observed = Wait-Until {
       # Direct deserialization preserves the raw top-level JSON shape; the
@@ -668,6 +682,15 @@ function Step-WaitFirstTrain {
       if ($null -eq $s -or $s -isnot [Collections.IDictionary]) { return $false }
       $e = Get-Key $s 'executor'; $tr = Get-Key $s 'train'
       $script:FirstTrainSeen = [ordered]@{ writtenAt = (Get-Key $s 'writtenAt'); state = (Get-Key $e 'state'); reason = (Get-Key $e 'reason'); trainEnabled = (Get-Key $tr 'enabled'); trainLast = (Get-Key $tr 'last'); halt = (Get-Key $s 'halt') }
+      try {
+        $nd = Get-Key $s 'node'; $pb = Get-Key $nd 'probe'; $qu = Get-Key $s 'queue'
+        $seen = [ordered]@{ state = $script:FirstTrainSeen.state; reason = $script:FirstTrainSeen.reason; trainEnabled = $script:FirstTrainSeen.trainEnabled; trainLast = $script:FirstTrainSeen.trainLast
+          halt = ($null -ne $script:FirstTrainSeen.halt); mode = (Get-Key $nd 'mode'); probeAt = (Get-Key $pb 'at'); probeResult = (Get-Key $pb 'result'); probeFailures = (Get-Key $pb 'failures'); live = (Get-Key $qu 'live') }
+        $key = ConvertTo-Json -InputObject $seen -Depth 4 -Compress
+        if ($key -cne $script:FirstTrainObservedKey -and $script:FirstTrainObservations.Count -lt 60) {
+          $script:FirstTrainObservedKey = $key; $o = [ordered]@{ at = (& $iso ([DateTime]::UtcNow)) }; foreach ($k in @($seen.Keys)) { $o[$k] = $seen[$k] }; [void]$script:FirstTrainObservations.Add($o)
+        }
+      } catch { }
       if ($null -ne $script:FirstTrainSeen.halt -or [string]$script:FirstTrainSeen.state -ceq 'HALTED') { return $true }
       if (Test-FirstTrainNotApplicable $s $t0) {
         $n = $s['node']; $p = $n['probe']
@@ -680,6 +703,7 @@ function Step-WaitFirstTrain {
     } $FirstTrainWaitSeconds
   } catch { $r.error = $_.Exception.Message }
   if ($r.notApplicable) { $r.observed = $false }
+  $r['phase1EndedAt'] = & $iso ([DateTime]::UtcNow)
   $r.last = $script:FirstTrainSeen
   if ($null -ne $r.last) { $r.halted = ($null -ne $r.last.halt -or [string]$r.last.state -ceq 'HALTED') }
   try {
@@ -691,9 +715,13 @@ function Step-WaitFirstTrain {
     }
     $r.runnerQuiet = Wait-Until { (& $quiet) -and (& { Start-Sleep -Seconds 5; & $quiet }) } $RunnerQuietWaitSeconds
   } catch { $r.error = [string]$r.error + ' ' + $_.Exception.Message }
-  $r.seconds = [int]([DateTime]::UtcNow - $t0).TotalSeconds
+  $t1 = [DateTime]::UtcNow
+  $r.seconds = [int]($t1 - $t0).TotalSeconds
+  $r['startedAt'] = & $iso $t0; $r['endedAt'] = & $iso $t1; $r['observations'] = @($script:FirstTrainObservations)
   $r['runnerAfter'] = (Get-RunnerState).flags
   Write-Json 'first-train-report.json' $r
+  $Progress['detail'] = [ordered]@{ startedAt = $r['startedAt']; phase1EndedAt = $r['phase1EndedAt']; endedAt = $r['endedAt']; seconds = $r.seconds; observed = $r.observed
+    notApplicable = $r.notApplicable; halted = $r.halted; runnerQuiet = $r.runnerQuiet; observations = $r['observations'] }
   $Done.Add($(if (-not $r.runnerQuiet) { 'runner-not-quiet-verify-skipped' } elseif ($r.notApplicable) { 'first-train-not-applicable' } elseif ($r.observed -and -not $r.halted) { 'first-train' } else { 'first-train-not-observed' }))
   $r
 }
@@ -1691,10 +1719,15 @@ try {
   $maintenanceDeferred = $CompanionMaintenance -and $verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed
   # The controlled maintenance path must reach a genuinely empty process tree.
   # Its account switch starts/qualifies the companion after the move itself.
-  $companion = if ($maintenanceDeferred) { [ordered]@{ started = $false; maintenanceDeferred = $true; error = $null } } elseif ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
+  # A first install (Fable ruling 11-19 renew-key, "eight on the path" 3): the install registered the companion's first task with the
+  # companion account's interactive token, which an account that never logs on cannot run; the account switch below replaces it and
+  # qualifies the companion itself (its new process in session 0: heartbeat and facts). So after verify and the confirmed pause a first
+  # install goes straight to the switch; nothing is started first. A reinstall is unchanged.
+  $firstInstallSwitch = [bool]$FleetFirstInstall -and $verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed -and -not $maintenanceDeferred
+  $companion = if ($maintenanceDeferred) { [ordered]@{ started = $false; maintenanceDeferred = $true; error = $null } } elseif ($firstInstallSwitch) { [ordered]@{ started = $false; firstInstallSwitch = $true; error = $null } } elseif ($verify.status -ceq 'RESIDENT_VERIFIED' -and $pause.confirmed) { Step-StartCompanion } else { [ordered]@{ started = $false; error = 'NOT_STARTED_VERIFY_OR_PAUSE_NOT_PASSED' } }
   $rearm = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and $companion.started) { Step-Rearm } else { [ordered]@{ requested = $false; cleared = $false; error = 'NOT_REQUESTED_VERIFY_OR_COMPANION_NOT_PASSED' } }
   if ($CompanionWslVhdxDirectory) { Write-Json 'companion-wsl-carry-report.json' (Step-CarryCompanionWslRecord ([string](Get-Key $uninstall 'keptAt'))) }
-  $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
+  $companionHeadless = if ($verify.status -ceq 'RESIDENT_VERIFIED' -and ($companion.started -or $maintenanceDeferred -or $firstInstallSwitch)) { Step-CompanionHeadless } else { [ordered]@{ ran = $false; status = 'NOT_RUN_VERIFY_OR_COMPANION_NOT_PASSED' } }
 } catch {
   Remove-FleetCarry
   Restore-W1Pause

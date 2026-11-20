@@ -55,11 +55,11 @@ DEFER_DRIVER = r'''
 param([string]$Template,[string]$Case)
 $ErrorActionPreference='Stop';Set-StrictMode -Version 2
 $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($Template,[ref]$tokens,[ref]$errors)
-$CompanionMaintenance=$Case -cne 'default';$verify=@{status='RESIDENT_VERIFIED'};$pause=@{confirmed=$Case -cne 'unpaused'}
+$CompanionMaintenance=$Case -cne 'default';$verify=@{status='RESIDENT_VERIFIED'};$pause=@{confirmed=$Case -cne 'unpaused'};$FleetFirstInstall=$null
 $script:starts=0;$script:switches=0
 function Step-StartCompanion {$script:starts++;return @{started=$true}}
 function Step-CompanionHeadless {$script:switches++;return @{ran=$true}}
-foreach($name in @('maintenanceDeferred','companion','companionHeadless')){
+foreach($name in @('maintenanceDeferred','firstInstallSwitch','companion','companionHeadless')){
   $nodes=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq ('$'+$name)},$true))
   if($nodes.Count -ne 1){throw 'ASSIGNMENT_NOT_UNIQUE'}
   . ([scriptblock]::Create($nodes[0].Extent.Text))

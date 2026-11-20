@@ -28,14 +28,15 @@ foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.F
 foreach ($name in @('Get-Key', 'Get-Rid', 'Get-NodeProfile', 'Get-Signer', 'Get-CiRootSddl', 'Get-FirstInstallSddl', 'Get-AdminOnlySddl', 'Test-SddlIs', 'Get-ResidueCodes',
     'Get-TokenFingerprint', 'New-FirstInstallFacts', 'Test-SameFacts', 'Test-LinuxFirstInstallFacts', 'Test-ExpectedOperator', 'Get-ServiceSid', 'Test-CiRootHasResidentAce',
     'Get-WslVersion', 'Get-CredentialPlan', 'Get-ResetPlan', 'Test-DenyServiceLogon', 'Get-V1BaseCodes', 'Get-DebListText',
-    'Sha256File', 'Write-NewFile', 'Get-ExpandState', 'Test-ZipExpanded', 'Expand-Verified', 'Get-MissingCredentials', 'Get-HeartbeatPrompt',
-    'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Step')) {
+    'Sha256File', 'Write-NewFile', 'Get-ExpandState', 'Test-ZipExpanded', 'Expand-Verified', 'Get-MissingCredentials', 'Get-HeartbeatPrompt', 'Test-CredentialFileName', 'Read-CredentialFiles',
+    'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Get-StepLine', 'Step', 'Get-CredentialDialogCode')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
-  if ($a.Left.Extent.Text -cin @('$Distribution', '$ResidentRoot', '$FactsContract', '$Utf8', '$Strict8', '$SecretTargets', '$CiRoot', '$VhdxDirectory')) { . ([scriptblock]::Create($a.Extent.Text)) }
+  if ($a.Left.Extent.Text -cin @('$Distribution', '$ResidentRoot', '$FactsContract', '$Utf8', '$Strict8', '$SecretTargets', '$CiRoot', '$VhdxDirectory', '$FactsSecrets', '$CredentialFilesContract')) { . ([scriptblock]::Create($a.Extent.Text)) }
 }
 $js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = [int]::MaxValue   # reads lines longer than the default 2,097,152
+$script:CredentialList = if ($functions.ContainsKey('Read-CredentialFiles')) { try { Read-CredentialFiles (Join-Path $here 'credential-files.json') } catch { $script:failures.Add('credential-files.json: ' + $_.Exception.Message); $null } } else { $null }
 $res = Split-Path -Parent $here
 $text = [IO.File]::ReadAllText($file)
 $main = $text.Substring($text.IndexOf('function Invoke-HostPreparation'))
@@ -318,7 +319,63 @@ try {
     Yes ((Get-MissingCredentials $all @('appKey', 'ciToken', 'upgradeToken')).Count -eq 0) 'l3:first-run-heartbeat-optional'
     Yes (((Get-MissingCredentials $all @('appKey', 'upgradeToken')) -join ',') -ceq 'ciToken') 'l3:first-run-ci-token-required'
     Yes ((Get-HeartbeatPrompt $true) -notmatch 'empty' -and (Get-HeartbeatPrompt $false) -match 'leave empty for none') 'l3:prompt'
-    Yes ($main -match 'Get-HeartbeatPrompt \(\$null -ne \$old\)' -and $main -match 'Get-MissingCredentials \$plan') 'l3:used'
+    Yes ($main -match 'Get-HeartbeatPrompt \(\$null -ne \$old -or \$script:CredentialList\.required\.Contains\(''heartbeatToken''\)\)' -and $main -match 'Get-MissingCredentials \$plan') 'l3:used'
+  }
+  # "credential list source": the two groups are data shipped with the package (windows\credential-files.json, next to the script, in
+  # the archive under its hash), read when P1 starts; the script names no credential file. Moving a name between the groups in the data
+  # changes what the package does; a list that is missing, unreadable, of another contract, with a file name twice or a name in both
+  # groups is refused by name before anything is done.
+  Case 'k1:the-credential-list-is-data' {
+    Yes ($script:CredentialList.optional.Contains('heartbeatToken') -and -not $script:CredentialList.required.Contains('heartbeatToken')) 'k1:heartbeat-optional'
+    $both = (@(@($script:CredentialList.required.Keys) + @($script:CredentialList.optional.Keys)) | Sort-Object) -join ','; $files = (@($script:CredentialList.files.Keys) | Sort-Object) -join ','
+    Yes ($both -ceq $files -and $files -ne '') ('k1:the-file-names-are-the-two ' + $files)
+    foreach ($n in @($script:CredentialList.files.Values)) { Yes ($text -notmatch ("'" + [regex]::Escape($n) + "'")) ('k1:no-literal-in-the-script:' + $n) }
+    Yes ($text -notmatch 'RequiredCredentialFiles|OptionalCredentialFiles' -and $text -notmatch "@\('appKey', 'ciToken', 'upgradeToken'\)") 'k1:no-list-in-the-script'
+    Yes ($main -match "Enter-Step 'credential-files'[\s\S]*Read-CredentialFiles \(Join-Path \`$PSScriptRoot 'credential-files\.json'\)[\s\S]*Enter-Step 'operator'") 'k1:read-first-next-to-the-script'
+    $all = [ordered]@{ mode = 'collect-all'; ask = @('appKey', 'ciToken', 'upgradeToken', 'heartbeatToken'); code = $null }
+    $keep = $script:CredentialList
+    $write = { param([string]$name, [string]$body) $f = Join-Path $tmp $name; [IO.File]::WriteAllText($f, $body, (New-Object Text.UTF8Encoding($false))); $f }
+    try {
+      $script:CredentialList = Read-CredentialFiles (& $write 'hb-required.json' '{"contract":"clued.independent-ci.credential-files/1","required":{"appKey":"a.pem","ciToken":"c.token","upgradeToken":"u.token","public":"p.json","companionToken":"g.token","heartbeatToken":"h.token"},"optional":{}}')
+      Yes (((Get-MissingCredentials $all @('appKey', 'ciToken', 'upgradeToken')) -join ',') -ceq 'heartbeatToken') 'k1:heartbeat-made-required-is-missing'
+      $script:CredentialList = Read-CredentialFiles (& $write 'up-optional.json' '{"contract":"clued.independent-ci.credential-files/1","required":{"appKey":"a.pem","ciToken":"c.token","public":"p.json","companionToken":"g.token"},"optional":{"heartbeatToken":"h.token","upgradeToken":"u.token"}}')
+      Yes ((Get-MissingCredentials $all @('appKey', 'ciToken')).Count -eq 0) 'k1:upgrade-made-optional-is-not-missing'
+    } finally { $script:CredentialList = $keep }
+    foreach ($c in @(@('missing', $null, 'CREDENTIAL_FILES_MISSING'), @('unreadable', '{not json', 'CREDENTIAL_FILES_UNREADABLE'),
+        @('contract', '{"contract":"x/1","required":{"a":"a.pem"},"optional":{}}', 'CREDENTIAL_FILES_CONTRACT'),
+        @('duplicate', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"x.token","b":"x.token"},"optional":{}}', 'CREDENTIAL_FILES_DUPLICATE_FILE'),
+        @('both', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"a.token"},"optional":{"a":"b.token"}}', 'CREDENTIAL_FILES_NAME_IN_BOTH'),
+        @('shape', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"..\\x"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        # the rules the drill's kit build holds the same file to (DESK, 11-20): exactly the three top-level keys, names and file names unique
+        # also when they differ only in case, plain file names, a non-empty required group
+        @('extra-key', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"a.token"},"optional":{},"note":"x"}', 'CREDENTIAL_FILES_SHAPE'),
+        @('no-optional', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"a.token"}}', 'CREDENTIAL_FILES_SHAPE'),
+        @('required-empty', '{"contract":"clued.independent-ci.credential-files/1","required":{},"optional":{"a":"a.token"}}', 'CREDENTIAL_FILES_REQUIRED_EMPTY'),
+        @('file-case', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"X.token"},"optional":{"b":"x.TOKEN"}}', 'CREDENTIAL_FILES_DUPLICATE_FILE'),
+        @('name-case-both', '{"contract":"clued.independent-ci.credential-files/1","required":{"appKey":"a.token"},"optional":{"AppKey":"b.token"}}', 'CREDENTIAL_FILES_NAME_IN_BOTH'),
+        @('name-case-one', '{"contract":"clued.independent-ci.credential-files/1","required":{"appKey":"a.token","APPKEY":"b.token"},"optional":{}}', 'CREDENTIAL_FILES_DUPLICATE_NAME'),
+        # the names allowed (DESK, 11-20; the drill's kit build holds the file to the same): a name ^[A-Za-z][A-Za-z0-9]*$, a file name
+        # ^[A-Za-z0-9][A-Za-z0-9._-]*$ not ending in '.' and not a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with or without
+        # an extension); ASCII only, so case is the same thing in both readers
+        @('sub-path', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"x/a.token"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('key-non-ascii', '{"contract":"clued.independent-ci.credential-files/1","required":{"\u00e4ppKey":"a.token"},"optional":{}}', 'CREDENTIAL_FILES_NAME_REFUSED'),
+        @('key-digit-first', '{"contract":"clued.independent-ci.credential-files/1","required":{"1a":"a.token"},"optional":{}}', 'CREDENTIAL_FILES_NAME_REFUSED'),
+        @('key-dash', '{"contract":"clued.independent-ci.credential-files/1","required":{"app-key":"a.token"},"optional":{}}', 'CREDENTIAL_FILES_NAME_REFUSED'),
+        @('file-trailing-dot', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"a.token."},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('file-non-ascii', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"\u00e4.token"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('file-con', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"CON"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('file-nul-ext', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"nul.txt"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('file-com1', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"com1.log"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('file-lpt9', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"LPT9"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('file-aux-ext', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"Aux.token"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'),
+        @('file-prn', '{"contract":"clued.independent-ci.credential-files/1","required":{"a":"prn"},"optional":{}}', 'CREDENTIAL_FILES_FILE_NAME_REFUSED'))) {
+      $f = if ($null -eq $c[1]) { Join-Path $tmp 'no-such-credential-files.json' } else { & $write ('cf-' + $c[0] + '.json') $c[1] }
+      Throws { Read-CredentialFiles $f } $c[2] ('k1:refused:' + $c[0])
+    }
+    # allowed: long names (no length cap in either reader), COM10 (not a device), dots inside a file name
+    $ok = try { Read-CredentialFiles (& $write 'cf-allowed.json' '{"contract":"clued.independent-ci.credential-files/1","required":{"appKeyWithAVeryLongNameIndeedThatGoesOnAndOnForMoreThanFortyChars":"COM10.token"},"optional":{"b":"x.y.z"}}') } catch { $_.Exception.Message }
+    Yes ($ok -is [Collections.IDictionary] -and $ok.files.Count -eq 2) ('k1:allowed ' + $ok)
+    Yes ($text -match "required\.Contains\('companionToken'\)") 'k1:the-companion-token-reads-it-too'
   }
 
   # ---- the one JSON writer (drill 3bc571a6 A1; Fable ruling 11-19 section 2.1). Under Windows PowerShell 5.1 a cmdlet's output (Join-Path,
@@ -345,8 +402,8 @@ try {
     Yes ($line.StartsWith('{"status":"FIRST_INSTALL_HOST_READY","facts":' + (& $str $jp) + ',"node":"desk-w-591"')) ('t1:key-order-kept ' + $line)
     # a deserialized document (facts.json read back: Dictionary and object[]) is plain data already and comes out the same
     Yes ((ConvertTo-JsonLine $back) -ceq $line) 't1:deserialized-is-unchanged'
-    Yes ((Step 'stage' $jp) -ceq ('{"step":"stage","result":' + (& $str $jp) + '}')) 't1:step-stage'
-    Yes ((Step 'residue' $two) -ceq '{"step":"residue","result":["SERVICE:A","SERVICE:B"]}') 't1:step-residue-codes'
+    Yes ((Step 'stage' $jp) -ceq ('{"name":"stage","result":"ok","rejectCode":null,"detail":' + (& $str $jp) + '}')) 't1:step-stage'
+    Yes ((Step 'residue' $two) -ceq '{"name":"residue","result":"ok","rejectCode":null,"detail":["SERVICE:A","SERVICE:B"]}') 't1:step-residue-codes'
     # longer than the serializer's default 2,097,152 characters (Codex review of PR-甲, blocking 2): plain data is written whole
     $big = 'y' * 2500000
     $bl = try { ConvertTo-JsonLine ([ordered]@{ facts = $big }) } catch { $null }
@@ -360,19 +417,45 @@ try {
     foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle, ([ordered]@{ ok = $jp; bad = $fi }))) {
       $l = Step 'odd' $odd
       $b = $js.DeserializeObject($l)
-      Yes ($l -is [string] -and $b['step'] -ceq 'odd') ('t3:step-one-line ' + $odd.GetType().Name + ' ' + $l)
+      Yes ($l -is [string] -and $b['name'] -ceq 'odd' -and $b['result'] -ceq 'ok') ('t3:step-one-line ' + $odd.GetType().Name + ' ' + $l)
     }
-    Yes ([string]$js.DeserializeObject((Step 'odd' $fi))['result'] -clike '*DirectoryInfo*') 't3:step-names-the-type'
-    Yes ($js.DeserializeObject((Step 'odd' ([ordered]@{ ok = $jp; bad = $fi })))['result']['ok'] -ceq [string]$jp) 't3:step-keeps-the-plain-part'
+    Yes ([string]$js.DeserializeObject((Step 'odd' $fi))['detail'] -clike '*DirectoryInfo*') 't3:step-names-the-type'
+    Yes ($js.DeserializeObject((Step 'odd' ([ordered]@{ ok = $jp; bad = $fi })))['detail']['ok'] -ceq [string]$jp) 't3:step-keeps-the-plain-part'
     foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle)) {
       Throws { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $odd }) } 'OUTPUT_NOT_PLAIN_DATA:$.facts*' ('t3:verdict-refused ' + $odd.GetType().Name)
     }
+  }
+  # Every step the main flow prints is entered first (Enter-Step), so that a refusal inside it is printed as that step failed.
+  Case 't4:every-step-is-entered-before-it-ends' {
+    $ended = @([regex]::Matches($main, "(?m)^\s*Step '([a-z0-9-]+)'") | ForEach-Object { $_.Groups[1].Value })
+    Yes ($ended.Count -ge 12) ('t4:steps-found ' + ($ended -join ','))
+    foreach ($s in $ended) {
+      $at = [regex]::Match($main, "(?m)^\s*Step '" + [regex]::Escape($s) + "'").Index
+      $entered = $main.LastIndexOf("Enter-Step '" + $s + "'", $at)
+      Yes ($entered -ge 0) ('t4:entered:' + $s)
+    }
+    Yes (-not ($main -match 'exit 3')) 't4:restarts-only-through-Exit-Restart'
+  }
+  # Eight on the path, 1: P1 runs -NonInteractive, which refuses PowerShell's host prompt before any window opens. Every
+  # token is asked for by Read-TokenFromDialog, the Windows credential dialog itself (credui.dll), with a stable code for each of its answers.
+  Case 'c1:tokens-through-the-windows-credential-dialog' {
+    Yes ($text -notmatch '(?<![\w-])Get-Credential(?![\w-])' -and $text -notmatch '(?<![\w-])Read-Host(?![\w-])' -and $text -notmatch 'UI\.PromptForCredential') 'c1:no-powershell-host-prompt'
+    Yes ($text -match 'CredUIPromptForCredentialsW' -and $text -match 'DllImport\("credui\.dll"') 'c1:credui'
+    $reads = @([regex]::Matches($main, "Read-TokenFromDialog ") | ForEach-Object { $_.Index })
+    Yes ($reads.Count -eq 3) ('c1:the-three-tokens-through-one-function ' + $reads.Count)
+    Yes ($null -eq (Get-CredentialDialogCode 0) -and (Get-CredentialDialogCode 1223) -ceq 'CREDENTIAL_DIALOG_CANCELLED' -and (Get-CredentialDialogCode 87) -ceq 'CREDENTIAL_DIALOG_FAILED:87' -and
+      (Get-CredentialDialogCode -1) -ceq 'CREDENTIAL_DIALOG_FAILED:-1') 'c1:codes'
+    Yes ($text -match "catch \{ Stop-Host 'CREDENTIAL_DIALOG_UNAVAILABLE'") 'c1:unavailable-by-name'
+    # the type compiles under Windows PowerShell 5.1 (no window is opened here)
+    $src = [regex]::Match($text, "(?s)\`$CredUiSource = @'\r?\n(.*?)\r?\n'@").Groups[1].Value
+    $compiled = try { if (-not ('CluedFirstInstallCredUi' -as [type])) { Add-Type -TypeDefinition $src }; [CluedFirstInstallCredUi]::PasswordChars -eq 257 } catch { $false }
+    Yes $compiled 'c1:the-dialog-type-compiles'
   }
   Case 't2:one-serializer-in-the-script' {
     $calls = [regex]::Matches($text, '\.Serialize\(').Count
     $inWriter = if ($functions.ContainsKey('ConvertTo-JsonLine')) { [regex]::Matches($functions['ConvertTo-JsonLine'], '\.Serialize\(').Count } else { 0 }
     Yes ($inWriter -ge 1 -and $calls -eq $inWriter) ('t2:every-Serialize-call-is-in-ConvertTo-JsonLine (file ' + $calls + ', writer ' + $inWriter + ')')
-    Yes ($functions.ContainsKey('Step') -and $functions['Step'] -match 'ConvertTo-JsonLine' -and $functions.ContainsKey('Stop-Host') -and $functions['Stop-Host'] -match 'ConvertTo-JsonLine') 't2:step-and-stop-host-use-it'
+    Yes ($functions.ContainsKey('Get-StepLine') -and $functions['Get-StepLine'] -match 'ConvertTo-JsonLine' -and $functions['Step'] -match 'Get-StepLine' -and $functions.ContainsKey('Stop-Host') -and $functions['Stop-Host'] -match 'ConvertTo-JsonLine') 't2:step-and-stop-host-use-it'
     Yes ($main -match "ConvertTo-JsonLine \(\[ordered\]@\{ status = 'FIRST_INSTALL_HOST_READY'") 't2:ready-uses-it'
   }
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }

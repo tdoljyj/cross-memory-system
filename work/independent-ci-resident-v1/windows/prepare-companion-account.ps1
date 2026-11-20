@@ -22,7 +22,9 @@
   for its own install record; the repository holds no node's profile.
 
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File prepare-companion-account.ps1 -LogDirectory <folder> -RegistrarSha256 <sha>
-      [-AccountName clued-companion] [-WslMemory 16GB -WslProcessors 8 -WslSwap 4GB]
+      -GhExe <the installed companion.json ghExe> [-AccountName clued-companion] [-WslMemory 16GB -WslProcessors 8 -WslSwap 4GB]
+  -AccountOnly: steps 1-4 and 6, never step 5 (the first install: the host preparation's credentials step gives the account its token,
+  with the other credentials; "package branch, two points" B1). Its status is then COMPANION_ACCOUNT_PREPARED, never ..._TOKEN_PENDING.
   -RegistrarSha256: the SHA-256 the commit's resident manifest pins for windows/CompanionTaskRegistrar.cs (the Agent gives it with the
   command); the source next to this script is compiled only when it has exactly that hash (review r1 m12).
   -Plan: not elevated, read-only: prints what a run would do (no registrar, no change).
@@ -33,7 +35,7 @@ param([ValidatePattern('^[a-z][a-z0-9-]{2,19}$')][string]$AccountName = 'clued-c
   [Parameter(Mandatory)][string]$LogDirectory,
   [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$RegistrarSha256,
   [ValidatePattern('^[0-9]{1,3}GB$')][string]$WslMemory = '16GB', [ValidateRange(1, 64)][int]$WslProcessors = 8, [ValidatePattern('^[0-9]{1,3}GB$')][string]$WslSwap = '4GB',
-  [switch]$Plan)
+  [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe, [switch]$AccountOnly, [switch]$Plan)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
@@ -60,6 +62,59 @@ function Invoke-PrepRegistrar([string]$exe, [string[]]$arguments) {
   $p = [Diagnostics.Process]::Start($psi)
   $o = $p.StandardOutput.ReadToEnd(); $p.WaitForExit()
   $o.Trim()
+}
+# H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
+# text): stdout, stderr and the exit code read apart; a child's stderr line is text, never an error that ends this script under Stop.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  $p = [Diagnostics.Process]::Start($psi)
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
+}
+# The error id a PowerShell child that threw printed on stderr ("+ FullyQualifiedErrorId : <id>"): its code when it threw one.
+function Get-ChildErrorId([string]$stderr) {
+  $m = [regex]::Match([string]$stderr, '(?m)^\s*\+\s*FullyQualifiedErrorId\s*:\s*([A-Za-z][A-Za-z0-9_.:,-]{0,120})\s*$')
+  if ($m.Success) { $m.Groups[1].Value } else { $null }
+}
+# One companion-gh-login.ps1 child (step 5) through Invoke-NativeChild. failed: $null when it answered (whatever its exit); when it ended
+# with an error (exit not 0 and text on stderr: it threw), the code it threw, or TOKEN_CHILD_FAILED:<MODE> for an exception that is no code.
+function Invoke-CompanionTokenChild([string]$ps, [string]$gl, [string]$mode, [string]$profileDir, [string]$sid, [string]$ghExe) {
+  $r = Invoke-NativeChild $ps @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $gl, ('-' + $mode), '-ProfileDirectory', $profileDir, '-AccountSid', $sid, '-GhExe', $ghExe) 900 ([Console]::OutputEncoding) $true
+  $id = Get-ChildErrorId $r.stderr
+  $failed = if ($r.timedOut) { 'TOKEN_CHILD_TIMEOUT:' + $mode.ToUpperInvariant() }
+    elseif ($r.exit -ne 0 -and ([string]$r.stderr).Trim()) { if ($id -cmatch '^[A-Z][A-Z0-9_]{2,80}\z') { $id } else { 'TOKEN_CHILD_FAILED:' + $mode.ToUpperInvariant() } }
+    else { $null }
+  $status = if ([string]$r.stdout -match '"status":\s*"([A-Za-z_:,-]+)"') { $Matches[1] } else { $null }
+  [ordered]@{ exit = $r.exit; status = $status; errorId = $id; failed = $failed }
+}
+# Step 5: the Owner's existing companion token first (copied inside the child, -CopyFromOwner); else the clipboard (-Login); then -Check.
+# What each child did goes into $steps (tokenLogin, tokenCheck: exit, status, errorId; never a token); a child that failed ends the step
+# with its code (thrown), after its entry is written.
+function Invoke-CompanionTokenStep([string]$ps, [string]$gl, [string]$profileDir, [string]$sid, $steps, [string]$ghExe) {
+  $copy = Invoke-CompanionTokenChild $ps $gl 'CopyFromOwner' $profileDir $sid $ghExe
+  $copyStatus = if ($copy.status) { $copy.status } else { 'UNREADABLE' }
+  if ($copy.failed) { $steps.tokenLogin = [ordered]@{ source = 'owner-existing-token'; exit = $copy.exit; status = $copy.status; errorId = $copy.errorId }; throw $copy.failed }
+  if ($copyStatus -ceq 'COMPANION_GH_LOGIN_COPIED') { $steps.tokenLogin = [ordered]@{ source = 'owner-existing-token'; exit = 0; status = $copyStatus } }
+  else {
+    $login = Invoke-CompanionTokenChild $ps $gl 'Login' $profileDir $sid $ghExe
+    $steps.tokenLogin = [ordered]@{ source = 'clipboard'; ownerTokenCopy = $copyStatus; exit = $login.exit; status = $(if ($login.status) { $login.status } else { 'UNREADABLE' }); errorId = $login.errorId }
+    if ($login.failed) { throw $login.failed }
+  }
+  $check = Invoke-CompanionTokenChild $ps $gl 'Check' $profileDir $sid $ghExe
+  $steps.tokenCheck = [ordered]@{ exit = $check.exit; status = $(if ($check.status) { $check.status } else { 'UNREADABLE' }); errorId = $check.errorId }
+  if ($check.failed) { throw $check.failed }
+}
+# The one line this script prints: its status, the log file, the node profile, and the log's own error and steps (never a secret; the log's
+# facts stay in the file). The log file lies where the caller put it (P1: its stage, removed when P1 ends), so the evidence goes with this.
+function Get-PrepareOutput($log, [string]$logFile) {
+  [ordered]@{ status = $log.status; log = $logFile; nodeProfile = $log.nodeProfile; error = $(if ($log.Contains('error')) { $log.error } else { $null }); steps = $log.steps }
 }
 function New-PrepDirectory {
   $dir = Join-Path 'C:\Windows\Temp' ('clued-prep-' + [Guid]::NewGuid().ToString('N'))
@@ -148,16 +203,11 @@ try {
   else { [IO.File]::WriteAllText($wslcfg, (Get-CompanionWslConfig $WslMemory $WslProcessors $WslSwap), (New-Object Text.UTF8Encoding($false))); $log.steps.wslconfig = 'written' }
   # 5. The token (a child process reads the clipboard; nothing of it here), then the read-only check.
   $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'; $gl = Join-Path $PSScriptRoot 'companion-gh-login.ps1'
-  # The Owner's existing companion token first (copied inside the child, -CopyFromOwner); else the clipboard (-Login).
-  $copy = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gl -CopyFromOwner -ProfileDirectory $profileDir -AccountSid $sid 2>&1 | Out-String
-  $copyStatus = if ($copy -match '"status":\s*"([A-Z_]+)"') { $Matches[1] } else { 'UNREADABLE' }
-  if ($copyStatus -ceq 'COMPANION_GH_LOGIN_COPIED') { $log.steps.tokenLogin = [ordered]@{ source = 'owner-existing-token'; exit = 0; status = $copyStatus } }
+  if ($AccountOnly) { $log.steps.token = 'not here: the first install''s host preparation writes it in its credentials step' }
   else {
-    $login = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gl -Login -ProfileDirectory $profileDir -AccountSid $sid 2>&1 | Out-String
-    $log.steps.tokenLogin = [ordered]@{ source = 'clipboard'; ownerTokenCopy = $copyStatus; exit = $LASTEXITCODE; status = $(if ($login -match '"status":\s*"([A-Z_]+)"') { $Matches[1] } elseif ($login -match '(CLIPBOARD_IS_NOT_A_CLASSIC_TOKEN|[A-Z][A-Z_]{8,})') { $Matches[1] } else { 'UNREADABLE' }) }
+    if (-not $GhExe) { throw 'GH_EXE_REQUIRED' }   # the companion configuration's ghExe (the login script has no default)
+    Invoke-CompanionTokenStep $ps $gl $profileDir $sid $log.steps $GhExe
   }
-  $check = & $ps -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gl -Check -ProfileDirectory $profileDir -AccountSid $sid 2>&1 | Out-String
-  $log.steps.tokenCheck = [ordered]@{ exit = $LASTEXITCODE; status = $(if ($check -match '"status":\s*"([A-Za-z_:,-]+)"') { $Matches[1] } else { 'UNREADABLE' }) }
   # 6. Facts for the Agent (read-only).
   $log.facts.account = (Invoke-PrepRegistrar $exe @('account-facts', $sid)) | ConvertFrom-Json
   # Review r1 m5: the account as the switch will check it (hidden now included)
@@ -167,7 +217,7 @@ try {
   $log.facts.userRights = Get-RightsNaming $sids (@($AccountName) + $ServiceAccounts)
   $log.facts.ownerWslRegistrations = @(Get-ChildItem -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-ItemProperty -LiteralPath $_.PSPath; [ordered]@{ guid = $_.PSChildName; name = [string]$p.DistributionName; basePath = [string]$p.BasePath } })
   $log.nodeProfile = [ordered]@{ ownerSid = $sid; ownerProfileDirectory = $profileDir }
-  $log.status = if ($log.steps.tokenCheck.status -ceq 'COMPANION_GH_LOGIN_READY') { 'COMPANION_ACCOUNT_PREPARED' } else { 'COMPANION_ACCOUNT_PREPARED_TOKEN_PENDING' }
+  $log.status = if ($AccountOnly -or $log.steps.tokenCheck.status -ceq 'COMPANION_GH_LOGIN_READY') { 'COMPANION_ACCOUNT_PREPARED' } else { 'COMPANION_ACCOUNT_PREPARED_TOKEN_PENDING' }
 } catch {
   $log.status = 'COMPANION_ACCOUNT_NOT_PREPARED'
   $why = [string]$_.Exception.Message
@@ -176,5 +226,5 @@ try {
   if ($build) { Remove-Item -LiteralPath $build -Recurse -Force -ErrorAction SilentlyContinue }
   [IO.File]::WriteAllText($logFile, ($log | ConvertTo-Json -Depth 8), (New-Object Text.UTF8Encoding($false)))
 }
-[ordered]@{ status = $log.status; log = $logFile; nodeProfile = $log.nodeProfile } | ConvertTo-Json -Depth 4
+(Get-PrepareOutput $log $logFile) | ConvertTo-Json -Depth 8
 exit $(if ($log.status -like 'COMPANION_ACCOUNT_PREPARED*') { 0 } else { 1 })
