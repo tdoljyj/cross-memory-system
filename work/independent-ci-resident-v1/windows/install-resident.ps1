@@ -1427,7 +1427,8 @@ Step 'resident-firewall' {
 Step 'source-v2-acl' {
   $tool = Join-Path $Root ('source\' + $plan.ciSourceManifestSha256 + '\work\actions-hosted-migration\independent-ci-v1\src\resident-v2\migrate-acl.ps1')
   if (-not (Test-Path -LiteralPath $tool)) { throw 'SOURCE_V2_REQUIRED' }
-  $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $(if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }) -ControllerSid $ControllerSid | Out-String
+  # its own -ExecutionPolicy Bypass (r5, Fable 11-21 section 1.2): never the policy of whoever started the install (a new machine's is Restricted)
+  $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $(if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }) -ControllerSid $ControllerSid | Out-String
   if ($LASTEXITCODE -ne 0) { throw 'SOURCE_V2_ACL_MIGRATION_REFUSED' }
   $script:receipt.sourceV2Acl = ($out | ConvertFrom-Json)
 }

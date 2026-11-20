@@ -103,8 +103,9 @@ $inv = $null; try { $found = Get-SpoolLeftovers $spool; $rem = Get-SpoolRemainde
 $dry = Invoke-Migrate
 $baseline = Get-SpoolBaseline ${psLiteral(MODEL)} $fx
 $accepted = Test-AclMissingTargetAccepted $dry.exit $dry.result ([IO.Directory]::Exists((Join-Path $fx 'resident'))) $true $null $baseline.missing
-# 3. the broker made (as the installer does before source-v2-acl): the plan passes, then -Apply does
-foreach ($d in @('resident\\broker', 'resident\\broker\\requests', 'resident\\broker\\responses')) { [void][IO.Directory]::CreateDirectory((Join-Path $fx $d)) }
+# 3. the broker made (as the installer does before source-v2-acl: protected, no controller entry; Get-AclPlan): the plan passes, then -Apply does
+$bds = New-Object Security.AccessControl.DirectorySecurity; $bds.SetSecurityDescriptorSddlForm('D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $me + ')')
+foreach ($d in @('resident', 'resident\\broker', 'resident\\broker\\requests', 'resident\\broker\\responses')) { [void][IO.Directory]::CreateDirectory((Join-Path $fx $d), $bds) }
 $plan = Invoke-Migrate; $apply = Invoke-Migrate -Apply
 # 4. the installer's companion move (Set-CompanionSpoolAcl's pure rule) on the two folders as they are after source-v2-acl
 $write = 0x2 -bor 0x4 -bor 0x10 -bor 0x40 -bor 0x100 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000

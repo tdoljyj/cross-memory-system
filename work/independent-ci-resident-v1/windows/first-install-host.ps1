@@ -13,6 +13,8 @@
   (resident-upgrade, heartbeat) under first-install\credentials\ (SYSTEM and Administrators only; bootstrap.ps1 clears that folder on
   every end of the run, so a later run asks for those two tokens again and holds them to the fingerprints in facts.json).
   Steps (each prints one JSON line {step, result}; the last line is the verdict):
+    execution-policy  Get-ExecutionPolicy -List, every scope in the step's detail; a group policy (MachinePolicy, UserPolicy) that
+                   enforces Restricted or AllSigned is refused (HOST_EXECUTION_POLICY_ENFORCED_BY_POLICY): -ExecutionPolicy Bypass cannot win;
     operator       the elevated account must be the operator the bootstrap ran as (-ExpectedOperatorSid; M4), before anything else;
     residue        a first install needs a CLEAN machine. Refused by name (FIRST_INSTALL_RESIDUE_PRESENT): the three services, the
                    firewall rule, the companion task, the resident root, the resident service's ACE on the CI root (an uninstall leaves
@@ -32,8 +34,9 @@
     accounts       .\clued-control and .\clued-runner (made when absent, random password nobody knows, not administrators), the
                    companion account by the package's own windows\prepare-companion-account.ps1 (-RegistrarSha256: the archive's pin,
                    L2); clued-control's right to log on as a service, and no deny-logon-as-a-service entry for it;
-    ci-root        C:\ProgramData\CluedIndependentCI and formal-spool with the baseline DACL the installer appends to, first-install\,
-                   first-install\credentials\, the two secret folders (installer's Get-SecretDirectorySddl);
+    ci-root        C:\ProgramData\CluedIndependentCI and formal-spool with the baseline DACL the installer appends to, formal-spool\outgoing
+                   and \incoming (the v1 one-shot table, the operator in the Owner's place), first-install\, first-install\credentials\,
+                   the secrets folder (installer's Get-SecretDirectorySddl): Get-CiRootDirectories, one table;
     runner         the carrier runner binaries (actions-runner) at C:\ProgramData\CluedControl\runner and its service (RunnerService.exe,
                    Manual, Stopped, .\clued-control): never registered with GitHub. Expanded resumably (Expand-Verified, M5): into a new
                    directory, every file held to the pinned zip, renamed into place, then marked (CluedControl\runner.first-install-complete);
@@ -164,6 +167,33 @@ function Get-AdminOnlySddl { 'O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)' }
 # install-resident.ps1's own two (test-first-install-host.ps1 holds them to its text): a secret file, and its folder.
 function Get-SecretFileSddl([string]$controllerSid) { 'O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;' + $controllerSid + ')' }
 function Get-SecretDirectorySddl([string]$controllerSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $controllerSid + ')' }
+# The ci-root step's directories, in the order they are made: name (the step's detail key) -> @(path, SDDL). The one table the step
+# makes them from (test/first-install-r5-defects.test.mjs builds its fixture from it).
+# formal-spool\outgoing and \incoming (r5, Fable 11-21 section 1.1: drill r4 stopped in the launcher's spool inventory without them): the
+# v1 one-shot install's fixed table (invoke-functions.ps1 New-FixedSecurity: outgoing = Spool, incoming = Results; controller and Owner
+# modify or read and execute), the operator in the Owner's place. The installer then moves the operator's write entries to the companion
+# account (install-resident.ps1 Set-CompanionSpoolAcl), as on the nodes the one-shot install made: the same end state, entry for entry.
+# Source v2's migrate-acl.ps1 appends the resident's entries to formal-spool and these two (acl-model.json add).
+function Get-CiRootDirectories([string]$operatorSid, [string]$controllerSid) {
+  [ordered]@{
+    $CiRoot = @($CiRoot, (Get-CiRootSddl $operatorSid $controllerSid))
+    'formal-spool' = @((Join-Path $CiRoot 'formal-spool'), (Get-CiRootSddl $operatorSid $controllerSid))
+    'formal-spool\outgoing' = @((Join-Path $CiRoot 'formal-spool\outgoing'), ('O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;' + $controllerSid + ')(A;OICI;0x1200a9;;;' + $operatorSid + ')'))
+    'formal-spool\incoming' = @((Join-Path $CiRoot 'formal-spool\incoming'), ('O:BAG:BAD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;' + $controllerSid + ')(A;OICI;0x1301bf;;;' + $operatorSid + ')'))
+    'first-install' = @($FirstDir, (Get-FirstInstallSddl $operatorSid))
+    'credentials' = @($CredDir, (Get-AdminOnlySddl))
+    'secrets' = @((Split-Path -Parent $SecretTargets['ciToken']), (Get-SecretDirectorySddl $controllerSid))
+  }
+}
+# r5 (Fable 11-21 section 1.2): every PowerShell this package starts carries -ExecutionPolicy Bypass, which sets the process scope; a
+# group policy (MachinePolicy, UserPolicy) outranks the process scope. One that enforces Restricted or AllSigned is refused by name before
+# anything is written. $list: Get-ExecutionPolicy -List (Scope, ExecutionPolicy); scopes: every scope's value as read (the step's detail).
+function Get-ExecutionPolicyCheck($list) {
+  $scopes = [ordered]@{}
+  foreach ($e in @($list)) { $scopes[[string]$e.Scope] = [string]$e.ExecutionPolicy }
+  $enforced = @(@('MachinePolicy', 'UserPolicy') | Where-Object { $scopes.Contains($_) -and @('Restricted', 'AllSigned') -ccontains $scopes[$_] })
+  [ordered]@{ scopes = $scopes; code = $(if ($enforced.Count) { 'HOST_EXECUTION_POLICY_ENFORCED_BY_POLICY' } else { $null }) }
+}
 # An existing directory's descriptor against the wanted one: owner and DACL equal ACE for ACE (order-insensitive), protected.
 function Test-SddlIs([string]$actual, [string]$want) {
   try { $a = New-Object Security.AccessControl.RawSecurityDescriptor($actual); $w = New-Object Security.AccessControl.RawSecurityDescriptor($want) } catch { return $false }
@@ -812,6 +842,11 @@ function Invoke-HostPreparation {
   Enter-Step 'credential-files'
   $script:CredentialList = try { Read-CredentialFiles (Join-Path $PSScriptRoot 'credential-files.json') } catch { Stop-Host ([string]$_.Exception.Message) $PSScriptRoot }
   Step 'credential-files' ([ordered]@{ required = @($script:CredentialList.required.Keys); optional = @($script:CredentialList.optional.Keys) })
+  # the execution policy as every scope says it (read only; a group policy that enforces Restricted or AllSigned is refused here)
+  Enter-Step 'execution-policy'
+  $policy = Get-ExecutionPolicyCheck (Get-ExecutionPolicy -List)
+  if ($policy.code) { Stop-Host $policy.code $policy.scopes }
+  Step 'execution-policy' $policy.scopes
   # the operator: elevated, and the account the bootstrap ran as (M4), before anything else
   Enter-Step 'operator'
   $wi = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -935,13 +970,10 @@ function Invoke-HostPreparation {
     if ($operator -ceq $companionSid -or $operator -ceq $controllerSid) { Stop-Host 'OPERATOR_IS_A_SERVICE_ACCOUNT' $operator }
     Step 'accounts' ([ordered]@{ controllerSid = $controllerSid; companionSid = $companionSid; operatorSid = $operator })
     Enter-Step 'ci-root'
-    # CI root, formal-spool, first-install, credentials, the two secret folders
+    # CI root, formal-spool and its outgoing and incoming, first-install, credentials, the secrets folder (Get-CiRootDirectories)
     $ci = [ordered]@{}
-    $ci[$CiRoot] = New-Dir $CiRoot (Get-CiRootSddl $operator $controllerSid)
-    $ci['formal-spool'] = New-Dir (Join-Path $CiRoot 'formal-spool') (Get-CiRootSddl $operator $controllerSid)
-    $ci['first-install'] = New-Dir $FirstDir (Get-FirstInstallSddl $operator)
-    $ci['credentials'] = New-Dir $CredDir (Get-AdminOnlySddl)
-    $ci['secrets'] = New-Dir (Split-Path -Parent $SecretTargets['ciToken']) (Get-SecretDirectorySddl $controllerSid)
+    $dirs = Get-CiRootDirectories $operator $controllerSid
+    foreach ($k in @($dirs.Keys)) { $ci[$k] = New-Dir $dirs[$k][0] $dirs[$k][1] }
     Step 'ci-root' $ci
     Enter-Step 'runner'
     # the carrier runner: binaries and a stopped, manual service as .\clued-control; never registered with GitHub

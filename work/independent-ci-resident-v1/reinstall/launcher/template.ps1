@@ -162,12 +162,14 @@ function Stop-Launch([string]$code, $detail) {
   throw $code
 }
 
-# A child powershell.exe -File with a fixed environment; stdout/stderr are kept in <W>\launch\<name>.*.
+# A child powershell.exe -File with a fixed environment; stdout/stderr are kept in <W>\launch\<name>.*. The execution policy is the
+# child's own argument (r5, Fable 11-21 section 1.2): the environment is cleared, so PSExecutionPolicyPreference is never inherited, and a
+# new machine's policy (Restricted) refused every child script (drill r4: migrate-acl, install dry runs).
 function Invoke-Child([string]$name, [string]$file, [string[]]$argList) {
   foreach ($a in @($file) + $argList) { if ($a -match '[\s"]') { Stop-Launch 'CHILD_ARGUMENT_REFUSED' $a } }
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $PS
-  $psi.Arguments = '-NoProfile -NonInteractive -File ' + $file + ' ' + ($argList -join ' ')
+  $psi.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' + $file + ' ' + ($argList -join ' ')
   $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
   if ($ChildEnv['TEMP']) { $psi.WorkingDirectory = $ChildEnv['TEMP'] }
   elseif ($name -ceq 'w1-resume') {
@@ -332,6 +334,29 @@ function Get-SpoolRemainder([string]$spool, $found) {
   foreach ($e in [IO.Directory]::GetFileSystemEntries($spool)) { $leaf = [IO.Path]::GetFileName($e); if ($leaf -cnotin @('incoming', 'outgoing') -and $leaf -cnotmatch '^(?:archive|failed|completed)-[A-Za-z0-9-]+$') { $rem += $leaf } }
   , $rem
 }
+# The spool baseline (r5, Fable 11-21 section 1.3): the directories Source v2's migrate-acl.ps1 appends the resident's entries to, read from
+# the acl-model.json staged next to it (its add list; the one source of those paths), looked for under $ciRoot (the CI root its paths
+# name, or a test fixture). The one-shot install made them on every node; a first install's host preparation makes them. One missing is
+# SPOOL_BASELINE_MISSING: the spool inventory does not run on it, and migrate-acl's ACL_TARGET_MISSING is not the missing broker.
+function Get-SpoolBaseline([string]$modelFile, [string]$ciRoot) {
+  $real = Split-Path -Parent $ResidentRoot
+  $missing = @()
+  foreach ($a in @(Get-Key ($Js.DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes($modelFile)))) 'add')) {
+    $p = [string](Get-Key $a 'path')
+    if (-not $p.StartsWith($real + '\', [StringComparison]::OrdinalIgnoreCase)) { throw ('ACL_MODEL_PATH_REFUSED:' + $p) }
+    if (-not [IO.Directory]::Exists($ciRoot + $p.Substring($real.Length))) { $missing += $p }
+  }
+  [ordered]@{ code = $(if ($missing.Count) { 'SPOOL_BASELINE_MISSING' } else { $null }); missing = $missing }
+}
+# r5c (the r5b resume, launcher 0e7e0f75 stopped here): before the install recreates resident\broker, migrate-acl can only report the
+# missing broker target. Accepted only with the resident root absent, this run's pre-uninstall dry run of the same staged migrate-acl
+# clean (or a first install) and (r5, Fable 11-21 section 1.3) the whole spool baseline there: migrate-acl looks at its add targets before
+# the broker, so with all of them present the missing target can only be the broker. install-resident.ps1 step source-v2-acl applies it
+# after it recreates the tree and refuses on any error.
+function Test-AclMissingTargetAccepted([int]$exit, $result, [bool]$residentRootExists, [bool]$firstInstall, $before, $baselineMissing) {
+  ($exit -ne 0 -and (Get-Key $result 'status') -ceq 'REFUSED' -and (Get-Key $result 'code') -ceq 'ACL_TARGET_MISSING' -and -not $residentRootExists -and
+    ($firstInstall -or (Get-Key $before 'status') -ceq 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN') -and $null -ne $baselineMissing -and @($baselineMissing).Count -eq 0)
+}
 function Test-LeftoversAsPinned($found) {
   ($found.Count -eq $Leftovers.Count) -and (@($Leftovers.Keys | Where-Object { -not $found.Contains($_) -or $found[$_] -cne $Leftovers[$_] }).Count -eq 0)
 }
@@ -374,7 +399,11 @@ function Step-Preflight {
   $absent = Get-Absences; $report['absent'] = $absent
   if (@($absent.Values | Where-Object { $_ -ne $true }).Count) { $codes.Add('HOST_NOT_FRESH_AS_REVIEWED') }
   $found = [ordered]@{}
-  try {
+  # the spool baseline first: the inventory reads a baseline that is there, and a missing one is named, not an inventory failure
+  $baseline = try { Get-SpoolBaseline (Join-Path $Stage 'acl-model.json') (Split-Path -Parent $ResidentRoot) } catch { [ordered]@{ code = 'SPOOL_BASELINE_UNREADABLE'; missing = $null; error = $_.Exception.Message } }
+  $report['spoolBaseline'] = $baseline
+  if ($baseline.code) { $codes.Add($baseline.code) }
+  else { try {
     $found = Get-SpoolLeftovers $Spool; $rem = Get-SpoolRemainder $Spool $found
     $inv = [ordered]@{ root = @([IO.Directory]::GetFileSystemEntries($Spool) | ForEach-Object { [IO.Path]::GetFileName($_) } | Sort-Object); records = $found; remainder = $rem
       outgoingKept = @([IO.Directory]::GetFileSystemEntries((Join-Path $Spool 'outgoing')) | ForEach-Object { [IO.Path]::GetFileName($_) } | Where-Object { -not $found.Contains('outgoing/' + $_) } | Sort-Object) }
@@ -383,16 +412,14 @@ function Step-Preflight {
     $report['spool'] = [ordered]@{ records = $found.Count; recordsAsPinned = $asPinned; remainder = $rem; root = $inv.root }
     if (-not $asPinned) { $codes.Add('SPOOL_LEFTOVERS_NOT_AS_REVIEWED'); $report['spool']['recordHashes'] = $found }
     if ($rem.Count) { $codes.Add('SPOOL_REMAINDER_WOULD_BLOCK_V2_ARCHIVES') }
-  } catch { $codes.Add('SPOOL_INVENTORY_FAILED'); $report['spool'] = [ordered]@{ error = $_.Exception.Message } }
+  } catch { $codes.Add('SPOOL_INVENTORY_FAILED'); $report['spool'] = [ordered]@{ error = $_.Exception.Message } } }
   $m = Invoke-Child 'migrate-acl.dry-run' (Join-Path $Stage 'migrate-acl.ps1') @('-ResidentSid', $ResidentSid, '-OwnerSid', $OperatorSid, '-ControllerSid', $ControllerSid)
   $mv = Parse-LastLine $m.stdout
   $report['migrateAcl'] = [ordered]@{ exit = $m.exit; status = (Get-Key $mv 'status'); code = (Get-Key $mv 'code'); exceptionType = (Get-Key $mv 'exceptionType')
     planSha256 = (Get-Key $mv 'planSha256'); steps = @(Get-Key $mv 'steps'); stderr = (Tail $m.stderr) }
-  # r5c (the r5b resume, launcher 0e7e0f75 stopped here): before the install recreates resident\broker, migrate-acl can only report the
-  # missing broker target. Accepted only with the resident root absent and this run's pre-uninstall dry run of the same staged
-  # migrate-acl clean (install-resident.ps1 step source-v2-acl applies it after it recreates the tree and refuses on any error).
+  # the missing broker target before the install recreates resident\broker (Test-AclMissingTargetAccepted says when)
   $aclBefore = try { Parse-LastLine ([IO.File]::ReadAllText((Join-Path $Out 'migrate-acl.dry-run.before-uninstall.stdout.json'))) } catch { $null }
-  $aclAfterUninstallOk = ($m.exit -ne 0 -and (Get-Key $mv 'status') -ceq 'REFUSED' -and (Get-Key $mv 'code') -ceq 'ACL_TARGET_MISSING' -and -not [IO.Directory]::Exists($ResidentRoot) -and ($FleetFirstInstall -or (Get-Key $aclBefore 'status') -ceq 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN'))
+  $aclAfterUninstallOk = Test-AclMissingTargetAccepted $m.exit $mv ([IO.Directory]::Exists($ResidentRoot)) ([bool]$FleetFirstInstall) $aclBefore $baseline.missing
   $report['migrateAcl']['acceptedMissingTargetBeforeInstall'] = $aclAfterUninstallOk
   if (-not $aclAfterUninstallOk -and ($m.exit -ne 0 -or (Get-Key $mv 'status') -cne 'SOURCE_V2_ACL_PLAN_ONLY_NOTHING_WRITTEN')) { $codes.Add('ACL_MIGRATION_PLAN_REFUSED') }
   $d = Invoke-Child 'install.dry-run' (Join-Path $Stage 'install-resident.ps1') (Get-InstallArgs -NoToken)   # r5c: the reviewed plan has no token
@@ -1740,7 +1767,7 @@ try {
   Remove-FleetCarry
   Restore-W1Pause
   if (-not [IO.File]::Exists((Join-Path $Out 'terminal.json'))) { Write-Json 'terminal.json' ([ordered]@{ contract = 'clued.independent-ci.source-v2-windows-launch-terminal/1'; status = 'STOPPED'; code = 'LAUNCHER_EXCEPTION'; detail = $_.Exception.Message; completed = @($Done); sourceSha = $SourceSha; packageHead = $PackageHead; carriedTokens = $CarriedTokens; w1Pause = $W1Restore.result; at = [DateTimeOffset]::UtcNow.ToString('o') }) }
-  Get-Content -LiteralPath (Join-Path $Out 'terminal.json') -Raw
+  Get-Content -LiteralPath (Join-Path $Out 'terminal.json') -Raw -Encoding UTF8   # Write-Json's UTF-8 without BOM (5.1 reads ANSI otherwise)
   throw
 } finally {
   # Whatever happened above (success, a stop, any exception): no copy of a token outlives this run, and what became of the directory is
