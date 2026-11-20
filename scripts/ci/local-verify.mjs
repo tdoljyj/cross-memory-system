@@ -101,6 +101,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { install as installDeps, npmCommand, runNpm } from './ci-deps.mjs';
+import { localVerifyEnv, TEST_ENV_VERSION, testEnv } from './test-env.mjs';
 
 export const REPOSITORY = 'tdoljyj/cross-memory-system';
 export const DISTRIBUTION = 'CluedDev-Linux';
@@ -108,7 +109,9 @@ export const DISTRIBUTION = 'CluedDev-Linux';
 export const CI_NODE = '24.19.0';
 const CACHE_VERSION = 5; // 5: tests run with a temporary directory of their own (a failure message may name its drive)
 const SELECTOR = 'scripts/ci/ci-required-selection.mjs';
-const SELECTOR_FILES = [SELECTOR, 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
+// test-env.mjs: what the selector imports since Task 2ee162c2; a main before it has none (OPTIONAL_SELECTOR_FILES).
+const SELECTOR_FILES = [SELECTOR, 'scripts/ci/test-env.mjs', 'scripts/ci/ci-known-failures.json', 'scripts/ci/ci-test-failures-reporter.mjs'];
+const OPTIONAL_SELECTOR_FILES = new Set(['scripts/ci/test-env.mjs']);
 const APP = 'apps/clued-cloud';
 // mechanical-outputs links the store into its throwaway worktree (component-version-integration.py): it never installs here.
 const NEEDS_APP_DEPENDENCIES = new Set(['clued-cloud', 'production-schema', 'mechanical-outputs']);
@@ -323,15 +326,9 @@ export function dependencyKey({ lock, packageJson, npmrc = '', nodeVersion = pro
   return sha256(JSON.stringify({ lock: sha256(lock), fields, npmrc: String(npmrc), node: nodeVersion.split('.')[0], platform })).slice(0, 16);
 }
 
-// The variables the suites' commands get: what a program needs to run, find
-// its tools, temp and home directories, and the network, not the caller's
-// tokens or Clued settings (CI's jobs have none of them either).
-const KEEP_VARIABLE = /^(PATH|PATHEXT|SYSTEMROOT|SYSTEMDRIVE|WINDIR|COMSPEC|TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|PROGRAMDATA|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|COMMONPROGRAMFILES\(X86\)|USERNAME|USER|LOGNAME|SHELL|TERM|LANG|LANGUAGE|LC_[A-Z]+|TZ|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|HTTPS?_PROXY|NO_PROXY|ALL_PROXY|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE|SSL_CERT_DIR)$/i;
-// On Windows Python's own UTF-8 mode stands in for the runners' UTF-8 locale.
-export function testEnvironment(env, extra = {}, platform = process.platform) {
-  return { ...Object.fromEntries(Object.entries(env).filter(([name]) => KEEP_VARIABLE.test(name))),
-    ...(platform === 'win32' ? { PYTHONUTF8: '1' } : {}), ...extra };
-}
+// The environment the suites' commands get: test-env.mjs's rules (the listed variables, the fake identity, the test marker,
+// local-verify's additions), not the caller's tokens or Clued settings.
+export const testEnvironment = localVerifyEnv;
 
 // A lock is a file that appears with its content at once (written aside, then
 // hard-linked into place). A lock whose process is gone, older than any run, or
@@ -982,6 +979,7 @@ async function loadSelector(root, main, home) {
       fs.mkdirSync(dir, { recursive: true });
       for (const file of SELECTOR_FILES) {
         const result = spawnSync('git', ['show', `${main}:${file}`], { cwd: root, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+        if (result.status !== 0 && OPTIONAL_SELECTOR_FILES.has(file)) continue;
         if (result.status !== 0) throw new Error(`main ${main.slice(0, 12)} has no ${file}`);
         fs.writeFileSync(path.join(dir, path.basename(file)), result.stdout);
       }
@@ -1267,8 +1265,8 @@ function dependencyKeyAt(root, commit) {
   return packageJson && lock ? dependencyKey({ lock, packageJson, npmrc: show('.npmrc') ?? '' }) : null;
 }
 
-const unitTestFilesWith = (cwd) => () => {
-  const listed = spawnSync(process.execPath, ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, encoding: 'utf8', windowsHide: true });
+const unitTestFilesWith = (cwd, env) => () => {
+  const listed = spawnSync(process.execPath, ['scripts/select-tests.mjs', 'unit', '--list'], { cwd, env: testEnv(env), encoding: 'utf8', windowsHide: true });
   if (listed.status !== 0 || typeof listed.stdout !== 'string') throw new Error('select-tests --list failed');
   return listed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
 };
@@ -1280,6 +1278,9 @@ const unitTestFilesWith = (cwd) => () => {
 // start), the command's test report (read as runSuite reads it, files relative
 // to root) and its known-failure key.
 export function runCommands(selector, id, root, main, logFile, { spawn = spawnSync, env = process.env, kill = killUnder } = {}) {
+  // Whatever env the caller passes (the in-process path on Linux and in Actions), the listing and each command get the
+  // test environment, made for each child so a changed identity is not handed on (Codex reviews of 2ee162c2, high 1 and
+  // second review medium 1).
   const fd = fs.openSync(logFile, 'w');
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), `clued-local-verify-${id}-`));
   const log = (line) => fs.writeSync(fd, `${line}\n`);
@@ -1290,12 +1291,12 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
       const known = command.known ?? null;
       try {
         const [program, ...args] = selector.expandArgv(command.argv, { cwd, base: main, report: path.join(temporary, `${id}-report.json`),
-          listUnit: unitTestFilesWith(cwd) });
+          listUnit: unitTestFilesWith(cwd, env) });
         const reported = withFailureReport(program, args, { known: Boolean(known), reporterUrl: selector.reporterUrl,
           file: path.join(temporary, `command-${index}.jsonl`) });
         const [file, ...prefix] = program === 'npm' ? npmCommand() : program === 'node' ? [process.execPath] : [program];
         log(`::group::${id}: (${command.cwd}) ${[program, ...reported.args].join(' ')}`);
-        const result = spawn(file, [...prefix, ...reported.args], { cwd, env, stdio: ['ignore', fd, fd], windowsHide: true, timeout: COMMAND_TIMEOUT_MS });
+        const result = spawn(file, [...prefix, ...reported.args], { cwd, env: testEnv(env), stdio: ['ignore', fd, fd], windowsHide: true, timeout: COMMAND_TIMEOUT_MS });
         log('::endgroup::');
         const status = result.error ? null : result.signal ? 128 : result.status;
         // as runSuite: a known-failure command without its report has an empty one
@@ -1431,9 +1432,10 @@ export function compareSuite(head, base, { selector, knownLists = {} }) {
 const pythonVersion = () => String(spawnSync(PYTHON, ['--version'], { encoding: 'utf8', windowsHide: true }).stdout ?? '').trim();
 
 // main's results are kept per main commit, platform, suite, tool version, Node
-// and Python versions and main's own dependencies (--fresh-base runs them again).
-export function mainResultsFile(home, { main, id, platform = process.platform, node = process.version, python, dependencies }) {
-  const key = sha256(JSON.stringify({ version: CACHE_VERSION, main, platform, id, node, python, dependencies })).slice(0, 16);
+// and Python versions, main's own dependencies and the suites' environment
+// (test-env.mjs's version) (--fresh-base runs them again).
+export function mainResultsFile(home, { main, id, platform = process.platform, node = process.version, python, dependencies, environment = TEST_ENV_VERSION }) {
+  const key = sha256(JSON.stringify({ version: CACHE_VERSION, main, platform, id, node, python, dependencies, environment })).slice(0, 16);
   return path.join(home, 'main-results', `${main.slice(0, 16)}-${id}-${key}.json`);
 }
 export function readCached(file) {
@@ -1572,10 +1574,18 @@ export function linuxScript({ bundle, refs, tool, run, candidate, main, suites, 
     `git -C "$repo" for-each-ref --format='delete %(refname)' ${INCOMING}${run}/ | git -C "$repo" update-ref --stdin`,
     'flock -u 9; exec 9>&-',
     'tool=$(mktemp -d)',
-    `cp ${quote(tool)} "$tool/local-verify.mjs"`,
+    `cp ${quote(tool)}/*.mjs "$tool/"`,
     'cd "$repo"',
     `node "$tool/local-verify.mjs" --candidate ${candidate} --base ${main} --no-fetch${freshBase ? ' --fresh-base' : ''}${noYield ? ' --no-yield' : ''}${suites.map((id) => ` --suite ${quote(id)}`).join('')}`,
   ].join('\n');
+}
+
+// The tool the Linux side runs: this file and the modules it imports (local-verify.test.mjs checks the list is whole).
+export const TOOL_MODULES = ['local-verify.mjs', 'ci-deps.mjs', 'test-env.mjs'];
+export function copyTool(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  for (const name of TOOL_MODULES) fs.copyFileSync(path.join(here, name), path.join(dir, name));
 }
 
 export function readResults(text) {
@@ -1699,8 +1709,8 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, n
   const refsFile = path.join(home, 'bundles', `${run}.refs`);
   fs.mkdirSync(path.dirname(refsFile), { recursive: true });
   fs.writeFileSync(refsFile, refUpdates(githubRefs(root), clone.refs));
-  const toolFile = path.join(home, 'bundles', `${run}.local-verify.mjs`);
-  fs.copyFileSync(fileURLToPath(import.meta.url), toolFile);
+  const toolFile = path.join(home, 'bundles', `${run}.local-verify`);
+  copyTool(toolFile);
   const logFile = path.join(logs, 'linux.log');
   const fd = fs.openSync(logFile, 'w');
   console.log(`local-verify: linux: running in ${distribution} (log ${logFile}; it may wait there for a place, the log says so)`);
@@ -1719,7 +1729,7 @@ function startLinuxRun({ root, home, candidate, main, suites, logs, freshBase, n
       fs.closeSync(fd);
       if (bundle) fs.rmSync(bundle, { force: true });
       fs.rmSync(refsFile, { force: true });
-      fs.rmSync(toolFile, { force: true });
+      fs.rmSync(toolFile, { recursive: true, force: true });
       const results = readResults(fs.readFileSync(logFile, 'utf8'))?.map((result) => ({ ...result, log: windowsPathOf(result.log) }));
       resolve(results ?? [{ platform: 'linux', suite: '(run)', verdict: 'unknown', detail: error ?? `exited ${code} without results`, log: logFile }]);
     };

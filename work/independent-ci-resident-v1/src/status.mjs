@@ -42,7 +42,7 @@ import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
-import { renewalStatus, parseRenewalStatus } from './connection-renewal.mjs';
+import { renewalStatus, parseRenewalStatus, RESPONSE_WAITING } from './connection-renewal.mjs';
 import { parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView } from './selfcheck.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
@@ -406,7 +406,8 @@ export async function readVersionState({ root, policy, policySha256 = null, cloc
   if(renewal) view.renewal=renewal;
   const notices=versionNotices(view, inputs.status);
   if(renewal) {
-    const codes=Object.values(renewal.connections).map(v=>v.code).filter(Boolean);
+    // 等回包（未满一小时）不是失败：状态视图显示等待码，不发续期失败通知。
+    const codes=Object.values(renewal.connections).map(v=>v.code).filter(code=>code && code!==RESPONSE_WAITING);
     if(renewal.keyCheck==='FAIL') codes.push('RENEW_KEY_CHECK_FAILED');
     for(const code of new Set(codes)) notices.push({key:'renewal-failed:'+code,kind:'renewal-failed',code,pr:null,headSha:null,at:renewal.checkedAt,until:null});
   }
