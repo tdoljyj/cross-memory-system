@@ -34,6 +34,10 @@ export const FRONT_BATCH_CONTRACT = 'clued.independent-ci.train-front-batch/1';
 export const PENDING_REVOCATIONS_CONTRACT = 'clued.independent-ci.pending-revocations/1';
 export const LANDING_BATCH_CONTRACT = 'clued.independent-ci.train-landing-batch/1';
 export const LANDING_STATE_CONTRACT = 'clued.independent-ci.train-landing-state/1';
+// Review 3 medium 1: when stage 10 saw the merge slot of a front head go green, so the 60-minute wait keeps its one start when a later round
+// cannot read the checks.
+export const SLOT_GREEN_CONTRACT = 'clued.independent-ci.train-slot-green/1';
+export const SLOT_GREEN_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'pr', 'headSha', 'slotGreenAt']);
 export const LANDING_BATCH_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'frontPr', 'frontHeadSha', 'baseSha', 'testSha', 'testTree', 'attempt', 'members']);
 export const LANDING_STATE_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'bad', 'suspect', 'adopted', 'handled']);
 export const PROOF_FIELDS = Object.freeze(['contract', 'writtenAt', 'runId', 'mode', 'pr', 'headSha', 'claimId', 'since', 'mainSha', 'clean', 'unconfirmed',
@@ -55,7 +59,7 @@ export const FULL_STATES = Object.freeze(['none', 'running', 'complete', 'abando
 export const MAX_IN_MAIN = 2000;
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-const NAME = /^(scan-on|scan-shadow|scan-strict|landing-batch|landing-state|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
+const NAME = /^(scan-on|scan-shadow|scan-strict|landing-batch|landing-state|slot-green|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\d{13})-([0-9a-f]{16}-[0-9a-f]{12})-[0-9a-f]{8}\.json$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const plain = v => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
@@ -124,7 +128,12 @@ export function validateLandingState(r) {
   return r;
 }
 
-const KIND = { 'landing-batch': [LANDING_BATCH_CONTRACT, validateLandingBatch], 'landing-state': [LANDING_STATE_CONTRACT, validateLandingState], proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
+export function validateSlotGreen(r) {
+  if (!exact(r, SLOT_GREEN_FIELDS) || r.contract !== SLOT_GREEN_CONTRACT || !iso(r.writtenAt) || !RUN_ID.test(r.runId ?? '') || !Number.isSafeInteger(r.pr) || r.pr <= 0
+    || !SHA.test(r.headSha ?? '') || !iso(r.slotGreenAt)) fail('invalid_train_slot_green');
+  return r;
+}
+const KIND = { 'slot-green': [SLOT_GREEN_CONTRACT, validateSlotGreen], 'landing-batch': [LANDING_BATCH_CONTRACT, validateLandingBatch], 'landing-state': [LANDING_STATE_CONTRACT, validateLandingState], proof: [SWEEP_PROOF_CONTRACT, validateSweepProof], 'full-shadow': [FULL_SWEEP_CONTRACT, validateFullSweep], 'full-on': [FULL_SWEEP_CONTRACT, validateFullSweep],
   front: [FRONT_BATCH_CONTRACT, validateFrontBatch], 'strict-proof': [STRICT_PROOF_CONTRACT, validateStrictProof], 'strict-round': [STRICT_ROUND_CONTRACT, validateStrictRound],
   'strict-front-proof': [STRICT_FRONT_PROOF_CONTRACT, validateStrictFrontProof], 'pending-revocations': [PENDING_REVOCATIONS_CONTRACT, validatePendingRevocations],
   'scan-on': [SCAN_CONTRACT, validateScanProgress], 'scan-shadow': [SCAN_CONTRACT, validateScanProgress], 'scan-strict': [SCAN_CONTRACT, validateScanProgress] };
@@ -272,6 +281,8 @@ export class TrainSweepStore {
   // Push mode (ADR 0018 §3): batch records, newest first (at most `limit`), and the landing state (newest valid; none: empty).
   async appendLandingBatch(r) { return this.write('landing-batch', { contract: LANDING_BATCH_CONTRACT, ...r }); }
   async landingBatches(limit = 20) { return this.read('landing-batch', limit); }
+  async writeSlotGreen(r) { return this.write('slot-green', { contract: SLOT_GREEN_CONTRACT, ...r }); }
+  async readSlotGreen({ pr, headSha }) { return (await this.read('slot-green', 1, r => r.pr === pr && r.headSha === headSha))[0] ?? null; }
   async landingBatchByTest(testSha) { return (await this.read('landing-batch', 1, r => r.testSha === testSha))[0] ?? null; }
   async writeLandingState({ writtenAt, runId, bad, suspect, adopted, handled }) {
     const r = { writtenAt, runId, bad, suspect, adopted, handled };

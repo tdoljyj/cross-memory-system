@@ -979,6 +979,20 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
         result.reason = 'required-tests dispatch PR is closed, foreign or moved';
         return result;
       }
+      // Review 3 high 2: this dispatch is one more attempt of the workflow on the head: with every other run's attempts it keeps the
+      // three-attempt budget (REPAIR_ATTEMPTS_MAX); a count that cannot be read is the budget reached.
+      let used = Infinity;
+      try {
+        const list = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&per_page=100`);
+        const runs = list?.workflow_runs;
+        if (Array.isArray(runs) && list.total_count === runs.length && runs.length <= 100
+          && runs.every(r => r && (r.id === run?.id || (Number.isSafeInteger(r.run_attempt) && r.run_attempt > 0))))
+          used = runs.filter(r => r.id !== run?.id && r.head_sha === head).reduce((n, r) => n + r.run_attempt, 0) + 1;
+      } catch { used = Infinity; }
+      if (!(used <= REPAIR_ATTEMPTS_MAX)) {
+        result.reason = `required-tests dispatch: three attempts of the workflow are already on this head (${Number.isFinite(used) ? used : 'not countable'})`;
+        return result;
+      }
       // Retain the branch-dispatch rule: workflow bytes must match main.
       // The unchanged trusted gate then judges the Native PR admission.
       const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);

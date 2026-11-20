@@ -3310,14 +3310,17 @@ test('bot head dispatch: active, dispatch, foreign, empty or previously executed
   ]) assert.equal((await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() }, ...opts })).outcome.admitted, false, JSON.stringify(opts));
 });
 
-test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse', async () => {
-  const others = [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })];
+test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse; the dispatch keeps the three-attempt budget', async () => {
+  const twoAttempts = [skippedDispatchRun({ run_attempt: 2 })], twoRuns = [skippedDispatchRun(), skippedDispatchRun({ id: 8002 })];
   const jobs = { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), 8002: skippedDispatchJobs() };
-  assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true);
+  for (const others of [twoAttempts, twoRuns]) assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true, 'two attempts and this dispatch: three');
+  // Review 3 high 2 (Fable 11-20): three attempts of the workflow already on the head, the dispatch would be the fourth.
+  const three = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })], jobs });
+  assert.deepEqual([three.outcome.admitted, three.outcome.reasons], [false, ['required_tests_dispatch_attempt_budget_used']]);
   const ran = skippedDispatchJobs(); ran[1].conclusion = 'failure';
-  for (const changed of [
-    { ...jobs, 8001: ran }, { ...jobs, 8002: ran },
-    { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } },
+  for (const [others, changed] of [
+    [twoAttempts, { ...jobs, 8001: ran }], [twoAttempts, { ...jobs, '8001:2': ran }], [twoRuns, { ...jobs, 8002: ran }],
+    [twoRuns, { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } }],
   ]) assert.equal((await requiredDispatch({ others, jobs: changed })).outcome.admitted, false);
 });
 

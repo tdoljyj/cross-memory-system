@@ -302,7 +302,7 @@ export function trainSummary(f) {
     || new Set(claimBindings.map(b => JSON.stringify([b.repository,b.scope,b.sourceManifestSha256]))).size > 1) return null;
   if (v2 ? !RUN_MODES.includes(f.mode) : f.mode !== 'shadow') return null;
   const front = f.front && Number.isSafeInteger(f.front.pr) ? { pr: f.front.pr, headSha: SHA.test(f.front.headSha ?? '') ? f.front.headSha : null,
-    ...frontChecksOf(f.front.required) } : null;
+    ...frontChecksOf({ ...f.front.required, checksUnreadable: f.front.checksUnreadable }) } : null;
   const base = { at: f.at, mode: f.mode, wouldDo: f.wouldDo, onDuty: f.onDuty === true, front, mainSha: SHA.test(f.mainSha ?? '') ? f.mainSha : null,
     ...(f.claimBindings === undefined ? {} : { claimBindings }),
     strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0 };
@@ -351,6 +351,7 @@ export const FRONT_CHECKS_DECISIONS = Object.freeze(['FRONT_CHECKS_WAIT', 'FRONT
 const YIELD_REASONS = ['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE', 'REQUIRED_CHECK_NOT_RERUN'];
 function frontChecksOf(v) {
   const out = {};
+  if (v?.checksUnreadable === true) out.checksUnreadable = true;
   if (Number.isSafeInteger(v?.reruns) && v.reruns > 0 && v.reruns <= 2) out.reruns = v.reruns;
   if (YIELD_REASONS.includes(v?.yieldReason)) out.yieldReason = v.yieldReason;
   return out;
@@ -359,6 +360,8 @@ export function frontChecksText(key, gap = null, front = null) {
   const list = Array.isArray(gap) && gap.length ? `；${gapList(gap)}` : '';
   const n = Number.isSafeInteger(front?.reruns) && front.reruns > 0 ? front.reruns : 0;
   const then = '；补跑用完或到时限即让出车头';
+  // Review 3 medium 2: with the checks unreadable nothing is known to be green.
+  if (key === 'FRONT_CHECKS_WAIT' && front?.checksUnreadable === true) return '检查暂时读不出，下一轮再看';
   if (key === 'FRONT_CHECKS_WAIT') return n ? `合并位已绿，补跑中（第 ${n} 次）${list}` : `合并位已绿，等检查${list}`;
   if (key === 'FRONT_CHECKS_MISSING') return n ? `合并位已绿，第 ${n} 次补跑后仍缺${list}；等再补跑${then}` : `合并位已绿，缺检查${list}；等自动补跑${then}`;
   if (key === 'FRONT_CHECKS_MISSING_YIELDED') return front?.yieldReason === 'REQUIRED_RERUNS_EXHAUSTED' ? '必需检查缺失，补跑两次仍缺，已让出车头，列车继续下一个'

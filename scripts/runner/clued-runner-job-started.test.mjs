@@ -95,7 +95,8 @@ function fakeFetch(script) {
   script = { [`${API}/actions/workflows/clued-work-admission.yml`]: { body: {
     path: ".github/workflows/clued-work-admission.yml", state: "active" } },
     // The head's runs for the three-attempt budget per head and workflow (Fable 11-20): by default no other run of the workflow.
-    [`${API}/actions/runs?head_sha=`]: { body: { total_count: 0, workflow_runs: [] } }, ...script };
+    [`${API}/actions/runs?head_sha=`]: { body: { total_count: 0, workflow_runs: [] } },
+    [`${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=`]: { body: { total_count: 0, workflow_runs: [] } }, ...script };
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? "GET", body: init.body });

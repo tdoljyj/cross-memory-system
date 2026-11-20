@@ -229,6 +229,15 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     // lands its own merge, so there the merge slot alone stays green.
     front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, ...(push ? {} : { rules: landability.rules }) });
     if (!checksReadable) front = { ...front, green: false, checksUnreadable: true, ...(front.required !== undefined ? { required: null } : {}) };
+    // Review 3 medium 1: the merge slot's green, recorded when seen, stays the start of the 60-minute wait when the checks cannot be read.
+    if (job.mode === 'on' && headSha && typeof sweepStore?.readSlotGreen === 'function') {
+      try {
+        const known = await sweepStore.readSlotGreen({ pr: holder.pr, headSha });
+        if (checksReadable && front.green && Number.isFinite(front.slotGreenAt) && known?.slotGreenAt !== isoOf(front.slotGreenAt))
+          await sweepStore.writeSlotGreen({ writtenAt: isoOf(clock()), runId: job.runId, pr: holder.pr, headSha, slotGreenAt: isoOf(front.slotGreenAt) });
+        if (!checksReadable && known) front = { ...front, slotGreenAt: Date.parse(known.slotGreenAt) };
+      } catch { /* an unreadable record proves no start: the 60 minutes wait for a round that reads the checks */ }
+    }
     // §41.4 (MergeAdmission v0.2 §2.4), on only: a protected-layer front whose H does not contain T needs main merged in
     // first. The layer is read only when H does not contain T; paths that cannot be read count as protected.
     if (job.mode === 'on' && front.state === 'open' && headSha && front.headContainsMain !== true) {
@@ -599,7 +608,10 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           const green = frontChecks.filter(c => c?.app?.id === appId && c.name === SLOT_CHECK && c.head_sha === front.headSha && c.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
           const said = TESTED.exec(green?.output?.summary ?? '');
           const tested = record ? { baseSha: record.baseSha, testTree: record.testTree } : said ? { baseSha: said[1], testTree: said[3] } : null;
-          if (tested && mergeCommit && mergeCommit.parents.length === 2 && mergeCommit.parents[0] === tested.baseSha && mergeCommit.parents[1] === front.headSha
+          // Review 3 high 3: with the checks unreadable and no record of this node, what was tested is unknown, never a wrong tree: nothing is
+          // latched, the next round reads again.
+          if (!tested && front.checksUnreadable) { /* unknown this round */ }
+          else if (tested && mergeCommit && mergeCommit.parents.length === 2 && mergeCommit.parents[0] === tested.baseSha && mergeCommit.parents[1] === front.headSha
             && mergeCommit.tree === tested.testTree) {
             fx.n++;
             const a = await native.adopt({ pr: holder.pr, mergeSha: mergeCommit.sha });
@@ -617,23 +629,30 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
         } else if (front.state === 'open' && typeof native.yieldSlot === 'function' && SHA.test(pull?.head?.sha ?? '')
-          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks },
+          && (pull.draft === true || !(await landable(github, pull, { complete: front.checksUnreadable !== true, checks: frontChecks },
             { ...landability, excuse: context => requiredFailureExcused(front, context, clock(), holder.takenAt ?? null) }))
             || (missingYield = requiredYieldReason(front, clock(), holder.takenAt ?? null)))) {
           // A front that cannot land as it stands (draft, auto-merge off, a required check failed) never
           // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
           // Fable 11-20 (#1192) and its independent review: nor does a merge-slot-green front that is not green once a missing check's re-run
           // budget is used up, or at the longest wait (train-facts.mjs#requiredYieldReason): FRONT_CHECKS_MISSING_YIELDED, with the reason.
-          // Review 2 medium 3: Native matches the front by claim and PR, so a missing-check yield is made only while the PR's head is still the
-          // head whose checks were read; a head that moved since keeps the slot (its own checks are read next round).
+          // Reviews 2 and 3 (medium 3): Native matches the front by claim and PR (the head it is given is recorded, not compared), so every yield
+          // here is made only while the PR's head is still the head whose checks were read; a head that moved keeps the slot (its own checks are
+          // read next round). After the call the head is read again: a yield cannot be taken back, so a head that moved meanwhile is recorded
+          // (yieldHeadMoved). What stays open is the moment between that read and Native's own write.
           let moved = false;
-          if (missingYield) { try { moved = (await github.readPullRequest(holder.pr))?.head?.sha !== pull.head.sha; } catch { moved = true; } }
+          try { moved = (await github.readPullRequest(holder.pr))?.head?.sha !== pull.head.sha; } catch { moved = true; }
           if (moved) { front = { ...front, requiredYieldHeld: 'FRONT_HEAD_MOVED' }; missingYield = null; }
           else {
             fx.n++;
             const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
             if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
             if (missingYield && actions.returned) front = { ...front, requiredYieldReason: missingYield };
+            if (actions.returned) {
+              let after = false;
+              try { after = (await github.readPullRequest(holder.pr))?.head?.sha !== pull.head.sha; } catch { after = false; }
+              if (after) front = { ...front, yieldHeadMoved: true };
+            }
           }
         }
       } catch { /* unreadable reply: the write may have happened; counted, and the next run sees the outcome */ }

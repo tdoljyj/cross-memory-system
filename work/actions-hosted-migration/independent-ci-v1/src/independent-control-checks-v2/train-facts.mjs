@@ -131,23 +131,32 @@ export function requiredOnHead({ rules, checks, headSha, appId }) {
     if (!state) continue;
     const tries = app === ACTIONS_APP_ID ? attemptsOf(own, entry.context) : [];
     const ends = tries.map(c => timeOf(c.completed_at)).filter(t => t !== null);
-    missing.push({ context: entry.context, state, actions: app === ACTIONS_APP_ID, attempts: tries.length, lastEndAt: ends.length ? Math.max(...ends) : null,
-      runs: [...new Set(tries.map(runOf).filter(r => r !== null))] });
+    const runs = [...new Set(tries.map(runOf).filter(r => r !== null))];
+    // Review 3 medium 2: attempts per workflow run and attempt: every attempt of a gated run has one gate, so a run's attempts are its gates
+    // (or its own check runs of this job, where more are listed); a check run that names no run counts once.
+    const attempts = runs.reduce((n, r) => n + Math.max(gatesOf(own, r).length, tries.filter(c => runOf(c) === r).length), 0)
+      + tries.filter(c => runOf(c) === null).length;
+    missing.push({ context: entry.context, state, actions: app === ACTIONS_APP_ID, attempts, lastEndAt: ends.length ? Math.max(...ends) : null,
+      runs, lastId: tries.length ? Math.max(...tries.map(c => c.id)) : 0 });
   }
-  // Review 2 high 2: a re-run of a missing check is one of its own workflow run (an earlier attempt of the check names the run): that run's
-  // gate has started after the check's last attempt ended and is running or has admitted (its jobs may not be listed yet). A queued gate that
-  // has not started, a gate of another run, or one that refused is not a re-run. A check with no attempt names no run: nothing is tied to it.
-  const gates = own.filter(c => c.app?.id === ACTIONS_APP_ID && c.name === GATE_JOB && runOf(c) !== null && timeOf(c.started_at) !== null
-    && (c.status === 'in_progress' || (c.status === 'completed' && c.conclusion === 'success')));
+  // Reviews 2 (high 2) and 3 (high 1): a re-run of a missing check is a new attempt of its own workflow run (an earlier attempt of the check
+  // names the run): that run's gate is newer than the check's last attempt (GitHub numbers check runs in creation order) and is queued, running
+  // or has admitted (its jobs may not be listed yet). A gate of another run, or one that ended without admitting, is not a re-run. A check
+  // with no attempt names no run: nothing is tied to it.
+  const live = own.filter(c => c.app?.id === ACTIONS_APP_ID && c.name === GATE_JOB && runOf(c) !== null && (c.status !== 'completed' || c.conclusion === 'success'));
   for (const m of missing) {
-    m.gateRerun = m.actions && m.state !== 'pending' && gates.some(g => m.runs.includes(runOf(g)) && (m.lastEndAt === null || timeOf(g.started_at) > m.lastEndAt));
+    m.gateRerun = m.actions && m.state !== 'pending' && live.some(g => m.runs.includes(runOf(g)) && g.id > m.lastId);
     m.rerunning = m.state === 'pending' || m.gateRerun;
   }
   const admitted = own.filter(c => c.app?.id === appId && c.name === ADMISSION_CHECK && c.status === 'completed' && c.conclusion === 'success')
     .map(c => timeOf(c.completed_at)).filter(t => t !== null);
-  return { missing, reruns: Math.min(REQUIRED_ATTEMPTS_MAX - 1, Math.max(0, ...missing.map(m => m.attempts - 1 + (m.gateRerun ? 1 : 0)))),
-    waiting: missing.some(m => m.rerunning), admittedAt: admitted.length ? Math.max(...admitted) : null };
+  // The re-runs shown are those of what runs now (review 3 medium 2): one workflow's first run is never shown with another's re-runs.
+  const running = missing.filter(m => m.rerunning);
+  return { missing, reruns: Math.min(REQUIRED_ATTEMPTS_MAX - 1, Math.max(0, ...(running.length ? running : missing).map(m => m.attempts - 1))),
+    waiting: running.length > 0, admittedAt: admitted.length ? Math.max(...admitted) : null };
 }
+// The gate check runs of one workflow run: one an attempt.
+function gatesOf(own, run) { return own.filter(c => c.app?.id === ACTIONS_APP_ID && c.name === GATE_JOB && runOf(c) === run); }
 
 // Whether the observation window of one missing check has passed with no new attempt (A3). It starts at the latest of its last attempt's end,
 // the head's admission and floor (review 2 high 1: the later of the claim becoming the front and the merge slot going green, so the companion,
@@ -176,17 +185,15 @@ export function requiredFailureExcused(front, context, now, takenAt = null) {
 // Why a merge-slot-green front that is not green gives the slot away now (REQUIRED_YIELD_REASONS), or null. fallbackStart: the holder's front
 // time (ISO), the clock's start when no check carries a time.
 export function requiredYieldReason(front, now, fallbackStart = null) {
-  // Review 2 medium 1: the front's check runs could not be read this round: nothing is known to be green, and the front time bounds the wait.
-  if (front?.checksUnreadable === true) {
-    const since = timeOf(fallbackStart);
-    return since === null || !Number.isFinite(now) || now - since >= REQUIRED_CHECKS_MAX_WAIT_MS ? 'REQUIRED_CHECKS_DEADLINE' : null;
-  }
+  // Review 3 medium 1: the 60 minutes have one start, the merge slot's green (read from the checks, or this node's record of it when they
+  // cannot be read); the front time never stands in. Unreadable checks with no record of the green prove no wait: the next round looks again.
+  const deadline = Number.isFinite(front?.slotGreenAt) && Number.isFinite(now) && now - front.slotGreenAt >= REQUIRED_CHECKS_MAX_WAIT_MS;
+  if (front?.checksUnreadable === true) return deadline ? 'REQUIRED_CHECKS_DEADLINE' : null;
   if (front?.green !== true || front.required === undefined) return null;
   const r = front.required;
   if (r !== null && !r.missing.length) return null;
-  if (r !== null && r.missing.some(m => m.state !== 'pending' && m.attempts >= REQUIRED_ATTEMPTS_MAX)) return 'REQUIRED_RERUNS_EXHAUSTED';
-  const start = [front.slotGreenAt, Date.parse(fallbackStart ?? '')].find(Number.isFinite);
-  if (start === undefined || !Number.isFinite(now) || now - start >= REQUIRED_CHECKS_MAX_WAIT_MS) return 'REQUIRED_CHECKS_DEADLINE';
+  if (r !== null && r.missing.some(m => !m.rerunning && m.attempts >= REQUIRED_ATTEMPTS_MAX)) return 'REQUIRED_RERUNS_EXHAUSTED';
+  if (deadline) return 'REQUIRED_CHECKS_DEADLINE';
   // A3: a missing check (not a failed one: the failure path has that) with no new attempt in its observation window was not re-run.
   const floor = frontFloor(front, fallbackStart);
   return r !== null && r.missing.some(m => m.state !== 'failed' && requiredWindowExpired(r, m, now, floor)) ? 'REQUIRED_CHECK_NOT_RERUN' : null;
@@ -258,6 +265,7 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
         testMergeSha: front.testMerge?.sha ?? null, testMergeTree: front.testMerge?.tree ?? null, testMergeParentsOk: front.testMerge?.parentsOk ?? null,
         ...(front.checksUnreadable === true ? { checksUnreadable: true } : {}),
         ...(front.requiredYieldHeld ? { requiredYieldHeld: front.requiredYieldHeld } : {}),
+        ...(front.yieldHeadMoved === true ? { yieldHeadMoved: true } : {}),
         ...(front.required !== undefined ? { required: front.required === null
           ? (front.requiredYieldReason ? { unreadable: true, yieldReason: front.requiredYieldReason } : null)
           : { missing: front.required.missing.slice(0, MAX_REQUIRED_LISTED).map(m => ({ ...m, lastEndAt: m.lastEndAt === null ? null : new Date(m.lastEndAt).toISOString() })),
