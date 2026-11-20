@@ -43,6 +43,9 @@ const attempt = ({ heavy = ['skipped', 'skipped', 'skipped'], notes = [pendingNo
     ...heavy.map((c, i) => ({ name: HEAVY[i], head_sha: head, status: c === 'in_progress' ? 'in_progress' : 'completed', conclusion: c === 'in_progress' ? null : c }))] });
 const run = (id, attempts, o = {}) => ({ id, workflow_id: LINUX_WORKFLOW, head_sha: HEAD, event: 'pull_request', status: 'completed', pull_requests: [{ number: 452 }], attempts, ...o,
   path: o.path ?? [...WORKFLOWS, extraWorkflow, hostedWorkflow].find(w => w.id === (o.workflow_id ?? LINUX_WORKFLOW))?.path });
+// An attempt whose jobs all ended at `at` (GitHub gives every completed job its completed_at, skipped ones included).
+const endedAt = (a, at) => ({ ...a, jobs: a.jobs.map(j => ({ ...j, started_at: at, completed_at: at })) });
+const LONG_AGO = '2026-11-05T11:00:00Z';
 const workflowAttempt = name => {
   const a = attempt({ heavy: ['skipped'] });
   a.jobs[1].name = `${name}-skipped`;
@@ -508,7 +511,8 @@ test('bot head: refused dispatch stays visible and tells Owner once without retr
 });
 
 test('skipped head: final repair refusal is visible and tells Owner once across restarts', async t => {
-  const w = world({ runs: [run(700, [attempt({ notes: [otherNote] })])] });
+  // The attempt ended an hour ago: the gate's evidence has settled (Fable 11-20 finalRuns).
+  const w = world({ runs: [run(700, [endedAt(attempt({ notes: [otherNote] }), LONG_AGO)])] });
   const l = await lane(t, w);
   await l.r.step();
   assert.match(l.r.line(HEAD), /必需测试被跳过且不能自动补跑：.*请推新提交或手动 Run workflow/);
@@ -1611,7 +1615,8 @@ test('54a2b67a review NB 3: a receipt with no checks field (old companion) is sh
 // the head waits for its required checks: no gate log, no job list; a new attempt of it is judged again.
 test('54a2b67a review NB 4: a gated run outside the required checks already judged final is not read again until it has a new attempt', async t => {
   const admitted = '{"verdict":"ADMITTED","automation_self_hosted":false}';
-  for (const hosted of [{ ...workflowAttempt('gitleaks'), notes: [], logs: { 0: admitted } }, { ...workflowAttempt('gitleaks'), notes: [otherNote] }]) {
+  // Both attempts ended an hour ago: the gate's evidence has settled (Fable 11-20 finalRuns).
+  for (const hosted of [endedAt({ ...workflowAttempt('gitleaks'), notes: [], logs: { 0: admitted } }, LONG_AGO), endedAt({ ...workflowAttempt('gitleaks'), notes: [otherNote] }, LONG_AGO)]) {
     const w = world({ runs: [run(700, [attempt({ heavy: ['in_progress', 'in_progress', 'in_progress'], notes: [] })], { status: 'in_progress' }),
       run(702, [hosted], { workflow_id: HOSTED_WORKFLOW })] });
     const l = await lane(t, w);
@@ -1678,7 +1683,6 @@ test('54a2b67a T2: every real workflow with an admission-gate job is re-run when
 // Fable 11-20 “finalRuns 读得太早”: a run that ran nothing is refused on its gate's evidence alone (the annotations, env-failure.mjs), which
 // GitHub may hang on the check run a while after the job ended. A refusal read within ten minutes of the latest attempt's end is no verdict:
 // neither the run (finalRuns) nor the head (seen.final) is closed on it, nor a STUCK receipt written; the next look judges it again.
-const endedAt = (a, at) => ({ ...a, jobs: a.jobs.map(j => ({ ...j, started_at: at, completed_at: at })) });
 const allChecksShown = () => [nativeCheck(), ...CHECK_NAMES.map(name => actionCheck(name))];
 const gitleaksRun = (notes, at) => run(702, [endedAt({ ...workflowAttempt('gitleaks'), notes }, at)], { workflow_id: HOSTED_WORKFLOW });
 const judgedFinal = (l, runId) => (l.state.data.heads[HEAD]?.finalRuns ?? []).some(key => key.endsWith(`:${runId}:1`));

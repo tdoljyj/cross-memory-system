@@ -62,7 +62,12 @@ const RECENT_OTHER_HEADS = 3;
 const MAX_RECOVERY_PAGES = 50;
 // 5: jobs no runner took ran nothing (9aba97c1), and the budget is per head and workflow; verdicts of 4 are judged again.
 // 6: every gated run of a PR head is in scope (54a2b67a); verdicts of 5 are judged again.
-const REPAIR_RULE_VERSION = 6;
+// 7: a never-ran refusal read within GATE_EVIDENCE_SETTLE_MS of the attempt's end is no verdict (Fable 11-20 finalRuns); a final or a
+//    finalRuns entry of 6 may have been read too early, so it is judged again.
+const REPAIR_RULE_VERSION = 7;
+// A run that ran nothing is refused on its gate's annotations alone (env-failure.mjs), which GitHub may hang on the check run a while
+// after the job ended: within this time of the latest attempt's end (or with no readable end) that refusal is no verdict yet.
+const GATE_EVIDENCE_SETTLE_MS = 10 * 60_000;
 const MAX_PAGES = 10;
 const MAX_TEXT = 3_500_000;
 // Runner refusals before any child ran (runner.mjs): nothing reached GitHub.
@@ -433,7 +438,9 @@ async function dispatchDecision({ gh, pull, defaultBranch, target, runs, missing
 // Keep the old newest-run and historical repair checks within one workflow.
 // neverRanOnly: a gated PR run outside the required checks (54a2b67a): only a run whose every attempt ran nothing is repaired, and its
 // refusal is told to no one (no required check waits on it).
-async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, headSha, base, defaultBranch, testSha, canRequest, checks, workflow, neverRanOnly = false }) {
+// now: the lane's clock (null for a direct decide(): a refusal is final at once).
+async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, headSha, base, defaultBranch, testSha, canRequest, checks, workflow,
+  neverRanOnly = false, now = null }) {
   const { id: runId, workflow_id: workflowId, run_attempt: attempt } = newest;
   const out = { pr: pull, runId, workflowId, attempt, checks, workflow };
   const say = (action, reason) => ({ ...out, action, reason: short(reason) });
@@ -479,7 +486,12 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
   const repair = await repairAllowed(gh, workflowId, runId, sha, next, attempts);
   if (!repair.allowed) {
     Object.assign(out, { systemic: repair.systemic, exhausted: repair.exhausted });
-    return say(repair.waiting ? 'skip' : 'final', repair.reason);
+    if (repair.waiting) return say('skip', repair.reason);
+    // Fable 11-20 finalRuns: a never-ran refusal read before the gate's evidence settled is judged again at the next look.
+    const endedAt = Math.max(...recentJobs.map(j => Date.parse(j.completed_at)));
+    if (allSkipped && now !== null && !(now - endedAt >= GATE_EVIDENCE_SETTLE_MS))
+      return say('skip', 'the gate evidence may not be on the run yet (ended under ' + GATE_EVIDENCE_SETTLE_MS / 60_000 + ' minutes ago): ' + repair.reason);
+    return say('final', repair.reason);
   }
   const current = await gh.get('/pulls/' + pull);
   if (!boundPr(current, pull, headSha, defaultBranch, gh.repo) || current.base.sha !== base)
@@ -643,7 +655,7 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
       let d;
       try {
         d = await decideWorkflow({ gh, runs: group, newest, recentJobs, select, pull: pull.number, headSha, base,
-          defaultBranch, testSha, canRequest, checks: target.checks, workflow: target.path, neverRanOnly });
+          defaultBranch, testSha, canRequest, checks: target.checks, workflow: target.path, neverRanOnly, now });
       } catch (e) {
         waiting = true;
         yield readError(e);
