@@ -170,6 +170,10 @@ test('shadow records are create-only and validated; the stage-10 outcome carries
   assert.equal(validateTrainFacts(open({ ...batch, headTree: TREE })).openFrontBatch.headTree, TREE);
   for (const bad of [{ ...batch, headTree: 'x' }, { ...batch, headTree: null }, { ...batch, headTree: TREE, members: [{ pr: 910, headSha: H }, { pr: 911, headSha: OLD }] }])
     assert.throws(() => validateTrainFacts(open(bad)), e => e.code === 'invalid_train_facts');
+  // Fable's review ruling B2: stage 10's own compare T...H says T is in H; only true, and only for a front of one member
+  assert.equal(validateTrainFacts(open({ ...batch, baseInHead: true })).openFrontBatch.baseInHead, true);
+  for (const bad of [{ ...batch, baseInHead: false }, { ...batch, baseInHead: 'true' }, { ...batch, baseInHead: true, members: [{ pr: 910, headSha: H }, { pr: 911, headSha: OLD }] }])
+    assert.throws(() => validateTrainFacts(open(bad)), e => e.code === 'invalid_train_facts');
   assert.equal(validateTrainFacts({ ...f, mode: 'on', decision: 'TRAIN_LANDED_TREE_MISMATCH', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' }).requestPause, 'TRAIN_LANDED_TREE_MISMATCH');
   assert.equal(validateTrainFacts({ ...f, mode: 'revoke-only', decision: 'REVOKE_ONLY_DONE', sweep: { ...f.sweep, revoked: 3 } }).sweep.revoked, 3);
   assert.throws(() => validateTrainFacts({ ...f, wouldDo: 'REVOKE_EVERYTHING' }), e => e.code === 'invalid_train_facts');

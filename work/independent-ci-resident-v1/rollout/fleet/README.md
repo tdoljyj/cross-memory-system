@@ -11,12 +11,9 @@
 
 ## 更换节点的 CI 连接
 
-前提是迁移 B 已上线，目标节点已安装含激活工具的新通用包、接受新 Source 并已移交当班。DESK 核对两台节点的升级、心跳和 CI 连接有效期与控制入口。轮换后的节点支持 v2 控制、v2 one-shot 和 bridge v4；仍使用 v1 控制的节点先切换至 v2。DESK 主动轮换前还须上线同事务撤销旧连接的迁移 A。
+含自续功能的代次由 LocalSystem Broker 处理 CI 与升级连接。常驻每天向 Broker 投递一次两类连接的续期请求；是否进入窗口、是否当班由 Broker 的新鲜签名探询判断，到达窗口开启时刻后申请同权限续期。CI 节点在本机排空后由服务端核对当班与排空状态。当班先让班；旧连接到期造成角色探测不确定时，仍可走签名探询并续期。升级连接独立处理。查看 `state/status.json` 的 `versions.renewal`，确认新连接编号、到期时刻、签名权限自检和后续心跳。
 
-1. Owner 在连接页签发新 CI 连接，在节点页选中目标节点，预览并确认换绑。
-2. 在目标节点上，从当前已装代次的 `windows` 目录用普通 Windows PowerShell 5.1 运行 `.\replace-ci-token.ps1`。核对节点名、安装身份摘要、两处目标路径与 ACL，并保留本次计划的 `planSha256`。普通窗口可能没有现连接的读取权。
-3. Owner 用本人提权的 Windows PowerShell 5.1 从同一目录运行 `.\replace-ci-token.ps1 -Apply -ExpectedPlanSha256 <计划摘要>`，在凭据窗口将新令牌粘贴到密码栏。工具按令牌查询服务端，核验本机登记公钥指纹并读回写入结果。结果显示变更前后编号、代次、服务端节点名和到期时刻。中断后按同一计划重试。若服务端已再次换绑，提供最新代次的令牌即可；工具会重新查询并核对，过程中保留恢复所需的事务标记。
-4. DESK 将自检中的当前连接编号和代次与服务端节点表对照，确认换绑后有新心跳被接受、自检 PASS，并核定新代次的资格。TURING 能接班后再处理 DESK。
+已部署签名探询与计划内让班入口的环境中，旧安装可凭机器签名和旧令牌证明定位项目。当班节点在服务端续期窗口内自动请求让班，收到接班回执后停止开新批，由角色探针和本地账本确认待命、排空，再续期。让班被拒时保留原连接与当班能力，状态显示拒绝码；无合格接班者与网关未确认类失败一小时后重试，其余拒绝次日重试。换载体请求照常处理。
 
 [节点当前连接合同](../../docs/ci-connection.md)
 
@@ -33,11 +30,13 @@
 
 自动审批的边界（服务端现有规则）：每节点 24 小时内自动批 6 次；同一个包第二次请求、或上一次自动批的升级没成功，归 Owner 手动批。
 
+切换为先核验后变绿时，两台节点都升级后，全队新发出的扫描检查才都遵循新次序。旧版发出的成功检查仍可能被复用。节点一旦用新版开始发布扫描，回退必须选用支持效果账本 `created` 和 `completing` 状态的版本。旧版遇到这两种状态可能要求对账或停机。
+
 ### 0.2 发布机与协调者（一次）
 
 1. 构建、发布：第 2、3 节，不变。
-2. 写接受文件：第 4 节，不变，只多一条规则。**`fleetRefs` 里进入 Source 的三项 `sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 沿用现装值**（任一已装节点上 `node …\install.mjs fleet-refs` 只读取出），这一版才能原地升级；`ownerDecisionRef`、`installationReceiptRef`（= `ownerReceiptRef`）写这次的 Decision 与回执。三项里有任何一项要换，这一版对所有节点都是重装。
-3. `publish.mjs attach-acceptance`：不变。
+2. 接受前：`publish.mjs prepare`（第 4 节），产出给 Owner 看的接受请求。**`fleetRefs` 里进入 Source 的三项 `sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 沿用现装值**，由 `prepare` 从本机已装记录只读带入（与 `install.mjs fleet-refs` 同一来源），这一版才能原地升级。三项里有任何一项要换，这一版对所有节点都是重装（`prepare` 不提供改它们的入口，要换先找 Fable）。
+3. Owner 接受、写完 Decision（正文带 prepare 给的那一行，并原样保存那次写入的返回）后：`publish.mjs seal --decision-record`（第 4 节），Decision、回执与时间都从那份返回里读。
 
 ### 0.3 每台节点：同一条命令
 
@@ -88,7 +87,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 1. 总览与顺序
 2. 发布机：构建一次
 3. 发布机：发布到 GitHub Release
-4. Owner 接受一次（接受文件）
+4. 接受：接受前 prepare、接受后 seal（Owner 只说一次“接受”）
 5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 6. 顺序与列车窗口（先 DESK，后 TURING）
 7. 凭据在哪里
@@ -97,7 +96,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 ## 1. 总览与顺序
 
 ```
-发布机   build（一次） -> publish release -> Owner 接受 -> publish attach-acceptance（首装另加 attach-first-install-kit）
+发布机   build（一次） -> publish release -> publish prepare（取 kit、备镜像、上传、写接受请求；Owner 面前的唯一产物） -> 候选演练（drill/，PASS 才往下） -> Owner 接受（一次；写 Decision 并保存返回） -> publish seal（读 Decision 记录、挂接受文件、写索引）
 节点     该版资产放进一个目录 -> fleet-node-<v>.bootstrap.ps1 -From <目录>（非提权；它取前置、解包、prepare，在要提权处自己请求 UAC）
 ```
 
@@ -127,9 +126,58 @@ node R/rollout/fleet/publish.mjs release --dir <构建输出目录> --repo tdolj
 
 索引文件默认：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`，表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision。
 
-## 4. Owner 接受一次（接受文件）
+## 4. 接受：接受前 prepare、接受后 seal（Owner 只说一次“接受”）
 
-接受只做一次，对全体节点适用。**由协调者在 Owner 的 Decision 之后写出**，文件名必须是 `fleet-node-<version>.acceptance.json`：
+接受分两段，各是一条命令、都可以原样重跑；**首装 kit 的检查在 `prepare` 里**（缺 kit 的包造不出可接受的东西）。把 kit 或接受文件挂上 Release 只有这两条命令：挂 kit、挂接受文件的步骤没有单独的命令，手写的接受文件没有入口。两条命令对“请求与 Release 是否对应”用同一个核对（`checkRequestOnRelease`）：Release 的 `SHA256SUMS` 与 `release.json` 指名请求里的 tar，`release.json` 的 commit 等于请求的，用从 Release 下载的 tar 由包自带的 `source-hash` 重算 Source 并与请求比，再核 kit。`prepare` 写出的请求，`seal` 不会因这一核对而拒。
+
+**“已接受”只看 Release**：Release 上有 `fleet-node-<version>.acceptance.json` 就是已接受，索引行只是它的派生记录。
+
+### 4.1 接受前：prepare（产出 Owner 要看的接受请求）
+
+```
+node R/rollout/fleet/publish.mjs prepare --version <version> --dir <构建输出目录> --out <目录> [--image <role-image-<id>.tar.gz> ...] [--repo tdoljyj/cross-memory-system] [--index <索引文件>]
+```
+
+在 `release` 之后、Owner 接受之前，在**装着更早版本、Linux 与 Windows 同一包的本机已装节点**上运行（非提权，对节点只读），且**在本机升到该版之前**。不要 Decision、回执或时间，也不读任何手写的字段文件。它依次做，任何一步不过就不写接受请求：
+
+1. Release 上已有该版接受文件：拒绝（`PREPARE_VERSION_ALREADY_ACCEPTED`），不再挂 kit、不再写请求，Release 缺 kit 也一样；索引行还空着，说明上次 `seal` 在写索引之前断了，用原参数重跑 `seal` 补上。索引行有值而 Release 上没有接受文件：拒绝，不猜。
+2. 首装 kit：**Release 上已有该版 kit 就用 Release 上那一份**（下载），不再去节点取。kit 的 `template.versionFacts` 带 `observedAt`，每次从节点取都是不同的字节；挂上之后，Release 上那一份就是唯一事实。Release 上还没有，才从本机取。两种来源都按新节点的读法核（`readKit`），并核模板 Source 不等于本包 Source：相等即拒绝，说明本机已经升到这一版，须在升级之前执行。
+3. 接受请求的 `fleetRefs`：从本机已装记录只读带入，来源与 `install.mjs fleet-refs` 相同：`sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 三项进 Source；`ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` 三项不进 Source，每次接受都沿用（来源见 `BATCH1-INTERFACES.md` 第 6 节）。Source 用上面的同一核对，从 Release 的 tar 算出（Decision、回执与时间不进 Source，算时用演练保留值占位）。
+4. 备齐 kit 列的每个本地角色镜像：用 `--image` 给；没给就用索引里上一版 Release 的同 id `role-image-<id>.tar.gz`，并按该版 `first-install.SHA256SUMS` 核哈希。缺一个即拒绝；下载失败按下载失败报，不当作缺镜像。
+5. 把 kit 与镜像放进 `--out`，Release 上缺的 kit、镜像与 `fleet-node-<version>.first-install.SHA256SUMS` 补传。Release 上已有的按**内容**比，不按大小：相同不重传，不同的镜像或 sums 替换；Release 上是另一份 kit 则拒绝。sums 读回整份比对，整个请求再按同一核对比一遍 Release，最后写 `fleet-node-<version>.acceptance-request.json`（文件整份写成或不写）。
+
+接受请求（合同 `clued.independent-ci.fleet-node-acceptance-request/1`）只有这些字段：`version`、`archive_sha256`、`commit`、`repository`、`ciSourceManifestSha256`、`firstInstallKitSha256`，以及上面六项 `fleetRefs`。**没有 Decision 字段**：这就是摆给 Owner 的那一份。输出里还有 `requestSha256` 和一行 `decisionLine`（`acceptance-request fleet-node-<version> sha256:<请求文件的 sha256>`），写 Decision 时把这一行原样放进正文。上传中途断了，原样重跑同一条命令（同一个 `--out`）即可。
+
+### 4.2 候选演练（接受之前）
+
+Owner 接受的，应当是已经在干净机器上装通过的东西：候选演练（`drill/`，见 `drill/FIRST-INSTALL-KIT.md`）用接受请求和该版的 kit、镜像组装自己的来宾目录。演练给来宾用的接受文件由接受请求加**演练保留值**生成（`publish.mjs` 的 `DRILL_RESERVED` 与 `acceptanceOf`，仓库里只此一处）。`seal` 与挂接受文件的步骤见到保留值即拒绝（`namesDrillReserved`），所以这份文件上不了 Release，真实节点拿不到。演练结束立刻 `-Finalize`（只回读 A9），回执定稿。`seal --drill-receipt` 只收 `candidate` 为 `true`、结论是 `PASS_A_FULL`、`PASS_A_PER_NODE_STEPS_REMAIN` 或 `PASS_A_REINSTALL_NOT_DRILLED`（候选显式带 `-SkipReinstall` 跳过 A8 时只能是它，同包重装未演练；`DRILL_PASS_CONCLUSIONS`）的回执，`PASS_A_PENDING_PRODUCTION_READBACK` 等一律拒绝。顺序是**演练 → `-Finalize` → 把请求与终稿回执摆给 Owner → 接受 → seal**，接受之后不开机、不再回读。演练失败不找 Owner：修、出新候选、重跑。首装演练不是原地升级的门，只走升级路径的紧急包可以不带演练回执。
+
+### 4.3 接受后：seal（填 Decision、挂上 Release、写索引）
+
+Owner 说“接受”之后，协调者写 Decision，正文放 4.1 的那一行。写的那一次 `clued_record_mutate` 的**完整返回当场原样存成文件**（Decision 记录），之后补不回来，没存下就只能再写一条 Decision。然后：
+
+```
+node R/rollout/fleet/publish.mjs seal --request <目录>\fleet-node-<version>.acceptance-request.json --decision-record <那次 clued_record_mutate 的返回文件> [--drill-receipt <候选演练定稿的 receipt.json>] [--repo tdoljyj/cross-memory-system] [--index <索引文件>]
+```
+
+只读接受请求和 Decision 记录，**不碰节点、不取 kit**。Decision、回执与接受时间都只从 Decision 记录里读：
+
+- Decision id 取 `target_refs[0].id`；
+- 回执 id 取 `receipt_id`；
+- 接受时间取 `supplemental.record.created_at`，截到秒，以 Z 结尾。
+
+命令行上没有这三个值的参数。
+
+Decision 记录要满足：已提交（`status: committed`）、恰一个目标、回执与目标是两个不同的 UUID；`supplemental.record` 是 Decision，它自带的 `id`、`receipt_id` 与上面两个相同；正文含本次请求的那一行（给别的候选写的 Decision 封不了这一个）；时间不在未来。
+
+`seal` 用这三个值填接受才有的五处：`cluedDecision` = `fleetRefs.ownerDecisionRef` = Decision，`installationReceiptRef` = `ownerReceiptRef` = 回执，`acceptedAt`。然后按节点 `prepare` 的同一份规则核整份合同，核索引行，再做同一个“请求对 Release”的核对。演练保留值即拒绝。都过了才把 `fleet-node-<version>.acceptance.json` 作为追加资产上传（不加 `--clobber`，tar 不变），补全索引行的接受时间、Decision、首装演练三格。最后把接受文件和 Decision 记录（`fleet-node-<version>.decision-record.json`，不上传）写到接受请求旁边。
+
+- `--drill-receipt`：要求见 4.2，且三项哈希与这份接受相同。索引“首装演练”格记它的结论与回执 sha256；没给，记“首装未演练”。已封的行，这一格不再改：换回执或去掉回执重跑都拒绝。
+- 同样的参数再跑一次：已挂上、已写索引就什么都不改；上传后、写索引前断了的，补写索引。同一版本换一个 Decision 再 seal：拒绝，且在上传之前。
+
+**交付目录**（给新节点 `bootstrap.ps1 -From`，第 5 节）就是该版 Release 的全部资产，在 `seal` 之后用 `gh release download fleet-node-<version> --pattern "fleet-node-<version>.*" --pattern "SHA256SUMS" --pattern "role-image-*.tar.gz"` 取进一个新目录（只取这一条，它取的就是 bootstrap 首装要的全部资产）。`prepare` 的 `--out`（含接受请求、Decision 记录）不是交付目录：bootstrap 会把其中没列在两份 sums 里的文件当作多出的文件拒绝。
+
+接受文件（合同 `clued.independent-ci.fleet-node-acceptance/1`，文件名 `fleet-node-<version>.acceptance.json`）由 `seal` 写出，形如：
 
 ```json
 { "contract": "clued.independent-ci.fleet-node-acceptance/1",
@@ -137,29 +185,14 @@ node R/rollout/fleet/publish.mjs release --dir <构建输出目录> --repo tdolj
   "archive_sha256": "<tar 的 sha256，与 release.json 一致>",
   "commit": "<40 位 hex>",
   "repository": "tdoljyj/cross-memory-system",
-  "ciSourceManifestSha256": "<install.mjs source-hash 算出的值>",
-  "cluedDecision": "<8 位 hex 或 uuid>",
+  "ciSourceManifestSha256": "<从 Release 的 tar 算出的 Source>",
+  "cluedDecision": "<Decision 的 uuid>",
   "acceptedAt": "<ISO，以 Z 结尾>",
-  "fleetRefs": { "<凡进入 record 的、各节点相同的接受引用与 formalRoles>": "…" } }
+  "fleetRefs": { "<凡进入 record 的、各节点相同的接受引用与 formalRoles>": "…" },
+  "firstInstallKitSha256": "<Release 上那份 kit 的 sha256>" }
 ```
 
-规则：凡进入 `record\source-manifest.json`（从而进入 `ciSourceManifestSha256`）的引用必须放在 `fleetRefs`，各节点相同，这样同一个包在两台上得到同一个 Source。按节点不同的（CI 连接资格 `ciPrincipalQualificationRef`、App 指纹、binding 等）不放这里，从本机记录读。确切字段清单见 `BATCH1-INTERFACES.md` 第 6 节；`formalRoles` 的现值可在任一已装节点上用 `node …\install.mjs fleet-refs` 只读取出。
-
-`ciSourceManifestSha256` 就是 Owner 接受的 Source（列车只比较它）。它只由包和 `fleetRefs` 决定，写接受文件的人先写出不含这一项的草稿，再在任一台机器上只读算出：
-
-```
-node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.mjs source-hash --artifact <tar> --artifact-sha <hex> --acceptance <草稿>
-```
-
-把输出的 `ciSourceManifestSha256` 填进接受文件。每台节点的 `prepare` 都重算一遍，不等即拒绝（`FLEET_SOURCE_NOT_THE_ACCEPTED_ONE`）；`repository` 必须等于节点 record 的仓库。
-
-上传：
-
-```
-node R/rollout/fleet/publish.mjs attach-acceptance --version <version> --acceptance <接受文件> [--repo tdoljyj/cross-memory-system] [--index <索引文件>] [--dir <构建输出目录>]
-```
-
-先核接受文件：合同、`version`、`archive_sha256` 与 `commit` 必须等于索引行里的值（给了 `--dir` 还要等于 release.json）、`repository` 等于 `--repo`，并按节点 `prepare` 的同一份规则核整份合同（`ciSourceManifestSha256` 的形状、`fleetRefs` 的确切字段、Decision 与时间）；通过后作为追加资产上传（不加 `--clobber`，tar 不变），再把索引行的接受时间与 Decision 补全。该行已有接受则拒绝，且在上传之前。
+规则：凡进入 `record\source-manifest.json`（从而进入 `ciSourceManifestSha256`）的引用，都必须放在 `fleetRefs`，各节点相同，这样同一个包在两台上得到同一个 Source。按节点不同的（CI 连接资格 `ciPrincipalQualificationRef`、App 指纹、binding 等）不放这里，从本机记录读。确切字段清单见 `BATCH1-INTERFACES.md` 第 6 节。`ciSourceManifestSha256` 就是 Owner 接受的 Source，列车只比较它；每台节点的 `prepare` 都重算一遍，不等即拒绝（`FLEET_SOURCE_NOT_THE_ACCEPTED_ONE`）；`repository` 必须等于节点 record 的仓库。
 
 ## 5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 
@@ -169,7 +202,7 @@ node R/rollout/fleet/publish.mjs attach-acceptance --version <version> --accepta
 powershell -NoProfile -ExecutionPolicy Bypass -File <目录>\fleet-node-<v>.bootstrap.ps1 -From <目录>
 ```
 
-`<目录>` 放该版的 Release 资产（U 盘、共享盘、同步文件夹都可以，只认哈希；路径只许字母、数字、`.`、`_`、`-` 与 `\`）：`fleet-node-<v>.tar`、`fleet-node-<v>.release.json`、`SHA256SUMS`、`fleet-node-<v>.bootstrap.ps1`、`fleet-node-<v>.prereq-manifest.json`、`fleet-node-<v>.acceptance.json`；首装另要 `fleet-node-<v>.first-install-kit.json`、它列出的每个 `role-image-<64hex>.tar.gz` 与 `fleet-node-<v>.first-install.SHA256SUMS`。取资产可以用 `fetch.mjs`（0.3，断流续传、只认哈希）或 `gh release download`。
+`<目录>` 放该版的 Release 资产（U 盘、共享盘、同步文件夹都可以，只认哈希；路径只许字母、数字、`.`、`_`、`-` 与 `\`）：`fleet-node-<v>.tar`、`fleet-node-<v>.release.json`、`SHA256SUMS`、`fleet-node-<v>.bootstrap.ps1`、`fleet-node-<v>.prereq-manifest.json`、`fleet-node-<v>.acceptance.json`；首装另要 `fleet-node-<v>.first-install-kit.json`、它列出的每个 `role-image-<64hex>.tar.gz` 与 `fleet-node-<v>.first-install.SHA256SUMS`。取资产用第 4.3 节“交付目录”那一条 `gh release download`（`fetch.mjs` 只取 tar、接受文件与 `SHA256SUMS`，够原地升级，组不齐首装目录）。
 
 bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象）：
 
@@ -198,7 +231,7 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
 同一个入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>`。它先非提权运行 `install.mjs first-install-check`（接受文件、tar 与 kit 的哈希、角色镜像，并核 toolchain 的 `node.exe` 就是 kit 记录的控制器运行时：不符即 `CONTROLLER_NODE_NOT_THE_FLEETS`，在任何 UAC 之前），再提权跑一次主机准备（UAC 1，`windows/first-install-host.ps1`：账户、runner、发行版、凭据，写 `C:\ProgramData\CluedIndependentCI\first-install\facts.json`；它读的 tar 与前置清单是 bootstrap 复制到本地工作目录的副本，提权令牌看不到 Owner 映射的盘符），再非提权跑 `install.mjs prepare ... --from <目录>`，最后提权跑它给的启动器（UAC 2）。
 
 - `prepare` 的判据只有一个：有没有 `install\install-receipt.json`。没有时：本机不得有任何常驻残留（三个服务、resident 根；有就 `FIRST_INSTALL_RESIDUE_PRESENT` 并列出，不猜、不覆盖）；节点值只从 `facts.json`（`clued.independent-ci.first-install-facts/1`，名字全由机器名推导，规则写在 `readFirstInstallFacts`）和该版的首装 kit 读。CI 根对 operator 不可列目录（主机准备设的 DACL），`prepare` 看不到 `resident-uninstalled-*`：输出的 `residueUnchecked` 写明这一项没查，不当作没有（主机准备与启动器在提权下查）。
-- 首装 kit：`fleet-node-<v>.first-install-kit.json`，任一已装、Linux 与 Windows 同一包的节点上非提权只读运行 `install.mjs first-install-kit` 得到；内容是模板 roles-v3 与 version facts、模板 Source 清单与公钥、全队共用的 record 值、模板 policy/companion 配置、角色镜像。其 sha256 由 Owner 随版接受（接受文件的 `firstInstallKitSha256`），缺它首装即拒绝。kit 要取自装着**更早版本**的节点（模板 Source 等于新包 Source 时派生拒绝）。
+- 首装 kit：`fleet-node-<v>.first-install-kit.json`，由 `publish.mjs prepare` 在接受前从装着更早版本的本机已装节点取得并上传，挂上之后只认 Release 上那一份（第 4 节；没有单独的取 kit、挂 kit 步骤）；内容是模板 roles-v3 与 version facts、模板 Source 清单与公钥、全队共用的 record 值、模板 policy/companion 配置、角色镜像。其 sha256 由 Owner 随版接受（接受文件的 `firstInstallKitSha256`）：没有它的接受文件，`seal` 不挂、`prepare` 与升级不读（`FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT`）；Release 上缺 kit 资产、`first-install.SHA256SUMS` 里的哈希与接受文件不等、或缺 kit 列的任一镜像，`seal` 同样拒绝。本机已装的旧版记录不受影响。
 - 本地构建的角色镜像（contract-placement 的 `sha256:<id>`）随版发布为 `role-image-<id>.tar.gz`（全队一次导出），B 载入后由 docker 按 id 核内容；新节点不再要任何节点为它导出东西。
 - 其后与重装同一路径：建包两次、`linux-in\`、包内 `reinstall/linux/first-install.py` 的 `--in-dir/--out-dir` 形态（`A.sh` 首装检查与派生、`B.sh` 签名与安装、`B-resume.sh` 即 `B.sh`）、`install-plan.json`（`firstInstall`，无 W1，`secrets.source = first-install`）、`generate.py --fleet-plan`。结束输出 `FLEET_NODE_FIRST_INSTALL_PREPARED`。
 - 启动器：首装预检（无残留、令牌目录只有 SYSTEM/Administrators）→ 从 `first-install\credentials\` 带令牌并核指纹 → Windows 侧完整预检（runner 等待、两处秘密文件、安装器的两次 dry run 与 ACL 迁移计划；不过即停，Linux 未动）→ Linux A/B（由提权 Owner `wsl -u root`，发行版此时在 operator 名下的导入位置）→ 安装 → verify → companion → rearm → 现有的 M5-b 切换（`rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory`，把发行版 move 到 companion 名下）。没有 W1、没有卸载。切换没有通过（`companionHeadless` 不是 `COMPANION_HEADLESS_QUALIFIED`）时 bootstrap 答 `BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE`，不答 `BOOTSTRAP_DONE`。
@@ -231,6 +264,6 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
   - 那个包本身续不下去、已经换了新包：直接用新包的 bootstrap，两侧各从现状装到新包。
 - `RUNNER_SERVICE_NOT_AS_REVIEWED`：当班节点在暂停下仍会为自己的维护临时交换运行器，预检会等它换回（最多 600 秒）；到时仍不对才停。
 - `publish.mjs` 在 gh 失败时不动索引；`release` 失败后先看 Release 是否已建出一部分，不要重复创建同一 tag。
-- `attach-acceptance` 对已接受的版本拒绝；接受文件写错要由协调者与 Owner 重新决定，不覆盖。
+- `seal` 对已用另一个 Decision 接受的版本拒绝；接受文件写错要由协调者与 Owner 重新决定，不覆盖。`prepare` 或 `seal` 中途断了，原样重跑同一条命令。
 - B 在 Source 切换之后失败：模板自动用 B-resume 续跑一次；仍失败则停手，交协调者。
 - 节点装完 `verify` 不过：不继续装另一台。

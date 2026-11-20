@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { CIV1, CLOSURE, PREPARE_RECORD, RESIDENT, computeUniversalFacts } from './facts.mjs';
+import { RESIDENT_EXTERNAL } from '../../tools/build-package.mjs';
 import { pyCanonical } from './pyjson.mjs';
 import { extractTar, writeTar } from './tar.mjs';
 
@@ -44,7 +45,9 @@ export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${
   `${RESIDENT}/reinstall/launcher/template.ps1`, `${RESIDENT}/reinstall/launcher/expected-plan.ps1`, `${RESIDENT}/reinstall/launcher/continue.py`,
   `${RESIDENT}/reinstall/launcher/continue-install.ps1`, `${RESIDENT}/reinstall/tools/file-locks.ps1`, `${RESIDENT}/reinstall/tools/ledger-evidence.py`,
   `${RESIDENT}/reinstall/tools/rconfig.py`, `${RESIDENT}/reinstall/linux/assemble.py`,
-  CLOSURE, PREPARE_RECORD, `${CIV1}/src/resident-v2/record.mjs`]);
+  CLOSURE, PREPARE_RECORD, `${CIV1}/src/resident-v2/record.mjs`,
+  // the resident files whose one source lies outside the resident tree (build-package.mjs RESIDENT_EXTERNAL): the node builds from this tree
+  ...RESIDENT_EXTERNAL.map(e => e.source)]);
 const excluded = p => TREE_EXCLUDED.some(x => p.startsWith(x)) || (p.startsWith(`${RESIDENT}/`) && EXCLUDED_PART.test(p.slice(RESIDENT.length + 1)));
 const IMPORT_RE = /\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]|new URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url/g;
 

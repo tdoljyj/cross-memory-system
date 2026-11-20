@@ -28,13 +28,14 @@ foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.F
 foreach ($name in @('Get-Key', 'Get-Rid', 'Get-NodeProfile', 'Get-Signer', 'Get-CiRootSddl', 'Get-FirstInstallSddl', 'Get-AdminOnlySddl', 'Test-SddlIs', 'Get-ResidueCodes',
     'Get-TokenFingerprint', 'New-FirstInstallFacts', 'Test-SameFacts', 'Test-LinuxFirstInstallFacts', 'Test-ExpectedOperator', 'Get-ServiceSid', 'Test-CiRootHasResidentAce',
     'Get-WslVersion', 'Get-CredentialPlan', 'Get-ResetPlan', 'Test-DenyServiceLogon', 'Get-V1BaseCodes', 'Get-DebListText',
-    'Sha256File', 'Write-NewFile', 'Get-ExpandState', 'Test-ZipExpanded', 'Expand-Verified', 'Get-MissingCredentials', 'Get-HeartbeatPrompt')) {
+    'Sha256File', 'Write-NewFile', 'Get-ExpandState', 'Test-ZipExpanded', 'Expand-Verified', 'Get-MissingCredentials', 'Get-HeartbeatPrompt',
+    'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Step')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
   if ($a.Left.Extent.Text -cin @('$Distribution', '$ResidentRoot', '$FactsContract', '$Utf8', '$Strict8', '$SecretTargets', '$CiRoot', '$VhdxDirectory')) { . ([scriptblock]::Create($a.Extent.Text)) }
 }
-$js = New-Object Web.Script.Serialization.JavaScriptSerializer
+$js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = [int]::MaxValue   # reads lines longer than the default 2,097,152
 $res = Split-Path -Parent $here
 $text = [IO.File]::ReadAllText($file)
 $main = $text.Substring($text.IndexOf('function Invoke-HostPreparation'))
@@ -318,6 +319,61 @@ try {
     Yes (((Get-MissingCredentials $all @('appKey', 'upgradeToken')) -join ',') -ceq 'ciToken') 'l3:first-run-ci-token-required'
     Yes ((Get-HeartbeatPrompt $true) -notmatch 'empty' -and (Get-HeartbeatPrompt $false) -match 'leave empty for none') 'l3:prompt'
     Yes ($main -match 'Get-HeartbeatPrompt \(\$null -ne \$old\)' -and $main -match 'Get-MissingCredentials \$plan') 'l3:used'
+  }
+
+  # ---- the one JSON writer (drill 3bc571a6 A1; Fable ruling 11-19 section 2.1). Under Windows PowerShell 5.1 a cmdlet's output (Join-Path,
+  # Where-Object, Split-Path) is a string in a PSObject shell, which JavaScriptSerializer walks as an object and refuses with a
+  # PSParameterizedProperty circular reference: Step 'stage' (Join-Path) ended P1 in the guest, and the READY line (facts = Join-Path)
+  # would have ended it after a whole install. Every line and file P1 writes goes through ConvertTo-JsonLine, which takes the shell off.
+  $jp = Join-Path 'C:\Windows\Temp' 'clued-p1-0123'
+  Case 't1:cmdlet-output-round-trips' {
+    $dir = (Get-Item -LiteralPath $tmp).FullName
+    $two = @('SERVICE:A', 'SERVICE:B') | Where-Object { $_ }
+    $one = @(Split-Path -Parent 'C:\a\b')
+    $str = { param($s) $js.Serialize([string]$s) }   # a plain .NET string, as the serializer writes it
+    Yes ((ConvertTo-JsonLine $jp) -ceq (& $str 'C:\Windows\Temp\clued-p1-0123')) 't1:join-path'
+    Yes ($js.DeserializeObject((ConvertTo-JsonLine ([ordered]@{ v = $jp })))['v'] -ceq 'C:\Windows\Temp\clued-p1-0123') 't1:join-path-parsed-back'
+    Yes ((ConvertTo-JsonLine $two) -ceq '["SERVICE:A","SERVICE:B"]') 't1:where-object-array'
+    Yes ((ConvertTo-JsonLine ([ordered]@{ one = $one })) -ceq ('{"one":[' + (& $str 'C:\a') + ']}')) 't1:one-element-array-stays-an-array'
+    $ready = [ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $jp; node = 'desk-w-591'; list = $two
+      inner = [ordered]@{ dir = $dir; n = 3; big = 5099457L; ok = $true; none = $null; empty = @() } }
+    $line = ConvertTo-JsonLine $ready
+    $back = $js.DeserializeObject($line)
+    Yes ($back['facts'] -ceq [string]$jp -and $back['inner']['dir'] -ceq [string]$dir -and (@($back['list']) -join ',') -ceq 'SERVICE:A,SERVICE:B' -and
+      $back['inner']['n'] -eq 3 -and $back['inner']['big'] -eq 5099457 -and $back['inner']['ok'] -eq $true -and $null -eq $back['inner']['none'] -and
+      @($back['inner']['empty']).Count -eq 0) ('t1:the-ready-shape-parsed-back ' + $line)
+    Yes ($line.StartsWith('{"status":"FIRST_INSTALL_HOST_READY","facts":' + (& $str $jp) + ',"node":"desk-w-591"')) ('t1:key-order-kept ' + $line)
+    # a deserialized document (facts.json read back: Dictionary and object[]) is plain data already and comes out the same
+    Yes ((ConvertTo-JsonLine $back) -ceq $line) 't1:deserialized-is-unchanged'
+    Yes ((Step 'stage' $jp) -ceq ('{"step":"stage","result":' + (& $str $jp) + '}')) 't1:step-stage'
+    Yes ((Step 'residue' $two) -ceq '{"step":"residue","result":["SERVICE:A","SERVICE:B"]}') 't1:step-residue-codes'
+    # longer than the serializer's default 2,097,152 characters (Codex review of PR-甲, blocking 2): plain data is written whole
+    $big = 'y' * 2500000
+    $bl = try { ConvertTo-JsonLine ([ordered]@{ facts = $big }) } catch { $null }
+    Yes ($null -ne $bl -and ([string]$js.DeserializeObject($bl)['facts']).Length -eq 2500000) 't1:longer-than-2M'
+  }
+  # Step is progress: whatever it is given, one line of JSON and no exception. A verdict line or facts.json is the contract: a value that is
+  # not plain data is refused by name (HOST_OUTPUT_NOT_PLAIN_DATA), never written in a form someone has to guess at.
+  Case 't3:step-never-throws-a-verdict-refuses-by-name' {
+    $fi = Get-Item -LiteralPath $tmp
+    $cycle = @{}; $cycle['self'] = $cycle
+    foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle, ([ordered]@{ ok = $jp; bad = $fi }))) {
+      $l = Step 'odd' $odd
+      $b = $js.DeserializeObject($l)
+      Yes ($l -is [string] -and $b['step'] -ceq 'odd') ('t3:step-one-line ' + $odd.GetType().Name + ' ' + $l)
+    }
+    Yes ([string]$js.DeserializeObject((Step 'odd' $fi))['result'] -clike '*DirectoryInfo*') 't3:step-names-the-type'
+    Yes ($js.DeserializeObject((Step 'odd' ([ordered]@{ ok = $jp; bad = $fi })))['result']['ok'] -ceq [string]$jp) 't3:step-keeps-the-plain-part'
+    foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle)) {
+      Throws { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $odd }) } 'OUTPUT_NOT_PLAIN_DATA:$.facts*' ('t3:verdict-refused ' + $odd.GetType().Name)
+    }
+  }
+  Case 't2:one-serializer-in-the-script' {
+    $calls = [regex]::Matches($text, '\.Serialize\(').Count
+    $inWriter = if ($functions.ContainsKey('ConvertTo-JsonLine')) { [regex]::Matches($functions['ConvertTo-JsonLine'], '\.Serialize\(').Count } else { 0 }
+    Yes ($inWriter -ge 1 -and $calls -eq $inWriter) ('t2:every-Serialize-call-is-in-ConvertTo-JsonLine (file ' + $calls + ', writer ' + $inWriter + ')')
+    Yes ($functions.ContainsKey('Step') -and $functions['Step'] -match 'ConvertTo-JsonLine' -and $functions.ContainsKey('Stop-Host') -and $functions['Stop-Host'] -match 'ConvertTo-JsonLine') 't2:step-and-stop-host-use-it'
+    Yes ($main -match "ConvertTo-JsonLine \(\[ordered\]@\{ status = 'FIRST_INSTALL_HOST_READY'") 't2:ready-uses-it'
   }
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 

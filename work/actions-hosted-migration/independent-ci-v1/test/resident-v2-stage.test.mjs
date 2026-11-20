@@ -220,6 +220,9 @@ test('invoke-stage: a publisher stage needs the ready-marked signed result for e
   assert.equal(canonical(JSON.parse((await readSpoolResult(f.roots.spoolRoot, job)).toString())), canonical(envelope));
   const fact = await run(f, 3, fakeBroker(f));
   assert.equal(fact.state, 'FORMAL_CHILD_COMPLETED_ORIGINAL_STOPPED_NO_QUALIFICATION');
+  const missing = await run(f, 3, fakeBroker(f, { outcome: null }));
+  assert.equal(missing.failure_code, 'STAGE_OUTCOME_MISSING');
+  assert.equal(missing.outcome, null);
   const other = JSON.parse(f.d.files['stage-05/jobs.json'])[0];
   await assert.rejects(readSpoolResult(f.roots.spoolRoot, other), { code: 'STAGE_INPUT_RESULT_MISSING' });
 });

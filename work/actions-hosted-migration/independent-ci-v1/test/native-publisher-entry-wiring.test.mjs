@@ -36,7 +36,7 @@ async function fixture(t, active = true) {
   const time = Date.now(), iso = ms => new Date(ms).toISOString();
   const jobs = batchJobsV2(subject({ testSha: subject().headSha, createdAt: iso(time - 60000) }));
   const claim = { claimId: randomUUID(), fence: 4, epoch: 3, expiresAt: iso(time + 3600000) };
-  const checks = [], calls = [], tickets = new Map();
+  const checks = [], calls = [], trace = [], tickets = new Map();
   let next = 101, current = true;
   const rawGithub = { fixture: true,
     async readPullRequest(n) { return { number: n, state: 'open', merged: false, mergeable: true, merge_commit_sha: 'd'.repeat(40),
@@ -51,14 +51,15 @@ async function fixture(t, active = true) {
           .map(context => ({ context, integration_id: 5368905 })) } },
     ] }; },
     async readChangedPaths(job) { return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['scripts/ci/test.mjs'] }; },
-    async readChecks(head) { return { complete: true, checks: structuredClone(checks.filter(c => c.head_sha === head)) }; },
-    async createCheck(payload) { const check = { ...structuredClone(payload), id: next++, app: { id: 5368905 } }; checks.push(check); return structuredClone(check); },
-    async revokeCheck(id, payload) { const check = checks.find(c => c.id === id); Object.assign(check, structuredClone(payload)); return structuredClone(check); },
+    async readChecks(head) { trace.push('read'); return { complete: true, checks: structuredClone(checks.filter(c => c.head_sha === head)) }; },
+    async createCheck(payload) { trace.push(`create:${payload.status}`); const check = { ...structuredClone(payload), id: next++, app: { id: 5368905 } }; checks.push(check); return structuredClone(check); },
+    async revokeCheck(id, payload) { trace.push(`patch:${payload.conclusion}`); const check = checks.find(c => c.id === id); Object.assign(check, structuredClone(payload)); return structuredClone(check); },
   };
   const native = { async current(identity, mode) {
     return current && identity.claim.claim_id === claim.claimId && mode.executionPolicy === (active ? 'active' : 'staged') && mode.guarded === active;
   }, async command(input) {
     calls.push(input);
+    trace.push(input.action);
     if (input.action === 'publication_begin_independent') {
       if (!current) return { status: 'rejected' };
       const identity = input.independent_identity;
@@ -71,6 +72,7 @@ async function fixture(t, active = true) {
   }};
   const headAuthorizationId = randomUUID();
   const admission = { fixture: true, async evaluatePr(job, packet, options = {}) {
+    trace.push('evaluate');
     const facts = admittedFacts(job, claim, packet, { domain: 'fixture', batchClaim: options.batchClaim, mergeQueueHead: true,
       slotUntil: time + 3600000, observedAt: Date.now() });
     if (!active) return facts;
@@ -82,7 +84,7 @@ async function fixture(t, active = true) {
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const { docs, signer } = fixtureRecord(), record = validateRecordV2(docs, { now: time });
   const wrap = selected => entryFacade({ ports: { github: rawGithub, native }, jobs: selected, journal, nonce: 'a'.repeat(32), record });
-  return { jobs, claim, checks, calls, journal, admission, wrap, record, signer, setCurrent: value => { current = value; } };
+  return { jobs, claim, checks, calls, trace, journal, admission, wrap, record, signer, setCurrent: value => { current = value; } };
 }
 
 test('the actual entry adapter wires work admission to the original Native ticket and re-verifies without another POST', async t => {
@@ -109,8 +111,8 @@ test('one control invocation routes both roles to distinct real publication iden
   assert.ok(f.checks.every(c => c.output.summary.includes('begin Receipt')));
 });
 
-test('scanner publication through the actual entry adapter retains signed evidence and the Native marker', async t => {
-  const f = await fixture(t), job = f.jobs.trivy, github = f.wrap([job]);
+async function publishActiveScanner(f) {
+  const job = f.jobs.trivy, github = f.wrap([job]);
   const refs = Object.fromEntries(['sourceAcceptanceRef','hostQualificationRef','ownerAuthorizationRef','publisherQualificationRef','ciPrincipalQualificationRef'].map(k => [k, f.record.accepted[k]]));
   const authority = { fixture: true, async observe(j) { return { ...subjectOfV2(j), ...refs, ciPrincipalBindingId: f.record.config.ciPrincipalBindingId,
     sourceAccepted: true, hostQualified: true, publisherQualified: true, ciPrincipalQualified: true, observedAt: new Date().toISOString(),
@@ -120,10 +122,32 @@ test('scanner publication through the actual entry adapter retains signed eviden
     readChangedPaths: j => github.readChangedPaths(j), batchClaim: claimGeneration(f.claim), domain: 'fixture',
     protectedDeployment: { enabled: true, domain: 'fixture', repository: job.repo, ciPrincipalBindingId: f.record.config.ciPrincipalBindingId, ...refs } });
   const envelope = signResult(job, f.signer, { domain: 'fixture', startedAt: Date.now() - 5000, finishedAt: Date.now() - 1000 });
-  const result = await publisher.publish({ job, envelope });
+  return publisher.publish({ job, envelope });
+}
+
+test('scanner publication through the actual entry adapter retains signed evidence and the Native marker', async t => {
+  const f = await fixture(t), result = await publishActiveScanner(f);
   assert.equal(result.status, 'SETTLED', JSON.stringify(result));
   assert.equal(f.checks.length, 1); assert.match(f.checks[0].output.summary, /signed execution sha256/);
   assert.match(f.checks[0].output.summary, /Native publication independent-ci:native:v1:/);
+});
+
+// Production activation preflight for work_claim_execution_policy_v1. See
+// WorkClaimAdmission.v0.1.md. Run as a hard assertion when qualifying activation.
+test('Native active activation requires pending, verification, success readback, then ticket settlement', {
+  todo: process.env.CLUED_TEST_NATIVE_ACTIVE_ACTIVATION !== '1' && 'Native active is outside the staged release',
+}, async t => {
+  const f = await fixture(t);
+  const result = await publishActiveScanner(f);
+  assert.equal(result.status, 'SETTLED');
+  const begin = f.trace.indexOf('publication_begin_independent');
+  const create = f.trace.indexOf('create:in_progress');
+  const verify = f.trace.indexOf('evaluate', create + 1);
+  const success = f.trace.indexOf('patch:success');
+  const readback = f.trace.indexOf('read', success + 1);
+  const finish = f.trace.indexOf('publication_finish');
+  assert.ok(begin >= 0 && begin < create && create < verify && verify < success && success < readback && readback < finish,
+    JSON.stringify(f.trace));
 });
 
 test('legacy entry wiring still publishes without creating a Native publication', async t => {

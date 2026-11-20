@@ -2057,10 +2057,10 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "90018809f94ceb6ba6ffcea8dcfac94a5d23b1e8": [
+        "2e14516b6813ce3024d42ab5ffde63fb399fb20b": [
           {
             "job_id": "clued-cloud-tests",
-            "definition_sha256": "69464b220bcb8e531890db01ef6fcfe51954b1a99db2fff0d2e0d69200449ca8",
+            "definition_sha256": "d4acae487998b4bc4e1e7fb8afefd0fed1bdaa830d91626960ae5818cf7e7168",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
               "needs": "admission-gate",
@@ -2145,7 +2145,8 @@
                   "name": "Lint, ledger, typecheck, build and unit tests",
                   "if": "steps.select.outputs.run_clued_cloud == 'true'",
                   "env": {
-                    "SELECTOR": "${{ steps.select.outputs.selector }}"
+                    "SELECTOR": "${{ steps.select.outputs.selector }}",
+                    "CLUED_UNDER_TEST": "1"
                   },
                   "run": "node \"$SELECTOR\" --run clued-cloud --root candidate"
                 }
@@ -2154,7 +2155,7 @@
           },
           {
             "job_id": "ci-suites",
-            "definition_sha256": "b0d7e70eb85cbff52c94e555e7a687027343de0164cfa3d69028f897d8160bdf",
+            "definition_sha256": "615749b035ead14b9fbd73d7d3b5ac633d3fe822c03a7c25c700170d53720564",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
               "needs": "admission-gate",
@@ -2227,12 +2228,20 @@
                   "run": "selector=trusted/scripts/ci/ci-required-selection.mjs\nif [ ! -f \"$selector\" ]; then\n  echo \"::warning title=ci-suites bootstrap::the base has no selection; the candidate's own copy decides\"\n  selector=candidate/scripts/ci/ci-required-selection.mjs\nfi\necho \"selector=$selector\" >> \"$GITHUB_OUTPUT\"\nnode \"$selector\" --check ci-suites\n"
                 },
                 {
+                  "name": "Install the application dependencies the selected suites need",
+                  "env": {
+                    "APP_DEPS": "${{ steps.select.outputs.app_deps }}"
+                  },
+                  "run": "apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || \"[]\")) console.log(a)')\nif [ -z \"$apps\" ]; then\n  echo \"No selected suite needs application dependencies; nothing installed.\"\n  exit 0\nfi\nfor app in $apps; do\n  node trusted/scripts/ci/ci-deps.mjs install \"candidate/$app\"\ndone\necho \"CLUED_CI_APP_DEPS=1\" >> \"$GITHUB_ENV\"\n"
+                },
+                {
                   "name": "Run the selected suites",
                   "env": {
                     "SELECTOR": "${{ steps.select.outputs.selector }}",
                     "SUITES": "${{ steps.select.outputs.suites }}",
                     "CI_BASE_SHA": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}",
-                    "PYTHONDONTWRITEBYTECODE": "1"
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "CLUED_UNDER_TEST": "1"
                   },
                   "run": "failed=\"\"\nfor suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do\n  if node \"$SELECTOR\" --run \"$suite\" --root candidate; then\n    echo \"- \\`$suite\\`: passed\" >> \"$GITHUB_STEP_SUMMARY\"\n  else\n    echo \"- \\`$suite\\`: **failed**\" >> \"$GITHUB_STEP_SUMMARY\"\n    failed=\"$failed $suite\"\n  fi\ndone\nif [ -n \"$failed\" ]; then\n  echo \"::error title=ci-suites::failed:$failed\"\n  exit 1\nfi\n"
                 }
@@ -2241,7 +2250,7 @@
           },
           {
             "job_id": "migration-verify",
-            "definition_sha256": "1019c074dd0be744b74289aa460dfbfc563d1c2c2a4012741e068dd2d342c088",
+            "definition_sha256": "627666456fa37adaa15ecfcd2124fe307abfc8bfa9ae32819c9ae2ec6e617927",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
               "needs": "admission-gate",
@@ -2326,7 +2335,8 @@
                   "name": "Verify migrations on the production schema",
                   "if": "steps.select.outputs.run_production_schema == 'true'",
                   "env": {
-                    "SELECTOR": "${{ steps.select.outputs.selector }}"
+                    "SELECTOR": "${{ steps.select.outputs.selector }}",
+                    "CLUED_UNDER_TEST": "1"
                   },
                   "run": "status=0\nnode \"$SELECTOR\" --run production-schema --root candidate || status=$?\nif [ -f \"$RUNNER_TEMP/production-schema-report.json\" ]; then\n  node -e 'const r=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\"));\n    const lines=[\"### migration-verify: \"+r.status,\"\",...r.errors.map(e=>\"- error: `\"+e+\"`\"),\n      \"- pending migrations: \"+((r.pending||[]).join(\", \")||\"none\"),\n      \"- repository-only columns and functions (tests see them, production does not): \"+((r.repository_only||[]).length)];\n    require(\"fs\").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join(\"\\n\")+\"\\n\");' \"$RUNNER_TEMP/production-schema-report.json\"\nfi\nexit $status\n"
                 },
@@ -2343,10 +2353,10 @@
     },
     ".github/workflows/clued-required-tests-windows.yml": {
       "sources": {
-        "990774a2a29a7a024517d26b98d72258981414a9": [
+        "5170ca35b5b844634a8ea080ef5d76df4d1ca6b3": [
           {
             "job_id": "ci-suites-windows",
-            "definition_sha256": "060826c01ca79217d6db29820138c69298931132622a4944fad4571179833b3b",
+            "definition_sha256": "79b513e7f2c536d570207ba0026d300fb22561648c7c0bb7367fc2b4dbcd44bf",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites-windows' || 'ci-suites-windows-skipped' }}",
               "needs": "admission-gate",
@@ -2412,7 +2422,8 @@
                   "env": {
                     "GITHUB_TOKEN": "${{ github.token }}",
                     "CI_BASE_SHA": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}",
-                    "PYTHONDONTWRITEBYTECODE": "1"
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "CLUED_UNDER_TEST": "1"
                   },
                   "run": "$ErrorActionPreference = 'Stop'\n& node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate\nexit $LASTEXITCODE\n"
                 }

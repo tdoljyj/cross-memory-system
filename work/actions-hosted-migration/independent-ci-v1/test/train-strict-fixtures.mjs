@@ -41,7 +41,9 @@ function fakeGithub(e, w) {
       const hooked = world.hooks.compare?.(base, head);
       if (hooked instanceof Error) throw hooked;
       if (hooked) return hooked;
-      if (world.behindHeads?.has(head)) return { status: 'diverged', aheadBy: 1, behindBy: 1 }; return world.inMain.has(head) ? { status: 'behind', aheadBy: 0, behindBy: 1 } : { status: 'ahead', aheadBy: 1, behindBy: 0 }; },
+      // The ends GitHub's compare names, as github.mjs#readCompare returns them.
+      const ends = { baseSha: base, headSha: head, mergeBaseSha: base };
+      if (world.behindHeads?.has(head)) return { ...ends, status: 'diverged', aheadBy: 1, behindBy: 1 }; return world.inMain.has(head) ? { ...ends, status: 'behind', aheadBy: 0, behindBy: 1 } : { ...ends, status: 'ahead', aheadBy: 1, behindBy: 0 }; },
     async readGitCommit(s) { call('commit'); return structuredClone(world.commits.get(s)); },
     async readChecks(head) { call('checks'); return { complete: true, checks: [...world.checks.values()].filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
     async readOwnChecksByName(head, name) {

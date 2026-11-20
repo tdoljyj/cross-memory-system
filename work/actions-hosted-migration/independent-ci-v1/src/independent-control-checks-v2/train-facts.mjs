@@ -34,7 +34,9 @@ export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUO
 // H); the proof was refreshed for its stage 8, no new batch and no attempt counted (review R2 M1).
 export const DECISIONS_V2 = Object.freeze(['TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH',
   'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED', 'FRONT_ADOPTED', 'FRONT_RETURNED', 'FRONT_FAILED_REPORTED', 'REVOKE_ONLY_DONE',
-  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN']);
+  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN', 'TRAIN_LANDING_STATE_UNREADABLE']);
+// D6 §8.4 (b): TRAIN_LANDING_STATE_UNREADABLE, push mode would open the front batch but this node's landing state cannot be read while it
+// has landing batches (landing.error says the same); no batch, the resident tells the Owner.
 // Strict-permanent mode (train-run /3 sweep audit|off; resident DESIGN §65): TRAIN_STRICT_OFF, strict read off in an on-mode run
 // (no front batch; requestPause TRAIN_STRICT_OFF: the resident latches PAUSE and tells the Owner); TRAIN_FRONT_NOT_PROVEN, the front
 // would be opened but this run could not write its strict current-front observation (stage 8 could not green it), so it opens none.
@@ -144,7 +146,9 @@ const validMembers = (b, m) => m === undefined || (Array.isArray(m) && m.length 
 const validBatch = b => plain(b) && Number.isSafeInteger(b.pr) && b.pr > 0 && ['headSha', 'baseSha', 'testSha', 'testTree'].every(k => SHA.test(b[k] ?? ''))
   && UUID.test(b.claimId ?? '') && iso(b.since) && [1, 2].includes(b.attempt) && validMembers(b, b.members)
   // headTree (rule 41ab823a, resident DESIGN §75): H's own tree, only for a front of one member.
-  && (b.headTree === undefined || (SHA.test(b.headTree) && b.members === undefined));
+  && (b.headTree === undefined || (SHA.test(b.headTree) && b.members === undefined))
+  // baseInHead (resident DESIGN §75, the review ruling): stage 10's own compare of exactly (T, H) says T is in H; only true, one member only.
+  && (b.baseInHead === undefined || (b.baseInHead === true && b.members === undefined));
 const validNodes = n => n === null || (Array.isArray(n) && n.length <= 64 && n.every(x => plain(x) && (x.node === null || (typeof x.node === 'string' && x.node.length <= 200))
   && (x.sourceManifestSha256 === null || HEX64.test(x.sourceManifestSha256 ?? '')) && (x.state === null || (typeof x.state === 'string' && x.state.length <= 40))
   && (x.lastHeartbeatAt === null || iso(x.lastHeartbeatAt))));

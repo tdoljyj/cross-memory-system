@@ -16,7 +16,8 @@ import { fitNode } from './fit-node-fixture.mjs';
 // Binding roles (migration 20261003200000, Task 869d2db7, Owner Decision
 // 38ddb8cf): once the Owner marks a CI admission Binding, only it binds claims
 // to pull requests, meters heads, admits hand dispatches and reports merges;
-// once the Owner marks a release-door Binding, only it consumes release grants.
+// the release-door role is still marked and listed, but since 20261119130000 no token, marked or not,
+// consumes release grants: the release workflow is its database login.
 // Before a role is marked, every Binding keeps the earlier behaviour.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -302,20 +303,20 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.deepEqual([adopted.adopted, adopted.copy_index], [true, 2], JSON.stringify(adopted));
     assert.equal((await row(copyA.claim_id)).outcome, 'not_adopted');
 
-    // --- N5: the release door, legacy first, then only the marked Binding. ---
+    // --- N5: the public release door refuses every token, marked or not. ---
     const commit = 'repo:tdoljyj/cross-memory-system/' + sha(12);
     const door = (who) => agent(who, 'clued_owner_grant_door_consume_v1', { action: 'release.production', resources: [commit] });
-    const pending = await door('codex');
-    assert.equal(pending.consumed, false, 'legacy: any write Binding reaches the door');
-    await assert.rejects(() => door('reader'), /binding_not_authorized/);
+    const retired = /owner_grant_door_release_token_retired/;
+    await assert.rejects(() => door('codex'), retired, 'no write Binding reaches the release actions');
+    await assert.rejects(() => door('reader'), retired);
     committed(await setRole(bindingIds.release, 'release-door', true));
-    await assert.rejects(() => door('codex'), /owner_grant_door_binding_not_authorized/);
-    await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
-    assert.equal((await door('release')).consumed, false, 'the marked Binding opens its own request');
+    await assert.rejects(() => door('codex'), retired);
+    await assert.rejects(() => door('claude'), retired);
+    await assert.rejects(() => door('release'), retired, 'the marked Binding is refused too');
 
     // --- Ending a role explicitly returns to the earlier behaviour. ---
     committed(await setRole(bindingIds.release, 'release-door', false));
-    assert.equal((await door('codex')).consumed, false);
+    await assert.rejects(() => door('codex'), retired);
     assert.equal(await issueErr({ binding_id: bindingIds.release, role: 'release-door', enabled: false }), 'binding_role_unchanged');
 
     // --- Re-review 2, finding A: a revoked or expired holder keeps the role locked. ---
@@ -330,8 +331,8 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.deepEqual([stillLocked.adopted, stillLocked.reason], [false, 'admission_binding_required']);
     committed(await setRole(bindingIds.release, 'release-door', true));
     await admin.query("update public.clued_agent_bindings set expires_at=now()-interval '1 minute' where id=$1", [bindingIds.release]);
-    await assert.rejects(() => door('release'), /binding_not_authorized/, 'the expired holder itself is refused');
-    await assert.rejects(() => door('codex'), /owner_grant_door_binding_not_authorized/, 'an expired release Binding keeps the door locked');
+    await assert.rejects(() => door('release'), retired, 'the expired holder itself is refused');
+    await assert.rejects(() => door('codex'), retired);
     // The Owner sees the dead holders and can end their roles, but cannot mark a dead Binding.
     const held = (await native('clued_binding_roles_list_v1', {})).bindings;
     assert.deepEqual(held.filter((b) => !b.live).map((b) => [b.binding_id, b.roles]).sort(),
@@ -340,8 +341,8 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     assert.equal(await issueErr({ binding_id: bindingIds.ci, role: 'release-door', enabled: true }), 'binding_role_binding_invalid');
     // Rotation: mark a new live Binding; the dead one keeps nothing open.
     committed(await setRole(bindingIds.codex, 'release-door', true));
-    assert.equal((await door('codex')).consumed, false, 'the new holder reaches the door');
-    await assert.rejects(() => door('claude'), /owner_grant_door_binding_not_authorized/);
+    await assert.rejects(() => door('codex'), retired, 'the new holder is refused too');
+    await assert.rejects(() => door('claude'), retired);
     // Ending the dead CI holder's role, the last one, reopens binding to every Binding.
     committed(await setRole(bindingIds.ci, 'ci-admission', false));
     const v2 = await verifyAs('claude', c2, { pr_ref: 'o/r#12', head_sha: sha(13) });

@@ -159,10 +159,10 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   delete rolesBefore.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is registered after this generation, additive too
   // (its current bytes: the clued-train/staging route, D6 N1).
-  const WINDOWS = '.github/workflows/clued-required-tests-windows.yml', WINDOWS_BLOB = '990774a2a29a7a024517d26b98d72258981414a9';
+  const WINDOWS = '.github/workflows/clued-required-tests-windows.yml', WINDOWS_BLOB = '5170ca35b5b844634a8ea080ef5d76df4d1ca6b3';
   assert.equal(profileBefore.workflows[WINDOWS].workflow_blob, WINDOWS_BLOB);
   assert.deepEqual(rolesBefore.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role => [role.job_id, role.definition_sha256]),
-    [['ci-suites-windows', '060826c01ca79217d6db29820138c69298931132622a4944fad4571179833b3b']]);
+    [['ci-suites-windows', '79b513e7f2c536d570207ba0026d300fb22561648c7c0bb7367fc2b4dbcd44bf']]);
   delete profileBefore.workflows[WINDOWS];
   delete rolesBefore.workflows[WINDOWS];
   // #988: the Node 22 install managed-cache Source is registered after this generation; strip it like the other later successors.
