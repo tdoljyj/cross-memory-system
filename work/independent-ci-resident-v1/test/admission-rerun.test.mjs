@@ -227,6 +227,7 @@ test('6be83331 E6 (54a2b67a): every gated run that never ran is repaired; outsid
     assert.match(l.toasts[1], /已自动补跑 ci-suites-windows/);
     if (posts.includes(702)) assert.match(l.toasts[2], /已自动补跑 gitleaks\.yml/);
     else assert.doesNotMatch(l.toasts.join('\n'), /gitleaks/);
+    assert.ok(!w.calls.some(call => call.target.includes('/actions/workflows?')));
     // The PR page names the required re-run, never the one outside the required checks.
     assert.match(l.r.line(HEAD), /^已自动补跑一次必需测试/);
     assert.doesNotMatch(l.r.line(HEAD), /不属必需检查/);
