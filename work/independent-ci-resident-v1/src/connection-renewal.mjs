@@ -20,7 +20,8 @@ const CODE = /^[A-Z_]{3,80}$/;
 const HOURLY = ['RENEW_GATEWAY_UNAVAILABLE', 'RENEW_RESPONSE_UNAVAILABLE', 'RENEW_INTERRUPTED', 'RENEW_UNAVAILABLE', 'RENEW_HANDOVER_NO_CANDIDATE'];
 // Task a75da4bd（Fable 11-20“补：让班回包迟到”(2)）：回包什么时候到都是对该请求号的权威答复。等过 REPLY_OVERDUE 只改对外显示
 // （RENEW_RESPONSE_WAITING），请求号留在状态里每轮照看；满 REPLY_LIMIT 仍无回包（Broker 没了、文件永远不来）才按回包不可用。
-// 满 REPLY_LIMIT 是硬边界，按读完回包文件那一刻的时钟判（Codex 复审 3d59ee58e 中1）：此前读到的匹配回包采纳，此后读到的不采纳、按不可用。
+// 采纳与否不看时间（Fable 11-20“一小时截止的语义”）：状态里记着的还是这个请求号，任何一轮读到它的回包都采纳；REPLY_LIMIT 只决定
+// 何时不再等，放弃前再读一次，读不到才放弃。放弃后状态里不再记着它，换成新请求号后旧号的回包不再采纳。判据只用常驻自己的时钟。
 // 等待码不是失败，状态不发失败通知（独审 4a83b3e08 低1）。
 const REPLY_OVERDUE = 120_000, REPLY_LIMIT = HOUR;
 export const RESPONSE_WAITING = 'RENEW_RESPONSE_WAITING';
@@ -107,11 +108,13 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
       // 旧格式在途记录没有 Source：按别的代处理（不计本代退避）。
       const owner=typeof book.pending.source==='string' ? book.pending.source : null;
       if (!UUID.test(id) || !KINDS.includes(kind)) throw new Error('RENEW_STATE_REFUSED');
-      let reply=await read(path.join(root,'broker','responses',id+'.json'));
-      const waited=clock()-at; // 读完之后取时：截止前读到的内容一定在截止前已发布
       // 只认状态里记着的这个请求号；没有结论前不为任何通道投新请求（Broker 那边本来也只处理一条）。重启后从状态恢复同一请求号。
-      if (reply?.requestId!==id || waited>=REPLY_LIMIT) reply=null;
-      if (!reply && waited<REPLY_LIMIT) return;
+      const readReply=async()=>{ const r=await read(path.join(root,'broker','responses',id+'.json')); return r?.requestId===id ? r : null; };
+      let reply=await readReply();
+      if (!reply) {
+        if (now-at<REPLY_LIMIT) return;
+        reply=await readReply(); // 放弃之前再读一次：读到就采纳，读不到才按回包不可用
+      }
       const valid=reply?.requestId===id && reply.kind===kind && reply.contract==='clued.independent-ci.connection-renew-response/1';
       const bound = valid && reply.code === null && UUID.test(reply.bindingId) && Number.isFinite(Date.parse(reply.expiresAt));
       const yielded = bound && kind === 'ci' && reply.outcome === 'yielded' && Number.isFinite(Date.parse(reply.effectiveAt));
