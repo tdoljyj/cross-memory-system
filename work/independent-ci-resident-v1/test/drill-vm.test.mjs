@@ -1352,6 +1352,15 @@ test('the run binds the kit\'s credential names again to the package it drills: 
   assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', 'a key in another case');
   put(kit.credentials);
   assert.equal(bound(), 'bound');
+  // 9th review round, low 2: the recorded hash is a lowercase hex digest compared ordinally -- a character a culture-aware comparison
+  // ignores (a soft hyphen), or the same digest in capitals, is not the package's
+  const putSha = v => fs.writeFileSync(kitFile, JSON.stringify({ ...kit, credentialFilesSha256: v }, null, 2));
+  for (const [reason, v] of [['a soft hyphen added', kit.credentialFilesSha256 + '­'], ['in capitals', kit.credentialFilesSha256.toUpperCase()]]) {
+    putSha(v);
+    assert.equal(bound(), 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES', reason);
+  }
+  putSha(kit.credentialFilesSha256);
+  assert.equal(bound(), 'bound');
   // a tar without the list: unreadable; a tar whose list has other bytes (the same names): not the package's
   const old = firstInstallAssets('bound-credentials-old', { credentialFiles: null });
   assert.equal(bound(path.join(old.build, `fleet-node-${old.version}.tar`)), 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE');
@@ -3646,18 +3655,29 @@ test('the shipped credential list is read as data: any list that is not exactly 
     ['a reserved device name, bare', list({ required: { a: 'nul' }, optional: {} })],
     ['a numbered device name', list({ required: { a: 'com1.token' }, optional: {} })],
     ['a name ending in a dot', list({ required: { a: 'a.token.' }, optional: {} })],
+    // 9th review round, medium 1: allow-lists, not case rules -- a group's key ^[A-Za-z][A-Za-z0-9]*$, a file name
+    // ^[A-Za-z0-9][A-Za-z0-9._-]*$ not ending in a dot; anything else, non-ASCII above all, is refused
+    ['a key pair Windows PowerShell folds (Kelvin sign and k)', list({ required: { 'K': 'a.token', k: 'b.token' }, optional: {} })],
+    ['a non-ASCII key', list({ required: { 'ı': 'a.token' }, optional: {} })],
+    ['a key with a hyphen', list({ required: { 'app-key': 'a.token' }, optional: {} })],
+    ['a key starting with a digit', list({ required: { '1a': 'a.token' }, optional: {} })],
+    ['a key with a colon and a quote', list({ required: { a: 'a.token', ':"b': 'b.token' }, optional: {} })],
+    ['a non-ASCII file name', list({ required: { a: 'ä.token' }, optional: {} })],
+    ['a file name with a plus', list({ required: { a: 'a+b.token' }, optional: {} })],
+    ['a file name with a tilde', list({ required: { a: 'a~b.token' }, optional: {} })],
+    ['a file name starting with a dot', list({ required: { a: '.token' }, optional: {} })],
   ]) {
     const f = firstInstallAssets(`list-refused-${reason.replace(/\W+/g, '-')}`, { credentialFiles: text });
     prepareFrom({ ...f, out: f.from });
     await assert.rejects(() => makeDrillKit(f), /DRILL_PACKAGE_CREDENTIALS_UNREADABLE/, reason);
     assert.ok(!fs.existsSync(f.out), reason);
   }
-  // 8th review round, low 1: a legal key with a colon and an escaped quote is one key, not two (no counting by pattern)
-  const odd = list({ required: { a: 'a.token', ':"b': 'b.token' }, optional: {} });
-  const oddKit = firstInstallAssets('list-odd-key', { credentialFiles: odd });
-  prepareFrom({ ...oddKit, out: oddKit.from });
-  await makeDrillKit(oddKit);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(oddKit.out, 'kit.json'), 'utf8')).credentials.required, { a: 'a.token', ':"b': 'b.token' });
+  // inside the allow-lists every key and name reads; the package's own list is in them
+  const plain = list({ required: { appKey: 'app-private-key.pem', a1: 'A-1_b.token' }, optional: { heartbeatToken: 'ci-node-heartbeat.token' } });
+  const plainKit = firstInstallAssets('list-allowed', { credentialFiles: plain });
+  prepareFrom({ ...plainKit, out: plainKit.from });
+  await makeDrillKit(plainKit);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(plainKit.out, 'kit.json'), 'utf8')).credentials.required, { appKey: 'app-private-key.pem', a1: 'A-1_b.token' });
   // the one reader the gate calls prints the list and its bytes' hash
   const f = firstInstallAssets('list-cli');
   const tar = path.join(f.build, `fleet-node-${f.version}.tar`);
