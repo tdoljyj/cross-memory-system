@@ -149,3 +149,47 @@ test('E1 target: every Test-SecretsAsVerify call site goes through the one reade
   assert.equal([...tpl.matchAll(/Test-SecretsAsVerify;/g)].length, 3);
   assert.ok(fs.readFileSync(path.join(RES, 'reinstall', 'launcher', 'finish-uninstall.ps1'), 'utf8').includes('Test-SecretsAsVerify'));
 });
+
+// DESK addition (r4 audit, "same kind of gap"): the other two places that read a packaged script's bytes, parse them and take
+// functions out. Their real extraction code (the lines of template.ps1 New-FleetRegistrar and of export-role-image.ps1 between the
+// parse and the dot-source) is cut out of the real files and run on the package's own companion-headless.ps1 bytes. They are
+// inline code, not functions, so the lines themselves are the unit; a negative control (the same bytes behind a BOM) must fail them.
+const SEGMENT_DRIVER = `param($Source, $Headless, $StartPattern)
+$ErrorActionPreference = 'Stop'
+$U8 = New-Object Text.UTF8Encoding($false)
+$lines = @($U8.GetString([IO.File]::ReadAllBytes($Source)) -split "\`n")
+$from = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -match $StartPattern })
+if ($from.Count -ne 1) { throw ('SEGMENT_START_NOT_FOUND:' + $from.Count) }
+$to = @($from[0]..($lines.Count - 1) | Where-Object { $lines[$_].Contains('foreach ($n in @($asg) + @($defs)) { . ([scriptblock]::Create') })[0]
+$segment = ($lines[$from[0]..$to] -join "\`n")
+$files = @{ 'companion-headless.ps1' = $Headless }
+$tk = $null; $er = $null; $codes = @()
+try { . ([scriptblock]::Create($segment)) } catch { $codes += $_.Exception.Message }
+[ordered]@{ codes = $codes; sha256Helper = [bool](Get-Command Get-CompanionSha256 -ErrorAction SilentlyContinue); lines = ($to - $from[0] + 1) } | ConvertTo-Json -Compress
+`;
+const SEGMENTS = [['reinstall/launcher/template.ps1 (New-FleetRegistrar)', ['reinstall', 'launcher', 'template.ps1'], '^[ ]*[$]tk = [$]null; [$]er = [$]null; [$]ast = .*companion-headless[.]ps1', true],
+  ['reinstall/tools/export-role-image.ps1', ['reinstall', 'tools', 'export-role-image.ps1'], '^[ ]*[$]hast = .*companion-headless[.]ps1', false]];   // the export tool checks no parse error: behind a BOM it still finds the functions (the parser recovers)
+for (const [label, parts, start, refusesBom] of SEGMENTS) {
+  test(`E1 audit: ${label} takes the 5 build functions and 4 variables out of the package's companion-headless.ps1 (a BOM is refused where parse errors are checked)`,
+    { skip: windows ? false : 'Windows PowerShell 5.1 only' }, async t => {
+      const { listing, read } = realTree();
+      const headless = `${RESIDENT}/windows/companion-headless.ps1`;
+      assert.ok((await U.selectTree(listing, read)).includes(headless));
+      const bytes = (await read([headless])).get(headless);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ps1ascii-'));
+      t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+      fs.writeFileSync(path.join(dir, 'driver.ps1'), SEGMENT_DRIVER);
+      const run = (name, data) => {
+        const file = path.join(dir, name); fs.writeFileSync(file, data);
+        const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, 'driver.ps1'),
+          path.join(RES, ...parts), file, start], { encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+        assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+        return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
+      };
+      const good = run('good.ps1', bytes);
+      assert.deepEqual([good.codes, good.sha256Helper], [[], true]);
+      assert.ok(good.lines >= 6 && good.lines <= 12, `${good.lines} lines taken`);
+      const bom = run('bom.ps1', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]));
+      if (refusesBom) assert.equal(bom.codes.length, 1, 'behind a BOM the same lines refuse');
+    });
+}
