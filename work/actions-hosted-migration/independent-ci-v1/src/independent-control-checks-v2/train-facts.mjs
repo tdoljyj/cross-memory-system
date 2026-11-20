@@ -82,7 +82,16 @@ const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
 // green (up to 15 minutes): 15 + 2 x 19 = 53 minutes. 60 covers both re-runs and stays under the merge slot's hard cap (120 minutes).
 export const REQUIRED_CHECKS_MAX_WAIT_MS = 60 * 60_000;
 export const REQUIRED_ATTEMPTS_MAX = 3;
-export const REQUIRED_YIELD_REASONS = Object.freeze(['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE']);
+export const REQUIRED_YIELD_REASONS = Object.freeze(['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE', 'REQUIRED_CHECK_NOT_RERUN']);
+// Fable 11-20 (A3): the train judges no failure. The one judgement is the companion's lane and the gate (env-failure.mjs); the train only
+// watches for its result. After a required GitHub Actions check fails or stays missing, it waits REQUIRED_RERUN_WINDOW_MS (from the later of
+// the check's last attempt ending and the head's admission, which the lane needs before it may re-run): a new attempt of the workflow inside
+// it is a re-run in progress; none means the failure is real (the existing failure path, FRONT_RETURNED) or the missing check was not re-run
+// (REQUIRED_CHECK_NOT_RERUN). Why 10 minutes: at least two polls of the side that finds and re-runs (the lane looks at the train's front
+// first, takes a step a minute and looks at a head again every 2 minutes: 2 x 2 = 4 minutes, plus a step for its five heads a step), and
+// the gate's check run of a re-run is created at once. The deadline and the attempt budget above stay the limits.
+export const REQUIRED_RERUN_WINDOW_MS = 10 * 60_000;
+const ADMISSION_CHECK = 'kooyumi-work-admission';
 export const ACTIONS_APP_ID = 15368;
 const GATE_JOB = 'admission-gate';
 const MAX_REQUIRED_LISTED = 20;
@@ -92,8 +101,9 @@ const MAX_REQUIRED_LISTED = 20;
 // reads). Every attempt of every run of the workflow leaves one.
 function attemptsOf(own, context) {
   const expression = `'${context}' || '${context}-skipped'`;
-  return own.filter(c => c.app?.id === ACTIONS_APP_ID && (c.name === context || c.name === `${context}-skipped` || c.name.includes(expression))).length;
+  return own.filter(c => c.app?.id === ACTIONS_APP_ID && (c.name === context || c.name === `${context}-skipped` || c.name.includes(expression)));
 }
+const timeOf = v => { const t = Date.parse(v ?? ''); return Number.isFinite(t) ? t : null; };
 
 // What main's live rules require that is not success on the head: { missing: [{ context, state, attempts }], reruns, waiting }; state pending
 // (queued or running), absent (no check run of that name and App), skipped, failed (any other conclusion, neutral included: the ruling asks for
@@ -101,7 +111,7 @@ function attemptsOf(own, context) {
 // name counts. reruns: the re-runs GitHub shows for the missing checks (attempts beyond the first, and a gate in flight after an earlier
 // attempt); waiting: a missing check is queued or running, or a gate is in flight. null when the rules cannot be read (no rule list, or an
 // entry that is not exactly a context with an integration id or none).
-export function requiredOnHead({ rules, checks, headSha }) {
+export function requiredOnHead({ rules, checks, headSha, appId }) {
   const required = Array.isArray(rules) ? rules.filter(r => plain(r) && r.type === 'required_status_checks') : [];
   if (!required.length || !required.every(r => plain(r.parameters) && Array.isArray(r.parameters.required_status_checks))) return null;
   const own = Array.isArray(checks) ? checks.filter(c => plain(c) && c.head_sha === headSha && typeof c.name === 'string' && Number.isSafeInteger(c.id)) : [];
@@ -115,12 +125,37 @@ export function requiredOnHead({ rules, checks, headSha }) {
     const latest = app === null ? null : own.filter(c => c.name === entry.context && c.app?.id === app).sort((a, b) => b.id - a.id)[0];
     const state = app === null ? 'unverifiable' : !latest ? 'absent' : latest.status !== 'completed' ? 'pending'
       : latest.conclusion === 'success' ? null : latest.conclusion === 'skipped' ? 'skipped' : 'failed';
-    if (state) missing.push({ context: entry.context, state, attempts: app === ACTIONS_APP_ID ? attemptsOf(own, entry.context) : 0 });
+    if (!state) continue;
+    const tries = app === ACTIONS_APP_ID ? attemptsOf(own, entry.context) : [];
+    const ends = tries.map(c => timeOf(c.completed_at)).filter(t => t !== null);
+    missing.push({ context: entry.context, state, actions: app === ACTIONS_APP_ID, attempts: tries.length, lastEndAt: ends.length ? Math.max(...ends) : null });
   }
-  const gateInFlight = own.some(c => c.app?.id === ACTIONS_APP_ID && c.name === GATE_JOB && c.status !== 'completed');
+  // A re-run's gate in flight (queued or running, started after the check's last attempt ended) is the new attempt before its jobs report.
+  const gates = own.filter(c => c.app?.id === ACTIONS_APP_ID && c.name === GATE_JOB && c.status !== 'completed').map(c => timeOf(c.started_at));
+  for (const m of missing) m.rerunning = m.state === 'pending' || (m.actions && gates.some(t => t === null || m.lastEndAt === null || t >= m.lastEndAt));
   const running = missing.some(m => m.state === 'pending');
-  const next = gateInFlight && !running && missing.some(m => m.attempts > 0) ? 1 : 0;
-  return { missing, reruns: Math.min(REQUIRED_ATTEMPTS_MAX - 1, Math.max(0, ...missing.map(m => m.attempts - 1)) + next), waiting: running || gateInFlight };
+  const next = gates.length && !running && missing.some(m => m.attempts > 0) ? 1 : 0;
+  const admitted = own.filter(c => c.app?.id === appId && c.name === ADMISSION_CHECK && c.status === 'completed' && c.conclusion === 'success')
+    .map(c => timeOf(c.completed_at)).filter(t => t !== null);
+  return { missing, reruns: Math.min(REQUIRED_ATTEMPTS_MAX - 1, Math.max(0, ...missing.map(m => m.attempts - 1)) + next),
+    waiting: missing.some(m => m.rerunning), admittedAt: admitted.length ? Math.max(...admitted) : null };
+}
+
+// Whether the observation window of one missing check has passed with no new attempt (A3). start: the later of its last attempt's end and the
+// head's admission; with neither, fallbackStart (the merge slot's time, else the holder's front time); with nothing, it has passed.
+export function requiredWindowExpired(required, m, now, fallbackStart = null) {
+  if (!required || !m || m.rerunning) return false;
+  const known = [m.lastEndAt, required.admittedAt].filter(Number.isFinite);
+  const start = known.length ? Math.max(...known) : fallbackStart;
+  return !Number.isFinite(start) || !Number.isFinite(now) || now - start >= REQUIRED_RERUN_WINDOW_MS;
+}
+
+// Whether a failed required check is excused for now (A3): a GitHub Actions check whose window is still open or whose re-run is in flight.
+// The judgement is the lane's and the gate's; until their answer can show, the train does not call the failure real.
+export function requiredFailureExcused(front, context, now, takenAt = null) {
+  const r = front?.required;
+  const m = r?.missing?.find(x => x.context === context && x.actions && x.state === 'failed');
+  return !!m && !requiredWindowExpired(r, m, now, Number.isFinite(front.slotGreenAt) ? front.slotGreenAt : timeOf(takenAt));
 }
 
 // Why a merge-slot-green front that is not green gives the slot away now (REQUIRED_YIELD_REASONS), or null. fallbackStart: the holder's front
@@ -131,7 +166,9 @@ export function requiredYieldReason(front, now, fallbackStart = null) {
   if (r !== null && !r.missing.length) return null;
   if (r !== null && r.missing.some(m => m.state !== 'pending' && m.attempts >= REQUIRED_ATTEMPTS_MAX)) return 'REQUIRED_RERUNS_EXHAUSTED';
   const start = [front.slotGreenAt, Date.parse(fallbackStart ?? '')].find(Number.isFinite);
-  return start === undefined || !Number.isFinite(now) || now - start >= REQUIRED_CHECKS_MAX_WAIT_MS ? 'REQUIRED_CHECKS_DEADLINE' : null;
+  if (start === undefined || !Number.isFinite(now) || now - start >= REQUIRED_CHECKS_MAX_WAIT_MS) return 'REQUIRED_CHECKS_DEADLINE';
+  // A3: a missing check (not a failed one: the failure path has that) with no new attempt in its observation window was not re-run.
+  return r !== null && r.missing.some(m => m.state !== 'failed' && requiredWindowExpired(r, m, now, start)) ? 'REQUIRED_CHECK_NOT_RERUN' : null;
 }
 
 // The front PR as GitHub reports it now, reduced to what the train decides on. rules: main's live rules (the reply's list, or null when it
@@ -146,7 +183,7 @@ export function frontPullFacts({ pull, mergeCommit, compare, checks, mainSha, ap
     mergeable: typeof pull?.mergeable === 'boolean' ? pull.mergeable : null, testMerge,
     headContainsMain: compare ? compare.behindBy === 0 && ['ahead', 'identical'].includes(compare.status) : null,
     green: !!latest && latest.status === 'completed' && latest.conclusion === 'success',
-    ...(rules !== undefined ? { required: requiredOnHead({ rules, checks, headSha }),
+    ...(rules !== undefined ? { required: requiredOnHead({ rules, checks, headSha, appId }),
       slotGreenAt: [latest?.completed_at, latest?.started_at].map(v => Date.parse(v ?? '')).find(Number.isFinite) ?? null } : {}) };
 }
 
@@ -198,7 +235,9 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
         testMergeSha: front.testMerge?.sha ?? null, testMergeTree: front.testMerge?.tree ?? null, testMergeParentsOk: front.testMerge?.parentsOk ?? null,
         ...(front.required !== undefined ? { required: front.required === null
           ? (front.requiredYieldReason ? { rulesUnreadable: true, yieldReason: front.requiredYieldReason } : null)
-          : { missing: front.required.missing.slice(0, MAX_REQUIRED_LISTED), missingCount: front.required.missing.length, reruns: front.required.reruns,
+          : { missing: front.required.missing.slice(0, MAX_REQUIRED_LISTED).map(m => ({ ...m, lastEndAt: m.lastEndAt === null ? null : new Date(m.lastEndAt).toISOString() })),
+            missingCount: front.required.missing.length, reruns: front.required.reruns,
+            admittedAt: front.required.admittedAt === null ? null : new Date(front.required.admittedAt).toISOString(),
             waiting: front.required.waiting, slotGreenAt: Number.isFinite(front.slotGreenAt) ? new Date(front.slotGreenAt).toISOString() : null,
             ...(front.requiredYieldReason ? { yieldReason: front.requiredYieldReason } : {}) } } : {}) } : {}) } : null,
     wouldDo,

@@ -3495,7 +3495,7 @@ test("independent gate repair re-run: earlier attempts that only ended in ADMISS
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons, slept], [true, "ADMITTED", [], []]);
   assert.deepEqual(outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3 }] });
   assert.deepEqual(extra.map((call) => call.url.replace("https://api.test/repos/o/r/", "").replace(/\?.*$/, "")),
-    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations"]);
+    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations", "actions/runs"], "and the head's runs, for the three-attempt budget");
   assert.ok([...calls, ...extra].every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
   // A first re-run that was itself refused (an old gate, or a stale head) ran nothing: the next one is still the repair.
   const second = await repairGate([earlierAttempt(1), earlierAttempt(2, { notes: [refusedNote] })]);
@@ -3615,18 +3615,20 @@ test("staging gate: the required-tests push uses the same repair budget on S wit
   }
 });
 
-test("required-tests failure evidence is identical across three copies and repair history agrees between the gate and hook", () => {
+// Fable 11-20 (单一判定, B1): the one failure rule is the companion's env-failure.mjs, which the gate imports. The runner hook, run by its
+// loader as one file from main, keeps a copy of the classifier and the repair history that must equal the module byte for byte.
+test("required-tests failure rule: one module the gate imports, and the hook's copy equals it byte for byte", () => {
   const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
   const classifier = text => text.match(/export const SETUP_STEPS[\s\S]*?\nexport function jobFailureKind[\s\S]*?\n\}/)?.[0];
-  const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nasync function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
-  const gateSource = source("./clued-work-admission.mjs");
+  const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nexport async function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
+  const moduleSource = source("../../work/independent-ci-resident-v1/src/env-failure.mjs");
   const hookSource = source("../runner/clued-runner-job-started.mjs");
-  const gateClassifier = classifier(gateSource);
-  assert.match(gateClassifier, /kind: "timeout"/);
-  assert.equal(classifier(hookSource), gateClassifier);
-  assert.equal(classifier(source("../../work/independent-ci-resident-v1/src/env-failure.mjs")), gateClassifier);
-  assert.match(history(gateSource), /hasRepairRecovery/);
-  assert.equal(history(hookSource), history(gateSource));
+  assert.match(classifier(moduleSource), /kind: "timeout"/);
+  assert.match(history(moduleSource), /hasRepairRecovery/);
+  assert.match(history(moduleSource), /REPAIR_ATTEMPTS_MAX/);
+  assert.equal(classifier(hookSource), classifier(moduleSource));
+  assert.equal(history(hookSource), history(moduleSource));
+  assert.equal(classifier(source("./clued-work-admission.mjs")), undefined, "the gate keeps no copy");
 });
 
 test("independent gate environment re-run: a network failure or a setup death of the one attempt that ran admits one re-run", async () => {

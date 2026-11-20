@@ -50,7 +50,7 @@ import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
-import { decideShadow, frontPullFacts, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
+import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
@@ -613,7 +613,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
         } else if (front.state === 'open' && typeof native.yieldSlot === 'function' && SHA.test(pull?.head?.sha ?? '')
-          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks }, landability))
+          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks },
+            { ...landability, excuse: context => requiredFailureExcused(front, context, clock(), holder.takenAt ?? null) }))
             || (missingYield = requiredYieldReason(front, clock(), holder.takenAt ?? null)))) {
           // A front that cannot land as it stands (draft, auto-merge off, a required check failed) never
           // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
@@ -765,12 +766,13 @@ async function findFrontBind({ github, native, fx, job, holder, rows, claimScope
 // As before, an unreadable check inventory does not change the scheduling choice. This is never merge authorization.
 const ACTIONS_APP_ID = 15368;
 const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure']);
-async function landable(github, pull, listed = null, { rules = null, appId = APP_ID, onFallback = () => {} } = {}) {
+// excuse (A3, Fable 11-20): a failed required check the train does not call real yet (train-facts.mjs#requiredFailureExcused).
+async function landable(github, pull, listed = null, { rules = null, appId = APP_ID, onFallback = () => {}, excuse = () => false } = {}) {
   if (pull.auto_merge == null) return false;
   if (listed === null) try { listed = await github.readChecks(pull.head.sha); } catch { return true; }
   if (listed?.complete !== true || !Array.isArray(listed.checks)) return true;
   if (rules !== null) {
-    try { return requiredCheckFailure(rules, listed, pull.head.sha, appId).length === 0; }
+    try { return requiredCheckFailure(rules, listed, pull.head.sha, appId).filter(context => !excuse(context)).length === 0; }
     catch (e) { onFallback(e?.code === RULESET_UNREADABLE ? RULESET_UNREADABLE : REQUIRED_CHECKS_UNREADABLE); }
   } else onFallback(RULESET_UNREADABLE);
   const latest = new Map();

@@ -167,6 +167,10 @@ export function jobFailureKind(job, log = null, annotations = null) {
 const REPAIR_GATE_JOB = "admission-gate";
 const REPAIR_NOT_ADMITTED = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
 const REPAIR_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+// Fable 11-20 (补：车头缺必需检查): at most three attempts of a workflow on one head in all (the first run and two re-runs), whatever made
+// them (this rule, the companion's lane, a person) and for both kinds of process cause together (a run that produced no result, and the
+// environment failures below): every run of the workflow on the head counts. The smaller of it and the environment limit holds.
+export const REPAIR_ATTEMPTS_MAX = 3;
 
 async function repairAnnotations(read, repository, jobId) {
   if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("the job has no check run ID");
@@ -230,11 +234,25 @@ async function hasRepairRecovery({ read, repository, runId, workflowId, head, af
   return false;
 }
 
-async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
-  const refuse = reason => ({ allowed: false, reason });
+// Attempts of the workflow on the head, this one included: the run's attempt and every other run of the same workflow on the head.
+async function headAttempts({ read, repository, runId, head, attempt, workflowId }) {
+  if (!Number.isSafeInteger(workflowId) || workflowId <= 0) return attempt;
+  const listing = await read(`/repos/${repository}/actions/runs?head_sha=${head}&per_page=100&page=1`);
+  const runs = listing?.workflow_runs;
+  if (!Array.isArray(runs) || runs.length > 100 || listing.total_count !== runs.length) throw new Error("the head's runs are unreadable");
+  return attempt + runs.filter(run => run?.workflow_id === workflowId && run.head_sha === head && String(run.id) !== String(runId))
+    .reduce((n, run) => n + (Number.isSafeInteger(run.run_attempt) && run.run_attempt > 0 ? run.run_attempt : 1), 0);
+}
+
+// The one answer to "may this attempt be a repair" (the gate imports it, the companion's lane calls it, the runner hook holds a copy the
+// admission self-tests lock byte for byte). Refusals carry why for the lane: unreadable (read again later), waiting (no recovery evidence
+// yet), exhausted (three real attempts, with the last failures), budget (three attempts of the workflow on the head).
+export async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
+  const refuse = (reason, more = {}) => ({ allowed: false, reason, ...more });
   const attempts = [];
   let realAttempts = 0;
   let lastFailures = [];
+  let lastKinds = [];
   let completedAt;
   try {
     for (let earlier = 1; earlier < attempt; earlier += 1) {
@@ -255,12 +273,13 @@ async function requiredTestsRepairHistory({ read, readLog, repository, runId, he
       const ran = heavy.filter(job => (job.status !== "completed" || job.conclusion !== "skipped") && !neverAssigned(job));
       if (ran.length > 0) {
         realAttempts += 1;
-        if (realAttempts === 3) return refuse("three real attempts have already run");
+        if (realAttempts === 3) return refuse("three real attempts have already run", { exhausted: lastKinds });
         const failures = gateJob.status === "completed" && gateJob.conclusion === "success"
           ? await repairEnvironmentFailures({ read, readLog, repository, heavy }) : null;
         if (!failures)
           return refuse(`attempt ${earlier} already ran ${ran.map(job => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; its gate or environment evidence does not allow repair`);
         lastFailures = failures.map(job => job.name);
+        lastKinds = failures.map(job => ({ name: job.name, kind: job.kind }));
         completedAt = Math.max(...jobs.map(job => Date.parse(job.completed_at)));
         attempts.push({ attempt: earlier, heavy_jobs: heavy.length, environment_failure: lastFailures,
           environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
@@ -275,10 +294,13 @@ async function requiredTestsRepairHistory({ read, readLog, repository, runId, he
         return refuse(`the ${REPAIR_GATE_JOB} job of attempt ${earlier} did not end in ADMISSION_PENDING, RERUN_REFUSED or a GitHub API outage`);
       attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
     }
+    const total = await headAttempts({ read, repository, runId, head, attempt, workflowId });
+    if (total > REPAIR_ATTEMPTS_MAX)
+      return refuse(`three attempts of this workflow have already been made on this head (${total} with this one)`, { budget: true });
     if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
-      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit");
+      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit", { waiting: true });
   } catch (error) {
-    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`);
+    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`, { unreadable: true });
   }
   return { allowed: true, attempts };
 }

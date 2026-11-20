@@ -348,7 +348,7 @@ export const FRONT_CHECKS_DECISIONS = Object.freeze(['FRONT_CHECKS_WAIT', 'FRONT
 // Independent review of 051b7d585: the count is what stage 10 read on GitHub (attempts of the missing checks' jobs beyond the first, a re-run's
 // gate in flight, a person's re-runs included; train-facts.mjs#requiredOnHead), carried in the summary's front; it goes first so a clipped
 // line keeps it. The yield says which limit was reached (train-facts.mjs REQUIRED_YIELD_REASONS).
-const YIELD_REASONS = ['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE'];
+const YIELD_REASONS = ['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE', 'REQUIRED_CHECK_NOT_RERUN'];
 function frontChecksOf(v) {
   const out = {};
   if (Number.isSafeInteger(v?.reruns) && v.reruns > 0 && v.reruns <= 2) out.reruns = v.reruns;
@@ -362,7 +362,8 @@ export function frontChecksText(key, gap = null, front = null) {
   if (key === 'FRONT_CHECKS_WAIT') return n ? `合并位已绿，补跑中（第 ${n} 次）${list}` : `合并位已绿，等检查${list}`;
   if (key === 'FRONT_CHECKS_MISSING') return n ? `合并位已绿，第 ${n} 次补跑后仍缺${list}；等再补跑${then}` : `合并位已绿，缺检查${list}；等自动补跑${then}`;
   if (key === 'FRONT_CHECKS_MISSING_YIELDED') return front?.yieldReason === 'REQUIRED_RERUNS_EXHAUSTED' ? '必需检查缺失，补跑两次仍缺，已让出车头，列车继续下一个'
-    : front?.yieldReason === 'REQUIRED_CHECKS_DEADLINE' ? '必需检查缺失，到时限仍无结果，已让出车头，列车继续下一个' : '必需检查缺失，重跑无效，已让出车头，列车继续下一个';
+    : front?.yieldReason === 'REQUIRED_CHECKS_DEADLINE' ? '必需检查缺失，到时限仍无结果，已让出车头，列车继续下一个'
+    : front?.yieldReason === 'REQUIRED_CHECK_NOT_RERUN' ? '必需检查缺失，观察窗内没有补跑，已让出车头，列车继续下一个' : '必需检查缺失，重跑无效，已让出车头，列车继续下一个';
   return null;
 }
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).

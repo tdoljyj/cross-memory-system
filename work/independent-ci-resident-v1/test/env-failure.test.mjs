@@ -11,25 +11,16 @@ const job = (conclusion, steps, extra = {}) => ({ id: 1, name: 'ci-suites', stat
 const SETUP = [step('Set up job', 'failure'), step('Run tests', 'skipped')];
 const RUN = [step('Set up job', 'success'), step('Run tests', 'failure')];
 
-test('the resident failure classifier agrees with the pinned gate and, after T1, byte-matches the gate and runner hook', async () => {
+// Fable 11-20 (单一判定, B1): this module is the one failure rule; the gate imports it (no copy of its own) and the runner hook, which its
+// loader runs as one file from main, keeps a copy equal to it byte for byte.
+test('the failure classifier is one module: the gate re-exports it, the runner hook copy equals it', async () => {
   const classifier = text => text.replaceAll('\r\n', '\n').match(/^export const SETUP_STEPS[\s\S]*?^export function jobFailureKind[\s\S]*?^}/m)?.[0];
   const [gate, copy, hook] = await Promise.all(['../../../scripts/ci/clued-work-admission.mjs', '../src/env-failure.mjs',
     '../../../scripts/runner/clued-runner-job-started.mjs'].map(async file => classifier(await fs.readFile(new URL(file, import.meta.url), 'utf8'))));
-  assert.ok(gate.includes('export function jobFailureKind') && gate.length > 1500);
-  if (hook || gate.includes('annotations = null')) {
-    assert.equal(copy, gate);
-    assert.equal(hook, gate);
-  } else {
-    // T2 is developed against the pre-T1 base. Keep the shared setup/network
-    // evidence byte-identical there and require full equality once T1 lands.
-    const common = body => body.slice(0, body.indexOf('\n//', body.indexOf('export function diedInSetup')));
-    assert.equal(common(copy), common(gate));
-    for (const steps of [SETUP, RUN, []]) {
-      for (const log of ['ECONNRESET', 'ECONNRESET\nnot ok 1', 'ordinary log', null]) {
-        assert.deepEqual(jobFailureKind(job('failure', steps), log), gateFailureKind(job('failure', steps), log));
-      }
-    }
-  }
+  assert.equal(gate, undefined, 'the gate keeps no copy');
+  assert.ok(copy.includes('export function jobFailureKind') && copy.length > 1500);
+  assert.equal(hook, copy);
+  assert.equal(gateFailureKind, jobFailureKind, 'the gate re-exports the one function');
 });
 
 test('a job that died in the runner\'s setup is an environment failure with no log; any other failed step needs the log', () => {

@@ -20,7 +20,7 @@ import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
 import { LIVE_STATES } from './queue.mjs';
-import { diedInSetup, failedSteps, jobFailureKind, neverAssigned } from './env-failure.mjs';
+import { diedInSetup, failedSteps, jobFailureKind, neverAssigned, requiredTestsRepairHistory } from './env-failure.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 
 export const RERUN_RECORD_CONTRACT = 'clued.independent-ci.admission-rerun/1';
@@ -54,13 +54,6 @@ export const POST_TIMEOUT_MS = 30_000;
 export const HEADS_PER_STEP = 5;
 export const HEAD_CANDIDATE_MARK_MS = 60 * 60_000;
 const REQUEST_RETRY_MS = 10 * 60_000;
-// Fable 11-20 补“车头缺必需检查” and its independent review: at most two re-runs per head and workflow, counted on GitHub over every run of
-// that workflow on the head (each run's attempts; a person's re-runs and a re-dispatched run included): three attempts in all, then final.
-// The train reads the same budget from the check runs and yields the front at once when it is used up (train-facts.mjs REQUIRED_ATTEMPTS_MAX).
-// Why two: the process causes seen (the gate timed out while the node was down, #1192; a job no runner took, 9aba97c1) are gone once one
-// re-run is made after the cause cleared; the second covers a cause still clearing. It also matches the gate's own repair budget (a third
-// heavy attempt is refused: clued-work-admission.mjs#requiredTestsRepairHistory).
-export const MAX_RERUNS_PER_WORKFLOW = 2;
 const RECENT_OTHER_HEADS = 3;
 const MAX_RECOVERY_PAGES = 50;
 // 5: jobs no runner took ran nothing (9aba97c1), and the budget is per head and workflow; verdicts of 4 are judged again.
@@ -282,46 +275,45 @@ async function otherJobEvidence(gh, workflowId, headSha, failures, recoveryAfter
   return { systemic, recovered: !needsRecovery.size };
 }
 
-// Mirror the gate's repair rule over the gh port. Attempts where the heavy jobs were skipped do not use up a repair.
-async function repairAllowed(gh, workflowId, runId, headSha, attempt, attempts) {
-  let executed = 0, failures = [], previousEnd = null;
-  for (let earlier = 1; earlier < attempt; earlier += 1) {
-    const jobs = attempts[earlier - 1] ?? await gh.paged(`/actions/runs/${runId}/attempts/${earlier}/jobs`, 'jobs');
-    const listed = jobs.filter(j => j && typeof j === 'object');
-    const gates = listed.filter(j => j.name === GATE_JOB_NAME), heavy = listed.filter(j => j.name !== GATE_JOB_NAME);
-    if (listed.length !== jobs.length || gates.length !== 1 || heavy.length === 0) return { allowed: false, reason: `attempt ${earlier} does not list one ${GATE_JOB_NAME} job and its heavy jobs` };
-    if (listed.some(j => j.head_sha !== headSha || (j.run_attempt != null && Number(j.run_attempt) !== earlier)))
-      return { allowed: false, reason: `attempt ${earlier} has a job of another head or attempt` };
-    // A job no runner took (9aba97c1) ran nothing, like a skipped one: an attempt of only such jobs used no repair.
-    if (heavy.some(j => !(j.status === 'completed' && j.conclusion === 'skipped') && !neverAssigned(j))) {
-      const failed = heavy.filter(j => ['failure', 'cancelled'].includes(j.conclusion));
-      const settled = failed.length > 0 && gates[0].status === 'completed' && gates[0].conclusion === 'success'
-        && heavy.every(j => j.status === 'completed' && ['success', 'skipped', 'failure', 'cancelled'].includes(j.conclusion));
-      executed += 1;
-      if (!settled) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job` };
-      failures = [];
-      for (const j of failed) {
-        const result = await classifyJob(gh, j);
-        if (!result.environment || typeof j.name !== 'string' || !j.name) return { allowed: false, reason: `attempt ${earlier} already ran a heavy job (not an environment failure)` };
-        failures.push({ name: j.name, kind: result.kind, completedAt: j.completed_at });
-      }
-      if (executed === 3) return { allowed: false, exhausted: failures, reason: 'three heavy attempts ended with environment failures' };
-      previousEnd = Math.max(...listed.map(j => Date.parse(j.completed_at)));
-      continue;
+// The one rule reads GitHub with the gate's routes; over the gh port its lists are read whole (paged) and served page by page.
+function historyPort(gh) {
+  const prefix = `/repos/${gh.repo}`;
+  const local = route => route.startsWith(`${prefix}/`) ? route.slice(prefix.length) : unreadable('a repair route outside the repository');
+  const notes = new Map();
+  async function read(route) {
+    const r = local(route);
+    let m;
+    if ((m = /^(\/actions\/runs\/\d+\/attempts\/\d+\/jobs)\?per_page=100$/.exec(r))) {
+      const jobs = await gh.paged(m[1], 'jobs');
+      return { total_count: jobs.length, jobs };
     }
-    // the gate job died in the runner's setup, or no runner took it or a job after it (9aba97c1): nothing ran, a process cause
-    if (diedInSetup(gates[0]) || neverAssigned(gates[0]) || heavy.some(neverAssigned)) continue;
-    if (!positive(gates[0].id)) unreadable(`the gate job of attempt ${earlier} has no id`);
-    const notes = await gh.paged(`/check-runs/${gates[0].id}/annotations`);
-    if (!notes.some(n => n && ((n.title === GATE_JOB_NAME && NOT_ADMITTED_VERDICT.test(String(n.message ?? '')))
-      || (n.title === ERROR_ANNOTATION_TITLE && TRANSIENT_API_ERROR.test(String(n.message ?? '')))))) {
-      return { allowed: false, reason: `the ${GATE_JOB_NAME} job of attempt ${earlier} did not end in ADMISSION_PENDING or a GitHub API outage` };
+    if ((m = /^(\/check-runs\/\d+\/annotations)\?per_page=100&page=([1-9][0-9]?)$/.exec(r))) {
+      if (!notes.has(m[1])) notes.set(m[1], await gh.paged(m[1]));
+      return notes.get(m[1]).slice((Number(m[2]) - 1) * 100, Number(m[2]) * 100);
     }
+    if ((m = /^(\/actions\/runs\?head_sha=[0-9a-f]{40})&per_page=100&page=1$/.exec(r))) {
+      const runs = await gh.paged(m[1], 'workflow_runs');
+      return { total_count: runs.length, workflow_runs: runs };
+    }
+    return gh.get(r);
   }
-  if (executed === 2 && !Number.isFinite(previousEnd)) return { allowed: false, waiting: true, reason: 'the previous heavy attempt has no proven end time' };
-  const { systemic, recovered } = await otherJobEvidence(gh, workflowId, headSha, failures, executed === 2 ? previousEnd : null);
+  return { read, readLog: route => gh.text(local(route)) };
+}
+
+// The gate's repair rule is the one rule (env-failure.mjs#requiredTestsRepairHistory, Fable 11-20 单一判定), called over the gh port: the
+// classification, three attempts per head and workflow for both kinds of process cause, the recovery evidence of a second repair. On top,
+// only the lane's own pacing: a timeout that other heads show too is systemic, so the lane waits instead of clicking.
+async function repairAllowed(gh, workflowId, runId, headSha, attempt, attempts) {
+  const history = await requiredTestsRepairHistory({ repository: gh.repo, runId, head: headSha, attempt, workflowId, ...historyPort(gh) });
+  if (!history.allowed) {
+    if (history.unreadable) unreadable(history.reason);
+    return { allowed: false, waiting: history.waiting === true, exhausted: history.exhausted, reason: history.reason };
+  }
+  const last = [...history.attempts].reverse().find(a => a.environment_failure_kinds);
+  const doneAt = last ? Math.max(...(attempts[last.attempt - 1] ?? []).map(j => Date.parse(j.completed_at)).filter(Number.isFinite)) : NaN;
+  const failures = last ? Object.entries(last.environment_failure_kinds).map(([name, kind]) => ({ name, kind, completedAt: new Date(Number.isFinite(doneAt) ? doneAt : 0).toISOString() })) : [];
+  const { systemic } = await otherJobEvidence(gh, workflowId, headSha, failures, null);
   if (systemic.length) return { allowed: false, waiting: true, systemic, reason: `${systemic.join(', ')} has systemic timeouts` };
-  if (!recovered) return { allowed: false, waiting: true, reason: 'the failed jobs have not succeeded on another head since the previous heavy attempt' };
   return { allowed: true, environment: failures.length ? failures.map(f => f.name.slice(0, 80)) : null,
     failures: failures.map(f => ({ name: f.name.slice(0, 80), kind: f.kind })) };
 }
@@ -471,10 +463,6 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
     Object.assign(out, { systemic: repair.systemic, exhausted: repair.exhausted });
     return say(repair.waiting ? 'skip' : 'final', repair.reason);
   }
-  // The repair rule's own verdicts (exhausted environment failures, systemic timeouts) come first, so their notices stay as they were.
-  const used = runs.reduce((n, r) => n + r.run_attempt, 0);
-  if (used > MAX_RERUNS_PER_WORKFLOW)
-    return say('final', `three attempts of this workflow were already made on this head (${used} over ${runs.length} run(s)): no more automatic re-runs`);
   const current = await gh.get('/pulls/' + pull);
   if (!boundPr(current, pull, headSha, defaultBranch, gh.repo) || current.base.sha !== base)
     return say('skip', 'the pull request or base moved');
@@ -698,10 +686,18 @@ export class AdmissionRerunState {
 export function statusFresh(status, now) {
   return Number.isSafeInteger(status?.writtenAt) && Number.isSafeInteger(now) && now - status.writtenAt <= STATUS_STALE_MS && status.writtenAt - now <= 60_000;
 }
+// Fable 11-20 (A3): the train's front head (status.train.last, mode on) is a candidate of its own and comes first, so the front whose required
+// runs ended with no result (skipped by the gate, never on a runner: the runner hook never fires for them) is found and re-run here even
+// when the head is no longer among this node's queue rows. The train itself judges nothing: it waits its observation window for the new
+// attempt (train-facts.mjs REQUIRED_RERUN_WINDOW_MS).
 export function candidateHeads(status, pulls, now) {
   if (!status || status.node?.mode !== 'ACTIVE' || status.halt || !statusFresh(status, now)) return [];
   const mine = new Set([status.current, ...(status.pending ?? []), ...(status.recent ?? [])].filter(x => x && Number.isSafeInteger(x.pr) && HEX40.test(x.headSha ?? '')).map(x => `${x.pr}:${x.headSha}`));
-  const heads = (pulls ?? []).filter(p => p && HEX40.test(p.headSha ?? '') && mine.has(`${p.pr}:${p.headSha}`)).map(p => ({ pr: p.pr, headSha: p.headSha }));
+  const last = status.train?.last;
+  const trainFront = last?.mode === 'on' && Number.isSafeInteger(last.front?.pr) && HEX40.test(last.front?.headSha ?? '') ? `${last.front.pr}:${last.front.headSha}` : null;
+  const open = (pulls ?? []).filter(p => p && HEX40.test(p.headSha ?? ''));
+  const heads = [...open.filter(p => `${p.pr}:${p.headSha}` === trainFront), ...open.filter(p => `${p.pr}:${p.headSha}` !== trainFront && mine.has(`${p.pr}:${p.headSha}`))]
+    .map(p => ({ pr: p.pr, headSha: p.headSha }));
   if (status.train?.enabled !== 'on' || status.train.landing !== 'push' || status.train.notOnDuty) return heads;
   const fronts = (status.pending ?? []).filter(p => LIVE_STATES.includes(p?.state) && HEX40.test(p.testSha ?? '')
     && p.testSha !== p.headSha && heads.some(h => h.pr === p.pr && h.headSha === p.headSha));
