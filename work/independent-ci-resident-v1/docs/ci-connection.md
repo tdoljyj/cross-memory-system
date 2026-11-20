@@ -51,7 +51,7 @@ Broker 在发送写请求前持久化恢复记录，限定 SYSTEM 与内置 Admi
 
 HTTP 202 携带审批编号和重试秒数，常驻保存两项并按服务端间隔复查。HTTP 503 及传输未确认以 `RENEW_GATEWAY_UNAVAILABLE` 按小时重试。来源缺失的 HTTP 403 记录为 `RENEW_SOURCE_REQUIRED`。该代次通用包以 D1c 已迁移、已部署为接受前提。
 
-演练机使用登记流程创建专用密钥并运行已安装服务后，把同一轮的公开观测复制到演练证据目录。离线夹具 `test/renewal-drill.mjs` 接收该目录，核对身份、提供程序、时效、陪伴读拒绝和 SYSTEM 网关探询。
+演练机使用登记流程创建专用密钥并运行已安装服务后，把同一轮的公开观测复制到演练证据目录。离线夹具 `test/renewal-drill.mjs` 接收该目录，核对身份、提供程序、时效、陪伴读拒绝和 SYSTEM 网关探询。令牌文件必须是陪伴“拒绝访问”；连接记录以管理员侧实读为准，存在则陪伴必须“拒绝访问”，不存在则必须报“不存在”，对不上即失败。首装时记录不存在，记录的拒绝访问登记为未验到（`record.denial`），其真机证据是已激活节点每天的 keyCheck。
 
 | 证据文件 | 来宾中的来源 |
 |---|---|
@@ -61,5 +61,6 @@ HTTP 202 携带审批编号和重试秒数，常驻保存两项并按服务端�
 | `controller.json` | `state/v2/receipts/renew-key-controller.json` |
 | `companion.json` | `resident/mailbox/responses/renew-key.json` |
 | `probe.json` | `resident/broker/renew-ci.json` 或 `renew-upgrade.json` |
+| `record.json` | 来宾管理员对 `secrets/ci-admission.connection.json` 的实读，只记 `PRESENT` 或 `ABSENT`，不读内容 |
 
 路径相对于来宾的 CI 根目录。控制账号的观测来自实际第 11 阶段服务令牌。正式包从 `windows/SwapBroker.cs` 生成 resident 清单项及 `bin/SwapBroker.cs` 编译槽。Broker 读取当前代次指针所钉的安装回执，并核对运行中的可执行文件、清单和两处源码摘要后才执行续期。

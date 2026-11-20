@@ -35,6 +35,7 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // through untouched, as before.
 export const READ_REQUEST_DEADLINE = Symbol.for('clued-read-request-deadline');
 export const READ_REQUEST_GUARD = Symbol.for('clued-read-request-guard');
+const READ_REQUEST_NO_RETRY = Symbol.for('clued-read-request-no-retry');
 export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budgetMs = READ_RETRY_BUDGET_MS, attemptTimeoutMs = 30_000, sleep = wait, live = () => {}, onRetry = () => {}, deadlineAt = () => null, resetOn = () => false, readPost = () => false, now = () => Date.now() } = {}) {
   if (typeof fetchImpl !== 'function' || !Array.isArray(delaysMs) || !delaysMs.every(ms => Number.isSafeInteger(ms) && ms > 0)
     || !Number.isSafeInteger(budgetMs) || budgetMs < 0 || typeof sleep !== 'function' || typeof live !== 'function' || typeof deadlineAt !== 'function' || typeof resetOn !== 'function' || typeof readPost !== 'function' || typeof now !== 'function') throw new Error('read_retry_configuration_invalid');
@@ -70,7 +71,7 @@ export function withReadRetry(fetchImpl, { delaysMs = READ_RETRY_DELAYS_MS, budg
       try { response = await fetchImpl(url, attemptOpts); } catch (error) { if (!networkFault(error)) throw error; failure = error; }
       lastResponse = response; lastFailure = failure;
       if (response && !RETRYABLE_STATUSES.includes(response.status)) return response;
-      const delay = delaysMs[attempt];
+      const delay = opts[READ_REQUEST_NO_RETRY] ? undefined : delaysMs[attempt];
       const late = Number.isFinite(deadline) && now() + delay >= deadline;
       if (delay === undefined || spent + delay > budgetMs || late) { if (failure) throw failure; return response; }
       // The stage's own deadline or stop request ends the wait; what it throws is the caller's ordinary refusal.

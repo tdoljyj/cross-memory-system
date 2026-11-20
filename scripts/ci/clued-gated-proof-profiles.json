@@ -6547,6 +6547,9 @@
         },
         {
           "command_digests": {
+            "Install the application dependencies the selected suites need": [
+              "511e1108529d91041e013a3cd32568c97b1b0e9cbca78d7c19dee5be3cb6933e"
+            ],
             "Resolve push baseline before loading trusted commands": [
               "614d7c1b253d4cdc2010130a1191b703d5d73164b4d860deec9a78985a636cf0"
             ],
@@ -6560,6 +6563,7 @@
           "job_id": "ci-suites",
           "name": "ci-suites",
           "required_steps": {
+            "Install the application dependencies the selected suites need": 1,
             "Resolve push baseline before loading trusted commands": 1,
             "Run the selected suites": 1,
             "Select suites": 1
@@ -6595,7 +6599,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "addbc949447958e6c1594f64b64c6b500a8837511be1d984e6c70b844c91d3ab",
+      "source_sha256": "0a36849d74c2612f38d759cbc27304a7721786417e75c889a3417b56ce724d8b",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -6877,6 +6881,23 @@
 "          fi",
 "          echo \"selector=$selector\" >> \"$GITHUB_OUTPUT\"",
 "          node \"$selector\" --check ci-suites",
+"      # Clued Task 10399304: the applications whose dependencies the selected suites need (SUITE_APP_DEPENDENCIES in the",
+"      # selection, written as app_deps), installed offline from the runner's store by the trusted ci-deps.mjs. The marker",
+"      # tells those suites a missing dependency is a failure, not a skip. A base selection without app_deps installs nothing.",
+"      # The step runs every time (the execution proof requires each registered step to succeed) and decides from app_deps.",
+"      - name: Install the application dependencies the selected suites need",
+"        env:",
+"          APP_DEPS: ${{ steps.select.outputs.app_deps }}",
+"        run: |",
+"          apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || \"[]\")) console.log(a)')",
+"          if [ -z \"$apps\" ]; then",
+"            echo \"No selected suite needs application dependencies; nothing installed.\"",
+"            exit 0",
+"          fi",
+"          for app in $apps; do",
+"            node trusted/scripts/ci/ci-deps.mjs install \"candidate/$app\"",
+"          done",
+"          echo \"CLUED_CI_APP_DEPS=1\" >> \"$GITHUB_ENV\"",
 "      - name: Run the selected suites",
 "        env:",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
@@ -7015,7 +7036,7 @@
 "        run: echo \"No migration, ledger, snapshot or drift-check file changed; nothing to verify.\" >> \"$GITHUB_STEP_SUMMARY\"",
 ""
       ],
-      "workflow_blob": "e600d8b2223e897008a2e07020b6c4d7731f2285"
+      "workflow_blob": "2e14516b6813ce3024d42ab5ffde63fb399fb20b"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

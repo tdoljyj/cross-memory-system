@@ -68,6 +68,87 @@ function Assert-FirstInstallRelease {
   if (@(Get-ChildItem -LiteralPath $From -Force).Count -ne $seen.Count) { throw 'DRILL_RELEASE_UNLISTED_ASSET' }
 }
 
+# Fable renew-key ruling, supplement "branch two, two points" 1 (the drill's side): a stage child's stdout goes to its log line by line as
+# it comes, so a stage cut off at its limit still leaves what it printed. Otherwise as the package's Invoke-StageChild (the same argument
+# quoting; stdout and stderr apart; nothing killed at the limit) and, with -NoWindow and $EnvAdd, as its Invoke-NonElevated. A limit of 0
+# waits for the end.
+function Invoke-EntryStreamedChild([string]$Exe, [string[]]$Arguments, [int]$LimitSeconds, [string]$Log, [hashtable]$EnvAdd = @{}, [switch]$NoWindow) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $Exe; $psi.Arguments = (($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = [bool]$NoWindow
+  foreach ($k in @($EnvAdd.Keys)) { $psi.EnvironmentVariables[$k] = $EnvAdd[$k] }
+  $writer = New-Object IO.StreamWriter -ArgumentList $Log, $false, (New-Object Text.UTF8Encoding($false))
+  $writer.AutoFlush = $true
+  $out = New-Object Text.StringBuilder
+  $lastOf = { param($t) if (Test-Path -LiteralPath 'function:Get-LastJsonLine') { Get-LastJsonLine $t } else { $null } }
+  try {
+    $proc = [Diagnostics.Process]::Start($psi)
+    $err = $proc.StandardError.ReadToEndAsync()
+    # One deadline for every wait (Codex review of c1497e0a1, medium 1): the next line, the child's exit and the end of its stderr. Past
+    # it the result is a timeout at once, even while lines keep coming.
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(0, $LimitSeconds))
+    $left = { if ($LimitSeconds -gt 0) { [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds) } else { -1 } }
+    $timeout = { [ordered]@{ exit = $null; timedOut = $true; pid = $proc.Id; stdout = $out.ToString(); stderr = $null; last = [ordered]@{ status = 'STAGE_CHILD_STILL_RUNNING'; pid = $proc.Id; note = 'nothing was killed' } } }
+    while ($true) {
+      if ($LimitSeconds -gt 0 -and [DateTime]::UtcNow -ge $deadline) { return (& $timeout) }
+      $next = $proc.StandardOutput.ReadLineAsync()
+      if (-not $next.Wait((& $left))) { return (& $timeout) }
+      if ($null -eq $next.Result) { break }
+      $writer.WriteLine($next.Result); [void]$out.AppendLine($next.Result)
+    }
+    if (-not $proc.WaitForExit((& $left))) { return (& $timeout) }
+    if (-not $err.Wait((& $left))) { return (& $timeout) }
+    $e = [string]$err.Result
+    $text = $out.ToString()
+    [ordered]@{ exit = $proc.ExitCode; timedOut = $false; pid = $proc.Id; stdout = $text; stderr = $(if ($e.Length -gt 4000) { $e.Substring($e.Length - 4000) } else { $e }); last = (& $lastOf $text) }
+  } finally { $writer.Dispose() }
+}
+
+# Whether the package's host preparation takes -Kit (package 0a4abc6f2 on): read from the script's own parameters.
+function Test-EntryHostTakesKit([string]$HostScript) {
+  return (Get-Command -Name $HostScript -ErrorAction Stop).Parameters.ContainsKey('Kit')
+}
+
+# The host preparation's own verdict carried as it is (Fable renew-key ruling, supplement "after the package branch" 3): a restart
+# Windows asks for, or a refusal, stops the entry with the package's code and the verdict's fields after ':', never a blanket failure.
+function Get-EntryHostStopCode($HostRun) {
+  $last = Get-EntryField $HostRun 'last'
+  $status = Get-EntryField $last 'status'
+  if ((Get-EntryField $HostRun 'exit') -eq 0 -and $status -ceq 'FIRST_INSTALL_HOST_READY') { return $null }
+  $raw = if ($null -ne $last) { ConvertTo-Json -InputObject $last -Compress -Depth 6 } else { 'exit=' + (Get-EntryField $HostRun 'exit') }
+  if ($status -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { return ('RESTART_THEN_RUN_THE_SAME_COMMAND:' + $raw) }
+  return ('HOST_PREPARATION_NOT_DONE:' + $raw)
+}
+# One field of an object the package's parser gave (Get-LastJsonLine: a JavaScriptSerializer Dictionary, whose IDictionary.Contains is an
+# explicit interface member) or of a PowerShell object: read as the package's own Get-Key reads it, through IDictionary (Codex review of
+# e0a3cded5, high 1).
+function Get-EntryField($Object, [string]$Name) {
+  if ($null -eq $Object) { return $null }
+  if ($Object -is [Collections.IDictionary]) { if (([Collections.IDictionary]$Object).Contains($Name)) { return $Object[$Name] }; return $null }
+  $p = $Object.PSObject.Properties[$Name]; if ($p) { return $p.Value }; return $null
+}
+
+# A stage's output file is this run's alone: one left from an earlier run is removed before the stage starts, and still there is a refusal
+# (the stage would then be read for another run's verdict).
+function Clear-EntryStageOutput([string]$Path) {
+  if ([IO.File]::Exists($Path)) { try { [IO.File]::Delete($Path) } catch { } }
+  if ([IO.File]::Exists($Path)) { throw ('DRILL_STAGE_OUTPUT_NOT_CLEARED:' + [IO.Path]::GetFileName($Path)) }
+}
+
+# A stage file read while its writer may still hold it open (read-write sharing, as bootstrap.ps1 Read-StageResult reads it).
+function Read-EntrySharedText([string]$Path) {
+  $fs = New-Object IO.FileStream -ArgumentList $Path, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
+  try { (New-Object IO.StreamReader -ArgumentList $fs, (New-Object Text.UTF8Encoding($false))).ReadToEnd() } finally { $fs.Dispose() }
+}
+
+# A launcher stage's verdict, by the drill's rule (drill-vm.ps1 Test-DrillStageVerdict): a status that is a non-empty string and not one
+# of the package's "no verdict" codes.
+function Test-EntryStageVerdict($Terminal) {
+  if ($null -eq $Terminal) { return $false }
+  $s = Get-EntryField $Terminal 'status'
+  return ($s -is [string]) -and ($s.Length -gt 0) -and (@('STAGE_CHILD_PRINTED_NO_VERDICT', 'STAGE_GAVE_NO_VERDICT') -cnotcontains $s)
+}
+
 # This is the README section 5 exception for CLUED-DRILL only. No accepted file is rewritten.
 # Load the accepted bootstrap's helpers, keeping its asset/prerequisite/check/prepare/launcher order.
 function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]$FakeInputs, [string]$Output, [string]$ReleaseVersion) {
@@ -75,20 +156,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
   . $bootstrap -From $Assets
   # Helpers normally terminate the bootstrap process. Here the entry owns the single terminal result and cleanup.
   function Stop-Bootstrap([string]$step, [string]$code, $detail) { throw ($code + $(if ($null -ne $detail) { ':' + (@($detail) -join ',') } else { '' })) }
-  # Drill-only stand-in for a package defect being fixed (claude/bootstrap-short-tool-cache): the accepted Expand-Cached names its
-  # cache <name>-<sha256>.partial-<guid>, which with node.zip's deepest entry passes MAX_PATH on a default Windows (LongPathsEnabled=0).
-  # Same behaviour, shorter names; the full sha256 is still the completion mark. Declared in the kit's perNodeSteps, so A10 cannot pass.
-  function Expand-Cached([string]$zip, [string]$name, [string]$sha256) {
-    $dir = Join-Path (Join-Path $WorkParent 'tools') ($name + '-' + $sha256.Substring(0, 16))
-    $state = Get-ExtractState $dir $sha256
-    if ($state -ceq 'complete') { return $dir }
-    if ($state -ceq 'incomplete') { [IO.Directory]::Move($dir, $dir + '.i-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmss')) }
-    $partial = $dir + '.p-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
-    Expand-Archive -LiteralPath $zip -DestinationPath $partial
-    [IO.File]::WriteAllText((Join-Path $partial '.bootstrap-complete'), $sha256)
-    [IO.Directory]::Move($partial, $dir)
-    $dir
-  }
+  # No package function is shadowed here: the package's own Expand-Cached runs (#1154 fixed its MAX_PATH defect; the drill-only stand-in
+  # that kept covering it was removed, Fable renew-key ruling, supplement "companion account and evidence" section 3).
   $script:From = $Assets
   $measurements = [ordered]@{ host = $null; prepare = $null; launcher = $null }
   $inputCredentials = Join-Path $Output 'credentials'
@@ -119,8 +188,11 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       if ([IO.File]::Exists($injected)) {
         if ((Sha256File $injected) -cne $item['sha256'] -or (Get-Item -LiteralPath $injected).Length -ne $item['bytes']) { throw 'DRILL_PREREQ_CHANGED' }
         $file = Join-Path $pre $item['fileName']; [IO.File]::Copy($injected, $file, $false)
-      } else { $file = Get-Prereq $item $pre }
-      if (@('node', 'python', 'git') -ccontains [string]$item['name']) { $tools[$item['name']] = Expand-Cached $file $item['name'] $item['sha256'] }
+      } elseif (@('gh', 'git-for-windows') -ccontains [string]$item['name']) { throw ('DRILL_PREREQ_NOT_INJECTED:' + $item['name']) }
+      else { $file = Get-Prereq $item $pre }
+      # the package's own Expand-Cached, called as its bootstrap calls it (rollout/fleet/bootstrap.ps1): the zip's longest entry path from the
+      # pinned manifest is its fourth argument, without which it refuses (PREREQ_ZIP_MAX_ENTRY_PATH_LENGTH)
+      if (@('node', 'python', 'git') -ccontains [string]$item['name']) { $tools[$item['name']] = Expand-Cached $file ([string]$item['name']) ([string]$item['sha256']) (Get-Key $item 'maxEntryPathLength') }
     }
     $debDir = Join-Path $pre 'debs'; [void][IO.Directory]::CreateDirectory($debDir)
     foreach ($item in $manifest['debs']) {
@@ -173,36 +245,61 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       $sameAcl = ($a.Owner.Value -ceq $w.Owner.Value) -and (($a.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) -and ((@($ak) -join ';') -ceq (@($wk) -join ';'))
     } catch { $sameAcl = $false }
     if (-not $sameAcl) { throw ('DRILL_CREDENTIAL_INPUT_ACL_REFUSED:' + $actualSddl) }
-    foreach ($pair in @(@('app-key.pem', 'app-private-key.pem'), @('ci-admission.token', 'ci-admission.token'), @('resident-upgrade.token', 'resident-upgrade.token'))) {
-      [IO.File]::Copy((Join-Path $FakeInputs $pair[0]), (Join-Path $inputCredentials $pair[1]), $false)
+    # companion-github.token: the stand-in for the companion GitHub classic token (drill-vm.ps1 New-DrillFakeCredentials), made only when the
+    # drilled package requires it (Get-DrillCredentialPlan); handed over under the package's name.
+    foreach ($pair in @(@('app-key.pem', 'app-private-key.pem'), @('ci-admission.token', 'ci-admission.token'), @('resident-upgrade.token', 'resident-upgrade.token'),
+        @('companion-github.token', 'companion-github.token'))) {
+      # only what the drill made for this package (drill-vm.ps1 Get-DrillCredentialPlan): a name it withholds has no file to hand over
+      $source = Join-Path $FakeInputs $pair[0]
+      if ([IO.File]::Exists($source)) { [IO.File]::Copy($source, (Join-Path $inputCredentials $pair[1]), $false) }
     }
-    $public = ConvertTo-FirstInstallPublic (Get-Content -LiteralPath (Join-Path $FakeInputs 'public.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
-    [IO.File]::WriteAllText((Join-Path $inputCredentials 'public.json'), ($public | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    if ([IO.File]::Exists((Join-Path $FakeInputs 'public.json'))) {
+      $public = ConvertTo-FirstInstallPublic (Get-Content -LiteralPath (Join-Path $FakeInputs 'public.json') -Raw -Encoding UTF8 | ConvertFrom-Json)
+      [IO.File]::WriteAllText((Join-Path $inputCredentials 'public.json'), ($public | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    }
     $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $hostScript = Join-Path $hostTree 'work\independent-ci-resident-v1\windows\first-install-host.ps1'
+    # A host preparation that takes -Kit (package 0a4abc6f2 on: it reads the companion's gh path from it) gets the Release's first-install
+    # kit, copied locally and held to its pinned hash like the archive; an older one is called as before (Codex review of c1497e0a1, high 3).
+    $kitArgs = @()
+    if (Test-EntryHostTakesKit $hostScript) {
+      $localKit = Copy-ToWork (Join-Path $Assets "$prefix.first-install-kit.json") $hostDir $firstSums["$prefix.first-install-kit.json"]
+      if (-not (Test-UnderDirectory $localKit $script:Work)) { throw 'ELEVATED_INPUT_NOT_LOCAL' }
+      $kitArgs = @('-Kit', $localKit)
+    }
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
-      $hostRun = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $hostScript, '-Tree', $hostTree,
+      # its stdout line by line into host.stdout.log: the step record (drill-vm.ps1 Read-DrillFirstInstallSteps reads steps from the
+      # complete stdout logs only; host-result.json below keeps only the tail and is read for its verdict line)
+      $hostRun = Invoke-EntryStreamedChild $PowerShellExe (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $hostScript, '-Tree', $hostTree,
         '-PrereqDirectory', $pre, '-PrereqManifest', $localManifest, '-PrereqManifestSha256', $sums["$prefix.prereq-manifest.json"],
         '-KitSha256', $pins['kitSha256'], '-ToolchainNodeSha256', $pins['toolchainNodeSha256'], '-RegistrarSha256', $pins['registrarSha256'],
-        '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) $HostLimitSeconds
+        '-ExpectedOperatorSid', $operatorSid, '-CredentialDirectory', $inputCredentials) + $kitArgs) $HostLimitSeconds (Join-Path $Output 'host.stdout.log')
     } finally { $measurements.host = $watch.Elapsed.TotalSeconds }
     [IO.File]::WriteAllText((Join-Path $Output 'host-result.json'), (ConvertTo-JsonLine ([ordered]@{ exit = $hostRun.exit; terminal = $hostRun.last; stdoutTail = $(if ($hostRun.stdout) { $t = [string]$hostRun.stdout; $t.Substring([Math]::Max(0, $t.Length - 6000)) } else { $null }); stderrTail = $(if ($hostRun.stderr) { $t = [string]$hostRun.stderr; $t.Substring([Math]::Max(0, $t.Length - 3000)) } else { $null }) })), (New-Object Text.UTF8Encoding($false)))
-    if ([string](Get-Key $hostRun.last 'status') -ceq 'RESTART_THEN_RUN_THE_SAME_COMMAND') { throw 'RESTART_THEN_RUN_THE_SAME_COMMAND' }
-    if ($hostRun.exit -ne 0 -or [string](Get-Key $hostRun.last 'status') -cne 'FIRST_INSTALL_HOST_READY') { throw 'HOST_PREPARATION_NOT_DONE' }
+    $hostStop = Get-EntryHostStopCode $hostRun
+    if ($hostStop) { throw $hostStop }
     $watch.Restart()
-    try { $prepared = Invoke-NonElevated $entryNode @($install, 'prepare', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'), '--from', $Assets) $childEnv }
+    try { $prepared = Invoke-EntryStreamedChild $entryNode @($install, 'prepare', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--work', (Join-Path $script:Work 'prepare'), '--from', $Assets) 0 (Join-Path $Output 'prepare.stdout.log') $childEnv -NoWindow }
     finally { $measurements.prepare = $watch.Elapsed.TotalSeconds }
     $drillLauncher = Get-Key $prepared.last 'launcher'
     if ($prepared.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains [string](Get-Key $prepared.last 'status') -or
         -not (Test-SafePath ([string](Get-Key $drillLauncher 'path'))) -or [string](Get-Key $drillLauncher 'sha256') -cnotmatch '^[0-9a-f]{64}$') { throw 'PREPARE_REFUSED' }
-    $launcherResult = Join-Path $script:Work ('elevated-launcher-' + [guid]::NewGuid().ToString('N') + '.txt')
+    # The launcher stage's output file (bootstrap.ps1 -Stage launcher -Result) is its whole printed output, and here it is launcher.stdout.log
+    # itself: whatever it holds when the stage ends or is cut off is what the drill reads (Fable renew-key ruling, supplement "branch two,
+    # two points" 1; the package will write it line by line).
+    $launcherResult = Join-Path $Output 'launcher.stdout.log'
+    # this run's file only (Codex review of c1497e0a1, medium 2): an earlier run's output is cleared before the stage and must be gone
+    Clear-EntryStageOutput $launcherResult
     $watch.Restart()
     try { $launch = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $bootstrap, '-Stage', 'launcher', '-Result', $launcherResult,
       '-Launcher', $drillLauncher['path'], '-LauncherSha256', $drillLauncher['sha256'], '-ExpectedOperatorSid', $operatorSid) $LauncherLimitSeconds }
     finally { $measurements.launcher = $watch.Elapsed.TotalSeconds }
-    $terminal = Get-LastJsonLine ([IO.File]::ReadAllText($launcherResult))
-    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal })), (New-Object Text.UTF8Encoding($false)))
+    # no output file, or one whose last object is not a verdict (a stage cut off): the stage gave no verdict
+    $terminal = if ([IO.File]::Exists($launcherResult)) { Get-LastJsonLine (Read-EntrySharedText $launcherResult) } else { $null }
+    $stageGaveNoVerdict = -not (Test-EntryStageVerdict $terminal)
+    if ($stageGaveNoVerdict) { $terminal = $null }
+    [IO.File]::WriteAllText((Join-Path $Output 'launcher-result.json'), (ConvertTo-JsonLine ([ordered]@{ source = $launcherResult; exit = $launch.exit; terminal = $terminal; stageGaveNoVerdict = $stageGaveNoVerdict })), (New-Object Text.UTF8Encoding($false)))
     $verdict = Get-LauncherVerdict $true $terminal
     return (ConvertTo-FirstInstallEntryResult $verdict $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit }) $entryTree $entryNode)
   } finally {

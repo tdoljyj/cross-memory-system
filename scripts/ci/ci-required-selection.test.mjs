@@ -717,9 +717,154 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
 test('outputs name every suite of the check', () => {
   const lines = outputLines('ci-suites', { suites: ['offline-drill'] });
   assert.equal(lines[0], 'suites=["offline-drill"]');
+  assert.equal(lines[1], 'app_deps=[]');
   assert.ok(lines.includes('run_offline_drill=true'));
   assert.ok(lines.includes('run_resident_node=false'));
-  assert.equal(lines.length, 1 + Object.keys(SUITES['ci-suites']).length);
+  assert.equal(lines.length, 2 + Object.keys(SUITES['ci-suites']).length);
+  assert.ok(outputLines('ci-suites', { suites: ['offline-drill', 'pinned-registries'] }).includes('app_deps=["apps/clued-cloud"]'));
+});
+
+// Clued Task 10399304: a suite the selection says needs an application's dependencies (SUITE_APP_DEPENDENCIES) is run only
+// by a job that installs them first and tells the suite so (APP_DEPS_MARKER). Every workflow GitHub runs is read, so a new
+// suite with such a need, or a suite moved to another job or workflow, cannot run where nothing installs what it needs.
+// The step runs in every run (no if:): a required primary's registered steps must all succeed in the execution proof
+// (clued-gated-proof.mjs), so a step that is skipped when no selected suite needs dependencies would make every such run
+// unqualified. It decides from the selection's app_deps itself, with exactly the reviewed script below.
+const APP_DEPS_STEP = 'Install the application dependencies the selected suites need';
+const appDepsEnv = (id) => 'APP_DEPS: ${{ steps.' + id + '.outputs.app_deps }}';
+const APP_DEPS_RUN = [
+  `apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || "[]")) console.log(a)')`,
+  'if [ -z "$apps" ]; then',
+  '  echo "No selected suite needs application dependencies; nothing installed."',
+  '  exit 0',
+  'fi',
+  'for app in $apps; do',
+  '  node trusted/scripts/ci/ci-deps.mjs install "candidate/$app"',
+  'done',
+  `echo "${selection.APP_DEPS_MARKER}=1" >> "$GITHUB_ENV"`,
+].join('\n');
+function workflowJobs(text) {
+  const body = text.slice(text.indexOf('\njobs:\n') + 1);
+  const parts = body.split(/\n {2}([a-z][a-z0-9_-]*):\n/);
+  const jobs = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const job = parts[i + 1];
+    const labels = /\n {4}runs-on: \[([^\]]+)\]/.exec(`\n${job}`)?.[1].split(',').map((label) => label.trim()) ?? [];
+    const steps = job.split(/\n {6}- /).slice(1).map((step) => {
+      const run = /(?:^|\n) {8}run: \|\n((?: {10}.*\n?| *\n)+)/.exec(step)?.[1].replace(/^ {10}/gm, '').trimEnd()
+        ?? /(?:^|\n) {8}run: (.+)/.exec(step)?.[1];
+      return { text: step, name: /^name: (.+)/.exec(step)?.[1] ?? null, id: /(?:^|\n) {8}id: (\S+)/.exec(step)?.[1] ?? null,
+        condition: /(?:^|\n) {8}if: (.+)/.exec(step)?.[1] ?? null, run };
+    });
+    jobs.push({ name: parts[i], platform: labels.includes('Windows') ? 'win32' : 'linux', text: job, steps });
+  }
+  return jobs;
+}
+function appDependencyFindings(file, text) {
+  const findings = [];
+  for (const job of workflowJobs(text)) {
+    const suites = new Set();
+    for (const [, check] of job.text.matchAll(/ --(?:check|run-selected) ([a-z][a-z-]*)\b/g)) {
+      for (const id of Object.keys(SUITES[check] ?? {})) if (suitePlatforms(id).includes(job.platform)) suites.add(id);
+    }
+    for (const [, id] of job.text.matchAll(/ --run ([a-z][a-z-]*)\b/g)) if (SUITE_COMMANDS[id]) suites.add(id);
+    const apps = selection.appDependencies([...suites]);
+    if (apps.length === 0) continue;
+    const where = `${file} ${job.name}`;
+    const install = job.steps.findIndex((step) => step.name === APP_DEPS_STEP);
+    const run = job.steps.findIndex((step) => / --run(-selected)? /.test(step.run ?? ''));
+    // The step that writes app_deps: the selection's --check, with an id its output is read by.
+    const select = job.steps.findIndex((step) => / --check [a-z][a-z-]*\b/.test(step.run ?? '') && step.id);
+    const needing = [...suites].filter((id) => selection.SUITE_APP_DEPENDENCIES[id]).join(', ');
+    if (install < 0) {
+      findings.push(`${where}: can run ${needing}, which need ${apps.join(', ')}, and has no step "${APP_DEPS_STEP}"`);
+      continue;
+    }
+    const step = job.steps[install];
+    if (step.condition !== null) findings.push(`${where}: "${APP_DEPS_STEP}" has a condition (${step.condition}); it must run every time`);
+    if (select < 0) {
+      findings.push(`${where}: has no step with an id that selects the suites with --check, so nothing writes app_deps`);
+      continue;
+    }
+    const selectId = job.steps[select].id;
+    if (!step.text.includes(`\n        env:\n          ${appDepsEnv(selectId)}\n`)) findings.push(`${where}: "${APP_DEPS_STEP}" does not read the selection's app_deps`);
+    if (step.run !== APP_DEPS_RUN) findings.push(`${where}: "${APP_DEPS_STEP}" is not the reviewed script`);
+    if (install < select) findings.push(`${where}: "${APP_DEPS_STEP}" does not come after the step that selects the suites (${selectId})`);
+    if (run < 0 || install > run) findings.push(`${where}: "${APP_DEPS_STEP}" does not come before the step that runs the suites`);
+  }
+  return findings;
+}
+const workflowFiles = () => readdirSync(path.join(ROOT, '.github', 'workflows')).filter((name) => /\.ya?ml$/.test(name)).sort()
+  .map((name) => `.github/workflows/${name}`);
+
+test('every job of any workflow that can run a suite needing application dependencies installs them first, every time, and sets the marker', () => {
+  const findings = workflowFiles().flatMap((file) => appDependencyFindings(file, readFileSync(path.join(ROOT, file), 'utf8')));
+  assert.deepEqual(findings, []);
+  // The guard sees the jobs, and each way to break the step is a finding.
+  const file = '.github/workflows/clued-required-tests.yml';
+  const text = readFileSync(path.join(ROOT, file), 'utf8');
+  const step = `      - name: ${APP_DEPS_STEP}\n`;
+  assert.ok(text.includes(step));
+  const broken = (edit) => appDependencyFindings('w', edit(text)).map((finding) => finding.split(': ').slice(1).join(': '));
+  assert.deepEqual(broken((t) => t.replace(APP_DEPS_STEP, 'Install something')), [`can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  assert.deepEqual(broken((t) => t.replace(step, `${step}        if: steps.select.outputs.app_deps == '[]'\n`)),
+    [`"${APP_DEPS_STEP}" has a condition (steps.select.outputs.app_deps == '[]'); it must run every time`]);
+  assert.deepEqual(broken((t) => t.replace(`${selection.APP_DEPS_MARKER}=1`, 'X=1')), [`"${APP_DEPS_STEP}" is not the reviewed script`]);
+  assert.deepEqual(broken((t) => t.replace(appDepsEnv('select'), 'APP_DEPS: "[]"')), [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  assert.deepEqual(broken((t) => t.replace('APP_DEPS: ${{ steps.select.outputs.app_deps }}', 'APP_DEPS: ${{ steps.other.outputs.app_deps }}')),
+    [`"${APP_DEPS_STEP}" does not read the selection's app_deps`]);
+  // Moved before the step that selects (its app_deps output does not exist yet there), it never installs (Codex re-review).
+  const start = text.indexOf(step), end = text.indexOf('\n      - ', start + step.length) + 1;
+  const selectAt = text.indexOf('      - name: Select suites\n', text.indexOf('\n  ci-suites:\n'));
+  assert.ok(start > selectAt && selectAt > 0);
+  const moved = text.slice(0, selectAt) + text.slice(start, end) + text.slice(selectAt, start) + text.slice(end);
+  assert.deepEqual(appDependencyFindings('w', moved).map((finding) => finding.split(': ').slice(1).join(': ')),
+    [`"${APP_DEPS_STEP}" does not come after the step that selects the suites (select)`]);
+  // A third workflow that runs such a suite is read too.
+  const third = 'name: third\non:\n  pull_request:\njobs:\n  other:\n    runs-on: [self-hosted, Linux]\n    steps:\n'
+    + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run pinned-registries --root candidate\n';
+  assert.deepEqual(appDependencyFindings('third.yml', third), [`third.yml other: can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  // The marker reaches the suites' processes through the environment the selection gives them.
+  assert.equal(selection.testEnv({ [selection.APP_DEPS_MARKER]: '1' })[selection.APP_DEPS_MARKER], '1');
+});
+
+// The execution proof requires every registered step of a required primary to succeed (clued-gated-proof.mjs); only
+// migration-verify's steps have an independent applicability branch there. A conditional step anywhere else must have a
+// condition that holds in every run, or a run that legitimately skips it is never qualified (Codex review of 10399304, high 2).
+test('the required primaries have no conditional step that a run can skip, except where the execution proof expects it', () => {
+  const file = '.github/workflows/clued-required-tests.yml';
+  const jobs = workflowJobs(readFileSync(path.join(ROOT, file), 'utf8'));
+  // clued-cloud-tests selects clued-cloud for every change, so its run_clued_cloud condition always holds.
+  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] });
+  const expected = {
+    'clued-cloud-tests': { 'Install from lockfile': "steps.select.outputs.run_clued_cloud == 'true'",
+      'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'" },
+    'ci-suites': {},
+    'migration-verify': { 'Install from lockfile': "steps.select.outputs.run_production_schema == 'true'",
+      'Verify migrations on the production schema': "steps.select.outputs.run_production_schema == 'true'",
+      'Not affected': "steps.select.outputs.run_production_schema != 'true'" },
+  };
+  const actual = Object.fromEntries(Object.keys(expected).map((name) => [name, Object.fromEntries(jobs.find((job) => job.name === name)
+    .steps.filter((step) => step.run !== undefined && step.condition !== null).map((step) => [step.name, step.condition]))]));
+  assert.deepEqual(actual, expected);
+});
+
+test('a missing application dependency fails when the job provided them and is skipped, saying why, when it did not', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'app-deps-'));
+  try {
+    const needs = ['apps/clued-cloud/node_modules/typescript/package.json'];
+    const { APP_DEPS_MARKER: marker, appDependencyGap } = selection;
+    const missing = appDependencyGap(root, needs, {});
+    assert.equal(missing.fail, false);
+    assert.equal(missing.reason, `${needs[0]} is missing: this run did not provide the application dependencies (${marker} is not set)`);
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }).fail, true);
+    mkdirSync(path.join(root, 'apps/clued-cloud/node_modules/typescript'), { recursive: true });
+    writeFileSync(path.join(root, needs[0]), '{}');
+    assert.equal(appDependencyGap(root, needs, { [marker]: '1' }), null);
+    assert.equal(appDependencyGap(root, needs, {}), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 const page = (names, extra = {}) => ({ ok: true, json: async () => names.map((filename) => ({ filename, ...extra })) });

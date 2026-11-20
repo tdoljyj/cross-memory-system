@@ -1,4 +1,4 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,8 +9,17 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
 import {readRequiredApplicability} from './clued-required-applicability.mjs';
 import {verifyReconcileSource} from './clued-merge-reconcile-source.mjs';
+import {GENERATED} from './check-pinned-registries.mjs';
+import {appDependencyGap} from './ci-required-selection.mjs';
 
 const root=fileURLToPath(new URL('../../',import.meta.url));
+// The pinned generators run here need the application's dependencies (check-pinned-registries.mjs's needs). When one is
+// missing: a failure if the job provided them (the selection's marker), otherwise every test is skipped, saying why
+// (Clued Task 10399304).
+const gap=appDependencyGap(root,GENERATED.flatMap(g=>g.needs));
+if(gap)console.log('generated-registry-merge: '+gap.reason+(gap.fail?'':'; skipped'));
+if(gap?.fail)nodeTest('作业提供的应用依赖确实在场',()=>assert.fail(gap.reason));
+const test=gap?Object.assign(name=>nodeTest(name,{skip:gap.reason},()=>{}),{before(){},after(){}}):nodeTest;
 const selector='scripts/ci/ci-required-selection.mjs';
 const firstHelper='scripts/ci/clued-push-reuse.mjs',secondHelper='scripts/ci/clued-merge-reconcile-source-build.mjs';
 const git=(cwd,...args)=>execFileSync('git',['-c','user.name=Registry test','-c','user.email=test@invalid',
