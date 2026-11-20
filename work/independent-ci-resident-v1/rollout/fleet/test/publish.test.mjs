@@ -731,6 +731,30 @@ test('seal refuses a request whose Source is well formed but not the Release tar
   assert.equal((await w.sealIt()).status, 'FLEET_ACCEPTANCE_SEALED');
 });
 
+// Fable renew-key ruling, supplement "one round exposes every error" (3): branch candidates may be built, released, prepared and drilled to
+// probe, but the one accepted must be built from a commit already on main. seal asks GitHub where the request's commit stands against main
+// (compare main...<commit>: identical or behind = on main) and refuses anything else, and refuses when it cannot tell, before anything is
+// uploaded or written.
+test('seal refuses a candidate whose commit is not on main, or whose place cannot be read: nothing uploaded or written; one on main seals', async t => {
+  const w = await prepWorld(t);
+  await w.prep();
+  const request = JSON.parse(await fs.readFile(w.requestFile, 'utf8'));
+  const before = await fs.readFile(w.index), n = (await uploadsOf(w)).length;
+  for (const [compare, code] of [['ahead', 'SEAL_COMMIT_NOT_ON_MAIN'], ['diverged', 'SEAL_COMMIT_NOT_ON_MAIN'], ['fail', 'SEAL_MAIN_UNREADABLE'],
+    ['garbled', 'SEAL_MAIN_UNREADABLE']]) {
+    await w.setState(st => { st.compare = compare; });
+    await assert.rejects(w.sealIt(), { code }, compare);
+  }
+  assert.ok((await fs.readFile(w.index)).equals(before));
+  assert.equal((await uploadsOf(w)).length, n, 'nothing uploaded');
+  await assert.rejects(fs.access(path.join(w.out, `${TAG}.acceptance.json`)));
+  await assert.rejects(fs.access(path.join(w.out, `${TAG}.decision-record.json`)));
+  const asked = (await w.calls()).filter(c => c.args[0] === 'api');
+  assert.ok(asked.length >= 4 && asked.every(c => c.args[1] === `repos/${request.repository}/compare/main...${request.commit}`), JSON.stringify(asked.map(c => c.args)));
+  await w.setState(st => { st.compare = 'identical'; });
+  assert.equal((await w.sealIt()).status, 'FLEET_ACCEPTANCE_SEALED');
+});
+
 // blocking 4: a candidate drill's receipt is taken only with one of two conclusions and candidate true; the set is defined once and exported
 test('seal --drill-receipt: PASS_A_FULL or PASS_A_PER_NODE_STEPS_REMAIN of a candidate with these three hashes; anything else is refused first; the cell is never replaced', async t => {
   assert.deepEqual(publishModule.DRILL_PASS_CONCLUSIONS, ['PASS_A_FULL', 'PASS_A_PER_NODE_STEPS_REMAIN']);
