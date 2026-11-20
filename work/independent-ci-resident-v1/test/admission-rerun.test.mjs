@@ -1553,6 +1553,28 @@ test('54a2b67a T1 counter-case: outside the required checks only a run that neve
   assert.deepEqual(w.posts, []);
 });
 
+// DESIGN §56.5 "收工": a PR head is final only when the required Actions checks all appeared and no gated run waits to be repaired. With
+// every required check present, the G4 run (outside the required checks) still in flight keeps the head open, and is re-run once its
+// attempt ends having run nothing.
+test('54a2b67a: the required checks all present do not settle a head whose gated run outside them is still in flight; it is re-run once it ends', async t => {
+  const g4 = LATE_WORKFLOWS[2];
+  const queued = { notes: [], jobs: [{ name: 'admission-gate', status: 'queued', conclusion: null, head_sha: HEAD },
+    ...g4.heavy.map(name => ({ name, status: 'queued', conclusion: null, head_sha: HEAD }))] };
+  const w = world({ checks: [lateAdmission(T0 - 60 * 60_000), ...REQUIRED_ACTIONS.map(name => actionCheck(name))], rules: [requiredRule(...REQUIRED_ACTIONS)],
+    runs: [{ ...pushedRun(g4, [queued], T0 - 70 * 60_000), status: 'in_progress' }] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, []);
+  assert.equal(l.state.data.heads[HEAD].final, null, 'the G4 run in flight keeps the head open');
+  // Attempt 1 ends: the hook refused the gate and every heavy job skipped.
+  const r = w.runs[0];
+  r.status = 'completed';
+  r.attempts[0] = refusedAttempt(g4, iso(T0 - 50 * 60_000));
+  l.advance(HEAD_RECHECK_MS);
+  await l.r.step();
+  assert.deepEqual(w.posts, [g4.runId], 'the G4 run is re-run once its attempt ended having run nothing');
+});
+
 // T2, the scope guard: every workflow in the repository that defines an admission-gate job is in the lane's scope. A new gated workflow, or
 // a new way of writing its needs, cannot fall out of it unnoticed.
 test('54a2b67a T2: every real workflow with an admission-gate job is re-run when its gate was refused and its heavy jobs skipped', async () => {
@@ -1565,9 +1587,14 @@ test('54a2b67a T2: every real workflow with an admission-gate job is re-run when
     assert.ok(jobsAt, file);
     const heavy = [...text.slice(jobsAt.index).matchAll(/^  ([A-Za-z0-9_-]+):[ \t]*(?:#.*)?\r?$/gm)].map(m => m[1]).filter(name => name !== 'admission-gate');
     assert.ok(heavy.length > 0, `${file} has jobs after its gate`);
+    // The lane finds the gate by the job's display name (its `name:`, else its key), as GitHub lists it: the run is built with that name.
+    const gateAt = /^  admission-gate:[ \t]*(?:#.*)?\r?$/m.exec(text);
+    const gateBody = text.slice(gateAt.index + gateAt[0].length).split(/^  [A-Za-z0-9_-]+:[ \t]*(?:#.*)?\r?$/m, 1)[0];
+    const shown = /^    name:[ \t]*(['"]?)([^\r\n]*?)\1[ \t]*\r?$/m.exec(gateBody)?.[2] ?? 'admission-gate';
+    assert.equal(shown, 'admission-gate', `${file}: the gate job's display name`);
     gated.push(file);
     const w = world({ checks: [nativeCheck(), ...REQUIRED_ACTIONS.map(name => actionCheck(name))], rules: [requiredRule(...REQUIRED_ACTIONS)],
-      runs: [run(800, [{ notes: [], jobs: [hookRefusedGate(iso(T0 - 60 * 60_000)), ...heavy.map(skippedJob)] }], { workflow_id: 900, path: `.github/workflows/${file}` })] });
+      runs: [run(800, [{ notes: [], jobs: [{ ...hookRefusedGate(iso(T0 - 60 * 60_000)), name: shown }, ...heavy.map(skippedJob)] }], { workflow_id: 900, path: `.github/workflows/${file}` })] });
     const d = await decide({ gh: w.gh, headSha: HEAD });
     assert.equal(d.action, 'rerun', `${file}: ${d.reason}`);
   }
