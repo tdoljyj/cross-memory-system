@@ -30,9 +30,13 @@ export class EffectJournal {
     let stat;
     try { stat = await fs.lstat(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 1024 * 1024) fail('unsafe_journal_file');
-    const record = JSON.parse(await fs.readFile(file, 'utf8'));
-    if (record.contract !== 'independent-ci.effect.v1' || record.key !== key
-      || record.integrity !== digest(record.value) || !transitions[record.value.state]) fail('invalid_effect_record');
+    const contents = await fs.readFile(file, 'utf8');
+    let record;
+    try { record = JSON.parse(contents); }
+    catch { fail('invalid_effect_record'); }
+    if (record?.contract !== 'independent-ci.effect.v1' || record.key !== key
+      || typeof record.value?.state !== 'string' || !Object.hasOwn(transitions, record.value.state)
+      || record.integrity !== digest(record.value)) fail('invalid_effect_record');
     return record.value;
   }
   async begin(key, subject) {

@@ -133,13 +133,15 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   const deployment = plain(protectedDeployment) ? structuredClone(protectedDeployment) : null;
   const checks = plain(configuredChecks) ? structuredClone(configuredChecks) : null;
   const verifyFirst = ['readStagedScan', 'completeStagedScan', 'failStagedScan'].every(k => typeof github?.[k] === 'function');
+  const completionAuthority = ['monotonicMs', 'recheckBatchClaim', 'assertCompletionWindow'].every(k => typeof authority?.[k] === 'function');
   const configured = ['production', 'fixture'].includes(domain) && deployment?.enabled === true
     && deployment.domain === domain && ref(deployment.repository) && requiredRefs.every(k => ref(deployment[k]))
     && UUID.test(deployment.ciPrincipalBindingId ?? '') && typeof nativeAdmission?.evaluatePr === 'function'
     && typeof authority?.observe === 'function' && typeof github?.readPullRequest === 'function'
     && typeof github?.readChecks === 'function' && typeof github?.createCheck === 'function'
     && typeof github?.revokeCheck === 'function' && ['begin', 'read', 'transition'].every(k => typeof journal?.[k] === 'function')
-    && (!requireVerifyFirst || verifyFirst) && signers instanceof Map && typeof readChangedPaths === 'function' && typeof clock === 'function' && checks
+    && (!requireVerifyFirst || verifyFirst && completionAuthority)
+    && signers instanceof Map && typeof readChangedPaths === 'function' && typeof clock === 'function' && checks
     && plain(batchClaim) && UUID.test(batchClaim.claimId ?? '') && positive(batchClaim.fence) && positive(batchClaim.epoch)
     && (domain !== 'fixture' || github.fixture === true && authority.fixture === true && nativeAdmission.fixture === true)
     && (domain !== 'production' || !github.fixture && !authority.fixture && !nativeAdmission.fixture);
@@ -334,7 +336,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   async function readEffect(key, job) {
     try { return await journal.read(key); }
     catch (error) {
-      if (verifyFirst && SCANNER_ROLES_V2.includes(job.role)) stop('staged_scan_journal_conflict');
+      if (verifyFirst && SCANNER_ROLES_V2.includes(job.role)
+        && ['invalid_effect_record', 'unsafe_journal_file'].includes(error?.code)) stop('staged_scan_journal_conflict');
       throw error;
     }
   }
