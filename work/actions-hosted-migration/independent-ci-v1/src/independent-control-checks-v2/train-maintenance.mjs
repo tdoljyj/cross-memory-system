@@ -229,6 +229,17 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     // lands its own merge, so there the merge slot alone stays green.
     front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, ...(push ? {} : { rules: landability.rules }) });
     if (!checksReadable) front = { ...front, green: false, checksUnreadable: true, ...(front.required !== undefined ? { required: null } : {}) };
+    // Review 4 medium 2: when this node first saw the head at the front, recorded once: the 60 minutes' start when no merge-slot time is known.
+    if (job.mode === 'on' && headSha && typeof sweepStore?.readFrontSeen === 'function') {
+      try {
+        let seen = await sweepStore.readFrontSeen({ pr: holder.pr, headSha });
+        if (!seen) {
+          seen = { seenAt: isoOf(clock()) };
+          await sweepStore.writeFrontSeen({ writtenAt: seen.seenAt, runId: job.runId, pr: holder.pr, headSha, seenAt: seen.seenAt });
+        }
+        front = { ...front, frontSeenAt: Date.parse(seen.seenAt) };
+      } catch { /* an unwritable record: no start yet; the next round tries again */ }
+    }
     // Review 3 medium 1: the merge slot's green, recorded when seen, stays the start of the 60-minute wait when the checks cannot be read.
     if (job.mode === 'on' && headSha && typeof sweepStore?.readSlotGreen === 'function') {
       try {
@@ -563,7 +574,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingFacts = null, landingState = null;
-  let missingYield = false;
+  let missingYield = false, treeUnchecked = null;
   if (job.mode === 'on') {
     // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
     // watermark (every take-over sweeps from onSince), so nothing reads it. actions.watermarkReported stays in the facts, always false.
@@ -610,7 +621,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           const tested = record ? { baseSha: record.baseSha, testTree: record.testTree } : said ? { baseSha: said[1], testTree: said[3] } : null;
           // Review 3 high 3: with the checks unreadable and no record of this node, what was tested is unknown, never a wrong tree: nothing is
           // latched, the next round reads again.
-          if (!tested && front.checksUnreadable) { /* unknown this round */ }
+          // Review 4 medium 1: nor is it reported merged in this round's lifecycle reconcile (that could end its claim before its tree is checked).
+          if (!tested && front.checksUnreadable) treeUnchecked = holder.pr;
           else if (tested && mergeCommit && mergeCommit.parents.length === 2 && mergeCommit.parents[0] === tested.baseSha && mergeCommit.parents[1] === front.headSha
             && mergeCommit.tree === tested.testTree) {
             fx.n++;
@@ -719,7 +731,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // touch, the front bind and the front batch, and only inside the round's budget (like the cleanup above; review B1): it never
   // delays anything on the train's path. It replaces ending the holder's bound PRs during the round.
   if (job.mode === 'on' && !lostDuty && clock() - started < CLEANUP_BEFORE_MS) {
-    await reconcileLifecycle({ github, native, fx, openRows, deadline: until.read, clock });
+    await reconcileLifecycle({ github, native, fx, openRows, deadline: until.read, clock, skip: treeUnchecked });
   }
   let progress = null;
   if (strict?.round && ['all', 'current'].includes(strict.round.scope) && strict.round.state === 'running') progress = sweepProgress({ identity: strict.identity, startedAt: strict.round.startedAt,
@@ -821,7 +833,8 @@ async function landable(github, pull, listed = null, { rules = null, appId = APP
 // reconcile this round; it never pauses the train, touches admission or decides duty.
 export const LIFECYCLE_MAX_READS = 25;
 const OPEN_PAGE = 100, OPEN_MAX_PAGES = 30;
-async function reconcileLifecycle({ github, native, fx, openRows = null, deadline, clock }) {
+// skip: a PR this round must not report (review 4 medium 1: the front merged whose tree check waits for readable checks).
+async function reconcileLifecycle({ github, native, fx, openRows = null, deadline, clock, skip = null }) {
   if (typeof native?.lifecycleReport !== 'function') return;
   const time = () => clock() < deadline - 1000;
   let tracked;
@@ -845,7 +858,7 @@ async function reconcileLifecycle({ github, native, fx, openRows = null, deadlin
     } catch { return; }
   }
   const facts = [];
-  for (const n of [...new Set(tracked)].filter(n => !open.has(n)).sort((a, b) => b - a).slice(0, LIFECYCLE_MAX_READS)) {
+  for (const n of [...new Set(tracked)].filter(n => !open.has(n) && n !== skip).sort((a, b) => b - a).slice(0, LIFECYCLE_MAX_READS)) {
     if (!time()) break;
     let pull;
     try { pull = await github.readPullRequest(n, { until: deadline }); } catch { continue; }

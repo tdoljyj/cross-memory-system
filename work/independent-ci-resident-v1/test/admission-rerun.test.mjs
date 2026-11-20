@@ -1233,19 +1233,11 @@ test('9aba97c1: a required job no runner took is re-run; the gate job no runner 
 
 // Independent review (Codex, 051b7d585). High 2: the re-run budget is the head and the workflow's (every run of that workflow on the head,
 // a person's re-runs included: three attempts in all), never one run ID's.
-test('review high 2: two runs of one workflow on one head share one budget of three attempts', async t => {
+test('per-run budget (Fable 11-20 补“补跑上限的范围”, superseding review 2 high 2): two runs of one workflow on one head each have their own', async t => {
   const runs = [ownerRun([attempt(), attempt()]), run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } })];
   const w = world({ runs, fail: ghRefusesEscapes });
   const d = await decide({ gh: w.gh, headSha: HEAD });
-  assert.equal(d.action, 'final', d.reason);
-  assert.match(d.reason, /three attempts/);
-  const l = await lane(t, w);
-  await l.r.step();
-  assert.deepEqual(w.posts, []);
-  // the same with one attempt less still re-runs the newest run
-  const w2 = world({ runs: [ownerRun([attempt()]), run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } })], fail: ghRefusesEscapes });
-  const d2 = await decide({ gh: w2.gh, headSha: HEAD });
-  assert.deepEqual([d2.action, d2.runId], ['rerun', 701], d2.reason);
+  assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 701, 1], d.reason);
 });
 
 // High 3 (the clear parts): a gate no runner took, with its downstream jobs cancelled as GitHub records it (run 44658316395: the gate and
@@ -1338,34 +1330,28 @@ test('one judgement: the gate and the lane take the same verdict from the same r
   }
 });
 
-// Review 2, high 3: the three-attempt budget holds on every path, the Bot re-dispatch included; a workflow or an attempt count that
-// cannot be read counts as the budget reached.
-test('review 2 high 3: a Bot run already at three attempts is not re-dispatched', async t => {
+// Fable 11-20 补“补跑上限的范围”: a re-dispatch is a new run ID with its own budget; the lane asks for it once per head and workflow.
+test('per-run budget: a Bot run at three attempts is re-dispatched once (a new run), never twice', async t => {
   const w = world({ runs: [botRun({ attempts: [attempt({ notes: [] }), attempt({ notes: [] }), attempt({ notes: [] })] })], fail: ghRefusesEscapes });
-  const d = await decide({ gh: w.gh, headSha: HEAD });
-  assert.equal(d.action, 'final', d.reason);
-  assert.match(d.reason, /three attempts/);
   const l = await lane(t, w);
   await l.r.step();
-  assert.deepEqual(w.dispatches, []);
+  assert.equal(w.dispatches.length, 1);
+  l.advance(HEAD_RECHECK_MS + 1);
+  await l.r.step();
+  assert.equal(w.dispatches.length, 1, 'one re-dispatch per head and workflow');
 });
 
-test('review 2 high 3: the shared rule counts an unreadable workflow or attempt number as the budget reached', async () => {
+test('per-run budget: an attempt number that cannot be proven is the budget reached', async () => {
   const shared = await import('../src/env-failure.mjs');
-  const w = world({ runs: [ownerRun([attempt()]), run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } })], fail: ghRefusesEscapes });
+  const w = world({ runs: [ownerRun([attempt()])], fail: ghRefusesEscapes });
   const strip = route => route.replace(`/repos/${REPO}`, '');
-  const ask = (workflowId, read = route => w.gh.get(strip(route))) => shared.requiredTestsRepairHistory({ repository: REPO, runId: 700, head: HEAD, attempt: 2, workflowId,
-    read, readLog: route => w.gh.text(strip(route)) });
-  assert.equal((await ask(LINUX_WORKFLOW)).allowed, true, 'two runs of the workflow, one attempt each, and this second attempt: three in all');
-  for (const id of [null, 0, -1, 'x']) {
-    const h = await ask(id);
-    assert.deepEqual([h.allowed, h.budget], [false, true], String(id));
+  const ask = attempt => shared.requiredTestsRepairHistory({ repository: REPO, runId: 700, head: HEAD, attempt, workflowId: LINUX_WORKFLOW,
+    read: route => w.gh.get(strip(route)), readLog: route => w.gh.text(strip(route)) });
+  assert.equal((await ask(2)).allowed, true);
+  for (const n of [null, 0, -1, 'x', 1.5]) {
+    const h = await ask(n);
+    assert.equal(h.allowed, false, String(n));
   }
-  const odd = await ask(LINUX_WORKFLOW, async route => {
-    const reply = await w.gh.get(strip(route));
-    return /head_sha=/.test(route) ? { ...reply, workflow_runs: reply.workflow_runs.map(r => r.id === 701 ? { ...r, run_attempt: null } : r) } : reply;
-  });
-  assert.deepEqual([odd.allowed, odd.budget], [false, true]);
 });
 
 // Fable 11-20 补“补跑上限的范围”: the budget is per run ID; a reopened PR's new run starts from 1 (its first attempt is admitted as any run,

@@ -3310,13 +3310,13 @@ test('bot head dispatch: active, dispatch, foreign, empty or previously executed
   ]) assert.equal((await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() }, ...opts })).outcome.admitted, false, JSON.stringify(opts));
 });
 
-test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse; the dispatch keeps the three-attempt budget', async () => {
+test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse; the dispatch is a new run with its own budget', async () => {
   const twoAttempts = [skippedDispatchRun({ run_attempt: 2 })], twoRuns = [skippedDispatchRun(), skippedDispatchRun({ id: 8002 })];
   const jobs = { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), 8002: skippedDispatchJobs() };
   for (const others of [twoAttempts, twoRuns]) assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true, 'two attempts and this dispatch: three');
-  // Review 3 high 2 (Fable 11-20): three attempts of the workflow already on the head, the dispatch would be the fourth.
+  // Fable 11-20 补“补跑上限的范围”: the dispatch is a new run with its own budget, whatever earlier runs used.
   const three = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })], jobs });
-  assert.deepEqual([three.outcome.admitted, three.outcome.reasons], [false, ['required_tests_dispatch_attempt_budget_used']]);
+  assert.equal(three.outcome.admitted, true, JSON.stringify(three.outcome.reasons));
   const ran = skippedDispatchJobs(); ran[1].conclusion = 'failure';
   for (const [others, changed] of [
     [twoAttempts, { ...jobs, 8001: ran }], [twoAttempts, { ...jobs, '8001:2': ran }], [twoRuns, { ...jobs, 8002: ran }],
@@ -3498,7 +3498,7 @@ test("independent gate repair re-run: earlier attempts that only ended in ADMISS
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons, slept], [true, "ADMITTED", [], []]);
   assert.deepEqual(outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3 }] });
   assert.deepEqual(extra.map((call) => call.url.replace("https://api.test/repos/o/r/", "").replace(/\?.*$/, "")),
-    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations", "actions/runs"], "and the head's runs, for the three-attempt budget");
+    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations"], "the budget is this run's own attempt number: no other run is read");
   assert.ok([...calls, ...extra].every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
   // A first re-run that was itself refused (an old gate, or a stale head) ran nothing: the next one is still the repair.
   const second = await repairGate([earlierAttempt(1), earlierAttempt(2, { notes: [refusedNote] })]);
@@ -4313,13 +4313,11 @@ test("independent gate repair re-run: skipped and environment-failed attempts sh
   const fourth = await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass]), ranAttempt(3, [netFail, pass, pass])]);
   assert.equal(fourth.outcome.admitted, false);
   assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
-  // another run of the same workflow on the head counts too
-  const other = await repairGate([earlierAttempt(1)], { otherRuns: [{ id: 9002, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: 2 }] });
-  assert.equal(other.outcome.admitted, false);
-  assert.match(other.outcome.reasons.join("; "), /three attempts/);
-  // a run of another workflow does not
-  const elsewhere = await repairGate([earlierAttempt(1)], { otherRuns: [{ id: 9003, workflow_id: timeoutIncident.workflow_id + 1, head_sha: HEAD, run_attempt: 3 }] });
-  assert.equal(elsewhere.outcome.admitted, true, elsewhere.outcome.reasons.join("; "));
+  // Fable 11-20 补“补跑上限的范围”: the budget is per run ID; another run of the head, of this workflow or another, never counts
+  for (const workflowId of [timeoutIncident.workflow_id, timeoutIncident.workflow_id + 1]) {
+    const other = await repairGate([earlierAttempt(1)], { otherRuns: [{ id: 9002, workflow_id: workflowId, head_sha: HEAD, run_attempt: 3 }] });
+    assert.equal(other.outcome.admitted, true, other.outcome.reasons.join("; "));
+  }
 });
 
 test("one judgement: the gate defines no failure rule of its own, and the hook's copy is the companion's, byte for byte", () => {
@@ -4331,33 +4329,6 @@ test("one judgement: the gate defines no failure rule of its own, and the hook's
   assert.doesNotMatch(gateSource, /work\/independent-ci-resident-v1/, "and nothing outside it");
 });
 
-// Review 3 high 2: the re-dispatch entry (workflow_dispatch of clued-required-tests.yml for a PR head) keeps the three-attempt budget of the
-// workflow on the head too: three skipped PR attempts already made, a dispatch would be the fourth.
-test("required-tests dispatch gate: three attempts of the workflow already on the head refuse the dispatch", async () => {
-  const runId = "9101";
-  const pr = { number: 9, state: "open", head: { sha: HEAD, ref: "claude/g3", repo: { full_name: "o/r" } }, base: { ref: "main", repo: { full_name: "o/r" } } };
-  const skippedAttempt = n => ({ total_count: 2, jobs: [
-    { id: 100 * n, name: "admission-gate", head_sha: HEAD, status: "completed", conclusion: "success" },
-    { id: 100 * n + 1, name: "ci-suites", head_sha: HEAD, status: "completed", conclusion: "skipped" }] });
-  const script = {
-    "GET https://api.test/repos/o/r/pulls/9": { body: pr },
-    [`GET https://api.test/repos/o/r/actions/runs/${runId}`]: { body: { id: Number(runId), event: "workflow_dispatch", head_sha: HEAD, head_branch: "claude/g3",
-      run_attempt: 1, path: ".github/workflows/clued-required-tests.yml" } },
-    "GET https://api.test/repos/o/r/actions/workflows/clued-required-tests.yml/runs?head_sha=": { body: { total_count: 2, workflow_runs: [
-      { id: Number(runId), head_sha: HEAD, event: "workflow_dispatch", status: "in_progress", run_attempt: 1 },
-      { id: 9100, head_sha: HEAD, event: "pull_request", status: "completed", run_attempt: 3 }] } },
-    "GET https://api.test/repos/o/r/actions/runs/9100/attempts/1/jobs": { body: skippedAttempt(1) },
-    "GET https://api.test/repos/o/r/actions/runs/9100/attempts/2/jobs": { body: skippedAttempt(2) },
-    "GET https://api.test/repos/o/r/actions/runs/9100/attempts/3/jobs": { body: skippedAttempt(3) },
-  };
-  const { fetchImpl } = fakeFetch(script);
-  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, GITHUB_RUN_ID: runId, GITHUB_RUN_ATTEMPT: "1",
-    GITHUB_ACTOR: "o", GITHUB_REPOSITORY_OWNER: "o", GITHUB_SHA: HEAD, GITHUB_REF: "refs/heads/claude/g3", GITHUB_REF_NAME: "claude/g3",
-    GITHUB_WORKFLOW_REF: "o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3" }),
-    event: { inputs: { pr: "9", head: HEAD }, repository: { default_branch: "main" } }, eventName: "workflow_dispatch", fetchImpl, sleep: async () => {} });
-  assert.equal(outcome.admitted, false);
-  assert.deepEqual(outcome.reasons, ["required_tests_dispatch_attempt_budget_used"]);
-});
 
 // Fable 11-20 补“补跑上限的范围”: the budget is per run ID. A new run of the same workflow on the head (the PR reopened) is admitted on its
 // first attempt as any run, and its re-runs count from 1, whatever other runs of the head used.

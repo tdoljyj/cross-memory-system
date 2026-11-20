@@ -81,6 +81,7 @@ const iso = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
 // minute, a head again every 2 minutes). One re-run cycle is about 19 minutes and the first run may still be finishing when the slot goes
 // green (up to 15 minutes): 15 + 2 x 19 = 53 minutes. 60 covers both re-runs and stays under the merge slot's hard cap (120 minutes).
 export const REQUIRED_CHECKS_MAX_WAIT_MS = 60 * 60_000;
+// Three attempts of one run ID (required-tests-failure-rule.mjs REPAIR_ATTEMPTS_MAX; Fable 11-20 补“补跑上限的范围”).
 export const REQUIRED_ATTEMPTS_MAX = 3;
 export const REQUIRED_YIELD_REASONS = Object.freeze(['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE', 'REQUIRED_CHECK_NOT_RERUN']);
 // Fable 11-20 (A3): the train judges no failure. The one judgement is the companion's lane and the gate (env-failure.mjs); the train only
@@ -132,10 +133,11 @@ export function requiredOnHead({ rules, checks, headSha, appId }) {
     const tries = app === ACTIONS_APP_ID ? attemptsOf(own, entry.context) : [];
     const ends = tries.map(c => timeOf(c.completed_at)).filter(t => t !== null);
     const runs = [...new Set(tries.map(runOf).filter(r => r !== null))];
-    // Review 3 medium 2: attempts per workflow run and attempt: every attempt of a gated run has one gate, so a run's attempts are its gates
-    // (or its own check runs of this job, where more are listed); a check run that names no run counts once.
-    const attempts = runs.reduce((n, r) => n + Math.max(gatesOf(own, r).length, tries.filter(c => runOf(c) === r).length), 0)
-      + tries.filter(c => runOf(c) === null).length;
+    // Review 3 medium 2 and Fable 11-20 补“补跑上限的范围”: attempts per run ID, the newest run of the check (a reopened PR's new run counts
+    // from 1): every attempt of a gated run has one gate, so its attempts are its gates (or its own check runs of this job, where more are
+    // listed); check runs that name no run count one each.
+    const newest = runs.length ? runs.reduce((a, b) => (Number(b) > Number(a) ? b : a)) : null;
+    const attempts = newest !== null ? Math.max(gatesOf(own, newest).length, tries.filter(c => runOf(c) === newest).length) : tries.length;
     missing.push({ context: entry.context, state, actions: app === ACTIONS_APP_ID, attempts, lastEndAt: ends.length ? Math.max(...ends) : null,
       runs, lastId: tries.length ? Math.max(...tries.map(c => c.id)) : 0 });
   }
@@ -187,7 +189,11 @@ export function requiredFailureExcused(front, context, now, takenAt = null) {
 export function requiredYieldReason(front, now, fallbackStart = null) {
   // Review 3 medium 1: the 60 minutes have one start, the merge slot's green (read from the checks, or this node's record of it when they
   // cannot be read); the front time never stands in. Unreadable checks with no record of the green prove no wait: the next round looks again.
-  const deadline = Number.isFinite(front?.slotGreenAt) && Number.isFinite(now) && now - front.slotGreenAt >= REQUIRED_CHECKS_MAX_WAIT_MS;
+  // Review 4 medium 2: with no merge-slot time (a take-over, checks unreadable from the first round, a check without times) the start is when
+  // this node first saw the head at the front (recorded in the train store): later than the truth, so never early. Native's merge-slot hard
+  // cap (slotHardCapMinutes from the turn's start) ends the turn on its own whatever this start is.
+  const start = Number.isFinite(front?.slotGreenAt) ? front.slotGreenAt : front?.frontSeenAt;
+  const deadline = Number.isFinite(start) && Number.isFinite(now) && now - start >= REQUIRED_CHECKS_MAX_WAIT_MS;
   if (front?.checksUnreadable === true) return deadline ? 'REQUIRED_CHECKS_DEADLINE' : null;
   if (front?.green !== true || front.required === undefined) return null;
   const r = front.required;
@@ -266,6 +272,7 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
         ...(front.checksUnreadable === true ? { checksUnreadable: true } : {}),
         ...(front.requiredYieldHeld ? { requiredYieldHeld: front.requiredYieldHeld } : {}),
         ...(front.yieldHeadMoved === true ? { yieldHeadMoved: true } : {}),
+        ...(Number.isFinite(front.frontSeenAt) ? { frontSeenAt: new Date(front.frontSeenAt).toISOString() } : {}),
         ...(front.required !== undefined ? { required: front.required === null
           ? (front.requiredYieldReason ? { unreadable: true, yieldReason: front.requiredYieldReason } : null)
           : { missing: front.required.missing.slice(0, MAX_REQUIRED_LISTED).map(m => ({ ...m, lastEndAt: m.lastEndAt === null ? null : new Date(m.lastEndAt).toISOString() })),

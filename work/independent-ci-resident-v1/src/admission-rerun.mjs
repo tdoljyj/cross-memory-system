@@ -20,7 +20,7 @@ import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { STATUS_STALE_MS } from './status.mjs';
 import { LIVE_STATES } from './queue.mjs';
-import { REPAIR_ATTEMPTS_MAX, diedInSetup, failedSteps, jobFailureKind, neverAssigned, requiredTestsRepairHistory } from './env-failure.mjs';
+import { diedInSetup, failedSteps, jobFailureKind, neverAssigned, requiredTestsRepairHistory } from './env-failure.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 
 export const RERUN_RECORD_CONTRACT = 'clued.independent-ci.admission-rerun/1';
@@ -448,14 +448,9 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
         const log = await gh.text('/actions/jobs/' + latestGate.id + '/logs');
         skippedByActor = /"verdict"\s*:\s*"ADMITTED"/.test(log) && /"automation_self_hosted"\s*:\s*false/.test(log);
       }
-      if (skippedByActor) {
-        // Review 2 high 3: a re-dispatch is a new run of the same workflow on the head, so it spends the same three-attempt budget; a count
-        // that cannot be proven is the budget reached.
-        const used = runs.reduce((n, r) => n + (Number.isSafeInteger(r.run_attempt) && r.run_attempt > 0 ? r.run_attempt : Infinity), 0);
-        if (!(used < REPAIR_ATTEMPTS_MAX))
-          return say('final', `three attempts of this workflow have already been made on this head (${Number.isFinite(used) ? used : 'the count cannot be proven'}): no re-dispatch`);
-        return say('bot-dispatch', 'required tests were skipped for a non-Owner actor');
-      }
+      // Fable 11-20 补“补跑上限的范围”: a re-dispatch is a new run ID with its own budget; this lane asks for it at most once per head and
+      // workflow (its receipt key), so the automatic side stays bounded.
+      if (skippedByActor) return say('bot-dispatch', 'required tests were skipped for a non-Owner actor');
     }
   }
 

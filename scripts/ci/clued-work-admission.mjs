@@ -91,7 +91,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { proxyBootstrapArguments } from "../runner/clued-runner-job-started.mjs";
 // The one failure rule (Fable 11-20, 单一判定): the classifier and the repair history, in the protected scripts/ci/** path.
-import { MAX_LOG_CHARS, REPAIR_ATTEMPTS_MAX, requiredTestsRepairHistory } from "./required-tests-failure-rule.mjs";
+import { MAX_LOG_CHARS, requiredTestsRepairHistory } from "./required-tests-failure-rule.mjs";
 export { SETUP_STEPS, MAX_LOG_CHARS, failedSteps, diedInSetup, neverAssigned, jobFailureKind, requiredTestsRepairHistory } from "./required-tests-failure-rule.mjs";
 import { resolvePRTaskBinding, claimReferenceFromBinding, PRTaskBindingError } from './clued-pr-task-binding.mjs';
 
@@ -3373,10 +3373,9 @@ async function requiredTestsDispatchGate({ env, event, fetchImpl, sleep, now, ou
         return refuse('required_tests_dispatch_prior_jobs_ran_or_unknown');
     }
   }
-  // Review 3 high 2: a dispatch is one more attempt of the workflow on the head; with every earlier run's attempts it keeps the three-attempt
-  // budget of required-tests-failure-rule.mjs (REPAIR_ATTEMPTS_MAX). What a read cannot close: a run made between this read and the jobs.
-  if (runs.filter(r => r.id !== self.id).reduce((n, r) => n + r.run_attempt, 0) + 1 > REPAIR_ATTEMPTS_MAX)
-    return refuse('required_tests_dispatch_attempt_budget_used');
+  // Fable 11-20 补“补跑上限的范围”: the re-run budget is per run ID; this dispatch is a new run (its own first attempt), and a re-run of it
+  // is judged by required-tests-failure-rule.mjs on its own attempts. Earlier runs bound it only as above: one dispatch a head, none after a
+  // heavy job ran.
   const admitted = await gate({ env, event: { ...event, pull_request: pr }, eventName: 'pull_request', fetchImpl, sleep, now });
   if (!live(await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${number}`)))
     return refuse('required_tests_dispatch_pr_changed_during_gate');

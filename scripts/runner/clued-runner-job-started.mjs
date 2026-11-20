@@ -167,9 +167,10 @@ export function jobFailureKind(job, log = null, annotations = null) {
 const REPAIR_GATE_JOB = "admission-gate";
 const REPAIR_NOT_ADMITTED = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
 const REPAIR_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
-// Fable 11-20 (补：车头缺必需检查): at most three attempts of a workflow on one head in all (the first run and two re-runs), whatever made
-// them (this rule, the companion's lane, a person) and for both kinds of process cause together (a run that produced no result, and the
-// environment failures below): every run of the workflow on the head counts. The smaller of it and the environment limit holds.
+// Fable 11-20 (补：车头缺必需检查, and 补：补跑上限的范围): the budget is counted per run ID: at most three attempts of one run (the first and
+// two re-runs), whatever made them (this rule, the companion's lane, a person's re-run of it) and for both kinds of process cause together (a
+// run that produced no result, and the environment failures below). A new run of the workflow on the head (the PR reopened, a new event, a
+// re-dispatch) is a new run ID and counts from 1. The smaller of it and the environment limit holds.
 export const REPAIR_ATTEMPTS_MAX = 3;
 
 async function repairAnnotations(read, repository, jobId) {
@@ -234,21 +235,11 @@ async function hasRepairRecovery({ read, repository, runId, workflowId, head, af
   return false;
 }
 
-// Attempts of the workflow on the head, this one included: the run's attempt and every other run of the same workflow on the head. A count
-// that cannot be proven (no valid workflow id or attempt number, a run whose attempt number is not one) is the budget reached (Infinity).
-// What it cannot close: a person's re-run between this read and the next request is counted only from the next read on.
-async function headAttempts({ read, repository, runId, head, attempt, workflowId }) {
-  if (!Number.isSafeInteger(workflowId) || workflowId <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) return Infinity;
-  const listing = await read(`/repos/${repository}/actions/runs?head_sha=${head}&per_page=100&page=1`);
-  const runs = listing?.workflow_runs;
-  if (!Array.isArray(runs) || runs.length > 100 || listing.total_count !== runs.length) throw new Error("the head's runs are unreadable");
-  let total = attempt;
-  for (const run of runs) {
-    if (run?.workflow_id !== workflowId || run.head_sha !== head || String(run.id) === String(runId)) continue;
-    if (!Number.isSafeInteger(run.run_attempt) || run.run_attempt <= 0) return Infinity;
-    total += run.run_attempt;
-  }
-  return total;
+// The attempts the budget counts: this run's attempt number (GitHub's own count of the run ID, a person's re-runs of it included). An attempt
+// number that cannot be proven is the budget reached (Infinity). What a check cannot close: a person's re-run made between the lane's read
+// and its request is counted from the next read on.
+function runAttempts({ attempt }) {
+  return Number.isSafeInteger(attempt) && attempt > 0 ? attempt : Infinity;
 }
 
 // The one answer to "may this attempt be a repair" (the gate imports it, the companion's lane calls it, the runner hook holds a copy the
@@ -301,9 +292,9 @@ export async function requiredTestsRepairHistory({ read, readLog, repository, ru
         return refuse(`the ${REPAIR_GATE_JOB} job of attempt ${earlier} did not end in ADMISSION_PENDING, RERUN_REFUSED or a GitHub API outage`);
       attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
     }
-    const total = await headAttempts({ read, repository, runId, head, attempt, workflowId });
+    const total = runAttempts({ attempt });
     if (total > REPAIR_ATTEMPTS_MAX)
-      return refuse(`three attempts of this workflow have already been made on this head (${Number.isFinite(total) ? `${total} with this one` : "the count cannot be proven"})`, { budget: true });
+      return refuse(`three attempts of this run have already been made (${Number.isFinite(total) ? `${total} with this one` : "the count cannot be proven"})`, { budget: true });
     if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
       return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit", { waiting: true });
   } catch (error) {
@@ -979,20 +970,8 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
         result.reason = 'required-tests dispatch PR is closed, foreign or moved';
         return result;
       }
-      // Review 3 high 2: this dispatch is one more attempt of the workflow on the head: with every other run's attempts it keeps the
-      // three-attempt budget (REPAIR_ATTEMPTS_MAX); a count that cannot be read is the budget reached.
-      let used = Infinity;
-      try {
-        const list = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/clued-required-tests.yml/runs?head_sha=${head}&per_page=100`);
-        const runs = list?.workflow_runs;
-        if (Array.isArray(runs) && list.total_count === runs.length && runs.length <= 100
-          && runs.every(r => r && (r.id === run?.id || (Number.isSafeInteger(r.run_attempt) && r.run_attempt > 0))))
-          used = runs.filter(r => r.id !== run?.id && r.head_sha === head).reduce((n, r) => n + r.run_attempt, 0) + 1;
-      } catch { used = Infinity; }
-      if (!(used <= REPAIR_ATTEMPTS_MAX)) {
-        result.reason = `required-tests dispatch: three attempts of the workflow are already on this head (${Number.isFinite(used) ? used : 'not countable'})`;
-        return result;
-      }
+      // Fable 11-20 补“补跑上限的范围”: the re-run budget is per run ID; this dispatch is a new run, its first attempt (attempt > 1 is
+      // refused above), so earlier runs' attempts do not count here.
       // Retain the branch-dispatch rule: workflow bytes must match main.
       // The unchanged trusted gate then judges the Native PR admission.
       const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);
