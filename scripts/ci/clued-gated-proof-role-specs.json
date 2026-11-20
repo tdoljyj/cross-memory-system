@@ -2057,7 +2057,7 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "2a96188f52b52d37e3661bb87e22350d3f925a92": [
+        "2e14516b6813ce3024d42ab5ffde63fb399fb20b": [
           {
             "job_id": "clued-cloud-tests",
             "definition_sha256": "d4acae487998b4bc4e1e7fb8afefd0fed1bdaa830d91626960ae5818cf7e7168",
@@ -2155,7 +2155,7 @@
           },
           {
             "job_id": "ci-suites",
-            "definition_sha256": "62db144272e7d780c2b0319cbcb35e7667fd24940413276cf91ced207913fea9",
+            "definition_sha256": "615749b035ead14b9fbd73d7d3b5ac633d3fe822c03a7c25c700170d53720564",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
               "needs": "admission-gate",
@@ -2229,11 +2229,10 @@
                 },
                 {
                   "name": "Install the application dependencies the selected suites need",
-                  "if": "steps.select.outputs.app_deps != '' && steps.select.outputs.app_deps != '[]'",
                   "env": {
                     "APP_DEPS": "${{ steps.select.outputs.app_deps }}"
                   },
-                  "run": "for app in $(node -e 'for (const a of JSON.parse(process.env.APP_DEPS)) console.log(a)'); do\n  node trusted/scripts/ci/ci-deps.mjs install \"candidate/$app\"\ndone\necho \"CLUED_CI_APP_DEPS=1\" >> \"$GITHUB_ENV\"\n"
+                  "run": "apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || \"[]\")) console.log(a)')\nif [ -z \"$apps\" ]; then\n  echo \"No selected suite needs application dependencies; nothing installed.\"\n  exit 0\nfi\nfor app in $apps; do\n  node trusted/scripts/ci/ci-deps.mjs install \"candidate/$app\"\ndone\necho \"CLUED_CI_APP_DEPS=1\" >> \"$GITHUB_ENV\"\n"
                 },
                 {
                   "name": "Run the selected suites",

@@ -195,14 +195,14 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'2a96188f52b52d37e3661bb87e22350d3f925a92',
-  source_sha256:'98da5a202da1e00105237fd78651f0aab4ff4336f2182bda36dd30178ac6fcc7',
-  workflow_definition_sha256:'679f08e8f48993f1c096cd54a1f0e8d79429e9dcdf2fa4fc6ba515610e96f02b',
-  profile_sha256:'3eb9c1c69f5c07956a3fb9a6377b6b486eedde818f53e5082a729910fa3e5eff',
+  workflow_blob:'2e14516b6813ce3024d42ab5ffde63fb399fb20b',
+  source_sha256:'0a36849d74c2612f38d759cbc27304a7721786417e75c889a3417b56ce724d8b',
+  workflow_definition_sha256:'3e018e716ed705a8e7269101662d4dbb4cd77f5c1475bfd5e895d6db4bc2f41b',
+  profile_sha256:'7162049ad40527a7d3417577e14020724837ca44f2228ad0135db445fa5a6832',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
   role_sha256:Object.freeze({
     'clued-cloud-tests':'d4acae487998b4bc4e1e7fb8afefd0fed1bdaa830d91626960ae5818cf7e7168',
-    'ci-suites':'62db144272e7d780c2b0319cbcb35e7667fd24940413276cf91ced207913fea9',
+    'ci-suites':'615749b035ead14b9fbd73d7d3b5ac633d3fe822c03a7c25c700170d53720564',
     'migration-verify':'627666456fa37adaa15ecfcd2124fe307abfc8bfa9ae32819c9ae2ec6e617927',
   }),
 });
