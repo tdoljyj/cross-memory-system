@@ -4464,7 +4464,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 回执丢了（例如重装），还有 gate 自己的 GitHub 历史预算和恢复证据要求兜底。
 - **告知。**
   - PR 状态通过 `pr-status.mjs#withRerunLine` 显示最近的结果，带上对应检查或环境类作业名。补跑提示在值班词后，看门狗提示仍在最后。
-  - 必需范围的工作流写补跑、补发和 STUCK 回执，并按具体检查名通知 Owner；非必需带门运行只写补跑回执，不通知，PR 页那行写“已自动补跑一次带门运行（运行 <id>，不属必需检查）”，同一 head 有必需范围回执时先显示那一条。请求结果为 `sent`（已请求）、`unsent`（gh 没有启动）、`refused`（HTTP 4xx）或 `unknown`（请求是否生效未知）。
+  - 必需范围的工作流写补跑、补发和 STUCK 回执，并按具体检查名通知 Owner；非必需带门运行只写补跑回执，被判拒绝（final）时不写 STUCK、不提示，发出补跑请求时照常提示（以工作流文件名指明对象），PR 页那行写“已自动补跑一次带门运行（运行 <id>，不属必需检查）”，同一 head 有必需范围回执时先显示那一条。请求结果为 `sent`（已请求）、`unsent`（gh 没有启动）、`refused`（HTTP 4xx）或 `unknown`（请求是否生效未知）。
 - **两处已知约束：以后任何新 workflow 都会碰到**（在未合入的 76481044 里实测发现）：
   - 已安装在每台 runner 上的 hook `scripts/runner/clued-runner-job-started.mjs` 只放行 main 上的 push、schedule、workflow_run、pull_request_target、workflow_dispatch，不放行 `check_run`。要用 `check_run` 触发，得先做 hook 的后继版本，并在每台 runner 上重装。
   - 每个新 workflow 都必须登记进 `.github/actions/ci-temporary-storage/coverage.json`。这个文件被 gitleaks/trivy 的 scan-start 策略钉住（`hosted-relay-v1/registry.json` 的冻结闭包，生产 Worker `ci-scan-start-v1.ts` 会核对）。所以加任何一个 workflow，都得重新钉值并部署生产 Worker，否则之后 PR 的 scan start 会被拒（`clued-cloud` 的 `ci-scan-start-worker.test.mjs` 会失败）。
