@@ -5,57 +5,11 @@
 // 缺项有明确的最长等待（自合并位变绿起 60 分钟），补跑额度（每 head 每工作流共三次尝试）用完立即让出车头，列车继续（独审修复）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { setup, sha, iso, H, NOW, CLAIM, REPO, APP, SOURCE } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
 import { frontPullFacts, decideShadow } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 import { trainPageLine, trainSummary, TRAIN_FRONT_RECHECK_DECISIONS } from '../src/train.mjs';
 
-const ACTIONS_APP = 15368;
-const ACTIONS = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'];
-const NATIVE = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
-const MIN = 60_000;
-// The four job names GitHub gave the skipped jobs of #1192 (the unevaluated `name:` expression), shortened.
-const SKIPPED_NAME = c => `needs.admission-gate.outputs.admitted == 'true' && (...) && '${c}' || '${c}-skipped'`;
-
-async function front(t, { extraRequired = [], slotAt = NOW - 4 * MIN, others = true, takenAt = undefined, rulesReply = null } = {}) {
-  const e = await setup(t, { strict: true, tick: 1,
-    native: { nodes: [{ node: { name: 'fixture', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }], ...(takenAt !== undefined ? { holder: { takenAt } } : {}) } });
-  const read = e.gh.readPullRequest;
-  e.gh.readPullRequest = async n => ({ ...(await read(n)), auto_merge: { merge_method: 'merge' } });
-  const rules = e.gh.readBranchRules;
-  e.gh.readBranchRules = async () => {
-    const reply = await rules();
-    if (rulesReply) return rulesReply(reply);
-    for (const context of [...ACTIONS, ...extraRequired]) reply.rules[1].parameters.required_status_checks.push({ context, integration_id: ACTIONS_APP });
-    return reply;
-  };
-  const otherHead = sha(0x9999);
-  e.gh.pull(911, { head: otherHead });
-  const queue = [{ pr: 910, headSha: H, claimId: CLAIM }, { pr: 911, headSha: otherHead, claimId: '99999999-8888-4777-8666-555555555555' }];
-  e.native.port.yieldSlot = async input => {
-    e.native.calls.push(['yield', input]);
-    queue.push(queue.shift());
-    e.native.holder = { ...e.native.holder, ...queue[0], boundPr: `${REPO}#${queue[0].pr}` };
-    return { onDuty: true, yielded: true };
-  };
-  let id = 600;
-  const check = (name, { app = ACTIONS_APP, status = 'completed', conclusion = 'success', at = NOW - 30 * MIN, head = H } = {}) => {
-    const c = { id: ++id, app: { id: app }, name, head_sha: head, status, conclusion: status === 'completed' ? conclusion : null,
-      started_at: at === null ? null : iso(at), completed_at: status === 'completed' && at !== null ? iso(at) : null };
-    if (name === 'kooyumi-merge-slot') c.output = { title: 'Complete Native control', summary: `front PR #910, head ${H}, main@${e.gh.world.main}` };
-    e.gh.world.checks.set(c.id, c);
-    return c;
-  };
-  // the six native checks of App 5368905, the merge slot last
-  for (const name of NATIVE) check(name, { app: APP, at: slotAt === null ? null : name === 'kooyumi-merge-slot' ? slotAt : slotAt - 10 * MIN });
-  // the gate of both workflows ran and admitted nothing: its own check run succeeded, the heavy jobs are skipped under their expression names
-  if (others) {
-    check('admission-gate', { at: NOW - 60 * MIN });
-    check('admission-gate', { at: NOW - 60 * MIN });
-    for (const c of ACTIONS) check(SKIPPED_NAME(c), { conclusion: 'skipped', at: NOW - 60 * MIN });
-  }
-  const yields = () => e.native.calls.filter(c => c[0] === 'yield').length;
-  return { e, queue, check, yields };
-}
+import { sha, iso, H, NOW, APP } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
+import { ACTIONS_APP, ACTIONS, MIN, SKIPPED_NAME, front } from './train-front-fixture.mjs';
 
 test('#1192: the merge slot is green but four required Actions checks never appeared: not "green, wait for merge"', async t => {
   const { e, yields, queue } = await front(t);
@@ -78,9 +32,9 @@ test('every required check green on the head: green, wait for merge', async t =>
   assert.equal(yields(), 0);
 });
 
-test('a required check queued or running: wait for checks while within the longest wait', async t => {
+test('required checks queued or running: wait for checks while within the longest wait', async t => {
   const { e, check, yields } = await front(t, { slotAt: NOW - 30 * MIN });
-  check('ci-suites', { status: 'in_progress', at: NOW - 20 * MIN });
+  for (const c of ACTIONS) check(c, { status: 'in_progress', at: NOW - 20 * MIN });
   const r = await e.run();
   assert.equal(r.facts.decision, 'FRONT_CHECKS_WAIT');
   assert.equal(yields(), 0);
@@ -95,11 +49,39 @@ test('a re-run whose gate is still running shows as a re-run in progress, withou
   assert.equal(yields(), 0);
 });
 
-test('nothing moving 25 minutes after the merge slot went green: still missing, no yield before the longest wait', async t => {
-  const { e, yields } = await front(t, { slotAt: NOW - 25 * MIN });
+// Fable 11-20 (A3): the train does not judge a failure. After a required check fails or stays missing it waits the observation window
+// (10 minutes, over two polls of the companion's lane); a new attempt of the workflow inside it is a re-run in progress, none is a real
+// failure and the front yields.
+test('A3: no new attempt within the observation window after the admission: the front yields, the check was not re-run', async t => {
+  const { e, yields, queue } = await front(t, { slotAt: NOW - 25 * MIN });
   const r = await e.run();
-  assert.equal(r.facts.decision, 'FRONT_CHECKS_MISSING');
+  assert.equal(yields(), 1);
+  assert.equal(queue[0].pr, 911);
+  assert.equal(r.facts.decision, 'FRONT_CHECKS_MISSING_YIELDED');
+  assert.equal(r.facts.front.required.yieldReason, 'REQUIRED_CHECK_NOT_RERUN');
+});
+
+test('A3: a failed required Actions check is not judged by the train: no yield inside the window, a real failure after it', async t => {
+  const inside = await front(t, { others: false });
+  for (const c of ACTIONS) inside.check(c, { at: NOW - 2 * MIN, conclusion: c === 'ci-suites' ? 'failure' : 'success' });
+  const r1 = await inside.e.run();
+  assert.equal(inside.yields(), 0, 'the companion or the gate may still call it a process cause and re-run it');
+  assert.equal(r1.facts.decision, 'FRONT_CHECKS_MISSING');
+  const after = await front(t, { others: false, slotAt: NOW - 30 * MIN });
+  for (const c of ACTIONS) after.check(c, { at: NOW - 11 * MIN, conclusion: c === 'ci-suites' ? 'failure' : 'success' });
+  const r2 = await after.e.run();
+  assert.equal(after.yields(), 1);
+  assert.equal(r2.facts.decision, 'FRONT_RETURNED', 'no new attempt in 10 minutes: a real failure, the existing path');
+});
+
+test('A3: a new attempt inside the window is a re-run in progress, whatever time has passed since the failure', async t => {
+  const { e, check, yields } = await front(t, { others: false, slotAt: NOW - 30 * MIN });
+  for (const c of ACTIONS) check(c, { at: NOW - 25 * MIN, conclusion: c === 'ci-suites' ? 'failure' : 'success' });
+  check('ci-suites', { status: 'in_progress', at: NOW - 20 * MIN });
+  const r = await e.run();
   assert.equal(yields(), 0);
+  assert.equal(r.facts.decision, 'FRONT_CHECKS_WAIT');
+  assert.equal(r.facts.front.required.reruns, 1);
 });
 
 // Independent review (Codex, 051b7d585) high 1: a provable exit. The longest wait is 60 minutes from the merge slot's green, whatever runs.

@@ -32,7 +32,8 @@ async function queued(t, { required = 'ci-suites', unreadable = null } = {}) {
     return { onDuty: true, yielded: true };
   };
   const check = (id, head, name, conclusion, app = 15368, status = 'completed') =>
-    e.gh.world.checks.set(id, { id, app: { id: app }, name, head_sha: head, status, conclusion });
+    // A3 (Fable 11-20): a failed Actions check is a real failure once the observation window has passed with no new attempt.
+    e.gh.world.checks.set(id, { id, app: { id: app }, name, head_sha: head, status, conclusion, completed_at: status === 'completed' ? iso(NOW - 11 * 60_000) : null });
   check(501, H, 'ci-suites-windows', 'failure');
   check(502, otherHead, 'ci-suites-windows', 'failure');
   return { e, queue, check };

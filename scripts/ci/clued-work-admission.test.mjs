@@ -3451,7 +3451,7 @@ const earlierAttempt = (n, { heavy = ["skipped", "skipped", "skipped"], notes = 
     conclusion === "in_progress" ? null : conclusion, conclusion === "in_progress" ? { status: "in_progress" } : {})), ...extraJobs],
   notes,
 });
-async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {}, staging = false } = {}) {
+async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {}, staging = false, otherRuns = [] } = {}) {
   const extra = [];
   const base = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: { id: 9001, run_attempt: attempt, head_sha: HEAD, created_at: RUN_CREATED,
     workflow_id: timeoutIncident.workflow_id, ...(staging ? { event: "push", head_branch: "clued-train/staging", path: stagingWorkflow, actor: { login: stagingActor } } : {}), ...selfRun } },
@@ -3459,6 +3459,12 @@ async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nat
   // The attempt-jobs and annotation URLs extend the run URL key, so they are served here, not by the first-prefix script.
   const fetchImpl = async (url, init = {}) => {
     const text = String(url);
+    // The head's runs (Fable 11-20: three attempts per head and workflow): this run at its attempt, and any other run of the head.
+    if (/\/actions\/runs\?head_sha=/.test(text)) {
+      extra.push({ url: text, method: init.method ?? "GET" });
+      const runs = [{ id: 9001, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: attempt }, ...otherRuns];
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ total_count: runs.length, workflow_runs: runs }), text: async () => "" };
+    }
     const jobs = /\/actions\/runs\/9001\/attempts\/(\d+)\/jobs/.exec(text);
     const notes = /\/check-runs\/(\d+)\/annotations/.exec(text);
     const logs = /\/actions\/jobs\/(\d+)\/logs/.exec(text);
@@ -4289,4 +4295,30 @@ test("independent gate repair re-run: a gate no runner took with its downstream 
   const { outcome, extra } = await repairGate([earlier]);
   assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
   assert.ok(extra.every((call) => !/\/logs|\/annotations/.test(call.url)), "nothing ran: no log or annotation is evidence");
+});
+
+// Fable 11-20 (单一判定): one budget of three attempts per head and workflow, shared by both kinds of process cause (a run that produced no
+// result, and the environment rule's failures), counted over every run of the workflow on the head; the smaller of it and the environment
+// rule's own limit holds.
+test("independent gate repair re-run: skipped and environment-failed attempts share three attempts per head and workflow", async () => {
+  const third = await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass])]);
+  assert.deepEqual([third.outcome.admitted, third.outcome.verdict], [true, "ADMITTED"], third.outcome.reasons.join("; "));
+  const fourth = await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass]), ranAttempt(3, [netFail, pass, pass])]);
+  assert.equal(fourth.outcome.admitted, false);
+  assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
+  // another run of the same workflow on the head counts too
+  const other = await repairGate([earlierAttempt(1)], { otherRuns: [{ id: 9002, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: 2 }] });
+  assert.equal(other.outcome.admitted, false);
+  assert.match(other.outcome.reasons.join("; "), /three attempts/);
+  // a run of another workflow does not
+  const elsewhere = await repairGate([earlierAttempt(1)], { otherRuns: [{ id: 9003, workflow_id: timeoutIncident.workflow_id + 1, head_sha: HEAD, run_attempt: 3 }] });
+  assert.equal(elsewhere.outcome.admitted, true, elsewhere.outcome.reasons.join("; "));
+});
+
+test("one judgement: the gate defines no failure rule of its own, and the hook's copy is the companion's, byte for byte", () => {
+  const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const gateSource = source("./clued-work-admission.mjs");
+  for (const name of ["jobFailureKind", "diedInSetup", "neverAssigned", "requiredTestsRepairHistory", "repairEnvironmentFailures", "hasRepairRecovery"])
+    assert.doesNotMatch(gateSource, new RegExp(`function ${name}\\b`), `the gate keeps no copy of ${name}`);
+  assert.match(gateSource, /from "\.\.\/\.\.\/work\/independent-ci-resident-v1\/src\/env-failure\.mjs"/);
 });
