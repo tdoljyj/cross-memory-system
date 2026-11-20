@@ -124,6 +124,9 @@ for role in ROLES:
 assert TEMPLATE_PUB_SHA != PUB_SHA, 'NODE_KEY_IS_THE_TEMPLATE_KEY'
 # the run roots readiness requires as root directories (loadQualifiedPolicyV2); a first install creates them in phase B
 ROOTS = ('/var/lib/clued-independent-ci/workspaces', '/var/lib/clued-independent-ci/runs')
+# the other directories prepare-workspaces.py demands (root-owned, no group/other write), made and read back by the same two loops; parent first.
+# Not part of ROOTS: the template assertion below compares ROOTS with the role policies' (workspaceRoot, runsRoot).
+SPOOL_DIRS = ('/var/lib/clued-independent-ci/formal-spool', '/var/lib/clued-independent-ci/formal-spool/incoming', '/var/lib/clued-independent-ci/formal-spool/outgoing')
 # the role images: the worker runs them with --pull=never, so they must be in the node's docker before the first job. A registry
 # image pinned by digest is pulled by that digest; a local image id (built on the template node) is loaded from
 # <in-dir>/images/<hex>.tar (docker save on the template node); docker checks the id against the loaded content.
@@ -350,7 +353,7 @@ for f in m["files"]:
   elif p in own: bad+=[p] if hashlib.sha256(open(sys.argv[6]+"/"+own[p],"rb").read()).hexdigest()!=f["sha256"] else []
   else: bad.append(p)
 print(json.dumps({"residentPinsNotTheNewSource":bad})); sys.exit(1 if bad else 0)' "$STG/linux-res-pkg/manifest.json" "$STG/src.git" "$COMMIT" "$NODE" "$NODE_SHA" "$STG/linux-res-pkg" > "$STG/resident-pins.A.stdout.json" || { cat "$STG/resident-pins.A.stdout.json"; refuse RESIDENT_PINS_NOT_THE_NEW_SOURCE; }
-# the run roots: absent (phase B creates them) or root directories nobody else can write
+# the run roots and the formal-spool directories: absent (phase B creates them) or root directories nobody else can write
 for d in @@ROOTS@@; do
   [ ! -e "$d" ] || { [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u "$d")" = 0 ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ]; } || refuse "RUN_ROOT_NOT_ROOT_PROTECTED:$d"
 done
@@ -388,7 +391,7 @@ if [ ! -e /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json 
     cp -f "$T/package.stdout.json" "$STG/package.stdout.json"
   fi
   grep -q LINUX_SOURCE_V2_PACKAGE_WRITTEN "$STG/package.stdout.json" || refuse PACKAGE_PARTIAL_SEE_RECOVERY
-  # the run roots readiness requires (loadQualifiedPolicyV2): root directories, created here when absent
+  # the run roots readiness requires (loadQualifiedPolicyV2) and the spool directories prepare-workspaces.py requires: root directories, created here when absent
   for d in @@ROOTS@@; do
     [ -e "$d" ] || install -d -o root -g root -m 0755 "$d"
     { [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u "$d")" = 0 ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ]; } || refuse "RUN_ROOT_NOT_ROOT_PROTECTED:$d"
@@ -502,7 +505,7 @@ for _k, _v in FORM.items():   # the form's pieces first: they carry @@SUFFIX@@ /
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
           'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': NODE_NAME,
-          'ROOTS': ' '.join(ROOTS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
+          'ROOTS': ' '.join(ROOTS + SPOOL_DIRS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
     assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
 def render(text):
