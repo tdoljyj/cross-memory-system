@@ -27,9 +27,16 @@ const now = new Date('2026-09-23T05:12:49Z');
 const OWNER = 'a'.repeat(64), OTHER = 'b'.repeat(64);
 
 // The production workflow already runs this file in preflight and deploy modes.
+// This file is on the release path, so it reads the configuration only through
+// readWranglerConfig (the guard below); the script's own reading of the raw
+// JSONC is what Wrangler's build command runs, so the test runs that script.
 test('N1 production preflight requires both renewal rate limit bindings', async t => {
-  const config = verifyProductionRenewRateLimits(await readFile(new URL(
-    '../wrangler.production.jsonc', import.meta.url), 'utf8'));
+  const { readWranglerConfig } = await import('../scripts/projection-postflight.mjs');
+  const parsed = await readWranglerConfig(fileURLToPath(new URL('../wrangler.production.jsonc', import.meta.url)));
+  const script = spawnSync(process.execPath,
+    [fileURLToPath(new URL('../scripts/verify-production-renew-rate-limits.mjs', import.meta.url))], { encoding: 'utf8' });
+  assert.equal(script.status, 0, script.stderr);
+  const config = verifyProductionRenewRateLimits(JSON.stringify(parsed));
   assert.equal(config.build.command,
     'node scripts/verify-production-renew-rate-limits.mjs && node scripts/production-release-gate.mjs --pre-deploy');
   for (const name of ['CI_RENEW_SOURCE_LIMIT', 'CI_RENEW_IDENTITY_LIMIT']) {
