@@ -689,7 +689,8 @@ test('push, fail closed: main without the fast-forward-only, no-deletion or trai
       return r;
     };
     const p = await stage8(t, e, b);
-    assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0]);
+    // without kooyumi-train-landed the route is the current path (H1), which never takes a batch with riders
+    assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', drop === 'kooyumi-train-landed' ? 'TRAIN_BATCH_WITHOUT_PUSH' : 'TRAIN_LANDING_RULES_MISSING', 0]);
     untouched(e, T); assert.equal(e.W.pushes.length, 0);
   });
 });
@@ -1189,11 +1190,11 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
     assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
     // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
     const summary = trainSummary(r.facts);
-    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE' }]);
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push' }]);
     const board = new StatusBoard({ clock: e.clock });
     board.update({ train: { enabled: 'on', last: summary } });
     const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
-    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE' }]);
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push' }]);
     const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
     assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
     assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));

@@ -212,7 +212,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
   // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8).
-  const route = !push ? null : rulesReason ? { route: 'park', missing: ['rules_unreadable'] } : await readLandingRoute({ github, appId, rules: landability.rules });
+  const route = !push ? null : rulesReason ? { route: 'park', missing: ['rules_unreadable'] } : await readLandingRoute({ github, appId, rules: landability.rules, bypass: 'when-train-landed' });
   const pushRoute = route?.route === 'push';
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
   if (holder?.boundPrs?.length > 1) {
@@ -656,7 +656,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
     const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, compare: frontCompare,
-      pushing: push ? { github, native, landing, max: pushRoute ? effectiveBatchMax(trainLanding) : 1, rows: openRows ?? [], claimScope, state: landingState,
+      pushing: push ? { github, native, landing, max: pushRoute ? effectiveBatchMax(trainLanding) : 1, rehearsalOnly: !pushRoute, rows: openRows ?? [], claimScope, state: landingState,
         layerOfPaths, frontBaseSha: pull?.base?.sha ?? null } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
     // turn_short (Fable 2026-11-19; field 2026-11-19, #1169 -> #1173): the hard cap leaves this turn less than the front batch needs,
@@ -984,7 +984,10 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
   let composed = null;
   if (pushing) {
     composed = await composeBatch({ ...pushing, job, holder, front, mainSha, fx });
-    if (composed.refusal) return no(composed.refusal);
+    // Off push (the current path), S on clued-train/staging is the rehearsal only: a composition that fails never holds the front batch
+    // back (an auxiliary step is never on the path to merging); the batch opens on GitHub's test merge as without push.
+    if (composed.refusal && pushing.rehearsalOnly) composed = null;
+    else if (composed.refusal) return no(composed.refusal);
   }
   let touched;
   try { fx.n++; fx.slotTouched = true; touched = await native.touch({ pr: holder.pr, headSha: front.headSha, ciState: 'running', hardCapMinutes: job.slotHardCapMinutes }); }
