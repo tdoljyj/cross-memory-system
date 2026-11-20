@@ -1,4 +1,6 @@
 export const PRODUCTION_HEALTH_URL = 'https://kooyumi.pixelgrav.com/healthz';
+export const PROPAGATION_WINDOW_MS = 120_000;
+const DEFAULT_RETRY_DELAY_MS = 10_000;
 
 export async function verifyLiveSourceCommit(expected, fetchLive = globalThis.fetch) {
   if (!/^[0-9a-f]{40}$/.test(expected)) throw new Error('Invalid expected source commit');
@@ -29,7 +31,8 @@ export async function verifyLiveSourceCommit(expected, fetchLive = globalThis.fe
 // commit is retried, within a bounded budget; any other failure, and the last
 // mismatch, is rethrown so the check still fails closed.
 export async function waitForLiveSourceCommit(expected, {
-  attempts = 12, delayMs = 10000, fetchLive = globalThis.fetch,
+  attempts = Math.ceil(PROPAGATION_WINDOW_MS / DEFAULT_RETRY_DELAY_MS),
+  delayMs = DEFAULT_RETRY_DELAY_MS, fetchLive = globalThis.fetch,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {},
 } = {}) {
   if (!Number.isInteger(attempts) || attempts < 1) throw new Error('Invalid attempt budget');
