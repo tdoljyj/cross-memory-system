@@ -1544,7 +1544,9 @@ function trainCheckout(t) {
   git('add', '-A');
   git('commit', '-q', '-m', 'T');
   const T = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
-  const commit = (...parents) => git('commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-m', `c${parents.length}`);
+  // Each commit its own object: same tree, parents and second would otherwise give the same SHA (H1 = H2).
+  let made = 0;
+  const commit = (...parents) => git('commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-m', `c${++made}`);
   const [H1, H2, H3, X] = [commit(T), commit(T), commit(T), commit()];
   git('update-ref', 'refs/remotes/origin/main', T);
   const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
@@ -1588,7 +1590,8 @@ for (const [file, id] of BASELINE_JOBS) {
   });
   test(`bors staging, ${label}: a chain that does not reach main through train merges gives no trusted base`, { skip }, (t) => {
     const repo = trainCheckout(t);
-    // Rooted off main; a non-merge step; a member head already on main; S itself on main.
+    // Rooted off main; a non-merge step; a non-merge S on main (git drops the repeated parent: the old S^1 check let it
+    // through); a member head already on main; S itself on main.
     for (const s of [repo.offMain, repo.single, repo.commit(repo.T, repo.T), repo.commit(repo.one, repo.T), repo.T]) {
       const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
       assert.notEqual(r.status, 0, `${s}: ${r.log}`);
