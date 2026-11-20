@@ -20,7 +20,8 @@ const CODE = /^[A-Z_]{3,80}$/;
 const HOURLY = ['RENEW_GATEWAY_UNAVAILABLE', 'RENEW_RESPONSE_UNAVAILABLE', 'RENEW_INTERRUPTED', 'RENEW_UNAVAILABLE', 'RENEW_HANDOVER_NO_CANDIDATE'];
 // Task a75da4bd（Fable 11-20“补：让班回包迟到”(2)）：回包什么时候到都是对该请求号的权威答复。等过 REPLY_OVERDUE 只改对外显示
 // （RENEW_RESPONSE_WAITING），请求号留在状态里每轮照看；满 REPLY_LIMIT 仍无回包（Broker 没了、文件永远不来）才按回包不可用。
-// 满 REPLY_LIMIT 是硬边界：那一轮即使回包文件已在也不采纳（Codex 独审 4a83b3e08 中1）。等待码不是失败，状态不发失败通知（低1）。
+// 满 REPLY_LIMIT 是硬边界，按读完回包文件那一刻的时钟判（Codex 复审 3d59ee58e 中1）：此前读到的匹配回包采纳，此后读到的不采纳、按不可用。
+// 等待码不是失败，状态不发失败通知（独审 4a83b3e08 低1）。
 const REPLY_OVERDUE = 120_000, REPLY_LIMIT = HOUR;
 export const RESPONSE_WAITING = 'RENEW_RESPONSE_WAITING';
 const retrySeconds = value => Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
@@ -107,9 +108,10 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
       const owner=typeof book.pending.source==='string' ? book.pending.source : null;
       if (!UUID.test(id) || !KINDS.includes(kind)) throw new Error('RENEW_STATE_REFUSED');
       let reply=await read(path.join(root,'broker','responses',id+'.json'));
+      const waited=clock()-at; // 读完之后取时：截止前读到的内容一定在截止前已发布
       // 只认状态里记着的这个请求号；没有结论前不为任何通道投新请求（Broker 那边本来也只处理一条）。重启后从状态恢复同一请求号。
-      if (reply?.requestId!==id || now-at>=REPLY_LIMIT) reply=null;
-      if (!reply && now-at<REPLY_LIMIT) return;
+      if (reply?.requestId!==id || waited>=REPLY_LIMIT) reply=null;
+      if (!reply && waited<REPLY_LIMIT) return;
       const valid=reply?.requestId===id && reply.kind===kind && reply.contract==='clued.independent-ci.connection-renew-response/1';
       const bound = valid && reply.code === null && UUID.test(reply.bindingId) && Number.isFinite(Date.parse(reply.expiresAt));
       const yielded = bound && kind === 'ci' && reply.outcome === 'yielded' && Number.isFinite(Date.parse(reply.effectiveAt));
@@ -127,7 +129,8 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
       const waiting = yielded || confirmation || (kind === 'ci' && !done && (uncertain || waitForDrain));
       if (yielded) await onHandover();
       book.lanes[kind] = {
-        at: now, source: owner, waiting, effectiveAt: yielded ? reply.effectiveAt : waiting ? prior?.effectiveAt ?? null : null,
+        // 服务端回包里的结论归投出请求的那一代；常驻自己记下的“回包不可用”归当前代，照常每小时复核（复审低1）。
+        at: now, source: valid ? owner : source, waiting, effectiveAt: yielded ? reply.effectiveAt : waiting ? prior?.effectiveAt ?? null : null,
         code: yielded ? 'RENEW_HANDOVER_WAITING' : confirmation ? 'CI_REBIND_NOT_DRAINED' : done ? null : refused,
         bindingId: bound ? reply.bindingId : prior?.bindingId ?? null,
         expiresAt: bound ? reply.expiresAt : prior?.expiresAt ?? null,
