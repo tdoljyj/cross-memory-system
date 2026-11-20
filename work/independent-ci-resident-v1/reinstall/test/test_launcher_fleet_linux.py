@@ -384,6 +384,8 @@ class FleetPlanChecks(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix='fp'); self.addCleanup(self.tmp.cleanup)
         d = self.d = Path(self.tmp.name)
         shutil.copytree(ROOT, d / 'x' / 'R' / 'reinstall', ignore=shutil.ignore_patterns('test', '__pycache__'))
+        # r5 N7: a first install's generator pins registration/export-node-registration.ps1 of the unpacked package (the universal tree carries it)
+        (d / 'x' / 'R' / 'registration').mkdir(); shutil.copy2(ROOT.parent / 'registration' / 'export-node-registration.ps1', d / 'x' / 'R' / 'registration')
         self.generate = d / 'x' / 'R' / 'reinstall' / 'launcher' / 'generate.py'
         text = self.generate.read_text(encoding='utf-8')
         live = "LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])"
