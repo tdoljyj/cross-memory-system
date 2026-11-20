@@ -35,6 +35,7 @@ import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { FAILURE_TABLE } from './classify.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { ghPort } from './admission-rerun.mjs';
+import { CLAIM_REASONS, CLAIM_WHY } from './queue.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 export { RULES_UNREADABLE_REPORT_AFTER_MS };
 import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
@@ -177,6 +178,12 @@ const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
 const NETWORK_CAUSE_TEXT = Object.freeze({ BUNDLE_UNAVAILABLE: '打包失败', REFS_GATE_UNCONFIRMED: 'refs 闸门没有答复',
   NATIVE_ADMISSION_UNAVAILABLE: '准入服务连不上', ADMISSION_VERIFICATION_UNAVAILABLE: '准入核验没有答复', GITHUB_TRANSIENT_UNAVAILABLE: 'GitHub 暂时不可用' });
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
+// Task 0ca0479d: the text for CLAIM_NOT_CURRENT's claim reasons (queue.mjs#CLAIM_WHY). Without a reason code (an older status,
+// a reason not named there, anything malformed) the text is the code alone, as before.
+export const claimWhy = (code, reasonCodes) => (CLAIM_REASONS.includes(code) && Array.isArray(reasonCodes)
+  ? CLAIM_WHY.find(([codes]) => codes.some(c => reasonCodes.includes(c)))?.[1] ?? '' : '');
+// The code as the page shows it in parentheses: "CODE" or "CODE，<why>".
+const codeWhy = (code, reasonCodes) => { const why = claimWhy(code, reasonCodes); return why ? `${code}，${why}` : code; };
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
 // DESIGN §41.6a: while the heartbeat's answer shows the failover watchdog has not ticked for more than 5 minutes
@@ -349,10 +356,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       }
       if (!(due && gate)) {
         const when = !due ? at : row.eta > now ? `约 ${hhmm(row.eta)} ` : status.current ? '当前批次结束后' : '即将';
-        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
+        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${codeWhy(code, row.reasonCodes)}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
         // Generation 12 (defect 050560ac): a network back-off names the cause and the next try; it needs nothing from the PR.
         if (row.network) return { state: 'pending', description: clip(`网络问题，${NETWORK_CAUSE_TEXT[row.deferred] ?? `未执行（${code}）`}，${when}自动重试，不用推新提交`) };
-        return { state: 'pending', description: clip(`未准入或未执行（${code}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
+        return { state: 'pending', description: clip(`未准入或未执行（${codeWhy(code, row.reasonCodes)}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
       }
     }
     // A row without a place among those that may run now (a deferral holds it) says no place, not "第 ? 位" (review round 22).
@@ -375,7 +382,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     return { state: 'pending', description: '网络故障重试次数已达今日上限：网络恢复后自动重试，不用推新提交' };
   }
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap') {
-    return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${row.deferred ?? '?'}）：请修正后推新提交`) };
+    return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${codeWhy(row.deferred ?? '?', row.reasonCodes)}）：请修正后推新提交`) };
   }
   const recent = status.recent.find(mine);
   if (recent) {
@@ -474,7 +481,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
     const d = rowHold(status, p, now);
     const reason = d ?? p.state ?? 'QUEUED';
     out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`,
-      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
+      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${codeWhy(d, p.reasonCodes)}）` : '前面还有批次')}。` });
   }
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
@@ -496,7 +503,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'stopped':
         if (status.notices?.some(b => b.budget && b.pr === n.pr && b.headSha === n.headSha
           && ['RELEASE_CAP_REACHED', 'NETWORK_RELEASE_CAP_REACHED'].includes(b.code))) break;
-        out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
+        out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${codeWhy(n.code ?? '?', status.pending?.find(p => p.pr === n.pr && p.headSha === n.headSha)?.reasonCodes)}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`,
         title: n.pr ? `PR #${n.pr} 的第 8 段重试额度已用完` : '今日第 8 段重试额度已用完',
         body: n.pr ? '这个 PR 在过去 24 小时内的重试已达上限，额度恢复后继续；其他 PR 的额度独立计算。' : '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;

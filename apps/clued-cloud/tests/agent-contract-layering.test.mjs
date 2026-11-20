@@ -18,6 +18,7 @@ const terminalRelease = JSON.parse(await readFile(new URL('./fixtures/agent-cont
 const leasePin = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v57-v58-map.json', import.meta.url), 'utf8'));
 const prEndRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v58-v59-map.json', import.meta.url), 'utf8'));
 const holderPreflight = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v59-v60-map.json', import.meta.url), 'utf8'));
+const servedTarget = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v60-v61-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -27,10 +28,32 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // the v55 queue participation and explicit holder removal, and the v56 Native
 // PR/Task identity successor, the v57 holder-edit/terminal successor, then the v58 lease pin by authorize_head, and the v59 PR-end release that
 // replaces holder readiness and terminal admission. The v60 successor corrects
-// only the existing A.4 holder preflight and its retired readiness wording.
+// only the existing A.4 holder preflight and its retired readiness wording. The v61 successor lets a pull-request
+// authorize_head omit the target branch the service decides (Task 0ca0479d).
 // Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v60Source() {
+  assert.equal(servedTarget.schema,'clued.agent-contract-served-target-successor/1');
+  assert.equal(servedTarget.source_version,60);assert.equal(servedTarget.target_version,61);
+  assert.deepEqual(servedTarget.edits.map(row=>row.id),['version','served-target']);
+  assert.deepEqual(servedTarget.edits[0],{id:'version',before:'Contract version: 60',after:'Contract version: 61'});
+  assert.equal(sha256(source),servedTarget.target_document_normalized_sha256);
+  const edit=servedTarget.edits[1];
+  for(const text of [edit.before,edit.after]) {
+    assert.ok(text.startsWith('- A guarded holder authorizes each exact full head SHA'));
+    assert.equal(/(?:^|\n)(?:### |<a id=)/.test(text),false,'the edit cannot consume another section');
+  }
+  assert.ok(edit.after.includes('omit `target_branch`')&&edit.after.includes('`work_claim_target_branch_not_served`'));
+  let restored=source;
+  for(const {id,before,after} of [...servedTarget.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact served-target successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),servedTarget.source_document_normalized_sha256);
+  return restored;
+}
 function v59Source() {
+  const source=v60Source();
   assert.equal(holderPreflight.schema,'clued.agent-contract-holder-preflight-successor/1');
   assert.equal(holderPreflight.source_version,59);assert.equal(holderPreflight.target_version,60);
   assert.deepEqual(holderPreflight.edits.map(row=>row.id),['version','holder-preflight']);
@@ -286,7 +309,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v60 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v61 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);
