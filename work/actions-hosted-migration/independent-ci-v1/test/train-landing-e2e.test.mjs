@@ -41,12 +41,12 @@ const body = pr => `Change.\n\nClued-Work-Claim: ${claimOf(pr)}\nClued-Work-Scop
 const healthy = { nodes: [{ node: { name: 'turing', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }] };
 
 // ---- the world ----
-// main's rulesets (Fable 2026-11-20 三态选路): 'push' is the state after the Owner's two steps (an independent fast-forward-only ruleset
-// with an empty bypass list, and the main ruleset with kooyumi-train-landed and App 5368905 as its only bypass); 'today' is production
-// before them (the main ruleset alone holds non_fast_forward and deletion, no kooyumi-train-landed, an empty bypass list).
+// main's rulesets (Fable 2026-11-20 三态选路, 补：bypass 名单读不到): 'push' is the state after the Owner's two steps (an independent
+// fast-forward-only ruleset App 5368905 cannot bypass, and the main ruleset with kooyumi-train-landed that it can always bypass); 'today'
+// is production before them (the main ruleset alone holds non_fast_forward and deletion, no kooyumi-train-landed, the App cannot bypass
+// it). The publisher reads only current_user_can_bypass (this App's own bypass); who else is on a list it does not read.
 const MAIN_RS = 24182890, FF_RS = 27500001;
 const FOUR = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'];
-const appBypass = [{ actor_id: 5368905, actor_type: 'Integration', bypass_mode: 'always' }];
 function rulesOf(kind) {
   const push = kind === 'push';
   return [{ type: 'pull_request', rulesetId: MAIN_RS, parameters: { allowed_merge_methods: ['merge'] } },
@@ -58,8 +58,8 @@ function rulesOf(kind) {
       ...FOUR.map(context => ({ context, integration_id: 15368 }))] } }];
 }
 const rulesetsOf = kind => new Map(kind === 'push'
-  ? [[MAIN_RS, { id: MAIN_RS, bypassActors: appBypass, currentUserCanBypass: 'always' }], [FF_RS, { id: FF_RS, bypassActors: [], currentUserCanBypass: 'never' }]]
-  : [[MAIN_RS, { id: MAIN_RS, bypassActors: [], currentUserCanBypass: 'never' }]]);
+  ? [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'always' }], [FF_RS, { id: FF_RS, currentUserCanBypass: 'never' }]]
+  : [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }]]);
 
 async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push' }) {
   const e = await setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 });
@@ -101,7 +101,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   W.rules = rulesOf(rules); W.rulesets = rulesetsOf(rules);
   W.setRules = kind => { W.rules = rulesOf(kind); W.rulesets = rulesetsOf(kind); };
   gh.readBranchRules = async () => ({ complete: true, branch: 'main', rules: structuredClone(W.rules) });
-  // GET /rulesets/{id} as github.mjs#readRuleset answers it (bypassActors null: the list is not visible to this token)
+  // GET /rulesets/{id} as github.mjs#readRuleset answers it: this App's own bypass of the ruleset (current_user_can_bypass)
   gh.readRuleset = async id => {
     const r = W.rulesets.get(id);
     if (!r) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' });
@@ -704,9 +704,9 @@ function githubMerges(e, b) {
 }
 const greens = (e, sha) => [...e.gh.world.checks.values()].filter(c => c.head_sha === sha && c.name === 'kooyumi-merge-slot' && c.conclusion === 'success');
 const PUSH1 = Object.freeze({ landing: 'push', batchMax: 1, unreadable: false });
-const TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing', 'main_bypass_not_app_only'];
+const TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass'];
 
-test('three ways, today (no independent ruleset, no kooyumi-train-landed, empty bypass): a push-capable package lands through GitHub as today and never parks', async t => {
+test('three ways, today (no independent ruleset, no kooyumi-train-landed, the App cannot bypass main): a push-capable package lands through GitHub as today and never parks', async t => {
   const { e, b, T } = await opened(t, [910], { rules: 'today' });
   // stage 10 still built the candidate merge commit S and pointed clued-train/staging at it: the four checks ran on S by their own names
   assert.equal(e.W.refs.get('heads/clued-train/staging'), b.testSha, 'the rehearsal S is on the staging ref');
@@ -756,7 +756,7 @@ test('three ways, today: three queued PRs go one by one through GitHub, none par
   assert.deepEqual(e.adopted.map(a => a[0]), [910, 911, 912]);
 });
 
-test('three ways: the four conditions all read back -> push lands, the stage-10 facts say so', async t => {
+test('three ways: the three conditions all read back -> push lands, the stage-10 facts say so', async t => {
   const { e, b } = await opened(t, [910]);
   const p = await stage8(t, e, b, { trainLanding: PUSH1 });
   assert.equal(p.status, 'SETTLED', JSON.stringify(p));
@@ -771,6 +771,8 @@ test('three ways, fail closed: rules that cannot be read, or read only in part, 
     'rules reply incomplete': e => { e.gh.readBranchRules = async () => ({ complete: false, branch: 'main', rules: [] }); },
     'ruleset read fails': e => { e.gh.readRuleset = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; },
     'rule without its ruleset': e => { const r = e.gh.readBranchRules; e.gh.readBranchRules = async () => { const x = await r(); delete x.rules[0].rulesetId; return x; }; },
+    // the "can this caller bypass" field itself not in the answer: the publisher knows nothing of its own position
+    'bypass state field absent': e => { for (const r of e.W.rulesets.values()) r.currentUserCanBypass = null; },
   };
   for (const [name, breakIt] of Object.entries(cases)) for (const kind of ['today', 'push']) await t.test(`${name} (${kind})`, async t => {
     const { e, b, T } = await opened(t, [910], { rules: kind });
@@ -788,15 +790,14 @@ test('three ways, fail closed: kooyumi-train-landed read while the rest is not c
   const cases = {
     // the main ruleset holds non_fast_forward and deletion itself (the App bypasses it): not the independent ruleset push relies on
     'no independent ruleset': W => { W.rules = W.rules.filter(r => r.rulesetId !== FF_RS); W.rulesets.delete(FF_RS); },
-    'independent ruleset with a bypass': W => { W.rulesets.get(FF_RS).bypassActors = [{ actor_id: 7, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; },
-    'main bypass empty': W => { Object.assign(W.rulesets.get(MAIN_RS), { bypassActors: [], currentUserCanBypass: 'never' }); },
-    'main bypass with another actor': W => { W.rulesets.get(MAIN_RS).bypassActors = [...appBypass, { actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; },
-    'ci-suites-windows dropped': W => { const rc = W.rules.find(r => r.type === 'required_status_checks'); rc.parameters.required_status_checks = rc.parameters.required_status_checks.filter(c => c.context !== 'ci-suites-windows'); },
+    // the App could force-push or delete main through it: the price of its bypass of the main ruleset is not paid
+    'the App can bypass the independent ruleset': W => { W.rulesets.get(FF_RS).currentUserCanBypass = 'always'; },
+    'the App cannot bypass main': W => { W.rulesets.get(MAIN_RS).currentUserCanBypass = 'never'; },
+    'the App bypasses main for pull requests only': W => { W.rulesets.get(MAIN_RS).currentUserCanBypass = 'pull_requests_only'; },
     'train-landed pinned to another App': W => { W.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.find(x => x.context === 'kooyumi-train-landed').integration_id = 1; },
   };
-  const expected = { 'no independent ruleset': 'independent_ruleset_missing', 'independent ruleset with a bypass': 'independent_ruleset_bypass_not_empty',
-    'main bypass empty': 'main_bypass_not_app_only', 'main bypass with another actor': 'main_bypass_not_app_only',
-    'ci-suites-windows dropped': 'main_required_check_missing:ci-suites-windows', 'train-landed pinned to another App': null };
+  const expected = { 'no independent ruleset': 'independent_ruleset_missing', 'the App can bypass the independent ruleset': 'independent_ruleset_app_can_bypass',
+    'the App cannot bypass main': 'main_app_cannot_bypass', 'the App bypasses main for pull requests only': 'main_app_bypass_not_always', 'train-landed pinned to another App': null };
   for (const [name, change] of Object.entries(cases)) await t.test(name, async t => {
     const { e, b, T } = await opened(t, [910]);
     change(e.W);
@@ -809,34 +810,27 @@ test('three ways, fail closed: kooyumi-train-landed read while the rest is not c
   });
 });
 
-test('three ways, fail closed: a main bypass list that is not empty without kooyumi-train-landed parks (half of the Owner\'s second step)', async t => {
+test('three ways, fail closed: the App able to bypass main without kooyumi-train-landed parks (half of the Owner\'s second step)', async t => {
   const { e, b, T } = await opened(t, [910], { rules: 'today' });
-  Object.assign(e.W.rulesets.get(MAIN_RS), { bypassActors: appBypass, currentUserCanBypass: 'always' });
+  e.W.rulesets.get(MAIN_RS).currentUserCanBypass = 'always';
   const p = await stage8(t, e, b, { trainLanding: PUSH1 });
   assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0], JSON.stringify(p));
-  assert.ok(p.missing.includes('main_bypass_not_empty'), JSON.stringify(p.missing));
+  assert.ok(p.missing.includes('main_app_can_bypass'), JSON.stringify(p.missing));
   untouched(e, T); assert.deepEqual(e.W.pushes, []);
 });
 
-test('three ways: a bypass list this token cannot see is read as the App\'s own bypass; a list that contradicts it is unreadable', async t => {
-  await t.test('today, list hidden, the App cannot bypass main -> current path', async t => {
+test('three ways: the bypass lists are not the publisher\'s to read: who else is on them changes no route (checked by an administrator when the Owner saves)', async t => {
+  await t.test('today, another actor on main\'s list, the App cannot bypass -> current path', async t => {
     const { e, b } = await opened(t, [910], { rules: 'today' });
-    Object.assign(e.W.rulesets.get(MAIN_RS), { bypassActors: null, currentUserCanBypass: 'never' });
+    e.W.rulesets.get(MAIN_RS).bypassActors = [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }];
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
     assert.equal(p.status, 'SETTLED', JSON.stringify(p)); assert.deepEqual(e.W.pushes, []);
   });
-  await t.test('push state, lists hidden -> push', async t => {
+  await t.test('push state, other actors on both lists -> push', async t => {
     const { e, b } = await opened(t, [910]);
-    for (const r of e.W.rulesets.values()) r.bypassActors = null;
+    for (const r of e.W.rulesets.values()) r.bypassActors = [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }];
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
     assert.equal(p.status, 'SETTLED', JSON.stringify(p)); assert.deepEqual(e.W.pushes, [b.testSha]);
-  });
-  await t.test('an empty list beside an App that can bypass -> unreadable, parked', async t => {
-    const { e, b, T } = await opened(t, [910]);
-    e.W.rulesets.get(MAIN_RS).bypassActors = [];
-    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
-    assert.deepEqual([p.reason, p.missing], ['TRAIN_LANDING_RULES_MISSING', [`ruleset_bypass_unreadable:${MAIN_RS}`]]);
-    untouched(e, T);
   });
 });
 
