@@ -11,7 +11,7 @@
 
 **凭据按被演练的包来给**（Fable 裁定补“合入顺序”“心跳令牌与重启码”“凭据名单来源”）：凭据文件名单是包随归档发布的数据
 `windows/credential-files.json`（`{"contract":"clued.independent-ci.credential-files/1","required":{…},"optional":{…}}`），建 kit 时从归档原样读出，
-连同其字节的哈希记进 kit 的 `credentials` 与 `credentialFilesSha256`；没有这份文件、contract 不符、读不懂、键或名字重复、同名跨两组的包拒绝建 kit
+连同其字节的哈希记进 kit 的 `credentials` 与 `credentialFilesSha256`；组内键须匹配 `^[A-Za-z][A-Za-z0-9]*$`、文件名须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]*$` 且不以点结尾、不是保留设备名（与包分支同一组白名单）；没有这份文件、contract 不符、读不懂（含非 UTF-8）、不合白名单、键或名字重复（按 ASCII 不分大小写）、同名跨两组的包拒绝建 kit
 （`DRILL_PACKAGE_CREDENTIALS_UNREADABLE`）。演练不再解析包的 PowerShell 源码。开机前：从已核的 tar 重新读出这份文件，字节哈希与两组名单都须与 kit 的记录相同，不一致即拒绝（`DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES`）；
 必需的名字演练造不出来即拒绝（`DRILL_CREDENTIAL_REQUIRED_NOT_MADE`，detail 为名字）；可选的名字演练必须有显式决定，没有决定即拒绝
 （`DRILL_CREDENTIAL_OPTIONAL_UNDECIDED`）。包没声明的名字不生成、不交付。决定写在 `drill/credential-decisions.json`（`drill-vm.ps1` 读成 `$script:DrillCredentialDecisions`，建 kit 也读它：给出且带 `perNodeStep` 的名字，不论在必需组还是可选组，都在 kit 的单节点步骤里登记一步），

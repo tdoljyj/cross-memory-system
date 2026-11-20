@@ -78,7 +78,8 @@ function duplicateJsonKey(text) {
       while (k < text.length && /\s/.test(text[k])) k++;
       const top = stack[stack.length - 1];
       if (text[k] === ':' && top) {
-        const key = JSON.parse(text.slice(i, j + 1)).toLowerCase();
+        // ASCII's case rule only: the keys that reach here are in the allow-list (credentialsOfTar checks it first)
+        const key = JSON.parse(text.slice(i, j + 1)).replace(/[A-Z]/g, ch => ch.toLowerCase());
         if (top.has(key)) return key;
         top.add(key);
       }
@@ -99,17 +100,19 @@ export function credentialsOfTar(tarBytes) {
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(entries[0].data); } catch { text = null; }
   check(text !== null, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json is not UTF-8');
   try { c = JSON.parse(text); } catch { c = null; }
-  // a credential file name: a plain name that a Win32 path keeps as it is -- no trailing dot or space, no reserved device name
-  // (CON, PRN, AUX, NUL, COM0-9, LPT0-9 and their superscript forms, with or without an extension; 8th review round, low 3)
-  const fileName = v => typeof v === 'string' && nameOK(v) && !/[. ]$/.test(v) && !/^(?:CON|PRN|AUX|NUL|COM[0-9¹²³]|LPT[0-9¹²³])(?:\..*)?$/i.test(v);
-  const group = g => g !== null && typeof g === 'object' && !Array.isArray(g) && Object.values(g).every(fileName);
+  // allow-lists, not case rules (9th review round, medium 1; the package branch holds the same): a group's key ^[A-Za-z][A-Za-z0-9]*$; a
+  // credential file name ^[A-Za-z0-9][A-Za-z0-9._-]*$, not ending in a dot, no reserved device name (CON, PRN, AUX, NUL, COM0-9, LPT0-9,
+  // with or without an extension; 8th review round, low 3). Inside them everything is ASCII, so comparing without case is ASCII's rule.
+  const keyOK = k => /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(k);
+  const fileName = v => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(v) && !v.endsWith('.') && !/^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?$/i.test(v);
+  const group = g => g !== null && typeof g === 'object' && !Array.isArray(g) && Object.keys(g).every(keyOK) && Object.values(g).every(fileName);
   check(c !== null && typeof c === 'object' && !Array.isArray(c) && Object.keys(c).sort().join() === 'contract,optional,required' &&
     c.contract === CREDENTIAL_FILES_CONTRACT && group(c.required) && group(c.optional) && Object.keys(c.required).length > 0,
     'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'credential-files.json');
   // a key written twice in one object, by case too (JSON.parse keeps the last; Windows PowerShell refuses such an object)
   check(duplicateJsonKey(text) === null, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a key twice');
   const names = [...Object.values(c.required), ...Object.values(c.optional)];
-  check(new Set(names.map(n => n.toLowerCase())).size === names.length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a name twice');
+  check(new Set(names.map(n => n.replace(/[A-Z]/g, ch => ch.toLowerCase()))).size === names.length, 'DRILL_PACKAGE_CREDENTIALS_UNREADABLE', 'a name twice');
   return { sha256: sha256(entries[0].data), credentials: { contract: c.contract, required: c.required, optional: c.optional } };
 }
 
