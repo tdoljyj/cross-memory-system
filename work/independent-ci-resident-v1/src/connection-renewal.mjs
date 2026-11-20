@@ -3,7 +3,9 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { performance } from 'node:perf_hooks';
 import { readBounded } from './store.mjs';
+import { HEX64 } from './canonical.mjs';
 
 const run = promisify(execFile);
 const DAY = 86_400_000;
@@ -17,7 +19,11 @@ const CODE = /^[A-Z_]{3,80}$/;
 // or no candidate; RENEW_BUSY after two minutes; a pending approval after the server's interval.
 const HOURLY = ['RENEW_GATEWAY_UNAVAILABLE', 'RENEW_RESPONSE_UNAVAILABLE', 'RENEW_INTERRUPTED', 'RENEW_UNAVAILABLE', 'RENEW_HANDOVER_NO_CANDIDATE'];
 const retrySeconds = value => Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
-const retryAfter = last => last.code === 'RENEW_PENDING_APPROVAL' && retrySeconds(last.retryAfterSeconds) ? last.retryAfterSeconds * 1000
+// 缺陷 c7ea4ea1（Fable 11-20“补：续期不等”B）：每条通道记录带写入它的那一代的 Source 摘要（source）。别的代写下的拒绝
+// （标识不同，或旧格式记录没有标识）不计退避，本代即可再投——升级往往正是为修这个拒绝。其余字段原样使用：让班等待中的仍按等待节奏，
+// 生效时间、绑定、到期跨代不变，续上的连接仍按日。
+const retryAfter = (last, source) => last.source !== source && typeof last.code === 'string' && !last.waiting ? 0
+  : last.code === 'RENEW_PENDING_APPROVAL' && retrySeconds(last.retryAfterSeconds) ? last.retryAfterSeconds * 1000
   : last.waiting || HOURLY.includes(last.code) ? HOUR : last.code === 'RENEW_BUSY' ? 120_000 : DAY;
 const validTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
 const serviceHash = createHash('sha1').update(Buffer.from('CLUEDCIRESIDENT', 'utf16le')).digest();
@@ -62,7 +68,11 @@ export function companionKeyWatch(root, clock = Date.now) {
 
 // One in-flight request. The resident can only create a new UUID file in this mailbox.
 // Persist the UUID first so that restarting either service never loses track of an answer.
-export function renewalWatch({root, profile, mode, drained, onHandover, clock=Date.now, observe=()=>observeOwnKey(root)}) {
+// source: this generation's Source digest (policy.ciSourceManifestSha256), the one the fleet upgrade names each generation by.
+// uptime: how long this process has run, on a monotonic clock (the tests inject it).
+export function renewalWatch({root, profile, mode, drained, onHandover, source, clock=Date.now, uptime=()=>performance.now(),
+  observe=()=>observeOwnKey(root)}) {
+  if (!HEX64.test(source ?? '')) throw new Error('RENEW_SOURCE_REQUIRED');
   const stateFile=path.join(root,'state','connection-renewal.json');
   let nextCheck=0, book=null;
   const save=()=>writeObservation(stateFile,book);
@@ -81,8 +91,9 @@ export function renewalWatch({root, profile, mode, drained, onHandover, clock=Da
       const [system,r,c,h]=await Promise.all([read(path.join(root,'broker','renew-key.json')),observe().catch(()=>null),
         read(controller),read(path.join(root,'mailbox','responses','renew-key.json'))]);
       if(r) await writeObservation(path.join(root,'state','renew-key-resident.json'),r);
-      book.keys={...keyCheck(system,r,c,h,profile,now,mode()),systemFailure:system?.failure??null};
-      book.checkedAt=new Date(now).toISOString(); await save();
+      const checkedAt=clock();
+      book.keys={...keyCheck(system,r,c,h,profile,checkedAt,mode()),systemFailure:system?.failure??null};
+      book.checkedAt=new Date(checkedAt).toISOString(); await save();
     }
     if (book.pending) {
       const {id,kind,at,confirming}=book.pending;
@@ -106,7 +117,7 @@ export function renewalWatch({root, profile, mode, drained, onHandover, clock=Da
       const waiting = yielded || confirmation || (kind === 'ci' && !done && (uncertain || waitForDrain));
       if (yielded) await onHandover();
       book.lanes[kind] = {
-        at: now, waiting, effectiveAt: yielded ? reply.effectiveAt : waiting ? prior?.effectiveAt ?? null : null,
+        at: now, source, waiting, effectiveAt: yielded ? reply.effectiveAt : waiting ? prior?.effectiveAt ?? null : null,
         code: yielded ? 'RENEW_HANDOVER_WAITING' : confirmation ? 'CI_REBIND_NOT_DRAINED' : done ? null : refused,
         bindingId: bound ? reply.bindingId : prior?.bindingId ?? null,
         expiresAt: bound ? reply.expiresAt : prior?.expiresAt ?? null,
@@ -127,12 +138,15 @@ export function renewalWatch({root, profile, mode, drained, onHandover, clock=Da
     }
     for (const kind of KINDS) {
       const last=book.lanes[kind];
-      if (last && now-last.at < retryAfter(last)) continue;
+      if (last && now-last.at < retryAfter(last, source)) continue;
       if (last?.waiting && now < Date.parse(last.effectiveAt)) continue;
       // During an acknowledged handover, await the role probe while the old connection is usable. After expiry
       // the server alone can confirm duty through the signed lane, once this node has drained.
       if (kind === 'ci' && last?.waiting && mode() === 'UNCERTAIN'
           && ((last.effectiveAt && Date.parse(last.expiresAt) > now) || !(await drained() && mode() !== 'ACTIVE'))) continue;
+      // Task eb73b396（Fable 11-20“补：升级中续期”，进程启动宽限）：换代与回滚必然重启常驻，服务端要等收到带新 Source 的心跳才认它；
+      // 本进程启动满一个检查周期前不发起新的投递（不写状态、不计退避）。让班等待中的重投与确认、自检不受此约束。
+      if (!last?.waiting && uptime() < CHECK_INTERVAL) break;
       // 是否进窗口、是否当班只由 Broker 的新鲜签名探询判断（D2c 裁定 B2）：常驻对两类连接同样投递，不读 Broker 的每日观测。
       await post(kind, now);
       break;

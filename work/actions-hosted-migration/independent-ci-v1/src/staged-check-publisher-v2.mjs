@@ -10,8 +10,8 @@
 //     no longer reports lease_observations_disagree);
 //   - the role-on-head mutex K(head, role) (effect-journal.mjs#claimRolePublication) is begun before the
 //     own effect key, in the journal state\v2\effects-scan; a K held by any other holder refuses the publication;
-//   - nothing else: same journal states, same revocation, same readback and the same "a settled
-//     effect is only re-verified, never re-posted" rule (a settled job id is never run again).
+//   - staged scanners create an in-progress run and bind its ID before verification and completion.
+//     Active ticket publication and verification of already settled effects use the existing path.
 // Resident primary/standby design v0.4 §6.2 (C4, Task c2af8d17): before a role's first publication, once
 // the boundary passed, a role this journal knows nothing of (no own effect key, no K(head, role)) is read back on
 // GitHub (published-on-github-v2.mjs). A check of App 5368905 of the same name there, published by another node or
@@ -20,7 +20,7 @@
 // is role_already_published_on_head). A read-back that is not complete refuses (fail closed).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { canonical, digest } from './proof.mjs';
-import { freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
+import { FRESH_MS, freshStamp, retainedServerAnswerCurrent } from './clock-skew.mjs';
 import { validateJobV2, SCANNER_ROLES_V2, subjectOfV2, scanEffectKeyV2, scanExternalIdV2, sameClaimGeneration, claimGeneration, prBaseAcceptedV2, isTrainFrontJobV2, frontJobIdsV2 } from './job-v2.mjs';
 import { verifyResultV2 } from './proof-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from './full-admission-v2.mjs';
@@ -83,6 +83,8 @@ export const ADOPT_READ_DELAYS_MS = Object.freeze([0, 10_000, 25_000]);
 // What the confirmation after the write needs besides a boundary as long as the one before it: the GitHub read-back and the steps
 // between its two boundaries.
 export const CONFIRMATION_MARGIN_MS = 5_000;
+export const SCAN_COMPLETION_RESERVE_MS = 2_000;
+const STAGED_SCAN_POLICY_REQUIRED = 'staged_scan_execution_policy_required';
 // What the write itself needs of the pre-write observation window after the last check before it (review round 6, MAJOR 1): the role
 // key and the journal (local), the reserve the recoverable publisher demands at the create (PUBLICATION_READBACK_RESERVE_MS, 2 s), and
 // WRITE_NATIVE_CALLS Native calls (prepareNativePublication's current-authority verify, and an active policy's publication begin),
@@ -126,15 +128,19 @@ export function slotBindingFor(job, mergeSlot) {
 // batchClaim: the sticky claim generation recorded by stage 1 for this batch (batch-claim-v2.mjs).
 export function createStagedCheckPublisherV2({ nativeAdmission, authority, github, journal, signers,
   configuredChecks, readChangedPaths, protectedDeployment, batchClaim, clock = Date.now, domain = 'production',
+  requireVerifyFirst = false,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
   const deployment = plain(protectedDeployment) ? structuredClone(protectedDeployment) : null;
   const checks = plain(configuredChecks) ? structuredClone(configuredChecks) : null;
+  const verifyFirst = ['readStagedScan', 'completeStagedScan', 'failStagedScan'].every(k => typeof github?.[k] === 'function');
+  const completionAuthority = ['monotonicMs', 'recheckBatchClaim', 'assertCompletionWindow'].every(k => typeof authority?.[k] === 'function');
   const configured = ['production', 'fixture'].includes(domain) && deployment?.enabled === true
     && deployment.domain === domain && ref(deployment.repository) && requiredRefs.every(k => ref(deployment[k]))
     && UUID.test(deployment.ciPrincipalBindingId ?? '') && typeof nativeAdmission?.evaluatePr === 'function'
     && typeof authority?.observe === 'function' && typeof github?.readPullRequest === 'function'
     && typeof github?.readChecks === 'function' && typeof github?.createCheck === 'function'
     && typeof github?.revokeCheck === 'function' && ['begin', 'read', 'transition'].every(k => typeof journal?.[k] === 'function')
+    && (!requireVerifyFirst || verifyFirst && completionAuthority)
     && signers instanceof Map && typeof readChangedPaths === 'function' && typeof clock === 'function' && checks
     && plain(batchClaim) && UUID.test(batchClaim.claimId ?? '') && positive(batchClaim.fence) && positive(batchClaim.epoch)
     && (domain !== 'fixture' || github.fixture === true && authority.fixture === true && nativeAdmission.fixture === true)
@@ -161,7 +167,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   // holds a check of this App by that name. The caller has already found no own effect key. A train front batch: only the
   // checks of its own front subject's jobs (§41.4).
   async function onGithubOnly(mutex, job, definition) {
-    if (await journal.read(rolePublicationKey(mutex))) return false;
+    if (await readEffect(rolePublicationKey(mutex), job)) return false;
     return (await publishedNames(github, job.headSha, [definition.name], definition.appId, frontJobIdsV2(job))).length > 0;
   }
   // The two reads the after-write verification depends on, nothing else: the PR and the head's check inventory.
@@ -203,6 +209,11 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (matches.length !== 1) stop('check_discovery_unconfirmed');
     return matches[0];
   }
+  // Active scanners need a different ticket lifecycle before production can publish them.
+  function requireStagedScanPolicy(job, facts) {
+    if (requireVerifyFirst && SCANNER_ROLES_V2.includes(job.role) && facts.executionPolicy !== 'staged')
+      stop(STAGED_SCAN_POLICY_REQUIRED);
+  }
   // The protected facts of the job, observed now and checked against the job, the batch claim, the qualification and the deployment.
   async function observeFacts(job, verified) {
     const facts = await authority.observe(job, batchClaim);
@@ -216,6 +227,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (!requiredRefs.every(k => facts[k] === deployment[k]) || facts.ciPrincipalBindingId !== deployment.ciPrincipalBindingId
       || verified.signer.sourceAcceptanceRef !== facts.sourceAcceptanceRef || verified.signer.qualificationRef !== facts.hostQualificationRef)
       stop('protected_qualification_changed', true);
+    requireStagedScanPolicy(job, facts);
     return facts;
   }
   // Generation 13 (DESIGN §57.2, Task 7b21f820): live authority is a Native answer at most FRESH_MS old (Decision 1100a0ed), and
@@ -227,8 +239,10 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   // own, protected_facts_reobservation_unavailable: it comes after a complete admission, so it is never the pre-admission exhaustion
   // the recoverable publisher may run again in the same window (runtime/one-shot-v2.mjs); before the write it is a clean, rerunnable
   // BLOCKED, after it the write is compensated as before (review round 2, MAJOR A).
-  async function liveFacts(job, verified, facts, claim) {
-    if (fresh(facts, clock())) return facts;
+  async function liveFacts(job, verified, facts, claim, completing) {
+    // Completion needs an observation after the full evaluation. The send
+    // closure checks the remaining lifetime of both answers.
+    if (!completing && fresh(facts, clock())) return facts;
     try { facts = await observeFacts(job, verified); }
     catch (error) { if (reason(error) === 'native_claim_observation_unavailable') stop('protected_facts_reobservation_unavailable'); throw error; }
     if (!sameClaimGeneration(facts.claim, claim)) stop('lease_observations_disagree', true);
@@ -264,7 +278,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (!fresh(again.native, clock())) stop('lease_expired_after_write', true);
     return again;
   }
-  async function boundary(job, envelope, definition, expectedEvidenceSha256 = null) {
+  async function boundary(job, envelope, definition, expectedEvidenceSha256 = null, completing = false) {
     let verified;
     try { verified = verifyResultV2({ job, envelope, signers, now: clock(), domain }); }
     catch { stop('execution_proof_refused', true); }
@@ -284,12 +298,16 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       || !Array.isArray(packet.paths) || !packet.paths.length || packet.paths.length > 3000 || new Set(packet.paths).size !== packet.paths.length
       || packet.paths.some(p => typeof p !== 'string' || !p || p.length > 4096 || /[\x00-\x1f\\:]/.test(p) || p.startsWith('/') || p.split('/').some(part => !part || part === '.' || part === '..')))
       stop('native_path_observation_unconfirmed');
+    const evaluationStarted = completing ? authority.monotonicMs?.() : null;
     const native = await nativeAdmission.evaluatePr(job, packet, { batchClaim });
     if (!['clued.independent-ci.full-admission/2', 'clued.independent-ci.full-admission/3'].includes(native?.contract) || native.status !== 'ADMITTED' || native.domain !== domain) {
       const failure = fullAdmissionFailureV2(native);
+      if (completing && failure?.reason === 'full_admission_observation_expired') stop('staged_scan_verification_aged');
       stop('full_admission_not_proven', false, { ...(failure ? { admissionReason: failure.reason } : {}), ...(failure?.admissionDiagnostic ? { admissionDiagnostic: failure.admissionDiagnostic } : {}) });
     }
+    if (completing && retainedServerAnswerCurrent(native) === false) stop('staged_scan_verification_aged');
     if (!admittedFactsMatchJobV2(native, job, clock(), { batchClaim })) stop('native_identity_changed', true);
+    requireStagedScanPolicy(job, native);
     if (native.packetSha256 !== digest(packet) || !HASH.test(native.evaluationSha256 ?? '') || !ref(native.modeProofRef) || !ref(native.observationRef)) stop('full_admission_observation_unconfirmed');
     if (!plain(native.mode) || !ref(native.mode.state) || !ref(native.mode.layer)
       || !(ref(native.mode.policyVersion) || Number.isSafeInteger(native.mode.policyVersion))
@@ -298,20 +316,132 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       || !Array.isArray(native.workflowGateFindings) || native.workflowGateFindings.length) stop('full_admission_incomplete');
     // Generation, not expires_at: a renewal between the two observations is not a disagreement.
     if (!sameClaimGeneration(facts.claim, native.observedClaim)) stop('lease_observations_disagree', true);
-    facts = await liveFacts(job, verified, facts, native.observedClaim);
+    facts = await liveFacts(job, verified, facts, native.observedClaim, completing);
+    if (completing && (facts.executionPolicy !== 'staged' || native.executionPolicy !== 'staged'
+      || facts.guarded !== native.guarded || facts.packetSha256 !== native.packetSha256)) stop('authorization_binding_changed', true);
     try {
       const stillVerified = verifyResultV2({ job, envelope, signers, now: clock(), domain });
       if (canonical(stillVerified.signer) !== canonical(verified.signer)) stop('execution_proof_refused');
     } catch { stop('execution_proof_refused'); }
     // §38.8 n2: the PR base.sha read here is bound too, so the before and after reads of one publication must agree on it
     // (for a batch that tests the head it is T anyway; a train front batch reads it as a fact).
-    return { verified, native, packet, facts, ms: used(), bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy, prBaseSha: pr.base.sha,
+    return { verified, native, packet, facts, evaluationStarted, ms: used(), bindingSha256: digest({ subject: subjectOfV2(job), claim: claimGeneration(native.observedClaim), executionPolicy: native.executionPolicy, prBaseSha: pr.base.sha,
       ...(native.publicationRequired ? { guarded: native.guarded, publicationRequired: true, headAuthorizationId: native.headAuthorizationId } : {}),
       mode: native.mode, mergeSlot: slotBindingFor(job, native.mergeSlot), ownerReview: native.ownerReview, refs: Object.fromEntries(requiredRefs.map(k => [k, facts[k]])),
       ciPrincipalBindingId: facts.ciPrincipalBindingId, signer: verified.signer, appId: definition.appId, name: definition.name }) };
   }
   async function transition(key, phase, next, details) {
     try { return await journal.transition(key, phase, next, details); } catch { return null; }
+  }
+  async function readEffect(key, job) {
+    try { return await journal.read(key); }
+    catch (error) {
+      if (verifyFirst && SCANNER_ROLES_V2.includes(job.role)
+        && ['invalid_effect_record', 'unsafe_journal_file'].includes(error?.code)) stop('staged_scan_journal_conflict');
+      throw error;
+    }
+  }
+  const pendingMatches = (check, payload) => check.status === 'in_progress' && check.conclusion === null
+    && check.output?.title === payload.output.title && check.output?.summary === payload.output.summary;
+
+  function isUnsentScan(record, job, definition, externalId) {
+    const subject = record?.subject;
+    return ['intent', 'authorized', 'not_sent'].includes(record?.state) && subject?.stagedScan === true
+      && subject.externalId === externalId && plain(subject.definition) && plain(subject.subject)
+      && canonical(subject.definition) === canonical(definition)
+      && canonical(subject.subject) === canonical(subjectOfV2(job));
+  }
+
+  async function publishPending({ key, job, envelope, definition, externalId, payload, nativeHandle, before, withdrawn, republication, journalSubject }) {
+    const journalUnconfirmed = sideEffects => ({ status: 'UNCERTAIN', effectKey: key, reason: 'staged_scan_journal_conflict', sideEffects, productionAuthorized: false });
+    const stopped = (status, reason, sideEffects) => ({ status, effectKey: key, reason, sideEffects, productionAuthorized: false });
+    let known = null, createConfirmed = false, cause = 'staged_scan_create_unconfirmed', sideEffects = 1;
+    const acceptPending = check => identity(check, definition, job, externalId) && !withdrawn.has(check.id) && pendingMatches(check, payload);
+    try {
+      const created = await github.createCheck(payload, nativeHandle);
+      if (acceptPending(created)) { known = created; createConfirmed = true; }
+    } catch (error) {
+      if (nativePublicationNoPostProof(error)?.notSent === true) {
+        const retired = await transition(key, 'sent', 'revoked', { reason: 'native_publication_not_sent', notSent: true, externalId });
+        return retired ? stopped('BLOCKED', 'native_publication_not_sent', 0) : journalUnconfirmed(0);
+      }
+      cause = reason(error);
+    }
+    // The create carried no conclusion. Recovery can identify an exact pending
+    // copy for cleanup without guessing an ID or repeating the POST.
+    if (!known) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const copy = await discoverKnown(definition, job, externalId, withdrawn);
+          if (acceptPending(copy)) { known = copy; break; }
+        } catch { /* A missing or unreadable pending check is safe. */ }
+      }
+    }
+    let details = null;
+    let after = null, completionSent = false, settled = false;
+    try {
+      const sent = await journal.read(key);
+      if (sent?.state !== 'sent' || sent.subjectSha256 !== digest(journalSubject) || sent.details?.externalId !== externalId) return journalUnconfirmed(sideEffects);
+      if (known) {
+        details = { checkRunId: known.id, conclusion: before.verified.payload.conclusion, output: payload.output };
+        await journal.transition(key, 'sent', 'created', details);
+      }
+    } catch { return journalUnconfirmed(sideEffects); }
+    if (known) {
+      try {
+        // On an ambiguous POST we only adopt the run for cleanup.
+        if (!createConfirmed) stop(cause);
+        await github.completeStagedScan(key, known.id, async () => {
+          after = await boundary(job, envelope, definition, before.verified.evidenceSha256, true);
+          if (after.bindingSha256 !== before.bindingSha256 || after.native.packetSha256 !== before.native.packetSha256
+            || after.native.scope !== before.native.scope) stop('authorization_binding_changed', true);
+          await authority.recheckBatchClaim?.(job);
+          return () => {
+            const now = clock(), reserve = SCAN_COMPLETION_RESERVE_MS;
+            authority.assertCompletionWindow?.(reserve);
+            const verified = verifyResultV2({ job, envelope, signers, now, domain });
+            if (canonical(verified.signer) !== canonical(after.verified.signer)) stop('execution_proof_refused');
+            // Mode and recorder can predate the retained Native reply.
+            const evaluationAge = authority.monotonicMs?.() - after.evaluationStarted;
+            if (!Number.isFinite(evaluationAge) || evaluationAge < 0 || evaluationAge + reserve > FRESH_MS
+              || retainedServerAnswerCurrent(after.native, reserve) !== true
+              || retainedServerAnswerCurrent(after.facts, reserve) !== true) stop('staged_scan_verification_aged');
+            completionSent = true;
+            sideEffects++;
+          };
+        });
+        cause = 'staged_scan_completion_unconfirmed';
+      } catch (error) { cause = reason(error); }
+      // A success reply, or a lost one, is confirmed only by the bound ID.
+      // An unexpected terminal state cannot authorize a PATCH or a settlement.
+      for (let attempt = 0; attempt < (completionSent ? 2 : 1); attempt++) {
+        try {
+          const observed = await github.readStagedScan(key, known.id);
+          if (completionSent && observed === 'completed') { settled = true; break; }
+        } catch { /* No terminal result was confirmed. */ }
+      }
+      if (!settled) {
+        sideEffects++;
+        try { await github.failStagedScan(key, known.id); } catch { /* Best effort on our pending run. */ }
+      }
+    }
+    try {
+      const current = await journal.read(key), state = current?.state;
+      if (current?.subjectSha256 !== digest(journalSubject)
+        || (known ? !['created', 'completing'].includes(state) || canonical(current.details) !== canonical(details)
+          : state !== 'sent' || current.details?.externalId !== externalId)
+        || (settled && state !== 'completing')) return journalUnconfirmed(sideEffects);
+      if (!settled) {
+        await journal.transition(key, state, 'revoked', { ...(known ? { checkRunId: known.id } : {}), externalId, reason: cause });
+        return stopped('STAGED_SCAN_FAILED', cause, sideEffects);
+      }
+      await journal.transition(key, state, 'settled', { checkRunId: known.id, externalId, conclusion: details.conclusion,
+        observationKind: 'staged-native-observation', nativeObservationBeforeSha256: before.native.observationSha256,
+        nativeObservationAfterSha256: after.native.observationSha256, evidenceSha256: after.verified.evidenceSha256 });
+    } catch { return journalUnconfirmed(sideEffects); }
+    return { status: 'SETTLED', mode: 'staged', effectKey: key, checkRunId: known.id, evidenceSha256: before.verified.evidenceSha256,
+      ...(republication ? { republication } : {}), nativeObservationBeforeSha256: before.native.observationSha256,
+      nativeObservationAfterSha256: after.native.observationSha256, sideEffects, productionAuthorized: domain === 'production' };
   }
   // republish: { n } when publish() may follow this withdrawal by republication n + 1 (a staged publication withdrawn after its write).
   async function revoke({ key, phase, known, definition, job, externalId, cause, sideEffects, admissionReason, admissionDiagnostic, republish = null }) {
@@ -362,7 +492,9 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         // §41.4: a train front batch holds its own K(head, S, role), apart from the non-front run of H.
         mutex = { repo: job.repo, headSha: job.headSha, role: job.role, checkName: definition.name, appId: definition.appId, ...(isTrainFrontJobV2(job) ? { testSha: job.testSha } : {}) };
         externalId = scanExternalIdV2(job);
-        previous = await journal.read(key);
+        previous = await readEffect(key, job);
+        if (isUnsentScan(previous, job, definition, externalId))
+          return { status: 'BLOCKED', effectKey: key, reason: 'staged_scan_not_sent', sideEffects: 0, productionAuthorized: false };
         if (previous && previous.state !== 'settled') {
           if (!republishable(previous)) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
           // Generation 28 (ADR 0015): the original was withdrawn for unavailability only. The first republication that is not itself so
@@ -372,7 +504,9 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           if (positive(previous.details?.checkRunId)) withdrawn.add(previous.details.checkRunId);
           let slot = null;
           for (let n = 1; n <= MAX_REPUBLICATIONS && !slot; n++) {
-            const k = republicationKey(original.key, n), record = await journal.read(k);
+            const k = republicationKey(original.key, n), record = await readEffect(k, job);
+            if (isUnsentScan(record, job, definition, externalId))
+              return { status: 'BLOCKED', effectKey: k, reason: 'staged_scan_not_sent', sideEffects: 0, productionAuthorized: false };
             if (!record || record.state === 'settled') slot = { n, k, record };
             else if (!republishable(record)) return { status: record.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: k, republication: n, sideEffects: 0, productionAuthorized: false };
             else if (positive(record.details?.checkRunId)) withdrawn.add(record.details.checkRunId);
@@ -396,14 +530,22 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         if (!fresh(before.native, clock())) stop('native_admission_aged_before_write');
         if (!writeFits(before.ms)) stop('publication_window_short_before_write');
       } catch (error) {
+        if (reason(error) === STAGED_SCAN_POLICY_REQUIRED)
+          return { status: 'BLOCKED', effectKey: key, reason: STAGED_SCAN_POLICY_REQUIRED, sideEffects: 0, productionAuthorized: false };
         if (previous?.state === 'settled' && positive(previous.details?.checkRunId)) {
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
           return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0, ...admissionOf(error) });
         }
-        return { status: previous ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(!previous && passingFault(error) ? { safeToRerun: true } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}),
+        return { status: previous || reason(error) === 'staged_scan_journal_conflict' ? 'UNCERTAIN' : 'BLOCKED', ...(key ? { effectKey: key } : {}), reason: reason(error), ...(!previous && passingFault(error) ? { safeToRerun: true } : {}), ...(admissionOf(error).admissionDiagnostic ? { admissionDiagnostic: admissionOf(error).admissionDiagnostic } : {}),
           ...(republication ? { republication } : {}), sideEffects: 0, productionAuthorized: false };
       }
-      let phase = 'intent', sent = false, known = null, sideEffects = 0;
+      const stagedScan = verifyFirst && SCANNER_ROLES_V2.includes(job.role) && before.native.executionPolicy === 'staged';
+      if (stagedScan) authority.beginStagedScan?.();
+      const journalSubject = { subject: subjectOfV2(job), definition, evidenceSha256: before.verified.evidenceSha256,
+        observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256, externalId,
+        compensation: 'known-check-patch-failure-on-any-unsettled-write', ...(stagedScan ? { stagedScan: true } : {}),
+        ...(republication ? { republicationOf: original.key, republication } : {}) };
+      let phase = 'intent', ownsIntent = false, sent = false, known = null, sideEffects = 0;
       try {
         // K(head, role) first: another holder of this role on this head refuses the publication before its own key exists.
         try {
@@ -413,17 +555,18 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
           if (error?.code === 'role_already_published_on_head') return { status: 'BLOCKED', effectKey: key, reason: 'role_already_published_on_head', sideEffects: 0, productionAuthorized: false };
           throw error;
         }
-        const intent = await journal.begin(key, { subject: subjectOfV2(job), definition, evidenceSha256: before.verified.evidenceSha256,
-          observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256, externalId,
-          compensation: 'known-check-patch-failure-on-any-unsettled-write', ...(republication ? { republicationOf: original.key, republication } : {}) });
+        const intent = await journal.begin(key, journalSubject);
         if (intent.existing) return { status: 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        ownsIntent = true;
         await journal.transition(key, 'intent', 'authorized', { observationKind: 'staged-native-observation', nativeObservationSha256: before.native.observationSha256 }); phase = 'authorized';
         if (!fresh(before.native, clock())) stop('lease_expired_before_write', true);
-        const payload = { name: definition.name, head_sha: job.headSha, status: 'completed', conclusion: before.verified.payload.conclusion,
-          external_id: externalId, output: { title: `${definition.name}: ${before.verified.payload.conclusion}`,
+        const payload = { name: definition.name, head_sha: job.headSha,
+          ...(stagedScan ? { status: 'in_progress' } : { status: 'completed', conclusion: before.verified.payload.conclusion }),
+          external_id: externalId, output: { title: `${definition.name}: ${stagedScan ? 'in progress' : before.verified.payload.conclusion}`,
             summary: `Independent CI job ${job.id} (attempt ${job.attempt}${republication ? `, republication ${republication} after a withdrawn verification` : ''}); signed execution sha256 ${before.verified.evidenceSha256}; staged Native observation sha256 ${before.native.observationSha256}. ${before.native.publicationRequired ? 'The protected publisher attaches its Native Receipt.' : 'No Native publication ticket or Receipt is asserted.'}\n${testedLineOf(job)}` } };
         const nativeHandle = await prepareNativePublication(github, { facts: before.native, packet: before.packet, payload });
         await journal.transition(key, 'authorized', 'sent', { externalId, nativeObservationSha256: before.native.observationSha256 }); phase = 'sent'; sent = true; sideEffects++;
+        if (stagedScan) return publishPending({ key, job, envelope, definition, externalId, payload, nativeHandle, before, withdrawn, republication, journalSubject });
         const created = await createOrAdopt(payload, nativeHandle, definition, job, externalId, withdrawn);
         if (!identity(created, definition, job, externalId)) stop('check_identity_unconfirmed'); known = created;
         let after = await boundary(job, envelope, definition);
@@ -436,6 +579,15 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         return { status: 'SETTLED', mode: 'staged', effectKey: key, checkRunId: known.id, evidenceSha256: before.verified.evidenceSha256, ...(republication ? { republication } : {}),
           nativeObservationBeforeSha256: before.native.observationSha256, nativeObservationAfterSha256: after.native.observationSha256, sideEffects, productionAuthorized: domain === 'production' };
       } catch (error) {
+        if (stagedScan && !sent) {
+          try {
+            const current = await journal.read(key);
+            if ((ownsIntent && !current) || (current && (current.state !== phase || current.subjectSha256 !== digest(journalSubject))))
+              stop('staged_scan_journal_conflict');
+            if (current) await journal.transition(key, phase, 'not_sent', { reason: reason(error) });
+            return { status: 'BLOCKED', effectKey: key, reason: reason(error), sideEffects: 0, productionAuthorized: false };
+          } catch { return { status: 'UNCERTAIN', effectKey: key, reason: 'staged_scan_journal_conflict', sideEffects: 0, productionAuthorized: false }; }
+        }
         if (sent && !known && sideEffects === 1 && nativePublicationNoPostProof(error)?.notSent === true) {
           await transition(key, phase, 'revoked', { reason: 'native_publication_not_sent', notSent: true, externalId });
           return { status: 'BLOCKED', effectKey: key, reason: 'native_publication_not_sent', sideEffects: 0, productionAuthorized: false };
