@@ -109,8 +109,10 @@ function Get-KeyProviders([string]$KeyRole, [string]$Wanted) {
 # The one place a key is created (init-keys and -SelfTest): $KeyRole's algorithm and usage (identity: ECDSA P-256, signing; encryption:
 # ECDH P-256, key agreement), in the provider of $Entry (an entry of Get-Providers), named $KeyName, with $Options (MachineKey for
 # init-keys, None for the self-test). A software key gets ExportPolicy None; a TPM key is non-exportable by construction, and the platform
-# provider may refuse an export-policy property.
+# provider may refuse an export-policy property. An empty name is refused (KEY_NAME_REQUIRED): Windows PowerShell passes $null to a
+# [string] as '', which the software provider persists as a key named '' (not an ephemeral key), so no caller can make one.
 function New-NodeKey([string]$KeyRole, $Entry, [string]$KeyName, [System.Security.Cryptography.CngKeyCreationOptions]$Options) {
+  if ([string]::IsNullOrEmpty($KeyName)) { throw 'KEY_NAME_REQUIRED: New-NodeKey creates named keys only' }
   $identity = $KeyRole -ceq 'identity'
   $parameters = New-Object System.Security.Cryptography.CngKeyCreationParameters
   $parameters.Provider = $Entry[0]
