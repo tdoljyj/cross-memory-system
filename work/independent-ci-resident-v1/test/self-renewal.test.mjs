@@ -166,8 +166,9 @@ function drillFixture(t) {
   put('controller',row(profile.controllerSid));
   put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
   put('probe',{at,code:'RENEW_IDENTITY_REFUSED'});
+  put('record',{'ci-admission.connection.json':'PRESENT'});
   const drill=()=>spawnSync(process.execPath,[path.join(resident,'test','renewal-drill.mjs'),dir],{encoding:'utf8'});
-  return {drill, put, profile, row};
+  return {drill, put, profile, row, dir};
 }
 test('演练以未登记来宾收到的网关拒绝观测判定可达性', async t=>{
   const {drill, put}=drillFixture(t);
@@ -201,6 +202,36 @@ test('演练夹具只凭公开的同轮身份和网关观测判定', t=>{
   put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
   put('controller',row(profile.ownerSid));
   result=drill();assert.equal(result.status,1);assert.equal(JSON.parse(result.stdout).result,'FAIL');
+});
+
+// 裁定补“对路八处”第 8 处：连接记录以来宾管理员侧实读为准（record.json）。存在则陪伴必须“拒绝访问”，不存在则必须报“不存在”，
+// 对不上即失败；记录不存在时“记录的拒绝访问”如实登记为未验到。令牌文件仍必须“拒绝访问”。
+test('M5 连接记录以管理员侧实读为准：存在须拒绝访问，不存在须报不存在，对不上即失败', t=>{
+  const {drill, put, profile, row, dir} = drillFixture(t);
+  const run=(admin,companion,token='DENIED')=>{
+    put('record',{'ci-admission.connection.json':admin});
+    put('companion',{...row(profile.ownerSid),'ci-admission.token':token,'ci-admission.connection.json':companion});
+    const r=drill(); return {status:r.status, verdict:JSON.parse(r.stdout)};
+  };
+  for (const [name,admin,companion,token,result,denial] of [
+    ['首装：记录不存在，陪伴报不存在','ABSENT','ABSENT','DENIED','PASS','NOT_VERIFIED_RECORD_ABSENT'],
+    ['记录存在，陪伴拒绝访问','PRESENT','DENIED','DENIED','PASS','VERIFIED'],
+    ['记录不存在，陪伴却报拒绝访问','ABSENT','DENIED','DENIED','FAIL',null],
+    ['记录存在，陪伴却报不存在','PRESENT','ABSENT','DENIED','FAIL',null],
+    ['令牌文件不存在仍不行','ABSENT','ABSENT','ABSENT','FAIL','NOT_VERIFIED_RECORD_ABSENT'],
+    ['管理员侧读数不认识','UNREADABLE','ABSENT','DENIED','FAIL',null],
+  ]) {
+    const {status,verdict}=run(admin,companion,token);
+    assert.equal(verdict.result,result,name);
+    assert.equal(status,result==='PASS'?0:1,name);
+    assert.deepEqual(verdict.record,{admin,companion,consistent:denial!==null,denial},name);
+  }
+  // 缺管理员侧读数：观测不全，失败
+  fs.rmSync(path.join(dir,'record.json'));
+  put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'ABSENT'});
+  const r=drill();
+  assert.equal(r.status,1);
+  assert.equal(JSON.parse(r.stdout).code,'DRILL_EVIDENCE_UNAVAILABLE');
 });
 
 test('M5 来宾使用软件 KSP 时即使日常自检通过也会拒绝', t=>{
