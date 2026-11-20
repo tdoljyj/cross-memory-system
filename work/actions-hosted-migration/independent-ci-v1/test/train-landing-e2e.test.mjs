@@ -726,18 +726,32 @@ test('three ways, today (no independent ruleset, no kooyumi-train-landed, empty 
   assert.equal(e.queue.length, 0);
 });
 
+// The guard program (scripts/ci/clued-merge-executor.mjs) on the current path: a front head behind main is updated (main merged into it);
+// the PR's own CI and stage 1 run again on the new head.
+function updateBranch(e, pr) {
+  const W = e.W, head = W.merge(e.head(pr), e.main(), ':update');
+  W.pulls.get(pr).head = head;
+  for (const [app, name] of [...FOUR.map(n => [ACTIONS, n]), [APP, 'kooyumi-work-admission']]) {
+    const id = W.nextCheck++; W.checks.set(id, { id, app: { id: app }, name, head_sha: head, status: 'completed', conclusion: 'success', completed_at: iso(e.now) });
+  }
+}
+
 test('three ways, today: three queued PRs go one by one through GitHub, none parks, every S rehearsed', async t => {
   const e = await world(t, { prs: [910, 911, 912], rules: 'today' });
-  const log = [];
-  for (let i = 0; i < 12 && e.queue.length; i++) {
+  const log = [], decisions = [];
+  for (let i = 0; i < 16 && e.queue.length; i++) {
     const r = await stage10(e);
+    decisions.push(r.facts.decision);
+    // the current path keeps strict's rule: a head behind main is not a front batch (push would land merge(T, H) itself)
+    if (r.facts.decision === 'FRONT_NEEDS_MAIN_MERGE') { updateBranch(e, e.queue[0]); continue; }
     const b = r.facts.openFrontBatch;
     if (!b) continue;
     const p = await stage8(t, e, b, { trainLanding: { landing: 'push', batchMax: 4, unreadable: false } });
     log.push([b.pr, p.status, p.reason ?? null, p.rehearsal?.allFour ?? null]);
     if (p.status === 'SETTLED') githubMerges(e, b);
   }
-  assert.deepEqual(log, [[910, 'SETTLED', null, true], [911, 'SETTLED', null, true], [912, 'SETTLED', null, true]], JSON.stringify(log));
+  assert.deepEqual(log, [[910, 'SETTLED', null, true], [911, 'SETTLED', null, true], [912, 'SETTLED', null, true]], JSON.stringify({ log, decisions }));
+  assert.ok(decisions.includes('FRONT_NEEDS_MAIN_MERGE'), 'one PR a batch, each head up to date with main');
   assert.deepEqual(e.W.pushes, []);
   assert.deepEqual(e.adopted.map(a => a[0]), [910, 911, 912]);
 });
@@ -782,12 +796,15 @@ test('three ways, fail closed: kooyumi-train-landed read while the rest is not c
   };
   const expected = { 'no independent ruleset': 'independent_ruleset_missing', 'independent ruleset with a bypass': 'independent_ruleset_bypass_not_empty',
     'main bypass empty': 'main_bypass_not_app_only', 'main bypass with another actor': 'main_bypass_not_app_only',
-    'ci-suites-windows dropped': 'main_required_check_missing:ci-suites-windows', 'train-landed pinned to another App': 'train_landed_check_missing' };
+    'ci-suites-windows dropped': 'main_required_check_missing:ci-suites-windows', 'train-landed pinned to another App': null };
   for (const [name, change] of Object.entries(cases)) await t.test(name, async t => {
     const { e, b, T } = await opened(t, [910]);
     change(e.W);
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
-    assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
+    // kooyumi-train-landed pinned to another App is an unknown provider to the queue head's required-check gate (train-rules.mjs), which
+    // parks first; landingRoute's own answer for it (train_landed_check_missing) is in train-landing.test.mjs
+    if (expected[name] === null) assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'REQUIRED_CHECKS_UNREADABLE', 0], JSON.stringify(p));
+    else assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
     untouched(e, T); assert.deepEqual(e.W.pushes, []);
   });
 });
@@ -1117,7 +1134,7 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
   for (let round = 0; round < 2; round++) {
     const r = await stage10(e);
     assert.equal(r.facts.decision, 'TRAIN_LANDING_STATE_UNREADABLE', JSON.stringify(r.facts));
-    assert.deepEqual(r.facts.landing, { error: 'TRAIN_LANDING_STATE_UNREADABLE' });
+    assert.deepEqual(r.facts.landing, { route: 'push', missing: [], error: 'TRAIN_LANDING_STATE_UNREADABLE' });
     assert.equal(r.facts.openFrontBatch, null);
     validateTrainFacts(r.facts);
     assert.ok(!e.W.refs.has('heads/clued-train/staging') && !e.W.refs.has('heads/clued-train/staging.tmp'), 'nothing composed');

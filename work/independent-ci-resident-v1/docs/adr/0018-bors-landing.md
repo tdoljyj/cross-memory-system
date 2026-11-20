@@ -2,7 +2,7 @@
 
 - 状态：实现已合入；Owner 于 2026-11-17 13:55 决定按预授权 `9e2511fe` 第 6 项准备启用。仓库侧补齐 §8 的工作流、runner 钩子、守队程序与合同前提，不代表生产已启用。App 权限与规则集就绪后，另行 PR 修改船队统一策略并发通用包；节点安装状态须独立核实。
 - 日期：2026-11-07（设计与实现）；2026-11-08 合入第 28 代
-- 批量合并开关（PR-4，#1153）曾把 `FLEET_TRAIN` 设为 `landing=push`；#1174 去掉 `landing`，回到默认 `github-merge`、`batchMax` 1（Fable 2026-11-19 批量合并启用设计 §8.3）。2026-11-20 以单独 PR 重开：`FLEET_TRAIN.landing` 恢复为 `push`，`batchMax` 不写、取默认 1（§8 第 7 条）。仓库值改了不等于生产生效，见 §8 第 7 条的发包、升级与主规则集保存。
+- 批量合并开关（PR-4，#1153）曾把 `FLEET_TRAIN` 设为 `landing=push`；#1174 去掉 `landing`，回到默认 `github-merge`、`batchMax` 1（Fable 2026-11-19 批量合并启用设计 §8.3）。2026-11-20 以单独 PR 重开：`FLEET_TRAIN.landing` 恢复为 `push`，`batchMax` 不写、取默认 1（§8 第 7 条）。仓库值改了不等于生产生效，见 §8 第 7 条的发包、升级与主规则集保存。同一 PR 起 `push` 的含义是“具备推送能力”：实际走哪条路由第 8 段每次读线上规则决定（§2 L2 第 7 条三态，Fable 2026-11-20），规则未齐期间走现行合入路径、不停车。
 - Owner Decision：`9e2511fe` 第 6 项；预授权 Task `7d86cf41`（ADR 0010）
 - 来源：分支 `claude/train-bors-chain` 提交 `d1c5174a6`。该分支把本文写成常驻 DESIGN 的 §66，与 main 上冻结档案的 §66（状态里的分段耗时）撞号，而 DESIGN 已在 §70 冻结，所以合入时改为本 ADR。代码注释里的 “ADR 0018 §n” 指本文第 n 节；正文里的 §41、§62、§65 等仍指冻结的 DESIGN。
 - 后续一步：[ADR 0019](0019-train-batch-member-chain.md)（批量真正上生产）。
@@ -40,7 +40,12 @@
 4. main 当前尖端 == T（读一次；PATCH 的 `force:false` 是最终的原子保证）；
 5. ruleset 里不由 App 5368905 产生的必需检查（今天是 Actions App 15368 的 `ci-suites`、`clued-cloud-tests`、`migration-verify`）在 **S 本身**上最新一次成功；或者 N=1 且 S 的树等于 H 的树（H 已含 T）时，在 H 上成功（同一棵树，结果相同）。还在跑或还没有：`TRAIN_LANDING_CHECKS_PENDING`（停靠，稍后再查）；失败：`TRAIN_LANDING_CHECK_FAILED`（终局，属于 PR，进入二分）；
 6. `push` 下第 8 段**不写任何检查**：不写 `kooyumi-merge-slot`，也不写 `kooyumi-admission-verified`（审查后改：先发一半再因“没就绪”停靠，会让一次停靠变成“写了一半”的 UNCERTAIN）。推 main 是这一段唯一的副作用；没就绪的回答都是零副作用的干净停靠。PR 页面因此凑不齐必需检查（本文第 8 节第 3 条再加一道谁都不发布的必需检查）；
-7. main 的实时规则里有“禁止强推”“禁止删除”两条规则，并且必需检查里有钉在 App 5368905 的 `kooyumi-train-landed`（`landingRulesDecision`）；缺任何一条：`TRAIN_LANDING_RULES_MISSING`（停靠，等 Owner 配好）。这个接口只列出生效的规则，看不到谁能 bypass，所以 bypass 名单仍是 Owner 的上线步骤。
+7. **规则不全绝不推送，之后按三态**（2026-11-20 改，Fable 三态选路复核；`train-landing.mjs#landingRoute`，第 8 段每次由发布器读线上规则，第 10 段同样读，同一个函数）。推送要下面四条同时读回为真：(1) 存在一份**独立于主规则集**、作用于 main 的规则集，含“禁止强推”“禁止删除”，bypass 名单为空；(2) 主规则集的必需检查含钉在 App 5368905 的 `kooyumi-train-landed`；(3) 主规则集的 bypass 名单恰好只有这一个 App（模式 `always`）；(4) 主规则集原有的必需检查仍在（六项钉在 App 5368905，加 Actions 的 `ci-suites`、`clued-cloud-tests`、`migration-verify`、`ci-suites-windows`）。禁删、禁强推只来自主规则集（App 在那里有 bypass）不算 (1)。
+   - 四条全齐：推送（本节其余各条照旧）。
+   - 规则完整读回，且主规则集里**没有** `kooyumi-train-landed`、主规则集 bypass 名单**为空**（恰好是 Owner 两步之前的状态）：走现行路径——发 `kooyumi-admission-verified` 与 `kooyumi-merge-slot`，由 GitHub 合入，与 `github-merge` 相同，列车不停；带骑乘成员的批不走这条（`TRAIN_BATCH_WITHOUT_PUSH`），第 10 段此时批大小取 1、车头仍须含 main（strict）。第 10 段照旧建候选合并提交 S 并把 `clued-train/staging` 指向它，四项 Actions 检查以原名跑在 S 上；第 8 段发完两条检查后把 S 上这四项的结果写进回执（`rehearsal`：每项 success/failure/pending/missing，`allFour` 即“若规则已齐本次即可推送落地”），这是推送路径的预演，不影响本次合入。
+   - 其余一切（读不到、读不全、读到 `kooyumi-train-landed` 而其余不齐、主规则集 bypass 非空而没有 `kooyumi-train-landed`）：`TRAIN_LANDING_RULES_MISSING` 停靠，回执 `missing` 与观察日志写明缺哪一项。**只要读到 `kooyumi-train-landed`，就绝不再发任何现行路径的绿灯**；本节第 3 条与第 8 节第 3 条的封口不受影响。
+   - 读法：`GET /rules/branches/main` 给出每条生效规则及其规则集 id；对其中每个规则集 `GET /rulesets/{id}` 读 bypass。GitHub 只对能改规则集的调用者返回 `bypass_actors`；看不到名单时只读回 `current_user_can_bypass`，即 App 自己能否 bypass，此时“为空”“恰好只有这个 App”里关于其他主体的部分读不回，仍由 Owner 上线步骤保证。名单可见时逐项核对，并须与 `current_user_can_bypass` 一致，不一致按读不全停靠。
+   - 改动原因：原文“缺任何一条即停靠”在“包先到、规则未到”时让列车停车，这一版因此撤回（#1174）。“规则不全时绝不推送”这一句不变；变的只是不推送之后做什么。
 
 **失败关闭。** 任何读不到、对不上、形状不符：不推，按已有的停靠码或新码零副作用结束；第 10 段读不到批记录、读不到 main：不 adopt、不开新批。阶段文件 `train-landing.json` 存在但读不出：第 8 段对车头作业停靠（`TRAIN_MODE_UNREADABLE`，与 train-mode.json 坏了一样），第 10 段按 `github-merge` 只读不推；没有这个文件：`github-merge`（今天的行为）。`github-merge` 下遇到带骑乘成员的批记录：拒绝发绿（`TRAIN_BATCH_WITHOUT_PUSH`，终局），绝不给单个 H 发一个其实没测过的树的绿。
 
@@ -109,6 +114,7 @@
    > 每个进 main 的变更仍必须是一个打开的、准入过的 PR 的 head；变的只是谁执行合并。任何 bypass 名单永不含 Owner、Admin 或任何 Agent 可用的身份；App 5368905 的私钥不得供 Agent 使用，其私钥泄露等同 main 写权限泄露，须立即撤销该 App 的 bypass 和 Contents/Workflows 权限。“main 只许快进”规则集的 bypass 名单始终为空，其它任何人或自动化不得直推 main；该规则集不构成私钥泄露后的写权限隔离。
 6. **合同**：MergeAdmission 与合同草稿写明：`push` 下 PR 不再由人或 auto-merge 合并，列车测过就推；批量时位子之后的骑乘成员随车头一起合入（每个成员都过实时准入，坏的被二分剔除）。
 7. **策略**：`FLEET_TRAIN` 随通用包下发，取代一次 UAC 写策略。先合入仓库侧工作流、runner 钩子和守队程序门控，配好 App 权限、列车暂存与无 bypass 的“main 只许快进”规则集；再以单独 PR 将 `FLEET_TRAIN.landing` 改为 `push`（`batchMax` 先保持 1；2026-11-20 重开即此 PR，`batchMax` 不写，由 `trainBatchMax` 取默认 1），发通用包，先升级待命节点、再升级当班节点并核实两侧同代。之后主规则集的 App bypass 与 `kooyumi-train-landed` 同一次保存。不得以节点本地策略替代通用包，包会重写 train；未完成前保持 `github-merge`。旧代码上线前不能先加它不认识的必需检查，否则全部 `REQUIRED_CHECKS_UNREADABLE` 停靠。
+   2026-11-20 补（Fable 三态选路复核，意图不变：规则与在跑的代码不能错位）：具备推送能力的代码在规则未齐期间走现行路径（§2 L2 第 7 条），所以“未完成前保持 `github-merge`”现在由代码按线上规则自动做到，发包、升级与 Owner 保存之间不再有先后约束。保存主规则集的 App bypass 与 `kooyumi-train-landed`（下称 C）之前，DESK 须核实两条前置：一、**保存 C 之前两台节点都已装上认识该检查的那一代**（还在旧代的节点只会走现行路径，C 一保存它就合不进任何东西）；二、预演回执里候选合并提交 S 上四项检查（`ci-suites`、`clued-cloud-tests`、`migration-verify`、`ci-suites-windows`）连续几次齐全且成功（缺一项时保存 C，推送会一直等那一项、现行路径又已走不通，只有撤销保存才能恢复）。两步的先后：先建独立的“main 只许快进”规则集并读回确认，再保存 C。改动原因：上次“包先到、规则未到”时列车停车并撤回（#1174）。
 8. **合并意愿**（审查第 4 条，Owner 决定点）：今天 strict 模式下 PR 要靠 auto-merge（`Clued-Auto-Merge:` 选择加入）或守队程序合并；`push` 下认领进了合并队列就等于要合并，列车测过就推（守队程序 §41.8 本来也会合任何全绿的 PR）。若 Owner 要保留“显式选择加入”，再加一条：骑乘成员和车头都要有选择加入 trailer。
 9. **Native 发布票据**（审查第 4 条）：受保护层的 guarded 发布（`publicationRequired`）今天经 `prepareNativePublication` 拿票据再写 merge-slot 绿。`push` 下骑乘成员凡是 `publicationRequired` 一律不搭车（代码已拒）；车头仍要过 Native 完整准入（含 Owner Grant），但“落地”本身还没有对应的 Native 票据。在 Owner 定义落地票据之前，建议受保护层的车头在 `push` 下也只走 `github-merge`，或由 Owner 确认“完整准入 + Grant”即可落地。
 
@@ -130,7 +136,7 @@
 
 ### 10. 改了什么（代码）与测试
 
-- **Source v2**：`independent-control-checks-v2/train-landing.mjs`（纯函数：阶段文件、链核对、必需检查判定、组批、二分；落地状态机）、`train-landing-port.mjs`（落地端口）、`train-sweep-store.mjs`（`landing-batch`、`landing-state` 记录）、`publisher.mjs`（`push` 下第 8 段推 main）、`train-maintenance.mjs`（`push` 下组批、累积合并、adopt 全部成员、二分；拆掉水位上报）、`startup.mjs`、`train-facts.mjs`（可选的 `landing` 事实）、`train-rules.mjs`（认得 `kooyumi-train-landed`）、`github.mjs`（检查端口拒绝发布它）、`resident-v2/invoke-stage.mjs`（`--train-landing`，只给第 8、10 段）、`resident-v2/stage-fact.mjs`（新码）。C# 边界只读它点名的文件，不读这个新文件，不改。
+- **Source v2**：`independent-control-checks-v2/train-landing.mjs`（纯函数：阶段文件、链核对、必需检查判定、组批、二分；落地状态机）、`train-landing-port.mjs`（落地端口）、`train-sweep-store.mjs`（`landing-batch`、`landing-state` 记录）、`publisher.mjs`（`push` 下第 8 段推 main）、`train-maintenance.mjs`（`push` 下组批、累积合并、adopt 全部成员、二分；拆掉水位上报）、`startup.mjs`、`train-facts.mjs`（可选的 `landing` 事实）、`train-rules.mjs`（认得 `kooyumi-train-landed`）、`github.mjs`（检查端口拒绝发布它；2026-11-20 起 `readRuleset` 读规则集 bypass）、`train-landing.mjs#landingRoute`/`readLandingRoute`/`rehearsalOf`（2026-11-20：三态选路与 S 上的预演回执，第 8、10 段共用）、`resident-v2/invoke-stage.mjs`（`--train-landing`，只给第 8、10 段）、`resident-v2/stage-fact.mjs`（新码）。C# 边界只读它点名的文件，不读这个新文件，不改。
 - **常驻层**：`policy.mjs`（`train.landing`、`train.batchMax`，/8 起可选，没写时策略字节和摘要不变；`push` 要求 `sweep` 不是 `gate`；`batchMax > 1` 要求 `push`）、`engine-windows.mjs`/`service-main.mjs`（把它传给第 8、10 段）、`executor.mjs`（落地后立即要第 10 段）、`classify.mjs`/`failure-table.json`（新码）、`status.mjs`（`train.landing`）。
 - `upgrader/src/` 不动；`scripts/ci/**`（受保护）只有注册表重新生成的部分。
 - **测试**：端到端（真实 Source v2 第 10 段 `runTrain` + 真实第 8 段发布者 + 模拟 GitHub（ref、merges、compare、推送后把 PR 标成已合并、Actions 检查）与 Native）：3 个 PR 排队 → 一批 → 推 main → 3 个都标为已合并、都 adopt；中间那个坏 → 二分 → 其余两个合入、坏的进名单；main 被别人抢先推进 → 422 → 干净结束 → 在新 main 上重测 → 落地。单元：落地端口（令牌权限、只许快进、拒绝其它 ref）、纯函数（链、必需检查、组批、二分）、策略键、阶段文件。
@@ -154,7 +160,7 @@
 | 6 | 重要 | 二分会把车头的两次机会用完 | 多人批失败不计车头次数（本文第 3 节，端到端测试） |
 | 7 | 重要 | 崩溃或换班后 adopt 卡住 | 先骑乘后车头、以“main 含 S”为准（本文第 6 节）；换班后失败关闭停车、落地记录同步列为后续 |
 | 8 | 重要 | S 上 CI 的可信度、工作流基线、并发组 | “最新一次按 id”已实现；工作流细节写进上线前提 4b；来源核对列为后续 |
-| 9 | 建议 | 第 8 段核对规则集里有只许快进、禁止删除、train-landed；检查端口拒绝发布 train-landed | 都已实现（`landingRulesDecision`、`github.mjs#createCheck`） |
+| 9 | 建议 | 第 8 段核对规则集里有只许快进、禁止删除、train-landed；检查端口拒绝发布 train-landed | 都已实现（`github.mjs#createCheck`；规则核对 2026-11-20 改为三态 `landingRoute`，见 §2 L2 第 7 条） |
 | 10 | 建议 | 切换模式时撤遗留 merge-slot 绿 | 不做：strict 开着时遗留绿只能合入测过的树（§65.1），且有 `kooyumi-train-landed` 封住 PR 页面 |
 | 11 | 建议 | PATCH 只能用 `job.testSha`；5xx 后不要记 `not_sent`；S 先被暂存 ref 钉住 | PATCH 用 `job.testSha`；5xx 记 `uncertain`（本文第 5 节）；开批时先把 `clued-train/staging` 指向 S |
 | 12 | 建议 | `train-landing.json` 不在 C# 边界里；`batchChain` 只许夹具注入 | 与 train-mode.json 同一信任级别（常驻层写、clued-control 读）；`batchChain` 只是 `runTrain` 的参数，生产入口 `main()` 从不传，取常量 false |

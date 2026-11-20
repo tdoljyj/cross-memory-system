@@ -166,7 +166,11 @@ const validBindingObservation = b => {
     && Number.isSafeInteger(b.epoch) && b.epoch > 0 : b.claimId === null && b.fence === null && b.epoch === null);
 };
 const prList = v => Array.isArray(v) && v.length <= 64 && v.every(n => Number.isSafeInteger(n) && n > 0);
-const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect'].includes(k))
+// route / missing (ADR 0018 §2 L2 item 7, Fable 2026-11-20): which way main's rules said this run, and what push still misses.
+const MISSING = /^[a-z][a-z_]{1,59}(?::[A-Za-z0-9_.-]{1,40})?$/;
+const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect', 'route', 'missing'].includes(k))
+  && (l.route === undefined || ['push', 'github-merge', 'park'].includes(l.route))
+  && (l.missing === undefined || (Array.isArray(l.missing) && l.missing.length <= 16 && l.missing.every(m => typeof m === 'string' && MISSING.test(m))))
   && (l.error === undefined || (typeof l.error === 'string' && CODE.test(l.error))) && (l.mainSha === undefined || l.mainSha === null || SHA.test(l.mainSha))
   && (l.landed === undefined || (Array.isArray(l.landed) && l.landed.length <= 20 && l.landed.every(b => plain(b) && SHA.test(b.testSha ?? '') && prList(b.members))))
   && (l.adopted === undefined || prList(l.adopted)) && (l.notMarkedMerged === undefined || prList(l.notMarkedMerged))

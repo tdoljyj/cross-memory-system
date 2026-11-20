@@ -36,6 +36,11 @@
 // effective batch size), S = GitHub's test merge for one member or the cumulative merge on clued-train/staging.tmp for several,
 // clued-train/staging pointed at S (the CI trigger) and a landing-batch record. A strict head that does not contain main's tip is no
 // longer FRONT_NEEDS_MAIN_MERGE there (the train lands merge(T, H) itself); a protected-layer one still is.
+// Three ways (ADR 0018 §2 L2 item 7, Fable 2026-11-20): 'push' installed means "can push". Each run reads main's rules and each ruleset's
+// bypass (train-landing.mjs#landingRoute); only route push takes (c)'s push behaviour (a head behind main, several members). Otherwise
+// the front batch opens as the current path needs it (the head contains main, one PR a batch), and is still composed here: S on
+// clued-train/staging, so the four Actions checks run on S (the rehearsal stage 8 records). (a) and (b) stay with push installed. The
+// route and what push still misses are in the facts (landing.route, landing.missing).
 // A read that fails before anything was written ends the run BLOCKED with zero side effects; after the first write every
 // failure becomes a decision (TRAIN_REVOKE_UNCONFIRMED, TRAIN_SWEEP_INCOMPLETE, ...) or, if it still throws, UNCERTAIN with
 // the true count (settleTrain).
@@ -57,7 +62,7 @@ import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, s
 import { ScanProgress } from './train-scan-progress.mjs';
 import { layerOf, loadPolicy } from '../../../../../scripts/ci/merge-admission-policy.mjs';
 import { resolvePRTaskBinding } from '../../../../../scripts/ci/clued-pr-task-binding.mjs';
-import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact } from './train-landing.mjs';
+import { STAGING_REF, STAGING_TMP_REF, effectiveBatchMax, pickMembers, bisectAfter, readBatchChain, readStageTrainLandingFact, readLandingRoute } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
 import { FIXED_APP } from '../resident-v2/record.mjs';
 import { MAX_REVOKES_PER_RUN, SLOT_CHECK, SWEEP_BUDGET_MS, countedGithub, createSweeper, fullSweepSegment, incrementalSweep, ledgerGreens,
@@ -206,6 +211,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     rules = rulesetFacts(reply.rules, appId);
     landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
+  // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8).
+  const route = !push ? null : rulesReason ? { route: 'park', missing: ['rules_unreadable'] } : await readLandingRoute({ github, appId, rules: landability.rules });
+  const pushRoute = route?.route === 'push';
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
   if (holder?.boundPrs?.length > 1) {
     const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, landability });
@@ -349,7 +357,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const frontFastEligible = job.mode === 'on' && !sinceOn(full) && job.revokeHeadRequestId === null && rules?.strict === true && frontSourceHealthy && fastStoreHealthy
     // ADR 0018: push lands the tested merge(T, H) itself, so a head behind main is no reason against the observation there (strict merges
     // only a head that contains T: that is github-merge's reason). A protected-layer head behind main is still FRONT_NEEDS_MAIN_MERGE.
-    && (push || front?.headContainsMain === true) && front?.state === 'open' && front.draft === false && front.mergeable === true
+    && (pushRoute || front?.headContainsMain === true) && front?.state === 'open' && front.draft === false && front.mergeable === true
     && front.testMerge?.parentsOk === true && holder?.takenAt && !stateReason && !ledgerReason
     && history !== 'rewritten' && history !== 'unknown' && allPending !== 'TRAIN_MAIN_REWRITTEN';
   const frontIdentity = frontFastEligible ? strictIdentity({ job, holder, headSha: front.headSha, mainSha, scope: full.scope }) : null;
@@ -547,7 +555,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const takeoverPending = job.mode === 'on' && !strictReady && !strictFrontReady && (gating ? !fullSweepSinceOn : after.allPending === 'TRAIN_MAIN_REWRITTEN');
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
-  let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingFacts = null, landingState = null;
+  let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingState = null;
+  let landingFacts = route ? { route: route.route, missing: route.missing } : null;
   if (job.mode === 'on') {
     // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
     // watermark (every take-over sweeps from onSince), so nothing reads it. actions.watermarkReported stays in the facts, always false.
@@ -564,7 +573,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     let frontLanded = false, landedNow = new Set();
     if (push && !takeoverPending && !lostDuty) {
       const l = await adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx });
-      landingFacts = l.facts;
+      landingFacts = { ...(landingFacts ?? {}), ...(l.facts ?? {}) };
       if (l.lostDuty) lostDuty = true;
       if (l.adopted.length) actions.adopted = true;
       landedNow = new Set(l.adopted);
@@ -632,7 +641,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     // latches PAUSE and tells the Owner; stage 8 writes no green either (no proof says fullSweepSinceOn, its strict route needs strict).
     if (permanent && rules !== null && rules.strict !== true && !requestPause) requestPause = 'TRAIN_STRICT_OFF';
   }
-  const wouldDo = decideShadow({ onDuty: true, holders: duty.holders, holder: duty.holders[0] ?? null, front, rules: push && rules ? { ...rules, strict: false } : rules, mainSha });
+  const wouldDo = decideShadow({ onDuty: true, holders: duty.holders, holder: duty.holders[0] ?? null, front, rules: pushRoute && rules ? { ...rules, strict: false } : rules, mainSha });
   if (!acting) decision = wouldDo;
   else if (requestPause) decision = requestPause;
   else if (lostDuty) decision = 'NOT_ON_DUTY';
@@ -647,7 +656,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
     const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, compare: frontCompare,
-      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState,
+      pushing: push ? { github, native, landing, max: pushRoute ? effectiveBatchMax(trainLanding) : 1, rows: openRows ?? [], claimScope, state: landingState,
         layerOfPaths, frontBaseSha: pull?.base?.sha ?? null } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
     // turn_short (Fable 2026-11-19; field 2026-11-19, #1169 -> #1173): the hard cap leaves this turn less than the front batch needs,
