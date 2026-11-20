@@ -1353,3 +1353,19 @@ test("clock: a reply cut off while its body is read is a failed attempt, tried a
   assert.equal(current.allow, true, current.reason);
   assert.deepEqual(g.bounds, [OBSERVATION_ATTEMPT_MS, OBSERVATION_ATTEMPT_MS]);
 });
+
+// Review 3 high 2: the hook's required-tests dispatch branch keeps the workflow's three-attempt budget on the head as well.
+test('required-tests dispatch: three attempts of the workflow already on the head refuse the dispatch in the hook', async () => {
+  const pr = { number: 9, state: 'open', head: { sha: HEAD, ref: 'claude/g3', repo: { full_name: 'o/r' } }, base: { ref: 'main', repo: { full_name: 'o/r' } } };
+  const overrides = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/claude/g3', GITHUB_REF_NAME: 'claude/g3', GITHUB_SHA: HEAD,
+    GITHUB_ACTOR: 'o', GITHUB_REPOSITORY_OWNER: 'o', GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3' };
+  const payload = JSON.stringify({ inputs: { pr: '9', head: HEAD }, repository: { default_branch: 'main' } });
+  const script = { [`${LIST}${HEAD}`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }),
+    [`${LIST}main`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }), [`${API}/pulls/9`]: { body: pr } };
+  const runs = (...list) => ({ [`${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=`]: { body: { total_count: list.length, workflow_runs: list } } });
+  const self = { id: 555, head_sha: HEAD, run_attempt: 1 };
+  assert.equal((await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 2 }) }, payload)).result.allow, true, 'two attempts and this one: three');
+  const used = await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 3 }) }, payload);
+  assert.equal(used.result.allow, false);
+  assert.match(used.result.reason, /three attempts/);
+});

@@ -107,22 +107,26 @@ test('#1192 as one stream: skipped -> the merge slot -> the lane re-runs both wo
     pulls: () => [{ pr: PR, headSha: H }] });
   const stepped = await lane.step();
   assert.deepEqual(f.m.posts.sort(), [LINUX_RUN, WINDOWS_RUN].sort(), `the lane re-ran both workflows of the front: ${JSON.stringify(stepped)}`);
-  // GitHub queued the re-runs: not yet a new attempt; still inside the window that began with the merge slot
+  // GitHub queued the re-runs (review 3 high 1): the queued gate of each missing check's own run is the re-run asked for, a wait
   const r2 = await roundAt(f, NOW + 3 * MIN);
-  assert.equal(r2.decision, 'FRONT_CHECKS_MISSING');
+  assert.equal(r2.decision, 'FRONT_CHECKS_WAIT');
   assert.equal(f.yields(), 0);
-  // the gates start; past the window the train sees the re-run of each missing check's own run
-  f.m.startGates(NOW + 4 * MIN);
-  const r3 = await roundAt(f, NOW + 11 * MIN);
+  // the runners are busy: still queued past the window that began with the merge slot, and still waited for
+  const queued = await roundAt(f, NOW + 11 * MIN);
+  assert.equal(f.yields(), 0, 'a queued re-run is never taken for no re-run');
+  assert.equal(queued.decision, 'FRONT_CHECKS_WAIT');
+  // the gates start late; the train still sees the re-run of each missing check's own run
+  f.m.startGates(NOW + 14 * MIN);
+  const r3 = await roundAt(f, NOW + 15 * MIN);
   assert.equal(f.yields(), 0);
   assert.equal(r3.decision, 'FRONT_CHECKS_WAIT');
   assert.equal(r3.front.required.reruns, 1);
   assert.match(trainPageLine(trainSummary(r3), PR, ['ci-suites（未出现）']), /补跑中（第 1 次）/);
   // admitted at once (the admission exists): the jobs run, then pass
-  f.m.admitGates(NOW + 12 * MIN);
-  assert.equal((await roundAt(f, NOW + 13 * MIN)).decision, 'FRONT_CHECKS_WAIT');
-  f.m.pass(NOW + 26 * MIN);
-  const done = await roundAt(f, NOW + 27 * MIN);
+  f.m.admitGates(NOW + 16 * MIN);
+  assert.equal((await roundAt(f, NOW + 17 * MIN)).decision, 'FRONT_CHECKS_WAIT');
+  f.m.pass(NOW + 30 * MIN);
+  const done = await roundAt(f, NOW + 31 * MIN);
   assert.equal(done.decision, 'FRONT_GREEN_WAIT_MERGE');
   assert.equal(f.yields(), 0);
 });

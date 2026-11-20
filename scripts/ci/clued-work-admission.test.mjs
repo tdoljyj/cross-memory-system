@@ -4327,3 +4327,31 @@ test("one judgement: the gate defines no failure rule of its own, and the hook's
   assert.match(gateSource, /from "\.\/required-tests-failure-rule\.mjs"/, "the gate imports the rule from the protected scripts/ci path");
   assert.doesNotMatch(gateSource, /work\/independent-ci-resident-v1/, "and nothing outside it");
 });
+
+// Review 3 high 2: the re-dispatch entry (workflow_dispatch of clued-required-tests.yml for a PR head) keeps the three-attempt budget of the
+// workflow on the head too: three skipped PR attempts already made, a dispatch would be the fourth.
+test("required-tests dispatch gate: three attempts of the workflow already on the head refuse the dispatch", async () => {
+  const runId = "9101";
+  const pr = { number: 9, state: "open", head: { sha: HEAD, ref: "claude/g3", repo: { full_name: "o/r" } }, base: { ref: "main", repo: { full_name: "o/r" } } };
+  const skippedAttempt = n => ({ total_count: 2, jobs: [
+    { id: 100 * n, name: "admission-gate", head_sha: HEAD, status: "completed", conclusion: "success" },
+    { id: 100 * n + 1, name: "ci-suites", head_sha: HEAD, status: "completed", conclusion: "skipped" }] });
+  const script = {
+    "GET https://api.test/repos/o/r/pulls/9": { body: pr },
+    [`GET https://api.test/repos/o/r/actions/runs/${runId}`]: { body: { id: Number(runId), event: "workflow_dispatch", head_sha: HEAD, head_branch: "claude/g3",
+      run_attempt: 1, path: ".github/workflows/clued-required-tests.yml" } },
+    "GET https://api.test/repos/o/r/actions/workflows/clued-required-tests.yml/runs?head_sha=": { body: { total_count: 2, workflow_runs: [
+      { id: Number(runId), head_sha: HEAD, event: "workflow_dispatch", status: "in_progress", run_attempt: 1 },
+      { id: 9100, head_sha: HEAD, event: "pull_request", status: "completed", run_attempt: 3 }] } },
+    "GET https://api.test/repos/o/r/actions/runs/9100/attempts/1/jobs": { body: skippedAttempt(1) },
+    "GET https://api.test/repos/o/r/actions/runs/9100/attempts/2/jobs": { body: skippedAttempt(2) },
+    "GET https://api.test/repos/o/r/actions/runs/9100/attempts/3/jobs": { body: skippedAttempt(3) },
+  };
+  const { fetchImpl } = fakeFetch(script);
+  const outcome = await gate({ env: env({ CLUED_ADMISSION_GATE_SOURCE: INDEPENDENT_GATE_SOURCE, GITHUB_RUN_ID: runId, GITHUB_RUN_ATTEMPT: "1",
+    GITHUB_ACTOR: "o", GITHUB_REPOSITORY_OWNER: "o", GITHUB_SHA: HEAD, GITHUB_REF: "refs/heads/claude/g3", GITHUB_REF_NAME: "claude/g3",
+    GITHUB_WORKFLOW_REF: "o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3" }),
+    event: { inputs: { pr: "9", head: HEAD }, repository: { default_branch: "main" } }, eventName: "workflow_dispatch", fetchImpl, sleep: async () => {} });
+  assert.equal(outcome.admitted, false);
+  assert.deepEqual(outcome.reasons, ["required_tests_dispatch_attempt_budget_used"]);
+});
