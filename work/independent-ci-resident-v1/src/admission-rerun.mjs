@@ -66,7 +66,8 @@ const MAX_RECOVERY_PAGES = 50;
 //    finalRuns entry of 6 may have been read too early, so it is judged again.
 const REPAIR_RULE_VERSION = 7;
 // A run that ran nothing is refused on its gate's annotations alone (env-failure.mjs), which GitHub may hang on the check run a while
-// after the job ended: within this time of the latest attempt's end (or with no readable end) that refusal is no verdict yet.
+// after the job ended: within this time of the latest attempt's end (or with no readable end) that refusal is no verdict yet. A job end that
+// cannot be read is taken from the run's updated_at, never earlier than the attempt's end (Fable 11-20 open points 一.2).
 const GATE_EVIDENCE_SETTLE_MS = 10 * 60_000;
 const MAX_PAGES = 10;
 const MAX_TEXT = 3_500_000;
@@ -488,7 +489,8 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
     Object.assign(out, { systemic: repair.systemic, exhausted: repair.exhausted });
     if (repair.waiting) return say('skip', repair.reason);
     // Fable 11-20 finalRuns: a never-ran refusal read before the gate's evidence settled is judged again at the next look.
-    const endedAt = Math.max(...recentJobs.map(j => Date.parse(j.completed_at)));
+    const ends = recentJobs.map(j => Date.parse(j.completed_at));
+    const endedAt = ends.every(Number.isFinite) ? Math.max(...ends) : Date.parse(newest.updated_at);
     if (allSkipped && now !== null && !(now - endedAt >= GATE_EVIDENCE_SETTLE_MS))
       return say('skip', 'the gate evidence may not be on the run yet (ended under ' + GATE_EVIDENCE_SETTLE_MS / 60_000 + ' minutes ago): ' + repair.reason);
     return say('final', repair.reason);
