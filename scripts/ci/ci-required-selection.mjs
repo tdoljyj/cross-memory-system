@@ -34,6 +34,7 @@ import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rea
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { ownIdentityDir, testEnv } from './test-env.mjs';
 
 // The resident layer imports Source v2, Source v2 imports scripts/ci (and
 // through it scripts/runner) and the resident's node profile, the admission
@@ -171,7 +172,7 @@ export const SUITES = {
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     // Its test checks that every database test of apps/clued-cloud/tests runs in a required suite or is exempted, so a
     // new or changed test there, or the classifier, selects it.
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
@@ -525,15 +526,20 @@ export function resolveCommand(argv, { platform = process.platform, nodePath = p
   return exists(script) ? [nodePath, script, ...argv.slice(1)] : argv;
 }
 
-// Clued Task fe8a2cbf (ruling 11-19, layer B): every suite command, whatever its language, runs with the test marker
-// CLUED_UNDER_TEST=1, so the installed request tools refuse a test aimed at the fixed production root (node --test adds
-// NODE_TEST_CONTEXT on its own; Python and PowerShell suites have only this one). The caller's env is not changed.
-export const testEnv = (env) => ({ ...env, CLUED_UNDER_TEST: '1' });
+// The environment of every suite child (test marker, listed variables, fake identity) is test-env.mjs; local-verify.mjs reads it too.
+export {
+  FAKE_GITHUB_TOKEN, KEEP_VARIABLE, TEST_ENV_RULES, TEST_ENV_VERSION, TEST_GIT_IDENTITY, fakeIdentityEnv, keptVariables, ownIdentityDir, testEnv,
+} from './test-env.mjs';
 // The command line marks its own environment first, before any child starts (the unit-test listing included), when it runs
-// suites: --run, --run-selected, --write-known. --check runs nothing and is left as it is.
+// suites: --run, --run-selected, --write-known, --run-files; it also makes the run's fake identity directory (Task 2ee162c2).
+// --check runs nothing and is left as it is.
 export function markTestRun(argv, env) {
-  if (['--run', '--run-selected', '--write-known'].some((flag) => argv.includes(flag))) env.CLUED_UNDER_TEST = '1';
+  if (!['--run', '--run-selected', '--write-known', '--run-files'].some((flag) => argv.includes(flag))) return;
+  env.CLUED_UNDER_TEST = '1';
+  env.CLUED_TEST_IDENTITY_DIR = ownIdentityDir(env);
 }
+// A run whose identity directory cannot be made does not start (ruling 11-20 "补：止血 PR 第四轮" §1).
+export const TEST_IDENTITY_EXIT = 71;
 
 // --run-files: the suite's own commands with the test-file operands replaced by
 // the named files. Only the operands change, so the command is the one CI runs.
@@ -786,7 +792,12 @@ const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suit
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
-  markTestRun(argv, env);
+  try {
+    markTestRun(argv, env);
+  } catch (error) {
+    console.error(`test identity: cannot make the run's directory, nothing started: ${error.message}`);
+    return TEST_IDENTITY_EXIT;
+  }
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE);
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
