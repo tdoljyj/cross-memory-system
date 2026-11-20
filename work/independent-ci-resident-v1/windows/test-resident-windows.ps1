@@ -851,7 +851,7 @@ foreach ($case in @(
   Yes ($v.status -ceq $case[1] -and $v.exit -eq $case[2]) ('verify-verdict:' + $case[3])
 }
 
-# 4z. Language-independent service facts (NODE-A, 2026-10-30: sc qfailure printed 重新启动) and the controller's right to log on
+# 4z. Language-independent service facts (NODE-A, 2026-10-30: sc qfailure printed the Chinese word for restart) and the controller's right to log on
 #     as a service (SCM 7041, then ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED).
 foreach ($name in @('ConvertFrom-FailureActions', 'Test-BrokerFailureActions', 'Test-ServiceLogonRight')) {
   Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name]))
