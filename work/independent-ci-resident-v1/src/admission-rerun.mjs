@@ -9,6 +9,12 @@
 // The main rules and exact SHA's Actions check runs determine when to stop
 // watching a PR head. Staging settles on its own scoped push runs.
 //
+// Fable 11-20 受保护工作流 PR 准入晚到 (Task 54a2b67a): on a PR head every gated run is in scope, read from the run itself (one
+// admission-gate job and other jobs), not from the required-check mapping. A gated run outside the required checks gets one kind of repair
+// only: the run never ran (its gate died in the runner's setup, or left ADMISSION_PENDING, RERUN_REFUSED or a GitHub outage, and every
+// heavy job was skipped). A PR head is watched for HEAD_WATCH_MS from its admission's completion, however long it waited for it, and is
+// not settled while a gated run is still to be repaired.
+//
 // When GitHub created no run, or a bot's run skipped all heavy jobs, an
 // active workflow whose trusted definition supplies a missing check may be
 // dispatched once per head. Read the PR and workflow inventory again before
@@ -39,8 +45,10 @@ export const ADMISSION_APP_ID = 5368905;
 export const ADMISSION_CHECK = 'kooyumi-work-admission';
 export const GATE_JOB_NAME = 'admission-gate';
 const NATIVE_ADMISSION_ID = /^independent-ci:native-work-admission:(?:[a-f0-9]{64}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9}:a[1-9][0-9]{0,9}|v2:[a-f0-9]{64}:a[12]:c[a-f0-9]{8}:f[1-9][0-9]{0,9}:e[1-9][0-9]{0,9})$/;
-// The lane's pace: one step a minute; a head is looked at again at most every HEAD_RECHECK_MS, and only for HEAD_WATCH_MS after this
-// lane first saw it (the gate's admission is for a fresh head). Records are kept RECORD_KEEP_MS.
+// The lane's pace: one step a minute; a head is looked at again at most every HEAD_RECHECK_MS, and only for HEAD_WATCH_MS after its
+// admission completed (54a2b67a: the admission comes when the executor's batch queue reaches the head, any time after the push; before
+// it the head is looked at with no clock running). A staging push is watched HEAD_WATCH_MS after this lane first saw it. Records are kept
+// RECORD_KEEP_MS.
 export const RERUN_LANE_EVERY_MS = 60_000;
 export const HEAD_RECHECK_MS = 2 * 60_000;
 export const HEAD_WATCH_MS = 12 * 60 * 60_000;
@@ -53,7 +61,8 @@ const REQUEST_RETRY_MS = 10 * 60_000;
 const RECENT_OTHER_HEADS = 3;
 const MAX_RECOVERY_PAGES = 50;
 // 5: jobs no runner took ran nothing (9aba97c1), and the budget is per head and workflow; verdicts of 4 are judged again.
-const REPAIR_RULE_VERSION = 5;
+// 6: every gated run of a PR head is in scope (54a2b67a); verdicts of 5 are judged again.
+const REPAIR_RULE_VERSION = 6;
 const MAX_PAGES = 10;
 const MAX_TEXT = 3_500_000;
 // Runner refusals before any child ran (runner.mjs): nothing reached GitHub.
@@ -69,6 +78,7 @@ function validState(v) {
   if (!plainObject(v) || Object.keys(v).sort().join('|') !== 'contract|heads|records' || v.contract !== RERUN_STATE_CONTRACT || !plainObject(v.heads) || !plainObject(v.records)) return false;
   for (const [k, h] of Object.entries(v.heads)) {
     if (!HEX40.test(k) || !plainObject(h) || !Number.isFinite(Date.parse(h.firstSeen))) return false;
+    if (h.admittedAt !== undefined && !Number.isFinite(Date.parse(h.admittedAt))) return false;
     const notice = h.systemicNotice;
     if (notice !== undefined && (!plainObject(notice) || typeof notice.target !== 'string'
       || !Array.isArray(notice.jobs) || notice.jobs.some(name => typeof name !== 'string'))) return false;
@@ -186,6 +196,7 @@ export function ghPort({ ghExe, repo, run }) {
 }
 
 // App 5368905's newest kooyumi-work-admission check of the head, bound to the pull request (clued-work-admission.mjs#independentAdmissionCheck).
+// at: when an admitting check completed (null when GitHub gives no readable time: no clock is started then).
 async function admissionOf(gh, headSha, prNumber) {
   const checks = await gh.paged(`/commits/${headSha}/check-runs?check_name=${ADMISSION_CHECK}&filter=all`, 'check_runs');
   const newest = checks.filter(c => c && c.name === ADMISSION_CHECK && c.head_sha === headSha && Number(c.app?.id) === ADMISSION_APP_ID)
@@ -194,7 +205,9 @@ async function admissionOf(gh, headSha, prNumber) {
   const named = [...String(newest.output?.summary ?? '').matchAll(/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([0-9]{1,10})(?![0-9])/g)]
     .filter(m => m[1].toLowerCase() === gh.repo.toLowerCase()).map(m => Number(m[2]));
   const bound = NATIVE_ADMISSION_ID.test(String(newest.external_id ?? '')) && named.length > 0 && named.every(n => n === Number(prNumber));
-  return { admitted: bound && newest.conclusion === 'success' };
+  const admitted = bound && newest.conclusion === 'success';
+  const at = admitted && Number.isFinite(Date.parse(newest.completed_at)) ? new Date(Date.parse(newest.completed_at)).toISOString() : null;
+  return { admitted, at };
 }
 
 async function classifyJob(gh, job) {
@@ -414,9 +427,11 @@ async function dispatchDecision({ gh, pull, defaultBranch, target, runs, missing
 }
 
 // Keep the old newest-run and historical repair checks within one workflow.
-async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, headSha, base, defaultBranch, testSha, canRequest, checks }) {
+// neverRanOnly: a gated PR run outside the required checks (54a2b67a): only a run whose every attempt ran nothing is repaired, and its
+// refusal is told to no one (no required check waits on it).
+async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, headSha, base, defaultBranch, testSha, canRequest, checks, workflow, neverRanOnly = false }) {
   const { id: runId, workflow_id: workflowId, run_attempt: attempt } = newest;
-  const out = { pr: pull, runId, workflowId, attempt, checks };
+  const out = { pr: pull, runId, workflowId, attempt, checks, workflow };
   const say = (action, reason) => ({ ...out, action, reason: short(reason) });
   const sha = testSha ?? headSha;
   if (runs.some(r => r.status !== 'completed')) return say('skip', 'an attempt is queued or running');
@@ -438,7 +453,8 @@ async function decideWorkflow({ gh, runs, newest, recentJobs, select, pull, head
     }
   }
   if (!testSha) {
-    out.neverRan = allSkipped;
+    if (neverRanOnly && !allSkipped) return say('final', 'a heavy job already ran; outside the required checks only a run that never ran is re-run');
+    out.neverRan = allSkipped && !neverRanOnly;
     if (allSkipped && runs.some(r => r.event !== 'pull_request')) return say('final', 'a previous dispatch or non-PR run already exists');
     if (allSkipped) {
       // Only a gate that ran can have skipped the heavy jobs for the actor (and has a verdict in its log); a gate no runner took ran nothing.
@@ -481,7 +497,8 @@ const newWorkflowMemo = () => ({ byBase: new Map(), byBlob: new Map() });
 
 // Resolve the whole scope before any POST. Each scoped decision still runs its
 // fresh checks immediately before the lane persists and sends it.
-async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = 'main', headAgeMs = null,
+// now: the lane's clock, for the watch window that starts at the admission (null: no window, as for a direct decide()).
+async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = 'main', headAgeMs = null, now = null,
   canRequest = () => true, canDispatch = () => true, workflowMemo = newWorkflowMemo(), workflowInventory, rulesRead = () => {} }) {
   const staging = testSha !== undefined;
   const say = (action, reason) => ({ action, reason, pr: frontPr, runId: null, attempt: null });
@@ -507,8 +524,14 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
         return;
       }
       [pull] = open;
-      if (!(await admissionOf(gh, headSha, pull.number)).admitted) {
+      const admission = await admissionOf(gh, headSha, pull.number);
+      if (!admission.admitted) {
         yield say('skip', 'the ' + ADMISSION_CHECK + ' check does not admit this head yet');
+        return;
+      }
+      yield { action: 'admitted', at: admission.at };
+      if (now !== null && admission.at !== null && now - Date.parse(admission.at) > HEAD_WATCH_MS) {
+        yield say('skip', 'the admission completed more than ' + HEAD_WATCH_MS / 3_600_000 + ' hours ago; the head is no longer watched');
         return;
       }
     }
@@ -534,7 +557,7 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
     let waiting = false;
     for (const group of byWorkflow.values()) {
       const newest = group.filter(select).sort((a, b) => b.id - a.id)[0];
-      if (!newest || !required.size) continue;
+      if (!newest || (staging && !required.size)) continue;
       let recentJobs;
       try { recentJobs = await jobsOf(gh, newest, newest.run_attempt); } catch (e) {
         waiting = true;
@@ -556,9 +579,11 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
         return;
       }
       const checks = source.checks.filter(c => required.has(c));
-      if (!checks.length) continue;
+      // 54a2b67a: a gated PR run outside the required checks stays in scope, for the never-ran repair only (the scope is the run's own).
+      if (!checks.length && staging) continue;
       for (const context of checks) unmapped.delete(context);
-      scoped.push({ group, newest, recentJobs, target: { id: newest.workflow_id, path: file, blob: source.blob, checks } });
+      scoped.push({ group, newest, recentJobs, neverRanOnly: !checks.length,
+        target: { id: newest.workflow_id, path: file, blob: source.blob, checks } });
     }
 
     const absent = [];
@@ -600,11 +625,11 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
     }
 
     yield { action: 'scope-ready', missing, workflowIds: [...byWorkflow.keys()] };
-    for (const { group, newest, recentJobs, target } of scoped) {
+    for (const { group, newest, recentJobs, target, neverRanOnly } of scoped) {
       let d;
       try {
         d = await decideWorkflow({ gh, runs: group, newest, recentJobs, select, pull: pull.number, headSha, base,
-          defaultBranch, testSha, canRequest, checks: target.checks });
+          defaultBranch, testSha, canRequest, checks: target.checks, workflow: target.path, neverRanOnly });
       } catch (e) {
         waiting = true;
         yield readError(e);
@@ -632,7 +657,7 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
 
 export async function decide(options) {
   for await (const value of decisions(options)) {
-    if (['inventory', 'scope-ready'].includes(value.action)) continue;
+    if (['inventory', 'scope-ready', 'admitted'].includes(value.action)) continue;
     return value.action === 'settled' ? { ...value, action: 'final' } : value;
   }
 }
@@ -798,13 +823,15 @@ export class AdmissionRerunner {
       const seen = this.state.data.heads[headSha];
       // Older verdicts used different repair or scope rules. Recheck within the original watch window.
       if (seen.final && seen.repairRuleVersion !== REPAIR_RULE_VERSION) { seen.final = null; changed = true; }
-      if (seen.final || now - Date.parse(seen.firstSeen) > HEAD_WATCH_MS) continue;
+      // 54a2b67a: a PR head's window starts at its admission (seen.admittedAt, written when the lane reads it); none read yet, no clock.
+      const watchFrom = testSha ? seen.firstSeen : seen.admittedAt;
+      if (seen.final || (watchFrom && now - Date.parse(watchFrom) > HEAD_WATCH_MS)) continue;
       if (seen.lookedAt && now - Date.parse(seen.lookedAt) < HEAD_RECHECK_MS) continue;
       if (looked >= HEADS_PER_STEP) break;
       looked += 1;
       changed = true;
       seen.lookedAt = new Date(now).toISOString();
-      const results = decisions({ gh: this.gh, ...candidate, headAgeMs: now - Date.parse(seen.firstSeen), workflowMemo: this.workflowMemo,
+      const results = decisions({ gh: this.gh, ...candidate, headAgeMs: now - Date.parse(seen.firstSeen), now, workflowMemo: this.workflowMemo,
         workflowInventory: seen.workflowInventory, rulesRead: () => { this.rulesFailingSince = null; },
         canDispatch: id => headRecord?.kind !== REDISPATCH_KIND && !this.state.data.records[headRecordKey(headSha, id)],
         canRequest: (runId, attempt) => {
@@ -814,6 +841,10 @@ export class AdmissionRerunner {
       for await (const d of results) {
         if (d.action === 'error') errors.push({ headSha, reason: d.reason });
         if (d.action === 'inventory') seen.workflowInventory = d.workflowInventory;
+        if (d.action === 'admitted') {
+          if (d.at) seen.admittedAt = d.at;
+          else delete seen.admittedAt;
+        }
         if (d.action === 'scope-ready') {
           delete seen.scopeIssue;
           Object.assign(seen, { missing: d.missing, workflowIds: d.workflowIds });
@@ -921,7 +952,8 @@ export class AdmissionRerunner {
             ? [`PR #${record.pr}：已自动补跑 ${d.checks.join('、')}（列车暂存提交）`, `${failureLabel(record.failures)} 已请求“Re-run all jobs”（运行 ${d.runId}，尝试 ${record.attempt}）。`.trim()]
             : d.environment
             ? [`PR #${record.pr}：已自动补跑 ${d.checks.join('、')}（环境类失败）`, `${failureLabel(record.failures)}。已请求“Re-run all jobs”（运行 ${d.runId}，尝试 ${record.attempt}）。`]
-            : [`PR #${record.pr}：已自动补跑 ${d.checks.join('、')}`, `准入在 gate 超时后才到，已按 #993 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`],
+            // A gated run outside the required checks (54a2b67a) is named by its workflow file.
+            : [`PR #${record.pr}：已自动补跑 ${d.checks.join('、') || path.posix.basename(d.workflow ?? '')}`, `准入在 gate 超时后才到，已按 #993 的规则点了一次“Re-run all jobs”（run ${d.runId}）。`],
           unsent: [`PR #${record.pr}：自动补跑没有发出`, `${failureLabel(record.failures)} ${record.why}，请求没有到 GitHub。${retryExplanation(record)}`.trim()],
           refused: [`PR #${record.pr}：自动补跑被 GitHub 拒绝`, `${failureLabel(record.failures)} ${record.why}。这个尝试号不再自动请求。`.trim()],
           unknown: [`PR #${record.pr}：自动补跑结果不确定`, `${failureLabel(record.failures)} ${record.why}。${retryExplanation(record)}`.trim()],
