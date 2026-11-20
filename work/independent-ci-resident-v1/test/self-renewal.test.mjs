@@ -228,7 +228,7 @@ function handoverFixture(t, {now = Date.now(), currentBinding = bindingId, mode,
   f.restart = () => {
     f.tick = renewalWatch({root, profile: {}, mode: mode ?? (() => f.mode), drained: drained ?? (async () => f.drained),
       clock: () => f.now, observe: () => f.observe(), onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; }), source: f.source,
-      uptime: () => f.now - f.startedAt});
+      uptime: () => f.now - f.startedAt, readResponse: f.readResponse ? (file => f.readResponse(file)) : undefined});
   };
   f.restart();
   f.book = () => JSON.parse(fs.readFileSync(path.join(root, 'state/connection-renewal.json')));
@@ -1054,4 +1054,82 @@ test('放弃后、新请求投出前读到旧号回包：采纳；新号投出�
   answer(f, old, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
   f.now += 15_000; await f.tick();
   assert.deepEqual([f.holds, f.book().pending?.id], [0, fresh], '换号后旧号回包不采纳');
+});
+
+// Codex 复审 076827ffe（中1）：准备投递与已成功投出分开。新请求号先记为“准备”，旧号（在途或已放弃）留到新请求文件确实建成才被替换；
+// 建文件失败或两步之间退出，按未投出处理：不阻塞投递，仍认旧号；请求文件已建成的，重启后接上，不丢号。
+const abandonCi = async f => { // 升级通道一天内不到期；ci 请求满一小时无回包而放弃
+  seedBook(f, {upgrade: {...refusedLane(f.now - HOUR, {source: CI_SOURCE}), code: null}}); f.restart();
+  await f.tick(); const old = f.request('ci');
+  f.now += HOUR; await f.tick();
+  assert.equal(f.book().lanes.ci.code, 'RENEW_RESPONSE_UNAVAILABLE');
+  return old;
+};
+test('建新请求文件失败：按未投出处理，旧号仍可采纳，也不挡下一次投递', async t => {
+  for (const variant of ['old-reply', 'repost']) {
+    const f = handoverFixture(t);
+    const old = await abandonCi(f);
+    const box = path.join(f.root, 'broker/requests'), aside = box + '-aside';
+    fs.renameSync(box, aside); fs.writeFileSync(box, ''); // 请求邮箱暂时建不了文件
+    f.now += HOUR;
+    await assert.rejects(f.tick());
+    fs.rmSync(box); fs.renameSync(aside, box);
+    assert.equal(requestFiles(f).length, 1, '新请求没有投出');
+    if (variant === 'old-reply') {
+      answer(f, old, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+      f.now += 15_000; await f.tick();
+      assert.equal(f.holds, 1, '旧号的让班回包照常采纳');
+    } else {
+      f.now += 15_000; await f.tick();
+      const fresh = f.request('ci');
+      assert.notEqual(fresh, old);
+      assert.equal(requestFiles(f).length, 2, '未投出的请求不挡下一次投递');
+    }
+  }
+});
+test('准备好新请求号后、建文件前后退出：未建成按未投出（仍认旧号），已建成则接上新号不丢', async t => {
+  const prepared = '10000000-0000-4000-8000-00000000000b';
+  for (const built of [false, true]) {
+    const f = handoverFixture(t);
+    const old = await abandonCi(f);
+    f.now += HOUR;
+    const book = f.book(); book.next = {id: prepared, kind: 'ci', at: f.now, confirming: false, source: CI_SOURCE};
+    fs.writeFileSync(path.join(f.root, 'state/connection-renewal.json'), JSON.stringify(book));
+    if (built) fs.writeFileSync(path.join(f.root, 'broker/requests', prepared + '.json'), JSON.stringify({kind: 'ci'}));
+    f.startedAt = f.now; f.restart(); // 退出后重启（启动宽限内）
+    answer(f, built ? prepared : old, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+    await f.tick();
+    assert.equal(f.holds, 1, built ? '已建成的新请求接上，其回包采纳' : '未建成的不算投出，旧号回包采纳');
+    assert.equal(f.book().next ?? null, null);
+  }
+});
+// 复审低2：业务字段不合格、由常驻自己判成“回包不可用”的，也归当前代，按每小时复核。
+test('A 代投出升级请求、B 代读到待批字段不全的回包：记回包不可用归当前代，不当轮重投', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); f.reply('ci', {}); await f.tick();
+  const id = f.request('upgrade'), at = f.now;
+  f.now = at + 10 * 60_000; f.source = OTHER_SOURCE; f.startedAt = f.now; f.restart(); await f.tick();
+  f.now = at + 20 * 60_000;
+  answer(f, id, 'upgrade', {code: 'RENEW_PENDING_APPROVAL'});
+  await f.tick();
+  assert.deepEqual([f.book().lanes.upgrade.code, f.book().lanes.upgrade.source], ['RENEW_RESPONSE_UNAVAILABLE', OTHER_SOURCE]);
+  f.request(null);
+  f.now += HOUR - 1; await f.tick(); f.request(null);
+  f.now += 1; await f.tick(); assert.notEqual(f.request('upgrade'), id);
+});
+// 复审低3：放弃前的第二次读要真的生效——同一轮第一次读空、第二次读到，采纳。
+test('一小时到点那一轮：第一次读空、放弃前再读读到回包——采纳，不进入回包不可用', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  const at = f.now;
+  let reads = 0;
+  f.readResponse = async file => { // 到点那一轮的第二次读之前，回包还没出现
+    if (f.now < at + HOUR || ++reads < 2) return null;
+    answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  };
+  f.restart();
+  f.now = at + HOUR - 15_000; await f.tick();
+  f.now = at + HOUR; await f.tick();
+  assert.deepEqual([reads, f.holds, f.book().lanes.ci.code], [2, 1, 'RENEW_HANDOVER_WAITING']);
 });
