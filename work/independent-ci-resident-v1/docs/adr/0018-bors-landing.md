@@ -1,8 +1,8 @@
 # ADR 0018：bors 式落地——列车自己把测过的提交快进推上 main
 
-- 状态：实现已合入；Owner 于 2026-11-17 13:55 决定按预授权 `9e2511fe` 第 6 项准备启用。仓库侧补齐 §8 的工作流、runner 钩子、守队程序与合同前提，不代表生产已启用；`FLEET_TRAIN` 仍为 `github-merge`、批大小 1。App 权限与规则集就绪后，另行 PR 修改船队统一策略并发通用包；节点安装状态须独立核实。
+- 状态：实现已合入；Owner 于 2026-11-17 13:55 决定按预授权 `9e2511fe` 第 6 项准备启用。仓库侧补齐 §8 的工作流、runner 钩子、守队程序与合同前提，不代表生产已启用。App 权限与规则集就绪后，另行 PR 修改船队统一策略并发通用包；节点安装状态须独立核实。
 - 日期：2026-11-07（设计与实现）；2026-11-08 合入第 28 代
-- 批量合并开关（PR-4）曾把 `FLEET_TRAIN` 设为 `landing=push`；现已去掉 `landing`，回到默认 `github-merge`、`batchMax` 1，由单独 PR 重新启用（Fable 2026-11-19 批量合并启用设计 §8.3）。
+- 批量合并开关（PR-4，#1153）曾把 `FLEET_TRAIN` 设为 `landing=push`；#1174 去掉 `landing`，回到默认 `github-merge`、`batchMax` 1（Fable 2026-11-19 批量合并启用设计 §8.3）。2026-11-20 以单独 PR 重开：`FLEET_TRAIN.landing` 恢复为 `push`，`batchMax` 不写、取默认 1（§8 第 7 条）。仓库值改了不等于生产生效，见 §8 第 7 条的发包、升级与主规则集保存。
 - Owner Decision：`9e2511fe` 第 6 项；预授权 Task `7d86cf41`（ADR 0010）
 - 来源：分支 `claude/train-bors-chain` 提交 `d1c5174a6`。该分支把本文写成常驻 DESIGN 的 §66，与 main 上冻结档案的 §66（状态里的分段耗时）撞号，而 DESIGN 已在 §70 冻结，所以合入时改为本 ADR。代码注释里的 “ADR 0018 §n” 指本文第 n 节；正文里的 §41、§62、§65 等仍指冻结的 DESIGN。
 - 后续一步：[ADR 0019](0019-train-batch-member-chain.md)（批量真正上生产）。
@@ -108,7 +108,7 @@
    > 合入 main 只有两条路：一是经 PR 由 GitHub 合并（`train.landing=github-merge` 时）；二是合并列车以 App 5368905 把它测过、并在推送前逐项实时准入过的提交快进推上 main（`train.landing=push` 时）。main 主规则集的 bypass 名单只含 App 5368905；“main 只许快进”规则集的 bypass 名单为空；其它任何人或自动化都不得直接推 main。
    > 每个进 main 的变更仍必须是一个打开的、准入过的 PR 的 head；变的只是谁执行合并。任何 bypass 名单永不含 Owner、Admin 或任何 Agent 可用的身份；App 5368905 的私钥不得供 Agent 使用，其私钥泄露等同 main 写权限泄露，须立即撤销该 App 的 bypass 和 Contents/Workflows 权限。“main 只许快进”规则集的 bypass 名单始终为空，其它任何人或自动化不得直推 main；该规则集不构成私钥泄露后的写权限隔离。
 6. **合同**：MergeAdmission 与合同草稿写明：`push` 下 PR 不再由人或 auto-merge 合并，列车测过就推；批量时位子之后的骑乘成员随车头一起合入（每个成员都过实时准入，坏的被二分剔除）。
-7. **策略**：`FLEET_TRAIN` 随通用包下发，取代一次 UAC 写策略。先合入仓库侧工作流、runner 钩子和守队程序门控，配好 App 权限、列车暂存与无 bypass 的“main 只许快进”规则集；再以单独 PR 将 `FLEET_TRAIN.landing` 改为 `push`（`batchMax` 先保持 1），发通用包，先升级待命节点、再升级当班节点并核实两侧同代。之后主规则集的 App bypass 与 `kooyumi-train-landed` 同一次保存。不得以节点本地策略替代通用包，包会重写 train；未完成前保持 `github-merge`。旧代码上线前不能先加它不认识的必需检查，否则全部 `REQUIRED_CHECKS_UNREADABLE` 停靠。
+7. **策略**：`FLEET_TRAIN` 随通用包下发，取代一次 UAC 写策略。先合入仓库侧工作流、runner 钩子和守队程序门控，配好 App 权限、列车暂存与无 bypass 的“main 只许快进”规则集；再以单独 PR 将 `FLEET_TRAIN.landing` 改为 `push`（`batchMax` 先保持 1；2026-11-20 重开即此 PR，`batchMax` 不写，由 `trainBatchMax` 取默认 1），发通用包，先升级待命节点、再升级当班节点并核实两侧同代。之后主规则集的 App bypass 与 `kooyumi-train-landed` 同一次保存。不得以节点本地策略替代通用包，包会重写 train；未完成前保持 `github-merge`。旧代码上线前不能先加它不认识的必需检查，否则全部 `REQUIRED_CHECKS_UNREADABLE` 停靠。
 8. **合并意愿**（审查第 4 条，Owner 决定点）：今天 strict 模式下 PR 要靠 auto-merge（`Clued-Auto-Merge:` 选择加入）或守队程序合并；`push` 下认领进了合并队列就等于要合并，列车测过就推（守队程序 §41.8 本来也会合任何全绿的 PR）。若 Owner 要保留“显式选择加入”，再加一条：骑乘成员和车头都要有选择加入 trailer。
 9. **Native 发布票据**（审查第 4 条）：受保护层的 guarded 发布（`publicationRequired`）今天经 `prepareNativePublication` 拿票据再写 merge-slot 绿。`push` 下骑乘成员凡是 `publicationRequired` 一律不搭车（代码已拒）；车头仍要过 Native 完整准入（含 Owner Grant），但“落地”本身还没有对应的 Native 票据。在 Owner 定义落地票据之前，建议受保护层的车头在 `push` 下也只走 `github-merge`，或由 Owner 确认“完整准入 + Grant”即可落地。
 
