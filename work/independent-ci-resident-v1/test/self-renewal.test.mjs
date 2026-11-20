@@ -866,3 +866,75 @@ test('等回包期间常驻重启：恢复同一请求号继续等，启动宽�
   assert.equal(f.holds, 1);
   assert.equal(f.book().lanes.ci.code, 'RENEW_HANDOVER_WAITING');
 });
+
+// Codex 独审 4a83b3e08（中1）：一小时是硬边界——满一小时的那一轮即按回包不可用，哪怕此刻回包文件已经在了（含重启后）。
+test('一小时边界：第 3599 秒空读、第 3601 秒才写入让班、第 3610 秒检查——按回包不可用，不交出接单', async t => {
+  for (const restart of [false, true]) {
+    const f = handoverFixture(t);
+    await f.tick(); const id = f.request('ci');
+    const at = f.now;
+    f.now = at + 3_599_000; await f.tick();
+    assert.equal(f.book().pending?.id, id);
+    f.now = at + 3_601_000;
+    answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+    f.now = at + 3_610_000;
+    if (restart) { f.startedAt = f.now; f.restart(); }
+    await f.tick();
+    assert.equal(f.holds, 0, '满一小时后才看到的让班回包不采纳' + (restart ? '（重启后）' : ''));
+    assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.book().lanes.ci.effectiveAt], ['RENEW_RESPONSE_UNAVAILABLE', true, null]);
+  }
+});
+// 中2：在途请求归属投出它的那一代。B 代消费 A 代请求的拒绝，通道记录记 A 代的 Source，B 代不按本代退避；旧格式在途记录（无 Source）按跨代。
+test('A 代投出、B 代消费 A 代请求的密钥不可用拒绝：记为 A 代，B 代宽限一过即重投；旧格式在途记录同样按跨代', async t => {
+  for (const legacy of [false, true]) {
+    const f = handoverFixture(t);
+    await f.tick(); const id = f.request('ci');
+    f.now += 120_000; await f.tick();
+    if (legacy) {
+      const book = f.book(); delete book.pending.source;
+      fs.writeFileSync(path.join(f.root, 'state/connection-renewal.json'), JSON.stringify(book));
+    }
+    f.source = OTHER_SOURCE; f.now += 10_000; f.startedAt = f.now; f.restart(); // 换代：常驻以 B 代重启
+    f.now += 30_000;
+    answer(f, id, 'ci', {code: 'RENEW_IDENTITY_KEY_UNAVAILABLE'});
+    await f.tick(); f.request(null);
+    assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.source ?? null], ['RENEW_IDENTITY_KEY_UNAVAILABLE', legacy ? null : CI_SOURCE]);
+    f.now = f.startedAt + CHECK - 1; await f.tick(); f.request(null);
+    f.now += 1; await f.tick();
+    assert.equal(f.request('ci') === id, false);
+    assert.equal(f.book().pending.kind, 'ci', 'B 代不为 A 代的拒绝退避一天');
+  }
+});
+// 低1：“等回包”不是失败，不发 renewal-failed 通知；状态视图照样显示等待码。
+test('等回包超过 120 秒：状态视图显示等待码，但不产生续期失败通知', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); f.request('ci');
+  f.now += 120_000; await f.tick();
+  const {view, notices} = await readVersionState({root: f.root, policy: {residentManifestSha256: RESIDENT, ciSourceManifestSha256: CI_SOURCE}, clock: () => f.now});
+  assert.equal(view.renewal.connections.ci.code, 'RENEW_RESPONSE_WAITING');
+  assert.deepEqual(notices.filter(n => n.kind === 'renewal-failed' && n.code === 'RENEW_RESPONSE_WAITING'), []);
+});
+// 低2：迟到的确认待命、迟到的拒绝各走原分支。
+test('确认待命的回包在第 160 秒到达：待命且已排空即投确认号', async t => {
+  const f = handoverFixture(t);
+  f.mode = 'STANDBY'; f.drained = true;
+  await f.tick(); const id = f.request('ci');
+  f.now += 120_000; await f.tick();
+  f.now += 40_000;
+  answer(f, id, 'ci', {outcome: 'confirm-standby', confirmationId});
+  await f.tick();
+  assert.equal(f.request('ci'), confirmationId);
+  assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.holds], ['CI_REBIND_NOT_DRAINED', true, 0]);
+});
+test('拒绝的回包在第 160 秒到达：原码落盘，不交出当班，按该码节奏重投', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  f.now += 120_000; await f.tick();
+  f.now += 40_000;
+  answer(f, id, 'ci', {code: 'RENEW_HANDOVER_NO_CANDIDATE'});
+  await f.tick();
+  assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.holds], ['RENEW_HANDOVER_NO_CANDIDATE', false, 0]);
+  f.reply('upgrade', {}); await f.tick(); f.request(null);
+  f.now += HOUR - 1; await f.tick(); f.request(null);
+  f.now += 1; await f.tick(); assert.notEqual(f.request('ci'), id);
+});
