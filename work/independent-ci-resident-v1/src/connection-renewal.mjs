@@ -21,7 +21,8 @@ const HOURLY = ['RENEW_GATEWAY_UNAVAILABLE', 'RENEW_RESPONSE_UNAVAILABLE', 'RENE
 // Task a75da4bd（Fable 11-20“补：让班回包迟到”(2)）：回包什么时候到都是对该请求号的权威答复。等过 REPLY_OVERDUE 只改对外显示
 // （RENEW_RESPONSE_WAITING），请求号留在状态里每轮照看；满 REPLY_LIMIT 仍无回包（Broker 没了、文件永远不来）才按回包不可用。
 // 采纳与否不看时间（Fable 11-20“一小时截止的语义”）：状态里记着的还是这个请求号，任何一轮读到它的回包都采纳；REPLY_LIMIT 只决定
-// 何时不再等，放弃前再读一次，读不到才放弃。放弃后状态里不再记着它，换成新请求号后旧号的回包不再采纳。判据只用常驻自己的时钟。
+// 何时不再等，放弃前再读一次，读不到才放弃（记回包不可用、每小时复核）。放弃后旧号仍留在状态里，直到投出新请求换成新号，期间读到
+// 它的回包照常采纳；换号后旧号的回包不再采纳。判据只用常驻自己的时钟。
 // 等待码不是失败，状态不发失败通知（独审 4a83b3e08 低1）。
 const REPLY_OVERDUE = 120_000, REPLY_LIMIT = HOUR;
 export const RESPONSE_WAITING = 'RENEW_RESPONSE_WAITING';
@@ -103,18 +104,23 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
       book.keys={...keyCheck(system,r,c,h,profile,checkedAt,mode()),systemFailure:system?.failure??null};
       book.checkedAt=new Date(checkedAt).toISOString(); await save();
     }
+    let reply=null;
     if (book.pending) {
-      const {id,kind,at,confirming}=book.pending;
-      // 旧格式在途记录没有 Source：按别的代处理（不计本代退避）。
-      const owner=typeof book.pending.source==='string' ? book.pending.source : null;
+      const {id,kind,at,abandoned}=book.pending;
       if (!UUID.test(id) || !KINDS.includes(kind)) throw new Error('RENEW_STATE_REFUSED');
       // 只认状态里记着的这个请求号；没有结论前不为任何通道投新请求（Broker 那边本来也只处理一条）。重启后从状态恢复同一请求号。
       const readReply=async()=>{ const r=await read(path.join(root,'broker','responses',id+'.json')); return r?.requestId===id ? r : null; };
-      let reply=await readReply();
-      if (!reply) {
+      reply=await readReply();
+      if (!reply && !abandoned) {
         if (now-at<REPLY_LIMIT) return;
         reply=await readReply(); // 放弃之前再读一次：读到就采纳，读不到才按回包不可用
       }
+    }
+    // 已放弃的请求号（abandoned）留在状态里，直到投出新请求换成新号（裁定规则 3）：期间不挡投递，每轮照看，读到它的回包照常采纳。
+    if (book.pending && (reply || !book.pending.abandoned)) {
+      const {id,kind,confirming}=book.pending;
+      // 旧格式在途记录没有 Source：按别的代处理（不计本代退避）。
+      const owner=typeof book.pending.source==='string' ? book.pending.source : null;
       const valid=reply?.requestId===id && reply.kind===kind && reply.contract==='clued.independent-ci.connection-renew-response/1';
       const bound = valid && reply.code === null && UUID.test(reply.bindingId) && Number.isFinite(Date.parse(reply.expiresAt));
       const yielded = bound && kind === 'ci' && reply.outcome === 'yielded' && Number.isFinite(Date.parse(reply.effectiveAt));
@@ -141,7 +147,7 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
         grantRequestId: pendingApproval ? reply.grantRequestId : null,
         retryAfterSeconds: pendingApproval ? reply.retryAfterSeconds : null,
       };
-      book.pending = null;
+      book.pending = reply ? null : {...book.pending, abandoned: true};
       const canConfirm = () => {
         const role=mode();
         return role==='STANDBY' || (role==='UNCERTAIN' && (!prior?.effectiveAt || Date.parse(reply.expiresAt)<=now));
@@ -191,6 +197,6 @@ export async function renewalStatus(root, now) {
   const keys=book.keys;
   const ok=keys?.result==='PASS' && now>=Date.parse(book.checkedAt) && now-Date.parse(book.checkedAt)<3*CHECK_INTERVAL;
   const lanes={...book.lanes}, p=book.pending;
-  if(p && KINDS.includes(p.kind) && now-p.at>=REPLY_OVERDUE) lanes[p.kind]={...lanes[p.kind],code:RESPONSE_WAITING};
+  if(p && !p.abandoned && KINDS.includes(p.kind) && now-p.at>=REPLY_OVERDUE) lanes[p.kind]={...lanes[p.kind],code:RESPONSE_WAITING};
   return parseRenewalStatus({keyCheck:ok?'PASS':'FAIL',checkedAt:book.checkedAt,connections:lanes});
 }
