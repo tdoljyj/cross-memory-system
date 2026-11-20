@@ -60,7 +60,7 @@ export const DEFAULT_ROOTS = Object.freeze({ receipts: STATE_V2.receipts, trainS
 const RUN = '[0-9a-f]{16}-[0-9a-f]{12}';
 const RUN_ID = new RegExp(`^${RUN}$`);
 const STAMPED = new RegExp(`^(\\d{13})-${RUN}\\.json$`);
-const SWEPT = new RegExp(`^(landing-batch|landing-state|scan-on|scan-shadow|scan-strict|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\\d{13})-${RUN}-[0-9a-f]{8}\\.json$`);
+const SWEPT = new RegExp(`^(landing-batch|landing-state|slot-green|front-seen|scan-on|scan-shadow|scan-strict|pending-revocations|strict-front-proof|strict-proof|strict-round|proof|full-shadow|full-on|front)-(\\d{13})-${RUN}-[0-9a-f]{8}\\.json$`);
 const MONTH = /^(\d{4})-(\d{2})$/;
 const fail = code => { throw Object.assign(new Error(code), { code }); };
 const check = (ok, code) => { if (!ok) fail(code); };

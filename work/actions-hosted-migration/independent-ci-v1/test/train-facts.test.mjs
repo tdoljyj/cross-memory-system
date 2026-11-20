@@ -92,7 +92,7 @@ test('what the train would do (design §5.2, §5.6)', () => {
   assert.equal(d({ checks: green }), 'FRONT_GREEN_WAIT_MERGE');
   assert.equal(d({ checks: [{ ...green[0], app: { id: 1 } }] }), 'OPEN_FRONT_BATCH', 'only App 5368905 counts');
   assert.equal(d({ checks: [...green, { ...green[0], id: 8, conclusion: 'failure' }] }), 'OPEN_FRONT_BATCH', 'the newest judgement counts');
-  assert.ok(WOULD_DO.length === 9);
+  assert.ok(WOULD_DO.length === 11);
 });
 
 test('would revoke: ledgered greens neither in main nor the front head; revoked, merged-in and unknown ones stay out', () => {
