@@ -26,6 +26,7 @@ import { runTrain } from '../src/independent-control-checks-v2/train-maintenance
 import { batchChainOk, parseStageTrainLanding, stageTrainLandingText } from '../src/independent-control-checks-v2/train-landing.mjs';
 import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
 import { parseLandingArg } from '../src/resident-v2/invoke-stage.mjs';
+import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import fs from 'node:fs/promises';
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
@@ -705,6 +706,9 @@ function githubMerges(e, b) {
 const greens = (e, sha) => [...e.gh.world.checks.values()].filter(c => c.head_sha === sha && c.name === 'kooyumi-merge-slot' && c.conclusion === 'success');
 const PUSH1 = Object.freeze({ landing: 'push', batchMax: 1, unreadable: false });
 const TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass'];
+// stage 10 reads no bypass state before kooyumi-train-landed (it cannot change the route then): what push lacks without it
+const S10_TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing'];
+const ALL_FOUR = { 'ci-suites': 'success', 'clued-cloud-tests': 'success', 'migration-verify': 'success', 'ci-suites-windows': 'success' };
 
 test('three ways, today (no independent ruleset, no kooyumi-train-landed, the App cannot bypass main): a push-capable package lands through GitHub as today and never parks', async t => {
   const { e, b, T } = await opened(t, [910], { rules: 'today' });
@@ -716,12 +720,11 @@ test('three ways, today (no independent ruleset, no kooyumi-train-landed, the Ap
   assert.equal(e.main(), T);
   assert.equal(greens(e, b.headSha).length, 1, 'the merge-slot green of the current path, on H');
   // the receipt: what a push of this S would have needed on S itself
-  assert.deepEqual(p.rehearsal, { testSha: b.testSha, checks: { 'ci-suites': 'success', 'clued-cloud-tests': 'success', 'migration-verify': 'success', 'ci-suites-windows': 'success' },
-    allFour: true, missing: TODAY_MISSING });
+  assert.deepEqual(p.rehearsal, { testSha: b.testSha, checks: ALL_FOUR, allSuccess: true, missing: TODAY_MISSING, bypass: { main: 'never', independent: 'absent' } });
   // GitHub merges it; the next stage 10 adopts it and says which way it read: the train went on
   const M = githubMerges(e, b);
   const s10 = (await stage10(e)).facts;
-  assert.deepEqual([s10.landing?.route, s10.landing?.missing], ['github-merge', TODAY_MISSING], JSON.stringify(s10.landing));
+  assert.deepEqual([s10.landing?.route, s10.landing?.missing], ['github-merge', S10_TODAY_MISSING], JSON.stringify(s10.landing));
   assert.deepEqual(e.adopted, [[910, M]]);
   assert.equal(e.queue.length, 0);
 });
@@ -747,7 +750,7 @@ test('three ways, today: three queued PRs go one by one through GitHub, none par
     const b = r.facts.openFrontBatch;
     if (!b) continue;
     const p = await stage8(t, e, b, { trainLanding: { landing: 'push', batchMax: 4, unreadable: false } });
-    log.push([b.pr, p.status, p.reason ?? null, p.rehearsal?.allFour ?? null]);
+    log.push([b.pr, p.status, p.reason ?? null, p.rehearsal?.allSuccess ?? null]);
     if (p.status === 'SETTLED') githubMerges(e, b);
   }
   assert.deepEqual(log, [[910, 'SETTLED', null, true], [911, 'SETTLED', null, true], [912, 'SETTLED', null, true]], JSON.stringify({ log, decisions }));
@@ -769,10 +772,7 @@ test('three ways: the three conditions all read back -> push lands, the stage-10
 test('three ways, fail closed: rules that cannot be read, or read only in part, park with the missing item named; no check, no push', async t => {
   const cases = {
     'rules reply incomplete': e => { e.gh.readBranchRules = async () => ({ complete: false, branch: 'main', rules: [] }); },
-    'ruleset read fails': e => { e.gh.readRuleset = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; },
     'rule without its ruleset': e => { const r = e.gh.readBranchRules; e.gh.readBranchRules = async () => { const x = await r(); delete x.rules[0].rulesetId; return x; }; },
-    // the "can this caller bypass" field itself not in the answer: the publisher knows nothing of its own position
-    'bypass state field absent': e => { for (const r of e.W.rulesets.values()) r.currentUserCanBypass = null; },
   };
   for (const [name, breakIt] of Object.entries(cases)) for (const kind of ['today', 'push']) await t.test(`${name} (${kind})`, async t => {
     const { e, b, T } = await opened(t, [910], { rules: kind });
@@ -810,13 +810,67 @@ test('three ways, fail closed: kooyumi-train-landed read while the rest is not c
   });
 });
 
-test('three ways, fail closed: the App able to bypass main without kooyumi-train-landed parks (half of the Owner\'s second step)', async t => {
-  const { e, b, T } = await opened(t, [910], { rules: 'today' });
-  e.W.rulesets.get(MAIN_RS).currentUserCanBypass = 'always';
-  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
-  assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0], JSON.stringify(p));
-  assert.ok(p.missing.includes('main_app_can_bypass'), JSON.stringify(p.missing));
-  untouched(e, T); assert.deepEqual(e.W.pushes, []);
+// H1 (Fable 2026-11-20 补：可绕过字段读不到时): before kooyumi-train-landed the bypass state never chooses: read, recorded, and the train goes on.
+test('three ways, H1: no kooyumi-train-landed and the bypass state unreadable (field absent, or the read fails) -> the current path, the rehearsal says unreadable', async t => {
+  const cases = {
+    'field absent': e => { for (const r of e.W.rulesets.values()) r.currentUserCanBypass = null; },
+    'read fails': e => { e.gh.readRuleset = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; },
+    'an undocumented value': e => { e.W.rulesets.get(MAIN_RS).currentUserCanBypass = 'sometimes'; },
+  };
+  for (const [name, breakIt] of Object.entries(cases)) await t.test(name, async t => {
+    const { e, b, T } = await opened(t, [910], { rules: 'today' });
+    breakIt(e);
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+    assert.equal(greens(e, b.headSha).length, 1); assert.equal(e.main(), T); assert.deepEqual(e.W.pushes, []);
+    assert.deepEqual(p.rehearsal.bypass, { main: 'unreadable', independent: 'absent' });
+    assert.ok(p.rehearsal.missing.includes(`ruleset_can_bypass_unreadable:${MAIN_RS}`), JSON.stringify(p.rehearsal.missing));
+  });
+  await t.test('the App able to bypass main without kooyumi-train-landed: current path, recorded as always', async t => {
+    const { e, b } = await opened(t, [910], { rules: 'today' });
+    e.W.rulesets.get(MAIN_RS).currentUserCanBypass = 'always';
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.equal(p.status, 'SETTLED', JSON.stringify(p)); assert.deepEqual(e.W.pushes, []);
+    assert.deepEqual(p.rehearsal.bypass, { main: 'always', independent: 'absent' });
+  });
+});
+
+test('three ways, H1: kooyumi-train-landed and a bypass state that cannot be read -> parked, the unreadable ruleset named; no check, no push', async t => {
+  const cases = {
+    'field absent on both': [e => { for (const r of e.W.rulesets.values()) r.currentUserCanBypass = null; }, [`ruleset_can_bypass_unreadable:${FF_RS}`, `ruleset_can_bypass_unreadable:${MAIN_RS}`]],
+    'field absent on main': [e => { e.W.rulesets.get(MAIN_RS).currentUserCanBypass = null; }, [`ruleset_can_bypass_unreadable:${MAIN_RS}`]],
+    'independent read fails': [e => { const read = e.gh.readRuleset; e.gh.readRuleset = async id => { if (id === FF_RS) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return read(id); }; },
+      [`ruleset_can_bypass_unreadable:${FF_RS}`]],
+  };
+  for (const [name, [breakIt, missing]] of Object.entries(cases)) await t.test(name, async t => {
+    const { e, b, T } = await opened(t, [910]);
+    breakIt(e);
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, missing], JSON.stringify(p));
+    untouched(e, T); assert.deepEqual(e.W.pushes, []);
+  });
+});
+
+test('three ways, M1: stage 8\'s outcome on disk carries the rehearsal of a current-path pair and the missing items of a park, and reads back', async t => {
+  const root = await tempDir(t);
+  const plan = { stage: 8, entryRole: 'control-checks' };
+  const write = async (nonce, result) => { await writeOutcome({ receiptsRoot: root, nonce, plan, jobIds: [], result }); return JSON.parse(await fs.readFile(path.join(root, `outcome-${nonce}.json`), 'utf8')); };
+  // the current path, Windows not yet on S (before 6a): the record says so
+  const today = await opened(t, [910], { rules: 'today' });
+  for (const [id, c] of today.e.W.checks) if (c.head_sha === today.b.testSha && c.name === 'ci-suites-windows') today.e.W.checks.delete(id);
+  const p = await stage8(t, today.e, today.b, { trainLanding: PUSH1 });
+  assert.equal(p.status, 'SETTLED');
+  const o = await write('a'.repeat(32), p);
+  assert.deepEqual(o.rehearsal, { testSha: today.b.testSha, checks: { ...ALL_FOUR, 'ci-suites-windows': 'missing' }, allSuccess: false, missing: TODAY_MISSING,
+    bypass: { main: 'never', independent: 'absent' } });
+  assert.ok(!('landingMissing' in o));
+  // a park on main's rules
+  const half = await opened(t, [910]);
+  half.e.W.rules = half.e.W.rules.filter(r => r.rulesetId !== FF_RS); half.e.W.rulesets.delete(FF_RS);
+  const q = await stage8(t, half.e, half.b, { trainLanding: PUSH1 });
+  const parked = await write('b'.repeat(32), q);
+  assert.deepEqual([parked.status, parked.reason, parked.landingMissing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', ['independent_ruleset_missing']]);
+  assert.ok(!('rehearsal' in parked));
 });
 
 test('three ways: the bypass lists are not the publisher\'s to read: who else is on them changes no route (checked by an administrator when the Owner saves)', async t => {
@@ -842,7 +896,7 @@ test('three ways, rehearsal: S without all four checks green still lands through
     change(e.W, id);
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
     assert.equal(p.status, 'SETTLED', JSON.stringify(p));
-    assert.deepEqual([p.rehearsal.allFour, p.rehearsal.checks['ci-suites-windows'], p.rehearsal.checks['ci-suites']], [false, what, 'success']);
+    assert.deepEqual([p.rehearsal.allSuccess, p.rehearsal.checks['ci-suites-windows'], p.rehearsal.checks['ci-suites']], [false, what, 'success']);
     assert.equal(greens(e, b.headSha).length, 1);
   });
 });
