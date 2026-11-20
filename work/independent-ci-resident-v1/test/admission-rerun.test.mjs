@@ -1767,3 +1767,38 @@ test('finalRuns read too early 5 (review NB 2): a run remembered final is read a
     assert.ok(w.calls.slice(from).some(c => c.target.includes('/actions/runs/702/attempts/1/jobs')), 'the job list of run 702 is read again');
   }
 });
+
+// Fable 11-20 open points 一.2: a job end that cannot be read falls back to the run's updated_at (never earlier than the attempt's end); with
+// neither readable the refusal stays no verdict. The jobs that can be read ended 11 minutes ago, so taking the latest readable one would close.
+const unreadableEndRun = updatedAt => {
+  const a = endedAt({ ...workflowAttempt('gitleaks'), notes: [] }, iso(T0 - 11 * 60_000));
+  a.jobs[1] = { ...a.jobs[1], completed_at: null };
+  return run(702, [a], { workflow_id: HOSTED_WORKFLOW, updated_at: updatedAt });
+};
+
+test('finalRuns read too early, unreadable job end 1: the run updated 11 minutes ago closes the run and the head', async t => {
+  const w = world({ checks: allChecksShown(), runs: [unreadableEndRun(iso(T0 - 11 * 60_000))] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.ok(judgedFinal(l, 702), 'remembered final');
+  assert.ok(l.state.data.heads[HEAD].final, 'the head is closed');
+  assert.deepEqual(w.posts, []);
+});
+
+test('finalRuns read too early, unreadable job end 2: the run updated 1 minute ago is no verdict yet', async t => {
+  const w = world({ checks: allChecksShown(), runs: [unreadableEndRun(iso(T0 - 60_000))] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.ok(!judgedFinal(l, 702));
+  assert.equal(l.state.data.heads[HEAD].final, null);
+  assert.deepEqual(w.posts, []);
+});
+
+test('finalRuns read too early, unreadable job end 3: with no readable updated_at either the refusal stays no verdict', async t => {
+  const w = world({ checks: allChecksShown(), runs: [unreadableEndRun(null)] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.ok(!judgedFinal(l, 702));
+  assert.equal(l.state.data.heads[HEAD].final, null);
+  assert.deepEqual(w.posts, []);
+});
