@@ -1295,7 +1295,7 @@ function Get-SecretRecorded([string]$name, $facts) {
 }
 # -Reset: what this host preparation made, removed (Get-ResetPlan); nothing else.
 function Invoke-Reset($old, $observed, [string]$operator) {
-  $resident = @(Get-ResidueCodes ([ordered]@{ services = $observed.services; firewallRule = $observed.firewallRule; companionTask = $observed.companionTask; residentRoot = $observed.residentRoot }))
+  $resident = Get-ResidueCodes ([ordered]@{ services = $observed.services; firewallRule = $observed.firewallRule; companionTask = $observed.companionTask; residentRoot = $observed.residentRoot })
   $controllerSid = try { (Get-LocalUser -Name 'clued-control').SID.Value } catch { $null }
   $cwFile = Join-Path $FirstDir 'companion-wsl.json'
   $cw = if ([IO.File]::Exists($cwFile)) { (New-Object Web.Script.Serialization.JavaScriptSerializer).DeserializeObject($Strict8.GetString([IO.File]::ReadAllBytes($cwFile))) } else { $null }
