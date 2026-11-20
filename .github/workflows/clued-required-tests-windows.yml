@@ -23,8 +23,9 @@ name: clued-required-tests-windows
 #
 # The train App's push to clued-train/staging runs it too (ADR 0018 §8, D6 N1),
 # exactly as clued-required-tests.yml: ci-suites-windows is required on main, so
-# a batch lands only when it succeeded on S. The trusted base is T = S^1,
-# checked to be an ancestor of main before any trusted command loads.
+# a batch lands only when it succeeded on S. The trusted base is T, the root
+# of S's member chain on main (S^1 for one member), resolved before any
+# trusted command loads.
 on:
   pull_request:
   push:
@@ -80,7 +81,7 @@ jobs:
 
   # One step selects and runs, on the runner's own Node 24 and Python 3.12
   # (cap-node24, cap-python312; nothing is downloaded), after the push baseline
-  # (git only).
+  # (git, and the runner hook's chain walk read from main).
   ci-suites-windows:
     name: >-
       ${{ needs.admission-gate.outputs.admitted == 'true' &&
@@ -128,14 +129,20 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:EVENT_NAME -ne 'push') { exit 0 }
-          $base = git rev-parse "$($env:STAGING_SHA)^1"
-          if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }
           if ($env:PUSH_REF -eq 'refs/heads/clued-train/staging') {
-            # Checkout fetched full history; no candidate code has run.
-            # The first parent must be an already trusted main ancestor.
-            git merge-base --is-ancestor $base origin/main
-            if ($LASTEXITCODE -ne 0) { exit 1 }
+            # Checkout fetched full history; no candidate code has run. T is the
+            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
+            # member), walked by the runner hook's own code read from main.
+            $base = node --input-type=module -e "
+              const { execFileSync } = await import('node:child_process');
+              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
+              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
+              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));"
+            if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }
             [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "sha=$base`n")
+          } else {
+            $base = git rev-parse "$($env:STAGING_SHA)^1"
+            if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }
           }
           [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "ci_base=$base`n")
       - name: Check out the trusted base (selection and commands)

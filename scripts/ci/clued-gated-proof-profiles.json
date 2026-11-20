@@ -6368,7 +6368,7 @@
         {
           "command_digests": {
             "Resolve push baseline before loading trusted commands": [
-              "dc9b23b3f8e43fe001846256f728bf6145a1f1c8431fd79f2f5ebc576fb96c9e"
+              "b2501a2b13959135d9858b7e369eacfe61200a4e1f6c00efe7a3bb747a6e3ea0"
             ],
             "Select and run the suites declared for Windows": [
               "2c288b8962c064fb85ba2d396e252b0850a751d57422b57b15ab51982313b6b6"
@@ -6383,7 +6383,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "c91b18203e538f2943f4c492f02b3f43543eb4275873f763d038ddbaef21e037",
+      "source_sha256": "0c6adf19abc0d0d982b20baf52d917b78b5b49dc1e2fa416839d5fc6cf431e64",
       "source_yaml_lines": [
 "name: clued-required-tests-windows",
 "",
@@ -6410,8 +6410,9 @@
 "#",
 "# The train App's push to clued-train/staging runs it too (ADR 0018 §8, D6 N1),",
 "# exactly as clued-required-tests.yml: ci-suites-windows is required on main, so",
-"# a batch lands only when it succeeded on S. The trusted base is T = S^1,",
-"# checked to be an ancestor of main before any trusted command loads.",
+"# a batch lands only when it succeeded on S. The trusted base is T, the root",
+"# of S's member chain on main (S^1 for one member), resolved before any",
+"# trusted command loads.",
 "on:",
 "  pull_request:",
 "  push:",
@@ -6467,7 +6468,7 @@
 "",
 "  # One step selects and runs, on the runner's own Node 24 and Python 3.12",
 "  # (cap-node24, cap-python312; nothing is downloaded), after the push baseline",
-"  # (git only).",
+"  # (git, and the runner hook's chain walk read from main).",
 "  ci-suites-windows:",
 "    name: >-",
 "      ${{ needs.admission-gate.outputs.admitted == 'true' &&",
@@ -6515,14 +6516,20 @@
 "        run: |",
 "          $ErrorActionPreference = 'Stop'",
 "          if ($env:EVENT_NAME -ne 'push') { exit 0 }",
-"          $base = git rev-parse \"$($env:STAGING_SHA)^1\"",
-"          if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }",
 "          if ($env:PUSH_REF -eq 'refs/heads/clued-train/staging') {",
-"            # Checkout fetched full history; no candidate code has run.",
-"            # The first parent must be an already trusted main ancestor.",
-"            git merge-base --is-ancestor $base origin/main",
-"            if ($LASTEXITCODE -ne 0) { exit 1 }",
+"            # Checkout fetched full history; no candidate code has run. T is the",
+"            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
+"            # member), walked by the runner hook's own code read from main.",
+"            $base = node --input-type=module -e \"",
+"              const { execFileSync } = await import('node:child_process');",
+"              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);",
+"              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));",
+"              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\"",
+"            if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }",
 "            [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, \"sha=$base`n\")",
+"          } else {",
+"            $base = git rev-parse \"$($env:STAGING_SHA)^1\"",
+"            if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }",
 "          }",
 "          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, \"ci_base=$base`n\")",
 "      - name: Check out the trusted base (selection and commands)",
@@ -6547,7 +6554,7 @@
 "          exit $LASTEXITCODE",
 ""
       ],
-      "workflow_blob": "5170ca35b5b844634a8ea080ef5d76df4d1ca6b3"
+      "workflow_blob": "58c31924b7564d1380431963b84f177cc4ea4993"
     },
     ".github/workflows/clued-required-tests.yml": {
       "execution_mode": "all_required_primaries",
@@ -6569,7 +6576,7 @@
               "e4cba6549ca820ef23089afe03eb55ae3f1726c11535a00cdc8184fb9c2763eb"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "614d7c1b253d4cdc2010130a1191b703d5d73164b4d860deec9a78985a636cf0"
+              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
             ],
             "Select suites": [
               "a824e26e2f93abc6277a1e9c526fb5a6d570bfcb202cede13f13c55beb65dfbc"
@@ -6591,7 +6598,7 @@
               "511e1108529d91041e013a3cd32568c97b1b0e9cbca78d7c19dee5be3cb6933e"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "614d7c1b253d4cdc2010130a1191b703d5d73164b4d860deec9a78985a636cf0"
+              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
             ],
             "Run the selected suites": [
               "475750114c5326faa66b30b574e09592613b3b7206332f195a7af6c1befbd32f"
@@ -6619,7 +6626,7 @@
               "7ad1c0568b557617b13f6a9fa7423856cdac4105bd14ff3543254d73db321f1c"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "614d7c1b253d4cdc2010130a1191b703d5d73164b4d860deec9a78985a636cf0"
+              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
             ],
             "Select suites": [
               "99fae768f35f057b1cc8f88f9a5593b17857a350685ead1214c5738dd73ba8d7"
@@ -6639,7 +6646,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "0a36849d74c2612f38d759cbc27304a7721786417e75c889a3417b56ce724d8b",
+      "source_sha256": "f5ee2f4f7a539acae72e7dbcc124a0bef7f929d1cc25631ce744b5398278cff9",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -6772,6 +6779,9 @@
 "          # Application tests read pinned historical workflow/role snapshots.",
 "          fetch-depth: 0",
 "          path: candidate",
+"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+"        with:",
+"          node-version: 24.19.0",
 "      - name: Resolve push baseline before loading trusted commands",
 "        id: train-base",
 "        working-directory: candidate",
@@ -6788,14 +6798,19 @@
 "        run: |",
 "          set -euo pipefail",
 "          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          base=$(git rev-parse \"$STAGING_SHA^1\")",
 "          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
-"            # Checkout fetched full history; no candidate code has run.",
-"            # The first parent must be an already trusted main ancestor.",
-"            git merge-base --is-ancestor \"$base\" origin/main",
-"          fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"            # Checkout fetched full history; no candidate code has run. T is the",
+"            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
+"            # member), walked by the runner hook's own code read from main.",
+"            base=$(node --input-type=module -e \"",
+"              const { execFileSync } = await import('node:child_process');",
+"              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);",
+"              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));",
+"              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
 "            echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"",
+"          else",
+"            base=$(git rev-parse \"$STAGING_SHA^1\")",
 "          fi",
 "          echo \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"",
 "      - name: Check out the trusted base (selection and commands)",
@@ -6804,9 +6819,6 @@
 "          persist-credentials: false",
 "          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
 "          path: trusted",
-"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
-"        with:",
-"          node-version: 24.19.0",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select suites",
@@ -6872,6 +6884,9 @@
 "          persist-credentials: false",
 "          fetch-depth: 0",
 "          path: candidate",
+"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+"        with:",
+"          node-version: 24.19.0",
 "      - name: Resolve push baseline before loading trusted commands",
 "        id: train-base",
 "        working-directory: candidate",
@@ -6888,14 +6903,19 @@
 "        run: |",
 "          set -euo pipefail",
 "          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          base=$(git rev-parse \"$STAGING_SHA^1\")",
 "          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
-"            # Checkout fetched full history; no candidate code has run.",
-"            # The first parent must be an already trusted main ancestor.",
-"            git merge-base --is-ancestor \"$base\" origin/main",
-"          fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"            # Checkout fetched full history; no candidate code has run. T is the",
+"            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
+"            # member), walked by the runner hook's own code read from main.",
+"            base=$(node --input-type=module -e \"",
+"              const { execFileSync } = await import('node:child_process');",
+"              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);",
+"              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));",
+"              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
 "            echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"",
+"          else",
+"            base=$(git rev-parse \"$STAGING_SHA^1\")",
 "          fi",
 "          echo \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"",
 "      - name: Check out the trusted base (selection and commands)",
@@ -6904,9 +6924,6 @@
 "          persist-credentials: false",
 "          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
 "          path: trusted",
-"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
-"        with:",
-"          node-version: 24.19.0",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select suites",
@@ -6994,6 +7011,9 @@
 "          persist-credentials: false",
 "          fetch-depth: 0",
 "          path: candidate",
+"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+"        with:",
+"          node-version: 24.19.0",
 "      - name: Resolve push baseline before loading trusted commands",
 "        id: train-base",
 "        working-directory: candidate",
@@ -7010,14 +7030,19 @@
 "        run: |",
 "          set -euo pipefail",
 "          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          base=$(git rev-parse \"$STAGING_SHA^1\")",
 "          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
-"            # Checkout fetched full history; no candidate code has run.",
-"            # The first parent must be an already trusted main ancestor.",
-"            git merge-base --is-ancestor \"$base\" origin/main",
-"          fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"            # Checkout fetched full history; no candidate code has run. T is the",
+"            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
+"            # member), walked by the runner hook's own code read from main.",
+"            base=$(node --input-type=module -e \"",
+"              const { execFileSync } = await import('node:child_process');",
+"              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);",
+"              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));",
+"              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
 "            echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"",
+"          else",
+"            base=$(git rev-parse \"$STAGING_SHA^1\")",
 "          fi",
 "          echo \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"",
 "      - name: Check out the trusted base (selection and commands)",
@@ -7026,9 +7051,6 @@
 "          persist-credentials: false",
 "          ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
 "          path: trusted",
-"      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
-"        with:",
-"          node-version: 24.19.0",
 "      - name: Configure job temporary storage",
 "        uses: ./trusted/.github/actions/ci-temporary-storage",
 "      - name: Select suites",
@@ -7076,7 +7098,7 @@
 "        run: echo \"No migration, ledger, snapshot or drift-check file changed; nothing to verify.\" >> \"$GITHUB_STEP_SUMMARY\"",
 ""
       ],
-      "workflow_blob": "2e14516b6813ce3024d42ab5ffde63fb399fb20b"
+      "workflow_blob": "00a9b5d1b1a0eaed1cc0d82d05753bfe984743ae"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

@@ -1481,7 +1481,7 @@ test('bors staging, Windows side: the train App push to clued-train/staging publ
   }
 });
 
-test('bors staging, Windows side: S^1 is checked against main before the trusted selection loads, and is the base', () => {
+test('bors staging, Windows side: T is resolved on main before the trusted selection loads, and is the base', () => {
   const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
   assert.doesNotMatch(text, /github\.event\.before/);
   const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
@@ -1493,8 +1493,9 @@ test('bors staging, Windows side: S^1 is checked against main before the trusted
   const verification = job.slice(resolver, trusted);
   assert.match(verification, /\n {8}shell: powershell\n/);
   assert.match(verification, /git rev-parse "\$\(\$env:STAGING_SHA\)\^1"/);
-  assert.match(verification, /git merge-base --is-ancestor \$base origin\/main/);
-  assert.ok(verification.indexOf('git merge-base --is-ancestor') < verification.indexOf('$env:GITHUB_OUTPUT'));
+  // On staging, the runner hook's chain walk read from main (behaviour: the multi-member tests below).
+  assert.match(verification, /execFileSync\('git', \['show', 'origin\/main:scripts\/runner\/clued-runner-job-started\.mjs'\]\)/);
+  assert.ok(verification.indexOf('stagingBaseFromCheckout(process.env.STAGING_SHA)') < verification.indexOf('$env:GITHUB_OUTPUT'));
   assert.match(job, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
   assert.match(job, /CI_BASE_SHA: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| steps\.train-base\.outputs\.ci_base \}\}\n/);
 });

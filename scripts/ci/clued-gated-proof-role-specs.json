@@ -2057,10 +2057,10 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "2e14516b6813ce3024d42ab5ffde63fb399fb20b": [
+        "00a9b5d1b1a0eaed1cc0d82d05753bfe984743ae": [
           {
             "job_id": "clued-cloud-tests",
-            "definition_sha256": "d4acae487998b4bc4e1e7fb8afefd0fed1bdaa830d91626960ae5818cf7e7168",
+            "definition_sha256": "a415718a63cdab237d2f81f143a5662cebbd3f1247a81d0efa60c42ff28e37dc",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
               "needs": "admission-gate",
@@ -2089,6 +2089,12 @@
                   }
                 },
                 {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
                   "name": "Resolve push baseline before loading trusted commands",
                   "id": "train-base",
                   "working-directory": "candidate",
@@ -2103,7 +2109,7 @@
                     "EVENT_NAME": "${{ github.event_name }}"
                   },
                   "shell": "bash",
-                  "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nbase=$(git rev-parse \"$STAGING_SHA^1\")\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run.\n  # The first parent must be an already trusted main ancestor.\n  git merge-base --is-ancestor \"$base\" origin/main\nfi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
+                  "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run. T is the\n  # root of S's member chain (ADR 0019), a commit on main (S^1 for one\n  # member), walked by the runner hook's own code read from main.\n  base=$(node --input-type=module -e \"\n    const { execFileSync } = await import('node:child_process');\n    const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);\n    const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));\n    process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\")\n  [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nelse\n  base=$(git rev-parse \"$STAGING_SHA^1\")\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
                 },
                 {
                   "name": "Check out the trusted base (selection and commands)",
@@ -2112,12 +2118,6 @@
                     "persist-credentials": false,
                     "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
                     "path": "trusted"
-                  }
-                },
-                {
-                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-                  "with": {
-                    "node-version": "24.19.0"
                   }
                 },
                 {
@@ -2155,7 +2155,7 @@
           },
           {
             "job_id": "ci-suites",
-            "definition_sha256": "615749b035ead14b9fbd73d7d3b5ac633d3fe822c03a7c25c700170d53720564",
+            "definition_sha256": "6bf4d794062bce46f9e6ae2fa370f43450f2c8fc3d4cdd8697087b048ed44ca4",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped' }}",
               "needs": "admission-gate",
@@ -2184,6 +2184,12 @@
                   }
                 },
                 {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
                   "name": "Resolve push baseline before loading trusted commands",
                   "id": "train-base",
                   "working-directory": "candidate",
@@ -2198,7 +2204,7 @@
                     "EVENT_NAME": "${{ github.event_name }}"
                   },
                   "shell": "bash",
-                  "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nbase=$(git rev-parse \"$STAGING_SHA^1\")\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run.\n  # The first parent must be an already trusted main ancestor.\n  git merge-base --is-ancestor \"$base\" origin/main\nfi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
+                  "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run. T is the\n  # root of S's member chain (ADR 0019), a commit on main (S^1 for one\n  # member), walked by the runner hook's own code read from main.\n  base=$(node --input-type=module -e \"\n    const { execFileSync } = await import('node:child_process');\n    const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);\n    const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));\n    process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\")\n  [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nelse\n  base=$(git rev-parse \"$STAGING_SHA^1\")\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
                 },
                 {
                   "name": "Check out the trusted base (selection and commands)",
@@ -2207,12 +2213,6 @@
                     "persist-credentials": false,
                     "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
                     "path": "trusted"
-                  }
-                },
-                {
-                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-                  "with": {
-                    "node-version": "24.19.0"
                   }
                 },
                 {
@@ -2250,7 +2250,7 @@
           },
           {
             "job_id": "migration-verify",
-            "definition_sha256": "627666456fa37adaa15ecfcd2124fe307abfc8bfa9ae32819c9ae2ec6e617927",
+            "definition_sha256": "ef6205af5f11b56a0c1c5481f7108cd371c188320770525d86ee06ee6f7c26ca",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
               "needs": "admission-gate",
@@ -2279,6 +2279,12 @@
                   }
                 },
                 {
+                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+                  "with": {
+                    "node-version": "24.19.0"
+                  }
+                },
+                {
                   "name": "Resolve push baseline before loading trusted commands",
                   "id": "train-base",
                   "working-directory": "candidate",
@@ -2293,7 +2299,7 @@
                     "EVENT_NAME": "${{ github.event_name }}"
                   },
                   "shell": "bash",
-                  "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nbase=$(git rev-parse \"$STAGING_SHA^1\")\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run.\n  # The first parent must be an already trusted main ancestor.\n  git merge-base --is-ancestor \"$base\" origin/main\nfi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
+                  "run": "set -euo pipefail\nif [ \"$EVENT_NAME\" != push ]; then exit 0; fi\nif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then\n  # Checkout fetched full history; no candidate code has run. T is the\n  # root of S's member chain (ADR 0019), a commit on main (S^1 for one\n  # member), walked by the runner hook's own code read from main.\n  base=$(node --input-type=module -e \"\n    const { execFileSync } = await import('node:child_process');\n    const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);\n    const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));\n    process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\")\n  [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]\n  echo \"sha=$base\" >> \"$GITHUB_OUTPUT\"\nelse\n  base=$(git rev-parse \"$STAGING_SHA^1\")\nfi\necho \"ci_base=$base\" >> \"$GITHUB_OUTPUT\"\n"
                 },
                 {
                   "name": "Check out the trusted base (selection and commands)",
@@ -2302,12 +2308,6 @@
                     "persist-credentials": false,
                     "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
                     "path": "trusted"
-                  }
-                },
-                {
-                  "uses": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-                  "with": {
-                    "node-version": "24.19.0"
                   }
                 },
                 {
@@ -2353,10 +2353,10 @@
     },
     ".github/workflows/clued-required-tests-windows.yml": {
       "sources": {
-        "5170ca35b5b844634a8ea080ef5d76df4d1ca6b3": [
+        "58c31924b7564d1380431963b84f177cc4ea4993": [
           {
             "job_id": "ci-suites-windows",
-            "definition_sha256": "79b513e7f2c536d570207ba0026d300fb22561648c7c0bb7367fc2b4dbcd44bf",
+            "definition_sha256": "45568474e0db4cebffd037407e7992ceb304cba899c7f7368df6d5db125dcd10",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites-windows' || 'ci-suites-windows-skipped' }}",
               "needs": "admission-gate",
@@ -2401,7 +2401,7 @@
                     "EVENT_NAME": "${{ github.event_name }}"
                   },
                   "shell": "powershell",
-                  "run": "$ErrorActionPreference = 'Stop'\nif ($env:EVENT_NAME -ne 'push') { exit 0 }\n$base = git rev-parse \"$($env:STAGING_SHA)^1\"\nif ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }\nif ($env:PUSH_REF -eq 'refs/heads/clued-train/staging') {\n  # Checkout fetched full history; no candidate code has run.\n  # The first parent must be an already trusted main ancestor.\n  git merge-base --is-ancestor $base origin/main\n  if ($LASTEXITCODE -ne 0) { exit 1 }\n  [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, \"sha=$base`n\")\n}\n[System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, \"ci_base=$base`n\")\n"
+                  "run": "$ErrorActionPreference = 'Stop'\nif ($env:EVENT_NAME -ne 'push') { exit 0 }\nif ($env:PUSH_REF -eq 'refs/heads/clued-train/staging') {\n  # Checkout fetched full history; no candidate code has run. T is the\n  # root of S's member chain (ADR 0019), a commit on main (S^1 for one\n  # member), walked by the runner hook's own code read from main.\n  $base = node --input-type=module -e \"\n    const { execFileSync } = await import('node:child_process');\n    const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);\n    const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));\n    process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));\"\n  if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }\n  [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, \"sha=$base`n\")\n} else {\n  $base = git rev-parse \"$($env:STAGING_SHA)^1\"\n  if ($LASTEXITCODE -ne 0 -or $base -notmatch '^[0-9a-f]{40}$') { exit 1 }\n}\n[System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, \"ci_base=$base`n\")\n"
                 },
                 {
                   "name": "Check out the trusted base (selection and commands)",

@@ -568,6 +568,55 @@ async function admissionRun(fetchImpl, token, repository, headSha, since) {
 const STAGING_WORKFLOWS = new Set(['.github/workflows/clued-required-tests.yml',
   '.github/workflows/clued-required-tests-windows.yml']);
 
+// The train's member chain (ADR 0019 §3), one copy for every reader: from S
+// along first parents, each step a merge of exactly two distinct parents whose
+// second parent is the next member head and not a root, until a root T. The
+// hook reads commits from GitHub and roots at live main; the required
+// workflows' push-baseline step (stagingBaseFromCheckout) reads its checkout
+// and roots at any commit on main. Bounded reads; a malformed, cyclic or
+// oversized chain, or one without members, never yields a root.
+export async function trainMemberChain(sha, { isRoot, readCommit, limit = 20 }) {
+  const heads = [], seen = new Set();
+  let at = sha;
+  while (!(await isRoot(at))) {
+    if (heads.length >= limit || seen.has(at)) return { error: 'merge chain is cyclic, oversized or not rooted at main' };
+    seen.add(at);
+    const commit = await readCommit(at);
+    if (commit?.sha !== at || !Array.isArray(commit.parents) || commit.parents.length !== 2
+      || commit.parents.some(parent => !/^[a-f0-9]{40}$/.test(parent?.sha ?? ''))
+      || commit.parents[0].sha === commit.parents[1].sha || await isRoot(commit.parents[1].sha)
+      || heads.includes(commit.parents[1].sha)) return { error: 'invalid merge chain' };
+    heads.push(commit.parents[1].sha);
+    at = commit.parents[0].sha;
+  }
+  if (!heads.length) return { error: 'S has no PR members' };
+  return { root: at, heads };
+}
+
+// The trusted base T of a push of S to clued-train/staging, for the required
+// workflows' push-baseline step: it reads this file from origin/main (as the
+// loader reads it from main), before any trusted command loads, and walks the
+// job's own full-history checkout. A root is any commit on main, so a
+// one-member S keeps T = S^1. Throws when there is no such T.
+export async function stagingBaseFromCheckout(sha, { mainRef = 'origin/main', cwd = process.cwd() } = {}) {
+  if (!/^[a-f0-9]{40}$/.test(String(sha ?? ''))) throw new Error('staging: invalid S');
+  const git = (...args) => spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const isRoot = (at) => {
+    const result = git('merge-base', '--is-ancestor', at, mainRef);
+    if (result.status === 0 || result.status === 1) return result.status === 0;
+    throw new Error(`staging: cannot compare ${at} with ${mainRef}`);
+  };
+  const readCommit = (at) => {
+    const result = git('rev-list', '--parents', '-n', '1', at);
+    if (result.status !== 0) return null;
+    const [self, ...parents] = result.stdout.trim().split(' ');
+    return { sha: self, parents: parents.map(parent => ({ sha: parent })) };
+  };
+  const chain = await trainMemberChain(sha, { isRoot, readCommit });
+  if (chain.error) throw new Error(`staging: ${chain.error}`);
+  return chain.root;
+}
+
 // Installed alone and loaded from main: do not import candidate policy/code.
 // Requiring admission for ALL members covers protected paths (including any
 // additions in main's policy), changed workflow bytes and unavailable diffs.
@@ -594,21 +643,10 @@ async function stagingAdmission({ env, fetchImpl, readFile, now, sleep, reposito
   const main = await github(fetchImpl, token, mainPath);
   const base = main?.object?.sha;
   if (main?.object?.type !== 'commit' || !/^[a-f0-9]{40}$/.test(base ?? '')) return refuse('live main is unavailable');
-  const heads = [], seen = new Set();
-  let at = sha;
-  // Bounded reads; a malformed, cyclic or oversized chain never admits.
-  while (at !== base) {
-    if (heads.length >= 20 || seen.has(at)) return refuse('merge chain is cyclic, oversized or not rooted at main');
-    seen.add(at);
-    const commit = await github(fetchImpl, token, `/repos/${repository}/git/commits/${at}`);
-    if (commit?.sha !== at || !Array.isArray(commit.parents) || commit.parents.length !== 2
-      || commit.parents.some(parent => !/^[a-f0-9]{40}$/.test(parent?.sha ?? ''))
-      || commit.parents[0].sha === commit.parents[1].sha || commit.parents[1].sha === base
-      || heads.includes(commit.parents[1].sha)) return refuse('invalid merge chain');
-    heads.push(commit.parents[1].sha);
-    at = commit.parents[0].sha;
-  }
-  if (!heads.length) return refuse('S has no PR members');
+  const chain = await trainMemberChain(sha, { isRoot: at => at === base,
+    readCommit: at => github(fetchImpl, token, `/repos/${repository}/git/commits/${at}`) });
+  if (chain.error) return refuse(chain.error);
+  const { heads } = chain;
   const memberIsLive = (pr, head) => Number.isSafeInteger(pr?.number) && pr.number > 0
     && pr.state === 'open' && pr.draft === false && pr.head?.sha === head
     && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository

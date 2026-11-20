@@ -46,7 +46,7 @@ test('all original sources and complete successors roundtrip without losing byte
   delete original.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary
   // (its current bytes: the clued-train/staging route, D6 N1).
-  const WINDOWS='.github/workflows/clued-required-tests-windows.yml',WINDOWS_BLOB='5170ca35b5b844634a8ea080ef5d76df4d1ca6b3';
+  const WINDOWS='.github/workflows/clued-required-tests-windows.yml',WINDOWS_BLOB='58c31924b7564d1380431963b84f177cc4ea4993';
   assert.equal(original.workflows[WINDOWS].workflow_blob,WINDOWS_BLOB);assert.deepEqual(original.workflows[WINDOWS].primary_ids,['ci-suites-windows']);
   assert.equal(Object.hasOwn(original.workflows[WINDOWS],'execution_mode'),false);delete original.workflows[WINDOWS];
   const G4='.github/workflows/clued-g4-database.yml',G4_BLOB='d7876890a4df616fddae675c4d66737a70eb7045';
@@ -78,7 +78,7 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.equal(roleDefinitionDigest(original),'9d6b910708b3d447bde534d883d0d6ca27a3a62ee42c9bc422abaa0951487a42');
   delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
   assert.deepEqual(oldRoles.workflows[WINDOWS].sources[WINDOWS_BLOB].map(role=>[role.job_id,role.definition_sha256]),
-    [['ci-suites-windows','79b513e7f2c536d570207ba0026d300fb22561648c7c0bb7367fc2b4dbcd44bf']]);
+    [['ci-suites-windows','45568474e0db4cebffd037407e7992ceb304cba899c7f7368df6d5db125dcd10']]);
   delete oldRoles.workflows[WINDOWS];
   assert.ok(oldRoles.workflows[G4].sources[G4_BLOB]);
   delete oldRoles.workflows[G4].sources[G4_BLOB];
