@@ -2,11 +2,13 @@
 // Result signatures and effect journal are real; this test never reads a Host secret.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { createGitHubChecksPort } from '../src/github.mjs';
 import { bindStagedScanJournal, createRecoverableCheckPublisherV2 } from '../runtime/one-shot-v2.mjs';
-import { EffectJournal } from '../src/effect-journal.mjs';
+import { EffectJournal, rolePublicationKey } from '../src/effect-journal.mjs';
+import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { batchJobsV2, claimGeneration, scanEffectKeyV2 } from '../src/job-v2.mjs';
 import { canonical, digest } from '../src/proof.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
@@ -33,7 +35,7 @@ async function world(t,options={}){
   if(u.pathname==='/app')return reply({id:5368905});
   if(u.pathname==='/app/installations/172706661/access_tokens')return reply({token:'offline-fixture-only',expires_at:iso(time.now+3600000),permissions:{checks:'write',contents:'read',pull_requests:'read',actions_variables:'read',environments:'read'}});
   if(u.pathname==='/installation/repositories')return reply({total_count:1,repositories:[{id:1334673495,full_name:REPO}]});
-  if(u.pathname===`/repos/${REPO}/pulls/888`)return reply({number:888,state:'open',changed_files:1,head:{sha:HEAD,repo:{full_name:REPO}},base:{sha:BASE,ref:'main',repo:{full_name:REPO}}});
+  if(u.pathname===`/repos/${REPO}/pulls/888`){state.onReadPr?.();return reply({number:888,state:'open',changed_files:1,head:{sha:HEAD,repo:{full_name:REPO}},base:{sha:BASE,ref:'main',repo:{full_name:REPO}}});}
   if(u.pathname===`/repos/${REPO}/pulls/888/files`)return reply([{filename:'a.txt',status:'modified'}]);
   if(u.pathname===`/repos/${REPO}/commits/${HEAD}/check-runs`){trace.push('inventory');return reply({total_count:checks.length,check_runs:checks});}
   if(u.pathname===`/repos/${REPO}/check-runs`&&method==='POST'){
@@ -66,15 +68,21 @@ async function world(t,options={}){
  const context={nonce:randomUUID().replaceAll('-',''),stage:{gitleaks:3,trivy:5,'contract-placement':7}[job.role],entryRole:'check-publisher',batchKey:digest('offline-batch'),configSha256:digest('offline-config'),sourceManifestSha256:job.sourceManifestSha256,acceptanceSha256:record.hashes.acceptanceSha256,entrySha256:digest('offline-entry')};
  const nativeFetch=async(_url,opts)=>{
   calls.verify++;
+  trace.push('observe');
   if(state.exhaust>0){state.exhaust--;time.now+=opts.signal.testTimeout;if(state.exhaust===0)await state.onExhaust?.();throw new DOMException('timeout','TimeoutError');}
-  return {status:200,json:async()=>({status:'ok',verdict:state.deny?'REFUSED':'ADMITTED',execution_policy:'staged',current_fence:claim.fence,execution_epoch:claim.epoch,paths_outside_write_set:[],verified_at:iso(time.now),
-   claim:{claim_id:claim.claimId,context_key:record.config.scope,fence:claim.fence,execution_epoch:claim.epoch,status:'ACTIVE',lease_key_required:false,execution_handover_pending:false,expires_at:claim.expiresAt}})};
+  const epoch=state.observedEpoch??claim.epoch;
+  return {status:200,json:async()=>({status:'ok',verdict:state.deny?'REFUSED':'ADMITTED',execution_policy:options.observedPolicy??'staged',current_fence:claim.fence,execution_epoch:epoch,paths_outside_write_set:[],verified_at:iso(time.now),
+   claim:{claim_id:claim.claimId,context_key:record.config.scope,fence:claim.fence,execution_epoch:epoch,status:'ACTIVE',lease_key_required:false,execution_handover_pending:false,expires_at:claim.expiresAt}})};
  };
- const publisherOptions={domain:'production',github,journal:publisherJournal,signers:record.signers,configuredChecks:record.config.checks,readChangedPaths:j=>github.readChangedPaths(j),batchClaim:claimGeneration(claim),
+ const publisherOptions={domain:'production',requireVerifyFirst:true,github,journal:publisherJournal,signers:record.signers,configuredChecks:record.config.checks,readChangedPaths:j=>github.readChangedPaths(j),batchClaim:claimGeneration(claim),
   nativeAdmission:{async evaluatePr(j,packet,opts){
    calls.evaluate++;trace.push('evaluate');
    if(state.admissionDeny)return {contract:'clued.independent-ci.full-admission/2',status:'BLOCKED',admitted:false,reason:'full_admission_rejected'};
    const facts=admittedFacts(j,claim,packet,{batchClaim:opts.batchClaim,observedAt:time.now,slotUntil:t0+3600000});
+   if(options.evaluatedPolicy==='active'){
+    Object.assign(facts,{contract:'clued.independent-ci.full-admission/3',executionPolicy:'active',publicationRequired:true,headAuthorizationId:null});
+    const {observationSha256,...fields}=facts;facts.observationSha256=digest(fields);
+   }
    retainServerAnswerForFacts(facts,{verifiedAt:iso(time.now),expiresAt:claim.expiresAt,sentMono:time.now-t0},()=>time.now-t0);
    return state.onEvaluate?.() ?? facts;
   }},
@@ -93,6 +101,27 @@ async function world(t,options={}){
 
 const writes = w => w.trace.filter(x=>Array.isArray(x)&&x[0]!=='read');
 const stageCode = result => outcomeFailureCode({...result,mayHavePublished:result.sideEffects>0},3);
+
+test('production scanner refuses active execution before any journal or GitHub write',async t=>{
+ for(const options of [{observedPolicy:'active',evaluatedPolicy:'active'},{evaluatedPolicy:'active'}]){
+  const w=await world(t,options);const r=await w.publisher.publish(w.input);
+  assert.deepEqual(writes(w),[]);
+  assert.deepEqual(await fs.readdir(w.journal.directory),[]);
+  assert.equal(w.calls.evaluate,options.observedPolicy==='active'?0:1);
+  assert.equal(r.status,'BLOCKED');assert.equal(r.sideEffects,0);
+  assert.equal(r.reason,'staged_scan_execution_policy_required');
+ }
+});
+
+test('production publisher requires all three completion authority methods',async t=>{
+ const w=await world(t);
+ const authority={observe(){assert.fail('incomplete completion authority must be refused before observation');},
+  monotonicMs(){return 0;},recheckBatchClaim(){},assertCompletionWindow(){}};
+ for(const method of ['monotonicMs','recheckBatchClaim','assertCompletionWindow']){
+  const publisher=createStagedCheckPublisherV2({...w.publisherOptions,authority:{...authority,[method]:undefined}});
+  assert.deepEqual(await publisher.publish(w.input),{status:'BLOCKED',reason:'staged_publisher_not_configured',sideEffects:0,productionAuthorized:false});
+ }
+});
 
 test('staged: creates pending, evaluates again, then sends one success PATCH',async t=>{
  for(const role of ['gitleaks','trivy','contract-placement']){
@@ -137,11 +166,32 @@ test('staged: ambiguous create ends cleanly with no possible success',async t=>{
 
 test('staged: stale evidence is fully re-evaluated once and still too little time fails cleanly',async t=>{
  const w=await world(t);
- w.state.onEvaluate=()=>{if(w.calls.evaluate>1)w.time.now+=29_001;};
+ w.state.onEvaluate=()=>{if(w.calls.evaluate>1)w.time.now+=28_001;};
  const r=await w.publisher.publish(w.input);
  assert.equal(w.calls.evaluate,3);
+ assert.equal(w.calls.verify,5);
  assert.deepEqual(writes(w),[['create','in_progress',null],['patch',200,'failure']]);
+ assert.equal(r.reason,'staged_scan_verification_aged');
  assert.equal(stageCode(r),'PUBLICATION_REVOKED');
+});
+
+test('staged: a 25-second evaluation completes with freshly reobserved protected facts',async t=>{
+ const w=await world(t);
+ // The PR read spends four seconds of the first protected answer's lifetime.
+ w.state.onCreate=()=>{w.state.onReadPr=()=>{w.time.now+=4_000;};};
+ w.state.onEvaluate=()=>{if(w.calls.evaluate>1)w.time.now+=25_000;};
+ const r=await w.publisher.publish(w.input);
+ assert.equal(r.status,'SETTLED');
+ assert.equal(w.calls.evaluate,2);
+ assert.deepEqual(w.trace.slice(w.trace.lastIndexOf('evaluate')),['evaluate','observe',['read',200],['patch',200,'success'],['read',200]]);
+});
+
+test('staged: a different claim generation on reobservation refuses success',async t=>{
+ const w=await world(t);
+ w.state.onEvaluate=()=>{if(w.calls.evaluate>1)w.state.observedEpoch=2;};
+ const r=await w.publisher.publish(w.input);
+ assert.equal(r.status,'STAGED_SCAN_FAILED');
+ assert.deepEqual(writes(w),[['create','in_progress',null],['patch',200,'failure']]);
 });
 
 test('staged: Native observation expiry triggers a full re-evaluation before success',async t=>{
@@ -166,11 +216,25 @@ test('staged: written intent without a sent record fails cleanly, while a mismat
   assert.equal(stageCode(r),mismatch?'PUBLICATION_UNCERTAIN':'PUBLICATION_BLOCKED');
   assert.deepEqual(writes(w),[]);
  }
- const w=await world(t),read=w.journal.read.bind(w.journal);
- w.journal.read=async key=>{if(key===w.key)throw Error('offline journal integrity failure');return read(key);};
- assert.equal(stageCode(await w.publisher.publish(w.input)),'PUBLICATION_UNCERTAIN');
- assert.deepEqual(writes(w),[]);
  assert.equal(outcomeFailureCode(null,3),'STAGE_OUTCOME_MISSING');
+});
+
+test('staged: a read I/O error blocks cleanly, while a corrupt effect or role lock halts',async t=>{
+ for(const roleLock of [false,true]){
+  for(const corrupt of [false,true]){
+   const w=await world(t);
+   const key=roleLock?rolePublicationKey({repo:REPO,headSha:HEAD,role:w.job.role,checkName:'gitleaks',appId:5368905}):w.key;
+   if(corrupt)await fs.writeFile(w.journal.file(key),'{');
+   else{
+    const read=w.journal.read.bind(w.journal);
+    w.journal.read=async k=>{if(k===key)throw Object.assign(Error('offline read failure'),{code:'EIO'});return read(k);};
+   }
+   const r=await w.publisher.publish(w.input);
+   assert.equal(stageCode(r),corrupt?'PUBLICATION_UNCERTAIN':'PUBLICATION_BLOCKED');
+   assert.equal(r.sideEffects,0);
+   assert.deepEqual(writes(w),[]);
+  }
+ }
 });
 
 test('staged: the real completion port rejects other IDs, completed runs and a second success',async t=>{

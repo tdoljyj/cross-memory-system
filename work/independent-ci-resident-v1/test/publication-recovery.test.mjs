@@ -280,6 +280,14 @@ test('postwrite observation has its own window: time spent between the write and
   assert.deepEqual([final.maxObservationMs, final.maxPostWriteObservationMs], [60000, 60000]);
 });
 
+test('legacy publication order: an unconfirmed withdrawal stays UNCERTAIN and never POSTs the role again', async t => {
+  const w = await world(t); w.state.onCreate = () => { w.state.fetchDelay = 30001; }; w.state.revokeFailure = true;
+  const r = await w.publisher.publish(w.input('trivy'));
+  assert.equal(r.status, 'UNCERTAIN'); assert.equal(r.reason, 'revocation_unconfirmed');
+  assert.equal(w.mutations.filter(x => x === 'create').length, 1);
+  assert.equal(w.mutations.filter(x => x === 'revoke').length, 1); assert.equal(w.checks.length, 1); assert.equal(attempts(w), 2);
+});
+
 test('failed staged verification with unavailable cleanup ends cleanly and never publishes green', async t => {
   const w = await world(t, { verifyFirst: true }); w.state.onCreate = () => { w.state.fetchDelay = 30001; }; w.state.revokeFailure = true;
   const r = await w.publisher.publish(w.input('trivy'));
