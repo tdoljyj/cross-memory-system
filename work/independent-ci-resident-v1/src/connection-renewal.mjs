@@ -68,8 +68,10 @@ export function companionKeyWatch(root, clock = Date.now) {
 // One in-flight request. The resident can only create a new UUID file in this mailbox.
 // Persist the UUID first so that restarting either service never loses track of an answer.
 // source: this generation's Source digest (policy.ciSourceManifestSha256), the one the fleet upgrade names each generation by.
-export function renewalWatch({root, profile, mode, drained, onHandover, source, clock=Date.now, observe=()=>observeOwnKey(root)}) {
+// settledAt: when this node's own upgrade settled (status.mjs#upgradeSettledAt), null while it has not.
+export function renewalWatch({root, profile, mode, drained, onHandover, source, settledAt, clock=Date.now, observe=()=>observeOwnKey(root)}) {
   if (!HEX64.test(source ?? '')) throw new Error('RENEW_SOURCE_REQUIRED');
+  if (typeof settledAt !== 'function') throw new Error('RENEW_SETTLE_REQUIRED');
   const stateFile=path.join(root,'state','connection-renewal.json');
   let nextCheck=0, book=null;
   const save=()=>writeObservation(stateFile,book);
@@ -141,6 +143,9 @@ export function renewalWatch({root, profile, mode, drained, onHandover, source, 
       // the server alone can confirm duty through the signed lane, once this node has drained.
       if (kind === 'ci' && last?.waiting && mode() === 'UNCERTAIN'
           && ((last.effectiveAt && Date.parse(last.expiresAt) > now) || !(await drained() && mode() !== 'ACTIVE'))) continue;
+      // Task eb73b396（Fable 11-20“补：升级中续期”）：本节点自己的升级未落定，或落定未满一个检查周期（服务端还没收到带新 Source
+      // 的心跳），不发起新的投递：这一轮不写状态、不计退避。让班等待中的重投与确认照旧。
+      if (!last?.waiting) { const at = await settledAt(); if (at === null || now - at < CHECK_INTERVAL) break; }
       // 是否进窗口、是否当班只由 Broker 的新鲜签名探询判断（D2c 裁定 B2）：常驻对两类连接同样投递，不读 Broker 的每日观测。
       await post(kind, now);
       break;
