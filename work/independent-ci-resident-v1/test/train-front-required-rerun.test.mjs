@@ -346,3 +346,62 @@ test('review 3 medium 3: the failure yield checks the head first too, and a head
   assert.equal(during.yields(), 1);
   assert.equal(r2.facts.front.yieldHeadMoved, true, 'a yield cannot be taken back: the moved head is on the record');
 });
+
+// Review 4 medium 1: a merged front whose tree check was skipped (checks unreadable, no record of this node) stays out of the round's PR
+// lifecycle reconcile: reporting it merged could end its claim, and the next round would have nothing left to check the tree against.
+test('review 4 medium 1: the front whose tree check was skipped is not sent to the lifecycle reconcile in that round', async t => {
+  const M = sha(0x9001);
+  const told = await setup(t, { front: { state: 'closed', merged: true, mergeCommitSha: M } });
+  told.gh.world.commits.set(M, { sha: M, tree: TREE, parents: [T, H] });
+  told.gh.world.inMain.add(H);
+  told.gh.green(81, H);
+  const reports = [];
+  told.native.port.lifecycleReport = async ({ prs }) => { reports.push(prs); return { onDuty: true, deployed: true, tracked: [910] }; };
+  const read = told.gh.readChecks;
+  let fail = true;
+  told.gh.readChecks = async head => { if (head === H && fail) { fail = false; throw new Error('offline'); } return read(head); };
+  const r1 = await told.run();
+  assert.equal(r1.facts.requestPause, null);
+  assert.ok(!reports.some(prs => prs.some(p => p.pr === 910)), `no merged fact of #910 while its tree is unchecked: ${JSON.stringify(reports)}`);
+  assert.equal((await told.run()).facts.decision, 'FRONT_ADOPTED', 'checked and adopted the next round');
+});
+
+// Review 4 medium 2: with no merge-slot time to start from (a take-over, checks unreadable from the first round, checks without times) the
+// 60 minutes run from when this node first saw the head at the front, recorded in the train store: later than the truth, never never.
+test('review 4 medium 2: checks unreadable from the first round: the longest wait runs from when this node first saw the front', async t => {
+  const f = await front(t, { slotAt: NOW - 30 * MIN, takenAt: iso(NOW - 120 * MIN) });
+  const read = f.e.gh.readChecks;
+  f.e.gh.readChecks = async head => (head === H ? Promise.reject(new Error('offline')) : read(head));
+  const r1 = await f.e.run();
+  assert.deepEqual([r1.facts.decision, f.yields()], ['FRONT_CHECKS_WAIT', 0], 'first seen now: no wait proven yet');
+  f.e.now = NOW + 30 * MIN;
+  assert.equal((await f.e.run()).facts.decision, 'FRONT_CHECKS_WAIT');
+  assert.equal(f.yields(), 0);
+  f.e.now = NOW + 61 * MIN;
+  const r3 = await f.e.run();
+  assert.equal(f.yields(), 1);
+  assert.equal(r3.facts.front.required.yieldReason, 'REQUIRED_CHECKS_DEADLINE');
+});
+
+test('review 4 medium 2: a merge slot whose check carries no time: the longest wait runs from the first sighting', async t => {
+  const f = await front(t, { slotAt: null, others: false, takenAt: iso(NOW - 5 * MIN) });
+  // a re-run in progress keeps the observation window out of the way
+  for (const c of ACTIONS) f.check(c, { status: 'in_progress', at: NOW - MIN });
+  assert.equal((await f.e.run()).facts.decision, 'FRONT_CHECKS_WAIT');
+  f.e.now = NOW + 61 * MIN;
+  const r = await f.e.run();
+  assert.equal(f.yields(), 1);
+  assert.equal(r.facts.front.required.yieldReason, 'REQUIRED_CHECKS_DEADLINE');
+});
+
+// Fable 11-20 补“补跑上限的范围”: the budget counts per run (one run ID, all its attempts, a person's re-runs included); the new run of a PR
+// reopened or pushed counts from 1. On the train's side the old run's attempts never make the new run's gap "used up".
+test('the budget is per run: a reopened PR\'s new run is not counted with the old run\'s attempts', async t => {
+  const { e, check, yields } = await front(t, { slotAt: NOW - 4 * MIN, others: false });
+  for (const c of ACTIONS) for (const at of [NOW - 90 * MIN, NOW - 80 * MIN, NOW - 70 * MIN]) check(c, { conclusion: 'skipped', at, run: 1000 + (c === 'ci-suites-windows' ? 1 : 0) });
+  for (const c of ACTIONS) check(c, { conclusion: 'skipped', at: NOW - 6 * MIN, run: 2000 + (c === 'ci-suites-windows' ? 1 : 0) });
+  const r = await e.run();
+  assert.equal(yields(), 0);
+  assert.notEqual(r.facts.front.required?.yieldReason, 'REQUIRED_RERUNS_EXHAUSTED');
+  assert.deepEqual(r.facts.front.required.missing.map(m => m.attempts), [1, 1, 1, 1], 'the newest run: its first attempt');
+});

@@ -4358,3 +4358,16 @@ test("required-tests dispatch gate: three attempts of the workflow already on th
   assert.equal(outcome.admitted, false);
   assert.deepEqual(outcome.reasons, ["required_tests_dispatch_attempt_budget_used"]);
 });
+
+// Fable 11-20 补“补跑上限的范围”: the budget is per run ID. A new run of the same workflow on the head (the PR reopened) is admitted on its
+// first attempt as any run, and its re-runs count from 1, whatever other runs of the head used.
+test("independent gate repair re-run: the budget is per run; another run's attempts on the head never count", async () => {
+  const other = { id: 9000, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: 3 };
+  const second = await repairGate([earlierAttempt(1)], { otherRuns: [other] });
+  assert.deepEqual([second.outcome.admitted, second.outcome.verdict], [true, "ADMITTED"], second.outcome.reasons.join("; "));
+  const fourth = await repairGate([earlierAttempt(1), earlierAttempt(2), earlierAttempt(3)], { otherRuns: [other] });
+  assert.equal(fourth.outcome.admitted, false);
+  assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
+  const dispatched = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 3 })], jobs: { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), '8001:3': skippedDispatchJobs() } });
+  assert.equal(dispatched.outcome.admitted, true, `a re-dispatched run's first attempt is admitted: ${JSON.stringify(dispatched.outcome.reasons)}`);
+});

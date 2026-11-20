@@ -1367,3 +1367,20 @@ test('review 2 high 3: the shared rule counts an unreadable workflow or attempt 
   });
   assert.deepEqual([odd.allowed, odd.budget], [false, true]);
 });
+
+// Fable 11-20 补“补跑上限的范围”: the budget is per run ID; a reopened PR's new run starts from 1 (its first attempt is admitted as any run,
+// its re-runs count from 1 whatever the old run used).
+test('per-run budget: the new run of a reopened PR is re-run although the old run of the same workflow used three attempts', async t => {
+  const reopened = run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } });
+  const w = world({ runs: [ownerRun([attempt(), attempt(), attempt()]), reopened], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 701, 1], d.reason);
+  const shared = await import('../src/env-failure.mjs');
+  const strip = route => route.replace(`/repos/${REPO}`, '');
+  const ask = (runId, attempt) => shared.requiredTestsRepairHistory({ repository: REPO, runId, head: HEAD, attempt, workflowId: LINUX_WORKFLOW,
+    read: route => w.gh.get(strip(route)), readLog: route => w.gh.text(strip(route)) });
+  assert.equal((await ask(701, 2)).allowed, true, 'the new run\'s first re-run');
+  w.runs[1].attempts.push(attempt(), attempt());
+  const fourth = await ask(701, 4);
+  assert.deepEqual([fourth.allowed, fourth.budget], [false, true], 'its own fourth attempt is over the budget');
+});
