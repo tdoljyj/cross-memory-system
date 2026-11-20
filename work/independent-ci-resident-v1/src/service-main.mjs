@@ -138,7 +138,7 @@ export async function main(argv = process.argv.slice(2), ports = {}) {
       residentRoot: path.join(root, 'resident', policy.residentManifestSha256), residentManifest: path.join(root, 'config', 'resident-installed-manifest.json'),
     }),
   });
-  const renew = renewalWatch({root,profile:policy.node,clock,mode:()=>exec.renewalMode(),
+  const renew = renewalWatch({root,profile:policy.node,source:policy.ciSourceManifestSha256,clock,mode:()=>exec.renewalMode(),
     onHandover:()=>exec.requestHandoverProbe(),
     drained:async()=>!runner.busy && (await ledger.open()).length===0});
   const spool = path.join(path.dirname(root), 'formal-spool');
