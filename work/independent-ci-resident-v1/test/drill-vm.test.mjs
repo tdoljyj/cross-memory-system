@@ -3756,7 +3756,7 @@ test('the real clock is read only through Get-DrillTime; the reads that predate 
     wallClock: new RegExp(String.raw`\[(?:System\.)?DateTime(?:Offset)?\]::(?:${NOW}|Now)\b`, 'gi'),
     [GET_DATE]: new RegExp(String.raw`\b${GET_DATE}\b`, 'gi'),
     [SW]: new RegExp(SW, 'gi'),
-  }, { wallClock: 32, [GET_DATE]: 0, [SW]: 5 },
+  }, { wallClock: 32, [GET_DATE]: 0, [SW]: 2 },
   'Read the time through Get-DrillTime; a budget becomes a deadline, (Get-DrillTime).AddSeconds(n), compared against Get-DrillTime.');
 
   // Test side: no read of the real clock at all. Fixture times are the constant 2026-11-19T02:00:00Z; a PowerShell snippet that needs
