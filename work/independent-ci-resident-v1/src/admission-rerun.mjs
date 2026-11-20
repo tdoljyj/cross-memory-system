@@ -746,7 +746,11 @@ export class AdmissionRerunner {
       for (const name of receipt.checks ?? []) if (!seen?.missing || seen.missing.includes(name)) unavailable.add(name);
     }
     if (unavailable.size) return `${[...unavailable].join('、')} 没有运行，无法自动补发`;
-    const r = this.state.record(headSha);
+    let r = this.state.record(headSha);
+    // 54a2b67a: a rerun receipt with no required check is a gated run outside the required checks; a required-scope receipt of the head is shown first.
+    const outside = x => x && !x.kind && !x.frontHeadSha && !x.checks?.length;
+    if (outside(r)) r = Object.values(this.state.data.records).filter(x => x.headSha === headSha && !outside(x))
+      .sort((x, y) => Date.parse(y.at) - Date.parse(x.at) || y.attempt - x.attempt)[0] ?? r;
     if (r?.kind === REDISPATCH_KIND && r.http === 422) return null;
     if (!r) {
       const staging = Object.values(this.state.data.records).filter(rec => rec.frontHeadSha === headSha && rec.outcome === 'sent')
@@ -762,6 +766,7 @@ export class AdmissionRerunner {
       ? '必需测试被跳过（推送者非 Owner），已自动补发一次' : '必需测试被跳过，自动补发结果不确定';
     if (r?.kind === REDISPATCH_KIND) return r.outcome === 'sent' ? '必需测试没有运行，已自动补发一次' : ['intent', 'unknown'].includes(r.outcome) ? '必需测试没有运行，自动补发结果不确定' : '必需测试没有运行，自动补发未成功';
     const failures = failureLabel(r?.failures);
+    if (outside(r) && r.outcome === 'sent') return `已自动补跑一次带门运行（运行 ${r.runId}，不属必需检查）`;
     if (r?.outcome === 'sent') return `已自动补跑一次必需测试${failures ? `（${failures}，尝试 ${r.attempt}）` : r.checks?.length ? `（${r.checks.join('、')}）` : ''}`;
     const outcome = { unsent: '自动补跑没有发出', refused: '自动补跑被拒绝', unknown: '自动补跑结果不确定' }[r?.outcome];
     return outcome ? `${outcome}${failures ? `（${failures}）` : ''}` : null;

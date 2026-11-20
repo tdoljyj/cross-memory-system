@@ -227,8 +227,20 @@ test('6be83331 E6 (54a2b67a): every gated run that never ran is repaired; outsid
     assert.match(l.toasts[1], /已自动补跑 ci-suites-windows/);
     if (posts.includes(702)) assert.match(l.toasts[2], /已自动补跑 gitleaks\.yml/);
     else assert.doesNotMatch(l.toasts.join('\n'), /gitleaks/);
-    assert.ok(!w.calls.some(call => call.target.includes('/actions/workflows?')));
+    // The PR page names the required re-run, never the one outside the required checks.
+    assert.match(l.r.line(HEAD), /^已自动补跑一次必需测试/);
+    assert.doesNotMatch(l.r.line(HEAD), /不属必需检查/);
   }
+});
+
+test('54a2b67a: a head whose only re-run is a gated run outside the required checks says so on the PR page, without "必需测试"', async t => {
+  const w = world({ rules: [{ type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'gitleaks', integration_id: 5368905 }] } }],
+    runs: [run(702, [workflowAttempt('gitleaks')], { workflow_id: HOSTED_WORKFLOW })] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, [702]);
+  assert.equal(l.r.line(HEAD), '已自动补跑一次带门运行（运行 702，不属必需检查）');
+  assert.doesNotMatch(l.r.line(HEAD), /必需测试/);
 });
 
 test('6be83331 E7: an unmapped requirement blocks every request and is reported once across restart', async t => {
@@ -1480,6 +1492,8 @@ for (const [label, delayMs] of [['13 hours', 13 * 60 * 60_000], ['30 minutes', 3
     const { w, hook, l, at } = await lateAdmissionChain(t, delayMs);
     assert.deepEqual([...w.posts].sort(), LATE_WORKFLOWS.map(wf => wf.runId).sort(), 'exactly one "Re-run all jobs" per gated run, G4 included');
     assert.deepEqual(Object.keys(l.state.data.records).sort(), LATE_WORKFLOWS.map(wf => `${wf.runId}:2`).sort());
+    assert.match(l.r.line(HEAD), /^已自动补跑一次必需测试/, 'the PR page names the required re-run even when the newest receipt is the G4 one');
+    assert.doesNotMatch(l.r.line(HEAD), /不属必需检查/);
     // 4. Attempt 2: the gate job and a heavy job of each run meet the real hook, which admits them on the late check.
     const started = at + 3 * 60_000;
     for (const wf of LATE_WORKFLOWS) {

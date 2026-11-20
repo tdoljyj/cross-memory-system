@@ -4442,11 +4442,11 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 - **做法**（`src/admission-rerun.mjs`，伴随进程里自己的 lane、自己的 Runner、自己的记忆文件 `companion-admission-rerun.json`）：
   - 伴随进程用写 PR 状态的 Owner 会话 gh 登录请求“Re-run all jobs”：`gh api --method POST repos/<repo>/actions/runs/<id>/rerun`。不新增 workflow、令牌或常驻 App 权限。
   - 只在本节点 ACTIVE、没有 HALT、状态文件是最近 5 分钟（`STATUS_STALE_MS`）内写的时候（更旧的状态证明不了角色：执行器可能已停、另一节点已接手；面板触发和 PR 状态也这样读），只看本节点跑过或排过的 head（状态里的 current、排队行、最近结果），且这个 head 是轮询器看到的开着的 PR。
-  - 每分钟一步；同一个 head 至多每 2 分钟看一次，从第一次看到起看 12 小时；每步至多看 5 个 head。
-  - 每次观察从 `rules/branches/main` 读取有效规则，取 App 15368 的必需检查名。通过该 App 在精确 SHA 上发出的同名 check run 确认检查已出现。PR head 在必需 Actions 检查全部出现且没有待处理的补跑时记 `final`。暂存 SHA 等自己实际触发的范围内工作流结束，未触发的工作流不计为缺项。
-  - 用带门运行的 `workflow_id` 和 `path` 定位默认分支的工作流 blob。工作流定义中带门作业的检查名与必需检查名有交集才进入补跑范围。解析结果按 blob SHA 复用，同一 base 和路径的读取也会复用。必需作业采用单行 `needs: admission-gate`，检查名用作业 ID、字面 `name`，或现有的 `&& 'x' || 'x-skipped'` 命名表达式。
+  - 每分钟一步；同一个 head 至多每 2 分钟看一次；每步至多看 5 个 head。PR head 从该 head 的 `kooyumi-work-admission` 成功检查的 `completed_at` 起看 12 小时，准入未到不计时（仍每 2 分钟看一次）；列车暂存提交仍从首见起算。
+  - 每次观察从 `rules/branches/main` 读取有效规则，取 App 15368 的必需检查名。通过该 App 在精确 SHA 上发出的同名 check run 确认检查已出现。PR head 在必需 Actions 检查全部出现、且没有待补的带门运行、且没有待处理的补跑时记 `final`。暂存 SHA 等自己实际触发的范围内工作流结束，未触发的工作流不计为缺项。
+  - 用带门运行的 `workflow_id` 和 `path` 定位默认分支的工作流 blob。范围从运行本身读出：PR head 上凡“恰有一个 `admission-gate` 且至少一个其他作业”的运行都在补跑范围。带门作业的检查名与 main 必需检查有交集的工作流，修复种类不变（从未真跑、环境类失败、丢事件补发）；无交集的只补“此前每个尝试都什么也没跑”这一种，不写 STUCK、不通知。列车暂存提交不变（仍只管必需检查）。解析结果按 blob SHA 复用，同一 base 和路径的读取也会复用。必需作业采用单行 `needs: admission-gate`，检查名用作业 ID、字面 `name`，或现有的 `&& 'x' || 'x-skipped'` 命名表达式。
   - 规则读不出、为空或形状错误，或者缺失的必需检查无法映射时，暂停该 head 的补跑和补发。PR 状态显示一条原因，下一观察周期仍有同样问题时告知 Owner 一次。之后继续核对，恢复后清除提示。
-  - 一个 head 只要还是候选，它的记录就一直留着（不论多久），所以 12 小时的窗口不会重新开始，“永久放弃”也不会忘。记录里还记着它最后一次是候选的时间（至多每小时更新一次）。不是候选时，记录只在两种情况下去掉：完整的一步（状态新、本节点 ACTIVE、没有 HALT、轮询器已经看到开着的 PR）里它不在候选之列；或者它最后一次是候选已过 24 小时。伴随进程刚启动（轮询器还没跑过）、节点暂时 STANDBY 或 UNCERTAIN、HALT、状态过旧，都不算完整的一步。所以伴随进程刚启动、节点暂时 STANDBY 或 UNCERTAIN、HALT 时，12 小时的窗口和“永久放弃”的结论都不会被重置。
+  - 一个 head 只要还是候选，它的记录就一直留着（不论多久），所以窗口（起点是准入完成时间）不会重新开始，“永久放弃”也不会忘。记录里还记着它最后一次是候选的时间（至多每小时更新一次）。不是候选时，记录只在两种情况下去掉：完整的一步（状态新、本节点 ACTIVE、没有 HALT、轮询器已经看到开着的 PR）里它不在候选之列；或者它最后一次是候选已过 24 小时。伴随进程刚启动（轮询器还没跑过）、节点暂时 STANDBY 或 UNCERTAIN、HALT、状态过旧，都不算完整的一步。所以伴随进程刚启动、节点暂时 STANDBY 或 UNCERTAIN、HALT 时，12 小时的窗口和“永久放弃”的结论都不会被重置。
 - **点之前必须全部满足**（判断从未合入的 76481044 搬来，`decide`）：
   1. 恰好一个开着的、目标为默认分支、来自本仓库的 PR 的 head 正是它，并且 App 5368905 在这个 head 上最新的 `kooyumi-work-admission` 是 completed/success、绑定这个 PR（第 1 段已发出准入；同 `independentAdmissionCheck`）。
   2. 按 SHA 分页列出全部 Actions 运行，按 GitHub 工作流 ID 分组。对绑定该 PR、在补跑范围内且恰有一个 `admission-gate` 和至少一个重型作业的运行，按组核对是否还有排队或在跑的尝试。列车暂存 SHA 要求该组有唯一一条暂存分支的 push 运行，发请求前再核对暂存 ref。
@@ -4464,7 +4464,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
   - 回执丢了（例如重装），还有 gate 自己的 GitHub 历史预算和恢复证据要求兜底。
 - **告知。**
   - PR 状态通过 `pr-status.mjs#withRerunLine` 显示最近的结果，带上对应检查或环境类作业名。补跑提示在值班词后，看门狗提示仍在最后。
-  - 只为范围内工作流写补跑、补发和 STUCK 回执，并按具体检查名通知 Owner。请求结果为 `sent`（已请求）、`unsent`（gh 没有启动）、`refused`（HTTP 4xx）或 `unknown`（请求是否生效未知）。
+  - 必需范围的工作流写补跑、补发和 STUCK 回执，并按具体检查名通知 Owner；非必需带门运行只写补跑回执，不通知，PR 页那行写“已自动补跑一次带门运行（运行 <id>，不属必需检查）”，同一 head 有必需范围回执时先显示那一条。请求结果为 `sent`（已请求）、`unsent`（gh 没有启动）、`refused`（HTTP 4xx）或 `unknown`（请求是否生效未知）。
 - **两处已知约束：以后任何新 workflow 都会碰到**（在未合入的 76481044 里实测发现）：
   - 已安装在每台 runner 上的 hook `scripts/runner/clued-runner-job-started.mjs` 只放行 main 上的 push、schedule、workflow_run、pull_request_target、workflow_dispatch，不放行 `check_run`。要用 `check_run` 触发，得先做 hook 的后继版本，并在每台 runner 上重装。
   - 每个新 workflow 都必须登记进 `.github/actions/ci-temporary-storage/coverage.json`。这个文件被 gitleaks/trivy 的 scan-start 策略钉住（`hosted-relay-v1/registry.json` 的冻结闭包，生产 Worker `ci-scan-start-v1.ts` 会核对）。所以加任何一个 workflow，都得重新钉值并部署生产 Worker，否则之后 PR 的 scan start 会被拒（`clued-cloud` 的 `ci-scan-start-worker.test.mjs` 会失败）。
@@ -4496,6 +4496,7 @@ companion 对执行器的答复：拒绝的原因是整仓 `fetch` 或 `ls-remot
 
 - **现场。** #1121 run `43720693841`、#1122 run `43720708199`：推送后 attempt 1 的每个作业在 “Set up runner” 等满钩子时限，以 “Native admission absent” 被拒（准入要等 PR 成为车头，14:11:36 才发）；attempt 2 有了准入（check `132838811702`），仍因钩子只认 attempt 1 被拒，只能人工推空提交。gate 在 “Set up runner” 被拒时，`diedInSetup` 只认 “Set up job”，这个 lane 也就把 head 判为 final，不会点补跑。
 - **做法。** `diedInSetup`（gate 与 `src/env-failure.mjs` 同一份）把紧跟 “Set up job” 的钩子步骤 “Set up runner” 也算 runner 自己的准备步骤：被钩子拒的作业什么也没跑。于是准入到达后，这个 lane 照 56.5 的规则点那一次 “Re-run all jobs”，gate 照 #993 放行；钩子后继版本 `required-tests-late-admission-v1`（组件 1.0.3，见 `scripts/runner/README.md`）不再只认 attempt 1，而是认“本运行之前每个尝试都什么也没跑”的那个尝试。同一提交仍只真跑一次。
+- **2026-11-20（Task 54a2b67a）：** 范围与窗口改按 56.5 现文；此前按必需检查映射与首见 12 小时，接不住 G4 这类非必需带门运行和排队超 12 小时的 head。
 - **测试**：`test/env-failure.test.mjs`、`test/admission-rerun.test.mjs` 的 setup 一例，`scripts/ci/clued-work-admission.test.mjs` 的 environment re-run 一例，`scripts/runner/clued-runner-job-started.test.mjs` 的 `defect B` 两例。
 
 ### 56.6 策略、Source 与安装
