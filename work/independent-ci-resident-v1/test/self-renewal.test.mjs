@@ -90,7 +90,7 @@ test('常驻轮次开始后产生的四项密钥观测仍可通过自检', async
   const iso=()=>new Date(now).toISOString();
   const row=sid=>({at:iso(),sid,tpm:'DENIED',software:'ABSENT'});
   const put=(file,value)=>fs.writeFileSync(path.join(directory,file),JSON.stringify(value));
-  const step=renewalWatch({root,profile,mode:()=>'STANDBY',clock:()=>now,observe:async()=>{
+  const step=renewalWatch({root,profile,mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,observe:async()=>{
     now+=40;
     return row(service);
   }});
@@ -117,7 +117,7 @@ test('常驻状态原样记录 SYSTEM 失败诊断，并在 Broker 恢复后清�
   const systemFile=path.join(root,'broker/renew-key.json');
   fs.writeFileSync(systemFile,JSON.stringify({at:new Date(now).toISOString(),sid:'S-1-5-18',provider:null,
     code:'RENEW_IDENTITY_KEY_UNAVAILABLE',failure}));
-  const step=renewalWatch({root,profile:{},mode:()=>'STANDBY',clock:()=>now,observe:async()=>null});
+  const step=renewalWatch({root,profile:{},mode:()=>'STANDBY',clock:()=>now,source:CI_SOURCE,observe:async()=>null});
   const keys=()=>JSON.parse(fs.readFileSync(path.join(root,'state/connection-renewal.json'))).keys;
   await step();
   assert.deepEqual(keys().systemFailure,failure);
@@ -138,7 +138,7 @@ test('两类连接每天各投一次；续期请求只含类别，拒绝不会�
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   for(const d of ['state','broker/requests','broker/responses']) fs.mkdirSync(path.join(root,d),{recursive:true});
   let mode='ACTIVE',idle=false,now=Date.now();
-  const step=renewalWatch({root,profile:{},mode:()=>mode,drained:async()=>idle,clock:()=>now,observe:async()=>null});
+  const step=renewalWatch({root,profile:{},mode:()=>mode,drained:async()=>idle,clock:()=>now,source:CI_SOURCE,observe:async()=>null});
   await step();
   const req=kind=>{
     const book=JSON.parse(fs.readFileSync(path.join(root,'state/connection-renewal.json')));
@@ -222,12 +222,12 @@ function handoverFixture(t, {now = Date.now(), currentBinding = bindingId, mode,
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'renew-handover-'));
   t.after(() => fs.rmSync(root, {recursive: true, force: true}));
   for (const dir of ['state', 'broker/requests', 'broker/responses']) fs.mkdirSync(path.join(root, dir), {recursive: true});
-  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0};
+  const f = {root, now, mode: 'ACTIVE', drained: false, holds: 0, source: CI_SOURCE};
   const expiresAt = new Date(f.now + 10 * 24 * HOUR).toISOString();
   const put = (name, value) => fs.writeFileSync(path.join(root, name), JSON.stringify(value));
   f.restart = () => {
     f.tick = renewalWatch({root, profile: {}, mode: mode ?? (() => f.mode), drained: drained ?? (async () => f.drained),
-      clock: () => f.now, observe: async () => null, onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; })});
+      clock: () => f.now, observe: async () => null, onHandover: onHandover ?? (() => { f.holds++; f.mode = 'UNCERTAIN'; }), source: f.source});
   };
   f.restart();
   f.book = () => JSON.parse(fs.readFileSync(path.join(root, 'state/connection-renewal.json')));
@@ -694,4 +694,53 @@ test('M3 续期通知独立于用完即弃自检', async t=>{
   const toast=events({status:{writtenAt:f.now,pending:[],notices:[notice]},now:f.now});
   assert.match(toast[0].title,/连接续期/);
   assert.match(toast[0].body,/versions\.renewal/);
+});
+
+// 缺陷 c7ea4ea1（Fable 11-20“补：续期不等”B）：升级正是为修上一代得到的拒绝，上一代写下的拒绝不再让本代等满退避；
+// 通道记录跨升级保留，让班等待、生效时间、绑定、到期原样生效。代的标识是本代 Source 摘要（policy.ciSourceManifestSha256）。
+const OTHER_SOURCE = 'a'.repeat(64);
+const refusedLane = (at, extra = {}) => ({at, waiting: false, effectiveAt: null, code: 'RENEW_IDENTITY_KEY_UNAVAILABLE', bindingId: null,
+  expiresAt: null, renewalWindowOpensAt: null, grantRequestId: null, retryAfterSeconds: null, ...extra});
+const seedBook = (f, lanes) => fs.writeFileSync(path.join(f.root, 'state/connection-renewal.json'), JSON.stringify({lanes, pending: null}));
+test('上一代写下的拒绝（标识不同或缺失）不计退避：本代启动第一轮即投，两类连接依次重投', async t => {
+  for (const marker of [{}, {source: OTHER_SOURCE}]) {
+    const f = handoverFixture(t);
+    seedBook(f, {ci: refusedLane(f.now - HOUR, marker), upgrade: refusedLane(f.now - HOUR, marker)});
+    f.restart();
+    await f.tick(); f.request('ci');
+    f.reply('ci', {code: 'RENEW_IDENTITY_KEY_UNAVAILABLE'});
+    await f.tick(); f.request('upgrade');
+    assert.equal(f.book().lanes.ci.source, CI_SOURCE, '本代写下的通道记录带本代标识');
+    f.reply('upgrade', {code: 'RENEW_IDENTITY_KEY_UNAVAILABLE'});
+    await f.tick(); f.request(null);
+    assert.equal(f.book().lanes.upgrade.source, CI_SOURCE);
+    f.now += 24 * HOUR - 1; await f.tick(); f.request(null);
+    f.now++; await f.tick(); f.request('ci');
+  }
+});
+test('本代写下的拒绝仍按原退避：密钥不可用一小时前，满一天才重投', async t => {
+  const f = handoverFixture(t);
+  seedBook(f, {ci: refusedLane(f.now - HOUR, {source: CI_SOURCE}), upgrade: refusedLane(f.now - HOUR, {source: CI_SOURCE})});
+  f.restart();
+  await f.tick(); f.request(null);
+  f.now += 23 * HOUR - 1; await f.tick(); f.request(null);
+  f.now++; await f.tick(); f.request('ci');
+});
+test('上一代的让班等待、生效时间、绑定、到期跨代原样生效，不因换代提前投递；上一代的成功续期仍按日', async t => {
+  const f = handoverFixture(t);
+  f.mode = 'UNCERTAIN';
+  const ci = {at: f.now - 10 * 60_000, waiting: true, effectiveAt: new Date(f.now + 300_000).toISOString(), code: 'RENEW_HANDOVER_WAITING',
+    bindingId, expiresAt: new Date(f.now + 10 * 24 * HOUR).toISOString(), renewalWindowOpensAt: null, grantRequestId: null, retryAfterSeconds: null};
+  const upgrade = {...refusedLane(f.now - HOUR), code: null, bindingId: confirmationId, expiresAt: new Date(f.now + 20 * 24 * HOUR).toISOString()};
+  seedBook(f, {ci, upgrade});
+  f.restart();
+  await f.tick(); f.request(null);
+  assert.deepEqual(f.book().lanes, {ci, upgrade});
+  f.now += HOUR; await f.tick(); f.request(null); // 旧连接仍可用：等角色探询，不投
+  assert.deepEqual(f.book().lanes, {ci, upgrade});
+  f.now += 23 * HOUR - 10 * 60_000; await f.tick(); f.request('upgrade');
+});
+test('常驻必须带上本代 Source 摘要才能续期', () => {
+  for (const source of [undefined, null, 'E'.repeat(64), 'e'.repeat(63)])
+    assert.throws(() => renewalWatch({root: os.tmpdir(), profile: {}, mode: () => 'STANDBY', source}), /RENEW_SOURCE_REQUIRED/);
 });
