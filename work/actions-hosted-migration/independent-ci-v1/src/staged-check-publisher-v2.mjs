@@ -84,6 +84,7 @@ export const ADOPT_READ_DELAYS_MS = Object.freeze([0, 10_000, 25_000]);
 // between its two boundaries.
 export const CONFIRMATION_MARGIN_MS = 5_000;
 export const SCAN_COMPLETION_RESERVE_MS = 2_000;
+const STAGED_SCAN_POLICY_REQUIRED = 'staged_scan_execution_policy_required';
 // What the write itself needs of the pre-write observation window after the last check before it (review round 6, MAJOR 1): the role
 // key and the journal (local), the reserve the recoverable publisher demands at the create (PUBLICATION_READBACK_RESERVE_MS, 2 s), and
 // WRITE_NATIVE_CALLS Native calls (prepareNativePublication's current-authority verify, and an active policy's publication begin),
@@ -206,6 +207,11 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (matches.length !== 1) stop('check_discovery_unconfirmed');
     return matches[0];
   }
+  // Active scanners need a different ticket lifecycle before production can publish them.
+  function requireStagedScanPolicy(job, facts) {
+    if (requireVerifyFirst && SCANNER_ROLES_V2.includes(job.role) && facts.executionPolicy !== 'staged')
+      stop(STAGED_SCAN_POLICY_REQUIRED);
+  }
   // The protected facts of the job, observed now and checked against the job, the batch claim, the qualification and the deployment.
   async function observeFacts(job, verified) {
     const facts = await authority.observe(job, batchClaim);
@@ -219,6 +225,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     if (!requiredRefs.every(k => facts[k] === deployment[k]) || facts.ciPrincipalBindingId !== deployment.ciPrincipalBindingId
       || verified.signer.sourceAcceptanceRef !== facts.sourceAcceptanceRef || verified.signer.qualificationRef !== facts.hostQualificationRef)
       stop('protected_qualification_changed', true);
+    requireStagedScanPolicy(job, facts);
     return facts;
   }
   // Generation 13 (DESIGN §57.2, Task 7b21f820): live authority is a Native answer at most FRESH_MS old (Decision 1100a0ed), and
@@ -296,6 +303,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
     }
     if (completing && retainedServerAnswerCurrent(native) === false) stop('staged_scan_verification_aged');
     if (!admittedFactsMatchJobV2(native, job, clock(), { batchClaim })) stop('native_identity_changed', true);
+    requireStagedScanPolicy(job, native);
     if (native.packetSha256 !== digest(packet) || !HASH.test(native.evaluationSha256 ?? '') || !ref(native.modeProofRef) || !ref(native.observationRef)) stop('full_admission_observation_unconfirmed');
     if (!plain(native.mode) || !ref(native.mode.state) || !ref(native.mode.layer)
       || !(ref(native.mode.policyVersion) || Number.isSafeInteger(native.mode.policyVersion))
@@ -521,6 +529,8 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
         if (!fresh(before.native, clock())) stop('native_admission_aged_before_write');
         if (!writeFits(before.ms)) stop('publication_window_short_before_write');
       } catch (error) {
+        if (reason(error) === STAGED_SCAN_POLICY_REQUIRED)
+          return { status: 'BLOCKED', effectKey: key, reason: STAGED_SCAN_POLICY_REQUIRED, sideEffects: 0, productionAuthorized: false };
         if (previous?.state === 'settled' && positive(previous.details?.checkRunId)) {
           const known = { id: previous.details.checkRunId, app: { id: definition.appId }, head_sha: job.headSha, name: definition.name, external_id: externalId };
           return revoke({ key, phase: 'settled', known, definition, job, externalId, cause: reason(error), sideEffects: 0, ...admissionOf(error) });
