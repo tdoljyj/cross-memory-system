@@ -98,9 +98,10 @@ test('D2-prime: the one door is a module of the resident, and the four options a
 // A line that starts PowerShell without the policy: it holds -NoProfile but not both -ExecutionPolicy and Bypass.
 const unguardedLines = text => text.split(/\r?\n/).map((line, i) => [i + 1, line]).filter(([, l]) => l.includes('-NoProfile') && !(l.includes('-ExecutionPolicy') && l.includes('Bypass')));
 
-// The exceptions. A file is listed with the number of such lines it holds today and why it may. Two kinds only:
+// The exceptions. A file is listed with the number of such lines it holds today and why it may. Three kinds only:
 //  - SOURCE: a file of the accepted Source closure (source-closure.json); its bytes are pinned by ciSourceManifestSha256, the package cannot change one.
 //  - TEXT: a line that talks about the option and starts nothing.
+//  - PROBE: a line that starts PowerShell the way the frozen Source is started (no -ExecutionPolicy, on purpose), to prove the machine policy the Source depends on is in effect; exactly one in the package.
 // A listed file with another count, or one that no longer needs its entry, is red: the set cannot go stale.
 const SOURCE = 'bytes frozen: the file is in source-closure.json (ciSourceManifestSha256); covered by the execution-policy baseline the host preparation sets and checks';
 const A = 'work/actions-hosted-migration/independent-ci-v1';
@@ -114,6 +115,8 @@ const EXCEPTIONS = Object.freeze({
   [`${A}/worker/protected-job-bridge-v2/mailbox.mjs`]: { count: 2, kind: 'SOURCE', reason: SOURCE },
   [`${A}/worker/protected-job-bridge-v4/mailbox.mjs`]: { count: 1, kind: 'SOURCE', reason: SOURCE },
   [`${A}/worker/protected-job-bridge-v4/relay-public.ps1`]: { count: 1, kind: 'SOURCE', reason: SOURCE },
+  'work/independent-ci-resident-v1/windows/first-install-host.ps1': { count: 1, kind: 'PROBE',
+    reason: 'the execution-policy baseline probe is started the way held-record.mjs starts the frozen Source, deliberately without -ExecutionPolicy, to prove the machine policy the frozen Source depends on is in effect' },
   'work/independent-ci-resident-v1/windows/test-first-install-host.ps1': { count: 1, kind: 'TEXT',
     reason: 'a pattern the test matches against first-install-host.ps1\'s text (the one in front of -NoProfile); it starts nothing' },
 });
@@ -155,6 +158,8 @@ test('D2 rule: every PowerShell the package starts or prints names -ExecutionPol
     if (e.kind === 'SOURCE') assert.ok(closure.has(p), `${p} is in the Source closure`);
     assert.ok(e.reason.length > 20, `${p} says why`);
   }
+  assert.deepEqual(Object.values(EXCEPTIONS).map(e => e.kind).filter(k => !['SOURCE', 'TEXT', 'PROBE'].includes(k)), [], 'only the three kinds');
+  assert.equal(Object.values(EXCEPTIONS).filter(e => e.kind === 'PROBE').length, 1, 'exactly one PROBE exception');
 });
 
 test('D2 rule: the scan reads the files selectTree selects, and the package carries the Node door', async () => {
