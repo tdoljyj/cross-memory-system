@@ -1815,89 +1815,6 @@ test('a Windows job query that fails takes the 21 GB tier and goes on to read me
   assert.deepEqual([r.noMemory.action, r.noMemory.code], ['refuse', 'DRILL_HOST_RESOURCE_UNREADABLE']);
 });
 
-// The same ruling: a timed guest step that ran out while the boot had a runner job beside it is classed "suspected host contention"
-// (rerun at another time before concluding anything), never a package defect; without a job at boot, or another failure, no class.
-test('a timed step that timed out with a runner job at boot is classed suspected host contention', opts, () => {
-  const r = ps(`
-    $steps = { param($code, $name = 'facts') @{ steps = @(@{ name = 'stage'; result = 'ok'; rejectCode = $null }, @{ name = $name; result = 'failed'; rejectCode = $code }) } }
-    [ordered]@{
-    guestStep = (Get-DrillHostContention @{ code = 'DRILL_GUEST_STEP_TIMEOUT'; detail = @{ step = 'guest-shutdown-timer'; minutes = 1 } } $null $true)
-    firstInstall = (Get-DrillHostContention @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install'; minutes = 240 } } $null $true)
-    prereq = (Get-DrillHostContention @{ code = 'DRILL_PREREQ_TIMEOUT'; detail = @{ step = 'prereq'; minutes = 40 } } $null $true)
-    packageStep = (Get-DrillHostContention $null (& $steps 'FACTS_CHECK_TIMEOUT') $true)
-    packageRootRun = (Get-DrillHostContention $null (& $steps 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' 'launcher') $true)
-    runDeadline = (Get-DrillHostContention @{ code = 'DRILL_RUN_TIMEOUT'; deadline = 'x' } $null $true)
-    operator = (Get-DrillHostContention @{ code = 'DRILL_INTERACTIVE_TIMEOUT' } $null $true)
-    guestNotReady = (Get-DrillHostContention @{ code = 'DRILL_GUEST_NOT_READY_IN_TIME' } $null $true)
-    packageFaultThenDeadline = (Get-DrillHostContention @{ code = 'DRILL_RUN_TIMEOUT' } (& $steps 'COMPANION_ACCOUNT_NOT_PREPARED' 'accounts') $true)
-    packageFaultThenGuestTimeout = (Get-DrillHostContention @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install' } } (& $steps 'COMPANION_ACCOUNT_NOT_PREPARED' 'accounts') $true)
-    substringOnly = (Get-DrillHostContention @{ code = 'DRILL_SOMETHING_TIMEOUT' } (& $steps 'RESIDENT_QUIET_TIMEOUT') $true)
-    stopCodeOnly = (Get-DrillHostContention $null @{ steps = @(); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'LAUNCHER_TIMEOUT' } } $true)
-    noConfirmedJob = (Get-DrillHostContention @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install' } } $null $false)
-    otherFailure = (Get-DrillHostContention @{ code = 'DRILL_HOST_MEMORY_SHORT' } $null $true)
-    nothing = (Get-DrillHostContention $null $null $true) }`);
-  const hit = (step, code) => ({ class: 'SUSPECTED_HOST_CONTENTION', step, code });
-  assert.deepEqual(r.guestStep, hit('guest-shutdown-timer', 'DRILL_GUEST_STEP_TIMEOUT'));
-  assert.deepEqual(r.firstInstall, hit('first-install', 'DRILL_FIRST_INSTALL_TIMEOUT'));
-  assert.deepEqual(r.prereq, hit('prereq', 'DRILL_PREREQ_TIMEOUT'));
-  assert.deepEqual(r.packageStep, hit('facts', 'FACTS_CHECK_TIMEOUT'));
-  assert.deepEqual(r.packageRootRun, hit('launcher', 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED'));
-  for (const k of ['runDeadline', 'operator', 'guestNotReady', 'packageFaultThenDeadline', 'packageFaultThenGuestTimeout', 'substringOnly',
-    'stopCodeOnly', 'noConfirmedJob', 'otherFailure', 'nothing']) assert.equal(r[k], null, k);
-});
-
-// Codex re-review of bde9aaa52, medium 1: a first install that ended refused (its terminal verdict, from the step record or the entry's
-// result) decides, whatever times out after it -- also when no step line carries the refusal (FIRST_INSTALL_STOPPED / PREPARE_REFUSED).
-// Only a refusal that is itself a bounded package step's time-out is classed. A first install that finished leaves the later steps to be judged.
-test('a first install that ended refused decides: no contention for a time-out after it, also without a refused step line', opts, () => {
-  const r = ps(`
-    $timeout = @{ code = 'DRILL_GUEST_STEP_TIMEOUT'; detail = @{ step = 'read-after-install'; minutes = 10 } }
-    $prepareRefused = @{ steps = @(@{ name = 'host'; result = 'ok'; rejectCode = $null }); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'PREPARE_REFUSED' } }
-    $done = @{ steps = @(@{ name = 'launcher'; result = 'ok'; rejectCode = $null }); verdict = @{ status = 'FIRST_INSTALL_DONE'; stopCode = $null } }
-    $timedOutStop = @{ steps = @(); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'FACTS_CHECK_TIMEOUT' } }
-    $entryRefused = @{ parsed = $true; exitCode = 1; status = 'FIRST_INSTALL_STOPPED'; stopCode = 'PREPARE_REFUSED' }
-    $entryDone = @{ parsed = $true; exitCode = 0; status = 'FIRST_INSTALL_DONE'; stopCode = $null }
-    [ordered]@{
-      verdictRefused = (Get-DrillHostContention $timeout $prepareRefused $true)
-      entryRefused = (Get-DrillHostContention $timeout @{ steps = @(); verdict = $null } $true $entryRefused)
-      entryRefusedNoSteps = (Get-DrillHostContention $timeout $null $true $entryRefused)
-      runDeadlineAfterRefusal = (Get-DrillHostContention @{ code = 'DRILL_RUN_TIMEOUT' } $prepareRefused $true $entryRefused)
-      refusedByPackageTimeout = (Get-DrillHostContention $timeout $timedOutStop $true)
-      doneThenTimeout = (Get-DrillHostContention $timeout $done $true $entryDone) }`);
-  for (const k of ['verdictRefused', 'entryRefused', 'entryRefusedNoSteps', 'runDeadlineAfterRefusal']) assert.equal(r[k], null, k);
-  assert.deepEqual(r.refusedByPackageTimeout, { class: 'SUSPECTED_HOST_CONTENTION', step: 'first-install', code: 'FACTS_CHECK_TIMEOUT' });
-  assert.deepEqual(r.doneThenTimeout, { class: 'SUSPECTED_HOST_CONTENTION', step: 'read-after-install', code: 'DRILL_GUEST_STEP_TIMEOUT' });
-});
-
-// Codex re-review of bde9aaa52, medium 2: a real command in the guest that reaches its own limit (A8's upgrade fetch, 3600 s) before the
-// step's outer bound comes back from Receive-Job as text. The drill's own runner writes that text (fixed, ASCII, never localized):
-// Invoke-DrillGuest keeps it as structured evidence -- DRILL_GUEST_COMMAND_TIMEOUT with the step, the command, the limit, reached --
-// instead of DRILL_GUEST_STEP_FAILED, and the contention class reads it. Any other text is still a step failure.
-test('a guest command that reached its own limit keeps step, command and limit, and is classed by them', opts, () => {
-  const r = ps(`
-    function Get-DrillGuestProbe { param($Credential) @{ boot = 'boot-1' } }
-    function Wait-DrillGuest { param($Credential, $Minutes) [DateTimeOffset]::Parse('2026-11-20T00:00:00Z') }
-    function Get-DrillStepFailureKind { param($Before, $After) 'failed' }
-    function Invoke-Command { param($VMName, $Credential, $ScriptBlock, $ArgumentList, [switch]$AsJob) 'job' }
-    function Wait-Job { param($Job, $Timeout) $true }
-    function Receive-Job { param($Job, $ErrorAction) throw $script:guestText }
-    function Remove-Job { param($Job, [switch]$Force, $ErrorAction) }
-    $run = { param($text) $script:guestText = $text
-      try { Invoke-DrillGuest $null { } @() -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall'; $null } catch { Get-DrillCode $_ } }
-    $timedOut = & $run 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe after 3600 s'
-    $other = & $run 'something else failed in the guest'
-    [ordered]@{ timedOut = $timedOut; other = $other.code
-      parsed = (Get-DrillGuestCommandTimeout 'x COMMAND_TIMEOUT_NOTHING_KILLED: pwsh.exe after 120 s y'); unparsed = (Get-DrillGuestCommandTimeout 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe')
-      contention = (Get-DrillHostContention $timedOut $null $true)
-      afterRefusal = (Get-DrillHostContention $timedOut @{ steps = @(); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'PREPARE_REFUSED' } } $true) }`);
-  assert.deepEqual(r.timedOut, { code: 'DRILL_GUEST_COMMAND_TIMEOUT', detail: { step: 'reinstall', command: 'node.exe', limitSeconds: 3600, reached: true } });
-  assert.equal(r.other, 'DRILL_GUEST_STEP_FAILED');
-  assert.deepEqual(r.parsed, { command: 'pwsh.exe', limitSeconds: 120 });
-  assert.equal(r.unparsed, null);
-  assert.deepEqual(r.contention, { class: 'SUSPECTED_HOST_CONTENTION', step: 'reinstall', code: 'DRILL_GUEST_COMMAND_TIMEOUT' });
-  assert.equal(r.afterRefusal, null);
-});
-
 // Codex re-review of bde9aaa52, lows 1 and 2: a job confirmed in one runner distribution stays a confirmed job when another could not be
 // read; a sample the duty check refused before any job was read says nothing about jobs (not "no").
 test('a confirmed WSL job survives another distribution unread; a duty refusal carries no job reading', opts, () => {
@@ -1916,22 +1833,33 @@ test('a confirmed WSL job survives another distribution unread; a duty refusal c
   assert.deepEqual(r.duty, { code: 'DRILL_HOST_IS_ON_DUTY', busyWith: null, runnerJob: null });
 });
 
-// The receipt keeps what the 6 GB is to be recalibrated from: free before boot and the tier, free once the guest is up (the running
-// guard's first reading) and the lowest while running.
-test('the receipt memory record: before boot, the tier, after boot and the lowest while running, and the contention class', opts, () => {
+// The receipt keeps raw facts only (Fable renew-key ruling, supplement "contention label stop-loss"): free before boot and the tier, the
+// runner jobs at boot (yes / no / unknown) and what the gate saw, free once the guest is up (the running guard's first reading), the
+// lowest while running and the lowest of the whole run. No contention class, and no failure or step record is read to make one.
+test('the receipt memory record: raw facts -- before boot, the tier, the jobs at boot, after boot, the lowest -- and no class', opts, () => {
   const r = ps(`
     $state = [hashtable]::Synchronized(@{ afterBootFreeGB = $null; minRunningFreeGB = $null })
     foreach ($g in @(12.5, 9.1, 10.4)) { Add-DrillRunningMemory $state @{ freeGB = $g } }
     Add-DrillRunningMemory $state @{ freeGB = $null }
     $running = [ordered]@{ afterBootFreeGB = $state.afterBootFreeGB; minRunningFreeGB = $state.minRunningFreeGB }
-    $timeout = @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install'; minutes = 240 } }
     $yes = @{ bootGate = [ordered]@{ freeGB = 23.4; runnerJob = 'yes'; busyWith = 'WSL_ACTIONS_RUNNER_JOB'; requiredFreeGB = 21 } }
-    $unknown = @{ bootGate = [ordered]@{ freeGB = 22.1; runnerJob = 'unknown'; busyWith = 'WSL_UNREADABLE'; requiredFreeGB = 21 } }
-    [ordered]@{ yes = (Get-DrillHostMemoryEvidence $yes $running $timeout $null); unknown = (Get-DrillHostMemoryEvidence $unknown $running $timeout $null) }`);
-  assert.deepEqual(r.yes, { beforeBootFreeGB: 23.4, runnerJobAtBoot: true, runnerJobAtBootState: 'yes', runnerJobBefore: 'WSL_ACTIONS_RUNNER_JOB', requiredFreeGB: 21,
-    afterBootFreeGB: 12.5, minRunningFreeGB: 9.1, contention: { class: 'SUSPECTED_HOST_CONTENTION', step: 'first-install', code: 'DRILL_FIRST_INSTALL_TIMEOUT' } });
-  // Codex review of f9ab1bb26, medium 2: a job query that failed is the high tier, but not a job at boot, and no contention by itself
-  assert.deepEqual([r.unknown.runnerJobAtBoot, r.unknown.runnerJobAtBootState, r.unknown.requiredFreeGB, r.unknown.contention], [false, 'unknown', 21, null]);
+    $unknown = @{ bootGate = [ordered]@{ freeGB = 8.2; runnerJob = 'unknown'; busyWith = 'WSL_UNREADABLE'; requiredFreeGB = 21 } }
+    [ordered]@{ yes = (Get-DrillHostMemoryEvidence $yes $running); unknown = (Get-DrillHostMemoryEvidence $unknown $running)
+      none = (Get-DrillHostMemoryEvidence $null $null)
+      params = @((Get-Command Get-DrillHostMemoryEvidence).Parameters.Keys | Where-Object { $_ -in @('PreBoot', 'RunningMemory', 'Failure', 'FirstInstallSteps', 'Entry') }) }`);
+  assert.deepEqual(r.yes, { beforeBootFreeGB: 23.4, requiredFreeGB: 21, runnerJobAtBoot: 'yes', runnerJobBefore: 'WSL_ACTIONS_RUNNER_JOB',
+    afterBootFreeGB: 12.5, minRunningFreeGB: 9.1, lowestFreeGB: 9.1 });
+  assert.deepEqual([r.unknown.runnerJobAtBoot, r.unknown.lowestFreeGB], ['unknown', 8.2], 'the lowest of the whole run includes the boot gate');
+  assert.deepEqual(r.none, { beforeBootFreeGB: null, requiredFreeGB: null, runnerJobAtBoot: null, runnerJobBefore: null,
+    afterBootFreeGB: null, minRunningFreeGB: null, lowestFreeGB: null });
+  assert.deepEqual(r.params, ['PreBoot', 'RunningMemory'], 'the record reads neither the failure nor the step record');
+});
+
+// Nothing in the drill classes a time-out (the stop-loss): no contention label, no code tables for it, no read-back of time-out text.
+test('no automatic contention class is left in the drill', () => {
+  const text = fs.readFileSync(script, 'utf8');
+  for (const gone of ['SUSPECTED_HOST_CONTENTION', 'Get-DrillHostContention', 'DrillGuestTimedStepCodes', 'DrillPackageTimedStepCodes',
+    'Get-DrillGuestCommandTimeout', 'DRILL_GUEST_COMMAND_TIMEOUT']) assert.ok(!text.includes(gone), gone);
 });
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,
@@ -3635,7 +3563,7 @@ test('a first install cut off by the deadline leaves its printed lines in the gu
       $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
     } finally { $w.Dispose() }
     @{ code = $code; seconds = $seconds; record = $c.record; steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
-  assert.equal(r.code, 'COMMAND_TIMEOUT_NOTHING_KILLED: powershell.exe after 2 s');
+  assert.equal(r.code, 'COMMAND_TIMEOUT_NOTHING_KILLED: powershell.exe');
   assert.ok(r.seconds < 5, `the deadline holds: ${r.seconds}`);
   assert.equal(r.record.entryLogError ?? null, null);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean),
