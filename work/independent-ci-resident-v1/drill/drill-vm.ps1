@@ -1099,9 +1099,10 @@ function Get-DrillConclusion($Items, $M5, [bool]$Candidate = $false) {
 
 # Fable ruling 11-20 "first install r4" section 5(b) (E5): the summary line of a run says why it failed, from the receipt just written
 # (nothing judged again). failedItems: Get-DrillFailedItems of its items and m5; reason: the first one as <id>:<code> -- A1 from its step
-# record (<first rejected step>:<its rejectCode>; without a rejected step its detail), M5 from its detail, any other item from its detail --
-# or, with no failed item, a checkpoint restore not confirmed. Both empty for a conclusion that is not FAIL. The run's code keeps its
-# meaning (the drill machine's own failure only); a FAIL always has a code or a reason.
+# record (<first rejected step>:<its rejectCode>; without a rejected step its detail), M5 from its detail, any other item from its detail.
+# Both empty for a conclusion that is not FAIL. The reason names product items only; the run's code keeps its meaning (the drill machine's
+# own failure only), and a checkpoint restore not confirmed is one: DRILL_RESTORE_NOT_CONFIRMED is the run's code, never a reason (Fable
+# ruling 11-20 "r4 E2-E5 ambiguities" item 3; read code first, then reason). A FAIL always has a code or a reason.
 function Get-DrillRunSummary($Receipt) {
   if ([string](Get-Prop $Receipt 'conclusion') -cne 'FAIL') { return [ordered]@{ failedItems = @(); reason = $null } }
   $items = @(Get-Prop $Receipt 'items'); $m5 = Get-Prop $Receipt 'm5'
@@ -1117,7 +1118,7 @@ function Get-DrillRunSummary($Receipt) {
       $rejected = @(@(Get-Prop $steps 'steps') | Where-Object { $null -ne $_ -and $null -ne (Get-Prop $_ 'rejectCode') }) | Select-Object -First 1
       $reason = if ($rejected) { 'A1:' + [string](Get-Prop $rejected 'name') + ':' + [string](Get-Prop $rejected 'rejectCode') } else { 'A1:' + [string](Get-Prop $item 'detail') }
     } else { $reason = $id + ':' + [string](Get-Prop $item 'detail') }
-  } elseif ((Get-Prop $Receipt 'restoredToCheckpoint') -ne $true) { $reason = 'DRILL_RESTORE_NOT_CONFIRMED' }
+  }
   [ordered]@{ failedItems = $failed; reason = $reason }
 }
 
@@ -2986,7 +2987,7 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   $receiptPath = Join-Path $runDir 'receipt.json'
   Write-DrillJson $receiptPath $receipt
   $summary = Get-DrillRunSummary $receipt
-  return [ordered]@{ status = 'DRILL_DONE'; conclusion = $receipt.conclusion; code = $(if ($failure) { $failure.code } else { $null }); failedItems = $summary.failedItems; reason = $summary.reason; restored = $restored; receipt = $receiptPath }
+  return [ordered]@{ status = 'DRILL_DONE'; conclusion = $receipt.conclusion; code = $(if ($failure) { $failure.code } elseif (-not $restored) { 'DRILL_RESTORE_NOT_CONFIRMED' } else { $null }); failedItems = $summary.failedItems; reason = $summary.reason; restored = $restored; receipt = $receiptPath }
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }   # dot-sourced by the offline tests: definitions only

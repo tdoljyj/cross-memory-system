@@ -262,11 +262,59 @@ test('E5(b): a FAIL summary line names its failed items and the first one\'s rea
   assert.equal(r.conclusionAgrees, true);
   assert.deepEqual(r.pass, { failedItems: [], reason: null });
   assert.deepEqual(r.m5Only, { failedItems: ['M5'], reason: 'M5:DRILL_M5_OBSERVATIONS_MISSING' });
-  assert.equal(r.noRestore.reason, 'DRILL_RESTORE_NOT_CONFIRMED');
+  // a restore not confirmed is not a product item: no failed item, no reason (the run's code says it; the test below)
+  assert.deepEqual(r.noRestore, { failedItems: [], reason: null });
   assert.equal(r.noA1Steps.reason, 'A1:no entry result steps=missing');
-  // invariant: every FAIL summary has a reason here (the run's code is the other half, set only by a machine failure)
-  for (const k of ['run', 'm5Only', 'noRestore', 'noA1Steps']) assert.ok(r[k].reason, k);
+  // every FAIL summary with a failed item has a reason (the run's code is the other half, set only by a machine failure or the restore)
+  for (const k of ['run', 'm5Only', 'noA1Steps']) assert.ok(r[k].reason, k);
   // the summary line is the receipt's: the line the run returns carries both fields, taken from the receipt just written
   const text = fs.readFileSync(script, 'utf8');
-  assert.match(text, /\$summary = Get-DrillRunSummary \$receipt\r?\n\s*return \[ordered\]@\{ status = 'DRILL_DONE'; conclusion = \$receipt\.conclusion; code = \$\(if \(\$failure\) \{ \$failure\.code \} else \{ \$null \}\); failedItems = \$summary\.failedItems; reason = \$summary\.reason;/);
+  assert.match(text, /\$summary = Get-DrillRunSummary \$receipt\r?\n\s*return \[ordered\]@\{ status = 'DRILL_DONE'; conclusion = \$receipt\.conclusion; code = \$\(if \(\$failure\) \{ \$failure\.code \} elseif \(-not \$restored\) \{ 'DRILL_RESTORE_NOT_CONFIRMED' \} else \{ \$null \}\); failedItems = \$summary\.failedItems; reason = \$summary\.reason;/);
+});
+
+// ---------------------------------------------------------------- E5 (b): the restore
+// Fable ruling 11-20 "r4 E2-E5 ambiguities" item 3 (review blocking B1): the real Invoke-DrillOnCheckpoint and Invoke-DrillPreparedRun, only
+// the VM and host boundary stubbed, and the checkpoint restore at the end throws. That is the drill machine's own failure, so it is the
+// summary line's code; the reason names product items only (section 7.3: read code first, then reason). Before the fix the line said
+// code=null, reason=DRILL_RESTORE_NOT_CONFIRMED, which section 7.3 reads as a product FAIL; and with failed items it said nothing of it.
+test('E5(b): a checkpoint restore not confirmed is the summary line\'s code, never its reason', opts, () => {
+  const root = path.join(tmp, 'e5b-restore'); fs.mkdirSync(root, { recursive: true });
+  const r = ps(`$script:Drill.Runs = ${q(root)}
+    function Assert-DrillHost { @{ freeGB = 64 } }
+    function Invoke-DrillBaseline { @{ action = 'reuse' } }
+    function Invoke-DrillPreBootRelease { param($HoldUntil) }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Get-DrillBaselineAction { param($Vm) @{ action = 'ready' } }
+    function Restore-VMCheckpoint { param($VMName, $Name, [switch]$Confirm) }
+    function Get-DrillCredential { }
+    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint, $Window) @{ state = @{ failure = $null; executorStates = [ordered]@{} } } }
+    function Stop-DrillHostGuard { param($Guard) }
+    function Start-DrillBootWatchdog { @{ signal = (Join-Path ${q(root)} 'watchdog'); process = $null } }
+    function Start-DrillGuardedVm { param($Watchdog) }
+    function Wait-DrillGuest { }
+    function Invoke-DrillGuest { $true }
+    function Assert-DrillGuard { }
+    function Stop-DrillGuardedVm { param($Guard, [switch]$RestoreCheckpoint) if ($script:restoreThrows) { throw 'Restore-VMCheckpoint failed' } $true }
+    function Invoke-DrillRun { if ($script:runThrows) { throw (New-DrillError 'DRILL_GUEST_STEP_FAILED') }
+      @{ first = @{ readAt = '2026-11-20T12:00:00Z'; pause = $null; verify = $null; status = $null; current = $null; facts = $null }; entry = $null; launcher = $null; reboot = $null; timings = @{}; m5 = $null } }
+    function Get-DrillVerdict { param($Facts)
+      @(@('A1','A2','A3','A4','A6','A7','A8') | ForEach-Object { [ordered]@{ id = $_; pass = ($_ -cne $script:failId); detail = $(if ($_ -ceq $script:failId) { 'broke' } else { 'ok' }) } }) +
+      @([ordered]@{ id = 'A5'; pass = $null; detail = 'x' }, [ordered]@{ id = 'A9'; pass = $null; detail = 'x' }, [ordered]@{ id = 'A10'; pass = $false; detail = 'per-node steps: x' }) }
+    function Get-DrillM5Verdict { param($RunDir, $M5) @{ result = 'PASS' } }
+    $case = { param($restoreThrows, $failId, $runThrows)
+      $script:restoreThrows = $restoreThrows; $script:failId = $failId; $script:runThrows = $runThrows
+      $out = Invoke-DrillPreparedRun @{ safeToResume = $true; holdUntil = [DateTimeOffset]::MinValue; deadline = [DateTimeOffset]::UtcNow.AddMinutes(10) } @{ version = '1.2.3'; tarSha256 = 'ab'; ciSourceManifestSha256 = 'cd'; candidate = $false } @{ sha256 = 'kit' } @{ sha256 = 'prereq' }
+      $rc = Read-DrillJson $out.receipt
+      [ordered]@{ conclusion = $out.conclusion; code = $out.code; reason = $out.reason; failedItems = @($out.failedItems); restored = $out.restored; receiptFailure = $rc.failure; receiptRestored = $rc.restoredToCheckpoint } }
+    [ordered]@{ clean = (& $case $true $null $false); failed = (& $case $true 'A2' $false); machine = (& $case $true $null $true); restored = (& $case $false $null $false) }`);
+  // every item passed, only the restore threw: the drill machine's code, no product reason, no failure invented in the receipt
+  assert.deepEqual(r.clean, { conclusion: 'FAIL', code: 'DRILL_RESTORE_NOT_CONFIRMED', reason: null, failedItems: [], restored: false, receiptFailure: null, receiptRestored: false });
+  // a product item failed and the restore threw: both show -- the code says the restore, the reason the item (section 7.3, row two)
+  assert.deepEqual([r.failed.conclusion, r.failed.code, r.failed.reason, r.failed.failedItems, r.failed.restored], ['FAIL', 'DRILL_RESTORE_NOT_CONFIRMED', 'A2:broke', ['A2'], false]);
+  // a drill failure of its own keeps its code even when the restore threw too
+  assert.equal(r.machine.code, 'DRILL_GUEST_STEP_FAILED');
+  // restored and every item passed: no code, no reason
+  assert.deepEqual([r.restored.conclusion === 'FAIL', r.restored.code, r.restored.reason, r.restored.restored], [false, null, null, true]);
+  // invariant: a FAIL line always has a code or a reason
+  for (const k of ['clean', 'failed', 'machine']) assert.ok(r[k].code || r[k].reason, k);
 });

@@ -263,7 +263,7 @@ function Test-UnderDirectory([string]$path, [string]$dir) {
 # companion account (companion-headless COMPANION_HEADLESS_QUALIFIED): until then it is the operator's (wsl-first-install), which the
 # profile's ownerSid (the companion) does not match. A reinstall's verdict is as before.
 # code (Fable ruling 11-20 "first install r4" section 5(a), E5): why the launcher did not end done, as the launcher said it -- a terminal
-# that stopped gives its own code, a companion switch not done the switch's code (else its status), no terminal an empty code; a done
+# that stopped gives its own code, a companion switch not done the switch's status, no terminal an empty code; a done
 # verdict has none. The status words stay as they are; the step line and the result line carry the code (Out-LauncherVerdict), and the
 # drill's entry takes it as its stop code from this verdict.
 function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
@@ -275,8 +275,7 @@ function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
     return [ordered]@{ status = 'BOOTSTRAP_LAUNCHER_ENDED'; code = $(if ($code -is [string] -and $code.Length) { $code } else { $null }); companionSwitch = $ch; next = $null }
   }
   if ($firstInstall -and $ch -cne 'COMPANION_HEADLESS_QUALIFIED') {
-    $chc = Get-Key $chh 'code'
-    return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE'; code = $(if ($chc -is [string] -and $chc.Length) { $chc } elseif ($ch) { $ch } else { $null }); companionSwitch = $ch
+    return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE'; code = $(if ($ch) { $ch } else { $null }); companionSwitch = $ch
       next = 'installed and verified, but the distribution is still the operator''s: the companion switch (the installed rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <facts.companionWsl.vhdxDirectory>, elevated) has to pass; see companion-headless-report.json of this launch' }
   }
   [ordered]@{ status = 'BOOTSTRAP_DONE'; companionSwitch = $ch; next = $null }
