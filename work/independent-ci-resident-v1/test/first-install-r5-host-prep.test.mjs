@@ -8,8 +8,9 @@
 //             temporary key under HKCU: nothing of this machine's policy is changed) and the probe's shape run for real here (DESK is
 //             RemoteSigned);
 //   N7        section 2.2: the package carries registration/export-node-registration.ps1, and the host preparation decides with the
-//             script's own Find-MachineKey: both keys there and TPM -> kept; none -> init-keys -KeyProvider tpm; one, not TPM, not
-//             readable -> refused; no usable TPM -> refused before anything is written;
+//             script's own Find-MachineKey: both keys there, the identity key in the TPM -> kept; none -> init-keys -KeyProvider tpm;
+//             one, identity not TPM, not readable -> refused; no usable TPM -> refused before anything is written (ruling "r5 node key"
+//             3.2, D:/w/tmp/FABLE-r5-node-key-20261121.md: the encryption key is in software);
 //   X3        section 2.5: install-resident.ps1's source-v2-acl step throws SOURCE_V2_ACL_MIGRATION_REFUSED with migrate-acl's own code.
 // Real files only: functions and statements taken by AST from windows/first-install-host.ps1 and windows/install-resident.ps1, the real
 // registration script, the real selectTree on this checkout's index. No machine key is created or opened for writing.
@@ -211,21 +212,28 @@ test('N7: the package carries registration/export-node-registration.ps1 (selectT
   assert.ok(U.TREE_FILES.includes('work/independent-ci-resident-v1/registration/export-node-registration.ps1'), 'named, not reached by a prefix');
 });
 
-test('N7: both keys in the TPM -> kept; none -> created; one, software, invalid or unreadable -> refused; none without a usable TPM -> refused', { skip, timeout: 300_000 }, () => {
+// Fable ruling 11-21 "r5 node key" section 3.2 (T2): only the identity key must be in the TPM; the encryption key is in software on both
+// nodes in service (the TPM provider makes no key-agreement key), and that layout is kept. Its other three rules are unchanged.
+test('N7: identity in the TPM (encryption anywhere) -> kept; none -> created; one, identity not in the TPM, invalid or unreadable -> refused; none without a usable TPM -> refused', { skip, timeout: 300_000 }, () => {
   const r = ps(`${PRELUDE}
 ${load(HOST, ['Get-Key', 'Get-NodeKeyPlan'])}
 $tpm = [ordered]@{ origin = 'tpm'; valid = $true }; $sw = [ordered]@{ origin = 'software'; valid = $true }; $bad = [ordered]@{ origin = 'tpm'; valid = $false }
+$badSw = [ordered]@{ origin = 'software'; valid = $false }
 $cases = [ordered]@{
   both = @($tpm, $tpm, $true); bothNoTpmNow = @($tpm, $tpm, $false); none = @($null, $null, $true); noneNoTpm = @($null, $null, $false)
-  identityOnly = @($tpm, $null, $true); encryptionOnly = @($null, $tpm, $true); software = @($tpm, $sw, $true); invalid = @($bad, $tpm, $true)
-  unreadable = @('unreadable', $tpm, $true) }
+  identityOnly = @($tpm, $null, $true); encryptionOnly = @($null, $sw, $true); inService = @($tpm, $sw, $true); inServiceNoTpmNow = @($tpm, $sw, $false)
+  softwareIdentity = @($sw, $tpm, $true); bothSoftware = @($sw, $sw, $true); invalid = @($bad, $sw, $true); invalidEncryption = @($tpm, $badSw, $true)
+  unreadable = @('unreadable', $sw, $true); unreadableEncryption = @($tpm, 'unreadable', $true) }
 $out = [ordered]@{}
 foreach ($k in @($cases.Keys)) { $p = Get-NodeKeyPlan ([ordered]@{ identity = $cases[$k][0]; encryption = $cases[$k][1]; tpmUsable = $cases[$k][2] }); $out[$k] = [ordered]@{ action = $p.action; code = $p.code } }
 ConvertTo-Json -Depth 4 -Compress -InputObject $out`);
   const refused = code => ({ action: null, code });
-  assert.deepEqual(r, { both: { action: 'present', code: null }, bothNoTpmNow: { action: 'present', code: null }, none: { action: 'create', code: null },
+  const present = { action: 'present', code: null };
+  assert.deepEqual(r, { both: present, bothNoTpmNow: present, none: { action: 'create', code: null },
     noneNoTpm: refused('HOST_TPM_NOT_USABLE'), identityOnly: refused('HOST_NODE_KEY_INCOMPLETE'), encryptionOnly: refused('HOST_NODE_KEY_INCOMPLETE'),
-    software: refused('HOST_NODE_KEY_NOT_TPM'), invalid: refused('HOST_NODE_KEY_INVALID'), unreadable: refused('HOST_NODE_KEY_UNREADABLE') });
+    inService: present, inServiceNoTpmNow: present, softwareIdentity: refused('HOST_NODE_KEY_NOT_TPM'), bothSoftware: refused('HOST_NODE_KEY_NOT_TPM'),
+    invalid: refused('HOST_NODE_KEY_INVALID'), invalidEncryption: refused('HOST_NODE_KEY_INVALID'), unreadable: refused('HOST_NODE_KEY_UNREADABLE'),
+    unreadableEncryption: refused('HOST_NODE_KEY_UNREADABLE') });
 });
 
 // The observation is the registration script's own Find-MachineKey (loaded from the packaged script, never a copy), read-only. Here with
@@ -245,8 +253,9 @@ ConvertTo-Json -Depth 4 -Compress -InputObject ([ordered]@{ identity = $o.identi
 });
 
 // The whole key step with a stand-in registration script (the same parameters; its Find-MachineKey reads a state file, its init-keys
-// writes it and records how it was called): none -> init-keys -ConfirmCreateKeys -KeyProvider tpm once, then present; present -> nothing
-// called; one -> refused without a call; init-keys that leaves them absent -> HOST_NODE_KEY_NOT_CREATED.
+// writes it and records how it was called; its keys are where the real init-keys -KeyProvider tpm puts them: identity in the TPM,
+// encryption in software, ruling "r5 node key" 3.4): none -> init-keys -ConfirmCreateKeys -KeyProvider tpm once, then present; present ->
+// nothing called; one -> refused without a call; init-keys that leaves them absent -> HOST_NODE_KEY_NOT_CREATED.
 test('N7: the key step creates with the packaged script only when both are absent, and holds the result to the same rule', { skip, timeout: 300_000 }, (t) => {
   const dir = tempDir(t, 'r5-keys-');
   const state = path.join(dir, 'state.json'), calls = path.join(dir, 'calls.txt'), fake = path.join(dir, 'export-node-registration.ps1');
@@ -272,7 +281,7 @@ function Find-MachineKey([string]$KeyName) {
   $blob = New-Object byte[] 72; [BitConverter]::GetBytes([uint32]$Magic[$role]).CopyTo($blob, 0); [BitConverter]::GetBytes([uint32]32).CopyTo($blob, 4)
   $export = { param($f) $blob }.GetNewClosure()
   $key = New-Object psobject; $key | Add-Member ScriptMethod Export $export; $key | Add-Member ScriptMethod Dispose { }
-  @{ key = $key; origin = 'tpm' }
+  @{ key = $key; origin = $(if ($role -ceq 'identity') { 'tpm' } else { 'software' }) }
 }
 if ($Mode -eq 'init-keys') {
   [IO.File]::AppendAllText(${psLiteral(calls)}, ('init-keys confirm=' + [bool]$ConfirmCreateKeys + ' provider=' + $KeyProvider + ' policy=' + [string](Get-ExecutionPolicy -Scope Process) + "\`n"))
@@ -292,14 +301,14 @@ foreach ($c in @(@('none', ''), @('present', 'identity,encryption'), @('one', 'i
   if ($c[1]) { [IO.File]::WriteAllText($state, $c[1]) } elseif ([IO.File]::Exists($state)) { [IO.File]::Delete($state) }
   if ($c[0] -ceq 'notCreated') { [IO.File]::WriteAllText(${psLiteral(path.join(dir, 'leave-absent'))}, '') }
   $s = Invoke-NodeKeyStep ${psLiteral(fake)} $PowerShellExe
-  $out[$c[0]] = [ordered]@{ action = $s.action; code = $s.code; identity = (Get-Key $s.after 'identity'); calls = @(& $read) }
+  $out[$c[0]] = [ordered]@{ action = $s.action; code = $s.code; identity = (Get-Key $s.after 'identity'); encryption = (Get-Key $s.after 'encryption'); calls = @(& $read) }
 }
 ConvertTo-Json -Depth 6 -Compress -InputObject $out`);
-  const tpm = { origin: 'tpm', valid: true };
-  assert.deepEqual(r.none, { action: 'created', code: null, identity: tpm, calls: ['init-keys confirm=True provider=tpm policy=Bypass'] });
-  assert.deepEqual(r.present, { action: 'present', code: null, identity: null, calls: [] });
-  assert.deepEqual(r.one, { action: null, code: 'HOST_NODE_KEY_INCOMPLETE', identity: null, calls: [] });
-  assert.deepEqual(r.notCreated, { action: null, code: 'HOST_NODE_KEY_NOT_CREATED', identity: null, calls: ['init-keys confirm=True provider=tpm policy=Bypass'] });
+  const tpm = { origin: 'tpm', valid: true }, software = { origin: 'software', valid: true };
+  assert.deepEqual(r.none, { action: 'created', code: null, identity: tpm, encryption: software, calls: ['init-keys confirm=True provider=tpm policy=Bypass'] });
+  assert.deepEqual(r.present, { action: 'present', code: null, identity: null, encryption: null, calls: [] });
+  assert.deepEqual(r.one, { action: null, code: 'HOST_NODE_KEY_INCOMPLETE', identity: null, encryption: null, calls: [] });
+  assert.deepEqual(r.notCreated, { action: null, code: 'HOST_NODE_KEY_NOT_CREATED', identity: null, encryption: null, calls: ['init-keys confirm=True provider=tpm policy=Bypass'] });
 });
 
 test('N7: the host checks the keys before its first write and creates them after the accounts, before the credentials, from the packaged script', { skip }, () => {

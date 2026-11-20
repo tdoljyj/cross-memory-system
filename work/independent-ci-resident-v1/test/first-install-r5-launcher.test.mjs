@@ -170,15 +170,17 @@ ConvertTo-Json -Depth 5 -Compress -InputObject ([ordered]@{ missing = $Missing; 
   assert.deepEqual(r.cases['Enc-v1'].missing, ['Id-v1']);
 });
 
-// Fable ruling 11-21 "r5 a2 points" 3: the launcher's check is the host preparation's rule (M5 accepts TPM keys only): both keys there
-// and either not in the TPM is NODE_IDENTITY_KEY_NOT_TPM; a missing key is named first.
-test('N7: both keys there but one not in the TPM is NODE_IDENTITY_KEY_NOT_TPM; a missing key comes first (the finder injected)', { skip, timeout: 300_000 }, () => {
+// Fable ruling 11-21 "r5 a2 points" 3, as ruling "r5 node key" 3.3 (T3) restates it: the launcher's check is the host preparation's
+// rule (M5 accepts a TPM identity key only): both keys there and the identity key not in the TPM is NODE_IDENTITY_KEY_NOT_TPM; the
+// encryption key may be in software (the layout of both nodes in service); a missing key is named first.
+test('N7: both keys there but the identity key not in the TPM is NODE_IDENTITY_KEY_NOT_TPM; a software encryption key passes; a missing key comes first (the finder injected)', { skip, timeout: 300_000 }, () => {
   const r = ps(`${PRELUDE}
 ${load(['Get-Key'], [], ['Test-NodeIdentityKeys'])}
 if ($Missing.Count) { ConvertTo-Json -Compress -InputObject ([ordered]@{ missing = $Missing }); return }
 $names = [ordered]@{ identity = 'Id-v1'; encryption = 'Enc-v1' }
 $cases = [ordered]@{}
-foreach ($c in @(@('tpm', @{ 'Id-v1' = 'tpm'; 'Enc-v1' = 'tpm' }), @('softwareIdentity', @{ 'Id-v1' = 'software'; 'Enc-v1' = 'tpm' }), @('missingAndSoftware', @{ 'Enc-v1' = 'software' }))) {
+foreach ($c in @(@('tpm', @{ 'Id-v1' = 'tpm'; 'Enc-v1' = 'tpm' }), @('inService', @{ 'Id-v1' = 'tpm'; 'Enc-v1' = 'software' }), @('softwareIdentity', @{ 'Id-v1' = 'software'; 'Enc-v1' = 'tpm' }),
+    @('bothSoftware', @{ 'Id-v1' = 'software'; 'Enc-v1' = 'software' }), @('missingAndSoftware', @{ 'Enc-v1' = 'software' }))) {
   $have = $c[1]
   $finder = { param($n) if ($have.ContainsKey($n)) { @{ key = $null; origin = $have[$n] } } else { $null } }.GetNewClosure()
   $cases[$c[0]] = Test-NodeIdentityKeys $names $finder
@@ -186,7 +188,10 @@ foreach ($c in @(@('tpm', @{ 'Id-v1' = 'tpm'; 'Enc-v1' = 'tpm' }), @('softwareId
 ConvertTo-Json -Depth 5 -Compress -InputObject ([ordered]@{ missing = $Missing; cases = $cases })`);
   assert.deepEqual(r.missing, [], 'the launcher has the rule');
   assert.equal(r.cases.tpm.code, null);
+  assert.equal(r.cases.inService.code, null, JSON.stringify(r.cases.inService));
+  assert.deepEqual(r.cases.inService.keys, { identity: 'tpm', encryption: 'software' });
   assert.equal(r.cases.softwareIdentity.code, 'NODE_IDENTITY_KEY_NOT_TPM');
+  assert.equal(r.cases.bothSoftware.code, 'NODE_IDENTITY_KEY_NOT_TPM');
   assert.deepEqual(r.cases.softwareIdentity.keys, { identity: 'software', encryption: 'tpm' }, 'the report keeps each origin');
   assert.equal(r.cases.missingAndSoftware.code, 'NODE_IDENTITY_KEY_MISSING');
 });
