@@ -237,8 +237,10 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
   // own, protected_facts_reobservation_unavailable: it comes after a complete admission, so it is never the pre-admission exhaustion
   // the recoverable publisher may run again in the same window (runtime/one-shot-v2.mjs); before the write it is a clean, rerunnable
   // BLOCKED, after it the write is compensated as before (review round 2, MAJOR A).
-  async function liveFacts(job, verified, facts, claim) {
-    if (fresh(facts, clock())) return facts;
+  async function liveFacts(job, verified, facts, claim, completing) {
+    // Completion needs an observation after the full evaluation. The send
+    // closure checks the remaining lifetime of both answers.
+    if (!completing && fresh(facts, clock())) return facts;
     try { facts = await observeFacts(job, verified); }
     catch (error) { if (reason(error) === 'native_claim_observation_unavailable') stop('protected_facts_reobservation_unavailable'); throw error; }
     if (!sameClaimGeneration(facts.claim, claim)) stop('lease_observations_disagree', true);
@@ -312,11 +314,7 @@ export function createStagedCheckPublisherV2({ nativeAdmission, authority, githu
       || !Array.isArray(native.workflowGateFindings) || native.workflowGateFindings.length) stop('full_admission_incomplete');
     // Generation, not expires_at: a renewal between the two observations is not a disagreement.
     if (!sameClaimGeneration(facts.claim, native.observedClaim)) stop('lease_observations_disagree', true);
-    if (completing) {
-      if (retainedServerAnswerCurrent(facts) !== true) stop('staged_scan_verification_aged');
-    } else {
-      facts = await liveFacts(job, verified, facts, native.observedClaim);
-    }
+    facts = await liveFacts(job, verified, facts, native.observedClaim, completing);
     if (completing && (facts.executionPolicy !== 'staged' || native.executionPolicy !== 'staged'
       || facts.guarded !== native.guarded || facts.packetSha256 !== native.packetSha256)) stop('authorization_binding_changed', true);
     try {
