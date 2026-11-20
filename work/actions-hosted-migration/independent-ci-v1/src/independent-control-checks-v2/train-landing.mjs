@@ -10,7 +10,7 @@
 //     stages 8 and 10 only, next to train-mode.json (the C# boundary reads only the files it names, never lists the directory);
 //   - batchChainOk: S is the cumulative merge of the batch members on T (one member: exactly [T, H]);
 //   - externalChecksDecision: the required checks App 5368905 does not produce (GitHub Actions) on S itself;
-//   - landingRoute / readLandingRoute: which way a batch lands, read from main's live rules and each ruleset's bypass (push, the
+//   - landingRoute / readLandingRoute: which way a batch lands, read from main's live rules and this App's own bypass of each ruleset (push, the
 //     current github-merge path, or park; ADR 0018 §2 L2 item 7, Fable 2026-11-20); rehearsalOf: the four Actions checks on S;
 //   - pickMembers and the bisection state (a Mergify-style search for the first failing prefix);
 //   - landMain: the one write to main, with its read-backs.
@@ -138,44 +138,29 @@ export async function readBatchChain({ readGitCommit, baseSha, heads, testSha, s
   return { ok, tree: ok ? commits.get(testSha).tree : null };
 }
 
-// ---- which way a batch lands: main's live rules and each ruleset's bypass (ADR 0018 §2 L2 item 7; Fable 2026-11-20 三态选路) ----
+// ---- which way a batch lands: main's live rules and this App's own bypass of each ruleset (ADR 0018 §2 L2 item 7; Fable 2026-11-20
+// 三态选路, 补：bypass 名单读不到) ----
 // A package with landing 'push' can push; whether it does is read from main's live rules each time (stage 8 before it writes, stage 10
-// when it opens a front batch), by this one function:
-//   push          all four read back true: (1) a ruleset other than the main ruleset applies to main with non_fast_forward and deletion
-//                 and an empty bypass list; (2) the main ruleset requires kooyumi-train-landed pinned to this App; (3) the main
-//                 ruleset's bypass list is exactly this App (always); (4) the main ruleset still requires its original checks (the six
-//                 this App publishes and the four GitHub Actions checks).
-//   github-merge  the rules read back completely, no kooyumi-train-landed anywhere and the main ruleset's bypass list empty: exactly the
-//                 state before the Owner's two steps. Stage 8 writes the control pair and GitHub merges, as with 'github-merge'.
-//   park          anything else (unreadable, read in part, kooyumi-train-landed with the rest not complete, a bypass on main without
-//                 kooyumi-train-landed): TRAIN_LANDING_RULES_MISSING, nothing written. Once kooyumi-train-landed is read, never a
-//                 current-path green.
+// when it opens a front batch), by this one function. The publisher reads only what its own identity can know:
+//   push          all three read back true: (1) a ruleset other than the main ruleset applies to main with non_fast_forward and deletion,
+//                 and this App cannot bypass it; (2) the main ruleset requires kooyumi-train-landed pinned to this App; (3) this App can
+//                 always bypass the main ruleset.
+//   github-merge  the rules read back completely, no kooyumi-train-landed anywhere and this App cannot bypass the main ruleset: exactly
+//                 the state before the Owner's two steps. Stage 8 writes the control pair and GitHub merges, as with 'github-merge'.
+//   park          anything else (unreadable, read in part, this App's bypass state not readable, kooyumi-train-landed with the rest not
+//                 complete, a bypass of main without kooyumi-train-landed): TRAIN_LANDING_RULES_MISSING, nothing written. Once
+//                 kooyumi-train-landed is read, never a current-path green.
+// Who else is on a bypass list is not a condition here: it is checked with an administrator's identity when the Owner saves the rules
+// (ADR 0018 §8 item 7); this App's token cannot read the lists and the publisher does not pretend to.
 // missing names what push still lacks (or what could not be read), in a fixed order: the receipt and the stage-10 facts carry it.
 // The main ruleset is the one ruleset whose required checks hold the six this App publishes (train-rules.mjs#REQUIRED_CHECK_NAMES).
-// Bypass: rulesets is id -> { bypassActors: [...] | null, currentUserCanBypass } (github.mjs#readRuleset). GitHub returns
-// bypass_actors only to a caller who may edit the ruleset; without it (null) only current_user_can_bypass is read back: this App's own
-// bypass ('never' counts as an empty list, 'always' as this App alone). Who else is on the list is then not readable here and stays the
-// Owner's launch step. A visible list is checked entry by entry and must agree with current_user_can_bypass; if not, it is unreadable.
+// rulesets: id -> { currentUserCanBypass } (github.mjs#readRuleset, GET /rulesets/{id}: current_user_can_bypass, this caller's own
+// bypass of that ruleset: always, pull_requests_only, never or exempt). Absent or anything else: unreadable.
 export const LANDING_ROUTES = Object.freeze(['push', 'github-merge', 'park']);
-// The main ruleset's GitHub Actions checks (resident ADR 0032 added the Windows one): condition (4), and the rehearsal on S.
+// The main ruleset's GitHub Actions checks (resident ADR 0032 added the Windows one): the rehearsal on S.
 export const MAIN_ACTIONS_CHECKS = Object.freeze(['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows']);
 const MAX_RULESETS = 10;
 const CAN_BYPASS = Object.freeze(['always', 'pull_requests_only', 'never', 'exempt']);
-const BYPASS_MODE = Object.freeze({ always: 'always', pull_request: 'pull_requests_only', exempt: 'exempt' });
-// -> { empty, appOnly } of one ruleset, or null when it cannot be read.
-function bypassOf(info, appId) {
-  if (!plain(info)) return null;
-  const can = info.currentUserCanBypass ?? null;
-  if (!(can === null || CAN_BYPASS.includes(can))) return null;
-  if (info.bypassActors === null || info.bypassActors === undefined) return can === null ? null : { empty: can === 'never', appOnly: can === 'always' };
-  const list = info.bypassActors;
-  if (!Array.isArray(list) || !list.every(a => plain(a) && typeof a.actor_type === 'string' && typeof a.bypass_mode === 'string'
-    && (a.actor_id === null || Number.isSafeInteger(a.actor_id)))) return null;
-  const app = list.filter(a => a.actor_type === 'Integration' && a.actor_id === appId);
-  const derived = app.length === 0 ? 'never' : app.length === 1 ? BYPASS_MODE[app[0].bypass_mode] ?? null : null;
-  if (derived === null || (can !== null && can !== derived)) return null;
-  return { empty: list.length === 0, appOnly: list.length === 1 && derived === 'always' };
-}
 export function landingRoute({ rules, rulesets, appId }) {
   const park = missing => ({ route: 'park', missing });
   if (!Array.isArray(rules) || rules.length === 0 || rules.length >= 100 || !rules.every(r => plain(r) && typeof r.type === 'string' && r.type.length > 0
@@ -189,24 +174,25 @@ export function landingRoute({ rules, rulesets, appId }) {
   const mains = [...byId].filter(([, list]) => REQUIRED_CHECK_NAMES.every(n => pinned(list, n, appId)));
   if (mains.length !== 1) return park(['main_ruleset_unidentified']);
   const [mainId, mainRules] = mains[0];
-  const bypass = new Map(), unreadable = [];
+  const can = new Map(), unreadable = [];
   for (const id of byId.keys()) {
-    const b = bypassOf(rulesets instanceof Map ? rulesets.get(id) : null, appId);
-    if (b) bypass.set(id, b); else unreadable.push(`ruleset_bypass_unreadable:${id}`);
+    const info = rulesets instanceof Map ? rulesets.get(id) : null;
+    if (plain(info) && CAN_BYPASS.includes(info.currentUserCanBypass)) can.set(id, info.currentUserCanBypass);
+    else unreadable.push(`ruleset_can_bypass_unreadable:${id}`);
   }
   if (unreadable.length) return park(unreadable);
   const has = (list, type) => list.some(r => r.type === type);
   const fastForwardOnly = [...byId].filter(([id, list]) => id !== mainId && has(list, 'non_fast_forward') && has(list, 'deletion'));
   const trainLanded = checksOf(rules).some(c => c.context === TRAIN_ONLY_CHECK);
-  const main = bypass.get(mainId), missing = [];
+  const main = can.get(mainId), missing = [];
   if (fastForwardOnly.length === 0) missing.push('independent_ruleset_missing');
-  else if (!fastForwardOnly.some(([id]) => bypass.get(id).empty)) missing.push('independent_ruleset_bypass_not_empty');
+  else if (!fastForwardOnly.some(([id]) => can.get(id) === 'never')) missing.push('independent_ruleset_app_can_bypass');
   if (!pinned(mainRules, TRAIN_ONLY_CHECK, appId)) missing.push('train_landed_check_missing');
-  if (!main.appOnly) missing.push('main_bypass_not_app_only');
-  for (const n of MAIN_ACTIONS_CHECKS) if (!pinned(mainRules, n, ACTIONS_APP_ID)) missing.push(`main_required_check_missing:${n}`);
+  if (main === 'never') missing.push('main_app_cannot_bypass');
+  else if (main !== 'always') missing.push('main_app_bypass_not_always');
   if (missing.length === 0) return { route: 'push', missing };
-  if (!trainLanded && main.empty) return { route: 'github-merge', missing };
-  return park(!trainLanded && !main.empty ? [...missing, 'main_bypass_not_empty'] : missing);
+  if (!trainLanded && main === 'never') return { route: 'github-merge', missing };
+  return park(!trainLanded && main !== 'never' ? [...missing, 'main_app_can_bypass'] : missing);
 }
 // The live read for landingRoute: main's rules (or the ones this run already read), then each of their rulesets. Never throws; a read
 // that fails is that ruleset unreadable (park).
