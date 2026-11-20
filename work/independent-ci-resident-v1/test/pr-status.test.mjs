@@ -29,7 +29,7 @@ test('C2 role notices are fixed local notifications without a PR status or retry
 });
 import { Runner } from '../src/runner.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { tempRoot } from './helpers.mjs';
+import { rulesReply, tempRoot } from './helpers.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const MAIN = 'd'.repeat(40), OLD = 'e'.repeat(40);
@@ -100,7 +100,7 @@ test('the advisory work is bounded: short calls, at most MAX_COMPARES_PER_PASS c
   let postOk = false, cost = 0;
   const run2 = async (argv, o) => {
     calls.push([argv, o.timeoutMs]); now += cost;
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     return { code: postOk ? 0 : 1, stdout: '{}' };
   };
   const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -135,7 +135,7 @@ test('a stalled advisory call ends the pass: nothing it could not do is recorded
     calls.push(argv);
     if (mode === 'busy') return { code: null, stdout: '', stderr: '', refused: 'RUNNER_BUSY_WITH_UNFINISHED_CHILD' };
     if (mode === 'slow-rules' && argv.some(a => a.includes('/rules/branches/main'))) return { code: null, stdout: '', stderr: '', timedOut: true };
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     return { code: 0, stdout: '{}' };
   };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now) });
@@ -266,7 +266,7 @@ test('the reporter writes a status only when it changes, never over a required c
   let required = REQUIRED;
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return required ? { code: 0, stdout: required.join('\n') + '\n' } : { code: 1, stdout: '' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return required ? rulesReply(required) : { code: 1, stdout: '' };
     return { code: 0, stdout: '{}' };
   };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now, store });
@@ -295,11 +295,16 @@ test('the reporter writes a status only when it changes, never over a required c
   assert.equal(r.toasts, 1, 'the HALT (the notifications run first, before the rules are read)');
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 1, 'the collision, one pass later');
   assert.equal((await reporter.pass({ pulls, status: halted })).toasts, 0, 'each key once');
-  // unknown rules: nothing is written
+  // unknown rules: the failure is said once per head (a status is auxiliary), nothing else is written
   required = null; now += 31 * 60_000;
   const fresh = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 'other.json'), () => now), notifications: false });
-  assert.equal((await fresh.pass({ pulls, status })).posted, 0);
+  assert.equal((await fresh.pass({ pulls, status })).posted, 0, 'a first failure is a flap: nothing is said');
+  now += 11 * 60_000;
+  const before2 = posts().length;
+  assert.equal((await fresh.pass({ pulls, status })).posted, 2, 'a lasting failure is said, once per head');
+  assert.ok(posts().slice(before2).every(a => a.some(x => x.startsWith('description=无法读取 main 规则集'))));
+  assert.equal((await fresh.pass({ pulls, status })).posted, 0, 'said once');
   // Task 9cac75be A3: no default node (the companion names its pinned node profile's)
   assert.deepEqual(validateStatusConfig(undefined), { prStatus: true, notifications: true, node: null });
   assert.deepEqual(validateStatusConfig({ notifications: false }), { prStatus: true, notifications: false, node: null });
@@ -318,7 +323,7 @@ test('§41.6a: while the heartbeat shows the failover watchdog stale, the PR pag
   const hb = new CompanionHeartbeat({ nodeName: 'node-b', clock: () => now, readToken: async () => 'clued_hb_x', readStatus: async () => null, serviceRunning: async () => true,
     transport: async () => ({ ok: true, tokenRefused: false, autoHandover: null, watchdogTickAt: tick }), notify: async (k, title) => { notes.push(title); },
     memory: { get: async () => 0, set: async () => {} }, handover: {} });
-  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? { code: 0, stdout: REQUIRED.join('\n') } : { code: 0, stdout: '{}' }; };
+  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? rulesReply(REQUIRED) : { code: 0, stdout: '{}' }; };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false });
   reporter.watchdogStale = () => hb.watchdogStale === true; // as companion-main.mjs wires it
@@ -388,7 +393,7 @@ test('C5: the node writes its own context on its own commits; duty texts are wri
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
     return { code: 0, stdout: '{}' };
@@ -426,7 +431,7 @@ test('C5: another node on duty locks this one: the dual-active hold goes into re
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: required.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(required);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes(`/commits/${H(9)}/statuses?`)) return { code: 0, stdout: JSON.stringify(other) };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
@@ -469,7 +474,7 @@ test('ADR 0028: a STANDBY writes no reminder under resident-standby/<node>; one 
   const other = [paused(now)];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes(`/commits/${H(7)}/statuses?`)) return { code: 0, stdout: JSON.stringify([...other].reverse()) };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
@@ -503,7 +508,7 @@ test('C5 review: notifications before the duty reads; a pass whose duty fails wr
   const calls = [];
   const run = async argv => {
     calls.push(argv);
-    if (argv.some(a => a.includes('/rules/branches/main'))) return { code: 0, stdout: REQUIRED.join('\n') + '\n' };
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
     if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
     if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
     return { code: 0, stdout: '{}' };
@@ -545,7 +550,7 @@ test('node governance: a red status becomes one line of the PR page text; gone, 
   const marker = path.join(root, 'status.json');
   let now = NOW;
   const calls = [];
-  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? { code: 0, stdout: REQUIRED.join('\n') } : { code: 0, stdout: '{}' }; };
+  const run = async argv => { calls.push(argv); return argv.some(a => a.includes('/rules/branches/main')) ? rulesReply(REQUIRED) : { code: 0, stdout: '{}' }; };
   const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', run, clock: () => now,
     store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false });
   reporter.hostCapacity = () => readCapacityAlert(marker, () => now); // as companion-main.mjs wires it (with NODE_STATUS_FILE)

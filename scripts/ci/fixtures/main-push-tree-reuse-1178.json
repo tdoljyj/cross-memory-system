@@ -1,0 +1,332 @@
+{
+ "provenance": "GitHub REST replies for PR #1178, recorded read-only on 2026-11-19 (Beijing) and trimmed to the fields the main-push tree reuse reads; nothing else changed.",
+ "repository": "tdoljyj/cross-memory-system",
+ "owner": "tdoljyj",
+ "merge": {
+  "sha": "0a1d2f0b955833aaace9971ca634a5bd74371dab",
+  "parents": [
+   {
+    "sha": "417aee8c51abcfe5d96d4d088fec1cd01de62a6a"
+   },
+   {
+    "sha": "76783d4ad8b3b5584f80cae400e4465e14250241"
+   }
+  ],
+  "commit": {
+   "tree": {
+    "sha": "80b9c36e57f95261b59af5aac6f5a1fb649fd33f"
+   }
+  }
+ },
+ "pulls": [
+  {
+   "number": 1178,
+   "state": "closed",
+   "merge_commit_sha": "0a1d2f0b955833aaace9971ca634a5bd74371dab",
+   "merged_at": "2026-11-19T06:43:24Z"
+  }
+ ],
+ "pr": {
+  "number": 1178,
+  "state": "closed",
+  "merged": true,
+  "merged_at": "2026-11-19T06:43:24Z",
+  "merge_commit_sha": "0a1d2f0b955833aaace9971ca634a5bd74371dab",
+  "user": {
+   "login": "tdoljyj",
+   "id": 52366662,
+   "type": "User"
+  },
+  "merged_by": {
+   "login": "tdoljyj",
+   "id": 52366662,
+   "type": "User"
+  },
+  "base": {
+   "ref": "main",
+   "sha": "417aee8c51abcfe5d96d4d088fec1cd01de62a6a",
+   "repo": {
+    "full_name": "tdoljyj/cross-memory-system"
+   }
+  },
+  "head": {
+   "ref": "claude/acceptance-requires-kit",
+   "sha": "76783d4ad8b3b5584f80cae400e4465e14250241",
+   "repo": {
+    "full_name": "tdoljyj/cross-memory-system"
+   }
+  }
+ },
+ "source": {
+  "sha": "76783d4ad8b3b5584f80cae400e4465e14250241",
+  "parents": [
+   {
+    "sha": "a38cf95075b464391bdcd7e4aa0f380c9c54d1cb"
+   },
+   {
+    "sha": "417aee8c51abcfe5d96d4d088fec1cd01de62a6a"
+   }
+  ],
+  "commit": {
+   "tree": {
+    "sha": "80b9c36e57f95261b59af5aac6f5a1fb649fd33f"
+   }
+  }
+ },
+ "compare": {
+  "status": "ahead",
+  "ahead_by": 3,
+  "behind_by": 0,
+  "total_commits": 3,
+  "base_commit": {
+   "sha": "417aee8c51abcfe5d96d4d088fec1cd01de62a6a"
+  },
+  "merge_base_commit": {
+   "sha": "417aee8c51abcfe5d96d4d088fec1cd01de62a6a"
+  }
+ },
+ "required_checks": [
+  {
+   "context": "gitleaks",
+   "integration_id": 5368905
+  },
+  {
+   "context": "trivy",
+   "integration_id": 5368905
+  },
+  {
+   "context": "kooyumi-work-admission",
+   "integration_id": 5368905
+  },
+  {
+   "context": "kooyumi-admission-verified",
+   "integration_id": 5368905
+  },
+  {
+   "context": "kooyumi-merge-slot",
+   "integration_id": 5368905
+  },
+  {
+   "context": "contract-placement",
+   "integration_id": 5368905
+  },
+  {
+   "context": "ci-suites",
+   "integration_id": 15368
+  },
+  {
+   "context": "clued-cloud-tests",
+   "integration_id": 15368
+  },
+  {
+   "context": "migration-verify",
+   "integration_id": 15368
+  },
+  {
+   "context": "ci-suites-windows",
+   "integration_id": 15368
+  }
+ ],
+ "workflows": {
+  "clued-required-tests.yml": {
+   "runs": {
+    "total_count": 1,
+    "workflow_runs": [
+     {
+      "id": 44471531779,
+      "run_number": 575,
+      "run_attempt": 1,
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "path": ".github/workflows/clued-required-tests.yml",
+      "head_sha": "76783d4ad8b3b5584f80cae400e4465e14250241",
+      "head_branch": "claude/acceptance-requires-kit",
+      "created_at": "2026-11-19T06:21:12Z",
+      "actor": {
+       "login": "tdoljyj",
+       "id": 52366662,
+       "type": "User"
+      },
+      "triggering_actor": {
+       "login": "tdoljyj",
+       "id": 52366662,
+       "type": "User"
+      },
+      "repository": {
+       "full_name": "tdoljyj/cross-memory-system"
+      },
+      "head_repository": {
+       "full_name": "tdoljyj/cross-memory-system"
+      },
+      "pull_requests": []
+     }
+    ]
+   },
+   "jobs": {
+    "total_count": 4,
+    "jobs": [
+     {
+      "id": 135381926463,
+      "run_id": 44471531779,
+      "run_attempt": 1,
+      "name": "admission-gate",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-19T06:24:01Z",
+      "completed_at": "2026-11-19T06:24:32Z"
+     },
+     {
+      "id": 135383261850,
+      "run_id": 44471531779,
+      "run_attempt": 1,
+      "name": "migration-verify",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-19T06:25:01Z",
+      "completed_at": "2026-11-19T06:26:47Z"
+     },
+     {
+      "id": 135383261896,
+      "run_id": 44471531779,
+      "run_attempt": 1,
+      "name": "ci-suites",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-19T06:27:09Z",
+      "completed_at": "2026-11-19T06:34:59Z"
+     },
+     {
+      "id": 135383262052,
+      "run_id": 44471531779,
+      "run_attempt": 1,
+      "name": "clued-cloud-tests",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-19T06:31:06Z",
+      "completed_at": "2026-11-19T06:38:40Z"
+     }
+    ]
+   },
+   "push_run": {
+    "id": 44474248339,
+    "run_number": 576,
+    "run_attempt": 1,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "path": ".github/workflows/clued-required-tests.yml",
+    "head_sha": "0a1d2f0b955833aaace9971ca634a5bd74371dab",
+    "head_branch": "main",
+    "created_at": "2026-11-19T06:43:27Z",
+    "actor": {
+     "login": "tdoljyj",
+     "id": 52366662,
+     "type": "User"
+    },
+    "triggering_actor": {
+     "login": "tdoljyj",
+     "id": 52366662,
+     "type": "User"
+    },
+    "repository": {
+     "full_name": "tdoljyj/cross-memory-system"
+    },
+    "head_repository": {
+     "full_name": "tdoljyj/cross-memory-system"
+    },
+    "pull_requests": []
+   }
+  },
+  "clued-required-tests-windows.yml": {
+   "runs": {
+    "total_count": 1,
+    "workflow_runs": [
+     {
+      "id": 44471531651,
+      "run_number": 221,
+      "run_attempt": 1,
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "path": ".github/workflows/clued-required-tests-windows.yml",
+      "head_sha": "76783d4ad8b3b5584f80cae400e4465e14250241",
+      "head_branch": "claude/acceptance-requires-kit",
+      "created_at": "2026-11-19T06:21:11Z",
+      "actor": {
+       "login": "tdoljyj",
+       "id": 52366662,
+       "type": "User"
+      },
+      "triggering_actor": {
+       "login": "tdoljyj",
+       "id": 52366662,
+       "type": "User"
+      },
+      "repository": {
+       "full_name": "tdoljyj/cross-memory-system"
+      },
+      "head_repository": {
+       "full_name": "tdoljyj/cross-memory-system"
+      },
+      "pull_requests": []
+     }
+    ]
+   },
+   "jobs": {
+    "total_count": 2,
+    "jobs": [
+     {
+      "id": 135381925792,
+      "run_id": 44471531651,
+      "run_attempt": 1,
+      "name": "admission-gate",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-19T06:22:22Z",
+      "completed_at": "2026-11-19T06:23:56Z"
+     },
+     {
+      "id": 135383024242,
+      "run_id": 44471531651,
+      "run_attempt": 1,
+      "name": "ci-suites-windows",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-19T06:23:59Z",
+      "completed_at": "2026-11-19T06:39:24Z"
+     }
+    ]
+   },
+   "push_run": {
+    "id": 44474248138,
+    "run_number": 222,
+    "run_attempt": 1,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "path": ".github/workflows/clued-required-tests-windows.yml",
+    "head_sha": "0a1d2f0b955833aaace9971ca634a5bd74371dab",
+    "head_branch": "main",
+    "created_at": "2026-11-19T06:43:27Z",
+    "actor": {
+     "login": "tdoljyj",
+     "id": 52366662,
+     "type": "User"
+    },
+    "triggering_actor": {
+     "login": "tdoljyj",
+     "id": 52366662,
+     "type": "User"
+    },
+    "repository": {
+     "full_name": "tdoljyj/cross-memory-system"
+    },
+    "head_repository": {
+     "full_name": "tdoljyj/cross-memory-system"
+    },
+    "pull_requests": []
+   }
+  }
+ }
+}

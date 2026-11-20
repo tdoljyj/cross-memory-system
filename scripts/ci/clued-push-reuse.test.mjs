@@ -173,7 +173,7 @@ test('only the exact registered listener and run-specific project changes qualif
 });
 
 test('workflow integration leaves the registered admission gate unchanged and records proof after tests', () => {
-  for (const file of Object.keys(TARGETS)) {
+  for (const file of Object.keys(TARGETS).filter((name) => TARGETS[name].proof === 'tree-report')) {
     const text = fs.readFileSync(fixtureFile(`.github/workflows/${file}`), 'utf8');
     assert.match(text, /needs: \[admission-gate, push-reuse\]/);
     assert.match(text, /needs\.admission-gate\.outputs\.admitted == 'true' &&\s+\(!cancelled\(\) && needs\.admission-gate\.result == 'success'/);

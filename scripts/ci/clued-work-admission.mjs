@@ -18,8 +18,10 @@
 //                     green check does not outlive its claim
 //   --mode adopt      the run on a closed pull request: reports a merge to
 //                     Clued so that, when the Task runs as a multi-copy race,
-//                     the copy on this pull request is adopted (adoptMerged()),
-//                     and returns the merge slot of a merged or closed one
+//                     the copy on this pull request is adopted (adoptMerged());
+//                     a pull request closed without a merge is not reported here
+//                     (its binding ends on GitHub's facts: the webhook and the
+//                     resident's PR lifecycle report, migration 20261119140000)
 //
 // The admission run also posts the kooyumi-merge-slot check (mergeSlotState()):
 // a pull request that contains the base branch's tip can merge only while its
@@ -3219,6 +3221,19 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   if (attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/clued-train/staging"
     && workflowFileOf(env) === "clued-required-tests.yml")
     return stagingRepairGate({ env, fetchImpl, outcome, attempt });
+  if (!attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/main") {
+    const reused = await mainPushTreeReuse({ env, fetchImpl });
+    if (reused && reused.run_heavy === false) {
+      outcome.verdict = "TREE_ALREADY_TESTED";
+      outcome.head_sha = env.GITHUB_SHA;
+      outcome.tree_reuse = reused;
+      outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} already passed ${workflowFileOf(env)} `
+        + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr}; `
+        + `prior PR evidence only, the skipped heavy jobs do not qualify this main commit; "Re-run all jobs" runs them`];
+      return outcome;
+    }
+    if (reused) outcome.notices.push(`main push tree reuse: ${reused.reason}; the heavy jobs run`);
+  }
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
@@ -3424,6 +3439,22 @@ export function dispatchTitle(workflow, ref, claimId) {
 function workflowFileOf(env) {
   const match = /\.github\/workflows\/([^@/]+)@/.exec(env.GITHUB_WORKFLOW_REF ?? "");
   return match ? match[1] : null;
+}
+
+// Rule 41ab823a by tree (FABLE-main-push-tree-reuse §2.2): the first attempt of a main push of a required-test
+// workflow in the reuse table (proof "ancestry") reuses the merged PR head's passing run of the same tree.
+// scripts/ci/clued-tree-reuse.mjs decides (no repository imports); it reads only GitHub's own records with this job's token and
+// returns run_heavy=true on anything it cannot prove. Null: not a subject, nothing was read.
+async function mainPushTreeReuse({ env, fetchImpl }) {
+  const workflow = workflowFileOf(env);
+  let reuse;
+  try {
+    reuse = await import("./clued-tree-reuse.mjs");
+  } catch (error) {
+    return { run_heavy: true, reason: `reuse table unreadable (${error instanceof Error ? error.message : String(error)})` };
+  }
+  if (!workflow || !Object.hasOwn(reuse.TARGETS, workflow) || reuse.TARGETS[workflow].proof !== "ancestry") return null;
+  return reuse.evaluatePush({ ...env, REUSE_WORKFLOW: workflow }, fetchImpl);
 }
 
 async function stagingRepairGate({ env, fetchImpl, outcome, attempt }) {
@@ -3908,7 +3939,6 @@ export const ADOPT_RPC = "clued_work_claim_adopt_v1";
 export const ADOPT_QUIET_REASONS = new Set(["no_copy_for_pr", "not_a_copy"]);
 // A pull request closed without a merge gives its merge slot back
 // (migration 20261006120000, Owner Decision 2ea795e4).
-export const MERGE_SLOT_RETURN_RPC = "clued_work_merge_slot_return_v1";
 
 export async function resolvePullRequestBinding(fetchImpl, env, pr,
   { workspace = env.GITHUB_WORKSPACE, scope, readOnly = false } = {}) {
@@ -3959,50 +3989,9 @@ export async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
   return { status: response.status, body, detail: describe(response.status, body, text, response.headers) };
 }
 
-async function returnMergeSlot({ env, pr, fetchImpl, workspace, result }) {
-  result.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
-  result.closed_unmerged = true;
-  if (!env.CLUED_CONTEXT_READ_TOKEN) {
-    result.reason = "CLUED_CONTEXT_READ_TOKEN is not set; merge slot not returned";
-    return result;
-  }
-  try {
-    const reference = await claimReferenceOf(fetchImpl, env, pr, { requireCurrent: false, workspace });
-    if (!reference) {
-      result.reason = "no Native PR Task binding; no merge slot to return";
-      return result;
-    }
-    result.claim_id = reference.claim_id;
-    result.scope = reference.scope;
-    const { status, body, detail } = await cluedRpc(fetchImpl, env, workspace, MERGE_SLOT_RETURN_RPC,
-      { scope: reference.scope, pr_ref: result.pr_ref });
-    if (status === 404 && body && body.code === "PGRST202") {
-      result.reason = `${MERGE_SLOT_RETURN_RPC} is not deployed (${detail}); the slot lapses on its own`;
-      return result;
-    }
-    if (status !== 200 || !body || typeof body !== "object" || body.status !== "ok") {
-      throw new Error(`Clued ${MERGE_SLOT_RETURN_RPC} returned ${detail}`);
-    }
-    result.payload = body;
-    if (body.reason === "admission_binding_required") {
-      result.error = "merge slot not returned: admission_binding_required";
-      return result;
-    }
-    const returned = Array.isArray(body.merge_slot_returned) ? body.merge_slot_returned : [];
-    result.merge_slot_returned = returned;
-    result.reason = returned.length ? `closed without a merge; merge slot returned (${returned.join(", ")})` : "closed without a merge; no merge slot held";
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : String(error);
-  }
-  return result;
-}
-
 export async function adoptMerged({ env, event, eventName, fetchImpl, workspace }) {
   const pr = event && event.pull_request;
   const result = { adopted: false, pr_ref: null, merge_sha: null, claim_id: null, scope: null, reason: null, error: null, payload: null };
-  if (eventName === "pull_request_target" && event && event.action === "closed" && pr && pr.merged === false) {
-    return returnMergeSlot({ env, pr, fetchImpl, workspace, result });
-  }
   if (eventName !== "pull_request_target" || !event || event.action !== "closed" || !pr || pr.merged !== true) {
     result.reason = "not a merged pull request";
     return result;
@@ -4055,8 +4044,7 @@ export async function adoptMerged({ env, event, eventName, fetchImpl, workspace 
 }
 
 function renderAdoptSummary(result) {
-  const lines = [result.closed_unmerged ? "## kooyumi-work-admission: merge slot of a closed pull request"
-    : "## kooyumi-work-admission: multi-copy adoption", ""];
+  const lines = ["## kooyumi-work-admission: multi-copy adoption", ""];
   lines.push(`- Pull request: ${result.pr_ref ?? "n/a"}`);
   if (result.merge_sha) lines.push(`- Merge commit: \`${result.merge_sha}\``);
   if (result.claim_id) lines.push(`- Claim: \`${result.claim_id}\` (${result.scope})`);
@@ -4064,7 +4052,7 @@ function renderAdoptSummary(result) {
     const out = Array.isArray(result.payload?.not_adopted) ? result.payload.not_adopted.length : 0;
     lines.push(`- Adopted copy ${result.payload?.copy_index ?? "?"} of Task \`${result.payload?.task_id ?? "?"}\`${result.payload?.replayed ? " (already adopted)" : ""}; ${out} other cop${out === 1 ? "y" : "ies"} put out.`);
   }
-  if (!result.closed_unmerged && Array.isArray(result.merge_slot_returned) && result.merge_slot_returned.length) {
+  if (Array.isArray(result.merge_slot_returned) && result.merge_slot_returned.length) {
     lines.push(`- Merge slot returned: ${result.merge_slot_returned.map((id) => `\`${id}\``).join(", ")}`);
   }
   if (result.reason) lines.push(`- ${result.reason}`);

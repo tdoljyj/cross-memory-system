@@ -24,6 +24,9 @@ import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS } from './mailbox.mjs';
 import { REVOCATION_STAGE, REVOCATION_RUN_MS, REVOCATION_PENDING_STATE, REVOCATION_RUN_ID,
   validateRevocationFacts,validateRevocationQualification } from './revocation-maintenance.mjs';
 import { RUN_MODES, TRAIN_RUN_INPUT_FIELDS, chainOfFront, validateTrainRunInput } from './train.mjs';
+// Rule 41ab823a (DESIGN §75): stage 1's headScans, in the shape head-scans.mjs checks (re-exported for the tests that cross-check it).
+import { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, stageHeadScans } from './head-scans.mjs';
+export { HEAD_SCAN_EXTERNAL_ID, HEAD_SCAN_ROLES, stageHeadScans };
 
 // How long a failed read of the installed Source's watch support waits before it is read again (queueWatchSupported).
 export const QUEUE_WATCH_SUPPORT_RETRY_MS = 5 * 60_000;
@@ -167,6 +170,8 @@ export function parseStageOutcome(o) {
     safeToRerun: o.safeToRerun === true && o.status === 'BLOCKED' && o.sideEffects === 0 && o.mayHavePublished === false,
     // Generation 28 (docs/adr/0015): the scanner publisher's "withdrawn for unavailability only, a republication may follow", only on REVOKED.
     ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
+    // Rule 41ab823a (DESIGN §75): only on a settled stage 1 of a front batch (executor.mjs#frontScansReused reads it).
+    ...(o.status === 'SETTLED' && stageHeadScans(o.headScans) ? { headScans: stageHeadScans(o.headScans) } : {}),
   };
 }
 

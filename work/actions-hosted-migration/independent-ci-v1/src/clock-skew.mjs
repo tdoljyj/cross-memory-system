@@ -19,16 +19,16 @@ export const notFuture = (stampedMs, now) => Number.isFinite(stampedMs) && stamp
 // the failed checks (empty when current); never values.
 export const LEASE_MARGIN_MS = 5000;
 const ISO_MS = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)$/;
-export function serverAnswerCurrent({ verifiedAt, expiresAt, sentMono, nowMono, maxAgeMs = FRESH_MS }) {
+export function serverAnswerCurrent({ verifiedAt, expiresAt, sentMono, nowMono, maxAgeMs = FRESH_MS, reserveMs = 0 }) {
   const failed = [], verified = ISO_MS.test(verifiedAt ?? '') ? Date.parse(verifiedAt) : NaN;
   const expires = ISO_MS.test(expiresAt ?? '') ? Date.parse(expiresAt) : NaN, age = nowMono - sentMono;
   if (!Number.isFinite(verified)) failed.push('verified_at_form');
   if (!Number.isFinite(expires)) failed.push('expires_at_form');
-  if (!Number.isFinite(age) || age < 0 || age > maxAgeMs) failed.push('round_trip_age');
+  if (!Number.isFinite(age) || age < 0 || age + reserveMs > maxAgeMs) failed.push('round_trip_age');
   // Lease failure is independent of an overlong round trip. It must not be
   // hidden by round_trip_age and then mistaken for retryable unavailability.
   if (Number.isFinite(verified) && Number.isFinite(expires) && Number.isFinite(age) && age >= 0
-    && !(expires - verified > age + LEASE_MARGIN_MS)) failed.push('lease_remaining');
+    && !(expires - verified > age + LEASE_MARGIN_MS + reserveMs)) failed.push('lease_remaining');
   return failed;
 }
 
@@ -45,9 +45,9 @@ export function retainServerAnswerForFacts(facts, { verifiedAt, expiresAt, sentM
   serverAnswers.set(facts, { verifiedAt, expiresAt, sentMono, monotonic, fingerprint: JSON.stringify(facts) });
   return facts;
 }
-export function retainedServerAnswerCurrent(facts) {
+export function retainedServerAnswerCurrent(facts, reserveMs = 0) {
   const held = serverAnswers.get(facts);
   if (!held) return null;
   try { return held.fingerprint === JSON.stringify(facts)
-    && serverAnswerCurrent({ ...held, nowMono: held.monotonic() }).length === 0; } catch { return false; }
+    && serverAnswerCurrent({ ...held, nowMono: held.monotonic(), reserveMs }).length === 0; } catch { return false; }
 }

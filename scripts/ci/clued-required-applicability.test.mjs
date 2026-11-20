@@ -12,6 +12,12 @@ const H='a'.repeat(40),B='b'.repeat(40),M='c'.repeat(40),repository='o/r',prNumb
 assert.match(COMPONENT_VERSION,/^\d+\.\d+\.\d+$/);
 const profile=parseWorkflowProfiles(fs.readFileSync(new URL('./clued-gated-proof-profiles.json',import.meta.url))).workflows[REQUIRED_TESTS_SOURCE.file];
 const selector=fs.readFileSync(new URL('./ci-required-selection.mjs',import.meta.url));
+test('the selector identity comes from the sibling file bytes',()=>{
+  const source=fs.readFileSync(new URL('./clued-required-applicability.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/['"][a-f0-9]{40}(?:[a-f0-9]{24})?['"]/i);
+  assert.equal(REQUIRED_SELECTOR_SOURCE.blob,workflowBlob(selector));
+  assert.equal(REQUIRED_SELECTOR_SOURCE.sha256,hash(selector));
+});
 const gateScript=Buffer.from('public trusted gate fixture, not a credential');
 const copy=value=>structuredClone(value),hash=x=>createHash('sha256').update(x).digest('hex');
 const step=(name,conclusion='success')=>({name,status:'completed',conclusion});

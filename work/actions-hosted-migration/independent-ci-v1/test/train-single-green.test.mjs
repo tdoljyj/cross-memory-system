@@ -10,14 +10,17 @@ import { randomUUID } from 'node:crypto';
 import { digest } from '../src/proof.mjs';
 import { admissionExternalIdV2, batchJobsV2, claimGeneration, frontJobIdsV2, scanExternalIdV2 } from '../src/job-v2.mjs';
 import { EffectJournal, ROLE_PUBLICATION_CONTRACT, rolePublicationKey } from '../src/effect-journal.mjs';
-import { ofJobIds, publishedNames } from '../src/published-on-github-v2.mjs';
+import { SCAN_CHECK_NAMES, headScansOf, ofJobIds, publishedNames, validHeadScans } from '../src/published-on-github-v2.mjs';
+// A namespace import: the tested-line pair (rule 41ab823a) is checked by its own test, so a Source without it fails only there.
+import * as onGithub from '../src/published-on-github-v2.mjs';
 import { recordBatchClaim, readBatchClaim } from '../src/batch-claim-v2.mjs';
 import { createFixtureControlPublisherV2, STAGE8_CHECK_MS, STAGE8_NOT_READY_REASONS, STAGE8_FINAL_REASONS } from '../src/independent-control-checks-v2/publisher.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { trainHeadDecision, TRAIN_SINGLE_GREEN_NOT_PROVEN } from '../src/independent-control-checks-v2/train-rules.mjs';
 import { parseStageTrainMode, readStageTrainMode, stageTrainModeText, trainPortsV2, STAGE_TRAIN_MODE_FILE } from '../src/independent-control-checks-v2/train-mode.mjs';
 import { createMergeSlotNative, parseHolders, parseRoleProbe } from '../src/independent-control-checks-v2/merge-slot-native.mjs';
-import { outcomeFailureCode, CLEAN_FINAL_CODES, TRAIN_CODES, ALL_STAGE_CODES } from '../src/resident-v2/stage-fact.mjs';
+import { outcomeFacts, outcomeFailureCode, CLEAN_FINAL_CODES, TRAIN_CODES, ALL_STAGE_CODES } from '../src/resident-v2/stage-fact.mjs';
+import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { HEAD, BASE, tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', PR = 888;
@@ -44,6 +47,12 @@ function fakeGithub(o = {}) {
       return structuredClone(state.commits[sha]);
     },
     async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
+    // compare T...H: counted (rule 41ab823a, R3: stage 1 never reads it for the reuse); H contains T unless the state says otherwise.
+    async readCompare(base, head) {
+      state.compares = (state.compares ?? 0) + 1;
+      if (state.compareError) throw Object.assign(new Error(state.compareError), { code: state.compareError });
+      return { baseSha: base, headSha: head, status: 'ahead', aheadBy: 1, behindBy: 0, mergeBaseSha: base, ...state.compare };
+    },
     async createCheck(body) { const c = { id: next++, app: { id: 5368905 }, ...structuredClone(body) }; checks.push(c); state.onCreate?.(c); return structuredClone(c); },
     async revokeCheck(id, body) { const c = checks.find(x => x.id === id); Object.assign(c, structuredClone(body)); return structuredClone(c); } };
 }
@@ -301,8 +310,8 @@ test('binding (§41.8): a renewal, keepalive or touch between the two observatio
 
 // ---- stage 1 ----
 // seed: check runs already on H (another batch, node or install).
-async function stage1(t, { trainMode = 'on', trainModeUnreadable = false, testSha = S, edit = () => {}, touch = null, answer = null, seed = [] } = {}) {
-  const job = jobsFor(testSha)['work-admission'], c = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) }, github = fakeGithub();
+async function stage1(t, { trainMode = 'on', trainModeUnreadable = false, testSha = S, edit = () => {}, touch = null, answer = null, seed = [], githubState = {} } = {}) {
+  const job = jobsFor(testSha)['work-admission'], c = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) }, github = fakeGithub(githubState);
   github.checks.push(...structuredClone(seed));
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects')), dir = await tempDir(t);
   const batchClaims = { read: async j => { try { return await readBatchClaim(dir, j); } catch (e) { if (e.code === 'BATCH_CLAIM_MISSING') return null; throw e; } }, record: (j, cl, at) => recordBatchClaim(dir, j, cl, at) };
@@ -472,6 +481,80 @@ test('front identity, stage 1: the non-front run of H does not refuse the front 
   // a batch that tests the head: every role check of this App on H counts, the front batch's too
   const head = await stage1(t, { trainMode: 'off', testSha: HEAD, seed: [checkRun(9, 'trivy', scanExternalIdV2(front.trivy))] });
   assert.deepEqual([head.r.status, head.r.reason, head.r.publishedChecks], ['BLOCKED', 'HEAD_PUBLISHED_ON_GITHUB', ['trivy']]);
+});
+
+// Rule 41ab823a (resident DESIGN §75; Fable 2026-11-19 §2.3 and the review ruling, field #1170): the front batch's stage 1 names, from
+// the read-back it already made, the scans H already carries: App 5368905's newest check of each scan name that is not the front's own,
+// completed, successful, the scanner's staged external id, and a summary that says it tested H itself ("tested <H>", written by the
+// scanner publisher). Stage 1 sends no request of its own for it; the resident reuses them only when stage 10 said T is in H and S has
+// H's tree. It never changes stage 1's ending.
+const withTested = (checks, sha = HEAD) => checks.map(c => SCAN_CHECK_NAMES.includes(c.name) ? { ...c, output: { title: `${c.name}: success`, summary: `Independent CI job x.\ntested ${sha}` } } : c);
+const scansOf = checks => SCAN_CHECK_NAMES.map(role => ({ role, externalId: checks.find(c => c.name === role).external_id }));
+test('rule 41ab823a, stage 1: a settled front batch names H\'s scans from the read-back it already made (R3: no compare); the outcome and the stage fact carry them', async t => {
+  const seed = withTested(nonFrontChecks());
+  const x = await stage1(t, { seed });
+  assert.equal(x.r.status, 'SETTLED', JSON.stringify(x.r));
+  assert.deepEqual(x.r.headScans, scansOf(seed));
+  assert.equal(x.github.state.compares ?? 0, 0, 'R3: stage 1 sends no request of its own for the reuse');
+  // The resident sees it through the outcome file and the stage fact (stage-inputs.mjs#writeOutcome, stage-fact.mjs#outcomeFacts), and only
+  // from stage 1's settled ending.
+  const write = async (result, entryRole = 'work-admission') => writeOutcome({ receiptsRoot: await tempDir(t), nonce: 'b'.repeat(32), plan: { stage: 1, entryRole }, jobIds: [], result });
+  assert.deepEqual(outcomeFacts(await write(x.r)).headScans, scansOf(seed));
+  assert.equal('headScans' in await write({ ...x.r, status: 'BLOCKED', sideEffects: 0 }), false);
+  assert.equal('headScans' in await write(x.r, 'check-publisher'), false);
+  assert.equal('headScans' in await write({ ...x.r, headScans: [{ role: 'gitleaks', externalId: 'not-staged' }] }), false);
+  assert.equal('headScans' in outcomeFacts({ ...(await write(x.r)), status: 'REVOKED' }), false);
+});
+
+// R1, R2 (review B1): a check on H does not say by itself which tree it scanned: a batch of several PRs publishes on its first member H1 the
+// scans of S = the chain merge (T', H1, H2, ...), and a front on an older main those of merge(T', H). Only a check whose summary names H as
+// the tested commit is H's own scan; one naming another commit (R1) or none (R2, the format before this generation) is never evidence.
+test('rule 41ab823a, stage 1 guards: only the newest successful scanner check of App 5368905 that tested H itself counts (R1 another tested commit, R2 none)', async t => {
+  const j = jobsFor(HEAD), front = jobsFor();
+  const none = async (name, o) => {
+    const x = await stage1(t, o);
+    assert.equal(x.r.status, 'SETTLED', `${name}: ${JSON.stringify(x.r)}`);
+    assert.equal('headScans' in x.r, false, name);
+    assert.equal(x.github.state.compares ?? 0, 0, name);
+  };
+  await none('H carries nothing', {});
+  await none('R1: the scans tested another commit (a batch of several PRs, S)', { seed: withTested(nonFrontChecks(), S) });
+  await none('R2: the scans say nothing of what they tested (the older format)', { seed: nonFrontChecks() });
+  // a batch that tests the head names nothing (with role checks on H it would end HEAD_PUBLISHED_ON_GITHUB anyway)
+  await none('a batch that tests the head (S = H)', { seed: [], testSha: HEAD, trainMode: 'off' });
+  // per role: the newest check of the name decides; another App, a failure (a withdrawal), a non-scanner external id never count
+  const scans = checks => headScansOf(checks, frontJobIdsV2(front['work-admission']), HEAD);
+  const ok = (role, o = {}) => withTested([checkRun(10 + SCAN_CHECK_NAMES.indexOf(role), role, scanExternalIdV2(j[role]), o)])[0];
+  assert.deepEqual(scans(SCAN_CHECK_NAMES.map(r => ok(r))).map(x => x.role), SCAN_CHECK_NAMES);
+  assert.deepEqual(scans([{ ...ok('gitleaks'), conclusion: 'failure' }]), [], 'failed');
+  assert.deepEqual(scans([ok('gitleaks'), { ...ok('gitleaks'), id: 20, conclusion: 'failure' }]), [], 'withdrawn after it passed (newest is the failure)');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), id: 5, conclusion: 'failure' }, ok('gitleaks')]).map(x => x.role), ['gitleaks'], 'republished after a withdrawal');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), app: { id: 15368 } }]), [], 'another App');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), status: 'in_progress', conclusion: null }]), [], 'not completed');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), external_id: `independent-ci:native-work-admission:v2:${'0'.repeat(64)}:a1:c00000000:f1:e1` }]), [], 'not a scanner publication');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: { summary: `x\ntested ${S}` } }]), [], 'R1: tested another commit');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: { summary: 'Independent CI job x.' } }]), [], 'R2: the older format, no tested commit');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: { summary: `x\ntested ${HEAD}\ntested ${HEAD}` } }]), [], 'two tested lines');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), output: null }]), [], 'no output');
+  assert.deepEqual(scans([ok('gitleaks'), { ...ok('gitleaks'), id: 30, external_id: scanExternalIdV2(front.gitleaks), conclusion: 'failure' }]).map(x => x.role), ['gitleaks'],
+    'the front batch\'s own check is not evidence (stage 1 ends HEAD_PUBLISHED_ON_GITHUB on it anyway)');
+  assert.deepEqual(scans([{ ...ok('gitleaks'), id: 40, output: { summary: `x\ntested ${S}` } }, ok('gitleaks')]), [], 'the newest one decides, and it tested another commit');
+  // the shape the outcome accepts
+  const ids = role => scanExternalIdV2(j[role]);
+  assert.deepEqual(validHeadScans([{ externalId: ids('trivy'), role: 'trivy' }, { role: 'gitleaks', externalId: ids('gitleaks') }]).map(x => x.role), ['gitleaks', 'trivy']);
+  for (const bad of [null, {}, [{ role: 'gitleaks' }], [{ role: 'kooyumi-merge-slot', externalId: ids('gitleaks') }], [{ role: 'gitleaks', externalId: ids('gitleaks'), x: 1 }],
+    [{ role: 'gitleaks', externalId: ids('gitleaks') }, { role: 'gitleaks', externalId: ids('gitleaks') }]]) assert.equal(validHeadScans(bad), null, JSON.stringify(bad));
+});
+
+// The writer and the reader of "tested <sha>" are one pair (published-on-github-v2.mjs): what one writes the other reads, exactly once.
+test('rule 41ab823a: the tested line is written and read by one pair of functions', () => {
+  assert.equal(typeof onGithub.scanTestedLine, 'function');
+  assert.equal(onGithub.scanTestedLine(HEAD), `tested ${HEAD}`);
+  assert.equal(onGithub.scanTestedOf(`Independent CI job x.\n${onGithub.scanTestedLine(S)}`), S);
+  assert.equal(onGithub.scanTestedOf(`${onGithub.scanTestedLine(S)}\n\nNative publication independent-ci:native:v1:x:p1`), S);
+  for (const bad of [null, undefined, 1, '', 'tested', `tested ${S.slice(1)}`, `tested ${S.toUpperCase()}`, ` tested ${S}`, `tested ${S} `, `xtested ${S}`,
+    `tested ${S}\ntested ${S}`, `tested ${S}\ntested ${HEAD}`]) assert.equal(onGithub.scanTestedOf(bad), null, JSON.stringify(bad));
+  assert.throws(() => onGithub.scanTestedLine('x'));
 });
 
 test('front identity, stage 8: the non-front control pair on H does not stop the front pair; the front\'s own merge-slot check from another node does', async t => {

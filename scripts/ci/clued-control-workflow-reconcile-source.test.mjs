@@ -51,8 +51,7 @@ test('one initial Source and full concrete Role are registered without inventing
   assert.deepEqual(source.primary_ids,['reconcile']);assert.equal(rolesOf(r).length,1);
   assert.deepEqual(rolesOf(r)[0].definition,source.workflow_definition.jobs.reconcile);
   assert.equal(Object.keys(pin.implementation_blobs).length,384);
-  for(const name of ['scripts/ci/clued-merge-reconcile.mjs','scripts/ci/clued-merge-reconcile-source.mjs',
-    'scripts/ci/clued-merge-reconcile-source.test.mjs',
+  for(const name of ['scripts/ci/clued-merge-reconcile.mjs',
     'scripts/ci/clued-pr-task-binding.mjs','scripts/ci/clued-pr-task-binding.test.mjs',
     'scripts/ci/clued-pr-write-set.mjs','scripts/ci/clued-pr-write-set.test.mjs'])
     assert.equal(pin.implementation_blobs[name],workflowBlob(fs.readFileSync(new URL('../../'+name,import.meta.url))),name);
@@ -65,6 +64,8 @@ test('one initial Source and full concrete Role are registered without inventing
   // This initial Source is immutable historical metadata, not today's execution
   // integrity registry. Authenticate its actual Git objects rather than repin it.
   for(const [name,blob,sha] of [
+    ['scripts/ci/clued-merge-reconcile-source.mjs','c3660096b818e8b432ac641f84526c7a4e0d0664','5abcc1cd5031cc20588027234d511a23a5998dd7c5dfc87816ee80a9a7f79c91'],
+    ['scripts/ci/clued-merge-reconcile-source.test.mjs','68801654aa3adab6cb971a0f56c9fdc8b7159bc5','8fb5a8590c101b66602905da885496bc68fa430de723b0f7dd51d752b2ce36f7'],
     ['scripts/ci/merge-admission-r9-collector.test.mjs','1053a17adfaecf5df9e6510bbdecb1c0b2ba93bf','6223ac697944d99a0ee2b5c9500cb6123498fbf33854445f9b04211525c4603b'],
     ['scripts/ci/clued-work-admission.mjs','62ebce7bcaeb2402c5a92caa025f44e0c07c0735','61d070f4d1e3e733eddc22c1e7dcf32f4eb16ec2123bd61c4e2212dc869a6be5'],
     // The single generated-file list and its reader change with the generators;

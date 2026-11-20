@@ -63,7 +63,7 @@ test('a verified command makes two trust reads and exactly one mutation, with th
   assert.deepEqual(r.calls.map(c => c.name), ['clued_ci_node_trust_v1', 'clued_ci_node_trust_v1', 'clued_ci_node_command_v1']);
   for (const c of r.calls) {
     assert.equal(c.url, 'https://db.example.test/rest/v1/rpc/' + c.name); assert.equal(c.headers.authorization, 'Bearer gw');
-    assert.equal(c.headers.apikey, 'pk'); assert.equal(c.redirect, 'error'); assert.equal(c.body.p_token_hash, hex(token));
+    assert.equal(c.headers.apikey, 'pk'); assert.equal(c.redirect, 'manual'); assert.equal(c.body.p_token_hash, hex(token));
     assert.ok(!JSON.stringify(c.body).includes(token), 'the raw token never leaves the Worker');
   }
   const mutation = r.calls[2].body;
@@ -71,6 +71,20 @@ test('a verified command makes two trust reads and exactly one mutation, with th
   assert.deepEqual(Object.keys(mutation.p_verified).sort(), ['node_id', 'nonce_sha256', 'operation', 'payload_sha256', 'verified_at_ms']);
   assert.equal(mutation.p_verified.nonce_sha256, hex(command.nonce)); assert.equal(mutation.p_verified.payload_sha256, command.payload_sha256);
   assert.equal(r.headers.get('cache-control'), 'no-store');
+});
+
+test('a verified command reaches the default database with the production environment shape', async () => {
+  const command = await signed();
+  const r = await call({ command, payload }, { environment: { CLUED_DB_GATEWAY_TOKEN: 'gw' } });
+
+  assert.equal(r.status, 200);
+  assert.equal(r.body.status, 'committed');
+  assert.deepEqual(r.calls.map(c => c.name), ['clued_ci_node_trust_v1', 'clued_ci_node_trust_v1', 'clued_ci_node_command_v1']);
+  for (const c of r.calls) {
+    assert.equal(c.url, 'https://ccxsikzwxlolxqlosril.supabase.co/rest/v1/rpc/' + c.name);
+    assert.equal(c.headers.authorization, 'Bearer gw');
+    assert.match(c.headers.apikey, /^sb_publishable_/);
+  }
 });
 
 test('route, method, content type, token and body bounds are refused before any database call', async () => {
