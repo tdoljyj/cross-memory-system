@@ -71,7 +71,7 @@
       "reverify_workflow_blob": "8d112ceea21487b9ef871558a2e3bab8decef126",
       "policy_path": "config/merge-admission-policy.json",
       "policy_blob": "a54ea27028f6361765fffce30f9ffa227a91b2ea",
-      "source_checkout_sha": "e5814322c9f795ea835e002a5149880889fc118f",
+      "source_checkout_sha": "94cc97e7af44ee51f57ef47dd42df7e1ce2021fe",
       "default_branch": "main"
     }
   ],
