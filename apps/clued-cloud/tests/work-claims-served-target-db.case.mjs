@@ -157,6 +157,45 @@ test('a committed pull-request head authorization always resolves bound against 
       await release(r);
     });
 
+    // Only the exact string main is served; no normalising (case, refs/heads/, whitespace, empty) and no PR-head name.
+    await t.test('every value other than exactly main is refused at the outer layer and writes nothing', async () => {
+      for (const value of ['', 'Main', 'MAIN', 'refs/heads/main', 'main ', 'claude/authorize-target-main']) {
+        const r = await claim(), head = crypto.randomBytes(20).toString('hex');
+        const before = await effects(r), leaseBefore = await lease(r);
+        const authorized = await authorize(r, head, { target_branch: value, pr_number: 21 });
+        const label = JSON.stringify(value);
+        assert.equal(authorized.status, 'rejected', label + ' ' + JSON.stringify(authorized));
+        assert.equal(authorized.error_code, 'work_claim_target_branch_not_served', label);
+        assert.equal(authorized.served_target, 'main', label);
+        assert.deepEqual(await effects(r), before, label + ': no authorization row, no Receipt, no PR binding');
+        assert.equal((await lease(r)).expires_at.getTime(), leaseBefore.expires_at.getTime(), label + ': the lease is not pinned');
+        await release(r);
+      }
+    });
+
+    // JSON null is not "absent": the inner validator reports input_invalid; the outer layer neither fills main nor says not_served.
+    await t.test('target_branch JSON null is input_invalid, not committed and not not_served', async () => {
+      const r = await claim(), head = '9'.repeat(40), before = await effects(r), leaseBefore = await lease(r);
+      const authorized = await authorize(r, head, { target_branch: null, pr_number: 22 });
+      assert.notEqual(authorized.status, 'committed', JSON.stringify(authorized));
+      assert.notEqual(authorized.error_code, 'work_claim_target_branch_not_served', JSON.stringify(authorized));
+      assert.match(JSON.stringify(authorized), /work_claim_head_authorization_input_invalid/);
+      assert.deepEqual(await effects(r), before);
+      assert.equal((await lease(r)).expires_at.getTime(), leaseBefore.expires_at.getTime(), 'the lease is not pinned');
+      await release(r);
+    });
+
+    await t.test('replaying an idempotency_key without target_branch, now with main, is replayed with one row', async () => {
+      const r = await claim(), head = 'a'.repeat(40), idempotency_key = uuid();
+      const first = committed(await authorize(r, head, { pr_number: 23, idempotency_key }));
+      assert.notEqual(first.replayed, true, JSON.stringify(first));
+      const second = await authorize(r, head, { target_branch: 'main', pr_number: 23, idempotency_key });
+      committed(second);
+      assert.equal(second.replayed, true, JSON.stringify(second));
+      assert.equal((await effects(r)).authorizations, 1, 'only one authorization row');
+      await release(r);
+    });
+
     await t.test('a workflow dispatch authorization is unchanged', async () => {
       const r = await claim();
       committed(await authorize(r, '6'.repeat(40), { target_branch: 'feature/x', workflow: 'fixture.yml' }));
