@@ -4,6 +4,7 @@
 // change, hands commits to the Linux clone and compares a failure with main.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -189,13 +190,89 @@ test('paths, keys and the environment the commands get', () => {
   }
   const env = testEnvironment({ Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', GITHUB_TOKEN: 'secret', SUPABASE_URL: 's',
     CLUED_HOME: 'c', NODE_OPTIONS: '--x', CI: 'true' }, { CI_BASE_SHA: 'm' }, 'linux');
-  assert.deepEqual(env, { Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', CI_BASE_SHA: 'm' });
-  assert.deepEqual(testEnvironment({ TEMP: '/t' }, {}, 'win32'), { TEMP: '/t', PYTHONUTF8: '1' }, "Windows Python in UTF-8 mode, like the runners' locale");
+  // Codex review of 2ee162c2, high 1: local-verify's commands get the selector's test environment, fake identity included.
+  const identity = new Set([...Object.keys(selection.fakeIdentityEnv('d')), 'CLUED_UNDER_TEST']);
+  const own = (vars) => Object.fromEntries(Object.entries(vars).filter(([name]) => !identity.has(name)));
+  assert.deepEqual(own(env), { Path: 'C:\\bin', HOME: '/h', TEMP: '/t', LC_ALL: 'C', HTTPS_PROXY: 'p', CI_BASE_SHA: 'm' });
+  assert.equal(env.GITHUB_TOKEN, selection.FAKE_GITHUB_TOKEN);
+  assert.equal(env.CLUED_UNDER_TEST, '1');
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+  assert.deepEqual(own(testEnvironment({ TEMP: '/t' }, {}, 'win32')), { TEMP: '/t', PYTHONUTF8: '1' }, "Windows Python in UTF-8 mode, like the runners' locale");
+});
+
+// Codex review of 2ee162c2, high 1: the in-process path (Linux, Actions) listed the application's unit tests with the
+// caller's whole environment, and ran the commands with whatever env it was given.
+test("runCommands lists unit tests and runs every command with the test environment, never the caller's", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-env-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  fs.writeFileSync(path.join(root, 'scripts', 'select-tests.mjs'), `import { writeFileSync } from 'node:fs';
+writeFileSync('listing-env.json', JSON.stringify({ pat: process.env.GITHUB_PAT_TOKEN ?? null, gh: process.env.GH_TOKEN ?? null,
+  marker: process.env.CLUED_UNDER_TEST ?? null, nosystem: process.env.GIT_CONFIG_NOSYSTEM ?? null }));
+console.log('tests/a.test.mjs');
+`);
+  const saved = process.env.GITHUB_PAT_TOKEN;
+  process.env.GITHUB_PAT_TOKEN = 'owner-pat';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_PAT_TOKEN; else process.env.GITHUB_PAT_TOKEN = saved; });
+  const selector = { ...selection, reporterUrl: 'file:///r.mjs', SUITE_COMMANDS: { s: [{ cwd: '.', argv: ['node', '--test', '{unit-tests}'] }] } };
+  const seen = [];
+  const results = runCommands(selector, 's', root, 'm'.repeat(40), path.join(root, 'log.txt'), {
+    env: { ...process.env, GH_TOKEN: 'owner-token', ANTHROPIC_API_KEY: 'owner-key' },
+    spawn: (file, args, options) => { seen.push(options.env); return { status: 0 }; }, kill: () => {} });
+  assert.equal(results[0].error, null, fs.readFileSync(path.join(root, 'log.txt'), 'utf8'));
+  const fake = selection.FAKE_GITHUB_TOKEN;
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'listing-env.json'), 'utf8')), { pat: null, gh: fake, marker: '1', nosystem: '1' },
+    'the unit-test listing');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY'].filter((name) => name in seen[0]), [], 'the command');
+  assert.equal(seen[0].GH_TOKEN, fake);
+  assert.equal(seen[0].CLUED_UNDER_TEST, '1');
+});
+
+// Codex review of 2ee162c2, low 7: the Linux side ran a copy of local-verify.mjs alone, without the modules it imports
+// (ci-deps.mjs, the test environment), so it could not load there.
+// Fable ruling 11-20 "补：止血 PR 第四轮" §3: the environment version is the hash of the whole file that defines the
+// environment rules (test-env.mjs), so any change in it, wherever, is another version. local-verify's additions are rules
+// of that file too.
+test('the environment version is the hash of the whole test-env.mjs, and changes with any edit to it', (t) => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, 'test-env.mjs'));
+  assert.equal(selection.TEST_ENV_VERSION, createHash('sha256').update(source).digest('hex'));
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'test-env-version-'));
+  t.after(() => fs.rmSync(copy, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(copy, 'test-env.mjs'), Buffer.concat([source, Buffer.from('\n// an edit\n')]));
+  const edited = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `const { TEST_ENV_VERSION } = await import(${JSON.stringify(pathToFileURL(path.join(copy, 'test-env.mjs')).href)}); console.log(TEST_ENV_VERSION);`],
+  { encoding: 'utf8' });
+  assert.equal(edited.status, 0, edited.stderr);
+  assert.notEqual(edited.stdout.trim(), selection.TEST_ENV_VERSION);
+  assert.equal(testEnvironment({ TEMP: '/t' }, {}, 'win32').PYTHONUTF8, selection.TEST_ENV_RULES.localVerify.win32.PYTHONUTF8,
+    "local-verify's additions are rules of that file");
+});
+
+test('the Linux side gets local-verify with every module it imports, and that copy loads', async (t) => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const closure = new Set();
+  const visit = (name) => {
+    if (closure.has(name)) return;
+    closure.add(name);
+    for (const [, file] of fs.readFileSync(path.join(here, name), 'utf8').matchAll(/^import [^;]*? from '\.\/([^'/]+\.mjs)';$/gm)) visit(file);
+  };
+  visit('local-verify.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-tool-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { copyTool } = await import('./local-verify.mjs');
+  assert.equal(typeof copyTool, 'function');
+  copyTool(dir);
+  assert.deepEqual(fs.readdirSync(dir).sort(), [...closure].sort());
+  const load = spawnSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(path.join(dir, 'local-verify.mjs')).href)})`],
+    { encoding: 'utf8' });
+  assert.equal(load.status, 0, load.stderr);
 });
 
 test("the Linux run takes objects only from this side's bundle (no GitHub login there), sets origin/* and tags exactly, and runs this side's copy", () => {
   const candidate = 'a'.repeat(40), main = 'b'.repeat(40);
-  const script = linuxScript({ bundle: "/mnt/c/L/it's.bundle", refs: '/mnt/c/L/run.refs', tool: '/mnt/c/L/tool.mjs', run: 'run-7', candidate, main,
+  const script = linuxScript({ bundle: "/mnt/c/L/it's.bundle", refs: '/mnt/c/L/run.refs', tool: '/mnt/c/L/tool', run: 'run-7', candidate, main,
     suites: ['clued-cloud', "x'y"], freshBase: true });
   assert.match(script, /^set -e\n/);
   assert.ok(script.includes('remote add origin https://github.com/tdoljyj/cross-memory-system.git'), 'an origin remote, as in CI');
@@ -210,7 +287,7 @@ test("the Linux run takes objects only from this side's bundle (no GitHub login 
   assert.ok(script.indexOf('trap ') < script.indexOf('flock -w'), 'the clean-up is set before anything is created');
   assert.ok(script.includes('refs/local-verify/run-7/ refs/local-verify/incoming/run-7/'), 'and removes the refs of this run only');
   assert.ok(script.includes(`for commit in ${candidate} ${main}; do`));
-  assert.ok(script.includes(`cp '/mnt/c/L/tool.mjs' "$tool/local-verify.mjs"`), 'the same tool on both sides, whatever the change holds');
+  assert.ok(script.includes(`cp '/mnt/c/L/tool'/*.mjs "$tool/"`), 'the same tool on both sides, whatever the change holds');
   assert.ok(script.endsWith(`--candidate ${candidate} --base ${main} --no-fetch --fresh-base --suite 'clued-cloud' --suite 'x'\\''y'`));
   assert.ok(linuxScript({ bundle: null, refs: '/r', tool: '/t', run: 'r', candidate, main, suites: ['a'], noYield: true }).endsWith("--no-fetch --no-yield --suite 'a'"),
     'the Linux side skips the wait for the resident too when asked');
@@ -546,9 +623,14 @@ test('main: the newest copy; main results kept per main, platform, suite, versio
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const at = { main: a, id: 'clued-cloud', platform: 'linux', node: 'v24.19.0', python: 'Python 3.12.3', dependencies: 'd' };
   const file = mainResultsFile(home, at);
-  for (const changed of [{ main: b }, { id: 'components' }, { platform: 'win32' }, { node: 'v24.21.0' }, { python: 'Python 3.13.0' }, { dependencies: null }]) {
+  for (const changed of [{ main: b }, { id: 'components' }, { platform: 'win32' }, { node: 'v24.21.0' }, { python: 'Python 3.13.0' }, { dependencies: null },
+    { environment: 'another' }]) {
     assert.notEqual(mainResultsFile(home, { ...at, ...changed }), file, JSON.stringify(changed));
   }
+  // Codex second review of 2ee162c2, medium 2: the suites' environment is part of the key, so main's results run under
+  // another environment (variable list, fake identity) are not compared with this one's. Its version is test-env.mjs's.
+  assert.match(String(selection.TEST_ENV_VERSION), /^[0-9a-f]{64}$/);
+  assert.equal(mainResultsFile(home, { ...at, environment: selection.TEST_ENV_VERSION }), file, 'by default the version in force');
   assert.equal(readCached(file), null);
   writeCached(file, [{ status: 0 }]);
   assert.deepEqual(readCached(file), [{ status: 0 }]);
