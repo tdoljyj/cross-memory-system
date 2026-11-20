@@ -263,7 +263,7 @@ test('Connect joins the existing main production release after its Grant and mai
   assert.match(build.run, /node --test tests\/oauth-origin\.test\.mjs/);
   assert.match(build.run, /--out-dir "\$RUNNER_TEMP\/kooyumi-connect-build"/);
   for (const name of ['Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release']) {
-    assert.equal(steps[index(name)].if, "${{ inputs.mode == 'deploy' }}");
+    assert.equal(steps[index(name)].if, "${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}");
   }
   const deploy = steps[index('Deploy Kooyumi Connect Worker')];
   assert.match(deploy.run, /wrangler deploy "\$RUNNER_TEMP\/kooyumi-connect-build\/worker\.mjs"/);
