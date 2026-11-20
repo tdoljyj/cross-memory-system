@@ -1133,3 +1133,58 @@ test('一小时到点那一轮：第一次读空、放弃前再读读到回包�
   f.now = at + HOUR; await f.tick();
   assert.deepEqual([reads, f.holds, f.book().lanes.ci.code], [2, 1, 'RENEW_HANDOVER_WAITING']);
 });
+
+// Codex 第四轮（中1）：以完整正文为准。请求文件已建但正文为空或只写了一半（写失败、或写到一半退出）＝未投出：
+// 旧号照旧可采纳；残件不再复用，下次投递用新号。正文只能是 {"kind":...}（Broker 的 MatchKind 只认这一种），请求号就是文件名。
+test('请求文件已建、正文为空或写了一半：按未投出处理，旧号回包照常采纳；同进程写失败与退出后重启两种', async t => {
+  const box = f => path.join(f.root, 'broker', 'requests');
+  const realWrite = fs.promises.writeFile;
+  t.after(() => { fs.promises.writeFile = realWrite; });
+  for (const torn of ['', '{"kind":"c']) for (const restart of [false, true]) {
+    const f = handoverFixture(t);
+    const old = await abandonCi(f);
+    f.now += HOUR;
+    let tornId = null;
+    if (!restart) { // 同进程：建出文件、写了 torn 后写失败
+      fs.promises.writeFile = async (file, data, options) => {
+        if (path.dirname(String(file)) !== box(f)) return realWrite(file, data, options);
+        tornId = path.basename(String(file), '.json');
+        await realWrite(file, torn, {flag: 'wx'});
+        throw Object.assign(new Error('torn write'), {code: 'EIO'});
+      };
+      await assert.rejects(f.tick());
+      fs.promises.writeFile = realWrite;
+    } else { // 准备好新号、建出文件写了一半时退出，然后重启
+      tornId = '10000000-0000-4000-8000-00000000000c';
+      const book = f.book(); book.next = {id: tornId, kind: 'ci', at: f.now, confirming: false, source: CI_SOURCE};
+      fs.writeFileSync(path.join(f.root, 'state/connection-renewal.json'), JSON.stringify(book));
+      fs.writeFileSync(path.join(box(f), tornId + '.json'), torn);
+      f.startedAt = f.now - CHECK; f.restart();
+    }
+    const label = JSON.stringify({torn, restart});
+    answer(f, old, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+    f.now += 15_000; await f.tick();
+    assert.equal(f.holds, 1, '旧号回包照常采纳 ' + label);
+    assert.deepEqual([f.book().next ?? null, f.book().pending], [null, null], label);
+    assert.ok(requestFiles(f).includes(tornId + '.json'), label);
+  }
+});
+test('残件不再复用：正文写坏的那次之后，下一次投递换新号、正文完整', async t => {
+  const realWrite = fs.promises.writeFile;
+  t.after(() => { fs.promises.writeFile = realWrite; });
+  const f = handoverFixture(t);
+  const old = await abandonCi(f);
+  f.now += HOUR;
+  let tornId = null;
+  fs.promises.writeFile = async (file, data, options) => {
+    if (path.dirname(String(file)) !== path.join(f.root, 'broker', 'requests')) return realWrite(file, data, options);
+    tornId = path.basename(String(file), '.json');
+    await realWrite(file, '', {flag: 'wx'});
+    throw Object.assign(new Error('torn write'), {code: 'EIO'});
+  };
+  await assert.rejects(f.tick());
+  fs.promises.writeFile = realWrite;
+  f.now += 15_000; await f.tick();
+  const fresh = f.request('ci'); // f.request 同时核对新请求文件正文为 {kind:'ci'}
+  assert.ok(![old, tornId].includes(fresh));
+});
