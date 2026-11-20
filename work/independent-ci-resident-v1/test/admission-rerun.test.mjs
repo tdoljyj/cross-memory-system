@@ -61,7 +61,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
     assert.equal(argv[0], 'C:\\gh.exe'); assert.equal(argv[1], 'api'); assert.ok(Number.isSafeInteger(o?.timeoutMs));
     const method = argv[3], target = argv.at(-1);
     st.calls.push({ method, target });
-    const f = fail(target, method, st);
+    const f = fail(target, method, st, argv);
     if (f === 'throw') throw new Error('spawn failed');
     if (f) return f;
     assert.ok(target.startsWith(`repos/${REPO}/`), target);
@@ -96,7 +96,7 @@ function world({ pulls = [pullRequest()], checks = [nativeCheck()], runs = [run(
       return ok({ total_count: own.length, workflow_runs: own });
     }
     if ((m = /^\/actions\/runs\/(\d+)\/jobs\?filter=all&per_page=100&page=1$/.exec(route))) { const r = byId(m[1]); const jobs = r.attempts.flatMap((_, i) => jobsOf(r, i + 1)); return ok({ total_count: jobs.length, jobs }); }
-    if ((m = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs\?per_page=100&page=1$/.exec(route))) { const jobs = jobsOf(byId(m[1]), Number(m[2])); return ok({ total_count: jobs.length, jobs }); }
+    if ((m = /^\/actions\/runs\/(\d+)\/attempts\/(\d+)\/jobs\?per_page=100(?:&page=1)?$/.exec(route))) { const jobs = jobsOf(byId(m[1]), Number(m[2])); return ok({ total_count: jobs.length, jobs }); }
     if ((m = /^\/check-runs\/(\d+)\/annotations\?per_page=100&page=1$/.exec(route))) {
       const id = Number(m[1]), a = byId(Math.floor(id / 100)).attempts[Math.floor((id % 100) / 10) - 1];
       return ok(id % 10 === 0 ? a.notes : (a.jobNotes?.[id % 10] ?? []));
@@ -987,7 +987,7 @@ const netFail = { conclusion: 'failure', steps: TESTS_DIED, log: NET_LOG };
 const setupFail = { conclusion: 'failure', steps: SETUP_DIED };
 // An attempt that ran: specs = [{ conclusion, steps, log }] for the three heavy jobs; logs are keyed by the job's index (the gate is 0).
 const ran = (specs, { gate = { name: 'admission-gate', status: 'completed', conclusion: 'success', head_sha: HEAD } } = {}) => ({ notes: [],
-  jobs: [gate, ...specs.map((sp, i) => ({ name: HEAVY[i], head_sha: HEAD, status: 'completed', conclusion: sp.conclusion, ...(sp.steps ? { steps: sp.steps } : {}) }))],
+  jobs: [gate, ...specs.map((sp, i) => ({ name: HEAVY[i], head_sha: HEAD, status: 'completed', conclusion: sp.conclusion, ...(sp.steps ? { steps: sp.steps } : {}), ...(sp.runner ?? {}) }))],
   logs: Object.fromEntries(specs.flatMap((sp, i) => sp.log === undefined ? [] : [[i + 1, sp.log]])) });
 
 test('environment failure: a network failure is re-run once; another needs recovery evidence', async t => {
@@ -1172,4 +1172,201 @@ test('lost run: GitHub refuses the dispatch (no workflow_dispatch entry yet) or 
   await again.r.step();
   assert.deepEqual(again.toasts, ['PR #452：必需测试没有运行，自动补发结果不确定']);
   assert.deepEqual(w.dispatches, []);
+});
+
+// Fable 11-20“补：车头缺必需检查”（#1192，运行 44633481108、44633481239）：gh 2.97 不肯输出含终端转义序列的作业日志（退出码 1），除非给
+// --allow-escape-sequences；而每个 `run:` 步骤的 Actions 日志都含（\x1b[36;1m）。本通道对 Owner 推送、重作业全被跳过的运行要读准入门日志，
+// 于是每次都读失败、永不补跑。这里按真实 gh 的行为脚本化。
+const ESCAPED_LOG = '2026-11-19T22:58:31Z \x1b[36;1mnode scripts/ci/clued-work-admission.mjs --mode gate\x1b[0m\n  "verdict": "ADMISSION_PENDING",\n  "automation_self_hosted": false\n';
+const GH_ESCAPE_REFUSAL = { code: 1, stdout: '', stderr: 'the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway' };
+const ghRefusesEscapes = (target, method, st, argv) => /\/logs$/.test(target) && !argv.includes('--allow-escape-sequences') ? GH_ESCAPE_REFUSAL : null;
+const ownerRun = (attempts, o = {}) => run(700, attempts, { actor: { login: 'tdoljyj', type: 'User' }, ...o });
+
+test('#1192: the gh port reads a job log that holds terminal escape sequences', async () => {
+  const gh = ghPort({ ghExe: 'C:\\gh.exe', repo: REPO, run: async argv => argv.includes('--allow-escape-sequences') ? { code: 0, stdout: ESCAPED_LOG } : GH_ESCAPE_REFUSAL });
+  assert.equal(await gh.text('/actions/jobs/1/logs'), ESCAPED_LOG);
+});
+
+test('#1192: a gate-skipped run of a head the Owner pushed is re-run once the admission came, with the real gh behaviour', async t => {
+  const w = world({ runs: [ownerRun([attempt()])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 700, 1], d.reason);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+});
+
+test('at most two re-runs of one workflow on one head: the third attempt that is still skipped is final', async t => {
+  const w = world({ runs: [ownerRun([attempt(), attempt({ notes: [{ ...pendingNote }] }), attempt({ notes: [{ ...pendingNote }] })])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'final', d.reason);
+  assert.match(d.reason, /three attempts/);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, []);
+  // the second re-run is still allowed
+  const w2 = world({ runs: [ownerRun([attempt(), attempt({ notes: [{ ...pendingNote }] })])], fail: ghRefusesEscapes });
+  assert.equal((await decide({ gh: w2.gh, headSha: HEAD })).action, 'rerun');
+});
+
+// 9aba97c1: a required job no runner ever took ran nothing (no step, no runner; real samples: job 136029949967 of run 44658316395 and
+// job 134948221590 of run 44345691588, both cancelled with steps [] and runner_id 0). It is a process cause: re-run. A job that ran a step
+// and failed stays a real failure.
+const unassignedJob = conclusion => ({ conclusion, steps: [], runner: { runner_id: 0, runner_name: null } });
+test('9aba97c1: a required job no runner took is re-run; the gate job no runner took ran nothing', async () => {
+  for (const conclusion of ['cancelled', 'failure']) {
+    const w = world({ runs: [ownerRun([ran([unassignedJob(conclusion), ok, ok])])], fail: ghRefusesEscapes });
+    const d = await decide({ gh: w.gh, headSha: HEAD });
+    assert.deepEqual([d.action, d.failures], ['rerun', [{ name: HEAVY[0], kind: 'unassigned' }]], `${conclusion}: ${d.reason}`);
+    assert.equal(w.calls.filter(c => /logs|annotations/.test(c.target)).length, 0, 'nothing ran: no log or annotation is evidence');
+  }
+  const gate = { name: 'admission-gate', status: 'completed', conclusion: 'cancelled', head_sha: HEAD, steps: [], runner_id: 0, runner_name: null };
+  const skipped = { conclusion: 'skipped' };
+  const w = world({ runs: [ownerRun([ran([skipped, skipped, skipped], { gate })])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.environment], ['rerun', null], d.reason);
+  // a job a runner took that failed with no failed step on record is not proven to be the environment
+  const taken = world({ runs: [ownerRun([ran([{ conclusion: 'failure', steps: [] }, ok, ok])])] });
+  taken.runs[0].attempts[0].jobs[1].runner_name = 'clued-ci-company-linux-01';
+  assert.equal((await decide({ gh: taken.gh, headSha: HEAD })).action, 'final');
+});
+
+// Independent review (Codex, 051b7d585). High 2: the re-run budget is the head and the workflow's (every run of that workflow on the head,
+// a person's re-runs included: three attempts in all), never one run ID's.
+test('per-run budget (Fable 11-20 补“补跑上限的范围”, superseding review 2 high 2): two runs of one workflow on one head each have their own', async t => {
+  const runs = [ownerRun([attempt(), attempt()]), run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } })];
+  const w = world({ runs, fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 701, 1], d.reason);
+});
+
+// High 3 (the clear parts): a gate no runner took, with its downstream jobs cancelled as GitHub records it (run 44658316395: the gate and
+// every job after it cancelled, steps [], runner_id 0 or null), ran nothing: re-run. A Bot's run whose gate never ran is re-run as well,
+// never re-dispatched for the actor.
+const neverTaken = (name, conclusion = 'cancelled') => ({ name, head_sha: HEAD, status: 'completed', conclusion, steps: [], runner_id: 0, runner_name: null });
+test('review high 3: a gate no runner took and its cancelled downstream jobs ran nothing: one re-run', async () => {
+  const jobs = { notes: [], jobs: [neverTaken('admission-gate'), ...HEAVY.map(n => neverTaken(n))] };
+  const w = world({ runs: [ownerRun([jobs])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId], ['rerun', 700], d.reason);
+  const bot = world({ runs: [botRun({ attempts: [{ notes: [], jobs: [neverTaken('admission-gate'), ...HEAVY.map(n => ({ name: n, head_sha: HEAD, status: 'completed', conclusion: 'skipped' }))] }] })], fail: ghRefusesEscapes });
+  const b = await decide({ gh: bot.gh, headSha: HEAD });
+  assert.equal(b.action, 'rerun', b.reason);
+  assert.deepEqual(bot.dispatches, []);
+});
+
+// Medium: the admission is read again right before the POST.
+test('review medium: an admission withdrawn between the first read and the POST stops the re-run', async () => {
+  let reads = 0;
+  const w = world({ runs: [ownerRun([attempt()])], fail: (target, method, st, argv) => {
+    if (target.includes('check_name=kooyumi-work-admission') && ++reads > 1) {
+      const revoked = nativeCheck({ id: 51, conclusion: 'failure' });
+      return { code: 0, stdout: JSON.stringify({ total_count: 2, check_runs: [nativeCheck(), revoked] }) };
+    }
+    return ghRefusesEscapes(target, method, st, argv);
+  } });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'skip', d.reason);
+  assert.match(d.reason, /no longer admitted/);
+});
+
+// Medium: an earlier verdict under the older repair rule is judged again (the never-taken classification is new).
+test('review medium: a head settled final under the older repair rule is looked at again', async t => {
+  const jobs = { notes: [], jobs: [neverTaken('admission-gate'), ...HEAVY.map(n => neverTaken(n))] };
+  const w = world({ runs: [ownerRun([jobs])], fail: ghRefusesEscapes });
+  const l = await lane(t, w);
+  l.state.data.heads[HEAD] = { firstSeen: new Date(T0).toISOString(), lastCandidateAt: new Date(T0).toISOString(), lookedAt: null,
+    final: 'attempt 1 already ran a heavy job', repairRuleVersion: 4 };
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+});
+
+// Fable 11-20 (A3 and the active half). The runner hook never fires for jobs the gate skipped or no runner took, so the one place that
+// finds "the front's required check missing, its run ended with no result" and asks for the re-run is this lane: every minute it looks at
+// the train's front head first (status.train.last.front), whether or not the head is still among the node's queue rows.
+const frontStatus = (decision = 'FRONT_CHECKS_MISSING') => status({ pending: [], recent: [],
+  train: { enabled: 'on', last: { at: T0, mode: 'on', decision, wouldDo: decision, front: { pr: 452, headSha: HEAD } } } });
+
+test('A3 active half: the train front is a candidate of its own, first, even with no queue row of this node', () => {
+  const other = { pr: 453, headSha: 'c'.repeat(40) };
+  const st = { ...frontStatus(), writtenAt: T0, pending: [{ pr: 453, headSha: other.headSha, state: 'PARKED' }] };
+  assert.deepEqual(candidateHeads(st, [{ pr: 452, headSha: HEAD }, other], T0), [{ pr: 452, headSha: HEAD }, other]);
+  // a front head that is no longer the PR's head is not one
+  assert.deepEqual(candidateHeads(st, [{ pr: 452, headSha: 'd'.repeat(40) }, other], T0), [other]);
+});
+
+// The incident end to end, as one event stream over one model of GitHub: train-front-joint-1192.test.mjs.
+
+// One budget of three attempts per head and workflow for both kinds of process cause (no result, and the environment rule's failures).
+test('one budget: a skipped attempt and an environment failure share the three attempts', async () => {
+  const two = world({ runs: [ownerRun([attempt(), ran([netFail, ok, ok])])], fail: ghRefusesEscapes });
+  assert.equal((await decide({ gh: two.gh, headSha: HEAD })).action, 'rerun', 'attempt 3 is the last of the three');
+  const three = world({ runs: [ownerRun([attempt(), ran([netFail, ok, ok]), ran([netFail, ok, ok])])], fail: ghRefusesEscapes });
+  const d = await decide({ gh: three.gh, headSha: HEAD });
+  assert.equal(d.action, 'final');
+  assert.match(d.reason, /three attempts/);
+});
+
+// The judgement is made in one place: scripts/ci/required-tests-failure-rule.mjs (a protected path), which the gate imports; the companion's
+// env-failure.mjs and the runner hook hold copies the self-tests lock byte for byte (review 2, high 4).
+test('one judgement: the gate and the lane take the same verdict from the same rule', async () => {
+  const shared = await import('../src/env-failure.mjs');
+  const canonical = await import('../../../scripts/ci/required-tests-failure-rule.mjs');
+  const gateModule = await import('../../../scripts/ci/clued-work-admission.mjs');
+  assert.equal(gateModule.requiredTestsRepairHistory, canonical.requiredTestsRepairHistory, 'the gate re-exports the protected module, no copy of its own');
+  assert.equal(await fs.readFile(new URL('../src/env-failure.mjs', import.meta.url), 'utf8'),
+    await fs.readFile(new URL('../../../scripts/ci/required-tests-failure-rule.mjs', import.meta.url), 'utf8'), 'the companion copy is the protected module, byte for byte');
+  for (const [label, attempts, allowed] of [['a network failure', [ran([netFail, ok, ok])], true],
+    ['a failed test', [ran([{ conclusion: 'failure', steps: TESTS_DIED, log: TEST_LOG }, ok, ok])], false]]) {
+    const w = world({ runs: [ownerRun(attempts)], fail: ghRefusesEscapes });
+    const d = await decide({ gh: w.gh, headSha: HEAD });
+    assert.equal(d.action, allowed ? 'rerun' : 'final', label);
+    const strip = route => route.replace(`/repos/${REPO}`, '');
+    for (const rule of [shared, canonical]) {
+      const history = await rule.requiredTestsRepairHistory({ repository: REPO, runId: 700, head: HEAD, attempt: 2, workflowId: LINUX_WORKFLOW,
+        read: route => w.gh.get(strip(route)), readLog: route => w.gh.text(strip(route)) });
+      assert.equal(history.allowed, allowed, `${label}: ${history.reason}`);
+    }
+  }
+});
+
+// Fable 11-20 补“补跑上限的范围”: a re-dispatch is a new run ID with its own budget; the lane asks for it once per head and workflow.
+test('per-run budget: a Bot run at three attempts is re-dispatched once (a new run), never twice', async t => {
+  const w = world({ runs: [botRun({ attempts: [attempt({ notes: [] }), attempt({ notes: [] }), attempt({ notes: [] })] })], fail: ghRefusesEscapes });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.equal(w.dispatches.length, 1);
+  l.advance(HEAD_RECHECK_MS + 1);
+  await l.r.step();
+  assert.equal(w.dispatches.length, 1, 'one re-dispatch per head and workflow');
+});
+
+test('per-run budget: an attempt number that cannot be proven is the budget reached', async () => {
+  const shared = await import('../src/env-failure.mjs');
+  const w = world({ runs: [ownerRun([attempt()])], fail: ghRefusesEscapes });
+  const strip = route => route.replace(`/repos/${REPO}`, '');
+  const ask = attempt => shared.requiredTestsRepairHistory({ repository: REPO, runId: 700, head: HEAD, attempt, workflowId: LINUX_WORKFLOW,
+    read: route => w.gh.get(strip(route)), readLog: route => w.gh.text(strip(route)) });
+  assert.equal((await ask(2)).allowed, true);
+  for (const n of [null, 0, -1, 'x', 1.5]) {
+    const h = await ask(n);
+    assert.equal(h.allowed, false, String(n));
+  }
+});
+
+// Fable 11-20 补“补跑上限的范围”: the budget is per run ID; a reopened PR's new run starts from 1 (its first attempt is admitted as any run,
+// its re-runs count from 1 whatever the old run used).
+test('per-run budget: the new run of a reopened PR is re-run although the old run of the same workflow used three attempts', async t => {
+  const reopened = run(701, [attempt()], { actor: { login: 'tdoljyj', type: 'User' } });
+  const w = world({ runs: [ownerRun([attempt(), attempt(), attempt()]), reopened], fail: ghRefusesEscapes });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 701, 1], d.reason);
+  const shared = await import('../src/env-failure.mjs');
+  const strip = route => route.replace(`/repos/${REPO}`, '');
+  const ask = (runId, attempt) => shared.requiredTestsRepairHistory({ repository: REPO, runId, head: HEAD, attempt, workflowId: LINUX_WORKFLOW,
+    read: route => w.gh.get(strip(route)), readLog: route => w.gh.text(strip(route)) });
+  assert.equal((await ask(701, 2)).allowed, true, 'the new run\'s first re-run');
+  w.runs[1].attempts.push(attempt(), attempt());
+  const fourth = await ask(701, 4);
+  assert.deepEqual([fourth.allowed, fourth.budget], [false, true], 'its own fourth attempt is over the budget');
 });

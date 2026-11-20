@@ -67,7 +67,7 @@ test('P1a: FRONT_RETURNED is looked at again too; a new front head starts its ow
   assert.equal(await minutesToNextRun(g), 10, 'not a fast-look decision');
   // pure: the cap is per head; a run with another decision ends the fast look but never refills the head's count
   assert.equal(train.TRAIN_FRONT_RECHECK_MAX, TRAIN_FRONT_RECHECK_MAX);
-  assert.deepEqual(train.TRAIN_FRONT_RECHECK_DECISIONS, ['TRAIN_SWEEP_INCOMPLETE', 'FRONT_RETURNED']);
+  assert.deepEqual(train.TRAIN_FRONT_RECHECK_DECISIONS, ['TRAIN_SWEEP_INCOMPLETE', 'FRONT_RETURNED', 'FRONT_CHECKS_MISSING_YIELDED']);
   const { trainFrontRecheckNext } = train;
   const s = { mode: 'on', decision: 'TRAIN_SWEEP_INCOMPLETE', front: { pr: 1172, headSha: H1172 } };
   let st = null;

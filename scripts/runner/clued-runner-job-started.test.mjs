@@ -93,7 +93,10 @@ const files = (...names) => ({ body: { files: names.map((filename) => ({ filenam
 // attempts/{n}/jobs URL.
 function fakeFetch(script) {
   script = { [`${API}/actions/workflows/clued-work-admission.yml`]: { body: {
-    path: ".github/workflows/clued-work-admission.yml", state: "active" } }, ...script };
+    path: ".github/workflows/clued-work-admission.yml", state: "active" } },
+    // The head's runs for the three-attempt budget per head and workflow (Fable 11-20): by default no other run of the workflow.
+    [`${API}/actions/runs?head_sha=`]: { body: { total_count: 0, workflow_runs: [] } },
+    [`${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=`]: { body: { total_count: 0, workflow_runs: [] } }, ...script };
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? "GET", body: init.body });
@@ -1350,4 +1353,19 @@ test("clock: a reply cut off while its body is read is a failed attempt, tried a
     readFile: (p) => (p === "/token" ? "ghp_read" : prEvent()) });
   assert.equal(current.allow, true, current.reason);
   assert.deepEqual(g.bounds, [OBSERVATION_ATTEMPT_MS, OBSERVATION_ATTEMPT_MS]);
+});
+
+// Fable 11-20 补“补跑上限的范围”: the budget is per run ID; a dispatch is a new run, admitted on its first attempt whatever earlier runs used.
+test('required-tests dispatch: a new run, admitted in the hook whatever earlier runs of the workflow used', async () => {
+  const pr = { number: 9, state: 'open', head: { sha: HEAD, ref: 'claude/g3', repo: { full_name: 'o/r' } }, base: { ref: 'main', repo: { full_name: 'o/r' } } };
+  const overrides = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/claude/g3', GITHUB_REF_NAME: 'claude/g3', GITHUB_SHA: HEAD,
+    GITHUB_ACTOR: 'o', GITHUB_REPOSITORY_OWNER: 'o', GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3' };
+  const payload = JSON.stringify({ inputs: { pr: '9', head: HEAD }, repository: { default_branch: 'main' } });
+  const script = { [`${LIST}${HEAD}`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }),
+    [`${LIST}main`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }), [`${API}/pulls/9`]: { body: pr } };
+  const runs = (...list) => ({ [`${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=`]: { body: { total_count: list.length, workflow_runs: list } } });
+  const self = { id: 555, head_sha: HEAD, run_attempt: 1 };
+  assert.equal((await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 2 }) }, payload)).result.allow, true, 'two attempts and this one: three');
+  const used = await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 3 }) }, payload);
+  assert.equal(used.result.allow, true, used.result.reason);
 });

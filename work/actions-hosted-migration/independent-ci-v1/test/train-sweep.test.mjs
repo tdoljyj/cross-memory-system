@@ -879,6 +879,8 @@ test('gen 28: an idle front is not renewed (green, needs main, closed, unbound, 
   const soon = { holder: { mergeSlotUntil: iso(NOW + 10 * 60_000) } };
   const green = await setup(t, { native: soon });
   green.gh.green(31, H);
+  // Fable 11-20 (#1192): green, wait for merge needs every check main's rules require on the head, not the merge slot alone.
+  for (const [i, name] of ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified'].entries()) green.gh.green(32 + i, H, { name });
   assert.deepEqual([(await green.run()).facts.decision, touchesOf(green)], ['FRONT_GREEN_WAIT_MERGE', []]);
   const greenClock = await setup(t, { native: { holder: { ...soon.holder, ciState: 'green', ciHeadSha: H } } });
   greenClock.streamDown = true;
