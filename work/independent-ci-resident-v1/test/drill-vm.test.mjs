@@ -1734,8 +1734,8 @@ test('the boot gate boots at ample memory with an Actions runner job on the host
     $script:assigned = 8GB
     $running = Get-DrillHostSafety -Running
     @{ listening = $listening; busy = $busy; running = $running }`);
-  assert.deepEqual([r.listening.action, r.listening.runnerJob, r.listening.requiredFreeBytes], ['start', false, 15 * 2 ** 30]);
-  assert.deepEqual([r.busy.action, r.busy.code, r.busy.busyWith, r.busy.runnerJob, r.busy.requiredFreeBytes], ['start', null, 'ACTIONS_RUNNER_JOB', true, 21 * 2 ** 30]);
+  assert.deepEqual([r.listening.action, r.listening.runnerJob, r.listening.requiredFreeBytes], ['start', 'no', 15 * 2 ** 30]);
+  assert.deepEqual([r.busy.action, r.busy.code, r.busy.busyWith, r.busy.runnerJob, r.busy.requiredFreeBytes], ['start', null, 'ACTIONS_RUNNER_JOB', 'yes', 21 * 2 ** 30]);
   assert.equal(r.running.action, 'continue');
 });
 
@@ -1751,9 +1751,9 @@ test('a job on either side, or a WSL side that could not be read, selects the hi
       unreadable = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Listener') -WslJob $null)
       windowsJob = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Worker') -WslJob $false)
       running = (Test-DrillHostSafety $s 64GB -Running -WslJob $true) }`);
-  assert.deepEqual([r.wslJob.action, r.wslJob.code, r.wslJob.busyWith, r.wslJob.runnerJob], ['start', null, 'WSL_ACTIONS_RUNNER_JOB', true]);
-  assert.deepEqual([r.quiet.action, r.quiet.busyWith, r.quiet.runnerJob], ['start', null, false]);
-  assert.deepEqual([r.unreadable.action, r.unreadable.code, r.unreadable.busyWith, r.unreadable.runnerJob], ['start', null, 'WSL_UNREADABLE', true]);
+  assert.deepEqual([r.wslJob.action, r.wslJob.code, r.wslJob.busyWith, r.wslJob.runnerJob], ['start', null, 'WSL_ACTIONS_RUNNER_JOB', 'yes']);
+  assert.deepEqual([r.quiet.action, r.quiet.busyWith, r.quiet.runnerJob], ['start', null, 'no']);
+  assert.deepEqual([r.unreadable.action, r.unreadable.code, r.unreadable.busyWith, r.unreadable.runnerJob], ['start', null, 'WSL_UNREADABLE', 'unknown']);
   assert.deepEqual([r.windowsJob.action, r.windowsJob.code, r.windowsJob.busyWith], ['start', null, 'ACTIONS_RUNNER_JOB']);
   assert.equal(r.running.action, 'continue');
 });
@@ -1779,36 +1779,71 @@ test('the boot gate takes a runner job as the 21 GB memory tier, not a refusal; 
       quietUnder15 = (& $gate (15GB - 1) @('Runner.Listener') $false)
       runningBusy = (Test-DrillHostSafety $s 6GB -Running -MemoryAssigned 8GB -WslJob $true).action
       runningShort = (Test-DrillHostSafety $s (6GB - 1) -Running -MemoryAssigned 8GB).code }`);
-  assert.deepEqual(r.windowsBusy24, { action: 'start', code: null, busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: true, requiredGB: 21 });
-  assert.deepEqual(r.wslBusy24, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB', runnerJob: true, requiredGB: 21 });
-  assert.deepEqual(r.busy18, { action: 'refuse', code: 'DRILL_HOST_MEMORY_SHORT', busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: true, requiredGB: 21 });
-  assert.deepEqual(r.unreadable22, { action: 'start', code: null, busyWith: 'WSL_UNREADABLE', runnerJob: true, requiredGB: 21 });
+  assert.deepEqual(r.windowsBusy24, { action: 'start', code: null, busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 21 });
+  assert.deepEqual(r.wslBusy24, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 21 });
+  assert.deepEqual(r.busy18, { action: 'refuse', code: 'DRILL_HOST_MEMORY_SHORT', busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 21 });
+  assert.deepEqual(r.unreadable22, { action: 'start', code: null, busyWith: 'WSL_UNREADABLE', runnerJob: 'unknown', requiredGB: 21 });
   assert.equal(r.unreadable18.code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r.busy21.action, 'start');
   assert.equal(r.busyUnder21.code, 'DRILL_HOST_MEMORY_SHORT');
-  assert.deepEqual(r.quiet15, { action: 'start', code: null, busyWith: null, runnerJob: false, requiredGB: 15 });
+  assert.deepEqual(r.quiet15, { action: 'start', code: null, busyWith: null, runnerJob: 'no', requiredGB: 15 });
   assert.equal(r.quietUnder15.code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r.runningBusy, 'continue', 'the running gate is unchanged: 6 GB after the guest, a job is no abort');
   assert.equal(r.runningShort, 'DRILL_HOST_MEMORY_SHORT');
 });
 
+// Codex review of f9ab1bb26, medium 1: the Windows process list that could not be read is a job query that failed, like the WSL side's:
+// the 21 GB tier, the WSL side and memory still read, no refusal by itself. A memory reading that fails still refuses (a resource failure).
+test('a Windows job query that fails takes the 21 GB tier and goes on to read memory; a memory read that fails still refuses', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) if ($script:memoryFails) { throw 'WMI unavailable' }; @{ FreePhysicalMemory = $script:free / 1KB } }
+    function Get-VM { param($ErrorAction) }
+    function Get-Process { param($ErrorAction) throw 'Access is denied' }
+    function Get-DrillRunnerDistributions { param($HostName) }
+    $script:memoryFails = $false
+    $script:free = 22GB; $at22 = Get-DrillHostSafety
+    $early = Get-DrillHostSafety -JobsOnly
+    $script:free = 20GB; $at20 = Get-DrillHostSafety
+    $script:memoryFails = $true; $script:free = 64GB; $noMemory = Get-DrillHostSafety
+    $pick = { param($x) $req = Get-Prop $x 'requiredFreeBytes'
+      [ordered]@{ action = $x.action; code = $x.code; busyWith = (Get-Prop $x 'busyWith'); runnerJob = (Get-Prop $x 'runnerJob'); requiredGB = $(if ($req) { [Math]::Round($req / 1GB, 1) }) } }
+    [ordered]@{ at22 = (& $pick $at22); early = (& $pick $early); at20 = (& $pick $at20); noMemory = (& $pick $noMemory) }`);
+  assert.deepEqual(r.at22, { action: 'start', code: null, busyWith: 'WINDOWS_UNREADABLE', runnerJob: 'unknown', requiredGB: 21 });
+  assert.deepEqual([r.early.action, r.early.busyWith, r.early.runnerJob], ['start', 'WINDOWS_UNREADABLE', 'unknown'], 'the early sample does not refuse either');
+  assert.deepEqual([r.at20.action, r.at20.code, r.at20.requiredGB], ['refuse', 'DRILL_HOST_MEMORY_SHORT', 21]);
+  assert.deepEqual([r.noMemory.action, r.noMemory.code], ['refuse', 'DRILL_HOST_RESOURCE_UNREADABLE']);
+});
+
 // The same ruling: a timed guest step that ran out while the boot had a runner job beside it is classed "suspected host contention"
 // (rerun at another time before concluding anything), never a package defect; without a job at boot, or another failure, no class.
 test('a timed step that timed out with a runner job at boot is classed suspected host contention', opts, () => {
-  const r = ps(`[ordered]@{
-    stepTimeoutBusy = (Get-DrillHostContention @{ code = 'DRILL_GUEST_STEP_TIMEOUT' } $null $true)
-    firstInstallTimeoutBusy = (Get-DrillHostContention @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT' } $null $true)
-    innerTimeoutBusy = (Get-DrillHostContention $null @{ steps = @(@{ name = 'stage'; result = 'ok'; rejectCode = $null }, @{ name = 'wait-resident'; result = 'failed'; rejectCode = 'RESIDENT_QUIET_TIMEOUT' }) } $true)
-    stopTimeoutBusy = (Get-DrillHostContention $null @{ steps = @(); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'LAUNCHER_TIMEOUT' } } $true)
-    innerOtherBusy = (Get-DrillHostContention $null @{ steps = @(@{ name = 'accounts'; result = 'failed'; rejectCode = 'COMPANION_ACCOUNT_NOT_PREPARED' }) } $true)
-    stepTimeoutQuiet = (Get-DrillHostContention @{ code = 'DRILL_GUEST_STEP_TIMEOUT' } $null $false)
-    otherBusy = (Get-DrillHostContention @{ code = 'DRILL_HOST_MEMORY_SHORT' } $null $true)
-    noneBusy = (Get-DrillHostContention $null $null $true) }`);
-  assert.equal(r.stepTimeoutBusy, 'SUSPECTED_HOST_CONTENTION');
-  assert.equal(r.firstInstallTimeoutBusy, 'SUSPECTED_HOST_CONTENTION');
-  assert.equal(r.innerTimeoutBusy, 'SUSPECTED_HOST_CONTENTION');
-  assert.equal(r.stopTimeoutBusy, 'SUSPECTED_HOST_CONTENTION');
-  for (const k of ['stepTimeoutQuiet', 'otherBusy', 'noneBusy', 'innerOtherBusy']) assert.equal(r[k], null, k);
+  const r = ps(`
+    $steps = { param($code, $name = 'facts') @{ steps = @(@{ name = 'stage'; result = 'ok'; rejectCode = $null }, @{ name = $name; result = 'failed'; rejectCode = $code }) } }
+    [ordered]@{
+    guestStep = (Get-DrillHostContention @{ code = 'DRILL_GUEST_STEP_TIMEOUT'; detail = @{ step = 'guest-shutdown-timer'; minutes = 1 } } $null $true)
+    firstInstall = (Get-DrillHostContention @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install'; minutes = 240 } } $null $true)
+    prereq = (Get-DrillHostContention @{ code = 'DRILL_PREREQ_TIMEOUT'; detail = @{ step = 'prereq'; minutes = 40 } } $null $true)
+    packageStep = (Get-DrillHostContention $null (& $steps 'FACTS_CHECK_TIMEOUT') $true)
+    packageRootRun = (Get-DrillHostContention $null (& $steps 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' 'launcher') $true)
+    runDeadline = (Get-DrillHostContention @{ code = 'DRILL_RUN_TIMEOUT'; deadline = 'x' } $null $true)
+    operator = (Get-DrillHostContention @{ code = 'DRILL_INTERACTIVE_TIMEOUT' } $null $true)
+    guestNotReady = (Get-DrillHostContention @{ code = 'DRILL_GUEST_NOT_READY_IN_TIME' } $null $true)
+    packageFaultThenDeadline = (Get-DrillHostContention @{ code = 'DRILL_RUN_TIMEOUT' } (& $steps 'COMPANION_ACCOUNT_NOT_PREPARED' 'accounts') $true)
+    packageFaultThenGuestTimeout = (Get-DrillHostContention @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install' } } (& $steps 'COMPANION_ACCOUNT_NOT_PREPARED' 'accounts') $true)
+    substringOnly = (Get-DrillHostContention @{ code = 'DRILL_SOMETHING_TIMEOUT' } (& $steps 'RESIDENT_QUIET_TIMEOUT') $true)
+    stopCodeOnly = (Get-DrillHostContention $null @{ steps = @(); verdict = @{ status = 'FIRST_INSTALL_STOPPED'; stopCode = 'LAUNCHER_TIMEOUT' } } $true)
+    noConfirmedJob = (Get-DrillHostContention @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install' } } $null $false)
+    otherFailure = (Get-DrillHostContention @{ code = 'DRILL_HOST_MEMORY_SHORT' } $null $true)
+    nothing = (Get-DrillHostContention $null $null $true) }`);
+  const hit = (step, code) => ({ class: 'SUSPECTED_HOST_CONTENTION', step, code });
+  assert.deepEqual(r.guestStep, hit('guest-shutdown-timer', 'DRILL_GUEST_STEP_TIMEOUT'));
+  assert.deepEqual(r.firstInstall, hit('first-install', 'DRILL_FIRST_INSTALL_TIMEOUT'));
+  assert.deepEqual(r.prereq, hit('prereq', 'DRILL_PREREQ_TIMEOUT'));
+  assert.deepEqual(r.packageStep, hit('facts', 'FACTS_CHECK_TIMEOUT'));
+  assert.deepEqual(r.packageRootRun, hit('launcher', 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED'));
+  for (const k of ['runDeadline', 'operator', 'guestNotReady', 'packageFaultThenDeadline', 'packageFaultThenGuestTimeout', 'substringOnly',
+    'stopCodeOnly', 'noConfirmedJob', 'otherFailure', 'nothing']) assert.equal(r[k], null, k);
 });
 
 // The receipt keeps what the 6 GB is to be recalibrated from: free before boot and the tier, free once the guest is up (the running
@@ -1818,10 +1853,15 @@ test('the receipt memory record: before boot, the tier, after boot and the lowes
     $state = [hashtable]::Synchronized(@{ afterBootFreeGB = $null; minRunningFreeGB = $null })
     foreach ($g in @(12.5, 9.1, 10.4)) { Add-DrillRunningMemory $state @{ freeGB = $g } }
     Add-DrillRunningMemory $state @{ freeGB = $null }
-    $pre = @{ bootGate = [ordered]@{ freeGB = 23.4; runnerJob = $true; busyWith = 'WSL_ACTIONS_RUNNER_JOB'; requiredFreeGB = 21 } }
-    Get-DrillHostMemoryEvidence $pre ([ordered]@{ afterBootFreeGB = $state.afterBootFreeGB; minRunningFreeGB = $state.minRunningFreeGB }) @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT' } $null`);
-  assert.deepEqual(r, { beforeBootFreeGB: 23.4, runnerJobAtBoot: true, runnerJobBefore: 'WSL_ACTIONS_RUNNER_JOB', requiredFreeGB: 21,
-    afterBootFreeGB: 12.5, minRunningFreeGB: 9.1, contention: 'SUSPECTED_HOST_CONTENTION' });
+    $running = [ordered]@{ afterBootFreeGB = $state.afterBootFreeGB; minRunningFreeGB = $state.minRunningFreeGB }
+    $timeout = @{ code = 'DRILL_FIRST_INSTALL_TIMEOUT'; detail = @{ step = 'first-install'; minutes = 240 } }
+    $yes = @{ bootGate = [ordered]@{ freeGB = 23.4; runnerJob = 'yes'; busyWith = 'WSL_ACTIONS_RUNNER_JOB'; requiredFreeGB = 21 } }
+    $unknown = @{ bootGate = [ordered]@{ freeGB = 22.1; runnerJob = 'unknown'; busyWith = 'WSL_UNREADABLE'; requiredFreeGB = 21 } }
+    [ordered]@{ yes = (Get-DrillHostMemoryEvidence $yes $running $timeout $null); unknown = (Get-DrillHostMemoryEvidence $unknown $running $timeout $null) }`);
+  assert.deepEqual(r.yes, { beforeBootFreeGB: 23.4, runnerJobAtBoot: true, runnerJobAtBootState: 'yes', runnerJobBefore: 'WSL_ACTIONS_RUNNER_JOB', requiredFreeGB: 21,
+    afterBootFreeGB: 12.5, minRunningFreeGB: 9.1, contention: { class: 'SUSPECTED_HOST_CONTENTION', step: 'first-install', code: 'DRILL_FIRST_INSTALL_TIMEOUT' } });
+  // Codex review of f9ab1bb26, medium 2: a job query that failed is the high tier, but not a job at boot, and no contention by itself
+  assert.deepEqual([r.unknown.runnerJobAtBoot, r.unknown.runnerJobAtBootState, r.unknown.requiredFreeGB, r.unknown.contention], [false, 'unknown', 21, null]);
 });
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,
@@ -2239,12 +2279,12 @@ test('from the real entry: a runner busy from the start skips the release and bo
   assert.ok(ok.events.includes('boot'), ok.events.join(','));
   assert.ok(!ok.events.some(e => e.startsWith('wsl-release')), 'no release with a job running');
   const pre = ok.out.hostPreBoot;
-  assert.deepEqual([pre.early.ok, pre.early.busyWith, pre.early.runnerJob], [true, 'WSL_ACTIONS_RUNNER_JOB', true]);
+  assert.deepEqual([pre.early.ok, pre.early.busyWith, pre.early.runnerJob], [true, 'WSL_ACTIONS_RUNNER_JOB', 'yes']);
   assert.deepEqual(pre.release.skipped, { where: 'early', reason: 'WSL_ACTIONS_RUNNER_JOB' });
-  assert.deepEqual([pre.bootGate.ok, pre.bootGate.runnerJob, pre.bootGate.freeGB, pre.bootGate.requiredFreeGB], [true, true, 24, 21]);
+  assert.deepEqual([pre.bootGate.ok, pre.bootGate.runnerJob, pre.bootGate.freeGB, pre.bootGate.requiredFreeGB], [true, 'yes', 24, 21]);
   const short = run(18);
   assert.equal(short.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(short.out));
-  assert.deepEqual([short.out.hostPreBoot.bootGate.runnerJob, short.out.hostPreBoot.bootGate.requiredFreeGB], [true, 21]);
+  assert.deepEqual([short.out.hostPreBoot.bootGate.runnerJob, short.out.hostPreBoot.bootGate.requiredFreeGB], ['yes', 21]);
   assert.ok(!short.events.includes('boot'));
 });
 

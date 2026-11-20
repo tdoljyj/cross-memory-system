@@ -188,14 +188,23 @@ function Test-DrillHostRunnerJob([string[]]$ProcessNames) {
   return @($ProcessNames | Where-Object { $_ -ieq 'Runner.Worker' }).Count -gt 0
 }
 
-# Both sides (Fable renew-key ruling, supplements "WSL runner jobs" and "branch one, round four"): the Windows process list, and the runner
-# distribution's answer -- $WslJob $true (a Runner.Worker there), $false (none, or no runner distribution running), or $null (that side
-# could not be read, which refuses as well). Returns $null (no job), ACTIONS_RUNNER_JOB, WSL_ACTIONS_RUNNER_JOB or WSL_UNREADABLE.
-function Get-DrillRunnerJob([string[]]$ProcessNames, $WslJob) {
-  if (Test-DrillHostRunnerJob $ProcessNames) { return 'ACTIONS_RUNNER_JOB' }
-  if ($null -eq $WslJob) { return 'WSL_UNREADABLE' }
+# Both sides (Fable renew-key ruling, supplements "WSL runner jobs" and "branch one, round four"): the Windows process list ($null: it could
+# not be read), and the runner distribution's answer -- $WslJob $true (a Runner.Worker there), $false (none, or no runner distribution
+# running), or $null (that side could not be read). A job confirmed on either side comes first: ACTIONS_RUNNER_JOB, WSL_ACTIONS_RUNNER_JOB;
+# then a side that could not be read: WINDOWS_UNREADABLE, WSL_UNREADABLE; $null only when both sides were read and neither has a job.
+# None of these refuses the boot (supplement "drill boot gate and the train both want DESK"): any but $null selects the high memory tier.
+function Get-DrillRunnerJob($ProcessNames, $WslJob) {
+  if ($null -ne $ProcessNames -and (Test-DrillHostRunnerJob $ProcessNames)) { return 'ACTIONS_RUNNER_JOB' }
   if ($WslJob -eq $true) { return 'WSL_ACTIONS_RUNNER_JOB' }
+  if ($null -eq $ProcessNames) { return 'WINDOWS_UNREADABLE' }
+  if ($null -eq $WslJob) { return 'WSL_UNREADABLE' }
   return $null
+}
+# What a reading of Get-DrillRunnerJob says about a job at boot: yes (confirmed), no (both sides read, none), unknown (a side not read).
+function Get-DrillRunnerJobState($BusyWith) {
+  if ($null -eq $BusyWith) { return 'no' }
+  if ([string]$BusyWith -cin @('ACTIONS_RUNNER_JOB', 'WSL_ACTIONS_RUNNER_JOB')) { return 'yes' }
+  return 'unknown'
 }
 
 function ConvertTo-DrillTimestamp($Value) {
@@ -221,7 +230,7 @@ function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
 # A drill hold leaves the parked stage-8 tries and revoke-only train maintenance on the Windows side.
 function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
   [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
-  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [string[]]$ProcessNames = @(), $WslJob = $false) {
+  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, $ProcessNames = @(), $WslJob = $false) {
   # Before boot only: a runner job on either side (or a side that could not be read) selects the boot gate's high memory tier; it refuses
   # nothing by itself (Fable renew-key ruling, supplement "drill boot gate and the train both want DESK"). A job picked up after the boot
   # is left to the running memory gate, as before.
@@ -297,7 +306,7 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
       }
     }
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
-  return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; runnerJob = $(if ($Running) { $null } else { $null -ne $busyWith });
+  return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; runnerJob = $(if ($Running) { $null } else { Get-DrillRunnerJobState $busyWith });
     mode = $mode; holdSince = $since; holdUntil = $until;
     freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes;
     executorObservation = $executorObservation; observedAt = $Now.ToUniversalTime().ToString('o');
@@ -1182,24 +1191,41 @@ function New-DrillFakeCredentials {
   return $public
 }
 
-# Fable renew-key ruling, supplement "drill boot gate and the train both want DESK": a timed guest step that ran out while a runner job
-# was beside the boot is "suspected host contention" -- rerun at another time before concluding anything, never fixed as a package defect.
-# The run's own timeout codes (*_TIMEOUT) and a first-install step or verdict whose code says TIMEOUT; anything else, or no job at boot: none.
+# Fable renew-key ruling, supplement "drill boot gate and the train both want DESK": a timed step in the guest that ran out while a runner
+# job was confirmed beside the boot is "suspected host contention" -- rerun at another time before concluding anything, never fixed as a
+# package defect. Named codes only, never a substring (Codex review of f9ab1bb26, medium 3):
+#   the guest steps Invoke-DrillGuest bounds (each with its step name in the detail);
+$script:DrillGuestTimedStepCodes = @('DRILL_GUEST_STEP_TIMEOUT', 'DRILL_PREREQ_TIMEOUT', 'DRILL_FIRST_INSTALL_TIMEOUT', 'DRILL_REINSTALL_TIMEOUT')
+#   the package's own bounded steps inside the first install, as its step record names them (windows/first-install-host.ps1 Invoke-Native,
+#   Get-SecretFingerprint, the facts check; the launcher's root runs; continue-install.ps1's registrar).
+$script:DrillPackageTimedStepCodes = @('COMMAND_TIMEOUT_NOTHING_KILLED', 'SECRET_FINGERPRINT_TIMEOUT', 'FACTS_CHECK_TIMEOUT',
+  'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED', 'REGISTRAR_TIMEOUT')
+# Not: the whole run's deadline (DRILL_RUN_TIMEOUT), waiting for the operator (DRILL_INTERACTIVE_TIMEOUT), the guest not coming up, nor a
+# job query that failed (unknown is not a job). The first-install step that was refused first decides when there is one: a package fault
+# that came before a later deadline is that fault. Returns @{ class; step; code } or $null.
 function Get-DrillHostContention($Failure, $FirstInstallSteps, $RunnerJobAtBoot) {
   if ($RunnerJobAtBoot -ne $true) { return $null }
-  $codes = @([string](Get-Prop $Failure 'code'), [string](Get-Prop $FirstInstallSteps 'verdict.stopCode'))
-  $codes += @(@(Get-Prop $FirstInstallSteps 'steps') | Where-Object { $null -ne $_ } | ForEach-Object { [string](Get-Prop $_ 'rejectCode') })
-  if (@($codes | Where-Object { $_ -cmatch 'TIMEOUT' }).Count) { return 'SUSPECTED_HOST_CONTENTION' }
+  $rejected = @(@(Get-Prop $FirstInstallSteps 'steps') | Where-Object { $null -ne $_ -and $null -ne (Get-Prop $_ 'rejectCode') }) | Select-Object -First 1
+  if ($rejected) {
+    $code = [string](Get-Prop $rejected 'rejectCode')
+    if ($script:DrillPackageTimedStepCodes -ccontains $code) { return [ordered]@{ class = 'SUSPECTED_HOST_CONTENTION'; step = [string](Get-Prop $rejected 'name'); code = $code } }
+    return $null
+  }
+  $code = [string](Get-Prop $Failure 'code')
+  if ($script:DrillGuestTimedStepCodes -ccontains $code) { return [ordered]@{ class = 'SUSPECTED_HOST_CONTENTION'; step = (Get-Prop $Failure 'detail.step'); code = $code } }
   return $null
 }
 
-# The receipt's memory record: free before boot (the boot gate's reading), whether a runner job was there and the tier it required, free
-# once the guest was up and the lowest while running, and the contention class.
+# The receipt's memory record: free before boot (the boot gate's reading), the job at boot -- runnerJobAtBoot true only for a confirmed job,
+# runnerJobAtBootState yes, no or unknown (a side not read: the high tier, but no job) -- and the tier it required, free once the guest was
+# up and the lowest while running, and the contention class.
 function Get-DrillHostMemoryEvidence($PreBoot, $RunningMemory, $Failure, $FirstInstallSteps) {
-  $job = Get-Prop $PreBoot 'bootGate.runnerJob'
-  [ordered]@{ beforeBootFreeGB = (Get-Prop $PreBoot 'bootGate.freeGB'); runnerJobAtBoot = $job; runnerJobBefore = (Get-Prop $PreBoot 'bootGate.busyWith')
-    requiredFreeGB = (Get-Prop $PreBoot 'bootGate.requiredFreeGB'); afterBootFreeGB = (Get-Prop $RunningMemory 'afterBootFreeGB')
-    minRunningFreeGB = (Get-Prop $RunningMemory 'minRunningFreeGB'); contention = (Get-DrillHostContention $Failure $FirstInstallSteps $job) }
+  $state = Get-Prop $PreBoot 'bootGate.runnerJob'
+  $job = [string]$state -ceq 'yes'
+  [ordered]@{ beforeBootFreeGB = (Get-Prop $PreBoot 'bootGate.freeGB'); runnerJobAtBoot = $job; runnerJobAtBootState = $state
+    runnerJobBefore = (Get-Prop $PreBoot 'bootGate.busyWith'); requiredFreeGB = (Get-Prop $PreBoot 'bootGate.requiredFreeGB')
+    afterBootFreeGB = (Get-Prop $RunningMemory 'afterBootFreeGB'); minRunningFreeGB = (Get-Prop $RunningMemory 'minRunningFreeGB')
+    contention = (Get-DrillHostContention $Failure $FirstInstallSteps $job) }
 }
 
 # ---------------------------------------------------------------- Hyper-V side (needs the host; not unit-tested)
@@ -1227,9 +1253,12 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     $target = $script:Drill.MemoryBytes
     $assigned = 0L
     # both sides' processes first, memory after: the reading a boot rests on is the latest one (Codex review of 74e7a65e7, high 2)
-    $processes = @(); $wsl = @{ ok = $true; running = @(); jobs = @(); reason = $null }
+    $processes = @(); $wsl = @{ ok = $true; running = @(); jobs = @(); reason = $null }; $windowsUnreadable = $null
     if (-not $Running) {
-      $processes = @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName })
+      # a Windows process list that cannot be read is a job query that failed, as on the WSL side: the high tier, never a refusal by itself
+      # (Codex review of f9ab1bb26, medium 1); memory and the VM are still read, and their failures still refuse below
+      try { $processes = @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName }) }
+      catch { $processes = $null; $windowsUnreadable = (Get-DrillCode $_).detail }
       $wsl = Get-DrillWslRunnerState
     }
     if (-not $JobsOnly) {
@@ -1250,6 +1279,7 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     $safety.wslRunnerDistributions = $wsl.running
     $safety.wslJobs = $wsl.jobs
     $safety.wslUnreadable = $wsl.reason
+    $safety.windowsUnreadable = $windowsUnreadable
   } catch {
     $c = Get-DrillCode $_
     $safety = @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
@@ -1275,12 +1305,14 @@ function ConvertTo-DrillGateTrace($Safety) {
   [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); ok = [bool](Get-Prop $Safety 'ok'); code = (Get-Prop $Safety 'code'); busyWith = (Get-Prop $Safety 'busyWith')
     runnerJob = (Get-Prop $Safety 'runnerJob'); requiredFreeGB = $(if ($null -ne $required) { [Math]::Round([long]$required / 1GB, 1) } else { $null })
     freeGB = (Get-Prop $Safety 'freeGB'); wslRunning = @(Get-Prop $Safety 'wslRunnerDistributions'); wslJobs = @(Get-Prop $Safety 'wslJobs')
-    wslUnreadable = (Get-Prop $Safety 'wslUnreadable') }
+    wslUnreadable = (Get-Prop $Safety 'wslUnreadable'); windowsUnreadable = (Get-Prop $Safety 'windowsUnreadable') }
 }
 
 # Fable renew-key ruling, supplements "WSL runner jobs" item 3 and "WSL gate race" item 3: before every boot, three stages, each sampling for
-# itself -- the early refusal (here), the release (here), the boot gate (Start-DrillGuardedVm: both sides again, memory once, the boot).
-# Each is kept in $script:DrillPreBoot for the receipt. A release skipped for a job it found is no failure: the boot gate refuses on it.
+# itself -- the early sample (here: the duty and the hold refuse; the jobs are sampled, never refused on), the release (here, only when
+# neither side has a job or an unread side), the boot gate (Start-DrillGuardedVm: both sides again, the memory tier they select, memory
+# once, the boot). Each is kept in $script:DrillPreBoot for the receipt. A release skipped for a job is no failure: the boot gate's high
+# tier judges what is free.
 function Invoke-DrillPreBootRelease([DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
   $script:DrillPreBoot = [ordered]@{ early = $null; release = $null; bootGate = $null }
   $early = Get-DrillHostSafety -HoldUntil $HoldUntil -JobsOnly
@@ -1380,7 +1412,7 @@ function ConvertFrom-DrillWslRunningList($Result, [string[]]$Registered) {
 # The probe's closed table (Fable renew-key ruling, supplement "branch one, round four", item 1): `pgrep -ix Runner[.]Worker` in the
 # distribution, the exact name in any case, as on the Windows side. Its stdout is never read.
 #   exit 0, nothing on stderr -> JOB       exit 1, nothing on stderr -> NO_JOB
-#   anything else -- another exit, anything on stderr, a time out (Invoke-DrillProcess throws) -> the query failed: the boot is refused
+#   anything else -- another exit, anything on stderr, a time out (Invoke-DrillProcess throws) -> the query failed: the high memory tier
 function Get-DrillWslJobVerdict($Result) {
   $exit = Get-DrillField $Result 'exit'; $err = Get-DrillField $Result 'stderr'
   if ($null -ne $err -and ([string]$err).Length -ne 0) { throw (New-DrillError 'WSL_PROCESS_QUERY_FAILED' 'stderr') }
@@ -1390,7 +1422,7 @@ function Get-DrillWslJobVerdict($Result) {
 }
 
 # Read-only. A distribution that is not running is "no job" without any command against it: a command would start it.
-# Returns @{ ok; distributions; running; jobs; reason }: ok false (reason set) when any step fails; the caller refuses the boot.
+# Returns @{ ok; distributions; running; jobs; reason }: ok false (reason set) when any step fails; the caller takes the high memory tier.
 function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
   $state = @{ ok = $false; distributions = @(); running = @(); jobs = @(); reason = 'NODE_PROFILES_UNREADABLE' }
   try {
@@ -1434,7 +1466,7 @@ function Assert-DrillWslReleaseCommandLiteral {
 # item 2): after the early refusal, for each of this host's runner distributions, right before it and taken from no earlier sample: the
 # running list read again (a distribution that is not running gets no command: it would start it), then the Windows side read again (a
 # job there stops the release), then the release command (DrillWslReleaseCommand), which decides inside the distribution. Its exit alone:
-# 0 released; 3 a job, skipped -- not a failure, the boot gate refuses on the same job; anything else a failed release, recorded, which
+# 0 released; 3 a job, skipped -- not a failure, the boot gate takes the high tier on the same job; anything else a failed release, recorded, which
 # does not stop the drill (the boot gate judges what is free). Under a test marker without an injected runner nothing is executed
 # (Invoke-DrillWsl refuses), which is recorded as a failed release.
 function Invoke-DrillWslCacheRelease([string]$HostName = $env:COMPUTERNAME) {

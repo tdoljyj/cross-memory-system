@@ -112,14 +112,17 @@ Step 'residue' (@('SERVICE:A', 'SERVICE:B') | Where-Object { $_ })
 Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
   assert.equal(steps.status, 0, steps.out);
   const parsed = steps.lines.map(l => JSON.parse(l));
-  assert.deepEqual(parsed.slice(0, 3), [{ step: 'residue', result: 'none' }, { step: 'stage', result: 'C:\\Windows\\Temp\\clued-p1-0123' },
-    { step: 'residue', result: ['SERVICE:A', 'SERVICE:B'] }], steps.out);
-  assert.match(parsed[3].result, /DirectoryInfo/, steps.out);
+  const ok = (name, detail) => ({ name, result: 'ok', rejectCode: null, detail });
+  assert.deepEqual(parsed.slice(0, 3), [ok('residue', 'none'), ok('stage', 'C:\\Windows\\Temp\\clued-p1-0123'), ok('residue', ['SERVICE:A', 'SERVICE:B'])], steps.out);
+  assert.match(parsed[3].detail, /DirectoryInfo/, steps.out);
 
-  const refused = hostScriptLines(`Stop-Host 'INPUT_MISSING' ([ordered]@{ path = (Join-Path 'C:\\drill\\from' 'x.tar'); found = @(Split-Path -Parent 'C:\\a\\b') })`);
+  const refused = hostScriptLines(`Enter-Step 'stage'\nStop-Host 'INPUT_MISSING' ([ordered]@{ path = (Join-Path 'C:\\drill\\from' 'x.tar'); found = @(Split-Path -Parent 'C:\\a\\b') })`);
   assert.equal(refused.status, 1, refused.out);
   assert.deepEqual(JSON.parse(refused.lines.at(-1)),
     { status: 'FIRST_INSTALL_HOST_REFUSED', code: 'INPUT_MISSING', detail: { path: 'C:\\drill\\from\\x.tar', found: ['C:\\a'] } }, refused.out);
+  // the step it ended, in the step-line shape, just before the verdict
+  assert.deepEqual(JSON.parse(refused.lines.at(-2)),
+    { name: 'stage', result: 'failed', rejectCode: 'INPUT_MISSING', detail: null }, refused.out);   // the detail only once: in the verdict
 
   // a refusal whose detail is not plain data is still one line and exit 1, refused by name with the code it was refusing
   const notPlain = hostScriptLines(`Stop-Host 'INPUT_MISSING' (Get-Item -LiteralPath $env:SystemRoot)`);
@@ -140,16 +143,72 @@ Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
   const fine = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Join-Path $FirstDir 'facts.json') })`);
   assert.equal(fine.status, 0, fine.out);
   assert.equal(JSON.parse(fine.lines.at(-1)).status, 'FIRST_INSTALL_HOST_READY', fine.out);
-  const restart = entry(`ConvertTo-JsonLine ([ordered]@{ status = 'RESTART_THEN_RUN_THE_SAME_COMMAND'; why = 'WSL installed' }); exit 3`);
+  // "heartbeat token and restart code" 2: the restart verdict says which install step asked for it and the installer's own exit code
+  const restart = entry(`Enter-Step 'tools'; Exit-Restart 'gh installed' @([ordered]@{ installer = 'msiexec /i gh_2.103.3_windows_amd64.msi'; exit = 3010 })`);
   assert.equal(restart.status, 3, restart.out);
-  const other = entry(`throw 'something else said OUTPUT_NOT_PLAIN_DATA:$.x:System.Object'`);
+  assert.deepEqual(restart.lines.slice(-2).map(l => JSON.parse(l)), [{ name: 'tools', result: 'failed', rejectCode: 'RESTART_THEN_RUN_THE_SAME_COMMAND', detail: null },
+    { status: 'RESTART_THEN_RUN_THE_SAME_COMMAND', why: 'gh installed', step: 'tools', installers: [{ installer: 'msiexec /i gh_2.103.3_windows_amd64.msi', exit: 3010 }] }], restart.out);
+  const hostText = fs.readFileSync(path.join(RES, 'windows', 'first-install-host.ps1'), 'utf8');
+  const restarts = [...hostText.slice(hostText.indexOf('function Invoke-HostPreparation')).matchAll(/Exit-Restart [^\r\n]*/g)].map(m => m[0]);
+  assert.equal(restarts.length, 3, restarts.join('\n'));
+  for (const r of restarts) assert.match(r, /Exit-Restart '[^']*'.* @\(|Exit-Restart \([^)]*\) @\(|Exit-Restart '[^']*' \$restarts/, `every restart names its installer and exit: ${r}`);
+  // a step that ends, then a refusal in the next: one ok line, one failed line, the verdict
+  const two = entry(`Enter-Step 'v1-base'; Step 'v1-base' 'present'; Enter-Step 'wsl'; Stop-Host 'WSL_MSI_FAILED' ([ordered]@{ exit = 1603; stderr = '' })`);
+  assert.equal(two.status, 1, two.out);
+  assert.deepEqual(two.lines.map(l => JSON.parse(l)), [{ name: 'v1-base', result: 'ok', rejectCode: null, detail: 'present' },
+    { name: 'wsl', result: 'failed', rejectCode: 'WSL_MSI_FAILED', detail: null },
+    { status: 'FIRST_INSTALL_HOST_REFUSED', code: 'WSL_MSI_FAILED', detail: { exit: 1603, stderr: '' } }], two.out);
+  const other = entry(`Enter-Step 'linux'; throw 'something else said OUTPUT_NOT_PLAIN_DATA:$.x:System.Object'`);
   assert.notEqual(other.status, 0, other.out);
   assert.ok(!other.lines.some(l => l.includes('HOST_OUTPUT_NOT_PLAIN_DATA')), other.out);
   assert.match(other.out, /something else said/);
+  const failed = JSON.parse(other.lines.at(-1));
+  assert.deepEqual(failed, { name: 'linux', result: 'failed', rejectCode: null, detail: null }, other.out);
 
   // the READY verdict's shape: facts is Join-Path's output
   const ready = hostScriptLines(`ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = (Join-Path $FirstDir 'facts.json'); node = 'desk-w-591' })`);
   assert.equal(ready.status, 0, ready.out);
   assert.deepEqual(JSON.parse(ready.lines.at(-1)),
     { status: 'FIRST_INSTALL_HOST_READY', facts: 'C:\\ProgramData\\CluedIndependentCI\\first-install\\facts.json', node: 'desk-w-591' }, ready.out);
+});
+
+// The step lines of the three stages of a first install have one shape (Fable ruling 11-19 renew-key, 2.3): {name, result: ok|failed,
+// rejectCode, detail}. The host preparation's are checked above; here rollout/fleet/bootstrap.ps1 (the entry) and the launcher template,
+// each under Windows PowerShell 5.1 with its real functions.
+function psLines(command) {
+  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(`$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n${command}`, 'utf16le').toString('base64')],
+    { cwd: RES, env: childEnv(), encoding: 'utf8', maxBuffer: 1 << 24, windowsHide: true, timeout: 300_000 });
+  assert.ifError(r.error);
+  return { status: r.status, lines: String(r.stdout ?? '').split(/\r?\n/).filter(l => l.trim()), out: `${tail(r.stdout)}\n${tail(r.stderr, 3000)}` };
+}
+test('bootstrap.ps1 and the launcher print their step lines in the host preparation\'s shape', { skip, timeout: 900_000 }, () => {
+  const BOOT = path.join(RES, 'rollout', 'fleet', 'bootstrap.ps1');
+  const entry = psLines(`. ${psLiteral(BOOT)}\nOut-Step 'assets' 'ok' $null @('SHA256SUMS')\nStop-Bootstrap 'prereq' 'PREREQ_NOT_PINNED' @('PREREQ_NOT_PINNED:git')`);
+  assert.equal(entry.status, 1, entry.out);
+  const [okLine, failedLine, verdict] = entry.lines.map(l => JSON.parse(l));
+  assert.deepEqual(okLine, { name: 'assets', result: 'ok', rejectCode: null, detail: ['SHA256SUMS'] }, entry.out);
+  assert.deepEqual(failedLine, { name: 'prereq', result: 'failed', rejectCode: 'PREREQ_NOT_PINNED', detail: null }, entry.out);
+  assert.deepEqual([verdict.status, verdict.step, verdict.code], ['BOOTSTRAP_REFUSED', 'prereq', 'PREREQ_NOT_PINNED'], entry.out);
+  // every step the entry can refuse also prints its ok line when it ends
+  const text = fs.readFileSync(BOOT, 'utf8');
+  const main = text.slice(text.indexOf('function Invoke-Bootstrap'));
+  const refused = [...new Set([...main.matchAll(/Stop-Bootstrap '([a-z-]+)'/g)].map(m => m[1]))];
+  assert.ok(refused.length >= 7, refused.join(','));
+  for (const s of refused) assert.match(main, new RegExp(`Out-Step '${s}' (?:'ok'|\\$\\(if)`), `bootstrap step ${s} prints its line when it ends`);
+
+  const TPL = path.join(RES, 'reinstall', 'launcher', 'template.ps1');
+  const launcher = psLines(`$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(TPL)}, [ref]$tokens, [ref]$errors)
+$f = @($ast.FindAll({ param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq 'Write-StepLine' }, $true))
+. ([scriptblock]::Create($f[0].Extent.Text))
+$r = & { Write-StepLine 'install' 'ok' $null $null; 'the function value' }
+Write-StepLine 'launcher' 'failed' 'INSTALL_NOT_COMPLETED' ([ordered]@{ exit = 1 })
+'returned: ' + (@($r) -join '|')`);
+  assert.equal(launcher.status, 0, launcher.out);
+  assert.deepEqual(launcher.lines.slice(0, 2).map(l => JSON.parse(l)), [{ name: 'install', result: 'ok', rejectCode: null, detail: null },
+    { name: 'launcher', result: 'failed', rejectCode: 'INSTALL_NOT_COMPLETED', detail: { exit: 1 } }], launcher.out);
+  assert.equal(launcher.lines.at(-1), 'returned: the function value', 'a step line never becomes part of a function\'s value');
+  const tpl = fs.readFileSync(TPL, 'utf8');
+  assert.match(tpl, /\$Done\.add_CollectionChanged\(\{[\s\S]{0,600}name = \[string\]\$step; result = 'ok'; rejectCode = \$null; detail = \$lineDetail/, 'every completed launcher step prints its line');
+  assert.match(tpl, /function Stop-Launch\(\[string\]\$code, \$detail\) \{\r?\n  if \(Test-Path -LiteralPath 'function:Write-StepLine'\) \{ Write-StepLine 'launcher' 'failed' \$code \$null \}/, 'a stop prints its line first (its detail is the terminal\'s)');
 });

@@ -197,7 +197,8 @@ test('the drill\'s fake credential file names are all in the package\'s fixed li
   const names = [...Object.values(data.required), ...Object.values(data.optional)];
   assert.ok(names.includes('companion-github.token'), names.join(','));
   const entry = fs.readFileSync(path.join(RES, 'drill', 'first-install-entry.ps1'), 'utf8');
-  const pairs = /foreach \(\$pair in @\((.*)\)\) \{/.exec(entry)?.[1] ?? '';   // the fake inputs copied to the package's names
+  // the fake inputs copied to the package's names: the list may run over several lines (drill-judgement wraps it), so the match spans them
+  const pairs = /foreach \(\$pair in @\(([\s\S]*?)\)\) \{/.exec(entry)?.[1] ?? '';
   const given = [...pairs.matchAll(/@\('[^']+', '([^']+)'\)/g)].map(m => m[1]).concat([...entry.matchAll(/Join-Path \$inputCredentials '([^']+)'/g)].map(m => m[1]));
   assert.ok(given.length >= 4, given.join(','));
   for (const g of given) assert.ok(names.includes(g), `the drill writes ${g}, which the package does not read (${names.join(', ')})`);
