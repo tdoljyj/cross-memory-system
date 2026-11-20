@@ -22,11 +22,18 @@
                    a CluedResident-Linux registered to the companion account (its hive read elevated; not readable is refused as
                    COMPANION_WSL_REGISTRATIONS_UNREADABLE, never taken as none) (M5). A node with a resident is reinstalled
                    (prepare finds its install receipt); leftovers of an uninstalled one are removed by a person first;
+    execution-policy-baseline  (not with -Reset) the first write: LocalMachine's execution policy RemoteSigned when it is Undefined,
+                   Restricted or AllSigned (RemoteSigned, Unrestricted, Bypass kept), the value the frozen Source runs under on every
+                   node (Get-ExecutionPolicyBaseline); every scope before and after in the detail; then a probe started as
+                   held-record.mjs starts its PowerShell must run (HOST_EXECUTION_POLICY_NOT_EFFECTIVE). Never put back by an uninstall;
     stage          a new admin-only directory under C:\Windows\Temp: the prerequisite manifest held to the sha256 the bootstrap pinned,
                    every prerequisite this step uses (node, rootfs, runner, the Linux toolchain node, the WSL package, the .debs)
                    copied in and held to the manifest's sha256 and size;
     v1-base        what the installer needs from Windows itself (Get-V1BaseCodes: .NET Framework 4 csc.exe, the LocalAccounts,
                    NetSecurity and ScheduledTasks modules, secedit) and cannot be added here: refused by name when missing;
+    node-key-check the node's two identity keys (registration\export-node-registration.ps1, in the archive), read with that script's own
+                   Find-MachineKey: one of them, one not in the TPM, not valid or not readable, or none and no usable TPM, is refused
+                   (Get-NodeKeyPlan) before anything is installed;
     wsl            WSL itself at the pinned version (the manifest's wsl item): installed from the pinned MSI when `wsl --version` is
                    not that version (msiexec /i /qn /norestart), then `wsl --version` must name it (M7); a restart: exit 3;
     features       VirtualMachinePlatform (and Microsoft-Windows-Subsystem-Linux) enabled (/norestart); a needed restart:
@@ -34,6 +41,8 @@
     accounts       .\clued-control and .\clued-runner (made when absent, random password nobody knows, not administrators), the
                    companion account by the package's own windows\prepare-companion-account.ps1 (-RegistrarSha256: the archive's pin,
                    L2); clued-control's right to log on as a service, and no deny-logon-as-a-service entry for it;
+    node-key       neither key there: the packaged script's init-keys -ConfirmCreateKeys -KeyProvider tpm (non-exportable, in the TPM;
+                   never a software key), then both must be found in the TPM; both there: kept. -Reset never removes them;
     ci-root        C:\ProgramData\CluedIndependentCI and formal-spool with the baseline DACL the installer appends to, formal-spool\outgoing
                    and \incoming (the v1 one-shot table, the operator in the Owner's place), first-install\, first-install\credentials\,
                    the secrets folder (installer's Get-SecretDirectorySddl): Get-CiRootDirectories, one table;
@@ -107,6 +116,8 @@ $CompanionAccountName = 'clued-companion'
 $Wsl = 'C:\Windows\System32\wsl.exe'
 $Sc = 'C:\Windows\System32\sc.exe'
 $PowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+# Where Windows PowerShell reads the LocalMachine execution policy (value ExecutionPolicy, REG_SZ; 64-bit view): the baseline's one place
+$ExecutionPolicyKey = 'SOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell'
 $FactsContract = 'clued.independent-ci.first-install-facts/1'
 # install-resident.ps1 $SecretTargets: placed here, never passed to the installer (a reinstall finds them in place the same way)
 $SecretTargets = [ordered]@{ appKey = 'C:\ProgramData\CluedControl\trusted\controller-checks-app.pem'; ciToken = 'C:\ProgramData\CluedIndependentCI\secrets\ci-admission.token' }
@@ -193,6 +204,57 @@ function Get-ExecutionPolicyCheck($list) {
   foreach ($e in @($list)) { $scopes[[string]$e.Scope] = [string]$e.ExecutionPolicy }
   $enforced = @(@('MachinePolicy', 'UserPolicy') | Where-Object { $scopes.Contains($_) -and @('Restricted', 'AllSigned') -ccontains $scopes[$_] })
   [ordered]@{ scopes = $scopes; code = $(if ($enforced.Count) { 'HOST_EXECUTION_POLICY_ENFORCED_BY_POLICY' } else { $null }) }
+}
+# r5 (Fable 11-21 "r5 preflight gaps" section 3.2): the frozen Source starts Windows PowerShell with its own environment and no
+# -ExecutionPolicy (held-record.mjs on every stage entry, and eight more; their bytes are pinned by ciSourceManifestSha256), so the
+# machine's policy decides for them. The nodes run LocalMachine RemoteSigned, the value the Source was accepted and runs under; the host
+# preparation provides it: Undefined, Restricted and AllSigned are set to RemoteSigned; RemoteSigned, Unrestricted and Bypass are left as
+# they are; a group policy that enforces Restricted or AllSigned is refused (Get-ExecutionPolicyCheck); any other value is refused by name
+# (HOST_EXECUTION_POLICY_UNRECOGNIZED). An uninstall never puts the old value back. $list: Get-ExecutionPolicy -List.
+function Get-ExecutionPolicyBaseline($list) {
+  $c = Get-ExecutionPolicyCheck $list
+  $lm = if ($c.scopes.Contains('LocalMachine')) { [string]$c.scopes['LocalMachine'] } else { $null }
+  $action = $null; $code = $c.code
+  if (-not $code) {
+    if (@('RemoteSigned', 'Unrestricted', 'Bypass') -ccontains $lm) { $action = 'keep' }
+    elseif (@('Undefined', 'Restricted', 'AllSigned') -ccontains $lm) { $action = 'set' }
+    else { $code = 'HOST_EXECUTION_POLICY_UNRECOGNIZED' }
+  }
+  [ordered]@{ scopes = $c.scopes; localMachine = $lm; action = $action; code = $code }
+}
+# The probe that proves the baseline is started as held-record.mjs starts hold-record.ps1 (test/first-install-r5-host-prep.test.mjs reads
+# that start from held-record.mjs itself): 64-bit Windows PowerShell 5.1 by its path, the same options before the script and no
+# -ExecutionPolicy (on purpose: the frozen start has none; the structure scan, test/ps-execution-policy.test.mjs, has to list this one line
+# as its exception), only its seven variables
+# (its state temp directory in HOME, USERPROFILE, TEMP and TMP; here the probe's own directory). Whatever decides for the frozen Source
+# decides for the probe, and nothing of this elevated process (its process scope, PSExecutionPolicyPreference) reaches it.
+function Get-PolicyProbeStart([string]$powershell, [string]$probe, [string]$temp) {
+  [ordered]@{ file = $powershell; arguments = @('-NoProfile', '-NonInteractive', '-File', $probe)
+    environment = [ordered]@{ SystemRoot = 'C:\Windows'; WINDIR = 'C:\Windows'; PATH = 'C:\Windows\System32;C:\Windows'; HOME = $temp; USERPROFILE = $temp; TEMP = $temp; TMP = $temp } }
+}
+# The probe ran (exit 0, nothing on stderr: held-record.mjs takes any stderr as a failure) and printed its one line with the policy in
+# effect for it; anything else is HOST_EXECUTION_POLICY_NOT_EFFECTIVE. $run: Invoke-PolicyProbe's answer.
+function Get-PolicyProbeResult($run) {
+  $out = ([string](Get-Key $run 'stdout')).Trim()
+  if ((Get-Key $run 'timedOut') -ne $true -and (Get-Key $run 'exit') -eq 0 -and ([string](Get-Key $run 'stderr')).Trim() -ceq '' -and $out -cmatch '\ACLUED_EXECUTION_POLICY_PROBE ([A-Za-z]+)\z') {
+    return [ordered]@{ code = $null; effective = $Matches[1] }
+  }
+  [ordered]@{ code = 'HOST_EXECUTION_POLICY_NOT_EFFECTIVE'; effective = $null }
+}
+# N7 (Fable 11-21 "r5 preflight gaps" section 2.2): what the key step does with the node's two keys as Get-NodeKeyObservation found them
+# (each $null: absent, 'unreadable', or {origin, valid}; tpmUsable). Both in the TPM and valid: present (kept). Neither: create, only with a
+# usable TPM (-KeyProvider tpm: never a software key; M5 accepts only TPM keys), else HOST_TPM_NOT_USABLE. One of them
+# (HOST_NODE_KEY_INCOMPLETE), one not in the TPM (HOST_NODE_KEY_NOT_TPM), not valid (HOST_NODE_KEY_INVALID) or not readable
+# (HOST_NODE_KEY_UNREADABLE): refused; init-keys never replaces a key, and nothing here deletes one.
+function Get-NodeKeyPlan($observed) {
+  $i = Get-Key $observed 'identity'; $e = Get-Key $observed 'encryption'
+  $refuse = { param($c) [ordered]@{ action = $null; code = $c } }
+  if ($i -is [string] -or $e -is [string]) { return (& $refuse 'HOST_NODE_KEY_UNREADABLE') }
+  if ($null -eq $i -and $null -eq $e) { if ((Get-Key $observed 'tpmUsable') -eq $true) { return [ordered]@{ action = 'create'; code = $null } } else { return (& $refuse 'HOST_TPM_NOT_USABLE') } }
+  if ($null -eq $i -or $null -eq $e) { return (& $refuse 'HOST_NODE_KEY_INCOMPLETE') }
+  foreach ($k in @($i, $e)) { if ([string](Get-Key $k 'origin') -cne 'tpm') { return (& $refuse 'HOST_NODE_KEY_NOT_TPM') } }
+  foreach ($k in @($i, $e)) { if ((Get-Key $k 'valid') -ne $true) { return (& $refuse 'HOST_NODE_KEY_INVALID') } }
+  [ordered]@{ action = 'present'; code = $null }
 }
 # An existing directory's descriptor against the wanted one: owner and DACL equal ACE for ACE (order-insensitive), protected.
 function Test-SddlIs([string]$actual, [string]$want) {
@@ -816,6 +878,102 @@ function Get-ToolInstallCode([string]$tool, $run, [bool]$present, [int[]]$restar
   if (-not $present) { return ($tool + '_NOT_AT_THE_EXPECTED_PATH') }
   $null
 }
+# ---- the execution policy baseline (section 3.2; Get-ExecutionPolicyBaseline)
+# The one writer: $policy as REG_SZ ExecutionPolicy under $key in the 64-bit view of $hive, read back. The host passes LocalMachine and
+# $ExecutionPolicyKey (the 64-bit Windows PowerShell held-record.mjs starts reads that view); the tests a temporary key under HKCU.
+function Set-ExecutionPolicyValue([string]$hive, [string]$key, [string]$policy) {
+  $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]$hive, [Microsoft.Win32.RegistryView]::Registry64)
+  try {
+    $k = $base.CreateSubKey($key)
+    try { $k.SetValue('ExecutionPolicy', $policy, [Microsoft.Win32.RegistryValueKind]::String); $back = [string]$k.GetValue('ExecutionPolicy') } finally { $k.Dispose() }
+  } finally { $base.Dispose() }
+  if ($back -cne $policy) { throw ('EXECUTION_POLICY_READBACK:' + $back) }
+  $back
+}
+# The probe (Get-PolicyProbeStart): its script written next to it, started with exactly that environment, stdout and stderr read apart.
+# On timeout nothing is killed (timedOut; H1's rule).
+function Invoke-PolicyProbe($start, [int]$seconds = 120) {
+  $probe = [string]@($start.arguments)[-1]
+  [IO.File]::WriteAllText($probe, "[Console]::Out.Write('CLUED_EXECUTION_POLICY_PROBE ' + [string](Get-ExecutionPolicy))`r`n", (New-Object Text.ASCIIEncoding))
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $start.file; $psi.Arguments = ((@($start.arguments) | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true; $psi.WorkingDirectory = 'C:\Windows\System32'
+  $psi.EnvironmentVariables.Clear(); foreach ($k in @($start.environment.Keys)) { $psi.EnvironmentVariables[$k] = [string]$start.environment[$k] }
+  $p = [Diagnostics.Process]::Start($psi)
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()
+  $err = [string]$e.Result; if ($err.Length -gt 1500) { $err = $err.Substring($err.Length - 1500) }
+  [ordered]@{ exit = $p.ExitCode; stdout = [string]$o.Result; stderr = $err; timedOut = $false }
+}
+# The step: decide (Get-ExecutionPolicyBaseline), write only for 'set', list every scope again, then the probe in $probeDir (a new
+# directory the caller made and removes). Its answer is the step's detail: action, before, written, after, probe, and the refusal code.
+function Invoke-ExecutionPolicyBaseline($list, [string]$hive, [string]$key, [string]$probeDir, [string]$powershell) {
+  $b = Get-ExecutionPolicyBaseline $list
+  $r = [ordered]@{ action = $b.action; code = $b.code; before = $b.scopes; written = $null; after = $null; probe = $null }
+  if ($b.code) { return $r }
+  if ($b.action -ceq 'set') { $r.written = Set-ExecutionPolicyValue $hive $key 'RemoteSigned' }
+  $r.after = (Get-ExecutionPolicyCheck (Get-ExecutionPolicy -List)).scopes
+  $run = Invoke-PolicyProbe (Get-PolicyProbeStart $powershell (Join-Path $probeDir 'probe.ps1') $probeDir)
+  $res = Get-PolicyProbeResult $run
+  $r.probe = [ordered]@{ code = $res.code; effective = $res.effective; exit = $run.exit; timedOut = $run.timedOut; stderr = $run.stderr }
+  if ($res.code) { $r.code = $res.code }
+  $r
+}
+# ---- the node's identity keys (N7; Get-NodeKeyPlan)
+# What is on this machine, read with the packaged registration script's own Find-MachineKey: its functions and its three names taken from
+# the file by the parser (never a copy), its Fail (which exits) replaced here by one that throws; all of it local to this function. Per
+# key: $null (absent), 'unreadable' (Find-MachineKey refused: KEY_ACCESS_DENIED), or {origin, valid} (valid: the public blob is the P-256
+# key of its role); tpmUsable: the TPM provider answered a lookup. $names: other key names (the tests only). Nothing is created or opened
+# for writing.
+function Get-NodeKeyObservation([string]$registrationScript, $names = $null) {
+  Add-Type -AssemblyName System.Core
+  $tokens = $null; $errors = $null
+  $ast = [Management.Automation.Language.Parser]::ParseFile($registrationScript, [ref]$tokens, [ref]$errors)
+  if ($errors.Count) { throw 'NODE_KEY_SCRIPT_PARSE_ERRORS' }
+  foreach ($wanted in @('ConvertTo-Base64Url', 'ConvertFrom-EccPublicBlob', 'Get-Providers', 'Find-MachineKey')) {
+    $found = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq $wanted }, $true))
+    if ($found.Count -ne 1) { throw ('NODE_KEY_SCRIPT_FUNCTION_NOT_ONE:' + $wanted) }
+    . ([scriptblock]::Create($found[0].Extent.Text))
+  }
+  foreach ($wanted in @('KeyNames', 'TpmProviderName', 'Magic')) {
+    $found = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] -and $x.Left.Extent.Text -ceq ('$' + $wanted) }, $false))
+    if ($found.Count -ne 1) { throw ('NODE_KEY_SCRIPT_ASSIGNMENT_NOT_ONE:' + $wanted) }
+    . ([scriptblock]::Create($found[0].Extent.Text))
+  }
+  function Fail([string]$Code, [string]$Detail) { throw ($Code + ': ' + $Detail) }
+  if ($null -ne $names) { $KeyNames = $names }
+  $tpmUsable = $false
+  foreach ($entry in Get-Providers) {
+    if ($entry[1] -cne 'tpm') { continue }
+    try { $null = [Security.Cryptography.CngKey]::Exists(('Clued-CI-Node-Lookup-' + [Guid]::NewGuid().ToString('N')), $entry[0], [Security.Cryptography.CngKeyOpenOptions]::MachineKey); $tpmUsable = $true } catch { }
+  }
+  $o = [ordered]@{ identity = $null; encryption = $null; tpmUsable = $tpmUsable }
+  foreach ($role in @('identity', 'encryption')) {
+    $key = try { Find-MachineKey $KeyNames[$role] } catch { 'unreadable' }
+    if ($key -is [string]) { $o[$role] = 'unreadable'; continue }
+    if ($null -eq $key) { continue }
+    $valid = try { $null = ConvertFrom-EccPublicBlob ($key.key.Export([Security.Cryptography.CngKeyBlobFormat]::EccPublicBlob)) $Magic[$role]; $true } catch { $false }
+    try { $key.key.Dispose() } catch { }
+    $o[$role] = [ordered]@{ origin = [string]$key.origin; valid = $valid }
+  }
+  $o
+}
+# The key step: observe, decide (Get-NodeKeyPlan); only when both are absent the packaged script's init-keys, in the TPM only, then the
+# same observation and rule again: both present, or HOST_NODE_KEY_NOT_CREATED. The private keys never leave the TPM; nothing is printed
+# but their origins. The keys are not removed by -Reset or an uninstall: a re-run finds them and keeps them.
+function Invoke-NodeKeyStep([string]$registrationScript, [string]$powershell) {
+  $before = Get-NodeKeyObservation $registrationScript
+  $plan = Get-NodeKeyPlan $before
+  $r = [ordered]@{ action = $plan.action; code = $plan.code; before = $before; after = $null; run = $null }
+  if ($plan.action -cne 'create') { return $r }
+  $run = Invoke-Native $powershell @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $registrationScript, '-Mode', 'init-keys', '-ConfirmCreateKeys', '-KeyProvider', 'tpm') 600
+  $r.run = [ordered]@{ exit = $run.exit; stderr = $run.stderr }
+  $r.after = Get-NodeKeyObservation $registrationScript
+  if ($run.exit -ne 0 -or (Get-NodeKeyPlan $r.after).action -cne 'present') { $r.action = $null; $r.code = 'HOST_NODE_KEY_NOT_CREATED'; return $r }
+  $r.action = 'created'
+  $r
+}
 function Get-ObservedResidue([bool]$factsPresent) {
   $sddl = try { (Get-Acl -LiteralPath $CiRoot).Sddl } catch { '' }
   [ordered]@{ services = @(Get-Service -Name 'CluedCIResident', 'CluedCISwapBroker', 'CluedCIUpgrader' -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
@@ -867,6 +1025,20 @@ function Invoke-HostPreparation {
   $res = Get-ResidueCodes $observed
   if (-not $Reset -and $res.Count) { Stop-Host 'FIRST_INSTALL_RESIDUE_PRESENT' ([ordered]@{ found = $res; next = 'a first install needs a clean machine: a node with a resident is reinstalled; leftovers of an uninstalled one (named above) are removed by a person first' }) }
   Step 'residue' $(if ($res.Count) { $res } else { 'none' })
+  if (-not $Reset) {
+    # the execution policy baseline (section 3.2): the first thing written, once the operator is the expected one and the machine is a
+    # clean one; LocalMachine RemoteSigned when it is Undefined, Restricted or AllSigned, then proved by a probe started as the frozen
+    # Source starts its PowerShell (a -Reset run only removes, and changes nothing here)
+    Enter-Step 'execution-policy-baseline'
+    $probeDir = Join-Path 'C:\Windows\Temp' ('clued-p1-policy-' + [Guid]::NewGuid().ToString('N'))
+    $null = New-Dir $probeDir (Get-AdminOnlySddl)
+    $probePowerShell = if ([Environment]::Is64BitProcess) { $PowerShellExe } else { 'C:\Windows\Sysnative\WindowsPowerShell\v1.0\powershell.exe' }
+    try { $baseline = Invoke-ExecutionPolicyBaseline (Get-ExecutionPolicy -List) 'LocalMachine' $ExecutionPolicyKey $probeDir $probePowerShell }
+    finally { Remove-Item -LiteralPath $probeDir -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($baseline.code -ceq 'HOST_EXECUTION_POLICY_NOT_EFFECTIVE') { Stop-Host 'HOST_EXECUTION_POLICY_NOT_EFFECTIVE' $baseline }
+    if ($baseline.code) { Stop-Host $baseline.code $baseline }
+    Step 'execution-policy-baseline' $baseline
+  }
   Enter-Step 'stage'
   # stage: what this elevated run uses, copied into an admin-only directory and held to the pins
   $stage = Join-Path 'C:\Windows\Temp' ('clued-p1-' + [Guid]::NewGuid().ToString('N'))
@@ -903,6 +1075,14 @@ function Invoke-HostPreparation {
     $vb = Get-V1BaseCodes $base
     if ($vb.Count) { Stop-Host 'V1_BASE_MISSING' $vb }
     Step 'v1-base' 'present'
+    Enter-Step 'node-key-check'
+    # N7, read only: the node's two identity keys as the packaged registration script finds them (Get-NodeKeyObservation). One of them,
+    # one not in the TPM, not valid or not readable, or none and no usable TPM, is refused here, before anything is installed.
+    $NodeKeyScript = Join-Path $R 'registration\export-node-registration.ps1'
+    $nodeKeys = try { Get-NodeKeyObservation $NodeKeyScript } catch { Stop-Host 'HOST_NODE_KEY_SCRIPT_REFUSED' ([string]$_.Exception.Message) }
+    $nodeKeyPlan = Get-NodeKeyPlan $nodeKeys
+    if ($nodeKeyPlan.code) { Stop-Host $nodeKeyPlan.code $nodeKeys }
+    Step 'node-key-check' ([ordered]@{ plan = $nodeKeyPlan.action; observed = $nodeKeys })
     Enter-Step 'wsl'
     # WSL at the pinned version (M7)
     $wantWsl = [string](Get-Key $items['wsl'] 'version')
@@ -969,6 +1149,11 @@ function Invoke-HostPreparation {
     $nodeProfile = try { Get-NodeProfile ([Environment]::MachineName) $controllerSid $companionSid $companionProfile } catch { Stop-Host ([string]$_.Exception.Message) 'rename the machine to a name of 1-15 letters, digits and inner hyphens; no parameter changes it' }
     if ($operator -ceq $companionSid -or $operator -ceq $controllerSid) { Stop-Host 'OPERATOR_IS_A_SERVICE_ACCOUNT' $operator }
     Step 'accounts' ([ordered]@{ controllerSid = $controllerSid; companionSid = $companionSid; operatorSid = $operator })
+    Enter-Step 'node-key'
+    # N7: the two keys made in the TPM by the packaged script (init-keys -KeyProvider tpm) when neither is there; both there: kept
+    $nodeKey = try { Invoke-NodeKeyStep $NodeKeyScript $PowerShellExe } catch { Stop-Host 'HOST_NODE_KEY_SCRIPT_REFUSED' ([string]$_.Exception.Message) }
+    if ($nodeKey.code) { Stop-Host $nodeKey.code $nodeKey }
+    Step 'node-key' $nodeKey
     Enter-Step 'ci-root'
     # CI root, formal-spool and its outgoing and incoming, first-install, credentials, the secrets folder (Get-CiRootDirectories)
     $ci = [ordered]@{}

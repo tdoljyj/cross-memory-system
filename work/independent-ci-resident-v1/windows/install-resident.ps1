@@ -1429,7 +1429,11 @@ Step 'source-v2-acl' {
   if (-not (Test-Path -LiteralPath $tool)) { throw 'SOURCE_V2_REQUIRED' }
   # its own -ExecutionPolicy Bypass (r5, Fable 11-21 section 1.2): never the policy of whoever started the install (a new machine's is Restricted)
   $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $(if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }) -ControllerSid $ControllerSid | Out-String
-  if ($LASTEXITCODE -ne 0) { throw 'SOURCE_V2_ACL_MIGRATION_REFUSED' }
+  # X3 (Fable 11-21 r5 section 2.5): a refusal carries migrate-acl.ps1's own code (its one JSON line), after the unchanged prefix
+  if ($LASTEXITCODE -ne 0) {
+    $refused = try { [string]((@(($out -split "`r?`n") | Where-Object { $_.Trim() }) | Select-Object -Last 1) | ConvertFrom-Json).code } catch { '' }
+    throw ('SOURCE_V2_ACL_MIGRATION_REFUSED' + $(if ($refused -cmatch '^[A-Z][A-Z0-9_]{1,79}$') { ':' + $refused } else { '' }))
+  }
   $script:receipt.sourceV2Acl = ($out | ConvertFrom-Json)
 }
 # 5a. M5-b (ADR 0023): the record of who is who (install\companion-account.json: rearm-resident.ps1, request-upgrade.ps1 and

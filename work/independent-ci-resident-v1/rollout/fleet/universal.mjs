@@ -9,7 +9,8 @@
 //   tree/<path>                 the commit's files a node needs to reinstall or upgrade (selectTree): the resident tree's src/, tools/,
 //                               windows/ (install, verify, uninstall, CompanionTaskRegistrar.cs ...), linux/, upgrader/src/, config/,
 //                               reinstall/launcher/, reinstall/linux/, reinstall/tools/ and reinstall/rehearse.py (never reinstall/test/
-//                               or reinstall/config/: no node's configuration), rollout/precheck.mjs, rollout/fleet/ (install.mjs,
+//                               or reinstall/config/: no node's configuration), registration/export-node-registration.ps1 (the first
+//                               install's node keys), rollout/precheck.mjs, rollout/fleet/ (install.mjs,
 //                               upgrade.mjs; without their tests), the CI Source closure (source-closure.json) with the closure file
 //                               itself, prepare-record.mjs and record.mjs, and every file these .mjs reach by relative import;
 //   bundle/accepted.bundle      the git bundle whose only ref is refs/heads/accepted = the commit (full history, as build-upgrade.ps1),
@@ -45,6 +46,9 @@ export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${
   `${RESIDENT}/reinstall/launcher/template.ps1`, `${RESIDENT}/reinstall/launcher/expected-plan.ps1`, `${RESIDENT}/reinstall/launcher/continue.py`,
   `${RESIDENT}/reinstall/launcher/continue-install.ps1`, `${RESIDENT}/reinstall/tools/file-locks.ps1`, `${RESIDENT}/reinstall/tools/ledger-evidence.py`,
   `${RESIDENT}/reinstall/tools/rconfig.py`, `${RESIDENT}/reinstall/linux/assemble.py`,
+  // the node's identity keys (Fable 11-21 r5 N7): first-install-host.ps1 reads them with this script's Find-MachineKey and makes them with
+  // its init-keys, which needs no other file (export-node-registration.mjs is its export mode's, run where a node is registered)
+  `${RESIDENT}/registration/export-node-registration.ps1`,
   CLOSURE, PREPARE_RECORD, `${CIV1}/src/resident-v2/record.mjs`,
   // the resident files whose one source lies outside the resident tree (build-package.mjs RESIDENT_EXTERNAL): the node builds from this tree
   ...RESIDENT_EXTERNAL.map(e => e.source)]);
