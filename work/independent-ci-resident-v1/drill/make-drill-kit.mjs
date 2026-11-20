@@ -62,7 +62,8 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
   return { contract: 'clued.drill.first-install-kit/1',
     files: names.map(name => ({ path: name, sha256: sha256(payloads[name]) })),
     entry: { file: 'first-install-entry.ps1', arguments: ['-From', '{from}', '-Kit', '{kit}', '-Fake', '{fake}', '-Work', '{work}', '-Version', '{version}'] },
-    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口', '工具缓存短路径替身（包缺陷 Expand-Cached 超 MAX_PATH，修复中）'], prereqSha256: sha256(prereqBytes),
+    timeoutMinutes, perNodeSteps: ['未验证原入口的非提权检查', '绕过 RunAs 提权', '绕过凭据窗口',
+      '陪伴 GitHub 经典令牌替身（替的是 Owner 在凭据窗口给的陪伴 GitHub 经典令牌；因为演练不得使用真凭据；因此没验到令牌被 GitHub 接受、陪伴访问 GitHub 的各个通道；不可删，没验到的部分由真机首装后的运行状态承担）'], prereqSha256: sha256(prereqBytes),
     // The real first-install host owns WSL import, Docker and accounts, from S0.
     prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}) };
 }
