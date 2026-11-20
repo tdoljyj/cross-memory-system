@@ -782,3 +782,87 @@ test('让班等待中进程重启：已有的等待重投与确认不受宽限�
   assert.equal(requestFiles(f).length, 2, '宽限内只有等待重投与确认两份请求');
   f.now = f.startedAt + CHECK; await f.tick(); f.request('upgrade');
 });
+
+// Task a75da4bd（Fable 11-20“补：让班回包迟到”(2)）：DESK 11-20 10:42:32 投出 ci 请求，服务端 10:45:14 提交让班，常驻只等 120 秒就把
+// 请求号丢了。超时不再丢弃请求号：120 秒后只改对外显示，之后每轮都看这一个回包；满一小时仍无回包才按“回包不可用”。
+import { renewalStatus } from '../src/connection-renewal.mjs';
+const RENEW_RESPONSE = 'clued.independent-ci.connection-renew-response/1';
+const answer = (f, id, kind, reply) => fs.writeFileSync(path.join(f.root, 'broker/responses', id + '.json'), JSON.stringify({
+  contract: RENEW_RESPONSE, requestId: id, kind, code: null, bindingId, expiresAt: new Date(f.now + 10 * 24 * HOUR).toISOString(), ...reply}));
+test('让班回包在第 160 秒到达（120 秒内无回包）：按已让班处理，交出接单并记生效时刻', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  f.now += 120_000; await f.tick(); // 到点无回包
+  f.now += 40_000;
+  const effectiveAt = new Date(f.now + 301_000).toISOString();
+  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt});
+  await f.tick();
+  assert.equal(f.holds, 1, '迟到的让班回包照常交出接单资格');
+  assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.book().lanes.ci.effectiveAt], ['RENEW_HANDOVER_WAITING', true, effectiveAt]);
+  assert.equal(requestFiles(f).length, 1, '等回包期间没有投新请求');
+});
+test('已续上的回包在第 150 秒到达：按已续上处理，记新绑定与到期', async t => {
+  const f = handoverFixture(t);
+  const renewed = '10000000-0000-4000-8000-000000000007';
+  await f.tick(); const id = f.request('ci');
+  f.now += 120_000; await f.tick();
+  f.now += 30_000;
+  const expiresAt = new Date(f.now + 30 * 24 * HOUR).toISOString();
+  answer(f, id, 'ci', {bindingId: renewed, expiresAt});
+  await f.tick();
+  const lane = f.book().lanes.ci;
+  assert.deepEqual([lane.code, lane.waiting, lane.bindingId, lane.expiresAt, f.holds], [null, false, renewed, expiresAt, 0]);
+});
+test('等回包期间不投新请求；120 秒后对外显示“等回包”，满一小时前一直等同一请求号', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  f.now += 120_000 - 1; await f.tick();
+  assert.equal((await renewalStatus(f.root, f.now)).connections.ci, undefined, '120 秒内对外不显示');
+  f.now += 1; await f.tick();
+  assert.equal((await renewalStatus(f.root, f.now)).connections.ci.code, 'RENEW_RESPONSE_WAITING');
+  while (f.now - f.startedAt < 10 * 60_000 + HOUR - 15_000) { f.now += 15_000; await f.tick(); }
+  assert.deepEqual([f.book().pending?.id, requestFiles(f).length, f.book().lanes.ci], [id, 1, undefined]);
+  assert.equal(f.holds, 0);
+});
+test('一小时内回包始终不出现：满一小时才按回包不可用处理，进入每小时复核，不交出当班', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  f.now += HOUR - 1; await f.tick();
+  assert.deepEqual([f.book().pending?.id, f.book().lanes.ci], [id, undefined]);
+  f.now += 1; await f.tick();
+  assert.deepEqual([f.book().lanes.ci.code, f.book().lanes.ci.waiting, f.holds], ['RENEW_RESPONSE_UNAVAILABLE', true, 0]);
+  f.reply('upgrade', {}); await f.tick(); f.request(null);
+  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()}); // 上限之后才到：不再认
+  f.now += HOUR - 1; await f.tick(); f.request(null);
+  assert.equal(f.holds, 0);
+  f.now += 1; await f.tick(); assert.notEqual(f.request('ci'), id);
+});
+test('只认状态里记着的请求号：别的请求号的回包、文件内请求号不符的回包都不认', async t => {
+  const f = handoverFixture(t);
+  const other = '10000000-0000-4000-8000-000000000008';
+  await f.tick(); const id = f.request('ci');
+  f.now += 120_000; await f.tick();
+  f.now += 20_000;
+  answer(f, other, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+  fs.writeFileSync(path.join(f.root, 'broker/responses', id + '.json'), JSON.stringify({contract: RENEW_RESPONSE, requestId: other, kind: 'ci',
+    code: null, bindingId, expiresAt: new Date(f.now + 10 * 24 * HOUR).toISOString(), outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()}));
+  await f.tick();
+  assert.deepEqual([f.holds, f.book().pending?.id, f.book().lanes.ci], [0, id, undefined]);
+  f.now += 20_000;
+  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+  await f.tick();
+  assert.equal(f.holds, 1);
+});
+test('等回包期间常驻重启：恢复同一请求号继续等，启动宽限不妨碍读回包', async t => {
+  const f = handoverFixture(t);
+  await f.tick(); const id = f.request('ci');
+  f.now += 120_000; await f.tick();
+  f.now += 10_000; f.startedAt = f.now; f.restart();
+  await f.tick();
+  assert.deepEqual([f.book().pending?.id, requestFiles(f).length], [id, 1], '重启后仍等同一请求号');
+  f.now += 30_000;
+  answer(f, id, 'ci', {outcome: 'yielded', effectiveAt: new Date(f.now + 300_000).toISOString()});
+  await f.tick();
+  assert.equal(f.holds, 1);
+  assert.equal(f.book().lanes.ci.code, 'RENEW_HANDOVER_WAITING');
+});
