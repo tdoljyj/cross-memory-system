@@ -672,11 +672,19 @@ export function commandArgv(command, options) {
 // command; then the commands the candidate's selector adds to the suite. Reading the candidate is lazy: only after the
 // baseline commands have run, and always when the candidate's selector is another file: its bytes say nothing about the
 // modules it imports. A separate Node process exports the candidate's list, and only what it prints, once validated here,
-// can add a command; candidate code never runs inside the process that decides which commands passed. It is not a read
-// boundary (the permission model follows symbolic links, the network is open): the suite commands run the candidate's
-// code anyway. A candidate command that only adds test files to a trusted command runs just those files, and none carries a
-// policy. A checkout without scripts/ci adds nothing; one with scripts/ci but no selector moved or deleted it, so what it
-// adds cannot be read and the suite fails.
+// can add a command; candidate code never runs inside the process that decides which commands passed. A candidate command
+// that only adds test files to a trusted command runs just those files, and none carries a policy. A checkout without
+// scripts/ci adds nothing; one with scripts/ci but no selector moved or deleted it, so what it adds cannot be read and the
+// suite fails.
+// The permission flags are no boundary of any kind (FABLE-new-suite-run-points-20261121 §3): the commands list may start
+// processes (--allow-child-process), which the permission model does not follow, the model follows symbolic links and the
+// network is open. They only keep an unintended write out. This guards against a change that would run less, swap a command
+// or widen the known failures by editing the selection, not against hostile code: that is for the protected-path rules and
+// review, and the suite commands run the candidate's code with the same user and environment anyway. What still holds:
+// candidate code never runs in the process that decides; the candidate only adds commands; what it adds carries no policy;
+// suite names, platforms and application dependencies are validated before they reach GITHUB_OUTPUT. The child gets the
+// suite environment (no real token), but its parent's token is readable to a process of the same user, so a step that holds
+// a token with write access or any secret must never call this selector with --root.
 // Task cb5017b6 (FABLE-c2-review-rulings-20261121, "补" ruling 2): each side expands its own commands and the expanded
 // commands are compared, so a placeholder only the candidate knows, or one the candidate expands differently, adds just the
 // test files it adds. The candidate's process reads the whole checkout and may start the unit-test listing, with the
@@ -713,7 +721,9 @@ function candidateSelectorOf(root, trusted, what) {
 
 function readCandidate(candidate, root, mode, name, { base, report, env }, what) {
   const reads = [...new Set([path.resolve(root), real(root)])].map((dir) => `--allow-fs-read=${dir}`);
-  const read = spawnSync(process.execPath, ['--permission', ...reads, '--allow-child-process', '--input-type=module', '-e', CANDIDATE_EXPORT,
+  // Only expanding commands may start a process (the unit-test listing); reading the suite tables does not.
+  const spawns = mode === 'commands' ? ['--allow-child-process'] : [];
+  const read = spawnSync(process.execPath, ['--permission', ...reads, ...spawns, '--input-type=module', '-e', CANDIDATE_EXPORT,
     pathToFileURL(candidate).href, mode, name, root, base ?? '', report], {
     cwd: root, env: testEnv(env), encoding: 'utf8', timeout: 60_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
   if (read.status !== 0) throw new Error(`cannot read ${what}: ${read.error?.message ?? read.stderr}`);
@@ -733,6 +743,8 @@ export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], tru
   }
   const commands = readCandidate(candidate, root, 'commands', id, { base, report, env }, what);
   if (commands === null && baseline === undefined) throw new Error(`unknown suite: ${id}`);
+  // A new suite that runs nothing would pass having checked nothing.
+  if (baseline === undefined && Array.isArray(commands) && commands.length === 0) throw new Error(`the candidate's suite ${id} has no command`);
   if (commands !== null && !Array.isArray(commands)) throw new Error(`invalid candidate command list for ${id}`);
   const key = ({ cwd, argv }) => JSON.stringify([cwd, argv]);
   // The trusted commands as they ran: expanded by this file's rules, with the same base commit and report file.
@@ -774,8 +786,10 @@ export function candidateSuites(check, root, { platform = null, trusted = fileUR
     if (known.has(id)) continue;
     const on = platforms ?? PLATFORMS;
     if (!Array.isArray(on) || !on.every((name) => PLATFORMS.includes(name))) throw new Error(`invalid candidate platforms for ${id}`);
-    if (app !== null && (typeof app !== 'string' || !/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(app) || app.split('/').includes('..'))) {
-      throw new Error(`invalid candidate application dependency for ${id}`);
+    // The trusted ci-deps.mjs installs it from the runner's store: an application of the checkout, with its lockfile.
+    if (app !== null && (typeof app !== 'string' || !/^apps\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(app)
+        || !existsSync(path.join(root, app, 'package-lock.json')))) {
+      throw new Error(`invalid candidate application dependency for ${id}: ${JSON.stringify(app)} (apps/<name> with a package-lock.json)`);
     }
     if (platform === null || on.includes(platform)) added.push({ id, app });
   }

@@ -739,7 +739,12 @@ test('the required primaries have no conditional step that a run can skip, excep
   const file = '.github/workflows/clued-required-tests.yml';
   const jobs = workflowJobs(readFileSync(path.join(ROOT, file), 'utf8'));
   // clued-cloud-tests selects clued-cloud for every change, so its run_clued_cloud condition always holds.
-  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] });
+  // These two jobs name their one suite in the workflow (its dependencies, timeout and the execution proof's conditional
+  // steps) and run no other: a new suite goes to ci-suites (FABLE-new-suite-run-points-20261121 §2).
+  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] },
+    'the clued-cloud-tests job names its suite in the workflow and runs no other: add a new suite to ci-suites');
+  assert.deepEqual(Object.keys(SUITES['migration-verify']), ['production-schema'],
+    'the migration-verify job names its suite in the workflow and runs no other: add a new suite to ci-suites');
   const expected = {
     'clued-cloud-tests': { 'Install from lockfile': "steps.select.outputs.run_clued_cloud == 'true'",
       'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'" },
