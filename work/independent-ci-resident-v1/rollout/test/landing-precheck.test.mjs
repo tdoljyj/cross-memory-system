@@ -121,7 +121,7 @@ test('T4 P1: a required check never seen on any S -> NO-GO naming it, every S li
   w = world();
   w.checks.set(w.S[0], w.checks.get(w.S[0]).map(c => c.name === 'ci-suites' ? { ...c, conclusion: 'failure' } : c));
   w.checks.set(w.S[1], w.checks.get(w.S[1]).map(c => c.name === 'ci-suites-windows' ? { ...c, conclusion: 'cancelled' } : c));
-  w.checks.get(w.S[2]).push({ id: 99, name: 'ci-suites-windows', app: { id: GHA }, status: 'completed', conclusion: 'success' });
+  w.checks.get(w.S[2]).push({ id: 99, name: 'ci-suites-windows', head_sha: w.S[2], app: { id: GHA }, status: 'completed', conclusion: 'success' });
   w.checks.set(w.S[2], w.checks.get(w.S[2]).map(c => c.name === 'clued-cloud-tests' ? { ...c, conclusion: 'failure' } : c));
   r = await run(w, 'before');
   assert.equal(r.verdict, 'NO-GO', JSON.stringify(r.items.P1));

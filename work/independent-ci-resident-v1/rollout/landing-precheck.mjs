@@ -15,8 +15,9 @@
 // files, its policy.mjs FLEET_TRAIN and its HEAD). The one file written is the --before snapshot (local, --snapshot). The stage-8
 // receipts are not read (Fable 11-21 open points §5: their directory is denied without elevation).
 // Items (§4):
-//   P1  precondition one: every Actions-pinned (15368) required check of the live rules has a completed success of App 15368 on at
-//       least 2 of the newest 10 distinct S on clued-train/staging (a), and at least 1 of those S has all of them (b); not consecutive.
+//   P1  precondition one: every required check of the live rules push waits for on S (not pinned to App 5368905; review A/B) has a
+//       completed success (of its pinned App, or any App when not pinned) on at least 2 of the newest 10 distinct S on clued-train/staging
+//       (a), and at least 1 of those S is all green by push's own rule, externalChecksDecision (b); not consecutive.
 //       On NO-GO every S with every check's conclusion, and for a check that did not succeed its title, summary and annotations
 //       (the runner hook's refusal is written there).
 //   P2  every node stage 10 last heard within 24 hours runs this node's Source, this node's Source record pins exactly this
@@ -39,12 +40,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { fleetSourceCheck } from './precheck.mjs';
 import { parseTrainLast, parseTrainNodes } from '../src/train.mjs';
+import { externalChecksDecision, externalRequiredChecks, runsOfRequired } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
 
 export const LANDING_PRECHECK_CONTRACT = 'clued.independent-ci.landing-precheck/1';
 export const SNAPSHOT_CONTRACT = 'clued.independent-ci.landing-precheck-snapshot/1';
 export const MAIN_RULESET_ID = 24182890;
 export const APP_ID = 5368905;
-export const ACTIONS_APP_ID = 15368;
 export const TRAIN_LANDED = 'kooyumi-train-landed';
 export const STAGING_BRANCH = 'clued-train/staging';
 export const S_WINDOW = 10;
@@ -62,31 +63,41 @@ class ItemError extends Error { constructor(code, detail) { super(code); this.co
 const refuse = (code, detail) => { throw new ItemError(code, detail); };
 
 // ---- P1 ----
-const actionsRequired = rules => [...new Set(rules.filter(r => r?.type === 'required_status_checks')
-  .flatMap(r => r.parameters?.required_status_checks ?? []).filter(c => c?.integration_id === ACTIONS_APP_ID).map(c => c.context))].sort();
-export async function p1({ gh, repo, rules }) {
-  const names = actionsRequired(rules);
-  if (!names.length) refuse('NO_ACTIONS_REQUIRED_CHECKS');
+// Independent review A/B (Fable 11-21 open points §9): the list is push's own (train-landing.mjs#externalRequiredChecks: every required
+// check of the live rules not pinned to App 5368905; pinned to another App, that App's runs only; not pinned, any App's), and an S is all
+// green only when push's own externalChecksDecision answers null for it (each check's newest run by id a completed success), from S's
+// whole check list (a list GitHub did not give whole is never all green). Condition a stays "has had a success" (it proves the check
+// can be produced on S).
+const labelOf = (c, list) => (list.filter(x => x.context === c.context).length > 1 ? `${c.context}@${c.pin ?? 'any'}` : c.context);
+export async function p1({ gh, repo, rules, now = Date.now() }) {
+  const seen = new Set(), required = [];
+  for (const c of externalRequiredChecks({ rules, appId: APP_ID })) { const k = `${c.context}\n${c.pin}`; if (!seen.has(k)) { seen.add(k); required.push(c); } }
+  const named = required.map(c => ({ ...c, label: labelOf(c, required) })).sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+  const names = named.map(c => c.label);
+  if (!names.length) refuse('NO_EXTERNAL_REQUIRED_CHECKS');
   const runs = await gh.paged(`repos/${repo}/actions/runs?branch=${encodeURIComponent(STAGING_BRANCH)}&event=push`, 'workflow_runs', { max: 3 });
   const order = runs.filter(r => typeof r?.head_sha === 'string').sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
   const shas = [...new Set(order.map(r => r.head_sha))].slice(0, S_WINDOW);
   const perS = [];
   for (const s of shas) {
-    const checks = (await gh.paged(`repos/${repo}/commits/${s}/check-runs?filter=all`, 'check_runs'))
-      .filter(c => c?.app?.id === ACTIONS_APP_ID && names.includes(c.name));
-    const row = { testSha: s, checks: {} };
-    for (const name of names) {
-      const mine = checks.filter(c => c.name === name).sort((a, b) => b.id - a.id);
-      const ok = mine.some(c => c.status === 'completed' && c.conclusion === 'success');
+    const inventory = await gh.paged(`repos/${repo}/commits/${s}/check-runs?filter=all`, 'check_runs', { whole: true });
+    const checks = Array.isArray(inventory?.rows) ? inventory.rows : [];
+    const decision = externalChecksDecision({ rules, inventory: { complete: inventory?.complete === true, checks }, commitSha: s, appId: APP_ID, now });
+    const row = { testSha: s, allGreen: decision === null, ...(decision ? { decision } : {}), ...(inventory?.complete === true ? {} : { incomplete: true }), checks: {} };
+    for (const c of named) {
+      const mine = runsOfRequired(checks, c, s).sort((a, b) => b.id - a.id);
+      const ok = mine.some(k => k.status === 'completed' && k.conclusion === 'success');
       const last = mine[0];
-      row.checks[name] = ok ? { state: 'success' } : !last ? { state: 'absent' }
-        : { state: last.status === 'completed' ? last.conclusion : last.status, id: last.id, title: clip(last.output?.title), summary: clip(last.output?.summary) };
+      const newest = !last ? 'absent' : last.status === 'completed' ? last.conclusion : last.status;
+      row.checks[c.label] = ok && newest === 'success' ? { state: 'success' }
+        : ok ? { state: 'success', newest, id: last.id, title: clip(last.output?.title), summary: clip(last.output?.summary) }
+          : !last ? { state: 'absent' } : { state: newest, id: last.id, title: clip(last.output?.title), summary: clip(last.output?.summary) };
     }
     perS.push(row);
   }
   const successes = Object.fromEntries(names.map(n => [n, perS.filter(r => r.checks[n].state === 'success').length]));
   const a = names.filter(n => successes[n] < 2);
-  const full = perS.filter(r => names.every(n => r.checks[n].state === 'success')).map(r => r.testSha);
+  const full = perS.filter(r => r.allGreen).map(r => r.testSha);
   const pass = a.length === 0 && full.length > 0;
   if (!pass) for (const r of perS) for (const n of names) {
     const c = r.checks[n];
@@ -232,7 +243,7 @@ export async function landingPrecheck({ mode, repo = DEFAULT_REPO, only = null, 
   const rulesOnce = async () => (rules ??= await gh.paged(`repos/${repo}/rules/branches/main`, null));
   if (mode === 'after') { try { snapshot = await files.readSnapshot(); } catch { snapshot = null; } }
   if (snapshot && snapshot.contract !== SNAPSHOT_CONTRACT) snapshot = null;
-  const run = { P1: async () => p1({ gh, repo, rules: await rulesOnce() }), P2: () => p2({ gh, repo, files, checkout, now: clock(), mode }), P3: () => p3({ files, mode }),
+  const run = { P1: async () => p1({ gh, repo, rules: await rulesOnce(), now: clock() }), P2: () => p2({ gh, repo, files, checkout, now: clock(), mode }), P3: () => p3({ files, mode }),
     P4: async () => p4({ gh, repo, rules: await rulesOnce() }), P5: () => p5({ gh, repo, mode, snapshot }), P6: () => p6({ files, snapshot }) };
   for (const i of items) {
     try { result.items[i] = await run[i](); } catch (e) { result.items[i] = { pass: false, failed: [e instanceof ItemError ? e.code : 'READ_FAILED'], detail: clip(e?.detail ?? e?.message) }; }
@@ -253,16 +264,18 @@ const exec = promisify(execFile);
 export function ghPort({ run = (args) => exec('gh', args, { maxBuffer: 64 * 1024 * 1024, windowsHide: true }) } = {}) {
   // Every call is `gh api <route>` with no method and no field: a GET.
   const get = async route => JSON.parse((await run(['api', '-H', 'X-GitHub-Api-Version: 2022-11-28', route])).stdout);
-  const paged = async (route, key, { max = 20 } = {}) => {
+  // whole: { rows, complete } (complete false when the last page read was full at the page limit: GitHub may have more).
+  const paged = async (route, key, { max = 20, whole = false } = {}) => {
     const out = [];
+    let complete = false;
     for (let page = 1; page <= max; page++) {
       const body = await get(`${route}${route.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
       const rows = key ? body?.[key] : body;
       if (!Array.isArray(rows)) refuse('GITHUB_REPLY_UNREADABLE', route);
       out.push(...rows);
-      if (rows.length < 100) break;
+      if (rows.length < 100) { complete = true; break; }
     }
-    return out;
+    return whole ? { rows: out, complete } : out;
   };
   return { get, paged };
 }
