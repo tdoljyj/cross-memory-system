@@ -1290,7 +1290,7 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
       const cwd = path.join(root, command.cwd);
       const known = command.known ?? null;
       try {
-        const [program, ...args] = selector.expandArgv(command.argv, { cwd, base: main, report: path.join(temporary, `${id}-report.json`),
+        const [program, ...args] = selector.expandArgv(command.argv, { cwd, root, base: main, report: path.join(temporary, `${id}-report.json`),
           listUnit: unitTestFilesWith(cwd, env) });
         const reported = withFailureReport(program, args, { known: Boolean(known), reporterUrl: selector.reporterUrl,
           file: path.join(temporary, `command-${index}.jsonl`) });
