@@ -1789,6 +1789,25 @@ class DuplicateTotalsTests(unittest.TestCase):
         self.assertEqual(scan["totals"], {"rerun": 0, "parallel": 0, "retry": 1, "unknown": 1})
         self.assertEqual(panel.violations(scan["totals"]), 0)
 
+    def test_r5_the_line_for_what_a_burst_cut_off_counts_violations_only_and_old_records_apart(self) -> None:
+        # Ruling 12.2 #8 again: an old record without a kind is not a violation, in the burst line as anywhere else.
+        def record(index: int, kind: str | None) -> dict:
+            row = {"head": f"{index:012x}", "pr": 9000 + index, "check": "a-check", "count": 2, "last": "2026-11-20T15:35:31Z"}
+            return {**row, "kind": kind} if kind else row
+        found = [record(i, "rerun") for i in range(panel.DUP_ROWS + 1)] + [record(50, "parallel")] + [record(60 + i, None) for i in range(3)]
+        state: dict = {"events_at": panel.iso(TOTALS_NOW), "duplicates": {"as_of": panel.iso(TOTALS_NOW), "found": found}}  # no scan is due
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        more = [text for key, text in report["events"].items() if key.startswith("dup-more:")]
+        self.assertEqual(len(more), 1)
+        self.assertIn("另有 2 项违规", more[0])  # one rerun and one parallel beyond the first DUP_ROWS
+        self.assertIn("另有 3 项旧记录未记类别（不算违规）", more[0])
+        self.assertNotIn("5 项违规", more[0])
+        # Only old records cut off: the line says no violation at all.
+        found = [record(i, "rerun") for i in range(panel.DUP_ROWS)] + [record(60 + i, None) for i in range(2)]
+        state = {"events_at": panel.iso(TOTALS_NOW), "duplicates": {"as_of": panel.iso(TOTALS_NOW), "found": found}}
+        more = [text for key, text in panel.build(self.both(), TOTALS_NOW, state)["events"].items() if key.startswith("dup-more:")]
+        self.assertEqual(more, ["重复执行：另有 2 项旧记录未记类别（不算违规），见面板“重复执行”表"])
+
     def test_r5_the_header_names_old_records_without_a_kind_only_when_there_are_some(self) -> None:
         state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
         report = panel.build(self.both(), TOTALS_NOW, state)
