@@ -909,7 +909,8 @@ def view_probe(props, run_view):
 
 def selfcheck(units, unit_text, run_view, docker, now):
     """Between batches only: while any clued-ci unit is not inactive/failed (before or after the probes) the answer is BUSY and
-    nothing is judged. Reads only; the probe is a transient systemd unit that is gone when it exits. A container read that fails
+    nothing is judged. Reads only, with one side effect: the probe runs like a worker, so systemd's StateDirectory= creates the trivy cache root
+    (root:root 0700) if it is not there yet; the probe is a transient systemd unit that is gone when it exits. A container read that fails
     says so (count null), it never reports zero."""
     base = {'contract': SELFCHECK_CONTRACT, 'at': now()}
     if other_units_quiet(units(), None):
