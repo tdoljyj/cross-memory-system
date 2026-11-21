@@ -711,7 +711,7 @@ if (Test-Path -LiteralPath $probeNode) {
 #     (b) the CI root's READ_CONTROL entry for the resident service: the install plan's state and append (install-resident.ps1#
 #         Get-ParentAclState, Add-ParentAce) on scratch folders with a protected DACL like the real one, and verify's rule
 #         (verify-resident.ps1#Test-ParentAclRule) over the same folders.
-foreach ($name in @('install-resident.ps1:Get-ServiceSid', 'install-resident.ps1:Get-ParentAce', 'install-resident.ps1:Get-AceKeys', 'install-resident.ps1:Get-ParentAclState', 'install-resident.ps1:Add-ParentAce')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
+foreach ($name in @('install-resident.ps1:Get-ServiceSid', 'install-resident.ps1:Get-DaclShape', 'install-resident.ps1:Get-ParentAce', 'install-resident.ps1:Get-AceKeys', 'install-resident.ps1:Get-ParentAclState', 'install-resident.ps1:Add-ParentAce')) { Yes ($functions.ContainsKey($name)) ('present:' + $name); . ([scriptblock]::Create($functions[$name])) }
 foreach ($name in @('Get-ServiceSid', 'Test-ParentAclRule', 'Test-CompanionSourceScripts')) { Yes ($functions.ContainsKey('verify-resident.ps1:' + $name)) ('verify-present:' + $name); . ([scriptblock]::Create($functions['verify-resident.ps1:' + $name])) }
 Yes ($functions['install-resident.ps1:Get-ServiceSid'] -ceq $functions['verify-resident.ps1:Get-ServiceSid']) 'service-sid-function-identical'
 $svcSid = Get-ServiceSid 'CluedCIResident'
