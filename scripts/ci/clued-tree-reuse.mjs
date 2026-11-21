@@ -30,11 +30,14 @@ const GATE_JOB = 'admission-gate';
 // proof lookup only; it does not move a bot onto the trusted runner route.
 const EXECUTOR_LOGIN = 'clued-admission[bot]';
 const executorMerged = (actor) => actor?.login === EXECUTOR_LOGIN && actor.id === 337003645 && actor.type === 'Bot';
+// Who may have triggered the PR run. The caller decides; without a caller's word only the owner counts.
+const ownerTriggered = (owner) => (actor) => actor?.login === owner;
 const fallback = (reason) => ({ run_heavy: true, reason, current_sha_pass: false });
 export const requireProof = (condition, reason) => { if (!condition) throw new Error(reason); };
 
 // The merge, its PR and the PR's latest run of this workflow, as both proofs require them.
-export function validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs }) {
+export function validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs,
+  runActorAllowed = ownerTriggered(owner) }) {
   requireProof(TARGETS[workflow] && merge.sha === sha && SHA.test(sha), 'merge_identity');
   requireProof(pr.state === 'closed' && pr.merged === true && pr.merge_commit_sha === sha &&
     Number.isSafeInteger(pr.number) && pr.base?.ref === 'main' &&
@@ -47,7 +50,7 @@ export function validateMergedRun({ repository, owner, sha, workflow, merge, pr,
   requireProof(run.event === 'pull_request' && run.status === 'completed' && run.conclusion === 'success' &&
     run.path === `.github/workflows/${workflow}` && run.head_sha === pr.head.sha &&
     run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
-    run.actor?.login === owner && Number.isSafeInteger(run.id) && Number.isSafeInteger(run.run_attempt) &&
+    runActorAllowed(run.actor) === true && Number.isSafeInteger(run.id) && Number.isSafeInteger(run.run_attempt) &&
     run.run_attempt > 0 && Array.isArray(run.pull_requests) &&
     (run.pull_requests.length === 0 || run.pull_requests.some((p) => p.number === pr.number)), 'pr_run_identity');
   // GitHub clears pull_requests on closed-PR runs (#688 was observed empty). The tree-report proof binds the PR
@@ -64,7 +67,12 @@ export function validateMergedRun({ repository, owner, sha, workflow, merge, pr,
 export function validateAncestryEvidence({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs, compare }) {
   const target = TARGETS[workflow];
   requireProof(target?.proof === 'ancestry', 'proof_kind');
-  validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs });
+  // The executor bot's run counts here and only here (#1202: the head was its merge of main). The heavy jobs carry
+  // their real names on a bot run only after the gate proved that merge (automation_self_hosted), and the names are
+  // required below; a bot run without that proof has "-skipped" names. The tree-report workflows (G4, IFE2E) have no
+  // such name proof, so clued-push-reuse.mjs passes nothing and keeps the owner only.
+  validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs,
+    runActorAllowed: (actor) => actor?.login === owner || executorMerged(actor) });
   const base = merge.parents[0]?.sha;
   requireProof(SHA.test(base) && ['ahead', 'identical'].includes(compare?.status) && compare.behind_by === 0 &&
     compare.base_commit?.sha === base && compare.merge_base_commit?.sha === base, 'base_not_ancestor');
