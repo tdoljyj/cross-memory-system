@@ -1086,7 +1086,7 @@ test('candidate commands: no known-failure allowance, nothing outside the checko
   const baseline = SUITE_COMMANDS['retrigger-counter'];
   const extra = { cwd: '.', argv: ['node', '--test', 'scripts/ci/retrigger-counter-extra.test.mjs'], known: 'retrigger-counter' };
   change('retrigger-counter', [...baseline, extra]);
-  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], [...baseline, { cwd: extra.cwd, argv: extra.argv }]);
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], [...baseline, { cwd: extra.cwd, argv: extra.argv, expanded: true }]);
   // --run-files plans a test file only the candidate's added command runs, with the command CI runs for it.
   writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), '');
   writeFileSync(path.join(dir, 'retrigger-counter-extra.test.mjs'), '');
@@ -1193,7 +1193,7 @@ test('an added test file runs without the trusted allowance, which still covers 
   // Guard: a switch added as well cannot be planned as files only, so the whole command is added, as before.
   const switched = [...middle.slice(0, 2), '--test-only', ...middle.slice(2)];
   change('admission-self-tests', [{ ...trusted, argv: switched }]);
-  assert.deepEqual([...selection.requiredCommands('admission-self-tests', root)], [trusted, { cwd: trusted.cwd, argv: switched }]);
+  assert.deepEqual([...selection.requiredCommands('admission-self-tests', root)], [trusted, { cwd: trusted.cwd, argv: switched, expanded: true }]);
   assert.deepEqual(suite(0).calls[1], switched);
 });
 
@@ -1228,7 +1228,7 @@ ${run.stdout}${run.stderr}`);
     `::group::retrigger-counter: (.) ${candidateCommand.argv.join(' ')}`]);
   assert.match(run.stdout, /b foo executed/);
   assert.deepEqual([...selection.requiredCommands('retrigger-counter', candidate.root, { baseline: [trustedCommand] })],
-    [trustedCommand, candidateCommand], 'the added command carries no files: it runs whole');
+    [trustedCommand, { ...candidateCommand, expanded: true }], 'the added command carries no files: it runs whole');
 });
 
 test('L1: filterCommand plans nothing for a switch that takes a separate value, and --run-files refuses the file', (t) => {
@@ -1253,13 +1253,16 @@ test('L1 guard: the --test-force-exit command of production-schema and a --switc
   const equals = ['node', '--test', '--test-name-pattern=foo', 'scripts/ci/a.test.mjs', 'scripts/ci/b.test.mjs'];
   assert.deepEqual(selection.filterCommand({ cwd: '.' }, equals, new Set(['scripts/ci/b.test.mjs'])).runs,
     [['node', '--test', '--test-name-pattern=foo', 'scripts/ci/b.test.mjs']]);
-  // A file added to that command still runs alone (unexpanded, as requiredCommands sees it).
+  // A file added to that command still runs alone (each side expands its own {db-concurrency}, as the run sees it).
   const { root, change } = candidateSelector(t);
   const added = 'tests/added-authorization-db.test.mjs';
   const argv = [...command.argv, added];
   change('production-schema', [{ ...command, argv }]);
+  const ran = expandArgv(argv, { cwd: path.join(root, command.cwd) });
   assert.deepEqual([...selection.requiredCommands('production-schema', root, { baseline: [command] })],
-    [command, { cwd: command.cwd, argv, files: [path.posix.join(command.cwd, added)] }]);
+    [command, { cwd: command.cwd, argv: ran, expanded: true, files: [path.posix.join(command.cwd, added)] }]);
+  assert.deepEqual(selection.commandArgv({ cwd: command.cwd, argv: ran, expanded: true, files: [path.posix.join(command.cwd, added)] }, {}),
+    ran.filter((arg) => !command.argv.slice(command.argv.indexOf('--test-force-exit') + 1).includes(arg)));
 });
 function runFixture(files) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-reporter-'));
