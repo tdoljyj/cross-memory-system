@@ -87,10 +87,10 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 ## 5. 归档与并入（块 3）
 
 - 没有单独的 `release` 命令（已撤掉，输入它得到 `USAGE`；FABLE-drill-release-step-20261121.md）。该版的 Release 和索引行由 `publish.mjs prepare` 在本地检查全部通过之后建出（README 第 3 节、4.1 第 5 步）：
-  - 候选 commit 必须已在远端：建 Release 之前用 `gh api repos/<repo>/commits/<commit>` 核，不在即拒绝（`PREPARE_COMMIT_NOT_ON_REMOTE`）；
+  - 候选 commit 必须已在远端：建 Release 之前用 `gh api repos/<repo>/commits/<commit>` 核，GitHub 答“没有这个 commit”即拒绝（`PREPARE_COMMIT_NOT_ON_REMOTE`），查询本身失败报 `PREPARE_COMMIT_LOOKUP_FAILED`；
   - `gh release create fleet-node-<version> <tar> <release.json> <SHA256SUMS> <bootstrap.ps1> <prereq-manifest.json> --target <commit>`；
   - 凭据只用 gh 自己的登录，不读、不写、不打印令牌，子进程环境去掉 `GH_TOKEN`/`GITHUB_TOKEN`；
-  - 在索引文件追加一行；中途停下后原样重跑 `prepare`，只补缺的资产和索引行。
+  - 在索引文件追加一行；中途停下后原样重跑 `prepare`：Release 上已有的资产逐字节核过，才只补缺的资产和索引行。
 - `publish.mjs prepare` / `seal`（README 第 4 节）：接受前建 Release 与索引行、出接受请求并挂 kit；接受后填 Decision、上传接受文件，补全索引行的接受时间、Decision 与首装演练。
 - 节点取包：`gh release download fleet-node-<version> --repo tdoljyj/cross-memory-system --pattern "fleet-node-<version>.*" --dir <新目录>`，然后由 `install.mjs prepare` 核哈希。
 - 索引文件：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`。表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练。
