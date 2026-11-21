@@ -1732,7 +1732,7 @@ class DuplicateTotalsTests(unittest.TestCase):
 
     def test_r5_the_scan_counts_violations_and_retries_apart_and_lists_violations_first(self) -> None:
         scan = panel.scan_duplicates(self.both(), TOTALS_NOW, {})
-        self.assertEqual(scan["totals"], {"rerun": 5, "parallel": 0, "retry": 1})
+        self.assertEqual(scan["totals"], {"rerun": 5, "parallel": 0, "retry": 1, "unknown": 0})
         self.assertEqual(scan["total"], 6)
         self.assertEqual([item["kind"] for item in scan["found"]], ["rerun"] * 5 + ["retry"])
         # each class newest first: #1204's capture guard push (17:02Z) before #1202's pushes (15:35Z)
@@ -1745,9 +1745,10 @@ class DuplicateTotalsTests(unittest.TestCase):
     def test_r5_the_panel_header_says_both_counts_and_no_retry_is_announced(self) -> None:
         state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
         report = panel.build(self.both(), TOTALS_NOW, state)
-        self.assertEqual(report["duplicates"]["totals"], {"rerun": 5, "parallel": 0, "retry": 1})
+        self.assertEqual(report["duplicates"]["totals"], {"rerun": 5, "parallel": 0, "retry": 1, "unknown": 0})
         body = panel.render(report, state)
-        self.assertIn(self.HEADER, body)
+        self.assertIn(self.HEADER + "。", body)
+        self.assertNotIn("旧记录未记类别", body)
         self.assertNotIn("共 6 项", body)
         rows = [line for line in body.splitlines() if line.startswith("| #12")]
         self.assertEqual(["失败后重试" in row for row in rows], [False] * 5 + [True])
@@ -1772,24 +1773,29 @@ class DuplicateTotalsTests(unittest.TestCase):
         self.assertIn("违规 30 项（通过后又跑 29、并行 1）；失败后重试 7 项（规则允许，只列出）", body)
         self.assertIn("明细已省略", body)
 
-    def test_r5_a_short_record_keeps_its_kind_and_one_saved_without_it_is_read_again(self) -> None:
+    def test_r5_a_short_record_keeps_its_kind_and_one_saved_without_it_is_counted_apart_not_as_a_violation(self) -> None:
+        # Ruling 12.2 #8: a short record an older panel saved has no kind. It is neither read again nor a violation:
+        # it is counted on its own until it leaves the window.
         case = TREE_1202_1204[1202]
         head = case["pull"]["head"]["sha"]
         scan = panel.scan_duplicates(TreeRecordedGitHub(case), TOTALS_NOW, {})
         self.assertEqual(panel.short_finding(scan["found"][0])["kind"], "rerun")
         old = {"head": head[:12], "pr": 1202, "check": "an-older-panel::record", "count": 2, "last": "2026-11-20T15:35:31Z"}
-        previous = {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2)), "found": [], "rest": [old],
+        previous = {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2)), "found": [], "rest": [old, {**old, "check": "b", "kind": "retry"}],
                     "settled": {panel.settle_key(case["pull"], head): case["pull"]["updated_at"]}}
         client = TreeRecordedGitHub(case)
         scan = panel.scan_duplicates(client, TOTALS_NOW, previous)
-        self.assertIn(f"/commits/{head}/check-runs", client.paths)  # no kind: its class is unknown, so the head is read
-        self.assertEqual(scan["totals"], {"rerun": 4, "parallel": 0, "retry": 0})
-        # guard: a settled head whose records all carry a kind is carried over unread
-        previous["rest"] = [{**old, "kind": "retry"}]
-        client = TreeRecordedGitHub(case)
-        scan = panel.scan_duplicates(client, TOTALS_NOW, previous)
-        self.assertNotIn(f"/commits/{head}/check-runs", client.paths)
-        self.assertEqual(scan["totals"], {"rerun": 0, "parallel": 0, "retry": 1})
+        self.assertNotIn(f"/commits/{head}/check-runs", client.paths)  # a settled head is carried over unread
+        self.assertEqual(scan["totals"], {"rerun": 0, "parallel": 0, "retry": 1, "unknown": 1})
+        self.assertEqual(panel.violations(scan["totals"]), 0)
+
+    def test_r5_the_header_names_old_records_without_a_kind_only_when_there_are_some(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        report["duplicates"]["totals"] = {"rerun": 2, "parallel": 0, "retry": 1, "unknown": 3}
+        body = panel.render(report, state)
+        self.assertIn("违规 2 项（通过后又跑 2、并行 0）；失败后重试 1 项（规则允许，只列出）；另有 3 项旧记录未记类别（7 天内滚出）。", body)
+        self.assertNotIn("只列最近", body)  # 5 violation rows are listed for 2 counted: nothing is cut off
 
 
 if __name__ == "__main__":
