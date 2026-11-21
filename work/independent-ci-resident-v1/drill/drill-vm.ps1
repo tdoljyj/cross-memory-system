@@ -2620,7 +2620,7 @@ function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [Da
 # the form the role policies use for a local image).
 $script:ProbeFilesContract = 'clued.drill.guest-probe-files/1'
 $script:ProbeImageRef = '^sha256:[0-9a-f]{64}$'
-$script:ProbePath = '^/[A-Za-z0-9._+/-]+$'
+$script:ProbePath = '^/[A-Za-z0-9._+@/-]+$'
 $script:DrillProbeImageIds = @()
 
 function Test-DrillProbePath([string]$Path) { ($Path -cmatch $script:ProbePath) -and ($Path -cnotmatch '(^|/)\.\.(/|$)') }
@@ -2650,34 +2650,65 @@ function Get-DrillKitImageIds([string[]]$Files) {
 }
 
 # The commands, as data: an id, a bash script that only reads, and the arguments the script reads as $1. A reference or a path is an argument,
-# never part of the script, and is of an exact shape or refused.
+# never part of the script, and is of an exact shape or refused. Readings: ruling 0e418483 4.3 and the two offline inventories'
+# "needs a guest reading" sections (D:/w/tmp/claude-r8-inventory.result.md 5, claude-r8-inventory2.result.md 6).
 function Get-DrillProbeCommands([string[]]$ImageIds = @(), [string[]]$Files = @()) {
   foreach ($r in @($ImageIds)) { if ($r -cnotmatch $script:ProbeImageRef) { throw (New-DrillError 'DRILL_PROBE_PLAN_REFUSED' 'image') } }
   foreach ($p in @($Files)) { if (-not (Test-DrillProbePath $p)) { throw (New-DrillError 'DRILL_PROBE_PLAN_REFUSED' 'path') } }
   $one = { param([string]$Id, [string]$Script, [string[]]$Arguments = @()) [ordered]@{ id = $Id; script = $Script; args = [string[]]@($Arguments) } }
+  # sha256 (a directory, a socket or a missing file answers with its error, kept raw), owner:group:mode:type, then the owning package and its version
   $fileScript = @'
-p="$1"; sha256sum -- "$p"; dpkg-query -S -- "$p"; pkg=$(dpkg-query -S -- "$p" | head -n 1 | cut -d: -f1); [ -n "$pkg" ] && dpkg-query -W -f='${Package} ${Version}\n' "$pkg"
+p="$1"; sha256sum -- "$p"; stat -c '%U:%G:%a:%F' -- "$p"; dpkg-query -S -- "$p"; pkg=$(dpkg-query -S -- "$p" | head -n 1 | cut -d: -f1); [ -n "$pkg" ] && dpkg-query -W -f='${Package} ${Version}\n' "$pkg"
 '@.Trim()
   $inspectScript = @'
 docker image inspect --format '{{.Id}} {{json .RepoDigests}}' "$1"
 '@.Trim()
+  # every image the guest holds: Id, RepoDigests, Os and the config the trivy and gitleaks adapters check (Env, Volumes)
+  $inspectAll = @'
+ids=$(docker image ls -aq --no-trunc | sort -u); [ -z "$ids" ] || docker image inspect --format '{{.Id}} {{json .RepoDigests}} os={{.Os}} env={{json .Config.Env}} volumes={{json .Config.Volumes}}' $ids
+'@.Trim()
+  $verifyScript = 'systemd-analyze verify "$1"; echo "verify-exit=$?"'
   $c = New-Object Collections.Generic.List[object]
   $c.Add((& $one 'docker-driver' "docker info --format '{{json .Driver}}'"))
   $c.Add((& $one 'docker-driver-status' "docker info --format '{{json .DriverStatus}}'"))
+  $c.Add((& $one 'docker-info-json' "docker info --format '{{json .}}'"))
   $c.Add((& $one 'docker-image-ls' 'docker image ls --no-trunc --digests'))
+  $c.Add((& $one 'docker-image-inspect-all' $inspectAll))
   foreach ($r in @($ImageIds)) { $c.Add((& $one "image:$r" $inspectScript @($r))) }
   foreach ($p in @($Files)) { $c.Add((& $one "file:$p" $fileScript @($p))) }
   $c.Add((& $one 'systemd-failed' 'systemctl --failed --no-pager --plain'))
+  $c.Add((& $one 'systemd-is-system-running' 'systemctl is-system-running'))
+  $c.Add((& $one 'systemd-version' 'systemctl --version'))
+  $c.Add((& $one 'runner-service-enabled' 'systemctl is-enabled --quiet actions.runner.tdoljyj-cross-memory-system.clued-ci-home-linux-01.service; echo "is-enabled-exit=$?"'))
+  $c.Add((& $one 'guest-nproc' 'nproc'))
+  $c.Add((& $one 'guest-meminfo' "grep -E 'MemTotal|SwapTotal' /proc/meminfo"))
+  $c.Add((& $one 'guest-uname' 'uname -r'))
+  foreach ($u in $script:ProbeUnits) { $c.Add((& $one "systemd-verify:$u" $verifyScript @("/etc/systemd/system/$u"))) }
   return $c.ToArray()
 }
+$script:ProbeUnits = @('clued-ci-worker@.service', 'clued-ci-wsprep@.service', 'clued-ci-archive@.service')
 
-function New-DrillProbePlan($Commands, [string]$WslExe = '') {
-  [ordered]@{ distribution = $script:Drill.ProbeDistribution; wslExe = $WslExe; commands = @($Commands) }
+# The one command that is not a pure reading (Fable ruling 0e418483 addendum, r8 trivy cache A): after everything else has been decided,
+# start a worker instance the worker's own guard rejects; systemd creates the unit's StateDirectory before ExecStartPre, so the trivy cache
+# root must exist afterwards, owned by root with mode 700. The directory is read before the start and after it, the failed unit is reset.
+# Never part of a verdict; a failure is only recorded.
+$script:ProbeLateInstance = 'r8-probe-rejected'
+function Get-DrillLateProbeCommands {
+  $s = @'
+n="$1"; d=/var/lib/clued-independent-ci-trivy-cache; stat -c '%U:%G:%a:%F' -- "$d"; echo "stat-before-exit=$?"; timeout 60 systemctl start "clued-ci-worker@${n}.service"; echo "start-exit=$?"; stat -c '%U:%G:%a:%F' -- "$d"; echo "stat-after-exit=$?"; systemctl reset-failed "clued-ci-worker@${n}.service"; echo "reset-failed-exit=$?"
+'@.Trim()
+  return @([ordered]@{ id = 'trivy-cache-by-rejected-worker'; script = $s; args = [string[]]@($script:ProbeLateInstance) })
+}
+
+function New-DrillProbePlan($Commands, [string]$WslExe = '', [switch]$Windows) {
+  [ordered]@{ distribution = $script:Drill.ProbeDistribution; wslExe = $WslExe; commands = @($Commands); windows = [bool]$Windows }
 }
 
 # In the guest (a script block). Each command runs apart as root in a clean environment (the form GuestPrereq uses), bounded, and its answer
-# is kept raw; one that cannot answer is kept with the reason. Without a plan it does nothing.
-$script:GuestProbe = {
+# is kept raw; one that cannot answer is kept with the reason. With plan.windows, the drill machine's own readings follow (logical processors,
+# physical memory, wsl --version, every profile's .wslconfig), each kept the same way. Without a plan it does nothing. No clock is read here
+# (the host stamps the record).
+$script:GuestInspect = {
   param($Plan, $NativeText)
   if ($Plan -isnot [Collections.IDictionary] -or $Plan['commands'] -isnot [Array]) { return $null }
   $native = [scriptblock]::Create($NativeText)
@@ -2693,18 +2724,61 @@ $script:GuestProbe = {
     } catch { $r.error = [string]$_.Exception.Message }
     $list.Add($r)
   }
-  [ordered]@{ schema = 'clued.drill.guest-probe/1'; distribution = [string]$Plan['distribution']; commands = $list.ToArray() }
+  $res = [ordered]@{ schema = 'clued.drill.guest-probe/1'; distribution = [string]$Plan['distribution']; commands = $list.ToArray() }
+  if ($Plan['windows'] -eq $true) {
+    $w = [ordered]@{ computerSystem = $null; wslVersion = $null; wslconfig = @(); errors = @() }
+    $errs = New-Object Collections.Generic.List[string]
+    try { $cs = Get-CimInstance Win32_ComputerSystem; $w.computerSystem = [ordered]@{ NumberOfLogicalProcessors = $cs.NumberOfLogicalProcessors; TotalPhysicalMemory = $cs.TotalPhysicalMemory } } catch { $errs.Add('computerSystem: ' + $_.Exception.Message) }
+    try { $v = & $native $wslExe @('--version') 120 'utf-16'; $w.wslVersion = [ordered]@{ exit = [int]$v.exit; stdout = [string]$v.stdout; stderr = [string]$v.stderr } } catch { $errs.Add('wslVersion: ' + $_.Exception.Message) }
+    try {
+      $cfg = New-Object Collections.Generic.List[object]
+      foreach ($f in @(Get-ChildItem -Path 'C:\Users\*\.wslconfig' -Force -ErrorAction SilentlyContinue)) {
+        try { $cfg.Add([ordered]@{ path = $f.FullName; text = [IO.File]::ReadAllText($f.FullName) }) } catch { $cfg.Add([ordered]@{ path = $f.FullName; error = [string]$_.Exception.Message }) }
+      }
+      $w.wslconfig = $cfg.ToArray()
+    } catch { $errs.Add('wslconfig: ' + $_.Exception.Message) }
+    $w.errors = $errs.ToArray()
+    $res.windows = $w
+  }
+  $res
 }
 
-# The host's side, once, before the stage files are taken. Returns @{ result; state; code }: the result only when the guest answered with a
-# probe of the expected shape. Never throws.
-function Invoke-DrillGuestProbe([pscredential]$Cred) {
+# The host's side, once per phase. Phase 'main': before the stage files are taken (4.3 readings); phase 'late': the one worker-instance
+# start. Returns @{ result; state; code }: the result only when the guest answered with a probe of the expected shape. Never throws.
+function Invoke-DrillGuestProbe([pscredential]$Cred, [ValidateSet('main', 'late')][string]$Phase = 'main') {
   try {
-    $plan = New-DrillProbePlan (Get-DrillProbeCommands -ImageIds @($script:DrillProbeImageIds) -Files @(Read-DrillProbeFiles))
-    $got = Invoke-DrillGuest $Cred $script:GuestProbe -ArgumentList @($plan, $script:DrillNativeText) -TimeoutMinutes 20 -Step 'guest-probe'
+    $plan = if ($Phase -ceq 'late') { New-DrillProbePlan (Get-DrillLateProbeCommands) } else { New-DrillProbePlan (Get-DrillProbeCommands -ImageIds @($script:DrillProbeImageIds) -Files @(Read-DrillProbeFiles)) -Windows }
+    $got = Invoke-DrillGuest $Cred $script:GuestInspect -ArgumentList @($plan, $script:DrillNativeText) -TimeoutMinutes 20 -Step $(if ($Phase -ceq 'late') { 'guest-probe-late' } else { 'guest-probe' })
     if ([string](Get-DrillField $got 'schema') -cne 'clued.drill.guest-probe/1' -or $null -eq (Get-DrillField $got 'commands')) { return @{ result = $null; state = 'not-run'; code = 'DRILL_PROBE_NO_ANSWER' } }
     return @{ result = $got; state = 'read'; code = $null }
   } catch { return @{ result = $null; state = 'not-run'; code = [string](Get-DrillCode $_).code } }
+}
+
+# After the first install, the reboot and the reinstall have all been decided (the end of Invoke-DrillRun): the late probe, merged into
+# stage-evidence.json as 'guest-probe-late' when that file exists, else kept as guest-probe-late.json; its outcome beside it in stage-files.json.
+# Not part of any verdict; every failure is swallowed after being recorded.
+function Save-DrillLateProbe([string]$RunDir, [pscredential]$Cred) {
+  $state = $null
+  try {
+    $p = Invoke-DrillGuestProbe $Cred 'late'
+    $state = [ordered]@{ state = $p.state; code = $p.code; at = (Get-DrillTime).ToString('o') }
+    if ($null -ne $p.result) {
+      $evFile = Join-Path $RunDir 'stage-evidence.json'
+      if (Test-Path -LiteralPath $evFile -PathType Leaf) {
+        $ev = Read-DrillJson $evFile
+        $ev | Add-Member -NotePropertyName 'guest-probe-late' -NotePropertyValue $p.result -Force
+        Write-DrillJson $evFile $ev
+        $state.state = 'saved'
+      } else { Write-DrillJson (Join-Path $RunDir 'guest-probe-late.json') $p.result; $state.state = 'saved-apart' }
+    }
+  } catch { $state = [ordered]@{ state = 'not-saved'; code = [string](Get-DrillCode $_).code } }
+  try {
+    $sf = Join-Path $RunDir 'stage-files.json'
+    $rec = if (Test-Path -LiteralPath $sf -PathType Leaf) { Read-DrillJson $sf } else { [pscustomobject]@{} }
+    $rec | Add-Member -NotePropertyName 'probeLate' -NotePropertyValue $state -Force
+    Write-DrillJson $sf $rec
+  } catch { }
+  return $state
 }
 
 # The stage files the entry writes under the guest's work directory, read in the guest file by file with read-write sharing (a stage still
@@ -2876,6 +2950,9 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $reinstall.prepareAgainStatus = [string](Get-Prop $p2 'status'); $reinstall.prepareAgainExit = $p2.exit; $reinstall.prepareAgainStderr = $p2.stderr
     Write-DrillJson (Join-Path $RunDir 'reinstall.json') $reinstall
   }
+
+  # the one worker-instance start (r8 trivy cache): after everything the verdict reads has been collected; never part of a verdict
+  [void](Save-DrillLateProbe $RunDir $Cred)
 
   $m5 = try { Copy-DrillM5 $RunDir $Cred } catch { @{ collectionCode = (Get-DrillCode $_).code } }
   return @{ entry = $entry; launcher = $launcher; first = $first; reboot = $reboot; reinstall = $reinstall; fake = $fake; prereq = $prereqFacts; timings = $timings; m5 = $m5 }

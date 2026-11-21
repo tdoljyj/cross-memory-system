@@ -124,7 +124,7 @@ function fakeWsl(name) {
 const runGuest = (wslCmd, env = '') => ps(`${env}
   $c = Get-DrillProbeCommands ${PLAN_ARGS}
   $plan = New-DrillProbePlan -Commands $c -WslExe ${q(wslCmd)}
-  & $script:GuestProbe $plan $script:DrillNativeText`);
+  & $script:GuestInspect $plan $script:DrillNativeText`);
 
 test('the guest side runs every command apart, as root, with a clean environment, and keeps each answer raw', opts, () => {
   const w = fakeWsl('guest-ok');
@@ -133,7 +133,10 @@ test('the guest side runs every command apart, as root, with a clean environment
   assert.equal(r.distribution, 'CluedResident-Linux');
   assert.equal(r.at, undefined, 'no clock read in the guest: the host stamps the record');
   const ids = r.commands.map(x => x.id);
-  assert.deepEqual(ids, ['docker-driver', 'docker-driver-status', 'docker-image-ls', `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`, 'file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', 'systemd-failed']);
+  const FIXED_HEAD = ['docker-driver', 'docker-driver-status', 'docker-info-json', 'docker-image-ls', 'docker-image-inspect-all'];
+  const FIXED_TAIL = ['systemd-failed', 'systemd-is-system-running', 'systemd-version', 'runner-service-enabled', 'guest-nproc', 'guest-meminfo', 'guest-uname',
+    'systemd-verify:clued-ci-worker@.service', 'systemd-verify:clued-ci-wsprep@.service', 'systemd-verify:clued-ci-archive@.service'];
+  assert.deepEqual(ids, [...FIXED_HEAD, `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`, 'file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', ...FIXED_TAIL]);
   assert.ok(r.commands.every(x => x.exit === 0 && x.error === null && typeof x.stdout === 'string' && x.stdout.startsWith('ANSWER')));
   const calls = w.calls();
   assert.equal(calls.length, ids.length);
@@ -141,26 +144,28 @@ test('the guest side runs every command apart, as root, with a clean environment
     assert.deepEqual(a.slice(0, 5), ['-d', 'CluedResident-Linux', '-u', 'root', '--exec']);
     assert.deepEqual(a.slice(5, 9), ['/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C']);
   }
-  assert.deepEqual(calls[3].slice(-2), ['_', `sha256:${HEX_A}`], 'a reference travels as an argument');
+  assert.deepEqual(calls[5].slice(-2), ['_', `sha256:${HEX_A}`], 'a reference travels as an argument');
 });
 
 test('one command failing, or wsl itself missing, stops nothing and throws nothing', opts, () => {
   const w = fakeWsl('guest-fail');
-  const r = runGuest(w.cmd, `$env:FAKE_FAIL = 'docker image ls';`);
-  assert.equal(r.commands.length, 8, 'the others still ran');
+  const ids = commandsOf().map(x => x.id);
+  const r = runGuest(w.cmd, `$env:FAKE_FAIL = 'docker image ls --no-trunc --digests';`);
+  assert.equal(r.commands.length, ids.length, 'the others still ran');
   const failed = r.commands.find(x => x.id === 'docker-image-ls');
   assert.equal(failed.exit, 7);
   assert.match(failed.stderr, /boom/);
-  assert.equal(r.commands.filter(x => x.exit === 0).length, 7);
+  assert.equal(r.commands.filter(x => x.exit === 0).length, ids.length - 1);
   const none = runGuest(path.join(tmp, 'no-such-wsl.exe'));
+  const idsNone = commandsOf().map(x => x.id);
   assert.equal(none.schema, 'clued.drill.guest-probe/1');
-  assert.equal(none.commands.length, 8);
+  assert.equal(none.commands.length, idsNone.length);
   assert.ok(none.commands.every(x => x.exit === null && typeof x.error === 'string' && x.error.length > 0), 'each one says why it did not answer');
 });
 
 test('the guest side does nothing when it is not handed a plan', opts, () => {
   const w = fakeWsl('guest-noplan');
-  const r = ps(`$r = & $script:GuestProbe ${q('C:\\some\\guest\\work')} $script:DrillNativeText; $null -eq $r`);
+  const r = ps(`$r = & $script:GuestInspect ${q('C:\\some\\guest\\work')} $script:DrillNativeText; $null -eq $r`);
   assert.equal(r, true);
   assert.deepEqual(w.calls(), []);
 });
@@ -251,4 +256,114 @@ test('the run hands the probe the kit images it carries, before the guest eviden
   assert.match(run.slice(ids, entry), /Get-DrillKitImageIds/);
   // the probe lives only in the stage evidence collection, which Save-DrillGuestEvidence runs on every end, before the checkpoint restore
   assert.match(text.slice(text.indexOf('function Save-DrillGuestEvidence')), /\$stage = Save-DrillStageEvidence/);
+});
+
+// ---- the two offline inventories' "needs a guest reading" sections, and the late worker-instance start (Fable ruling addenda) ----
+
+test('every reading the two inventories name is in the probe, and the main probe only reads', opts, () => {
+  const c = commandsOf();
+  const text = Object.fromEntries(c.map(x => [x.id, x.script]));
+  assert.match(text['docker-info-json'], /docker info --format '\{\{json \.\}\}'/);
+  assert.match(text['docker-image-inspect-all'], /docker image ls -aq --no-trunc/);
+  for (const field of ['\\.Id', 'json \\.RepoDigests', '\\.Os', 'json \\.Config\\.Env', 'json \\.Config\\.Volumes']) assert.match(text['docker-image-inspect-all'], new RegExp(field));
+  assert.match(text['runner-service-enabled'], /systemctl is-enabled --quiet actions\.runner\.tdoljyj-cross-memory-system\.clued-ci-home-linux-01\.service; echo "is-enabled-exit=\$\?"/);
+  assert.match(text['systemd-is-system-running'], /systemctl is-system-running/);
+  assert.match(text['systemd-version'], /systemctl --version/);
+  assert.equal(text['guest-nproc'], 'nproc');
+  assert.match(text['guest-meminfo'], /MemTotal\|SwapTotal.*\/proc\/meminfo/);
+  assert.equal(text['guest-uname'], 'uname -r');
+  for (const u of ['worker', 'wsprep', 'archive']) {
+    const x = c.find(y => y.id === `systemd-verify:clued-ci-${u}@.service`);
+    assert.ok(x); assert.match(x.script, /systemd-analyze verify "\$1"; echo "verify-exit=\$\?"/);
+    assert.deepEqual(x.args, [`/etc/systemd/system/clued-ci-${u}@.service`]);
+  }
+  for (const x of c.filter(y => y.id.startsWith('file:'))) assert.match(x.script, /stat -c '%U:%G:%a:%F' -- "\$p"/, 'owner, group, mode and type of every inventory path');
+  for (const x of c) assert.doesNotMatch(x.script, /systemctl (start|restart|stop|reset-failed)/, `${x.id} does not change anything`);
+});
+
+test('the inventory holds the 23 paths of the first offline inventory and the 8 of the second', opts, () => {
+  const paths = arr(ps(`@(Read-DrillProbeFiles)`));
+  for (const p of ['/usr/bin/python3.12', '/usr/bin/git', '/usr/bin/docker', '/run/docker.sock', '/etc/docker/daemon.json', '/var/lib/clued-independent-ci-trivy-cache',
+    '/etc/systemd/system/clued-ci-worker@.service', '/var/lib/clued-independent-ci/resident/upgrade/g1.json',
+    '/usr/bin/systemd-run', '/usr/bin/systemd-analyze', '/usr/bin/systemctl', '/etc/wsl.conf', '/opt/clued-independent-ci/resident-v1/bin/clued-ci-resident-linux',
+    '/opt/clued-independent-ci/resident-v1/manifest.json', '/var/lib/clued-independent-ci/formal-spool/incoming', '/var/lib/clued-independent-ci/formal-spool/outgoing']) {
+    assert.ok(paths.includes(p), p);
+  }
+  assert.equal(paths.length, 31);
+});
+
+test('the Windows side of the drill machine is read after the distribution, each reading on its own', opts, () => {
+  const w = fakeWsl('guest-windows');
+  const r = ps(`$plan = New-DrillProbePlan (Get-DrillProbeCommands -Files @('/usr/bin/python3.12')) -WslExe ${q(w.cmd)} -Windows
+    & $script:GuestInspect $plan $script:DrillNativeText`);
+  assert.ok(r.windows.computerSystem.NumberOfLogicalProcessors > 0);
+  assert.ok(r.windows.computerSystem.TotalPhysicalMemory > 0);
+  assert.equal(typeof r.windows.wslVersion.exit, 'number');
+  assert.ok(Array.isArray(arr(r.windows.wslconfig)));
+  assert.deepEqual(arr(r.windows.errors), []);
+  const calls = w.calls();
+  assert.deepEqual(calls[calls.length - 1], ['--version'], 'wsl --version, after the distribution commands');
+  const plain = ps(`$plan = New-DrillProbePlan (Get-DrillProbeCommands -Files @('/usr/bin/python3.12')) -WslExe ${q(w.cmd)}
+    $x = & $script:GuestInspect $plan $script:DrillNativeText; -not $x.Contains('windows')`);
+  assert.equal(plain, true, 'only when the plan asks');
+});
+
+test('the late probe is the one command that starts a unit: a rejected worker instance, the trivy cache read before and after, then reset-failed', opts, () => {
+  const c = arr(ps(`@(Get-DrillLateProbeCommands)`));
+  assert.equal(c.length, 1);
+  assert.equal(c[0].id, 'trivy-cache-by-rejected-worker');
+  const s = c[0].script;
+  const marks = ['stat -c', 'systemctl start "clued-ci-worker@${n}.service"', 'systemctl reset-failed "clued-ci-worker@${n}.service"'].map(x => s.indexOf(x));
+  const lastStat = s.lastIndexOf('stat -c');
+  assert.ok(marks[0] >= 0 && marks[0] < marks[1] && marks[1] < lastStat && lastStat < marks[2], 'before, start, after, reset');
+  assert.match(s, /d=\/var\/lib\/clued-independent-ci-trivy-cache/);
+  assert.match(s, /timeout 60 systemctl start/);
+  assert.deepEqual(c[0].args, ['r8-probe-rejected']);
+  assert.ok(!commandsOf().some(x => x.id === c[0].id), 'not among the main probe commands');
+});
+
+test('the late probe is merged into stage-evidence.json when it exists, kept apart when it does not, and never throws', opts, () => {
+  const LATE = { schema: 'clued.drill.guest-probe/1', distribution: 'CluedResident-Linux', commands: [{ id: 'trivy-cache-by-rejected-worker', exit: 0, stdout: 'root:root:700:directory\n' }] };
+  const stubLate = (answer) => `function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
+    if ($Step -ceq 'guest-probe-late') { ${answer} } else { throw 'unexpected step' } }`;
+  const withEvidence = path.join(tmp, 'late-with'); fs.mkdirSync(withEvidence, { recursive: true });
+  fs.writeFileSync(path.join(withEvidence, 'stage-evidence.json'), JSON.stringify({ 'launcher-result.json': { exit: 0 }, 'guest-probe': PROBE }));
+  fs.writeFileSync(path.join(withEvidence, 'stage-files.json'), JSON.stringify({ files: {}, probe: { state: 'saved' } }));
+  const a = ps(`${stubLate(`${q(JSON.stringify(LATE))} | ConvertFrom-Json`)}
+    (Save-DrillLateProbe ${q(withEvidence)} $null).state`);
+  assert.equal(a, 'saved');
+  const ev = JSON.parse(fs.readFileSync(path.join(withEvidence, 'stage-evidence.json'), 'utf8'));
+  assert.deepEqual(ev['guest-probe-late'], LATE);
+  assert.deepEqual(ev['guest-probe'], PROBE, 'what was there stays');
+  assert.equal(ev['launcher-result.json'].exit, 0);
+  const rec = JSON.parse(fs.readFileSync(path.join(withEvidence, 'stage-files.json'), 'utf8'));
+  assert.equal(rec.probeLate.state, 'saved');
+  assert.equal(rec.probe.state, 'saved');
+
+  const without = path.join(tmp, 'late-without'); fs.mkdirSync(without, { recursive: true });
+  const b = ps(`${stubLate(`${q(JSON.stringify(LATE))} | ConvertFrom-Json`)}
+    (Save-DrillLateProbe ${q(without)} $null).state`);
+  assert.equal(b, 'saved-apart');
+  assert.ok(!fs.existsSync(path.join(without, 'stage-evidence.json')), 'no stage-evidence.json from nothing: the abort evidence reads its presence');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(without, 'guest-probe-late.json'), 'utf8')), LATE);
+
+  for (const [name, answer] of [['thrown', `throw (New-DrillError 'DRILL_GUEST_STEP_FAILED')`], ['nonsense', `[ordered]@{ schema = 'x' }`], ['nothing', `$null`]]) {
+    const dir = path.join(tmp, `late-${name}`); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'stage-evidence.json'), JSON.stringify({ 'launcher-result.json': { exit: 0 } }));
+    const s = ps(`${stubLate(answer)}
+      $x = Save-DrillLateProbe ${q(dir)} $null; $x.state`);
+    assert.equal(s, 'not-run', name);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'stage-evidence.json'), 'utf8')), { 'launcher-result.json': { exit: 0 } }, 'evidence untouched');
+  }
+});
+
+test('the late probe is called once, at the end of the run: after the reinstall, before the M5 copy, outside every verdict', opts, () => {
+  const text = fs.readFileSync(script, 'utf8');
+  const run = text.slice(text.indexOf('function Invoke-DrillRun'), text.indexOf('function Save-DrillGuestEvidence'));
+  assert.equal(run.split('Save-DrillLateProbe').length, 2);
+  assert.ok(run.indexOf('Save-DrillLateProbe') > run.indexOf('prepareAgainStatus') && run.indexOf('Save-DrillLateProbe') < run.indexOf('$m5 = try { Copy-DrillM5'));
+  assert.doesNotMatch(text.slice(text.indexOf('function Get-DrillVerdict'), text.indexOf('function Test-DrillAfterBoot')), /guest-probe|probeLate|GuestInspect/);
+  // the readiness probe the drill already had keeps its own name and body
+  assert.match(text, /\$script:GuestProbe = \{\r?\n\s+\$setup = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\Setup'/);
+  assert.equal(text.split('$script:GuestProbe =').length, 2, 'one definition: the read-only probe uses GuestInspect');
 });
