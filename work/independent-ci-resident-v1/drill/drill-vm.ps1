@@ -82,11 +82,15 @@ $script:Drill = [ordered]@{
   # 20261119T172257Z, 3.3 GB in run 20261119T030253Z) is not counted: it was the production WSL growing under a CI job of the host's
   # Actions runners, which the runner-job tier below now covers.
   BootMarginBytes = 1GB
-  # A runner job on either side at boot (or a job query that failed) does not refuse the boot: it raises the boot gate by this much, the
-  # measured growth of the production WSL under a job (5.9 GB, run 20261119T172257Z): 15 GB without a job, 21 GB with one (Fable renew-key
-  # ruling, supplement "drill boot gate and the train both want DESK"). One measurement: the receipt's evidence.hostMemory keeps the
-  # figures to recalibrate it. The running gate does not use it.
-  RunnerJobExtraBytes = 6GB
+  # A runner job on either side at boot (or a job query that failed) does not refuse the boot: it raises the boot gate by the growth of
+  # the host's other usage after the boot measured with a job at boot (Fable renew-key ruling, supplement "drill boot gate and the train
+  # both want DESK"; calibrated by the Fable ruling on r6 Linux phase A, section 5). The one source of that figure is this receipt
+  # reading: its evidence.hostMemory, free once the guest was up minus the lowest while running, 19.3 - 8.9 = 10.4 GB (the earlier 6 GB
+  # came from run 20261119T172257Z's 5.9 GB, a different reading: free at start - after boot - guest). 15 GB without a job, 25.4 GB with
+  # one. Test-DrillHostMemory derives the bytes and reports this record as the basis; the running gate does not use it. To recalibrate,
+  # replace the record with a later receipt's reading -- nothing else holds the value, and no dispatch carries a memory figure.
+  RunnerJobGrowth = [ordered]@{ receipt = 'D:\clued-drill\runs\20261121T010455Z-2026.11.21-b7d92a1a-4b3f5ee5\receipt.json'
+    afterBootFreeGB = 19.3; minRunningFreeGB = 8.9 }
   HostGuardSeconds = 30
   # Which WSL distribution this host's Linux Actions runners live in: the host's entry (by host name) in the self-hosted node registry of
   # this checkout. Not the installed node profile's wslDistribution: that is the resident's own distribution, registered for its
@@ -172,18 +176,28 @@ function Get-Prop($Object, [string]$Path) {
 
 # ---------------------------------------------------------------- pure decisions (unit-tested offline)
 
-# -RunnerJob (before boot only): a runner job on either side, or a job query that failed -- the high tier (RunnerJobExtraBytes more).
+# -RunnerJob (before boot only): a runner job on either side, or a job query that failed -- the high tier (the RunnerJobGrowth reading more).
+# requiredBasis: what requiredFreeBytes is made of, in GB, and the receipt reading the runner job growth comes from (null without it).
 function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0, [switch]$RunnerJob) {
   $target = [Math]::Max($script:Drill.MemoryBytes, $VmMemoryBytes)
-  $vmFreeRequired = if ($Running) {
+  $guest = $margin = $growth = 0L; $growthFrom = $null
+  if ($Running) {
     # Hyper-V's assigned memory has already been deducted from the host's free memory.
-    [Math]::Max(0L, $target - $MemoryAssigned)
+    $guest = [Math]::Max(0L, $target - $MemoryAssigned)
   } else {
-    [Math]::Max($target, $MemoryAssigned) + $script:Drill.BootMarginBytes + $(if ($RunnerJob) { $script:Drill.RunnerJobExtraBytes } else { 0L })
+    $guest = [Math]::Max($target, $MemoryAssigned); $margin = $script:Drill.BootMarginBytes
+    if ($RunnerJob) {
+      $g = $script:Drill.RunnerJobGrowth
+      $growth = [long][Math]::Ceiling(([double]$g.afterBootFreeGB - [double]$g.minRunningFreeGB) * 1GB)
+      $growthFrom = "$($g.receipt): evidence.hostMemory afterBootFreeGB $($g.afterBootFreeGB) - minRunningFreeGB $($g.minRunningFreeGB)"
+    }
   }
-  $required = $vmFreeRequired + $script:Drill.ProductionReserveBytes
+  $required = $guest + $margin + $growth + $script:Drill.ProductionReserveBytes
+  $gb = { param([long]$b) [Math]::Round($b / 1GB, 1) }
   return @{ ok = ($FreeBytes -ge $required); code = $(if ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null });
-    freeGB = [Math]::Round($FreeBytes / 1GB, 1); requiredFreeBytes = $required }
+    freeGB = (& $gb $FreeBytes); requiredFreeBytes = $required
+    requiredBasis = [ordered]@{ guestGB = (& $gb $guest); bootMarginGB = (& $gb $margin); runnerJobGrowthGB = (& $gb $growth)
+      productionReserveGB = (& $gb $script:Drill.ProductionReserveBytes); runnerJobGrowthFrom = $growthFrom } }
 }
 
 # An Actions self-hosted runner executes each job in a Runner.Worker process (its Runner.Listener only waits for work). Judged from the
@@ -312,7 +326,7 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
   return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; runnerJob = $(if ($Running) { $null } else { Get-DrillRunnerJobState $busyWith });
     mode = $mode; holdSince = $since; holdUntil = $until;
-    freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes;
+    freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes; requiredBasis = $memory.requiredBasis;
     executorObservation = $executorObservation; observedAt = $Now.ToUniversalTime().ToString('o');
     action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
 }
@@ -1309,7 +1323,7 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     $wslJob = $null
     if (@($wsl.jobs).Count -gt 0) { $wslJob = $true } elseif ($wsl.ok) { $wslJob = $false }   # a confirmed job stays one beside an unread distribution
     $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes -WslJob $wslJob
-    if ($JobsOnly) { $safety.freeGB = $null; $safety.requiredFreeBytes = $null }   # nothing was read
+    if ($JobsOnly) { $safety.freeGB = $null; $safety.requiredFreeBytes = $null; $safety.requiredBasis = $null }   # nothing was read
     $safety.wslRunnerDistributions = $wsl.running
     $safety.wslJobs = $wsl.jobs
     $safety.wslUnreadable = $wsl.reason
@@ -1339,6 +1353,7 @@ function ConvertTo-DrillGateTrace($Safety) {
   $required = Get-Prop $Safety 'requiredFreeBytes'
   [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); ok = [bool](Get-Prop $Safety 'ok'); code = (Get-Prop $Safety 'code'); busyWith = (Get-Prop $Safety 'busyWith')
     runnerJob = (Get-Prop $Safety 'runnerJob'); requiredFreeGB = $(if ($null -ne $required) { [Math]::Round([long]$required / 1GB, 1) } else { $null })
+    requiredBasis = $(if ($null -ne $required) { Get-Prop $Safety 'requiredBasis' } else { $null })
     freeGB = (Get-Prop $Safety 'freeGB'); wslRunning = @(Get-Prop $Safety 'wslRunnerDistributions'); wslJobs = @(Get-Prop $Safety 'wslJobs')
     wslUnreadable = (Get-Prop $Safety 'wslUnreadable'); wslListCall = (Get-Prop $Safety 'wslListCall'); windowsUnreadable = (Get-Prop $Safety 'windowsUnreadable') }
 }
