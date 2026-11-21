@@ -183,7 +183,7 @@
       "reason": "2 处：1 处 work_claim_pr_binding_input_invalid；1 处期望错误码 work_claim_pr_ref_invalid 实得 work_claim_pr_binding_input_invalid（校验次序变了，先查是否有意再改断言）"
     },
     {
-      "path": "artifacts/clued-validation/**",
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/**",
       "kind": "archive",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
       "reason": "验证证据包里的测试副本，字节随证据封存，不是活代码，不该运行或修改"
@@ -195,7 +195,7 @@
       "reason": "授权合同证据包里的测试与测试脚本副本（含 *-test.mjs 两个），字节随证据封存，不是活代码"
     },
     {
-      "path": "docs/execution-plans/**",
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/**",
       "kind": "archive",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
       "reason": "执行计划文档里随附的执行载荷副本，字节随文档封存，不是活代码"
@@ -303,284 +303,34 @@
       "reason": "封存的旧代码目录（legacy），不再维护，测试从没在必需检查里跑；整目录是否删除另议"
     },
     {
-      "path": "scripts/ci/activity-conflict-caller.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "Task 15ca471a 记它在 f4494b77 上红，现已通过；apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/check-pinned-registries.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/ci-usage-attribution.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/ci-usage-report.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-control-source-pins.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-control-workflow-reconcile-source.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-control-workflow-source.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "Task 15ca471a 记它在 f4494b77 上红，现已通过；apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-g4-fresh-start.test.mjs",
-      "kind": "other-workflow",
-      "workflow": "clued-g4-database.yml",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
-    },
-    {
-      "path": "scripts/ci/clued-handover-external-source-check.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-handover-native-entry.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-independent-legacy-drain.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-independent-publication-identity.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-independent-publication-port.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-independent-publication-runtime.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-independent-revocation-controller.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-independent-revoker.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-independent-supervisor.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-merge-reconcile-gate.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-merge-reconcile-source.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-merge-reconcile.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-merge-train-native.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-pr-task-binding.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-pr-write-set.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-push-reuse.test.mjs",
-      "kind": "other-workflow",
-      "workflow": "clued-g4-database.yml",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
-    },
-    {
-      "path": "scripts/ci/clued-scan-start.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-standard-runner-actor-source.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/clued-work-claim-handover.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/component-version-integration-policy.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/merge-admission-clock-bootstrap.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/merge-admission-clock-source.test.mjs",
-      "kind": "other-workflow",
-      "workflow": "clued-g4-database.yml",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
-    },
-    {
-      "path": "scripts/ci/merge-admission-four-sources.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/merge-admission-measurement-history.test.mjs",
-      "kind": "other-workflow",
-      "workflow": "clued-g4-database.yml",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
-    },
-    {
-      "path": "scripts/ci/merge-admission-r9-collector.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/merge-admission-r9-reregister.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/nonpush-seal-caller.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "Task 15ca471a 记它在 f4494b77 上红，现已通过；apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/public-mcp-hosted-space.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
-      "path": "scripts/ci/public-mcp-supabase-isolation.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
-    },
-    {
       "path": "scripts/ci/self-hosted/resource-maintenance/test_maintenance.py",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+      "kind": "stale-or-suspect",
+      "task": "8aa01865-5599-4594-a140-d6c3451e1fe8",
+      "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
     },
     {
       "path": "scripts/ci/self-hosted/resource-maintenance/test_producer.py",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+      "kind": "stale-or-suspect",
+      "task": "8aa01865-5599-4594-a140-d6c3451e1fe8",
+      "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
     },
     {
       "path": "scripts/ci/self-hosted/resource-maintenance/test_schedule_probe.py",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
-    },
-    {
-      "path": "scripts/ci/test_check_contract_placement.py",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+      "kind": "stale-or-suspect",
+      "task": "8aa01865-5599-4594-a140-d6c3451e1fe8",
+      "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
     },
     {
       "path": "scripts/ci/test_check_design_refs.py",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
-    },
-    {
-      "path": "scripts/ci/test_clued_docs_only.py",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+      "kind": "stale-or-suspect",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "C2 首跑（--run-files clued-cloud，Windows）9 例 2 例报错：run_main 打开 /dev/null，Windows 上没有；Linux 上未跑过。文件字节被 config/clued-handover-external-acceptance.json（Owner 签名）钉住，不能在本批改；待开 Task 定：在 Linux 上验证后进 clued-cloud 的 Python 命令，或经重签改成 os.devnull"
     },
     {
       "path": "scripts/phase2-qualification/**",
       "kind": "archive",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
       "reason": "Phase 2 资格验证的脚本与 history/<提交> 快照目录，已封存；其中的测试从没在必需检查里跑，整目录是否删除另议"
-    },
-    {
-      "path": "scripts/runner/qualify-work-handover.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
-    },
-    {
-      "path": "scripts/verify-memory-publication.test.mjs",
-      "kind": "unsorted",
-      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
-      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
     },
     {
       "path": "tests/information-flow-parent-adapter.test.mjs",

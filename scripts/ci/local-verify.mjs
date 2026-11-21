@@ -1300,7 +1300,7 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
       try {
         // commandArgv runs only the test files an added command adds to a trusted one (a main predating it has none such).
         const argvOf = selector.commandArgv ?? ((it, options) => selector.expandArgv(it.argv, options));
-        const [program, ...args] = argvOf(command, { cwd, base: main, report: path.join(temporary, `${id}-report.json`),
+        const [program, ...args] = argvOf(command, { cwd, root, base: main, report: path.join(temporary, `${id}-report.json`),
           listUnit: unitTestFilesWith(cwd, env) });
         const reported = withFailureReport(program, args, { known: Boolean(known), reporterUrl: selector.reporterUrl,
           file: path.join(temporary, `command-${index}.jsonl`) });
