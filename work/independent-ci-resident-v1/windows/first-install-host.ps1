@@ -452,9 +452,12 @@ function ConvertTo-JsonLine($value, [switch]$Progress) {
 # shape in the three stages of a first install (this host preparation, bootstrap.ps1, the launcher): {name, result: ok|failed, rejectCode,
 # detail}. Enter-Step names the step that runs now: a refusal, a restart or an exception is printed as that step failed, before the
 # verdict. A step line never throws and never ends P1.
+# This stage's lines also carry at, the UTC time the step ended (Fable ruling 0e418483 section 4; ISO 8601, +00:00): two neighbouring lines
+# give a step's duration. bootstrap.ps1's and the launcher's lines do not carry it.
 function Get-StepLine([string]$name, [string]$result, $rejectCode, $detail) {
-  try { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail }) -Progress }
-  catch { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $(if ($rejectCode -is [string]) { $rejectCode } else { $null }); detail = '<not printable>' }) -Progress }
+  $at = try { [DateTimeOffset]::UtcNow.ToString('o') } catch { $null }
+  try { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail; at = $at }) -Progress }
+  catch { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $(if ($rejectCode -is [string]) { $rejectCode } else { $null }); detail = '<not printable>'; at = $at }) -Progress }
 }
 function Enter-Step([string]$name) { $script:StepNow = $name }
 function Step([string]$name, $detail) { $script:StepNow = $null; Get-StepLine $name 'ok' $null $detail }

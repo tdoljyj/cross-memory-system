@@ -157,7 +157,9 @@ test('companion token: none anywhere: refused in the credentials step by name, n
   assert.equal(r.status, 1, r.out);
   const v = JSON.parse(r.lines.at(-1));
   assert.deepEqual([v.status, v.code, v.detail], ['FIRST_INSTALL_HOST_REFUSED', 'CREDENTIAL_MISSING', ['companionToken']], r.out);
-  assert.deepEqual(JSON.parse(r.lines.at(-2)), { name: 'credentials', result: 'failed', rejectCode: 'CREDENTIAL_MISSING', detail: null });
+  const { at, ...step } = JSON.parse(r.lines.at(-2));   // at: the UTC time the step ended (Fable ruling 0e418483 section 4)
+  assert.match(at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}\+00:00$/, r.out);
+  assert.deepEqual(step, { name: 'credentials', result: 'failed', rejectCode: 'CREDENTIAL_MISSING', detail: null });
   assert.deepEqual(r.calls, ['Check:Offline', 'CopyFromOwner'], 'no login: nothing written');
   assert.equal(r.written, false);
   const shape = hostRun(t, { tokenFile: 'github_pat_not_classic', body: RESOLVE_AND_WRITE });

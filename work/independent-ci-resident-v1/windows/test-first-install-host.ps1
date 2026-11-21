@@ -402,8 +402,10 @@ try {
     Yes ($line.StartsWith('{"status":"FIRST_INSTALL_HOST_READY","facts":' + (& $str $jp) + ',"node":"desk-w-591"')) ('t1:key-order-kept ' + $line)
     # a deserialized document (facts.json read back: Dictionary and object[]) is plain data already and comes out the same
     Yes ((ConvertTo-JsonLine $back) -ceq $line) 't1:deserialized-is-unchanged'
-    Yes ((Step 'stage' $jp) -ceq ('{"name":"stage","result":"ok","rejectCode":null,"detail":' + (& $str $jp) + '}')) 't1:step-stage'
-    Yes ((Step 'residue' $two) -ceq '{"name":"residue","result":"ok","rejectCode":null,"detail":["SERVICE:A","SERVICE:B"]}') 't1:step-residue-codes'
+    # a step line ends with at, the UTC time the step ended (Fable ruling 0e418483 section 4)
+    $stepIs = { param([string]$line, [string]$fields) $line -cmatch ('\A' + [regex]::Escape($fields + ',"at":"') + '\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}\+00:00"\}\z') }
+    Yes (& $stepIs (Step 'stage' $jp) ('{"name":"stage","result":"ok","rejectCode":null,"detail":' + (& $str $jp))) 't1:step-stage'
+    Yes (& $stepIs (Step 'residue' $two) '{"name":"residue","result":"ok","rejectCode":null,"detail":["SERVICE:A","SERVICE:B"]') 't1:step-residue-codes'
     # longer than the serializer's default 2,097,152 characters (Codex review of PR-A, blocking 2): plain data is written whole
     $big = 'y' * 2500000
     $bl = try { ConvertTo-JsonLine ([ordered]@{ facts = $big }) } catch { $null }

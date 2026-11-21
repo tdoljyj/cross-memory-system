@@ -108,6 +108,16 @@ function global:Get-Service {
 // (definitions only: its main runs only when the file is invoked), its progress and refusal lines are printed from the values P1 really
 // has, cmdlet output (Join-Path, Where-Object, Split-Path), which 5.1 hands over in a PSObject shell. Before the one JSON writer the
 // guest stopped at `Step 'stage' $stage` with a PSParameterizedProperty circular reference, and so does this test.
+// The host preparation's step lines end with at, the UTC time the step ended (Fable ruling 0e418483 section 4): checked, then compared
+// without it. A verdict line (status) carries none.
+const STEP_AT = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{7}\+00:00$/;
+function hostLine(line) {
+  const o = JSON.parse(line);
+  if ('status' in o) { assert.ok(!('at' in o), line); return o; }
+  assert.match(o.at, STEP_AT, line);
+  const { at, ...rest } = o;
+  return rest;
+}
 function hostScriptLines(body) {
   const command = `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n. ${psLiteral(path.join(RES, 'windows', 'first-install-host.ps1'))}\n${body}`;
   const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
@@ -124,7 +134,9 @@ Step 'stage' $stage
 Step 'residue' (@('SERVICE:A', 'SERVICE:B') | Where-Object { $_ })
 Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
   assert.equal(steps.status, 0, steps.out);
-  const parsed = steps.lines.map(l => JSON.parse(l));
+  const parsed = steps.lines.map(hostLine);
+  const ats = steps.lines.map(l => Date.parse(JSON.parse(l).at));
+  assert.ok(ats.every((t, i) => Number.isFinite(t) && (i === 0 || t >= ats[i - 1])), `step times in order: ${steps.out}`);
   const ok = (name, detail) => ({ name, result: 'ok', rejectCode: null, detail });
   assert.deepEqual(parsed.slice(0, 3), [ok('residue', 'none'), ok('stage', 'C:\\Windows\\Temp\\clued-p1-0123'), ok('residue', ['SERVICE:A', 'SERVICE:B'])], steps.out);
   assert.match(parsed[3].detail, /DirectoryInfo/, steps.out);
@@ -134,7 +146,7 @@ Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
   assert.deepEqual(JSON.parse(refused.lines.at(-1)),
     { status: 'FIRST_INSTALL_HOST_REFUSED', code: 'INPUT_MISSING', detail: { path: 'C:\\drill\\from\\x.tar', found: ['C:\\a'] } }, refused.out);
   // the step it ended, in the step-line shape, just before the verdict
-  assert.deepEqual(JSON.parse(refused.lines.at(-2)),
+  assert.deepEqual(hostLine(refused.lines.at(-2)),
     { name: 'stage', result: 'failed', rejectCode: 'INPUT_MISSING', detail: null }, refused.out);   // the detail only once: in the verdict
 
   // a refusal whose detail is not plain data is still one line and exit 1, refused by name with the code it was refusing
@@ -159,7 +171,7 @@ Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
   // "heartbeat token and restart code" 2: the restart verdict says which install step asked for it and the installer's own exit code
   const restart = entry(`Enter-Step 'tools'; Exit-Restart 'gh installed' @([ordered]@{ installer = 'msiexec /i gh_2.103.3_windows_amd64.msi'; exit = 3010 })`);
   assert.equal(restart.status, 3, restart.out);
-  assert.deepEqual(restart.lines.slice(-2).map(l => JSON.parse(l)), [{ name: 'tools', result: 'failed', rejectCode: 'RESTART_THEN_RUN_THE_SAME_COMMAND', detail: null },
+  assert.deepEqual(restart.lines.slice(-2).map(hostLine), [{ name: 'tools', result: 'failed', rejectCode: 'RESTART_THEN_RUN_THE_SAME_COMMAND', detail: null },
     { status: 'RESTART_THEN_RUN_THE_SAME_COMMAND', why: 'gh installed', step: 'tools', installers: [{ installer: 'msiexec /i gh_2.103.3_windows_amd64.msi', exit: 3010 }] }], restart.out);
   const hostText = fs.readFileSync(path.join(RES, 'windows', 'first-install-host.ps1'), 'utf8');
   const restarts = [...hostText.slice(hostText.indexOf('function Invoke-HostPreparation')).matchAll(/Exit-Restart [^\r\n]*/g)].map(m => m[0]);
@@ -168,14 +180,14 @@ Step 'odd' (Get-Item -LiteralPath $env:SystemRoot)`);
   // a step that ends, then a refusal in the next: one ok line, one failed line, the verdict
   const two = entry(`Enter-Step 'v1-base'; Step 'v1-base' 'present'; Enter-Step 'wsl'; Stop-Host 'WSL_MSI_FAILED' ([ordered]@{ exit = 1603; stderr = '' })`);
   assert.equal(two.status, 1, two.out);
-  assert.deepEqual(two.lines.map(l => JSON.parse(l)), [{ name: 'v1-base', result: 'ok', rejectCode: null, detail: 'present' },
+  assert.deepEqual(two.lines.map(hostLine), [{ name: 'v1-base', result: 'ok', rejectCode: null, detail: 'present' },
     { name: 'wsl', result: 'failed', rejectCode: 'WSL_MSI_FAILED', detail: null },
     { status: 'FIRST_INSTALL_HOST_REFUSED', code: 'WSL_MSI_FAILED', detail: { exit: 1603, stderr: '' } }], two.out);
   const other = entry(`Enter-Step 'linux'; throw 'something else said OUTPUT_NOT_PLAIN_DATA:$.x:System.Object'`);
   assert.notEqual(other.status, 0, other.out);
   assert.ok(!other.lines.some(l => l.includes('HOST_OUTPUT_NOT_PLAIN_DATA')), other.out);
   assert.match(other.out, /something else said/);
-  const failed = JSON.parse(other.lines.at(-1));
+  const failed = hostLine(other.lines.at(-1));
   assert.deepEqual(failed, { name: 'linux', result: 'failed', rejectCode: null, detail: null }, other.out);
 
   // the READY verdict's shape: facts is Join-Path's output
