@@ -229,22 +229,33 @@ WANT_A_CHECK = '' if FLEET else '[ "$(sha256sum "$STG/phaseA.sha256" | cut -d\' 
 BASE = '/root/clued-ci-reinstall-' + COMMIT[:8] + '-' + SUFFIX
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
-# start/restart a unit, and never turn failed/inactive/unknown into a retry.
+# start/restart a unit. One read of ActiveState and Job decides (Fable ruling 0e418483, 1.2):
+#   active                          -> ready
+#   activating, any job             -> not settled: read again after a second
+#   any other state, a queued job   -> not settled (systemd keeps a start job queued behind
+#                                      network-online.target and containerd as inactive)
+#   any other state, no job         -> final: refused at once (a failed job lands here)
+# One bound for all unsettled reads together. A refusal writes the scene to stderr first;
+# a query of the scene that fails changes no code.
 docker_ready() {
-  local started=$SECONDS remaining state
+  local limit=180 started=$SECONDS remaining out state job code
   while :; do
-    remaining=$((60 - (SECONDS - started)))
-    [ "$remaining" -gt 0 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-    state=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --value docker.service) || refuse SYSTEMCTL_FAILED
-    case "$state" in
-      active) return 0 ;;
-      activating)
-        [ "$((SECONDS - started))" -lt 60 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-        sleep 1 || refuse DOCKER_SERVICE_WAIT_FAILED
-        ;;
-      *) refuse DOCKER_SERVICE_NOT_ACTIVE ;;
-    esac
+    remaining=$((limit - (SECONDS - started)))
+    if [ "$remaining" -le 0 ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
+    if ! out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then code=SYSTEMCTL_FAILED; break; fi
+    state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
+    if [ "$state" = active ]; then echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$((SECONDS - started))}"; return 0; fi
+    if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
+    if [ "$((SECONDS - started))" -ge "$limit" ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
+    if ! sleep 1; then code=DOCKER_SERVICE_WAIT_FAILED; break; fi
   done
+  {
+    echo "docker_ready: $code after $((SECONDS - started))s; the scene:"
+    timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"
+    { timeout --signal=KILL 10s systemctl list-jobs --no-legend || echo "(systemctl list-jobs: exit $?)"; } | head -n 20
+    timeout --signal=KILL 10s systemctl is-system-running || echo "(systemctl is-system-running: exit $?)"
+  } >&2 || :
+  refuse "$code"
 }
 """
 
