@@ -169,6 +169,11 @@ export const targetOf = (release, over = {}) => ({ id: randomUUID(), receipt_id:
 // "release download --pattern <name> --dir <dir>" writes that asset (its bytes kept as base64) into <dir>.
 // FAKE_GH_FAIL_DOWNLOAD=<asset name>: that one download fails as a dropped connection does (acceptance-draft.log).
 // A download into a --dir that already holds a file of that name fails, as the real gh does without --clobber (review r2).
+// The Release being published exists once it has assets (made by "release create", or seeded by the test): before that "release view",
+// "upload" and "download" of its tag answer "release not found" (exit 1) as the real gh does, and a second "release create" of a Release
+// that exists is refused. FAKE_GH_FAIL_CREATE=1: "release create" fails. "gh api repos/<repo>/commits/<sha>": the commit, unless the
+// state's commitMissing is true (HTTP 404, exit 1), '422' (no commit found for the SHA, HTTP 422, exit 1) or 'fail' (no answer: a
+// dropped connection, exit 1).
 export const FAKE_GH = `import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -182,7 +187,12 @@ const nth = Number(process.env.FAKE_GH_FAIL_UPLOAD_NTH || 0);
 if (nth && args[0] === 'release' && args[1] === 'upload' && log.calls.filter(c => c.args[1] === 'upload').length === nth) { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 502: fake upload failure'); process.exit(1); }
 if (args[0] === 'release' && args[1] === 'delete-asset') log.assets = log.assets.filter(a => a.name !== args[3]);
 const assetsOf = tag => (log.other && log.other[tag]) || log.assets;
+const absent = tag => !(log.other && log.other[tag]) && log.assets.length === 0;
+const refuse = text => { fs.writeFileSync(state, JSON.stringify(log)); console.error(text); process.exit(1); };
+if (args[0] === 'release' && ['view', 'upload', 'download', 'delete-asset'].includes(args[1]) && absent(args[2])) refuse('release not found');
 if (args[0] === 'release' && args[1] === 'create') {
+  if (process.env.FAKE_GH_FAIL_CREATE === '1') refuse('HTTP 422: fake create failure');
+  if (!absent(args[2])) refuse('HTTP 422: Validation Failed (Release.tag_name already_exists)');
   const files = args.slice(3, args.indexOf('--repo'));
   log.assets = files.map(asset);
   console.log('https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2]);
@@ -194,6 +204,12 @@ if (args[0] === 'api' && /^repos\\/[^/]+\\/[^/]+\\/compare\\/main\\.\\.\\.[0-9a-
   const c = log.compare || 'behind';
   if (c === 'fail') { fs.writeFileSync(state, JSON.stringify(log)); console.error('HTTP 502: fake compare failure'); process.exit(1); }
   console.log(c === 'garbled' ? '<html>' : JSON.stringify({ status: c, ahead_by: c === 'ahead' || c === 'diverged' ? 1 : 0 }));
+}
+if (args[0] === 'api' && /^repos\\/[^/]+\\/[^/]+\\/commits\\/[0-9a-f]{40}$/.test(args[1] ?? '')) {
+  if (log.commitMissing === true) refuse('gh: Not Found (HTTP 404)');
+  if (log.commitMissing === '422') refuse('gh: No commit found for SHA: ' + args[1].split('/').pop() + ' (HTTP 422)');
+  if (log.commitMissing === 'fail') refuse('error connecting to api.github.com');
+  console.log(JSON.stringify({ sha: args[1].split('/').pop() }));
 }
 if (args[0] === 'release' && args[1] === 'view') console.log(JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: assetsOf(args[2]).map(a => ({ name: a.name, size: a.size })) }));
 if (args[0] === 'release' && args[1] === 'download') {
