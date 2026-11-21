@@ -1,9 +1,11 @@
 // Fable 11-21 T5 (push landing follow-up): the rules after C add kooyumi-train-landed pinned to App 5368905, which nothing ever publishes.
 // The merge-slot reporter (scripts/ci/clued-merge-slot-ci.mjs) reads main's required checks live (requiredChecksOf) and counts every one
-// but kooyumi-merge-slot (ciRequiredChecks). Under C it lists kooyumi-train-landed as missing: on a head whose CI is all green it stays
-// idle, never failed, so it neither returns the slot nor posts a failing slot check, and never touches green. Recorded as found (11-21),
-// not changed here: whether the reporter should report green under C is Fable's (the train lands itself; the merge executor's planFor
-// answers none under these rules, scripts/ci/clued-merge-executor.test.mjs). Kept out of scripts/ci (a protected path).
+// but kooyumi-merge-slot (ciRequiredChecks). Under C it lists kooyumi-train-landed as missing.
+// Rule (Fable 11-21 open points §2): under C a head whose CI is all green MUST be idle, never green. green means "every required check
+// passed, the slot is kept 30 minutes for someone to merge on the PR page"; after C nobody merges there, and a green would move the slot
+// from running to green, which stage 10 no longer reads as the front batch running (train-maintenance.mjs#frontBatchPlan). idle posts
+// nothing and leaves the slot's clock alone; a real failure is still reported (and returns the slot). A change that makes the reporter
+// skip kooyumi-train-landed turns this test red. Kept out of scripts/ci (a protected path).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ciStateOf, requiredChecksOf } from '../../../scripts/ci/clued-merge-slot-ci.mjs';
@@ -40,12 +42,13 @@ function fake(checks, rules = C_RULES) {
 const qualify = async pr => ({ passed: true, state: 'qualified', head: pr.head.sha, pr_number: pr.number, reason: 'fixture', native_runs: [] });
 const green = () => NAMES.filter(n => n !== 'kooyumi-merge-slot').map(n => check(n));
 
-test('T5: the rules after C x the merge-slot reporter: a never-published kooyumi-train-landed is never a failure; green CI stays idle, no touch', async () => {
+test('T5 rule: under C the merge-slot reporter keeps an all-green head idle, never green; a never-published kooyumi-train-landed is never a failure', async () => {
   assert.deepEqual(await requiredChecksOf(fake([]).fetchImpl, env, REPO, 'main'), C_RULES, 'requiredChecksOf reads the rules after C');
   const state = await ciStateOf(fake(green()).fetchImpl, env, REPO, HEAD, new Map(), null, { pr: pull, qualifyExecution: qualify, required: C_RULES });
   assert.notEqual(state.state, 'failed');
+  assert.notEqual(state.state, 'green', 'never green under C');
   assert.deepEqual([state.state, state.reason, state.checks.find(c => c.name === 'kooyumi-train-landed')?.status],
-    ['idle', 'no CI result yet and no CI run active', 'missing']);
+    ['idle', 'no CI result yet and no CI run active', 'missing'], 'idle: kooyumi-train-landed is required and missing');
   // the same head on today's rules is not failed either (the reference the cell above differs from only by the train's check)
   const today = await ciStateOf(fake(green(), TODAY).fetchImpl, env, REPO, HEAD, new Map(), null, { pr: pull, qualifyExecution: async () => null, required: TODAY });
   assert.notEqual(today.state, 'failed');
