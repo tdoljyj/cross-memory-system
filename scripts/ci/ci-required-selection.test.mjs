@@ -1612,7 +1612,7 @@ test('a change that breaks only on Windows fails ci-suites-windows and passes th
   // Fixed for both platforms, the same change is green on this host too: every trusted command passes, so the
   // candidate's own command list is read as well (this is the path the Linux side takes above).
   writeFileSync(path.join(candidate, 'scripts', 'ci', 'check-powershell-count.mjs'),
-    "import path from 'node:path';\nif (path.basename(process.argv[1]) === 'check-powershell-count.mjs') console.log('scanned');\n");
+    "import path from 'node:path';\nconst name = path.basename(process.argv[1]);\nif (name === 'check-powershell-count.mjs') console.log('scanned');\n");
   const fixedLines = [];
   const fixedLog = [];
   const fixed = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(),
