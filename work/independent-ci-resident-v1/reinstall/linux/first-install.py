@@ -186,13 +186,8 @@ for f in RES_FILES:
 TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh'):
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
-def verified_status(text):
-    """The status verify-resident-linux.sh prints when every check passed, read from its own verdict line (one source: B11 waits for
-    exactly that word; r8 inventory N1: a word written here by hand had its two parts swapped and B11 refused every node)."""
-    found = re.findall(r'(?m)^status=\$\(\[ \$ok = 1 \] && echo ([A-Z][A-Z_]*[A-Z]) \|\| echo [A-Z_]+\)$', text)
-    assert len(found) == 1, 'VERIFY_RESIDENT_LINUX_VERDICT_NOT_ONE'
-    return found[0]
-VERIFIED = verified_status(open(os.path.join(IN, 'tools', 'verify-resident-linux.sh'), 'rb').read().decode('utf-8'))
+# the success word B11 waits for, read from the verify script's own verdict line by the one reader (rconfig.py)
+VERIFIED = rconfig.verified_status(open(os.path.join(IN, 'tools', 'verify-resident-linux.sh'), 'rb').read().decode('utf-8'))
 UNITS = ['clued-ci-worker@.service', 'clued-ci-wsprep@.service', 'clued-ci-archive@.service']
 res_text = '\n'.join(['install-script.sha256=' + sha(os.path.join(IN, 'tools', 'install-resident-linux.sh'))]
                      + [sha(os.path.join(IN, 'linux-res-pkg', *f.split('/'))) + '  ' + f for f in RES_FILES]

@@ -4,7 +4,9 @@ verify-resident-linux.sh prints {"status":"RESIDENT_LINUX_VERIFIED",...}; first-
 words swapped), so a new node whose every check passed still stopped in B11 on VERIFY_RESIDENT_LINUX_FAILED. Here the real verdict lines of
 verify-resident-linux.sh (its `status=` and `echo` lines, cut out of the file) produce the output, and the actual B11 text of
 first-install.py's phase B (from its '# B11:' line to the end of B) judges it under native Git Bash. Nothing else runs.
+The word is read by rconfig.verified_status, the one reader both generators load (r8 fixup review F3/F6).
 """
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -17,6 +19,13 @@ import first_install_text
 
 RES = Path(__file__).resolve().parents[2]
 VERIFY = RES / 'linux' / 'verify-resident-linux.sh'
+RCONFIG = RES / 'reinstall' / 'tools' / 'rconfig.py'
+
+
+def rconfig():
+    spec = importlib.util.spec_from_file_location('rconfig_under_test', RCONFIG)
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod
 
 
 def verdict_lines():
@@ -32,10 +41,7 @@ def b11():
     b = ns['B']
     start = b.index('# B11:'); end = b.index('@@B_DONE@@', start)
     text = b[start:end]
-    status = first_install_text.function('verified_status')
-    if status is not None:
-        text = text.replace('@@VERIFIED@@', status(VERIFY.read_text(encoding='utf-8')))
-    return text
+    return text.replace('@@VERIFIED@@', rconfig().verified_status(VERIFY.read_text(encoding='utf-8')))
 
 
 class VerifyStatus(unittest.TestCase):
@@ -72,13 +78,13 @@ class VerifyStatus(unittest.TestCase):
         text = first_install_text.FIRST_INSTALL.read_text(encoding='utf-8')
         self.assertNotIn('LINUX_RESIDENT_VERIFIED', text)
         self.assertNotIn('RESIDENT_LINUX_VERIFIED', text)
-        status = first_install_text.function('verified_status')
-        self.assertIsNotNone(status)
-        self.assertEqual(status(VERIFY.read_text(encoding='utf-8')), 'RESIDENT_LINUX_VERIFIED')
+        self.assertIn("VERIFIED = rconfig.verified_status(", text)
+        rc = rconfig()
+        self.assertEqual(rc.verified_status(VERIFY.read_text(encoding='utf-8')), 'RESIDENT_LINUX_VERIFIED')
         for bad in ('', 'status=$(echo X)\n', VERIFY.read_text(encoding='utf-8') * 2):
             with self.subTest(bad=bad[:40]):
-                with self.assertRaises(AssertionError):
-                    status(bad)
+                with self.assertRaises(rc.ConfigError):
+                    rc.verified_status(bad)
 
 
 if __name__ == '__main__':
