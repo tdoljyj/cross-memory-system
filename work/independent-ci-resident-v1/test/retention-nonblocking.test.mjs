@@ -28,6 +28,9 @@ const json = v => Buffer.from(JSON.stringify(v));
 const realSleep = ms => new Promise(r => setTimeout(r, ms));
 // The 30-second budget of the defect, in test time: the hung companion wait is 10 minutes of the mailbox clock.
 const PROMPT_MS = 5_000;
+// Ticks the queued batch takes to complete once the between-batches step has ended: measured 1 (it may take one more while the step's
+// ending settles), about ten times that. A count of ticks, not a wall-clock budget.
+const STEPS_TO_BATCH = 10;
 
 // A mailbox whose clock is real until `unwind()`: from then on every read of it is an hour later, so a wait that is still polling
 // (the unfixed loop) reaches its deadline at its next poll and the test ends instead of hanging for 10 minutes.
@@ -41,6 +44,24 @@ async function silentMailbox(root) {
     }
     return out;
   } };
+}
+
+// A service loop the test drives (Task fe9044fc): its sleep is no timer but a promise only step() lets go, so the loop runs exactly
+// one tick per step() and which of the test and the loop goes first is never left to the machine's load (CI run 44843986661).
+// parked(): the loop waits in its sleep. step(): one tick, then parked again. end(): every sleep from now on returns at once.
+function steppedLoop() {
+  let wake = null, ended = false, exited = false;
+  const waiting = [];
+  const parked = () => (wake ? Promise.resolve() : new Promise((resolve, reject) => {
+    if (exited) reject(new Error('the service loop has returned')); else waiting.push({ resolve, reject });
+  }));
+  return {
+    sleep: () => (ended ? Promise.resolve() : new Promise(r => { wake = r; for (const w of waiting.splice(0)) w.resolve(); })),
+    parked,
+    step: async () => { await parked(); const w = wake; wake = null; w(); await parked(); },
+    end: () => { ended = true; const w = wake; wake = null; w?.(); },
+    watch: loop => loop.finally(() => { exited = true; for (const w of waiting.splice(0)) w.reject(new Error('the service loop has returned')); }),
+  };
 }
 
 test('defect 8f8240ff: a Linux archive-prune that never answers no longer holds the loop; the upgrader pause is latched at once and a stop ends the wait', async t => {
@@ -98,18 +119,30 @@ test('defect 8f8240ff: while the between-batches step runs beside the loop no ne
   const results = [];
   let stop = false;
   const exec = { tick: async o => { const r = await f.exec.tick(o); results.push(r); return r; } };
-  const loop = serviceLoop({ exec, lock: { touch: async () => {} }, sleep: () => realSleep(10), stopRequested: async () => stop,
+  const steps = steppedLoop();
+  const loop = serviceLoop({ exec, lock: { touch: async () => {} }, sleep: steps.sleep, stopRequested: async () => stop,
     acknowledgeStop: async () => {}, onLoopException: async () => {}, betweenBatches: async () => { if (!started) { started = true; await gate; } } });
+  steps.watch(loop).catch(() => {});
   try {
-    await waitFor(() => started, 'the between-batches step to start');
+    // The first tick (nothing queued) ends quiet and starts the step beside the loop.
+    await steps.parked();
+    assert.equal(started, true, 'the between-batches step started after the first tick');
+    assert.equal(results.length, 1);
+    // One tick before the trigger lands, deferred by the running step: on CI such a tick had already ended when the trigger was
+    // written, and the check took it for the tick that read the trigger (run 44843986661). Kept, so every run has it.
+    await steps.step();
+    assert.deepEqual([results.at(-1).state, results.at(-1).reason], ['DEFERRED', BETWEEN_BATCHES_RUNNING]);
     await f.drop(triggerBytes());
     await waitFor(() => results.some(r => r.state === 'DEFERRED' && r.reason === BETWEEN_BATCHES_RUNNING), 'a tick deferred by the running step', PROMPT_MS);
     assert.equal(f.engine.calls.length, 0, 'no stage, no bundle while the step runs');
     assert.equal(f.queue.row(884).state, 'QUEUED', 'the trigger is read, not lost');
     release();
-    await waitFor(() => results.some(r => r.state === 'COMPLETED'), 'the batch after the step', PROMPT_MS);
+    for (let n = 0; !results.some(r => r.state === 'COMPLETED'); n += 1) {
+      if (n >= STEPS_TO_BATCH) throw new Error(`no batch COMPLETED within ${STEPS_TO_BATCH} ticks after the step ended: ${results.map(r => r.state)}`);
+      await steps.step();
+    }
   } finally {
-    release(); stop = true;
+    release(); stop = true; steps.end();
     await withTimeout(loop, 'the service loop to stop', 30_000).catch(() => {});
   }
 });
