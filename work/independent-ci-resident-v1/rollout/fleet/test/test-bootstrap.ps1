@@ -24,14 +24,14 @@ foreach ($f in $ast.FindAll({ param($a) $a -is [Management.Automation.Language.F
 foreach ($name in @('Get-Key', 'Read-Sha256Sums', 'Get-ReleaseVersion', 'Get-RequiredAssets', 'Test-AssetSet', 'Test-PrereqManifest', 'Get-LastJsonLine', 'Get-ElevatedArguments', 'Test-UacDeclined',
     'Test-SafePath', 'Test-SafeArgument', 'Get-ExtractState', 'Get-StageFailure', 'Test-StageOperator', 'Test-CredentialsToClear',
     'Sha256File', 'Invoke-StageChild', 'Test-ParentAlive', 'Clear-CredentialDirectory', 'Test-FirstInstallCheck', 'Copy-ToWork', 'Test-UnderDirectory', 'Get-LauncherVerdict',
-    'Get-NeededPrereqs', 'Expand-Cached', 'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Out-Result')) {
+    'Get-NeededPrereqs', 'Expand-Cached', 'ConvertTo-PlainData', 'ConvertTo-JsonLine', 'Out-Result', 'Out-Step', 'Add-ResultLine', 'Get-StageVerdict', 'Read-StageResult')) {
   Yes ($functions.ContainsKey($name)) ('present:' + $name); if ($functions.ContainsKey($name)) { . ([scriptblock]::Create($functions[$name])) }
 }
 # the constants the functions read, from the script itself
 foreach ($a in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] }, $false)) {
   if ($a.Left.Extent.Text -cin @('$PrereqContract', '$PrereqNames', '$PowerShellExe', '$WorkParent')) { . ([scriptblock]::Create($a.Extent.Text)) }
 }
-Yes ($PrereqContract -ceq 'clued.independent-ci.fleet-node-prereq-manifest/1' -and $PrereqNames.Count -eq 7 -and $PrereqNames -ccontains 'wsl') 'constants'
+Yes ($PrereqContract -ceq 'clued.independent-ci.fleet-node-prereq-manifest/1' -and $PrereqNames.Count -eq 9 -and $PrereqNames -ccontains 'wsl' -and $PrereqNames -ccontains 'gh' -and $PrereqNames -ccontains 'git-for-windows') 'constants'
 $text = [IO.File]::ReadAllText($file)
 $js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = [int]::MaxValue   # reads lines longer than the default 2,097,152
 $h1 = 'a' * 64; $h2 = 'b' * 64; $h3 = 'c' * 64; $img = 'd' * 64
@@ -73,15 +73,16 @@ $rel2 = [ordered]@{}; foreach ($k in @($release.Keys)) { $rel2[$k] = $release[$k
 $c = Test-AssetSet $all $rel2 $null $v $true @()
 Yes ($c -ccontains "RELEASE_SUMS_NAMES_FIRST_INSTALL_ASSET:role-image-$img.tar.gz") 'assets:release-sums-never-names-an-image'
 
-# ---- the prerequisite manifest: the committed one pins what the drill VM proved (WSL MSI, rootfs, the 16 docker .debs) and refuses
-#      the rest until the coordinator pins it (M6, M7)
+# ---- the prerequisite manifest: the committed one pins what the drill VM proved (WSL MSI, rootfs, the 16 docker .debs and the five
+#      python3.12 .debs whose /usr/bin/python3.12 is the fleet's pin) and refuses the rest until
+#      the coordinator pins it (M6, M7)
 $committed = $js.DeserializeObject([IO.File]::ReadAllText((Join-Path (Split-Path -Parent $here) 'prereq-manifest.json')))
 $c = Test-PrereqManifest $committed
 $unpinned = @($c | Where-Object { $_ -like 'PREREQ_NOT_PINNED:*' } | ForEach-Object { $_.Substring(18) } | Sort-Object)
 Yes ($c.Count -eq 0 -and @($committed['items'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' -or -not ($_['bytes'] -gt 0) -or [string]::IsNullOrEmpty([string]$_['url']) }).Count -eq 0) ('prereq:committed-pins-every-item ' + ($c -join ','))
 $wslItem = @($committed['items'] | Where-Object { $_['name'] -ceq 'wsl' })[0]
 Yes ($wslItem['sha256'] -ceq 'a3505a50f4cc585551d11d9de824ba4375448d7a68f2e71d3fb315fa986fc754' -and $wslItem['version'] -ceq '2.7.13.0' -and $wslItem['kind'] -ceq 'msi') 'prereq:wsl-msi-pinned'
-Yes (@($committed['debs']).Count -eq 16 -and @($committed['debs'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' }).Count -eq 0 -and @($committed['debs'] | Where-Object { $_['package'] -ceq 'docker.io' }).Count -eq 1) 'prereq:16-debs-pinned'
+Yes (@($committed['debs']).Count -eq 21 -and @($committed['debs'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' }).Count -eq 0 -and @($committed['debs'] | Where-Object { $_['package'] -ceq 'docker.io' }).Count -eq 1 -and @($committed['debs'] | Where-Object { [string]$_['package'] -cmatch '^(lib)?python3\.12' -and [string]$_['version'] -ceq '3.12.3-1ubuntu0.17' }).Count -eq 5) 'prereq:21-debs-pinned'
 Yes ($null -eq (Get-Key $committed 'aptPins')) 'prereq:no-apt-resolution'
 # Measured from the pinned ZIPs, including directory entries and the archive's top-level directory (DESK, 2026-11-17).
 # Capture the real extraction destination before any I/O: this checks Windows' default path budget even on a long-path-enabled host.
@@ -232,6 +233,31 @@ try {
   Case 'h1:a-grandchild-on-stderr-does-not-end-the-host-stage' {
     $r = Invoke-StageChild $PowerShellExe ($childArgs + '-Grandchild') 300
     Yes ($r.exit -eq 0 -and [string](Get-Key $r.last 'status') -ceq 'FIRST_INSTALL_HOST_READY') ('h1:grandchild exit=' + $r.exit + ' stdout=' + $r.stdout + ' stderr=' + $r.stderr)
+  }
+  # Defect 0e004509 (Fable ruling 11-19 renew-key, "branch two, two points" 1): a stage child's lines reach the stage's output file as it
+  # prints them (appended and flushed line by line), the verdict last; a child still running at the limit, or one that printed no verdict,
+  # gives the lines it printed, never nothing. Before: ReadToEndAsync held them all until the child ended, and the file was written once.
+  $slow = Join-Path $tmp 'slow-child.ps1'
+  [IO.File]::WriteAllText($slow, "'{`"name`":`"stage`",`"result`":`"ok`",`"rejectCode`":null,`"detail`":null}'`r`n'{`"name`":`"v1-base`",`"result`":`"ok`",`"rejectCode`":null,`"detail`":null}'`r`nStart-Sleep -Seconds 25`r`n'{`"status`":`"FIRST_INSTALL_HOST_READY`"}'`r`n", (New-Object Text.UTF8Encoding($false)))
+  Case 'stage-lines:a-child-at-the-limit-gives-the-lines-it-printed' {
+    $out = Join-Path $tmp 'stage-result.txt'
+    $r = Invoke-StageChild $PowerShellExe @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $slow) 6 $out
+    Yes ($r.timedOut -eq $true) 'stage-lines:timed-out'
+    Yes ([string]$r.stdout -match '"name":"stage"' -and [string]$r.stdout -match '"name":"v1-base"') ('stage-lines:stdout-so-far ' + $r.stdout)
+    $file = if ([IO.File]::Exists($out)) { [IO.File]::ReadAllText($out) } else { '' }
+    Yes ($file -match '"name":"stage"' -and $file -match '"name":"v1-base"' -and $file -notmatch 'FIRST_INSTALL_HOST_READY') ('stage-lines:on-disk-while-the-child-runs ' + $file)
+    $read = Read-StageResult $out
+    Yes ($read.lines.Count -eq 2 -and $null -eq $read.last) ('stage-lines:read-back-no-verdict ' + $read.lines.Count)
+  }
+  Case 'stage-lines:no-verdict-is-said-by-name' {
+    $step = [ordered]@{ exit = 1; timedOut = $false; last = [ordered]@{ name = 'linux'; result = 'failed'; rejectCode = $null; detail = $null } }
+    $v = Get-StageVerdict $step 'first-install-host.ps1'
+    Yes ([string]$v.status -ceq 'STAGE_CHILD_PRINTED_NO_VERDICT' -and $v.child -ceq 'first-install-host.ps1' -and $v.exit -eq 1) ('stage-lines:a-step-line-is-no-verdict ' + (ConvertTo-Json $v -Compress))
+    $ready = [ordered]@{ exit = 0; timedOut = $false; last = [ordered]@{ status = 'FIRST_INSTALL_HOST_READY' } }
+    Yes ([string](Get-StageVerdict $ready 'first-install-host.ps1').status -ceq 'FIRST_INSTALL_HOST_READY') 'stage-lines:a-verdict-is-kept'
+    Yes ($stageBody -notmatch 'WriteAllLines' -and $stageBody -match 'Add-ResultLine') 'stage-lines:the-stage-appends-never-writes-once'
+    $elevated = $text.Substring($text.IndexOf('function Invoke-Elevated')); $elevated = $elevated.Substring(0, $elevated.IndexOf("`nfunction "))
+    Yes ($elevated -match 'Stop-Bootstrap \$step ''STAGE_GAVE_NO_VERDICT''' -and $elevated -match 'Read-StageResult \$result') 'stage-lines:the-entry-names-a-stage-without-a-verdict'
   }
   Case 'h1:the-stages-never-merge-stderr-into-the-verdict' {
     Yes ($stageBody -notmatch '2>&1') 'h1:no-2>&1-in-Invoke-Stage'

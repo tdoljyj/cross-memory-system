@@ -9,7 +9,8 @@
 //   tree/<path>                 the commit's files a node needs to reinstall or upgrade (selectTree): the resident tree's src/, tools/,
 //                               windows/ (install, verify, uninstall, CompanionTaskRegistrar.cs ...), linux/, upgrader/src/, config/,
 //                               reinstall/launcher/, reinstall/linux/, reinstall/tools/ and reinstall/rehearse.py (never reinstall/test/
-//                               or reinstall/config/: no node's configuration), rollout/precheck.mjs, rollout/fleet/ (install.mjs,
+//                               or reinstall/config/: no node's configuration), registration/export-node-registration.ps1 (the first
+//                               install's node keys), rollout/precheck.mjs, rollout/fleet/ (install.mjs,
 //                               upgrade.mjs; without their tests), the CI Source closure (source-closure.json) with the closure file
 //                               itself, prepare-record.mjs and record.mjs, and every file these .mjs reach by relative import;
 //   bundle/accepted.bundle      the git bundle whose only ref is refs/heads/accepted = the commit (full history, as build-upgrade.ps1),
@@ -45,10 +46,15 @@ export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${
   `${RESIDENT}/reinstall/launcher/template.ps1`, `${RESIDENT}/reinstall/launcher/expected-plan.ps1`, `${RESIDENT}/reinstall/launcher/continue.py`,
   `${RESIDENT}/reinstall/launcher/continue-install.ps1`, `${RESIDENT}/reinstall/tools/file-locks.ps1`, `${RESIDENT}/reinstall/tools/ledger-evidence.py`,
   `${RESIDENT}/reinstall/tools/rconfig.py`, `${RESIDENT}/reinstall/linux/assemble.py`,
+  // the node's identity keys (Fable 11-21 r5 N7): first-install-host.ps1 reads them with this script's Find-MachineKey and makes them with
+  // its init-keys, which needs no other file (export-node-registration.mjs is its export mode's, run where a node is registered)
+  `${RESIDENT}/registration/export-node-registration.ps1`,
   CLOSURE, PREPARE_RECORD, `${CIV1}/src/resident-v2/record.mjs`,
   // the resident files whose one source lies outside the resident tree (build-package.mjs RESIDENT_EXTERNAL): the node builds from this tree
   ...RESIDENT_EXTERNAL.map(e => e.source)]);
 const excluded = p => TREE_EXCLUDED.some(x => p.startsWith(x)) || (p.startsWith(`${RESIDENT}/`) && EXCLUDED_PART.test(p.slice(RESIDENT.length + 1)));
+// Whether a repository path is left out of the tree (the package's own rule; test/native-child.test.mjs walks the package's .ps1 by it).
+export const isExcludedFromTree = p => excluded(p);
 // A packaged PowerShell script is ASCII (tab, LF, CR, 0x20-0x7e), with one exception. Windows PowerShell 5.1 reads a script with a BOM as
 // UTF-8 and one without as the system ANSI code page, and the launcher parses verify-resident.ps1 from its bytes as a third reader;
 // only ASCII means the same to all three (a BOM made the launcher's parse fail with VERIFY_SCRIPT_PARSE_ERRORS; a UTF-8 comment under

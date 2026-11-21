@@ -24,21 +24,26 @@
   what changes is that this token can only touch this repository, with the permissions the Owner chose.
 
     -Login   reads the token from the clipboard (copy it from the GitHub page first), checks its shape (ghp_ and 36 characters), writes
-             hosts.yml and home\.gitconfig, and empties the clipboard. Prints no part of the token.
+             hosts.yml and home\.gitconfig, and empties the clipboard. Prints no part of the token. With -TokenFromStdin the token is read
+             from standard input instead (the first install's host preparation: never on a command line, never written anywhere else), and
+             the clipboard is not touched.
     -CopyFromOwner  (elevated, with -ProfileDirectory and -AccountSid) takes the github.com classic token of the Owner's existing companion hosts.yml and writes a new
              hosts.yml (-Login's format) into the account's profile at the same relative place, with the same folder ACL as -Login; only when it holds a classic token. The token
              is never printed and never in a variable here. Prints JSON with a status: COMPANION_GH_LOGIN_COPIED, or
              COMPANION_GH_ plus OWNER_TOKEN_MISSING, OWNER_TOKEN_NOT_CLASSIC, OWNER_TOKEN_PATH_IS_A_LINK, OWNER_TOKEN_FILE_HARDLINKED, OWNER_SID_MISMATCH or OWNER_PROFILE_REFUSED (exit 1, nothing copied).
     -Check   read-only: the folder and its ACL, the token's shape (prefix and length only), the .gitconfig text, then with the companion's
              own configuration: gh auth status, the read-only GitHub reads the companion makes, and git ls-remote through the helper;
-             finally that the Owner's own gh login still works. Prints exit codes and gh's own masked lines only.
+             finally that the Owner's own gh login still works. Prints exit codes and gh's own masked lines only. With -Offline only the
+             first part (Get-CompanionGhOfflineState: the folders, their ACL, hosts.yml's github.com classic token shape, the .gitconfig
+             text; what the companion checks when it starts), nothing on the network.
+  -GhExe is required (no default): the caller passes the companion configuration's ghExe, the one source of gh's path.
 
-  powershell.exe -NoProfile -File companion-gh-login.ps1 -Login
-  powershell.exe -NoProfile -File companion-gh-login.ps1 -Check
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File companion-gh-login.ps1 -Login -GhExe <companion.json ghExe>
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File companion-gh-login.ps1 -Check -GhExe <companion.json ghExe>
 #>
 [CmdletBinding()]
 param([switch]$Login, [switch]$Check, [switch]$CopyFromOwner, [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')][string]$Repo = 'tdoljyj/cross-memory-system',
-  [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe = 'C:\Program Files\GitHub CLI\gh.exe',
+  [ValidatePattern('^[A-Z]:\\[^"''\r\n;]+\\gh\.exe$')][string]$GhExe, [switch]$TokenFromStdin, [switch]$Offline,
   # M5-b (ADR 0023): for the companion's own account, elevated (by the Owner): its profile directory and SID (prepare-account prints both).
   [string]$ProfileDirectory, [string]$AccountSid)
 Set-StrictMode -Version 2.0
@@ -145,7 +150,56 @@ function Invoke-WithConfig([string]$exe, [string[]]$arguments, $dirs, [bool]$own
   [ordered]@{ exit = $p.ExitCode; lines = $lines }
 }
 
+# The companion's own gh configuration offline (what src/companion-session.mjs assertGhIsolation holds it to when the companion starts,
+# plus the folder ACL -Login sets): base, gh\ and home\ real folders (no link), the base protected with SYSTEM, Administrators and the
+# account only, hosts.yml a regular file of at most 64 KiB whose github.com block holds a classic token, home\.gitconfig exactly the text.
+# Never the token: its shape only. bad: the parts that are not so (none: in place).
+function Get-CompanionGhOfflineState($dirs, [string]$ownerSid, [string]$profileDir, [string]$ghExe) {
+  $r = [ordered]@{ folder = $null; token = $null; gitconfig = $null; bad = @() }
+  $isLink = { param([string]$p) ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 }
+  if (-not (Test-Path -LiteralPath $dirs.base -PathType Container)) { $r.folder = 'missing' }
+  elseif (& $isLink $dirs.base) { $r.folder = 'link' }
+  else {
+    $acl = Get-Acl -LiteralPath $dirs.base
+    $others = @($acl.Access | Where-Object { @('S-1-5-18', 'S-1-5-32-544', $ownerSid) -cnotcontains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value })
+    $sub = @(@($dirs.gh, $dirs.home) | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Container) -or (& $isLink $_) })
+    $r.folder = if (-not $acl.AreAccessRulesProtected -or $others.Count) { 'acl-not-protected' } elseif ($sub.Count) { 'subfolder-missing-or-link' } else { 'ok' }
+  }
+  if ($r.folder -cne 'ok') { $r.bad += 'folder' }
+  $hosts = Join-Path $dirs.gh 'hosts.yml'
+  if (-not (Test-Path -LiteralPath $hosts -PathType Leaf)) { $r.token = 'missing' }
+  elseif ((& $isLink $hosts) -or (Get-Item -LiteralPath $hosts -Force).Length -lt 1 -or (Get-Item -LiteralPath $hosts -Force).Length -gt 65536) { $r.token = 'file-refused' }
+  else {
+    $m = [regex]::Match([IO.File]::ReadAllText($hosts), $GithubTokenRx)
+    $r.token = if (-not $m.Success) { 'none' } elseif ($m.Groups[1].Value -cmatch '^ghp_[A-Za-z0-9]{36}\z') { 'ghp_ (classic, length ' + $m.Groups[1].Value.Length + ')' } else { 'not-classic' }
+    $m = $null
+  }
+  if ([string]$r.token -notlike 'ghp_ *') { $r.bad += 'token' }
+  $gc = Join-Path $dirs.home '.gitconfig'
+  $r.gitconfig = if (-not (Test-Path -LiteralPath $gc -PathType Leaf)) { 'missing' } elseif (([IO.File]::ReadAllText($gc)).Replace("`r`n", "`n") -ceq (Get-CompanionGitConfig $profileDir $ghExe)) { 'ok' } else { 'differs' }
+  if ($r.gitconfig -cne 'ok') { $r.bad += 'gitconfig' }
+  $r
+}
+# -Login's token: from the clipboard, or (-TokenFromStdin) from standard input; trimmed, held to the classic shape. Only .NET methods see it
+# (review MINOR 13: module logging records the arguments of PowerShell functions and cmdlets); the caller clears it after use.
+function Read-LoginToken([bool]$fromStdin) {
+  if ($fromStdin) {
+    $in = [Console]::OpenStandardInput(); $ms = New-Object IO.MemoryStream
+    try { $in.CopyTo($ms); $bytes = $ms.ToArray() } finally { $ms.Dispose() }
+    try { $t = (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes).Trim() } catch { $t = '' } finally { [Array]::Clear($bytes, 0, $bytes.Length) }
+    if ($t -cnotmatch '^ghp_[A-Za-z0-9]{36}\z') { $t = $null; throw 'STDIN_IS_NOT_A_CLASSIC_TOKEN' }
+  } else {
+    $t = ([string](Get-Clipboard -Raw)).Trim()
+    if ($t -cnotmatch '^ghp_[A-Za-z0-9]{36}\z') { $t = $null; throw 'CLIPBOARD_IS_NOT_A_CLASSIC_TOKEN' }
+  }
+  $t
+}
+
 if (@($Login, $Check, $CopyFromOwner | Where-Object { $_.IsPresent }).Count -ne 1) { throw 'ONE_OF_LOGIN_OR_CHECK_OR_COPYFROMOWNER' }
+# the companion configuration's ghExe, passed by every caller (the one source of gh's path; no default here)
+if (-not $GhExe) { throw 'GH_EXE_REQUIRED' }
+if ($TokenFromStdin -and -not $Login) { throw 'TOKEN_FROM_STDIN_IS_A_LOGIN' }
+if ($Offline -and -not $Check) { throw 'OFFLINE_IS_A_CHECK' }
 if ($CopyFromOwner -and -not $AccountSid) { throw 'COPYFROMOWNER_NEEDS_THE_ACCOUNT' }
 $me = [Security.Principal.WindowsIdentity]::GetCurrent()
 $elevatedNow = (New-Object Security.Principal.WindowsPrincipal($me)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -185,42 +239,33 @@ if ($Login) {
   Initialize-CompanionGhFolder $dirs $ownerSid $profileDir $GhExe
   # The token: from the clipboard straight into hosts.yml; never printed, never in a variable longer than these lines, and never passed
   # as an argument to a PowerShell function or cmdlet (review MINOR 13: module logging records those), only to .NET methods.
-  $token = ([string](Get-Clipboard -Raw)).Trim()
-  if ($token -cnotmatch '^ghp_[A-Za-z0-9]{36}\z') { $token = $null; throw 'CLIPBOARD_IS_NOT_A_CLASSIC_TOKEN' }
+  $token = Read-LoginToken $TokenFromStdin.IsPresent
   $hostsPath = Join-Path $dirs.gh 'hosts.yml'; $hostsTmp = $hostsPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
   [IO.File]::WriteAllText($hostsTmp, ("github.com:`n    oauth_token: " + $token + "`n    git_protocol: https`n"), (New-Object Text.UTF8Encoding($false)))
   if (Test-Path -LiteralPath $hostsPath) { [IO.File]::Replace($hostsTmp, $hostsPath, [NullString]::Value) } else { [IO.File]::Move($hostsTmp, $hostsPath) }
   $length = $token.Length; $token = $null
-  # The clipboard, and (review MINOR 5) its history (Win+V) and cloud copy where Windows keeps them.
-  try { Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.Clipboard]::Clear() } catch { Set-Clipboard -Value ' ' }
-  $historyCleared = try { [void][Windows.ApplicationModel.DataTransfer.Clipboard, Windows.ApplicationModel.DataTransfer, ContentType = WindowsRuntime]; [Windows.ApplicationModel.DataTransfer.Clipboard]::ClearHistory() } catch { $false }
+  # The clipboard, and (review MINOR 5) its history (Win+V) and cloud copy where Windows keeps them; a token from stdin never was there.
+  $historyCleared = $false
+  if (-not $TokenFromStdin) {
+    try { Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.Clipboard]::Clear() } catch { Set-Clipboard -Value ' ' }
+    $historyCleared = try { [void][Windows.ApplicationModel.DataTransfer.Clipboard, Windows.ApplicationModel.DataTransfer, ContentType = WindowsRuntime]; [Windows.ApplicationModel.DataTransfer.Clipboard]::ClearHistory() } catch { $false }
+  }
   [GC]::Collect()
-  [ordered]@{ status = 'COMPANION_GH_LOGIN_STORED'; ghConfigDir = $dirs.gh; home = $dirs.home; tokenKind = 'classic'; tokenLength = $length; clipboardCleared = $true; clipboardHistoryCleared = [bool]$historyCleared
-    next = 'powershell.exe -NoProfile -File companion-gh-login.ps1 -Check' } | ConvertTo-Json
+  [ordered]@{ status = 'COMPANION_GH_LOGIN_STORED'; ghConfigDir = $dirs.gh; home = $dirs.home; tokenKind = 'classic'; tokenLength = $length; source = $(if ($TokenFromStdin) { 'stdin' } else { 'clipboard' }); clipboardCleared = (-not $TokenFromStdin); clipboardHistoryCleared = [bool]$historyCleared
+    next = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File companion-gh-login.ps1 -Check' } | ConvertTo-Json
   exit 0
 }
 
 # -Check: read-only.
-$r = [ordered]@{ status = $null; folder = $null; token = $null; gitconfig = $null; ghAuthStatus = $null; reads = [ordered]@{}; gitLsRemote = $null; ownersOwnGhLogin = $null }
-$bad = @()
-if (-not (Test-Path -LiteralPath $dirs.base -PathType Container)) { $r.folder = 'missing'; $bad += 'folder' }
-else {
-  $acl = Get-Acl -LiteralPath $dirs.base
-  $others = @($acl.Access | Where-Object { @('S-1-5-18', 'S-1-5-32-544', $ownerSid) -cnotcontains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value })
-  $link = ((Get-Item -LiteralPath $dirs.base -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-  $r.folder = if ($link) { 'link' } elseif (-not $acl.AreAccessRulesProtected -or $others.Count) { 'acl-not-protected' } else { 'ok' }
-  if ($r.folder -cne 'ok') { $bad += 'folder' }
+$r = [ordered]@{ status = $null; offline = $Offline.IsPresent; folder = $null; token = $null; gitconfig = $null; ghAuthStatus = $null; reads = [ordered]@{}; gitLsRemote = $null; ownersOwnGhLogin = $null }
+$state = Get-CompanionGhOfflineState $dirs $ownerSid $profileDir $GhExe
+$r.folder = $state.folder; $r.token = $state.token; $r.gitconfig = $state.gitconfig
+$bad = @($state.bad)
+if ($Offline) {
+  $r.status = if ($bad.Count) { 'COMPANION_GH_LOGIN_NOT_READY:' + ($bad -join ',') } else { 'COMPANION_GH_LOGIN_READY' }
+  $r | ConvertTo-Json -Depth 5
+  exit $(if ($bad.Count) { 1 } else { 0 })
 }
-$hosts = Join-Path $dirs.gh 'hosts.yml'
-if (Test-Path -LiteralPath $hosts -PathType Leaf) {
-  $m = [regex]::Match([IO.File]::ReadAllText($hosts), '(?m)^\s+oauth_token:\s*(\S+)\s*$')
-  $r.token = if (-not $m.Success) { 'none' } elseif ($m.Groups[1].Value -cmatch '^ghp_[A-Za-z0-9]{36}\z') { 'ghp_ (classic, length ' + $m.Groups[1].Value.Length + ')' } else { 'not-classic' }
-  $m = $null
-  if ($r.token -notlike 'ghp_ *') { $bad += 'token' }
-} else { $r.token = 'missing'; $bad += 'token' }
-$gc = Join-Path $dirs.home '.gitconfig'
-$r.gitconfig = if (-not (Test-Path -LiteralPath $gc -PathType Leaf)) { 'missing' } elseif (([IO.File]::ReadAllText($gc)).Replace("`r`n", "`n") -ceq (Get-CompanionGitConfig $profileDir $GhExe)) { 'ok' } else { 'differs' }
-if ($r.gitconfig -cne 'ok') { $bad += 'gitconfig' }
 if (-not $bad.Count) {
   $r.ghAuthStatus = Invoke-WithConfig $GhExe @('auth', 'status', '--hostname', 'github.com') $dirs
   # The reads the companion makes (permissions the Owner chose: metadata, contents, pull requests, checks, statuses, actions, issues).
