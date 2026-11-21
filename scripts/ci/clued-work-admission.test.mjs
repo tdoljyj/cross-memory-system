@@ -3310,14 +3310,17 @@ test('bot head dispatch: active, dispatch, foreign, empty or previously executed
   ]) assert.equal((await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() }, ...opts })).outcome.admitted, false, JSON.stringify(opts));
 });
 
-test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse', async () => {
-  const others = [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })];
+test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse; the dispatch is a new run with its own budget', async () => {
+  const twoAttempts = [skippedDispatchRun({ run_attempt: 2 })], twoRuns = [skippedDispatchRun(), skippedDispatchRun({ id: 8002 })];
   const jobs = { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), 8002: skippedDispatchJobs() };
-  assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true);
+  for (const others of [twoAttempts, twoRuns]) assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true, 'two attempts and this dispatch: three');
+  // Fable 11-20 补“补跑上限的范围”: the dispatch is a new run with its own budget, whatever earlier runs used.
+  const three = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })], jobs });
+  assert.equal(three.outcome.admitted, true, JSON.stringify(three.outcome.reasons));
   const ran = skippedDispatchJobs(); ran[1].conclusion = 'failure';
-  for (const changed of [
-    { ...jobs, 8001: ran }, { ...jobs, 8002: ran },
-    { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } },
+  for (const [others, changed] of [
+    [twoAttempts, { ...jobs, 8001: ran }], [twoAttempts, { ...jobs, '8001:2': ran }], [twoRuns, { ...jobs, 8002: ran }],
+    [twoRuns, { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } }],
   ]) assert.equal((await requiredDispatch({ others, jobs: changed })).outcome.admitted, false);
 });
 
@@ -3451,7 +3454,7 @@ const earlierAttempt = (n, { heavy = ["skipped", "skipped", "skipped"], notes = 
     conclusion === "in_progress" ? null : conclusion, conclusion === "in_progress" ? { status: "in_progress" } : {})), ...extraJobs],
   notes,
 });
-async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {}, staging = false } = {}) {
+async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {}, staging = false, otherRuns = [] } = {}) {
   const extra = [];
   const base = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: { id: 9001, run_attempt: attempt, head_sha: HEAD, created_at: RUN_CREATED,
     workflow_id: timeoutIncident.workflow_id, ...(staging ? { event: "push", head_branch: "clued-train/staging", path: stagingWorkflow, actor: { login: stagingActor } } : {}), ...selfRun } },
@@ -3459,6 +3462,12 @@ async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nat
   // The attempt-jobs and annotation URLs extend the run URL key, so they are served here, not by the first-prefix script.
   const fetchImpl = async (url, init = {}) => {
     const text = String(url);
+    // The head's runs (Fable 11-20: three attempts per head and workflow): this run at its attempt, and any other run of the head.
+    if (/\/actions\/runs\?head_sha=/.test(text)) {
+      extra.push({ url: text, method: init.method ?? "GET" });
+      const runs = [{ id: 9001, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: attempt }, ...otherRuns];
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ total_count: runs.length, workflow_runs: runs }), text: async () => "" };
+    }
     const jobs = /\/actions\/runs\/9001\/attempts\/(\d+)\/jobs/.exec(text);
     const notes = /\/check-runs\/(\d+)\/annotations/.exec(text);
     const logs = /\/actions\/jobs\/(\d+)\/logs/.exec(text);
@@ -3489,7 +3498,7 @@ test("independent gate repair re-run: earlier attempts that only ended in ADMISS
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons, slept], [true, "ADMITTED", [], []]);
   assert.deepEqual(outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3 }] });
   assert.deepEqual(extra.map((call) => call.url.replace("https://api.test/repos/o/r/", "").replace(/\?.*$/, "")),
-    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations"]);
+    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations"], "the budget is this run's own attempt number: no other run is read");
   assert.ok([...calls, ...extra].every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
   // A first re-run that was itself refused (an old gate, or a stale head) ran nothing: the next one is still the repair.
   const second = await repairGate([earlierAttempt(1), earlierAttempt(2, { notes: [refusedNote] })]);
@@ -3609,18 +3618,22 @@ test("staging gate: the required-tests push uses the same repair budget on S wit
   }
 });
 
-test("required-tests failure evidence is identical across three copies and repair history agrees between the gate and hook", () => {
+// Fable 11-20 (单一判定, B1) and review 2 high 4: the one failure rule is scripts/ci/required-tests-failure-rule.mjs, under the protected
+// scripts/ci/** path, which the gate imports. The companion's env-failure.mjs is the same file byte for byte (its package cannot import
+// scripts/ci), and the runner hook, run by its loader as one file from main, keeps a copy of the classifier and the repair history.
+test("required-tests failure rule: one protected module the gate imports; the companion's and the hook's copies equal it byte for byte", () => {
   const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
   const classifier = text => text.match(/export const SETUP_STEPS[\s\S]*?\nexport function jobFailureKind[\s\S]*?\n\}/)?.[0];
-  const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nasync function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
-  const gateSource = source("./clued-work-admission.mjs");
+  const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nexport async function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
+  const moduleSource = source("./required-tests-failure-rule.mjs");
   const hookSource = source("../runner/clued-runner-job-started.mjs");
-  const gateClassifier = classifier(gateSource);
-  assert.match(gateClassifier, /kind: "timeout"/);
-  assert.equal(classifier(hookSource), gateClassifier);
-  assert.equal(classifier(source("../../work/independent-ci-resident-v1/src/env-failure.mjs")), gateClassifier);
-  assert.match(history(gateSource), /hasRepairRecovery/);
-  assert.equal(history(hookSource), history(gateSource));
+  assert.equal(source("../../work/independent-ci-resident-v1/src/env-failure.mjs"), moduleSource, "the companion's copy is the module, byte for byte");
+  assert.match(classifier(moduleSource), /kind: "timeout"/);
+  assert.match(history(moduleSource), /hasRepairRecovery/);
+  assert.match(history(moduleSource), /REPAIR_ATTEMPTS_MAX/);
+  assert.equal(classifier(hookSource), classifier(moduleSource));
+  assert.equal(history(hookSource), history(moduleSource));
+  assert.equal(classifier(source("./clued-work-admission.mjs")), undefined, "the gate keeps no copy");
 });
 
 test("independent gate environment re-run: a network failure or a setup death of the one attempt that ran admits one re-run", async () => {
@@ -4255,4 +4268,77 @@ test('the gate loads only the pure reuse judgement: clued-tree-reuse.mjs imports
   const text = fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-tree-reuse.mjs'), 'utf8');
   const specifiers = [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g)].map((m) => m[1]);
   assert.deepEqual(specifiers.filter((spec) => !spec.startsWith('node:')), []);
+});
+
+// 9aba97c1 (Fable 11-20, 补：车头缺必需检查): a job no runner ever took ran nothing: no step, runner_id 0, runner_name null (GitHub's record
+// of job 136029949967 of run 44658316395 and job 134948221590 of run 44345691588). Like a setup death it is the process, not the change:
+// one repair re-run is admitted, with no log and no annotation read. The same for a gate job no runner took.
+const unassigned = (job) => ({ ...job, steps: [], runner_id: 0, runner_name: null });
+test("independent gate repair re-run: a required job or a gate job that no runner took admits one re-run", async () => {
+  for (const conclusion of ["cancelled", "failure"]) {
+    const earlier = ranAttempt(1, [pass, pass, pass]);
+    earlier.jobs[1] = unassigned({ ...earlier.jobs[1], conclusion });
+    const { outcome, extra } = await repairGate([earlier]);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], `${conclusion}: ${outcome.reasons.join("; ")}`);
+    assert.deepEqual(outcome.repair_rerun.earlier_attempts[0].environment_failure_kinds, { [earlier.jobs[1].name]: "unassigned" });
+    assert.ok(extra.every((call) => !/\/logs|\/annotations/.test(call.url)), "nothing ran: no log or annotation is evidence");
+  }
+  const gateNeverTaken = ranAttempt(1, [{ conclusion: "skipped" }, { conclusion: "skipped" }, { conclusion: "skipped" }],
+    { gate: unassigned(attemptJob(100, "admission-gate", "cancelled")) });
+  const { outcome } = await repairGate([gateNeverTaken]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
+  // A job a runner took that failed with no failed step on record is not proven to be the environment.
+  const taken = ranAttempt(1, [pass, pass, pass]);
+  taken.jobs[1] = { ...taken.jobs[1], conclusion: "failure", steps: [], runner_id: 7, runner_name: "clued-ci-company-linux-01" };
+  assert.equal((await repairGate([taken])).outcome.admitted, false);
+});
+
+// Independent review (Codex, 051b7d585) high 3: GitHub records a gate no runner took with every job after it cancelled the same way (run
+// 44658316395: steps [], runner_id 0 or null, runner_name null). Nothing ran: the repair re-run is admitted, as for the gate alone.
+test("independent gate repair re-run: a gate no runner took with its downstream jobs cancelled unrun admits one re-run", async () => {
+  const gate = unassigned(attemptJob(100, "admission-gate", "cancelled"));
+  const earlier = ranAttempt(1, [{ conclusion: "cancelled" }, { conclusion: "cancelled" }, { conclusion: "cancelled" }], { gate });
+  earlier.jobs = earlier.jobs.map((job) => job.name === "admission-gate" ? job : unassigned(job));
+  const { outcome, extra } = await repairGate([earlier]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
+  assert.ok(extra.every((call) => !/\/logs|\/annotations/.test(call.url)), "nothing ran: no log or annotation is evidence");
+});
+
+// Fable 11-20 (单一判定): one budget of three attempts per head and workflow, shared by both kinds of process cause (a run that produced no
+// result, and the environment rule's failures), counted over every run of the workflow on the head; the smaller of it and the environment
+// rule's own limit holds.
+test("independent gate repair re-run: skipped and environment-failed attempts share three attempts per head and workflow", async () => {
+  const third = await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass])]);
+  assert.deepEqual([third.outcome.admitted, third.outcome.verdict], [true, "ADMITTED"], third.outcome.reasons.join("; "));
+  const fourth = await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass]), ranAttempt(3, [netFail, pass, pass])]);
+  assert.equal(fourth.outcome.admitted, false);
+  assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
+  // Fable 11-20 补“补跑上限的范围”: the budget is per run ID; another run of the head, of this workflow or another, never counts
+  for (const workflowId of [timeoutIncident.workflow_id, timeoutIncident.workflow_id + 1]) {
+    const other = await repairGate([earlierAttempt(1)], { otherRuns: [{ id: 9002, workflow_id: workflowId, head_sha: HEAD, run_attempt: 3 }] });
+    assert.equal(other.outcome.admitted, true, other.outcome.reasons.join("; "));
+  }
+});
+
+test("one judgement: the gate defines no failure rule of its own, and the hook's copy is the companion's, byte for byte", () => {
+  const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const gateSource = source("./clued-work-admission.mjs");
+  for (const name of ["jobFailureKind", "diedInSetup", "neverAssigned", "requiredTestsRepairHistory", "repairEnvironmentFailures", "hasRepairRecovery"])
+    assert.doesNotMatch(gateSource, new RegExp(`function ${name}\\b`), `the gate keeps no copy of ${name}`);
+  assert.match(gateSource, /from "\.\/required-tests-failure-rule\.mjs"/, "the gate imports the rule from the protected scripts/ci path");
+  assert.doesNotMatch(gateSource, /work\/independent-ci-resident-v1/, "and nothing outside it");
+});
+
+
+// Fable 11-20 补“补跑上限的范围”: the budget is per run ID. A new run of the same workflow on the head (the PR reopened) is admitted on its
+// first attempt as any run, and its re-runs count from 1, whatever other runs of the head used.
+test("independent gate repair re-run: the budget is per run; another run's attempts on the head never count", async () => {
+  const other = { id: 9000, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: 3 };
+  const second = await repairGate([earlierAttempt(1)], { otherRuns: [other] });
+  assert.deepEqual([second.outcome.admitted, second.outcome.verdict], [true, "ADMITTED"], second.outcome.reasons.join("; "));
+  const fourth = await repairGate([earlierAttempt(1), earlierAttempt(2), earlierAttempt(3)], { otherRuns: [other] });
+  assert.equal(fourth.outcome.admitted, false);
+  assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
+  const dispatched = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 3 })], jobs: { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), '8001:3': skippedDispatchJobs() } });
+  assert.equal(dispatched.outcome.admitted, true, `a re-dispatched run's first attempt is admitted: ${JSON.stringify(dispatched.outcome.reasons)}`);
 });
