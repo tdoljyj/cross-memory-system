@@ -312,3 +312,42 @@ test('review MINOR 5: a stop waits for the step at most leaveMaxMs', async () =>
   assert.ok(Date.now() - began >= 150 && Date.now() - began < PROMPT_MS);
   assert.deepEqual([acked, abandoned], [true, true]);
 });
+
+// ---- Task fe9044fc: a service loop running beside the test on a real timer races it ----
+
+// The tests that still run serviceLoop beside the test on a real-timer sleep; their checks wait for what the stimulus itself causes.
+// Only fewer: a new one drives its loop with steppedLoop().
+const REAL_TIMER_LOOPS = Object.freeze([
+  'defect 8f8240ff: a Linux archive-prune that never answers no longer holds the loop; the upgrader pause is latched at once and a stop ends the wait',
+  'review MAJOR 1: a claim re-check is not asked while the step runs: its pr-head would queue behind the hung prune in the companion lane',
+  'review MINOR 5: a stop waits for the step at most leaveMaxMs',
+]);
+// Every serviceLoop call in `text` not awaited where it is made (the test goes on beside it) whose sleep is not a steppedLoop()'s:
+// the name of the test it is in. Spaces and line breaks anywhere in the call count for nothing.
+function backgroundTimerLoops(text) {
+  const stepped = [...text.matchAll(/\bconst\s+(\w+)\s*=\s*steppedLoop\s*\(\s*\)/g)].map(m => m[1]);
+  const steppedSleep = stepped.length ? new RegExp(String.raw`\bsleep\s*:\s*(?:${stepped.join('|')})\.sleep\b`) : null;
+  const out = [];
+  for (const m of text.matchAll(/\bserviceLoop\s*\(/g)) {
+    if (/\bawait\s*$/.test(text.slice(0, m.index))) continue;
+    let depth = 0, end = m.index + m[0].length - 1;
+    do { const c = text[end++]; depth += c === '(' ? 1 : c === ')' ? -1 : 0; } while (depth > 0 && end < text.length);
+    if (steppedSleep?.test(text.slice(m.index, end))) continue;
+    out.push([...text.slice(0, m.index).matchAll(/\btest\s*\(\s*(['"`])(.*?)\1/g)].at(-1)?.[2] ?? null);
+  }
+  return out;
+}
+
+test('Task fe9044fc: a service loop beside the test runs on steppedLoop(); one on a real timer only in the tests listed, and only fewer', async () => {
+  const L = 'serviceLoop';
+  assert.deepEqual(backgroundTimerLoops(`test('a', () => { const loop = ${L}\n  (\n{ exec,\n sleep:\n () => realSleep(10) }); });`), ['a'], 'a call over several lines');
+  assert.deepEqual(backgroundTimerLoops(`test('b', () => { const loop = ${L}({ exec, sleep }); });`), ['b'], 'a sleep given by name');
+  assert.deepEqual(backgroundTimerLoops(`test('c', async () => { const s = steppedLoop(); const loop = ${L}({ exec, sleep:\n s.sleep }); await ${L}({ sleep: () => realSleep(1) }); });`), []);
+  const dir = new URL('.', import.meta.url);
+  const found = [];
+  for (const n of (await fs.readdir(dir)).filter(n => n.endsWith('.test.mjs')).sort()) {
+    for (const name of backgroundTimerLoops(await fs.readFile(new URL(n, dir), 'utf8'))) found.push(`${n}: ${name}`);
+  }
+  assert.deepEqual(found, REAL_TIMER_LOOPS.map(n => `retention-nonblocking.test.mjs: ${n}`),
+    'a service loop beside the test on a real-timer sleep: drive it with steppedLoop() instead (Task fe9044fc)');
+});
