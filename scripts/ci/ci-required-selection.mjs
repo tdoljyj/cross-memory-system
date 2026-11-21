@@ -326,6 +326,7 @@ export const SUITE_COMMANDS = {
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'ledger:verify'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'typecheck'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'build'] },
+    { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{tests:../kooyumi-connect/tests}'] },
     { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}'] },
   ],
   'production-schema': [
