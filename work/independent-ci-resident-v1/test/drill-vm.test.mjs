@@ -1868,6 +1868,22 @@ test('the boot gate takes a runner job as the 21 GB memory tier, not a refusal; 
   assert.equal(r.runningShort, 'DRILL_HOST_MEMORY_SHORT');
 });
 
+// The r6 receipt (run 20261121T010455Z-2026.11.21-b7d92a1a-4b3f5ee5, evidence.hostMemory; Fable ruling on r6 Linux phase A, section 5):
+// a runner job at boot, 27.0 GB free before boot, 19.3 GB once the guest was up, 8.9 GB at the lowest while running -- the host's other
+// usage grew 10.4 GB after the boot. The figures are written here, not read from the script: a boot that just passes the job tier's boot
+// gate, then loses the guest and that growth, must still pass the running gate. At the old 21 GB tier it fell to 2.6 GB (aborted).
+test('the r6 receipt replayed: from the job tier of the boot gate, the measured growth after boot keeps the running gate passing', opts, () => {
+  const r = ps(`
+    $s = ${q(idleHostStatus())}
+    $boot = (Test-DrillHostSafety $s 0 -ProcessNames @('Runner.Worker')).requiredFreeBytes
+    $minRunning = $boot - 8GB - [long]((19.3 - 8.9) * 1GB)
+    @{ bootGB = [Math]::Round($boot / 1GB, 1); minRunningGB = [Math]::Round($minRunning / 1GB, 1)
+      atBoot = (Test-DrillHostSafety $s $boot -ProcessNames @('Runner.Worker')).action
+      running = (Test-DrillHostSafety $s $minRunning -Running -MemoryAssigned 8GB).action }`);
+  assert.equal(r.atBoot, 'start');
+  assert.equal(r.running, 'continue', `boot gate ${r.bootGB} GB leaves ${r.minRunningGB} GB after the r6 growth`);
+});
+
 // Codex review of f9ab1bb26, medium 1: the Windows process list that could not be read is a job query that failed, like the WSL side's:
 // the 21 GB tier, the WSL side and memory still read, no refusal by itself. A memory reading that fails still refuses (a resource failure).
 test('a Windows job query that fails takes the 21 GB tier and goes on to read memory; a memory read that fails still refuses', opts, () => {
@@ -2372,6 +2388,25 @@ test('from the real entry: a runner busy from the start skips the release and bo
   assert.equal(short.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(short.out));
   assert.deepEqual([short.out.hostPreBoot.bootGate.runnerJob, short.out.hostPreBoot.bootGate.requiredFreeGB], ['yes', 21]);
   assert.ok(!short.events.includes('boot'));
+});
+
+// r6 conditions from the real entry (a runner job at boot, 24 GB free: the old 21 GB tier booted it, and the r6 growth would have taken it
+// under the running gate): refused before boot, and the refusal carries the figure the script computed and what it is made of -- the
+// guest, the boot margin, the runner job growth with the receipt it was measured in, the production reserve. No figure from outside.
+test('from the real entry: r6 conditions at 24 GB are refused before boot with the computed figure and its basis', shOpts, () => {
+  const r = ps(`${preBootWorld({ freeBeforeRelease: 24, freeAfterRelease: 24 })}
+    $script:jobAfter = 0
+    Invoke-Entry`);
+  assert.equal(r.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(r.out));
+  assert.ok(!r.events.includes('boot'), r.events.join(','));
+  const gate = r.out.hostPreBoot.bootGate;
+  assert.deepEqual([gate.runnerJob, gate.freeGB, gate.requiredFreeGB], ['yes', 24, 25.4]);
+  const b = gate.requiredBasis;
+  assert.deepEqual([b.guestGB, b.bootMarginGB, b.runnerJobGrowthGB, b.productionReserveGB], [8, 1, 10.4, 6], JSON.stringify(b));
+  assert.equal(Math.round((b.guestGB + b.bootMarginGB + b.runnerJobGrowthGB + b.productionReserveGB) * 10) / 10, gate.requiredFreeGB);
+  assert.match(b.runnerJobGrowthFrom, /20261121T010455Z-2026\.11\.21-b7d92a1a-4b3f5ee5/);
+  assert.match(b.runnerJobGrowthFrom, /afterBootFreeGB 19\.3/);
+  assert.match(b.runnerJobGrowthFrom, /minRunningFreeGB 8\.9/);
 });
 
 // Codex review of 74e7a65e7, medium 1: a refusal at the duty check carries no memory figure (nothing was read), and a built baseline
