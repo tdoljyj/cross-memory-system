@@ -305,19 +305,19 @@
     {
       "path": "scripts/ci/self-hosted/resource-maintenance/test_maintenance.py",
       "kind": "stale-or-suspect",
-      "task": "8aa01865",
+      "task": "8aa01865-5599-4594-a140-d6c3451e1fe8",
       "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
     },
     {
       "path": "scripts/ci/self-hosted/resource-maintenance/test_producer.py",
       "kind": "stale-or-suspect",
-      "task": "8aa01865",
+      "task": "8aa01865-5599-4594-a140-d6c3451e1fe8",
       "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
     },
     {
       "path": "scripts/ci/self-hosted/resource-maintenance/test_schedule_probe.py",
       "kind": "stale-or-suspect",
-      "task": "8aa01865",
+      "task": "8aa01865-5599-4594-a140-d6c3451e1fe8",
       "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
     },
     {
