@@ -211,8 +211,11 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     rules = rulesetFacts(reply.rules, appId);
     landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
-  // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8).
-  const route = !push ? null : rulesReason ? { route: 'park', missing: ['rules_unreadable'] } : await readLandingRoute({ github, appId, rules: landability.rules, bypass: 'when-train-landed' });
+  // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8). Fable 11-21 open
+  // points §5: every round reads this App's bypass state of each ruleset too (one GET /rulesets/{id} each), and the facts carry it
+  // (landing.bypass -> state\status.json), so the landing precheck's P3 reads it there without elevation.
+  const route = !push ? null : rulesReason ? { route: 'park', missing: ['rules_unreadable'], bypass: { main: 'not_read', independent: 'not_read' } }
+    : await readLandingRoute({ github, appId, rules: landability.rules });
   const pushRoute = route?.route === 'push';
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
   if (holder?.boundPrs?.length > 1) {
@@ -233,10 +236,10 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     try { listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] }; } catch { listed = null; }
     const checksReadable = listed?.complete === true && Array.isArray(listed.checks);
     frontChecks = checksReadable ? listed.checks : [];
-    // Fable 11-20 (#1192): green is every check main's live rules require on the head (this run's rules read; null when unreadable). Only route
-    // push lands its own merge, so only there the merge slot alone stays green; a push-capable package on the current path (route
-    // github-merge, ADR 0018 §2 L2 item 7) is merged by GitHub, which needs the head's own required checks.
-    front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, ...(pushRoute ? {} : { rules: landability.rules }) });
+    // Fable 11-20 (#1192): green is every check main's live rules require on the head (this run's rules read; null when unreadable).
+    // Fable 11-21 应修 1: and only on the current path (no push in the package, or route github-merge; ADR 0018 §2 L2 item 7), which GitHub
+    // merges. On route push or park a merge-slot green on H is a leftover of the current path: not green, so the front batch opens.
+    front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, rules: landability.rules, route: route?.route ?? 'github-merge' });
     if (!checksReadable) front = { ...front, green: false, checksUnreadable: true, ...(front.required !== undefined ? { required: null } : {}) };
     // Review 4 medium 2: when this node first saw the head at the front, recorded once: the 60 minutes' start when no merge-slot time is known.
     if (job.mode === 'on' && headSha && typeof sweepStore?.readFrontSeen === 'function') {
@@ -583,7 +586,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingState = null;
-  let landingFacts = route ? { route: route.route, missing: route.missing } : null;
+  let landingFacts = route ? { route: route.route, missing: route.missing, bypass: { main: route.bypass.main, independent: route.bypass.independent } } : null;
   let missingYield = false, treeUnchecked = null;
   if (job.mode === 'on') {
     // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
@@ -1032,6 +1035,22 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
         || Date.parse(currentSince) > clock()) return no('TRAIN_FRONT_BUDGET_SHORT');
       await sweepStore.appendFrontBatch({ ...running, writtenAt: isoOf(clock()), runId: job.runId, since: currentSince });
     } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
+  }
+  // Fable 11-21 open points §1 (one invariant): on route push the running front batch's S is on clued-train/staging with a landing-batch
+  // record. A batch opened while the composition was only a rehearsal (the current path or park: a failed composition is swallowed, the
+  // batch runs on GitHub's test merge) has neither, and once main's rules route push stage 8 would wait for Actions checks S never gets.
+  // Stage 10 attaches it this round: clued-train/staging pointed at S, then a landing-batch record of the front alone (T, S and S's tree
+  // of the running batch; the record present means attached). A failure leaves the round TRAIN_FRONT_BATCH_RUNNING and the next round
+  // tries again: no new batch, no attempt counted, no suite run again. The current path and park attach nothing.
+  if (refusal === 'TRAIN_FRONT_BATCH_RUNNING' && pushing && !pushing.rehearsalOnly && running) {
+    try {
+      if (!(await sweepStore.landingBatchByTest(running.testSha))) {
+        fx.n++; await pushing.landing.pointRef(STAGING_REF, running.testSha);
+        await sweepStore.appendLandingBatch({ writtenAt: isoOf(clock()), runId: job.runId, frontPr: running.pr, frontHeadSha: running.headSha,
+          baseSha: running.baseSha, testSha: running.testSha, testTree: running.testTree, attempt: running.attempt,
+          members: [{ pr: running.pr, headSha: running.headSha, claimId: running.claimId }] });
+      }
+    } catch { /* not attached this round: the next round tries again */ }
   }
   if (refusal) return { ...no(refusal), turnShort };
   let composed = null;
