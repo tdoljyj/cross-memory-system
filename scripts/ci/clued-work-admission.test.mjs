@@ -4286,6 +4286,37 @@ test('R2: a workflow with a PR trigger and a main push trigger is in the reuse t
   assert.ok(outside.filter(frozen).length <= 5, `byte-frozen workflows still running on main push: ${outside.filter(frozen).join(', ')}`);
 });
 
+test('R2: the trigger reading refuses a spelling it cannot read instead of reading no push out of it', () => {
+  // R2 is the only stop, so an unread trigger block must be red, never "no push here".
+  for (const [name, text] of [
+    ['flow mapping', 'name: x\non: {push: {branches: [main]}, pull_request: {}}\njobs:\n'],
+    ['flow mapping under a trigger', 'name: x\non:\n  pull_request:\n  push: {branches: [main]}\njobs:\n'],
+    ['four-space indent', 'name: x\non:\n    pull_request:\n    push:\n        branches: [main]\njobs:\n'],
+    ['quoted trigger name', 'name: x\non:\n  pull_request:\n  "push":\n    branches: [main]\njobs:\n'],
+    ['empty block', 'name: x\non:\njobs:\n'],
+  ]) assert.throws(() => workflowTriggers(text), /cannot read the trigger block/, name);
+  // What it does read stays read.
+  assert.deepEqual(workflowTriggers('on:\n  pull_request:\n  push:\n    branches: [main]\njobs:\n'), { names: ['pull_request', 'push'], pushHitsMain: true });
+  assert.deepEqual(workflowTriggers('on: [push, pull_request]\njobs:\n'), { names: ['push', 'pull_request'], pushHitsMain: true });
+});
+
+// R2b (FABLE-tree-reuse-registry B): a counted CI workflow whose bytes at this head are not a registered Source makes
+// the merge slot and the merge executor wait for ever on every head that carries it. The set is the merge slot's own
+// (ciWorkflows); no list of names. The YAML-parsing check of the entries stays in ci-proof-profiles.test.mjs.
+test('R2b: every counted CI workflow is a registered Source at this head', async () => {
+  const { ciWorkflows } = await import('./clued-merge-slot-ci.mjs');
+  const { recognizeCatalogueWorkflow } = await import('./clued-source-only-workflow.mjs');
+  const registry = parseWorkflowProfiles(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-profiles.json'), 'utf8'));
+  const roleSpecs = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-role-specs.json'), 'utf8'));
+  const counted = [...ciWorkflows(ROOT)];
+  assert.ok(counted.length > 0, 'the merge slot counts at least one workflow');
+  const unknown = counted.filter(([file, blob]) => recognizeCatalogueWorkflow({ registry, roleSpecs, file, blob }).source_identified !== true)
+    .map(([file, blob]) => `${file} (${blob})`);
+  assert.deepEqual(unknown, [],
+    'the bytes of these counted workflows are not a registered Source: register the new Source and its roles in ' +
+    'clued-gated-proof-profiles.json and clued-gated-proof-role-specs.json, then run merge-admission-r9-reregister.mjs --write');
+});
+
 test('T2: every required job of every gate-decided workflow of the reuse table is in the table, and so is every Actions-bound required check', async () => {
   const { TARGETS } = await import('./clued-tree-reuse.mjs');
   const covered = new Set();
