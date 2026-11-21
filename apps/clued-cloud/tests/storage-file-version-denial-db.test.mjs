@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -20,7 +20,7 @@ async function freePort() {
 test("file-version diagnosis on the current full migration chain remains read-only and fail-closed", { timeout: 180000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "clued-file-version-db-"));
   const server = new EmbeddedPostgres({ databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
-    port: await freePort(), persistent: false, postgresFlags: ["-c", "io_method=sync"], onLog() {}, onError(message) { process.stderr.write(message + "\n"); } });
+    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + "\n"); } });
   let admin, caller;
   try {
     await server.initialise(); await server.start();

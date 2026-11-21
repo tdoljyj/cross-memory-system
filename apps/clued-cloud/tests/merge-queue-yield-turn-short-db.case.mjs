@@ -5,7 +5,7 @@
 // exactly at the cap. A person gave the claim up, claimed again, authorized the head again and edited the PR body. Now the train
 // sends reason turn_short: the head joins again even alone (head again at once with a whole turn), behind waiting claims otherwise.
 // Imported by work-claims-reject-receipts-db.test.mjs, so it runs in the production-schema suite.
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -31,7 +31,7 @@ async function freePort() {
 test('merge_queue_yield turn_short: a head whose turn is too short joins again, alone or behind waiting claims', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-turn-short-'));
   const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
     await server.initialise(); await server.start();

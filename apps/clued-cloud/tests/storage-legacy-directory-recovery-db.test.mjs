@@ -1,7 +1,7 @@
 // Actual disposable PostgreSQL, original executor and Worker recovery. The
 // provider transport and elapsed-time fixtures are synthetic; no production
 // authorization, Drive file or machine synchronization state is asserted.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -23,7 +23,7 @@ async function port(){const server=net.createServer();await new Promise(r=>serve
 test('legacy directory: real P5 attempts and independent before recovery',{timeout:240000},async t=>{
  const parent=await fs.realpath(os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'kooyumi-legacy-directory-'));
  const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:uuid(),port:await port(),persistent:true,
-  postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+  initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  let db,started=false;
  try{
   await server.initialise();await server.start();started=true;db=server.getPgClient();await db.connect();
