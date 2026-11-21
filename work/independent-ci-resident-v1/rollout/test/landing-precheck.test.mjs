@@ -209,7 +209,7 @@ test('T4 P4: no independent ruleset, a second one, a bypass actor on it, other r
     assert.equal(w.snapshot, null);
   }
   const w = world();
-  assert.equal((await run(w, 'before', { only: ['P4'] })).verdict, 'GO');
+  assert.equal((await run(w, 'before', { only: ['P4'] })).verdict, 'PARTIAL-PASS', 'review optional 2: a subset that passes is never GO');
   assert.equal(w.snapshot, null, 'a subset (R1) writes no snapshot');
 });
 
@@ -230,12 +230,52 @@ test('T4 P2: a node heard within 24 hours on another Source, a record of another
   // a node last heard more than 24 hours ago is not compared (as stage 10)
   const w = world();
   Object.assign(w.status.train.nodes.nodes[1], { sourceManifestSha256: 'e'.repeat(64), lastHeartbeatAt: iso(NOW - 25 * 3_600_000) });
-  assert.equal((await run(w, 'before', { only: ['P2'] })).verdict, 'GO');
+  assert.equal((await run(w, 'before', { only: ['P2'] })).verdict, 'PARTIAL-PASS');
 });
 
 // Fable 11-21 open points §3: the stage file must read push on the node before C is saved. Four items read off the objects: the train on
 // and landing push in this node's status (its installed policy, which writes the stage file), stage 10's newest round within 60 minutes
 // with landing.route (only written while push is in force) reading github-merge before C, and this checkout's FLEET_TRAIN landing push.
+// Independent review C and optional 1 (half), as ruled (open points §9): a node heard within 24 hours that reports no Source is not
+// proven on this Source (FLEET_NODE_SOURCE_UNREPORTED; the shared fleetSourceCheck is unchanged), and a node view that dropped entries
+// is not whole (FLEET_NODES_DROPPED). A node last heard over 24 hours ago without a Source is not looked at.
+test('T4 P2 (review C, optional 1): a node heard 2 minutes ago with no Source, or a node view with dropped entries -> NO-GO', async () => {
+  let w = world(); w.status.train.nodes.nodes[1].sourceManifestSha256 = null;
+  let r = await run(w, 'before', { only: ['P2'] });
+  assert.deepEqual([r.verdict, failedOf(r, 'P2')], ['NO-GO', ['FLEET_NODE_SOURCE_UNREPORTED']], JSON.stringify(r.items.P2));
+  assert.deepEqual(r.items.P2.sourceUnreported, ['DESK']);
+  w = world(); w.status.train.nodes.dropped = 1;
+  r = await run(w, 'before', { only: ['P2'] });
+  assert.deepEqual([r.verdict, failedOf(r, 'P2')], ['NO-GO', ['FLEET_NODES_DROPPED']], JSON.stringify(r.items.P2));
+  w = world(); Object.assign(w.status.train.nodes.nodes[1], { sourceManifestSha256: null, lastHeartbeatAt: iso(NOW - 25 * 3_600_000) });
+  assert.equal((await run(w, 'before', { only: ['P2'] })).items.P2.pass, true);
+});
+
+// Review optional 3: the annotations are best effort (the network jitters): one that cannot be read leaves that check's annotations
+// null, and every other detail of P1's NO-GO stays.
+test('T4 P1 (review optional 3): annotations that cannot be read leave the rest of the NO-GO detail', async () => {
+  const w = world();
+  w.checks.set(w.S[1], w.checks.get(w.S[1]).filter(c => c.name !== 'ci-suites-windows'));
+  const { gh, files, checkout } = ports(w);
+  const paged = gh.paged;
+  gh.paged = async (route, key, o) => { if (/annotations/.test(route)) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return paged(route, key, o); };
+  const r = await landingPrecheck({ mode: 'before', repo: REPO, clock: () => NOW, only: ['P1'], gh, files, checkout });
+  assert.equal(r.verdict, 'NO-GO');
+  assert.deepEqual(r.items.P1.fewerThanTwo, ['ci-suites-windows'], JSON.stringify(r.items.P1));
+  const refusal = r.items.P1.perS.find(x => x.testSha === w.S[2]).checks['ci-suites-windows'];
+  assert.deepEqual([refusal.state, refusal.summary, refusal.annotations], ['failure', 'staging admission: member PR moved or closed', null]);
+});
+
+// Review optional 6: a check named *-skipped is not the required check, even as a success on every S.
+test('T4 P1 (review optional 6): ci-suites-windows-skipped never stands for ci-suites-windows', async () => {
+  const w = world();
+  for (const s of w.S) { w.checks.set(s, w.checks.get(s).filter(c => c.name !== 'ci-suites-windows')); w.add(s, 'ci-suites-windows-skipped'); }
+  const r = await run(w, 'before', { only: ['P1'] });
+  assert.equal(r.verdict, 'NO-GO');
+  assert.deepEqual([r.items.P1.successes['ci-suites-windows'], r.items.P1.fewerThanTwo, r.items.P1.fullyGreen], [0, ['ci-suites-windows'], []]);
+  assert.ok(!r.items.P1.names.includes('ci-suites-windows-skipped'));
+});
+
 test('T4 P2 (open points §3): the train not on, landing not push, no landing.route in the newest round, a round older than 60 minutes, a checkout whose FLEET_TRAIN is not push -> NO-GO', async () => {
   const cases = [
     ['train.enabled shadow', w => { w.status.train.enabled = 'shadow'; }, 'NODE_TRAIN_NOT_ON'],
