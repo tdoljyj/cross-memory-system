@@ -879,27 +879,71 @@ test('应修 1 (T3): the switch to C at every point of the front\'s way -> no pe
     const start = e.now, log = await untilLanded(t, e);
     await landed(t, e, slotCalls, start, log);
   });
-  const openedThenSwitched = async (t, { failS, rounds = 30 }) => {
-    const e = await world(t, { prs: [910], rules: 'today' });
+  // failS: the rehearsal S could not be built (clued-train/staging cannot be pointed), so the batch opens on GitHub's test merge, not on
+  // clued-train/staging, with no landing-batch record (rehearsalOnly). park: the batch opens while the rules read back as park (the same
+  // swallowed composition, Fable 11-21 open points §1's second source).
+  const openedThenSwitched = async (t, { failS, park = false, rounds = 30 }) => {
+    const e = await world(t, { prs: [910], rules: park ? 'push' : 'today' });
+    if (park) e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' });
     const { slotCalls } = leftoverGreen(e);
     const pointRef = e.port.pointRef;
     if (failS) e.port.pointRef = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
     const r = await stage10(e);
     assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+    if (park) assert.equal(r.facts.landing?.route, 'park');
     const b = r.facts.openFrontBatch;
-    if (failS) { assert.equal(b.testSha, e.W.merge(e.main(), e.head(910)), 'GitHub\'s test merge'); e.port.pointRef = pointRef; }
-    e.W.setRules('push');
-    const start = e.now, log = await untilLanded(t, e, { batch: b, rounds });
-    if (failS) t.diagnostic(`${Math.round((e.now - start) / MIN)} minutes, endings ${JSON.stringify([...new Set(log.map(x => x.slice(1).join(' ')))])}, slot calls ${JSON.stringify(slotCalls)}`);
+    if (failS) {
+      assert.equal(b.testSha, e.W.merge(e.main(), e.head(910)), 'GitHub\'s test merge');
+      assert.notEqual(e.W.refs.get('heads/clued-train/staging'), b.testSha, 'S is not on clued-train/staging');
+      assert.equal(await e.store.landingBatchByTest(b.testSha), null, 'no landing-batch record');
+      e.port.pointRef = pointRef;
+    }
+    if (park) e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'always' }); else e.W.setRules('push');
+    const start = e.now;
+    let log = [];
+    if (failS) {
+      // Fable 11-21 open points §1: route push, the running front batch's S not on clued-train/staging -> stage 10 attaches it this round
+      const s10 = await stage10(e);
+      assert.equal(s10.facts.landing?.route, 'push');
+      assert.equal(s10.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(s10.facts));
+      assert.equal(e.W.refs.get('heads/clued-train/staging'), b.testSha, 'the next stage 10 points clued-train/staging at S');
+      const rec = await e.store.landingBatchByTest(b.testSha);
+      assert.deepEqual(rec && [rec.frontPr, rec.frontHeadSha, rec.baseSha, rec.testTree, rec.attempt, rec.members.map(m => m.pr)],
+        [910, b.headSha, b.baseSha, b.testTree, b.attempt, [910]], 'a landing-batch record of the front alone');
+      log.push(['10', s10.facts.decision]);
+    }
+    log = [...log, ...await untilLanded(t, e, { batch: b, rounds })];
     await landed(t, e, slotCalls, start, log);
+    if (failS) {
+      assert.equal(e.main(), b.testSha, 'main is S');
+      assert.ok(e.now - start < REQUIRED_CHECKS_MAX_WAIT_MS, `landed ${Math.round((e.now - start) / MIN)} minutes after the switch, under 60`);
+    }
   };
   await t.test('after stage 10 opened on today\'s rules (S on clued-train/staging), before stage 8', t => openedThenSwitched(t, { failS: false }));
-  // Review optional 6: the rehearsal S could not be built, so the batch's S is GitHub's test merge. It does not land in bounded rounds, before
-  // or after the 应修 1 fix: that S is not on clued-train/staging, GitHub Actions never runs on it, so once C is saved stage 8 parks it on
-  // TRAIN_LANDING_CHECKS_PENDING for ever while stage 10 reads the batch as running (TRAIN_FRONT_BATCH_RUNNING) and renews the slot up to
-  // the hard cap. No green is involved (not either 应修's state); reported to Fable, a todo until ruled.
+  // Review optional 6, ruled by Fable 11-21 open points §1: the rehearsal S could not be built, so the batch's S is GitHub's test merge, not
+  // on clued-train/staging. Before the fix it never got its Actions checks once C was saved: stage 8 parked it on CHECKS_PENDING while stage
+  // 10 read it as running up to the hard cap (about 220 minutes, then a turn_short yield). Now stage 10 attaches it to clued-train/staging.
   await t.test('after stage 10 opened on today\'s rules with S = GitHub\'s test merge (the rehearsal S could not be built), before stage 8',
-    { todo: 'Fable 11-21 T3 / review optional 6: S never gets its Actions checks once C is saved (not ruled yet)' }, t => openedThenSwitched(t, { failS: true, rounds: 60 }));
+    t => openedThenSwitched(t, { failS: true }));
+  await t.test('park source: opened while the rules read park with S = GitHub\'s test merge, then the rules completed to push',
+    t => openedThenSwitched(t, { failS: true, park: true }));
+  // Not past the line: on the current path the same batch (S = GitHub's test merge) gets no ref and no landing-batch record from stage 10.
+  await t.test('current path: the same running batch on GitHub\'s test merge -> stage 10 writes no ref', async t => {
+    const e = await world(t, { prs: [910], rules: 'today' });
+    const pointRef = e.port.pointRef, points = [];
+    e.port.pointRef = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
+    const r = await stage10(e);
+    const b = r.facts.openFrontBatch;
+    assert.equal(b.testSha, e.W.merge(e.main(), e.head(910)));
+    e.port.pointRef = async (ref, s) => { points.push([ref, s]); return pointRef(ref, s); };
+    for (let i = 0; i < 3; i++) {
+      e.now += 4 * MIN;
+      const s10 = await stage10(e);
+      assert.equal(s10.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(s10.facts));
+    }
+    assert.deepEqual(points, [], 'no ref written');
+    assert.equal(await e.store.landingBatchByTest(b.testSha), null, 'no landing-batch record');
+  });
   await t.test('after stage 8 wrote kooyumi-admission-verified only', async t => {
     const e = await world(t, { prs: [910], rules: 'today' });
     const { slotCalls } = leftoverGreen(e);
