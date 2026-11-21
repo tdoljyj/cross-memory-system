@@ -104,7 +104,7 @@ const AUTHORIZATION_DB_TESTS = [
   'work-claims-continuation-db', 'work-claims-hardening-db', 'work-claims-main-merge-db', 'work-claims-multi-copy-db', 'work-claims-reject-receipts-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
   'work-claims-resource-kinds-db', 'worker-gateway-db', 'worker-gateway-request-context-db',
   // Database tests no required suite ran until ci-required-selection.test.mjs required each to run or be exempted
-  // (2026-11-19); each of these passed when listed. The exempted ones and their reasons are in that test.
+  // (2026-11-19); each of these passed when listed. The exempted ones and their reasons are in ci-uncovered-tests.json.
   'approved-legacy-successor-reconcile-db', 'audit-receipt-lookup-indexes-db', 'ci-database-lint-type-fixes-db', 'ci-heartbeat-scope-db',
   'credential-table-privileges-db', 'credential-verifier-db', 'currentness-legacy-inventory', 'future-consent-authorization-db',
   'imprint-bulk-backfill-db', 'imprint-development-organization-db', 'imprint-organization-db', 'imprint-owner-scope-query-db',
@@ -170,8 +170,14 @@ export const SUITES = {
     'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
-    // Its test checks that every database test of apps/clued-cloud/tests runs in a required suite or is exempted, so a
-    // new or changed test there, or the classifier, selects it.
+    // Every test file runs in a required suite or is listed in ci-uncovered-tests.json (check-tests-covered.mjs). Any test
+    // file anywhere, the table, the check, a workflow (other-workflow entries) and what decides the application's unit tests
+    // select it; a change to this file selects every suite already.
+    'test-coverage': ['**/*.test.mjs', '**/*.test.js', '**/*.test.cjs', '**/*.test.ts', '**/test_*.py', '**/*_test.py',
+      'scripts/ci/ci-uncovered-tests.json', 'scripts/ci/check-tests-covered.mjs', '.github/workflows/**',
+      'apps/clued-cloud/tests/**', 'apps/clued-cloud/scripts/select-tests.mjs'],
+    // Its tests read the database tests of apps/clued-cloud/tests and what they import, so a new or changed test there, or
+    // the classifier, selects it.
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
@@ -220,6 +226,7 @@ export const SUITE_PLATFORMS = {
   'pinned-registries': { platforms: ['linux'], reason: 'a commit has one set of pinned bytes; checked once (needs the application dependencies)' },
   'mechanical-outputs': { platforms: ['linux'], reason: 'integrates a throwaway worktree from the Linux dependency store; one answer for a commit' },
   'ci-deps-entry': { platforms: ['linux'], reason: 'the dependency store it guards exists on the Linux pool only' },
+  'test-coverage': { platforms: ['linux'], reason: 'a commit has one set of test files and suite commands; checked once' },
   // Its 10 Windows failures on main (test_resume_launcher and others) are an open defect; until they are fixed a
   // required Windows run could never be green. Remove this entry with that fix: the reinstall tools run on Windows.
   'reinstall-python': { platforms: ['linux'], reason: 'fails on Windows on main today (open defect); joins win32 with its fix' },
@@ -309,6 +316,9 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: ['node', 'scripts/ci/check-cron-budget.mjs'] }],
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
+  // Seconds: lists the tracked files and expands every suite command (FABLE-tests-outside-required-suites-20261121 §2).
+  'test-coverage': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-tests-covered.test.mjs'] },
+    { cwd: '.', argv: ['node', 'scripts/ci/check-tests-covered.mjs'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs',
     'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
@@ -574,12 +584,15 @@ export function filterCommand(command, argv, named) {
       result.matched.push(file);
     }
   } else if (unittestAt >= 0) {
-    const files = operandsAfter(argv, unittestAt).filter((arg) => /[\\/]/.test(arg) || arg.endsWith('.py'));
-    result.accepts = files.map(repo);
-    const kept = new Set(files.filter((file) => named.has(repo(file))));
+    // A file operand, or a dotted module name (tests.test_x is tests/test_x.py under cwd).
+    const fileOf = (arg) => (/[\\/]/.test(arg) || arg.endsWith('.py') ? arg
+      : /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(arg) ? `${arg.replaceAll('.', '/')}.py` : null);
+    const operands = operandsAfter(argv, unittestAt).filter(fileOf);
+    result.accepts = operands.map((arg) => repo(fileOf(arg)));
+    const kept = new Set(operands.filter((arg) => named.has(repo(fileOf(arg)))));
     if (kept.size > 0) {
       result.runs = [argv.filter((arg, i) => i <= unittestAt || arg.startsWith('-') || kept.has(arg))];
-      result.matched = [...kept].map(repo);
+      result.matched = [...kept].map((arg) => repo(fileOf(arg)));
     }
   } else {
     const operands = operandsAfter(argv, 0);
