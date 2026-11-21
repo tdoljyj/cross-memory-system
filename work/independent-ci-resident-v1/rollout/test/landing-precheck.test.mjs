@@ -24,7 +24,7 @@ function world() {
   const ff = { id: FF, name: 'main fast-forward only', target: 'branch', enforcement: 'active',
     conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, bypass_actors: [], rules: [{ type: 'deletion' }, { type: 'non_fast_forward' }] };
   const w = { rulesets: new Map([[MAIN_RULESET_ID, main], [FF, ff]]), runs: [], checks: new Map(), annotations: new Map(), mainSha: sha(0xabc),
-    files: new Map(), checkoutFiles: new Map(), head: sha(0xabc), snapshot: null, calls: [], nextId: 1 };
+    files: new Map(), checkoutFiles: new Map(), head: sha(0xabc), snapshot: null, calls: [], nextId: 1, fleetTrain: { enabled: 'on', landing: 'push' } };
   // three S on staging, newest first: S1 and S2 all four green (S2 pending at stage 8's moment, green after), S3 Windows refused by the hook
   const S = [sha(0x51), sha(0x52), sha(0x53)];
   S.forEach((s, i) => w.runs.push({ id: 900 - i, head_sha: s, created_at: iso(NOW - (i + 1) * 3_600_000) }));
@@ -44,8 +44,9 @@ function world() {
   const sourceFiles = pins.map(([p, b]) => ({ path: p, sha256: hash(Buffer.from(b)) }));
   w.record = Buffer.from(JSON.stringify({ schema: 'x', sourceSha: w.head, roles: { scanner: { sourceFiles }, control: { sourceFiles } } }));
   w.source = hash(w.record);
+  // the node's installed policy (Fable 11-21 open points §3): the train on, landing push (the stage file stage 10 reads comes from it)
   w.status = { node: { name: 'TURING', mode: 'ACTIVE' }, versions: { windows: { ciSourceManifestSha256: w.source } },
-    train: { nodes: { at: iso(NOW - 60_000), sourceManifestSha256: w.source, dropped: 0, nodes: [
+    train: { enabled: 'on', landing: 'push', nodes: { at: iso(NOW - 60_000), sourceManifestSha256: w.source, dropped: 0, nodes: [
       { node: 'TURING', sourceManifestSha256: w.source, state: 'online', lastHeartbeatAt: iso(NOW - 60_000) },
       { node: 'DESK', sourceManifestSha256: w.source, state: 'online', lastHeartbeatAt: iso(NOW - 120_000) }] },
     last: { at: iso(NOW - 60_000), mode: 'on', wouldDo: 'NO_FRONT', decision: 'NO_FRONT', onDuty: true, landing: { route: 'github-merge' } } } };
@@ -78,7 +79,7 @@ function ports(w) {
     list: async () => [...w.receipts.keys()],
     readSnapshot: async () => { if (!w.snapshot) throw new Error('ENOENT'); return structuredClone(w.snapshot); },
     writeSnapshot: async v => { w.snapshot = structuredClone(v); } };
-  const checkout = { head: async () => w.head, read: async p => { if (!w.checkoutFiles.has(p)) throw new Error(`ENOENT ${p}`); return w.checkoutFiles.get(p); } };
+  const checkout = { fleetTrain: async () => structuredClone(w.fleetTrain), head: async () => w.head, read: async p => { if (!w.checkoutFiles.has(p)) throw new Error(`ENOENT ${p}`); return w.checkoutFiles.get(p); } };
   return { gh, files, checkout };
 }
 const run = (w, mode, o = {}) => landingPrecheck({ mode, repo: REPO, clock: () => o.now ?? NOW, only: o.only ?? null, ...ports(w) });
@@ -180,6 +181,29 @@ test('T4 P2: a node heard within 24 hours on another Source, a record of another
   const w = world();
   Object.assign(w.status.train.nodes.nodes[1], { sourceManifestSha256: 'e'.repeat(64), lastHeartbeatAt: iso(NOW - 25 * 3_600_000) });
   assert.equal((await run(w, 'before', { only: ['P2'] })).verdict, 'GO');
+});
+
+// Fable 11-21 open points §3: the stage file must read push on the node before C is saved. Four items read off the objects: the train on
+// and landing push in this node's status (its installed policy, which writes the stage file), stage 10's newest round within 60 minutes
+// with landing.route (only written while push is in force) reading github-merge before C, and this checkout's FLEET_TRAIN landing push.
+test('T4 P2 (open points §3): the train not on, landing not push, no landing.route in the newest round, a round older than 60 minutes, a checkout whose FLEET_TRAIN is not push -> NO-GO', async () => {
+  const cases = [
+    ['train.enabled shadow', w => { w.status.train.enabled = 'shadow'; }, 'NODE_TRAIN_NOT_ON'],
+    ['train.landing github-merge (desk-w-591 today)', w => { w.status.train.landing = 'github-merge'; }, 'NODE_LANDING_NOT_PUSH'],
+    ['no landing.route in the newest round', w => { delete w.status.train.last.landing; }, 'STAGE10_ROUTE_NOT_READ'],
+    ['the newest round older than 60 minutes', w => { w.status.train.last.at = iso(NOW - 61 * 60_000); }, 'STAGE10_ROUTE_NOT_READ'],
+    ['the checkout FLEET_TRAIN without push', w => { w.fleetTrain = { enabled: 'on' }; }, 'CHECKOUT_FLEET_LANDING_NOT_PUSH'],
+  ];
+  const wrong = [];
+  for (const [label, change, code] of cases) {
+    const w = world(); change(w);
+    const r = await run(w, 'before', { only: ['P2'] });
+    if (r.verdict !== 'NO-GO' || !failedOf(r, 'P2').includes(code)) wrong.push([label, r.verdict, failedOf(r, 'P2')]);
+  }
+  assert.deepEqual(wrong, [], 'every case NO-GO naming its code');
+  // --before wants the route github-merge exactly (C not saved yet): a round that already reads park is not before C
+  const w = world(); w.status.train.last.landing = { route: 'park' };
+  assert.ok(failedOf(await run(w, 'before', { only: ['P2'] }), 'P2').includes('STAGE10_ROUTE_NOT_READ'));
 });
 
 test('T4 P3: the newest rehearsal without bypass, or with a state read as unreadable or absent -> NO-GO with the record', async () => {
