@@ -261,7 +261,8 @@ export function appDependencyGap(root, needs, env = process.env) {
 // the base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP. A
 // command with `known` runs Node's test runner with ci-test-failures-reporter.mjs
 // and passes only when every failure is an entry of ci-known-failures.json
-// under that key (knownFailureVerdict).
+// under that key (knownFailureVerdict). Any other node --test command of this list reports to it as well, so that a test
+// that fails once can run alone again (passesAlone).
 const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
@@ -935,9 +936,114 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
+// A failing test run alone again (Task 11092b8b; FABLE-flaky-no-new-commit-20261122 §2). When a node --test command fails
+// only because of one to RERUN_MAX_FAILURES tests (a known-failure command: tests off its list) in at most RERUN_MAX_FILES
+// files the change did not touch, those files run alone with the same command, twice; the command passes when both runs
+// finish and pass every one of those tests, with one flaky warning per test. Anything else keeps the failure: a runner that
+// crashed, was killed or timed out (exit other than 1, no summary in the report), a missing dependency, a test file that
+// differs from the base commit's (CI_BASE_SHA) or that git cannot read, a command that cannot run only those files, any
+// error on the way. It starts only after a command failed, so it never fails a command that passed; --run-files never does
+// it. A determinate regression fails alone too; what this lets through is a test that passes alone twice.
+export const RERUN_MAX_FAILURES = 3;
+export const RERUN_MAX_FILES = 2;
+export const RERUN_TIMEOUT_MS = 5 * 60_000;
+const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
+function withReporter(argv, out) {
+  const index = argv.indexOf('--test');
+  // The reporter comes from this file's (trusted base) checkout.
+  return [...argv.slice(0, index + 1), '--test-reporter=spec', '--test-reporter-destination=stdout',
+    `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`, ...argv.slice(index + 1)];
+}
+const testAt = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
+
+// Each file as the base commit has it: its blob there equals the checkout's file as git would store it. Local reads only.
+function unchangedSinceBase(root, base, files, env) {
+  if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/i.test(base) || /^0+$/.test(base)) return 'CI_BASE_SHA is not a commit';
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30_000,
+      env: { ...env, GIT_TERMINAL_PROMPT: '0' } });
+    return result.status === 0 && !result.error ? result.stdout.trim() : null;
+  };
+  for (const file of files) {
+    const before = git('rev-parse', '--verify', '--quiet', `${base}:${file}`);
+    if (!before) return `${file} is not in the base commit ${base} (or git cannot read it)`;
+    if (git('hash-object', '--', file) !== before) return `${file} differs from the base commit ${base}`;
+  }
+  return null;
+}
+
+// Why the failures of a command cannot be run alone, or null.
+function rerunRefusal({ status, signal, report, failures, root, base, env }) {
+  if (signal || status !== 1) return `the test runner exited ${status ?? signal}`;
+  if (report.corrupt || !report.summary) return 'the test report has no summary of the run';
+  if (failures.length === 0) return 'no failing test in the report';
+  if (failures.length > RERUN_MAX_FAILURES) return `${failures.length} failing tests (more than ${RERUN_MAX_FAILURES})`;
+  if (failures.some((event) => typeof event.file !== 'string' || !event.file || !Array.isArray(event.path))) return 'a failure names no test file';
+  if (failures.some((event) => event.missing_dependency)) return 'a module cannot be loaded';
+  const files = [...new Set(failures.map((event) => event.file))];
+  if (files.length > RERUN_MAX_FILES) return `failures in ${files.length} test files (more than ${RERUN_MAX_FILES})`;
+  return unchangedSinceBase(root, base, files, env);
+}
+
+// Runs the failing tests' files alone twice; true when both runs pass every one of those tests. Logs why not otherwise.
+function passesAlone(id, { command, argv, failures, report, status, signal, root, cwd, env, spawn, platform, list, log, plan,
+  readReportFile, timeout }) {
+  const refusal = rerunRefusal({ status, signal, report, failures, root, base: env.CI_BASE_SHA, env });
+  if (refusal) {
+    log(`${id}: not run alone again: ${refusal}`);
+    return false;
+  }
+  const files = [...new Set(failures.map((event) => event.file))];
+  const { runs, matched } = plan(command, argv, new Set(files));
+  if (runs.length !== 1 || !files.every((file) => matched.includes(file))) {
+    log(`${id}: not run alone again: the command cannot run only ${files.join(', ')}`);
+    return false;
+  }
+  const known = list.filter((entry) => files.includes(entry.file));
+  for (const attempt of [1, 2]) {
+    const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-alone-`));
+    let text = '';
+    let result;
+    try {
+      const alone = withReporter(runs[0], path.join(dir, 'failures.jsonl'));
+      log(`::group::${id}: run alone again (${attempt}/2): (${command.cwd}) ${runs[0].join(' ')}`);
+      const run = resolveCommand(alone, { platform });
+      result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: 'inherit', timeout });
+      log('::endgroup::');
+      text = readReportFile(path.join(dir, 'failures.jsonl'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const again = readReport(text, root);
+    const verdict = knownFailureVerdict({ status: result.signal ? 128 : result.status, report: again, known });
+    const failed = new Set(again.events.filter((event) => event.type === 'fail').map(testAt));
+    // A skipped test did not pass: it did not run.
+    const passed = new Set(again.events.filter((event) => event.type === 'pass' && !event.skip).map(testAt));
+    const notPassed = failures.filter((event) => failed.has(testAt(event)) || !passed.has(testAt(event)));
+    if (result.error || result.signal || !verdict.ok || notPassed.length > 0) {
+      const why = result.error ? result.error.message : !verdict.ok ? [...verdict.problems, ...verdict.unexpected.map(testAt)].join('; ')
+        : `${notPassed.map(testAt).join('; ')} did not pass`;
+      log(`${id}: run alone again (${attempt}/2), still failing (单独再跑仍失败): ${why}`);
+      return false;
+    }
+  }
+  return true;
+}
+
+function reportFlaky(id, failures, { env, log }) {
+  for (const event of failures) log(`::warning title=${id} flaky::${testAt(event)} fingerprint=${event.fingerprint}`);
+  log(`${id}: ${failures.length} test(s) failed once and passed alone twice (flaky): the command passes`);
+  try {
+    if (env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(env.GITHUB_STEP_SUMMARY, failures.map((event) => `- \`${id}\` flaky: ${testAt(event)} (fingerprint ${event.fingerprint})\n`).join(''));
+    }
+  } catch { /* the annotations above are the record */ }
+}
+
 // The CI process or the already guarded worker executes the suite here.
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
-  captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
+  planRerun = filterCommand, rerunTimeoutMs = RERUN_TIMEOUT_MS } = {}) {
   if (captureKnown) return writeKnown(id, root, env, keep);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   // The trusted commands, then the candidate's additions (read once the trusted ones have run), or, for a suite only the
@@ -957,17 +1063,27 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    let argv = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
+    const plain = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
+    let argv = plain;
     let reportDir = null;
-    if (command.known) {
-      reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
-      const index = argv.indexOf('--test');
-      // The reporter comes from this file's (trusted base) checkout.
-      argv = [...argv.slice(0, index + 1), '--test-reporter=spec', '--test-reporter-destination=stdout',
-        `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${path.join(reportDir, 'failures.jsonl')}`,
-        ...argv.slice(index + 1)];
+    // A known-failure command reports to the trusted reporter for its verdict; any other node --test command of the trusted
+    // list for the run alone again (passesAlone), which a missing reporter or report directory only rules out. A command the
+    // candidate adds gets none: what it adds carries no policy. The log shows such a command as it is, without the reporter.
+    if (command.known) reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
+    else if (!files && !command.expanded && isNodeTest(plain) && existsSync(REPORTER_PATH)) {
+      try {
+        reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
+      } catch { /* runs without a report */ }
     }
-    log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
+    if (reportDir) argv = withReporter(plain, path.join(reportDir, 'failures.jsonl'));
+    // Removing that report never decides a command (a known-failure command removes its own as before).
+    const dropReport = () => {
+      try {
+        if (reportDir && !command.known) rmSync(reportDir, { recursive: true, force: true });
+      } catch { /* a temporary directory left behind */ }
+    };
+    const shown = command.known ? argv : plain;
+    log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
     const run = resolveCommand(argv, { platform });
     const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
     if (command.quiet && result.stdout) {
@@ -977,19 +1093,37 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     }
     log('::endgroup::');
     if (result.error) {
-      log(`${id}: ${argv[0]} did not start: ${result.error.message}`);
+      dropReport();
+      log(`${id}: ${shown[0]} did not start: ${result.error.message}`);
       return 1;
     }
+    // Every error on the way to running alone again keeps the failure (FABLE-flaky-no-new-commit-20261122 §2.5).
+    const alone = (failures, { report: ran, status, list = [] }) => {
+      if (files) return false;
+      try {
+        return passesAlone(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, root, cwd, env, spawn,
+          platform, list, log, plan: planRerun, readReportFile, timeout: rerunTimeoutMs });
+      } catch (error) {
+        log(`${id}: not run alone again: ${error?.message ?? error}`);
+        return false;
+      }
+    };
     if (command.known) {
       const list = ((known ?? readKnownFailures())[command.known] ?? []).filter((entry) => !named || named.has(entry.file));
       const text = readReportFile(path.join(reportDir, 'failures.jsonl'));
       rmSync(reportDir, { recursive: true, force: true });
       const status = result.signal ? 128 : result.status;
-      const verdict = knownFailureVerdict({ status, report: readReport(text, root), known: list });
+      const ran = readReport(text, root);
+      const verdict = knownFailureVerdict({ status, report: ran, known: list });
       const label = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
       for (const entry of verdict.expected) log(`::warning title=${id} known failure::${label(entry)}`);
       for (const entry of verdict.fixed) log(`::warning title=${id} known failure now passes::${label(entry)}; remove it from ci-known-failures.json`);
       for (const entry of verdict.missing) log(`::warning title=${id} known failure no longer runs::${label(entry)}; remove it from ci-known-failures.json`);
+      if (!verdict.ok && verdict.problems.length === 0
+          && alone(verdict.unexpected, { report: ran, status, list })) {
+        reportFlaky(id, verdict.unexpected, { env, log });
+        continue;
+      }
       for (const entry of verdict.unexpected) {
         log(`::error title=${id} new failure::${label(entry)} (${entry.failure_type ?? 'failure'}, fingerprint ${entry.fingerprint})`);
       }
@@ -1001,9 +1135,24 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       continue;
     }
     if (result.status !== 0) {
-      log(`${id}: ${argv.join(' ')} exited ${result.status ?? result.signal}`);
+      log(`${id}: ${shown.join(' ')} exited ${result.status ?? result.signal}`);
+      if (reportDir) {
+        let ran = null;
+        try {
+          ran = readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+        } catch (error) {
+          log(`${id}: not run alone again: the test report cannot be read (${error?.message ?? error})`);
+        }
+        dropReport();
+        const failures = ran ? ran.events.filter((event) => event.type === 'fail') : [];
+        if (ran && alone(failures, { report: ran, status: result.status })) {
+          reportFlaky(id, failures, { env, log });
+          continue;
+        }
+      }
       return result.status || 1;
     }
+    dropReport();
   }
   return 0;
 }

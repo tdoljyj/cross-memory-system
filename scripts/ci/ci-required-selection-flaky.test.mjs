@@ -115,6 +115,7 @@ test('C: a failing test file the change edited is not run again', (t) => {
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
   assert.equal(calls.length, 1, out);
+  assert.match(out, /not run alone again: .*flaky\.test\.mjs differs from the base commit/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
@@ -123,6 +124,7 @@ test('D: four failing tests are not run again', (t) => {
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
   assert.equal(calls.length, 1, out);
+  assert.match(out, /not run alone again: 4 failing tests/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
@@ -141,6 +143,7 @@ test('F: a runner that is killed (no summary in the report) is not run again', (
   const { status, calls, out } = run(root, base);
   assert.notEqual(status, 0, out);
   assert.equal(calls.length, 1, out);
+  assert.match(out, /not run alone again: (the test runner exited|the test report has no summary)/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
@@ -150,6 +153,7 @@ test('G: without CI_BASE_SHA, or with a base git cannot read, nothing is run aga
     const { status, calls, out } = run(root, base);
     assert.equal(status, 1, `${base}: ${out}`);
     assert.equal(calls.length, 1, `${base}: ${out}`);
+    assert.match(out, base ? /not run alone again: .* is not in the base commit/ : /not run alone again: CI_BASE_SHA is not a commit/);
     assert.equal(runsOf(FLAKY), 1);
   }
 });
@@ -160,14 +164,17 @@ test('H: an error while planning the run alone leaves the command red and is not
   assert.doesNotThrow(() => { result = run(root, base, { planRerun: () => { throw new Error('planning broke'); } }); });
   assert.equal(result.status, 1, result.out);
   assert.equal(result.calls.length, 1, result.out);
+  assert.match(result.out, /not run alone again: planning broke/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
 test('I: a run alone in which the failed test is skipped does not count as a pass', (t) => {
   const { root, base } = checkout(t, suite({ 'skipped later':
     "test('skipped later', { skip: run > 1 }, () => { throw new Error('first run fails'); });\ntest('other', () => {});\n" }));
-  const { status, out } = run(root, base);
+  const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
+  assert.equal(calls.length, 2, 'it ran alone once and stopped');
+  assert.match(out, /单独再跑仍失败\): .*skipped later did not pass/);
   assert.doesNotMatch(out, /flaky::/);
 });
 
@@ -193,5 +200,6 @@ test('K: under --run-files a failure is returned as it is and nothing is run aga
   const { status, calls, out } = run(root, base, { files: [FLAKY] });
   assert.equal(status, 1, out);
   assert.equal(calls.length, 1, out);
+  assert.doesNotMatch(out, /run alone again/);
   assert.equal(runsOf(FLAKY), 1);
 });
