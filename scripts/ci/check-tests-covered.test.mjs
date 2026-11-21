@@ -20,7 +20,7 @@ function fixture(t, files, { commands = { unit: [{ cwd: '.', argv: ['node', '--t
   }
   return coverage({ root, tracked: tracked ?? Object.keys(files), table, commands, listUnit: () => [] });
 }
-const entry = (file, extra = {}) => ({ path: file, kind: 'unsorted', task: TASK, reason: '从没在必需检查里跑过，红绿未知，待分拣', ...extra });
+const entry = (file, extra = {}) => ({ path: file, kind: 'unsorted', task: TASK, reason: '从没在必需检查里跑过，红绿未知，等下一批分拣', ...extra });
 
 test('test files are named *.test.{mjs,js,cjs,ts}, test_*.py or *_test.py', () => {
   for (const file of ['a.test.mjs', 'x/a.test.js', 'x/a.test.cjs', 'x/a.test.ts', 'tests/test_a.py', 'x/a_test.py']) assert.ok(isTestFile(file), file);
