@@ -56,12 +56,18 @@
 //     force false) and reads main back. Not ready answers park with zero side effects; a member that changed or a required
 //     check that failed on S ends the batch (stage 10 composes again or bisects); a batch record with riders never gets a
 //     merge-slot green in 'github-merge'.
+//   - Three ways (ADR 0018 §2 L2 item 7, Fable 2026-11-20): 'push' installed means "can push". Which way a front job lands is read from
+//     main's live rules and each ruleset's bypass after the queue head (train-landing.mjs#landingRoute): push lands as above; exactly
+//     the state before the Owner's two steps (no kooyumi-train-landed, an empty main bypass) takes the current path (the control pair,
+//     GitHub merges; never a batch with riders), and after the pair settled the main ruleset's Actions checks on S and this App's own
+//     bypass state of both rulesets are recorded as the rehearsal of push (the outcome's rehearsal, resident-v2/stage-inputs.mjs);
+//     anything else parks with TRAIN_LANDING_RULES_MISSING and the missing items (the outcome's landingMissing).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { STAGE8_LEASE_MINUTES, extendLeaseIfShort, leaseAfter } from './claim-assist-native.mjs';
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { LANDING_NOT_READY_REASONS, LANDING_FINAL_REASONS, TRAIN_BATCH_CHANGED, TRAIN_BATCH_WITHOUT_PUSH, TRAIN_LANDING_REFUSED, TRAIN_LANDING_UNCONFIRMED,
-  landingRulesDecision, externalChecksDecision, readBatchChain, landMain } from './train-landing.mjs';
+  TRAIN_LANDING_RULES_MISSING, readLandingRoute, rehearsalOf, externalChecksDecision, readBatchChain, landMain } from './train-landing.mjs';
 import { makeJobV2, validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, CONTROL_ROLES_V2, MAX_ATTEMPT_V2, sameBatchV2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
 import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admission-v2.mjs';
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
@@ -546,6 +552,15 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await sleep(QUEUE_POLL_MS);
     }
   }
+  // Fable 2026-11-20: the rehearsal of push on the current path. Read only, after the pair settled; it never changes the ending.
+  async function rehearse(job, route) {
+    let inventory = null;
+    try { inventory = await github.readChecks(job.testSha); } catch { inventory = null; }
+    // route: the read this run chose by (the same GET /rulesets/{id} answers; nothing is read again for the rehearsal)
+    const r = rehearsalOf({ inventory, testSha: job.testSha, route });
+    try { record('native_train_landing_rehearsal', { jobId: job.id, ...r }); } catch { /* a log only */ }
+    return r;
+  }
   // ADR 0018 §5: the one write to main. The effect key names the subject, the batch claim generation and the members; an earlier key of
   // the same landing that ended without effect (not_sent, revoked: refused or main moved) is followed by the next one, any other
   // unfinished one needs reconciliation. Every check below runs live in this run; any that fails writes nothing.
@@ -581,11 +596,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(liveTrain.testTree === headTrain.testTree && (liveTrain.batch?.testSha ?? null) === (headTrain.batch?.testSha ?? null), TRAIN_BATCH_CHANGED);
       const current = await trainHead(job, liveTrain, before.facts.observedClaim, before.facts.mode?.state);
       if (current.reason) return blocked(current.reason);
-      // main's rules hold what push relies on (ADR 0018 §8)
+      // main's rules hold what push relies on: the route read again in this run (ADR 0018 §2 L2 item 7; never pushed on rules not complete)
       const reply = await github.readBranchRules('main');
       check(reply?.complete === true, RULESET_UNREADABLE);
-      const rulesMissing = landingRulesDecision(reply.rules, APP_ID);
-      if (rulesMissing) return blocked(rulesMissing);
+      const route = await readLandingRoute({ github, appId: APP_ID, rules: reply.rules });
+      if (route.route !== 'push') return blocked(TRAIN_LANDING_RULES_MISSING, { missing: route.missing });
       // every member: open, its head, into main; every rider: its own complete admission (never frozen, never a guarded publication),
       // the claim the batch recorded, in the merge queue
       for (const [i, m] of members.entries()) {
@@ -687,7 +702,16 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     // The green ledger's answer below is the exception: not a §28 code, it keeps the whole facts.
     const lease = head.scheduling ? { scheduling: { ciRetryAfter: null, mergeQueue: null, claimExpiresAt: head.scheduling.claimExpiresAt ?? null } } : {};
     // ADR 0018 §2 item 6: push writes no check at all (no merge-slot green, no admission-verified): the landing is the one effect.
-    if (push && isTrainFrontJobV2(jobs[1])) return landOne(jobs[1], head.train, lease);
+    // Item 7 (three ways): which way is read from main's rules now. The current path only for exactly the state before the Owner's steps.
+    let route = null;
+    if (push && isTrainFrontJobV2(jobs[1])) {
+      route = await readLandingRoute({ github, appId: APP_ID });
+      try { record('native_train_landing_route', { jobId: jobs[1].id, route: route.route, missing: route.missing }); } catch { /* a log only */ }
+      if (route.route === 'push') return landOne(jobs[1], head.train, lease);
+      if (route.route !== 'github-merge') return { status: 'BLOCKED', reason: TRAIN_LANDING_RULES_MISSING, missing: route.missing, sideEffects: 0, productionAuthorized: false, ...lease };
+      // a merge-slot green on H would name a tree H was not tested as
+      if ((head.train?.batch?.members?.length ?? 1) > 1) return { status: 'BLOCKED', reason: TRAIN_BATCH_WITHOUT_PUSH, sideEffects: 0, productionAuthorized: false, ...lease };
+    }
     // C4: both halves are read back before either is published (nothing written yet: a refusal is a clean BLOCKED). A half
     // with an unsettled journal entry (a write that may have happened) skips this and keeps its path (reconciliation).
     let unsettled;
@@ -719,7 +743,8 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return { status: r.status === 'BLOCKED' ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false, ...lease };
     }
     const touched = trainOn && head.train?.proof ? { trainTouch: await touchGreen(jobs[1], head.train.proof) } : {};
-    return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false, ...touched };
+    const rehearsal = route ? { rehearsal: await rehearse(jobs[1], route) } : {};
+    return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false, ...touched, ...rehearsal };
   } });
 }
 export function createFixtureControlPublisherV2(dependencies) { return engine(dependencies, false); }
