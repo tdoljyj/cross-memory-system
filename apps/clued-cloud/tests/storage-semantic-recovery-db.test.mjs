@@ -1,5 +1,5 @@
 // Actual disposable PostgreSQL; no production SQL, provider requests or credentials.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs/promises";
@@ -23,7 +23,7 @@ async function freePort() { const s = net.createServer(); await new Promise(r =>
 test("semantic recovery: actual migration, independent predicates and private boundary", { timeout: 240000 }, async t => {
  const temporaryRoot = await fs.realpath(process.env.KOOYUMI_TEST_TEMP_ROOT ?? os.tmpdir()), dir = await fs.mkdtemp(path.join(temporaryRoot, "kooyumi-semantic-db-"));
  const server = new EmbeddedPostgres({ databaseDir: dir, user: "postgres", password: crypto.randomUUID(),
-   port: await freePort(), persistent: true, postgresFlags: ["-c", "listen_addresses=127.0.0.1"], onLog() {}, onError() {} });
+   port: await freePort(), persistent: true, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, "-c", "listen_addresses=127.0.0.1"], onLog() {}, onError() {} });
  let db, started = false;
  try {
   await server.initialise(); await server.start(); started = true; db = server.getPgClient(); await db.connect();

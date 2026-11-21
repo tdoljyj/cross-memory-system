@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -110,7 +110,7 @@ test('release door v1: the release workflow consumes, probes and boots the door 
     const password = crypto.randomBytes(16).toString('hex');
     const port = await freePort();
     const server = new EmbeddedPostgres({ databaseDir: path.join(directory, 'db'), user: 'postgres', password, port,
-      persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
+      persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
     const clients = [];
     try {
       await server.initialise();

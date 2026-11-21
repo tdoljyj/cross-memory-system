@@ -2,7 +2,7 @@
 // Synthetic identity keys test deployment-config CAS only; no issuer credential
 // table, credential RPC, stage/activate path or test credential grant is created.
 // Synthetic accounts/envelopes never use a live service.
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -119,7 +119,7 @@ test('forward/reverse SQL enforce callback drainage, exact CAS, operator and his
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kooyumi-storage-redirect-test-'));
     const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres',
       password: crypto.randomBytes(32).toString('hex'), port: await freePort(), persistent: false,
-      initdbFlags: ['--locale=C'], postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError() {} });
+      initdbFlags: [...EPHEMERAL_INITDB_FLAGS, '--locale=C'], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError() {} });
     const clients = []; let index = 0;
     try {
       await server.initialise(); await server.start();
