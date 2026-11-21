@@ -34,6 +34,8 @@ test('bors staging: only the required-tests workflow pushed by App 5368905 may b
     { GITHUB_REF: 'refs/heads/clued-train/staging.tmp' }, { GITHUB_REF: 'refs/heads/feature' },
     { GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/other.yml@refs/heads/clued-train/staging' },
     { GITHUB_EVENT_NAME: 'schedule' }, { GITHUB_REPOSITORY: 'other/repo' },
+    ...[{ GITHUB_ACTOR: 'o' }, { GITHUB_REF: 'refs/heads/feature' }, { GITHUB_EVENT_NAME: 'schedule' }].map(change => ({ ...change,
+      GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests-windows.yml@refs/heads/clued-train/staging' })),
   ]) assert.equal((await check(changed)).allow, false, JSON.stringify(changed));
 });
 
@@ -93,7 +95,10 @@ const files = (...names) => ({ body: { files: names.map((filename) => ({ filenam
 // attempts/{n}/jobs URL.
 function fakeFetch(script) {
   script = { [`${API}/actions/workflows/clued-work-admission.yml`]: { body: {
-    path: ".github/workflows/clued-work-admission.yml", state: "active" } }, ...script };
+    path: ".github/workflows/clued-work-admission.yml", state: "active" } },
+    // The head's runs for the three-attempt budget per head and workflow (Fable 11-20): by default no other run of the workflow.
+    [`${API}/actions/runs?head_sha=`]: { body: { total_count: 0, workflow_runs: [] } },
+    [`${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=`]: { body: { total_count: 0, workflow_runs: [] } }, ...script };
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url: String(url), auth: init.headers.authorization, method: init.method ?? "GET", body: init.body });
@@ -237,6 +242,61 @@ test('bors staging: every member of a multi-PR chain must have its own admission
   };
   assert.equal((await stagingRun(script)).result.allow, true);
   assert.equal((await stagingRun({ ...script, [riderChecks]: { body: { total_count: 0, check_runs: [] } } })).result.allow, false);
+});
+
+// D6 N1: ci-suites-windows is required on main, so the train needs it on S too. The Windows workflow takes the
+// same staging route, bound to its own run and to its own pull_request runs for each member head.
+const WINDOWS_WORKFLOW = '.github/workflows/clued-required-tests-windows.yml';
+const windowsMemberRunsUrl = head => `${API}/actions/workflows/clued-required-tests-windows.yml/runs?head_sha=${head}&event=pull_request`;
+const windowsStagingScript = () => {
+  const script = stagingScript();
+  script[RUN].body.path = WINDOWS_WORKFLOW;
+  delete script[memberRunsUrl(HEAD)];
+  const runs = memberRuns();
+  runs.body.workflow_runs[0].path = WINDOWS_WORKFLOW;
+  script[windowsMemberRunsUrl(HEAD)] = runs;
+  return script;
+};
+const WINDOWS_STAGING_ENV = { GITHUB_WORKFLOW_REF: `o/r/${WINDOWS_WORKFLOW}@refs/heads/clued-train/staging`, GITHUB_JOB: 'ci-suites-windows' };
+test('bors staging: the Windows required workflow is admitted on S on the same terms as the Linux one', async () => {
+  const { result, calls } = await stagingRun(windowsStagingScript(), WINDOWS_STAGING_ENV);
+  assert.equal(result.allow, true, result.reason);
+  assert.ok(calls.some(call => call.url.startsWith(windowsMemberRunsUrl(HEAD))), 'reads its own PR runs');
+  assert.ok(!calls.some(call => call.url.startsWith(memberRunsUrl(HEAD))), 'not the Linux workflow runs');
+  // No weaker: no member admission, another actor, or a run of another workflow refuses.
+  assert.equal((await stagingRun({ ...windowsStagingScript(), [NATIVE]: { body: { total_count: 0, check_runs: [] } } },
+    WINDOWS_STAGING_ENV)).result.allow, false);
+  assert.equal((await stagingRun(windowsStagingScript(), { ...WINDOWS_STAGING_ENV, GITHUB_ACTOR: 'o' })).result.allow, false);
+  const linuxRun = windowsStagingScript();
+  linuxRun[RUN].body.path = '.github/workflows/clued-required-tests.yml';
+  assert.equal((await stagingRun(linuxRun, WINDOWS_STAGING_ENV)).result.allow, false);
+  // The member's PR runs must be of this workflow.
+  const linuxMemberRuns = windowsStagingScript();
+  linuxMemberRuns[windowsMemberRunsUrl(HEAD)] = memberRuns();
+  assert.equal((await stagingRun(linuxMemberRuns, WINDOWS_STAGING_ENV)).result.allow, false);
+});
+
+// ADR 0019 §3: one walk of the member chain for every reader. The hook roots it at live main; the required workflows'
+// push-baseline step runs the same export, read from main, over its checkout and checks out the root T.
+test('bors staging: the member chain walk is one export, rooted by its reader', async () => {
+  const hook = await import('./clued-runner-job-started.mjs');
+  assert.equal(typeof hook.trainMemberChain, 'function');
+  assert.equal(typeof hook.stagingBaseFromCheckout, 'function');
+  const [T, H1, H2, M1, S] = ['1', '2', '3', '4', '5'].map((c) => c.repeat(40));
+  const graph = { [S]: [M1, H2], [M1]: [T, H1] };
+  const readCommit = async (at) => graph[at] ? { sha: at, parents: graph[at].map((sha) => ({ sha })) } : null;
+  assert.deepEqual(await hook.trainMemberChain(S, { isRoot: (at) => at === T, readCommit }), { root: T, heads: [H2, H1] });
+  assert.deepEqual(await hook.trainMemberChain(M1, { isRoot: (at) => at === T, readCommit }), { root: T, heads: [H1] });
+  // Another root, a member head on main, no member, an unreadable step: no root.
+  for (const [sha, isRoot] of [[S, (at) => at === H1], [S, (at) => at === T || at === H2], [T, (at) => at === T], [S, () => false]]) {
+    const chain = await hook.trainMemberChain(sha, { isRoot, readCommit });
+    assert.equal(chain.root, undefined, JSON.stringify(chain));
+    assert.match(chain.error, /chain|members/);
+  }
+  const source = fs.readFileSync(fileURLToPath(new URL('./clued-runner-job-started.mjs', import.meta.url)), 'utf8');
+  const admission = source.slice(source.indexOf('async function stagingAdmission('));
+  assert.match(admission.slice(0, admission.indexOf('\n}\n')), /await trainMemberChain\(sha, \{ isRoot: at => at === base,/,
+    'the hook walks with the shared export, rooted at live main');
 });
 
 test('bors staging: an earlier success on the same head cannot authorize a later PR event', async () => {
@@ -1137,7 +1197,7 @@ test("runner hook (Decision d8bc893c): with its read-only App configured, the ho
 
 // Since the loader (runner-hook-loader-v1) the component is this file itself, run from main: no immutable per-version copy is added.
 test("the hook component is the file runners load from main; the earlier immutable sources stay for their pins", () => {
-  assert.equal(COMPONENT_VERSION, "1.0.6");
+  assert.equal(COMPONENT_VERSION, "1.0.7");
   const manifest = JSON.parse(fs.readFileSync(new URL("../../config/clued-components.json", import.meta.url), "utf8"));
   const component = manifest.components.find((c) => c.id === "hook.runner-job-started");
   assert.deepEqual([component.version, component.files, component.version_marker.file], [COMPONENT_VERSION, ["clued-runner-job-started.mjs"], "clued-runner-job-started.mjs"]);
@@ -1350,4 +1410,19 @@ test("clock: a reply cut off while its body is read is a failed attempt, tried a
     readFile: (p) => (p === "/token" ? "ghp_read" : prEvent()) });
   assert.equal(current.allow, true, current.reason);
   assert.deepEqual(g.bounds, [OBSERVATION_ATTEMPT_MS, OBSERVATION_ATTEMPT_MS]);
+});
+
+// Fable 11-20 补“补跑上限的范围”: the budget is per run ID; a dispatch is a new run, admitted on its first attempt whatever earlier runs used.
+test('required-tests dispatch: a new run, admitted in the hook whatever earlier runs of the workflow used', async () => {
+  const pr = { number: 9, state: 'open', head: { sha: HEAD, ref: 'claude/g3', repo: { full_name: 'o/r' } }, base: { ref: 'main', repo: { full_name: 'o/r' } } };
+  const overrides = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/claude/g3', GITHUB_REF_NAME: 'claude/g3', GITHUB_SHA: HEAD,
+    GITHUB_ACTOR: 'o', GITHUB_REPOSITORY_OWNER: 'o', GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-required-tests.yml@refs/heads/claude/g3' };
+  const payload = JSON.stringify({ inputs: { pr: '9', head: HEAD }, repository: { default_branch: 'main' } });
+  const script = { [`${LIST}${HEAD}`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }),
+    [`${LIST}main`]: listing({ 'clued-required-tests.yml': '1'.repeat(40) }), [`${API}/pulls/9`]: { body: pr } };
+  const runs = (...list) => ({ [`${API}/actions/workflows/clued-required-tests.yml/runs?head_sha=`]: { body: { total_count: list.length, workflow_runs: list } } });
+  const self = { id: 555, head_sha: HEAD, run_attempt: 1 };
+  assert.equal((await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 2 }) }, payload)).result.allow, true, 'two attempts and this one: three');
+  const used = await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 3 }) }, payload);
+  assert.equal(used.result.allow, true, used.result.reason);
 });

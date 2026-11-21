@@ -216,7 +216,7 @@ $lc = Test-LinuxFirstInstallFacts $lf ('4' * 64)
 Yes ($lc -ccontains 'LINUX_CI_ALREADY_PRESENT' -and $lc -ccontains 'LINUX_dockerActive') 'linux:not-a-first-install-host'
 Yes ((Test-LinuxFirstInstallFacts $null ('4' * 64)) -ccontains 'LINUX_FACTS_SHAPE') 'linux:unreadable'
 
-# ---- the hand-over to the companion (補缺 1): P1 imports the distribution where the existing switch MOVES it from. The switch
+# ---- the hand-over to the companion (gap fill 1): P1 imports the distribution where the existing switch MOVES it from. The switch
 #      (rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <facts.companionWsl.vhdxDirectory>, companion-headless.ps1
 #      Invoke-CompanionWslMove) plans with Get-CompanionWslMovePlan; an import into the target directory itself would be 'forget'
 #      (no Set-CompanionVhdxAcl), not the move DESK-W-591 took on 2026-11-09/10.
@@ -347,7 +347,7 @@ try {
     Yes ((ConvertTo-JsonLine $back) -ceq $line) 't1:deserialized-is-unchanged'
     Yes ((Step 'stage' $jp) -ceq ('{"step":"stage","result":' + (& $str $jp) + '}')) 't1:step-stage'
     Yes ((Step 'residue' $two) -ceq '{"step":"residue","result":["SERVICE:A","SERVICE:B"]}') 't1:step-residue-codes'
-    # longer than the serializer's default 2,097,152 characters (Codex review of PR-甲, blocking 2): plain data is written whole
+    # longer than the serializer's default 2,097,152 characters (Codex review of PR-A, blocking 2): plain data is written whole
     $big = 'y' * 2500000
     $bl = try { ConvertTo-JsonLine ([ordered]@{ facts = $big }) } catch { $null }
     Yes ($null -ne $bl -and ([string]$js.DeserializeObject($bl)['facts']).Length -eq 2500000) 't1:longer-than-2M'

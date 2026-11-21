@@ -357,7 +357,7 @@
             }
           ],
           "retained_artifacts": [
-            "apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json\napps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json\napps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json\napps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json\napps/clued-cloud/.sites-runtime/release-evidence/connect-build.json\napps/clued-cloud/.sites-runtime/release-evidence/connect-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc\napps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json\napps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json\napps/clued-cloud/.sites-runtime/storage-client-source/registration.json\n"
+            "apps/clued-cloud/.sites-runtime/release-evidence/production-preflight.json\napps/clued-cloud/.sites-runtime/release-evidence/currentness-attestation.json\napps/clued-cloud/.sites-runtime/release-evidence/served-agent-contract.json\napps/clued-cloud/.sites-runtime/release-evidence/pdf-extractor.json\napps/clued-cloud/.sites-runtime/release-evidence/connect-build.json\napps/clued-cloud/.sites-runtime/release-evidence/connect-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json\napps/clued-cloud/.sites-runtime/release-evidence/worker-versions.json\napps/clued-cloud/.sites-runtime/release-evidence/worker-rollback.json\napps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc\napps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json\napps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json\napps/clued-cloud/.sites-runtime/storage-client-source/registration.json\n"
           ],
           "persistent_action_caches": []
         }
@@ -1573,15 +1573,15 @@
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
               "if": "true",
-              "path": "trusted",
-              "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+              "path": "candidate",
+              "ref": null,
               "repository": null
             },
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
               "if": "true",
-              "path": "candidate",
-              "ref": null,
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
               "repository": null
             }
           ],

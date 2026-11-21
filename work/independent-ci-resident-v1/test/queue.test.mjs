@@ -263,3 +263,20 @@ test('generation 10 (DESIGN 53.3): a network release backs off a flat 10 minutes
   assert.deepEqual([q.row(6).nextAt === now(), q.row(7).nextAt > now()], [true, true]);
   assert.deepEqual(q.wakeNetworkRows(now()), [], 'nothing twice');
 });
+
+test('reason codes are kept only for a CLAIM_NOT_CURRENT release, and only the codes the PR page has a text for (task 0ca0479d)', async t => {
+  const { q, now } = await fresh(t);
+  q.offer(trig(7, 1), now(), OPTS);
+  const release = (code, reasonCodes) => { q.begin(7, H(1), KEY, q.candidates(Number.MAX_SAFE_INTEGER)[0].origin, now()); q.settle(7, H(1), { kind: 'released', klass: 'waiting', code, reasonCodes }, now()); };
+  release('OWNER_REVIEW_REQUIRED', ['pr_task_binding_unbound']);
+  assert.equal(q.row(7).diagnostic, undefined, 'another release code stores nothing');
+  assert.equal(q.view(now(), { etaBatchMs: MIN })[0].reasonCodes, undefined);
+  release('CLAIM_NOT_CURRENT', ['workflow_gate', 'owner_grant_required', 'pr_task_binding_unbound', 'pr_task_binding_unbound', 7, null, 'x'.repeat(5000)]);
+  assert.deepEqual(q.row(7).diagnostic, { headSha: H(1), reasonCodes: ['pr_task_binding_unbound'] }, 'a code outside the table is not stored, a repeat once');
+  assert.deepEqual(q.view(now(), { etaBatchMs: MIN })[0].reasonCodes, ['pr_task_binding_unbound']);
+  release('CLAIM_NOT_CURRENT', ['workflow_gate']);
+  assert.equal(q.row(7).diagnostic, undefined, 'nothing the table names: nothing stored');
+  release('CLAIM_NOT_CURRENT', ['pr_task_binding_unbound']);
+  release('OWNER_REVIEW_REQUIRED', ['pr_task_binding_unbound']);
+  assert.equal(q.row(7).diagnostic, undefined, 'the next release replaces the last one');
+});
