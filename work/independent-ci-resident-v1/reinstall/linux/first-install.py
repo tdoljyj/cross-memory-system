@@ -4,8 +4,8 @@ roles-v3, README section 8c). Windows, non-elevated, no WSL: writes the two root
 
   phase A (root, NO private key, writes only under $BASE): the node has no Linux CI yet (no Source v2, no roles, no resident, no
           upgrade tool, no Source v1), its toolchain node and its new result key are the configured ones (linux.host), docker, systemd
-          and cgroup v2; stages every pinned byte; derives the role policies v3 from the TEMPLATE node's reviewed, signed roles-v3 for
-          this record (derive-roles-r7.py: the Source values) and puts in this node's facts (first-node-facts.py); host pins
+          and cgroup v2, docker's image store (containerd), every host tool the source manifest pins; stages every pinned byte;
+          derives the role policies v3 from the TEMPLATE node's reviewed, signed roles-v3 for this record (derive-roles-r7.py: the Source values) and puts in this node's facts (first-node-facts.py); host pins
           (check-host-r4.py); the resident install plan.
   phase B (root, READS THE NEW PRIVATE KEY through sign-first-qualification.mjs; nothing prints it): signs, verifies the signed set
           (verify-signed-r4.mjs), installs Source v2 (clued-ci-install-source-v2 package / --plan / --apply), verifies it (verify-source-v2,
@@ -124,9 +124,13 @@ for role in ROLES:
 assert TEMPLATE_PUB_SHA != PUB_SHA, 'NODE_KEY_IS_THE_TEMPLATE_KEY'
 # the run roots readiness requires as root directories (loadQualifiedPolicyV2); a first install creates them in phase B
 ROOTS = ('/var/lib/clued-independent-ci/workspaces', '/var/lib/clued-independent-ci/runs')
+# the other directories prepare-workspaces.py demands (root-owned, no group/other write), made and read back by the same two loops; parent first.
+# Not part of ROOTS: the template assertion below compares ROOTS with the role policies' (workspaceRoot, runsRoot).
+SPOOL_DIRS = ('/var/lib/clued-independent-ci/formal-spool', '/var/lib/clued-independent-ci/formal-spool/incoming', '/var/lib/clued-independent-ci/formal-spool/outgoing')
 # the role images: the worker runs them with --pull=never, so they must be in the node's docker before the first job. A registry
 # image pinned by digest is pulled by that digest; a local image id (built on the template node) is loaded from
-# <in-dir>/images/<hex>.tar (docker save on the template node); docker checks the id against the loaded content.
+# <in-dir>/images/<hex>.tar (docker save on the template node). An image ID means the containerd image store's .Id (the OCI index
+# or manifest digest; the classic store is not supported, Fable ruling 0e418483, r7 phase B, 2.1).
 PULL_IMAGES, LOCAL_IMAGES = [], []
 for role in ROLES:
     tp = json.load(open(os.path.join(TEMPLATE, role + '.json'), encoding='utf-8'))
@@ -182,6 +186,8 @@ for f in RES_FILES:
 TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh'):
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
+# the success word B11 waits for, read from the verify script's own verdict line by the one reader (rconfig.py)
+VERIFIED = rconfig.verified_status(open(os.path.join(IN, 'tools', 'verify-resident-linux.sh'), 'rb').read().decode('utf-8'))
 UNITS = ['clued-ci-worker@.service', 'clued-ci-wsprep@.service', 'clued-ci-archive@.service']
 res_text = '\n'.join(['install-script.sha256=' + sha(os.path.join(IN, 'tools', 'install-resident-linux.sh'))]
                      + [sha(os.path.join(IN, 'linux-res-pkg', *f.split('/'))) + '  ' + f for f in RES_FILES]
@@ -208,43 +214,85 @@ MODS = ['worker/qualification-v2.mjs', 'src/worker-v2.mjs', 'src/job-v2.mjs', 's
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 
 DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
-# start/restart a unit, and never turn failed/inactive/unknown into a retry.
+# start/restart a unit. One read of ActiveState and Job decides (Fable ruling 0e418483, 1.2):
+#   active                          -> ready
+#   activating, any job             -> not settled: read again after a second
+#   any other state, a queued job   -> not settled (systemd keeps a start job queued behind
+#                                      network-online.target and containerd as inactive)
+#   any other state, no job         -> final: refused at once (a failed job lands here)
+# One bound for all unsettled reads together. A refusal writes the scene to stderr first;
+# a query of the scene that fails changes no code.
+# Active, the image store decides (Fable ruling 0e418483, r7 phase B, 2.2): an image ID means
+# the containerd store's .Id, so docker info's DriverStatus must name io.containerd.snapshotter,
+# else DOCKER_IMAGE_STORE_NOT_CONTAINERD, the Driver and DriverStatus on stderr first.
 docker_ready() {
-  local started=$SECONDS remaining state
+  local limit=180 started=$SECONDS remaining out state job code= waited store
   while :; do
-    remaining=$((60 - (SECONDS - started)))
-    [ "$remaining" -gt 0 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-    state=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --value docker.service) || refuse SYSTEMCTL_FAILED
-    case "$state" in
-      active) return 0 ;;
-      activating)
-        [ "$((SECONDS - started))" -lt 60 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-        sleep 1 || refuse DOCKER_SERVICE_WAIT_FAILED
-        ;;
-      *) refuse DOCKER_SERVICE_NOT_ACTIVE ;;
-    esac
+    remaining=$((limit - (SECONDS - started)))
+    if [ "$remaining" -le 0 ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
+    if ! out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then code=SYSTEMCTL_FAILED; break; fi
+    state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
+    if [ "$state" = active ]; then waited=$((SECONDS - started)); break; fi
+    if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
+    if [ "$((SECONDS - started))" -ge "$limit" ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
+    if ! sleep 1; then code=DOCKER_SERVICE_WAIT_FAILED; break; fi
   done
+  if [ -z "$code" ]; then
+    store=$(timeout --signal=KILL 60s docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store="(docker info: exit $?)"
+    case "$store" in *io.containerd.snapshotter*) echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$waited}"; return 0 ;; esac
+    {
+      echo "docker_ready: DOCKER_IMAGE_STORE_NOT_CONTAINERD; the store:"
+      echo "Driver=$(timeout --signal=KILL 10s docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)")"
+      echo "DriverStatus=$store"
+    } >&2 || :
+    refuse DOCKER_IMAGE_STORE_NOT_CONTAINERD
+  fi
+  {
+    echo "docker_ready: $code after $((SECONDS - started))s; the scene:"
+    timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"
+    { timeout --signal=KILL 10s systemctl list-jobs --no-legend || echo "(systemctl list-jobs: exit $?)"; } | head -n 20
+    timeout --signal=KILL 10s systemctl is-system-running || echo "(systemctl is-system-running: exit $?)"
+  } >&2 || :
+  refuse "$code"
 }
 """
 
-# .Id is backend-defined: config digest on classic Docker, target index/manifest
-# digest on containerd. Keep the exact policy ID, never substitute a config ID,
-# tag, load stdout or a RepoDigest. An incompatible target store must refuse.
+# An image ID means the containerd image store's .Id (the OCI index or manifest digest; the classic store is not supported, Fable
+# ruling 0e418483, r7 phase B, 2.1): docker_ready refused any other store in A. B keeps the exact policy ID, never a config ID, tag,
+# load stdout or RepoDigest. docker load's output is kept in $T; an ID the store does not keep after the load refuses with the scene.
+# Done, one line: the store and each local image's .Id.
 LOCAL_IMAGE_LOAD = r"""# a local image's archive (pinned below when the generator saw it): images/<hex>.tar, or .tar.gz (gzip of the docker save)
+ids=
 while read -r hex name want; do
   [ -n "$hex" ] || continue
   if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
     [ "$name" != - ] && [ -f "$W/images/$name" ] || refuse "IMAGE_NOT_LOADED_PUT_THE_TEMPLATE_DOCKER_SAVE_AT:images/$hex.tar(.gz)"
     [ "$(sha256sum "$W/images/$name" | cut -d' ' -f1)" = "$want" ] || refuse "IMAGE_ARCHIVE_NOT_THE_PINNED_ONE:$name"
+    L="$T/image-load.$hex.txt"
     case "$name" in
-      *.tar.gz) gzip -dc "$W/images/$name" | docker load -q >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
-      *) docker load -q -i "$W/images/$name" >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
+      *.tar.gz) gzip -dc "$W/images/$name" | docker load -q >"$L" 2>&1 || { cat "$L" >&2; refuse "IMAGE_LOAD_FAILED:$hex"; } ;;
+      *) docker load -q -i "$W/images/$name" >"$L" 2>&1 || { cat "$L" >&2; refuse "IMAGE_LOAD_FAILED:$hex"; } ;;
     esac
+    if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
+      {
+        echo "image sha256:$hex is not in this store after docker load; the load output:"; cat "$L"
+        echo "docker image ls --no-trunc --digests (first 20 lines):"; { docker image ls --no-trunc --digests 2>&1 || echo "(docker image ls: exit $?)"; } | head -n 20
+        echo "the store: Driver=$(docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)") DriverStatus=$(docker info --format '{{json .DriverStatus}}' 2>&1 || echo "(docker info: exit $?)")"
+      } >&2 || :
+      refuse "IMAGE_ID_NOT_KEPT_BY_THIS_STORE:$hex"
+    fi
   fi
   got=$(docker image inspect --format '{{.Id}}' "sha256:$hex") || refuse "IMAGE_INSPECT_FAILED:$hex"
   [ "$got" = "sha256:$hex" ] || refuse "IMAGE_NOT_PRESENT:$hex"
+  ids="$ids${ids:+,}\"$hex\":\"$got\""
 done <<'IMAGES'
 @@LOCAL_IMAGES@@IMAGES
+# the reading is a record, never a gate (the store was decided in A): unreadable, it is written as such
+store_driver=$(docker info --format '{{.Driver}}' 2>/dev/null) || store_driver=
+store_status=$(docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store_status=
+[[ "$store_driver" =~ ^[A-Za-z0-9._-]+$ ]] || store_driver=unreadable
+[[ "$store_status" =~ ^\[.*\]$ ]] || store_status=null
+echo "{\"imageStore\":{\"driver\":\"$store_driver\",\"driverStatus\":$store_status},\"localImages\":{$ids}}"
 """
 
 COMMON = DOCKER_READY + r"""set -euo pipefail
@@ -305,9 +353,28 @@ host_ready() {
 }
 """
 
+# Every role's every host tool the source manifest pins (roles.<role>.hostTools.<name>: path and sha256, as the worker holds them per job,
+# e.g. gitleaks' ACTUAL_PYTHON_PIN_CHANGED): the node's file must be that file before A stages anything (Fable ruling 0e418483, r7
+# phase B, 4.1 ruling 2). Read from the manifest, never named here: a host tool pinned later is covered by the same loop.
+def host_tool_lines(manifest):
+    lines = ''
+    for role in sorted(manifest['roles']):
+        for name in sorted(manifest['roles'][role].get('hostTools', {})):
+            t = manifest['roles'][role]['hostTools'][name]
+            assert re.fullmatch(r'/[A-Za-z0-9_./-]+', t['path']) and '..' not in t['path'].split('/') and re.fullmatch(r'[0-9a-f]{64}', t['sha256']), ('HOST_TOOL_PIN_SHAPE', role, name)
+            lines += t['sha256'] + ' ' + t['path'] + '\n'
+    return lines
+HOST_TOOLS_GATE = r"""# every host tool the source manifest pins for a role: the node's file is the fleet's pinned one
+while read -r want path; do
+  [ -n "$want" ] || continue
+  { [ -f "$path" ] && [ "$(sha256sum "$path" | cut -d' ' -f1)" = "$want" ]; } || refuse "HOST_TOOL_NOT_THE_FLEET_PIN:$path"
+done <<'HOST_TOOLS'
+@@HOST_TOOLS@@HOST_TOOLS
+"""
+
 A = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase A (root, NO private key, writes only under $BASE). Commit @@C8@@, node @@NODE_NAME@@.
 @@HOW_A@@""" + COMMON + r"""host_ready
-@@CONTINUE@@# a first install: nothing of a Linux CI here yet
+""" + HOST_TOOLS_GATE + r"""@@CONTINUE@@# a first install: nothing of a Linux CI here yet
 for p in /opt/clued-independent-ci/source-v2 /opt/clued-independent-ci/resident-v1 /opt/clued-independent-ci/upgrade-v1 \
          /etc/clued-independent-ci/roles-v3 /etc/clued-independent-ci/formal-source-manifest-v2.json \
          /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json /var/lib/clued-independent-ci/resident/upgrade/current.json; do
@@ -350,7 +417,7 @@ for f in m["files"]:
   elif p in own: bad+=[p] if hashlib.sha256(open(sys.argv[6]+"/"+own[p],"rb").read()).hexdigest()!=f["sha256"] else []
   else: bad.append(p)
 print(json.dumps({"residentPinsNotTheNewSource":bad})); sys.exit(1 if bad else 0)' "$STG/linux-res-pkg/manifest.json" "$STG/src.git" "$COMMIT" "$NODE" "$NODE_SHA" "$STG/linux-res-pkg" > "$STG/resident-pins.A.stdout.json" || { cat "$STG/resident-pins.A.stdout.json"; refuse RESIDENT_PINS_NOT_THE_NEW_SOURCE; }
-# the run roots: absent (phase B creates them) or root directories nobody else can write
+# the run roots and the formal-spool directories: absent (phase B creates them) or root directories nobody else can write
 for d in @@ROOTS@@; do
   [ ! -e "$d" ] || { [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u "$d")" = 0 ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ]; } || refuse "RUN_ROOT_NOT_ROOT_PROTECTED:$d"
 done
@@ -388,7 +455,7 @@ if [ ! -e /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json 
     cp -f "$T/package.stdout.json" "$STG/package.stdout.json"
   fi
   grep -q LINUX_SOURCE_V2_PACKAGE_WRITTEN "$STG/package.stdout.json" || refuse PACKAGE_PARTIAL_SEE_RECOVERY
-  # the run roots readiness requires (loadQualifiedPolicyV2): root directories, created here when absent
+  # the run roots readiness requires (loadQualifiedPolicyV2) and the spool directories prepare-workspaces.py requires: root directories, created here when absent
   for d in @@ROOTS@@; do
     [ -e "$d" ] || install -d -o root -g root -m 0755 "$d"
     { [ -d "$d" ] && [ ! -L "$d" ] && [ "$(stat -c %u "$d")" = 0 ] && [ $(( 0$(stat -c %a "$d") & 022 )) = 0 ]; } || refuse "RUN_ROOT_NOT_ROOT_PROTECTED:$d"
@@ -443,7 +510,7 @@ $CLEAN $PY -I -c 'import json,sys; f=json.load(open(sys.argv[1])); sys.exit(not 
 # B11: verify-resident-linux, every check fatal
 bash --noprofile --norc "$STG/tools/verify-resident-linux.sh" > "$T/verify-resident.stdout.json" || true
 cat "$T/verify-resident.stdout.json"
-grep -q '"status":"LINUX_RESIDENT_VERIFIED"' "$T/verify-resident.stdout.json" || refuse VERIFY_RESIDENT_LINUX_FAILED
+grep -q '"status":"@@VERIFIED@@"' "$T/verify-resident.stdout.json" || refuse VERIFY_RESIDENT_LINUX_FAILED
 @@B_DONE@@"""
 
 # each local image's archive as it is in the in-dir now (pinned), or '-' (B then refuses until the image is loaded)
@@ -502,9 +569,9 @@ for _k, _v in FORM.items():   # the form's pieces first: they carry @@SUFFIX@@ /
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
           'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': NODE_NAME,
-          'ROOTS': ' '.join(ROOTS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
+          'ROOTS': ' '.join(ROOTS + SPOOL_DIRS), 'VERIFIED': VERIFIED, 'HOST_TOOLS': host_tool_lines(src_manifest), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
-    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
+    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES', 'HOST_TOOLS') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
 def render(text):
     for k, v in values.items():
         text = text.replace('@@' + k + '@@', v)

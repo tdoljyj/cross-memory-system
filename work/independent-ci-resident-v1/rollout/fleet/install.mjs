@@ -732,10 +732,12 @@ export function serviceSid(name) {
   return `S-1-5-80-${[0, 4, 8, 12, 16].map(i => h.readUInt32LE(i)).join('-')}`;
 }
 export const RESIDENT_SERVICE_SID = serviceSid('CluedCIResident');
+// This module runs before the package is unpacked and is copied by the installer (OWN_MODULES), so it cannot import src/powershell-argv.mjs;
+// the four options are written out here and test/ps-execution-policy.test.mjs holds this line to them like every other.
 // The CI root's DACL as Windows PowerShell 5.1 reads it (Get-Acl, read-only); no CI root yet: ''; unreadable: null (residue, not absence).
 export const defaultCiRootSddl = dir => {
   if (!fsSync.existsSync(dir)) return '';
-  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:FI_CI_ROOT).Sddl'],
+  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '(Get-Acl -LiteralPath $env:FI_CI_ROOT).Sddl'],
     { env: { ...process.env, FI_CI_ROOT: dir, PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules' }, encoding: 'utf8', windowsHide: true });
   const sddl = String(r.stdout ?? '').trim();
   return r.status === 0 && sddl.startsWith('O:') ? sddl : null;

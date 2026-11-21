@@ -124,7 +124,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '0dce6ae6a2ed1c241438399ecd5a7d8bc0e31fa07e62350d530a4923182cee2a'
+TEMPLATE_SHA = 'b1b562aaecb8cb2737e01968418eeb3d0da41da9652cc0aecdc07c873fb60803'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -263,6 +263,10 @@ if FLEET_PLAN:
                 and _facts.get('operatorSid') == FIRST['operatorSid'] and (_facts.get('companionWsl') or {}).get('vhdxDirectory') == FIRST['wslVhdxDirectory']
                 and FIRST['operatorSid'] != OWNER), 'FIRST_INSTALL_FACTS_NOT_THE_PLANS'
         OPERATOR, VHDX_DIR = FIRST['operatorSid'], FIRST['wslVhdxDirectory']
+        # r5 N7: the launcher's first-install preflight reads the node identity keys with this script's own key names and finder; it
+        # comes from the unpacked package (the universal tree carries it), its bytes pinned below
+        _reg = os.path.abspath(os.path.join(HERE, '..', '..', 'registration', 'export-node-registration.ps1'))
+        FIRST_REGISTRATION = (_reg, sha(_reg))
     if PLAN['companionAccount']:
         with open(_account_file, encoding='utf-8-sig') as _stream:
             _acct = json.load(_stream)
@@ -434,7 +438,7 @@ assert len(win_paths) >= 2
 os.makedirs(os.path.join(R4, 'dryrun'), exist_ok=True)
 dry_file = os.path.join(R4, 'dryrun', 'install.dry-run.post-uninstall.' + COMMIT[:8] + '.' + GEN_UTC + '.json')
 SECRETS_EXIST = ['true' if x else 'false' for x in CFG['secretTargetsExist']]   # r5 S1: app key target, ci token target (elevated truth, checked by the launcher)
-p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-File', EXPECTED_PLAN, '-View', 'post-uninstall', '-PackageRoot', PKG, '-PackageManifestSha256', pkg_sha,
+p = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', EXPECTED_PLAN, '-View', 'post-uninstall', '-PackageRoot', PKG, '-PackageManifestSha256', pkg_sha,
                     '-AppKeyTargetExists', SECRETS_EXIST[0], '-CiTokenTargetExists', SECRETS_EXIST[1], '-OwnerSid', OWNER, '-ControllerSid', CONTROLLER, '-OperatorSid', OPERATOR],
                    capture_output=True, check=False)
 write_new(dry_file, p.stdout)
@@ -519,7 +523,7 @@ if FIRST:   # nothing installed: its root must not exist (Linux A and the launch
     halt_present = halt_accepted = paused_present = False
     terminal_evidence = {'key': None, 'relativeDirectory': '', 'terminalSha256': None, 'backfillManifestSha256': None}
     PARENT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
-    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
+    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
                                    capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
     quiet = {'firstInstall': True, 'residentRootExists': os.path.lexists(LIVE_ROOT)}
     refusals = ['FIRST_INSTALL_RESIDENT_ROOT_PRESENT'] if os.path.lexists(LIVE_ROOT) else []
@@ -536,7 +540,7 @@ if not FIRST:
     halt_doc = json.load(open(os.path.join(LIVE_ROOT, 'state', 'HALT.json'), encoding='utf-8-sig')) if halt_present else None
     halt_accepted = bool(halt_present and ACCEPT_HALT and halt_sha == ACCEPT_HALT)
     PARENT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI'])
-    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
+    parent_before = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', '(Get-Acl -LiteralPath $env:R41_PARENT).Sddl'],
                                    capture_output=True, text=True, env=dict(os.environ, R41_PARENT=PARENT)).stdout.strip()
     paused_present = os.path.exists(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json'))
     paused_sha = sha(os.path.join(LIVE_ROOT, 'state', 'PAUSED.json')) if paused_present else None   # review m6: pinned into the launcher
@@ -589,7 +593,7 @@ if FINAL and refusals:
     print(json.dumps({'status': 'REFUSED', 'codes': refusals, 'quiet': quiet, 'dryRun': dry_file, 'runnerBefore': rb}, indent=1))
     sys.exit(3)
 # r4.1 C2: the parent ACL before/after, computed exactly as the launcher does (Get-Acl + AddAccessRule), pinned
-parent_after = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-Command',
+parent_after = subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
     '$a=New-Object Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm($env:R41_BEFORE); '
     '$r=New-Object Security.AccessControl.FileSystemAccessRule((New-Object Security.Principal.SecurityIdentifier($env:R41_SID)),[Security.AccessControl.FileSystemRights]0x120080,[Security.AccessControl.InheritanceFlags]::None,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow); '
     '$a.AddAccessRule($r); $a.GetSecurityDescriptorSddlForm("All")'], capture_output=True, text=True,
@@ -646,6 +650,7 @@ lines = [
     '$LedgerEvidenceRelativeDirectory = ' + q(terminal_evidence['relativeDirectory'].replace('/', BS)),
     '$TerminalEvidenceSha256 = ' + _qn(terminal_evidence['terminalSha256']),
     '$BackfillEvidenceManifestSha256 = ' + (q(terminal_evidence['backfillManifestSha256']) if terminal_evidence['backfillManifestSha256'] else '$null'),
+    '$LedgerEmptyAtGeneration = ' + ('$true' if terminal_evidence.get('empty') else '$false') + '   # r5 N9: no batch ever ran; the kept ledger must still be empty (no key, no terminal record)',
     '$LaunchOutPin = ' + q(LAUNCH_DIR) + '   # F1: output directory of this generation',
     '$PauseRequestDacl = ' + q(pause_dacl) + '   # F2: the DACL a request in requests\\ inherits',
     '$LinuxLiveSourceManifestSha256 = ' + (q(linux_live) if linux_live else '$null') + '   # Q5b: formal-source-manifest-v2.json (evidence file below)',
@@ -673,7 +678,15 @@ lines = [
     '$R5c = @{ applyPlanSha256 = $null; factsStaged = $null }   # r5c: set by Test-TokenPlan / Get-VerifyFactsArgs',
 ]
 # The generic node package (--fleet-plan): all null otherwise, and the launcher then runs no Linux step.
-_fq = lambda v: q(v) if FLEET and v is not None else '$null'
+# `FLEET and <condition> and <value>` is False when the condition does not hold (a first install: `not FIRST`): no value, as None is.
+# Anything else that is not a string is no value to write (refused by name, never a silent $null). Probe round two (5be766cd): the
+# False of $FleetInstalledRearmSha256 for a first install reached q() and stopped prepare (LAUNCHER_CHECK_FAILED, TypeError).
+def _fq(v):
+    if not FLEET or v is None or v is False:
+        return '$null'
+    if not isinstance(v, str):
+        sys.exit('VALUE_NOT_A_STRING %r' % (v,))
+    return q(v)
 _fs = lambda k, i: q(FLEET['scripts'][k][i]) if FLEET else '$null'
 lines += [
     '$FleetPlanSha256 = ' + _fq(FLEET and FLEET['planSha256']) + '   # the install plan as it was at generation; set, the launcher runs Linux A and B itself',
@@ -702,6 +715,8 @@ lines += [
     '$FleetRegistrarSha256 = ' + _fq(FLEET and FLEET['registrarSha256']) + '   # the package CompanionTaskRegistrar.cs (root-run)',
     '$FleetFirstInstall = ' + ('$true' if FIRST else '$null') + '   # set: no resident is installed (no W1, no uninstall); the tokens are the host preparation\'s',
     '$FleetFirstInstallDirectory = ' + (q(FIRST_DIR + BS + 'credentials') if FIRST else '$null') + '   # the host preparation\'s two tokens; deleted once the installer has run',
+    '$FirstInstallRegistrationScript = ' + _fq(FIRST and FIRST_REGISTRATION[0]) + '   # r5 N7: registration/export-node-registration.ps1 of the unpacked package; its key names and finder read the identity keys',
+    '$FirstInstallRegistrationScriptSha256 = ' + _fq(FIRST and FIRST_REGISTRATION[1]),
 ]
 assert template.count('#PINS#') == 1
 text = template.replace('#PINS#', '\n'.join(lines))
@@ -727,7 +742,7 @@ cmd = ("$env:PSModulePath='C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modul
        "if ($h -cne '" + launcher_sha + "') { throw ('LAUNCHER_CHANGED ' + $h) }; & ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($b))) -RunApprovedInstall\n")
 if FLEET_PLAN:
     # One line of JSON for rollout/fleet/install.mjs prepare, which puts path and sha256 into the plan's `launcher` and builds its runCommand
-    # around elevatedCommand (hash-checked bytes, run from memory, in an elevated Windows PowerShell 5.1 started with -NoProfile).
+    # around elevatedCommand (hash-checked bytes, run from memory, in an elevated Windows PowerShell 5.1 started with -NoProfile -ExecutionPolicy Bypass).
     print(json.dumps({'status': 'FLEET_LAUNCHER_GENERATED', 'launcher': {'path': out, 'sha256': launcher_sha}, 'bytes': len(data), 'node': node['nodeName'], 'version': PLAN['version'], 'commit': COMMIT,
                       'installPlan': FLEET_PLAN, 'installPlanSha256': CFG['_sha256'], 'templateSha256': TEMPLATE_SHA, 'elevatedCommand': cmd.strip(), 'launchDir': LAUNCH_DIR,
                       'companionAccount': FLEET['companionAccount'], 'operatorSid': OPERATOR, 'linux': {'inDir': FLEET['inDir'], 'outDir': FLEET['outDir'], 'wslOutDir': FLEET['wslOutDir'], 'timeoutSeconds': FLEET['timeouts']},

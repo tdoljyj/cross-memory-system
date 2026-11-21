@@ -517,7 +517,7 @@ function Invoke-CompanionRelayParentsEnsure([string]$root, [string]$sid, [string
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
     if (@($errors).Count -ne 0) { throw 'RELAY_PARENT_RULE_UNPARSEABLE' }
-    foreach ($name in @('Get-DaclPart', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence',
+    foreach ($name in @('Get-DaclPart', 'Get-DaclShape', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence',
         'Assert-CompanionRelayParentPlan', 'Add-CompanionRelayParentAce', 'Get-CompanionRelayParentsPlan')) {
       $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
       if ($found.Count -ne 1) { throw ('RELAY_PARENT_RULE_MISSING:' + $name) }

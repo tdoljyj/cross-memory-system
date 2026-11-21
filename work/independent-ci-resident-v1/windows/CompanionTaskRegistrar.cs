@@ -52,6 +52,12 @@
 //       owned by Administrators with a protected DACL of SYSTEM and Administrators only.
 //   CluedCompanionTaskRegistrar.exe account-facts <sid>
 //       Read-only facts of the account: local, enabled, administrator, rights held directly, profile directory.
+//   CluedCompanionTaskRegistrar.exe grant-service-logon <sid>
+//       Elevated only. SeServiceLogonRight for one local account (the first install's clued-control), by the account-rights interface:
+//       the same grant prepare-account gives the companion its batch logon with (GrantRights), never by writing back the security policy
+//       (Fable renew-key ruling, supplement "service logon grant"). RIGHT_GRANTED, or RIGHT_NOT_GRANTED with the step it stopped in and
+//       the system's raw status: "resolve" (not a local account), "open:<NTSTATUS>:<win32>" (LsaOpenPolicy), "grant:<NTSTATUS>:<win32>"
+//       (LsaAddAccountRights). The caller reads the account's rights back (account-facts) before it counts the grant.
 //   CluedCompanionTaskRegistrar.exe vtable-selftest
 //       Read-only: proves the vtable slots this program calls by reading the root folder's Path (slot 8) and asking for a task that
 //       does not exist (GetTask, slot 13). RegistrarPureTests.cs runs it offline.
@@ -788,6 +794,7 @@ public static class CluedCompanionTaskRegistrar {
       if (args.Length == 2 && args[0] == "remove-account" && RegistrarCore.ValidAccountName(args[1])) return RemoveAccount(args[1]);
       if (args.Length == 2 && args[0] == "prepare-account" && RegistrarCore.ValidAccountName(args[1])) return PrepareAccount(args[1]);
       if (args.Length == 2 && args[0] == "account-facts" && RegistrarCore.ValidSid(args[1])) return AccountFacts(args[1]);
+      if (args.Length == 2 && args[0] == "grant-service-logon" && RegistrarCore.ValidSid(args[1])) return GrantServiceLogon(args[1]);
       if (args.Length == 3 && args[0] == "capture-file") {
         string[] pair = RegistrarCore.ParseCaptureFile(args);
         if (pair == null) { Print("REGISTRAR_ARGS_REFUSED", null); return 2; }
@@ -975,13 +982,33 @@ public static class CluedCompanionTaskRegistrar {
     return h;
   }
   static byte[] SidBytes(string sid) { SecurityIdentifier s = new SecurityIdentifier(sid); byte[] b = new byte[s.BinaryLength]; s.GetBinaryForm(b, 0); return b; }
-  static int AddRights(string sid, string[] rights) {
-    IntPtr h = OpenLsa(0x10 | 0x800);   // POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+  // The one grant of account rights in the package (prepare-account's batch logon, grant-service-logon's service logon): the step it
+  // stopped in (open, grant) and the system's raw NTSTATUS, 0 when done.
+  static uint GrantRights(string sid, string[] rights, out string step) {
+    step = "open";
+    LSA_OBJECT_ATTRIBUTES oa = new LSA_OBJECT_ATTRIBUTES(); oa.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES)); IntPtr h;
+    uint st = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x10 | 0x800, out h);   // POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES
+    if (st != 0) return st;
+    step = "grant";
     LSA_UNICODE_STRING[] r = new LSA_UNICODE_STRING[rights.Length];
     try {
       for (int i = 0; i < rights.Length; i++) { r[i].Buffer = Marshal.StringToHGlobalUni(rights[i]); r[i].Length = (ushort)(rights[i].Length * 2); r[i].MaximumLength = (ushort)(rights[i].Length * 2 + 2); }
-      return LsaNtStatusToWinError(LsaAddAccountRights(h, SidBytes(sid), r, r.Length));
+      return LsaAddAccountRights(h, SidBytes(sid), r, r.Length);
     } finally { foreach (LSA_UNICODE_STRING s in r) if (s.Buffer != IntPtr.Zero) Marshal.FreeHGlobal(s.Buffer); LsaClose(h); }
+  }
+  // prepare-account's use, as before: a policy that does not open throws (LSA_OPEN), a grant that fails returns its win32 code
+  static int AddRights(string sid, string[] rights) {
+    string step; uint st = GrantRights(sid, rights, out step);
+    if (st != 0 && step == "open") throw new InvalidOperationException("LSA_OPEN:" + LsaNtStatusToWinError(st));
+    return LsaNtStatusToWinError(st);
+  }
+  // grant-service-logon <sid>: one local account's SeServiceLogonRight by GrantRights; the step and the raw status when it is not done.
+  static int GrantServiceLogon(string sid) {
+    string[] a = SplitAccount(sid);
+    if (a == null || !string.Equals(a[0], Environment.MachineName, StringComparison.OrdinalIgnoreCase)) { Print("RIGHT_NOT_GRANTED", "resolve"); return 1; }
+    string step; uint st = GrantRights(sid, new[] { "SeServiceLogonRight" }, out step);
+    if (st != 0) { Print("RIGHT_NOT_GRANTED", step + ":0x" + st.ToString("X8") + ":" + LsaNtStatusToWinError(st)); return 1; }
+    Print("RIGHT_GRANTED", null); return 0;
   }
   static List<string> RightsOf(string sid) {
     IntPtr h = OpenLsa(0x800 | 0x1), p; int count; List<string> o = new List<string>();   // POLICY_LOOKUP_NAMES | POLICY_VIEW_LOCAL_INFORMATION

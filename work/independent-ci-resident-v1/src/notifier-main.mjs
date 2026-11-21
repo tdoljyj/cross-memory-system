@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { check } from './canonical.mjs';
 import { toastArgv } from './pr-status.mjs';
+import { powershellArgv } from './powershell-argv.mjs';
 import { readStatus } from './status.mjs';
 import { NotifyQueue, companionFindings, notifyQueueDir } from './notify-queue.mjs';
 
@@ -29,7 +30,7 @@ export const COMPANION_TASK = '\\Clued\\CluedCIResidentCompanion';
 export const TASK_FACTS_SCRIPT = "$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();"
   + "$t=$s.GetFolder('\\Clued').GetTask('CluedCIResidentCompanion');"
   + "[Console]::Out.Write((@{state=[int]$t.State;lastTaskResult=[long]$t.LastTaskResult} | ConvertTo-Json -Compress))";
-export const taskFactsArgv = () => [POWERSHELL_EXE, '-NoProfile', '-NonInteractive', '-Command', TASK_FACTS_SCRIPT];
+export const taskFactsArgv = () => powershellArgv(POWERSHELL_EXE, '-Command', TASK_FACTS_SCRIPT);
 
 export function parseTaskFacts(text) {
   try {

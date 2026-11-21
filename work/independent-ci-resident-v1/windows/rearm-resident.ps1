@@ -6,7 +6,7 @@
 
 .DESCRIPTION
   Run the INSTALLED copy, always as:
-    powershell.exe -NoProfile -NonInteractive -File C:\ProgramData\CluedIndependentCI\resident\resident\<sha>\windows\rearm-resident.ps1 ...
+    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\ProgramData\CluedIndependentCI\resident\resident\<sha>\windows\rearm-resident.ps1 ...
 
   Without -Request it only inspects, NOT elevated: it refuses to run elevated, so the node process
   it starts never holds an admin token.

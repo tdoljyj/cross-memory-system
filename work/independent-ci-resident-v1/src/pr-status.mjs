@@ -33,6 +33,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { FAILURE_TABLE } from './classify.mjs';
+import { powershellArgv } from './powershell-argv.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { ghPort } from './admission-rerun.mjs';
 import { CLAIM_REASONS, CLAIM_WHY } from './queue.mjs';
@@ -553,7 +554,7 @@ export function toastArgv(powershellExe, title, body) {
     + '$x=New-Object Windows.Data.Xml.Dom.XmlDocument;'
     + "$x.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>'+[Security.SecurityElement]::Escape($t)+'</text><text>'+[Security.SecurityElement]::Escape($b)+'</text></binding></visual></toast>');"
     + "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))";
-  return [powershellExe, '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+  return powershellArgv(powershellExe, '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'));
 }
 
 // The reporter's own memory (the Owner's profile, never the resident's state): the last write per head, and which

@@ -631,15 +631,37 @@ function Get-WslRegistrations {
 }
 # The registry steps of the move, each its own function (the offline tests replace them). The export is reg.exe's own full copy of the
 # key (every value with its type), written to the admin-only install\ before anything changes.
-function Export-CompanionLxssKey([string]$guid, [string]$file) {
-  $null = & 'C:\Windows\System32\reg.exe' export ('HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss\' + $guid) $file /y 2>&1
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'WSL_OWNER_REGISTRATION_NOT_EXPORTED' }
+# H1, one rule for every child a package script starts (first-install-host.ps1's own; test/native-child.test.mjs holds every copy the same
+# text and no package .ps1 merging a stream into its output): stdout, stderr and the exit code read apart; never an error from stderr.
+function Invoke-NativeChild([string]$exe, [string[]]$arguments, [int]$seconds = 3600, [Text.Encoding]$encoding = (New-Object Text.UTF8Encoding($false)), [bool]$shareConsole = $false, [byte[]]$stdin = $null) {
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $exe; $psi.Arguments = (($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = ($null -ne $stdin); $psi.CreateNoWindow = (-not $shareConsole)
+  $psi.StandardOutputEncoding = $encoding; $psi.StandardErrorEncoding = $encoding
+  # Windows PowerShell 5.1 (.NET Framework) opens a redirected stdin as a StreamWriter in Console.InputEncoding and writes that
+  # encoding's preamble at once: on a UTF-8 console (code page 65001) the child reads a BOM before $stdin (run 44705707829). While the
+  # child starts, Console's cached input encoding (what its getter returns) is a UTF-8 without one; .NET Core has no such field and
+  # writes no preamble. Our bytes go to the base stream, so the writer's encoding is otherwise unused.
+  $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+  $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+  if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+  try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
+  $o = $p.StandardOutput.ReadToEndAsync(); $e = $p.StandardError.ReadToEndAsync()
+  if ($null -ne $stdin) { try { $p.StandardInput.BaseStream.Write($stdin, 0, $stdin.Length); $p.StandardInput.BaseStream.Flush() } finally { $p.StandardInput.Close() } }   # a secret: never a command line
+  if (-not $p.WaitForExit($seconds * 1000)) { return [ordered]@{ exit = $null; stdout = ''; stderr = ''; timedOut = $true } }
+  $p.WaitForExit()   # the asynchronous reads end with the child
+  $tail = { param($t) $t = ([string]$t) -replace "`0", ''; if ($t.Length -gt 1500) { $t.Substring($t.Length - 1500) } else { $t } }
+  [ordered]@{ exit = $p.ExitCode; stdout = ([string]$o.Result -replace "`0", ''); stderr = (& $tail $e.Result); timedOut = $false }
 }
-function Import-CompanionLxssKey([string]$file) { $null = & 'C:\Windows\System32\reg.exe' import $file 2>&1; if ($LASTEXITCODE -ne 0) { throw 'WSL_OWNER_REGISTRATION_NOT_IMPORTED' } }
+function Export-CompanionLxssKey([string]$guid, [string]$file) {
+  $r = Invoke-NativeChild 'C:\Windows\System32\reg.exe' @('export', ('HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss\' + $guid), $file, '/y') 600
+  if ($r.exit -ne 0 -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'WSL_OWNER_REGISTRATION_NOT_EXPORTED' }
+}
+function Import-CompanionLxssKey([string]$file) { $r = Invoke-NativeChild 'C:\Windows\System32\reg.exe' @('import', $file) 600; if ($r.exit -ne 0) { throw 'WSL_OWNER_REGISTRATION_NOT_IMPORTED' } }
 function Remove-CompanionLxssKey([string]$guid) { Remove-Item -LiteralPath (Join-Path $CompanionLxssKey $guid) -Recurse -Force }
 function Get-CompanionLxssDefault { try { [string](Get-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -ErrorAction Stop).DefaultDistribution } catch { $null } }
 function Remove-CompanionLxssDefault { Remove-ItemProperty -LiteralPath $CompanionLxssKey -Name 'DefaultDistribution' -Force }
-function Invoke-CompanionWslTerminate([string]$distro) { $client = Get-CluedMachineWslClient; $null = & $client.path --terminate $distro 2>&1 }
+function Invoke-CompanionWslTerminate([string]$distro) { $client = Get-CluedMachineWslClient; $null = Invoke-NativeChild $client.path @('--terminate', $distro) 600 }
 # Only the account-switch maintenance option can request a whole-VM stop.
 # These two fixed management commands never run a distribution or arbitrary code.
 function Invoke-CompanionWslControl([ValidateSet('list-running', 'shutdown')][string]$operation) {
