@@ -2606,7 +2606,8 @@ function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [Da
 # The stage files the entry writes under the guest's work directory, read in the guest file by file with read-write sharing (a stage still
 # writing holds its log open: the entry's line-by-line writer, the package's appending one; Read-StageResult in bootstrap.ps1 reads them
 # the same way). One that cannot be read is named with its error, never taking the others with it.
-$script:DrillStageFiles = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log', 'host-result.json', 'launcher-result.json', 'stage-timings.json')
+# wsl-cold-start.json: what the entry found right after shutting the guest's WSL down before the launcher stage (Fable ruling 0e418483 4.2).
+$script:DrillStageFiles = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log', 'host-result.json', 'launcher-result.json', 'wsl-cold-start.json', 'stage-timings.json')
 $script:GuestStageFiles = {
   param($Work, $Names)
   $r = [ordered]@{}
@@ -2652,9 +2653,9 @@ function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
   }
   # Written only from what was really read (Codex review of e0a3cded5, medium 2): no stage-evidence.json or stage-timings.json from nothing,
   # and every file's state says whether it reached the run directory.
-  $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json'] }
+  $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json']; 'wsl-cold-start.json' = $json['wsl-cold-start.json'] }
   $timings = $json['stage-timings.json']
-  $results = @(@('host-result.json', 'launcher-result.json') | Where-Object { $json.Contains($_) })
+  $results = @(@('host-result.json', 'launcher-result.json', 'wsl-cold-start.json') | Where-Object { $json.Contains($_) })
   if ($results.Count) {
     try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' } }
     catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } } }

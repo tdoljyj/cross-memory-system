@@ -2547,6 +2547,9 @@ function guestWorkDir(name, files) {
   for (const [n, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), text);
   return dir;
 }
+// What the entry writes right before the launcher stage (Invoke-EntryWslColdStart): part of every complete set of stage files.
+const WSL_COLD_START = JSON.stringify({ at: '2026-11-21T03:00:00Z', shutdown: { exit: 0, timedOut: false, stdout: '', stderr: '' },
+  runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } });
 
 // Section 2 of the same supplement (branch one), with this branch's collection: the guest evidence -- the entry's guest log and the stage
 // files, each read with read-write sharing -- is taken whether the first install succeeded, failed or ran out of time, before the
@@ -2590,7 +2593,7 @@ test('the guest evidence is collected after a timed-out first install too, and a
   // collected, but not all of it: ok only with nothing missing (Codex review of f33fc33e5, medium 2)
   assert.equal(r.record.ok, false);
   assert.equal(r.record.code, null);
-  assert.deepEqual(r.record.missing, ['prepare.stdout.log', 'launcher.stdout.log', 'launcher-result.json']);
+  assert.deepEqual(r.record.missing, ['prepare.stdout.log', 'launcher.stdout.log', 'launcher-result.json', 'wsl-cold-start.json']);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean),
     ['line one', '{"name":"prepare","result":"ok","rejectCode":null,"detail":null}']);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-timings.json'), 'utf8')).host, 12.5);
@@ -3541,7 +3544,7 @@ test('the merged collection feeds A1 and A6: complete logs pass, a missing stage
   const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
     'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
     'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
-    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1,"prepare":2,"launcher":3}' };
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'wsl-cold-start.json': WSL_COLD_START, 'stage-timings.json': '{"host":1,"prepare":2,"launcher":3}' };
   const collect = (name, change = {}) => {
     const all = { ...files, ...change };
     const guest = guestWorkDir(`merged-${name}-guest`, Object.fromEntries(Object.entries(all).filter(([, t]) => t !== null)));
@@ -3612,7 +3615,7 @@ test('guest-evidence ok is false on any missing file, and A6 reads the launcher 
   const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
     'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
     'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
-    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1}' };
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'wsl-cold-start.json': WSL_COLD_START, 'stage-timings.json': '{"host":1}' };
   const collect = (name, change = {}, failWrite = null) => {
     const guest = guestWorkDir(`r5-ok-${name}-guest`, Object.fromEntries(Object.entries({ ...files, ...change }).filter(([, t]) => t !== null)));
     const runDir = path.join(tmp, `r5-ok-${name}`); fs.mkdirSync(runDir, { recursive: true });
@@ -3909,7 +3912,7 @@ test('a launcher result read back without its terminal field is recorded as a fa
   const e = JSON.parse(evidence());
   const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
     'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
-    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }), 'stage-timings.json': '{"host":1}' };
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }), 'wsl-cold-start.json': WSL_COLD_START, 'stage-timings.json': '{"host":1}' };
   const collect = (name, launcher) => {
     const guest = guestWorkDir(`r7-readback-${name}-guest`, { ...files, 'launcher-result.json': launcher });
     const runDir = path.join(tmp, `r7-readback-${name}`); fs.mkdirSync(runDir, { recursive: true });
@@ -4002,7 +4005,7 @@ test('the entry shuts the guest WSL down right before the launcher stage and rec
   const prepared = body.indexOf("throw 'PREPARE_REFUSED'"), cold = body.indexOf('Invoke-EntryWslColdStart $Output'), launcher = body.indexOf("$launcherResult = Join-Path $Output 'launcher.stdout.log'");
   assert.ok(prepared > 0 && cold > prepared && launcher > cold, 'after prepare, before the launcher stage');
   assert.equal(body.split('Invoke-EntryWslColdStart').length, 2, 'once');
-  assert.match(text, /function Invoke-EntryWslColdStart\(\[string\]\$Output, \[string\]\$LogDir, \[string\]\$WslExe = 'C:\Program Files\WSL\wsl\.exe'\)/);
+  assert.match(text, /function Invoke-EntryWslColdStart\(\[string\]\$Output, \[string\]\$LogDir, \[string\]\$WslExe = 'C:\\Program Files\\WSL\\wsl\.exe'\)/);
   const dir = path.join(tmp, 'wsl-cold'); fs.mkdirSync(dir, { recursive: true });
   const fake = path.join(dir, 'wsl.cmd'), calls = path.join(dir, 'calls.txt');
   fs.writeFileSync(fake, ['@echo off', '>>"%~dp0calls.txt" echo %*^|%WSL_UTF8%', 'if "%1"=="--shutdown" exit /b %FAKE_SHUTDOWN_EXIT%',
@@ -4010,11 +4013,11 @@ test('the entry shuts the guest WSL down right before the launcher stage and rec
   const run = (name, shutdownExit) => {
     const out = path.join(dir, name); fs.mkdirSync(out, { recursive: true });
     if (fs.existsSync(calls)) fs.rmSync(calls);
-    const thrown = entryPs(`$env:FAKE_SHUTDOWN_EXIT = '${shutdownExit}'; try { Invoke-EntryWslColdStart ${q(out)} ${q(dir)} ${q(fake)}; $null } catch { $_.Exception.Message }`);
+    const thrown = entryPs(`$env:FAKE_SHUTDOWN_EXIT = '${shutdownExit}'; try { Invoke-EntryWslColdStart ${q(out)} ${q(dir)} ${q(fake)}; 'NO THROW' } catch { $_.Exception.Message }`);
     return { thrown, record: JSON.parse(fs.readFileSync(path.join(out, 'wsl-cold-start.json'), 'utf8')), calls: fs.readFileSync(calls, 'utf8').trim().split(/\r?\n/) };
   };
   const ok = run('ok', 0);
-  assert.equal(ok.thrown, null);
+  assert.equal(ok.thrown, 'NO THROW');
   assert.deepEqual(ok.calls, ['--shutdown|1', '--list --running|1'], 'shutdown first, then the list; WSL_UTF8 set');
   assert.equal(ok.record.shutdown.exit, 0);
   assert.equal(ok.record.shutdown.timedOut, false);

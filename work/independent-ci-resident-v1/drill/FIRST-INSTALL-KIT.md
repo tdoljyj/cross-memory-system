@@ -150,8 +150,9 @@ Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-Fro
 来宾取证在首装的正常结束、失败、超时三种结局之后、对来宾做任何别的事之前执行（首装调用的 finally），所以这三种结局下都在还原检查点之前：
 取回入口打印的每一行（入口运行时同步写到来宾 `C:\drill\work\first-install.stdout.log`，超时也留得下），以及阶段文件——
 三份完整阶段日志 `host.stdout.log`、`prepare.stdout.log`、`launcher.stdout.log`（由入口逐行写出；启动器的阶段输出文件就是 `launcher.stdout.log`）
-和 `host-result.json`、`launcher-result.json`、`stage-timings.json`。阶段文件在来宾里逐个以读写共享方式读取（写端仍开着也能读），逐个存回运行目录，
-每个文件的结局记在 `stage-files.json`；不取任何凭据文件。取证失败只记录（`guest-evidence.json`、`stage-files.json`），不挡还原，也不替换本轮自己的失败码。
+和 `host-result.json`、`launcher-result.json`、`wsl-cold-start.json`、`stage-timings.json`。阶段文件在来宾里逐个以读写共享方式读取（写端仍开着也能读），逐个存回运行目录，
+每个文件的结局记在 `stage-files.json`；不取任何凭据文件。
+`wsl-cold-start.json`：入口在 launcher 段之前对来宾 `wsl --shutdown`（失败即以 `DRILL_WSL_SHUTDOWN_FAILED` 停），再读 `wsl --list --running`，两次的原始应答（exit、stdout、stderr）原样记下、不判；与两份阶段结果一起存进 `stage-evidence.json`（Fable 裁定 0e418483 §4.2：每轮固定走冷启动）。取证失败只记录（`guest-evidence.json`、`stage-files.json`），不挡还原，也不替换本轮自己的失败码。
 回执 A1 下的 `firstInstallSteps` 只从完整日志解析（阶段结果文件只取判决行）：各阶段的逐步结果行、最后完成的一步、首个被拒的一步、判决行；
 阶段已运行却缺日志、空日志、只有判决行、被截断、或后续阶段已抵达而它毫无证据，记 `incomplete`；一行也解析不到记 `missing`。A1 要求两者都不是。
 本轮在首装之后中断时，A1 由首装自己的结果（`entry-result.json`）单独形成。本轮没有判决就结束时（无 A1），记录在 `evidence.firstInstallSteps`。
