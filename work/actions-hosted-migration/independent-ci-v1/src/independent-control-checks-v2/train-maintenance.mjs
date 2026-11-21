@@ -1033,6 +1033,22 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
       await sweepStore.appendFrontBatch({ ...running, writtenAt: isoOf(clock()), runId: job.runId, since: currentSince });
     } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   }
+  // Fable 11-21 open points §1 (one invariant): on route push the running front batch's S is on clued-train/staging with a landing-batch
+  // record. A batch opened while the composition was only a rehearsal (the current path or park: a failed composition is swallowed, the
+  // batch runs on GitHub's test merge) has neither, and once main's rules route push stage 8 would wait for Actions checks S never gets.
+  // Stage 10 attaches it this round: clued-train/staging pointed at S, then a landing-batch record of the front alone (T, S and S's tree
+  // of the running batch; the record present means attached). A failure leaves the round TRAIN_FRONT_BATCH_RUNNING and the next round
+  // tries again: no new batch, no attempt counted, no suite run again. The current path and park attach nothing.
+  if (refusal === 'TRAIN_FRONT_BATCH_RUNNING' && pushing && !pushing.rehearsalOnly && running) {
+    try {
+      if (!(await sweepStore.landingBatchByTest(running.testSha))) {
+        fx.n++; await pushing.landing.pointRef(STAGING_REF, running.testSha);
+        await sweepStore.appendLandingBatch({ writtenAt: isoOf(clock()), runId: job.runId, frontPr: running.pr, frontHeadSha: running.headSha,
+          baseSha: running.baseSha, testSha: running.testSha, testTree: running.testTree, attempt: running.attempt,
+          members: [{ pr: running.pr, headSha: running.headSha, claimId: running.claimId }] });
+      }
+    } catch { /* not attached this round: the next round tries again */ }
+  }
   if (refusal) return { ...no(refusal), turnShort };
   let composed = null;
   if (pushing) {
