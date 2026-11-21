@@ -5,7 +5,7 @@
 //   node rollout/landing-precheck.mjs --before --snapshot <file> [--root <resident root>] [--repo <owner/name>] [--only P1,P4]
 //   node rollout/landing-precheck.mjs --after  --snapshot <file> [same options]
 //
-//   R1  the independent ruleset just created:     --before --only P4 (the snapshot is not written for a subset)
+//   R1  the independent ruleset just created:     --before --only P4 (a subset: PARTIAL-PASS at best, no snapshot written)
 //   R1+ stage 10's next round after it:           --before --only P3 (until bypass.independent reads never)
 //   R2  right before the Owner is asked to save:  --before (all of P1-P5; writes the main ruleset's snapshot; GO only then ask)
 //   R3  right after the Owner saved:              --after  (P1-P6 against that snapshot)
@@ -38,7 +38,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
-import { fleetSourceCheck } from './precheck.mjs';
+import { FLEET_HEARTBEAT_WINDOW_MS, fleetSourceCheck } from './precheck.mjs';
 import { parseTrainLast, parseTrainNodes } from '../src/train.mjs';
 import { externalChecksDecision, externalRequiredChecks, runsOfRequired } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
 
@@ -101,7 +101,9 @@ export async function p1({ gh, repo, rules, now = Date.now() }) {
   const pass = a.length === 0 && full.length > 0;
   if (!pass) for (const r of perS) for (const n of names) {
     const c = r.checks[n];
-    if (c.id) c.annotations = (await gh.paged(`repos/${repo}/check-runs/${c.id}/annotations`, null, { max: 1 })).slice(0, 5).map(x => clip(x?.message));
+    // review optional 3: best effort; one that cannot be read leaves that check's annotations null and every other detail
+    if (c.id) try { c.annotations = (await gh.paged(`repos/${repo}/check-runs/${c.id}/annotations`, null, { max: 1 })).slice(0, 5).map(x => clip(x?.message)); }
+    catch { c.annotations = null; }
   }
   return { pass, names, sCount: perS.length, successes, ...(a.length ? { fewerThanTwo: a } : {}), fullyGreen: full, ...(pass ? {} : { perS }) };
 }
@@ -139,16 +141,23 @@ export async function p2({ gh, repo, files, checkout, now, mode = 'before' }) {
     .map(([role]) => role);
   const status = JSON.parse((await files.read(files.status)).toString('utf8'));
   const installed = status?.versions?.windows?.ciSourceManifestSha256 ?? null;
-  const fleet = fleetSourceCheck({ view: parseTrainNodes(status?.train?.nodes), target: source, now, onDuty: status?.node?.mode === 'ACTIVE', selfNames: [status?.node?.name] });
+  const view = parseTrainNodes(status?.train?.nodes);
+  const fleet = fleetSourceCheck({ view, target: source, now, onDuty: status?.node?.mode === 'ACTIVE', selfNames: [status?.node?.name] });
+  // Review C (open points §9): a node heard within 24 hours that reports no Source is not proven on this one (fleetSourceCheck, shared
+  // with the upgrade precheck and stage 10, skips it and stays as it is). Optional 1 (half): a view with dropped entries is not whole.
+  const unreported = (view?.nodes ?? []).filter(n => n.sourceManifestSha256 === null && n.lastHeartbeatAt !== null
+    && now - Date.parse(n.lastHeartbeatAt) <= FLEET_HEARTBEAT_WINDOW_MS).map(n => n.node);
   const failed = [
     ...(head !== main ? ['CHECKOUT_NOT_MAIN'] : []),
     ...(!roles.length || differ.length ? ['SOURCE_RECORD_NOT_THIS_CHECKOUT'] : []),
     ...(installed !== source ? ['SOURCE_RECORD_NOT_THIS_NODE'] : []),
     ...(fleet.status !== 'PASS' ? [`FLEET_${fleet.status}${fleet.reason ? `_${fleet.reason}` : ''}`] : []),
+    ...(unreported.length ? ['FLEET_NODE_SOURCE_UNREPORTED'] : []),
+    ...(view && view.dropped > 0 ? ['FLEET_NODES_DROPPED'] : []),
     ...policyFailures({ status, fleetTrain: await checkout.fleetTrain(), mode, now }),
   ];
   return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), checkoutHead: head, mainSha: main ?? null, ciSourceManifestSha256: source,
-    installedCiSourceManifestSha256: installed, recordSourceSha: manifest?.sourceSha ?? null, ...(differ.length ? { rolesDiffer: differ } : {}), fleet,
+    installedCiSourceManifestSha256: installed, recordSourceSha: manifest?.sourceSha ?? null, ...(differ.length ? { rolesDiffer: differ } : {}), fleet, ...(unreported.length ? { sourceUnreported: unreported } : {}),
     policy: { trainEnabled: status?.train?.enabled ?? null, trainLanding: status?.train?.landing ?? null, lastAt: status?.train?.last?.at ?? null,
       lastRoute: status?.train?.last?.landing?.route ?? null } };
 }
@@ -250,7 +259,8 @@ export async function landingPrecheck({ mode, repo = DEFAULT_REPO, only = null, 
   }
   const p5Snapshot = result.items.P5?.snapshot;
   if (p5Snapshot) delete result.items.P5.snapshot;
-  result.verdict = items.length > 0 && items.every(i => result.items[i].pass === true) ? 'GO' : 'NO-GO';
+  // review optional 2: only the whole mode can be GO; a subset (--only) that passes is PARTIAL-PASS (exit 0 as before)
+  result.verdict = !(items.length > 0 && items.every(i => result.items[i].pass === true)) ? 'NO-GO' : only === null ? 'GO' : 'PARTIAL-PASS';
   // The snapshot of the main ruleset is kept only from a full --before GO (R2): it is what --after compares with.
   if (mode === 'before' && only === null && result.verdict === 'GO' && p5Snapshot) {
     await files.writeSnapshot({ contract: SNAPSHOT_CONTRACT, readAt, ...p5Snapshot });
@@ -300,7 +310,7 @@ export async function main(argv, { log = s => process.stdout.write(s + '\n') } =
   const r = await landingPrecheck({ mode: values.before ? 'before' : 'after', repo: values.repo ?? DEFAULT_REPO, only, gh: ghPort(),
     files: filePorts({ root: values.root ?? DEFAULT_ROOT, snapshot: values.snapshot }), checkout: checkoutPort() });
   log(JSON.stringify(r));
-  return r.verdict === 'GO' ? 0 : 1;
+  return r.verdict === 'GO' || r.verdict === 'PARTIAL-PASS' ? 0 : 1;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
