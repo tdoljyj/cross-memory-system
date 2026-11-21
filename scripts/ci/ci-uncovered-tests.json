@@ -174,7 +174,7 @@
       "path": "apps/clued-cloud/tests/work-claims-pr-task-binding-db.test.mjs",
       "kind": "stale-or-suspect",
       "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
-      "reason": "1 处：最后一个 PR 结束后认领为 RELEASED（work_claim_pr_end_release_v1 的设计行为），测试仍期望不释放；由 PR 生命周期对账兜底的 PR 改期望并列入 AUTHORIZATION_DB_TESTS"
+      "reason": "1 处（'unknown' 视为 open 的新语义已改入断言）：最后一个 PR 结束后认领为 RELEASED（work_claim_pr_end_release_v1 的设计行为），测试仍期望不释放；由 PR 生命周期对账兜底的 PR 改期望并列入 AUTHORIZATION_DB_TESTS"
     },
     {
       "path": "apps/clued-cloud/tests/work-verify-shared-observation-db.test.mjs",
