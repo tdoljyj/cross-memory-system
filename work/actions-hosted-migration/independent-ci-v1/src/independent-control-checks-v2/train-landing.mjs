@@ -206,17 +206,13 @@ export function landingRoute({ rules, rulesets, appId }) {
 }
 // The live read for landingRoute: main's rules (or the ones this run already read), then this App's bypass state of each of their
 // rulesets, one GET /rulesets/{id} each (GitHub has no read that returns both). Never throws; a read that fails is that ruleset
-// unreadable. bypass 'always' (stage 8: the current path records them in the rehearsal, from this same read) or 'when-train-landed'
-// (stage 10, every round: before kooyumi-train-landed they cannot change the route, so they are not read).
-export async function readLandingRoute({ github, appId, rules = undefined, bypass = 'always' }) {
+// unreadable. Stage 8 records them in the rehearsal; stage 10 (Fable 11-21 open points §5) every round, into its facts' landing.bypass.
+export async function readLandingRoute({ github, appId, rules = undefined }) {
   let list = rules;
   if (list === undefined) {
     try { const reply = await github.readBranchRules('main'); list = reply?.complete === true ? reply.rules : null; } catch { list = null; }
   }
   const ids = Array.isArray(list) ? [...new Set(list.map(r => r?.rulesetId))].filter(id => Number.isSafeInteger(id) && id > 0) : [];
-  const trainLanded = Array.isArray(list) && list.some(r => r?.type === 'required_status_checks' && Array.isArray(r.parameters?.required_status_checks)
-    && r.parameters.required_status_checks.some(c => c?.context === TRAIN_ONLY_CHECK));
-  if (bypass === 'when-train-landed' && !trainLanded) return landingRoute({ rules: list, rulesets: null, appId });
   const rulesets = new Map();
   if (ids.length <= MAX_RULESETS && typeof github?.readRuleset === 'function') for (const id of ids) {
     try { const r = await github.readRuleset(id); if (r?.id === id) rulesets.set(id, r); } catch { /* unreadable */ }

@@ -2,17 +2,18 @@
 // answers GO or NO-GO with the evidence of every item, and never changes a ruleset, a branch, a check or a node. DESK runs it with
 // the repository owner's gh identity (the ruleset bypass lists are only shown to an administrator), at the times of §5:
 //
-//   node rollout/landing-precheck.mjs --before --snapshot <file> [--root <resident root>] [--receipts <dir>] [--repo <owner/name>] [--only P1,P4]
+//   node rollout/landing-precheck.mjs --before --snapshot <file> [--root <resident root>] [--repo <owner/name>] [--only P1,P4]
 //   node rollout/landing-precheck.mjs --after  --snapshot <file> [same options]
 //
 //   R1  the independent ruleset just created:     --before --only P4 (the snapshot is not written for a subset)
-//   R1+ the first front after it:                 --before --only P3 (until bypass.independent reads never)
+//   R1+ stage 10's next round after it:           --before --only P3 (until bypass.independent reads never)
 //   R2  right before the Owner is asked to save:  --before (all of P1-P5; writes the main ruleset's snapshot; GO only then ask)
 //   R3  right after the Owner saved:              --after  (P1-P6 against that snapshot)
 //
-// Inputs, all read-only: gh (GET only: the branch rules, the rulesets, the staging runs and S's check-runs, main's head), this node's
-// state\status.json and record\source-manifest.json under --root, the stage-8 outcomes outcome-*.json under --receipts, and this
-// checkout (its source-closure.json files and its HEAD). The one file written is the --before snapshot (local, --snapshot).
+// Inputs, all read-only and none needing elevation: gh (GET only: the branch rules, the rulesets, the staging runs and S's check-runs,
+// main's head), this node's state\status.json and record\source-manifest.json under --root, and this checkout (its source-closure.json
+// files, its policy.mjs FLEET_TRAIN and its HEAD). The one file written is the --before snapshot (local, --snapshot). The stage-8
+// receipts are not read (Fable 11-21 open points §5: their directory is denied without elevation).
 // Items (§4):
 //   P1  precondition one: every Actions-pinned (15368) required check of the live rules has a completed success of App 15368 on at
 //       least 2 of the newest 10 distinct S on clued-train/staging (a), and at least 1 of those S has all of them (b); not consecutive.
@@ -22,7 +23,8 @@
 //       checkout's Source closure files, and this checkout is origin's main; and (open points §3) this node's policy has the train on
 //       and landing push, stage 10's newest round (within 60 minutes) read a landing route (--before: github-merge), and this
 //       checkout's FLEET_TRAIN lands by push.
-//   P3  the newest stage-8 rehearsal reads both bypass states as never (the App token can read the field).
+//   P3  stage 10's newest round in state\status.json (train.last.landing.bypass) reads this App's bypass state of the main and the
+//       independent ruleset: --before both never (the App token can read the field); --after main always and independent never.
 //   P4  exactly one independent ruleset on the default branch: active, rules exactly deletion and non_fast_forward, no bypass actor;
 //       and main's branch rules carry those two rules from it.
 //   P5  the main ruleset 24182890. --before: no bypass actor, no kooyumi-train-landed. --after: the bypass actors exactly Integration
@@ -49,7 +51,6 @@ export const S_WINDOW = 10;
 export const ITEMS = Object.freeze(['P1', 'P2', 'P3', 'P4', 'P5', 'P6']);
 export const DEFAULT_REPO = 'tdoljyj/cross-memory-system';
 export const DEFAULT_ROOT = 'C:\\ProgramData\\CluedIndependentCI\\resident';
-export const DEFAULT_RECEIPTS = 'C:\\ProgramData\\CluedIndependentCI\\state\\v2\\receipts';
 const CLOSURE = 'work/actions-hosted-migration/independent-ci-v1/src/resident-v2/source-closure.json';
 const CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const sha256 = b => createHash('sha256').update(b).digest('hex');
@@ -142,17 +143,18 @@ export async function p2({ gh, repo, files, checkout, now, mode = 'before' }) {
 }
 
 // ---- P3 ----
-export async function p3({ files }) {
-  const names = (await files.list(files.receipts)).filter(n => /^outcome-[A-Za-z0-9]+\.json$/.test(n));
-  let newest = null;
-  for (const n of names) {
-    let o; try { o = JSON.parse((await files.read(path.join(files.receipts, n))).toString('utf8')); } catch { continue; }
-    if (!plain(o?.rehearsal) || !Number.isFinite(Date.parse(o.at))) continue;
-    if (!newest || Date.parse(o.at) > Date.parse(newest.at)) newest = { file: n, at: o.at, rehearsal: o.rehearsal };
-  }
-  if (!newest) refuse('NO_REHEARSAL');
-  const b = newest.rehearsal.bypass;
-  return { pass: plain(b) && b.main === 'never' && b.independent === 'never', newest };
+// Fable 11-21 open points §5: from state\status.json, the round stage 10 last wrote (train.last.landing.bypass), never the receipts.
+// --after: the state route push needs (main always, independent never); P6 judges the route itself.
+export async function p3({ files, mode = 'before' }) {
+  const status = JSON.parse((await files.read(files.status)).toString('utf8'));
+  const last = parseTrainLast(status?.train?.last);
+  const bypass = last?.landing?.bypass ?? null;
+  const want = mode === 'after' ? 'always' : 'never';
+  const failed = !bypass ? ['BYPASS_NOT_READ'] : [
+    ...(bypass.main !== want ? [mode === 'after' ? 'BYPASS_MAIN_NOT_ALWAYS' : 'BYPASS_MAIN_NOT_NEVER'] : []),
+    ...(bypass.independent !== 'never' ? ['BYPASS_INDEPENDENT_NOT_NEVER'] : []),
+  ];
+  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), at: last ? new Date(last.at).toISOString() : null, bypass };
 }
 
 // ---- P4 ----
@@ -220,7 +222,7 @@ export async function p6({ files, snapshot }) {
 }
 
 // The whole precheck. mode 'before' | 'after'; only: the items to decide (default all of the mode's). Ports: gh { get, paged } (GET
-// only), files { read, list, status, sourceManifest, receipts, writeSnapshot, readSnapshot }, checkout { head, read }.
+// only), files { read, status, sourceManifest, writeSnapshot, readSnapshot }, checkout { fleetTrain, head, read }.
 export async function landingPrecheck({ mode, repo = DEFAULT_REPO, only = null, gh, files, checkout, clock = Date.now }) {
   if (!['before', 'after'].includes(mode)) refuse('USAGE');
   const items = (only ?? ITEMS).filter(i => ITEMS.includes(i) && (i !== 'P6' || mode === 'after'));
@@ -230,7 +232,7 @@ export async function landingPrecheck({ mode, repo = DEFAULT_REPO, only = null, 
   const rulesOnce = async () => (rules ??= await gh.paged(`repos/${repo}/rules/branches/main`, null));
   if (mode === 'after') { try { snapshot = await files.readSnapshot(); } catch { snapshot = null; } }
   if (snapshot && snapshot.contract !== SNAPSHOT_CONTRACT) snapshot = null;
-  const run = { P1: async () => p1({ gh, repo, rules: await rulesOnce() }), P2: () => p2({ gh, repo, files, checkout, now: clock(), mode }), P3: () => p3({ files }),
+  const run = { P1: async () => p1({ gh, repo, rules: await rulesOnce() }), P2: () => p2({ gh, repo, files, checkout, now: clock(), mode }), P3: () => p3({ files, mode }),
     P4: async () => p4({ gh, repo, rules: await rulesOnce() }), P5: () => p5({ gh, repo, mode, snapshot }), P6: () => p6({ files, snapshot }) };
   for (const i of items) {
     try { result.items[i] = await run[i](); } catch (e) { result.items[i] = { pass: false, failed: [e instanceof ItemError ? e.code : 'READ_FAILED'], detail: clip(e?.detail ?? e?.message) }; }
@@ -264,8 +266,8 @@ export function ghPort({ run = (args) => exec('gh', args, { maxBuffer: 64 * 1024
   };
   return { get, paged };
 }
-export function filePorts({ root, receipts, snapshot }) {
-  return { read: f => fs.readFile(f), list: d => fs.readdir(d), receipts,
+export function filePorts({ root, snapshot }) {
+  return { read: f => fs.readFile(f),
     status: path.join(root, 'state', 'status.json'), sourceManifest: path.join(root, 'record', 'source-manifest.json'),
     readSnapshot: async () => JSON.parse(await fs.readFile(snapshot, 'utf8')),
     writeSnapshot: async v => fs.writeFile(snapshot, JSON.stringify(v, null, 2) + '\n', { flag: 'wx' }) };
@@ -278,12 +280,12 @@ export function checkoutPort(dir = CHECKOUT) {
 
 export async function main(argv, { log = s => process.stdout.write(s + '\n') } = {}) {
   const { values } = parseArgs({ args: argv, options: { before: { type: 'boolean' }, after: { type: 'boolean' }, snapshot: { type: 'string' },
-    root: { type: 'string' }, receipts: { type: 'string' }, repo: { type: 'string' }, only: { type: 'string' } } });
+    root: { type: 'string' }, repo: { type: 'string' }, only: { type: 'string' } } });
   const only = values.only ? values.only.split(',').map(s => s.trim().toUpperCase()) : null;
   // The snapshot is written by a full --before and read by --after; a subset of --before (R1) needs none.
   if (values.before === values.after || (!values.snapshot && !(values.before && only))) refuse('USAGE');
   const r = await landingPrecheck({ mode: values.before ? 'before' : 'after', repo: values.repo ?? DEFAULT_REPO, only, gh: ghPort(),
-    files: filePorts({ root: values.root ?? DEFAULT_ROOT, receipts: values.receipts ?? DEFAULT_RECEIPTS, snapshot: values.snapshot }), checkout: checkoutPort() });
+    files: filePorts({ root: values.root ?? DEFAULT_ROOT, snapshot: values.snapshot }), checkout: checkoutPort() });
   log(JSON.stringify(r));
   return r.verdict === 'GO' ? 0 : 1;
 }

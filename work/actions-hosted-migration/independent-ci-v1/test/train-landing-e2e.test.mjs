@@ -709,8 +709,8 @@ function githubMerges(e, b) {
 const greens = (e, sha) => [...e.gh.world.checks.values()].filter(c => c.head_sha === sha && c.name === 'kooyumi-merge-slot' && c.conclusion === 'success');
 const PUSH1 = Object.freeze({ landing: 'push', batchMax: 1, unreadable: false });
 const TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass'];
-// stage 10 reads no bypass state before kooyumi-train-landed (it cannot change the route then): what push lacks without it
-const S10_TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing'];
+// Fable 11-21 open points §5: stage 10 reads the bypass states every round too, so it names what push lacks as stage 8 does
+const S10_TODAY_MISSING = TODAY_MISSING;
 
 test('three ways, today (no independent ruleset, no kooyumi-train-landed, the App cannot bypass main): a push-capable package lands through GitHub as today and never parks', async t => {
   const { e, b, T } = await opened(t, [910], { rules: 'today' });
@@ -1488,18 +1488,18 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
   for (let round = 0; round < 2; round++) {
     const r = await stage10(e);
     assert.equal(r.facts.decision, 'TRAIN_LANDING_STATE_UNREADABLE', JSON.stringify(r.facts));
-    assert.deepEqual(r.facts.landing, { route: 'push', missing: [], error: 'TRAIN_LANDING_STATE_UNREADABLE' });
+    assert.deepEqual(r.facts.landing, { route: 'push', missing: [], bypass: { main: 'always', independent: 'never' }, error: 'TRAIN_LANDING_STATE_UNREADABLE' });
     assert.equal(r.facts.openFrontBatch, null);
     validateTrainFacts(r.facts);
     assert.ok(!e.W.refs.has('heads/clued-train/staging') && !e.W.refs.has('heads/clued-train/staging.tmp'), 'nothing composed');
     assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
     // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
     const summary = trainSummary(r.facts);
-    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push' }]);
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
     const board = new StatusBoard({ clock: e.clock });
     board.update({ train: { enabled: 'on', last: summary } });
     const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
-    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push' }]);
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
     const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
     assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
     assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));

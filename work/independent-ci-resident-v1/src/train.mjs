@@ -284,10 +284,18 @@ export function sweepOf(s) {
 
 // D6 §8.4 (b): of stage 10's landing facts (push mode) the summary and state\status.json keep the error code, and (ADR 0018 §2 L2 item 7,
 // three ways) the route main's rules gave that round, so the status does not read the policy's landing 'push' as "pushing"; or nothing.
+// Fable 11-21 open points §5: and bypass, this App's bypass state of the main and the independent ruleset as stage 10 read them that
+// round (Source v2 train-landing.mjs#BYPASS_STATES, absent for the independent ruleset), which the landing precheck's P3 reads from
+// state\status.json without elevation; a bypass of another shape is dropped (the rest stays).
 const LANDING_ROUTES = Object.freeze(['push', 'github-merge', 'park']);
+const BYPASS_STATES = Object.freeze(['always', 'pull_requests_only', 'never', 'exempt', 'unreadable', 'not_read']);
+const bypassOf = b => (plain(b) && Object.keys(b).sort().join('|') === 'independent|main' && BYPASS_STATES.includes(b.main)
+  && (BYPASS_STATES.includes(b.independent) || b.independent === 'absent') ? Object.freeze({ main: b.main, independent: b.independent }) : null);
 const landingOf = l => {
   if (!plain(l)) return null;
-  const out = { ...(typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? { error: l.error } : {}), ...(LANDING_ROUTES.includes(l.route) ? { route: l.route } : {}) };
+  const bypass = bypassOf(l.bypass);
+  const out = { ...(typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? { error: l.error } : {}), ...(LANDING_ROUTES.includes(l.route) ? { route: l.route } : {}),
+    ...(bypass ? { bypass } : {}) };
   return Object.keys(out).length ? Object.freeze(out) : null;
 };
 const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunning === true, adopted: a.adopted === true, returned: a.returned === true, failedReported: a.failedReported === true,

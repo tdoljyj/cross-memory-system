@@ -217,15 +217,15 @@ test('landingRoute, fail closed: rules that cannot be read are never the current
   assert.equal(L.landingRoute({ ...today, rulesets: new Map([[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never', bypassActors: [{ actor_id: 9, actor_type: 'Team', bypass_mode: 'always' }] }]]) }).route, 'github-merge');
 });
 
-test('readLandingRoute: stage 8 reads every ruleset\'s bypass state with the rules (one GET /rulesets/{id} each); stage 10 only once kooyumi-train-landed is there', async () => {
+// Fable 11-21 open points §5: stage 10 reads the bypass states every round too (no 'when-train-landed' any more), for landing.bypass.
+test('readLandingRoute: stages 8 and 10 read every ruleset\'s bypass state with the rules (one GET /rulesets/{id} each), today and after C', async () => {
   const reads = [];
   const gh = input => ({ async readBranchRules() { reads.push('rules'); return { complete: true, rules: input.rules }; },
     async readRuleset(id) { reads.push(id); return input.rulesets.get(id); } });
   assert.equal((await L.readLandingRoute({ github: gh(ruleState(TODAY)), appId: APP })).bypass.main, 'never');
   assert.deepEqual(reads.splice(0), ['rules', MAIN_RS]);
-  assert.equal((await L.readLandingRoute({ github: gh(ruleState(TODAY)), appId: APP, bypass: 'when-train-landed' })).route, 'github-merge');
-  assert.deepEqual(reads.splice(0), ['rules']);
-  assert.equal((await L.readLandingRoute({ github: gh(ruleState()), appId: APP, bypass: 'when-train-landed' })).route, 'push');
+  const after = await L.readLandingRoute({ github: gh(ruleState()), appId: APP });
+  assert.deepEqual([after.route, after.bypass], ['push', { main: 'always', independent: 'never' }]);
   assert.deepEqual(reads.splice(0), ['rules', MAIN_RS, FF_RS]);
   // a read that throws is that ruleset unreadable, never an exception
   const failing = { async readBranchRules() { return { complete: true, rules: ruleState(TODAY).rules }; }, async readRuleset() { throw Object.assign(new Error('x'), { code: 'github_http_502' }); } };

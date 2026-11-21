@@ -211,8 +211,11 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     rules = rulesetFacts(reply.rules, appId);
     landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
-  // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8).
-  const route = !push ? null : rulesReason ? { route: 'park', missing: ['rules_unreadable'] } : await readLandingRoute({ github, appId, rules: landability.rules, bypass: 'when-train-landed' });
+  // ADR 0018 §2 L2 item 7: push behaviour only while main's rules read back as push (the same function as stage 8). Fable 11-21 open
+  // points §5: every round reads this App's bypass state of each ruleset too (one GET /rulesets/{id} each), and the facts carry it
+  // (landing.bypass -> state\status.json), so the landing precheck's P3 reads it there without elevation.
+  const route = !push ? null : rulesReason ? { route: 'park', missing: ['rules_unreadable'], bypass: { main: 'not_read', independent: 'not_read' } }
+    : await readLandingRoute({ github, appId, rules: landability.rules });
   const pushRoute = route?.route === 'push';
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
   if (holder?.boundPrs?.length > 1) {
@@ -583,7 +586,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingState = null;
-  let landingFacts = route ? { route: route.route, missing: route.missing } : null;
+  let landingFacts = route ? { route: route.route, missing: route.missing, bypass: { main: route.bypass.main, independent: route.bypass.independent } } : null;
   let missingYield = false, treeUnchecked = null;
   if (job.mode === 'on') {
     // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a

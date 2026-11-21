@@ -31,7 +31,7 @@
 // The protected-layer pre-check (§41.4, MergeAdmission v0.2 §2.4: a protected-layer front H must contain T) runs in mode on
 // only: stage 10 sets front.protectedLayer from the PR's changed paths and the admission policy (train-maintenance.mjs);
 // shadow mode reports FRONT_NEEDS_MAIN_MERGE only from GitHub's own facts, as before.
-import { validLandingMissing } from './train-landing.mjs';
+import { BYPASS_STATES, validLandingMissing } from './train-landing.mjs';
 import { validStrictReadiness, validStrictFrontReadiness, validTrainProviderBudget, validSweepProgress } from './train-strict.mjs';
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
@@ -348,8 +348,12 @@ const validBindingObservation = b => {
 };
 const prList = v => Array.isArray(v) && v.length <= 64 && v.every(n => Number.isSafeInteger(n) && n > 0);
 // route / missing (ADR 0018 §2 L2 item 7, Fable 2026-11-20): which way main's rules said this run, and what push still misses.
-const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect', 'route', 'missing'].includes(k))
-  && (l.route === undefined || ['push', 'github-merge', 'park'].includes(l.route))
+// Fable 11-21 open points §5: bypass, this App's bypass state of the main and the independent ruleset as stage 10 read them this round
+// (train-landing.mjs#landingRoute: BYPASS_STATES, and absent for the independent ruleset).
+const validBypass = b => plain(b) && Object.keys(b).sort().join('|') === 'independent|main' && BYPASS_STATES.includes(b.main)
+  && (BYPASS_STATES.includes(b.independent) || b.independent === 'absent');
+const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect', 'route', 'missing', 'bypass'].includes(k))
+  && (l.route === undefined || ['push', 'github-merge', 'park'].includes(l.route)) && (l.bypass === undefined || validBypass(l.bypass))
   && (l.missing === undefined || validLandingMissing(l.missing))
   && (l.error === undefined || (typeof l.error === 'string' && CODE.test(l.error))) && (l.mainSha === undefined || l.mainSha === null || SHA.test(l.mainSha))
   && (l.landed === undefined || (Array.isArray(l.landed) && l.landed.length <= 20 && l.landed.every(b => plain(b) && SHA.test(b.testSha ?? '') && prList(b.members))))
