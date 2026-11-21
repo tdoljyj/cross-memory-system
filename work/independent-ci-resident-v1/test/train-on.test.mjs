@@ -1059,3 +1059,17 @@ test('executor, on: TRAIN_LANDING_STATE_UNREADABLE tells the Owner and keeps lan
   assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', landing]);
   assert.equal(trainSummary({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing: { error: 'not a code' } })?.landing, undefined, 'only a code is kept');
 });
+
+// Fable 11-21 open points §5: stage 10's landing.bypass (this App's bypass state of the main and the independent ruleset) is kept in the
+// summary and state\status.json's train.last, for the landing precheck's P3 (no elevation needed); a bypass of another shape is dropped.
+test('open points §5: trainSummary and status.json keep landing.bypass; another shape is dropped, the route stays', async () => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const on = landing => ({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing });
+  const kept = { route: 'github-merge', bypass: { main: 'never', independent: 'never' } };
+  assert.deepEqual(trainSummary(on(kept))?.landing, kept);
+  status.update({ train: { enabled: 'on', last: trainSummary(on(kept)) } });
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last.landing, kept, 'status.json keeps it');
+  assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'always', independent: 'absent' } }))?.landing, { route: 'push', bypass: { main: 'always', independent: 'absent' } });
+  for (const bypass of [{ main: 'absent', independent: 'never' }, { main: 'never' }, { main: 'never', independent: 'x' }, { main: 'never', independent: 'never', more: 'never' }, 'never'])
+    assert.deepEqual(trainSummary(on({ route: 'push', bypass }))?.landing, { route: 'push' }, JSON.stringify(bypass));
+});

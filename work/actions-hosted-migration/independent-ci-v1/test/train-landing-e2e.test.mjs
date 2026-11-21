@@ -1041,6 +1041,27 @@ test('three ways, today: three queued PRs go one by one through GitHub, none par
   assert.deepEqual(e.adopted.map(a => a[0]), [910, 911, 912]);
 });
 
+// Fable 11-21 open points §5: the precheck's P3 reads the bypass states from state\status.json (the receipts directory is not readable
+// without elevation), so stage 10 reads them every round while push is in the package and its facts' landing carries them.
+test('open points §5: stage 10 (push in the package) reads both bypass states every round and its facts carry landing.bypass, today and after C', async t => {
+  let e = await world(t, { prs: [910], rules: 'today' });
+  let r = await stage10(e);
+  assert.equal(r.facts.landing?.route, 'github-merge');
+  assert.deepEqual(r.facts.landing?.bypass, { main: 'never', independent: 'absent' }, 'today: the App cannot bypass main, no independent ruleset');
+  validateTrainFacts(r.facts);
+  e = await world(t, { prs: [910], rules: 'today' });
+  e.W.rulesets.set(FF_RS, { id: FF_RS, currentUserCanBypass: 'never' });
+  e.W.rules = [...e.W.rules, { type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null }];
+  r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.bypass], ['github-merge', { main: 'never', independent: 'never' }], 'the independent ruleset created (R1): never/never');
+  e = await world(t, { prs: [910], rules: 'push' });
+  r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.bypass], ['push', { main: 'always', independent: 'never' }]);
+  // a facts landing.bypass of another shape is refused by the shared validator
+  for (const bypass of [{ main: 'x', independent: 'never' }, { main: 'never' }, { main: 'never', independent: 'never', other: 'never' }, 'never'])
+    assert.throws(() => validateTrainFacts({ ...r.facts, landing: { ...r.facts.landing, bypass } }), undefined, JSON.stringify(bypass));
+});
+
 test('three ways: the three conditions all read back -> push lands, the stage-10 facts say so', async t => {
   const { e, b } = await opened(t, [910]);
   const p = await stage8(t, e, b, { trainLanding: PUSH1 });

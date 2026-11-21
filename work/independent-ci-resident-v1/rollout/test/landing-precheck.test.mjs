@@ -2,7 +2,6 @@
 // gh port only ever runs `gh api <route>` (a GET), and the one file written is the --before snapshot.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import path from 'node:path';
 import test from 'node:test';
 import { ghPort, landingPrecheck, MAIN_RULESET_ID, SNAPSHOT_CONTRACT } from '../landing-precheck.mjs';
 
@@ -13,7 +12,6 @@ const NOW = Date.parse('2026-11-21T08:00:00Z'), iso = ms => new Date(ms).toISOSt
 const RESIDENT = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
 const FOUR = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows'];
 const CLOSURE = 'work/actions-hosted-migration/independent-ci-v1/src/resident-v2/source-closure.json';
-const RECEIPTS = 'R:\\receipts';
 
 function world() {
   const required = [...RESIDENT.map(context => ({ context, integration_id: APP })), ...FOUR.map(context => ({ context, integration_id: GHA }))];
@@ -49,11 +47,9 @@ function world() {
     train: { enabled: 'on', landing: 'push', nodes: { at: iso(NOW - 60_000), sourceManifestSha256: w.source, dropped: 0, nodes: [
       { node: 'TURING', sourceManifestSha256: w.source, state: 'online', lastHeartbeatAt: iso(NOW - 60_000) },
       { node: 'DESK', sourceManifestSha256: w.source, state: 'online', lastHeartbeatAt: iso(NOW - 120_000) }] },
-    last: { at: iso(NOW - 60_000), mode: 'on', wouldDo: 'NO_FRONT', decision: 'NO_FRONT', onDuty: true, landing: { route: 'github-merge' } } } };
-  w.receipts = new Map([
-    ['outcome-1.json', { at: iso(NOW - 7_200_000), rehearsal: { testSha: S[2], missing: ['independent_ruleset'], bypass: { main: 'never', independent: 'absent' } } }],
-    ['outcome-2.json', { at: iso(NOW - 3_600_000), rehearsal: { testSha: S[0], missing: ['train_landed_required'], bypass: { main: 'never', independent: 'never' } } }],
-    ['outcome-3.json', { at: iso(NOW - 60_000), status: 'BLOCKED' }]]);
+    // stage 10's newest round (open points §5): its landing carries both bypass states, read without elevation
+    last: { at: iso(NOW - 60_000), mode: 'on', wouldDo: 'NO_FRONT', decision: 'NO_FRONT', onDuty: true,
+      landing: { route: 'github-merge', bypass: { main: 'never', independent: 'never' } } } } };
   return w;
 }
 // The fixture gh: the routes the precheck reads, by path; there is no write route at all.
@@ -73,10 +69,12 @@ function ports(w) {
     throw new Error(`unexpected route ${r}`);
   };
   const gh = { get: async r => answer(route(r)), paged: async (r, key) => { const b = answer(route(r)); return key ? b[key] : b; } };
-  const files = { receipts: RECEIPTS, status: 'N:\\state\\status.json', sourceManifest: 'N:\\record\\source-manifest.json',
+  // the receipts directory (C:\ProgramData\CluedIndependentCI\state\v2\receipts) is denied without elevation, as on desk-w-591
+  const denied = f => { throw Object.assign(new Error(`EPERM: operation not permitted, ${f}`), { code: 'EPERM' }); };
+  const files = { receipts: 'R:\\receipts', status: 'N:\\state\\status.json', sourceManifest: 'N:\\record\\source-manifest.json',
     read: async f => f === 'N:\\state\\status.json' ? Buffer.from(JSON.stringify(w.status)) : f === 'N:\\record\\source-manifest.json' ? w.record
-      : w.receipts.has(path.basename(f)) ? Buffer.from(JSON.stringify(w.receipts.get(path.basename(f)))) : (() => { throw new Error(`ENOENT ${f}`); })(),
-    list: async () => [...w.receipts.keys()],
+      : f.startsWith('R:\\') ? denied(f) : (() => { throw new Error(`ENOENT ${f}`); })(),
+    list: async d => denied(d),
     readSnapshot: async () => { if (!w.snapshot) throw new Error('ENOENT'); return structuredClone(w.snapshot); },
     writeSnapshot: async v => { w.snapshot = structuredClone(v); } };
   const checkout = { fleetTrain: async () => structuredClone(w.fleetTrain), head: async () => w.head, read: async p => { if (!w.checkoutFiles.has(p)) throw new Error(`ENOENT ${p}`); return w.checkoutFiles.get(p); } };
@@ -96,7 +94,7 @@ test('T4 --before: GO on today\'s fixture; P1 counts the Actions checks of the l
   assert.deepEqual(r.items.P1.names, [...FOUR].sort());
   assert.deepEqual(r.items.P1.fullyGreen, [w.S[0], w.S[1]], 'S2: pending at the moment stage 8 published, green after: counted');
   assert.equal(r.items.P1.successes['ci-suites-windows'], 2);
-  assert.equal(r.items.P3.newest.file, 'outcome-2.json');
+  assert.deepEqual(r.items.P3.bypass, { main: 'never', independent: 'never' }, 'P3 from status.json; the receipts directory is denied');
   assert.equal(r.items.P4.id, FF);
   assert.deepEqual([w.snapshot.contract, w.snapshot.readAt, w.snapshot.required.length], [SNAPSHOT_CONTRACT, iso(NOW), 10]);
   // read-only: only reads, and no rehearsal is asked about S's checks
@@ -206,21 +204,30 @@ test('T4 P2 (open points §3): the train not on, landing not push, no landing.ro
   assert.ok(failedOf(await run(w, 'before', { only: ['P2'] }), 'P2').includes('STAGE10_ROUTE_NOT_READ'));
 });
 
-test('T4 P3: the newest rehearsal without bypass, or with a state read as unreadable or absent -> NO-GO with the record', async () => {
+// Fable 11-21 open points §5: P3 reads stage 10's newest round in state\status.json (train.last.landing.bypass), never the receipts
+// directory (denied without elevation). --before: both never.
+test('T4 P3 (open points §5): the receipts directory denied, status.json with both bypass states never -> P3 passes; missing, unreadable, not_read, absent or always -> NO-GO', async () => {
+  let w = world();
+  let r = await run(w, 'before', { only: ['P3'] });
+  assert.equal(r.items.P3.pass, true, JSON.stringify(r.items.P3));
   const cases = [
-    ['no bypass', r => { delete r.rehearsal.bypass; }],
-    ['main unreadable', r => { r.rehearsal.bypass.main = 'unreadable'; }],
-    ['independent absent', r => { r.rehearsal.bypass.independent = 'absent'; }],
-    ['independent not read', r => { r.rehearsal.bypass.independent = 'not_read'; }],
+    ['no bypass', l => { delete l.bypass; }, 'BYPASS_NOT_READ'],
+    ['no landing at all', (l, last) => { delete last.landing; }, 'BYPASS_NOT_READ'],
+    ['main unreadable', l => { l.bypass.main = 'unreadable'; }, 'BYPASS_MAIN_NOT_NEVER'],
+    ['main not read', l => { l.bypass.main = 'not_read'; }, 'BYPASS_MAIN_NOT_NEVER'],
+    ['main always (before C)', l => { l.bypass.main = 'always'; }, 'BYPASS_MAIN_NOT_NEVER'],
+    ['independent absent', l => { l.bypass.independent = 'absent'; }, 'BYPASS_INDEPENDENT_NOT_NEVER'],
+    ['independent not read', l => { l.bypass.independent = 'not_read'; }, 'BYPASS_INDEPENDENT_NOT_NEVER'],
+    ['independent unreadable', l => { l.bypass.independent = 'unreadable'; }, 'BYPASS_INDEPENDENT_NOT_NEVER'],
+    ['independent always', l => { l.bypass.independent = 'always'; }, 'BYPASS_INDEPENDENT_NOT_NEVER'],
   ];
-  for (const [label, change] of cases) {
-    const w = world(); change(w.receipts.get('outcome-2.json'));
-    const r = await run(w, 'before', { only: ['P3'] });
-    assert.equal(r.verdict, 'NO-GO', label);
-    assert.equal(r.items.P3.newest.file, 'outcome-2.json', label);
+  const wrong = [];
+  for (const [label, change, code] of cases) {
+    w = world(); change(w.status.train.last.landing, w.status.train.last);
+    r = await run(w, 'before', { only: ['P3'] });
+    if (r.verdict === 'GO' || !failedOf(r, 'P3').includes(code)) wrong.push([label, r.verdict, failedOf(r, 'P3')]);
   }
-  const w = world(); w.receipts.delete('outcome-1.json'); w.receipts.delete('outcome-2.json');
-  assert.deepEqual(failedOf(await run(w, 'before', { only: ['P3'] }), 'P3'), ['NO_REHEARSAL']);
+  assert.deepEqual(wrong, [], 'every case NO-GO naming its code');
 });
 
 test('T4 P5 and P6: --before refuses a main ruleset already changed; --after takes exactly the one save against the snapshot and a push round after it', async () => {
@@ -230,7 +237,7 @@ test('T4 P5 and P6: --before refuses a main ruleset already changed; --after tak
   w = world(); saveC(w); w.rulesets.get(MAIN_RULESET_ID).bypass_actors = [];
   assert.deepEqual(failedOf(await run(w, 'before', { only: ['P5'] }), 'P5'), ['TRAIN_LANDED_ALREADY_REQUIRED']);
   // the R2 -> R3 path: --before GO writes the snapshot; the Owner saves C; stage 10's next round reads push
-  const after = async (change, status = s => { s.train.last = { ...s.train.last, at: iso(NOW + 600_000), landing: { route: 'push' } }; }) => {
+  const after = async (change, status = s => { s.train.last = { ...s.train.last, at: iso(NOW + 600_000), landing: { route: 'push', bypass: { main: 'always', independent: 'never' } } }; }) => {
     const v = world();
     assert.equal((await run(v, 'before')).verdict, 'GO');
     saveC(v); change(v); status(v.status);
@@ -254,7 +261,7 @@ test('T4 P5 and P6: --before refuses a main ruleset already changed; --after tak
     assert.equal(r.verdict, 'NO-GO', label);
     assert.ok(failedOf(r, item).includes(code), `${label}: ${JSON.stringify(r.items[item])}`);
   }
-  r = await after(() => {}, s => { s.train.last = { ...s.train.last, at: iso(NOW + 600_000), landing: { route: 'park' } }; });
+  r = await after(() => {}, s => { s.train.last = { ...s.train.last, at: iso(NOW + 600_000), landing: { route: 'park', bypass: { main: 'never', independent: 'never' } } }; });
   assert.deepEqual(failedOf(r, 'P6'), ['ROUTE_NOT_PUSH']);
   r = await after(() => {}, () => {});
   assert.deepEqual(failedOf(r, 'P6'), ['NO_ROUND_AFTER_THE_SNAPSHOT', 'ROUTE_NOT_PUSH']);
