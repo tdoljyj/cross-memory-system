@@ -7,7 +7,8 @@
 // runs it from the pull request's trusted base checkout, so a pull request
 // cannot narrow its own selection, swap a suite's command line or extend the
 // known-failure list (ci-known-failures.json, read next to this file). The
-// commands themselves run the candidate's code and tests: that code is
+// baseline commands run first, followed by commands the candidate adds to
+// the selected suite (requiredCommands). The commands run the candidate's code and tests: that code is
 // reviewed through the protected-path rules, not through this file. The
 // candidate's own changes to the selection (this file, the workflow) select
 // every suite.
@@ -594,11 +595,45 @@ export function filterCommand(command, argv, named) {
   return result;
 }
 
+// Gap A (FABLE r8 B2): the trusted list first, in its order and with its policy, even if the PR removes or replaces a
+// command; then the commands the candidate's selector adds to the suite. Reading the candidate is lazy: only after the
+// baseline commands have run. A separate, read-only Node process (no environment; it may read only the candidate's
+// scripts/ci, where the selector and the modules it imports live) exports the candidate's list; candidate code never runs
+// inside the process that decides which commands passed. A checkout without the selector adds nothing.
+export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], trusted = fileURLToPath(import.meta.url) } = {}) {
+  if (!Array.isArray(baseline)) throw new Error(`unknown suite: ${id}`);
+  yield* baseline;
+  const candidate = path.resolve(root, 'scripts/ci/ci-required-selection.mjs');
+  if (candidate === path.resolve(trusted) || !existsSync(candidate) || readFileSync(candidate).equals(readFileSync(trusted))) return;
+  const read = spawnSync(process.execPath, ['--permission', `--allow-fs-read=${path.dirname(candidate)}`, '--input-type=module', '-e',
+    'const {SUITE_COMMANDS} = await import(process.argv[1]); process.stdout.write(JSON.stringify(SUITE_COMMANDS[process.argv[2]] ?? []));',
+    pathToFileURL(candidate).href, id], { cwd: root, env: {}, encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  if (read.status !== 0) throw new Error(`cannot read candidate commands for ${id}: ${read.error?.message ?? read.stderr}`);
+  const commands = JSON.parse(read.stdout);
+  if (!Array.isArray(commands)) throw new Error(`invalid candidate command list for ${id}`);
+  const key = ({ cwd, argv }) => JSON.stringify([cwd, argv]);
+  const seen = new Set(baseline.map(key));
+  for (const command of commands) {
+    const { cwd, argv } = command ?? {};
+    if (typeof cwd !== 'string' || !Array.isArray(argv) || !argv[0] || !argv.every((arg) => typeof arg === 'string')) {
+      throw new Error(`invalid candidate command for ${id}`);
+    }
+    const identity = key(command);
+    if (seen.has(identity)) continue;
+    const relative = path.relative(real(root), real(path.resolve(root, cwd)));
+    if (path.isAbsolute(cwd) || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+      throw new Error(`candidate command directory is outside the checkout: ${cwd}`);
+    }
+    seen.add(identity);
+    // Only the trusted list can attach a known-failure allowance (or any other policy) to a command.
+    yield { cwd, argv };
+  }
+}
+
 export class RunFilesError extends Error {}
 
 export function planFiles(id, { root, files, env = process.env }) {
-  const commands = SUITE_COMMANDS[id];
-  if (!commands) throw new RunFilesError(`unknown suite: ${id}`);
+  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new RunFilesError(`unknown suite: ${id}`);
   const list = (files ?? []).map(posixPath);
   if (list.length === 0) throw new RunFilesError('no test file named');
   for (const file of list) {
@@ -613,7 +648,7 @@ export function planFiles(id, { root, files, env = process.env }) {
   const matched = new Set();
   const accepts = [];
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
-  for (const command of commands) {
+  for (const command of requiredCommands(id, root)) {
     const cwd = path.join(root, command.cwd);
     // {base} is not a test file; a placeholder keeps commands that need it plannable (they are skipped).
     const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA || 'unset', report });
@@ -659,10 +694,10 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
   if (captureKnown) return writeKnown(id, root, env, keep);
-  const commands = SUITE_COMMANDS[id];
-  if (!commands) throw new Error(`unknown suite: ${id}`);
+  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
-  let steps = commands.map((command) => ({ command, argv: null }));
+  // The trusted commands, then the candidate's additions (read once the trusted ones have run).
+  let steps = (function* plan() { for (const command of requiredCommands(id, root)) yield { command, argv: null }; }());
   let named = null;
   if (files) {
     try {
@@ -734,7 +769,13 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
   const failed = [];
   let timedOut = false;
   for (const id of suites) {
-    const status = await run(id, { root, env, log });
+    let status = 1;
+    try {
+      status = await run(id, { root, env, log });
+    } catch (error) {
+      // e.g. a candidate selector whose command list cannot be read: this suite fails, the next ones still run
+      log(`::error title=${id}::${error.message}`);
+    }
     if (env.GITHUB_ACTIONS !== 'true' && status === LOCAL_TIMEOUT_EXIT) timedOut = true;
     summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
     if (status !== 0) failed.push(id);

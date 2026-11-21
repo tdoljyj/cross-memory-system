@@ -40,8 +40,8 @@
 //   run its commit and suites.)
 //
 // What runs is what CI runs for the pull request: the change merged into main
-// (CI tests refs/pull/N/merge), with the selection, known-failure list and
-// reporter of main's scripts/ci/ci-required-selection.mjs, CI_BASE_SHA set to
+// (CI tests refs/pull/N/merge), with the selection, command policy (including
+// additions from the PR), known-failure list and reporter of main's selector, CI_BASE_SHA set to
 // main, and the suites picked from the files the change itself touches. Each
 // suite runs in a clean worktree; unlike CI, every command of a failing suite
 // still runs, so each one can be compared. The application's dependencies come
@@ -1286,7 +1286,12 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
   const log = (line) => fs.writeSync(fd, `${line}\n`);
   const results = [];
   try {
-    for (const [index, command] of selector.SUITE_COMMANDS[id].entries()) {
+    // As runSuite: main's commands, then those the change adds to the suite (a main predating that has only its own list).
+    // Compared with the loaded file of main's selector, whichever module defines requiredCommands.
+    const trusted = selector.selectorUrl ? { trusted: fileURLToPath(selector.selectorUrl) } : {};
+    const commands = selector.requiredCommands?.(id, root, { baseline: selector.SUITE_COMMANDS[id], ...trusted }) ?? selector.SUITE_COMMANDS[id];
+    for (const command of commands) {
+      const index = results.length;
       const cwd = path.join(root, command.cwd);
       const known = command.known ?? null;
       try {
@@ -1422,8 +1427,15 @@ export function compareCommand(head, base, { selector, known = [] }) {
 const SEVERITY = ['pass', 'base', 'unknown', 'new'];
 
 // A suite's verdict: its worst command, with what each failing command says.
-export function compareSuite(head, base, { selector, knownLists = {} }) {
-  const commands = head.map((result, index) => ({ index, ...compareCommand(result, base?.[index], { selector, known: knownLists[result.known] ?? [] }) }));
+// A command after the first baselineCount is one the change added: main does not have it, so any failure of it is new.
+export function compareSuite(head, base, { selector, knownLists = {}, baselineCount = head.length }) {
+  const commands = head.map((result, index) => {
+    const outcome = compareCommand(result, base?.[index], { selector, known: knownLists[result.known] ?? [] });
+    if (index >= baselineCount && outcome.verdict !== 'pass') {
+      return { index, verdict: 'new', detail: `command added by the candidate failed (${result.error ?? result.status})` };
+    }
+    return { index, ...outcome };
+  });
   const worst = commands.reduce((a, b) => (SEVERITY.indexOf(b.verdict) > SEVERITY.indexOf(a.verdict) ? b : a), { verdict: 'pass' });
   const details = commands.filter((command) => command.verdict !== 'pass').map((command) => `command ${command.index + 1}: ${command.verdict}${command.detail ? ` (${command.detail})` : ''}`);
   return { verdict: worst.verdict, ...(details.length ? { detail: details.join('; ') } : {}) };
@@ -1517,12 +1529,14 @@ export async function verifySuites({ root, home, selector, main, dir, suites, lo
       cleanWorktree(dir);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
       const head = await runVerificationSuite(selector, id, dir, main, log, env);
-      outcome = compareSuite(head, null, { selector, knownLists });
-      if (outcome.verdict !== 'pass') {
+      // Only main's own commands are run on main to compare; a failing addition is new without that.
+      const baselineCount = selector.SUITE_COMMANDS[id].length;
+      let theirs = null;
+      if (compareSuite(head.slice(0, baselineCount), null, { selector, knownLists }).verdict !== 'pass') {
         console.log(`local-verify: ${platform}: ${id} failed; running it on main ${main.slice(0, 12)} to compare`);
-        const theirs = await mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase, run });
-        outcome = compareSuite(head, theirs, { selector, knownLists });
+        theirs = await mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase, run });
       }
+      outcome = compareSuite(head, theirs, { selector, knownLists, baselineCount });
     } catch (error) {
       outcome = error instanceof LocalSuiteTimeout
         ? { verdict: 'timeout', detail: error.message, exitCode: error.exitCode }

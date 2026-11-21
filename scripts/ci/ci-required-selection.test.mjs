@@ -1122,6 +1122,81 @@ test('every workflow step that runs suites through the selector sets CLUED_UNDER
 // A real run through the reporter: the failure shapes round 2 found masked.
 // The fixture is its own test run, not part of this one (as run-tests.mjs does).
 const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; return env; };
+
+// A candidate checkout whose selector is the trusted one, optionally with the suite's command list replaced.
+function candidateSelector(t) {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'ci-pr-commands-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'scripts/ci');
+  mkdirSync(dir, { recursive: true });
+  const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
+  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+  const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
+    commands === undefined ? source : `${source}\nSUITE_COMMANDS[${JSON.stringify(id)}] = ${JSON.stringify(commands)};\n`);
+  change();
+  return { root, dir, change };
+}
+
+// Gap A (FABLE r8 B2): a command a pull request adds to a suite runs in that pull request's required check.
+test('the trusted CLI runs a command added by this PR and its failure fails the suite', (t) => {
+  const { root, dir, change } = candidateSelector(t);
+  const trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
+  // As in the required check: the trusted base's selector on the candidate checkout, in Actions (no local slot).
+  const run = () => spawnSync(process.execPath, [trusted, '--run', 'retrigger-counter', '--root', root],
+    { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+  const unchanged = run();
+  assert.equal(unchanged.status, 0, unchanged.stdout + unchanged.stderr);
+  assert.match(unchanged.stdout, /baseline executed/);
+
+  const failing = { cwd: 'scripts/ci', argv: ['node', '-e', "console.log('addition executed'); process.exit(23)"] };
+  // The new command comes first in the candidate. The baseline still runs first, and once.
+  change('retrigger-counter', [failing, ...SUITE_COMMANDS['retrigger-counter']]);
+  writeFileSync(path.join(dir, 'ci-known-failures.json'), 'invalid candidate quarantine');
+  const added = run();
+  assert.equal(added.status, 23, added.stdout + added.stderr);
+  assert.match(added.stdout, /baseline executed[\s\S]*\naddition executed\r?\n/);
+  assert.equal(added.stdout.split('baseline executed').length - 1, 1);
+
+  // A replacement cannot drop the original command either.
+  change('retrigger-counter', [failing]);
+  const replaced = run();
+  assert.equal(replaced.status, 23, replaced.stdout + replaced.stderr);
+  assert.match(replaced.stdout, /baseline executed[\s\S]*\naddition executed\r?\n/);
+  change('retrigger-counter', []);
+  const removed = run();
+  assert.equal(removed.status, 0, removed.stdout + removed.stderr);
+  const groups = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
+  assert.deepEqual(groups(removed.stdout), groups(unchanged.stdout));
+  assert.match(removed.stdout, /baseline executed/);
+
+  writeFileSync(path.join(dir, 'ci-required-selection.mjs'), 'throw new Error("invalid selector");');
+  const invalid = run();
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stdout, /baseline executed/);
+  assert.match(invalid.stderr, /invalid selector/);
+});
+
+test('candidate commands: no known-failure allowance, nothing outside the checkout, the targeted entry takes them', (t) => {
+  const { root, dir, change } = candidateSelector(t);
+  const baseline = SUITE_COMMANDS['retrigger-counter'];
+  const extra = { cwd: '.', argv: ['node', '--test', 'scripts/ci/retrigger-counter-extra.test.mjs'], known: 'retrigger-counter' };
+  change('retrigger-counter', [...baseline, extra]);
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], [...baseline, { cwd: extra.cwd, argv: extra.argv }]);
+  // --run-files plans a test file only the candidate's added command runs, with the command CI runs for it.
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), '');
+  writeFileSync(path.join(dir, 'retrigger-counter-extra.test.mjs'), '');
+  const { steps } = selection.planFiles('retrigger-counter', { root, files: ['scripts/ci/retrigger-counter-extra.test.mjs'], env: {} });
+  assert.deepEqual(steps.map((step) => step.argv), [extra.argv]);
+  assert.equal(steps[0].command.known, undefined);
+  change('retrigger-counter', [{ cwd: '..', argv: ['node', '-e', ''] }]);
+  assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /outside the checkout/);
+  change('retrigger-counter', [{ cwd: '.', argv: [] }]);
+  assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /invalid candidate command/);
+  // A checkout without the selector adds nothing.
+  rmSync(path.join(dir, 'ci-required-selection.mjs'));
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], baseline);
+});
 function runFixture(files) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-reporter-'));
   for (const [name, text] of Object.entries(files)) writeFileSync(path.join(dir, name), text);
@@ -1374,6 +1449,13 @@ test('a platform step runs every selected suite, names each result, fails when a
   assert.equal(await runSelected(['resident-node', 'offline-drill', 'selection'], { root: ROOT, env: {}, run, log, summary: (text) => lines.push(text) }), 1);
   assert.deepEqual(ran, ['resident-node', 'offline-drill', 'selection'], 'a failure does not hide the suites after it');
   assert.deepEqual(lines, ['- `resident-node`: passed\n', '- `offline-drill`: **failed**\n', '- `selection`: passed\n']);
+  const afterError = [];
+  assert.equal(await runSelected(['a', 'b'], { root: ROOT, env: {}, run: async (id) => {
+    afterError.push(id);
+    if (id === 'a') throw new Error('invalid candidate selector');
+    return 0;
+  }, log }), 1);
+  assert.deepEqual(afterError, ['a', 'b'], 'a suite that throws fails and does not hide the suites after it');
   assert.equal(await runSelected(['resident-node'], { root: ROOT, env: {}, run, log }), 0);
   assert.equal(await runSelected([], { root: ROOT, env: {}, run: () => assert.fail('nothing to run'), log }), 0);
 });
