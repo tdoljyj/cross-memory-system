@@ -4112,8 +4112,10 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
 // head's tree, with main's old tip an ancestor of that head, reuses the head's passing required-test run.
 // The fixture is #1178's real GitHub replies (scripts/ci/fixtures/main-push-tree-reuse-1178.json).
 const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1178.json'), 'utf8'));
-function treeReuseCase(workflow, mutate = () => {}) {
-  const f = structuredClone(TREE_REUSE);
+// #1202's real GitHub replies: its head is the executor bot's merge of main, so the bot triggered the head's runs.
+const TREE_REUSE_1202 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1202.json'), 'utf8'));
+function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE) {
+  const f = structuredClone(fixture);
   const w = f.workflows[workflow];
   const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.merge.sha, GITHUB_RUN_ATTEMPT: '1',
     GITHUB_RUN_ID: String(w.push_run.id), GITHUB_ACTOR: w.push_run.actor.login, GITHUB_REPOSITORY_OWNER: f.owner,
@@ -4178,6 +4180,56 @@ test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the h
     assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// R1 (FABLE-tree-reuse-close-out §1): a head run the executor bot triggered is same-tree evidence for the two
+// required-test workflows. The heavy jobs carry their real names only after the gate proved the bot's signed merge
+// of main, and the reuse requires those names, so no trust is added.
+for (const [label, workflow, sourceRun] of [['R1 Linux', 'clued-required-tests.yml', 44757766226],
+  ['R1w Windows', 'clued-required-tests-windows.yml', 44757766314]]) {
+  test(`${label}: #1202's main push is not run again; the head's run that the executor bot triggered decides`, async () => {
+    const ctx = treeReuseCase(workflow, undefined, TREE_REUSE_1202);
+    assert.deepEqual(ctx.w.runs.workflow_runs[0].actor, { login: 'clued-admission[bot]', id: 337003645, type: 'Bot' });
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_ALREADY_TESTED'], JSON.stringify(outcome));
+    const why = outcome.reasons.join(' ');
+    assert.match(why, new RegExp(`run ${sourceRun} attempt 1`));
+    assert.match(why, /PR #1202/);
+    assert.match(why, /tree a92406746d0a/);
+    assert.equal(outcome.tree_reuse.qualification, 'PR_EVIDENCE_ONLY');
+  });
+}
+
+test('R1: the gate step of #1202 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml', undefined, TREE_REUSE_1202);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
+  try {
+    const eventPath = path.join(dir, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(ctx.event));
+    const code = await mainWith(['--mode', 'gate'], { ...ctx.env, GITHUB_EVENT_PATH: eventPath,
+      GITHUB_OUTPUT: path.join(dir, 'out'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary') }, ctx.fetchImpl);
+    assert.equal(code, 0);
+    const out = fs.readFileSync(path.join(dir, 'out'), 'utf8');
+    assert.match(out, /^admitted=false$/m);
+    assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// R1 guards: green before and after the fix. Only the exact executor identity counts, and only a run whose heavy
+// jobs carry their real names (a bot run the gate did not prove gets "-skipped" names).
+for (const [label, mutate] of [
+  ['another bot id', (c) => { c.w.runs.workflow_runs[0].actor.id = 337003646; }],
+  ['the executor login on a User account', (c) => { c.w.runs.workflow_runs[0].actor.type = 'User'; }],
+  ['another bot login', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone[bot]'; }],
+  ['a heavy job under its "-skipped" name', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
+  ['a heavy job under its "-skipped" name that reports success', (c) => { c.w.jobs.jobs.at(-1).name += '-skipped'; }],
+]) {
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    test(`R1 guard (${workflow}, #1202): ${label} -> the heavy jobs run`, async () => {
+      const outcome = await treeReuseGate(treeReuseCase(workflow, mutate, TREE_REUSE_1202));
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    });
+  }
+}
 
 test('T2: every required job of both required-test workflows is in the reuse table, and so is every Actions-bound required check', async () => {
   const { TARGETS } = await import('./clued-tree-reuse.mjs');
