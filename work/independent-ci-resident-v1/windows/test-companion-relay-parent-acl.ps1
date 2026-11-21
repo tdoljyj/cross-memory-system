@@ -96,7 +96,7 @@ function Set-Mutated([string]$dir,[string]$how){
   'one-more' {$dacl.InsertAce($dacl.Count,(& $other 'S-1-5-21-1-2-3-1010'));$n++}
   'one-replaced' {$dacl.RemoveAce($i);$dacl.InsertAce($i,(& $other 'S-1-5-21-1-2-3-1011'))}
   'mask-bit' {$dacl[$i].AccessMask=$dacl[$i].AccessMask -bxor 1}
-  'inherit-bit' {$dacl[$i].AceFlags=$dacl[$i].AceFlags -bxor [Security.AccessControl.AceFlags]::ObjectInherit}
+  'inherit-bit' {$dacl[$i].AceFlags=[Security.AccessControl.AceFlags]([int]$dacl[$i].AceFlags -bxor [int][Security.AccessControl.AceFlags]::ObjectInherit)}
  }
  $acl=New-Object Security.AccessControl.DirectorySecurity;$acl.SetSecurityDescriptorSddlForm($raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access),[Security.AccessControl.AccessControlSections]::Access);[IO.Directory]::SetAccessControl($dir,$acl)
  $now=(Get-Acl -LiteralPath $dir).Sddl

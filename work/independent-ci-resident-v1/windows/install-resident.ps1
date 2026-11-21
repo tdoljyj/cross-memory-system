@@ -911,6 +911,17 @@ function Get-AceKeys([string]$sddl) {
   $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
   @(foreach ($a in $raw.DiscretionaryAcl) { if ($a -is [Security.AccessControl.CommonAce]) { $a.SecurityIdentifier.Value + '|' + [string]$a.AccessMask + '|' + [int]$a.AceFlags + '|' + [string]$a.AceQualifier } else { 'other|' + $a.GetType().Name } })
 }
+# The DACL's shape, what the two compare-before-write checks compare (Fable ruling 0e418483): the protected bit and the set of every ACE
+# in its binary form (type, flags, mask, SID, all of it), sorted ordinally. Not the SDDL text: Windows writes a DACL back with AI set, its
+# ACEs reordered and its masks spelled its own way (FA or 0x1f01ff), none of which changes what the DACL grants. A null DACL is refused.
+function Get-DaclShape([string]$sddl) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  if ($null -eq $raw.DiscretionaryAcl) { throw 'DACL_SHAPE_NULL_DACL' }
+  $aces = New-Object 'Collections.Generic.List[string]'
+  foreach ($a in $raw.DiscretionaryAcl) { $b = New-Object byte[] $a.BinaryLength; $a.GetBinaryForm($b, 0); $aces.Add([BitConverter]::ToString($b).Replace('-', '')) }
+  $aces.Sort([StringComparer]::Ordinal)
+  $(if (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) { 'P' } else { '-' }) + '|' + ($aces -join '|')
+}
 # The state of the folder for the service SID: refuses a missing or linked folder, a DACL that is not protected, and any ACE of the
 # service SID that is not exactly the planned one. present: that ACE is already there (an earlier install or the Owner's own icacls).
 function Get-ParentAclState([string]$path, [string]$res) {
@@ -935,7 +946,7 @@ function Get-ParentAclState([string]$path, [string]$res) {
 function Add-ParentAce($p) {
   if ($p.present -eq $true) { return $false }
   $now = (Get-Acl -LiteralPath $p.path).Sddl
-  if ((Get-DaclPart $now) -cne $p.before) { throw 'PARENT_ACL_CHANGED_SINCE_PLAN' }
+  if ((Get-DaclShape $now) -cne (Get-DaclShape $p.before)) { throw 'PARENT_ACL_CHANGED_SINCE_PLAN' }
   $oldKeys = @(Get-AceKeys $now)
   $acl = New-Object Security.AccessControl.DirectorySecurity
   $acl.SetSecurityDescriptorSddlForm($now + $p.ace, [Security.AccessControl.AccessControlSections]::Access)
@@ -949,7 +960,7 @@ function Add-ParentAce($p) {
 # The existing service append stays unchanged; this wrapper binds the companion's stricter rule and the complete expected DACL.
 function Assert-CompanionRelayParentPlan($p) {
   $now = Get-ParentAclState $p.path $p.sid
-  if ($now.before -cne $p.before -or (Get-RelayParentAclPresence ((Get-Acl -LiteralPath $p.path).Sddl) $p.sid) -ceq 'refused') { throw 'COMPANION_RELAY_PARENT_CHANGED_SINCE_PLAN' }
+  if ((Get-DaclShape $now.before) -cne (Get-DaclShape $p.before) -or (Get-RelayParentAclPresence ((Get-Acl -LiteralPath $p.path).Sddl) $p.sid) -ceq 'refused') { throw 'COMPANION_RELAY_PARENT_CHANGED_SINCE_PLAN' }
 }
 function Add-CompanionRelayParentAce($p) {
   Assert-CompanionRelayParentPlan $p
