@@ -824,8 +824,17 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
       if ($name -isnot [string] -or -not $name -or $null -eq $o.PSObject.Properties['result']) { continue }
       $reject = Get-DrillField $o 'rejectCode'
       if ($reject -isnot [string] -or -not $reject) { $reject = $null }
-      # at: when the step ended, as the line itself says (the host stage's lines carry it); null when it does not
+      # at: when the step ended, as the line itself says (the host stage's lines carry it); null when it does not. pwsh 7 reads a time
+      # string as a date (Windows PowerShell 5.1 leaves it a string): then the text is taken from the line itself, the "at" string
+      # of the line that reads as that same date, never the date formatted again.
       $at = Get-DrillField $o 'at'
+      if ($at -is [datetime] -or $at -is [DateTimeOffset]) {
+        $asRead = $at; $at = $null
+        foreach ($m in [regex]::Matches($t, '"at"\s*:\s*("(?:[^"\\]|\\.)*")')) {
+          $again = $null; try { $again = $m.Groups[1].Value | ConvertFrom-Json } catch { $again = $null }
+          if ($null -ne $again -and $again.GetType() -eq $asRead.GetType() -and $again -eq $asRead) { $at = $m.Groups[1].Value.Substring(1, $m.Groups[1].Value.Length - 2); break }
+        }
+      }
       if ($at -isnot [string] -or -not $at) { $at = $null }
       [void]$steps.Add([ordered]@{ stage = $Stage; name = $name; result = $o.result; rejectCode = $reject; detail = (Get-DrillField $o 'detail'); at = $at })
       $n++
