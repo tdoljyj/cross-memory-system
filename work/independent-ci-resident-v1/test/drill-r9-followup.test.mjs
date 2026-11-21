@@ -21,9 +21,9 @@ after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const q = s => `'${String(s).replace(/'/g, "''")}'`;
 const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}`;
 
-function ps(expr) {
+function ps(expr, exe = powershell) {
   const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ${ownMutexes}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`;
-  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 200_000 });
+  const r = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 200_000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
 }
@@ -62,10 +62,14 @@ test('F1: the failure snapshot comes home with the stage files, word for word, a
   assert.equal(fs.existsSync(path.join(cut, 'resident-failure-snapshot.json')), false);
 });
 
-test('F2: a step line that carries its own "at" keeps it; one without has null', opts, () => {
+// The drill itself runs under pwsh 7 (drill-vm.ps1's header), whose ConvertFrom-Json turns a time string into a DateTime: F2 is run
+// under both hosts (review of 86297d72: under pwsh the "at" came out null, and only Windows PowerShell 5.1 was tested).
+const pwsh = (() => { const r = windows ? spawnSync('pwsh', ['-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.Major']) : { status: 1 }; return r.status === 0 ? 'pwsh' : null; })();
+for (const [host5or7, exe] of [['Windows PowerShell', powershell], ['pwsh', pwsh]])
+test(`F2 (${host5or7}): a step line that carries its own "at" keeps it; one without has null`, { ...opts, skip: opts.skip || (exe === null && 'pwsh is not on this machine') }, () => {
   const host = ['{"name":"wsl-install","result":"ok","at":"2026-11-21T08:40:12.000Z"}', '{"name":"docker","result":"ok","at":17}', '{"status":"HOST_READY"}'].join('\n');
   const launcher = ['{"step":"verify","result":"failed","rejectCode":"RESIDENT_VERIFICATION_FAILED"}', '{"status":"X"}'].join('\n');
-  const r = ps(`(ConvertFrom-DrillFirstInstallSteps @{ host = ${q(host)}; launcher = ${q(launcher)} } $null).steps`);
+  const r = ps(`(ConvertFrom-DrillFirstInstallSteps @{ host = ${q(host)}; launcher = ${q(launcher)} } $null).steps`, exe);
   assert.deepEqual(r.map(s => [s.stage, s.name, s.at]), [['host', 'wsl-install', '2026-11-21T08:40:12.000Z'], ['host', 'docker', null], ['launcher', 'verify', null]]);
   assert.ok(r.every(s => Object.keys(s).join() === 'stage,name,result,rejectCode,detail,at'));
 });
