@@ -313,7 +313,7 @@ export async function main(argv, { log = s => process.stdout.write(s + '\n') } =
   return r.verdict === 'GO' || r.verdict === 'PARTIAL-PASS' ? 0 : 1;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   main(process.argv.slice(2)).then(code => { process.exitCode = code; }, error => {
     process.stdout.write(JSON.stringify({ contract: LANDING_PRECHECK_CONTRACT, verdict: 'NO-GO', code: error?.code ?? 'PRECHECK_FAILED', detail: clip(String(error?.message ?? error)) }) + '\n');
     process.exitCode = 1;
