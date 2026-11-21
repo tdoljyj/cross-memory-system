@@ -10,11 +10,13 @@
 //     stages 8 and 10 only, next to train-mode.json (the C# boundary reads only the files it names, never lists the directory);
 //   - batchChainOk: S is the cumulative merge of the batch members on T (one member: exactly [T, H]);
 //   - externalChecksDecision: the required checks App 5368905 does not produce (GitHub Actions) on S itself;
-//   - landingRulesDecision: main's live rules carry what push mode relies on (ADR 0018 §8);
+//   - landingRoute / readLandingRoute: which way a batch lands, read from main's live rules and this App's own bypass of each ruleset (push, the
+//     current github-merge path, or park; ADR 0018 §2 L2 item 7, Fable 2026-11-20); rehearsalOf / validRehearsal: S, what push lacks and this App's bypass state, recorded;
 //   - pickMembers and the bisection state (a Mergify-style search for the first failing prefix);
 //   - landMain: the one write to main, with its read-backs.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { REQUIRED_CHECK_NAMES } from './train-rules.mjs';
 
 export const LANDING_MODES = Object.freeze(['github-merge', 'push']);
 export const LANDING_DEFAULT = 'github-merge';
@@ -136,17 +138,103 @@ export async function readBatchChain({ readGitCommit, baseSha, heads, testSha, s
   return { ok, tree: ok ? commits.get(testSha).tree : null };
 }
 
-// ---- main's live rules (ADR 0018 §8) ----
-// push lands only while main's rules hold what it relies on: a non_fast_forward and a deletion rule (the ruleset with an empty
-// bypass list makes the bypass App unable to rewrite or delete main) and the never-published required check TRAIN_ONLY_CHECK
-// pinned to App 5368905 (no PR-page merge). The endpoint lists the rules that apply, not who may bypass them; the bypass lists
-// are the Owner's launch step and are not visible here.
-export function landingRulesDecision(rules, appId) {
-  if (!Array.isArray(rules)) return TRAIN_LANDING_RULES_MISSING;
-  const has = type => rules.some(r => plain(r) && r.type === type);
-  const trainOnly = rules.some(r => plain(r) && r.type === 'required_status_checks' && Array.isArray(r.parameters?.required_status_checks)
-    && r.parameters.required_status_checks.some(c => plain(c) && c.context === TRAIN_ONLY_CHECK && c.integration_id === appId));
-  return has('non_fast_forward') && has('deletion') && trainOnly ? null : TRAIN_LANDING_RULES_MISSING;
+// ---- which way a batch lands: main's live rules and this App's own bypass of each ruleset (ADR 0018 §2 L2 item 7; Fable 2026-11-20
+// 三态选路, 补：bypass 名单读不到, 补：可绕过字段读不到时) ----
+// A package with landing 'push' can push; whether it does is read from main's live rules each time (stage 8 before it writes, stage 10
+// when it opens a front batch), by this one function:
+//   github-merge  the rules read back completely and kooyumi-train-landed is nowhere in them. The bypass state is NOT looked at: the
+//                 current path only writes the control pair and GitHub merges; the publisher never writes main there.
+//   push          kooyumi-train-landed pinned to this App in the main ruleset, and: a ruleset other than the main ruleset applies to main
+//                 with non_fast_forward and deletion and this App cannot bypass it (never); this App can always bypass the main ruleset.
+//   park          the rules unreadable or read in part; or kooyumi-train-landed read with any of the push conditions not true or not
+//                 readable: TRAIN_LANDING_RULES_MISSING, nothing written. Once kooyumi-train-landed is read, never a current-path green.
+// The bypass state only matters after kooyumi-train-landed: on the current path it is still read (stage 8) and recorded in the rehearsal
+// (bypass.main / bypass.independent), never used to choose. That record is the live, App-token proof that the field is readable, a
+// prerequisite of the Owner saving C (ADR 0018 §8 item 7).
+// Who else is on a bypass list is not read here: an administrator checks it when the Owner saves the rules.
+// missing names what push still lacks (or what could not be read), in a fixed order: independent ruleset, kooyumi-train-landed, main.
+// The main ruleset is the one ruleset whose required checks hold the six this App publishes (train-rules.mjs#REQUIRED_CHECK_NAMES).
+// rulesets: id -> { currentUserCanBypass } (github.mjs#readRuleset: current_user_can_bypass, this caller's own bypass of that ruleset:
+// always, pull_requests_only, never or exempt; anything else is unreadable), or null when they were not read (stage 10 reads them only
+// when kooyumi-train-landed is there: not_read).
+export const LANDING_ROUTES = Object.freeze(['push', 'github-merge', 'park']);
+const MAX_RULESETS = 10;
+const CAN_BYPASS = Object.freeze(['always', 'pull_requests_only', 'never', 'exempt']);
+// The bypass states a record may carry: GitHub's four, unreadable (the field not there or not one of the four, or the read failed),
+// not_read, and for the independent ruleset absent (there is none).
+export const BYPASS_STATES = Object.freeze([...CAN_BYPASS, 'unreadable', 'not_read']);
+const MISSING = /^[a-z][a-z_]{1,59}(?::[A-Za-z0-9_.-]{1,40})?$/;
+// A list of missing items as landingRoute writes them (the stage-8 outcome, the stage-10 facts): bounded, each a known shape.
+export const validLandingMissing = (m, { empty = true } = {}) => Array.isArray(m) && m.length <= 16 && (empty || m.length > 0)
+  && m.every(x => typeof x === 'string' && MISSING.test(x)) && new Set(m).size === m.length;
+const rulesUnreadable = { route: 'park', missing: ['rules_unreadable'], bypass: { main: 'not_read', independent: 'not_read' } };
+export function landingRoute({ rules, rulesets, appId }) {
+  if (!Array.isArray(rules) || rules.length === 0 || rules.length >= 100 || !rules.every(r => plain(r) && typeof r.type === 'string' && r.type.length > 0
+    && Number.isSafeInteger(r.rulesetId) && r.rulesetId > 0)) return rulesUnreadable;
+  const checksOf = list => list.filter(r => r.type === 'required_status_checks').flatMap(r => (Array.isArray(r.parameters?.required_status_checks) ? r.parameters.required_status_checks : [null]));
+  if (checksOf(rules).some(c => !plain(c) || typeof c.context !== 'string')) return rulesUnreadable;
+  const byId = new Map();
+  for (const r of rules) byId.set(r.rulesetId, [...(byId.get(r.rulesetId) ?? []), r]);
+  if (byId.size > MAX_RULESETS) return rulesUnreadable;
+  const pinned = (list, context, app) => checksOf(list).some(c => c.context === context && c.integration_id === app);
+  const mains = [...byId].filter(([, list]) => REQUIRED_CHECK_NAMES.every(n => pinned(list, n, appId)));
+  if (mains.length !== 1) return { ...rulesUnreadable, missing: ['main_ruleset_unidentified'] };
+  const [mainId, mainRules] = mains[0];
+  const canOf = id => {
+    if (rulesets === null) return 'not_read';
+    const info = rulesets instanceof Map ? rulesets.get(id) : null;
+    return plain(info) && CAN_BYPASS.includes(info.currentUserCanBypass) ? info.currentUserCanBypass : 'unreadable';
+  };
+  const has = (list, type) => list.some(r => r.type === type);
+  const fastForwardOnly = [...byId.entries()].filter(([id, list]) => id !== mainId && has(list, 'non_fast_forward') && has(list, 'deletion')).map(([id]) => [id, canOf(id)]);
+  const states = fastForwardOnly.map(([, s]) => s);
+  const independent = states.length === 0 ? 'absent' : states.includes('never') ? 'never'
+    : states.find(s => s === 'unreadable' || s === 'not_read') ?? states[0];
+  const bypass = { main: canOf(mainId), independent };
+  const trainLanded = checksOf(rules).some(c => c.context === TRAIN_ONLY_CHECK);
+  const missing = [], unread = s => s === 'unreadable' || s === 'not_read';
+  if (independent === 'absent') missing.push('independent_ruleset_missing');
+  else if (unread(independent)) for (const [id, s] of fastForwardOnly) { if (unread(s)) missing.push(`ruleset_can_bypass_unreadable:${id}`); }
+  else if (independent !== 'never') missing.push('independent_ruleset_app_can_bypass');
+  if (!pinned(mainRules, TRAIN_ONLY_CHECK, appId)) missing.push('train_landed_check_missing');
+  if (unread(bypass.main)) missing.push(`ruleset_can_bypass_unreadable:${mainId}`);
+  else if (bypass.main === 'never') missing.push('main_app_cannot_bypass');
+  else if (bypass.main !== 'always') missing.push('main_app_bypass_not_always');
+  const route = !trainLanded ? 'github-merge' : missing.length === 0 ? 'push' : 'park';
+  return { route, missing: route === 'github-merge' && rulesets === null ? missing.filter(m => !m.startsWith('ruleset_can_bypass_unreadable:')) : missing,
+    bypass };
+}
+// The live read for landingRoute: main's rules (or the ones this run already read), then this App's bypass state of each of their
+// rulesets, one GET /rulesets/{id} each (GitHub has no read that returns both). Never throws; a read that fails is that ruleset
+// unreadable. Stage 8 records them in the rehearsal; stage 10 (Fable 11-21 open points §5) every round, into its facts' landing.bypass.
+export async function readLandingRoute({ github, appId, rules = undefined }) {
+  let list = rules;
+  if (list === undefined) {
+    try { const reply = await github.readBranchRules('main'); list = reply?.complete === true ? reply.rules : null; } catch { list = null; }
+  }
+  const ids = Array.isArray(list) ? [...new Set(list.map(r => r?.rulesetId))].filter(id => Number.isSafeInteger(id) && id > 0) : [];
+  const rulesets = new Map();
+  if (ids.length <= MAX_RULESETS && typeof github?.readRuleset === 'function') for (const id of ids) {
+    try { const r = await github.readRuleset(id); if (r?.id === id) rulesets.set(id, r); } catch { /* unreadable */ }
+  }
+  return landingRoute({ rules: list, rulesets, appId });
+}
+// The rehearsal of push on the current path (Fable 2026-11-20; 11-21 应修 2): what this stage 8 knows when its pair settled, nothing it does
+// not: S (testSha), what push still lacks (missing) and this App's own bypass state of the main and the independent ruleset, as read for
+// this route (bypass; recorded, never used to choose). S's checks are not in it: they have not finished when stage 8 settles, so a copy here
+// is almost always pending; whether every required check can succeed on S is read from GitHub before the Owner saves C (ADR 0018 §8 item 7,
+// rollout/landing-precheck.mjs). Recorded only; it never decides anything.
+export function rehearsalOf({ testSha, route }) {
+  return { testSha, missing: Array.isArray(route?.missing) ? [...route.missing] : [],
+    bypass: { main: route?.bypass?.main ?? 'not_read', independent: route?.bypass?.independent ?? 'not_read' } };
+}
+// The rehearsal record as the stage-8 outcome carries it (resident-v2/stage-inputs.mjs#writeOutcome): exactly the shape above, from this
+// publisher's own reads; anything else is left out (null).
+export function validRehearsal(r) {
+  if (!plain(r) || Object.keys(r).sort().join('|') !== 'bypass|missing|testSha' || !SHA.test(r.testSha ?? '')
+    || !plain(r.bypass) || Object.keys(r.bypass).sort().join('|') !== 'independent|main' || !BYPASS_STATES.includes(r.bypass.main)
+    || !(BYPASS_STATES.includes(r.bypass.independent) || r.bypass.independent === 'absent') || !validLandingMissing(r.missing)) return null;
+  return { testSha: r.testSha, missing: [...r.missing], bypass: { main: r.bypass.main, independent: r.bypass.independent } };
 }
 
 // ---- required checks App 5368905 does not produce, on S (ADR 0018 §2 L2 item 5) ----
@@ -157,15 +245,23 @@ const CHECK_FAILURE_GRACE_MS = 5 * 60_000;
 // Every required context pinned to another App (or to none) must have, as its newest check
 // run by id of the pinned App, a completed success. N9: unusable verdicts park; a fresh failure gives the repair lane time to act.
 // Contexts pinned to appId are the train's own (on H) and are not looked at here.
+// The required checks push waits for on S (also the landing precheck's P1 list, review A/B 11-21): every required context of the live
+// rules not pinned to appId, each { context, pin } (pin: the App whose runs count, null = any App's), in rule order.
+export function externalRequiredChecks({ rules, appId }) {
+  const required = [];
+  if (Array.isArray(rules)) for (const r of rules) if (plain(r) && r.type === 'required_status_checks' && Array.isArray(r.parameters?.required_status_checks))
+    for (const c of r.parameters.required_status_checks) if (plain(c) && typeof c.context === 'string' && c.integration_id !== appId)
+      required.push({ context: c.context, pin: Number.isSafeInteger(c.integration_id) && c.integration_id > 0 ? c.integration_id : null });
+  return required;
+}
+// The runs of one such check on commitSha: its name, that commit, and the pinned App's (any App's when not pinned).
+export const runsOfRequired = (checks, { context, pin }, commitSha) =>
+  checks.filter(k => plain(k) && k.name === context && k.head_sha === commitSha && (pin === null || k.app?.id === pin));
 export function externalChecksDecision({ rules, inventory, commitSha, appId, now = Date.now() }) {
   if (!Array.isArray(rules) || inventory?.complete !== true || !Array.isArray(inventory.checks)) return TRAIN_LANDING_CHECKS_PENDING;
-  const required = [];
-  for (const r of rules) if (plain(r) && r.type === 'required_status_checks' && Array.isArray(r.parameters?.required_status_checks))
-    for (const c of r.parameters.required_status_checks) if (plain(c) && typeof c.context === 'string' && c.integration_id !== appId) required.push(c);
   let pending = false;
-  for (const c of required) {
-    const pin = Number.isSafeInteger(c.integration_id) && c.integration_id > 0 ? c.integration_id : null;
-    const runs = inventory.checks.filter(k => plain(k) && k.name === c.context && k.head_sha === commitSha && (pin === null || k.app?.id === pin));
+  for (const c of externalRequiredChecks({ rules, appId })) {
+    const runs = runsOfRequired(inventory.checks, c, commitSha);
     const newest = runs.reduce((a, k) => (!a || k.id > a.id ? k : a), null);
     if (!newest || newest.status !== 'completed') { pending = true; continue; }
     if (INCONCLUSIVE_CHECKS.has(newest.conclusion)

@@ -308,6 +308,10 @@ function probeRepository(t, { seconds, waitMs = 45_000 }) {
     const dir = path.join(base, `change-${name}`);
     git(repo, 'worktree', 'add', '-q', '-b', `change-${name}`, dir, main);
     fs.writeFileSync(path.join(dir, 'change.txt'), `${name}\n`);
+    // main's selector imports the real one from outside its scripts/ci, which the reading of a candidate's command list
+    // (requiredCommands) cannot follow; the change's own selector lists the same commands by itself.
+    fs.writeFileSync(path.join(dir, 'scripts', 'ci', 'ci-required-selection.mjs'),
+      "export const SUITE_COMMANDS = { probe: [{ cwd: '.', argv: ['node', 'probe.mjs'] }] };\n");
     if (failing) fs.writeFileSync(path.join(dir, 'fail-this-change'), '');
     git(dir, 'add', '--all');
     git(dir, 'commit', '-q', '-m', name);

@@ -1802,3 +1802,18 @@ test('finalRuns read too early, unreadable job end 3: with no readable updated_a
   assert.equal(l.state.data.heads[HEAD].final, null);
   assert.deepEqual(w.posts, []);
 });
+
+// Fable 11-21 T5: the rules after C add kooyumi-train-landed pinned to 5368905, never published. The repair lane counts only the
+// Actions-pinned required checks: the same heads are repaired the same way (nothing more re-run, nothing held back, no read error).
+test('T5: the rules after C: a never-published kooyumi-train-landed changes nothing in the repair lane', async t => {
+  const trainLanded = { type: 'required_status_checks', parameters: { required_status_checks: [{ context: 'kooyumi-train-landed', integration_id: 5368905 }] } };
+  const seen = [];
+  for (const rules of [[requiredRule(...CHECK_NAMES)], [requiredRule(...CHECK_NAMES), trainLanded]]) {
+    const w = world({ rules });
+    const l = await lane(t, w);
+    await l.r.step();
+    seen.push({ posts: w.posts, dispatches: w.dispatches, toasts: l.toasts, records: Object.keys(l.state.data.records).sort() });
+  }
+  assert.deepEqual(seen[0].posts, [700], 'today: the skipped required tests are re-run');
+  assert.deepEqual(seen[1], seen[0]);
+});

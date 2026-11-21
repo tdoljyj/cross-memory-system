@@ -74,6 +74,8 @@ function slotFixture(t) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
     mkdirSync(scripts, { recursive: true });
+    // A checkout with scripts/ci has its selector (requiredCommands); this one adds no command to any suite.
+    writeFileSync(path.join(scripts, 'ci-required-selection.mjs'), 'export const SUITE_COMMANDS = {};\n');
     writeFileSync(path.join(root, 'descendant.mjs'), `
       import { existsSync, writeFileSync } from 'node:fs';
       writeFileSync('descendant.pid', String(process.pid));
@@ -737,7 +739,12 @@ test('the required primaries have no conditional step that a run can skip, excep
   const file = '.github/workflows/clued-required-tests.yml';
   const jobs = workflowJobs(readFileSync(path.join(ROOT, file), 'utf8'));
   // clued-cloud-tests selects clued-cloud for every change, so its run_clued_cloud condition always holds.
-  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] });
+  // These two jobs name their one suite in the workflow (its dependencies, timeout and the execution proof's conditional
+  // steps) and run no other: a new suite goes to ci-suites (FABLE-new-suite-run-points-20261121 §2).
+  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] },
+    'the clued-cloud-tests job names its suite in the workflow and runs no other: add a new suite to ci-suites');
+  assert.deepEqual(Object.keys(SUITES['migration-verify']), ['production-schema'],
+    'the migration-verify job names its suite in the workflow and runs no other: add a new suite to ci-suites');
   const expected = {
     'clued-cloud-tests': { 'Install from lockfile': "steps.select.outputs.run_clued_cloud == 'true'",
       'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'" },
@@ -1024,6 +1031,244 @@ test('every workflow step that runs suites through the selector sets CLUED_UNDER
 // A real run through the reporter: the failure shapes round 2 found masked.
 // The fixture is its own test run, not part of this one (as run-tests.mjs does).
 const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; return env; };
+
+// A candidate checkout whose selector is the trusted one, optionally with the suite's command list replaced.
+function candidateSelector(t) {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'ci-pr-commands-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'scripts/ci');
+  mkdirSync(dir, { recursive: true });
+  const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
+  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+  const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
+    commands === undefined ? source : `${source}\nSUITE_COMMANDS[${JSON.stringify(id)}] = ${JSON.stringify(commands)};\n`);
+  change();
+  return { root, dir, change };
+}
+
+// Gap A (FABLE r8 B2): a command a pull request adds to a suite runs in that pull request's required check.
+test('the trusted CLI runs a command added by this PR and its failure fails the suite', (t) => {
+  const { root, dir, change } = candidateSelector(t);
+  const trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
+  // As in the required check: the trusted base's selector on the candidate checkout, in Actions (no local slot).
+  const run = () => spawnSync(process.execPath, [trusted, '--run', 'retrigger-counter', '--root', root],
+    { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+  const unchanged = run();
+  assert.equal(unchanged.status, 0, unchanged.stdout + unchanged.stderr);
+  assert.match(unchanged.stdout, /baseline executed/);
+
+  const failing = { cwd: 'scripts/ci', argv: ['node', '-e', "console.log('addition executed'); process.exit(23)"] };
+  // The new command comes first in the candidate. The baseline still runs first, and once.
+  change('retrigger-counter', [failing, ...SUITE_COMMANDS['retrigger-counter']]);
+  writeFileSync(path.join(dir, 'ci-known-failures.json'), 'invalid candidate quarantine');
+  const added = run();
+  assert.equal(added.status, 23, added.stdout + added.stderr);
+  assert.match(added.stdout, /baseline executed[\s\S]*\naddition executed\r?\n/);
+  assert.equal(added.stdout.split('baseline executed').length - 1, 1);
+
+  // A replacement cannot drop the original command either.
+  change('retrigger-counter', [failing]);
+  const replaced = run();
+  assert.equal(replaced.status, 23, replaced.stdout + replaced.stderr);
+  assert.match(replaced.stdout, /baseline executed[\s\S]*\naddition executed\r?\n/);
+  change('retrigger-counter', []);
+  const removed = run();
+  assert.equal(removed.status, 0, removed.stdout + removed.stderr);
+  const groups = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
+  assert.deepEqual(groups(removed.stdout), groups(unchanged.stdout));
+  assert.match(removed.stdout, /baseline executed/);
+
+  writeFileSync(path.join(dir, 'ci-required-selection.mjs'), 'throw new Error("invalid selector");');
+  const invalid = run();
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stdout, /baseline executed/);
+  assert.match(invalid.stderr, /invalid selector/);
+});
+
+test('candidate commands: no known-failure allowance, nothing outside the checkout, the targeted entry takes them', (t) => {
+  const { root, dir, change } = candidateSelector(t);
+  const baseline = SUITE_COMMANDS['retrigger-counter'];
+  const extra = { cwd: '.', argv: ['node', '--test', 'scripts/ci/retrigger-counter-extra.test.mjs'], known: 'retrigger-counter' };
+  change('retrigger-counter', [...baseline, extra]);
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], [...baseline, { cwd: extra.cwd, argv: extra.argv, expanded: true }]);
+  // --run-files plans a test file only the candidate's added command runs, with the command CI runs for it.
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), '');
+  writeFileSync(path.join(dir, 'retrigger-counter-extra.test.mjs'), '');
+  const { steps } = selection.planFiles('retrigger-counter', { root, files: ['scripts/ci/retrigger-counter-extra.test.mjs'], env: {} });
+  assert.deepEqual(steps.map((step) => step.argv), [extra.argv]);
+  assert.equal(steps[0].command.known, undefined);
+  change('retrigger-counter', [{ cwd: '..', argv: ['node', '-e', ''] }]);
+  assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /outside the checkout/);
+  change('retrigger-counter', [{ cwd: '.', argv: [] }]);
+  assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /invalid candidate command/);
+  // A checkout without scripts/ci adds nothing.
+  rmSync(dir, { recursive: true, force: true });
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], baseline);
+});
+
+// As the required check runs: the trusted selector (given) on the candidate checkout, in Actions (no local slot).
+const runCandidate = (root, id = 'retrigger-counter', trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')) =>
+  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
+
+// Gap A review finding 1: the selector's bytes say nothing about the modules it imports, so a candidate selector at another
+// path is read even when it is byte for byte the trusted one.
+test('a command added by a module the candidate selector imports runs although the selector itself is unchanged', (t) => {
+  const checkout = (added) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'ci-pr-import-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const dir = path.join(root, 'scripts/ci');
+    mkdirSync(dir, { recursive: true });
+    copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+    writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
+import { ADDED } from './suite-additions.mjs';
+SUITE_COMMANDS['retrigger-counter'].push(...ADDED);
+`);
+    writeFileSync(path.join(dir, 'suite-additions.mjs'), `export const ADDED = ${JSON.stringify(added)};\n`);
+    writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+    return root;
+  };
+  const trusted = checkout([]);
+  const candidate = checkout([{ cwd: 'scripts/ci', argv: ['node', '-e', "console.log('import addition executed')"] }]);
+  assert.equal(readFileSync(path.join(trusted, 'scripts/ci/ci-required-selection.mjs'), 'utf8'),
+    readFileSync(path.join(candidate, 'scripts/ci/ci-required-selection.mjs'), 'utf8'));
+  const run = runCandidate(candidate, 'retrigger-counter', path.join(trusted, 'scripts/ci/ci-required-selection.mjs'));
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /baseline executed[\s\S]*\nimport addition executed\r?\n/);
+});
+
+// Gap A review finding 2: a checkout with scripts/ci but no selector moved or deleted it; what the change adds to the suite
+// cannot be read, so the suite fails (after the trusted commands ran).
+test('a candidate with scripts/ci but no selector fails the suite after its trusted commands ran', (t) => {
+  const { root, dir } = candidateSelector(t);
+  rmSync(path.join(dir, 'ci-required-selection.mjs'));
+  assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /no ci-required-selection\.mjs/);
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+  const run = runCandidate(root);
+  assert.notEqual(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /baseline executed/);
+  assert.match(run.stdout + run.stderr, /no ci-required-selection\.mjs/);
+});
+
+// Gap A review finding 4: a test file added to a trusted command's explicit list runs alone, planned as --run-files plans it,
+// after the trusted command ran as it is.
+test('a test file added to a trusted command list runs alone after the trusted command', (t) => {
+  const { root, dir, change } = candidateSelector(t);
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+  writeFileSync(path.join(dir, 'retrigger-counter-new.test.mjs'), "console.log('new file executed');\n");
+  const [trusted] = SUITE_COMMANDS['retrigger-counter'];
+  change('retrigger-counter', [{ ...trusted, argv: ['node', '--test', 'scripts/ci/retrigger-counter-new.test.mjs', ...trusted.argv.slice(2)] }]);
+  const run = runCandidate(root);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.deepEqual(groupLines(run.stdout), ['::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter.test.mjs',
+    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs']);
+  assert.equal(run.stdout.split('baseline executed').length - 1, 1);
+  assert.equal(run.stdout.split('new file executed').length - 1, 1);
+});
+
+test('an added test file runs without the trusted allowance, which still covers the old files; an added switch runs the whole command', (t) => {
+  const { root, change } = candidateSelector(t);
+  const [trusted] = SUITE_COMMANDS['admission-self-tests'];
+  const added = 'scripts/ci/added.test.mjs';
+  const old = trusted.argv[2];
+  const middle = [...trusted.argv.slice(0, 4), added, ...trusted.argv.slice(4)];
+  change('admission-self-tests', [{ ...trusted, argv: middle }]);
+  const known = { 'admission-self-tests': [{ file: old, path: ['old'], fingerprint: 'a'.repeat(16), reason: 'r' }] };
+  const report = [{ type: 'fail', file: path.join(root, old), path: ['old'], fingerprint: 'a'.repeat(16) },
+    { type: 'summary', counts: {}, success: false }].map((event) => JSON.stringify(event)).join('\n');
+  // The trusted command fails on its known failure only; the added file fails or passes.
+  const suite = (addedStatus) => {
+    const calls = [];
+    const spawn = (command, args) => { calls.push([command, ...args]); return { status: args.includes(added) ? addedStatus : 1 }; };
+    const status = executeSuite('admission-self-tests', { root, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known, log: () => {}, readReportFile: () => report });
+    return { status, calls };
+  };
+  const failing = suite(1);
+  assert.equal(failing.status, 1, 'the added file has no allowance');
+  assert.equal(failing.calls.length, 2);
+  assert.deepEqual(failing.calls[0].filter((arg) => !arg.startsWith('--test-reporter')), trusted.argv, 'the trusted command as it is');
+  assert.deepEqual(failing.calls[1], ['node', '--test', added], 'then only the added file, without the reporter of the allowance');
+  const passing = suite(0);
+  assert.equal(passing.status, 0, 'the old known failure stays allowed');
+  assert.deepEqual(passing.calls[1], ['node', '--test', added]);
+  // --run-files plans the added file with the command CI runs for it.
+  writeFileSync(path.join(root, added), '');
+  assert.deepEqual(selection.planFiles('admission-self-tests', { root, files: [added], env: {} }).steps.map((step) => step.argv), [['node', '--test', added]]);
+  // Guard: a switch added as well cannot be planned as files only, so the whole command is added, as before.
+  const switched = [...middle.slice(0, 2), '--test-only', ...middle.slice(2)];
+  change('admission-self-tests', [{ ...trusted, argv: switched }]);
+  assert.deepEqual([...selection.requiredCommands('admission-self-tests', root)], [trusted, { cwd: trusted.cwd, argv: switched, expanded: true }]);
+  assert.deepEqual(suite(0).calls[1], switched);
+});
+
+// Gap A L1 (FABLE-ci-gap-a-L1 §3): after the anchor (--test, -m unittest) a switch without = may take the next element as
+// its value. Dropping the other file operands would drop that value too, so such a command cannot be planned: a test file
+// added to it runs with the whole command, and --run-files refuses it. Only switches known to take no value plan files.
+const L1_SHAPES = [
+  ['node', '--test', '--test-name-pattern', 'foo', 'scripts/ci/a.test.mjs', 'scripts/ci/b.test.mjs'],
+  ['node', '--test', '--import', './setup.mjs', 'scripts/ci/a.test.mjs', 'scripts/ci/b.test.mjs'],
+  ['python', '-m', 'unittest', '-k', 'foo', 'scripts/ci/test_a.py', 'scripts/ci/test_b.py'],
+];
+
+test('L1: a test file added to a command whose switch takes a separate value runs with the whole command, and fails', (t) => {
+  const trustedCommand = { cwd: '.', argv: ['node', '--test', '--test-name-pattern', 'foo', 'scripts/ci/a.test.mjs'] };
+  const candidateCommand = { cwd: '.', argv: [...trustedCommand.argv, 'scripts/ci/b.test.mjs'] };
+  // The trusted selector runs as the CLI, before a line appended to it would: its list is edited in place.
+  const trusted = candidateSelector(t);
+  const entry = "'retrigger-counter': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/retrigger-counter.test.mjs'] }],";
+  const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
+  assert.ok(source.includes(entry));
+  writeFileSync(path.join(trusted.dir, 'ci-required-selection.mjs'),
+    source.replace(entry, `'retrigger-counter': [${JSON.stringify(trustedCommand)}],`));
+  const candidate = candidateSelector(t);
+  candidate.change('retrigger-counter', [candidateCommand]);
+  writeFileSync(path.join(candidate.dir, 'a.test.mjs'), "import test from 'node:test';\ntest('foo passes', () => {});\n");
+  writeFileSync(path.join(candidate.dir, 'b.test.mjs'),
+    "import test from 'node:test';\ntest('foo fails', () => { throw new Error('b foo executed'); });\n");
+  const run = runCandidate(candidate.root, 'retrigger-counter', path.join(trusted.dir, 'ci-required-selection.mjs'));
+  assert.notEqual(run.status, 0, `the failing added test must fail the suite
+${run.stdout}${run.stderr}`);
+  assert.deepEqual(groupLines(run.stdout), [`::group::retrigger-counter: (.) ${trustedCommand.argv.join(' ')}`,
+    `::group::retrigger-counter: (.) ${candidateCommand.argv.join(' ')}`]);
+  assert.match(run.stdout, /b foo executed/);
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', candidate.root, { baseline: [trustedCommand] })],
+    [trustedCommand, { ...candidateCommand, expanded: true }], 'the added command carries no files: it runs whole');
+});
+
+test('L1: filterCommand plans nothing for a switch that takes a separate value, and --run-files refuses the file', (t) => {
+  const { root, dir, change } = candidateSelector(t);
+  for (const name of ['retrigger-counter.test.mjs', 'a.test.mjs', 'b.test.mjs', 'test_a.py', 'test_b.py']) writeFileSync(path.join(dir, name), '');
+  for (const argv of L1_SHAPES) {
+    const named = new Set([argv.at(-1)]);
+    assert.deepEqual(selection.filterCommand({ cwd: '.' }, argv, named), { runs: [], matched: [], accepts: [] }, argv.join(' '));
+    change('retrigger-counter', [...SUITE_COMMANDS['retrigger-counter'], { cwd: '.', argv }]);
+    assert.throws(() => selection.planFiles('retrigger-counter', { root, files: [argv.at(-1)], env: {} }),
+      (error) => error instanceof selection.RunFilesError && /does not run/.test(error.message), argv.join(' '));
+  }
+});
+
+test('L1 guard: the --test-force-exit command of production-schema and a --switch=value still plan the named file only', (t) => {
+  const command = SUITE_COMMANDS['production-schema'].find(({ argv }) => argv.includes('--test-force-exit'));
+  const [first, second] = command.argv.slice(command.argv.indexOf('--test-force-exit') + 1);
+  const expanded = command.argv.map((arg) => (arg === '{db-concurrency}' ? '--test-concurrency=4' : arg));
+  const forceExit = selection.filterCommand(command, expanded, new Set([path.posix.join(command.cwd, second)]));
+  assert.deepEqual(forceExit.runs, [['node', 'scripts/run-tests.mjs', '--test', '--test-concurrency=4', '--test-force-exit', second]]);
+  assert.ok(forceExit.accepts.includes(path.posix.join(command.cwd, first)));
+  const equals = ['node', '--test', '--test-name-pattern=foo', 'scripts/ci/a.test.mjs', 'scripts/ci/b.test.mjs'];
+  assert.deepEqual(selection.filterCommand({ cwd: '.' }, equals, new Set(['scripts/ci/b.test.mjs'])).runs,
+    [['node', '--test', '--test-name-pattern=foo', 'scripts/ci/b.test.mjs']]);
+  // A file added to that command still runs alone (each side expands its own {db-concurrency}, as the run sees it).
+  const { root, change } = candidateSelector(t);
+  const added = 'tests/added-authorization-db.test.mjs';
+  const argv = [...command.argv, added];
+  change('production-schema', [{ ...command, argv }]);
+  const ran = expandArgv(argv, { cwd: path.join(root, command.cwd) });
+  assert.deepEqual([...selection.requiredCommands('production-schema', root, { baseline: [command] })],
+    [command, { cwd: command.cwd, argv: ran, expanded: true, files: [path.posix.join(command.cwd, added)] }]);
+  assert.deepEqual(selection.commandArgv({ cwd: command.cwd, argv: ran, expanded: true, files: [path.posix.join(command.cwd, added)] }, {}),
+    ran.filter((arg) => !command.argv.slice(command.argv.indexOf('--test-force-exit') + 1).includes(arg)));
+});
 function runFixture(files) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-reporter-'));
   for (const [name, text] of Object.entries(files)) writeFileSync(path.join(dir, name), text);
@@ -1283,6 +1528,13 @@ test('a platform step runs every selected suite, names each result, fails when a
   assert.equal(await runSelected(['resident-node', 'offline-drill', 'selection'], { root: ROOT, env: {}, run, log, summary: (text) => lines.push(text) }), 1);
   assert.deepEqual(ran, ['resident-node', 'offline-drill', 'selection'], 'a failure does not hide the suites after it');
   assert.deepEqual(lines, ['- `resident-node`: passed\n', '- `offline-drill`: **failed**\n', '- `selection`: passed\n']);
+  const afterError = [];
+  assert.equal(await runSelected(['a', 'b'], { root: ROOT, env: {}, run: async (id) => {
+    afterError.push(id);
+    if (id === 'a') throw new Error('invalid candidate selector');
+    return 0;
+  }, log }), 1);
+  assert.deepEqual(afterError, ['a', 'b'], 'a suite that throws fails and does not hide the suites after it');
   assert.equal(await runSelected(['resident-node'], { root: ROOT, env: {}, run, log }), 0);
   assert.equal(await runSelected([], { root: ROOT, env: {}, run: () => assert.fail('nothing to run'), log }), 0);
 });
@@ -1309,6 +1561,10 @@ test('a change that breaks only on Windows fails ci-suites-windows and passes th
   t.after(() => rmSync(candidate, { recursive: true, force: true }));
   mkdirSync(path.join(candidate, 'scripts', 'ci'), { recursive: true });
   mkdirSync(path.join(candidate, 'tools'));
+  // A checkout with scripts/ci carries its selector (requiredCommands reads it once the trusted commands pass); this
+  // change leaves the suite's commands as they are.
+  writeFileSync(path.join(candidate, 'scripts', 'ci', 'ci-required-selection.mjs'),
+    `export const SUITE_COMMANDS = ${JSON.stringify({ 'powershell-count': SUITE_COMMANDS['powershell-count'] })};\n`);
   writeFileSync(path.join(candidate, 'tools', 'setup.ps1'), 'Write-Output "changed"\n');
   writeFileSync(path.join(candidate, 'scripts', 'ci', 'check-powershell-count.mjs'),
     "const name = process.argv[1].split('/').pop();\nif (name === 'check-powershell-count.mjs') console.log('scanned');\n");
@@ -1333,16 +1589,33 @@ test('a change that breaks only on Windows fails ci-suites-windows and passes th
   // The step of the job on this host: the real commands, in the candidate checkout.
   const quiet = (command, args, options) => spawnSync(command, args, { ...options, stdio: 'pipe' });
   const lines = [];
-  const status = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
+  const logged = [];
+  const status = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(),
+    log: (text) => logged.push(String(text)),
     run: (id, options) => executeSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
+  // The suite's own commands decide, never an error before they run (e.g. a candidate selector that cannot be read).
+  assert.ok(!logged.some((line) => line.startsWith('::error title=powershell-count::')), logged.join('\n'));
   if (process.platform === 'win32') {
     assert.equal(hostPlatform(), job.platform, 'this host is the platform of the ci-suites-windows job');
     assert.equal(status, 1, 'ci-suites-windows fails: this is the failure a Linux-only CI never saw');
+    assert.ok(logged.some((line) => /^powershell-count: node --test .*check-powershell-count\.test\.mjs exited 1$/.test(line)),
+      `the change's own test is what fails:\n${logged.join('\n')}`);
     assert.deepEqual(lines, ['- `powershell-count`: **failed**\n']);
   } else {
-    assert.equal(status, 0, 'the same change is green on Linux');
+    assert.equal(status, 0, `the same change is green on Linux:\n${logged.join('\n')}`);
     assert.deepEqual(lines, ['- `powershell-count`: passed\n']);
   }
+  // Fixed for both platforms, the same change is green on this host too: every trusted command passes, so the
+  // candidate's own command list is read as well (this is the path the Linux side takes above).
+  writeFileSync(path.join(candidate, 'scripts', 'ci', 'check-powershell-count.mjs'),
+    "import path from 'node:path';\nconst name = path.basename(process.argv[1]);\nif (name === 'check-powershell-count.mjs') console.log('scanned');\n");
+  const fixedLines = [];
+  const fixedLog = [];
+  const fixed = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(),
+    log: (text) => fixedLog.push(String(text)),
+    run: (id, options) => executeSuite(id, { ...options, spawn: quiet }), summary: (text) => fixedLines.push(text) });
+  assert.equal(fixed, 0, `the fixed change is green on ${process.platform}:\n${fixedLog.join('\n')}`);
+  assert.deepEqual(fixedLines, ['- `powershell-count`: passed\n']);
 });
 
 // The Windows job is the selection's own entry point and nothing else, on a self-hosted Windows runner, behind the
@@ -1359,11 +1632,155 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
   for (const label of ['self-hosted', 'Windows', 'trust-internal', 'cap-node24', 'cap-python312']) assert.ok(labels.includes(label), label);
   assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
-  assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
-  assert.equal(job.match(/\brun: /g).length, 1, 'one command: nothing else can pass or fail the job');
+  // Two commands: the push baseline (git only, before any trusted code loads) and the selection's own entry point.
+  assert.deepEqual([...job.matchAll(/\n {6}- name: (.+)\n(?:(?! {6}- ).*\n)*? {8}run: /g)].map((m) => m[1]),
+    ['Resolve push baseline before loading trusted commands', 'Select and run the suites declared for Windows'],
+    'nothing else can pass or fail the job');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
 });
+
+// D6 N1: ci-suites-windows is a required check on main, and the train lands only when every required check
+// succeeded on S. The Windows workflow therefore runs on the train App's push to clued-train/staging under its
+// own name, exactly as clued-required-tests.yml does (ADR 0018 §8; ADR 0032 "counted the same way").
+test('bors staging, Windows side: the train App push to clued-train/staging publishes ci-suites-windows', () => {
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
+  assert.match(text, /\n {2}push:\n {4}branches: \[main, clued-train\/staging\]\n/);
+  assert.match(text, /group:.*github\.ref == 'refs\/heads\/clued-train\/staging' && github\.sha/);
+  assert.match(text, /cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}/);
+  const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
+  const expr = field => job.match(new RegExp(`^    ${field}: >-\\n([\\s\\S]*?)(?=^    [a-z])`, 'm'))[1]
+    .trim().replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.admission-gate', "needs['admission-gate']");
+  const evaluate = (field, change = {}, admitted = 'true') => Function('github', 'needs', `return (${expr(field)});`)(
+    { event_name: 'push', ref: 'refs/heads/clued-train/staging', actor: 'clued-ci-checks-turing-20261018[bot]',
+      repository: 'o/r', repository_owner: 'o', event: { pull_request: { base: {}, head: { repo: {} } } }, ...change },
+    { 'admission-gate': { outputs: { admitted } } });
+  for (const [change, admitted, allowed] of [[{}, 'true', true], [{ actor: 'owner' }, 'true', false],
+    [{ ref: 'refs/heads/clued-train/staging.tmp' }, 'true', false], [{ event_name: 'schedule' }, 'true', false],
+    [{}, 'false', false], [{ ref: 'refs/heads/main' }, 'true', true], [{ ref: 'refs/heads/main', actor: 'o' }, 'true', true]]) {
+    assert.equal(Boolean(evaluate('if', change, admitted)), allowed, JSON.stringify([change, admitted]));
+    assert.equal(evaluate('name', change, admitted), allowed ? 'ci-suites-windows' : 'ci-suites-windows-skipped');
+  }
+});
+
+test('bors staging, Windows side: T is resolved on main before the trusted selection loads, and is the base', () => {
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
+  assert.doesNotMatch(text, /github\.event\.before/);
+  const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
+  const candidate = job.indexOf('path: candidate');
+  const resolver = job.indexOf('id: train-base');
+  const trusted = job.indexOf('path: trusted');
+  assert.ok(candidate > 0 && candidate < resolver && resolver < trusted, 'candidate, then the baseline, then trusted');
+  assert.match(job.slice(0, resolver), /fetch-depth: 0/);
+  const verification = job.slice(resolver, trusted);
+  assert.match(verification, /\n {8}shell: powershell\n/);
+  assert.match(verification, /git rev-parse "\$\(\$env:STAGING_SHA\)\^1"/);
+  // On staging, the runner hook's chain walk read from main (behaviour: the multi-member tests below).
+  assert.match(verification, /execFileSync\('git', \['show', 'origin\/main:scripts\/runner\/clued-runner-job-started\.mjs'\]\)/);
+  assert.ok(verification.indexOf('stagingBaseFromCheckout(process.env.STAGING_SHA)') < verification.indexOf('$env:GITHUB_OUTPUT'));
+  assert.match(job, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
+  assert.match(job, /CI_BASE_SHA: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| steps\.train-base\.outputs\.ci_base \}\}\n/);
+});
+
+// A batch of N members is S = merge(...merge(T, H1)..., HN) (ADR 0019 §3): S^1 is an intermediate train merge, not on
+// main, and only T, the root of the member chain, is a trusted base. Each required job's push-baseline step runs here as
+// it does on the runner: its own script, its own shell, a real Git checkout whose origin/main is T and holds this
+// change's runner hook (the step's walk is the hook's, read from main).
+const LINUX_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
+const BASELINE_JOBS = [[LINUX_WORKFLOW, 'clued-cloud-tests'], [LINUX_WORKFLOW, 'ci-suites'], [LINUX_WORKFLOW, 'migration-verify'],
+  [WINDOWS_WORKFLOW, 'ci-suites-windows']];
+function baselineStep(file, id) {
+  const text = readFileSync(file, 'utf8');
+  const start = text.indexOf(`\n  ${id}:\n`);
+  assert.ok(start > 0, `${path.basename(file)} has job ${id}`);
+  const rest = text.slice(start + 1);
+  const end = rest.slice(1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+  const job = end < 0 ? rest : rest.slice(0, end + 1);
+  const step = job.slice(job.indexOf('        id: train-base\n'));
+  const shell = /\n {8}shell: (bash|powershell)\n/.exec(step)[1];
+  const lines = step.slice(step.indexOf('        run: |\n') + '        run: |\n'.length).split('\n');
+  const body = [];
+  for (const line of lines) { if (line.trim() && !line.startsWith(' '.repeat(10))) break; body.push(line.slice(10)); }
+  return { shell, script: body.join('\n').trimEnd() + '\n' };
+}
+// Never the bash on PATH under Windows (it may be WSL's): Git for Windows' own bash, or none.
+function shellCommand(shell) {
+  if (shell === 'powershell') return process.platform === 'win32' ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']] : null;
+  if (process.platform !== 'win32') return ['bash', []];
+  const exec = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout?.trim();
+  const bash = exec && path.resolve(exec, '..', '..', '..', 'bin', 'bash.exe');
+  return bash && existsSync(bash) ? [bash, []] : null;
+}
+function trainCheckout(t) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-train-base-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@invalid', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=', ...args],
+      { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git('init', '-q', '-b', 'work');
+  mkdirSync(path.join(dir, 'scripts', 'runner'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'scripts', 'runner', 'clued-runner-job-started.mjs'), path.join(dir, 'scripts', 'runner', 'clued-runner-job-started.mjs'));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'T');
+  const T = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
+  // Each commit its own object: same tree, parents and second would otherwise give the same SHA (H1 = H2).
+  let made = 0;
+  const commit = (...parents) => git('commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-m', `c${++made}`);
+  const [H1, H2, H3, X] = [commit(T), commit(T), commit(T), commit()];
+  git('update-ref', 'refs/remotes/origin/main', T);
+  const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
+  return { dir, T, H1, H2, one, two, three, commit, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
+}
+function runBaseline(t, { shell, script }, repo, env) {
+  const command = shellCommand(shell);
+  const output = path.join(repo, `output-${Math.random().toString(16).slice(2)}`);
+  const file = path.join(repo, `step-${Math.random().toString(16).slice(2)}.${shell === 'bash' ? 'sh' : 'ps1'}`);
+  writeFileSync(output, '');
+  writeFileSync(file, script);
+  const r = spawnSync(command[0], [...command[1], file], { cwd: repo, encoding: 'utf8',
+    env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: output, ...env } });
+  const outputs = Object.fromEntries(readFileSync(output, 'utf8').split('\n').filter(Boolean).map((line) => line.split('=')));
+  return { status: r.status, outputs, log: r.stdout + r.stderr };
+}
+const STAGING = { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/clued-train/staging' };
+for (const [file, id] of BASELINE_JOBS) {
+  const label = `${path.basename(file)} ${id}`;
+  const step = baselineStep(file, id);
+  const skip = shellCommand(step.shell) ? false : `no ${step.shell} for this platform`;
+  test(`bors staging, ${label}: the trusted base of a multi-member S is the chain root T, never S^1`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    for (const s of [repo.two, repo.three]) {
+      const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
+      assert.equal(r.status, 0, r.log);
+      assert.deepEqual(r.outputs, { sha: repo.T, ci_base: repo.T }, r.log);
+    }
+  });
+  test(`bors staging, ${label}: a one-member S keeps T = S^1; main pushes and pull requests are unchanged`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    const one = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: repo.one });
+    assert.equal(one.status, 0, one.log);
+    assert.deepEqual(one.outputs, { sha: repo.T, ci_base: repo.T }, one.log);
+    const main = runBaseline(t, step, repo.dir, { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.one });
+    assert.equal(main.status, 0, main.log);
+    assert.deepEqual(main.outputs, { ci_base: repo.T }, main.log);
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.one });
+    assert.equal(pr.status, 0, pr.log);
+    assert.deepEqual(pr.outputs, {}, pr.log);
+  });
+  test(`bors staging, ${label}: a chain that does not reach main through train merges gives no trusted base`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    // Rooted off main; a non-merge step; a non-merge S on main (git drops the repeated parent: the old S^1 check let it
+    // through); a member head already on main; S itself on main.
+    for (const s of [repo.offMain, repo.single, repo.commit(repo.T, repo.T), repo.commit(repo.one, repo.T), repo.T]) {
+      const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
+      assert.notEqual(r.status, 0, `${s}: ${r.log}`);
+      assert.equal(r.outputs.sha, undefined, r.log);
+    }
+  });
+}
 
 // The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
 // either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
