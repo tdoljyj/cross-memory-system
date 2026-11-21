@@ -254,7 +254,7 @@ test('Connect joins the existing main production release after its Grant and mai
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   const ordered = ['Verify and build Kooyumi Connect release source', 'Verify database prerequisites and record projection state',
     'Consume the Owner Grant for this commit', 'Deploy Clued PDF extractor Worker', 'Deploy Clued production Worker',
-    'Verify exact live commit and currentness transport', 'Verify production serves the repository Agent contract',
+    'Wait until production serves this commit', 'Verify production serves the repository Agent contract',
     'Verify the PDF extractor service binding', 'Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release',
     'Verify projection currentness after deployment'].map(index);
   assert.ok(ordered.every((position, i) => position >= 0 && (i === 0 || position > ordered[i - 1])));
@@ -263,7 +263,7 @@ test('Connect joins the existing main production release after its Grant and mai
   assert.match(build.run, /node --test tests\/oauth-origin\.test\.mjs/);
   assert.match(build.run, /--out-dir "\$RUNNER_TEMP\/kooyumi-connect-build"/);
   for (const name of ['Deploy Kooyumi Connect Worker', 'Verify Kooyumi Connect production release']) {
-    assert.equal(steps[index(name)].if, "${{ inputs.mode == 'deploy' }}");
+    assert.equal(steps[index(name)].if, "${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}");
   }
   const deploy = steps[index('Deploy Kooyumi Connect Worker')];
   assert.match(deploy.run, /wrangler deploy "\$RUNNER_TEMP\/kooyumi-connect-build\/worker\.mjs"/);

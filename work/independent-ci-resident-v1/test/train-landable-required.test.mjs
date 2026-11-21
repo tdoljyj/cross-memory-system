@@ -6,7 +6,8 @@ import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/i
 
 async function queued(t, { required = 'ci-suites', unreadable = null } = {}) {
   const e = await setup(t, { strict: true, tick: 1,
-    native: { nodes: [{ node: { name: 'fixture', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }] } });
+    // A3 window floor (review 2 high 1): the claim has been the front for 20 minutes, so a failure 11 minutes old is past its window.
+    native: { nodes: [{ node: { name: 'fixture', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(NOW) } }], holder: { takenAt: iso(NOW - 20 * 60_000) } } });
   const read = e.gh.readPullRequest;
   e.gh.readPullRequest = async n => ({ ...(await read(n)), auto_merge: { merge_method: 'merge' } });
   const rules = e.gh.readBranchRules;
@@ -32,7 +33,8 @@ async function queued(t, { required = 'ci-suites', unreadable = null } = {}) {
     return { onDuty: true, yielded: true };
   };
   const check = (id, head, name, conclusion, app = 15368, status = 'completed') =>
-    e.gh.world.checks.set(id, { id, app: { id: app }, name, head_sha: head, status, conclusion });
+    // A3 (Fable 11-20): a failed Actions check is a real failure once the observation window has passed with no new attempt.
+    e.gh.world.checks.set(id, { id, app: { id: app }, name, head_sha: head, status, conclusion, completed_at: status === 'completed' ? iso(NOW - 11 * 60_000) : null });
   check(501, H, 'ci-suites-windows', 'failure');
   check(502, otherHead, 'ci-suites-windows', 'failure');
   return { e, queue, check };
