@@ -26,8 +26,9 @@ const { PAUSE_CONTRACT, BETWEEN_BATCHES_RUNNING } = executor;
 const T0 = Date.parse('2026-11-08T08:17:46Z');
 const json = v => Buffer.from(JSON.stringify(v));
 const realSleep = ms => new Promise(r => setTimeout(r, ms));
-// The 30-second budget of the defect, in test time: the hung companion wait is 10 minutes of the mailbox clock.
-const PROMPT_MS = 5_000;
+// The 30-second budget of the defect, in test time: the hung companion wait is 10 minutes of the mailbox clock. Every wait under it
+// returns as soon as its event comes, so the full 30 seconds costs a passing run nothing (one took 7.9 s on CI, run 44087930494).
+const PROMPT_MS = 30_000;
 // Ticks the queued batch takes to complete once the between-batches step has ended: measured 1 (it may take one more while the step's
 // ending settles), about ten times that. A count of ticks, not a wall-clock budget.
 const STEPS_TO_BATCH = 10;
@@ -133,9 +134,13 @@ test('defect 8f8240ff: while the between-batches step runs beside the loop no ne
     await steps.step();
     assert.deepEqual([results.at(-1).state, results.at(-1).reason], ['DEFERRED', BETWEEN_BATCHES_RUNNING]);
     await f.drop(triggerBytes());
-    await waitFor(() => results.some(r => r.state === 'DEFERRED' && r.reason === BETWEEN_BATCHES_RUNNING), 'a tick deferred by the running step', PROMPT_MS);
+    // Only the tick after the drop counts: it reads the trigger and, the step still running, opens nothing.
+    const from = results.length;
+    await steps.step();
+    assert.deepEqual(results.slice(from).map(r => [r.state, r.reason]), [['DEFERRED', BETWEEN_BATCHES_RUNNING]]);
     assert.equal(f.engine.calls.length, 0, 'no stage, no bundle while the step runs');
-    assert.equal(f.queue.row(884).state, 'QUEUED', 'the trigger is read, not lost');
+    assert.equal(f.queue.row(884)?.state, 'QUEUED', 'the trigger is read, not lost');
+    // A step's ending settles over a few microtasks: the first tick after it may still be deferred, so no claim on which one opens it.
     release();
     for (let n = 0; !results.some(r => r.state === 'COMPLETED'); n += 1) {
       if (n >= STEPS_TO_BATCH) throw new Error(`no batch COMPLETED within ${STEPS_TO_BATCH} ticks after the step ended: ${results.map(r => r.state)}`);
