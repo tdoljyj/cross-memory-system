@@ -130,16 +130,18 @@ class Units(unittest.TestCase):
         self.assertEqual(filters, ['@system-service', '~@privileged @resources @mount @debug @module @reboot @swap @clock @cpu-emulation @obsolete @raw-io', '@chown'])
 
     def test_only_the_worker_may_write_the_trivy_cache_root_beside_the_state_root(self):
-        # ProtectSystem=strict leaves only ReadWritePaths writable. The trivy role takes prepare.lock and stages
-        # and promotes its DB/checks generations under its cache root, a sibling of the state root: without it
-        # the first resident trivy job ended EROFS before any container (2026-10-21, batch ed9dc331).
-        # The cache root is optional ('-'): a host without it must not fail gitleaks and placement units too.
-        for name, paths in (('clued-ci-worker@.service', ['/var/lib/clued-independent-ci', '-/var/lib/clued-independent-ci-trivy-cache']),
-                            ('clued-ci-wsprep@.service', ['/var/lib/clued-independent-ci']),
-                            ('clued-ci-archive@.service', ['/var/lib/clued-independent-ci'])):
+        # ProtectSystem=strict leaves only ReadWritePaths and StateDirectory writable. The trivy role takes prepare.lock and
+        # stages and promotes its DB/checks generations under its cache root, a sibling of the state root: without it the
+        # first resident trivy job ended EROFS before any container (2026-10-21, batch ed9dc331). The worker unit creates
+        # that root itself (StateDirectory=, root:root 0700; test_trivy_cache_root.py), so it is never optional and no other
+        # unit names it.
+        for name, paths, state in (('clued-ci-worker@.service', ['/var/lib/clued-independent-ci'], ['clued-independent-ci-trivy-cache']),
+                                   ('clued-ci-wsprep@.service', ['/var/lib/clued-independent-ci'], []),
+                                   ('clued-ci-archive@.service', ['/var/lib/clued-independent-ci'], [])):
             unit = (R / 'linux' / 'systemd' / name).read_text(encoding='utf8')
             self.assertRegex(unit, r'(?m)^ProtectSystem=strict$', name)
             self.assertEqual(re.findall(r'(?m)^ReadWritePaths=(.+)$', unit), [' '.join(paths)], name)
+            self.assertEqual(re.findall(r'(?m)^StateDirectory=(.+)$', unit), state, name)
 
 
 class WsPrepCheckout(unittest.TestCase):

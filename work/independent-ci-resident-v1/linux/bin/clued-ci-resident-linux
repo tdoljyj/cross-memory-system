@@ -744,8 +744,9 @@ MAX_DOCKER_OUT = 1 << 20
 TRIVY_CACHE = '/var/lib/clued-independent-ci-trivy-cache'
 WORKER_UNIT_FILE = '/etc/systemd/system/clued-ci-worker@.service'
 # The [Service] settings that build the worker's file-system view; view-properties hands exactly these to systemd-run.
+# StateDirectory= is one of them: it creates the trivy cache root (TRIVY_CACHE) and is what keeps it writable under ProtectSystem=strict.
 VIEW_KEYS = ('ProtectSystem', 'ProtectHome', 'PrivateTmp', 'PrivateIPC', 'ReadWritePaths', 'ReadOnlyPaths', 'InaccessiblePaths',
-             'TemporaryFileSystem', 'BindPaths')
+             'TemporaryFileSystem', 'BindPaths', 'StateDirectory', 'StateDirectoryMode')
 LEGACY_STATE = ('verify-spool', 'verify-once-state', 'trusted-source')
 
 
@@ -868,9 +869,11 @@ def view_facts(job_id, entries, writable):
     want(not writable(SPOOL) and not writable(f'{STATE}/workspaces'), 'VIEW_ROOT_WRITABLE')
     want(not writable('/etc/clued-independent-ci') and not writable(OPT), 'TRUSTED_TREE_WRITABLE')
     want(writable(STATE), 'STATE_ROOT_NOT_WRITABLE')  # formal-role.lock (Source SERIAL_LOCK) is created here
-    for p in (f'{SPOOL}/incoming', f'{SPOOL}/outgoing', f'{STATE}/runs', f'{STATE}/workspaces/{job_id}', TRIVY_CACHE):
+    for p in (f'{SPOOL}/incoming', f'{SPOOL}/outgoing', f'{STATE}/runs', f'{STATE}/workspaces/{job_id}'):
         if entries(p) is not None:
             want(writable(p), 'NOT_WRITABLE:' + p)
+    # the unit's StateDirectory= creates the trivy cache root before any process of the run starts: it is always there, writable
+    want(entries(TRIVY_CACHE) is not None and writable(TRIVY_CACHE), 'NOT_WRITABLE:' + TRIVY_CACHE)
     return {'contract': VIEW_CONTRACT, 'jobId': job_id, 'ok': not fails, 'failures': fails}
 
 SELFCHECK_CONTRACT = 'clued.independent-ci.resident-linux-selfcheck/1'

@@ -76,7 +76,13 @@ def view_rules(unit_text, job_id):
             rules += [(p.lstrip('-'), kind) for p in value.split()]
         elif key == 'TemporaryFileSystem':
             rules.append((value.split(':')[0], 'tmpfs'))
+        elif key == 'StateDirectory':   # systemd creates /var/lib/<name> before the run and keeps it writable under strict
+            rules += [('/var/lib/' + d, 'rw') for d in value.split()]
     return rules
+
+
+def state_directories(unit_text):
+    return ['/var/lib/' + d for line in unit_text.splitlines() if line.startswith('StateDirectory=') for d in line.split('=', 1)[1].split()]
 
 
 def classify(rules, path):
@@ -91,6 +97,8 @@ class View:
     """The view a worker run gets of a host tree that mirrors absolute paths under root."""
     def __init__(self, root, unit_text, job_id):
         self.root, self.rules = root, view_rules(unit_text, job_id)
+        for d in state_directories(unit_text):   # what systemd does at unit start, before ExecStartPre
+            os.makedirs(self.host(d), exist_ok=True)
 
     def host(self, path):
         return os.path.join(self.root, path.lstrip('/'))
@@ -197,6 +205,7 @@ class WorkerUnitView(unittest.TestCase):
         props = tool.namespace_properties(WORKER_UNIT, job)
         self.assertIn(f'--property=BindPaths=-{STATE}/workspaces/{job}', props)
         self.assertIn('--property=ProtectSystem=strict', props)
+        self.assertIn('--property=StateDirectory=clued-independent-ci-trivy-cache', props)
         self.assertTrue(all('%' not in p for p in props))
         keys = [p.split('=', 2)[1] for p in props]
         self.assertEqual(sorted(set(keys)), sorted(tool.VIEW_KEYS))
@@ -314,6 +323,22 @@ class TwoBatches(unittest.TestCase):
             facts = tool.view_facts(trivy2, view.entries, view.writable)
         self.assertEqual(facts['failures'], [])
         self.assertTrue(facts['ok'])
+
+    def test_a_new_host_gets_its_trivy_cache_root_from_the_unit_and_a_unit_without_it_fails_the_check(self):
+        # A new node: no install path ever made the cache root. The unit's StateDirectory= makes it before the run.
+        job = self.d1['linuxJobIds'][1]
+        host_cache = os.path.join(self.root, CACHE.lstrip('/'))
+        bare = '\n'.join(l for l in WORKER_UNIT.splitlines() if not l.startswith('StateDirectory'))
+        view = View(self.root, bare, job)
+        self.assertFalse(os.path.lexists(host_cache))
+        with mock.patch.object(tool, 'TRIVY_CACHE', CACHE):
+            facts = tool.view_facts(job, view.entries, view.writable)
+        self.assertEqual(facts['failures'], ['NOT_WRITABLE:' + CACHE])
+        view = View(self.root, WORKER_UNIT, job)
+        self.assertTrue(os.path.isdir(host_cache))
+        with mock.patch.object(tool, 'TRIVY_CACHE', CACHE):
+            facts = tool.view_facts(job, view.entries, view.writable)
+        self.assertEqual(facts['failures'], [])
 
     def test_the_model_and_the_check_notice_a_unit_without_the_view(self):
         self.run_batch_1()
