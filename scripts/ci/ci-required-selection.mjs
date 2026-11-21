@@ -549,12 +549,20 @@ export const TEST_IDENTITY_EXIT = 71;
 const posixPath = (file) => file.replaceAll('\\', '/');
 const operandsAfter = (argv, index) => argv.slice(index + 1).filter((arg) => !arg.startsWith('-'));
 const optionValue = (argv, flag) => argv[argv.indexOf(flag) + 1];
+// Switches the lists use after the anchor (--test, -m unittest) that take no value. After it, an element that follows any other switch
+// without = may be that switch's value (--test-name-pattern foo, --import ./setup.mjs, -k foo): dropping the other operands
+// would drop it too, so such a command cannot be planned (gap A L1). A switch missing here only runs the whole command.
+const VALUELESS_SWITCHES = new Set(['--test-force-exit']);
+const takesSeparateValue = (argv, anchor) => argv.some((arg, i) => i > anchor + 1 && !arg.startsWith('-')
+  && argv[i - 1].startsWith('-') && !argv[i - 1].includes('=') && !VALUELESS_SWITCHES.has(argv[i - 1]));
 
 export function filterCommand(command, argv, named) {
   const repo = (operand) => path.posix.join(command.cwd, posixPath(operand));
   const result = { runs: [], matched: [], accepts: [] };
   const testAt = argv.indexOf('--test');
   const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
+  const listAt = testAt >= 0 ? testAt : unittestAt >= 0 && argv[unittestAt + 1] !== 'discover' ? unittestAt : -1;
+  if (listAt >= 0 && takesSeparateValue(argv, listAt)) return result;
   if (testAt >= 0) {
     const files = operandsAfter(argv, testAt);
     result.accepts = files.map(repo);
