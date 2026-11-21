@@ -3992,3 +3992,50 @@ test('the fixtures never take the drill\'s machine-wide mutexes', opts, () => {
   assert.equal(names.length, 2);
   for (const name of names) assert.ok(/^Local\\/.test(name) && !/^Global\\/i.test(name), `a fixture holds the mutex ${name}`);
 });
+
+// Fable ruling 0e418483 (r6 Linux phase A) 4.2: the launcher stage always meets a cold WSL. Right before it, the entry shuts the guest's
+// WSL down and lists what still runs; both answers, raw, are wsl-cold-start.json, which the drill takes into stage-evidence.json. A
+// shutdown that fails stops the first install by name (the launcher would not run cold); the list is recorded as it came.
+test('the entry shuts the guest WSL down right before the launcher stage and records what still runs', opts, () => {
+  const text = fs.readFileSync(entryScript, 'utf8');
+  const body = text.slice(text.indexOf('function Invoke-FirstInstallAccepted'), text.indexOf('function Invoke-FirstInstallEntry'));
+  const prepared = body.indexOf("throw 'PREPARE_REFUSED'"), cold = body.indexOf('Invoke-EntryWslColdStart $Output'), launcher = body.indexOf("$launcherResult = Join-Path $Output 'launcher.stdout.log'");
+  assert.ok(prepared > 0 && cold > prepared && launcher > cold, 'after prepare, before the launcher stage');
+  assert.equal(body.split('Invoke-EntryWslColdStart').length, 2, 'once');
+  assert.match(text, /function Invoke-EntryWslColdStart\(\[string\]\$Output, \[string\]\$LogDir, \[string\]\$WslExe = 'C:\Program Files\WSL\wsl\.exe'\)/);
+  const dir = path.join(tmp, 'wsl-cold'); fs.mkdirSync(dir, { recursive: true });
+  const fake = path.join(dir, 'wsl.cmd'), calls = path.join(dir, 'calls.txt');
+  fs.writeFileSync(fake, ['@echo off', '>>"%~dp0calls.txt" echo %*^|%WSL_UTF8%', 'if "%1"=="--shutdown" exit /b %FAKE_SHUTDOWN_EXIT%',
+    'if "%1"=="--list" (', '  echo There are no running distributions.', '  exit /b 1', ')', 'exit /b 9', ''].join('\r\n'));
+  const run = (name, shutdownExit) => {
+    const out = path.join(dir, name); fs.mkdirSync(out, { recursive: true });
+    if (fs.existsSync(calls)) fs.rmSync(calls);
+    const thrown = entryPs(`$env:FAKE_SHUTDOWN_EXIT = '${shutdownExit}'; try { Invoke-EntryWslColdStart ${q(out)} ${q(dir)} ${q(fake)}; $null } catch { $_.Exception.Message }`);
+    return { thrown, record: JSON.parse(fs.readFileSync(path.join(out, 'wsl-cold-start.json'), 'utf8')), calls: fs.readFileSync(calls, 'utf8').trim().split(/\r?\n/) };
+  };
+  const ok = run('ok', 0);
+  assert.equal(ok.thrown, null);
+  assert.deepEqual(ok.calls, ['--shutdown|1', '--list --running|1'], 'shutdown first, then the list; WSL_UTF8 set');
+  assert.equal(ok.record.shutdown.exit, 0);
+  assert.equal(ok.record.shutdown.timedOut, false);
+  assert.equal(ok.record.runningAfter.stdout.trim(), 'There are no running distributions.');
+  assert.equal(typeof ok.record.runningAfter.exit, 'number');
+  assert.ok(!Number.isNaN(Date.parse(ok.record.at)));
+  const failed = run('failed', 5);
+  assert.equal(failed.thrown, 'DRILL_WSL_SHUTDOWN_FAILED:exit=5');
+  assert.equal(failed.record.shutdown.exit, 5);
+  assert.equal(failed.record.runningAfter.stdout.trim(), 'There are no running distributions.', 'recorded before the stop');
+});
+
+test('the drill takes wsl-cold-start.json into stage-evidence.json', opts, () => {
+  const cold = { at: '2026-11-21T03:00:00Z', shutdown: { exit: 0, timedOut: false, stdout: '', stderr: '' }, runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } };
+  const work = guestWorkDir('wsl-cold-guest', { 'wsl-cold-start.json': JSON.stringify(cold),
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' } }) });
+  const runDir = path.join(tmp, 'wsl-cold-run'); fs.mkdirSync(runDir, { recursive: true });
+  const files = ps(`function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step) & $Script ${q(work)} $ArgumentList[1] }
+    (Save-DrillStageEvidence ${q(runDir)} $null).record.files`);
+  assert.equal(files['wsl-cold-start.json'].state, 'saved');
+  const evidence = JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'));
+  assert.deepEqual(evidence['wsl-cold-start.json'], cold);
+  assert.equal(evidence['launcher-result.json'].terminal.status, 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED');
+});
