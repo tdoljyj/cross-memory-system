@@ -798,18 +798,18 @@ const PR_1015_FILES = [
 const forCheck = (picked, check) => picked.selections.find((entry) => entry.check === check);
 
 test('--affected selects exactly what the ci-suites job selects, from the selection it imports', () => {
-  // The literal list of eight below is the regression lock: it is what the real run
-  // selected for #1015 (plus ci-deps-entry, added since), so a change to the selection that alters it is to be looked at.
+  // The literal list below is the regression lock: it is what the real run
+  // selected for #1015 (plus ci-deps-entry and test-coverage, added since), so a change to the selection that alters it is to be looked at.
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
-    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'selection']);
+    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'test-coverage', 'selection']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
   assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
-    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, selection');
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, test-coverage, selection');
   // the first file of each top-level directory leads, so the resident's own files show too
   assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));
