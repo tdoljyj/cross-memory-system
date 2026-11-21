@@ -4394,6 +4394,8 @@ test('R3c: the reason vocabulary is closed - every code is in REASONS, and every
   assert.ok(!reuse.REASONS.includes('proof_unavailable_or_not_applicable'), 'the catch-all word is gone');
 });
 
+// This pins the scope of reuse to a first-attempt push to main (FABLE-tree-reuse-close-out §4).
+// 扩范围前先让 admission-rerun 按门的 verdict 判 final。
 test('tree reuse guard: a re-run, staging, another branch or a workflow outside the table reads nothing and runs', async () => {
   for (const [label, mutate] of [
     ['attempt 2 (Re-run all jobs is the manual way to force a real run)', (c) => { c.env.GITHUB_RUN_ATTEMPT = '2'; }],
