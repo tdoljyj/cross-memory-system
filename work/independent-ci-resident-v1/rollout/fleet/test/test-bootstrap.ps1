@@ -73,15 +73,16 @@ $rel2 = [ordered]@{}; foreach ($k in @($release.Keys)) { $rel2[$k] = $release[$k
 $c = Test-AssetSet $all $rel2 $null $v $true @()
 Yes ($c -ccontains "RELEASE_SUMS_NAMES_FIRST_INSTALL_ASSET:role-image-$img.tar.gz") 'assets:release-sums-never-names-an-image'
 
-# ---- the prerequisite manifest: the committed one pins what the drill VM proved (WSL MSI, rootfs, the 16 docker .debs) and refuses
-#      the rest until the coordinator pins it (M6, M7)
+# ---- the prerequisite manifest: the committed one pins what the drill VM proved (WSL MSI, rootfs, the 16 docker .debs and the five
+#      python3.12 .debs whose /usr/bin/python3.12 is the fleet's pin) and refuses the rest until
+#      the coordinator pins it (M6, M7)
 $committed = $js.DeserializeObject([IO.File]::ReadAllText((Join-Path (Split-Path -Parent $here) 'prereq-manifest.json')))
 $c = Test-PrereqManifest $committed
 $unpinned = @($c | Where-Object { $_ -like 'PREREQ_NOT_PINNED:*' } | ForEach-Object { $_.Substring(18) } | Sort-Object)
 Yes ($c.Count -eq 0 -and @($committed['items'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' -or -not ($_['bytes'] -gt 0) -or [string]::IsNullOrEmpty([string]$_['url']) }).Count -eq 0) ('prereq:committed-pins-every-item ' + ($c -join ','))
 $wslItem = @($committed['items'] | Where-Object { $_['name'] -ceq 'wsl' })[0]
 Yes ($wslItem['sha256'] -ceq 'a3505a50f4cc585551d11d9de824ba4375448d7a68f2e71d3fb315fa986fc754' -and $wslItem['version'] -ceq '2.7.13.0' -and $wslItem['kind'] -ceq 'msi') 'prereq:wsl-msi-pinned'
-Yes (@($committed['debs']).Count -eq 16 -and @($committed['debs'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' }).Count -eq 0 -and @($committed['debs'] | Where-Object { $_['package'] -ceq 'docker.io' }).Count -eq 1) 'prereq:16-debs-pinned'
+Yes (@($committed['debs']).Count -eq 21 -and @($committed['debs'] | Where-Object { [string]$_['sha256'] -cnotmatch '^[0-9a-f]{64}$' }).Count -eq 0 -and @($committed['debs'] | Where-Object { $_['package'] -ceq 'docker.io' }).Count -eq 1 -and @($committed['debs'] | Where-Object { [string]$_['package'] -cmatch '^(lib)?python3\.12' -and [string]$_['version'] -ceq '3.12.3-1ubuntu0.17' }).Count -eq 5) 'prereq:21-debs-pinned'
 Yes ($null -eq (Get-Key $committed 'aptPins')) 'prereq:no-apt-resolution'
 # Measured from the pinned ZIPs, including directory entries and the archive's top-level directory (DESK, 2026-11-17).
 # Capture the real extraction destination before any I/O: this checks Windows' default path budget even on a long-path-enabled host.

@@ -4,8 +4,8 @@ roles-v3, README section 8c). Windows, non-elevated, no WSL: writes the two root
 
   phase A (root, NO private key, writes only under $BASE): the node has no Linux CI yet (no Source v2, no roles, no resident, no
           upgrade tool, no Source v1), its toolchain node and its new result key are the configured ones (linux.host), docker, systemd
-          and cgroup v2; stages every pinned byte; derives the role policies v3 from the TEMPLATE node's reviewed, signed roles-v3 for
-          this record (derive-roles-r7.py: the Source values) and puts in this node's facts (first-node-facts.py); host pins
+          and cgroup v2, docker's image store (containerd), every host tool the source manifest pins; stages every pinned byte;
+          derives the role policies v3 from the TEMPLATE node's reviewed, signed roles-v3 for this record (derive-roles-r7.py: the Source values) and puts in this node's facts (first-node-facts.py); host pins
           (check-host-r4.py); the resident install plan.
   phase B (root, READS THE NEW PRIVATE KEY through sign-first-qualification.mjs; nothing prints it): signs, verifies the signed set
           (verify-signed-r4.mjs), installs Source v2 (clued-ci-install-source-v2 package / --plan / --apply), verifies it (verify-source-v2,
@@ -358,9 +358,28 @@ host_ready() {
 }
 """
 
+# Every role's every host tool the source manifest pins (roles.<role>.hostTools.<name>: path and sha256, as the worker holds them per job,
+# e.g. gitleaks' ACTUAL_PYTHON_PIN_CHANGED): the node's file must be that file before A stages anything (Fable ruling 0e418483, r7
+# phase B, 4.1 ruling 2). Read from the manifest, never named here: a host tool pinned later is covered by the same loop.
+def host_tool_lines(manifest):
+    lines = ''
+    for role in sorted(manifest['roles']):
+        for name in sorted(manifest['roles'][role].get('hostTools', {})):
+            t = manifest['roles'][role]['hostTools'][name]
+            assert re.fullmatch(r'/[A-Za-z0-9_./-]+', t['path']) and '..' not in t['path'].split('/') and re.fullmatch(r'[0-9a-f]{64}', t['sha256']), ('HOST_TOOL_PIN_SHAPE', role, name)
+            lines += t['sha256'] + ' ' + t['path'] + '\n'
+    return lines
+HOST_TOOLS_GATE = r"""# every host tool the source manifest pins for a role: the node's file is the fleet's pinned one
+while read -r want path; do
+  [ -n "$want" ] || continue
+  { [ -f "$path" ] && [ "$(sha256sum "$path" | cut -d' ' -f1)" = "$want" ]; } || refuse "HOST_TOOL_NOT_THE_FLEET_PIN:$path"
+done <<'HOST_TOOLS'
+@@HOST_TOOLS@@HOST_TOOLS
+"""
+
 A = "#!/bin/bash\n" + r"""# First install of this node's Linux half, phase A (root, NO private key, writes only under $BASE). Commit @@C8@@, node @@NODE_NAME@@.
 @@HOW_A@@""" + COMMON + r"""host_ready
-@@CONTINUE@@# a first install: nothing of a Linux CI here yet
+""" + HOST_TOOLS_GATE + r"""@@CONTINUE@@# a first install: nothing of a Linux CI here yet
 for p in /opt/clued-independent-ci/source-v2 /opt/clued-independent-ci/resident-v1 /opt/clued-independent-ci/upgrade-v1 \
          /etc/clued-independent-ci/roles-v3 /etc/clued-independent-ci/formal-source-manifest-v2.json \
          /var/lib/clued-independent-ci/resident/source-v2-install-receipt.json /var/lib/clued-independent-ci/resident/upgrade/current.json; do
@@ -555,9 +574,9 @@ for _k, _v in FORM.items():   # the form's pieces first: they carry @@SUFFIX@@ /
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
           'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': NODE_NAME,
-          'ROOTS': ' '.join(ROOTS + SPOOL_DIRS), 'VERIFIED': VERIFIED, 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
+          'ROOTS': ' '.join(ROOTS + SPOOL_DIRS), 'VERIFIED': VERIFIED, 'HOST_TOOLS': host_tool_lines(src_manifest), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
-    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
+    assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES', 'HOST_TOOLS') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
 def render(text):
     for k, v in values.items():
         text = text.replace('@@' + k + '@@', v)

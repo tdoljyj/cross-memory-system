@@ -7,11 +7,12 @@
 # with the CONTAINERD image store, /usr/bin/python3.12 and /usr/bin/git, the toolchain node at its fixed path with the pinned sha256.
 # It does NOT make the result key (reinstall/linux/tools/make-result-key.sh, run next by P1) and installs nothing of the Linux CI itself.
 #
-#   <debs dir>, <debs list>  the docker closure as .deb files (the prerequisite manifest's `debs`, the drill VM's set), staged and held to
+#   <debs dir>, <debs list>  the docker closure and python3.12 as .deb files (the prerequisite manifest's `debs`), staged and held to
 #                     their sha256 by P1, and the list "<sha256>  <file name>" per line. Nothing is resolved or downloaded: the list is
 #                     checked with sha256sum -c in that directory, then dpkg -i installs exactly those files (apt-get, even with
 #                     --no-download, resolved against the image's lists and wanted the network: drill VM, 2026-11-16 12:58). python3.12
-#                     and git are the pinned Ubuntu image's own packages.
+#                     comes from these files too (its source package at the version whose /usr/bin/python3.12 the fleet pins, one patch
+#                     newer than the image's); git is the pinned Ubuntu image's own package.
 #   <toolchain node tarball>  the official node-v<ver>-linux-x64.tar.xz as P1 staged it (its sha256 checked by P1 against the manifest);
 #                     its bin/node must have <toolchain node sha256> (the template role policies' nodeExecutableSha256, from the kit).
 #
@@ -61,8 +62,8 @@ fi
 # 2. cgroup v2 (unified hierarchy)
 [ -e /sys/fs/cgroup/cgroup.controllers ] || refuse CGROUP_V2_REQUIRED
 
-# 3. the pinned docker closure: every listed file exactly as pinned, then dpkg -i of exactly those files (once; found installed at the
-#    listed versions, only checked). The list's names are plain .deb file names; nothing else in the directory is used.
+# 3. the pinned .debs (the docker closure, python3.12): every listed file exactly as pinned, then dpkg -i of exactly those files
+#    (once; found installed at the listed versions, only checked). The list's names are plain .deb file names; nothing else in the directory is used.
 grep -qvE '^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._+~-]{0,200}\.deb$' "$LIST" && refuse DEBS_LIST_SHAPE
 [ "$(grep -c . "$LIST")" -ge 1 ] || refuse DEBS_LIST_EMPTY
 (cd "$DEBS" && sha256sum --quiet --strict -c "$LIST") >"$LOG" 2>&1 || refuse_tail DEBS_NOT_THE_PINNED_FILES "$LOG"
