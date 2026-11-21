@@ -324,7 +324,6 @@ export const SUITE_COMMANDS = {
     // test_check_design_refs.py is red on its first run (ci-uncovered-tests.json), and the components and runner budget
     // suites run their own two.
     { cwd: '.', argv: [PYTHON, '-B', '-m', 'unittest', 'scripts/ci/test_check_contract_placement.py', 'scripts/ci/test_clued_docs_only.py'] },
-    { cwd: '.', argv: [PYTHON, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'scripts/ci/self-hosted/resource-maintenance', '-p', 'test_*.py'] },
     { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}', '{ci-script-tests}'] },
   ],
   'production-schema': [

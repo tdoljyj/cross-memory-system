@@ -303,6 +303,24 @@
       "reason": "封存的旧代码目录（legacy），不再维护，测试从没在必需检查里跑；整目录是否删除另议"
     },
     {
+      "path": "scripts/ci/self-hosted/resource-maintenance/test_maintenance.py",
+      "kind": "stale-or-suspect",
+      "task": "8aa01865",
+      "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
+    },
+    {
+      "path": "scripts/ci/self-hosted/resource-maintenance/test_producer.py",
+      "kind": "stale-or-suspect",
+      "task": "8aa01865",
+      "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
+    },
+    {
+      "path": "scripts/ci/self-hosted/resource-maintenance/test_schedule_probe.py",
+      "kind": "stale-or-suspect",
+      "task": "8aa01865",
+      "reason": "已按 Owner 决定退役（7ce72e8c8），删除另见 Task 8aa01865"
+    },
+    {
       "path": "scripts/ci/test_check_design_refs.py",
       "kind": "stale-or-suspect",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
