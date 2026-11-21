@@ -1794,7 +1794,7 @@ class DuplicateTotalsTests(unittest.TestCase):
         report = panel.build(self.both(), TOTALS_NOW, state)
         report["duplicates"]["totals"] = {"rerun": 2, "parallel": 0, "retry": 1, "unknown": 3}
         body = panel.render(report, state)
-        self.assertIn("违规 2 项（通过后又跑 2、并行 0）；失败后重试 1 项（规则允许，只列出）；另有 3 项旧记录未记类别（7 天内滚出）。", body)
+        self.assertIn(f"违规 2 项（通过后又跑 2、并行 0）；失败后重试 1 项（规则允许，只列出）；另有 3 项旧记录未记类别（{panel.DUP_LOOKBACK.days} 天内滚出）。", body)
         self.assertNotIn("只列最近", body)  # 5 violation rows are listed for 2 counted: nothing is cut off
 
 

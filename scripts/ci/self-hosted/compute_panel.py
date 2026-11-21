@@ -792,12 +792,12 @@ def short_finding(finding: dict) -> dict:
 
 def duplicate_totals(found: list[dict]) -> dict[str, int]:
     """Every finding by kind. "rerun" and "parallel" break the rule; "retry" is allowed and only listed.
-    A record without a kind (saved by an older panel, for a head GitHub no longer returns) counts as a rerun:
-    it is announced like one, and what cannot be classified is not filed under "allowed"."""
-    totals = {"rerun": 0, "parallel": 0, "retry": 0}
+    "unknown" is a short record an older panel saved without its kind: not a violation, not read again, counted on
+    its own until it leaves the window (DUP_LOOKBACK)."""
+    totals = {"rerun": 0, "parallel": 0, "retry": 0, "unknown": 0}
     for item in found:
         kind = item.get("kind")
-        totals[kind if kind in ("parallel", "retry") else "rerun"] += 1
+        totals[kind if kind in ("rerun", "parallel", "retry") else "unknown"] += 1
     return totals
 
 
@@ -807,7 +807,8 @@ def violations(totals: dict) -> int:
 
 def totals_line(totals: dict) -> str:
     return (f"违规 {violations(totals)} 项（通过后又跑 {totals.get('rerun', 0)}、并行 {totals.get('parallel', 0)}）；"
-            f"失败后重试 {totals.get('retry', 0)} 项（规则允许，只列出）")
+            f"失败后重试 {totals.get('retry', 0)} 项（规则允许，只列出）"
+            + (f"；另有 {totals['unknown']} 项旧记录未记类别（{DUP_LOOKBACK.days} 天内滚出）" if totals.get("unknown") else ""))
 
 
 def retrying(call):
@@ -1008,12 +1009,10 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
         sha = str(pull["head"]["sha"])
         closed = pull.get("state") == "closed"
         key = settle_key(pull, sha)
-        kept = [item for item in old_found if item["head"] == sha[:12]]
-        # A record saved without its kind (by a panel that only summed) cannot be counted by kind: the head is read again.
-        if closed and settled_before.get(key) == pull.get("updated_at") and all("kind" in item for item in kept):
+        if closed and settled_before.get(key) == pull.get("updated_at"):
             settled[key] = pull["updated_at"]
             carried += 1
-            found.extend(kept)
+            found.extend(item for item in old_found if item["head"] == sha[:12])
             continue
         if client.low():
             raise BudgetLow("额度不足，未读完")
@@ -1040,8 +1039,9 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
             best[(item["head"], item["check"])] = item
     found = [item for item in best.values() if (parse_time(item["last"]) or now) >= floor]
     found.sort(key=lambda item: item["last"], reverse=True)
-    # Violations first, allowed retries after, each newest first: what is cut off (DUP_KEEP, DUP_ROWS) is a retry first.
-    found.sort(key=lambda item: item.get("kind") == "retry")
+    # Violations first, then allowed retries and records without a kind, each newest first: what is cut off
+    # (DUP_KEEP, DUP_ROWS) is not a violation first.
+    found.sort(key=lambda item: item.get("kind") not in ("rerun", "parallel"))
     return {"as_of": iso(now), "window_days": DUP_LOOKBACK.days, "heads_read": heads, "skipped": skipped,
             "skipped_heads": skipped_heads, "total": len(found), "totals": duplicate_totals(found), "found": found,
             "settled": settled}
@@ -1178,7 +1178,7 @@ def render(report: dict, state: dict) -> str:
             lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item.get('label') or item['check'])} | {item['count']} | "
                          f"{KIND_TEXT.get(item.get('kind'), '—')} | {parts} | "
                          f"{'；'.join(CAUSE_TEXT.get(c, cell(c)) for c in item.get('causes') or []) or '—'} | {item['last']} |")
-        listed = sum(1 for item in duplicates["found"] if item.get("kind") != "retry")
+        listed = sum(1 for item in duplicates["found"] if item.get("kind") in ("rerun", "parallel"))
         if totals and violations(totals) > listed:
             lines.append(f"违规 {violations(totals)} 项，只列最近 {listed} 项。")
         elif not totals and duplicates.get("total", 0) > len(duplicates["found"]):
