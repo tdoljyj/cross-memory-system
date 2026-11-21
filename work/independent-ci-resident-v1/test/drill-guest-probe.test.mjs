@@ -183,16 +183,17 @@ const PROBE = { schema: 'clued.drill.guest-probe/1', distribution: 'CluedResiden
 const stub = (work, probeAnswer) => `
   $script:probeCalls = New-Object Collections.Generic.List[string]
   function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
-    if ($Step -ceq 'guest-probe') { $script:probeCalls.Add('probe'); ${probeAnswer} }
+    if ($Step -ceq 'guest-probe') { $script:probeCalls.Add('probe'); $script:probeTimeout = $TimeoutMinutes; ${probeAnswer} }
     else { $script:probeCalls.Add('files'); & $Script ${q(work)} $ArgumentList[1] } }`;
 
-test('the probe runs before the stage files are taken, on a failed launcher too, and lands in stage-evidence.json', opts, () => {
+test('the required stage files are taken first, then the probe (5 minutes at most), on a failed launcher too; it lands in stage-evidence.json', opts, () => {
   const work = guestWork('save-failed-guest', { 'launcher-result.json': LAUNCHER_FAILED });
   const runDir = path.join(tmp, 'save-failed-run'); fs.mkdirSync(runDir, { recursive: true });
   const r = ps(`${stub(work, `${q(JSON.stringify(PROBE))} | ConvertFrom-Json`)}
     $script:DrillProbeImageIds = @(); $c = Save-DrillStageEvidence ${q(runDir)} $null
-    [ordered]@{ order = @($script:probeCalls); probeState = $c.record.probe.state; collection = $c.record.collection; launcher = $c.record.files['launcher-result.json'].state }`);
-  assert.deepEqual(r.order, ['probe', 'files'], 'the probe first: nothing else touches the guest in between');
+    [ordered]@{ order = @($script:probeCalls); probeTimeout = $script:probeTimeout; probeState = $c.record.probe.state; collection = $c.record.collection; launcher = $c.record.files['launcher-result.json'].state }`);
+  assert.deepEqual(r.order, ['files', 'probe'], 'the required evidence first: a guest that hangs must not eat its time');
+  assert.equal(r.probeTimeout, 5, 'the probe is an extra: its outer bound is 5 minutes');
   assert.equal(r.probeState, 'saved');
   assert.equal(r.collection, null);
   assert.equal(r.launcher, 'saved');
@@ -201,12 +202,22 @@ test('the probe runs before the stage files are taken, on a failed launcher too,
   assert.equal(ev['launcher-result.json'].terminal.code, 'LAUNCHER_STAGE_FAILED');
 });
 
-test('the probe is kept even when no stage result could be read', opts, () => {
+test('with no stage result read, the probe is kept apart and no stage-evidence.json is made from it', opts, () => {
   const work = guestWork('save-noresult-guest', { 'stage-timings.json': '{}' });
   const runDir = path.join(tmp, 'save-noresult-run'); fs.mkdirSync(runDir, { recursive: true });
-  ps(`${stub(work, `${q(JSON.stringify(PROBE))} | ConvertFrom-Json`)}
-    $script:DrillProbeImageIds = @(); Save-DrillStageEvidence ${q(runDir)} $null | Out-Null; 0`);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'))['guest-probe'], PROBE);
+  const r = ps(`${stub(work, `${q(JSON.stringify(PROBE))} | ConvertFrom-Json`)}
+    $script:DrillProbeImageIds = @(); $c = Save-DrillStageEvidence ${q(runDir)} $null
+    [ordered]@{ probe = $c.record.probe.state }`);
+  assert.equal(r.probe, 'saved-apart');
+  assert.ok(!fs.existsSync(path.join(runDir, 'stage-evidence.json')), 'the abort evidence reads its presence: the probe alone must not create it');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'guest-probe.json'), 'utf8')), PROBE);
+});
+
+test('the late probe has the same 5-minute outer bound', opts, () => {
+  const text = fs.readFileSync(script, 'utf8');
+  const fn = text.slice(text.indexOf('function Invoke-DrillGuestProbe'), text.indexOf('function Save-DrillLateProbe'));
+  assert.match(fn, /-TimeoutMinutes 5 -Step/);
+  assert.doesNotMatch(fn, /-TimeoutMinutes 20/);
 });
 
 test('a probe that fails, throws or answers nonsense changes nothing else', opts, () => {

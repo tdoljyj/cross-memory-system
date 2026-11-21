@@ -2608,7 +2608,7 @@ function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [Da
 }
 
 # ---- The read-only guest probe (Fable ruling 0e418483, phase B image id, 4.3) ----------------------------------------------------------
-# After the launcher stage and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the
+# After the launcher stage's files are taken and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the
 # guest's WSL distribution: the docker storage (Driver, DriverStatus), the image list, each kit image's .Id and RepoDigests, the sha256 and
 # package version of every file the inventory names, systemctl --failed. The answers are kept raw in stage-evidence.json ('guest-probe'),
 # never judged, and the probe is no part of the candidate's behaviour: a probe that cannot be built, cannot reach the guest, or answers
@@ -2748,7 +2748,7 @@ $script:GuestInspect = {
 function Invoke-DrillGuestProbe([pscredential]$Cred, [ValidateSet('main', 'late')][string]$Phase = 'main') {
   try {
     $plan = if ($Phase -ceq 'late') { New-DrillProbePlan (Get-DrillLateProbeCommands) } else { New-DrillProbePlan (Get-DrillProbeCommands -ImageIds @($script:DrillProbeImageIds) -Files @(Read-DrillProbeFiles)) -Windows }
-    $got = Invoke-DrillGuest $Cred $script:GuestInspect -ArgumentList @($plan, $script:DrillNativeText) -TimeoutMinutes 20 -Step $(if ($Phase -ceq 'late') { 'guest-probe-late' } else { 'guest-probe' })
+    $got = Invoke-DrillGuest $Cred $script:GuestInspect -ArgumentList @($plan, $script:DrillNativeText) -TimeoutMinutes 5 -Step $(if ($Phase -ceq 'late') { 'guest-probe-late' } else { 'guest-probe' })
     if ([string](Get-DrillField $got 'schema') -cne 'clued.drill.guest-probe/1' -or $null -eq (Get-DrillField $got 'commands')) { return @{ result = $null; state = 'not-run'; code = 'DRILL_PROBE_NO_ANSWER' } }
     return @{ result = $got; state = 'read'; code = $null }
   } catch { return @{ result = $null; state = 'not-run'; code = [string](Get-DrillCode $_).code } }
@@ -2806,9 +2806,8 @@ $script:GuestStageFiles = {
 # in the guest, or not saved here. A failed collection is recorded and never replaces the run's own outcome.
 function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
   $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); collection = $null; files = [ordered]@{}; probe = $null }
-  # the read-only guest probe first (4.3): nothing else touches the guest between the launcher stage and it; its failure is only recorded
-  $probe = Invoke-DrillGuestProbe $Cred
-  $record.probe = [ordered]@{ state = $probe.state; code = $probe.code; at = (Get-DrillTime).ToString('o') }
+  # the required stage files first; the read-only guest probe (4.3) is an extra and comes after them (a guest that hangs must not eat the
+  # time of the required evidence), still before the checkpoint restore; its failure is only recorded
   $got = $null
   try { $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), $script:DrillStageFiles) -TimeoutMinutes 2 -Step 'stage-files' }
   catch { $record.collection = (Get-DrillCode $_) }
@@ -2834,13 +2833,20 @@ function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
   }
   # Written only from what was really read (Codex review of e0a3cded5, medium 2): no stage-evidence.json or stage-timings.json from nothing,
   # and every file's state says whether it reached the run directory.
+  $probe = Invoke-DrillGuestProbe $Cred
+  $record.probe = [ordered]@{ state = $probe.state; code = $probe.code; at = (Get-DrillTime).ToString('o') }
   $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json']; 'wsl-cold-start.json' = $json['wsl-cold-start.json'] }
   if ($null -ne $probe.result) { $stageEvidence['guest-probe'] = $probe.result }
   $timings = $json['stage-timings.json']
   $results = @(@('host-result.json', 'launcher-result.json', 'wsl-cold-start.json') | Where-Object { $json.Contains($_) })
-  if ($results.Count -or $null -ne $probe.result) {
+  # the probe alone never makes stage-evidence.json (the abort evidence reads its presence): without a stage result it is kept apart
+  # as guest-probe.json, like the late probe (the same choice as Save-DrillLateProbe)
+  if ($results.Count) {
     try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' }; if ($null -ne $probe.result) { $record.probe.state = 'saved' } }
     catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }; if ($null -ne $probe.result) { $record.probe = [ordered]@{ state = 'not-saved'; code = $null } } }
+  } elseif ($null -ne $probe.result) {
+    try { Write-DrillJson (Join-Path $RunDir 'guest-probe.json') $probe.result; $record.probe.state = 'saved-apart' }
+    catch { $record.probe = [ordered]@{ state = 'not-saved'; code = $null } }
   }
   if ($json.Contains('stage-timings.json')) {
     try { Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings; $record.files['stage-timings.json'].state = 'saved' }
