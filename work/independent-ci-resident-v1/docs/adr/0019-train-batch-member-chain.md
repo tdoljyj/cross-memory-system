@@ -1,6 +1,6 @@
 # ADR 0019：批量真正上生产——描述符 /4 与两侧的成员链核对
 
-- 状态：实现已合入；Owner 于 2026-11-17 决定准备启用 ADR 0018 的 push 落地，仓库侧前提正在补齐。船队统一值 `FLEET_TRAIN` 仍为 `github-merge`、1；多人批次仅在 `train.landing=push`、`train.batchMax>1` 且已装同代链核对时生效，生产安装与首批结果须另行核实。
+- 状态：实现已合入；Owner 于 2026-11-17 决定准备启用 ADR 0018 的 push 落地，仓库侧前提正在补齐。船队统一值 `FLEET_TRAIN` 自 2026-11-20 起为 `push`、1（ADR 0018 §8 第 7 条，随通用包生效）；多人批次仅在 `train.landing=push`、`train.batchMax>1` 且已装同代链核对时生效，生产安装与首批结果须另行核实。
 - 日期：2026-11-08（设计与实现，合入第 28 代）
 - Owner Decision：同 [ADR 0018](0018-bors-landing.md)（`9e2511fe` 第 6 项，Task `7d86cf41`）
 - 来源：分支 `claude/train-bors-chain` 提交 `bf444310d`。原为常驻 DESIGN 的 §67，与冻结档案的 §67（准入往返去掉重复开销）撞号，所以合入时改为本 ADR。代码注释里的 “ADR 0019 §n” 指本文第 n 节。

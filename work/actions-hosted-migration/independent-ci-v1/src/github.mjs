@@ -467,6 +467,18 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
       return { complete: true, branch, rules: body.map(rule => ({ type: rule.type, rulesetId: Number.isSafeInteger(rule.ruleset_id) ? rule.ruleset_id : null,
         parameters: rule.parameters ? structuredClone(rule.parameters) : null })) };
     },
+    // This App's own bypass of one ruleset (resident ADR 0018 §2 L2 item 7, Fable 2026-11-20: which way a batch lands). Metadata read.
+    // current_user_can_bypass is the caller's own state (GitHub returns it only from this repository-level endpoint; read 2026-11-20 with
+    // the Owner's identity: present, 'never' for 24182890); absent is null and landingRoute parks. The bypass list is not read: GitHub
+    // shows it only to a caller who may edit the ruleset, and who else is on it is checked with an administrator's identity, not here.
+    // includes_parents: a ruleset of the organization that applies to main is read the same way.
+    async readRuleset(id) {
+      if (!positive(id)) fail('invalid_ruleset');
+      const body = await scoped(`/rulesets/${id}?includes_parents=true`);
+      const can = body?.current_user_can_bypass;
+      if (body?.id !== id || !(can === undefined || can === null || typeof can === 'string')) fail('invalid_ruleset_reply');
+      return { id, currentUserCanBypass: typeof can === 'string' ? can : null };
+    },
     // Merge-train sweep reads (DESIGN §41.3; stage 10). Bounded, complete or refused. GET only, except the GraphQL
     // query: a read sent as POST, repeated like a read.
     // This App's runs of one name on a commit (app_id and check_name filtered by GitHub, every run checked again).

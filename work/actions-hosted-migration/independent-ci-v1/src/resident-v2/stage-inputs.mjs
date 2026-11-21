@@ -12,6 +12,7 @@ import { validateTrainRun } from './train-run.mjs';
 import { validateRoleProbeRun } from './role-probe-run.mjs';
 import { validateRevocationRun, validateRevocationFacts } from './revocation-run.mjs';
 import { validateTrainFacts } from '../independent-control-checks-v2/train-facts.mjs';
+import { validRehearsal, validLandingMissing } from '../independent-control-checks-v2/train-landing.mjs';
 import { hash } from './prepare-record.mjs';
 import { sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2 } from '../admission-facts-v2.mjs';
 import { validHeadScans } from '../published-on-github-v2.mjs';
@@ -116,6 +117,12 @@ export async function writeOutcome({ receiptsRoot = STATE_V2.receipts, nonce, pl
     // Rule 41ab823a (resident DESIGN §75): a front batch's settled admission names the scans H already carries (publisher.mjs headScans).
     // Only on stage 1's SETTLED ending and only in exactly that shape; anything else is left out (the front batch then scans as before).
     ...(status === 'SETTLED' && plan?.entryRole === 'work-admission' && validHeadScans(r.headScans)?.length ? { headScans: validHeadScans(r.headScans) } : {}),
+    // Stage 8 (resident ADR 0018 §2 L2 item 7, Fable 2026-11-20): on the current path a SETTLED pair carries the rehearsal of push (S's
+    // Actions checks, this App's own bypass state of both rulesets); a park on main's rules carries the missing items. Both from the
+    // publisher's own reads, validated (train-landing.mjs); anything else is left out.
+    ...(status === 'SETTLED' && plan?.entryRole === 'control-checks' && validRehearsal(r.rehearsal) ? { rehearsal: validRehearsal(r.rehearsal) } : {}),
+    ...(status === 'BLOCKED' && plan?.entryRole === 'control-checks' && r.reason === 'TRAIN_LANDING_RULES_MISSING' && validLandingMissing(r.missing, { empty: false })
+      ? { landingMissing: [...r.missing] } : {}),
     // Stage 10 only: the train facts (train-facts.mjs); facts that do not validate are written as null, and the stage fact
     // is then no success (stage-fact.mjs: STAGE_OUTCOME_MISSING).
     train: plan?.entryRole === 'train-maintenance' ? trainFactsOrNull(r.train) : null,

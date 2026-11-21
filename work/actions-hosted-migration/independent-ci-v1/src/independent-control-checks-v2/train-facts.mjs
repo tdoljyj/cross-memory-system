@@ -31,6 +31,7 @@
 // The protected-layer pre-check (§41.4, MergeAdmission v0.2 §2.4: a protected-layer front H must contain T) runs in mode on
 // only: stage 10 sets front.protectedLayer from the PR's changed paths and the admission policy (train-maintenance.mjs);
 // shadow mode reports FRONT_NEEDS_MAIN_MERGE only from GitHub's own facts, as before.
+import { validLandingMissing } from './train-landing.mjs';
 import { validStrictReadiness, validStrictFrontReadiness, validTrainProviderBudget, validSweepProgress } from './train-strict.mjs';
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
@@ -337,7 +338,10 @@ const validBindingObservation = b => {
     && Number.isSafeInteger(b.epoch) && b.epoch > 0 : b.claimId === null && b.fence === null && b.epoch === null);
 };
 const prList = v => Array.isArray(v) && v.length <= 64 && v.every(n => Number.isSafeInteger(n) && n > 0);
-const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect'].includes(k))
+// route / missing (ADR 0018 §2 L2 item 7, Fable 2026-11-20): which way main's rules said this run, and what push still misses.
+const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect', 'route', 'missing'].includes(k))
+  && (l.route === undefined || ['push', 'github-merge', 'park'].includes(l.route))
+  && (l.missing === undefined || validLandingMissing(l.missing))
   && (l.error === undefined || (typeof l.error === 'string' && CODE.test(l.error))) && (l.mainSha === undefined || l.mainSha === null || SHA.test(l.mainSha))
   && (l.landed === undefined || (Array.isArray(l.landed) && l.landed.length <= 20 && l.landed.every(b => plain(b) && SHA.test(b.testSha ?? '') && prList(b.members))))
   && (l.adopted === undefined || prList(l.adopted)) && (l.notMarkedMerged === undefined || prList(l.notMarkedMerged))

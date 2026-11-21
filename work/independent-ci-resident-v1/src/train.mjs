@@ -282,8 +282,14 @@ export function sweepOf(s) {
     ...(s.providerBudget !== undefined ? { providerBudget: providerBudgetOf(s.providerBudget) } : {}) });
 }
 
-// D6 §8.4 (b): of stage 10's landing facts (push mode) the summary and state\status.json keep the error code only, or nothing.
-const landingOf = l => (plain(l) && typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? Object.freeze({ error: l.error }) : null);
+// D6 §8.4 (b): of stage 10's landing facts (push mode) the summary and state\status.json keep the error code, and (ADR 0018 §2 L2 item 7,
+// three ways) the route main's rules gave that round, so the status does not read the policy's landing 'push' as "pushing"; or nothing.
+const LANDING_ROUTES = Object.freeze(['push', 'github-merge', 'park']);
+const landingOf = l => {
+  if (!plain(l)) return null;
+  const out = { ...(typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? { error: l.error } : {}), ...(LANDING_ROUTES.includes(l.route) ? { route: l.route } : {}) };
+  return Object.keys(out).length ? Object.freeze(out) : null;
+};
 const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunning === true, adopted: a.adopted === true, returned: a.returned === true, failedReported: a.failedReported === true,
   keptAlive: count(a.keptAlive) ?? 0, watermarkReported: a.watermarkReported === true,
   revokeHead: plain(a.revokeHead) && UUID.test(a.revokeHead.requestId ?? '') ? Object.freeze({ requestId: a.revokeHead.requestId, done: a.revokeHead.done === true }) : null }) : null);
