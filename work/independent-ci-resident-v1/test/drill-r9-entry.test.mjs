@@ -55,6 +55,7 @@ function guest(name, { list = fs.readFileSync(listFile, 'utf8'), extra = () => {
 // makes its work directory known (as the real one does) and stops.
 const stoppedEntry = (g, { guestCheck = '', stop = "throw 'LAUNCHER_STOPPED:R4_WINDOWS_REINSTALLED_VERIFY_NOT_PASSED_RESIDENT_STOPPED'" } = {}) => `$Work = ${q(g.out)}; $Kit = ${q(g.kitDir)}
   $script:EntryFailureRoots = @{ ci = ${q(g.ci)}; work = $null }
+  $script:eventAsk = $null
   $script:EntryFailureEventReader = { param($Since, $Max) $script:eventAsk = @($Since.ToString('o'), $Max)
     1..60 | ForEach-Object { [pscustomobject]@{ TimeCreated = [datetime]'2026-11-21T08:52:35Z'; Id = 7000 + $_; LevelDisplayName = 'Error'; Message = ("service CluedCIResident line $_ " + ('x' * 500)) } } }
   ${guestCheck || 'function Assert-FirstInstallGuest { }'}
@@ -177,7 +178,7 @@ test('S3: the committed list is accepted by the entry and names no secret, crede
   // what the report names: the resident's three state records, the launcher's progress records, verify's full answer
   assert.deepEqual(doc.files.map(f => `${f.root}:${f.path}`), ['ci:resident\\state\\HALT.json', 'ci:resident\\state\\PAUSED.json', 'ci:resident\\state\\status.json',
     'ci:reinstall-progress-*\\*.json', 'work:prepare\\launch-*\\progress\\*.json', 'work:prepare\\launch-*\\verify.stdout.json']);
-  assert.deepEqual(ps(`@(Read-EntryFailureFiles ${q(listFile)} | ForEach-Object { $_.root + ':' + $_.path })`), doc.files.map(f => `${f.root}:${f.path}`));
+  assert.deepEqual(ps(`@((Read-EntryFailureFiles ${q(listFile)}) | ForEach-Object { $_.root + ':' + $_.path })`), doc.files.map(f => `${f.root}:${f.path}`));
 });
 
 test('S4: an entry refused before the drill guest is known reads nothing and writes no snapshot', opts, () => {

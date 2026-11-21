@@ -1,0 +1,11 @@
+{
+  "contract": "clued.drill.guest-failure-files/1",
+  "files": [
+    { "root": "ci", "path": "resident\\state\\HALT.json" },
+    { "root": "ci", "path": "resident\\state\\PAUSED.json" },
+    { "root": "ci", "path": "resident\\state\\status.json" },
+    { "root": "ci", "path": "reinstall-progress-*\\*.json" },
+    { "root": "work", "path": "prepare\\launch-*\\progress\\*.json" },
+    { "root": "work", "path": "prepare\\launch-*\\verify.stdout.json" }
+  ]
+}
