@@ -8,18 +8,20 @@
 // cannot narrow its own selection, swap a suite's command line or extend the
 // known-failure list (ci-known-failures.json, read next to this file). The
 // baseline commands run first, followed by commands the candidate adds to
-// the selected suite (requiredCommands). The commands run the candidate's code and tests: that code is
+// the selected suite (requiredCommands), each side's commands as it expands them; a suite only the
+// candidate has runs whole (candidateSuites). The commands run the candidate's code and tests: that code is
 // reviewed through the protected-path rules, not through this file. The
 // candidate's own changes to the selection (this file, the workflow) select
 // every suite.
 //
-//   node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify>
+//   node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>]
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
 //     API (GITHUB_TOKEN, pull-requests: read); a push, a listing it cannot
 //     read or a listing at GitHub's 3000-file limit selects everything.
 //     Writes suites=<json>, app_deps=<json> (SUITE_APP_DEPENDENCIES) and
 //     run_<suite>=true|false to GITHUB_OUTPUT. Only
-//     the suites declared for the host's platform (SUITE_PLATFORMS) are listed.
+//     the suites declared for the host's platform (SUITE_PLATFORMS) are listed. With --root, the suites the
+//     checkout's own selector adds to the check follow, by its own platform table (selectWithCandidate).
 //   node scripts/ci/ci-required-selection.mjs --run-selected <check> [--root <checkout>]
 //     selects as --check does, then runs every selected suite in turn and fails
 //     when any of them fails: one job step, the same on Linux and on Windows
@@ -179,7 +181,7 @@ export const SUITES = {
       'apps/clued-cloud/tests/**', 'apps/clued-cloud/scripts/select-tests.mjs'],
     // Its tests read the database tests of apps/clued-cloud/tests and what they import, so a new or changed test there, or
     // the classifier, selects it.
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
@@ -320,7 +322,7 @@ export const SUITE_COMMANDS = {
   // Seconds: lists the tracked files and expands every suite command (FABLE-tests-outside-required-suites-20261121 §2).
   'test-coverage': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-tests-covered.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-tests-covered.mjs'] }],
-  'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs',
+  'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
     'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
@@ -408,6 +410,23 @@ export function selectSuites(check, files, platform = null) {
   return { suites: selected, reason: selected.length === 0 ? 'no file this check covers changed' : 'selected by changed paths' };
 }
 
+// Task cb5017b6: the selection of the trusted table, then the suites the candidate at root adds to the check (candidateSuites),
+// each selected whole whatever changed: a pull request that adds a suite runs it. A candidate table that cannot be read
+// keeps the trusted selection and is returned as the error, which fails the check.
+export function selectWithCandidate(check, files, platform, root, { trusted } = {}) {
+  const selection = selectSuites(check, files, platform);
+  let added = [];
+  try {
+    added = candidateSuites(check, root, { platform, ...(trusted ? { trusted } : {}) });
+  } catch (error) {
+    return { selection, error };
+  }
+  if (added.length === 0) return { selection, error: null };
+  const ids = added.map(({ id }) => id);
+  return { selection: { suites: [...selection.suites, ...ids], added,
+    reason: `${selection.reason}; the candidate adds ${ids.join(', ')}: each runs whole` }, error: null };
+}
+
 export async function listPullRequestFiles({ repository, number, token, fetchImpl = fetch }) {
   const files = [];
   for (let page = 1; page <= FILE_LIMIT / 100; page += 1) {
@@ -438,9 +457,10 @@ export async function changedFiles({ event, env, fetchImpl = fetch }) {
 }
 
 export function outputLines(check, selection) {
+  const apps = [...appDependencies(selection.suites), ...(selection.added ?? []).map(({ app }) => app).filter(Boolean)];
   return [
     `suites=${JSON.stringify(selection.suites)}`,
-    `app_deps=${JSON.stringify(appDependencies(selection.suites))}`,
+    `app_deps=${JSON.stringify([...new Set(apps)].sort())}`,
     ...Object.keys(SUITES[check]).map((id) => `run_${id.replace(/-/g, '_')}=${selection.suites.includes(id)}`),
   ];
 }
@@ -641,7 +661,7 @@ function addedTestFiles(command, baseline) {
 // The argv a suite command runs: its placeholders expanded and, for a command that only adds test files to a trusted one
 // (requiredCommands), just those files, planned as --run-files plans them.
 export function commandArgv(command, options) {
-  const argv = expandArgv(command.argv, options);
+  const argv = command.expanded ? command.argv : expandArgv(command.argv, options);
   if (!command.files) return argv;
   const [only] = filterCommand(command, argv, new Set(command.files)).runs;
   if (!only) throw new Error(`cannot run only the added test files of (${command.cwd}) ${command.argv.join(' ')}`);
@@ -651,30 +671,87 @@ export function commandArgv(command, options) {
 // Gap A (FABLE r8 B2): the trusted list first, in its order and with its policy, even if the PR removes or replaces a
 // command; then the commands the candidate's selector adds to the suite. Reading the candidate is lazy: only after the
 // baseline commands have run, and always when the candidate's selector is another file: its bytes say nothing about the
-// modules it imports. A separate Node process (no environment) exports the candidate's list, and only what it prints, once
-// validated here, can add a command; candidate code never runs inside the process that decides which commands passed. It
-// is not a read boundary (the permission model follows symbolic links, the network is open): the suite commands run the
-// candidate's code anyway. A candidate command that only adds test files to a trusted command runs just those files, and
-// none carries a policy. A checkout without scripts/ci adds nothing; one with scripts/ci but no selector moved or deleted
-// it, so what it adds cannot be read and the suite fails.
-export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], trusted = fileURLToPath(import.meta.url) } = {}) {
-  if (!Array.isArray(baseline)) throw new Error(`unknown suite: ${id}`);
-  yield* baseline;
-  const candidate = path.resolve(root, 'scripts/ci/ci-required-selection.mjs');
-  if (real(candidate) === real(trusted)) return;
-  if (!existsSync(candidate)) {
-    if (!existsSync(path.dirname(candidate))) return;
-    throw new Error(`the candidate has scripts/ci but no ci-required-selection.mjs: the commands it adds to ${id} cannot be read`);
+// modules it imports. A separate Node process exports the candidate's list, and only what it prints, once validated here,
+// can add a command; candidate code never runs inside the process that decides which commands passed. A candidate command
+// that only adds test files to a trusted command runs just those files, and none carries a policy. A checkout without
+// scripts/ci adds nothing; one with scripts/ci but no selector moved or deleted it, so what it adds cannot be read and the
+// suite fails.
+// The permission flags are no boundary of any kind (FABLE-new-suite-run-points-20261121 §3): the commands list may start
+// processes (--allow-child-process), which the permission model does not follow, the model follows symbolic links and the
+// network is open. They only keep an unintended write out. This guards against a change that would run less, swap a command
+// or widen the known failures by editing the selection, not against hostile code: that is for the protected-path rules and
+// review, and the suite commands run the candidate's code with the same user and environment anyway. What still holds:
+// candidate code never runs in the process that decides; the candidate only adds commands; what it adds carries no policy;
+// suite names, platforms and application dependencies are validated before they reach GITHUB_OUTPUT. The child gets the
+// suite environment (no real token), but its parent's token is readable to a process of the same user, so a step that holds
+// a token with write access or any secret must never call this selector with --root.
+// Task cb5017b6 (FABLE-c2-review-rulings-20261121, "补" ruling 2): each side expands its own commands and the expanded
+// commands are compared, so a placeholder only the candidate knows, or one the candidate expands differently, adds just the
+// test files it adds. The candidate's process reads the whole checkout and may start the unit-test listing, with the
+// environment a suite command gets. A suite only the candidate has (no trusted commands) runs the candidate's commands
+// whole. Equal expanded commands add nothing.
+const CANDIDATE_EXPORT = `const [url, mode, name, root, base, report] = process.argv.slice(1);
+const path = await import('node:path');
+const m = await import(url);
+const plain = (c) => typeof c?.cwd === 'string' && Array.isArray(c.argv) && c.argv.every((a) => typeof a === 'string');
+let out = null;
+if (mode === 'commands') {
+  if (m.SUITE_COMMANDS && Object.hasOwn(m.SUITE_COMMANDS, name)) {
+    const list = m.SUITE_COMMANDS[name];
+    out = !Array.isArray(list) ? list : list.map((c) => (plain(c) && typeof m.expandArgv === 'function'
+      ? { cwd: c.cwd, argv: m.expandArgv(c.argv, { cwd: path.join(root, c.cwd), root, base: base || undefined, report }) } : c));
   }
-  const read = spawnSync(process.execPath, ['--permission', `--allow-fs-read=${path.dirname(candidate)}`, '--input-type=module', '-e',
-    'const {SUITE_COMMANDS} = await import(process.argv[1]); process.stdout.write(JSON.stringify(SUITE_COMMANDS[process.argv[2]] ?? []));',
-    pathToFileURL(candidate).href, id], { cwd: root, env: {}, encoding: 'utf8', timeout: 10_000, windowsHide: true });
-  if (read.status !== 0) throw new Error(`cannot read candidate commands for ${id}: ${read.error?.message ?? read.stderr}`);
-  const commands = JSON.parse(read.stdout);
-  if (!Array.isArray(commands)) throw new Error(`invalid candidate command list for ${id}`);
+} else {
+  out = Object.keys(m.SUITES?.[name] ?? {}).map((id) => ({ id,
+    platforms: typeof m.suitePlatforms === 'function' ? m.suitePlatforms(id) : m.SUITE_PLATFORMS?.[id]?.platforms ?? null,
+    app: m.SUITE_APP_DEPENDENCIES?.[id] ?? null }));
+}
+process.stdout.write(JSON.stringify(out));`;
+
+// The candidate's selector: null when it is this file or the checkout has no scripts/ci.
+function candidateSelectorOf(root, trusted, what) {
+  const candidate = path.resolve(root, 'scripts/ci/ci-required-selection.mjs');
+  if (real(candidate) === real(trusted)) return null;
+  if (!existsSync(candidate)) {
+    if (!existsSync(path.dirname(candidate))) return null;
+    throw new Error(`the candidate has scripts/ci but no ci-required-selection.mjs: ${what} cannot be read`);
+  }
+  return candidate;
+}
+
+function readCandidate(candidate, root, mode, name, { base, report, env }, what) {
+  const reads = [...new Set([path.resolve(root), real(root)])].map((dir) => `--allow-fs-read=${dir}`);
+  // Only expanding commands may start a process (the unit-test listing); reading the suite tables does not.
+  const spawns = mode === 'commands' ? ['--allow-child-process'] : [];
+  const read = spawnSync(process.execPath, ['--permission', ...reads, ...spawns, '--input-type=module', '-e', CANDIDATE_EXPORT,
+    pathToFileURL(candidate).href, mode, name, root, base ?? '', report], {
+    cwd: root, env: testEnv(env), encoding: 'utf8', timeout: 60_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  if (read.status !== 0) throw new Error(`cannot read ${what}: ${read.error?.message ?? read.stderr}`);
+  return JSON.parse(read.stdout);
+}
+
+export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], trusted = fileURLToPath(import.meta.url), env = process.env,
+  base = env.CI_BASE_SHA, report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`) } = {}) {
+  if (baseline !== undefined && !Array.isArray(baseline)) throw new Error(`unknown suite: ${id}`);
+  const own = baseline ?? [];
+  yield* own;
+  const what = `the commands the candidate adds to ${id}`;
+  const candidate = candidateSelectorOf(root, trusted, what);
+  if (!candidate) {
+    if (baseline === undefined) throw new Error(`unknown suite: ${id}`);
+    return;
+  }
+  const commands = readCandidate(candidate, root, 'commands', id, { base, report, env }, what);
+  if (commands === null && baseline === undefined) throw new Error(`unknown suite: ${id}`);
+  // A new suite that runs nothing would pass having checked nothing.
+  if (baseline === undefined && Array.isArray(commands) && commands.length === 0) throw new Error(`the candidate's suite ${id} has no command`);
+  if (commands !== null && !Array.isArray(commands)) throw new Error(`invalid candidate command list for ${id}`);
   const key = ({ cwd, argv }) => JSON.stringify([cwd, argv]);
-  const seen = new Set(baseline.map(key));
-  for (const command of commands) {
+  // The trusted commands as they ran: expanded by this file's rules, with the same base commit and report file.
+  const expanded = own.map((command) => ({ cwd: command.cwd,
+    argv: expandArgv(command.argv, { cwd: path.join(root, command.cwd), base, report }) }));
+  const seen = new Set(expanded.map(key));
+  for (const command of commands ?? []) {
     const { cwd, argv } = command ?? {};
     if (typeof cwd !== 'string' || !Array.isArray(argv) || !argv[0] || !argv.every((arg) => typeof arg === 'string')) {
       throw new Error(`invalid candidate command for ${id}`);
@@ -687,9 +764,36 @@ export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], tru
     }
     seen.add(identity);
     // Only the trusted list can attach a known-failure allowance (or any other policy) to a command.
-    const files = addedTestFiles({ cwd, argv }, baseline);
-    yield files ? { cwd, argv, files } : { cwd, argv };
+    const files = addedTestFiles({ cwd, argv }, expanded);
+    yield files ? { cwd, argv, expanded: true, files } : { cwd, argv, expanded: true };
   }
+}
+
+// The suites of a check only the candidate has (no trusted check names them), each runnable by --run, by the candidate's
+// own platform table (all platforms when it names none), with its application dependency. Empty when the checkout's
+// selector is this file or the checkout has no scripts/ci.
+const SUITE_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export function candidateSuites(check, root, { platform = null, trusted = fileURLToPath(import.meta.url), env = process.env } = {}) {
+  const what = `the suites the candidate adds to ${check}`;
+  const candidate = candidateSelectorOf(root, trusted, what);
+  if (!candidate) return [];
+  const listed = readCandidate(candidate, root, 'suites', check, { report: '', env }, what);
+  if (!Array.isArray(listed)) throw new Error(`invalid candidate suite list for ${check}`);
+  const known = new Set([...Object.keys(SUITE_COMMANDS), ...Object.values(SUITES).flatMap((suites) => Object.keys(suites))]);
+  const added = [];
+  for (const { id, platforms, app } of listed) {
+    if (typeof id !== 'string' || !SUITE_NAME.test(id)) throw new Error(`invalid candidate suite name in ${check}: ${JSON.stringify(id)}`);
+    if (known.has(id)) continue;
+    const on = platforms ?? PLATFORMS;
+    if (!Array.isArray(on) || !on.every((name) => PLATFORMS.includes(name))) throw new Error(`invalid candidate platforms for ${id}`);
+    // The trusted ci-deps.mjs installs it from the runner's store: an application of the checkout, with its lockfile.
+    if (app !== null && (typeof app !== 'string' || !/^apps\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(app)
+        || !existsSync(path.join(root, app, 'package-lock.json')))) {
+      throw new Error(`invalid candidate application dependency for ${id}: ${JSON.stringify(app)} (apps/<name> with a package-lock.json)`);
+    }
+    if (platform === null || on.includes(platform)) added.push({ id, app });
+  }
+  return added;
 }
 
 export class RunFilesError extends Error {}
@@ -710,10 +814,10 @@ export function planFiles(id, { root, files, env = process.env }) {
   const matched = new Set();
   const accepts = [];
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
-  for (const command of requiredCommands(id, root)) {
+  for (const command of requiredCommands(id, root, { env, base: env.CI_BASE_SHA || 'unset', report })) {
     const cwd = path.join(root, command.cwd);
     // {base} is not a test file; a placeholder keeps commands that need it plannable (they are skipped).
-    const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA || 'unset', report });
+    const argv = command.expanded ? command.argv : expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA || 'unset', report });
     // A command that only adds test files to a trusted one runs no other file (the trusted command runs those).
     const filtered = filterCommand(command, argv, command.files ? new Set(command.files.filter((file) => named.has(file))) : named);
     accepts.push(...filtered.accepts);
@@ -728,7 +832,10 @@ export function planFiles(id, { root, files, env = process.env }) {
 }
 
 export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null } = {}) {
-  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
+  // A suite this file does not have may be one the candidate adds (requiredCommands reads it); not in this file's own checkout.
+  if (!Object.hasOwn(SUITE_COMMANDS, id) && (files || captureKnown || !candidateSelectorOf(root, fileURLToPath(import.meta.url), id))) {
+    throw new Error(`unknown suite: ${id}`);
+  }
   if (files) {
     if (env.GITHUB_ACTIONS === 'true') {
       log('run-files: refused under GITHUB_ACTIONS; a targeted run is never a suite verdict, use --run');
@@ -757,10 +864,12 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
   if (captureKnown) return writeKnown(id, root, env, keep);
-  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
-  // The trusted commands, then the candidate's additions (read once the trusted ones have run).
-  let steps = (function* plan() { for (const command of requiredCommands(id, root)) yield { command, argv: null }; }());
+  // The trusted commands, then the candidate's additions (read once the trusted ones have run), or, for a suite only the
+  // candidate has, the candidate's commands (requiredCommands throws for a suite neither has).
+  let steps = (function* plan() {
+    for (const command of requiredCommands(id, root, { env, base: env.CI_BASE_SHA, report })) yield { command, argv: null };
+  }());
   let named = null;
   if (files) {
     try {
@@ -892,7 +1001,7 @@ function writeKnown(id, root, env, keep = false) {
   return unexplained ? 1 : 0;
 }
 
-const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>]';
+const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>]';
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
@@ -953,15 +1062,18 @@ async function main(argv, env = process.env) {
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const files = env.GITHUB_EVENT_NAME === 'pull_request' ? await changedFiles({ event, env }) : null;
   const platform = hostPlatform();
-  const selection = selectSuites(check, files, platform);
+  const rootIndex = argv.indexOf('--root');
+  const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
+  const { selection, error } = selectWithCandidate(check, files, platform, root);
+  if (error) console.log(`::error title=${check} candidate suites::${error.message}`);
   console.log(`${check}: ${selection.reason}; suites: ${selection.suites.join(', ') || 'none'}`);
   console.log(`platform: ${platform} (suites declared for another platform only are not selected here)`);
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `${outputLines(check, selection).join('\n')}\n`);
   const summary = (text) => { if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, text); };
   summary(`### ${check}\n\n${selection.reason}.\n\nSuites (${platform}): ${selection.suites.map((id) => `\`${id}\``).join(', ') || 'none (not affected)'}\n`);
-  if (selectedIndex < 0) return 0;
-  const rootIndex = argv.indexOf('--root');
-  return runSelected(selection.suites, { root: rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT, env, summary });
+  if (selectedIndex < 0) return error ? 1 : 0;
+  const status = await runSelected(selection.suites, { root, env, summary });
+  return status !== 0 ? status : error ? 1 : 0;
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
