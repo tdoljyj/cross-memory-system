@@ -38,11 +38,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
 import { readBounded } from './store.mjs';
+import { reasonCodeList } from './queue.mjs';
 import { HOLDER, INTAKE_HOLDS_MAX } from './intake-pause.mjs';
 import { parseRevokeHead, parseTrainLast, parseTrainNodes, parseTrainSweep } from './train.mjs';
 import { NODE_NAME, NODE_SOURCE } from './node-duty.mjs';
 import { StageTimings, parseTiming } from './stage-timing.mjs';
-import { renewalStatus, parseRenewalStatus } from './connection-renewal.mjs';
+import { renewalStatus, parseRenewalStatus, RESPONSE_WAITING } from './connection-renewal.mjs';
 import { parseSelfcheckView, readSelfcheck, selfcheckNotice, selfcheckView } from './selfcheck.mjs';
 import { GENERATION_CURRENT_CONTRACT, LINUX_VERSION_FACTS_CONTRACT, UPGRADE_OP_STATES, UPGRADE_STATUS_CONTRACT, VERSION_FACTS_FILE,
   consistent as versionsConsistent } from './upgrade-mailbox.mjs';
@@ -205,7 +206,9 @@ export class StatusBoard {
       stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null,
       queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null, claimExpiresAt: isoOrNull(p.claimExpiresAt ?? null), watched: p.watched === true, network: p.network === true,
       ...(HEX40.test(p.testSha ?? '') ? { testSha: p.testSha } : {}),
-      heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true })) });
+      heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
+      // Task 0ca0479d: the row's last release reason codes (queue.mjs#view), for the PR page only.
+      ...(reasonCodeList(p.reasonCodes).length > 0 ? { reasonCodes: reasonCodeList(p.reasonCodes) } : {}) })) });
   }
 
   snapshot() {
@@ -282,7 +285,8 @@ export function parseStatus(bytes) {
         ...(head(p.baseSha) ? { baseSha: p.baseSha } : {}), ...(head(p.testSha) ? { testSha: p.testSha } : {}),
         deferred: codeOrNull(p.deferred), since: ms(p.since), nextAt: ms(p.nextAt), eta: ms(p.eta), level: Number.isSafeInteger(p.level) ? p.level : 0,
         stopKind: ['burned', 'release-cap'].includes(p.stopKind) ? p.stopKind : null, queuePosition: Number.isSafeInteger(p.queuePosition) ? p.queuePosition : null,
-        claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true })) : [],
+        claimExpiresAt: ms(p.claimExpiresAt), watched: p.watched === true, network: p.network === true, heldBy: codeOrNull(p.heldBy ?? null), frontOpenOwed: p.frontOpenOwed === true,
+        ...(reasonCodeList(p.reasonCodes).length > 0 ? { reasonCodes: reasonCodeList(p.reasonCodes) } : {}) })) : [],
     recent: Array.isArray(v.recent) ? v.recent.filter(r => Number.isSafeInteger(r?.pr) && head(r.headSha) && RECENT_OUTCOMES.includes(r.outcome)).slice(0, RECENT_MAX)
       .map(r => ({ pr: r.pr, headSha: r.headSha, attempt: r.attempt, outcome: r.outcome, code: typeof r.code === 'string' && CODE.test(r.code) ? r.code : null,
         class: typeof r.class === 'string' && /^[a-z0-9-]{1,40}$/.test(r.class) ? r.class : null, retry: typeof r.retry === 'string' && /^[a-z0-9-]{1,40}$/.test(r.retry) ? r.retry : null,
@@ -406,7 +410,8 @@ export async function readVersionState({ root, policy, policySha256 = null, cloc
   if(renewal) view.renewal=renewal;
   const notices=versionNotices(view, inputs.status);
   if(renewal) {
-    const codes=Object.values(renewal.connections).map(v=>v.code).filter(Boolean);
+    // 等回包（未满一小时）不是失败：状态视图显示等待码，不发续期失败通知。
+    const codes=Object.values(renewal.connections).map(v=>v.code).filter(code=>code && code!==RESPONSE_WAITING);
     if(renewal.keyCheck==='FAIL') codes.push('RENEW_KEY_CHECK_FAILED');
     for(const code of new Set(codes)) notices.push({key:'renewal-failed:'+code,kind:'renewal-failed',code,pr:null,headSha:null,at:renewal.checkedAt,until:null});
   }

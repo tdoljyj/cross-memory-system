@@ -133,6 +133,12 @@ export function diedInSetup(job) {
   const failed = failedSteps(job);
   return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
 }
+// Did GitHub end the job before any runner took it (9aba97c1)? No step ran and the record says no runner (runner_id 0 or null and runner_name
+// null or empty, as GitHub records it); a record without those fields proves nothing.
+export function neverAssigned(job) {
+  return !!job && job.status === "completed" && ["failure", "cancelled"].includes(job.conclusion) && Array.isArray(job.steps)
+    && job.steps.length === 0 && [0, null].includes(job.runner_id) && [null, ""].includes(job.runner_name);
+}
 // The timeout annotation is emitted on the cancelled job's check run, independently of its log.
 function hasTimeoutAnnotation(annotations) {
   return Array.isArray(annotations) && annotations.some(note =>
@@ -142,6 +148,7 @@ export function jobFailureKind(job, log = null, annotations = null) {
   const no = (why) => ({ environment: false, kind: "unknown", why });
   if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
   if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
+  if (neverAssigned(job)) return { environment: true, kind: "unassigned", why: "no runner took the job and no step ran" };
   const failed = failedSteps(job);
   const cancelled = job.conclusion === "cancelled";
   if (cancelled) {
@@ -161,6 +168,11 @@ export function jobFailureKind(job, log = null, annotations = null) {
 const REPAIR_GATE_JOB = "admission-gate";
 const REPAIR_NOT_ADMITTED = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
 const REPAIR_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
+// Fable 11-20 (补：车头缺必需检查, and 补：补跑上限的范围): the budget is counted per run ID: at most three attempts of one run (the first and
+// two re-runs), whatever made them (this rule, the companion's lane, a person's re-run of it) and for both kinds of process cause together (a
+// run that produced no result, and the environment failures below). A new run of the workflow on the head (the PR reopened, a new event, a
+// re-dispatch) is a new run ID and counts from 1. The smaller of it and the environment limit holds.
+export const REPAIR_ATTEMPTS_MAX = 3;
 
 async function repairAnnotations(read, repository, jobId) {
   if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("the job has no check run ID");
@@ -179,8 +191,10 @@ async function repairEnvironmentFailures({ read, readLog, repository, heavy }) {
   const failures = [];
   for (const job of heavy) {
     if (job.conclusion === "success" || job.conclusion === "skipped") continue;
-    const setup = diedInSetup(job);
-    const cancelled = job.conclusion === "cancelled";
+    // A job no runner took (9aba97c1) ran nothing, like a setup death: no log, no annotation.
+    const unassigned = neverAssigned(job);
+    const setup = diedInSetup(job) || unassigned;
+    const cancelled = job.conclusion === "cancelled" && !unassigned;
     const steps = failedSteps(job);
     if (!setup && (!Number.isSafeInteger(job.id) || job.id <= 0 || !steps || (cancelled ? steps.length > 0 : steps.length === 0))) return null;
     const annotations = cancelled ? await repairAnnotations(read, repository, job.id) : null;
@@ -222,11 +236,22 @@ async function hasRepairRecovery({ read, repository, runId, workflowId, head, af
   return false;
 }
 
-async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
-  const refuse = reason => ({ allowed: false, reason });
+// The attempts the budget counts: this run's attempt number (GitHub's own count of the run ID, a person's re-runs of it included). An attempt
+// number that cannot be proven is the budget reached (Infinity). What a check cannot close: a person's re-run made between the lane's read
+// and its request is counted from the next read on.
+function runAttempts({ attempt }) {
+  return Number.isSafeInteger(attempt) && attempt > 0 ? attempt : Infinity;
+}
+
+// The one answer to "may this attempt be a repair" (the gate imports it, the companion's lane calls it, the runner hook holds a copy the
+// admission self-tests lock byte for byte). Refusals carry why for the lane: unreadable (read again later), waiting (no recovery evidence
+// yet), exhausted (three real attempts, with the last failures), budget (three attempts of the workflow on the head).
+export async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
+  const refuse = (reason, more = {}) => ({ allowed: false, reason, ...more });
   const attempts = [];
   let realAttempts = 0;
   let lastFailures = [];
+  let lastKinds = [];
   let completedAt;
   try {
     for (let earlier = 1; earlier < attempt; earlier += 1) {
@@ -243,21 +268,24 @@ async function requiredTestsRepairHistory({ read, readLog, repository, runId, he
       if (jobs.some(job => job.run_attempt != null && Number(job.run_attempt) !== earlier))
         return refuse(`attempt ${earlier} has a job of another attempt`);
       const [gateJob] = gates;
-      const ran = heavy.filter(job => job.status !== "completed" || job.conclusion !== "skipped");
+      // A job no runner took (9aba97c1) ran nothing, like a skipped one.
+      const ran = heavy.filter(job => (job.status !== "completed" || job.conclusion !== "skipped") && !neverAssigned(job));
       if (ran.length > 0) {
         realAttempts += 1;
-        if (realAttempts === 3) return refuse("three real attempts have already run");
+        if (realAttempts === 3) return refuse("three real attempts have already run", { exhausted: lastKinds });
         const failures = gateJob.status === "completed" && gateJob.conclusion === "success"
           ? await repairEnvironmentFailures({ read, readLog, repository, heavy }) : null;
         if (!failures)
           return refuse(`attempt ${earlier} already ran ${ran.map(job => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; its gate or environment evidence does not allow repair`);
         lastFailures = failures.map(job => job.name);
+        lastKinds = failures.map(job => ({ name: job.name, kind: job.kind }));
         completedAt = Math.max(...jobs.map(job => Date.parse(job.completed_at)));
         attempts.push({ attempt: earlier, heavy_jobs: heavy.length, environment_failure: lastFailures,
           environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
         continue;
       }
-      const setup = diedInSetup(gateJob);
+      // Nothing ran: the gate died in setup, or no runner took it or a job after it (GitHub then records them all cancelled, unrun).
+      const setup = diedInSetup(gateJob) || neverAssigned(gateJob) || heavy.some(neverAssigned);
       const notes = !setup && gateJob.status === "completed" ? await repairAnnotations(read, repository, gateJob.id) : [];
       if (!setup && !notes.some(note =>
         (note?.title === REPAIR_GATE_JOB && REPAIR_NOT_ADMITTED.test(note.message ?? "")) ||
@@ -265,10 +293,13 @@ async function requiredTestsRepairHistory({ read, readLog, repository, runId, he
         return refuse(`the ${REPAIR_GATE_JOB} job of attempt ${earlier} did not end in ADMISSION_PENDING, RERUN_REFUSED or a GitHub API outage`);
       attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
     }
+    const total = runAttempts({ attempt });
+    if (total > REPAIR_ATTEMPTS_MAX)
+      return refuse(`three attempts of this run have already been made (${Number.isFinite(total) ? `${total} with this one` : "the count cannot be proven"})`, { budget: true });
     if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
-      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit");
+      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit", { waiting: true });
   } catch (error) {
-    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`);
+    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`, { unreadable: true });
   }
   return { allowed: true, attempts };
 }
@@ -984,6 +1015,8 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
         result.reason = 'required-tests dispatch PR is closed, foreign or moved';
         return result;
       }
+      // Fable 11-20 补“补跑上限的范围”: the re-run budget is per run ID; this dispatch is a new run, its first attempt (attempt > 1 is
+      // refused above), so earlier runs' attempts do not count here.
       // Retain the branch-dispatch rule: workflow bytes must match main.
       // The unchanged trusted gate then judges the Native PR admission.
       const differing = await workflowsDifferFromMain(fetchImpl, token, repository, defaultBranch, sha);

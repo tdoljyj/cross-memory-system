@@ -5,11 +5,16 @@ on:
     inputs:
       mode:
         description: >-
-          Release mode. Only deploy and migrate change production, and both first consume
-          an Owner Grant for this commit. preflight runs the read-only gate, backup creates
-          the encrypted pre-migration backup, source-capture captures one reviewed storage
-          client source, migrate applies the named migration files. deploy publishes the
-          PDF, main application and Kooyumi Connect Workers as one controlled release.
+          Release mode. Only deploy, migrate and release change production, and each first
+          consumes an Owner Grant for this commit. preflight runs the read-only gate, backup
+          creates the encrypted pre-migration backup, source-capture captures one reviewed
+          storage client source, migrate applies the named migration files. deploy publishes
+          the PDF, main application and Kooyumi Connect Workers as one controlled release.
+          release is the same deploy from one approval for a commit whose every change a
+          Worker version rollback undoes: it takes no migrations (apply them with migrate
+          first) and runs only when the three wrangler production configurations are byte for
+          byte those of the commit the edge serves (otherwise use deploy). deploy and release
+          roll the Workers back to the versions they served if a deploy or verification fails.
         type: choice
         required: true
         default: preflight
@@ -19,6 +24,7 @@ on:
           - source-capture
           - deploy
           - migrate
+          - release
       source_request_id:
         description: Exact approved authorization request UUID; source-capture mode only
         type: string
@@ -33,6 +39,12 @@ on:
           comma-separated, in the order to apply
         type: string
         default: ''
+      rollback_drill:
+        description: >-
+          release mode only: after every verification has passed, fail on purpose before
+          the G6 attestation is written, so the Workers roll back through the real path
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -48,7 +60,11 @@ jobs:
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # deploy and release: at least every step plus the rollback (each has its
+    # own timeout-minutes; tests/production-release-gate.test.mjs checks the sum).
+    # Every other mode keeps 45: the migrate steps have no step timeout, and a
+    # stalled migration must not hold the concurrency group longer than before.
+    timeout-minutes: ${{ (inputs.mode == 'deploy' || inputs.mode == 'release') && 165 || 45 }}
     # OwnerCredential §6.1: CLUED_MIGRATION_DATABASE_URL lives in this
     # environment (Owner setting: deployment branches main only). Its database
     # login is also the release identity: only it may call the release door.
@@ -58,22 +74,27 @@ jobs:
         working-directory: apps/clued-cloud
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 3
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        timeout-minutes: 5
         with:
           node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/clued-cloud/package-lock.json
       - name: Configure job temporary storage
+        timeout-minutes: 2
         uses: ./.github/actions/ci-temporary-storage
       - name: Validate exclusive release mode
+        timeout-minutes: 1
         env:
           RELEASE_MODE: ${{ inputs.mode }}
           SOURCE_REQUEST_ID: ${{ inputs.source_request_id }}
           SOURCE_REQUEST_DIGEST: ${{ inputs.source_request_digest }}
           MIGRATIONS: ${{ inputs.migrations }}
+          ROLLBACK_DRILL: ${{ inputs.rollback_drill }}
         run: |
           set -euo pipefail
           # Deploy is never implied: an unknown or missing mode stops here, before any
@@ -91,13 +112,27 @@ jobs:
               test -z "$SOURCE_REQUEST_ID"
               test -z "$SOURCE_REQUEST_DIGEST"
               test -n "${MIGRATIONS:-}" ;;
+            release)
+              test -z "$SOURCE_REQUEST_ID"
+              test -z "$SOURCE_REQUEST_DIGEST"
+              # A release carries only what a Worker version rollback undoes; a
+              # migration cannot be rolled back with the Workers.
+              if [ -n "${MIGRATIONS:-}" ]; then
+                echo "::error::release takes no migrations: apply them with migrate mode first, then release" >&2
+                exit 1
+              fi ;;
             *)
               echo "::error::Unknown release mode '$RELEASE_MODE'" >&2
               exit 1 ;;
           esac
+          if [ "${ROLLBACK_DRILL:-false}" != "false" ] && [ "$RELEASE_MODE" != "release" ]; then
+            echo "::error::rollback_drill is a release-mode switch" >&2
+            exit 1
+          fi
           echo "Release mode: $RELEASE_MODE"
       - name: Check production database credential
         if: ${{ inputs.mode != 'source-capture' }}
+        timeout-minutes: 1
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: |
@@ -364,6 +399,7 @@ jobs:
           node -e 'process.stdout.write(JSON.stringify({contract:"clued.production-migration-apply.v1",source_commit:process.env.GITHUB_SHA,applied:JSON.parse(process.argv[1]),finished_at:new Date().toISOString()},null,2)+"\n")' "$applied" \
             > "$evidence_dir/production-migrations.json"
       - if: ${{ inputs.mode != 'backup' && inputs.mode != 'migrate' }}
+        timeout-minutes: 10
         run: npm ci --ignore-scripts
       - name: Capture exact nonsecret registration source
         if: ${{ inputs.mode == 'source-capture' }}
@@ -381,7 +417,8 @@ jobs:
             --expected-release-sha "$GITHUB_SHA" \
             --output .sites-runtime/storage-client-source/registration.json
       - name: Install embedded PostgreSQL ICU compatibility runtime
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           icu_deb=$(mktemp "$RUNNER_TEMP/clued-libicu60-XXXXXX.deb")
@@ -389,19 +426,22 @@ jobs:
           curl -fsSLo "$icu_deb" https://archive.ubuntu.com/ubuntu/pool/main/i/icu/libicu60_60.2-3ubuntu3.2_amd64.deb
           sudo dpkg -i "$icu_deb"
       - name: Verify projection and MTPE behavior
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 10
         run: |
           node --test tests/production-release-gate.test.mjs tests/served-agent-contract.test.mjs
           npm run test:projection:refresh
           npm run test:mtpe:intake
           npm run typecheck
       - name: Build exact Worker source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         # Builds the main Worker and the PDF extractor Worker (dist/pdf-extractor),
         # and fails if the main Worker's bundle contains pdf.js.
         run: npm run build
       - name: Verify and build Kooyumi Connect release source
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           node --test tests/oauth-origin.test.mjs
@@ -413,7 +453,8 @@ jobs:
             --evidence-out .sites-runtime/release-evidence/connect-build.json
           node --check "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
       - name: Verify database prerequisites and record projection state
-        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'preflight' || inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: |
@@ -421,22 +462,42 @@ jobs:
           node scripts/production-release-gate.mjs --pre-deploy \
             --evidence-out .sites-runtime/release-evidence/production-preflight.json
       - name: Check Cloudflare deployment credential
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: |
           test -n "$CLOUDFLARE_API_TOKEN"
           test -n "$CLOUDFLARE_ACCOUNT_ID"
+      # Before the grant and the first change to the Workers: the version each one
+      # serves and the commit the public edge serves (main /healthz, Connect
+      # smoke), so a failed deploy or verification below rolls back to exactly
+      # that and reads it back. A Worker without a single version at 100% stops
+      # here. A release also stops here unless the three wrangler production
+      # configurations are byte for byte those of the commit the edge serves
+      # (git diff): a version rollback undoes code, bindings and vars, not
+      # Cron, routes or queue consumers. deploy publishes such commits.
+      - name: Record the Worker versions production serves
+        id: worker_versions
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 8
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/release-worker-versions.mjs record --mode "$RELEASE_MODE" --out .sites-runtime/release-evidence/worker-versions.json
       # OwnerCredential §6.1, release door v1: consume one use of the Owner's
       # grant for this commit before anything changes production, through
       # clued_private.release_door_v1 with the migration database login (the
       # release identity; no token). The input is COPY data, not SQL text. It
       # runs after the release gate and the credential checks, so a deploy the
       # gate stops uses no grant (run 37329072487 used its grant and then
-      # stopped at the gate). Without the door it fails.
+      # stopped at the gate). Without the door it fails. A release
+      # consumes it as deploy: one grant, used once.
       - name: Consume the Owner Grant for this commit
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         working-directory: .
         env:
           # Steps before this one ran dependency code (npm ci, tests, build);
@@ -457,18 +518,27 @@ jobs:
           cat -- "$err" >&2
           printf '%s\n' "$answer" | node scripts/ci/clued-release-door.mjs report --mode deploy --error-file "$err"
       - name: Ensure Storage job queue exists
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         env:
+          RELEASE_MODE: ${{ inputs.mode }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           # The Worker's producer and consumer bindings need the queue before deploy.
           if ! npx wrangler queues info clued-storage-jobs >/dev/null; then
+            # A Worker rollback would not remove a queue: release only reads.
+            if [ "$RELEASE_MODE" = "release" ]; then
+              echo "::error::clued-storage-jobs is missing or unreadable; release creates nothing a rollback cannot undo (use deploy)" >&2
+              exit 1
+            fi
             npx wrangler queues create clued-storage-jobs
           fi
       - name: Deploy Clued PDF extractor Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        id: first_deploy
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -478,28 +548,33 @@ jobs:
         # service binding names it.
         run: npx wrangler deploy --config wrangler.pdf-extractor.jsonc
       - name: Deploy Clued production Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 8
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.production.jsonc --keep-vars
-      - name: Verify exact live commit and currentness transport
-        if: ${{ inputs.mode == 'deploy' }}
-        env:
-          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
-        run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+      - name: Wait until production serves this commit
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 4
+        run: >-
+          node --input-type=module -e "const { waitForLiveSourceCommit } = await import('./scripts/currentness-live-build.mjs');
+          await waitForLiveSourceCommit(process.env.GITHUB_SHA, { log: (line) => console.error(line) });"
       - name: Verify production serves the repository Agent contract
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         run: node scripts/verify-served-agent-contract.mjs --evidence-out .sites-runtime/release-evidence/served-agent-contract.json
       - name: Verify the PDF extractor service binding
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 3
         run: node scripts/verify-pdf-extractor.mjs --evidence-out .sites-runtime/release-evidence/pdf-extractor.json
       # The existing service binding already names clued-cloud. Publish Connect only
       # after the main application's exact commit, contract and PDF binding pass.
       # The same commit's Owner Grant above covers this explicit release cohort.
       - name: Deploy Kooyumi Connect Worker
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 5
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
@@ -507,17 +582,68 @@ jobs:
           npx wrangler deploy "$RUNNER_TEMP/kooyumi-connect-build/worker.mjs"
           --config ../kooyumi-connect/wrangler.production.jsonc --no-bundle --keep-vars
       - name: Verify Kooyumi Connect production release
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 4
         run: node ../kooyumi-connect/verify-production.mjs --evidence-out .sites-runtime/release-evidence/connect-postflight.json
+      # Calls the unchanged gate's --post-deploy until one Cron period plus two
+      # minutes has passed, while its only findings are a backlog; a failed
+      # job, a digest mismatch or a stalled call ends it at once. The step
+      # timeout is that window plus five minutes.
       - name: Verify projection currentness after deployment
-        if: ${{ inputs.mode == 'deploy' }}
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 17
         env:
           CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
         run: >-
-          node scripts/production-release-gate.mjs --post-deploy
+          node scripts/projection-postflight.mjs
           --evidence-out .sites-runtime/release-evidence/production-postflight.json
+      # Rollback drill: every check above passed. Failing here rolls the
+      # Workers back through the real path; the G6 step below then does not run.
+      # It can only fail a run; off (the default) it is not on the path.
+      - name: Fail the rollback drill after every verification passed
+        if: ${{ inputs.mode == 'release' && inputs.rollback_drill }}
+        timeout-minutes: 1
+        run: |
+          echo "::error title=Rollback drill::Every verification passed; failing on purpose so the Workers roll back to the recorded versions"
+          exit 1
+      # Any failure from the first deploy on (a deploy, the live commit,
+      # contract, PDF, Connect or projection check, a step timeout, the drill)
+      # rolls each changed Worker back to its recorded version, then reads all
+      # three versions and the edge commits once, after one propagation window;
+      # only that reading decides "restored". The run still fails. A failure
+      # before the first deploy (the grant, the queue) changed no Worker and
+      # rolls nothing back. The database is forward-only; a release carries no
+      # migration.
+      - name: Roll back the Workers after a failed deploy or verification
+        if: ${{ failure() && (inputs.mode == 'deploy' || inputs.mode == 'release') && steps.worker_versions.outcome == 'success' && (steps.first_deploy.outcome == 'success' || steps.first_deploy.outcome == 'failure') }}
+        timeout-minutes: 35
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLUED_CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/release-worker-versions.mjs rollback --from .sites-runtime/release-evidence/worker-versions.json --out .sites-runtime/release-evidence/worker-rollback.json
+      # Outside the rollback: it runs only when everything above succeeded, and
+      # its failure does not roll production back. Written or not, the
+      # attestation and the live Worker then name the same commit.
+      - name: Verify exact live commit and currentness transport
+        id: g6
+        if: ${{ inputs.mode == 'deploy' || inputs.mode == 'release' }}
+        timeout-minutes: 15
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+        run: node scripts/verify-currentness-transport.mjs --production --evidence-out .sites-runtime/release-evidence/currentness-attestation.json
+      - name: Report an unconfirmed G6 attestation
+        if: ${{ failure() && steps.g6.outcome == 'failure' }}
+        timeout-minutes: 1
+        run: |
+          {
+            echo '## G6 attestation not confirmed'
+            echo
+            echo 'The release completed and passed every verification; the Workers were not rolled back.'
+            echo 'The G6 currentness attestation is not confirmed: run the Clued currentness production post-deploy attestation workflow.'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve release evidence
         if: always()
+        timeout-minutes: 5
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: clued-cloud-production-release-${{ github.run_id }}
@@ -529,6 +655,8 @@ jobs:
             apps/clued-cloud/.sites-runtime/release-evidence/connect-build.json
             apps/clued-cloud/.sites-runtime/release-evidence/connect-postflight.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-postflight.json
+            apps/clued-cloud/.sites-runtime/release-evidence/worker-versions.json
+            apps/clued-cloud/.sites-runtime/release-evidence/worker-rollback.json
             apps/clued-cloud/.sites-runtime/release-evidence/clued-production-pre-migration.dump.enc
             apps/clued-cloud/.sites-runtime/release-evidence/production-backup-manifest.json
             apps/clued-cloud/.sites-runtime/release-evidence/production-migrations.json

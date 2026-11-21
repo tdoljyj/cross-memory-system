@@ -560,17 +560,23 @@ function Step-ParentAcl {
 }
 # r5 review m1: the two secret files the NEW verify requires, checked BEFORE the uninstall with verify's own helpers (parsed from the
 # staged, pinned package copy of verify-resident.ps1). Existence, links and ACLs only; contents are never read.
+# The one place the staged verify-resident.ps1 is read, parsed and its secret helpers taken (every Test-SecretsAsVerify call site goes
+# through it; test/package-ps1-ascii.test.mjs runs it on the package's own verify bytes). Returns the source text of the two
+# assignments and the four helper functions, in that order; throws a code when verify does not parse or a helper is missing.
+function Read-VerifySecretHelpers {
+  $text = $U8.GetString([IO.File]::ReadAllBytes((Join-Path $Stage 'verify-resident.ps1')))
+  $tk = $null; $er = $null; $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)
+  if ($er.Count) { throw 'VERIFY_SCRIPT_PARSE_ERRORS' }
+  $want = @('Test-SecretFileSecurity', 'Test-SecretAclChain', 'Get-SecretPathState', 'Get-SecretFileState')
+  $defs = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $want -ccontains $n.Name }, $true))
+  $asg = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and @('$SecretTargets', '$SecretAdmins') -ccontains $n.Left.Extent.Text }, $false))
+  if ($defs.Count -ne 4 -or $asg.Count -ne 2) { throw 'VERIFY_SECRET_HELPERS_NOT_FOUND' }
+  foreach ($n in @($asg) + @($defs)) { $n.Extent.Text }
+}
 function Test-SecretsAsVerify {
   $r = [ordered]@{ appKey = $null; ciToken = $null; codes = @() }
   try {
-    $text = $U8.GetString([IO.File]::ReadAllBytes((Join-Path $Stage 'verify-resident.ps1')))
-    $tk = $null; $er = $null; $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)
-    if ($er.Count) { throw 'VERIFY_SCRIPT_PARSE_ERRORS' }
-    $want = @('Test-SecretFileSecurity', 'Test-SecretAclChain', 'Get-SecretPathState', 'Get-SecretFileState')
-    $defs = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $want -ccontains $n.Name }, $true))
-    $asg = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and @('$SecretTargets', '$SecretAdmins') -ccontains $n.Left.Extent.Text }, $false))
-    if ($defs.Count -ne 4 -or $asg.Count -ne 2) { throw 'VERIFY_SECRET_HELPERS_NOT_FOUND' }
-    foreach ($n in @($asg) + @($defs)) { . ([scriptblock]::Create($n.Extent.Text)) }
+    foreach ($t in @(Read-VerifySecretHelpers)) { . ([scriptblock]::Create($t)) }
     foreach ($k in @('appKey', 'ciToken')) {
       $f = Get-SecretFileState $SecretTargets[$k] $ControllerSid; $p = Get-SecretPathState $SecretTargets[$k] $ControllerSid
       $r[$k] = [ordered]@{ target = $SecretTargets[$k]; file = $f; path = $p }

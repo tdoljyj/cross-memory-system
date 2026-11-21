@@ -20,11 +20,12 @@ import { fail } from './canonical.mjs';
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/1';
 export const TRAIN_FACTS_CONTRACT_V2 = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
-  'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH']);
+  'FRONT_TEST_MERGE_NOT_READY', 'FRONT_GREEN_WAIT_MERGE', 'OPEN_FRONT_BATCH', 'FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING']);
 export const RUN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
 export const DECISIONS = Object.freeze([...WOULD_DO, 'TRAIN_REVOKE_UNCONFIRMED', 'TRAIN_SWEEP_INCOMPLETE', 'TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH',
   'TRAIN_LANDED_TREE_MISMATCH', 'TRAIN_FRONT_BUDGET_SHORT', 'TRAIN_FRONT_ATTEMPTS_USED', 'FRONT_ADOPTED', 'FRONT_RETURNED', 'FRONT_FAILED_REPORTED', 'REVOKE_ONLY_DONE',
-  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN', 'TRAIN_LANDING_STATE_UNREADABLE']);
+  'TRAIN_SOURCE_UNREADABLE', 'TRAIN_FRONT_BATCH_RUNNING', 'TRAIN_STRICT_OFF', 'TRAIN_FRONT_NOT_PROVEN', 'TRAIN_LANDING_STATE_UNREADABLE',
+  'FRONT_CHECKS_MISSING_YIELDED']);
 // Stage 10's decisions after which the executor starts no new batch (DESIGN §41.6: no publication of any stage before the
 // take-over sweep; no on-mode duty while another node runs another Source, or while the nodes' Sources cannot be read).
 export const TRAIN_SCHEDULE_DEFERRALS = Object.freeze(['TRAIN_TAKEOVER_SWEEP_PENDING', 'TRAIN_SOURCE_MISMATCH', 'TRAIN_SOURCE_UNREADABLE']);
@@ -147,7 +148,8 @@ export function trainDue({ train, now, runs = [], busy, urgent = false, recheck 
 // more run moves it on (an incomplete sweep, a returned slot), waited three full maintenanceEveryMs with the executor idle. Such a run's
 // next one comes TRAIN_RECHECK_MS later too, at most TRAIN_FRONT_RECHECK_MAX times per front head (the 7th goes back to the normal cadence),
 // so one stuck head can never spend the daily cap. The streak is per head: a run with another decision does not refill it.
-export const TRAIN_FRONT_RECHECK_DECISIONS = Object.freeze(['TRAIN_SWEEP_INCOMPLETE', 'FRONT_RETURNED']);
+// FRONT_CHECKS_MISSING_YIELDED is a returned slot too (independent review of 051b7d585): the next front is looked at as soon.
+export const TRAIN_FRONT_RECHECK_DECISIONS = Object.freeze(['TRAIN_SWEEP_INCOMPLETE', 'FRONT_RETURNED', 'FRONT_CHECKS_MISSING_YIELDED']);
 export const TRAIN_FRONT_RECHECK_MAX = 6;
 // previous: the last streak or null; summary: the newest clean on-mode run's summary, or null (any other run). Returns { key, count, due } or null.
 export function trainFrontRecheckNext(previous, summary) {
@@ -299,7 +301,8 @@ export function trainSummary(f) {
   if (!claimBindings || claimBindings.some(b => b === null) || new Set(claimBindings.map(b => b.pr)).size !== claimBindings.length
     || new Set(claimBindings.map(b => JSON.stringify([b.repository,b.scope,b.sourceManifestSha256]))).size > 1) return null;
   if (v2 ? !RUN_MODES.includes(f.mode) : f.mode !== 'shadow') return null;
-  const front = f.front && Number.isSafeInteger(f.front.pr) ? { pr: f.front.pr, headSha: SHA.test(f.front.headSha ?? '') ? f.front.headSha : null } : null;
+  const front = f.front && Number.isSafeInteger(f.front.pr) ? { pr: f.front.pr, headSha: SHA.test(f.front.headSha ?? '') ? f.front.headSha : null,
+    ...frontChecksOf({ ...f.front.required, checksUnreadable: f.front.checksUnreadable }) } : null;
   const base = { at: f.at, mode: f.mode, wouldDo: f.wouldDo, onDuty: f.onDuty === true, front, mainSha: SHA.test(f.mainSha ?? '') ? f.mainSha : null,
     ...(f.claimBindings === undefined ? {} : { claimBindings }),
     strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0 };
@@ -328,12 +331,43 @@ function frontBindOf(b, front) {
 // the merge slot is known green), [] (every required check of main is green on this head) or the missing / unfinished ones, as words.
 // The first missing check is always named in full; further ones are added while they fit GAP_NAMES_MAX, and the count says how many there are.
 export const GAP_NAMES_MAX = 90;
+const gapList = gap => {
+  let names = gap[0], shown = 1;
+  while (shown < gap.length && names.length + 1 + gap[shown].length <= GAP_NAMES_MAX) names += `、${gap[shown++]}`;
+  return `缺 ${gap.length} 项：${names}${shown < gap.length ? '…' : ''}`;
+};
 export function frontGreenText(gap) {
   if (!Array.isArray(gap)) return '合并位已绿，等合并';
   if (gap.length === 0) return '全部必需检查已绿，等合并';
-  let names = gap[0], shown = 1;
-  while (shown < gap.length && names.length + 1 + gap[shown].length <= GAP_NAMES_MAX) names += `、${gap[shown++]}`;
-  return `合并位已绿；缺 ${gap.length} 项：${names}${shown < gap.length ? '…' : ''}`;
+  return `合并位已绿；${gapList(gap)}`;
+}
+// Fable 11-20 补“车头缺必需检查” (#1192): a front whose merge slot is green is never "等合并" while a required check is missing. Words differ
+// by what the gap is: queued or running (等检查); missing with nothing running (缺检查: the companion's repair lane re-runs it, 补跑中（第 n 次）
+// counts its accepted re-runs of this head); the front gave the slot away after the grace time (FRONT_CHECKS_MISSING_YIELDED).
+export const FRONT_CHECKS_DECISIONS = Object.freeze(['FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING', 'FRONT_CHECKS_MISSING_YIELDED']);
+// Independent review of 051b7d585: the count is what stage 10 read on GitHub (attempts of the missing checks' jobs beyond the first, a re-run's
+// gate in flight, a person's re-runs included; train-facts.mjs#requiredOnHead), carried in the summary's front; it goes first so a clipped
+// line keeps it. The yield says which limit was reached (train-facts.mjs REQUIRED_YIELD_REASONS).
+const YIELD_REASONS = ['REQUIRED_RERUNS_EXHAUSTED', 'REQUIRED_CHECKS_DEADLINE', 'REQUIRED_CHECK_NOT_RERUN'];
+function frontChecksOf(v) {
+  const out = {};
+  if (v?.checksUnreadable === true) out.checksUnreadable = true;
+  if (Number.isSafeInteger(v?.reruns) && v.reruns > 0 && v.reruns <= 2) out.reruns = v.reruns;
+  if (YIELD_REASONS.includes(v?.yieldReason)) out.yieldReason = v.yieldReason;
+  return out;
+}
+export function frontChecksText(key, gap = null, front = null) {
+  const list = Array.isArray(gap) && gap.length ? `；${gapList(gap)}` : '';
+  const n = Number.isSafeInteger(front?.reruns) && front.reruns > 0 ? front.reruns : 0;
+  const then = '；补跑用完或到时限即让出车头';
+  // Review 3 medium 2: with the checks unreadable nothing is known to be green.
+  if (key === 'FRONT_CHECKS_WAIT' && front?.checksUnreadable === true) return '检查暂时读不出，下一轮再看';
+  if (key === 'FRONT_CHECKS_WAIT') return n ? `合并位已绿，补跑中（第 ${n} 次）${list}` : `合并位已绿，等检查${list}`;
+  if (key === 'FRONT_CHECKS_MISSING') return n ? `合并位已绿，第 ${n} 次补跑后仍缺${list}；等再补跑${then}` : `合并位已绿，缺检查${list}；等自动补跑${then}`;
+  if (key === 'FRONT_CHECKS_MISSING_YIELDED') return front?.yieldReason === 'REQUIRED_RERUNS_EXHAUSTED' ? '必需检查缺失，补跑两次仍缺，已让出车头，列车继续下一个'
+    : front?.yieldReason === 'REQUIRED_CHECKS_DEADLINE' ? '必需检查缺失，到时限仍无结果，已让出车头，列车继续下一个'
+    : front?.yieldReason === 'REQUIRED_CHECK_NOT_RERUN' ? '必需检查缺失，观察窗内没有补跑，已让出车头，列车继续下一个' : '必需检查缺失，重跑无效，已让出车头，列车继续下一个';
+  return null;
 }
 // The PR page line on the front PR (info only: in shadow mode the train does nothing).
 const TEXT = {
@@ -364,7 +398,8 @@ const ON_TEXT = {
 export const MAIN_REWRITTEN_TEXT = 'main 被改写，合并列车在重扫全部 PR 和提交，扫完前不发绿';
 export function trainPageLine(summary, pr, gap = null) {
   if (!summary || summary.front?.pr !== pr) return null;
-  const words = (table, key) => key === 'FRONT_GREEN_WAIT_MERGE' ? frontGreenText(gap) : table[key];
+  const words = (table, key) => key === 'FRONT_GREEN_WAIT_MERGE' ? frontGreenText(gap)
+    : FRONT_CHECKS_DECISIONS.includes(key) ? frontChecksText(key, gap, summary.front) : table[key];
   if (summary.mode === 'shadow') return words(TEXT, summary.wouldDo) ? `列车影子（只记录，不执行）：你是合并队列车头。${words(TEXT, summary.wouldDo)}。` : null;
   const text = summary.decision === 'TRAIN_TAKEOVER_SWEEP_PENDING' && summary.sweep?.fullSweep?.allPending === 'TRAIN_MAIN_REWRITTEN' ? MAIN_REWRITTEN_TEXT
     : words(ON_TEXT, summary.decision) ?? null;
@@ -385,7 +420,7 @@ export function parseTrainLast(l) {
   const v2 = Object.hasOwn(l, 'decision');
   if (!v2 && l.mode !== 'shadow') return null;
   const base = { at: Date.parse(l.at), mode: l.mode, wouldDo: l.wouldDo, onDuty: l.onDuty === true,
-    front: l.front && Number.isSafeInteger(l.front.pr) ? { pr: l.front.pr, headSha: SHA.test(l.front.headSha ?? '') ? l.front.headSha : null } : null,
+    front: l.front && Number.isSafeInteger(l.front.pr) ? { pr: l.front.pr, headSha: SHA.test(l.front.headSha ?? '') ? l.front.headSha : null, ...frontChecksOf(l.front) } : null,
     mainSha: SHA.test(l.mainSha ?? '') ? l.mainSha : null, strict: typeof l.strict === 'boolean' ? l.strict : null,
     wouldRevokeCount: Number.isSafeInteger(l.wouldRevokeCount) && l.wouldRevokeCount >= 0 ? l.wouldRevokeCount : 0 };
   if (!v2) return Object.freeze(base);
@@ -456,6 +491,8 @@ export function withTrainLine(want, last, pull, now, max = 140, gap = null) {
   if (!line) return want;
   // A gap goes first (a clipped text keeps its start), and the duty word another node reads is added before it by node-duty.mjs; all green or
   // unknown goes after the text as before.
-  const d = Array.isArray(gap) && gap.length > 0 ? `${line}；${want.description}` : `${want.description}；${line}`;
+  // The missing-check lines go first too (review 2, low): a clipped text keeps the reason.
+  const first = (Array.isArray(gap) && gap.length > 0) || FRONT_CHECKS_DECISIONS.includes(last.decision);
+  const d = first ? `${line}；${want.description}` : `${want.description}；${line}`;
   return { ...want, description: d.length <= max ? d : `${d.slice(0, max - 1)}…` };
 }

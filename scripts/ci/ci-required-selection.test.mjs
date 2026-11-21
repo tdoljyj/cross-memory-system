@@ -15,7 +15,6 @@ import {
 } from './ci-required-selection.mjs';
 import * as selection from './ci-required-selection.mjs';
 import { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
-import { classifyTests } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
@@ -462,7 +461,7 @@ test('every Node suite runs when any file its tests reach through imports change
 });
 
 test('any workflow change runs the runner budget policy, the admission self-tests, the pinned-registry and the dependency-entry checks', () => {
-  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']);
+  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'test-coverage']);
 });
 
 test('a generator, the generated-file list or any file it names runs the mechanical-outputs audit', () => {
@@ -570,105 +569,8 @@ test('every file a moved database test imports selects production-schema', () =>
   assert.ok(roots.length > 60 && seen.size > roots.length);
 });
 
-// A database test no required suite runs goes red on main unnoticed (the work-claim files of 20261108161615). Every
-// database test (classifyTests: it, or a test helper it imports, imports embedded-postgres) runs in a required suite
-// (listed in a suite command, or imported by a listed test file) or is exempted here. A new database test left out of
-// both fails this test; an exemption whose test now runs, or no longer exists, fails it too.
-// Each exemption: kind 'environment' (needs what the required checks do not have) or 'stale-or-suspect' (failed when
-// first run, 2026-11-19 in the production-schema command: a stale test or a suspected defect), a reason of at least 20
-// characters saying where it fails, and the Clued Task that fixes it. Fixed, it leaves this table for a production-schema list.
-const STALE_TESTS_TASK = '5ba48256-3a1d-4297-9936-b0fe257a70a8';
-const DB_TEST_EXEMPTIONS = {
-  // Environment.
-  'production-backup-scope-db': { kind: 'environment', task: STALE_TESTS_TASK, reason: '需要 pg_dump/pg_restore 或现成的 Docker PostgreSQL 17 镜像（CLUED_BACKUP_TEST_IMAGE），production-schema 两样都没有；clued-g4-database.yml 用镜像跑它。首跑 5 处失败：3 处 spawnSync pg_dump ENOENT，另 2 处是连带（toc 未生成；上一子测试中途失败留下 concurrent_extra 表）' },
-  'p5-real-postgres': { kind: 'environment', task: STALE_TESTS_TASK, reason: '运行中用 npx --yes supabase@2.115.0 从网络取 Supabase CLI 跑安全顾问，必需检查不联网；首跑失败于这一步（Supabase security advisors failed）' },
-  // Old PR binding input: work_claim_resolve_pr_v1 (20261108161615_work_claim_pr_task_binding_v1.sql) requires pr_ref,
-  // head_sha, base_sha and target_branch; production callers pass all four, these fixtures do not.
-  'ci-node-gateway-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '4 处：3 处 work_claim_pr_binding_input_invalid；1 处 assert.ok(queued?.length >= 1) 不成立（排队作业没建成，疑为同一入参问题的连带）' },
-  'ci-scheduling-stage1-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '18 处：14 处 work_claim_pr_binding_input_invalid；2 处期望 CI_SCHEDULING_NOT_ACTIVATED、CI_INPUT_INVALID|CI_JOB_SCALAR_INVALID 却先得到 work_claim_pr_binding_input_invalid；1 处 :258 读 undefined.j（连带）；1 处函数授权表多出 clued_ci_connection_renew_trust_v1 等（期望值过时）' },
-  'ci-scheduling-stage1-effects-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '10 处：7 处 work_claim_pr_binding_input_invalid；CI_INPUT_INVALID、CI_NONCE_INPUT_INVALID 各 1 处（根因未查，疑为入参契约收紧）；1 处 :23 读 undefined.job_id（连带）' },
-  'ci-scheduling-t2a2-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '13 处全部是 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
-  'ci-duty-holder-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '9 处：7 处 work_claim_pr_binding_input_invalid；1 处期望 open_green_in_ledger 实得 CI_PHASE_CAS_MISMATCH（根因未查）；1 处静态检查 :94 多出 clued_private.work_claim_merge_queue_yield_v1 等函数（期望值过时）' },
-  'work-claims-ci-queue-assist-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
-  'work-claims-handover-activation-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
-  'work-claims-handover-execution-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）' },
-  'work-verify-shared-observation-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '2 处：1 处 work_claim_pr_binding_input_invalid；1 处期望错误码 work_claim_pr_ref_invalid 实得 work_claim_pr_binding_input_invalid（校验次序变了，先查是否有意再改断言）' },
-  // Execute on the old functions revoked from anon (20261010161848_worker_gateway_closeout_v1.sql): go through the Worker gateway.
-  'agent-messages-switch-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 permission denied for function clued_agent_inbox_summary_v1（测试以 anon 直连已收回执行权的旧函数）' },
-  'model-domain-successor-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 permission denied for function clued_project_mutate（测试以 anon 直连已收回执行权的旧函数）' },
-  'search-context-text-cache-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 permission denied for function clued_mcp_search_context（测试以 anon 直连已收回执行权的旧函数）' },
-  // Retired by design.
-  'merge-train-queue-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处 work_claim_legacy_pr_binding_retired：测试仍走按设计退役的旧 PR 绑定' },
-  'work-claims-pr-task-binding-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：最后一个 PR 结束后认领为 RELEASED（work_claim_pr_end_release_v1 的设计行为），测试仍期望不释放；由 PR 生命周期对账兜底的 PR 改期望并列入 AUTHORIZATION_DB_TESTS' },
-  // Expected values behind the schema.
-  'owner-auto-approve-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）' },
-  'resident-upgrade-auto-approve-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）' },
-  'resident-upgrade-auto-approve-v2-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）' },
-  'storage-owner-lifecycle-db': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '3 处：2 处网关函数数 88，测试期望 80（期望值过时）；1 处 :666 storage_demand_refresh_source_mismatch（根因未查）' },
-  'p6-shadow-canary': { kind: 'stale-or-suspect', task: STALE_TESTS_TASK, reason: '1 处：esbuild 打包 worker 失败 32 处，无法解析 node:util、node:crypto 等（测试的打包设置疑缺 node 平台；clued-cloud 套件的真实构建是绿的）' },
-  // Suspected defects, each with its own Task.
-  'registration-recovery-db': { kind: 'stale-or-suspect', task: '3ed34a7c-9716-4198-9a6a-f8950a87cd49', reason: '16 处：14 处 storage_root_has_unresolved_mutation；:181 生产 Worker 正常入口返回 unreconciled / PROVIDER_MUTATION_OUTCOME_UNKNOWN（期望完成一次原始替换）；:339 createOriginal 返回 unavailable（期望 committed）。14 处疑为同一未对账变更的连带；先二分哪条迁移之后变红' },
-  'raw-binding-fallback-db': { kind: 'stale-or-suspect', task: '28c9d784-ec96-4631-8686-fc100654975b', reason: '1 处 :112“第二次运行不改变任何东西”两次的指纹 f 不等：迁移重放不幂等，或指纹含时间，待查' },
-  'ci-admission-handover-db': { kind: 'stale-or-suspect', task: '0f86addc-55a4-4906-8dc1-5311b0a70137', reason: '1 处 :116：交接后 release-door 角色 live 期望 true 实为 false；角色是否现役的判定变了，待查是预期变化还是回归' },
-  'merge-train-failover-db': { kind: 'stale-or-suspect', task: 'aeefed92-1839-46a9-9e8d-9301e90c643b', reason: '5 处：:643“单次 4.9 分钟与单独 UNKNOWN 不触发”实得 handed_over（期望 holder_alive），疑为故障转移触发条件变了；:760、:886、:1255 得 rejected / ci_admission_target_not_heard；:468 夹具违反 20261115120000 新增的 ci_node_liveness_v1_steady_since_check 约束（过时）' },
-  'context-ownership-independent': { kind: 'stale-or-suspect', task: '41bdbc17-f78d-4d11-950b-7d3149f7192f', reason: '2 处，同一原因：/v1/development 和 /mcp 都返回 503（期望 200）；疑为新增网关配置缺失时失败即关闭，待读 worker 的 503 分支确认生产默认环境不会出现' },
-};
-// Coverage by import counts a top-level static import declaration of another test file only: a line that starts with
-// `import` outside block comments. An import written in a comment, a string or a function body is no coverage.
-const importedTests = (file) => [...readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
-  .matchAll(/^import\s+(?:[^'";]*?\bfrom\s*)?['"](\.{1,2}\/[^'"]+\.test\.mjs)['"]/gm)].map((match) => path.resolve(path.dirname(file), match[1]));
-const runningTests = (listed) => {
-  const seen = new Set();
-  const pending = [...listed];
-  while (pending.length > 0) {
-    const file = pending.pop();
-    if (seen.has(file) || !existsSync(file)) continue;
-    seen.add(file);
-    pending.push(...importedTests(file));
-  }
-  return seen;
-};
-test('coverage by import counts top-level static imports of test files only', () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'db-cover-'));
-  try {
-    const write = (name, text) => writeFileSync(path.join(dir, name), text);
-    for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(`${name}.test.mjs`, '');
-    write('helper.mjs', "import './f.test.mjs';\n");
-    write('root.test.mjs', ["import './a.test.mjs';", "import { x } from\n  './b.test.mjs';", "// import './c.test.mjs';",
-      "/*\nimport './d.test.mjs';\n*/", "const s = \"import './e.test.mjs'\";", "if (x) await import('./e.test.mjs');",
-      "import './helper.mjs';", ''].join('\n'));
-    const seen = [...runningTests([path.join(dir, 'root.test.mjs')])].map((file) => path.basename(file)).sort();
-    assert.deepEqual(seen, ['a.test.mjs', 'b.test.mjs', 'root.test.mjs']);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-const EXEMPTION_KINDS = ['environment', 'stale-or-suspect'];
-const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const exemptionProblems = (exemptions) => Object.entries(exemptions).flatMap(([name, entry]) => [
-  ...(EXEMPTION_KINDS.includes(entry?.kind) ? [] : [`${name}: kind must be one of ${EXEMPTION_KINDS.join(', ')}`]),
-  ...(typeof entry?.reason === 'string' && [...entry.reason.trim()].length >= 20 ? [] : [`${name}: reason of at least 20 characters`]),
-  ...(typeof entry?.task === 'string' && TASK_ID.test(entry.task) ? [] : [`${name}: task must be a Clued Task id`]),
-]);
-test('an exemption without a kind, a reason of 20 characters or a Task id fails', () => {
-  const good = { kind: 'environment', reason: '需要 Docker 镜像，必需检查没有，所以只在别处跑', task: STALE_TESTS_TASK };
-  assert.deepEqual(exemptionProblems({ ok: good }), []);
-  assert.deepEqual(exemptionProblems({ a: { ...good, kind: 'later' }, b: { ...good, reason: 'x' }, c: { ...good, task: '' }, d: '待修：x' }), [
-    'a: kind must be one of environment, stale-or-suspect', 'b: reason of at least 20 characters', 'c: task must be a Clued Task id',
-    'd: kind must be one of environment, stale-or-suspect', 'd: reason of at least 20 characters', 'd: task must be a Clued Task id']);
-});
-test('every database test runs in a required suite or is exempted with its kind, reason and Task', () => {
-  const relative = (file) => path.relative(ROOT, file).split(path.sep).join('/');
-  const db = classifyTests(path.join(ROOT, 'apps/clued-cloud/tests')).db.map(relative);
-  const listed = Object.values(SUITE_COMMANDS).flatMap((commands) => commands.flatMap(({ cwd, argv }) =>
-    argv.filter((arg) => arg.endsWith('.test.mjs')).map((arg) => path.join(ROOT, cwd, arg))));
-  const runs = new Set([...runningTests(listed)].map(relative));
-  const exempt = Object.keys(DB_TEST_EXEMPTIONS).map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
-  assert.deepEqual(db.filter((file) => !runs.has(file) && !exempt.includes(file)), [],
-    'database tests no required suite runs: list each in a production-schema list (ci-required-selection.mjs) or exempt it here');
-  assert.deepEqual(exempt.filter((file) => runs.has(file) || !db.includes(file)), [], 'exemptions of a test that runs or is no database test: remove them');
-  assert.deepEqual(exemptionProblems(DB_TEST_EXEMPTIONS), []);
-});
+// Every database test, like every other test file, runs in a required suite or is listed in ci-uncovered-tests.json with its
+// kind, reason and Task: check-tests-covered.mjs (suite test-coverage) checks it; the database exemptions moved there.
 
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
@@ -1329,6 +1231,25 @@ test('a PowerShell script anywhere selects the bare-pipeline .Count scan, and ot
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('powershell-count'), file);
   }
   assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('powershell-count'), false);
+});
+
+test('a test file anywhere, the uncovered-tests table, the check or a workflow selects test-coverage; other files do not', () => {
+  for (const file of ['a.test.mjs', 'x/y/z.test.js', 'x/z.test.cjs', 'apps/x/z.test.ts', 'tests/test_x.py', 'legacy/a/b_test.py',
+    'scripts/ci/ci-uncovered-tests.json', 'scripts/ci/check-tests-covered.mjs', '.github/workflows/model-program-m0.yml',
+    'apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/scripts/select-tests.mjs']) {
+    assert.ok(selectSuites('ci-suites', [file]).suites.includes('test-coverage'), file);
+  }
+  for (const file of ['docs/README.md', 'scripts/ci/clued-merge-executor.mjs', 'tests/helper.py']) {
+    assert.equal(selectSuites('ci-suites', [file]).suites.includes('test-coverage'), false, file);
+  }
+  assert.deepEqual(suitePlatforms('test-coverage'), ['linux']);
+});
+
+test('run-files: a unittest module name counts as its file, so the components tests can be named by path', () => {
+  const { calls, spawn } = spawnRecorder();
+  assert.equal(executeSuite('components', { root: ROOT, env: {}, spawn, log, files: ['tests/test_clued_version_check.py'] }), 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(-3), ['-m', 'unittest', 'tests.test_clued_version_check']);
 });
 
 // Both platforms (resident ADR 0032): the same selection runs once on Linux and once on Windows.
