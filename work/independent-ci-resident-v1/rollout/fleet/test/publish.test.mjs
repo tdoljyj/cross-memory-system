@@ -1,6 +1,6 @@
-// publish.mjs with a fake gh (never the real one, never the network): the release is created from the checked build output, with
-// the commit as target and no token in gh's environment; the index gets one line only after gh succeeded; a version already in the
-// index, a build whose archive is not its release.json, and a failing gh are refused without touching the index.
+// publish.mjs with a fake gh (never the real one, never the network). There is no release command: prepare makes the Release from the
+// checked build output (the commit as target, no token in gh's environment) and the index gets one line only after gh succeeded; a
+// build whose archive is not its release.json, and a failing gh are refused without touching the index (FABLE-drill-release-step-20261121.md).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { DRILL_RESERVED, acceptanceOf, attachAcceptance, attachFirstInstallKit, main, prepare, publish, readBuild, seal, stageNodeEntry } from '../publish.mjs';
+import { DRILL_RESERVED, acceptanceOf, attachAcceptance, attachFirstInstallKit, main, prepare, readBuild, seal, stageNodeEntry } from '../publish.mjs';
 import * as publishModule from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
 import { FAKE_GH } from './fleet-fixtures.mjs';
@@ -39,82 +39,29 @@ async function world(t) {
   const fake = path.join(d, 'fake-gh.mjs');
   await fs.writeFile(fake, FAKE_GH);
   const state = path.join(d, 'gh-state.json');
-  const env = { FAKE_GH_STATE: state, GH_TOKEN: 'fake-token-value-for-the-test', FAKE_GH_FAIL: undefined };
-  const run = async (over = {}, extraEnv = {}) => {
-    const saved = Object.fromEntries(Object.keys({ ...env, ...extraEnv }).map(k => [k, process.env[k]]));
-    for (const [k, v] of Object.entries({ ...env, ...extraEnv })) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-    try { return await publish({ dir: out, repo: 'tdoljyj/cross-memory-system', index, ghCommand: [process.execPath, fake], ...over }); }
-    finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
-  };
   const calls = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).calls; } catch { return []; } };
   const assets = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).assets; } catch { return []; } };
-  return { d, out, build: out, tar, source, index, run, calls, assets, fake, state };
+  return { d, out, build: out, tar, source, index, calls, assets, fake, state };
 }
 
-test('publish: gh release create <tag> <assets> --target <commit>, without any token variable; then one index line', async t => {
-  const w = await world(t);
-  const r = await w.run();
-  assert.equal(r.status, 'FLEET_RELEASE_PUBLISHED');
-  assert.equal(r.url, `https://github.com/tdoljyj/cross-memory-system/releases/tag/${TAG}`);
-  const [create, view] = await w.calls();
-  assert.deepEqual(create.args.slice(0, 3), ['release', 'create', TAG]);
-  assert.deepEqual(create.args.slice(3, 8).map(f => path.basename(f)), [`${TAG}.tar`, `${TAG}.release.json`, 'SHA256SUMS', `${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`]);
-  // the two node-entry assets are the archive's bytes; the published SHA256SUMS lists the four others (the build's two lines kept)
-  const up = Object.fromEntries((await w.assets()).map(a => [a.name, a]));
-  assert.equal(up[`${TAG}.bootstrap.ps1`].sha256, sha(BOOTSTRAP));
-  assert.equal(up[`${TAG}.prereq-manifest.json`].sha256, sha(PREREQ));
-  const sums = up.SHA256SUMS.text.split('\n').filter(Boolean);
-  assert.deepEqual(sums.map(l => l.split('  ')[1]), [`${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`, `${TAG}.release.json`, `${TAG}.tar`], 'sorted by name');
-  for (const l of sums) { const [h, n] = l.split('  '); assert.equal(h, up[n].sha256, n); }
-  assert.equal(up[`${TAG}.tar`].sha256, sha(w.tar));
-  assert.equal((await fs.readFile(path.join(w.out, 'SHA256SUMS'), 'utf8')).split('\n').filter(Boolean).length, 2, 'the build output is not changed');
-  assert.equal(create.args[create.args.indexOf('--repo') + 1], 'tdoljyj/cross-memory-system');
-  assert.equal(create.args[create.args.indexOf('--target') + 1], COMMIT);
-  assert.deepEqual(create.tokenSeen, [], 'gh uses only its own login');
-  assert.deepEqual(view.args.slice(0, 3), ['release', 'view', TAG]);
-  assert.ok(!JSON.stringify(await w.calls()).includes('fake-token-value'), 'no token in any argument');
-  const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
-  assert.equal(lines[2], `| ${VERSION} | ${r.url} | ${w.source.archive_sha256} | ${COMMIT} |  |  |  |`);
-  assert.equal(lines.length, 4, 'one line, with the index\'s own line ending');
-  // the same version again: refused before gh is called
-  await assert.rejects(w.run(), { code: 'PUBLISH_INDEX_ALREADY_HAS_VERSION' });
-  assert.equal((await w.calls()).length, 2);
-});
-
-test('publish refuses a build whose archive is not its release.json, and leaves the index alone when gh fails', async t => {
-  const w = await world(t);
-  const before = await fs.readFile(w.index);
-  await fs.appendFile(path.join(w.out, `${TAG}.tar`), 'x');
-  await assert.rejects(w.run(), { code: 'PUBLISH_ARCHIVE_SHA_MISMATCH' });
-  await fs.writeFile(path.join(w.out, `${TAG}.tar`), w.tar);
-  await assert.rejects(w.run({}, { FAKE_GH_FAIL: '1' }), { code: 'PUBLISH_GH_RELEASE_CREATE_FAILED' });
-  assert.ok((await fs.readFile(w.index)).equals(before));
-  await fs.writeFile(path.join(w.out, 'SHA256SUMS'), `${'0'.repeat(64)}  ${TAG}.tar\n`);
-  await assert.rejects(w.run(), { code: 'PUBLISH_SHA256SUMS_MISMATCH' });
-  await assert.rejects(w.run({ repo: 'not a repo' }), { code: 'PUBLISH_REPO_REFUSED' });
-});
-
-test('publish creates an absent index with the seven-column header, and completes an older five- or six-column one', async t => {
-  const w = await world(t);
-  const fresh = path.join(w.d, 'sub', 'new-index.md');
-  await w.run({ index: fresh });
-  const lines = (await fs.readFile(fresh, 'utf8')).split('\n');
-  assert.equal(lines[0], '| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |');
-  assert.equal(lines[1], '|---|---|---|---|---|---|---|');
-  assert.ok(lines[2].startsWith(`| ${VERSION} | https://`) && lines[2].endsWith(`| ${COMMIT} |  |  |  |`));
-  const old = path.join(w.d, 'old-index.md');
-  await fs.writeFile(old, '| 版本 | Release | tar sha256 | commit | 接受时间 |\n|---|---|---|---|---|\n| 0.1 | u | h | c |  |\n');
-  await w.run({ index: old });
-  const o = (await fs.readFile(old, 'utf8')).split('\n');
-  assert.deepEqual(o.slice(0, 3), ['| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |', '|---|---|---|---|---|---|---|', '| 0.1 | u | h | c |  |  |  |']);
-  assert.ok(o[3].startsWith(`| ${VERSION} |`));
-  // the six-column table of today (accepted rows keep their cells; the drill cell of an older row stays empty)
-  const six = path.join(w.d, 'six-index.md');
-  await fs.writeFile(six, '| 版本 | Release | tar sha256 | commit | 接受时间 | Decision |\n|---|---|---|---|---|---|\n| 0.2 | u | h | c | 2026-11-19T12:22:39Z | c556370f |\n');
-  await w.run({ index: six });
-  assert.deepEqual((await fs.readFile(six, 'utf8')).split('\n').slice(0, 3), ['| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |', '|---|---|---|---|---|---|---|',
-    '| 0.2 | u | h | c | 2026-11-19T12:22:39Z | c556370f |  |']);
-});
+const REPO = 'tdoljyj/cross-memory-system';
+const RELEASE_ASSETS = [`${TAG}.tar`, `${TAG}.release.json`, 'SHA256SUMS', `${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`];
+const rowOf = w => `| ${VERSION} | https://github.com/${REPO}/releases/tag/${TAG} | ${w.source.archive_sha256} | ${COMMIT} |  |  |  |`;
+// The fake gh's state as the Release of this build would have it (the assets the release step publishes, through the fake's own
+// "release create"); only: the assets kept (a release that stopped half way); row: the index row appended as well. The calls are cleared.
+async function seedRelease(w, { only = null, row = false } = {}) {
+  const build = await readBuild(w.build);
+  const stage = await fs.mkdtemp(path.join(w.d, 'seed-'));
+  const { sums, entry } = await stageNodeEntry(build, stage);
+  const files = [build.assets[0], build.assets[1], sums, ...entry].filter(a => only === null || only.includes(a.name)).map(a => a.file);
+  const r = spawnSync(process.execPath, [w.fake, 'release', 'create', TAG, ...files, '--repo', REPO, '--target', COMMIT], { env: { ...process.env, FAKE_GH_STATE: w.state }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const st = JSON.parse(await fs.readFile(w.state, 'utf8'));
+  st.calls = [];
+  await fs.writeFile(w.state, JSON.stringify(st));
+  if (row) await fs.appendFile(w.index, `${rowOf(w)}\r\n`);
+}
+const releaseWrites = async w => (await w.calls()).filter(c => c.args[0] === 'release' && ['create', 'upload', 'delete-asset'].includes(c.args[1]));
 
 const DECISION = 'b5d041d2';
 const drillRefs = (decision, receipt) => ({ sourceAcceptanceRef: decision, hostQualificationRef: decision, ownerAuthorizationRef: decision, publisherQualificationRef: decision,
@@ -171,7 +118,7 @@ test('attach-acceptance: uploads the file as an extra asset (no --clobber), fill
 
 test('attach-acceptance refuses a file that is not this release, and leaves index and gh alone', async t => {
   const w = await world(t);
-  await w.run();
+  await seedRelease(w, { row: true });
   const before = await fs.readFile(w.index);
   const n = (await w.calls()).length;
   const base = { version: VERSION, index: w.index, ghCommand: [process.execPath, path.join(w.d, 'fake-gh.mjs')] };
@@ -201,23 +148,10 @@ test('attach-acceptance refuses a file that is not this release, and leaves inde
   assert.equal((await w.calls()).length, n);
 });
 
-test('publish refuses an archive without the node entry (bootstrap.ps1, prereq-manifest.json) before gh is called', async t => {
-  const w = await world(t);
-  const tar = writeTar([{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: 'universal-manifest.json', data: Buffer.from('{}') }]);
-  const rel = JSON.parse(await fs.readFile(path.join(w.out, `${TAG}.release.json`), 'utf8'));
-  rel.source.archive_sha256 = sha(tar); rel.archive = { name: `${TAG}.tar`, bytes: tar.length, sha256: sha(tar) };
-  const rb = Buffer.from(JSON.stringify(rel, null, 1) + '\n');
-  await fs.writeFile(path.join(w.out, `${TAG}.tar`), tar);
-  await fs.writeFile(path.join(w.out, `${TAG}.release.json`), rb);
-  await fs.writeFile(path.join(w.out, 'SHA256SUMS'), `${sha(rb)}  ${TAG}.release.json\n${sha(tar)}  ${TAG}.tar\n`);
-  await assert.rejects(w.run(), { code: 'PUBLISH_ARCHIVE_LACKS_NODE_ENTRY' });
-  assert.equal((await w.calls()).length, 0);
-});
-
 const IMAGE = 'c'.repeat(64);
 async function kitWorld(t) {
   const w = await world(t);
-  await w.run();
+  await seedRelease(w, { row: true });
   const kit = path.join(w.d, `${TAG}.first-install-kit.json`);
   await fs.writeFile(kit, JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { pull: [], local: [{ id: IMAGE, asset: `role-image-${IMAGE}.tar.gz` }] } }));
   const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
@@ -269,7 +203,7 @@ test('attach-first-install-kit refuses a kit and images that do not name each ot
   assert.equal((await w.calls()).length, n, 'refused before gh');
 });
 
-test('main: only release, prepare and seal, with their own options; the steps and the old entry have no command', async () => {
+test('main: only prepare and seal, with their own options; release, the steps and the old entry have no command', async () => {
   for (const gone of [['attach-acceptance', '--version', '1', '--acceptance', 'a'], ['attach-first-install-kit', '--version', '1', '--kit', 'k'],
     ['acceptance-draft', '--version', '1', '--dir', 'x', '--base', 'b', '--out', 'o']]) await assert.rejects(main(gone), { code: 'USAGE' }, gone[0]);
   await assert.rejects(main(['prepare', '--version', '1', '--dir', 'x']), { code: 'USAGE' });
@@ -365,15 +299,17 @@ const requestLine = hash => `acceptance-request ${TAG} sha256:${hash}`;
 // released: false leaves the Release and the index row to prepare (an empty gh state, an index with its header only)
 const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true } = {}) => {
   const w = await world(t);
-  if (released) await w.run();
+  if (released) await seedRelease(w, { row: true });
   const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
   await fs.writeFile(image, Buffer.from('gzip of a docker save'));
   const carried = { sourceAcceptanceRef: '5c06efc1-6597-49bb-9883-57a7e7d6c344', hostQualificationRef: 'e46ab3f7-539f-4bc3-8f60-5ceec1eef8b9',
     ownerAuthorizationRef: '5c06efc1-6597-49bb-9883-57a7e7d6c344', publisherQualificationRef: '5c06efc1-6597-49bb-9883-57a7e7d6c344', ownerPackageAcceptanceRef: '5c06efc1-6597-49bb-9883-57a7e7d6c344' };
   const formalRoles = { gitleaks: {}, trivy: {}, 'contract-placement': {} };
-  const saved = process.env.FAKE_GH_STATE;
+  // a token variable in this process: gh never sees it
+  const saved = { FAKE_GH_STATE: process.env.FAKE_GH_STATE, GH_TOKEN: process.env.GH_TOKEN };
   process.env.FAKE_GH_STATE = path.join(w.d, 'gh-state.json');
-  t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
+  process.env.GH_TOKEN = 'fake-token-value-for-the-test';
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   const out = path.join(w.d, 'accept');
   const s = { kitReads: 0, kitBroken: false, sourceDrafts: [], sourceOf: packageSource };
   const kitOf = async () => {
@@ -424,12 +360,16 @@ test('prepare: no Decision, receipt or time goes in; the request the Owner revie
   // the line DESK puts into the Decision: the request file's sha256 binds tar, commit, Source, kit and fleetRefs at once
   const requestSha = sha(await fs.readFile(w.requestFile));
   assert.deepEqual([r.requestSha256, r.decisionLine], [requestSha, requestLine(requestSha)]);
-  // the Source is the Release tar's (downloaded, not the build directory's), with the drill's stand-in Decision and receipt (they do not enter it)
-  assert.ok(w.s.sourceDrafts.length >= 1);
+  // the Source: first on the build's own tar (the bytes that go up), then again on the tar downloaded from the Release (the check seal makes),
+  // with the drill's stand-in Decision and receipt (they do not enter it)
+  assert.ok(w.s.sourceDrafts.length >= 2);
+  assert.equal(path.resolve(w.s.sourceDrafts[0].artifactPath), path.resolve(w.build, `${TAG}.tar`));
+  for (const d of w.s.sourceDrafts.slice(1)) {
+    assert.ok(![w.out, w.build].some(dir => path.resolve(d.artifactPath).startsWith(path.resolve(dir))), 'computed on the tar downloaded from the Release');
+  }
   for (const d of w.s.sourceDrafts) {
     assert.equal(d.acceptance.cluedDecision, DRILL_RESERVED.decision);
     assert.ok(!('ciSourceManifestSha256' in d.acceptance));
-    assert.ok(!path.resolve(d.artifactPath).startsWith(path.resolve(w.out)), 'computed on the tar downloaded from the Release');
     assert.equal(d.artifactSha256, w.source.archive_sha256);
   }
   // nothing of an acceptance is on the Release, in the index or in the directory yet
@@ -586,6 +526,8 @@ test('prepare does not write a request seal would refuse: a Release whose releas
   });
   await assert.rejects(w.prep(), { code: 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS' });
   await noRequest(w);
+  assert.deepEqual(await w.kitAssets(), [], 'refused before the kit is attached');
+  assert.deepEqual(await uploadsOf(w), [], 'nothing uploaded');
 });
 
 // ruling test 3: seal never touches a node or a kit; the acceptance is the request's fields and the five the Decision record gives
@@ -832,24 +774,6 @@ test('prepare reuses two role images from the previous Release: its sums file is
 // ---------------------------------------------------------------- prepare makes the Release it needs (FABLE-drill-release-step-20261121.md):
 // there is no release command any more; prepare finds the Release and the index row as they are, creates what is missing, completes a
 // release that stopped half way, and refuses another build of the same version, a row without its Release and a commit not on the remote.
-const REPO = 'tdoljyj/cross-memory-system';
-const RELEASE_ASSETS = [`${TAG}.tar`, `${TAG}.release.json`, 'SHA256SUMS', `${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`];
-const rowOf = w => `| ${VERSION} | https://github.com/${REPO}/releases/tag/${TAG} | ${w.source.archive_sha256} | ${COMMIT} |  |  |  |`;
-// The fake gh's state as the Release of this build would have it (the assets the release step publishes, through the fake's own
-// "release create"); only: the assets kept (a release that stopped half way); row: the index row appended as well. The calls are cleared.
-async function seedRelease(w, { only = null, row = false } = {}) {
-  const build = await readBuild(w.build);
-  const stage = await fs.mkdtemp(path.join(w.d, 'seed-'));
-  const { sums, entry } = await stageNodeEntry(build, stage);
-  const files = [build.assets[0], build.assets[1], sums, ...entry].filter(a => only === null || only.includes(a.name)).map(a => a.file);
-  const r = spawnSync(process.execPath, [w.fake, 'release', 'create', TAG, ...files, '--repo', REPO, '--target', COMMIT], { env: { ...process.env, FAKE_GH_STATE: w.state }, encoding: 'utf8' });
-  assert.equal(r.status, 0, r.stderr);
-  const st = JSON.parse(await fs.readFile(w.state, 'utf8'));
-  st.calls = [];
-  await fs.writeFile(w.state, JSON.stringify(st));
-  if (row) await fs.appendFile(w.index, `${rowOf(w)}\r\n`);
-}
-const releaseWrites = async w => (await w.calls()).filter(c => c.args[0] === 'release' && ['create', 'upload', 'delete-asset'].includes(c.args[1]));
 
 // T1 of the ruling, in this file's terms: a build, an index with its header only, an empty gh state, no release step
 test('prepare on a build with no Release and no index row: checks the commit on the remote, creates the Release as release did, appends the row, writes the request', async t => {
@@ -953,4 +877,96 @@ test('main: release is no command, in any form', async t => {
   await assert.rejects(main(['release', '--dir', d, '--repo', 'a/b']), { code: 'USAGE' });
   await assert.rejects(main(['release', '--dir', d, '--repo', 'a/b', '--index', path.join(d, 'index.md')]), { code: 'USAGE' });
   await assert.rejects(main(['release']), { code: 'USAGE' });
+});
+
+// What the release command checked and wrote, now prepare's step 4 (the same assets, notes, target and index row)
+test('prepare creates the Release as release did: gh release create <tag> <five assets> --target <commit>, without any token variable; then one index line; again no second create', async t => {
+  const w = await prepWorld(t, { released: false });
+  const r = await w.prep();
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const calls = await w.calls();
+  const create = calls.find(c => c.args[1] === 'create'), view = calls[calls.indexOf(create) + 1];
+  assert.deepEqual(create.args.slice(0, 3), ['release', 'create', TAG]);
+  assert.deepEqual(create.args.slice(3, 8).map(f => path.basename(f)), RELEASE_ASSETS);
+  // the two node-entry assets are the archive's bytes; the published SHA256SUMS lists the four others (the build's two lines kept)
+  const up = Object.fromEntries((await w.assets()).map(a => [a.name, a]));
+  assert.equal(up[`${TAG}.bootstrap.ps1`].sha256, sha(BOOTSTRAP));
+  assert.equal(up[`${TAG}.prereq-manifest.json`].sha256, sha(PREREQ));
+  const sums = up.SHA256SUMS.text.split('\n').filter(Boolean);
+  assert.deepEqual(sums.map(l => l.split('  ')[1]), [`${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`, `${TAG}.release.json`, `${TAG}.tar`], 'sorted by name');
+  for (const l of sums) { const [h, n] = l.split('  '); assert.equal(h, up[n].sha256, n); }
+  assert.equal(up[`${TAG}.tar`].sha256, sha(w.tar));
+  assert.equal((await fs.readFile(path.join(w.build, 'SHA256SUMS'), 'utf8')).split('\n').filter(Boolean).length, 2, 'the build output is not changed');
+  assert.equal(create.args[create.args.indexOf('--repo') + 1], REPO);
+  assert.equal(create.args[create.args.indexOf('--target') + 1], COMMIT);
+  assert.equal(create.args[create.args.indexOf('--title') + 1], TAG);
+  assert.equal(create.args[create.args.indexOf('--notes') + 1].split('\n')[0], `Universal node package ${VERSION} (commit ${COMMIT}).`);
+  assert.deepEqual(create.tokenSeen, [], 'gh uses only its own login');
+  assert.deepEqual(view.args.slice(0, 3), ['release', 'view', TAG]);
+  assert.ok(!JSON.stringify(calls).includes('fake-token-value'), 'no token in any argument');
+  const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
+  assert.equal(lines[2], rowOf(w));
+  assert.equal(lines.length, 4, 'one line, with the index\'s own line ending');
+  // the same prepare again: no second create, the index as it is
+  const index = await fs.readFile(w.index);
+  await w.prep();
+  assert.equal((await w.calls()).filter(c => c.args[1] === 'create').length, 1);
+  assert.ok((await fs.readFile(w.index)).equals(index));
+});
+
+test('prepare refuses a build whose archive is not its release.json, and leaves the index alone when gh fails', async t => {
+  const w = await prepWorld(t, { released: false });
+  const before = await fs.readFile(w.index);
+  await fs.appendFile(path.join(w.build, `${TAG}.tar`), 'x');
+  await assert.rejects(w.prep(), { code: 'PUBLISH_ARCHIVE_SHA_MISMATCH' });
+  await fs.writeFile(path.join(w.build, `${TAG}.tar`), w.tar);
+  t.after(() => { delete process.env.FAKE_GH_FAIL_CREATE; delete process.env.FAKE_GH_FAIL; });
+  process.env.FAKE_GH_FAIL_CREATE = '1';
+  await assert.rejects(w.prep(), { code: 'PUBLISH_GH_RELEASE_CREATE_FAILED' });
+  delete process.env.FAKE_GH_FAIL_CREATE;
+  process.env.FAKE_GH_FAIL = '1';
+  await assert.rejects(w.prep(), { code: 'PUBLISH_GH_RELEASE_VIEW_FAILED' });
+  delete process.env.FAKE_GH_FAIL;
+  assert.ok((await fs.readFile(w.index)).equals(before));
+  await noRequest(w);
+  await fs.writeFile(path.join(w.build, 'SHA256SUMS'), `${'0'.repeat(64)}  ${TAG}.tar\n`);
+  await assert.rejects(w.prep(), { code: 'PUBLISH_SHA256SUMS_MISMATCH' });
+  await assert.rejects(w.prep({ repo: 'not a repo' }), { code: 'PUBLISH_REPO_REFUSED' });
+});
+
+test('prepare creates an absent index with the seven-column header, and completes an older five- or six-column one', async t => {
+  const w = await prepWorld(t, { released: false });
+  const fresh = path.join(w.d, 'sub', 'new-index.md');
+  await w.prep({ index: fresh });
+  const lines = (await fs.readFile(fresh, 'utf8')).split('\n');
+  assert.equal(lines[0], '| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |');
+  assert.equal(lines[1], '|---|---|---|---|---|---|---|');
+  assert.ok(lines[2].startsWith(`| ${VERSION} | https://`) && lines[2].endsWith(`| ${COMMIT} |  |  |  |`));
+  // the Release is there from now on: the next two complete their index only
+  const old = path.join(w.d, 'old-index.md');
+  await fs.writeFile(old, '| 版本 | Release | tar sha256 | commit | 接受时间 |\n|---|---|---|---|---|\n| 0.1 | u | h | c |  |\n');
+  await w.prep({ index: old });
+  const o = (await fs.readFile(old, 'utf8')).split('\n');
+  assert.deepEqual(o.slice(0, 3), ['| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |', '|---|---|---|---|---|---|---|', '| 0.1 | u | h | c |  |  |  |']);
+  assert.ok(o[3].startsWith(`| ${VERSION} |`));
+  // the six-column table of today (accepted rows keep their cells; the drill cell of an older row stays empty)
+  const six = path.join(w.d, 'six-index.md');
+  await fs.writeFile(six, '| 版本 | Release | tar sha256 | commit | 接受时间 | Decision |\n|---|---|---|---|---|---|\n| 0.2 | u | h | c | 2026-11-19T12:22:39Z | c556370f |\n');
+  await w.prep({ index: six });
+  assert.deepEqual((await fs.readFile(six, 'utf8')).split('\n').slice(0, 3), ['| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |', '|---|---|---|---|---|---|---|',
+    '| 0.2 | u | h | c | 2026-11-19T12:22:39Z | c556370f |  |']);
+  assert.equal((await w.calls()).filter(c => c.args[1] === 'create').length, 1);
+});
+
+test('prepare refuses an archive without the node entry (bootstrap.ps1, prereq-manifest.json) before gh is called', async t => {
+  const w = await prepWorld(t, { released: false });
+  const tar = writeTar([{ path: `${FLEET}bootstrap.ps1`, data: BOOTSTRAP }, { path: 'universal-manifest.json', data: Buffer.from('{}') }]);
+  const rel = JSON.parse(await fs.readFile(path.join(w.build, `${TAG}.release.json`), 'utf8'));
+  rel.source.archive_sha256 = sha(tar); rel.archive = { name: `${TAG}.tar`, bytes: tar.length, sha256: sha(tar) };
+  const rb = Buffer.from(JSON.stringify(rel, null, 1) + '\n');
+  await fs.writeFile(path.join(w.build, `${TAG}.tar`), tar);
+  await fs.writeFile(path.join(w.build, `${TAG}.release.json`), rb);
+  await fs.writeFile(path.join(w.build, 'SHA256SUMS'), `${sha(rb)}  ${TAG}.release.json\n${sha(tar)}  ${TAG}.tar\n`);
+  await assert.rejects(w.prep(), { code: 'PUBLISH_ARCHIVE_LACKS_NODE_ENTRY' });
+  assert.equal((await w.calls()).length, 0);
 });

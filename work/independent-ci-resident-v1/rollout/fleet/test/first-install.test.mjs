@@ -335,8 +335,9 @@ test('first install refuses: residue by name, a kit not accepted, facts not this
   });
 
 
-// The acceptance in two halves, end to end on a real installed template node (Fable 3bc571a6 ruling section 3, Task 758989fa): the release as
-// publish makes it, prepare with the node's own kit, readKit, record material and the archive's own source-hash, then seal; gh is the fake one.
+// The acceptance in two halves, end to end on a real installed template node (Fable 3bc571a6 ruling section 3, Task 758989fa): prepare with
+// the node's own kit, readKit, record material and the archive's own source-hash, making the Release it needs (there is no release step:
+// FABLE-drill-release-step-20261121.md), then seal; gh is the fake one, its state empty at the start.
 // The two defects as they were found on 3bc571a6 were red here before the fix: the entry needed a real Decision before it wrote anything
 // (FLEET_ACCEPTANCE_REFUSED "cluedDecision"), and its second run after a stop took a new kit from the node, whose version facts carry
 // observedAt, and was refused (PUBLISH_FIRST_INSTALL_KIT_ALREADY_ATTACHED_DIFFERENT, acceptance-draft.1.log).
@@ -351,8 +352,6 @@ async function releaseWorld(t, w) {
   t.after(() => { if (saved === undefined) delete process.env.FAKE_GH_STATE; else process.env.FAKE_GH_STATE = saved; });
   const ghCommand = [process.execPath, fake];
   const outDir = path.join(w.d, 'out');   // the build output (tar, release.json, SHA256SUMS)
-  const published = await publishModule.publish({ dir: outDir, repo: 'tdoljyj/cross-memory-system', index, ghCommand });
-  assert.equal(published.status, 'FLEET_RELEASE_PUBLISHED');
   const assets = () => JSON.parse(fsSync.readFileSync(state, 'utf8')).assets;
   const kitName = `fleet-node-${VERSION}.first-install-kit.json`;
   const out = path.join(d, 'accept');

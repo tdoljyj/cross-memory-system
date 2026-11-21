@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
 import * as drillKit from '../drill/make-drill-kit.mjs';
-import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, publish, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
@@ -1515,8 +1515,7 @@ async function sealWorld(t) {
   const saved = { FAKE_GH_STATE: process.env.FAKE_GH_STATE, GH_TOKEN: process.env.GH_TOKEN };
   process.env.FAKE_GH_STATE = path.join(d, 'gh-state.json'); delete process.env.GH_TOKEN;
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
-  const gh = [process.execPath, fake];
-  await publish({ dir: out, repo: 'tdoljyj/cross-memory-system', index, ghCommand: gh });
+  const gh = [process.execPath, fake];   // no release step: prepare makes the Release and the index row
   const image = 'e'.repeat(64), imageFile = path.join(d, `role-image-${image}.tar.gz`); fs.writeFileSync(imageFile, 'gzip of a docker save');
   const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
   const deps = { readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: S }),
