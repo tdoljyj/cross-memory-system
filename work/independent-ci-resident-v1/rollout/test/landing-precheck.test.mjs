@@ -26,7 +26,9 @@ function world() {
   // three S on staging, newest first: S1 and S2 all four green (S2 pending at stage 8's moment, green after), S3 Windows refused by the hook
   const S = [sha(0x51), sha(0x52), sha(0x53)];
   S.forEach((s, i) => w.runs.push({ id: 900 - i, head_sha: s, created_at: iso(NOW - (i + 1) * 3_600_000) }));
-  const add = (s, name, o = {}) => { const id = w.nextId++; (w.checks.get(s) ?? w.checks.set(s, []).get(s)).push({ id, name, app: { id: GHA }, status: 'completed', conclusion: 'success', ...o }); return id; };
+  const add = (s, name, o = {}) => { const id = w.nextId++; (w.checks.get(s) ?? w.checks.set(s, []).get(s)).push({ id, name, head_sha: s, app: { id: GHA }, status: 'completed', conclusion: 'success',
+    completed_at: iso(NOW - 2 * 3_600_000), ...o }); return id; };
+  w.add = add; w.truncated = new Set();
   for (const n of FOUR) add(S[0], n);
   for (const n of FOUR) add(S[1], n, { status: 'in_progress', conclusion: null });
   for (const n of FOUR) add(S[1], n);
@@ -68,7 +70,12 @@ function ports(w) {
     if (r === `repos/${REPO}/branches/main`) return { commit: { sha: w.mainSha } };
     throw new Error(`unexpected route ${r}`);
   };
-  const gh = { get: async r => answer(route(r)), paged: async (r, key) => { const b = answer(route(r)); return key ? b[key] : b; } };
+  const gh = { get: async r => answer(route(r)), paged: async (r, key, o = {}) => {
+    const b = answer(route(r)), rows = key ? b[key] : b;
+    if (!o.whole) return rows;
+    const m = /commits\/([0-9a-f]{40})\/check-runs/.exec(r);
+    return { rows, complete: !(m && w.truncated.has(m[1])) };
+  } };
   // the receipts directory (C:\ProgramData\CluedIndependentCI\state\v2\receipts) is denied without elevation, as on desk-w-591
   const denied = f => { throw Object.assign(new Error(`EPERM: operation not permitted, ${f}`), { code: 'EPERM' }); };
   const files = { receipts: 'R:\\receipts', status: 'N:\\state\\status.json', sourceManifest: 'N:\\record\\source-manifest.json',
@@ -138,6 +145,51 @@ test('T4 P1: a required check never seen on any S -> NO-GO naming it, every S li
   const refusal = r.items.P1.perS.find(s => s.testSha === w.S[2]).checks['ci-suites-windows'];
   assert.deepEqual([refusal.state, refusal.summary, refusal.annotations], ['failure', 'staging admission: member PR moved or closed',
     ['clued-runner-job-started: staging admission refused: main moved']]);
+});
+
+// Independent review A, B (Fable 11-21 open points §9): P1's list and condition b are push's own (train-landing.mjs#externalChecksDecision):
+// every required check of the live rules not pinned to App 5368905 (pinned to another App: that App's runs only; not pinned: any App's),
+// and an S is all green only when externalChecksDecision answers null for it (each check's newest run, by id, a completed success).
+test('T4 P1 (review A): a check that succeeded and then failed on its newest run is not green on that S; the reverse is', async () => {
+  let w = world();
+  for (const s of [w.S[0], w.S[1]]) w.add(s, 'ci-suites', { conclusion: 'failure' });
+  let r = await run(w, 'before', { only: ['P1'] });
+  assert.equal(r.verdict, 'NO-GO', JSON.stringify(r.items.P1));
+  assert.deepEqual(r.items.P1.fullyGreen, [], 'S1 and S2: ci-suites newest run failed');
+  w = world();
+  w.add(w.S[2], 'ci-suites-windows'); // S3: the refused Windows job ran again and succeeded
+  r = await run(w, 'before', { only: ['P1'] });
+  assert.deepEqual(r.items.P1.fullyGreen, w.S, 'S3 counts once its newest Windows run succeeded');
+  // a check list GitHub did not give whole is never all green
+  w = world(); w.truncated.add(w.S[0]);
+  r = await run(w, 'before', { only: ['P1'] });
+  assert.deepEqual(r.items.P1.fullyGreen, [w.S[1]]);
+});
+
+test('T4 P1 (review B): required checks pinned to another App or to none are on the list; never seen on S -> NO-GO naming both', async () => {
+  const more = w => w.rulesets.get(MAIN_RULESET_ID).rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks
+    .push({ context: 'other-app-check', integration_id: 99999 }, { context: 'any-app-check' });
+  let w = world(); more(w);
+  let r = await run(w, 'before', { only: ['P1'] });
+  assert.equal(r.verdict, 'NO-GO', JSON.stringify(r.items.P1));
+  assert.deepEqual(r.items.P1.names, ['any-app-check', ...FOUR, 'other-app-check'].sort());
+  assert.deepEqual(r.items.P1.fewerThanTwo, ['any-app-check', 'other-app-check']);
+  // produced on S: the pinned one by its App only, the unpinned one by any App
+  w = world(); more(w);
+  for (const s of w.S) { w.add(s, 'other-app-check', { app: { id: 99999 } }); w.add(s, 'any-app-check', { app: { id: 4242 } }); }
+  w.add(w.S[0], 'other-app-check', { app: { id: 77 } });
+  r = await run(w, 'before', { only: ['P1'] });
+  assert.equal(r.items.P1.pass, true, JSON.stringify(r.items.P1));
+  w = world(); more(w);
+  for (const s of w.S) { w.add(s, 'other-app-check', { app: { id: 77 } }); w.add(s, 'any-app-check', { app: { id: 4242 } }); }
+  r = await run(w, 'before', { only: ['P1'] });
+  assert.deepEqual(r.items.P1.fewerThanTwo, ['other-app-check'], 'another App\'s check of a pinned name never counts');
+  // nothing required outside App 5368905: NO-GO (nothing proves S can be produced)
+  w = world();
+  const req = w.rulesets.get(MAIN_RULESET_ID).rules.find(x => x.type === 'required_status_checks').parameters;
+  req.required_status_checks = req.required_status_checks.filter(c => c.integration_id === APP);
+  r = await run(w, 'before', { only: ['P1'] });
+  assert.deepEqual(failedOf(r, 'P1'), ['NO_EXTERNAL_REQUIRED_CHECKS']);
 });
 
 test('T4 P4: no independent ruleset, a second one, a bypass actor on it, other rules on it, not active, or a list the identity cannot read -> NO-GO', async () => {
