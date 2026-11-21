@@ -563,6 +563,25 @@ test('recovery: refuses a new K or Check without the explicit 2000ms post-write 
   assert.equal(await r.journal.read(r.key), null);
 });
 
+// CI run 44925431128 (clued-company-win-01) had the test above red (prReads 0 !== 2, 2242ms) while it was green here: same root
+// as the 30000ms case, the result signed by the real clock and judged by the fake one, so the proof was refused before the
+// boundary read (task ce2e5c1a step 2). Under a wall clock that runs 2 s per read the window verdict is the same.
+test('recovery: the 2000ms post-write reserve refusal is the same when the wall clock runs fast (a slow host)', async t => {
+  await withFastWallClock(async () => {
+    const clock = { now: Date.now() }, started = clock.now;
+    let prReads = 0;
+    const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))],
+      { recover: true, clock, changeGithub: gh => {
+        const read = gh.readPullRequest;
+        gh.readPullRequest = async n => { prReads++; clock.now = started + 60000 - PUBLICATION_READBACK_RESERVE_MS + 1; return read(n); };
+      } });
+    assert.equal(prReads, 2, JSON.stringify(r.result));
+    assert.deepEqual([r.result.status, r.result.reason, r.result.safeToRerun], ['BLOCKED', 'publication_window_short_before_write', true], JSON.stringify(r.result));
+    assert.equal(r.checks.length, 0);
+    assert.equal(await r.journal.read(r.key), null);
+  });
+});
+
 test('recovery: normal protected observations retain their original single 30000ms budget', () => {
   assert.equal(OBSERVE_BUDGET_MS, 30000);
   assert.equal(PUBLICATION_OBSERVE_BUDGET_MS, 60000);
