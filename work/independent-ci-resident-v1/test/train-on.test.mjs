@@ -1070,6 +1070,28 @@ test('open points §5: trainSummary and status.json keep landing.bypass; another
   status.update({ train: { enabled: 'on', last: trainSummary(on(kept)) } });
   assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last.landing, kept, 'status.json keeps it');
   assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'always', independent: 'absent' } }))?.landing, { route: 'push', bypass: { main: 'always', independent: 'absent' } });
-  for (const bypass of [{ main: 'absent', independent: 'never' }, { main: 'never' }, { main: 'never', independent: 'x' }, { main: 'never', independent: 'never', more: 'never' }, 'never'])
+  for (const bypass of [{ main: 'never' }, { main: 'never', independent: 'never', more: 'never' }, 'never'])
     assert.deepEqual(trainSummary(on({ route: 'push', bypass }))?.landing, { route: 'push' }, JSON.stringify(bypass));
+});
+
+// Fable 11-21 open points §10 point 2: the resident only keeps what stage 10 wrote; it knows no list of bypass states (that list is
+// Source v2's train-landing.mjs#BYPASS_STATES alone, and the two may be of different generations). It checks the shape only: exactly the
+// keys main and independent, each a short string of lower-case letters and underscores. Which values are right is the reader's (P3).
+test('open points §10: a bypass state the resident never heard of is kept as written; only the shape drops one', async () => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const on = landing => ({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing });
+  const newer = { route: 'push', bypass: { main: 'some_new_state', independent: 'absent' } };
+  assert.deepEqual(trainSummary(on(newer))?.landing, newer, 'a value of a newer Source generation is kept');
+  status.update({ train: { enabled: 'on', last: trainSummary(on(newer)) } });
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last.landing, newer, 'status.json keeps it');
+  assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'absent', independent: 'x' } }))?.landing, { route: 'push', bypass: { main: 'absent', independent: 'x' } });
+  const bad = [
+    ['not a string', { main: 7, independent: 'never' }], ['null', { main: 'never', independent: null }], ['empty', { main: '', independent: 'never' }],
+    ['too long', { main: 'a'.repeat(33), independent: 'never' }], ['upper case', { main: 'Never', independent: 'never' }],
+    ['a hyphen', { main: 'never', independent: 'not-read' }], ['a space', { main: 'never ', independent: 'never' }], ['a digit', { main: 'never2', independent: 'never' }],
+    ['one key more', { main: 'never', independent: 'never', more: 'never' }], ['one key fewer', { main: 'never' }], ['not an object', 'never'], ['an array', ['never', 'never']],
+  ];
+  const wrong = bad.filter(([, bypass]) => JSON.stringify(trainSummary(on({ route: 'push', bypass }))?.landing) !== JSON.stringify({ route: 'push' })).map(([label]) => label);
+  assert.deepEqual(wrong, [], 'every other shape dropped, the route stays');
+  assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'a'.repeat(32), independent: 'never' } }))?.landing?.bypass?.main, 'a'.repeat(32), '32 characters is short enough');
 });

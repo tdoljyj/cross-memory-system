@@ -322,6 +322,27 @@ test('T4 P3 (open points §5): the receipts directory denied, status.json with b
   assert.deepEqual(wrong, [], 'every case NO-GO naming its code');
 });
 
+// Fable 11-21 open points §10 point 1 (P3's --after: main always, independent never) and point 2 (the resident keeps a bypass state it
+// never heard of; P3 accepts only never and always, so an unknown value is NO-GO naming the ruleset, with the value shown).
+test('T4 P3 (open points §10): --after main still never or independent always -> NO-GO; an unknown bypass state -> NO-GO naming it', async () => {
+  const wrong = [];
+  for (const [label, mode, bypass, code] of [
+    ['after: main still never', 'after', { main: 'never', independent: 'never' }, 'BYPASS_MAIN_NOT_ALWAYS'],
+    ['after: independent always', 'after', { main: 'always', independent: 'always' }, 'BYPASS_INDEPENDENT_NOT_NEVER'],
+    ['before: main unknown', 'before', { main: 'some_new_state', independent: 'never' }, 'BYPASS_MAIN_NOT_NEVER'],
+    ['after: main unknown', 'after', { main: 'some_new_state', independent: 'never' }, 'BYPASS_MAIN_NOT_ALWAYS'],
+    ['before: independent unknown', 'before', { main: 'never', independent: 'some_new_state' }, 'BYPASS_INDEPENDENT_NOT_NEVER'],
+  ]) {
+    const w = world(); w.status.train.last.landing.bypass = bypass;
+    const r = await run(w, mode, { only: ['P3'] });
+    if (r.verdict !== 'NO-GO' || JSON.stringify(failedOf(r, 'P3')) !== JSON.stringify([code]) || JSON.stringify(r.items.P3.bypass) !== JSON.stringify(bypass))
+      wrong.push([label, r.verdict, failedOf(r, 'P3'), r.items.P3.bypass]);
+  }
+  assert.deepEqual(wrong, [], 'every case NO-GO naming its code, the bypass as stage 10 wrote it');
+  const w = world(); w.status.train.last.landing.bypass = { main: 'always', independent: 'never' };
+  assert.equal((await run(w, 'after', { only: ['P3'] })).items.P3.pass, true);
+});
+
 test('T4 P5 and P6: --before refuses a main ruleset already changed; --after takes exactly the one save against the snapshot and a push round after it', async () => {
   // --before: an actor on main, or kooyumi-train-landed already there
   let w = world(); w.rulesets.get(MAIN_RULESET_ID).bypass_actors = [{ actor_id: 7, actor_type: 'User', bypass_mode: 'always' }];
