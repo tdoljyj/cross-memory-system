@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -118,7 +118,7 @@ async function applyClockFixtureCapability(admin, migrator, caller, clockSql) {
 test('Worker gateway is additive, least privileged, and still requires a live Binding', { timeout: 600000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-worker-gateway-'));
   const server = new EmbeddedPostgres({ databaseDir: directory, user: 'supabase_admin', password: hex(),
-    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   let failure;

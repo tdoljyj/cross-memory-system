@@ -1,3 +1,4 @@
+import { EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from '../../../../apps/clued-cloud/tests/cluster-cleanup.mjs';
 // Real temporary PostgreSQL storage checks with explicitly synthetic metadata. No remote DB or GA authority.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs/promises';import path from 'node:path';import net from 'node:net';import crypto from 'node:crypto';import {fileURLToPath} from 'node:url';import {createRequire} from 'node:module';
 import {createBudgetStore,projectRef,rootId} from '../../nonproduction-control-store/runtime-successor/budget-reservation-successor/client.mjs';
@@ -5,7 +6,7 @@ const here=path.dirname(fileURLToPath(import.meta.url)),repo=path.resolve(here,'
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex'),raw=x=>JSON.stringify(x)+'\n',h='a'.repeat(64),gen='ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12';
 async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const n=s.address().port;await new Promise(r=>s.close(r));return n;}
 test('one actual temporary PG fixture exercises no-start nonPASS and preserves original STOP terminal semantics',{timeout:90000},async t=>{
- const folder=await fs.mkdtemp(path.join(here,'pg-run-')),server=new EmbeddedPostgres({databaseDir:path.join(folder,'data'),user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),persistent:false,postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(m+'\n');}}),clients=[];
+ const folder=await fs.mkdtemp(path.join(here,'pg-run-')),server=new EmbeddedPostgres({databaseDir:path.join(folder,'data'),user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),persistent:false,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(m+'\n');}}),clients=[];
  const report={state:'LOCAL_ENGINEERING_ONLY_TEMPORARY_PG',started_at:new Date().toISOString(),folder,checks:[],production:false,authority_effect:'NONE'};
  try{
   await server.initialise();await server.start();const admin=server.getPgClient();clients.push(admin);await admin.connect();

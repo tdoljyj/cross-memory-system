@@ -1,7 +1,7 @@
 // Migration 20261116090000 (resident DESIGN §80): a head that only merged main into an authorized head keeps that authorization when
 // the CI admission issuer says so (carry_main_merge). Before it, the same merge commit stayed head_not_authorized until the holder
 // authorized it with the private lease key (CLUED_MAIN_MERGE_BASELINE=1 runs this file without the migration: the first case fails).
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -27,7 +27,7 @@ async function freePort() {
 test('a merge of main into an authorized head keeps the authorization, only by the CI issuer and only from a live source', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-main-merge-'));
   const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
     await server.initialise(); await server.start();

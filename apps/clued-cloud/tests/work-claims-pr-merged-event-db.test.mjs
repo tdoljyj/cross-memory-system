@@ -7,7 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { PLATFORM_SQL } from '../scripts/production-schema-drift.mjs';
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import { allowRawTestBindings } from './raw-binding-grants-fixture.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc } from './worker-gateway-caller-fixture.mjs';
 import { loadContinuityWorker } from './worker-continuity-loader.mjs';
@@ -35,7 +35,7 @@ test('PR 合入事件释放符合条件的认领', { timeout: 300000 }, async t 
   const server = new EmbeddedPostgres({
     databaseDir: await fs.mkdtemp(path.join(os.tmpdir(), 'clued-merged-event-')),
     user: 'postgres', password: randomUUID(), port: await freePort(), persistent: false,
-    postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { console.error(message); },
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { console.error(message); },
   });
   const clients = [];
   const connect = async () => {

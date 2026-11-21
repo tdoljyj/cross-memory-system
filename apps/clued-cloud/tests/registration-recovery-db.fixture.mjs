@@ -1,5 +1,5 @@
 // Disposable PostgreSQL and synthetic identity/provider metadata only.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import {randomUUID,randomBytes,createHash} from "node:crypto";
 import fs from "node:fs/promises";
@@ -24,7 +24,7 @@ async function freePort(){const s=net.createServer();await new Promise(resolve=>
 export async function withRegistrationDatabase(run){
  const temp=await fs.realpath(os.tmpdir()),dir=await fs.mkdtemp(path.join(temp,"kooyumi-registration-db-"));
  const server=new EmbeddedPostgres({databaseDir:dir,user:"postgres",password:sha(id()),port:await freePort(),persistent:true,
-  postgresFlags:["-c","listen_addresses=127.0.0.1"],onLog(){},onError(){}}),clients=[];let started=false;
+  initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, "-c", "listen_addresses=127.0.0.1"],onLog(){},onError(){}}),clients=[];let started=false;
  try{
   await server.initialise();await server.start();started=true;
   const connect=async()=>{const c=server.getPgClient();clients.push(c);await c.connect();return c;},db=await connect();

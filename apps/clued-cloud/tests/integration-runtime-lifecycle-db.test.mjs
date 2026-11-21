@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -56,7 +56,7 @@ test('S2c PR-4: revocation, restore, reauth marks, capability expansion and life
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-lifecycle-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: sha(uid()), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync', '-c', 'max_connections=40'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'max_connections=40'],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
