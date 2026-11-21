@@ -36,7 +36,7 @@ import { FAILURE_TABLE } from './classify.mjs';
 import { powershellArgv } from './powershell-argv.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
 import { ghPort } from './admission-rerun.mjs';
-import { CLAIM_REASONS, CLAIM_WHY } from './queue.mjs';
+import { CLAIM_REASONS, CLAIM_WHY, earlyWakeOf } from './queue.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 export { RULES_UNREADABLE_REPORT_AFTER_MS };
 import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
@@ -185,6 +185,11 @@ export const claimWhy = (code, reasonCodes) => (CLAIM_REASONS.includes(code) && 
   ? CLAIM_WHY.find(([codes]) => codes.some(c => reasonCodes.includes(c)))?.[1] ?? '' : '');
 // The code as the page shows it in parentheses: "CODE" or "CODE，<why>".
 const codeWhy = (code, reasonCodes) => { const why = claimWhy(code, reasonCodes); return why ? `${code}，${why}` : code; };
+// Task 30643342 (FABLE-botmerge-auth-carry §1.6): what wakes a waiting row before its next try is the queue's own rule
+// (queue.mjs#earlyWakeOf, which the queue's candidates() reads too); the page only says it. The status board carries the queue view's
+// reason as `deferred`.
+const EARLY_WAKE_TEXT = Object.freeze({ authorization: '认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）' });
+const earlyWakeOfPage = row => earlyWakeOf({ state: row.state, reason: row.deferred });
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
 // DESIGN §41.6a: while the heartbeat's answer shows the failover watchdog has not ticked for more than 5 minutes
@@ -357,6 +362,9 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       }
       if (!(due && gate)) {
         const when = !due ? at : row.eta > now ? `约 ${hhmm(row.eta)} ` : status.current ? '当前批次结束后' : '即将';
+        const wake = EARLY_WAKE_TEXT[earlyWakeOfPage(row)];
+        if (wake && row.state === 'WAITING') return { state: 'pending', description: clip(`等待中（${codeWhy(code, row.reasonCodes)}）：${when}自动重试；${wake}`) };
+        if (wake) return { state: 'pending', description: clip(`未准入或未执行（${codeWhy(code, row.reasonCodes)}）：${when}自动重试（第 ${row.level} 次）；${wake}`) };
         if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${codeWhy(code, row.reasonCodes)}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
         // Generation 12 (defect 050560ac): a network back-off names the cause and the next try; it needs nothing from the PR.
         if (row.network) return { state: 'pending', description: clip(`网络问题，${NETWORK_CAUSE_TEXT[row.deferred] ?? `未执行（${code}）`}，${when}自动重试，不用推新提交`) };
