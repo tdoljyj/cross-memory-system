@@ -57,8 +57,10 @@ test('the acceptance has two commands in the README, prepare before the Owner an
   assert.ok(!/install\.mjs first-install-kit/.test(readme), 'the manual take-the-kit step is gone from the README');
   assert.ok(!/^node [^\n]*first-install-kit/m.test(readme), 'no command line of the README runs a kit step by hand');
   assert.ok(!/^node [^\n]*install\.mjs source-hash/m.test(readme), 'the Source is prepare\'s, nobody fills it in by hand');
-  // the flow: candidate -> drill -> the Owner's one acceptance -> seal
-  assert.match(readme, /publish release -> publish prepare[^\n]*-> 候选演练[^\n]*-> Owner 接受[^\n]*-> publish seal/);
+  // the flow: candidate -> drill -> the Owner's one acceptance -> seal; no release step before prepare (FABLE-drill-release-step-20261121.md)
+  assert.match(readme, /build（一次） -> publish prepare[^\n]*-> 候选演练[^\n]*-> Owner 接受[^\n]*-> publish seal/);
+  assert.ok(!/^node [^\n]*publish\.mjs release /m.test(readme), 'the release command is gone from the README');
+  assert.match(readme, /候选 commit 必须已在远端/);
 });
 
 test('the acceptance in the README: seal takes the Decision record, not three hand-copied values; the delivery directory is the Release\'s assets, not prepare\'s --out', () => {

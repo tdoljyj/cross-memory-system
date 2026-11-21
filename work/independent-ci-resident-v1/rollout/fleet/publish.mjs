@@ -1,40 +1,59 @@
 // Archive one universal node package on a GitHub Release (Decision b5d041d2 v2) and keep the 资料中心 index.
 //
-//   node rollout/fleet/publish.mjs release --dir <universal.mjs build out> --repo <owner/name> [--index <index file>]
 //   node rollout/fleet/publish.mjs prepare --version <v> --dir <build out> --out <dir> [--image <role-image-<id>.tar.gz> ...] [--repo <owner/name>] [--index <index file>]
 //   node rollout/fleet/publish.mjs seal --request <fleet-node-<v>.acceptance-request.json> --decision-record <the clued_record_mutate return, as saved>
 //        [--drill-receipt <receipt.json>] [--repo <owner/name>] [--index <index file>]
 //
 // The acceptance has two halves, each one command that may be run again (Fable 3bc571a6 ruling section 3, Task 758989fa): prepare before the
-// Owner accepts (what the Owner reviews), seal after (what the acceptance makes). Nothing else puts a kit or an acceptance on a Release: the
-// steps (attachFirstInstallKit, attachAcceptance) have no command of their own, so no hand-written acceptance file has a way up.
+// Owner accepts (what the Owner reviews), seal after (what the acceptance makes). Nothing else puts a package, a kit or an acceptance on a
+// Release: the steps (ensureRelease, attachFirstInstallKit, attachAcceptance) have no command of their own, so no hand-written acceptance file
+// has a way up, and there is no separate release step to forget (FABLE-drill-release-step-20261121.md: the release command is gone, any form of
+// it is USAGE; prepare makes the Release and the index row it needs).
 //
-// release: the build output is checked first (exactly one fleet-node-<v>.release.json, its tar with the sha256 it names, SHA256SUMS naming
-//   both). The index must not name this version yet (an absent index is created with its header). Then
-//   gh release create fleet-node-<v> <tar> <release.json> SHA256SUMS --repo <repo> --target <commit> ..., gh release view checks the
-//   three assets by name and size, and only after that one row is appended: | version | Release URL | tar sha256 | commit | | | |.
-//   Two more assets are the node entry of a first install (rollout/fleet/bootstrap.ps1 and prereq-manifest.json), taken from the
-//   checked archive itself (never a working-tree copy: the bytes the Owner accepts) as fleet-node-<v>.bootstrap.ps1 and
-//   fleet-node-<v>.prereq-manifest.json; the published SHA256SUMS is the build's two lines plus these two (written into a new temporary
-//   directory; the build output is not changed). An archive without them is refused before gh is called.
-// prepare (after release, before the Owner accepts; on a settled installed node that does not run this version yet, read-only there):
-//   0. accepted is what the Release holds: a Release with fleet-node-<v>.acceptance.json is refused (PREPARE_VERSION_ALREADY_ACCEPTED: run the
+// prepare (before the Owner accepts; on a settled installed node that does not run this version yet, read-only there). Everything it can check
+// locally or read is checked first; only then (step 4) is anything written outside:
+//   0. the build output (exactly one fleet-node-<v>.release.json, its tar with the sha256 it names, SHA256SUMS naming both) and the node entry of
+//      a first install staged from it (rollout/fleet/bootstrap.ps1 and prereq-manifest.json, taken from the checked archive itself, never a
+//      working-tree copy: the bytes the Owner accepts, as fleet-node-<v>.bootstrap.ps1 and fleet-node-<v>.prereq-manifest.json, and the
+//      SHA256SUMS to publish: the build's two lines plus these two, in a new temporary directory; the build output is not changed). An archive
+//      without them is refused before gh is called. An index row of this version, when there is one, must name this tar and commit.
+//      Accepted is what the Release holds: a Release with fleet-node-<v>.acceptance.json is refused (PREPARE_VERSION_ALREADY_ACCEPTED: run the
 //      same seal again to complete an empty index row), whatever the index says; a row filled while the Release holds none is refused too.
+//      No Release yet is fine, unless the index has a row of this version: that is refused here (PREPARE_INDEX_ROW_WITHOUT_RELEASE, not
+//      guessed), before a kit is taken or an image fetched.
 //   1. the first-install kit. The Release's, when it has one: once a kit is attached that copy is the one fact and nobody takes it from a node
 //      again (a node gives new bytes on every read: template.versionFacts carries its observedAt). Else this node's (install.mjs
 //      firstInstallKitOf). Either is held to what a new node reads (readKit), and the template's Source must not be this package's (the node
 //      already runs this version: take the kit before upgrading it).
 //   2. the request's fleetRefs, from this node's installed record (install.mjs installedFleetMaterial, read-only): the three that enter the
 //      Source (sourceAcceptanceRef, hostQualificationRef, formalRoles) and the three every acceptance carries (ownerAuthorizationRef,
-//      publisherQualificationRef, ownerPackageAcceptanceRef). Its Source comes from checkRequestOnRelease, the check seal makes: the Release's
-//      own tar (SHA256SUMS and release.json naming it, its commit the request's) through the archive's source-hash, computed with the drill's
-//      stand-in Decision and receipt (DRILL_RESERVED), which do not enter it (BATCH1-INTERFACES.md section 6).
+//      publisherQualificationRef, ownerPackageAcceptanceRef). Its Source: the build's own tar (the bytes step 0 checked, the ones that go up)
+//      through the archive's source-hash, computed with the drill's stand-in Decision and receipt (DRILL_RESERVED), which do not enter it
+//      (BATCH1-INTERFACES.md section 6); the template's Source must not be it; the request must make an acceptance every node reads.
 //   3. every local role image the kit lists (--image, else the previous Release's same-id asset, held to that version's first-install.SHA256SUMS;
-//      a failed download stays a download error).
-//   4. --out (new or the one of an earlier run): the kit and the images in it; whatever of kit, images and fleet-node-<v>.first-install.SHA256SUMS
+//      the previous Release is the one of the last index row before this version's, every row when this version has none yet; a failed
+//      download stays a download error).
+//   4. ensureRelease: the Release and the index row of this build, as they are found.
+//      - neither: the commit must be on GitHub (gh api repos/<repo>/commits/<commit>: GitHub's "no such commit" is PREPARE_COMMIT_NOT_ON_REMOTE,
+//        any other failure PREPARE_COMMIT_LOOKUP_FAILED, to be run again; nothing written yet);
+//        gh release create fleet-node-<v> <tar> <release.json> SHA256SUMS <bootstrap.ps1> <prereq-manifest.json> --repo <repo>
+//        --target <commit> ..., gh release view checks the five assets by name and size, and only after that one row is appended:
+//        | version | Release URL | tar sha256 | commit | | | | (an absent index is created with its header).
+//      - the Release without the row (a run that stopped before the index was written), or a Release missing assets (one that stopped half
+//        way): every asset there must be this build's byte for byte (the same size is not the same build): SHA256SUMS against the one
+//        staged here, release.json and the node-entry files downloaded and compared, the tar downloaded to <stage>/<tar> and held to its
+//        sha256 (step 5 reuses that file). Another build of this version is refused before anything goes up (ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES
+//        when its SHA256SUMS names another tar or its tar is another, else ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS). What is missing
+//        is uploaded (never --clobber), the five are read back by name and size, and the row is appended when it is not there.
+//      - the row without its Release: refused (PREPARE_INDEX_ROW_WITHOUT_RELEASE), not guessed (step 0 already refuses it; held here again
+//        on the index and the Release as they are now).
+//      Only the tag fleet-node-<v> and this one row are ever written.
+//   5. --out (new or the one of an earlier run): the kit and the images in it; whatever of kit, images and fleet-node-<v>.first-install.SHA256SUMS
 //      the Release lacks is uploaded (attachFirstInstallKit, resuming: what is there is kept only when it is the same bytes, another image or
-//      sums file is replaced, another kit refused) and read back; the whole request is held to the Release once more (checkRequestOnRelease
-//      with the kit), so prepare never writes a request seal would refuse; then fleet-node-<v>.acceptance-request.json (REQUEST_CONTRACT): tar,
+//      sums file is replaced, another kit refused) and read back; the whole request is held to the Release (checkRequestOnRelease with the kit,
+//      the check seal makes: SHA256SUMS and release.json naming the request's tar and commit, the tar downloaded from the Release giving the
+//      request's Source), so prepare never writes a request seal would refuse;
+//   6. then fleet-node-<v>.acceptance-request.json (REQUEST_CONTRACT): tar,
 //      commit, repository, Source, kit hash and those fleetRefs, and the line for the Decision's text (requestLineOf: the request file's sha256).
 //      No Decision, receipt or time: the Owner reviews it. Files are written whole or not at all.
 // seal (after the Owner accepted; never touches a node or takes a kit): the request and the Decision record, the return of the one
@@ -159,27 +178,92 @@ async function writeIndex(index, lines, eol) {
   await writeAtomic(index, Buffer.from(lines.join(eol) + eol));
 }
 
-function viewRelease(ghCommand, repo, tag) {
+// The Release of a tag, or null when GitHub has none (gh says "release not found"); any other failure stays a failure (a dropped connection
+// is not a missing Release).
+function viewReleaseOrNull(ghCommand, repo, tag) {
   const viewed = gh(ghCommand, ['release', 'view', tag, '--repo', repo, '--json', 'url,tagName,assets']);
+  if (viewed.status !== 0 && /release not found/i.test(viewed.stderr)) return null;
   check(viewed.status === 0, 'PUBLISH_GH_RELEASE_VIEW_FAILED', viewed.stderr);
   const v = JSON.parse(viewed.stdout);
   check(v.tagName === tag && typeof v.url === 'string' && /^https:\/\//.test(v.url), 'PUBLISH_RELEASE_NOT_AS_CREATED', { tagName: v.tagName });
   return { url: v.url, assets: Array.isArray(v.assets) ? v.assets : [] };
 }
+function viewRelease(ghCommand, repo, tag) {
+  const v = viewReleaseOrNull(ghCommand, repo, tag);
+  check(v !== null, 'PUBLISH_GH_RELEASE_VIEW_FAILED', 'release not found');
+  return v;
+}
 
-export async function publish({ dir, repo = DEFAULT_REPO, index = DEFAULT_INDEX, ghCommand = ['gh'] }) {
-  check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
-  const build = await readBuild(dir);
-  const s = build.release.source;
+// The candidate's commit on GitHub (the Release's --target), asked before anything is written: a commit never pushed is refused here.
+// Only GitHub's own "no such commit" (HTTP 404, or 422 "No commit found for SHA") is a commit not on the remote; any other failure (a
+// dropped connection, a 5xx, an answer that is not the API's) is a lookup that failed, to be run again, not a sign the commit was never pushed.
+function checkCommitOnRemote(ghCommand, repo, commit) {
+  const r = gh(ghCommand, ['api', `repos/${repo}/commits/${commit}`]);
+  if (r.status !== 0 && /\(HTTP 404\)|No commit found for SHA/i.test(r.stderr ?? '')) fail('PREPARE_COMMIT_NOT_ON_REMOTE', { commit, exit: r.status, stderr: r.stderr });
+  let got = null;
+  try { got = r.status === 0 ? JSON.parse(r.stdout).sha : null; } catch { got = null; }
+  check(got === commit, 'PREPARE_COMMIT_LOOKUP_FAILED', { commit, exit: r.status, stderr: r.stderr, note: 'GitHub did not say whether the commit is there: run the same prepare again' });
+}
+
+// prepare's step 4 (see the head of this file): the Release and the index row of this build, made or completed, never guessed. `assets`: the
+// five, in the order they are published (tar, release.json, the staged SHA256SUMS, the two node-entry files).
+async function ensureRelease({ ghCommand, repo, index, s, assets, stage }) {
+  const tag = s.release_tag, tarName = `${tag}.tar`, relName = `${tag}.release.json`;
   const idx = await readIndex(index);
-  check(findRow(idx.lines, s.version) < 0, 'PUBLISH_INDEX_ALREADY_HAS_VERSION', s.version);
-  const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-publish-'));
-  try {
-    const { sums, entry } = await stageNodeEntry(build, stage);
-    return await publishAssets({ ghCommand, repo, index, idx, s, assets: [build.assets[0], build.assets[1], sums, ...entry] });
-  } finally {
-    await fs.rm(stage, { recursive: true, force: true });
+  const at = findRow(idx.lines, s.version);
+  const v = viewReleaseOrNull(ghCommand, repo, tag);
+  if (v === null) {
+    check(at < 0, 'PREPARE_INDEX_ROW_WITHOUT_RELEASE', { version: s.version, note: 'the index names this version, GitHub has no Release of it: not this command\'s to guess' });
+    checkCommitOnRemote(ghCommand, repo, s.commit);
+    return publishAssets({ ghCommand, repo, index, idx, s, assets });
   }
+  // a Release of this version is there: this build's (complete or not), or another build's, refused before anything goes up. Every asset it
+  // holds is held to this build byte for byte (the same size is not the same build: a tar is 512-byte aligned); the tar is downloaded to
+  // <stage>/<tar>, where step 5's checkRequestOnRelease finds it already held and does not download it again.
+  const sizes = new Map(v.assets.map(x => [x.name, x.size]));
+  const local = new Map();
+  for (const a of assets) local.set(a.name, await fs.readFile(a.file));
+  const dl = path.join(stage, 'ensure');
+  if (sizes.has('SHA256SUMS')) {
+    const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, 'SHA256SUMS', dl));
+    if (!there.equals(local.get('SHA256SUMS'))) {
+      const named = sumsOf(there.toString('utf8')).get(tarName) ?? null;
+      check(named === s.archive_sha256, 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { build: s.archive_sha256, release: named });
+      fail('ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS', { note: 'the Release\'s SHA256SUMS is not this build\'s', release: sha(there), build: sha(local.get('SHA256SUMS')) });
+    }
+  }
+  for (const [name, bytes] of local) {
+    if (sizes.has(name) && sizes.get(name) !== bytes.length) {
+      fail(name === tarName ? 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES' : 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS', { asset: name, release: sizes.get(name), build: bytes.length });
+    }
+  }
+  // release.json and the node-entry files first (small), the tar last
+  for (const a of [...assets.filter(x => x.name !== tarName), ...assets.filter(x => x.name === tarName)]) {
+    if (!sizes.has(a.name) || a.name === 'SHA256SUMS') continue;
+    if (a.name === tarName) {
+      const tarFile = path.join(stage, tarName);
+      await fs.rm(tarFile, { force: true });
+      await fs.rename(downloadAsset(ghCommand, repo, tag, tarName, dl), tarFile);
+      const got = sha(await fs.readFile(tarFile));
+      if (got !== s.archive_sha256) {
+        await fs.rm(tarFile, { force: true });
+        fail('ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { asset: tarName, release: got, build: s.archive_sha256 });
+      }
+    } else {
+      const there = await fs.readFile(downloadAsset(ghCommand, repo, tag, a.name, dl));
+      check(there.equals(local.get(a.name)), 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS', { asset: a.name, release: sha(there), build: sha(local.get(a.name)) });
+    }
+  }
+  const missing = assets.filter(a => !sizes.has(a.name));
+  for (const a of missing) {
+    const up = gh(ghCommand, ['release', 'upload', tag, a.file, '--repo', repo]);
+    check(up.status === 0, 'PUBLISH_GH_RELEASE_UPLOAD_FAILED', { asset: a.name, stderr: up.stderr });
+  }
+  const back = missing.length ? viewRelease(ghCommand, repo, tag) : v;
+  for (const a of assets) check(back.assets.some(x => x.name === a.name && x.size === local.get(a.name).length), 'PUBLISH_RELEASE_ASSET_MISSING', a.name);
+  const line = at < 0 ? row([s.version, back.url, s.archive_sha256, s.commit, '', '', '']) : idx.lines[at];
+  if (at < 0) await writeIndex(index, [...idx.lines, line], idx.eol);
+  return { status: 'FLEET_RELEASE_PUBLISHED', tag, url: back.url, archiveSha256: s.archive_sha256, commit: s.commit, indexLine: line, uploaded: missing.map(a => a.name) };
 }
 
 async function publishAssets({ ghCommand, repo, index, idx, s, assets }) {
@@ -419,11 +503,12 @@ export async function attachFirstInstallKit({ version, kit, images = [], repo = 
 
 // The previous Release's role image of this id, if it has one: its asset, held to that version's first-install.SHA256SUMS. null only when there
 // is none to use (no earlier version in the index, that Release lists no such asset or no sums file); a failed view or download stays what it is
-// (review: a dropped connection is not a missing image).
+// (review: a dropped connection is not a missing image). The previous version is the last row before this version's; before prepare has
+// appended this version's row (step 4 comes after this one), every row is before it.
 async function previousImage({ ghCommand, repo, index, version, id, stage }) {
   const idx = await readIndex(index);
   const at = findRow(idx.lines, version);
-  const before = idx.lines.slice(0, at < 0 ? 0 : at).filter(l => isRow(l) && VERSION.test(cells(l)[0] ?? ''));
+  const before = idx.lines.slice(0, at < 0 ? idx.lines.length : at).filter(l => isRow(l) && VERSION.test(cells(l)[0] ?? ''));
   if (before.length === 0) return null;
   const prev = tagOf(cells(before[before.length - 1])[0]), asset = `role-image-${id}.tar.gz`, sumsName = `${prev}.first-install.SHA256SUMS`;
   const names = new Set(viewRelease(ghCommand, repo, prev).assets.map(x => x.name));
@@ -436,9 +521,8 @@ async function previousImage({ ghCommand, repo, index, version, id, stage }) {
 
 // The one check of a request against its Release as it is now (blocking 2), the same for prepare (before it writes a request) and seal (before
 // anything goes up): the release's SHA256SUMS names the request's tar and release.json, release.json names its version, commit and tar, the
-// tar downloaded from the Release has that hash, and the Source the archive's own source-hash gives on it (with the drill's stand-ins, which do
-// not enter it) is the request's; with `kit`, the kit as checkKitOnRelease holds it. `stage` keeps the downloaded tar for a second call.
-// The Source it computed.
+// tar downloaded from the Release has that hash, and the Source the archive's own source-hash gives on it (sourceOf) is the request's; with
+// `kit`, the kit as checkKitOnRelease holds it. `stage` keeps the downloaded tar for a second call. The Source it computed.
 async function checkRequestOnRelease({ ghCommand, repo, request, stage, kit = true, deps = {}, now = Date.now() }) {
   const tag = tagOf(request.version), tarName = `${tag}.tar`, relName = `${tag}.release.json`;
   const names = new Set(viewRelease(ghCommand, repo, tag).assets.map(x => x.name));
@@ -462,12 +546,18 @@ async function checkRequestOnRelease({ ghCommand, repo, request, stage, kit = tr
     await fs.rename(downloadAsset(ghCommand, repo, tag, tarName, dl), tarFile);
     check(sha(await fs.readFile(tarFile)) === request.archive_sha256, 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', { downloaded: 'another tar' });
   }
+  const source = await sourceOf({ tarFile, request, deps, now });
+  check(request.ciSourceManifestSha256 === undefined || request.ciSourceManifestSha256 === source, 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES',
+    { request: request.ciSourceManifestSha256, release: source });
+  if (kit) await checkKitOnRelease({ ghCommand, repo, tag, kitSha256: request.firstInstallKitSha256 });
+  return source;
+}
+
+// The Source a request names on a tar: the archive's own source-hash, with the drill's stand-ins (they do not enter it).
+async function sourceOf({ tarFile, request, deps, now }) {
   const { ciSourceManifestSha256: _ignored, ...draft } = request;
   const sh = await (deps.sourceHash ?? sourceHashOf)({ artifactPath: tarFile, artifactSha256: request.archive_sha256, acceptance: acceptanceOf(draft, DRILL_RESERVED), now });
   check(HEX64.test(sh?.ciSourceManifestSha256 ?? ''), 'ACCEPTANCE_SOURCE_HASH_REFUSED');
-  check(request.ciSourceManifestSha256 === undefined || request.ciSourceManifestSha256 === sh.ciSourceManifestSha256, 'ACCEPTANCE_SOURCE_NOT_THE_RELEASES',
-    { request: request.ciSourceManifestSha256, release: sh.ciSourceManifestSha256 });
-  if (kit) await checkKitOnRelease({ ghCommand, repo, tag, kitSha256: request.firstInstallKitSha256 });
   return sh.ciSourceManifestSha256;
 }
 
@@ -485,22 +575,28 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
   now = Date.now(), deps = {} }) {
   check(REPO.test(repo ?? ''), 'PUBLISH_REPO_REFUSED');
   check(VERSION.test(version ?? ''), 'PUBLISH_VERSION_REFUSED');
-  const { release } = await readBuild(dir);
-  const s = release.source;
+  const build = await readBuild(dir);
+  const { release } = build, s = release.source;
   check(s.version === version, 'PREPARE_BUILD_NOT_THIS_VERSION', s.version);
   const tag = tagOf(version), kitName = `${tag}.first-install-kit.json`;
-  const idx = await readIndex(index);
-  const at = findRow(idx.lines, version);
-  check(at >= 0, 'PUBLISH_INDEX_LACKS_VERSION', version);
-  const c = cells(idx.lines[at]);
-  check(c[2] === s.archive_sha256 && c[3] === s.commit, 'ACCEPTANCE_NOT_THIS_RELEASE');
-  // accepted is what the Release holds (blocking 5): an accepted version is never given a kit or a request afterwards
-  const onRelease = new Set(viewRelease(ghCommand, repo, tag).assets.map(x => x.name));
-  check(!onRelease.has(`${tag}.acceptance.json`), 'PREPARE_VERSION_ALREADY_ACCEPTED',
-    { version, note: 'the Release holds its acceptance; if the index row is empty, run the same seal again to complete it' });
-  check(c[4] === '' && c[5] === '', 'PUBLISH_ACCEPTANCE_INDEX_WITHOUT_ASSET', { version, acceptedAt: c[4], decision: c[5] });
   const stage = await fs.mkdtemp(path.join(os.tmpdir(), 'fleet-prepare-'));
   try {
+    // 0. local first: the node entry staged from the checked archive (refused here when the archive lacks it), the index row when there is one
+    const entryStage = path.join(stage, 'release-assets');
+    await fs.mkdir(entryStage);
+    const { sums, entry } = await stageNodeEntry(build, entryStage);
+    const releaseAssets = [build.assets[0], build.assets[1], sums, ...entry];
+    const idx = await readIndex(index);
+    const at = findRow(idx.lines, version);
+    const c = at >= 0 ? cells(idx.lines[at]) : null;
+    check(c === null || (c[2] === s.archive_sha256 && c[3] === s.commit), 'ACCEPTANCE_NOT_THIS_RELEASE');
+    // accepted is what the Release holds (blocking 5): an accepted version is never given a kit or a request afterwards; no Release yet is fine
+    const viewed = viewReleaseOrNull(ghCommand, repo, tag);
+    check(viewed !== null || c === null, 'PREPARE_INDEX_ROW_WITHOUT_RELEASE', { version, note: 'the index names this version, GitHub has no Release of it: not this command\'s to guess' });
+    const onRelease = new Set((viewed?.assets ?? []).map(x => x.name));
+    check(!onRelease.has(`${tag}.acceptance.json`), 'PREPARE_VERSION_ALREADY_ACCEPTED',
+      { version, note: 'the Release holds its acceptance; if the index row is empty, run the same seal again to complete it' });
+    check(c === null || (c[4] === '' && c[5] === ''), 'PUBLISH_ACCEPTANCE_INDEX_WITHOUT_ASSET', { version, acceptedAt: c?.[4], decision: c?.[5] });
     // 1. the kit: the Release's once it has one (the one fact from then on), else this node's; held to what a new node will read
     const kitFromRelease = onRelease.has(kitName);
     const kitBytes = kitFromRelease ? await fs.readFile(downloadAsset(ghCommand, repo, tag, kitName, stage))
@@ -508,12 +604,13 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
     (deps.readKit ?? readKit)(kitBytes);
     let kit;
     try { kit = JSON.parse(kitBytes.toString('utf8')); } catch { fail('FIRST_INSTALL_KIT_NOT_JSON'); }
-    // 2. the request: what this node carries into every acceptance; its Source from the Release's own tar (the check seal makes)
+    // 2. the request: what this node carries into every acceptance; its Source from the build's own tar (the bytes step 0 checked and step 4
+    //    puts on the Release; step 5 recomputes it on the tar downloaded from the Release, the check seal makes)
     const m = await (deps.fleetMaterial ?? installedFleetMaterial)(root);
     const fleetRefs = Object.fromEntries(REQUEST_FLEET_REFS.map(k => [k, k === 'formalRoles' ? m?.formalRoles : m?.installed?.[k]]));
     const request = { contract: REQUEST_CONTRACT, version, archive_sha256: s.archive_sha256, commit: s.commit, repository: repo, ciSourceManifestSha256: undefined,
       firstInstallKitSha256: sha(kitBytes), fleetRefs };
-    const source = await checkRequestOnRelease({ ghCommand, repo, request, stage, kit: false, deps, now });
+    const source = await sourceOf({ tarFile: path.join(dir, release.archive.name), request, deps, now });
     check(kit.config?.ciSourceManifestSha256 !== source, 'PREPARE_TEMPLATE_IS_THIS_SOURCE',
       { template: kit.config?.ciSourceManifestSha256, note: 'this node already runs this version: the kit must be taken before it upgrades' });
     request.ciSourceManifestSha256 = source;
@@ -533,8 +630,10 @@ export async function prepare({ version, dir, out, images = [], repo = DEFAULT_R
       check(f, 'PREPARE_IMAGE_MISSING', { id, asset: `role-image-${id}.tar.gz`, note: 'give it with --image; the previous Release has none of that id' });
       files.set(id, f);
     }
-    // 4. all checks passed: the directory, the kit and the images in it, what the Release lacks uploaded, the whole request held to the Release
-    //    again (the same check as seal's), and only then the request
+    // 4. all checks passed: the Release and the index row of this build, made or completed (only the tag fleet-node-<v> and this row)
+    await ensureRelease({ ghCommand, repo, index, s, assets: releaseAssets, stage });
+    // 5. the directory, the kit and the images in it, what the Release lacks uploaded, the whole request held to the Release (the same check
+    //    as seal's); 6. only then the request
     await fs.mkdir(out, { recursive: true });
     const kitFile = path.join(out, kitName);
     await writeAtomic(kitFile, kitBytes);
@@ -653,13 +752,10 @@ export async function main(argv) {
       version: { type: 'string' }, image: { type: 'string', multiple: true }, out: { type: 'string' }, request: { type: 'string' },
       'decision-record': { type: 'string' }, 'drill-receipt': { type: 'string' } } });
   } catch { fail('USAGE'); }   // an option no command has (the old entry's --base, --kit, --acceptance; seal's old --decision, --receipt, --accepted-at)
+  // the release command is gone (prepare makes the Release): `release`, with or without options, ends in USAGE below like any unknown command
   const { values, positionals } = parsed;
   check(positionals.length === 0, 'USAGE');
   const only = (...allowed) => check(Object.keys(values).every(k => allowed.includes(k)), 'USAGE');
-  if (sub === 'release') {
-    only('dir', 'repo', 'index'); check(values.dir && values.repo, 'USAGE');
-    return publish({ dir: values.dir, repo: values.repo, index: values.index });
-  }
   if (sub === 'prepare') {
     only('version', 'dir', 'out', 'image', 'repo', 'index'); check(values.version && values.dir && values.out, 'USAGE');
     return prepare({ version: values.version, dir: values.dir, out: path.resolve(values.out), images: values.image ?? [], repo: values.repo, index: values.index });
