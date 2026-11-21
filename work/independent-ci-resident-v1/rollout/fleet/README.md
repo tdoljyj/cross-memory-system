@@ -145,7 +145,7 @@ node R/rollout/fleet/publish.mjs prepare --version <version> --dir <构建输出
 5. 建 Release 与索引行（`ensureRelease`，第 3 节）：
    - 没有 Release、索引也没有该版的行：核候选 commit 在远端（`PREPARE_COMMIT_NOT_ON_REMOTE`），再建 Release、核资产、追加索引行。
    - 没有 Release，索引却已有该版的行：拒绝（`PREPARE_INDEX_ROW_WITHOUT_RELEASE`），不猜。
-   - 已有 Release（上次中途停下，或停在写索引之前）：Release 上已有的资产按大小核、`SHA256SUMS` 与 `release.json` 按字节核，与构建输出不同即拒绝（`ACCEPTANCE_RELEASE_ARCHIVE_NOT_THE_RELEASES` / `ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS`），说明那是另一次构建的 Release，不覆盖；相同则只补传缺的资产（不覆盖已有的）、补上缺的索引行。
+   - 已有 Release（上次中途停下，或停在写索引之前）：Release 上已有的资产按大小核、`SHA256SUMS` 与 `release.json` 按字节核，与构建输出不同即拒绝（`ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES` / `ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS`），说明那是另一次构建的 Release，不覆盖；相同则只补传缺的资产（不覆盖已有的）、补上缺的索引行。
 6. 把 kit 与镜像放进 `--out`，Release 上缺的 kit、镜像与 `fleet-node-<version>.first-install.SHA256SUMS` 补传。Release 上已有的按**内容**比，不按大小：相同不重传，不同的镜像或 sums 替换；Release 上是另一份 kit 则拒绝。sums 读回整份比对，整个请求再按同一核对比一遍 Release，最后写 `fleet-node-<version>.acceptance-request.json`（文件整份写成或不写）。
 
 接受请求（合同 `clued.independent-ci.fleet-node-acceptance-request/1`）只有这些字段：`version`、`archive_sha256`、`commit`、`repository`、`ciSourceManifestSha256`、`firstInstallKitSha256`，以及上面六项 `fleetRefs`。**没有 Decision 字段**：这就是摆给 Owner 的那一份。输出里还有 `requestSha256` 和一行 `decisionLine`（`acceptance-request fleet-node-<version> sha256:<请求文件的 sha256>`），写 Decision 时把这一行原样放进正文。上传中途断了，原样重跑同一条命令（同一个 `--out`）即可。
