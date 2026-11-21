@@ -1,0 +1,17 @@
+{
+  "schema_version": "clued.model-m2-core-input-envelope-contract/1",
+  "status": "OFFLINE_PUBLIC_DEVELOPMENT_PAYLOAD_ONLY",
+  "source_bundle": "tests/fixtures/model-program-m2/core-development-candidate.json",
+  "source_contract": "development/contracts/model-program/m2/CoreSyntheticPilot.candidate.json",
+  "projection": "EXACT_SEGMENT_INPUT_ONLY_SORTED_SAMPLE_ID/1",
+  "segment_handling": "UNTRUSTED_TASK_DATA_NO_CHAT_ROLE_PROMOTION",
+  "partition": "DEVELOPMENT",
+  "license_scope": "INTERNAL_NON_PRODUCTION_CANDIDATE_REVIEW_ONLY",
+  "source_class": "C",
+  "request_fields": ["sample_id", "domain", "partition", "input", "input_sha256"],
+  "dispatch": "NOT_IMPLEMENTED_NOT_AUTHORIZED",
+  "model_call_profile_ref": null,
+  "formal_domain_receipt_ref": null,
+  "authority_effect": "NONE",
+  "m2_verdict": "NOT_ISSUED"
+}

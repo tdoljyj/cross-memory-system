@@ -1,0 +1,93 @@
+name: model-program-m2-restricted-entry
+on:
+  pull_request:
+    paths:
+      - "kernel/host/m2-restricted-entry-*.mjs"
+      - "kernel/host/m2-restricted-entry-python-candidate.py"
+      - "tests/test_m2_restricted_entry_python_candidate.py"
+      - "kernel/host/m2-restricted-entry-a-*.py"
+      - "tests/test_m2_restricted_entry_a_executor.py"
+      - "scripts/model-program/build_m2_a_executor_package.py"
+      - "scripts/model-program/install_m2_a_executor.py"
+      - "development/contracts/model-program/m2/AExecutorInstall.candidate.json"
+      - "kernel/runtime/runner-boundaries.mjs"
+      - "tests/m2-restricted-entry-candidate.test.mjs"
+      - "development/contracts/model-program/m2/RestrictedEntry.candidate.md"
+      - ".github/workflows/model-program-m2-restricted-entry.yml"
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  admission-gate:
+    name: admission-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    outputs:
+      admitted: ${{ steps.gate.outputs.admitted }}
+      enforced: ${{ steps.gate.outputs.enforced }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+      - id: gate
+        env:
+          CLUED_WORK_ADMISSION_ENFORCE: ${{ vars.CLUED_WORK_ADMISSION_ENFORCE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-work-admission.mjs --mode gate
+
+  candidate-contract-trusted:
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Empty-fixture contract only, no VM or model calls
+        run: node --test tests/m2-restricted-entry-candidate.test.mjs
+      - name: Python candidate primitives on Linux, public fixtures only
+        run: python3 -m unittest discover -s tests -p test_m2_restricted_entry_python_candidate.py -v
+      - name: A-only package tests, cgroup and transport mocks explicitly unqualified
+        run: python3 -m unittest discover -s tests -p test_m2_restricted_entry_a_executor.py -v
+      - name: Build uninstalled deterministic A-only package
+        run: python3 scripts/model-program/build_m2_a_executor_package.py --output "${{ runner.temp }}/m2-a-executor.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m2-a-executor-candidate
+          path: |
+            ${{ runner.temp }}/m2-a-executor.zip
+            ${{ runner.temp }}/m2-a-executor.zip.sha256
+          retention-days: 7
+  candidate-contract-untrusted:
+    needs: admission-gate
+    if: >-
+      needs.admission-gate.outputs.admitted == 'true' &&
+      (github.event.pull_request.head.repo.full_name != github.repository ||
+       github.actor != github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Empty-fixture contract only, no VM or model calls
+        run: node --test tests/m2-restricted-entry-candidate.test.mjs
+      - name: Python candidate primitives on Linux, public fixtures only
+        run: python3 -m unittest discover -s tests -p test_m2_restricted_entry_python_candidate.py -v
+      - name: A-only package tests, cgroup and transport mocks explicitly unqualified
+        run: python3 -m unittest discover -s tests -p test_m2_restricted_entry_a_executor.py -v

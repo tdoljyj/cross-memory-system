@@ -1,0 +1,153 @@
+{
+  "schema_version": "clued.model-dataset-split-definition/1",
+  "definition_id": "clued.model-program.DatasetSplit",
+  "version": "v0.1",
+  "status": "OWNER_ADOPTED_NON_PRODUCTION_BASELINE",
+  "authority_effect": "OWNER_DEFINITION_ADOPTION_ONLY",
+  "domain_owner": "MODEL PROGRAM",
+  "enum_effect": "OWNER_ADOPTED_MODEL_DOMAIN_BASELINE_ONLY",
+  "plan_source": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "size_bytes": 356825,
+    "ranges": [
+      {
+        "start_line": 2648,
+        "end_line": 2670,
+        "sha256": "1bb8b3885728fe974e9654e5f84a5319e837c94c7052dde2b197c50c47c667de"
+      },
+      {
+        "start_line": 2709,
+        "end_line": 2728,
+        "sha256": "f69a0d689ee33cefdebe6c9c3792f968943e36f5af6488747c293f9c7480c14e"
+      }
+    ]
+  },
+  "ownership_registry": {
+    "path": "development/contracts/model-program/m0/upstream/ObjectAuthorityRegistry_model_program_v1_20260918.json",
+    "sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc",
+    "size_bytes": 2412,
+    "revision_id": "CLUED-MODEL-OBJECT-AUTHORITY-v1-20260918"
+  },
+  "parent_boundaries": [
+    "TRAINING",
+    "DEVELOPMENT",
+    "QUALIFICATION",
+    "FINAL_HOLDOUT"
+  ],
+  "purposes": [
+    {
+      "purpose_id": "training",
+      "description": "训练",
+      "parent_boundary": "TRAINING",
+      "allowed_use_keys": [
+        "weight_learning"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "development",
+      "description": "开发",
+      "parent_boundary": "DEVELOPMENT",
+      "allowed_use_keys": [
+        "prompt_or_architecture_tuning",
+        "selection"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": true,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "calibration_fit",
+      "description": "校准拟合",
+      "parent_boundary": "DEVELOPMENT",
+      "allowed_use_keys": [
+        "calibration_fit"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "selection_policy_validation",
+      "description": "选型/策略验证",
+      "parent_boundary": "DEVELOPMENT",
+      "allowed_use_keys": [
+        "selection"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": true,
+      "fixed_candidate_required": false
+    },
+    {
+      "purpose_id": "qualification",
+      "description": "资格",
+      "parent_boundary": "QUALIFICATION",
+      "allowed_use_keys": [],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": true
+    },
+    {
+      "purpose_id": "final_holdout",
+      "description": "最终 Holdout",
+      "parent_boundary": "FINAL_HOLDOUT",
+      "allowed_use_keys": [],
+      "final_holdout": true,
+      "selection_report_allowed": false,
+      "fixed_candidate_required": true
+    }
+  ],
+  "cross_fitting": "NOT_SUPPORTED",
+  "sample_and_group_isolation": "EVERY_PARTITION_INCLUDING_DEVELOPMENT_SUBPARTITIONS",
+  "evaluation_effect": "DECLARED_FIXED_CANDIDATE_BINDING_ONLY_NOT_ATTESTED",
+  "direction_acceptance": {
+    "scope": "FOUR_BOUNDARIES_AND_ISOLATED_DEVELOPMENT_DIRECTION_ONLY",
+    "canonical_record_id": "46d3e8e1-81f7-43af-aa46-11a37a1fd584",
+    "record_version": 1,
+    "record_content_sha256": "7d424041b4a2a3856d4f71a79e792db517ffed2b0f7d493c5d233d483a2a86e3",
+    "canonical_receipt_id": "fd2576dc-a0c2-4769-aab8-b8d88abd967a",
+    "quote_evidence_id": "900b52e3-ff19-46b9-a214-421b66a3b7a8",
+    "quote_sha256": "53cdbb01ccff8875b0b110d507c5316dd169724b3a284b2818086bcdc117f211",
+    "quote_size_bytes": 33,
+    "corresponding_proposal": {
+      "version": "v0.1",
+      "commit": "7cdda75aba54c01cbc68bf4a269f1620dc0b349e",
+      "path": "development/contracts/model-program/m2/DatasetSplitDomainDecision.candidate.md",
+      "sha256": "182767f2be090681420ab43f75639158420a2a42cecc8efedfcaad5ed6e85ef1",
+      "size_bytes": 6957,
+      "binding_effect": "CORRESPONDING_DIRECTION_NOT_WHOLE_DOCUMENT_ADOPTION"
+    },
+    "offline_reference_status": "RECORDED_REFERENCE_NOT_LIVE_RECHECKED"
+  },
+  "instance_schema": {
+    "path": "development/contracts/model-program/m2/schemas/DatasetSplit.v0.1.schema.json",
+    "size_bytes": 6268,
+    "sha256": "062860afd3dc16fa9ee1de27582439701a67b7c5976ad45981a7cca3e515468f"
+  },
+  "adopted_from": {
+    "definition": {
+      "path": "development/contracts/model-program/m2/DatasetSplitDefinition.candidate.json",
+      "size_bytes": 4481,
+      "sha256": "2c8e0196c4338cf9d0c6758eb78c8d57a05a2363aacb694f1c305c602b1288ba"
+    },
+    "instance_schema": {
+      "path": "development/contracts/model-program/m2/schemas/DatasetSplit.candidate.schema.json",
+      "size_bytes": 5835,
+      "sha256": "f0359d6846fa6bff94994c145f7d7077132dc077054fe1b011edaf6c3789d95d"
+    }
+  },
+  "owner_adoption": {
+    "canonical_record_id": "b8c1d482-9eb4-4bc5-8dd1-372b0d55174e",
+    "record_version": 1,
+    "canonical_scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "record_content_sha256": "b58db4fe2cc81c123f078aeff789fcc9fe971902321ffd36a9e3ebaa1af477eb",
+    "canonical_receipt_id": "45a657d9-ba34-437e-b17c-2d792ce5c692",
+    "quote_evidence_id": "1257e89f-d6b6-4015-8712-0bab340cc1b4",
+    "quote_sha256": "905819e2e3a059a02087855e9f326d05c877c1767ec31dc012c5c44652840230",
+    "quote_size_bytes": 6,
+    "effect": "OWNER_BASELINE_ADOPTION_ONLY"
+  }
+}

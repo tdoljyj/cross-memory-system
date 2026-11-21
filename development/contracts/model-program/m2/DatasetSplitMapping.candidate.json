@@ -1,0 +1,95 @@
+{
+  "schema_version": "clued.model-m2-split-mapping-candidate/1",
+  "status": "CANDIDATE_DIRECTION_ACCEPTED_NOT_ADOPTED",
+  "authority_effect": "NONE",
+  "domain_mapping_status": "UNRESOLVED",
+  "official_definition_status": "NOT_LOCATED_OR_VERIFIED",
+  "plan_source": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "size_bytes": 356825,
+    "ranges": [
+      {
+        "start_line": 2648,
+        "end_line": 2670,
+        "sha256": "1bb8b3885728fe974e9654e5f84a5319e837c94c7052dde2b197c50c47c667de"
+      },
+      {
+        "start_line": 2709,
+        "end_line": 2728,
+        "sha256": "f69a0d689ee33cefdebe6c9c3792f968943e36f5af6488747c293f9c7480c14e"
+      }
+    ]
+  },
+  "mappings": [
+    {
+      "purpose_description": "训练",
+      "proposed_boundary": "existing_training",
+      "dataset_split_ref": null,
+      "allowed_use_keys": [
+        "weight_learning"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "training",
+      "candidate_parent_boundary": "TRAINING"
+    },
+    {
+      "purpose_description": "开发",
+      "proposed_boundary": "existing_development",
+      "dataset_split_ref": null,
+      "allowed_use_keys": [
+        "prompt_or_architecture_tuning",
+        "selection"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": true,
+      "candidate_purpose_id": "development",
+      "candidate_parent_boundary": "DEVELOPMENT"
+    },
+    {
+      "purpose_description": "校准拟合",
+      "proposed_boundary": "existing_development_isolated_fit_partition",
+      "dataset_split_ref": null,
+      "allowed_use_keys": [
+        "calibration_fit"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "calibration_fit",
+      "candidate_parent_boundary": "DEVELOPMENT"
+    },
+    {
+      "purpose_description": "选型/策略验证",
+      "proposed_boundary": "existing_development_isolated_selection_partition",
+      "dataset_split_ref": null,
+      "allowed_use_keys": [
+        "selection"
+      ],
+      "final_holdout": false,
+      "selection_report_allowed": true,
+      "candidate_purpose_id": "selection_policy_validation",
+      "candidate_parent_boundary": "DEVELOPMENT"
+    },
+    {
+      "purpose_description": "资格",
+      "proposed_boundary": "existing_qualification_fixed_candidate",
+      "dataset_split_ref": null,
+      "allowed_use_keys": [],
+      "final_holdout": false,
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "qualification",
+      "candidate_parent_boundary": "QUALIFICATION"
+    },
+    {
+      "purpose_description": "最终 Holdout",
+      "proposed_boundary": "existing_final_holdout_fixed_candidate",
+      "dataset_split_ref": null,
+      "allowed_use_keys": [],
+      "final_holdout": true,
+      "selection_report_allowed": false,
+      "candidate_purpose_id": "final_holdout",
+      "candidate_parent_boundary": "FINAL_HOLDOUT"
+    }
+  ]
+}

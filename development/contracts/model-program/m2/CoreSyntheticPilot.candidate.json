@@ -1,0 +1,90 @@
+{
+  "schema_version": "clued.model-m2-core-synthetic-pilot/1",
+  "status": "AUTHOR_VISIBLE_DEVELOPMENT_CANDIDATE",
+  "source_class": "C",
+  "planned_counts": {
+    "utterance_card": {
+      "DEVELOPMENT": 6,
+      "QUALIFICATION": 6,
+      "FINAL_HOLDOUT": 6
+    },
+    "card_chain": {
+      "DEVELOPMENT": 6,
+      "QUALIFICATION": 6,
+      "FINAL_HOLDOUT": 6
+    },
+    "imprint": {
+      "DEVELOPMENT": 6,
+      "QUALIFICATION": 6,
+      "FINAL_HOLDOUT": 6
+    },
+    "context": {
+      "DEVELOPMENT": 6,
+      "QUALIFICATION": 6,
+      "FINAL_HOLDOUT": 6
+    }
+  },
+  "materialization": {
+    "DEVELOPMENT": "AUTHOR_VISIBLE_24_CANDIDATES",
+    "QUALIFICATION": "NOT_GENERATED",
+    "FINAL_HOLDOUT": "NOT_GENERATED",
+    "heldout_seed_or_answer_material": null
+  },
+  "source_bindings": [
+    {
+      "path": "development/contracts/information-flow/vendored/m0a/segment-input.v1.schema.json",
+      "sha256": "a4f174a56a3e53bad8c72ba0e888bd012164542920df293466c2e711aaece865"
+    },
+    {
+      "path": "development/contracts/information-flow/vendored/m0a/candidate-information.v1.schema.json",
+      "sha256": "52b270b24458a76ae40257df4e9a3d220aad232ba9ee939b2fde96f33b9c7702"
+    },
+    {
+      "path": "development/contracts/model-program/m2/DatasetSplitDefinition.v0.1.json",
+      "sha256": "f51cefe8eccd0faa75b45e78380e5b389ed266ca4034b511a85f51771f2d4f77"
+    }
+  ],
+  "domain_rules": {
+    "utterance_card": "EXPLICIT_SINGLE_CLAIM_CANDIDATE_EXTRACTION/2",
+    "card_chain": "EXPLICIT_LOCAL_EDGE_SUGGESTION_NO_EXECUTION/1",
+    "imprint": "EXPLICIT_SINGLE_VALUE_SAME_TIME_CONFLICT_PRESERVATION/2",
+    "context": "VISIBLE_DECLARED_POLICY_SCOPE_FILTER_NO_GRANT/2"
+  },
+  "role_slots": {
+    "gold_reviewer": {
+      "authenticated_subject_ref": null,
+      "current_grant_ref": null,
+      "status": "NOT_ASSIGNED_NOT_VERIFIED"
+    },
+    "dispute_adjudicator": {
+      "authenticated_subject_ref": null,
+      "current_grant_ref": null,
+      "status": "NOT_ASSIGNED_NOT_VERIFIED"
+    },
+    "holdout_custodian": {
+      "authenticated_subject_ref": null,
+      "current_grant_ref": null,
+      "status": "NOT_ASSIGNED_NOT_VERIFIED"
+    },
+    "data_gate_reviewer": {
+      "authenticated_subject_ref": null,
+      "current_grant_ref": null,
+      "status": "NOT_ASSIGNED_NOT_VERIFIED"
+    }
+  },
+  "authority": {
+    "formal_gold_ref": null,
+    "independent_review_ref": null,
+    "holdout_lock_ref": null,
+    "domain_receipt_ref": null,
+    "model_call_profile_ref": null,
+    "m2_verdict": "NOT_ISSUED"
+  },
+  "rule_implementation": {
+    "path": "scripts/model-program/validate_m2_core_synthetic_pilot.py",
+    "revision": "core-dev-semantic-rules/2",
+    "sha256": "7c7f02e27267b70a5b2964d1e836841be75bbcea99c34113353c10f1bf8ab621",
+    "hash_bytes": "SHA256_COMPLETE_RAW_FILE_BYTES_NO_NEWLINE_OR_JSON_NORMALIZATION"
+  },
+  "context_policy_sha256": "eebba79cfee92fd578bf2bffa8a41051111e0975c8487c256596a94b716563b8"
+}

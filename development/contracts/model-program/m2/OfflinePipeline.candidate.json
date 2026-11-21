@@ -1,0 +1,34 @@
+{
+  "schema_version": "clued.model-m2-offline-pipeline-candidate/1",
+  "status": "SYNTHETIC_OFFLINE_CANDIDATE",
+  "authority_effect": "NONE",
+  "plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+  "generator_revision": "deterministic-arithmetic-and-context-fixtures/1",
+  "source_class": "C",
+  "license_scope": "SELF_CONTAINED_SYNTHETIC_TEST_ONLY",
+  "normalization": "NFKC_WHITESPACE_CASEFOLD/1",
+  "scrub_policy": "FINITE_EMAIL_PHONE_ASSIGNMENT_INJECTION_RULES/1",
+  "dedup_policy": "NORMALIZED_EXACT_AND_TOKEN_JACCARD_COMPONENTS/1",
+  "near_duplicate_threshold": {
+    "numerator": 9,
+    "denominator": 10
+  },
+  "quality_policy": "NONEMPTY_BOUNDED_PRINTABLE_INPUT/1",
+  "scorer": "CLOSED_JSON_ANSWER_EXACT_MATCH/1",
+  "renderer": "SORTED_LOCAL_JSON_NO_NONFINITE/1",
+  "max_rows": 128,
+  "max_input_chars": 2048,
+  "max_output_chars": 2048,
+  "max_saved_output_bytes": 65536,
+  "sample_boundaries": [
+    "DEVELOPMENT"
+  ],
+  "dataset_revision_id": "synthetic-offline-dataset/1",
+  "evaluation_revision_id": "synthetic-saved-output-evaluation/1",
+  "version_binding": "CLOSED_DATASET_EVALUATION_EVIDENCE_BINDING/1",
+  "saved_output_origin": "DETERMINISTIC_SYNTHETIC_FIXTURE_WRITER",
+  "independent_gold_review": "NOT_PERFORMED",
+  "real_holdout_secrecy": false,
+  "training_or_real_data_use_authorized": false,
+  "m2_verdict": "NOT_ISSUED"
+}

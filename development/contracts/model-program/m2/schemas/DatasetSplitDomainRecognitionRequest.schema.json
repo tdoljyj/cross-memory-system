@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clued:model-program:m2:candidate:DatasetSplitDomainRecognitionRequest",
+  "title": "Read-only non-production DatasetSplit domain recognition request candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_sha256", "subject", "recognition_record_ref", "recognition_receipt_id"],
+  "properties": {
+    "schema_version": {"const": "clued.model-dataset-split-domain-recognition-request-candidate/1"},
+    "contract_sha256": {"$ref": "#/$defs/sha256"},
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["definition_id", "version", "definition_sha256", "instance_schema_sha256"],
+      "properties": {
+        "definition_id": {"const": "clued.model-program.DatasetSplit"},
+        "version": {"const": "v0.1"},
+        "definition_sha256": {"$ref": "#/$defs/sha256"},
+        "instance_schema_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "recognition_record_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "content_hash"],
+      "properties": {
+        "id": {"$ref": "#/$defs/uuid"},
+        "version": {"type": "integer", "minimum": 1},
+        "content_hash": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "recognition_receipt_id": {"$ref": "#/$defs/uuid"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "uuid": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+  }
+}

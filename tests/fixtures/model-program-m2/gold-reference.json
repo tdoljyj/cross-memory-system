@@ -1,0 +1,110 @@
+{
+  "schema_version": "clued.model-m2-gold-provenance-candidate/1",
+  "authority_effect": "NONE",
+  "gold_revision": "synthetic-gold-provenance/1",
+  "m1_reference": {
+    "repository": "tdoljyj/cross-memory-system",
+    "commit": "c454d8dfe6b8a216eb2eee5fda39550ea2ac0f82",
+    "path": "development/contracts/model-program/m1/registries/TeacherComparisonSelectionMatrix.v1.0.2.json",
+    "git_blob_sha1": "4d86c3e6852f0190e2a19a4226182453850fab94",
+    "record_id": "CLUED-MODEL-M1-TEACHER-COMPARISON-SELECTION-MATRIX-v1.0.2-20260921",
+    "accepted_state_id": "50f24568-fd32-4632-8cb7-aa7ac31f84df",
+    "accepted_state_version": 2,
+    "effect": "REFERENCE_BASELINE_ONLY_NOT_QUALITY_THRESHOLD"
+  },
+  "source_rule": {
+    "id": "synthetic-integer-addition",
+    "revision": "1",
+    "operation": "ADD"
+  },
+  "labels": [
+    {
+      "sample_id": "synthetic-gold-0",
+      "input": {
+        "left": 0,
+        "right": 10
+      },
+      "label": {
+        "answer": 10
+      },
+      "source": {
+        "kind": "DETERMINISTIC_SYNTHETIC_RULE",
+        "ref": "synthetic-integer-addition/1",
+        "sha256": "1bf2f71339e0cdfb03b5649741ec7041ee29fb627a777257ca9c57dd08f7d135"
+      },
+      "annotator_id": "synthetic-annotator",
+      "adjudication": {
+        "status": "RESOLVED",
+        "reviewer_id": "synthetic-reviewer",
+        "evidence": {
+          "sample_id": "synthetic-gold-0",
+          "input_sha256": "bd59cac91973a873e74c1553b285db34bffc59bf4f29ace5c4cbaab60e520a7a",
+          "label_sha256": "e7a4c2f31c55a950ff21f199e901cc8343ae0a804c0159d576fb2e3a65b4eb54",
+          "source_sha256": "1bf2f71339e0cdfb03b5649741ec7041ee29fb627a777257ca9c57dd08f7d135",
+          "gold_revision": "synthetic-gold-provenance/1",
+          "reviewer_id": "synthetic-reviewer",
+          "annotator_id": "synthetic-annotator"
+        }
+      }
+    },
+    {
+      "sample_id": "synthetic-gold-1",
+      "input": {
+        "left": 1,
+        "right": 10
+      },
+      "label": {
+        "answer": 11
+      },
+      "source": {
+        "kind": "DETERMINISTIC_SYNTHETIC_RULE",
+        "ref": "synthetic-integer-addition/1",
+        "sha256": "1bf2f71339e0cdfb03b5649741ec7041ee29fb627a777257ca9c57dd08f7d135"
+      },
+      "annotator_id": "synthetic-annotator",
+      "adjudication": {
+        "status": "RESOLVED",
+        "reviewer_id": "synthetic-reviewer",
+        "evidence": {
+          "sample_id": "synthetic-gold-1",
+          "input_sha256": "a84cc5f4fd324f79c960c6cba0ffb3f67a067dad8e5dec8324880f85370b6abe",
+          "label_sha256": "0cb634a9ade57f71e9bdb5896461ad7ce2cf93bbe0bdff82a7cd72c728edfd64",
+          "source_sha256": "1bf2f71339e0cdfb03b5649741ec7041ee29fb627a777257ca9c57dd08f7d135",
+          "gold_revision": "synthetic-gold-provenance/1",
+          "reviewer_id": "synthetic-reviewer",
+          "annotator_id": "synthetic-annotator"
+        }
+      }
+    },
+    {
+      "sample_id": "synthetic-gold-2",
+      "input": {
+        "left": 2,
+        "right": 10
+      },
+      "label": {
+        "answer": 12
+      },
+      "source": {
+        "kind": "DETERMINISTIC_SYNTHETIC_RULE",
+        "ref": "synthetic-integer-addition/1",
+        "sha256": "1bf2f71339e0cdfb03b5649741ec7041ee29fb627a777257ca9c57dd08f7d135"
+      },
+      "annotator_id": "synthetic-annotator",
+      "adjudication": {
+        "status": "RESOLVED",
+        "reviewer_id": "synthetic-reviewer",
+        "evidence": {
+          "sample_id": "synthetic-gold-2",
+          "input_sha256": "ce6f7ea7a4abc533ad3ace8a2e2a56f58bb566b137151573ed18f180cb8a1d5b",
+          "label_sha256": "97c95e55e3387da4d7b531a24ac32d27e3d1d5ab6c9a177a1f25620427c15590",
+          "source_sha256": "1bf2f71339e0cdfb03b5649741ec7041ee29fb627a777257ca9c57dd08f7d135",
+          "gold_revision": "synthetic-gold-provenance/1",
+          "reviewer_id": "synthetic-reviewer",
+          "annotator_id": "synthetic-annotator"
+        }
+      }
+    }
+  ],
+  "revision_sha256": "70328cd9f3f7876032aed561bf162809325bf99ad33a26d3e47c865525a73bc7"
+}

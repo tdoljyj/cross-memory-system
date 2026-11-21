@@ -1,0 +1,307 @@
+{
+  "schema_version": "clued.model-m1-teacher-comparison-selection-matrix/1",
+  "record_id": "CLUED-MODEL-M1-TEACHER-COMPARISON-SELECTION-MATRIX-v1.0.2-20260921",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-09",
+  "date": "2026-09-21",
+  "status": "AUTHOR_SIDE_COMPLETE / STATIC_EVIDENCE_ONLY / M1_10_REVIEW_PENDING",
+  "predecessor": {
+    "path": "TeacherComparisonSelectionMatrix.v1.0.1.json",
+    "git_blob_sha1": "6d9ecd860b1672410292103dd152ad3f5bf10703",
+    "disposition": "IMMUTABLE_PREDECESSOR / SUPERSEDED_BY_TARGETED_M1_04_AND_RUNTIME_LICENSE_BINDING_REPAIR"
+  },
+  "baseline": {
+    "repository": "tdoljyj/cross-memory-system",
+    "m1_09_parent_commit": "bbfb9427a6712d9b79038a64e9f5e011ebbfda13",
+    "m1_10_blocked_review_exact_target": "f55237bd8535c812b8279745e84744796c98b69c",
+    "m1_08_accepted_exact_head": "a15ca02439b383b28e9faeddb585e72a65decb02",
+    "m1_08_pull_request": 275,
+    "m1_08_merge_commit": "bbfb9427a6712d9b79038a64e9f5e011ebbfda13",
+    "m1_07_accepted_exact_head": "d91b7a6418afa811530ca39bb1fe43f322ccc375",
+    "m1_07_pull_request": 270,
+    "m1_07_merge_commit": "0e31b8a3b7da55bf9723a3d0650081ef98b5e85b",
+    "stage_successor_pull_request": 273,
+    "stage_successor_exact_head": "6e86c3b389d17aa28b2f74c516204397374dc682",
+    "stage_successor_merge_commit": "329bf8af416659e6ea98d096d270d8243cb5cdc9"
+  },
+  "generation_mode": {
+    "mode": "STATIC_EVIDENCE_ONLY_TEACHER_COMPARISON_SELECTION_MATRIX",
+    "new_model_calls": 0,
+    "new_provider_calls": 0,
+    "new_benchmarks": 0,
+    "new_downloads": 0,
+    "network_access_required": false,
+    "effectful_experiment_profile_required": false,
+    "effectful_execution_performed": false
+  },
+  "source_bindings": {
+    "device_matrix": {
+      "path": "development/contracts/model-program/m1/registries/DeviceRuntimeMatrix.v1.0.2.json",
+      "git_blob_sha1": "e1642041ec164fd836e07091b59e5db3e0a356e2",
+      "task_scope": "M1-00"
+    },
+    "stage_entry": {
+      "path": "development/contracts/model-program/m1/governance/M1StageEntryAuthorization.v1.0.3.json",
+      "git_blob_sha1": "4dbbf4b0120738f448fd5006d38561db935960cd",
+      "task_scope": "M1-00_TO_M1-10_STAGE_BOUNDARY"
+    },
+    "shortlist": {
+      "path": "development/contracts/model-program/m1/registries/ReferenceModelShortlist.v1.0.1.json",
+      "git_blob_sha1": "866be3c8fd4f8d89ea8fd5da5346e24433287680",
+      "task_scope": "M1-01"
+    },
+    "license_review": {
+      "path": "development/contracts/model-program/m1/evidence/LicenseTermsCompatibilityReview.v1.0.2.json",
+      "git_blob_sha1": "e64b5f489a7cd0925cb2a49b9912ecf6793cd45e",
+      "task_scope": "M1-02"
+    },
+    "download_closeout": {
+      "path": "development/contracts/model-program/m1/evidence/M1ExperimentProfile003ExecutionCloseout_20260918.json",
+      "git_blob_sha1": "b3b147eacc78a707b561302676228b68c18c8954",
+      "task_scope": "M1-03"
+    },
+    "invocation_harness": {
+      "path": "development/contracts/model-program/m1/harness/M1InvocationHarnessBinding.v1.0.2.json",
+      "git_blob_sha1": "91acfd237bfb1e772310feb48a864890b869a2d9",
+      "task_scope": "M1-04"
+    },
+    "provider_registry": {
+      "path": "development/contracts/model-program/m1/harness/ProviderAdapterRegistry.v1.0.2.json",
+      "git_blob_sha1": "9eb5efbeb0969ab88f23f6928d4149afdd49de17",
+      "task_scope": "M1-04"
+    },
+    "invocation_closeout": {
+      "path": "development/contracts/model-program/m1/evidence/M1InvocationProfile001HistoricalEvidenceRecoveryCloseout_20260921.json",
+      "git_blob_sha1": "30a0004063883c6545bd8fcaa377ca2072013627",
+      "task_scope": "M1-04"
+    },
+    "package_matrix": {
+      "path": "development/contracts/model-program/m1/package/PackageVariantMatrix.v1.0.2.json",
+      "git_blob_sha1": "f5e94be1befe99526cbd9f0cbb74ec500fc17622",
+      "task_scope": "M1-05"
+    },
+    "runtime_selection": {
+      "path": "development/contracts/model-program/m1/package/RuntimePackageSelection.v1.0.1.json",
+      "git_blob_sha1": "4aa482c5a6b8dbe50441efa496d8f19f3cd5405b",
+      "task_scope": "M1-05"
+    },
+    "pc_benchmark": {
+      "path": "development/contracts/model-program/m1/evidence/DeviceBenchmarkEvidence.PC.DESK-W-591.v1.0.1.json",
+      "git_blob_sha1": "9e65dc42e0844419d89a58bd4874603ac7747a7e",
+      "task_scope": "M1-06A"
+    },
+    "pc_benchmark_validation": {
+      "path": "development/contracts/model-program/m1/evidence/M1BenchmarkPCValidationReceipt_20260919.json",
+      "git_blob_sha1": "b715aed20ec420805f9626577a11ebb93444021d",
+      "task_scope": "M1-06A"
+    },
+    "runtime_stability": {
+      "path": "development/contracts/model-program/m1/evidence/M1RuntimeStabilityExecutionCloseout_20260920.json",
+      "git_blob_sha1": "b609845dd472501ac5a3c7ce7ce1730a4b8ae106",
+      "task_scope": "M1-07"
+    },
+    "runtime_lifecycle": {
+      "path": "development/contracts/model-program/m1/evidence/M1RuntimeLifecycleExecutionCloseout_20260921.json",
+      "git_blob_sha1": "3e3f35e7a4718e1c379a7dc4eda59da00a06155f",
+      "task_scope": "M1-08"
+    }
+  },
+  "teacher_selection": {
+    "role": "Teacher / Distillation Reference",
+    "candidate": null,
+    "revision": null,
+    "disposition": "NOT_SELECTED / INSUFFICIENT_ACCEPTED_EVIDENCE",
+    "reason_codes": [
+      "STRONG_HOSTED_ENTERPRISE_REFERENCE_NOT_SELECTED",
+      "PROVIDER_TERMS_AND_ACCOUNT_SCOPE_NOT_BOUND",
+      "NO_ACCEPTED_TEACHER_QUALITY_COMPARISON",
+      "TRAINING_AND_DISTILLATION_NOT_AUTHORIZED"
+    ],
+    "reopen_condition": "SEPARATE_FUTURE_STAGE_WITH_EXACT_PROVIDER_MODEL_TERMS_QUALITY_AND_AUTHORITY_BINDINGS",
+    "authority_effect": "NONE"
+  },
+  "selected_reference_baseline": {
+    "role": "PC Local Reference / Comparison Baseline",
+    "candidate": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "license": "Apache-2.0",
+    "source_weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696",
+    "runtime": {
+      "id": "llama.cpp",
+      "release_tag": "b11033",
+      "commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+      "asset_sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+    },
+    "runtime_license_binding": {
+      "license": "MIT",
+      "review_ref": "development/contracts/model-program/m1/evidence/LicenseTermsCompatibilityReview.v1.0.2.json",
+      "review_git_blob_sha1": "e64b5f489a7cd0925cb2a49b9912ecf6793cd45e",
+      "disposition": "PROVISIONALLY_COMPATIBLE_FOR_INTERNAL_M1_EVIDENCE_USE / RELEASE_TIME_REVIEW_STILL_REQUIRED"
+    },
+    "package": {
+      "variant_id": "q8_0",
+      "filename": "Qwen3.5-0.8B-Q8_0.gguf",
+      "bytes": 833592320,
+      "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+      "selection_basis": "EXACT_PACKAGE_USED_BY_ACCEPTED_M1_07_AND_M1_08_RUNTIME_EVIDENCE",
+      "quality_winner": false
+    },
+    "device": {
+      "name": "DESK-W-591",
+      "class": "PC",
+      "benchmark_mode": "STRICT_CPU_ONLY",
+      "coverage_scope": "MINIMUM_FORMAL_M1_PC_BASELINE_ONLY"
+    },
+    "disposition": "SELECTED_AS_M1_PC_LOCAL_REFERENCE_AND_COMPARISON_BASELINE",
+    "selection_basis_tasks": [
+      "M1-00",
+      "M1-01",
+      "M1-02",
+      "M1-03",
+      "M1-04",
+      "M1-05",
+      "M1-06A",
+      "M1-07",
+      "M1-08"
+    ],
+    "claim_boundary": "REFERENCE_AND_COMPARISON_BASELINE_ONLY / NOT_A_TEACHER_QUALITY_WINNER_RELEASE_OR_PRODUCT_ACTIVATION"
+  },
+  "package_comparison_set": {
+    "disposition": "RETAINED_AS_ACCEPTED_MEASURED_UNRANKED_COMPARISON_SET",
+    "quality_winner": null,
+    "ranking_performed": false,
+    "operational_reference_variant": "q8_0",
+    "operational_reference_reason": "USED_BY_ACCEPTED_M1_07_AND_M1_08_RUNTIME EVIDENCE; NOT A QUALITY-WINNER CLAIM",
+    "strict_cpu_benchmark": {
+      "device": "DESK-W-591",
+      "threads": 2,
+      "repetitions_per_group": 5,
+      "result_groups": 8,
+      "measurement_samples": 40
+    },
+    "variants": [
+      {
+        "variant_id": "bf16",
+        "bytes": 1557662720,
+        "sha256": "fbeda5bd9fa2e8c418cb08df1fa2d06082d2d8ded2728df2d94c9144033f2b73",
+        "pp512_avg_ts": 167.149615,
+        "tg128_avg_ts": 19.17819
+      },
+      {
+        "variant_id": "q8_0",
+        "bytes": 833592320,
+        "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+        "pp512_avg_ts": 194.355903,
+        "tg128_avg_ts": 34.287641
+      },
+      {
+        "variant_id": "q4_0",
+        "bytes": 512977920,
+        "sha256": "d9192377b378863e309e5d2faeeea5b0489f385320a8ed281cff9568061577d6",
+        "pp512_avg_ts": 280.758082,
+        "tg128_avg_ts": 51.380995
+      },
+      {
+        "variant_id": "q4_k_m",
+        "bytes": 541903872,
+        "sha256": "2f26e07f5585a0f824edbb62a62c3f571bdbaae58d5f13b99befc6447edce90e",
+        "pp512_avg_ts": 222.455343,
+        "tg128_avg_ts": 46.823885
+      }
+    ]
+  },
+  "role_matrix": [
+    {
+      "role": "Mobile-class Local Reference",
+      "candidate": "Qwen/Qwen3.5-0.8B",
+      "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "disposition": "SELECTED_AS_M1_PC_LOCAL_REFERENCE_AND_COMPARISON_BASELINE",
+      "evidence_maturity": "EXACT_MODEL_PACKAGE_PC_BENCHMARK_STABILITY_AND_LIFECYCLE_EVIDENCE_ACCEPTED",
+      "coverage": "PC_ONLY"
+    },
+    {
+      "role": "Personal-device Local Reference",
+      "candidate": "Qwen/Qwen3.5-4B",
+      "revision": null,
+      "disposition": "DEFERRED / SHORTLISTED_UNBOUND_NO_EXECUTION",
+      "evidence_maturity": "LICENSE_SCREEN_ONLY",
+      "coverage": "NONE"
+    },
+    {
+      "role": "Strong Hosted / Enterprise Reference",
+      "candidate": null,
+      "revision": null,
+      "disposition": "BLOCKED_PENDING_PROVIDER_SELECTION_AND_TERMS_REVIEW",
+      "evidence_maturity": "NONE",
+      "coverage": "NONE"
+    },
+    {
+      "role": "Reproducible From-scratch Reference",
+      "candidate": "allenai/OLMo-2-0425-1B",
+      "revision": null,
+      "disposition": "DEFERRED / SHORTLISTED_UNBOUND_NO_EXECUTION",
+      "evidence_maturity": "LICENSE_SCREEN_ONLY",
+      "coverage": "NONE"
+    },
+    {
+      "role": "Embedding Reference",
+      "candidate": "Qwen/Qwen3-Embedding-0.6B",
+      "revision": null,
+      "disposition": "DEFERRED / RESEARCH_ONLY / SEMANTIC_RECALL_DISABLED",
+      "evidence_maturity": "LICENSE_SCREEN_ONLY",
+      "coverage": "NONE"
+    },
+    {
+      "role": "Reranker Reference",
+      "candidate": "Qwen/Qwen3-Reranker-0.6B",
+      "revision": null,
+      "disposition": "DEFERRED / RESEARCH_ONLY / SEMANTIC_RECALL_DISABLED",
+      "evidence_maturity": "LICENSE_SCREEN_ONLY",
+      "coverage": "NONE"
+    },
+    {
+      "role": "Guard / Classifier Reference",
+      "candidate": "Qwen/Qwen3Guard-Gen-0.6B",
+      "revision": null,
+      "disposition": "DEFERRED / RESEARCH_ONLY / NO_PRODUCTION_SAFETY_AUTHORITY",
+      "evidence_maturity": "LICENSE_SCREEN_ONLY",
+      "coverage": "NONE"
+    }
+  ],
+  "device_coverage": {
+    "minimum_formal_m1_baseline": {
+      "device_class": "PC",
+      "device_name": "DESK-W-591",
+      "status": "PASS"
+    },
+    "deferred_platforms": {
+      "Phone": "DEFERRED_NO_BOUND_DEVICE / NO_COVERAGE",
+      "Tablet": "DEFERRED_NO_BOUND_DEVICE / NO_COVERAGE",
+      "Mac": "DEFERRED_NO_BOUND_DEVICE / NO_COVERAGE"
+    },
+    "full_cross_device_claim_allowed": false,
+    "deferred_platforms_block_global_m1_closeout": false
+  },
+  "hard_boundaries": {
+    "training": false,
+    "distillation": false,
+    "new_model_or_provider_call": false,
+    "new_benchmark": false,
+    "promotion": false,
+    "activation": false,
+    "release": false,
+    "production_deployment": false,
+    "phone_tablet_mac_coverage": false,
+    "teacher_quality_winner_claim": false
+  },
+  "validation": {
+    "validator": "scripts/model-program/validate_m1_teacher_comparison_selection.py",
+    "tests": "tests/test_model_program_m1_teacher_comparison_selection.py",
+    "failure_mode": "FAIL_CLOSED",
+    "required_source_blob_match": true
+  },
+  "conclusion": "M1-09 AUTHOR-SIDE COMPLETE / QWEN3.5-0.8B Q8_0 SELECTED AS THE PC LOCAL REFERENCE AND COMPARISON BASELINE / FORMAL TEACHER SELECTION DEFERRED",
+  "authority_effect": "REFERENCE_BASELINE_REPORT_ONLY / NO_NEW_EXECUTION_TRAINING_DISTILLATION_PROMOTION_ACTIVATION_RELEASE_OR_PRODUCTION_AUTHORITY",
+  "next_gate": "M1-10 SINGLE FRESH_CONTEXT / READ_ONLY / REVIEWER_NOT_MODIFIER FINAL REVIEW"
+}

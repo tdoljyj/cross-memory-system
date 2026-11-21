@@ -1,0 +1,14 @@
+{
+  "schema_version": "clued.model-m2-withdrawal-candidate/1",
+  "authority_effect": "NONE",
+  "baseline_sha256": "eaac7b7bfc6cebaabc088a5f2b24ee088ce4abf131e22aa6fe1c21a5db65d256",
+  "events": [
+    {
+      "event_id": "synthetic-withdrawal-1",
+      "reason": "WITHDRAWN",
+      "source_id": "synthetic-source-001",
+      "source_revision": "fixture-rev-1",
+      "raw_snapshot_sha256": "57f90cd0d38024796430e7e60f801357711d3a29bab22c7ca62ddd0c29f5108f"
+    }
+  ]
+}
