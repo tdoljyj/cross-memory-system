@@ -730,6 +730,28 @@ test('three ways, today (no independent ruleset, no kooyumi-train-landed, the Ap
   assert.equal(e.queue.length, 0);
 });
 
+// Merge of #1192 (a front is green only when every required check of main's live rules passed on its head) into the three ways: on the
+// current path GitHub merges H, so H's own required checks decide, also when the installed package says push. Before the merge fix stage 10
+// asked "push mode?" (the package) instead of "route push?" (main's rules): a push-capable package on today's rules called a front green
+// whose head misses ci-suites-windows, a wait GitHub never ends.
+test(`three ways, today: a push-capable package still waits for the head's own required checks (#1192) before "green, wait for merge"`, async t => {
+  const e = await world(t, { prs: [910], rules: 'today' });
+  const H = e.head(910);
+  for (const [id, c] of e.W.checks) if (c.head_sha === H && c.name === 'ci-suites-windows') e.W.checks.delete(id);
+  const r = await stage10(e);
+  assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+  const b = r.facts.openFrontBatch;
+  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.equal(greens(e, b.headSha).length, 1, 'the merge-slot green of the current path, on H');
+  const s10 = (await stage10(e)).facts;
+  assert.equal(s10.landing?.route, 'github-merge');
+  assert.notEqual(s10.decision, 'FRONT_GREEN_WAIT_MERGE', 'GitHub cannot merge H without ci-suites-windows on H');
+  assert.ok(['FRONT_CHECKS_WAIT', 'FRONT_CHECKS_MISSING'].includes(s10.decision), JSON.stringify(s10));
+  assert.deepEqual(s10.front.required?.missing?.map(m => m.context), ['ci-suites-windows'], JSON.stringify(s10.front));
+  assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
+});
+
 // The guard program (scripts/ci/clued-merge-executor.mjs) on the current path: a front head behind main is updated (main merged into it);
 // the PR's own CI and stage 1 run again on the new head.
 function updateBranch(e, pr) {
