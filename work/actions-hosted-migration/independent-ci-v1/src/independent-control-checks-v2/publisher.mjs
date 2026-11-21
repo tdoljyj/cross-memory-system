@@ -59,8 +59,9 @@
 //   - Three ways (ADR 0018 §2 L2 item 7, Fable 2026-11-20): 'push' installed means "can push". Which way a front job lands is read from
 //     main's live rules and each ruleset's bypass after the queue head (train-landing.mjs#landingRoute): push lands as above; exactly
 //     the state before the Owner's two steps (no kooyumi-train-landed, an empty main bypass) takes the current path (the control pair,
-//     GitHub merges; never a batch with riders), and after the pair settled the main ruleset's Actions checks on S and this App's own
-//     bypass state of both rulesets are recorded as the rehearsal of push (the outcome's rehearsal, resident-v2/stage-inputs.mjs);
+//     GitHub merges; never a batch with riders), and after the pair settled S, what push lacks and this App's own bypass state of both
+//     rulesets are recorded as the rehearsal of push (the outcome's rehearsal, resident-v2/stage-inputs.mjs; S's checks are read by the
+//     precheck before the Owner saves C, never here: Fable 11-21 应修 2);
 //     anything else parks with TRAIN_LANDING_RULES_MISSING and the missing items (the outcome's landingMissing).
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { STAGE8_LEASE_MINUTES, extendLeaseIfShort, leaseAfter } from './claim-assist-native.mjs';
@@ -552,12 +553,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       await sleep(QUEUE_POLL_MS);
     }
   }
-  // Fable 2026-11-20: the rehearsal of push on the current path. Read only, after the pair settled; it never changes the ending.
-  async function rehearse(job, route) {
-    let inventory = null;
-    try { inventory = await github.readChecks(job.testSha); } catch { inventory = null; }
-    // route: the read this run chose by (the same GET /rulesets/{id} answers; nothing is read again for the rehearsal)
-    const r = rehearsalOf({ inventory, testSha: job.testSha, route });
+  // Fable 2026-11-20: the rehearsal of push on the current path, after the pair settled; it never changes the ending. 11-21 应修 2: nothing
+  // is read for it (S's checks have not finished now; the precheck reads them from GitHub before the Owner saves C).
+  function rehearse(job, route) {
+    // route: the read this run chose by (the same GET /rulesets/{id} answers)
+    const r = rehearsalOf({ testSha: job.testSha, route });
     try { record('native_train_landing_rehearsal', { jobId: job.id, ...r }); } catch { /* a log only */ }
     return r;
   }
@@ -743,7 +743,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return { status: r.status === 'BLOCKED' ? 'UNCERTAIN' : r.status, reason: r.reason ?? 'CONTROL_PAIR_INCOMPLETE', results, sideEffects, productionAuthorized: false, ...lease };
     }
     const touched = trainOn && head.train?.proof ? { trainTouch: await touchGreen(jobs[1], head.train.proof) } : {};
-    const rehearsal = route ? { rehearsal: await rehearse(jobs[1], route) } : {};
+    const rehearsal = route ? { rehearsal: rehearse(jobs[1], route) } : {};
     return { status: 'SETTLED', results, sideEffects, productionAuthorized: production, qualificationIssued: false, nativeTicketIssued: false, ...touched, ...rehearsal };
   } });
 }

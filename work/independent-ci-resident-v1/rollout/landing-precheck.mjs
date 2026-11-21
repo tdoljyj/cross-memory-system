@@ -1,0 +1,274 @@
+// The push-landing precheck (Fable 2026-11-21, push landing follow-up §3.3, §4, §5; resident ADR 0018 §8 item 7). Read-only: it
+// answers GO or NO-GO with the evidence of every item, and never changes a ruleset, a branch, a check or a node. DESK runs it with
+// the repository owner's gh identity (the ruleset bypass lists are only shown to an administrator), at the times of §5:
+//
+//   node rollout/landing-precheck.mjs --before --snapshot <file> [--root <resident root>] [--receipts <dir>] [--repo <owner/name>] [--only P1,P4]
+//   node rollout/landing-precheck.mjs --after  --snapshot <file> [same options]
+//
+//   R1  the independent ruleset just created:     --before --only P4 (the snapshot is not written for a subset)
+//   R1+ the first front after it:                 --before --only P3 (until bypass.independent reads never)
+//   R2  right before the Owner is asked to save:  --before (all of P1-P5; writes the main ruleset's snapshot; GO only then ask)
+//   R3  right after the Owner saved:              --after  (P1-P6 against that snapshot)
+//
+// Inputs, all read-only: gh (GET only: the branch rules, the rulesets, the staging runs and S's check-runs, main's head), this node's
+// state\status.json and record\source-manifest.json under --root, the stage-8 outcomes outcome-*.json under --receipts, and this
+// checkout (its source-closure.json files and its HEAD). The one file written is the --before snapshot (local, --snapshot).
+// Items (§4):
+//   P1  precondition one: every Actions-pinned (15368) required check of the live rules has a completed success of App 15368 on at
+//       least 2 of the newest 10 distinct S on clued-train/staging (a), and at least 1 of those S has all of them (b); not consecutive.
+//       On NO-GO every S with every check's conclusion, and for a check that did not succeed its title, summary and annotations
+//       (the runner hook's refusal is written there).
+//   P2  every node stage 10 last heard within 24 hours runs this node's Source, this node's Source record pins exactly this
+//       checkout's Source closure files, and this checkout is origin's main.
+//   P3  the newest stage-8 rehearsal reads both bypass states as never (the App token can read the field).
+//   P4  exactly one independent ruleset on the default branch: active, rules exactly deletion and non_fast_forward, no bypass actor;
+//       and main's branch rules carry those two rules from it.
+//   P5  the main ruleset 24182890. --before: no bypass actor, no kooyumi-train-landed. --after: the bypass actors exactly Integration
+//       5368905 always, the required checks the snapshot's plus kooyumi-train-landed pinned to 5368905, everything else as the snapshot.
+//   P6  --after: stage 10's newest round after the snapshot reads the landing route push (nothing missing).
+// Nothing here relaxes an item: a NO-GO goes back to Fable with this output (§3.3, §8 stop lines).
+import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseArgs, promisify } from 'node:util';
+import { fleetSourceCheck } from './precheck.mjs';
+import { parseTrainLast, parseTrainNodes } from '../src/train.mjs';
+
+export const LANDING_PRECHECK_CONTRACT = 'clued.independent-ci.landing-precheck/1';
+export const SNAPSHOT_CONTRACT = 'clued.independent-ci.landing-precheck-snapshot/1';
+export const MAIN_RULESET_ID = 24182890;
+export const APP_ID = 5368905;
+export const ACTIONS_APP_ID = 15368;
+export const TRAIN_LANDED = 'kooyumi-train-landed';
+export const STAGING_BRANCH = 'clued-train/staging';
+export const S_WINDOW = 10;
+export const ITEMS = Object.freeze(['P1', 'P2', 'P3', 'P4', 'P5', 'P6']);
+export const DEFAULT_REPO = 'tdoljyj/cross-memory-system';
+export const DEFAULT_ROOT = 'C:\\ProgramData\\CluedIndependentCI\\resident';
+export const DEFAULT_RECEIPTS = 'C:\\ProgramData\\CluedIndependentCI\\state\\v2\\receipts';
+const CLOSURE = 'work/actions-hosted-migration/independent-ci-v1/src/resident-v2/source-closure.json';
+const CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const sha256 = b => createHash('sha256').update(b).digest('hex');
+const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+const clip = (s, n = 300) => (typeof s === 'string' ? s.slice(0, n) : null);
+const canon = v => Array.isArray(v) ? `[${v.map(canon).join(',')}]`
+  : plain(v) ? `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}` : JSON.stringify(v ?? null);
+class ItemError extends Error { constructor(code, detail) { super(code); this.code = code; this.detail = detail; } }
+const refuse = (code, detail) => { throw new ItemError(code, detail); };
+
+// ---- P1 ----
+const actionsRequired = rules => [...new Set(rules.filter(r => r?.type === 'required_status_checks')
+  .flatMap(r => r.parameters?.required_status_checks ?? []).filter(c => c?.integration_id === ACTIONS_APP_ID).map(c => c.context))].sort();
+export async function p1({ gh, repo, rules }) {
+  const names = actionsRequired(rules);
+  if (!names.length) refuse('NO_ACTIONS_REQUIRED_CHECKS');
+  const runs = await gh.paged(`repos/${repo}/actions/runs?branch=${encodeURIComponent(STAGING_BRANCH)}&event=push`, 'workflow_runs', { max: 3 });
+  const order = runs.filter(r => typeof r?.head_sha === 'string').sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
+  const shas = [...new Set(order.map(r => r.head_sha))].slice(0, S_WINDOW);
+  const perS = [];
+  for (const s of shas) {
+    const checks = (await gh.paged(`repos/${repo}/commits/${s}/check-runs?filter=all`, 'check_runs'))
+      .filter(c => c?.app?.id === ACTIONS_APP_ID && names.includes(c.name));
+    const row = { testSha: s, checks: {} };
+    for (const name of names) {
+      const mine = checks.filter(c => c.name === name).sort((a, b) => b.id - a.id);
+      const ok = mine.some(c => c.status === 'completed' && c.conclusion === 'success');
+      const last = mine[0];
+      row.checks[name] = ok ? { state: 'success' } : !last ? { state: 'absent' }
+        : { state: last.status === 'completed' ? last.conclusion : last.status, id: last.id, title: clip(last.output?.title), summary: clip(last.output?.summary) };
+    }
+    perS.push(row);
+  }
+  const successes = Object.fromEntries(names.map(n => [n, perS.filter(r => r.checks[n].state === 'success').length]));
+  const a = names.filter(n => successes[n] < 2);
+  const full = perS.filter(r => names.every(n => r.checks[n].state === 'success')).map(r => r.testSha);
+  const pass = a.length === 0 && full.length > 0;
+  if (!pass) for (const r of perS) for (const n of names) {
+    const c = r.checks[n];
+    if (c.id) c.annotations = (await gh.paged(`repos/${repo}/check-runs/${c.id}/annotations`, null, { max: 1 })).slice(0, 5).map(x => clip(x?.message));
+  }
+  return { pass, names, sCount: perS.length, successes, ...(a.length ? { fewerThanTwo: a } : {}), fullyGreen: full, ...(pass ? {} : { perS }) };
+}
+
+// ---- P2 ----
+export async function p2({ gh, repo, files, checkout, now }) {
+  const head = await checkout.head();
+  const main = (await gh.get(`repos/${repo}/branches/main`))?.commit?.sha;
+  const bytes = await files.read(files.sourceManifest);
+  const source = sha256(bytes);
+  let manifest; try { manifest = JSON.parse(bytes.toString('utf8')); } catch { refuse('SOURCE_MANIFEST_UNREADABLE'); }
+  const closure = JSON.parse((await checkout.read(CLOSURE)).toString('utf8'));
+  if (!Array.isArray(closure?.paths) || !closure.paths.length) refuse('SOURCE_CLOSURE_UNREADABLE');
+  const pins = [];
+  for (const p of [...closure.paths].sort()) pins.push({ path: p, sha256: sha256(await checkout.read(p)) });
+  const roles = plain(manifest?.roles) ? Object.entries(manifest.roles) : [];
+  const want = canon(pins);
+  const differ = roles.filter(([, r]) => canon([...(r?.sourceFiles ?? [])].map(f => ({ path: f?.path, sha256: f?.sha256 })).sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0))) !== want)
+    .map(([role]) => role);
+  const status = JSON.parse((await files.read(files.status)).toString('utf8'));
+  const installed = status?.versions?.windows?.ciSourceManifestSha256 ?? null;
+  const fleet = fleetSourceCheck({ view: parseTrainNodes(status?.train?.nodes), target: source, now, onDuty: status?.node?.mode === 'ACTIVE', selfNames: [status?.node?.name] });
+  const failed = [
+    ...(head !== main ? ['CHECKOUT_NOT_MAIN'] : []),
+    ...(!roles.length || differ.length ? ['SOURCE_RECORD_NOT_THIS_CHECKOUT'] : []),
+    ...(installed !== source ? ['SOURCE_RECORD_NOT_THIS_NODE'] : []),
+    ...(fleet.status !== 'PASS' ? [`FLEET_${fleet.status}${fleet.reason ? `_${fleet.reason}` : ''}`] : []),
+  ];
+  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), checkoutHead: head, mainSha: main ?? null, ciSourceManifestSha256: source,
+    installedCiSourceManifestSha256: installed, recordSourceSha: manifest?.sourceSha ?? null, ...(differ.length ? { rolesDiffer: differ } : {}), fleet };
+}
+
+// ---- P3 ----
+export async function p3({ files }) {
+  const names = (await files.list(files.receipts)).filter(n => /^outcome-[A-Za-z0-9]+\.json$/.test(n));
+  let newest = null;
+  for (const n of names) {
+    let o; try { o = JSON.parse((await files.read(path.join(files.receipts, n))).toString('utf8')); } catch { continue; }
+    if (!plain(o?.rehearsal) || !Number.isFinite(Date.parse(o.at))) continue;
+    if (!newest || Date.parse(o.at) > Date.parse(newest.at)) newest = { file: n, at: o.at, rehearsal: o.rehearsal };
+  }
+  if (!newest) refuse('NO_REHEARSAL');
+  const b = newest.rehearsal.bypass;
+  return { pass: plain(b) && b.main === 'never' && b.independent === 'never', newest };
+}
+
+// ---- P4 ----
+const ruleTypes = rs => (Array.isArray(rs?.rules) ? rs.rules.map(r => r?.type).sort() : null);
+const onDefault = rs => (rs?.conditions?.ref_name?.include ?? []).some(x => x === '~DEFAULT_BRANCH' || x === 'refs/heads/main' || x === '~ALL');
+export async function p4({ gh, repo, rules }) {
+  const list = await gh.paged(`repos/${repo}/rulesets?includes_parents=true`, null);
+  const others = [];
+  for (const r of list.filter(r => r?.target === 'branch' && r.id !== MAIN_RULESET_ID)) {
+    const full = await gh.get(`repos/${repo}/rulesets/${r.id}`);
+    if (onDefault(full)) others.push(full);
+  }
+  if (others.length !== 1) return { pass: false, failed: [others.length ? 'MORE_THAN_ONE_INDEPENDENT_RULESET' : 'NO_INDEPENDENT_RULESET'], rulesets: others.map(r => r.id) };
+  const rs = others[0];
+  const branch = new Set(rules.filter(r => r?.ruleset_id === rs.id).map(r => r.type));
+  const failed = [
+    ...(rs.enforcement !== 'active' ? ['NOT_ACTIVE'] : []),
+    ...(canon(ruleTypes(rs)) !== canon(['deletion', 'non_fast_forward']) ? ['RULES_NOT_EXACTLY_DELETION_AND_NON_FAST_FORWARD'] : []),
+    ...(!Array.isArray(rs.bypass_actors) ? ['BYPASS_ACTORS_UNREADABLE'] : rs.bypass_actors.length ? ['BYPASS_ACTORS_NOT_EMPTY'] : []),
+    ...(!branch.has('deletion') || !branch.has('non_fast_forward') ? ['MAIN_BRANCH_RULES_LACK_IT'] : []),
+  ];
+  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), id: rs.id, name: rs.name ?? null, enforcement: rs.enforcement ?? null,
+    rules: ruleTypes(rs), bypassActors: rs.bypass_actors ?? null };
+}
+
+// ---- P5 ----
+const requiredOf = rs => (rs?.rules ?? []).filter(r => r?.type === 'required_status_checks')
+  .flatMap(r => r.parameters?.required_status_checks ?? []).map(c => ({ context: c.context, integration_id: c.integration_id ?? null }));
+const keyOf = c => `${c.context}\n${c.integration_id}`;
+// The main ruleset minus what P5 compares on its own (the bypass list, the required checks list) and GitHub's bookkeeping.
+const restOf = rs => ({ name: rs.name, target: rs.target, enforcement: rs.enforcement, conditions: rs.conditions ?? null,
+  rules: (rs.rules ?? []).map(r => {
+    if (r?.type !== 'required_status_checks') return r;
+    const { required_status_checks: _, ...parameters } = r.parameters ?? {};
+    return { type: r.type, parameters };
+  }) });
+export async function p5({ gh, repo, mode, snapshot }) {
+  const rs = await gh.get(`repos/${repo}/rulesets/${MAIN_RULESET_ID}`);
+  if (!Array.isArray(rs?.bypass_actors)) return { pass: false, failed: ['BYPASS_ACTORS_UNREADABLE'] };
+  const required = requiredOf(rs), landed = required.filter(c => c.context === TRAIN_LANDED);
+  const actors = rs.bypass_actors.map(a => ({ actor_id: a?.actor_id ?? null, actor_type: a?.actor_type ?? null, bypass_mode: a?.bypass_mode ?? null }));
+  if (mode === 'before') {
+    const failed = [...(actors.length ? ['BYPASS_ACTORS_NOT_EMPTY'] : []), ...(landed.length ? ['TRAIN_LANDED_ALREADY_REQUIRED'] : [])];
+    return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), bypassActors: actors, required, snapshot: { required, rest: restOf(rs) } };
+  }
+  if (!snapshot) return { pass: false, failed: ['SNAPSHOT_MISSING'] };
+  const before = new Set(snapshot.required.map(keyOf));
+  const added = required.filter(c => !before.has(keyOf(c))), dropped = snapshot.required.filter(c => !required.some(r => keyOf(r) === keyOf(c)));
+  const failed = [
+    ...(canon(actors) !== canon([{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'always' }]) ? ['BYPASS_ACTORS_NOT_EXACTLY_THE_APP_ALWAYS'] : []),
+    ...(canon(added) !== canon([{ context: TRAIN_LANDED, integration_id: APP_ID }]) || dropped.length ? ['REQUIRED_CHECKS_NOT_SNAPSHOT_PLUS_TRAIN_LANDED'] : []),
+    ...(canon(restOf(rs)) !== canon(snapshot.rest) ? ['OTHER_RULES_CHANGED'] : []),
+  ];
+  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), bypassActors: actors, added, dropped };
+}
+
+// ---- P6 ----
+export async function p6({ files, snapshot }) {
+  const status = JSON.parse((await files.read(files.status)).toString('utf8'));
+  const last = parseTrainLast(status?.train?.last);
+  const after = !!snapshot && Number.isFinite(Date.parse(snapshot.readAt)) && last?.at > Date.parse(snapshot.readAt);
+  const route = last?.landing?.route ?? null, error = last?.landing?.error ?? null;
+  const failed = [...(!after ? ['NO_ROUND_AFTER_THE_SNAPSHOT'] : []), ...(route !== 'push' ? ['ROUTE_NOT_PUSH'] : [])];
+  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), at: last ? new Date(last.at).toISOString() : null, route, ...(error ? { error } : {}) };
+}
+
+// The whole precheck. mode 'before' | 'after'; only: the items to decide (default all of the mode's). Ports: gh { get, paged } (GET
+// only), files { read, list, status, sourceManifest, receipts, writeSnapshot, readSnapshot }, checkout { head, read }.
+export async function landingPrecheck({ mode, repo = DEFAULT_REPO, only = null, gh, files, checkout, clock = Date.now }) {
+  if (!['before', 'after'].includes(mode)) refuse('USAGE');
+  const items = (only ?? ITEMS).filter(i => ITEMS.includes(i) && (i !== 'P6' || mode === 'after'));
+  const readAt = new Date(clock()).toISOString();
+  const result = { contract: LANDING_PRECHECK_CONTRACT, mode, repo, readAt, items: {} };
+  let rules = null, snapshot = null;
+  const rulesOnce = async () => (rules ??= await gh.paged(`repos/${repo}/rules/branches/main`, null));
+  if (mode === 'after') { try { snapshot = await files.readSnapshot(); } catch { snapshot = null; } }
+  if (snapshot && snapshot.contract !== SNAPSHOT_CONTRACT) snapshot = null;
+  const run = { P1: async () => p1({ gh, repo, rules: await rulesOnce() }), P2: () => p2({ gh, repo, files, checkout, now: clock() }), P3: () => p3({ files }),
+    P4: async () => p4({ gh, repo, rules: await rulesOnce() }), P5: () => p5({ gh, repo, mode, snapshot }), P6: () => p6({ files, snapshot }) };
+  for (const i of items) {
+    try { result.items[i] = await run[i](); } catch (e) { result.items[i] = { pass: false, failed: [e instanceof ItemError ? e.code : 'READ_FAILED'], detail: clip(e?.detail ?? e?.message) }; }
+  }
+  const p5Snapshot = result.items.P5?.snapshot;
+  if (p5Snapshot) delete result.items.P5.snapshot;
+  result.verdict = items.length > 0 && items.every(i => result.items[i].pass === true) ? 'GO' : 'NO-GO';
+  // The snapshot of the main ruleset is kept only from a full --before GO (R2): it is what --after compares with.
+  if (mode === 'before' && only === null && result.verdict === 'GO' && p5Snapshot) {
+    await files.writeSnapshot({ contract: SNAPSHOT_CONTRACT, readAt, ...p5Snapshot });
+    result.snapshotWritten = true;
+  }
+  return result;
+}
+
+// ---- the real ports ----
+const exec = promisify(execFile);
+export function ghPort({ run = (args) => exec('gh', args, { maxBuffer: 64 * 1024 * 1024, windowsHide: true }) } = {}) {
+  // Every call is `gh api <route>` with no method and no field: a GET.
+  const get = async route => JSON.parse((await run(['api', '-H', 'X-GitHub-Api-Version: 2022-11-28', route])).stdout);
+  const paged = async (route, key, { max = 20 } = {}) => {
+    const out = [];
+    for (let page = 1; page <= max; page++) {
+      const body = await get(`${route}${route.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
+      const rows = key ? body?.[key] : body;
+      if (!Array.isArray(rows)) refuse('GITHUB_REPLY_UNREADABLE', route);
+      out.push(...rows);
+      if (rows.length < 100) break;
+    }
+    return out;
+  };
+  return { get, paged };
+}
+export function filePorts({ root, receipts, snapshot }) {
+  return { read: f => fs.readFile(f), list: d => fs.readdir(d), receipts,
+    status: path.join(root, 'state', 'status.json'), sourceManifest: path.join(root, 'record', 'source-manifest.json'),
+    readSnapshot: async () => JSON.parse(await fs.readFile(snapshot, 'utf8')),
+    writeSnapshot: async v => fs.writeFile(snapshot, JSON.stringify(v, null, 2) + '\n', { flag: 'wx' }) };
+}
+export function checkoutPort(dir = CHECKOUT) {
+  return { head: async () => (await exec('git', ['-C', dir, 'rev-parse', 'HEAD'], { windowsHide: true })).stdout.trim(),
+    read: rel => fs.readFile(path.join(dir, ...rel.split('/'))) };
+}
+
+export async function main(argv, { log = s => process.stdout.write(s + '\n') } = {}) {
+  const { values } = parseArgs({ args: argv, options: { before: { type: 'boolean' }, after: { type: 'boolean' }, snapshot: { type: 'string' },
+    root: { type: 'string' }, receipts: { type: 'string' }, repo: { type: 'string' }, only: { type: 'string' } } });
+  const only = values.only ? values.only.split(',').map(s => s.trim().toUpperCase()) : null;
+  // The snapshot is written by a full --before and read by --after; a subset of --before (R1) needs none.
+  if (values.before === values.after || (!values.snapshot && !(values.before && only))) refuse('USAGE');
+  const r = await landingPrecheck({ mode: values.before ? 'before' : 'after', repo: values.repo ?? DEFAULT_REPO, only, gh: ghPort(),
+    files: filePorts({ root: values.root ?? DEFAULT_ROOT, receipts: values.receipts ?? DEFAULT_RECEIPTS, snapshot: values.snapshot }), checkout: checkoutPort() });
+  log(JSON.stringify(r));
+  return r.verdict === 'GO' ? 0 : 1;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2)).then(code => { process.exitCode = code; }, error => {
+    process.stdout.write(JSON.stringify({ contract: LANDING_PRECHECK_CONTRACT, verdict: 'NO-GO', code: error?.code ?? 'PRECHECK_FAILED', detail: clip(String(error?.message ?? error)) }) + '\n');
+    process.exitCode = 1;
+  });
+}

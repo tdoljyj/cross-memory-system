@@ -66,8 +66,12 @@ test('holders: one read-only POST with the token hash, the scope and the reposit
 });
 
 const openPull = (o = {}) => ({ state: 'open', draft: false, merged: false, mergeable: true, merge_commit_sha: S, head: { sha: H }, base: { ref: 'main', sha: T }, ...o });
+// The current path (route github-merge) with main's rules requiring only the merge slot: green is the merge slot's success on the head.
+const SLOT_ONLY = [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true,
+  required_status_checks: [{ context: 'kooyumi-merge-slot', integration_id: APP }] } }];
 const facts = (o = {}) => frontPullFacts({ pull: openPull(o.pull), mergeCommit: o.mergeCommit === undefined ? { sha: S, tree: TREE, parents: [T, H] } : o.mergeCommit,
-  compare: o.compare ?? { status: 'ahead', aheadBy: 1, behindBy: 0 }, checks: o.checks ?? [], mainSha: T, appId: APP });
+  compare: o.compare ?? { status: 'ahead', aheadBy: 1, behindBy: 0 }, checks: o.checks ?? [], mainSha: T, appId: APP,
+  rules: o.rules === undefined ? SLOT_ONLY : o.rules, route: o.route ?? 'github-merge' });
 
 test('what the train would do (design §5.2, §5.6)', () => {
   const one = [{ claimId: CLAIM, pr: 910 }];
@@ -93,6 +97,28 @@ test('what the train would do (design §5.2, §5.6)', () => {
   assert.equal(d({ checks: [{ ...green[0], app: { id: 1 } }] }), 'OPEN_FRONT_BATCH', 'only App 5368905 counts');
   assert.equal(d({ checks: [...green, { ...green[0], id: 8, conclusion: 'failure' }] }), 'OPEN_FRONT_BATCH', 'the newest judgement counts');
   assert.ok(WOULD_DO.length === 11);
+});
+
+// Fable 11-21 应修 1 (T2): a merge-slot green counts only on the current path. Push lands S itself and park lands nothing: a green left on H
+// by the current path (before the Owner saved C) is never "green, wait for merge" there, and "green with no judged required checks" is no
+// state at all. Before the fix both pure functions said FRONT_GREEN_WAIT_MERGE, a wait GitHub can never end once main needs kooyumi-train-landed.
+test('应修 1: a merge-slot green on H counts only on the current path; push and park never call it green', () => {
+  const one = [{ claimId: CLAIM, pr: 910 }];
+  const green = [{ id: 7, app: { id: APP }, name: 'kooyumi-merge-slot', head_sha: H, status: 'completed', conclusion: 'success', completed_at: '2026-10-23T02:00:00Z' }];
+  const d = front => decideShadow({ onDuty: true, holders: one, front, rules: { strict: true, mergeOnly: false }, mainSha: T });
+  assert.equal(d(facts({ checks: green, route: 'github-merge' })), 'FRONT_GREEN_WAIT_MERGE', 'the current path: GitHub merges a green head');
+  for (const route of ['push', 'park']) {
+    const f = facts({ checks: green, route });
+    assert.equal(f.green, false, `${route}: the leftover merge-slot green is not green`);
+    assert.ok(!('required' in f), `${route}: no required checks judged`);
+    assert.equal(d(f), 'OPEN_FRONT_BATCH', `${route}: the front batch opens as for a head without a green`);
+  }
+  // green with required checks not judged is not a state: decideShadow never waits for a merge on the merge slot alone
+  const unjudged = { ...facts({ checks: green }), required: undefined };
+  assert.notEqual(d(unjudged), 'FRONT_GREEN_WAIT_MERGE');
+  // the rules and the route are always given: a caller that forgets either cannot fall back to "the merge slot alone"
+  assert.throws(() => frontPullFacts({ pull: openPull(), mergeCommit: null, compare: null, checks: green, mainSha: T, appId: APP, route: 'github-merge' }));
+  assert.throws(() => frontPullFacts({ pull: openPull(), mergeCommit: null, compare: null, checks: green, mainSha: T, appId: APP, rules: SLOT_ONLY }));
 });
 
 test('would revoke: ledgered greens neither in main nor the front head; revoked, merged-in and unknown ones stay out', () => {

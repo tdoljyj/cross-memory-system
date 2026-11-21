@@ -233,10 +233,10 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     try { listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] }; } catch { listed = null; }
     const checksReadable = listed?.complete === true && Array.isArray(listed.checks);
     frontChecks = checksReadable ? listed.checks : [];
-    // Fable 11-20 (#1192): green is every check main's live rules require on the head (this run's rules read; null when unreadable). Only route
-    // push lands its own merge, so only there the merge slot alone stays green; a push-capable package on the current path (route
-    // github-merge, ADR 0018 §2 L2 item 7) is merged by GitHub, which needs the head's own required checks.
-    front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, ...(pushRoute ? {} : { rules: landability.rules }) });
+    // Fable 11-20 (#1192): green is every check main's live rules require on the head (this run's rules read; null when unreadable).
+    // Fable 11-21 应修 1: and only on the current path (no push in the package, or route github-merge; ADR 0018 §2 L2 item 7), which GitHub
+    // merges. On route push or park a merge-slot green on H is a leftover of the current path: not green, so the front batch opens.
+    front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, rules: landability.rules, route: route?.route ?? 'github-merge' });
     if (!checksReadable) front = { ...front, green: false, checksUnreadable: true, ...(front.required !== undefined ? { required: null } : {}) };
     // Review 4 medium 2: when this node first saw the head at the front, recorded once: the 60 minutes' start when no merge-slot time is known.
     if (job.mode === 'on' && headSha && typeof sweepStore?.readFrontSeen === 'function') {

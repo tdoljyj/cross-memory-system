@@ -10,7 +10,8 @@ import { tempDir } from './resident-v2-fixtures.mjs';
 import * as L from '../src/independent-control-checks-v2/train-landing.mjs';
 import { createLandingPort, LANDING_PERMISSIONS } from '../src/independent-control-checks-v2/train-landing-port.mjs';
 import { TrainSweepStore } from '../src/independent-control-checks-v2/train-sweep-store.mjs';
-import { requiredCheckFailure, TRAIN_ONLY_CHECK as RULES_TRAIN_ONLY, REQUIRED_CHECK_NAMES } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { requiredCheckFailure, rulesetFacts, TRAIN_ONLY_CHECK as RULES_TRAIN_ONLY, REQUIRED_CHECK_NAMES } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { requiredOnHead } from '../src/independent-control-checks-v2/train-facts.mjs';
 import { createGitHubChecksPort } from '../src/github.mjs';
 import { parseLandingArg, prepareStageDirectory } from '../src/resident-v2/invoke-stage.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
@@ -151,8 +152,31 @@ function ruleState({ independent = true, trainLanded = true, mainCan = 'always',
 const TODAY = { independent: false, trainLanded: false, mainCan: 'never' };
 const route = (o, input = ruleState(o)) => { const r = L.landingRoute(input); return [r.route, r.missing, r.bypass]; };
 
+// Fable 11-21 T5: the rules after C (kooyumi-train-landed pinned to this App, the independent ruleset) through the rule readers of stage 8
+// and 10. kooyumi-train-landed is never published: the landing gate (requiredCheckFailure) never counts it failed. requiredOnHead is the
+// current path's (GitHub merges, and GitHub requires it like any other: test/train-front-required-rerun.test.mjs "never green"); it is not
+// read off that path (frontPullFacts builds no front.required for push or park: train-facts.test.mjs 应修 1), so under C it stops nothing.
+// The resident's readers (the PR page, the re-run lane, the merge-slot reporter) have their own T5 cells.
+test('T5: the rules after C x the stage 8/10 rule readers: kooyumi-train-landed, never published, is never a failure of the landing gate', () => {
+  const { rules } = ruleState();
+  assert.ok(rules.some(r => r.type === 'required_status_checks' && r.parameters.required_status_checks.some(c => c.context === L.TRAIN_ONLY_CHECK)));
+  assert.deepEqual(rulesetFacts(rules, APP), { requiredPinned: true, strict: true, mergeOnly: true }, 'rulesetFacts reads the rules after C');
+  let id = 0;
+  const on = (name, app, extra = {}) => ({ id: ++id, name, head_sha: H1, app: { id: app }, status: 'completed', conclusion: 'success', ...extra });
+  const green = [...REQUIRED_CHECK_NAMES.map(n => on(n, APP)), ...FOUR.map(n => on(n, ACTIONS))];
+  assert.deepEqual(requiredCheckFailure(rules, { complete: true, checks: green }, H1, APP), [], 'requiredCheckFailure: nothing failed');
+  // the current path's reader needs it (GitHub would never merge without it); only that path reads it
+  assert.deepEqual(requiredOnHead({ rules, checks: green, headSha: H1, appId: APP }).missing.map(m => [m.context, m.state]), [[L.TRAIN_ONLY_CHECK, 'absent']]);
+  // a real failure still counts, and only it
+  const failing = green.map(c => c.name === 'trivy' ? { ...c, conclusion: 'failure' } : c);
+  assert.deepEqual(requiredCheckFailure(rules, { complete: true, checks: failing }, H1, APP), ['trivy']);
+  // pinned to another App it is not the train's never-published check: unknown to the gate (parks)
+  const other = ruleState({ trainApp: 5164952 }).rules;
+  assert.throws(() => requiredCheckFailure(other, { complete: true, checks: green }, H1, APP), /REQUIRED_CHECKS_UNREADABLE/);
+});
+
 test('landingRoute: no kooyumi-train-landed -> the current path whatever the bypass state; with it push only when all of push reads back true', () => {
-  assert.deepEqual(L.landingRoute(ruleState()), { route: 'push', missing: [], bypass: { main: 'always', independent: 'never' }, actionsChecks: FOUR });
+  assert.deepEqual(L.landingRoute(ruleState()), { route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } });
   // today: main's own non_fast_forward and deletion (the ruleset the App will bypass) are not the independent ruleset
   assert.deepEqual(route(TODAY), ['github-merge', ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass'], { main: 'never', independent: 'absent' }]);
   // H1: without kooyumi-train-landed the bypass state never stops the train: any value, unreadable or not read at all is the current path
@@ -209,26 +233,19 @@ test('readLandingRoute: stage 8 reads every ruleset\'s bypass state with the rul
   assert.equal((await L.readLandingRoute({ github: { async readBranchRules() { throw new Error('x'); } }, appId: APP })).route, 'park');
 });
 
-test('rehearsalOf and validRehearsal: the main ruleset\'s Actions checks on S itself (names from the live rules), this App\'s bypass state as read; only that shape is kept', () => {
-  const run = (id, name, conclusion, status = 'completed', o = {}) => ({ id, name, head_sha: S1, app: { id: ACTIONS }, status, conclusion, ...o });
-  const all = FOUR.map((n, i) => run(i + 1, n, 'success'));
+test('rehearsalOf and validRehearsal: S, what push lacks and this App\'s bypass state as read; never S\'s checks (Fable 11-21 应修 2); only that shape is kept', () => {
   const today = L.landingRoute(ruleState(TODAY));
-  const ok = L.rehearsalOf({ inventory: { complete: true, checks: all }, testSha: S1, route: today });
-  assert.deepEqual(ok, { testSha: S1, checks: Object.fromEntries(FOUR.map(n => [n, 'success'])), allSuccess: true, missing: today.missing, bypass: { main: 'never', independent: 'absent' } });
+  const ok = L.rehearsalOf({ testSha: S1, route: today });
+  assert.deepEqual(ok, { testSha: S1, missing: today.missing, bypass: { main: 'never', independent: 'absent' } });
   assert.deepEqual(L.validRehearsal(ok), ok);
-  const r = L.rehearsalOf({ inventory: { complete: true, checks: [...all.slice(0, 3), run(9, 'ci-suites', 'failure'), run(10, 'ci-suites-windows', null, 'in_progress'),
-    run(11, 'migration-verify', 'success', 'completed', { head_sha: S2 }), run(12, 'clued-cloud-tests', 'success', 'completed', { app: { id: APP } })] }, testSha: S1, route: today });
-  assert.deepEqual([r.checks, r.allSuccess], [{ 'ci-suites': 'failure', 'clued-cloud-tests': 'success', 'migration-verify': 'success', 'ci-suites-windows': 'pending' }, false]);
-  assert.equal(L.rehearsalOf({ inventory: { complete: true, checks: all.slice(0, 3) }, testSha: S1, route: today }).checks['ci-suites-windows'], 'missing', 'before 6a: Windows missing');
-  assert.deepEqual(L.rehearsalOf({ inventory: { complete: false, checks: all }, testSha: S1, route: today }).checks, Object.fromEntries(FOUR.map(n => [n, 'unreadable'])));
   // the bypass state read on the current path, in each of its values (never decides anything)
   for (const main of ['never', 'always', 'unreadable']) {
-    const x = L.rehearsalOf({ inventory: { complete: true, checks: all }, testSha: S1, route: { ...today, bypass: { main, independent: 'absent' } } });
+    const x = L.rehearsalOf({ testSha: S1, route: { ...today, bypass: { main, independent: 'absent' } } });
     assert.deepEqual(L.validRehearsal(x)?.bypass, { main, independent: 'absent' });
   }
-  // only exactly the shape: anything else (free text, extra keys, a wrong allSuccess) is left out
-  for (const bad of [null, 'x', { ...ok, note: 'x' }, { ...ok, allSuccess: false }, { ...ok, testSha: 'x' }, { ...ok, checks: { 'ci-suites': 'great' } },
-    { ...ok, bypass: { main: 'maybe', independent: 'absent' } }, { ...ok, missing: ['Free text'] }, { ...ok, checks: Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`c${i}`, 'success'])) }])
+  // only exactly the shape: anything else (free text, extra keys, the removed checks / allSuccess snapshot) is left out
+  for (const bad of [null, 'x', { ...ok, note: 'x' }, { ...ok, allSuccess: true }, { ...ok, checks: { 'ci-suites': 'success' } }, { ...ok, testSha: 'x' },
+    { ...ok, bypass: { main: 'maybe', independent: 'absent' } }, { ...ok, missing: ['Free text'] }])
     assert.equal(L.validRehearsal(bad), null, JSON.stringify(bad));
   assert.equal(L.validLandingMissing(['independent_ruleset_missing', `ruleset_can_bypass_unreadable:${MAIN_RS}`]), true);
   assert.equal(L.validLandingMissing([], { empty: false }), false);
@@ -239,22 +256,21 @@ test('stage-8 outcome (writeOutcome): the rehearsal of a SETTLED pair and the mi
   const root = await tempDir(t);
   const plan = { stage: 8, entryRole: 'control-checks' };
   const today = L.landingRoute(ruleState(TODAY));
-  const rehearsal = L.rehearsalOf({ inventory: { complete: true, checks: FOUR.slice(0, 3).map((n, i) => ({ id: i + 1, name: n, head_sha: S1, app: { id: ACTIONS }, status: 'completed', conclusion: 'success' })) },
-    testSha: S1, route: today });
+  const rehearsal = L.rehearsalOf({ testSha: S1, route: today });
   const read = async nonce => JSON.parse(await fs.readFile(path.join(root, `outcome-${nonce}.json`), 'utf8'));
   const n = i => String(i).repeat(32);
   await writeOutcome({ receiptsRoot: root, nonce: n(1), plan, jobIds: [], result: { status: 'SETTLED', sideEffects: 2, rehearsal } });
   assert.deepEqual((await read(n(1))).rehearsal, rehearsal);
-  assert.equal((await read(n(1))).rehearsal.checks['ci-suites-windows'], 'missing');
   const missing = ['independent_ruleset_missing', `ruleset_can_bypass_unreadable:${MAIN_RS}`];
   await writeOutcome({ receiptsRoot: root, nonce: n(2), plan, jobIds: [], result: { status: 'BLOCKED', reason: 'TRAIN_LANDING_RULES_MISSING', sideEffects: 0, missing } });
   assert.deepEqual((await read(n(2))).landingMissing, missing);
-  // not stage 8, another ending, or not the shape: left out
+  // not stage 8, another ending, or not the shape (an old record with checks and allSuccess included): left out
   await writeOutcome({ receiptsRoot: root, nonce: n(3), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [], result: { status: 'SETTLED', sideEffects: 1, rehearsal } });
   await writeOutcome({ receiptsRoot: root, nonce: n(4), plan, jobIds: [], result: { status: 'BLOCKED', reason: 'RULESET_UNREADABLE', sideEffects: 0, missing } });
   await writeOutcome({ receiptsRoot: root, nonce: n(5), plan, jobIds: [], result: { status: 'SETTLED', sideEffects: 2, rehearsal: { ...rehearsal, note: 'free text' } } });
   await writeOutcome({ receiptsRoot: root, nonce: n(6), plan, jobIds: [], result: { status: 'BLOCKED', reason: 'TRAIN_LANDING_RULES_MISSING', sideEffects: 0, missing: ['Not a code'] } });
-  for (const i of [3, 4, 5, 6]) { const o = await read(n(i)); assert.ok(!('rehearsal' in o) && !('landingMissing' in o), JSON.stringify(o)); }
+  await writeOutcome({ receiptsRoot: root, nonce: n(7), plan, jobIds: [], result: { status: 'SETTLED', sideEffects: 2, rehearsal: { ...rehearsal, checks: {}, allSuccess: false } } });
+  for (const i of [3, 4, 5, 6, 7]) { const o = await read(n(i)); assert.ok(!('rehearsal' in o) && !('landingMissing' in o), JSON.stringify(o)); }
 });
 
 test('GitHub port: one ruleset\'s current_user_can_bypass (this App\'s own bypass), normalized; the bypass list is never read; a malformed reply refused', async () => {
