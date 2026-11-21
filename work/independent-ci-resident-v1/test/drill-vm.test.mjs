@@ -1774,9 +1774,10 @@ test('the boot gate refuses a job on either side and a WSL side that could not b
 });
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,
-// or a throw as a time out does), a running list answering `list`.
+// or a throw as a time out does), a running list answering `list`. Its host status is written by the drill's clock when it is read, never
+// when this file loads: the world is built once, and its tests may run long after that (CI run 44746396297).
 const wslWorld = `
-    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Read-DrillHostStatus { ${q(idleHostStatus('WRITTEN_AT'))}.Replace('WRITTEN_AT', (Get-DrillTime).ToString('o')) }
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
     function Get-VM { param($ErrorAction) }
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
@@ -1790,6 +1791,17 @@ const wslWorld = `
       if ($script:probe -eq 'timeout') { throw 'wsl.exe timed out' }
       return $script:probe
     }`;
+
+// CI run 44746396297 (clued-ci-home-win-01): the WSL world's tests ran more than HostStatusStaleSeconds after this file loaded, and the
+// gate read the world's host status as stale. The world's status must not age: run the gate as though that much time had passed.
+test('the WSL world does not age: its host status still reads as fresh when the gate runs HostStatusStaleSeconds after this file loaded', opts, () => {
+  const r = ps(`${wslWorld}
+    $later = (Get-DrillTime).AddSeconds($script:Drill.HostStatusStaleSeconds + 1)
+    function Get-DrillTime { $later }
+    $script:probe = @{ exit = 0; stdout = ''; stderr = '' }
+    $s = Get-DrillHostSafety; @{ action = $s.action; code = $s.code; busyWith = $s.busyWith }`);
+  assert.deepEqual(r, { action: 'refuse', code: 'DRILL_HOST_CI_BUSY', busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
+});
 
 // The probe's closed table, cell by cell, end to end through the boot gate; and the reverse: across exits -2..9 and stderr empty, blank,
 // text, and missing, the one cell that gives "no job" is exit 1 with nothing on stderr; the one that gives "a job" is exit 0 with nothing.
