@@ -1,0 +1,1056 @@
+{
+  "schema": "clued.ci-uncovered-tests/1",
+  "note": "Test files no required suite runs, each with why (scripts/ci/check-tests-covered.mjs; FABLE-tests-outside-required-suites-20261121 §2.3). kind: environment (needs what the required checks do not have), stale-or-suspect (ran and failed), other-workflow (another workflow runs it on pull requests; workflow names the file), unsorted (never ran, not yet sorted; one file per entry), archive (sealed directories; the only kind that may be a pattern). A file that starts to run, or is removed, must leave this table: the check fails otherwise. The list only shrinks.",
+  "tests": [
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/a03-contract.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "apps/clued-cloud/scripts/test-phase2-change-applicability.mjs",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "导入了测试运行器却不叫测试文件，没有套件跑它，也没有测试导入它（Task f974129c 说的孤儿测试，已从 scripts/ 移到这里）；C4：进套件并改名，或删除"
+    },
+    {
+      "path": "apps/clued-cloud/tests/agent-messages-switch-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处 permission denied for function clued_agent_inbox_summary_v1（测试以 anon 直连已收回执行权的旧函数）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-admission-handover-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "0f86addc-55a4-4906-8dc1-5311b0a70137",
+      "reason": "1 处 :116：交接后 release-door 角色 live 期望 true 实为 false；角色是否现役的判定变了，待查是预期变化还是回归"
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-duty-holder-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "9 处：7 处 work_claim_pr_binding_input_invalid；1 处期望 open_green_in_ledger 实得 CI_PHASE_CAS_MISMATCH（根因未查）；1 处静态检查 :94 多出 clued_private.work_claim_merge_queue_yield_v1 等函数（期望值过时）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-node-gateway-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "4 处：3 处 work_claim_pr_binding_input_invalid；1 处 assert.ok(queued?.length >= 1) 不成立（排队作业没建成，疑为同一入参问题的连带）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "18 处：14 处 work_claim_pr_binding_input_invalid；2 处期望 CI_SCHEDULING_NOT_ACTIVATED、CI_INPUT_INVALID|CI_JOB_SCALAR_INVALID 却先得到 work_claim_pr_binding_input_invalid；1 处 :258 读 undefined.j（连带）；1 处函数授权表多出 clued_ci_connection_renew_trust_v1 等（期望值过时）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-stage1-effects-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "10 处：7 处 work_claim_pr_binding_input_invalid；CI_INPUT_INVALID、CI_NONCE_INPUT_INVALID 各 1 处（根因未查，疑为入参契约收紧）；1 处 :23 读 undefined.job_id（连带）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/ci-scheduling-t2a2-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "13 处全部是 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-independent.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "41bdbc17-f78d-4d11-950b-7d3149f7192f",
+      "reason": "2 处，同一原因：/v1/development 和 /mcp 都返回 503（期望 200）；疑为新增网关配置缺失时失败即关闭，待读 worker 的 503 分支确认生产默认环境不会出现"
+    },
+    {
+      "path": "apps/clued-cloud/tests/merge-train-failover-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "aeefed92-1839-46a9-9e8d-9301e90c643b",
+      "reason": "5 处：:643“单次 4.9 分钟与单独 UNKNOWN 不触发”实得 handed_over（期望 holder_alive），疑为故障转移触发条件变了；:760、:886、:1255 得 rejected / ci_admission_target_not_heard；:468 夹具违反 20261115120000 新增的 ci_node_liveness_v1_steady_since_check 约束（过时）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/merge-train-queue-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处 work_claim_legacy_pr_binding_retired：测试仍走按设计退役的旧 PR 绑定"
+    },
+    {
+      "path": "apps/clued-cloud/tests/model-domain-successor-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处 permission denied for function clued_project_mutate（测试以 anon 直连已收回执行权的旧函数）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/owner-auto-approve-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/p5-real-postgres.test.mjs",
+      "kind": "environment",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "运行中用 npx --yes supabase@2.115.0 从网络取 Supabase CLI 跑安全顾问，必需检查不联网；首跑失败于这一步（Supabase security advisors failed）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/p6-shadow-canary.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处：esbuild 打包 worker 失败 32 处，无法解析 node:util、node:crypto 等（测试的打包设置疑缺 node 平台；clued-cloud 套件的真实构建是绿的）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/production-backup-scope-db.test.mjs",
+      "kind": "environment",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "需要 pg_dump/pg_restore 或现成的 Docker PostgreSQL 17 镜像（CLUED_BACKUP_TEST_IMAGE），production-schema 两样都没有；clued-g4-database.yml 用镜像跑它。首跑 5 处失败：3 处 spawnSync pg_dump ENOENT，另 2 处是连带（toc 未生成；上一子测试中途失败留下 concurrent_extra 表）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/raw-binding-fallback-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "28c9d784-ec96-4631-8686-fc100654975b",
+      "reason": "1 处 :112“第二次运行不改变任何东西”两次的指纹 f 不等：迁移重放不幂等，或指纹含时间，待查"
+    },
+    {
+      "path": "apps/clued-cloud/tests/registration-recovery-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "3ed34a7c-9716-4198-9a6a-f8950a87cd49",
+      "reason": "16 处：14 处 storage_root_has_unresolved_mutation；:181 生产 Worker 正常入口返回 unreconciled / PROVIDER_MUTATION_OUTCOME_UNKNOWN（期望完成一次原始替换）；:339 createOriginal 返回 unavailable（期望 committed）。14 处疑为同一未对账变更的连带；先二分哪条迁移之后变红"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resident-upgrade-auto-approve-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/resident-upgrade-auto-approve-v2-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处：自动批准种类清单多出 ci.connection_renew（期望值过时）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/search-context-text-cache-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处 permission denied for function clued_mcp_search_context（测试以 anon 直连已收回执行权的旧函数）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/storage-owner-lifecycle-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "3 处：2 处网关函数数 88，测试期望 80（期望值过时）；1 处 :666 storage_demand_refresh_source_mismatch（根因未查）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/v2-red/unified-record-invariants.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "apps/clued-cloud/tests/work-claims-ci-queue-assist-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/work-claims-handover-activation-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/work-claims-handover-execution-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处 work_claim_pr_binding_input_invalid（夹具仍用旧的 PR 绑定入参）"
+    },
+    {
+      "path": "apps/clued-cloud/tests/work-claims-pr-task-binding-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "1 处：最后一个 PR 结束后认领为 RELEASED（work_claim_pr_end_release_v1 的设计行为），测试仍期望不释放；由 PR 生命周期对账兜底的 PR 改期望并列入 AUTHORIZATION_DB_TESTS"
+    },
+    {
+      "path": "apps/clued-cloud/tests/work-verify-shared-observation-db.test.mjs",
+      "kind": "stale-or-suspect",
+      "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",
+      "reason": "2 处：1 处 work_claim_pr_binding_input_invalid；1 处期望错误码 work_claim_pr_ref_invalid 实得 work_claim_pr_binding_input_invalid（校验次序变了，先查是否有意再改断言）"
+    },
+    {
+      "path": "artifacts/clued-validation/**",
+      "kind": "archive",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "验证证据包里的测试副本，字节随证据封存，不是活代码，不该运行或修改"
+    },
+    {
+      "path": "development/contracts/context-authorization/evidence/**",
+      "kind": "archive",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "授权合同证据包里的测试与测试脚本副本（含 *-test.mjs 两个），字节随证据封存，不是活代码"
+    },
+    {
+      "path": "docs/execution-plans/**",
+      "kind": "archive",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "执行计划文档里随附的执行载荷副本，字节随文档封存，不是活代码"
+    },
+    {
+      "path": "evals/kernel-next/v02-reference-core.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v03-deletion-session.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v03-erasure-isolation.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v03-identity-security.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v04-reference-core.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v05-reference-core.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v06l-outbox-evidence.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v06l-runner-boundaries.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v07-artifact-archive.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v07-file-intent.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v08-reference-core.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v10-reference-core.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v11-model-contract.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v12-supply-chain.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "evals/kernel-next/v14-v15-local-assurance.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "integrations/codex/kooyumi/validate-package.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "legacy/**",
+      "kind": "archive",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "封存的旧代码目录（legacy），不再维护，测试从没在必需检查里跑；整目录是否删除另议"
+    },
+    {
+      "path": "scripts/ci/activity-conflict-caller.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "Task 15ca471a 记它在 f4494b77 上红，现已通过；apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/check-pinned-registries.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/ci-usage-attribution.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/ci-usage-report.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-control-source-pins.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-reconcile-source.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-control-workflow-source.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "Task 15ca471a 记它在 f4494b77 上红，现已通过；apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-g4-fresh-start.test.mjs",
+      "kind": "other-workflow",
+      "workflow": "clued-g4-database.yml",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
+    },
+    {
+      "path": "scripts/ci/clued-handover-external-source-check.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-handover-native-entry.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-independent-legacy-drain.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-independent-publication-identity.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-independent-publication-port.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-independent-publication-runtime.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-independent-revocation-controller.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-independent-revoker.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-independent-supervisor.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-merge-reconcile-gate.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-merge-reconcile-source.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-merge-reconcile.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-merge-train-native.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-pr-task-binding.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-pr-write-set.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-push-reuse.test.mjs",
+      "kind": "other-workflow",
+      "workflow": "clued-g4-database.yml",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
+    },
+    {
+      "path": "scripts/ci/clued-scan-start.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-standard-runner-actor-source.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/clued-work-claim-handover.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/component-version-integration-policy.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/merge-admission-clock-bootstrap.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/merge-admission-clock-source.test.mjs",
+      "kind": "other-workflow",
+      "workflow": "clued-g4-database.yml",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
+    },
+    {
+      "path": "scripts/ci/merge-admission-four-sources.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/merge-admission-measurement-history.test.mjs",
+      "kind": "other-workflow",
+      "workflow": "clued-g4-database.yml",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "由 clued-g4-database.yml 在 PR 上跑（非必需检查）；另外apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2/C3：迁进 ci-scripts 套件并删掉重复的入口"
+    },
+    {
+      "path": "scripts/ci/merge-admission-r9-collector.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/merge-admission-r9-reregister.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/nonpush-seal-caller.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "Task 15ca471a 记它在 f4494b77 上红，现已通过；apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/public-mcp-hosted-space.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/public-mcp-supabase-isolation.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "apps/clued-cloud/tests/ci-script-tests.test.mjs 在 clued-cloud 里动态 import 它（PR 运行 44843080114 作业 136657205261 里通过），本检查只认顶层静态 import，故入表；C2：并入 ci-scripts 套件（显式列文件）后删本条，并从该包装文件移出"
+    },
+    {
+      "path": "scripts/ci/self-hosted/resource-maintenance/test_maintenance.py",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "scripts/ci/self-hosted/resource-maintenance/test_producer.py",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "scripts/ci/self-hosted/resource-maintenance/test_schedule_probe.py",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "scripts/ci/test_check_contract_placement.py",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "scripts/ci/test_check_design_refs.py",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "scripts/ci/test_clued_docs_only.py",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "scripts/phase2-qualification/**",
+      "kind": "archive",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "Phase 2 资格验证的脚本与 history/<提交> 快照目录，已封存；其中的测试从没在必需检查里跑，整目录是否删除另议"
+    },
+    {
+      "path": "scripts/runner/qualify-work-handover.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "scripts/verify-memory-publication.test.mjs",
+      "kind": "unsorted",
+      "task": "15ca471a-68b3-49c1-be5f-1bab6711ad18",
+      "reason": "从没在必需检查里跑过，红绿未知；C2：并入新套件 ci-scripts（显式列文件），首跑红的改记 stale-or-suspect"
+    },
+    {
+      "path": "tests/information-flow-parent-adapter.test.mjs",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/mps03/test_error_boundaries.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/mps03/test_pg_bridge_guards.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/mps03/test_pg_bridge_outcomes.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/mps03/test_pg_bridge_static.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/mps03/test_real_entries.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/mps04/test_readonly_provider.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_ci_health.py",
+      "kind": "other-workflow",
+      "workflow": "node-profile-policy.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 node-profile-policy.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_claude_code_plugin.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_clued_capture_guard.py",
+      "kind": "other-workflow",
+      "workflow": "clued-capture-guard.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 clued-capture-guard.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_clued_work_claim_guard.py",
+      "kind": "other-workflow",
+      "workflow": "clued-capture-guard.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 clued-capture-guard.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_clued_work_write_set.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_development_completion_entry.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_completion_saved_response.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_completion_v2_records.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_decision_candidate_projection.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_development_clued_currentness.cjs",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "Node 测试却用 Python 式 test_*.cjs 命名，没有套件跑它；文件名被 config/clued-handover-external-acceptance.json（Owner 签名）钉住，不能单独改名；C4 处理"
+    },
+    {
+      "path": "tests/test_model_development_currentness_channel.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_development_host_bridge.cjs",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "Node 测试却用 Python 式 test_*.cjs 命名，没有套件跑它；文件名被 config/clued-handover-external-acceptance.json（Owner 签名）钉住，不能单独改名；C4 处理"
+    },
+    {
+      "path": "tests/test_model_development_request_host.cjs",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "Node 测试却用 Python 式 test_*.cjs 命名，没有套件跑它；文件名被 config/clued-handover-external-acceptance.json（Owner 签名）钉住，不能单独改名；C4 处理"
+    },
+    {
+      "path": "tests/test_model_development_windows_namespace.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_local_completion_execution.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_observed_completion_execution.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_observed_completion_response.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_development_invocation_projection.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_invocation_saved_projection.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_m0.py",
+      "kind": "other-workflow",
+      "workflow": "model-program-m0.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 model-program-m0.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_model_program_m1_entry.py",
+      "kind": "other-workflow",
+      "workflow": "model-program-m1-entry.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 model-program-m1-entry.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_model_program_m1_harness.py",
+      "kind": "other-workflow",
+      "workflow": "model-program-m1-harness.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 model-program-m1-harness.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_model_program_m1_package.py",
+      "kind": "other-workflow",
+      "workflow": "model-program-m1-package.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 model-program-m1-package.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_model_program_m2_core_saved_adapter.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_m2_input_generator.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_m2_saved_harness.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_m2_saved_output_metrics.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_m2_saved_report_runner.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_program_m2_scoped_consumer.py",
+      "kind": "other-workflow",
+      "workflow": "model-program-m2-scoped-consumer.yml",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "由 model-program-m2-scoped-consumer.yml 在 PR 上跑（非必需检查）；C3：迁进必需套件并删掉该工作流里的重复步骤"
+    },
+    {
+      "path": "tests/test_model_provider_timing_saved_projection.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_reference_4b_preparation.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_runtime_observation_records.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_stage_admission.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_stage_binding_preparation.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_workflow_domain_contract.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_model_workflow_saved_scorers.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_naming_governance_post_migration.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_naming_governance_publication.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_naming_governance_trusted_launcher.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_naming_governance_validator.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_naming_inventory_completeness.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_naming_inventory_semantic_surfaces.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_naming_inventory_supplements.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_p1_align_and_verify.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_p2_verification_context.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_p3_isolated_mirror.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_p4_canonical_first.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_p6_release.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_phase2_qualification_controller.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_reviewed_gitleaks_artifacts.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_storage_zip.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_t0_training_smoke_preflight.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_v16_root_cutover.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "tests/test_v17_reference_erratum.py",
+      "kind": "unsorted",
+      "task": "f974129c-337b-4bdd-aaca-063ee5efcb24",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：活的进套件，死的删"
+    },
+    {
+      "path": "work/actions-hosted-migration/independent-ci-v1/worker/image-identity.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/qualification/scan-start-cutover-plan.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在 CI 跑过；C1：先用唯一入口定向跑，绿的进 resident-node，红的改记 stale-or-suspect 并开 Task"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/registration/test/export-cli.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/registration/test/registration-core.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/reinstall/qualification/real-upgrade-flow.mjs",
+      "kind": "environment",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "有意不叫 *.test.mjs：只在 Windows PowerShell 5.1 上、显式设 CLUED_UPGRADE_REPLAY=1 并给两份固定 checkout 时复放历史升级，必需检查没有这个环境（reinstall/README.md）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/rollout/fleet/test/entry-docs.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/rollout/fleet/test/first-install.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/rollout/fleet/test/install.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/rollout/fleet/test/ports.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/rollout/fleet/test/publish.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/rollout/fleet/test/tar.test.mjs",
+      "kind": "unsorted",
+      "task": "36602827-39d1-4b27-bfe2-0b22a378436b",
+      "reason": "从没在 CI 跑过；B2 把整个目录并入 resident-node 后删本条（等 #1199、#1206 合入）"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/upgrader/test/drill-upgrade.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在 CI 跑过；C1：先用唯一入口定向跑，绿的进 resident-node，红的改记 stale-or-suspect 并开 Task"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/upgrader/test/machine.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在 CI 跑过；C1：先用唯一入口定向跑，绿的进 resident-node，红的改记 stale-or-suspect 并开 Task"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/upgrader/test/units.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在 CI 跑过；C1：先用唯一入口定向跑，绿的进 resident-node，红的改记 stale-or-suspect 并开 Task"
+    },
+    {
+      "path": "work/independent-ci-resident-v1/upgrader/test/upgrader-main.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在 CI 跑过；C1：先用唯一入口定向跑，绿的进 resident-node，红的改记 stale-or-suspect 并开 Task"
+    },
+    {
+      "path": "work/successor-reviewer/verify-issued-documents.test.mjs",
+      "kind": "unsorted",
+      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
+      "reason": "从没在必需检查里跑过，红绿未知；C4：逐个定，活的进套件，死的删"
+    }
+  ]
+}
