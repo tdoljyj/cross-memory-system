@@ -144,6 +144,13 @@ for f in UPG_FILES:
 TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):   # r7: + uninstall
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
+def verified_status(text):
+    """The status verify-resident-linux.sh prints when every check passed, read from its own verdict line (one source, as in first-install.py:
+    step (7) of phase B waits for exactly that word; a word written here by hand could drift from the script's, r8 inventory N1)."""
+    found = re.findall(r'(?m)^status=\$\(\[ \$ok = 1 \] && echo ([A-Z][A-Z_]*[A-Z]) \|\| echo [A-Z_]+\)$', text)
+    assert len(found) == 1, 'VERIFY_RESIDENT_LINUX_VERDICT_NOT_ONE'
+    return found[0]
+VERIFIED = verified_status(open(os.path.join(IN, 'tools', 'verify-resident-linux.sh'), 'rb').read().decode('utf-8'))
 # r7: the package's Linux resident files (install-resident-linux.sh FILES, in its order) and their install plan on the host as it will
 # be after the uninstall: systemd enabled in wsl.conf, systemd pid 1, cgroup v2 (verify-resident-linux showed all three on r5c2),
 # no resident-v1, no unit file. Phase A and B0 recompute it live (with those lines) and phase B applies exactly it.
@@ -387,7 +394,7 @@ reinstall_tail() {{
   $CLEAN $PY -I -c 'import json,sys; f=json.load(open(sys.argv[1])); sys.exit(not (f.get("contract")=="clued.independent-ci.linux-version-facts/1" and f.get("generation")==1 and f.get("staged") is None and f.get("ciSourceManifestSha256")==sys.argv[2] and f.get("manifestSha256")==sys.argv[3] and f.get("pinsOk") is True and f.get("sourceCommit")==sys.argv[4] and f.get("upgradeToolSha256")==sys.argv[5]))' "$VF" "$NEW_MANIFEST" "$LINUX_RES_MANIFEST" "$COMMIT" "$UPG_TOOL_SHA" || refuse VERSION_FACTS_NOT_THIS_PACKAGE
   # (7) verify-resident-linux, every check fatal (the resident half and the upgrade channel were just installed)
   bash --noprofile --norc "$STG/tools/verify-resident-linux.sh" > "$T/l7-verify.stdout.json" || true
-  grep -q RESIDENT_LINUX_VERIFIED "$T/l7-verify.stdout.json" && grep -q '"upgrade-v1-pins":true' "$T/l7-verify.stdout.json" && grep -q '"generation-current":true' "$T/l7-verify.stdout.json" || {{ cat "$T/l7-verify.stdout.json"; refuse RESIDENT_LINUX_NOT_VERIFIED_SEE_RECOVERY; }}
+  grep -q {VERIFIED} "$T/l7-verify.stdout.json" && grep -q '"upgrade-v1-pins":true' "$T/l7-verify.stdout.json" && grep -q '"generation-current":true' "$T/l7-verify.stdout.json" || {{ cat "$T/l7-verify.stdout.json"; refuse RESIDENT_LINUX_NOT_VERIFIED_SEE_RECOVERY; }}
   # (8) evidence for the Windows generator, and a public review copy in a new directory each run
   E="{OUT}/linux-live-manifest.$(date -u +%Y%m%dT%H%M%SZ).txt"
   {{ echo "source: reinstall-linux-B (root, Owner)"; echo "package: $PKG_SHA"; echo "capturedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "command: /usr/bin/sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json"; echo "exit: 0"; echo "sha256: $(sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json | cut -d' ' -f1)"; }} > "$E"
