@@ -7,7 +7,8 @@
 // runs it from the pull request's trusted base checkout, so a pull request
 // cannot narrow its own selection, swap a suite's command line or extend the
 // known-failure list (ci-known-failures.json, read next to this file). The
-// commands themselves run the candidate's code and tests: that code is
+// baseline commands run first, followed by commands the candidate adds to
+// the selected suite (requiredCommands). The commands run the candidate's code and tests: that code is
 // reviewed through the protected-path rules, not through this file. The
 // candidate's own changes to the selection (this file, the workflow) select
 // every suite.
@@ -559,12 +560,20 @@ export const TEST_IDENTITY_EXIT = 71;
 const posixPath = (file) => file.replaceAll('\\', '/');
 const operandsAfter = (argv, index) => argv.slice(index + 1).filter((arg) => !arg.startsWith('-'));
 const optionValue = (argv, flag) => argv[argv.indexOf(flag) + 1];
+// Switches the lists use after the anchor (--test, -m unittest) that take no value. After it, an element that follows any other switch
+// without = may be that switch's value (--test-name-pattern foo, --import ./setup.mjs, -k foo): dropping the other operands
+// would drop it too, so such a command cannot be planned (gap A L1). A switch missing here only runs the whole command.
+const VALUELESS_SWITCHES = new Set(['--test-force-exit']);
+const takesSeparateValue = (argv, anchor) => argv.some((arg, i) => i > anchor + 1 && !arg.startsWith('-')
+  && argv[i - 1].startsWith('-') && !argv[i - 1].includes('=') && !VALUELESS_SWITCHES.has(argv[i - 1]));
 
 export function filterCommand(command, argv, named) {
   const repo = (operand) => path.posix.join(command.cwd, posixPath(operand));
   const result = { runs: [], matched: [], accepts: [] };
   const testAt = argv.indexOf('--test');
   const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
+  const listAt = testAt >= 0 ? testAt : unittestAt >= 0 && argv[unittestAt + 1] !== 'discover' ? unittestAt : -1;
+  if (listAt >= 0 && takesSeparateValue(argv, listAt)) return result;
   if (testAt >= 0) {
     const files = operandsAfter(argv, testAt);
     result.accepts = files.map(repo);
@@ -608,11 +617,85 @@ export function filterCommand(command, argv, named) {
   return result;
 }
 
+// The test files a candidate command only adds to a trusted command of the same directory: the trusted argv is a
+// subsequence of the candidate's and every other element is a new test file operand, as --run-files recognises one
+// (filterCommand). Null for any other change (a switch, a changed or removed element): that command is added whole.
+function addedTestFiles(command, baseline) {
+  for (const trusted of baseline) {
+    if (trusted.cwd !== command.cwd) continue;
+    const extra = [];
+    let next = 0;
+    for (const arg of command.argv) {
+      if (next < trusted.argv.length && arg === trusted.argv[next]) next += 1;
+      else extra.push(arg);
+    }
+    if (next < trusted.argv.length || extra.length === 0 || new Set(extra).size !== extra.length) continue;
+    if (extra.some((arg) => arg.startsWith('-') || /^\{.*\}$/.test(arg) || trusted.argv.includes(arg))) continue;
+    const files = extra.map((arg) => path.posix.join(command.cwd, posixPath(arg)));
+    const { runs, matched } = filterCommand(command, command.argv, new Set(files));
+    if (runs.length === 1 && matched.length === new Set(files).size) return files;
+  }
+  return null;
+}
+
+// The argv a suite command runs: its placeholders expanded and, for a command that only adds test files to a trusted one
+// (requiredCommands), just those files, planned as --run-files plans them.
+export function commandArgv(command, options) {
+  const argv = expandArgv(command.argv, options);
+  if (!command.files) return argv;
+  const [only] = filterCommand(command, argv, new Set(command.files)).runs;
+  if (!only) throw new Error(`cannot run only the added test files of (${command.cwd}) ${command.argv.join(' ')}`);
+  return only;
+}
+
+// Gap A (FABLE r8 B2): the trusted list first, in its order and with its policy, even if the PR removes or replaces a
+// command; then the commands the candidate's selector adds to the suite. Reading the candidate is lazy: only after the
+// baseline commands have run, and always when the candidate's selector is another file: its bytes say nothing about the
+// modules it imports. A separate Node process (no environment) exports the candidate's list, and only what it prints, once
+// validated here, can add a command; candidate code never runs inside the process that decides which commands passed. It
+// is not a read boundary (the permission model follows symbolic links, the network is open): the suite commands run the
+// candidate's code anyway. A candidate command that only adds test files to a trusted command runs just those files, and
+// none carries a policy. A checkout without scripts/ci adds nothing; one with scripts/ci but no selector moved or deleted
+// it, so what it adds cannot be read and the suite fails.
+export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], trusted = fileURLToPath(import.meta.url) } = {}) {
+  if (!Array.isArray(baseline)) throw new Error(`unknown suite: ${id}`);
+  yield* baseline;
+  const candidate = path.resolve(root, 'scripts/ci/ci-required-selection.mjs');
+  if (real(candidate) === real(trusted)) return;
+  if (!existsSync(candidate)) {
+    if (!existsSync(path.dirname(candidate))) return;
+    throw new Error(`the candidate has scripts/ci but no ci-required-selection.mjs: the commands it adds to ${id} cannot be read`);
+  }
+  const read = spawnSync(process.execPath, ['--permission', `--allow-fs-read=${path.dirname(candidate)}`, '--input-type=module', '-e',
+    'const {SUITE_COMMANDS} = await import(process.argv[1]); process.stdout.write(JSON.stringify(SUITE_COMMANDS[process.argv[2]] ?? []));',
+    pathToFileURL(candidate).href, id], { cwd: root, env: {}, encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  if (read.status !== 0) throw new Error(`cannot read candidate commands for ${id}: ${read.error?.message ?? read.stderr}`);
+  const commands = JSON.parse(read.stdout);
+  if (!Array.isArray(commands)) throw new Error(`invalid candidate command list for ${id}`);
+  const key = ({ cwd, argv }) => JSON.stringify([cwd, argv]);
+  const seen = new Set(baseline.map(key));
+  for (const command of commands) {
+    const { cwd, argv } = command ?? {};
+    if (typeof cwd !== 'string' || !Array.isArray(argv) || !argv[0] || !argv.every((arg) => typeof arg === 'string')) {
+      throw new Error(`invalid candidate command for ${id}`);
+    }
+    const identity = key(command);
+    if (seen.has(identity)) continue;
+    const relative = path.relative(real(root), real(path.resolve(root, cwd)));
+    if (path.isAbsolute(cwd) || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+      throw new Error(`candidate command directory is outside the checkout: ${cwd}`);
+    }
+    seen.add(identity);
+    // Only the trusted list can attach a known-failure allowance (or any other policy) to a command.
+    const files = addedTestFiles({ cwd, argv }, baseline);
+    yield files ? { cwd, argv, files } : { cwd, argv };
+  }
+}
+
 export class RunFilesError extends Error {}
 
 export function planFiles(id, { root, files, env = process.env }) {
-  const commands = SUITE_COMMANDS[id];
-  if (!commands) throw new RunFilesError(`unknown suite: ${id}`);
+  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new RunFilesError(`unknown suite: ${id}`);
   const list = (files ?? []).map(posixPath);
   if (list.length === 0) throw new RunFilesError('no test file named');
   for (const file of list) {
@@ -627,11 +710,12 @@ export function planFiles(id, { root, files, env = process.env }) {
   const matched = new Set();
   const accepts = [];
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
-  for (const command of commands) {
+  for (const command of requiredCommands(id, root)) {
     const cwd = path.join(root, command.cwd);
     // {base} is not a test file; a placeholder keeps commands that need it plannable (they are skipped).
     const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA || 'unset', report });
-    const filtered = filterCommand(command, argv, named);
+    // A command that only adds test files to a trusted one runs no other file (the trusted command runs those).
+    const filtered = filterCommand(command, argv, command.files ? new Set(command.files.filter((file) => named.has(file))) : named);
     accepts.push(...filtered.accepts);
     filtered.matched.forEach((file) => matched.add(file));
     steps.push(...filtered.runs.map((run) => ({ command, argv: run })));
@@ -673,10 +757,10 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
   if (captureKnown) return writeKnown(id, root, env, keep);
-  const commands = SUITE_COMMANDS[id];
-  if (!commands) throw new Error(`unknown suite: ${id}`);
+  if (!Object.hasOwn(SUITE_COMMANDS, id)) throw new Error(`unknown suite: ${id}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
-  let steps = commands.map((command) => ({ command, argv: null }));
+  // The trusted commands, then the candidate's additions (read once the trusted ones have run).
+  let steps = (function* plan() { for (const command of requiredCommands(id, root)) yield { command, argv: null }; }());
   let named = null;
   if (files) {
     try {
@@ -689,7 +773,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    let argv = planned ?? expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report });
+    let argv = planned ?? commandArgv(command, { cwd, base: env.CI_BASE_SHA, report });
     let reportDir = null;
     if (command.known) {
       reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
@@ -748,7 +832,13 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
   const failed = [];
   let timedOut = false;
   for (const id of suites) {
-    const status = await run(id, { root, env, log });
+    let status = 1;
+    try {
+      status = await run(id, { root, env, log });
+    } catch (error) {
+      // e.g. a candidate selector whose command list cannot be read: this suite fails, the next ones still run
+      log(`::error title=${id}::${error.message}`);
+    }
     if (env.GITHUB_ACTIONS !== 'true' && status === LOCAL_TIMEOUT_EXIT) timedOut = true;
     summary(`- \`${id}\`: ${status === 0 ? 'passed' : '**failed**'}\n`);
     if (status !== 0) failed.push(id);

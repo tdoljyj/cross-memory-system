@@ -161,7 +161,7 @@ test('pure decision: rules that could not be read never make a slot-green head g
   const mainSha = sha(0x7001);
   const pull = { state: 'open', draft: false, base: { ref: 'main' }, head: { sha: H }, mergeable: true };
   const slot = { id: 7, app: { id: APP }, name: 'kooyumi-merge-slot', head_sha: H, status: 'completed', conclusion: 'success', completed_at: iso(NOW) };
-  const f = frontPullFacts({ pull, mergeCommit: null, compare: null, checks: [slot], mainSha, appId: APP, rules: null });
+  const f = frontPullFacts({ pull, mergeCommit: null, compare: null, checks: [slot], mainSha, appId: APP, rules: null, route: 'github-merge' });
   assert.equal(decideShadow({ onDuty: true, holders: [{ pr: 910 }], front: f, rules: { strict: true }, mainSha }), 'FRONT_CHECKS_WAIT');
 });
 
@@ -173,7 +173,7 @@ test('pure decision: neutral is not success; an unpinned or malformed rule and t
   const rulesOf = extra => [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true,
     required_status_checks: [{ context: 'kooyumi-merge-slot', integration_id: APP }, ...extra] } }];
   const decide = (extra, checks) => decideShadow({ onDuty: true, holders: [{ pr: 910 }], rules: { strict: true }, mainSha,
-    front: frontPullFacts({ pull, mergeCommit: null, compare: null, checks: [run(7, 'kooyumi-merge-slot'), ...checks], mainSha, appId: APP, rules: rulesOf(extra) }) });
+    front: frontPullFacts({ pull, mergeCommit: null, compare: null, checks: [run(7, 'kooyumi-merge-slot'), ...checks], mainSha, appId: APP, rules: rulesOf(extra), route: 'github-merge' }) });
   assert.equal(decide([{ context: 'ci-suites', integration_id: ACTIONS_APP }], [run(8, 'ci-suites', 'success', ACTIONS_APP)]), 'FRONT_GREEN_WAIT_MERGE');
   assert.equal(decide([{ context: 'ci-suites', integration_id: ACTIONS_APP }], [run(8, 'ci-suites', 'neutral', ACTIONS_APP)]), 'FRONT_CHECKS_MISSING');
   assert.equal(decide([{ context: 'legacy' }], [run(8, 'legacy', 'success', ACTIONS_APP)]), 'FRONT_CHECKS_MISSING', 'a commit status may stand behind an unpinned rule: unverifiable here');

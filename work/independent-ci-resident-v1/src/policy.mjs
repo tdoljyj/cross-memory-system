@@ -113,8 +113,9 @@ export const TRAIN_BATCH_MAX_LIMIT = 4;
 // package and all nodes of one Source run one mode. Before, every package carried the node's installed train unchanged (the generic
 // upgrade's configInputsFor), so the mode a node was first installed with stayed (2026-11-14: turing shadow, desk-w-591 on). Going back
 // (shadow or off) is this value and a new package; the immediate stop is the Owner's PAUSE request, as before.
+// ADR 0018 §8.7: landing 'push' (reopened 2026-11-20); batchMax is left out, so trainBatchMax gives 1 (ADR 0019 §8.3 raises it in its own PR).
 export const FLEET_TRAIN = Object.freeze({ enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 600_000, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS,
-  sweep: TRAIN_SWEEP_DEFAULT });
+  sweep: TRAIN_SWEEP_DEFAULT, landing: 'push' });
 // Local execution and publication stages of each heavy role (the dynamic part of a batch).
 export const ROLE_STAGES = Object.freeze({ gitleaks: Object.freeze([2, 3]), trivy: Object.freeze([4, 5]), 'contract-placement': Object.freeze([6, 7]) });
 // The heavy roles of every batch, in their fixed order.

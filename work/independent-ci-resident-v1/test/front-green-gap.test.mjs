@@ -173,3 +173,22 @@ test('a flap after a good read keeps the last known rules; a recovery restarts t
   await r.pass({ pulls, status: board(now.v, 7) });
   assert.ok(!texts(g.calls).some(x => /无法读取/.test(x)), 'two spells of 6 minutes are not one of 12');
 });
+
+// Fable 11-21 T5: the rules after C add kooyumi-train-landed pinned to App 5368905, which is never published. The PR page only lists a
+// gap for the current path's decisions (green, wait for merge; a merge-slot-green front waiting for checks), where GitHub merges and
+// requires it like any other, so there it is listed. Off that path (push, park) stage 10 calls no front green (train-facts.mjs, 应修 1)
+// and the page reads no checks for a gap: the page never stops, yields or re-runs anything; it only says.
+test('T5: the rules after C: the PR page lists no gap off the current path, and on it names kooyumi-train-landed as GitHub requires it', async t => {
+  const C = [...RULES, { context: 'kooyumi-train-landed', integrationId: APP }];
+  const seen = GREEN.map(r => ({ name: r.name, appId: r.appId, source: 'run', state: 'pass' }));
+  assert.deepEqual(prStatus.requiredGap(C, seen), ['kooyumi-train-landed（未出现）']);
+  const g = fake({ rules: C });
+  const r = await reporter(t, g.run, { v: Date.parse('2026-11-19T04:00:00Z') });
+  Object.assign(r, { passStartedAt: Date.parse('2026-11-19T04:00:00Z'), stalled: false }); // inside a pass (pass() sets both)
+  for (const decision of ['OPEN_FRONT_BATCH', 'TRAIN_FRONT_BATCH_RUNNING', 'FRONT_ADOPTED'])
+    assert.equal(await r.frontGap(pulls[0], { front: { pr: 7, headSha: H(7) }, decision, wouldDo: decision }, C), null, decision);
+  assert.equal(g.calls.length, 0, 'no check read for a push-route decision');
+  // the control: the current path's decision reads the checks and names it
+  assert.deepEqual(await r.frontGap(pulls[0], { front: { pr: 7, headSha: H(7) }, decision: 'FRONT_GREEN_WAIT_MERGE', wouldDo: 'FRONT_GREEN_WAIT_MERGE' }, C),
+    ['kooyumi-train-landed（未出现）']);
+});

@@ -18,8 +18,8 @@
 //   FRONT_NOT_RUNNABLE       the front PR is closed, a draft, or not based on main
 //   FRONT_NEEDS_MAIN_MERGE   GitHub reports a conflict, or strict is on and the head does not contain main's tip
 //   FRONT_TEST_MERGE_NOT_READY  no test merge yet, still computing, or not exactly [main, head]
-//   FRONT_GREEN_WAIT_MERGE   the front head already carries App 5368905's kooyumi-merge-slot success, and (when stage 10 passes main's live
-//                            rules) every check those rules require is passed on the head
+//   FRONT_GREEN_WAIT_MERGE   on the current path (route github-merge) only: the front head already carries App 5368905's kooyumi-merge-slot
+//                            success, and every check main's live rules require is passed on the head
 //   FRONT_CHECKS_WAIT        the merge slot is green, a required check is not yet passed and it is queued or running, a re-run's gate is
 //                            in flight, or the rules could not be read
 //   FRONT_CHECKS_MISSING     the merge slot is green, a required check is absent, skipped or failed and nothing of it runs: the companion's
@@ -31,6 +31,7 @@
 // The protected-layer pre-check (§41.4, MergeAdmission v0.2 §2.4: a protected-layer front H must contain T) runs in mode on
 // only: stage 10 sets front.protectedLayer from the PR's changed paths and the admission policy (train-maintenance.mjs);
 // shadow mode reports FRONT_NEEDS_MAIN_MERGE only from GitHub's own facts, as before.
+import { BYPASS_STATES, validLandingMissing } from './train-landing.mjs';
 import { validStrictReadiness, validStrictFrontReadiness, validTrainProviderBudget, validSweepProgress } from './train-strict.mjs';
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
@@ -195,8 +196,9 @@ export function requiredYieldReason(front, now, fallbackStart = null) {
   const start = Number.isFinite(front?.slotGreenAt) ? front.slotGreenAt : front?.frontSeenAt;
   const deadline = Number.isFinite(start) && Number.isFinite(now) && now - start >= REQUIRED_CHECKS_MAX_WAIT_MS;
   if (front?.checksUnreadable === true) return deadline ? 'REQUIRED_CHECKS_DEADLINE' : null;
-  if (front?.green !== true || front.required === undefined) return null;
-  const r = front.required;
+  if (front?.green !== true) return null;
+  // Fable 11-21 应修 1: green always carries its judged required checks (frontPullFacts); none is unreadable rules, bounded by the deadline.
+  const r = front.required ?? null;
   if (r !== null && !r.missing.length) return null;
   if (r !== null && r.missing.some(m => !m.rerunning && m.attempts >= REQUIRED_ATTEMPTS_MAX)) return 'REQUIRED_RERUNS_EXHAUSTED';
   if (deadline) return 'REQUIRED_CHECKS_DEADLINE';
@@ -206,8 +208,16 @@ export function requiredYieldReason(front, now, fallbackStart = null) {
 }
 
 // The front PR as GitHub reports it now, reduced to what the train decides on. rules: main's live rules (the reply's list, or null when it
-// could not be read) adds `required` (requiredOnHead); left out (push mode, which lands its own merge), the merge slot alone is green.
-export function frontPullFacts({ pull, mergeCommit, compare, checks, mainSha, appId, slotCheckName = 'kooyumi-merge-slot', rules = undefined }) {
+// could not be read); route: this round's landing route (train-landing.mjs#landingRoute: github-merge, push or park; a package without
+// push is always github-merge). Both are always given.
+// Fable 11-21 应修 1: a merge-slot green counts only on the current path (route github-merge), where GitHub merges H: there green is the
+// merge slot's success and `required` (requiredOnHead) says what main's rules still need on H. On route push the train lands S itself, and
+// on park nothing lands: a merge-slot green on H is what the current path left before the rules changed, never green, and no `required`.
+// "Green with no judged required checks" is no state this function can produce.
+const FRONT_ROUTES = Object.freeze(['github-merge', 'push', 'park']);
+export function frontPullFacts({ pull, mergeCommit, compare, checks, mainSha, appId, slotCheckName = 'kooyumi-merge-slot', rules, route }) {
+  if (rules === undefined || !FRONT_ROUTES.includes(route)) fail('FRONT_FACTS_ROUTE_REQUIRED');
+  const currentPath = route === 'github-merge';
   const headSha = SHA.test(pull?.head?.sha ?? '') ? pull.head.sha : null;
   const testMerge = mergeCommit && SHA.test(mergeCommit.sha ?? '') ? { sha: mergeCommit.sha, tree: mergeCommit.tree,
     parentsOk: Array.isArray(mergeCommit.parents) && mergeCommit.parents.length === 2 && mergeCommit.parents[0] === mainSha && mergeCommit.parents[1] === headSha } : null;
@@ -216,8 +226,8 @@ export function frontPullFacts({ pull, mergeCommit, compare, checks, mainSha, ap
   return { state: pull?.state ?? null, draft: pull?.draft === true, merged: pull?.merged === true, baseRef: pull?.base?.ref ?? null, headSha,
     mergeable: typeof pull?.mergeable === 'boolean' ? pull.mergeable : null, testMerge,
     headContainsMain: compare ? compare.behindBy === 0 && ['ahead', 'identical'].includes(compare.status) : null,
-    green: !!latest && latest.status === 'completed' && latest.conclusion === 'success',
-    ...(rules !== undefined ? { required: requiredOnHead({ rules, checks, headSha, appId }),
+    green: currentPath && !!latest && latest.status === 'completed' && latest.conclusion === 'success',
+    ...(currentPath ? { required: requiredOnHead({ rules, checks, headSha, appId }),
       slotGreenAt: [latest?.completed_at, latest?.started_at].map(v => Date.parse(v ?? '')).find(Number.isFinite) ?? null } : {}) };
 }
 
@@ -234,8 +244,8 @@ export function decideShadow({ onDuty, holders, holder = holders?.[0] ?? null, f
     || (front.protectedLayer === true && front.headContainsMain !== true)) return 'FRONT_NEEDS_MAIN_MERGE';
   if (front.green) {
     // green means GitHub will merge: every required check passed, not the merge slot alone (#1192)
-    const r = front.required;
-    if (r === undefined) return 'FRONT_GREEN_WAIT_MERGE';
+    // Fable 11-21 应修 1: no green without judged required checks (frontPullFacts); none judged is a wait, never a merge on the slot alone
+    const r = front.required ?? null;
     if (r === null) return 'FRONT_CHECKS_WAIT';
     if (!r.missing.length) return 'FRONT_GREEN_WAIT_MERGE';
     return r.waiting ? 'FRONT_CHECKS_WAIT' : 'FRONT_CHECKS_MISSING';
@@ -337,7 +347,14 @@ const validBindingObservation = b => {
     && Number.isSafeInteger(b.epoch) && b.epoch > 0 : b.claimId === null && b.fence === null && b.epoch === null);
 };
 const prList = v => Array.isArray(v) && v.length <= 64 && v.every(n => Number.isSafeInteger(n) && n > 0);
-const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect'].includes(k))
+// route / missing (ADR 0018 §2 L2 item 7, Fable 2026-11-20): which way main's rules said this run, and what push still misses.
+// Fable 11-21 open points §5: bypass, this App's bypass state of the main and the independent ruleset as stage 10 read them this round
+// (train-landing.mjs#landingRoute: BYPASS_STATES, and absent for the independent ruleset).
+const validBypass = b => plain(b) && Object.keys(b).sort().join('|') === 'independent|main' && BYPASS_STATES.includes(b.main)
+  && (BYPASS_STATES.includes(b.independent) || b.independent === 'absent');
+const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainSha', 'landed', 'adopted', 'notMarkedMerged', 'bisect', 'route', 'missing', 'bypass'].includes(k))
+  && (l.route === undefined || ['push', 'github-merge', 'park'].includes(l.route)) && (l.bypass === undefined || validBypass(l.bypass))
+  && (l.missing === undefined || validLandingMissing(l.missing))
   && (l.error === undefined || (typeof l.error === 'string' && CODE.test(l.error))) && (l.mainSha === undefined || l.mainSha === null || SHA.test(l.mainSha))
   && (l.landed === undefined || (Array.isArray(l.landed) && l.landed.length <= 20 && l.landed.every(b => plain(b) && SHA.test(b.testSha ?? '') && prList(b.members))))
   && (l.adopted === undefined || prList(l.adopted)) && (l.notMarkedMerged === undefined || prList(l.notMarkedMerged))
