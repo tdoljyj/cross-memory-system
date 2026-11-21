@@ -186,6 +186,13 @@ for f in RES_FILES:
 TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh'):
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
+def verified_status(text):
+    """The status verify-resident-linux.sh prints when every check passed, read from its own verdict line (one source: B11 waits for
+    exactly that word; r8 inventory N1: a word written here by hand had its two parts swapped and B11 refused every node)."""
+    found = re.findall(r'(?m)^status=\$\(\[ \$ok = 1 \] && echo ([A-Z][A-Z_]*[A-Z]) \|\| echo [A-Z_]+\)$', text)
+    assert len(found) == 1, 'VERIFY_RESIDENT_LINUX_VERDICT_NOT_ONE'
+    return found[0]
+VERIFIED = verified_status(open(os.path.join(IN, 'tools', 'verify-resident-linux.sh'), 'rb').read().decode('utf-8'))
 UNITS = ['clued-ci-worker@.service', 'clued-ci-wsprep@.service', 'clued-ci-archive@.service']
 res_text = '\n'.join(['install-script.sha256=' + sha(os.path.join(IN, 'tools', 'install-resident-linux.sh'))]
                      + [sha(os.path.join(IN, 'linux-res-pkg', *f.split('/'))) + '  ' + f for f in RES_FILES]
@@ -489,7 +496,7 @@ $CLEAN $PY -I -c 'import json,sys; f=json.load(open(sys.argv[1])); sys.exit(not 
 # B11: verify-resident-linux, every check fatal
 bash --noprofile --norc "$STG/tools/verify-resident-linux.sh" > "$T/verify-resident.stdout.json" || true
 cat "$T/verify-resident.stdout.json"
-grep -q '"status":"LINUX_RESIDENT_VERIFIED"' "$T/verify-resident.stdout.json" || refuse VERIFY_RESIDENT_LINUX_FAILED
+grep -q '"status":"@@VERIFIED@@"' "$T/verify-resident.stdout.json" || refuse VERIFY_RESIDENT_LINUX_FAILED
 @@B_DONE@@"""
 
 # each local image's archive as it is in the in-dir now (pinned), or '-' (B then refuses until the image is loaded)
@@ -548,7 +555,7 @@ for _k, _v in FORM.items():   # the form's pieces first: they carry @@SUFFIX@@ /
 values = {'DRAFT': str(int(DRAFT)), 'W': W, 'BASE': BASE, 'COMMIT': COMMIT, 'NEW': NEW, 'REF': REF, 'HREF': HREF, 'RECEIPT': RECEIPT, 'PKG_SHA': PKG_SHA,
           'LINUX_RES_MANIFEST': LINUX_RES_MANIFEST, 'UPG_PLAN': UPG_PLAN, 'INSTALL_PLAN': INSTALL_PLAN, 'KEY_ID': SIGNER['keyId'], 'RUNTIME_ID': SIGNER['runtimeId'],
           'TEMPLATE_PUB_SHA': TEMPLATE_PUB_SHA, 'NODE_SHA': NODE_SHA, 'PUB_SHA': PUB_SHA, 'SIGN_SHA': SIGN_SHA, 'C8': COMMIT[:8], 'NODE_NAME': NODE_NAME,
-          'ROOTS': ' '.join(ROOTS + SPOOL_DIRS), 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
+          'ROOTS': ' '.join(ROOTS + SPOOL_DIRS), 'VERIFIED': VERIFIED, 'PULL_IMAGES': ' '.join(PULL_IMAGES), 'LOCAL_IMAGES': LOCAL_LINES, 'SUFFIX': SUFFIX, 'DISTRO': CFG['linux']['distribution'], 'FILES': ' '.join(files), 'SUMS': sums, 'MODS': ' '.join(MODS), 'CI': CI}
 for k, v in values.items():   # every value is hex, a validated name, a shlex-quoted path, or a list of fixed relative paths
     assert k in ('W', 'SUMS', 'FILES', 'MODS', 'ROOTS', 'PULL_IMAGES', 'LOCAL_IMAGES') or re.fullmatch(r'[A-Za-z0-9._/-]*', v), ('VALUE_SHAPE', k)
 def render(text):
