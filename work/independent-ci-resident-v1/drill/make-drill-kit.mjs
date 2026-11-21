@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
@@ -139,6 +140,75 @@ export function drillKitManifest({ payloads, prereqBytes, timeoutMinutes = 240, 
     prerequisiteMode: 'first-install-host', ...(candidate ? { candidate } : {}), ...(credentials ? { credentials } : {}), ...(credentialFilesSha256 ? { credentialFilesSha256 } : {}) };
 }
 
+// The host tools the kit's acceptance pins for its roles (fleetRefs.formalRoles.<role>.hostTools.<name>: path and sha256, the source
+// manifest's, which the worker holds per job and phase A of the first install holds the node to: HOST_TOOL_NOT_THE_FLEET_PIN), held
+// before any boot to the .debs the kit stages (Fable ruling 0e418483, r7 phase B, 4.1 step 3): every staged .deb that carries the path
+// carries it as a regular file with the pinned sha256, and at least one does; otherwise no kit. A walk of every role and tool, not python
+// alone. An acceptance that pins no host tool has nothing here (phase A on the node is the check that counts).
+const debUnreadable = name => new Error(`DRILL_KIT_DEB_UNREADABLE:${name}`);
+// A .deb's data.tar, decompressed: an ar archive ("!<arch>\n", 60-byte member headers, members padded to even); Ubuntu's are zstd.
+function debData(name, bytes) {
+  if (bytes.subarray(0, 8).toString('latin1') !== '!<arch>\n') throw debUnreadable(name);
+  for (let i = 8; i + 60 <= bytes.length;) {
+    const h = bytes.subarray(i, i + 60).toString('latin1'), member = h.slice(0, 16).trim().replace(/\/$/, ''), size = h.slice(48, 58).trim();
+    if (h.slice(58, 60) !== '`\n' || !/^\d+$/.test(size) || i + 60 + Number(size) > bytes.length) throw debUnreadable(name);
+    const n = Number(size), body = bytes.subarray(i + 60, i + 60 + n);
+    if (member.startsWith('data.tar')) {
+      if (member !== 'data.tar.zst') throw debUnreadable(name);
+      try { return zlib.zstdDecompressSync(body); } catch { throw debUnreadable(name); }
+    }
+    i += 60 + n + (n & 1);
+  }
+  throw debUnreadable(name);
+}
+// The entries of a data.tar whose path (without "./" or "/") is in `wanted`: { path, regular, data }. dpkg's tars are GNU or POSIX: a
+// GNU long name (L) or a pax path names the next entry (a long link name, K, and global pax records are skipped); a POSIX ustar header
+// joins its prefix.
+function tarEntries(name, tar, wanted) {
+  const out = []; let next = null;
+  const text = (h, o, n) => { const s = h.subarray(o, o + n), z = s.indexOf(0); return s.subarray(0, z < 0 ? n : z).toString('utf8'); };
+  for (let i = 0; i + 512 <= tar.length;) {
+    const h = tar.subarray(i, i + 512);
+    if (h.every(b => b === 0)) break;
+    let size = 0;
+    if (h[124] & 0x80) for (let k = 125; k < 136; k++) size = size * 256 + h[k];
+    else { const s = text(h, 124, 12).trim(); if (!/^[0-7]*$/.test(s)) throw debUnreadable(name); size = s ? parseInt(s, 8) : 0; }
+    const start = i + 512, type = h[156] === 0 ? '0' : String.fromCharCode(h[156]);
+    if (!Number.isSafeInteger(size) || start + size > tar.length) throw debUnreadable(name);
+    const data = tar.subarray(start, start + size);
+    if (type === 'L') next = text(data, 0, data.length);
+    else if (type === 'x') {
+      for (const rec of data.toString('utf8').split('\n')) { const m = /^\d+ path=(.*)$/.exec(rec); if (m) next = m[1]; }
+    } else if (type !== 'g' && type !== 'K') {
+      const ustar = h.subarray(257, 263).toString('latin1') === 'ustar\0' ? text(h, 345, 155) : '';
+      const p = (next ?? (ustar ? `${ustar}/${text(h, 0, 100)}` : text(h, 0, 100))).replace(/^\.?\//, '');
+      next = null;
+      if (wanted.has(p)) out.push({ path: p, regular: type === '0' || type === '7', data });
+    }
+    i = start + Math.ceil(size / 512) * 512;
+  }
+  return out;
+}
+export function kitHostTools(acceptance, debs) {
+  const tools = [];
+  for (const [role, r] of Object.entries(acceptance?.fleetRefs?.formalRoles ?? {})) {
+    for (const [tool, t] of Object.entries(r?.hostTools ?? {})) {
+      check(typeof t?.path === 'string' && /^(\/[A-Za-z0-9._+-]+)+$/.test(t.path) && !t.path.split('/').some(s => s === '.' || s === '..') &&
+        typeof t?.sha256 === 'string' && /^[0-9a-f]{64}$/.test(t.sha256), `DRILL_KIT_HOST_TOOL_REFUSED:${role}.${tool}`);
+      tools.push(t);
+    }
+  }
+  if (tools.length === 0) return [];
+  const wanted = new Set(tools.map(t => t.path.slice(1))), hits = [];
+  for (const d of debs) for (const e of tarEntries(d.name, debData(d.name, d.bytes), wanted)) hits.push({ deb: d.name, ...e });
+  return tools.map(t => {
+    const of = hits.filter(h => h.path === t.path.slice(1));
+    check(of.length > 0, `DRILL_KIT_HOST_TOOL_NOT_IN_THE_DEBS:${t.path}`);
+    check(of.every(h => h.regular && sha256(h.data) === t.sha256), `DRILL_KIT_HOST_TOOL_NOT_THE_FLEET_PIN:${t.path}`);
+    return { path: t.path, sha256: t.sha256, debs: [...new Set(of.map(h => h.deb))] };
+  });
+}
+
 // Validate a complete local Release directory, without treating a new sums file as acceptance. No acceptance file in it: a candidate
 // (candidate: true; makeDrillKit adds the candidate's own acceptance to the kit). One that names the drill's stand-ins is refused.
 export function releasePins(from, version) {
@@ -193,8 +263,9 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
   const payloads = Object.fromEntries(['first-install-entry.ps1'].map(name => [name, read(here, name)]));
   let candidate = null;
   check(isCandidate || !request, 'DRILL_REQUEST_FOR_AN_ACCEPTED_VERSION');
+  let acceptance = null;   // the kit's acceptance: the candidate's (drill-only) or the Owner's in the From directory
   if (isCandidate) {
-    const acceptance = candidateAcceptance({ from, version, request, now });
+    acceptance = candidateAcceptance({ from, version, request, now });
     const name = `fleet-node-${version}.acceptance.json`, bytes = Buffer.from(JSON.stringify(acceptance, null, 2) + '\n');
     payloads[name] = bytes;
     pins.files = [...pins.files, { path: name, sha256: sha256(bytes) }].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
@@ -227,11 +298,13 @@ export async function makeDrillKit({ from, version, prereq, out, request, timeou
     const need = declared[0];
     check(Object.hasOwn(payloads, need.fileName) && sha256(payloads[need.fileName]) === need.sha256, `DRILL_PREREQ_TOOLS_INCOMPLETE:${tool}`);
   }
+  acceptance ??= JSON.parse(read(from, `fleet-node-${version}.acceptance.json`).toString('utf8'));
+  const hostTools = kitHostTools(acceptance, (p.debs ?? []).map(item => { const name = path.win32.basename(item.path); return { name, bytes: payloads[name] }; }));
   const manifest = drillKitManifest({ payloads, prereqBytes, timeoutMinutes, candidate, credentials, credentialFilesSha256 });
   fs.mkdirSync(out); // refuse an existing target, including a previous kit
   for (const [name, bytes] of Object.entries(payloads)) fs.writeFileSync(path.join(out, name), bytes, { flag: 'wx' });
   fs.writeFileSync(path.join(out, 'kit.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
-  return { kit: path.resolve(out), version, files: manifest.files.length, perNodeSteps: manifest.perNodeSteps, candidate };
+  return { kit: path.resolve(out), version, files: manifest.files.length, perNodeSteps: manifest.perNodeSteps, candidate, hostTools };
 }
 
 // Assemble the local build/final layout exactly as publish.mjs does, never changing the originals.
