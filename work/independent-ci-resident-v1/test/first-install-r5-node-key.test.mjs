@@ -9,6 +9,9 @@
 //   T5  (ruling 11-21 "r6 ephemeral key" 2.2, D:/w/tmp/FABLE-r6-ephemeral-key-20261121.md) New-NodeKey refuses an empty name
 //       (KEY_NAME_REQUIRED): Windows PowerShell passes $null to a [string] as '', which the software provider persists as a key named ''.
 //       T1 holds nothing left behind by name: the run's own names, and no key named '' in the software provider.
+//   T6  (r6 review, question 1) -KeyProvider is matched case-sensitively where it is used (Get-KeyProviders, -ceq), so its ValidateSet is
+//       too: -KeyProvider TPM is refused at parameter binding, before any line of the script runs (no key can be made), not let through
+//       to a provider choice that finds nothing and stops with an empty error.
 // T2 (the host preparation's rule) is in first-install-r5-host-prep.test.mjs, T3 (the launcher's) in first-install-r5-launcher.test.mjs.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -116,4 +119,18 @@ ConvertTo-Json -Compress -InputObject ([ordered]@{ refused = @($refused); leftov
   assert.equal(result.leftover, false, 'New-NodeKey made a key named \'\'');
   assert.equal(result.refused.length, 2, JSON.stringify(result));
   for (const message of result.refused) assert.match(message, /^KEY_NAME_REQUIRED: /, JSON.stringify(result));
+});
+
+// Before the fix the ValidateSet compared without case: TPM got through binding, the self-test found no provider for it (Get-KeyProviders
+// compares with -ceq) and stopped with "KEY_CREATE_FAILED: identity: " and nothing after it. Now PowerShell refuses the value at binding:
+// exit 1, its own ParameterArgumentValidationError naming KeyProvider (the message itself is in the machine's language), and the script
+// body never ran -- no output, none of the script's own CODE: lines, so no key could have been made.
+test('T6: -SelfTest -KeyProvider TPM is refused at parameter binding, before the script runs (no key made)', { skip, timeout: 300_000 }, () => {
+  const r = powershell(['-File', REG, '-SelfTest', '-KeyProvider', 'TPM']);
+  const stderr = String(r.stderr);
+  assert.notEqual(r.status, 0, `${r.stdout}\n${stderr}`);
+  assert.match(stderr, /ParameterArgumentValidationError,export-node-registration\.ps1/, stderr);
+  assert.match(stderr.replace(/\r?\n/g, ''), /KeyProvider/, stderr);   // PowerShell wraps the message at the console width
+  assert.doesNotMatch(stderr, /^[A-Z_]+: /m, 'none of the script\'s own CODE: lines: its body never ran');
+  assert.equal(String(r.stdout).trim(), '', 'no self-test output: its body never ran');
 });

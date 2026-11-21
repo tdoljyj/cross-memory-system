@@ -26,7 +26,7 @@
 param(
   [ValidateSet('export', 'init-keys')] [string]$Mode = 'export',
   [switch]$ConfirmCreateKeys,
-  [ValidateSet('auto', 'tpm', 'software')] [string]$KeyProvider = 'auto',
+  [ValidateSet('auto', 'tpm', 'software', IgnoreCase = $false)] [string]$KeyProvider = 'auto',
   [string]$BindingId,
   [string]$Name,
   [int]$SlotCount = 0,

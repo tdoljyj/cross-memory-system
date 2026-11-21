@@ -200,7 +200,7 @@ test('no foreach variable in the PowerShell script reuses a parameter name (vari
   assert.deepEqual(loops.filter(name => params.has(name.toLowerCase())), []);
 });
 
-test('Windows: the EccPublicBlob conversion yields keys Node verifies (ephemeral CNG keys, no key store touched)',
+test('Windows: the EccPublicBlob conversion yields keys Node verifies (named keys of the current user, deleted again)',
   { skip: process.platform !== 'win32' && 'needs Windows CNG' }, () => {
     // -File hands "scan,publish" over as one string; the script splits it.
     const raw = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', SCRIPT_PS, '-SelfTest',
