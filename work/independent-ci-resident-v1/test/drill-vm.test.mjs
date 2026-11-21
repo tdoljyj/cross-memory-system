@@ -2635,7 +2635,7 @@ test('the returned entry output is kept when the stage files cannot be collected
     @{ kept = $kept; keptSteps = $keptSteps; interactive = $interactiveCode; interactiveSteps = @($script:steps)
       record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); record2 = (Read-DrillJson (Join-Path ${q(runDir2)} 'guest-evidence.json'))
       steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
-  assert.deepEqual(r.keptSteps.slice(0, 3), ['first-install', 'guest-probe', 'stage-files', 'guest-evidence']);
+  assert.deepEqual(r.keptSteps.slice(0, 4), ['first-install', 'guest-probe', 'stage-files', 'guest-evidence']);
   assert.equal(r.record.ok, false);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean).length, 2);
   assert.deepEqual(r.steps.steps.map(x => x.name), ['prepare']);
