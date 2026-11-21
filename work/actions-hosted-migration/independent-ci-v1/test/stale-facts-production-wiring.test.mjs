@@ -19,7 +19,7 @@ import { ADOPT_READ_DELAYS_MS, createStagedCheckPublisherV2 } from '../src/stage
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { protectedAuthority, createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter, PUBLICATION_OBSERVE_BUDGET_MS, PUBLICATION_POST_WRITE_OBSERVE_BUDGET_MS } from '../runtime/one-shot-v2.mjs';
 import { createIndependentPublicationPort } from '../../../../scripts/ci/clued-independent-publication-port.mjs';
-import { HEAD, BASE, tempDir, fixtureRecord, signResult, admittedFacts, subject } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, tempDir, fixtureRecord, signResult, admittedFacts, subject, withFastWallClock } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
@@ -138,6 +138,16 @@ for (const [name, admissions] of [['fast before, 35 s after (the PR #1001 incide
 for (const [name, admissions] of [['40 s before, 40 s after', [40000, 40000]], ['5 s before, 56 s after', [5000, 56000]]]) {
   test(`production wiring: ${name}: the confirmation has its own window and the green stays (Owner Decision 36946d8b)`, async t => {
     const r = await run(t, admissions);
+    assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
+  });
+}
+
+// CI run 44895513321 (clued-company-win-01) had "5 s before, 56 s after" BLOCKED execution_proof_refused while it was green here:
+// the fixture signed the result with the real clock and the publisher judged it with the fake one (task ce2e5c1a step 2). Under a
+// wall clock that runs 2 s per read, every case above gives the same verdict.
+for (const [name, admissions] of [['fast before, 35 s after', [5000, 35000]], ['40 s before, 40 s after', [40000, 40000]], ['5 s before, 56 s after', [5000, 56000]]]) {
+  test(`production wiring: ${name} settles the same when the wall clock runs fast (a slow host)`, async t => {
+    const r = await withFastWallClock(() => run(t, admissions));
     assert.deepEqual(outcome(r), ['SETTLED', null, ['success']], JSON.stringify(r.result));
   });
 }

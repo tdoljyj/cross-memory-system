@@ -52,6 +52,8 @@ function psCode(expr) {
   return ps(`try { ${expr} | Out-Null; $null } catch { (Get-DrillCode $_).code }`);
 }
 const opts = { skip: !windows };
+// The fixtures' one time (task ce2e5c1a step 2): every host status is written at T0, and ps() runs with Get-DrillTime fixed at T0.
+const T0 = '2026-11-19T02:00:00Z';
 const idleHostStatus = (writtenAt = new Date().toISOString()) =>
   JSON.stringify({ node: { mode: 'STANDBY' }, executor: { state: 'IDLE' }, current: null, writtenAt });
 const activeHostStatus = (hold, { writtenAt = '2026-11-19T02:00:00Z', executor = 'IDLE', reason = null, current = null } = {}) =>
@@ -4009,6 +4011,21 @@ test('a launcher result read back without its terminal field is recorded as a fa
   assert.equal(given.record.launcherReadback.ok, true);
 });
 
+// Task ce2e5c1a step 2 (FABLE-drill-vm-frozen-clock-20261121 §2): a fixture cannot reach the real time. A host status written
+// without a time is written at T0, and every ps() snippet sees Get-DrillTime at T0 unless it defines its own, so a fixture built
+// when this file loads reads the same, however long the tests before it ran.
+test('fixtures cannot reach the real clock: a host status is written at T0', () => {
+  assert.equal(JSON.parse(idleHostStatus()).writtenAt, T0);
+});
+
+test('fixtures cannot reach the real clock: ps() runs with Get-DrillTime fixed at T0, and a snippet may still set its own', opts, () => {
+  assert.deepEqual(ps(`@((Get-DrillTime).ToString('o'), (& { function Get-DrillTime { [DateTimeOffset]'2026-11-20T00:00:00Z' }; (Get-DrillTime).ToString('o') }))`),
+    ['2026-11-19T02:00:00.0000000+00:00', '2026-11-20T00:00:00.0000000+00:00']);
+  // and the gate, judging by the seam, reads a status written without a time as fresh
+  const r = ps(`$s = Test-DrillHostSafety ${q(idleHostStatus())} 64GB -Now (Get-DrillTime); @{ action = $s.action; code = $s.code }`);
+  assert.deepEqual(r, { action: 'start', code: null });
+});
+
 // Fable 11-21 clock ruling §3: drill-vm.ps1 learns "now" only from Get-DrillTime, and these tests never read the real clock, so no
 // assertion can depend on how much real time passed. The reads that predate the rule are pinned at exactly today's count (step 2 clears
 // them): one more is red, and so is one fewer until the pin is lowered with it. The words are assembled so the scan does not count its
@@ -4055,7 +4072,7 @@ test('the real clock is read only through Get-DrillTime; the reads that predate 
     dateTimeNow: new RegExp(String.raw`\]::${BARE_NOW}\b`, 'gi'),
     [GET_DATE]: new RegExp(String.raw`\b${GET_DATE}\b`, 'gi'),
     [SW]: new RegExp(SW, 'gi'),
-  }, { newDate: 4, dateNow: 1, [NOW]: 10, dateTimeNow: 0, [GET_DATE]: 0, [SW]: 4 },
+  }, { newDate: 0, dateNow: 0, [NOW]: 10, dateTimeNow: 0, [GET_DATE]: 0, [SW]: 4 },
   'Use the constant 2026-11-19T02:00:00Z in fixtures and Get-DrillTime inside PowerShell snippets.');
   // The drill's machine-wide mutex names stay out of the tests (Fable clock-seam points ruling, point 5): fixtures use their own names.
   const mutexName = word('CluedFirst', 'InstallDrill');

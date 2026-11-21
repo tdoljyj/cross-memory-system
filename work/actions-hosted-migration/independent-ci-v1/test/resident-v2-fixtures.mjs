@@ -17,6 +17,19 @@ export const HEAD = 'a'.repeat(40);
 export const BASE = 'b'.repeat(40);
 export const NOW = Date.parse('2026-10-21T08:00:00.000Z');
 export const iso = ms => new Date(ms).toISOString();
+// A slow host, as a fixture that reads the real clock twice sees it (task ce2e5c1a step 2; CI run 44895513321 on
+// clued-company-win-01): every read of Date.now() or new Date() is stepMs after the one before. A fixture that takes its
+// time only from the clock it was given gives the same verdict under it. Restored when fn settles.
+export async function withFastWallClock(fn, stepMs = 2000) {
+  const Real = globalThis.Date;
+  let at = Real.now();
+  const tick = () => (at += stepMs);
+  globalThis.Date = class FastDate extends Real {
+    constructor(...args) { if (args.length) super(...args); else super(tick()); }
+    static now() { return tick(); }
+  };
+  try { return await fn(); } finally { globalThis.Date = Real; }
+}
 
 export async function tempDir(t, prefix = 'clued-v2-') {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));

@@ -17,7 +17,7 @@ import { outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { protectedAuthority, createRecoverableCheckPublisherV2, createPublicationRecoveryAuditWriter, transientFetchError, OBSERVE_RETRY_WAITS_MS, OBSERVE_BUDGET_MS, PUBLICATION_OBSERVE_BUDGET_MS, PUBLICATION_READBACK_RESERVE_MS } from '../runtime/one-shot-v2.mjs';
-import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, tempDir, fixtureRecord, signResult, withFastWallClock } from './resident-v2-fixtures.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 const iso = ms => new Date(ms).toISOString();
@@ -487,6 +487,20 @@ test('recovery: a genuine 30000ms exhaustion continues only the current publishe
   assert.equal(final.fullEvaluations, 2, 'one successful pre-write evaluation and the required post-write evaluation');
   assert.equal(final.maxObservationMs, 60000);
   assert.equal(await r.journal.read(r.key).then(x => x.state), 'settled');
+});
+
+// CI run 44895513321 (clued-company-win-01) had the test above red (0 !== 30000) while it was green here: the fixture signed the
+// result with the real clock and the publisher judged it with the fake one, so a host whose setup took over a second refused the
+// proof before any observation (task ce2e5c1a step 2). Under a wall clock that runs 2 s per read the verdict is the same.
+test('recovery: a genuine 30000ms exhaustion settles the same when the wall clock runs fast (a slow host)', async t => {
+  await withFastWallClock(async () => {
+    const clock = { now: Date.now() }, started = clock.now;
+    const r = await publisherWith(t, (c, now) => [...firstBudgetExhaustion(), () => reply(200, verifyBody(c, now()))], { recover: true, clock });
+    assert.equal(r.result.status, 'SETTLED', JSON.stringify(r.result));
+    assert.equal(clock.now - started, 30000);
+    assert.equal(r.checks.length, 1);
+    assert.equal(r.calls.length, 5);
+  });
 });
 
 test('recovery: two genuine observation rounds remain bounded at 60000ms with no third publisher try', async t => {
