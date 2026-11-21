@@ -1565,6 +1565,10 @@ test('a change that breaks only on Windows fails ci-suites-windows and passes th
   t.after(() => rmSync(candidate, { recursive: true, force: true }));
   mkdirSync(path.join(candidate, 'scripts', 'ci'), { recursive: true });
   mkdirSync(path.join(candidate, 'tools'));
+  // A checkout with scripts/ci carries its selector (requiredCommands reads it once the trusted commands pass); this
+  // change leaves the suite's commands as they are.
+  writeFileSync(path.join(candidate, 'scripts', 'ci', 'ci-required-selection.mjs'),
+    `export const SUITE_COMMANDS = ${JSON.stringify({ 'powershell-count': SUITE_COMMANDS['powershell-count'] })};\n`);
   writeFileSync(path.join(candidate, 'tools', 'setup.ps1'), 'Write-Output "changed"\n');
   writeFileSync(path.join(candidate, 'scripts', 'ci', 'check-powershell-count.mjs'),
     "const name = process.argv[1].split('/').pop();\nif (name === 'check-powershell-count.mjs') console.log('scanned');\n");
@@ -1589,16 +1593,33 @@ test('a change that breaks only on Windows fails ci-suites-windows and passes th
   // The step of the job on this host: the real commands, in the candidate checkout.
   const quiet = (command, args, options) => spawnSync(command, args, { ...options, stdio: 'pipe' });
   const lines = [];
-  const status = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(), log,
+  const logged = [];
+  const status = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(),
+    log: (text) => logged.push(String(text)),
     run: (id, options) => executeSuite(id, { ...options, spawn: quiet }), summary: (text) => lines.push(text) });
+  // The suite's own commands decide, never an error before they run (e.g. a candidate selector that cannot be read).
+  assert.ok(!logged.some((line) => line.startsWith('::error title=powershell-count::')), logged.join('\n'));
   if (process.platform === 'win32') {
     assert.equal(hostPlatform(), job.platform, 'this host is the platform of the ci-suites-windows job');
     assert.equal(status, 1, 'ci-suites-windows fails: this is the failure a Linux-only CI never saw');
+    assert.ok(logged.some((line) => /^powershell-count: node --test .*check-powershell-count\.test\.mjs exited 1$/.test(line)),
+      `the change's own test is what fails:\n${logged.join('\n')}`);
     assert.deepEqual(lines, ['- `powershell-count`: **failed**\n']);
   } else {
-    assert.equal(status, 0, 'the same change is green on Linux');
+    assert.equal(status, 0, `the same change is green on Linux:\n${logged.join('\n')}`);
     assert.deepEqual(lines, ['- `powershell-count`: passed\n']);
   }
+  // Fixed for both platforms, the same change is green on this host too: every trusted command passes, so the
+  // candidate's own command list is read as well (this is the path the Linux side takes above).
+  writeFileSync(path.join(candidate, 'scripts', 'ci', 'check-powershell-count.mjs'),
+    "import path from 'node:path';\nif (path.basename(process.argv[1]) === 'check-powershell-count.mjs') console.log('scanned');\n");
+  const fixedLines = [];
+  const fixedLog = [];
+  const fixed = await runSelected(selectSuites(job.check, files, hostPlatform()).suites, { root: candidate, env: childEnv(),
+    log: (text) => fixedLog.push(String(text)),
+    run: (id, options) => executeSuite(id, { ...options, spawn: quiet }), summary: (text) => fixedLines.push(text) });
+  assert.equal(fixed, 0, `the fixed change is green on ${process.platform}:\n${fixedLog.join('\n')}`);
+  assert.deepEqual(fixedLines, ['- `powershell-count`: passed\n']);
 });
 
 // The Windows job is the selection's own entry point and nothing else, on a self-hosted Windows runner, behind the
