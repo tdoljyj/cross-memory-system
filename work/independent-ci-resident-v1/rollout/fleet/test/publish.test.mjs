@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { DRILL_RESERVED, acceptanceOf, attachAcceptance, attachFirstInstallKit, main, prepare, publish, seal } from '../publish.mjs';
+import { spawnSync } from 'node:child_process';
+import { DRILL_RESERVED, acceptanceOf, attachAcceptance, attachFirstInstallKit, main, prepare, publish, readBuild, seal, stageNodeEntry } from '../publish.mjs';
 import * as publishModule from '../publish.mjs';
 import { writeTar } from '../tar.mjs';
 import { FAKE_GH } from './fleet-fixtures.mjs';
@@ -47,7 +48,7 @@ async function world(t) {
   };
   const calls = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).calls; } catch { return []; } };
   const assets = async () => { try { return JSON.parse(await fs.readFile(state, 'utf8')).assets; } catch { return []; } };
-  return { d, out, tar, source, index, run, calls, assets, fake };
+  return { d, out, build: out, tar, source, index, run, calls, assets, fake, state };
 }
 
 test('publish: gh release create <tag> <assets> --target <commit>, without any token variable; then one index line', async t => {
@@ -361,9 +362,10 @@ const FIX = JSON.parse(await fs.readFile(RECORD_FIXTURE, 'utf8'));
 const FIX_DECISION = FIX.target_refs[0].id, FIX_RECEIPT = FIX.receipt_id, FIX_ACCEPTED_AT = '2026-11-19T12:22:39Z';
 // the line prepare gives for the Decision's text (the interface DESK copies): the request file's sha256
 const requestLine = hash => `acceptance-request ${TAG} sha256:${hash}`;
-const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64) } = {}) => {
+// released: false leaves the Release and the index row to prepare (an empty gh state, an index with its header only)
+const prepWorld = async (t, { templateSource = 'a'.repeat(64), packageSource = 'b'.repeat(64), released = true } = {}) => {
   const w = await world(t);
-  await w.run();
+  if (released) await w.run();
   const image = path.join(w.d, `role-image-${IMAGE}.tar.gz`);
   await fs.writeFile(image, Buffer.from('gzip of a docker save'));
   const carried = { sourceAcceptanceRef: '5c06efc1-6597-49bb-9883-57a7e7d6c344', hostQualificationRef: 'e46ab3f7-539f-4bc3-8f60-5ceec1eef8b9',
@@ -825,4 +827,130 @@ test('prepare reuses two role images from the previous Release: its sums file is
   assert.deepEqual(r.images, [IMAGE, IMAGE2].sort());
   const up = Object.fromEntries((await w.assets()).map(a => [a.name, a.sha256]));
   assert.deepEqual([up[`role-image-${IMAGE}.tar.gz`], up[`role-image-${IMAGE2}.tar.gz`]], [sha(one), sha(two)]);
+});
+
+// ---------------------------------------------------------------- prepare makes the Release it needs (FABLE-drill-release-step-20261121.md):
+// there is no release command any more; prepare finds the Release and the index row as they are, creates what is missing, completes a
+// release that stopped half way, and refuses another build of the same version, a row without its Release and a commit not on the remote.
+const REPO = 'tdoljyj/cross-memory-system';
+const RELEASE_ASSETS = [`${TAG}.tar`, `${TAG}.release.json`, 'SHA256SUMS', `${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`];
+const rowOf = w => `| ${VERSION} | https://github.com/${REPO}/releases/tag/${TAG} | ${w.source.archive_sha256} | ${COMMIT} |  |  |  |`;
+// The fake gh's state as the Release of this build would have it (the assets the release step publishes, through the fake's own
+// "release create"); only: the assets kept (a release that stopped half way); row: the index row appended as well. The calls are cleared.
+async function seedRelease(w, { only = null, row = false } = {}) {
+  const build = await readBuild(w.build);
+  const stage = await fs.mkdtemp(path.join(w.d, 'seed-'));
+  const { sums, entry } = await stageNodeEntry(build, stage);
+  const files = [build.assets[0], build.assets[1], sums, ...entry].filter(a => only === null || only.includes(a.name)).map(a => a.file);
+  const r = spawnSync(process.execPath, [w.fake, 'release', 'create', TAG, ...files, '--repo', REPO, '--target', COMMIT], { env: { ...process.env, FAKE_GH_STATE: w.state }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const st = JSON.parse(await fs.readFile(w.state, 'utf8'));
+  st.calls = [];
+  await fs.writeFile(w.state, JSON.stringify(st));
+  if (row) await fs.appendFile(w.index, `${rowOf(w)}\r\n`);
+}
+const releaseWrites = async w => (await w.calls()).filter(c => c.args[0] === 'release' && ['create', 'upload', 'delete-asset'].includes(c.args[1]));
+
+// T1 of the ruling, in this file's terms: a build, an index with its header only, an empty gh state, no release step
+test('prepare on a build with no Release and no index row: checks the commit on the remote, creates the Release as release did, appends the row, writes the request', async t => {
+  const w = await prepWorld(t, { released: false });
+  const r = await w.prep();
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const calls = await w.calls();
+  const commitAt = calls.findIndex(c => c.args[0] === 'api' && c.args[1] === `repos/${REPO}/commits/${COMMIT}`);
+  const creates = calls.filter(c => c.args[1] === 'create');
+  assert.equal(creates.length, 1);
+  assert.ok(commitAt >= 0 && commitAt < calls.indexOf(creates[0]), 'the commit is asked for before the Release is created');
+  assert.deepEqual(creates[0].args.slice(3, 8).map(f => path.basename(f)), RELEASE_ASSETS);
+  assert.equal(creates[0].args[creates[0].args.indexOf('--target') + 1], COMMIT);
+  assert.deepEqual(creates[0].tokenSeen, []);
+  assert.deepEqual((await fs.readFile(w.index, 'utf8')).split('\r\n').slice(2), [rowOf(w), ''], 'one row');
+  for (const n of [...RELEASE_ASSETS, `${TAG}.first-install-kit.json`, `role-image-${IMAGE}.tar.gz`, `${TAG}.first-install.SHA256SUMS`]) {
+    assert.equal((await w.assets()).filter(a => a.name === n).length, 1, n);
+  }
+  await fs.access(w.requestFile);
+});
+
+// T2: the Release was created, the index row was never written (the G: write stopped)
+test('prepare after a release that stopped before the index row: no second create, the row as release writes it, the request', async t => {
+  const w = await prepWorld(t, { released: false });
+  await seedRelease(w);
+  const r = await w.prep();
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  assert.deepEqual((await w.calls()).filter(c => c.args[1] === 'create'), [], 'no second create');
+  assert.deepEqual((await releaseWrites(w)).map(c => path.basename(c.args[3])).filter(n => RELEASE_ASSETS.includes(n)), [], 'no package asset uploaded again');
+  const lines = (await fs.readFile(w.index, 'utf8')).split('\r\n');
+  assert.deepEqual(lines.slice(2), [rowOf(w), '']);
+  await fs.access(w.requestFile);
+  // the very row a prepare that created the Release writes
+  const fresh = await prepWorld(t, { released: false });
+  await fresh.prep();
+  assert.equal((await fs.readFile(fresh.index, 'utf8')).split('\r\n')[2], lines[2]);
+});
+
+// T3: the Release holds only the tar (create stopped after the first asset)
+test('prepare after a release that stopped half way: the four missing assets uploaded, never --clobber, the row and the request', async t => {
+  const w = await prepWorld(t, { released: false });
+  await seedRelease(w, { only: [`${TAG}.tar`] });
+  const r = await w.prep();
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const writes = await releaseWrites(w);
+  assert.deepEqual(writes.filter(c => c.args[1] === 'create'), []);
+  assert.deepEqual(writes.map(c => path.basename(c.args[3])).filter(n => RELEASE_ASSETS.includes(n)).sort(), RELEASE_ASSETS.filter(n => n !== `${TAG}.tar`).sort());
+  assert.ok((await w.calls()).every(c => !c.args.includes('--clobber')), 'never --clobber');
+  for (const n of RELEASE_ASSETS) assert.equal((await w.assets()).filter(a => a.name === n).length, 1, n);
+  assert.deepEqual((await fs.readFile(w.index, 'utf8')).split('\r\n').slice(2), [rowOf(w), '']);
+  await fs.access(w.requestFile);
+});
+
+// T4: what can be checked locally is checked before anything is written outside
+test('prepare checks first and writes after: a template of this Source or a missing image, with no Release, is refused with no create, no upload, the index as it was', async t => {
+  for (const [over, run, code] of [[{ templateSource: 'b'.repeat(64), packageSource: 'b'.repeat(64) }, {}, 'PREPARE_TEMPLATE_IS_THIS_SOURCE'],
+    [{}, { images: [] }, 'PREPARE_IMAGE_MISSING']]) {
+    const w = await prepWorld(t, { released: false, ...over });
+    const before = await fs.readFile(w.index);
+    await assert.rejects(w.prep(run), { code }, code);
+    assert.deepEqual(await releaseWrites(w), [], `${code}: nothing created or uploaded`);
+    assert.ok((await fs.readFile(w.index)).equals(before), `${code}: the index as it was`);
+    await noRequest(w);
+  }
+});
+
+// T5: what prepare does not guess
+test('prepare refuses an index row without its Release, a Release of another build of this version, a commit not on the remote: nothing written', async t => {
+  // (a) the row is there, the Release is not
+  const a = await prepWorld(t, { released: false });
+  await fs.appendFile(a.index, `${rowOf(a)}\r\n`);
+  const beforeA = await fs.readFile(a.index);
+  await assert.rejects(a.prep(), { code: 'PREPARE_INDEX_ROW_WITHOUT_RELEASE' });
+  assert.deepEqual(await releaseWrites(a), []);
+  assert.ok((await fs.readFile(a.index)).equals(beforeA));
+  await noRequest(a);
+  // (b) the Release's SHA256SUMS is another build's (the same version built again): refused before any upload
+  const b = await prepWorld(t, { released: false });
+  await seedRelease(b);
+  await b.setState(st => { const x = st.assets.find(y => y.name === 'SHA256SUMS'); x.text = x.text.replace(b.source.archive_sha256, '9'.repeat(64)); x.b64 = b64Of(x.text); x.sha256 = sha(Buffer.from(x.text)); });
+  const beforeB = await fs.readFile(b.index);
+  await assert.rejects(b.prep(), e => ['ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES', 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS'].includes(e.code), 'another build');
+  assert.deepEqual(await releaseWrites(b), [], 'nothing uploaded');
+  assert.ok((await fs.readFile(b.index)).equals(beforeB));
+  await noRequest(b);
+  // (c) the commit is not on the remote (the API answers 404): refused before anything is written
+  const c = await prepWorld(t, { released: false });
+  await fs.writeFile(c.state, JSON.stringify({ calls: [], assets: [], commitMissing: true }));
+  const beforeC = await fs.readFile(c.index);
+  await assert.rejects(c.prep(), { code: 'PREPARE_COMMIT_NOT_ON_REMOTE' });
+  assert.ok((await c.calls()).some(x => x.args[0] === 'api' && x.args[1] === `repos/${REPO}/commits/${COMMIT}`), 'asked of the remote');
+  assert.deepEqual(await releaseWrites(c), []);
+  assert.ok((await fs.readFile(c.index)).equals(beforeC));
+  await noRequest(c);
+});
+
+// T6: the release command is gone (an empty directory: before the fix it is refused by the build check, so nothing outside is reached)
+test('main: release is no command, in any form', async t => {
+  const d = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetnorelease'));
+  t.after(() => fs.rm(d, { recursive: true, force: true }));
+  await assert.rejects(main(['release', '--dir', d, '--repo', 'a/b']), { code: 'USAGE' });
+  await assert.rejects(main(['release', '--dir', d, '--repo', 'a/b', '--index', path.join(d, 'index.md')]), { code: 'USAGE' });
+  await assert.rejects(main(['release']), { code: 'USAGE' });
 });
