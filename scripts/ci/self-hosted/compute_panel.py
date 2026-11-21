@@ -1284,7 +1284,12 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         mark_announced(state, extra)
         for key in extra:
             del events[key]
-        events[f"dup-more:{duplicates.get('as_of')}"] = f"重复执行：另有 {len(extra)} 项违规，见面板“重复执行”表"
+        # Violations are reruns and parallels only; an old record without a kind is said apart (ruling 12.2 #8).
+        kinds = {duplicate_key(item): item.get("kind") for item in items}
+        bad = sum(1 for key in extra if kinds.get(key) in ("rerun", "parallel"))
+        said = "；".join(part for part in (f"另有 {bad} 项违规" if bad else "",
+                                         f"另有 {len(extra) - bad} 项旧记录未记类别（不算违规）" if len(extra) - bad else "") if part)
+        events[f"dup-more:{duplicates.get('as_of')}"] = f"重复执行：{said}，见面板“重复执行”表"
     stall = None
     if client.low():
         errors.append("residents: 额度不足，沿用上一轮常驻状态")
