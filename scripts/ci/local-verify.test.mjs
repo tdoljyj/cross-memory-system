@@ -174,6 +174,31 @@ test('local verification reports a failing candidate addition without running th
   assert.equal(fs.existsSync(path.join(home, `${process.platform}-retrigger-counter.main.log`)), false);
 });
 
+// Gap A review finding 4: as CI, a test file the change adds to a trusted command's list runs alone after that command.
+test('local verification runs a test file added to a trusted command list alone', async (t) => {
+  const { dir, commit } = repository(t);
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({ 'scripts/ci/retrigger-counter.test.mjs': "import test from 'node:test'; test('baseline', () => {});" });
+  commit({ 'scripts/ci/added.test.mjs': "import test from 'node:test'; test('added', () => { process.exitCode = 23; throw new Error('added failed'); });",
+    'scripts/ci/ci-required-selection.mjs': `export const SUITE_COMMANDS = {
+    'retrigger-counter': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/added.test.mjs', 'scripts/ci/retrigger-counter.test.mjs'] }]
+  };` });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-added-file-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const saved = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = 'true';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = saved; });
+  const selector = { ...selection, reporterUrl: pathToFileURL(selection.REPORTER_PATH).href };
+  const [result] = await verifySuites({ root: dir, home, dir, selector, main, suites: ['retrigger-counter'], logs: home,
+    run: { run: { pid: process.pid }, touch() {} }, platform: process.platform, temp: home, yieldTo: null });
+  assert.equal(result.verdict, 'new', result.detail);
+  assert.match(result.detail, /command 2: new/);
+  const groups = fs.readFileSync(result.log, 'utf8').split(/\r?\n/).filter((line) => line.startsWith('::group::'))
+    .map((line) => line.split(' ').filter((arg) => !arg.startsWith('--test-reporter')).join(' '));
+  assert.deepEqual(groups, ['::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter.test.mjs',
+    '::group::retrigger-counter: (.) node --test scripts/ci/added.test.mjs']);
+});
+
 test('Windows starts npm through its CLI next to node.exe (npm.cmd needs a shell); elsewhere npm itself', () => {
   const execPath = 'C:\\nodejs\\node.exe';
   const cli = 'C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';

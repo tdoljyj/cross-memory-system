@@ -75,6 +75,8 @@ function slotFixture(t) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
     mkdirSync(scripts, { recursive: true });
+    // A checkout with scripts/ci has its selector (requiredCommands); this one adds no command to any suite.
+    writeFileSync(path.join(scripts, 'ci-required-selection.mjs'), 'export const SUITE_COMMANDS = {};\n');
     writeFileSync(path.join(root, 'descendant.mjs'), `
       import { existsSync, writeFileSync } from 'node:fs';
       writeFileSync('descendant.pid', String(process.pid));
@@ -1193,9 +1195,104 @@ test('candidate commands: no known-failure allowance, nothing outside the checko
   assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /outside the checkout/);
   change('retrigger-counter', [{ cwd: '.', argv: [] }]);
   assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /invalid candidate command/);
-  // A checkout without the selector adds nothing.
-  rmSync(path.join(dir, 'ci-required-selection.mjs'));
+  // A checkout without scripts/ci adds nothing.
+  rmSync(dir, { recursive: true, force: true });
   assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], baseline);
+});
+
+// As the required check runs: the trusted selector (given) on the candidate checkout, in Actions (no local slot).
+const runCandidate = (root, id = 'retrigger-counter', trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')) =>
+  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
+
+// Gap A review finding 1: the selector's bytes say nothing about the modules it imports, so a candidate selector at another
+// path is read even when it is byte for byte the trusted one.
+test('a command added by a module the candidate selector imports runs although the selector itself is unchanged', (t) => {
+  const checkout = (added) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'ci-pr-import-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const dir = path.join(root, 'scripts/ci');
+    mkdirSync(dir, { recursive: true });
+    copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+    writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
+import { ADDED } from './suite-additions.mjs';
+SUITE_COMMANDS['retrigger-counter'].push(...ADDED);
+`);
+    writeFileSync(path.join(dir, 'suite-additions.mjs'), `export const ADDED = ${JSON.stringify(added)};\n`);
+    writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+    return root;
+  };
+  const trusted = checkout([]);
+  const candidate = checkout([{ cwd: 'scripts/ci', argv: ['node', '-e', "console.log('import addition executed')"] }]);
+  assert.equal(readFileSync(path.join(trusted, 'scripts/ci/ci-required-selection.mjs'), 'utf8'),
+    readFileSync(path.join(candidate, 'scripts/ci/ci-required-selection.mjs'), 'utf8'));
+  const run = runCandidate(candidate, 'retrigger-counter', path.join(trusted, 'scripts/ci/ci-required-selection.mjs'));
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /baseline executed[\s\S]*\nimport addition executed\r?\n/);
+});
+
+// Gap A review finding 2: a checkout with scripts/ci but no selector moved or deleted it; what the change adds to the suite
+// cannot be read, so the suite fails (after the trusted commands ran).
+test('a candidate with scripts/ci but no selector fails the suite after its trusted commands ran', (t) => {
+  const { root, dir } = candidateSelector(t);
+  rmSync(path.join(dir, 'ci-required-selection.mjs'));
+  assert.throws(() => [...selection.requiredCommands('retrigger-counter', root)], /no ci-required-selection\.mjs/);
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+  const run = runCandidate(root);
+  assert.notEqual(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /baseline executed/);
+  assert.match(run.stdout + run.stderr, /no ci-required-selection\.mjs/);
+});
+
+// Gap A review finding 4: a test file added to a trusted command's explicit list runs alone, planned as --run-files plans it,
+// after the trusted command ran as it is.
+test('a test file added to a trusted command list runs alone after the trusted command', (t) => {
+  const { root, dir, change } = candidateSelector(t);
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
+  writeFileSync(path.join(dir, 'retrigger-counter-new.test.mjs'), "console.log('new file executed');\n");
+  const [trusted] = SUITE_COMMANDS['retrigger-counter'];
+  change('retrigger-counter', [{ ...trusted, argv: ['node', '--test', 'scripts/ci/retrigger-counter-new.test.mjs', ...trusted.argv.slice(2)] }]);
+  const run = runCandidate(root);
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.deepEqual(groupLines(run.stdout), ['::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter.test.mjs',
+    '::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter-new.test.mjs']);
+  assert.equal(run.stdout.split('baseline executed').length - 1, 1);
+  assert.equal(run.stdout.split('new file executed').length - 1, 1);
+});
+
+test('an added test file runs without the trusted allowance, which still covers the old files; an added switch runs the whole command', (t) => {
+  const { root, change } = candidateSelector(t);
+  const [trusted] = SUITE_COMMANDS['admission-self-tests'];
+  const added = 'scripts/ci/added.test.mjs';
+  const old = trusted.argv[2];
+  const middle = [...trusted.argv.slice(0, 4), added, ...trusted.argv.slice(4)];
+  change('admission-self-tests', [{ ...trusted, argv: middle }]);
+  const known = { 'admission-self-tests': [{ file: old, path: ['old'], fingerprint: 'a'.repeat(16), reason: 'r' }] };
+  const report = [{ type: 'fail', file: path.join(root, old), path: ['old'], fingerprint: 'a'.repeat(16) },
+    { type: 'summary', counts: {}, success: false }].map((event) => JSON.stringify(event)).join('\n');
+  // The trusted command fails on its known failure only; the added file fails or passes.
+  const suite = (addedStatus) => {
+    const calls = [];
+    const spawn = (command, args) => { calls.push([command, ...args]); return { status: args.includes(added) ? addedStatus : 1 }; };
+    const status = executeSuite('admission-self-tests', { root, env: { RUNNER_TEMP: os.tmpdir() }, spawn, known, log: () => {}, readReportFile: () => report });
+    return { status, calls };
+  };
+  const failing = suite(1);
+  assert.equal(failing.status, 1, 'the added file has no allowance');
+  assert.equal(failing.calls.length, 2);
+  assert.deepEqual(failing.calls[0].filter((arg) => !arg.startsWith('--test-reporter')), trusted.argv, 'the trusted command as it is');
+  assert.deepEqual(failing.calls[1], ['node', '--test', added], 'then only the added file, without the reporter of the allowance');
+  const passing = suite(0);
+  assert.equal(passing.status, 0, 'the old known failure stays allowed');
+  assert.deepEqual(passing.calls[1], ['node', '--test', added]);
+  // --run-files plans the added file with the command CI runs for it.
+  writeFileSync(path.join(root, added), '');
+  assert.deepEqual(selection.planFiles('admission-self-tests', { root, files: [added], env: {} }).steps.map((step) => step.argv), [['node', '--test', added]]);
+  // Guard: a switch added as well cannot be planned as files only, so the whole command is added, as before.
+  const switched = [...middle.slice(0, 2), '--test-only', ...middle.slice(2)];
+  change('admission-self-tests', [{ ...trusted, argv: switched }]);
+  assert.deepEqual([...selection.requiredCommands('admission-self-tests', root)], [trusted, { cwd: trusted.cwd, argv: switched }]);
+  assert.deepEqual(suite(0).calls[1], switched);
 });
 function runFixture(files) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-reporter-'));

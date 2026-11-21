@@ -72,7 +72,7 @@ if (process.env.CLUED_LOCAL_SUITE_GUARD && process.argv[1] === import.meta.filen
         const { runCommands } = await import('./local-verify.mjs');
         const selector = { ...await import(work.selectorUrl), selectorUrl: work.selectorUrl, reporterUrl: work.reporterUrl };
         const { main, logFile, resultFile } = work.verify;
-        writeFileSync(resultFile, JSON.stringify(runCommands(selector, suite, root, main, logFile)));
+        writeFileSync(resultFile, JSON.stringify(runCommands(selector, suite, root, main, logFile, { additions: work.verify.additions !== false })));
       } else {
         const { executeSuite } = await import(work.selectorUrl);
         const status = executeSuite(suite, { root, captureKnown: work.captureKnown, keep: work.keep, files: work.files });

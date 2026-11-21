@@ -1277,7 +1277,7 @@ const unitTestFilesWith = (cwd, env) => () => {
 // main. Each result: the exit status (128 for a signal, null when it could not
 // start), the command's test report (read as runSuite reads it, files relative
 // to root) and its known-failure key.
-export function runCommands(selector, id, root, main, logFile, { spawn = spawnSync, env = process.env, kill = killUnder } = {}) {
+export function runCommands(selector, id, root, main, logFile, { spawn = spawnSync, env = process.env, kill = killUnder, additions = true } = {}) {
   // Whatever env the caller passes (the in-process path on Linux and in Actions), the listing and each command get the
   // test environment, made for each child so a changed identity is not handed on (Codex reviews of 2ee162c2, high 1 and
   // second review medium 1).
@@ -1287,15 +1287,19 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
   const results = [];
   try {
     // As runSuite: main's commands, then those the change adds to the suite (a main predating that has only its own list).
-    // Compared with the loaded file of main's selector, whichever module defines requiredCommands.
+    // Compared with the loaded file of main's selector, whichever module defines requiredCommands. Run on main to compare
+    // (additions false), only main's own commands: main adds nothing to its own list.
     const trusted = selector.selectorUrl ? { trusted: fileURLToPath(selector.selectorUrl) } : {};
-    const commands = selector.requiredCommands?.(id, root, { baseline: selector.SUITE_COMMANDS[id], ...trusted }) ?? selector.SUITE_COMMANDS[id];
+    const commands = additions && selector.requiredCommands
+      ? selector.requiredCommands(id, root, { baseline: selector.SUITE_COMMANDS[id], ...trusted }) : selector.SUITE_COMMANDS[id];
     for (const command of commands) {
       const index = results.length;
       const cwd = path.join(root, command.cwd);
       const known = command.known ?? null;
       try {
-        const [program, ...args] = selector.expandArgv(command.argv, { cwd, base: main, report: path.join(temporary, `${id}-report.json`),
+        // commandArgv runs only the test files an added command adds to a trusted one (a main predating it has none such).
+        const argvOf = selector.commandArgv ?? ((it, options) => selector.expandArgv(it.argv, options));
+        const [program, ...args] = argvOf(command, { cwd, base: main, report: path.join(temporary, `${id}-report.json`),
           listUnit: unitTestFilesWith(cwd, env) });
         const reported = withFailureReport(program, args, { known: Boolean(known), reporterUrl: selector.reporterUrl,
           file: path.join(temporary, `command-${index}.jsonl`) });
@@ -1338,9 +1342,9 @@ class LocalSuiteTimeout extends Error {
 
 // The comparison runner needs every command result, so its worker uses
 // runCommands directly inside the same process-tree guard as the selector.
-async function runVerificationSuite(selector, id, root, main, logFile, env) {
+async function runVerificationSuite(selector, id, root, main, logFile, env, { additions = true } = {}) {
   if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS === 'true') {
-    return runCommands(selector, id, root, main, logFile, { env });
+    return runCommands(selector, id, root, main, logFile, { env, additions });
   }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
   const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
@@ -1348,7 +1352,7 @@ async function runVerificationSuite(selector, id, root, main, logFile, env) {
   try {
     const status = await withLocalSuiteSlot(id, {
       root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
-      work: { selectorUrl: selector.selectorUrl, reporterUrl: selector.reporterUrl, verify: { main, logFile, resultFile } },
+      work: { selectorUrl: selector.selectorUrl, reporterUrl: selector.reporterUrl, verify: { main, logFile, resultFile, additions } },
     });
     if (status === LOCAL_TIMEOUT_EXIT) throw new LocalSuiteTimeout(id, status);
     if (status !== 0) throw new Error(`${id}: local suite guard exited ${status}; see its output`);
@@ -1477,7 +1481,7 @@ function mainResults(selector, id, { root, main, home, logFile, env, freshBase, 
     return withLock(home, worktreeLock(worktreePath(root, main, home)), async () => {
       const dir = worktree(root, main, home);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
-      const results = await runVerificationSuite(selector, id, dir, main, logFile, env);
+      const results = await runVerificationSuite(selector, id, dir, main, logFile, env, { additions: false });
       writeCached(cache, results);
       return results;
     }, { what: `the worktree of main ${main.slice(0, 12)}`, log });

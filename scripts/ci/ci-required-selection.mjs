@@ -595,16 +595,55 @@ export function filterCommand(command, argv, named) {
   return result;
 }
 
+// The test files a candidate command only adds to a trusted command of the same directory: the trusted argv is a
+// subsequence of the candidate's and every other element is a new test file operand, as --run-files recognises one
+// (filterCommand). Null for any other change (a switch, a changed or removed element): that command is added whole.
+function addedTestFiles(command, baseline) {
+  for (const trusted of baseline) {
+    if (trusted.cwd !== command.cwd) continue;
+    const extra = [];
+    let next = 0;
+    for (const arg of command.argv) {
+      if (next < trusted.argv.length && arg === trusted.argv[next]) next += 1;
+      else extra.push(arg);
+    }
+    if (next < trusted.argv.length || extra.length === 0 || new Set(extra).size !== extra.length) continue;
+    if (extra.some((arg) => arg.startsWith('-') || /^\{.*\}$/.test(arg) || trusted.argv.includes(arg))) continue;
+    const files = extra.map((arg) => path.posix.join(command.cwd, posixPath(arg)));
+    const { runs, matched } = filterCommand(command, command.argv, new Set(files));
+    if (runs.length === 1 && matched.length === new Set(files).size) return files;
+  }
+  return null;
+}
+
+// The argv a suite command runs: its placeholders expanded and, for a command that only adds test files to a trusted one
+// (requiredCommands), just those files, planned as --run-files plans them.
+export function commandArgv(command, options) {
+  const argv = expandArgv(command.argv, options);
+  if (!command.files) return argv;
+  const [only] = filterCommand(command, argv, new Set(command.files)).runs;
+  if (!only) throw new Error(`cannot run only the added test files of (${command.cwd}) ${command.argv.join(' ')}`);
+  return only;
+}
+
 // Gap A (FABLE r8 B2): the trusted list first, in its order and with its policy, even if the PR removes or replaces a
 // command; then the commands the candidate's selector adds to the suite. Reading the candidate is lazy: only after the
-// baseline commands have run. A separate, read-only Node process (no environment; it may read only the candidate's
-// scripts/ci, where the selector and the modules it imports live) exports the candidate's list; candidate code never runs
-// inside the process that decides which commands passed. A checkout without the selector adds nothing.
+// baseline commands have run, and always when the candidate's selector is another file: its bytes say nothing about the
+// modules it imports. A separate Node process (no environment) exports the candidate's list, and only what it prints, once
+// validated here, can add a command; candidate code never runs inside the process that decides which commands passed. It
+// is not a read boundary (the permission model follows symbolic links, the network is open): the suite commands run the
+// candidate's code anyway. A candidate command that only adds test files to a trusted command runs just those files, and
+// none carries a policy. A checkout without scripts/ci adds nothing; one with scripts/ci but no selector moved or deleted
+// it, so what it adds cannot be read and the suite fails.
 export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], trusted = fileURLToPath(import.meta.url) } = {}) {
   if (!Array.isArray(baseline)) throw new Error(`unknown suite: ${id}`);
   yield* baseline;
   const candidate = path.resolve(root, 'scripts/ci/ci-required-selection.mjs');
-  if (candidate === path.resolve(trusted) || !existsSync(candidate) || readFileSync(candidate).equals(readFileSync(trusted))) return;
+  if (real(candidate) === real(trusted)) return;
+  if (!existsSync(candidate)) {
+    if (!existsSync(path.dirname(candidate))) return;
+    throw new Error(`the candidate has scripts/ci but no ci-required-selection.mjs: the commands it adds to ${id} cannot be read`);
+  }
   const read = spawnSync(process.execPath, ['--permission', `--allow-fs-read=${path.dirname(candidate)}`, '--input-type=module', '-e',
     'const {SUITE_COMMANDS} = await import(process.argv[1]); process.stdout.write(JSON.stringify(SUITE_COMMANDS[process.argv[2]] ?? []));',
     pathToFileURL(candidate).href, id], { cwd: root, env: {}, encoding: 'utf8', timeout: 10_000, windowsHide: true });
@@ -626,7 +665,8 @@ export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], tru
     }
     seen.add(identity);
     // Only the trusted list can attach a known-failure allowance (or any other policy) to a command.
-    yield { cwd, argv };
+    const files = addedTestFiles({ cwd, argv }, baseline);
+    yield files ? { cwd, argv, files } : { cwd, argv };
   }
 }
 
@@ -652,7 +692,8 @@ export function planFiles(id, { root, files, env = process.env }) {
     const cwd = path.join(root, command.cwd);
     // {base} is not a test file; a placeholder keeps commands that need it plannable (they are skipped).
     const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA || 'unset', report });
-    const filtered = filterCommand(command, argv, named);
+    // A command that only adds test files to a trusted one runs no other file (the trusted command runs those).
+    const filtered = filterCommand(command, argv, command.files ? new Set(command.files.filter((file) => named.has(file))) : named);
     accepts.push(...filtered.accepts);
     filtered.matched.forEach((file) => matched.add(file));
     steps.push(...filtered.runs.map((run) => ({ command, argv: run })));
@@ -710,7 +751,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    let argv = planned ?? expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report });
+    let argv = planned ?? commandArgv(command, { cwd, base: env.CI_BASE_SHA, report });
     let reportDir = null;
     if (command.known) {
       reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
