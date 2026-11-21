@@ -1,5 +1,5 @@
-// The drill's read-only guest probe (Fable ruling 0e418483, phase B image id, 4.3): after the launcher stage and before the checkpoint is
-// restored, whether the first install passed or failed, one read-only pass over the guest's WSL: the docker storage, the image list, each
+// The drill's read-only guest probe (Fable ruling 0e418483, phase B image id, 4.3): after every required piece of the first install's evidence
+// and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the guest's WSL: the docker storage, the image list, each
 // kit image's .Id and RepoDigests, the sha256 and package version of the files the inventory names, systemctl --failed. The answers are
 // kept raw in stage-evidence.json ('guest-probe') and never judged; a probe that cannot run is recorded and changes nothing else.
 // No VM is touched: the guest side runs against a fake wsl.exe; no test here depends on the wall clock.
@@ -101,13 +101,15 @@ test('the kit image ids come from the release files the drill already holds', op
 
 // A fake wsl.exe, a real console program (a .cmd would let cmd.exe read the | and && of a script argument): it appends each call's arguments
 // (separated by U+001F, one call per line) to calls.txt beside it and answers by the script text; FAKE_FAIL is a substring of a script
-// whose command exits 7 with "boom" on stderr.
+// whose command exits 7 with "boom" on stderr; FAKE_SLEEP is one whose command first sleeps FAKE_SLEEP_MS.
 const FAKE_WSL_CS = `using System; using System.IO;
 public static class P { public static int Main(string[] a) {
   string dir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
   File.AppendAllText(Path.Combine(dir, "calls.txt"), string.Join("\\u001f", a) + "\\n");
   int c = Array.IndexOf(a, "-c"); string s = (c >= 0 && c + 1 < a.Length) ? a[c + 1] : "";
   int u = Array.IndexOf(a, "_"); string rest = (u >= 0) ? string.Join(",", a, u + 1, a.Length - u - 1) : "";
+  string sleep = Environment.GetEnvironmentVariable("FAKE_SLEEP");
+  if (!string.IsNullOrEmpty(sleep) && s.Contains(sleep)) System.Threading.Thread.Sleep(int.Parse(Environment.GetEnvironmentVariable("FAKE_SLEEP_MS")));
   string fail = Environment.GetEnvironmentVariable("FAKE_FAIL");
   if (!string.IsNullOrEmpty(fail) && s.Contains(fail)) { Console.Error.WriteLine("boom"); return 7; }
   Console.Out.WriteLine("ANSWER " + s.Split(' ')[0] + " " + rest); return 0; } }`;
@@ -133,10 +135,11 @@ test('the guest side runs every command apart, as root, with a clean environment
   assert.equal(r.distribution, 'CluedResident-Linux');
   assert.equal(r.at, undefined, 'no clock read in the guest: the host stamps the record');
   const ids = r.commands.map(x => x.id);
-  const FIXED_HEAD = ['docker-driver', 'docker-driver-status', 'docker-info-json', 'docker-image-ls', 'docker-image-inspect-all'];
-  const FIXED_TAIL = ['systemd-failed', 'systemd-is-system-running', 'systemd-version', 'runner-service-enabled', 'guest-nproc', 'guest-meminfo', 'guest-uname',
+  const DOCKER = ['docker-driver', 'docker-driver-status', 'docker-info-json', 'docker-image-ls', 'docker-image-inspect-all'];
+  const SYSTEM = ['systemd-failed', 'systemd-is-system-running', 'systemd-version', 'runner-service-enabled', 'guest-nproc', 'guest-meminfo', 'guest-uname',
     'systemd-verify:clued-ci-worker@.service', 'systemd-verify:clued-ci-wsprep@.service', 'systemd-verify:clued-ci-archive@.service'];
-  assert.deepEqual(ids, [...FIXED_HEAD, `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`, 'file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', ...FIXED_TAIL]);
+  // the readings a docker stuck in activating cannot hold up come first; every docker command last (review F2)
+  assert.deepEqual(ids, ['file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', ...SYSTEM, ...DOCKER, `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`]);
   assert.ok(r.commands.every(x => x.exit === 0 && x.error === null && typeof x.stdout === 'string' && x.stdout.startsWith('ANSWER')));
   const calls = w.calls();
   assert.equal(calls.length, ids.length);
@@ -144,7 +147,7 @@ test('the guest side runs every command apart, as root, with a clean environment
     assert.deepEqual(a.slice(0, 5), ['-d', 'CluedResident-Linux', '-u', 'root', '--exec']);
     assert.deepEqual(a.slice(5, 9), ['/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C']);
   }
-  assert.deepEqual(calls[5].slice(-2), ['_', `sha256:${HEX_A}`], 'a reference travels as an argument');
+  assert.deepEqual(calls[ids.indexOf(`image:sha256:${HEX_A}`)].slice(-2), ['_', `sha256:${HEX_A}`], 'a reference travels as an argument');
 });
 
 test('one command failing, or wsl itself missing, stops nothing and throws nothing', opts, () => {
@@ -170,103 +173,180 @@ test('the guest side does nothing when it is not handed a plan', opts, () => {
   assert.deepEqual(w.calls(), []);
 });
 
-// Save-DrillStageEvidence with the guest stubbed: the stage files come from a directory, the probe from the stub.
+// Save-DrillGuestEvidence with the guest stubbed: the stage files and the guest's first-install.log come from a directory, the probe from
+// the stub. Review F1 of the r8 fixups: the probe is an extra and runs only after every required piece has been taken and written.
 function guestWork(name, files) {
   const dir = path.join(tmp, name); fs.mkdirSync(dir, { recursive: true });
   for (const [n, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), text);
   return dir;
 }
 const LAUNCHER_FAILED = JSON.stringify({ exit: 1, terminal: { status: 'BOOTSTRAP_REFUSED', code: 'LAUNCHER_STAGE_FAILED' } });
+const ENTRY_LOG = { 'first-install.stdout.log': '{"name":"prepare","result":"ok","rejectCode":null,"detail":null}\r\n' };
 const PROBE = { schema: 'clued.drill.guest-probe/1', distribution: 'CluedResident-Linux',
   commands: [{ id: 'docker-driver', script: 's', args: [], exit: 0, error: null, stdout: '"overlayfs"\n', stderr: '' }] };
-// A stub for Invoke-DrillGuest: the stage-file reader runs over the directory, the probe call is answered by $probeAnswer.
-const stub = (work, probeAnswer) => `
-  $script:probeCalls = New-Object Collections.Generic.List[string]
+// A stub for Invoke-DrillGuest: every file reader runs over the directory (the stage files, the entry log, the probe's own spool), the probe
+// call is answered by $probeAnswer; $failStep names a step whose guest cannot be reached.
+const stub = (work, probeAnswer, failStep = '') => `
+  $script:steps = New-Object Collections.Generic.List[string]; $script:probeTimeout = $null; $script:evidenceBeforeProbe = $null
   function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
-    if ($Step -ceq 'guest-probe') { $script:probeCalls.Add('probe'); $script:probeTimeout = $TimeoutMinutes; ${probeAnswer} }
-    else { $script:probeCalls.Add('files'); & $Script ${q(work)} $ArgumentList[1] } }`;
+    $script:steps.Add($Step)
+    if ($Step -ceq ${q(failStep)}) { throw (New-DrillError 'DRILL_GUEST_NOT_READY_IN_TIME' @{ step = $Step }) }
+    if ($Step -ceq 'guest-probe') { $script:probeTimeout = $TimeoutMinutes; $script:evidenceBeforeProbe = (Test-Path -LiteralPath (Join-Path $script:runDir 'guest-evidence.json')); ${probeAnswer} }
+    else { & $Script ${q(work)} $ArgumentList[1] } }`;
+const save = (work, runDir, probeAnswer, failStep = '', extra = '') => ps(`$script:runDir = ${q(runDir)}
+  ${stub(work, probeAnswer, failStep)}
+  ${extra}
+  $script:DrillProbeImageIds = @(); $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+  [ordered]@{ steps = @($script:steps); probeTimeout = $script:probeTimeout; evidenceBeforeProbe = $script:evidenceBeforeProbe; record = $c.record }`);
+const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
+const runDirOf = (name) => { const d = path.join(tmp, name); fs.mkdirSync(d, { recursive: true }); return d; };
+const PROBE_ANSWER = `${q(JSON.stringify(PROBE))} | ConvertFrom-Json`;
 
-test('the required stage files are taken first, then the probe (5 minutes at most), on a failed launcher too; it lands in stage-evidence.json', opts, () => {
-  const work = guestWork('save-failed-guest', { 'launcher-result.json': LAUNCHER_FAILED });
-  const runDir = path.join(tmp, 'save-failed-run'); fs.mkdirSync(runDir, { recursive: true });
-  const r = ps(`${stub(work, `${q(JSON.stringify(PROBE))} | ConvertFrom-Json`)}
-    $script:DrillProbeImageIds = @(); $c = Save-DrillStageEvidence ${q(runDir)} $null
-    [ordered]@{ order = @($script:probeCalls); probeTimeout = $script:probeTimeout; probeState = $c.record.probe.state; collection = $c.record.collection; launcher = $c.record.files['launcher-result.json'].state }`);
-  assert.deepEqual(r.order, ['files', 'probe'], 'the required evidence first: a guest that hangs must not eat its time');
+test('every required piece is taken first -- the stage files, the guest first-install.log, the launcher read-back -- then the probe (5 minutes at most), on a failed launcher too', opts, () => {
+  const work = guestWork('save-failed-guest', { 'launcher-result.json': LAUNCHER_FAILED, ...ENTRY_LOG });
+  const runDir = runDirOf('save-failed-run');
+  const r = save(work, runDir, PROBE_ANSWER);
+  assert.deepEqual(r.steps, ['stage-files', 'guest-evidence', 'guest-probe'], 'a guest that hangs must not eat the time of the required evidence');
+  assert.equal(r.evidenceBeforeProbe, true, 'guest-evidence.json is written before the probe is asked');
   assert.equal(r.probeTimeout, 5, 'the probe is an extra: its outer bound is 5 minutes');
-  assert.equal(r.probeState, 'saved');
-  assert.equal(r.collection, null);
-  assert.equal(r.launcher, 'saved');
-  const ev = JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'));
+  assert.equal(r.record.entryLog, 'guest-log');
+  assert.equal(r.record.launcherReadback.ok, true);
+  assert.equal(readJson(path.join(runDir, 'stage-files.json')).probe.state, 'saved');
+  const ev = readJson(path.join(runDir, 'stage-evidence.json'));
   assert.deepEqual(ev['guest-probe'], PROBE);
   assert.equal(ev['launcher-result.json'].terminal.code, 'LAUNCHER_STAGE_FAILED');
 });
 
 test('with no stage result read, the probe is kept apart and no stage-evidence.json is made from it', opts, () => {
-  const work = guestWork('save-noresult-guest', { 'stage-timings.json': '{}' });
-  const runDir = path.join(tmp, 'save-noresult-run'); fs.mkdirSync(runDir, { recursive: true });
-  const r = ps(`${stub(work, `${q(JSON.stringify(PROBE))} | ConvertFrom-Json`)}
-    $script:DrillProbeImageIds = @(); $c = Save-DrillStageEvidence ${q(runDir)} $null
-    [ordered]@{ probe = $c.record.probe.state }`);
-  assert.equal(r.probe, 'saved-apart');
+  const work = guestWork('save-noresult-guest', { 'stage-timings.json': '{}', ...ENTRY_LOG });
+  const runDir = runDirOf('save-noresult-run');
+  save(work, runDir, PROBE_ANSWER);
+  assert.equal(readJson(path.join(runDir, 'stage-files.json')).probe.state, 'saved-apart');
   assert.ok(!fs.existsSync(path.join(runDir, 'stage-evidence.json')), 'the abort evidence reads its presence: the probe alone must not create it');
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(runDir, 'guest-probe.json'), 'utf8')), PROBE);
+  assert.deepEqual(readJson(path.join(runDir, 'guest-probe.json')), PROBE);
 });
 
-test('the late probe has the same 5-minute outer bound', opts, () => {
-  const text = fs.readFileSync(script, 'utf8');
-  const fn = text.slice(text.indexOf('function Invoke-DrillGuestProbe'), text.indexOf('function Save-DrillLateProbe'));
-  assert.match(fn, /-TimeoutMinutes 5 -Step/);
-  assert.doesNotMatch(fn, /-TimeoutMinutes 20/);
+test('a guest that could not be reached for the stage files or the entry log is not asked for the probe', opts, () => {
+  for (const failStep of ['stage-files', 'guest-evidence']) {
+    const work = guestWork(`save-unreachable-${failStep}-guest`, { 'launcher-result.json': LAUNCHER_FAILED, ...ENTRY_LOG });
+    const runDir = runDirOf(`save-unreachable-${failStep}-run`);
+    const r = save(work, runDir, PROBE_ANSWER, failStep);
+    assert.ok(!r.steps.includes('guest-probe'), `${failStep}: no probe, no second readiness wait`);
+    assert.equal(r.record.ok, false);
+    const probe = readJson(path.join(runDir, 'stage-files.json')).probe;
+    assert.equal(probe.state, 'not-run', failStep);
+    assert.equal(probe.code, 'DRILL_PROBE_SKIPPED_COLLECTION_FAILED', failStep);
+    assert.ok(!fs.existsSync(path.join(runDir, 'guest-probe.json')));
+  }
 });
 
 test('a probe that fails, throws or answers nonsense changes nothing else', opts, () => {
   const base = (name, answer) => {
-    const work = guestWork(`save-${name}-guest`, { 'launcher-result.json': LAUNCHER_FAILED, 'stage-timings.json': '{"host":1}' });
-    const runDir = path.join(tmp, `save-${name}-run`); fs.mkdirSync(runDir, { recursive: true });
-    const r = ps(`${stub(work, answer)}
-      $script:DrillProbeImageIds = @(); $c = Save-DrillStageEvidence ${q(runDir)} $null
-      [ordered]@{ probe = $c.record.probe; collection = $c.record.collection; files = $c.record.files; keys = @($c.stageEvidence.Keys) }`);
-    const ev = JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'));
-    return { r, ev };
+    const work = guestWork(`save-${name}-guest`, { 'launcher-result.json': LAUNCHER_FAILED, 'stage-timings.json': '{"host":1}', ...ENTRY_LOG });
+    const runDir = runDirOf(`save-${name}-run`);
+    const r = save(work, runDir, answer);
+    return { r, ev: readJson(path.join(runDir, 'stage-evidence.json')), rec: readJson(path.join(runDir, 'stage-files.json')), ge: readJson(path.join(runDir, 'guest-evidence.json')) };
   };
   const thrown = base('thrown', `throw (New-DrillError 'DRILL_GUEST_STEP_FAILED')`);
   const nonsense = base('nonsense', `[ordered]@{ schema = 'something-else' }`);
   const nothing = base('nothing', `$null`);
-  const clean = base('clean', `$null`);
-  assert.equal(thrown.r.probe.state, 'not-run');
-  assert.equal(thrown.r.probe.code, 'DRILL_GUEST_STEP_FAILED');
-  assert.equal(nonsense.r.probe.state, 'not-run');
-  assert.equal(nothing.r.probe.state, 'not-run');
+  const clean = base('clean', PROBE_ANSWER);
+  assert.equal(thrown.rec.probe.state, 'not-run');
+  assert.equal(thrown.rec.probe.code, 'DRILL_GUEST_STEP_FAILED');
+  assert.equal(nonsense.rec.probe.state, 'not-run');
+  assert.equal(nothing.rec.probe.state, 'not-run');
   for (const x of [thrown, nonsense, nothing]) {
-    assert.equal(x.r.collection, null, 'the stage-file collection is not marked failed by a probe');
-    assert.deepEqual(x.r.files, clean.r.files, 'every stage file keeps its own state');
+    assert.equal(x.rec.collection, null, 'the stage-file collection is not marked failed by a probe');
+    assert.deepEqual(x.rec.files, clean.rec.files, 'every stage file keeps its own state');
+    assert.deepEqual([x.ge.ok, x.ge.missing, x.ge.entryLog, x.ge.launcherReadback], [clean.ge.ok, clean.ge.missing, clean.ge.entryLog, clean.ge.launcherReadback], 'the guest evidence record is the same');
     assert.equal(x.ev['guest-probe'], undefined, 'nothing is written from nothing');
     assert.equal(x.ev['launcher-result.json'].terminal.code, 'LAUNCHER_STAGE_FAILED');
   }
 });
 
 test('a plan the drill cannot build is recorded as not run and the guest is not asked', opts, () => {
-  const work = guestWork('save-noplan-guest', { 'launcher-result.json': LAUNCHER_FAILED });
-  const runDir = path.join(tmp, 'save-noplan-run'); fs.mkdirSync(runDir, { recursive: true });
-  const r = ps(`${stub(work, `${q(JSON.stringify(PROBE))} | ConvertFrom-Json`)}
-    function Read-DrillProbeFiles { throw (New-DrillError 'DRILL_PROBE_FILES_REFUSED') }
-    $script:DrillProbeImageIds = @(); $c = Save-DrillStageEvidence ${q(runDir)} $null
-    [ordered]@{ order = @($script:probeCalls); probe = $c.record.probe; launcher = $c.record.files['launcher-result.json'].state }`);
-  assert.deepEqual(r.order, ['files']);
-  assert.equal(r.probe.state, 'not-run');
-  assert.equal(r.probe.code, 'DRILL_PROBE_FILES_REFUSED');
-  assert.equal(r.launcher, 'saved');
+  const work = guestWork('save-noplan-guest', { 'launcher-result.json': LAUNCHER_FAILED, ...ENTRY_LOG });
+  const runDir = runDirOf('save-noplan-run');
+  const r = save(work, runDir, PROBE_ANSWER, '', `function Read-DrillProbeFiles { throw (New-DrillError 'DRILL_PROBE_FILES_REFUSED') }`);
+  assert.deepEqual(r.steps, ['stage-files', 'guest-evidence']);
+  const probe = readJson(path.join(runDir, 'stage-files.json')).probe;
+  assert.equal(probe.state, 'not-run');
+  assert.equal(probe.code, 'DRILL_PROBE_FILES_REFUSED');
+  assert.equal(r.record.launcherReadback.ok, true);
 });
 
-test('the run hands the probe the kit images it carries, before the guest evidence is taken', opts, () => {
+test('the run hands the probe the kit images it carries; the probe is called once, from Save-DrillGuestEvidence, after everything it reads', opts, () => {
   const text = fs.readFileSync(script, 'utf8');
   const run = text.slice(text.indexOf('function Invoke-DrillRun'), text.indexOf('function Save-DrillGuestEvidence'));
   const ids = run.indexOf('$script:DrillProbeImageIds = '), entry = run.indexOf('$entryOut = $null');
   assert.ok(ids > 0 && entry > ids, 'set before the first install starts, so every end of it finds it');
   assert.match(run.slice(ids, entry), /Get-DrillKitImageIds/);
-  // the probe lives only in the stage evidence collection, which Save-DrillGuestEvidence runs on every end, before the checkpoint restore
-  assert.match(text.slice(text.indexOf('function Save-DrillGuestEvidence')), /\$stage = Save-DrillStageEvidence/);
+  const stage = text.slice(text.indexOf('function Save-DrillStageEvidence'), text.indexOf('# A1\'s kit entry in the guest'));
+  assert.doesNotMatch(stage, /Invoke-DrillGuestProbe|Save-DrillProbe/, 'the stage-file collection no longer runs the probe');
+  const ge = text.slice(text.indexOf('function Save-DrillGuestEvidence'));
+  const call = ge.indexOf("Save-DrillProbe $RunDir $Cred 'main'");
+  assert.ok(call > 0 && ge.split("Save-DrillProbe $RunDir $Cred 'main'").length === 2, 'one call');
+  for (const before of ["-Step 'guest-evidence'", 'launcherReadback = [ordered]@{ ok = $true', "Write-DrillJson (Join-Path $RunDir 'guest-evidence.json') $record"]) {
+    assert.ok(ge.indexOf(before) > 0 && ge.indexOf(before) < call, `after: ${before}`);
+  }
+});
+
+// ---- review F2 of the r8 fixups: the probe keeps what it read when a command hangs ----
+
+test('the guest side bounds each command and stops after two timeouts: a docker that hangs costs only the docker readings', opts, () => {
+  const w = fakeWsl('guest-hang');
+  const plan = ps(`New-DrillProbePlan -Commands @() -Spool 'C:\\x\\y.jsonl'`);
+  assert.equal(plan.commandSeconds, 30, 'one command at most 30 seconds');
+  assert.equal(plan.maxTimeouts, 2, 'no command is started after two have timed out');
+  assert.ok(plan.maxTimeouts * plan.commandSeconds < 5 * 60, 'so a hung docker leaves the guest answering inside the 5-minute outer bound');
+  const r = ps(`$env:FAKE_SLEEP = 'docker'; $env:FAKE_SLEEP_MS = '2500'
+    $plan = New-DrillProbePlan -Commands (Get-DrillProbeCommands ${PLAN_ARGS}) -WslExe ${q(w.cmd)} -CommandSeconds 1
+    & $script:GuestInspect $plan $script:DrillNativeText`);
+  const ids = commandsOf().map(x => x.id);
+  assert.deepEqual(r.commands.map(x => x.id), ids, 'every command has its entry');
+  const isDocker = (x) => /^(docker-|image:)/.test(x.id);
+  const docker = r.commands.filter(isDocker), rest = r.commands.filter(x => !isDocker(x));
+  assert.ok(rest.length >= 12 && rest.every(x => x.exit === 0 && x.stdout.startsWith('ANSWER')), 'the file and systemd readings are kept');
+  assert.deepEqual(docker.map(x => x.error.startsWith('COMMAND_TIMEOUT') ? 'timeout' : x.error), ['timeout', 'timeout', ...docker.slice(2).map(() => 'PROBE_STOPPED_AFTER_TIMEOUTS')],
+    'two docker readings time out; none is started after them, each says why it has no answer');
+  assert.ok(docker.every(x => x.exit === null));
+});
+
+test('the guest writes each command result to its spool as it completes', opts, () => {
+  const w = fakeWsl('guest-spool');
+  const spool = path.join(tmp, 'guest-spool', 'probe.jsonl');
+  fs.writeFileSync(spool, '{"id":"stale"}\n');
+  const r = ps(`$plan = New-DrillProbePlan -Commands (Get-DrillProbeCommands ${PLAN_ARGS}) -WslExe ${q(w.cmd)} -Spool ${q(spool)}
+    & $script:GuestInspect $plan $script:DrillNativeText`);
+  const lines = fs.readFileSync(spool, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+  assert.deepEqual(lines.map(x => x.id), r.commands.map(x => x.id), 'one line per command, in order; a stale spool is not kept');
+  assert.deepEqual(lines.map(x => [x.exit, x.stdout]), r.commands.map(x => [x.exit, x.stdout]));
+});
+
+test('a probe cut by its outer bound keeps what the guest had spooled; a guest that is not reachable is not asked again', opts, () => {
+  const L1 = { id: 'file:/usr/bin/python3.12', script: 's', args: ['/usr/bin/python3.12'], exit: 0, error: null, stdout: 'abc  /usr/bin/python3.12\n', stderr: '' };
+  const L2 = { id: 'systemd-failed', script: 's', args: [], exit: 0, error: null, stdout: '0 loaded units listed.\n', stderr: '' };
+  const spoolText = JSON.stringify(L1) + '\n' + JSON.stringify(L2) + '\n{"id":"docker-dri';
+  const cut = (work, code) => `[IO.File]::WriteAllText((Join-Path ${q(work)} ([IO.Path]::GetFileName([string]$ArgumentList[0]['spool']))), ${q(spoolText)}); throw (New-DrillError ${q(code)} @{ step = $Step })`;
+  const work = guestWork('save-cut-guest', { 'launcher-result.json': LAUNCHER_FAILED, ...ENTRY_LOG });
+  const runDir = runDirOf('save-cut-run');
+  const r = save(work, runDir, cut(work, 'DRILL_GUEST_STEP_TIMEOUT'));
+  assert.deepEqual(r.steps, ['stage-files', 'guest-evidence', 'guest-probe', 'guest-probe-partial']);
+  const probe = readJson(path.join(runDir, 'stage-files.json')).probe;
+  assert.equal(probe.state, 'saved');
+  assert.equal(probe.code, 'DRILL_GUEST_STEP_TIMEOUT', 'the cut is named');
+  assert.equal(probe.partial, true);
+  const got = readJson(path.join(runDir, 'stage-evidence.json'))['guest-probe'];
+  assert.equal(got.schema, 'clued.drill.guest-probe/1');
+  assert.equal(got.partial, true);
+  assert.equal(got.cutLines, 1, 'a line cut mid-write is counted, never read');
+  assert.deepEqual(got.commands, [L1, L2]);
+
+  const work2 = guestWork('save-gone-guest', { 'launcher-result.json': LAUNCHER_FAILED, ...ENTRY_LOG });
+  const runDir2 = runDirOf('save-gone-run');
+  const r2 = save(work2, runDir2, cut(work2, 'DRILL_GUEST_NOT_READY_IN_TIME'));
+  assert.deepEqual(r2.steps, ['stage-files', 'guest-evidence', 'guest-probe'], 'no partial read from a guest that did not answer');
+  assert.equal(readJson(path.join(runDir2, 'stage-files.json')).probe.state, 'not-run');
 });
 
 // ---- the two offline inventories' "needs a guest reading" sections, and the late worker-instance start (Fable ruling addenda) ----

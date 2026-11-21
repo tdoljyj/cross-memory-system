@@ -2608,7 +2608,8 @@ function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [Da
 }
 
 # ---- The read-only guest probe (Fable ruling 0e418483, phase B image id, 4.3) ----------------------------------------------------------
-# After the launcher stage's files are taken and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the
+# After every required piece of the first install's evidence is taken (the stage files, the guest's first-install.log, the launcher read-back;
+# Save-DrillGuestEvidence) and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the
 # guest's WSL distribution: the docker storage (Driver, DriverStatus), the image list, each kit image's .Id and RepoDigests, the sha256 and
 # package version of every file the inventory names, systemctl --failed. The answers are kept raw in stage-evidence.json ('guest-probe'),
 # never judged, and the probe is no part of the candidate's behaviour: a probe that cannot be built, cannot reach the guest, or answers
@@ -2668,13 +2669,9 @@ docker image inspect --format '{{.Id}} {{json .RepoDigests}}' "$1"
 ids=$(docker image ls -aq --no-trunc | sort -u); [ -z "$ids" ] || docker image inspect --format '{{.Id}} {{json .RepoDigests}} os={{.Os}} env={{json .Config.Env}} volumes={{json .Config.Volumes}}' $ids
 '@.Trim()
   $verifyScript = 'systemd-analyze verify "$1"; echo "verify-exit=$?"'
+  # every docker command last: a docker.service stuck in activating holds each docker call to its bound, and must not take the readings
+  # that do not need docker with it (r8 fixup review F2)
   $c = New-Object Collections.Generic.List[object]
-  $c.Add((& $one 'docker-driver' "docker info --format '{{json .Driver}}'"))
-  $c.Add((& $one 'docker-driver-status' "docker info --format '{{json .DriverStatus}}'"))
-  $c.Add((& $one 'docker-info-json' "docker info --format '{{json .}}'"))
-  $c.Add((& $one 'docker-image-ls' 'docker image ls --no-trunc --digests'))
-  $c.Add((& $one 'docker-image-inspect-all' $inspectAll))
-  foreach ($r in @($ImageIds)) { $c.Add((& $one "image:$r" $inspectScript @($r))) }
   foreach ($p in @($Files)) { $c.Add((& $one "file:$p" $fileScript @($p))) }
   $c.Add((& $one 'systemd-failed' 'systemctl --failed --no-pager --plain'))
   $c.Add((& $one 'systemd-is-system-running' 'systemctl is-system-running'))
@@ -2684,6 +2681,12 @@ ids=$(docker image ls -aq --no-trunc | sort -u); [ -z "$ids" ] || docker image i
   $c.Add((& $one 'guest-meminfo' "grep -E 'MemTotal|SwapTotal' /proc/meminfo"))
   $c.Add((& $one 'guest-uname' 'uname -r'))
   foreach ($u in $script:ProbeUnits) { $c.Add((& $one "systemd-verify:$u" $verifyScript @("/etc/systemd/system/$u"))) }
+  $c.Add((& $one 'docker-driver' "docker info --format '{{json .Driver}}'"))
+  $c.Add((& $one 'docker-driver-status' "docker info --format '{{json .DriverStatus}}'"))
+  $c.Add((& $one 'docker-info-json' "docker info --format '{{json .}}'"))
+  $c.Add((& $one 'docker-image-ls' 'docker image ls --no-trunc --digests'))
+  $c.Add((& $one 'docker-image-inspect-all' $inspectAll))
+  foreach ($r in @($ImageIds)) { $c.Add((& $one "image:$r" $inspectScript @($r))) }
   return $c.ToArray()
 }
 $script:ProbeUnits = @('clued-ci-worker@.service', 'clued-ci-wsprep@.service', 'clued-ci-archive@.service')
@@ -2700,36 +2703,52 @@ n="$1"; d=/var/lib/clued-independent-ci-trivy-cache; stat -c '%U:%G:%a:%F' -- "$
   return @([ordered]@{ id = 'trivy-cache-by-rejected-worker'; script = $s; args = [string[]]@($script:ProbeLateInstance) })
 }
 
-function New-DrillProbePlan($Commands, [string]$WslExe = '', [switch]$Windows) {
-  [ordered]@{ distribution = $script:Drill.ProbeDistribution; wslExe = $WslExe; commands = @($Commands); windows = [bool]$Windows }
+# The bounds (r8 fixup review F2), without reading a clock in the guest: one command at most CommandSeconds; once MaxTimeouts commands
+# have run into that bound (a docker stuck in activating, say), no further command is started, so the guest answers well inside
+# Invoke-DrillGuestProbe's 5-minute outer bound with what it read. Spool: the guest file each command's result is appended to as it
+# completes (one JSON line each), read back by the host when the outer bound cuts the probe all the same.
+function New-DrillProbePlan($Commands, [string]$WslExe = '', [switch]$Windows, [string]$Spool = '', [int]$CommandSeconds = 30, [int]$MaxTimeouts = 2) {
+  [ordered]@{ distribution = $script:Drill.ProbeDistribution; wslExe = $WslExe; commands = @($Commands); windows = [bool]$Windows
+    spool = $Spool; commandSeconds = $CommandSeconds; maxTimeouts = $MaxTimeouts }
 }
 
 # In the guest (a script block). Each command runs apart as root in a clean environment (the form GuestPrereq uses), bounded, and its answer
-# is kept raw; one that cannot answer is kept with the reason. With plan.windows, the drill machine's own readings follow (logical processors,
-# physical memory, wsl --version, every profile's .wslconfig), each kept the same way. Without a plan it does nothing. No clock is read here
-# (the host stamps the record).
+# is kept raw; one that cannot answer is kept with the reason, and one not started after the timeouts says PROBE_STOPPED_AFTER_TIMEOUTS.
+# Each result is appended to plan.spool as it completes (a spool that cannot be written stops nothing). With plan.windows, the drill
+# machine's own readings follow (logical processors, physical memory, wsl --version, every profile's .wslconfig), each kept the same way.
+# Without a plan it does nothing. No clock is read here (the host stamps the record).
 $script:GuestInspect = {
   param($Plan, $NativeText)
   if ($Plan -isnot [Collections.IDictionary] -or $Plan['commands'] -isnot [Array]) { return $null }
   $native = [scriptblock]::Create($NativeText)
   $wslExe = if ([string]$Plan['wslExe']) { [string]$Plan['wslExe'] } else { "$env:SystemRoot\System32\wsl.exe" }
+  $each = if ([int]$Plan['commandSeconds'] -gt 0) { [int]$Plan['commandSeconds'] } else { 30 }
+  $maxTimeouts = if ([int]$Plan['maxTimeouts'] -gt 0) { [int]$Plan['maxTimeouts'] } else { 2 }
+  $timeouts = 0
+  $spool = [string]$Plan['spool']
+  if ($spool) { try { [IO.File]::Delete($spool) } catch { } }
+  $utf8 = New-Object Text.UTF8Encoding($false)
   $list = New-Object Collections.Generic.List[object]
   foreach ($c in @($Plan['commands'])) {
     $r = [ordered]@{ id = [string]$c['id']; script = [string]$c['script']; args = @(@($c['args']) | ForEach-Object { [string]$_ }); exit = $null; error = $null; stdout = ''; stderr = '' }
-    try {
-      $argv = @('-d', [string]$Plan['distribution'], '-u', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', 'LC_ALL=C', '/bin/bash', '-c', $r.script, '_') + @($r.args)
-      $n = & $native $wslExe $argv 120 'utf-8'
-      $out = [string]$n.stdout
-      $r.exit = [int]$n.exit; $r.stdout = $(if ($out.Length -gt 200000) { $out.Substring(0, 200000) } else { $out }); $r.stderr = [string]$n.stderr
-    } catch { $r.error = [string]$_.Exception.Message }
+    if ($timeouts -ge $maxTimeouts) { $r.error = 'PROBE_STOPPED_AFTER_TIMEOUTS' }
+    else {
+      try {
+        $argv = @('-d', [string]$Plan['distribution'], '-u', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', 'LC_ALL=C', '/bin/bash', '-c', $r.script, '_') + @($r.args)
+        $n = & $native $wslExe $argv $each 'utf-8'
+        $out = [string]$n.stdout
+        $r.exit = [int]$n.exit; $r.stdout = $(if ($out.Length -gt 200000) { $out.Substring(0, 200000) } else { $out }); $r.stderr = [string]$n.stderr
+      } catch { $r.error = [string]$_.Exception.Message; if ($r.error -like 'COMMAND_TIMEOUT*') { $timeouts++ } }
+    }
     $list.Add($r)
+    if ($spool) { try { [IO.File]::AppendAllText($spool, (ConvertTo-Json -Compress -Depth 5 -InputObject $r) + "`n", $utf8) } catch { } }
   }
   $res = [ordered]@{ schema = 'clued.drill.guest-probe/1'; distribution = [string]$Plan['distribution']; commands = $list.ToArray() }
   if ($Plan['windows'] -eq $true) {
     $w = [ordered]@{ computerSystem = $null; wslVersion = $null; wslconfig = @(); errors = @() }
     $errs = New-Object Collections.Generic.List[string]
     try { $cs = Get-CimInstance Win32_ComputerSystem; $w.computerSystem = [ordered]@{ NumberOfLogicalProcessors = $cs.NumberOfLogicalProcessors; TotalPhysicalMemory = $cs.TotalPhysicalMemory } } catch { $errs.Add('computerSystem: ' + $_.Exception.Message) }
-    try { $v = & $native $wslExe @('--version') 120 'utf-16'; $w.wslVersion = [ordered]@{ exit = [int]$v.exit; stdout = [string]$v.stdout; stderr = [string]$v.stderr } } catch { $errs.Add('wslVersion: ' + $_.Exception.Message) }
+    try { $v = & $native $wslExe @('--version') $each 'utf-16'; $w.wslVersion = [ordered]@{ exit = [int]$v.exit; stdout = [string]$v.stdout; stderr = [string]$v.stderr } } catch { $errs.Add('wslVersion: ' + $_.Exception.Message) }
     try {
       $cfg = New-Object Collections.Generic.List[object]
       foreach ($f in @(Get-ChildItem -Path 'C:\Users\*\.wslconfig' -Force -ErrorAction SilentlyContinue)) {
@@ -2743,43 +2762,76 @@ $script:GuestInspect = {
   $res
 }
 
-# The host's side, once per phase. Phase 'main': before the stage files are taken (4.3 readings); phase 'late': the one worker-instance
-# start. Returns @{ result; state; code }: the result only when the guest answered with a probe of the expected shape. Never throws.
+# The host's side, once per phase. Phase 'main': after every required piece of the first install's evidence (Save-DrillGuestEvidence, last;
+# 4.3 readings); phase 'late': the one worker-instance start. Returns @{ result; state; code; partial }: the result only when the guest
+# answered with a probe of the expected shape, or -- when the outer bound cut it (DRILL_GUEST_STEP_TIMEOUT: the guest was answering) --
+# the commands it had spooled by then (partial, state 'read-partial', the cut named in code). Never throws.
+function Get-DrillProbeSpool([ValidateSet('main', 'late')][string]$Phase) { @{ dir = ($script:Drill.GuestWork + '\work'); name = "guest-probe-$Phase.jsonl" } }
+function Read-DrillProbeSpool([pscredential]$Cred, $Spool, [string]$Step) {
+  $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @($Spool.dir, @($Spool.name)) -TimeoutMinutes 1 -Step "$Step-partial"
+  $f = Get-DrillField $got $Spool.name
+  if ((Get-DrillField $f 'present') -ne $true -or (Get-DrillField $f 'error')) { return $null }
+  $commands = New-Object Collections.Generic.List[object]; $cut = 0
+  foreach ($line in @([string](Get-DrillField $f 'text') -split "`n" | Where-Object { $_.Trim() -ne '' })) {
+    $x = $null; try { $x = $line | ConvertFrom-Json } catch { $x = $null }
+    if ($null -ne $x -and (Get-DrillField $x 'id')) { $commands.Add($x) } else { $cut++ }
+  }
+  if ($commands.Count -eq 0) { return $null }
+  [ordered]@{ schema = 'clued.drill.guest-probe/1'; distribution = $script:Drill.ProbeDistribution; partial = $true; cutLines = $cut; commands = $commands.ToArray() }
+}
 function Invoke-DrillGuestProbe([pscredential]$Cred, [ValidateSet('main', 'late')][string]$Phase = 'main') {
+  $step = if ($Phase -ceq 'late') { 'guest-probe-late' } else { 'guest-probe' }
+  $spool = Get-DrillProbeSpool $Phase
   try {
-    $plan = if ($Phase -ceq 'late') { New-DrillProbePlan (Get-DrillLateProbeCommands) } else { New-DrillProbePlan (Get-DrillProbeCommands -ImageIds @($script:DrillProbeImageIds) -Files @(Read-DrillProbeFiles)) -Windows }
-    $got = Invoke-DrillGuest $Cred $script:GuestInspect -ArgumentList @($plan, $script:DrillNativeText) -TimeoutMinutes 5 -Step $(if ($Phase -ceq 'late') { 'guest-probe-late' } else { 'guest-probe' })
-    if ([string](Get-DrillField $got 'schema') -cne 'clued.drill.guest-probe/1' -or $null -eq (Get-DrillField $got 'commands')) { return @{ result = $null; state = 'not-run'; code = 'DRILL_PROBE_NO_ANSWER' } }
-    return @{ result = $got; state = 'read'; code = $null }
-  } catch { return @{ result = $null; state = 'not-run'; code = [string](Get-DrillCode $_).code } }
+    $commands = if ($Phase -ceq 'late') { Get-DrillLateProbeCommands } else { Get-DrillProbeCommands -ImageIds @($script:DrillProbeImageIds) -Files @(Read-DrillProbeFiles) }
+    $plan = New-DrillProbePlan $commands -Windows:($Phase -cne 'late') -Spool ($spool.dir + '\' + $spool.name)
+  } catch { return @{ result = $null; state = 'not-run'; code = [string](Get-DrillCode $_).code; partial = $false } }
+  try {
+    $got = Invoke-DrillGuest $Cred $script:GuestInspect -ArgumentList @($plan, $script:DrillNativeText) -TimeoutMinutes 5 -Step $step
+    if ([string](Get-DrillField $got 'schema') -cne 'clued.drill.guest-probe/1' -or $null -eq (Get-DrillField $got 'commands')) { return @{ result = $null; state = 'not-run'; code = 'DRILL_PROBE_NO_ANSWER'; partial = $false } }
+    return @{ result = $got; state = 'read'; code = $null; partial = $false }
+  } catch {
+    $code = [string](Get-DrillCode $_).code
+    if ($code -ceq 'DRILL_GUEST_STEP_TIMEOUT') {
+      $part = try { Read-DrillProbeSpool $Cred $spool $step } catch { $null }
+      if ($null -ne $part) { return @{ result = $part; state = 'read-partial'; code = $code; partial = $true } }
+    }
+    return @{ result = $null; state = 'not-run'; code = $code; partial = $false }
+  }
 }
 
-# After the first install, the reboot and the reinstall have all been decided (the end of Invoke-DrillRun): the late probe, merged into
-# stage-evidence.json as 'guest-probe-late' when that file exists, else kept as guest-probe-late.json; its outcome beside it in stage-files.json.
-# Not part of any verdict; every failure is swallowed after being recorded.
-function Save-DrillLateProbe([string]$RunDir, [pscredential]$Cred) {
+# One probe phase, saved: merged into stage-evidence.json (main as 'guest-probe', late as 'guest-probe-late') when that file exists, else
+# kept apart (guest-probe.json, guest-probe-late.json: the probe alone never makes stage-evidence.json, whose presence the abort evidence
+# reads); its outcome beside it in stage-files.json ('probe', 'probeLate'). $SkipCode: not run, the guest is not asked. Not part of any
+# verdict; every failure is swallowed after being recorded.
+function Save-DrillProbe([string]$RunDir, [pscredential]$Cred, [ValidateSet('main', 'late')][string]$Phase, [string]$SkipCode = '') {
+  $key = if ($Phase -ceq 'late') { 'guest-probe-late' } else { 'guest-probe' }
+  $recordKey = if ($Phase -ceq 'late') { 'probeLate' } else { 'probe' }
   $state = $null
   try {
-    $p = Invoke-DrillGuestProbe $Cred 'late'
-    $state = [ordered]@{ state = $p.state; code = $p.code; at = (Get-DrillTime).ToString('o') }
+    $p = if ($SkipCode) { @{ result = $null; state = 'not-run'; code = $SkipCode; partial = $false } } else { Invoke-DrillGuestProbe $Cred $Phase }
+    $state = [ordered]@{ state = $p.state; code = $p.code; partial = [bool]$p.partial; at = (Get-DrillTime).ToString('o') }
     if ($null -ne $p.result) {
       $evFile = Join-Path $RunDir 'stage-evidence.json'
       if (Test-Path -LiteralPath $evFile -PathType Leaf) {
         $ev = Read-DrillJson $evFile
-        $ev | Add-Member -NotePropertyName 'guest-probe-late' -NotePropertyValue $p.result -Force
+        $ev | Add-Member -NotePropertyName $key -NotePropertyValue $p.result -Force
         Write-DrillJson $evFile $ev
         $state.state = 'saved'
-      } else { Write-DrillJson (Join-Path $RunDir 'guest-probe-late.json') $p.result; $state.state = 'saved-apart' }
+      } else { Write-DrillJson (Join-Path $RunDir "$key.json") $p.result; $state.state = 'saved-apart' }
     }
   } catch { $state = [ordered]@{ state = 'not-saved'; code = [string](Get-DrillCode $_).code } }
   try {
     $sf = Join-Path $RunDir 'stage-files.json'
     $rec = if (Test-Path -LiteralPath $sf -PathType Leaf) { Read-DrillJson $sf } else { [pscustomobject]@{} }
-    $rec | Add-Member -NotePropertyName 'probeLate' -NotePropertyValue $state -Force
+    $rec | Add-Member -NotePropertyName $recordKey -NotePropertyValue $state -Force
     Write-DrillJson $sf $rec
   } catch { }
   return $state
 }
+
+# After the first install, the reboot and the reinstall have all been decided (the end of Invoke-DrillRun): the late probe.
+function Save-DrillLateProbe([string]$RunDir, [pscredential]$Cred) { Save-DrillProbe $RunDir $Cred 'late' }
 
 # The stage files the entry writes under the guest's work directory, read in the guest file by file with read-write sharing (a stage still
 # writing holds its log open: the entry's line-by-line writer, the package's appending one; Read-StageResult in bootstrap.ps1 reads them
@@ -2805,9 +2857,7 @@ $script:GuestStageFiles = {
 # stage-evidence.json, the timings as stage-timings.json), and records each one's outcome in stage-files.json: saved, absent, unreadable
 # in the guest, or not saved here. A failed collection is recorded and never replaces the run's own outcome.
 function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
-  $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); collection = $null; files = [ordered]@{}; probe = $null }
-  # the required stage files first; the read-only guest probe (4.3) is an extra and comes after them (a guest that hangs must not eat the
-  # time of the required evidence), still before the checkpoint restore; its failure is only recorded
+  $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); collection = $null; files = [ordered]@{} }
   $got = $null
   try { $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), $script:DrillStageFiles) -TimeoutMinutes 2 -Step 'stage-files' }
   catch { $record.collection = (Get-DrillCode $_) }
@@ -2831,22 +2881,14 @@ function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
       $record.files[$name] = [ordered]@{ state = 'saved'; bytes = $text.Length }
     } catch { $record.files[$name] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }
   }
-  # Written only from what was really read (Codex review of e0a3cded5, medium 2): no stage-evidence.json or stage-timings.json from nothing,
-  # and every file's state says whether it reached the run directory.
-  $probe = Invoke-DrillGuestProbe $Cred
-  $record.probe = [ordered]@{ state = $probe.state; code = $probe.code; at = (Get-DrillTime).ToString('o') }
   $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json']; 'wsl-cold-start.json' = $json['wsl-cold-start.json'] }
-  if ($null -ne $probe.result) { $stageEvidence['guest-probe'] = $probe.result }
   $timings = $json['stage-timings.json']
   $results = @(@('host-result.json', 'launcher-result.json', 'wsl-cold-start.json') | Where-Object { $json.Contains($_) })
-  # the probe alone never makes stage-evidence.json (the abort evidence reads its presence): without a stage result it is kept apart
-  # as guest-probe.json, like the late probe (the same choice as Save-DrillLateProbe)
+  # Written only from what was really read (Codex review of e0a3cded5, medium 2): no stage-evidence.json or stage-timings.json from nothing,
+  # and every file's state says whether it reached the run directory.
   if ($results.Count) {
-    try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' }; if ($null -ne $probe.result) { $record.probe.state = 'saved' } }
-    catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }; if ($null -ne $probe.result) { $record.probe = [ordered]@{ state = 'not-saved'; code = $null } } }
-  } elseif ($null -ne $probe.result) {
-    try { Write-DrillJson (Join-Path $RunDir 'guest-probe.json') $probe.result; $record.probe.state = 'saved-apart' }
-    catch { $record.probe = [ordered]@{ state = 'not-saved'; code = $null } }
+    try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' } }
+    catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } } }
   }
   if ($json.Contains('stage-timings.json')) {
     try { Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings; $record.files['stage-timings.json'].state = 'saved' }
@@ -2891,7 +2933,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
 
-  # the kit's image references for the guest probe, which runs on every end of the first install (Save-DrillStageEvidence)
+  # the kit's image references for the guest probe, which runs on every end of the first install (Save-DrillGuestEvidence, last)
   $script:DrillProbeImageIds = @(try { Get-DrillKitImageIds @($Package.files) } catch { })
   $timings = $null; $launcher = $null
   if ($Interactive) {
@@ -3025,6 +3067,12 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
   $record.ok = ($null -eq $record.code) -and ($null -eq $record.entryLogError) -and ($null -ne $record.entryLog) -and ($null -eq $stage.record.collection) -and (@($record.missing).Count -eq 0) `
     -and ((Get-DrillField (Get-DrillField $record 'launcherReadback') 'ok') -ne $false)
   try { Write-DrillJson (Join-Path $RunDir 'guest-evidence.json') $record } catch { }
+  # The read-only guest probe (4.3), an extra: only now, after every required piece -- the stage files, the guest's first-install.log, the
+  # launcher read-back -- has been taken and written (r8 fixup review F1: a first install that hung is a guest whose WSL or docker is the
+  # likeliest to hang, and the probe must not eat the time of the evidence the verdict reads). Still before the checkpoint restore. A guest
+  # that could not be reached for that evidence is not asked again (no second readiness wait); either way only recorded (stage-files.json).
+  $skip = if ($null -ne $stage.record.collection -or $null -ne $record.code) { 'DRILL_PROBE_SKIPPED_COLLECTION_FAILED' } else { '' }
+  [void](Save-DrillProbe $RunDir $Cred 'main' $skip)
   return @{ record = $record; timings = $timings; stageEvidence = $stage.stageEvidence; launcher = $launcher }
 }
 
