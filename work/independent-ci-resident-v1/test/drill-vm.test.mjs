@@ -40,10 +40,15 @@ const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({ contra
 // runs. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own right after loading it; the PowerShell processes one
 // test starts (a host and the watchdog it launches) load the same fixture, so they still share them.
 const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}`;
-// Dot-source the script (definitions only) and print the expression's value as JSON.
+// The fixtures' one time (task ce2e5c1a step 2): a host status is written at T0, and Get-DrillTime answers T0 in every ps() snippet
+// that does not define its own, so what a fixture writes reads the same whenever the snippet runs. A snippet that needs time to pass
+// defines Get-DrillTime itself.
+const T0 = '2026-11-19T02:00:00Z';
+const frozenClock = `function Get-DrillTime { [DateTimeOffset]${q(T0)} }`;
+// Dot-source the script (definitions only), fix its clock at T0, and print the expression's value as JSON.
 function ps(expr) {
   const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ${ownMutexes}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
+    `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(script)}; ${ownMutexes}; ${frozenClock}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`], { encoding: 'utf8', timeout: 120000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim());
 }
@@ -52,11 +57,9 @@ function psCode(expr) {
   return ps(`try { ${expr} | Out-Null; $null } catch { (Get-DrillCode $_).code }`);
 }
 const opts = { skip: !windows };
-// The fixtures' one time (task ce2e5c1a step 2): every host status is written at T0, and ps() runs with Get-DrillTime fixed at T0.
-const T0 = '2026-11-19T02:00:00Z';
-const idleHostStatus = (writtenAt = new Date().toISOString()) =>
+const idleHostStatus = (writtenAt = T0) =>
   JSON.stringify({ node: { mode: 'STANDBY' }, executor: { state: 'IDLE' }, current: null, writtenAt });
-const activeHostStatus = (hold, { writtenAt = '2026-11-19T02:00:00Z', executor = 'IDLE', reason = null, current = null } = {}) =>
+const activeHostStatus = (hold, { writtenAt = T0, executor = 'IDLE', reason = null, current = null } = {}) =>
   JSON.stringify({ node: { mode: 'ACTIVE' }, executor: { state: executor, reason }, current, writtenAt,
     intakePause: hold && { until: '2026-11-19T04:00:00Z', holders: [hold] } });
 const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
@@ -341,7 +344,7 @@ test('the answer ISO is built without elevation and carries autounattend.xml und
 
 test('host duty gate fails closed for active, busy, missing and malformed resident status', opts, () => {
   const r = ps(`@(
-    (Test-DrillHostSafety ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} 64GB),
+    (Test-DrillHostSafety ${q(activeHostStatus(null))} 64GB),
     (Test-DrillHostSafety ${q(idleHostStatus().replace('"IDLE"', '"RUNNING"'))} 64GB),
     (Test-DrillHostSafety ${q(idleHostStatus().replace('"current":null', '"current":{"pr":1153}'))} 64GB),
     (Test-DrillHostSafety $null 64GB), (Test-DrillHostSafety '{broken' 64GB),
@@ -557,7 +560,7 @@ test('memory threshold includes the whole VM and the boot margin at start and on
 });
 
 test('the duty gate refuses stale, missing and invalid status timestamps', opts, () => {
-  const now = Date.now();
+  const now = Date.parse(T0);
   const stamp = (offset) => new Date(now + offset).toISOString();
   const statusAt = (writtenAt) => q(idleHostStatus(writtenAt));
   const r = ps(`$now = [DateTimeOffset]::Parse(${q(stamp(0))}); @(
@@ -572,7 +575,7 @@ test('the duty gate refuses stale, missing and invalid status timestamps', opts,
 
 test('host preflight refuses duty before any Hyper-V or memory query', opts, () => {
   assert.equal(psCode(`
-    function Get-DrillHostSafety { Test-DrillHostSafety ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} 64GB }
+    function Get-DrillHostSafety { Test-DrillHostSafety ${q(activeHostStatus(null))} 64GB }
     function Get-CimInstance { throw 'MUST_NOT_QUERY_HOST' }
     function Get-VMSwitch { throw 'MUST_NOT_QUERY_HYPERV' }
     Assert-DrillHost`), 'DRILL_HOST_IS_ON_DUTY');
@@ -1903,7 +1906,7 @@ test('a confirmed WSL job survives another distribution unread; a duty refusal c
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
     function Get-DrillWslRunnerState { param($HostName) @{ ok = $false; distributions = @('A', 'B'); running = @('A', 'B'); jobs = @('A'); reason = 'WSL_PROCESS_QUERY_FAILED' } }
     $partial = Get-DrillHostSafety
-    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} }
+    function Read-DrillHostStatus { ${q(activeHostStatus(null))} }
     $duty = Get-DrillHostSafety -JobsOnly
     [ordered]@{ partial = [ordered]@{ action = $partial.action; busyWith = $partial.busyWith; runnerJob = $partial.runnerJob }
       duty = [ordered]@{ code = $duty.code; busyWith = (Get-Prop $duty 'busyWith'); runnerJob = (Get-Prop $duty 'runnerJob') } }`);
@@ -1941,10 +1944,11 @@ test('no automatic contention class is left in the drill', () => {
 });
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,
-// or a throw as a time out does), a running list answering `list`. Its host status is written by the drill's clock when it is read, never
-// when this file loads: the world is built once, and its tests may run long after that (CI run 44746396297).
+// or a throw as a time out does), a running list answering `list`. Its host status is written at T0, the time ps() fixes for the
+// drill's clock: the world is built once when this file loads, and its tests may run long after that (CI run 44746396297) without
+// it aging, because nothing in it reads the real clock.
 const wslWorld = `
-    function Read-DrillHostStatus { ${q(idleHostStatus('WRITTEN_AT'))}.Replace('WRITTEN_AT', (Get-DrillTime).ToString('o')) }
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
     function Get-VM { param($ErrorAction) }
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
@@ -1960,14 +1964,17 @@ const wslWorld = `
     }`;
 
 // CI run 44746396297 (clued-ci-home-win-01): the WSL world's tests ran more than HostStatusStaleSeconds after this file loaded, and the
-// gate read the world's host status as stale. The world's status must not age: run the gate as though that much time had passed.
-test('the WSL world does not age: its host status still reads as fresh when the gate runs HostStatusStaleSeconds after this file loaded', opts, () => {
+// gate read the world's host status as stale. The world's status must not age: it is written at T0 and the gate reads it at T0
+// whenever the test runs; the gate still judges by the drill's clock, so the same status read HostStatusStaleSeconds + 1 later is stale.
+test('the WSL world does not age: its host status is written at T0 and the gate reads it at T0, however long after this file loaded', opts, () => {
   const r = ps(`${wslWorld}
+    $script:probe = @{ exit = 0; stdout = ''; stderr = '' }
+    $fresh = Get-DrillHostSafety
     $later = (Get-DrillTime).AddSeconds($script:Drill.HostStatusStaleSeconds + 1)
     function Get-DrillTime { $later }
-    $script:probe = @{ exit = 0; stdout = ''; stderr = '' }
-    $s = Get-DrillHostSafety; @{ action = $s.action; code = $s.code; busyWith = $s.busyWith }`);
-  assert.deepEqual(r, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
+    $stale = Get-DrillHostSafety
+    @(@{ action = $fresh.action; code = $fresh.code; busyWith = $fresh.busyWith }, @{ action = $stale.action; code = $stale.code })`);
+  assert.deepEqual(r, [{ action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB' }, { action: 'refuse', code: 'DRILL_HOST_STATUS_STALE' }]);
 });
 
 // The probe's closed table, cell by cell, end to end through the boot gate; and the reverse: across exits -2..9 and stderr empty, blank,
@@ -2261,6 +2268,7 @@ function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64 } = {}) {
   const quiet = shWorld('preboot-quiet', { pgrep: 1 });
   const job = shWorld('preboot-job', { pgrep: 0 });
   const status = path.join(fs.mkdtempSync(path.join(tmp, 'preboot-status-')), 'status.json');
+  // Written at T0 and read by the host guard too, in its own runspace, by the clock of the run that started it (ps(): T0).
   fs.writeFileSync(status, idleHostStatus());
   return `
     $script:events = [Collections.Generic.List[string]]::new()
@@ -4027,9 +4035,10 @@ test('fixtures cannot reach the real clock: ps() runs with Get-DrillTime fixed a
 });
 
 // Fable 11-21 clock ruling §3: drill-vm.ps1 learns "now" only from Get-DrillTime, and these tests never read the real clock, so no
-// assertion can depend on how much real time passed. The reads that predate the rule are pinned at exactly today's count (step 2 clears
-// them): one more is red, and so is one fewer until the pin is lowered with it. The words are assembled so the scan does not count its
-// own patterns.
+// assertion can depend on how much real time passed. The reads that predate the rule are pinned at exactly today's count: one more is
+// red, and so is one fewer until the pin is lowered with it. Step 2 (task ce2e5c1a) took the JavaScript reads to 0 and the gate's
+// default -Now to Get-DrillTime (wallClock 32 -> 31); what is left runs in PowerShell (a fixture that loads the script on its own, a
+// real wait). The words are assembled so the scan does not count its own patterns.
 test('the real clock is read only through Get-DrillTime; the reads that predate the rule are pinned at their count', () => {
   const word = (...parts) => parts.join('');
   const NOW = word('Utc', 'Now'), GET_DATE = word('Get-', 'Date'), SW = word('Stop', 'watch'), BARE_NOW = word('No', 'w');
@@ -4059,7 +4068,7 @@ test('the real clock is read only through Get-DrillTime; the reads that predate 
     wallClock: new RegExp(String.raw`\[(?:System\.)?DateTime(?:Offset)?\]::(?:${NOW}|Now)\b`, 'gi'),
     [GET_DATE]: new RegExp(String.raw`\b${GET_DATE}\b`, 'gi'),
     [SW]: new RegExp(SW, 'gi'),
-  }, { wallClock: 32, [GET_DATE]: 0, [SW]: 2 },
+  }, { wallClock: 31, [GET_DATE]: 0, [SW]: 2 },
   'Read the time through Get-DrillTime; a budget becomes a deadline, (Get-DrillTime).AddSeconds(n), compared against Get-DrillTime.');
 
   // Test side: no read of the real clock at all. Fixture times are the constant 2026-11-19T02:00:00Z; a PowerShell snippet that needs
