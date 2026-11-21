@@ -129,6 +129,9 @@ jobs:
           # Application tests read pinned historical workflow/role snapshots.
           fetch-depth: 0
           path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
       - name: Resolve push baseline before loading trusted commands
         id: train-base
         working-directory: candidate
@@ -145,14 +148,19 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" != push ]; then exit 0; fi
-          base=$(git rev-parse "$STAGING_SHA^1")
           if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run.
-            # The first parent must be an already trusted main ancestor.
-            git merge-base --is-ancestor "$base" origin/main
-          fi
-          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            # Checkout fetched full history; no candidate code has run. T is the
+            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
+            # member), walked by the runner hook's own code read from main.
+            base=$(node --input-type=module -e "
+              const { execFileSync } = await import('node:child_process');
+              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
+              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
+              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
             echo "sha=$base" >> "$GITHUB_OUTPUT"
+          else
+            base=$(git rev-parse "$STAGING_SHA^1")
           fi
           echo "ci_base=$base" >> "$GITHUB_OUTPUT"
       - name: Check out the trusted base (selection and commands)
@@ -161,9 +169,6 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
           path: trusted
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24.19.0
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select suites
@@ -229,6 +234,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
       - name: Resolve push baseline before loading trusted commands
         id: train-base
         working-directory: candidate
@@ -245,14 +253,19 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" != push ]; then exit 0; fi
-          base=$(git rev-parse "$STAGING_SHA^1")
           if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run.
-            # The first parent must be an already trusted main ancestor.
-            git merge-base --is-ancestor "$base" origin/main
-          fi
-          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            # Checkout fetched full history; no candidate code has run. T is the
+            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
+            # member), walked by the runner hook's own code read from main.
+            base=$(node --input-type=module -e "
+              const { execFileSync } = await import('node:child_process');
+              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
+              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
+              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
             echo "sha=$base" >> "$GITHUB_OUTPUT"
+          else
+            base=$(git rev-parse "$STAGING_SHA^1")
           fi
           echo "ci_base=$base" >> "$GITHUB_OUTPUT"
       - name: Check out the trusted base (selection and commands)
@@ -261,9 +274,6 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
           path: trusted
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24.19.0
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select suites
@@ -351,6 +361,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
       - name: Resolve push baseline before loading trusted commands
         id: train-base
         working-directory: candidate
@@ -367,14 +380,19 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" != push ]; then exit 0; fi
-          base=$(git rev-parse "$STAGING_SHA^1")
           if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
-            # Checkout fetched full history; no candidate code has run.
-            # The first parent must be an already trusted main ancestor.
-            git merge-base --is-ancestor "$base" origin/main
-          fi
-          if [ "$PUSH_REF" = 'refs/heads/clued-train/staging' ]; then
+            # Checkout fetched full history; no candidate code has run. T is the
+            # root of S's member chain (ADR 0019), a commit on main (S^1 for one
+            # member), walked by the runner hook's own code read from main.
+            base=$(node --input-type=module -e "
+              const { execFileSync } = await import('node:child_process');
+              const hook = execFileSync('git', ['show', 'origin/main:scripts/runner/clued-runner-job-started.mjs']);
+              const { stagingBaseFromCheckout } = await import('data:text/javascript;base64,' + hook.toString('base64'));
+              process.stdout.write(await stagingBaseFromCheckout(process.env.STAGING_SHA));")
+            [[ "$base" =~ ^[0-9a-f]{40}$ ]]
             echo "sha=$base" >> "$GITHUB_OUTPUT"
+          else
+            base=$(git rev-parse "$STAGING_SHA^1")
           fi
           echo "ci_base=$base" >> "$GITHUB_OUTPUT"
       - name: Check out the trusted base (selection and commands)
@@ -383,9 +401,6 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}
           path: trusted
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24.19.0
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select suites

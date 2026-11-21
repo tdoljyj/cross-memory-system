@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
 import * as drillKit from '../drill/make-drill-kit.mjs';
-import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, publish, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
@@ -1516,8 +1516,7 @@ async function sealWorld(t) {
   const saved = { FAKE_GH_STATE: process.env.FAKE_GH_STATE, GH_TOKEN: process.env.GH_TOKEN };
   process.env.FAKE_GH_STATE = path.join(d, 'gh-state.json'); delete process.env.GH_TOKEN;
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
-  const gh = [process.execPath, fake];
-  await publish({ dir: out, repo: 'tdoljyj/cross-memory-system', index, ghCommand: gh });
+  const gh = [process.execPath, fake];   // no release step: prepare makes the Release and the index row
   const image = 'e'.repeat(64), imageFile = path.join(d, `role-image-${image}.tar.gz`); fs.writeFileSync(imageFile, 'gzip of a docker save');
   const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
   const deps = { readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: S }),
@@ -1673,6 +1672,65 @@ test('each of the three PASS drill receipts is refused off main and seals on mai
     assert.equal(r.drill, `${conclusion} receipt ${sha(bytes)}`);
     assert.ok(fs.readFileSync(w.index, 'utf8').includes(r.drill), conclusion);
   }
+});
+
+// T1 of FABLE-drill-release-step-20261121.md (the r4 and r9 refusal, PUBLISH_INDEX_LACKS_VERSION at prepare): a candidate from its build
+// alone, with an index holding its header only and an empty gh state, and no release step: prepare -> -From (prepareFrom) -> the kit
+// (makeDrillKit with --request) -> the receipt drill-vm.ps1's conclusion function wrote, finalized -> seal --drill-receipt.
+test('a candidate from its build alone: prepare makes the Release and the index row, then -From, the kit, the drill\'s own receipt and seal', opts, async t => {
+  const f = firstInstallAssets('candidate-from-build', { candidate: true });
+  const { version } = f, tag = `fleet-node-${version}`, commit = 'c'.repeat(40), repo = 'tdoljyj/cross-memory-system';
+  // the build as universal.mjs writes it: a release.json of the real contract naming this tar, the two-line SHA256SUMS
+  const tar = fs.readFileSync(path.join(f.build, `${tag}.tar`));
+  const source = { version, release_tag: tag, archive_sha256: sha(tar), commit, resident_manifest_sha256: '2'.repeat(64), source_manifest_sha256: '3'.repeat(64),
+    upgrader_manifest_sha256: '4'.repeat(64), bundle_sha256: '5'.repeat(64), universal_files_sha256: '6'.repeat(64) };
+  const release = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-release/1', source, archive: { name: `${tag}.tar`, bytes: tar.length, sha256: sha(tar) } }) + '\n');
+  fs.writeFileSync(path.join(f.build, `${tag}.release.json`), release);
+  fs.writeFileSync(path.join(f.build, 'SHA256SUMS'), `${sha(release)}  ${tag}.release.json\n${sha(tar)}  ${tag}.tar\n`);
+  const index = path.join(f.root, 'index.md');
+  fs.writeFileSync(index, '| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |\r\n|---|---|---|---|---|---|---|\r\n');
+  const fake = path.join(f.root, 'fake-gh.mjs'); fs.writeFileSync(fake, FAKE_GH);
+  const state = path.join(f.root, 'gh-state.json');
+  const saved = { FAKE_GH_STATE: process.env.FAKE_GH_STATE, GH_TOKEN: process.env.GH_TOKEN };
+  process.env.FAKE_GH_STATE = state; delete process.env.GH_TOKEN;
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  const gh = [process.execPath, fake];
+  const image = 'b'.repeat(64), imageFile = path.join(f.images, `role-image-${image}.tar.gz`);
+  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  const deps = { readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: S }),
+    kitOf: async () => ({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', template: {}, config: { ciSourceManifestSha256: L }, images: { pull: [], local: [{ id: image, asset: `role-image-${image}.tar.gz` }] } }),
+    fleetMaterial: async () => ({ formalRoles: { gitleaks: {}, trivy: {}, 'contract-placement': {} },
+      installed: { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5), ciSourceManifestSha256: L } }) };
+  // 1. prepare, with nothing published before it
+  const accept = path.join(f.root, 'accept');
+  const p = await prepare({ version, dir: f.build, out: accept, images: [imageFile], index, repo, ghCommand: gh, deps });
+  assert.equal(p.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const request = JSON.parse(fs.readFileSync(p.request, 'utf8'));
+  // 2. -From from the build and what prepare left; 3. the candidate's kit on that request
+  const from = path.join(f.root, 'from-prepared');
+  prepareFrom({ build: f.build, final: accept, images: accept, version, out: from });
+  const made = await makeDrillKit({ from, version, prereq: f.prereq, out: path.join(f.root, 'kit-prepared'), request: p.request });
+  assert.deepEqual(made.candidate, { acceptance: `${tag}.acceptance.json`, tarSha256: sha(tar), ciSourceManifestSha256: S, firstInstallKitSha256: request.firstInstallKitSha256 });
+  // 4. the receipt drill-vm.ps1's conclusion function writes for this candidate, read back (-Finalize)
+  const cand = m5DrillReceipt('candidate-from-build-run', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version,
+    pkg: { tarSha256: request.archive_sha256, firstInstallKitSha256: request.firstInstallKitSha256 } });
+  const done = finalize('candidate-from-build-finalize', cand, notTheDrillsSource());
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  // 5. the Owner accepts (the Decision record naming this request), seal --drill-receipt
+  const record = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/test/fixtures/clued-decision-mutate-3bc571a6.json', import.meta.url)), 'utf8'));
+  record.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLineOf(version, sha(fs.readFileSync(p.request)))}\n`;
+  const decisionRecord = path.join(f.root, 'decision-record.json'); fs.writeFileSync(decisionRecord, JSON.stringify(record, null, 2));
+  const sealed = await seal({ request: p.request, decisionRecord, drillReceipt: done.receiptFile, index, repo, ghCommand: gh, deps });
+  assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
+  // the Release: the five package assets, the kit, the image, the first-install sums and the acceptance, once each
+  const names = JSON.parse(fs.readFileSync(state, 'utf8')).assets.map(a => a.name).sort();
+  assert.deepEqual(names, [`${tag}.tar`, `${tag}.release.json`, 'SHA256SUMS', `${tag}.bootstrap.ps1`, `${tag}.prereq-manifest.json`, `${tag}.first-install-kit.json`,
+    `role-image-${image}.tar.gz`, `${tag}.first-install.SHA256SUMS`, `${tag}.acceptance.json`].sort());
+  // the index row whole: the Release, this tar and commit, the acceptance, and the drill column naming this receipt
+  const drill = `PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(fs.readFileSync(done.receiptFile))}`;
+  assert.equal(sealed.drill, drill);
+  assert.deepEqual(fs.readFileSync(index, 'utf8').split('\r\n').slice(2),
+    [`| ${version} | https://github.com/${repo}/releases/tag/${tag} | ${sha(tar)} | ${commit} | 2026-11-19T12:22:39Z | ${record.target_refs[0].id} | ${drill} |`, '']);
 });
 
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {

@@ -195,15 +195,15 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'2e14516b6813ce3024d42ab5ffde63fb399fb20b',
-  source_sha256:'0a36849d74c2612f38d759cbc27304a7721786417e75c889a3417b56ce724d8b',
-  workflow_definition_sha256:'3e018e716ed705a8e7269101662d4dbb4cd77f5c1475bfd5e895d6db4bc2f41b',
-  profile_sha256:'7162049ad40527a7d3417577e14020724837ca44f2228ad0135db445fa5a6832',
+  workflow_blob:'00a9b5d1b1a0eaed1cc0d82d05753bfe984743ae',
+  source_sha256:'f5ee2f4f7a539acae72e7dbcc124a0bef7f929d1cc25631ce744b5398278cff9',
+  workflow_definition_sha256:'e5860941824e514a281661b180e6b754fb43cc0e953f2e9d303746bbdae7bbcd',
+  profile_sha256:'0b71c079afad7e9ed58778cf461150635435e10f74eeb2dadce930f543d6b834',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'d4acae487998b4bc4e1e7fb8afefd0fed1bdaa830d91626960ae5818cf7e7168',
-    'ci-suites':'615749b035ead14b9fbd73d7d3b5ac633d3fe822c03a7c25c700170d53720564',
-    'migration-verify':'627666456fa37adaa15ecfcd2124fe307abfc8bfa9ae32819c9ae2ec6e617927',
+    'clued-cloud-tests':'a415718a63cdab237d2f81f143a5662cebbd3f1247a81d0efa60c42ff28e37dc',
+    'ci-suites':'6bf4d794062bce46f9e6ae2fa370f43450f2c8fc3d4cdd8697087b048ed44ca4',
+    'migration-verify':'ef6205af5f11b56a0c1c5481f7108cd371c188320770525d86ee06ee6f7c26ca',
   }),
 });
 // Earlier exact bytes of the same compound Source, oldest first. Catalogues kept as
@@ -278,6 +278,20 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
     role_sha256:Object.freeze({
       'clued-cloud-tests':'d4acae487998b4bc4e1e7fb8afefd0fed1bdaa830d91626960ae5818cf7e7168',
       'ci-suites':'875cc2516520b0fe3177b6386fcffe419cf2ac6a387a3c5219edda8de2735f08',
+      'migration-verify':'627666456fa37adaa15ecfcd2124fe307abfc8bfa9ae32819c9ae2ec6e617927',
+    }),
+  }),
+  // Before the push baseline took T, the root of S's member chain, instead of S^1 (ADR 0019; main 912c7aba).
+  Object.freeze({
+    file:'.github/workflows/clued-required-tests.yml',
+    workflow_blob:'2e14516b6813ce3024d42ab5ffde63fb399fb20b',
+    source_sha256:'0a36849d74c2612f38d759cbc27304a7721786417e75c889a3417b56ce724d8b',
+    workflow_definition_sha256:'3e018e716ed705a8e7269101662d4dbb4cd77f5c1475bfd5e895d6db4bc2f41b',
+    profile_sha256:'7162049ad40527a7d3417577e14020724837ca44f2228ad0135db445fa5a6832',
+    primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify']),
+    role_sha256:Object.freeze({
+      'clued-cloud-tests':'d4acae487998b4bc4e1e7fb8afefd0fed1bdaa830d91626960ae5818cf7e7168',
+      'ci-suites':'615749b035ead14b9fbd73d7d3b5ac633d3fe822c03a7c25c700170d53720564',
       'migration-verify':'627666456fa37adaa15ecfcd2124fe307abfc8bfa9ae32819c9ae2ec6e617927',
     }),
   }),
