@@ -14,7 +14,7 @@ The default is `preflight`, and an unknown mode fails before any production
 credential is read, so a dispatch whose inputs are missing or misparsed never
 falls through to a deploy. From the GitHub API or a connector, pass the input
 as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
-`"source-capture"`).
+`"source-capture"`, `"migrate"` with `migrations`).
 
 - `preflight` verifies the live database and stores evidence without needing a
   Cloudflare token or changing production.
@@ -26,6 +26,27 @@ as the string `{"mode": "deploy"}` (or `"preflight"`, `"backup"`,
 - `source-capture` captures one reviewed nonsecret storage client source and
   requires `source_request_id` and `source_request_digest`.
 - `deploy` builds, gates, deploys `clued-cloud` and runs the post-deploy checks.
+- `release` is the same deploy from one approval, for a commit a Worker
+  version rollback fully undoes: it takes no migrations (apply them with
+  `migrate` first), runs only when the three wrangler production
+  configurations are byte for byte those of the commit the edge serves, and
+  never creates the Storage job queue (use `deploy` otherwise).
+  `rollback_drill` fails a fully verified release on purpose.
+
+`deploy` and `release` record the version each Worker serves and the commit
+the edge serves before the grant. Any failure from the first deploy on, a
+step timeout included, rolls the changed Workers back to those versions (a
+failure before it, such as a refused grant, changed nothing and rolls
+nothing back); one propagation window
+later the rollback reads all three versions and the edge commits once, and
+only that reading makes it `restored`. A rollback does not restore Worker
+settings someone changed by hand outside the repository. The G6 currentness
+attestation step runs after the rollback step and only when everything
+before it succeeded; if it fails, the release stays deployed and the summary
+asks for the standalone attestation workflow. After a deploy,
+`scripts/projection-postflight.mjs` calls the gate's `--post-deploy` again
+while its only findings are a backlog, for one Cron period plus two minutes
+(period from `wrangler.production.jsonc`, `*/N * * * *` only).
 
 The workflow needs the `CLUED_ATTESTATION_DATABASE_URL_V2` secret, a
 `CLUED_CLOUDFLARE_DEPLOY_TOKEN_V2` secret scoped to edit the existing `clued-cloud`
@@ -46,6 +67,29 @@ command argument. Backup mode additionally requires a high-entropy
 `CLUED_PRODUCTION_BACKUP_KEY` GitHub secret; retain it while any encrypted
 backup artifact may be needed. Keep the reviewed schedule and existing Worker bindings in
 `wrangler.production.jsonc`; deployment uses `--keep-vars`.
+
+## 发布门（Owner Grant）
+
+`deploy` 和 `migrate` 改变生产之前，都要为这次提交消费一条 Owner 授权（`deploy`：动作
+`release.production`，资源 `repo:<仓库>/<40 位 sha>`；`migrate`：动作 `migration.production`，
+资源是这次点名的每个迁移文件，并捎带同一提交的 `deploy`，一次批准两件）。门是数据库函数
+`clued_private.release_door_v1(jsonb)`，只有 `clued-release` 环境里 `CLUED_MIGRATION_DATABASE_URL`
+的数据库登录角色能调用；它不在 PostgREST 上，没有发布令牌，也没有到期和轮换。工作流用 psql
+调它，输入以 COPY 数据传入，不拼进 SQL；`scripts/ci/clued-release-door.mjs` 只负责组装输入、
+解析回答、写运行摘要，并把拒绝原因翻成中文的下一步。没有“仅提示”模式：没消费到授权就停。
+
+- `migrate`：消费发生在第一条迁移文件的事务里，顺序是消费 → 执行文件 → 探门（`probe`）→
+  记 `schema_migrations` → 提交。没消费到就整体回滚，再用 `request_only` 留下一条待确认请求，
+  运行打印确认链接后失败；Owner 批准后重跑即可。每条文件的事务提交前都探门，所以把门弄坏的
+  迁移提交不了；第一条文件执行出错时授权也随之回滚，不会被用掉。
+- `deploy`：在发布闸门和凭据检查之后、任何 `wrangler` 之前，单独一步消费；门不存在时失败。
+- 自举（只发生一次）：门还不存在时，只有 md5 等于工作流里 `RELEASE_DOOR_INSTALL_MD5` 的安装迁移
+  （`20261119130000_release_door_db_identity_v1.sql`）能作为第一条执行；它在同一事务里装上门、经新门消费授权、
+  探门、记账，任何一步不成整体回滚。顺序：`backup` → `migrate`（只填安装迁移）→ `migrate`
+  （其余待跑迁移）→ `deploy`。`tests/production-release-gate.test.mjs` 要求
+  `RELEASE_DOOR_INSTALL_MD5` 等于仓库里这份安装迁移的 md5。
+
+`tests/production-release-door-flow-db.test.mjs` 对一次性数据库原样执行工作流的这两步。
 
 ## Database sequence
 

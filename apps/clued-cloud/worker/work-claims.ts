@@ -62,7 +62,7 @@ const headAuthorization = {
   receiver_key: { type: "string", pattern: "^clued_lk_[0-9a-f]{64}$", description: "Private receiving capability from prepare_handover. Keep only in this session; never send it to another Agent, or put it in a file, record, Event, Receipt, checkpoint or log." },
   repository: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$" },
   head_sha: { type: "string", pattern: "^[0-9a-f]{40}$", description: "Full exact commit SHA. No wildcard or future head is authorized." },
-  target_branch: { type: "string", minLength: 1, maxLength: 200, pattern: "^\\S+$" },
+  target_branch: { type: "string", minLength: 1, maxLength: 200, pattern: "^\\S+$", description: "Omit it for a pull request: the server decides the branch a pull request merges into (main). Any other branch, such as the PR's own head branch, is refused with work_claim_target_branch_not_served. For a workflow dispatch, the exact ref the workflow runs on." },
   pr_ref: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,10}$" },
   pr_number: { type: "integer", minimum: 1, maximum: 9999999999, description: "Optional known PR number for authorize_head. The holder-authorized call atomically binds this PR to the claim's Task; it must agree with pr_ref when both are given. A new relation has unknown PR lifecycle until the existing qualified CI observes it open; holder authorization never reopens a closed relation." },
   workflow: { type: "string", pattern: "^[A-Za-z0-9_.-]{1,200}\\.ya?ml$", description: "Exact manually dispatched workflow file. Omit for a pull request." },
@@ -167,7 +167,7 @@ export const workClaimTools = [
     inputSchema: {
       type: "object",
       anyOf: [
-        renewCommand("authorize_head", ["action", "claim_id", "fence", "lease_version", "lease_key", "repository", "head_sha", "target_branch", "idempotency_key"]),
+        renewCommand("authorize_head", ["action", "claim_id", "fence", "lease_version", "lease_key", "repository", "head_sha", "idempotency_key"]),
         renewCommand("prepare_handover", ["action", "claim_id", "fence", "holder_label", "idempotency_key"]),
         renewCommand("offer_handover", ["action", "request_id", "lease_key"]),
         renewCommand("accept_handover", ["action", "request_id", "receiver_key"]),

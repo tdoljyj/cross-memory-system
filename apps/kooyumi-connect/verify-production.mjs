@@ -1,12 +1,14 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { sha256 } from './build-release.mjs';
+import { PROPAGATION_WINDOW_MS } from '../clued-cloud/scripts/currentness-live-build.mjs';
 import { verifyServedAgentContract } from '../clued-cloud/scripts/verify-served-agent-contract.mjs';
 
 // Public browser entry and authenticated issuer are deliberately independent.
 export const PUBLIC_ORIGIN = 'https://kooyomi.com';
 export const ORIGIN = 'https://kooyumi.pixelgrav.com';
 export const LEGACY_ORIGIN = 'https://clued.pixelgrav.com';
-const ATTEMPTS = 6;
+const RETRY_DELAY_MS = 5_000;
+const REQUEST_TIMEOUT_MS = 20_000;
 
 export function verifyConnectRelease({ commit, revision, contract, page, smoke, resource, issuer, servedContract, bootstrap, notBefore }) {
   const errors = [];
@@ -34,12 +36,13 @@ export function verifyConnectRelease({ commit, revision, contract, page, smoke, 
   return errors;
 }
 
-export async function collectChecks(commit, fetchImpl = fetch) {
+export async function collectChecks(commit, fetchImpl = fetch, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const signal = AbortSignal.timeout(timeoutMs);
   const get = async (url, accept = 'application/json') => {
     try {
       // Read-only: never create an Installation Request, download an issued package or call protected MCP.
       const response = await fetchImpl(`${url}?release=${commit}`, { method: 'GET', redirect: 'error', cache: 'no-store',
-        signal: AbortSignal.timeout(20_000), headers: { accept } });
+        signal, headers: { accept } });
       return { status: response.status, body: accept === 'application/json' ? await response.json() : await response.text() };
     } catch { return { status: 0, body: null }; }
   };
@@ -59,12 +62,14 @@ async function main() {
   if (!revision) throw new Error('connect_revision_missing');
   const contract = (await readFile(new URL('../../protocol/agent/agent-contract.md', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const expected = { commit, revision, contract, notBefore: Date.now() };
+  const deadline = performance.now() + PROPAGATION_WINDOW_MS;
   let checks, errors;
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-    checks = await collectChecks(commit);
+  for (let remainingMs = PROPAGATION_WINDOW_MS; remainingMs > 0; remainingMs = deadline - performance.now()) {
+    checks = await collectChecks(commit, fetch, Math.min(REQUEST_TIMEOUT_MS, Math.ceil(remainingMs)));
     errors = verifyConnectRelease({ ...expected, ...checks });
     if (!errors.length) break;
-    if (attempt < ATTEMPTS) await new Promise(done => setTimeout(done, 5_000));
+    const delayMs = Math.min(RETRY_DELAY_MS, deadline - performance.now());
+    if (delayMs > 0) await new Promise(done => setTimeout(done, Math.ceil(delayMs)));
   }
   if (errors.length) throw new Error('connect_release_blocked:' + errors.join(','));
   const result = { status: 'passed', source_commit: commit, revision, source_sha256: sha256(source), contract_sha256: sha256(contract),

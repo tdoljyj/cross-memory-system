@@ -12,7 +12,8 @@
 //                segment, with revocations confirmed twice; the sweep proof; keepalive once; adopt, return or touch
 //                failed; the protected-layer check (H contains T); and for OPEN_FRONT_BATCH the hard-cap budget, touch
 //                running and its read-back, then the front batch (the executor's one source of S), unless this node's
-//                batch of the same S is still running. The watermark (informational) after a confirmed full sweep. Generation 28
+//                batch of the same S is still running. Last, inside the round's budget, the PR lifecycle reconcile
+//                (reconcileLifecycle). The watermark (informational) after a confirmed full sweep. Generation 28
 //                (resident ADR 0017): a bound front that waits for its front batch, or whose front batch runs or is parked, gets
 //                one touch running when its merge slot has less than 20 minutes left (renewFrontSlot; one slot write a round).
 //   revoke-only  (under PAUSE; §41.3) the three kinds of revocation, the incremental sweep and the proof; no batch, no
@@ -49,7 +50,7 @@ import { closeGreenLedgerGroups } from './green-ledger-closed.mjs';
 import { APP_ID } from './publisher.mjs';
 import { createMergeSlotNative } from './merge-slot-native.mjs';
 import { RULESET_UNREADABLE, REQUIRED_CHECKS_UNREADABLE, rulesetFacts, requiredCheckFailure } from './train-rules.mjs';
-import { decideShadow, frontPullFacts, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
+import { decideShadow, frontPullFacts, requiredFailureExcused, requiredYieldReason, trainFacts, validateTrainFacts, NO_ACTIONS } from './train-facts.mjs';
 import { TrainShadowStore } from './train-shadow-store.mjs';
 import { TrainSweepStore } from './train-sweep-store.mjs';
 import { runStrictLane, strictIdentity, strictSettingsDigest, strictReadiness, strictFrontReadiness, strictFrontSourceHealthy, sweepProgress, recordFollows } from './train-strict.mjs';
@@ -206,28 +207,52 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     landability.rules = reply.rules;
   } catch { rulesReason = RULESET_UNREADABLE; }
   let holder = duty.holders.length === 1 ? duty.holders[0] : null;
-  const endedBound = [];
   if (holder?.boundPrs?.length > 1) {
-    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, ended: endedBound, landability });
+    const selected = await selectProjectedHolder({ github, native, fx, job, holder, claimScope, until: until.read, clock, landability });
     holder = selected ?? { ...holder, pr: null, boundPr: null };
     duty = { ...duty, holders: [holder] };
   }
-  let front = null, pull = null, mergeCommit = null, frontChecks = [];
+  let front = null, pull = null, mergeCommit = null, frontChecks = [], frontCompare = null;
   if (holder?.pr) {
     pull = await github.readPullRequest(holder.pr);
     const headSha = SHA.test(pull?.head?.sha ?? '') ? pull.head.sha : null;
     const compare = headSha ? await github.readCompare(mainSha, headSha) : null;
+    frontCompare = compare;
     mergeCommit = SHA.test(pull?.merge_commit_sha ?? '') ? await github.readGitCommit(pull.merge_commit_sha) : null;
-    const listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] };
-    if (listed?.complete !== true || !Array.isArray(listed.checks)) fail('TRAIN_FRONT_CHECKS_UNREADABLE');
-    frontChecks = listed.checks;
-    front = frontPullFacts({ pull, mergeCommit, compare, checks: listed.checks, mainSha, appId });
+    // Review 2 medium 1: an unreadable check inventory (a failed read, or one GitHub did not give whole) no longer ends the round here:
+    // the front is not green, opens nothing, and its wait is bounded by its front time (train-facts.mjs#requiredYieldReason).
+    let listed = null;
+    try { listed = headSha ? await github.readChecks(headSha) : { complete: true, checks: [] }; } catch { listed = null; }
+    const checksReadable = listed?.complete === true && Array.isArray(listed.checks);
+    frontChecks = checksReadable ? listed.checks : [];
+    // Fable 11-20 (#1192): green is every check main's live rules require on the head (this run's rules read; null when unreadable). Push mode
+    // lands its own merge, so there the merge slot alone stays green.
+    front = frontPullFacts({ pull, mergeCommit, compare, checks: frontChecks, mainSha, appId, ...(push ? {} : { rules: landability.rules }) });
+    if (!checksReadable) front = { ...front, green: false, checksUnreadable: true, ...(front.required !== undefined ? { required: null } : {}) };
+    // Review 4 medium 2: when this node first saw the head at the front, recorded once: the 60 minutes' start when no merge-slot time is known.
+    if (job.mode === 'on' && headSha && typeof sweepStore?.readFrontSeen === 'function') {
+      try {
+        let seen = await sweepStore.readFrontSeen({ pr: holder.pr, headSha });
+        if (!seen) {
+          seen = { seenAt: isoOf(clock()) };
+          await sweepStore.writeFrontSeen({ writtenAt: seen.seenAt, runId: job.runId, pr: holder.pr, headSha, seenAt: seen.seenAt });
+        }
+        front = { ...front, frontSeenAt: Date.parse(seen.seenAt) };
+      } catch { /* an unwritable record: no start yet; the next round tries again */ }
+    }
+    // Review 3 medium 1: the merge slot's green, recorded when seen, stays the start of the 60-minute wait when the checks cannot be read.
+    if (job.mode === 'on' && headSha && typeof sweepStore?.readSlotGreen === 'function') {
+      try {
+        const known = await sweepStore.readSlotGreen({ pr: holder.pr, headSha });
+        if (checksReadable && front.green && Number.isFinite(front.slotGreenAt) && known?.slotGreenAt !== isoOf(front.slotGreenAt))
+          await sweepStore.writeSlotGreen({ writtenAt: isoOf(clock()), runId: job.runId, pr: holder.pr, headSha, slotGreenAt: isoOf(front.slotGreenAt) });
+        if (!checksReadable && known) front = { ...front, slotGreenAt: Date.parse(known.slotGreenAt) };
+      } catch { /* an unreadable record proves no start: the 60 minutes wait for a round that reads the checks */ }
+    }
     // §41.4 (MergeAdmission v0.2 §2.4), on only: a protected-layer front whose H does not contain T needs main merged in
     // first. The layer is read only when H does not contain T; paths that cannot be read count as protected.
     if (job.mode === 'on' && front.state === 'open' && headSha && front.headContainsMain !== true) {
-      let layer = 'protected';
-      try { layer = layerOfPaths((await github.readChangedPaths({ repo: job.repo, pr: holder.pr, headSha, baseSha: pull.base.sha })).paths); } catch { layer = 'protected'; }
-      front = { ...front, protectedLayer: layer === 'protected' };
+      front = { ...front, protectedLayer: await protectedPull({ github, job, layerOfPaths, pr: holder.pr, headSha, baseSha: pull.base.sha }) };
     }
   }
   let entries = [], summary = null, ledgerReason = null;
@@ -549,6 +574,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
 
   // ---- on only: watermark, keepalive, adopt / return / touch failed, the front batch ----
   let lostDuty = false, requestPause = null, openFrontBatch = null, decision = null, keptAlive = [], openRows = null, frontBind = null, landingFacts = null, landingState = null;
+  let missingYield = false, treeUnchecked = null;
   if (job.mode === 'on') {
     // ADR 0018 §9: the take-over watermark report (§41.6) is gone. It was informational only: since review R2 B1 no take-over uses a
     // watermark (every take-over sweeps from onSince), so nothing reads it. actions.watermarkReported stays in the facts, always false.
@@ -572,17 +598,6 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
       frontLanded = holder?.pr != null && l.adopted.includes(holder.pr);
       landingState = l.state;
     }
-    // Field 2026-11-13: Native finishes a PR's Task binding only on adopt or return, and a holder that merges or closes a PR itself
-    // releases its claim first, so nothing else ends that binding. A bound PR GitHub has closed is ended here, merged with its merge
-    // commit, otherwise returned; Native keeps the slot while the Task has another active PR (migration 20261108161615). A PR the
-    // landing above has just answered is not asked again.
-    for (const p of lostDuty ? [] : endedBound.filter(p => !landedNow.has(p.number))) {
-      try {
-        fx.n++;
-        const a = p.merged === true ? await native.adopt({ pr: p.number, mergeSha: p.merge_commit_sha }) : await native.returnSlot({ pr: p.number });
-        if (!a.onDuty) { lostDuty = true; fx.n--; break; }
-      } catch { /* unreadable reply: counted; the next round reads the PR again */ }
-    }
     if (!takeoverPending && !lostDuty && holder?.pr && front && !frontLanded) {
       try {
         const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
@@ -604,13 +619,19 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           const green = frontChecks.filter(c => c?.app?.id === appId && c.name === SLOT_CHECK && c.head_sha === front.headSha && c.conclusion === 'success').sort((a, b) => b.id - a.id)[0];
           const said = TESTED.exec(green?.output?.summary ?? '');
           const tested = record ? { baseSha: record.baseSha, testTree: record.testTree } : said ? { baseSha: said[1], testTree: said[3] } : null;
-          if (tested && mergeCommit && mergeCommit.parents.length === 2 && mergeCommit.parents[0] === tested.baseSha && mergeCommit.parents[1] === front.headSha
+          // Review 3 high 3: with the checks unreadable and no record of this node, what was tested is unknown, never a wrong tree: nothing is
+          // latched, the next round reads again.
+          // Review 4 medium 1: nor is it reported merged in this round's lifecycle reconcile (that could end its claim before its tree is checked).
+          if (!tested && front.checksUnreadable) treeUnchecked = holder.pr;
+          else if (tested && mergeCommit && mergeCommit.parents.length === 2 && mergeCommit.parents[0] === tested.baseSha && mergeCommit.parents[1] === front.headSha
             && mergeCommit.tree === tested.testTree) {
             fx.n++;
             const a = await native.adopt({ pr: holder.pr, mergeSha: mergeCommit.sha });
             if (!a.onDuty) { lostDuty = true; fx.n--; } else actions.adopted = a.adopted === true;
           } else requestPause = 'TRAIN_LANDED_TREE_MISMATCH';
         } else if (front.state === 'closed') {
+          // Two calls, each its own: GitHub's closure ends the binding, and the merge slot is given back (giving it back ends nothing).
+          await reportLifecycle(native, fx, [{ pr: holder.pr, state: 'closed', mergeSha: null }]);
           fx.n++;
           const r = await native.returnSlot({ pr: holder.pr });
           if (!r.onDuty) { lostDuty = true; fx.n--; } else actions.returned = r.returned === true;
@@ -620,12 +641,31 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
         } else if (front.state === 'open' && typeof native.yieldSlot === 'function' && SHA.test(pull?.head?.sha ?? '')
-          && (pull.draft === true || !(await landable(github, pull, { complete: true, checks: frontChecks }, landability)))) {
+          && (pull.draft === true || !(await landable(github, pull, { complete: front.checksUnreadable !== true, checks: frontChecks },
+            { ...landability, excuse: context => requiredFailureExcused(front, context, clock(), holder.takenAt ?? null) }))
+            || (missingYield = requiredYieldReason(front, clock(), holder.takenAt ?? null)))) {
           // A front that cannot land as it stands (draft, auto-merge off, a required check failed) never
           // holds the slot while another claim waits: its claim goes to the back of the queue (Native writes nothing when none waits).
-          fx.n++;
-          const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
-          if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
+          // Fable 11-20 (#1192) and its independent review: nor does a merge-slot-green front that is not green once a missing check's re-run
+          // budget is used up, or at the longest wait (train-facts.mjs#requiredYieldReason): FRONT_CHECKS_MISSING_YIELDED, with the reason.
+          // Reviews 2 and 3 (medium 3): Native matches the front by claim and PR (the head it is given is recorded, not compared), so every yield
+          // here is made only while the PR's head is still the head whose checks were read; a head that moved keeps the slot (its own checks are
+          // read next round). After the call the head is read again: a yield cannot be taken back, so a head that moved meanwhile is recorded
+          // (yieldHeadMoved). What stays open is the moment between that read and Native's own write.
+          let moved = false;
+          try { moved = (await github.readPullRequest(holder.pr))?.head?.sha !== pull.head.sha; } catch { moved = true; }
+          if (moved) { front = { ...front, requiredYieldHeld: 'FRONT_HEAD_MOVED' }; missingYield = null; }
+          else {
+            fx.n++;
+            const y = await native.yieldSlot({ pr: holder.pr, headSha: pull.head.sha });
+            if (y.onDuty === false) { lostDuty = true; fx.n--; } else if (y.onDuty === null || y.yielded !== true) fx.n--; else actions.returned = true;
+            if (missingYield && actions.returned) front = { ...front, requiredYieldReason: missingYield };
+            if (actions.returned) {
+              let after = false;
+              try { after = (await github.readPullRequest(holder.pr))?.head?.sha !== pull.head.sha; } catch { after = false; }
+              if (after) front = { ...front, yieldHeadMoved: true };
+            }
+          }
         }
       } catch { /* unreadable reply: the write may have happened; counted, and the next run sees the outcome */ }
     }
@@ -652,13 +692,28 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   else if (job.mode === 'revoke-only') decision = 'REVOKE_ONLY_DONE';
   else if (takeoverPending) decision = 'TRAIN_TAKEOVER_SWEEP_PENDING';
   else if (actions.adopted) decision = 'FRONT_ADOPTED';
-  else if (actions.returned) decision = 'FRONT_RETURNED';
+  else if (actions.returned) decision = missingYield ? 'FRONT_CHECKS_MISSING_YIELDED' : 'FRONT_RETURNED';
   else if (actions.failedReported) decision = 'FRONT_FAILED_REPORTED';
   else if (wouldDo === 'OPEN_FRONT_BATCH' && permanent && !strictFrontReady && !strictReady) decision = 'TRAIN_FRONT_NOT_PROVEN';
   else if (wouldDo === 'OPEN_FRONT_BATCH') {
-    const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx,
-      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState } : null });
+    const o = await openFront({ job, github, native, claimScope, until: until.read, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, compare: frontCompare,
+      pushing: push ? { github, native, landing, max: effectiveBatchMax(trainLanding), rows: openRows ?? [], claimScope, state: landingState,
+        layerOfPaths, frontBaseSha: pull?.base?.sha ?? null } : null });
     decision = o.decision; openFrontBatch = o.openFrontBatch;
+    // turn_short (Fable 2026-11-19; field 2026-11-19, #1169 -> #1173): the hard cap leaves this turn less than the front batch needs,
+    // and a new turn would fit it. Nothing else ends such a turn (renewFrontSlot stops renewing it, it lapses idle before the cap,
+    // and the cannot_land yield writes nothing while nobody waits), so before this a person released the claim, claimed again,
+    // authorized the head again and edited the PR body. Native ends the turn instead: the same claim joins again, behind any waiting
+    // claim, or alone head again at once with a whole turn; the next round opens the batch. Only when no slot write happened this
+    // round. A server without turn_short writes nothing: the round stays TRAIN_FRONT_BUDGET_SHORT, as before.
+    if (o.turnShort === true && !fx.slotTouched && typeof native.yieldSlot === 'function') {
+      fx.n++;
+      let y = null;
+      try { y = await native.yieldSlot({ pr: holder.pr, headSha: front.headSha, reason: 'turn_short' }); } catch { y = null; /* unreadable: counted */ }
+      if (y?.onDuty === false) { lostDuty = true; fx.n--; decision = 'NOT_ON_DUTY'; }
+      else if (y && (y.onDuty === null || y.yielded !== true)) fx.n--;
+      else if (y) { actions.returned = true; decision = 'FRONT_RETURNED'; }
+    }
   } else decision = wouldDo;
   // Generation 28 (resident ADR 0017): the merge slot of a bound front that waits for its front batch, or whose front batch is still
   // running or parked, is renewed with touch running when less than SLOT_RENEW_BELOW_MS of it is left; at most one slot write a round.
@@ -671,6 +726,12 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   if (job.mode === 'on' && ledger && !lostDuty && clock() - started < CLEANUP_BEFORE_MS) {
     try { summary = { ...(summary ?? { records: 0, refused: 0 }), closed: (await closeGreenLedgerGroups({ ledger, inMain: sweeper.inMainOf, now: clock(), deadline: until.read, clock })).closed }; }
     catch { /* cleanup is best effort; the ledger stays as it is */ }
+  }
+  // FABLE 11-19 L2: a PR binding ends on GitHub's facts only. The reconcile runs last in mode on, after the front's adopt, return or
+  // touch, the front bind and the front batch, and only inside the round's budget (like the cleanup above; review B1): it never
+  // delays anything on the train's path. It replaces ending the holder's bound PRs during the round.
+  if (job.mode === 'on' && !lostDuty && clock() - started < CLEANUP_BEFORE_MS) {
+    await reconcileLifecycle({ github, native, fx, openRows, deadline: until.read, clock, skip: treeUnchecked });
   }
   let progress = null;
   if (strict?.round && ['all', 'current'].includes(strict.round.scope) && strict.round.state === 'running') progress = sweepProgress({ identity: strict.identity, startedAt: strict.round.startedAt,
@@ -706,14 +767,12 @@ const sweepFacts = ({ kind, complete, revoked, unconfirmed, would, full = null, 
 // Task/current generation. Several PRs of that Task are normal scheduling choices;
 // contradictory Task/generation projections, unreadable data and deadline fail closed.
 async function findFrontBind({ github, native, fx, job, holder, rows, claimScope, until, clock, readOnly = false,
-  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, ended = null, preferLandable = false, landability }) {
+  preferredHead = null, maxReads = FRONT_BIND_MAX_READS, preferLandable = false, landability }) {
   const matches = [], observed = [];
   for (const row of rows.filter(r => r?.state === 'open' && r.baseRef === 'main').slice(0, maxReads)) {
     if (clock() >= until) return null;
     let pull;
     try { pull = await github.readPullRequest(row.number, { until }); } catch { return null; }
-    if (ended && pull?.number === row.number && pull.state === 'closed' && pull.base?.ref === 'main'
-      && (pull.merged !== true || SHA.test(pull.merge_commit_sha ?? ''))) ended.push(pull);
     if (!eligibleBindingPull(pull, job.repo)) continue;
     let binding;
     try { binding = await projectPull({ native, fx, pull, job, claimScope, readOnly, until, clock }); } catch { return null; }
@@ -749,18 +808,75 @@ async function findFrontBind({ github, native, fx, job, holder, rows, claimScope
 // As before, an unreadable check inventory does not change the scheduling choice. This is never merge authorization.
 const ACTIONS_APP_ID = 15368;
 const FAILED_CONCLUSIONS = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure']);
-async function landable(github, pull, listed = null, { rules = null, appId = APP_ID, onFallback = () => {} } = {}) {
+// excuse (A3, Fable 11-20): a failed required check the train does not call real yet (train-facts.mjs#requiredFailureExcused).
+async function landable(github, pull, listed = null, { rules = null, appId = APP_ID, onFallback = () => {}, excuse = () => false } = {}) {
   if (pull.auto_merge == null) return false;
   if (listed === null) try { listed = await github.readChecks(pull.head.sha); } catch { return true; }
   if (listed?.complete !== true || !Array.isArray(listed.checks)) return true;
   if (rules !== null) {
-    try { return requiredCheckFailure(rules, listed, pull.head.sha, appId).length === 0; }
+    try { return requiredCheckFailure(rules, listed, pull.head.sha, appId).filter(context => !excuse(context)).length === 0; }
     catch (e) { onFallback(e?.code === RULESET_UNREADABLE ? RULESET_UNREADABLE : REQUIRED_CHECKS_UNREADABLE); }
   } else onFallback(RULESET_UNREADABLE);
   const latest = new Map();
   for (const c of listed.checks) if (c?.app?.id === ACTIONS_APP_ID && c.head_sha === pull.head.sha && Number.isSafeInteger(c.id)
     && !(latest.get(c.name)?.id > c.id)) latest.set(c.name, c);
   return ![...latest.values()].some(c => c.status === 'completed' && FAILED_CONCLUSIONS.has(c.conclusion));
+}
+
+// FABLE 11-19 L2: the PR's real lifecycle on GitHub is the only source of a binding's end. Native says which of this repository's PR
+// bindings it still holds open (tracked); every PR GitHub lists open now is left out (the round's own open list when it is shorter
+// than a page, so complete; otherwise every page), at most LIFECYCLE_MAX_READS of the rest are read (highest number first) and what
+// GitHub says goes back in one report: merged with its merge commit, or closed (merged false and no merged_at; anything else is no
+// fact this round). An open PR is never reported. Steady state: one RPC and no extra GitHub read. Bounded (review B1): every read
+// carries the round's deadline and the clock is checked before each; at the deadline it stops and reports what it already has.
+// Auxiliary: a port without the report, an RPC that is not deployed, a failed read or an unreadable reply only means less or no
+// reconcile this round; it never pauses the train, touches admission or decides duty.
+export const LIFECYCLE_MAX_READS = 25;
+const OPEN_PAGE = 100, OPEN_MAX_PAGES = 30;
+// skip: a PR this round must not report (review 4 medium 1: the front merged whose tree check waits for readable checks).
+async function reconcileLifecycle({ github, native, fx, openRows = null, deadline, clock, skip = null }) {
+  if (typeof native?.lifecycleReport !== 'function') return;
+  const time = () => clock() < deadline - 1000;
+  let tracked;
+  try {
+    const asked = await native.lifecycleReport({ prs: [] });
+    if (asked?.onDuty !== true || !Array.isArray(asked.tracked) || !asked.tracked.every(n => Number.isSafeInteger(n) && n > 0)) return;
+    tracked = asked.tracked;
+  } catch { return; }
+  if (!tracked.length) return;
+  const open = new Set();
+  if (Array.isArray(openRows) && openRows.length < KEEPALIVE_MAX_PRS) for (const p of openRows) open.add(p?.number);
+  else {
+    try {
+      for (let page = 1; page <= OPEN_MAX_PAGES; page++) {
+        if (!time()) return;
+        const pulls = (await github.readPullsPage({ state: 'open', sort: 'created', direction: 'desc', page, perPage: OPEN_PAGE, until: deadline }))?.pulls;
+        if (!Array.isArray(pulls)) return;
+        for (const p of pulls) open.add(p?.number);
+        if (pulls.length < OPEN_PAGE) break;
+      }
+    } catch { return; }
+  }
+  const facts = [];
+  for (const n of [...new Set(tracked)].filter(n => !open.has(n) && n !== skip).sort((a, b) => b - a).slice(0, LIFECYCLE_MAX_READS)) {
+    if (!time()) break;
+    let pull;
+    try { pull = await github.readPullRequest(n, { until: deadline }); } catch { continue; }
+    if (pull?.number !== n || pull.state !== 'closed') continue;
+    if (pull.merged === true) { if (SHA.test(pull.merge_commit_sha ?? '')) facts.push({ pr: n, state: 'merged', mergeSha: pull.merge_commit_sha }); }
+    else if (pull.merged === false && pull.merged_at == null) facts.push({ pr: n, state: 'closed', mergeSha: null });
+  }
+  if (facts.length) await reportLifecycle(native, fx, facts);
+}
+// One lifecycle report write -> whether Native took it. A lost reply may follow a commit: counted, and the next round asks again.
+async function reportLifecycle(native, fx, prs) {
+  if (typeof native?.lifecycleReport !== 'function') return false;
+  fx.n++;
+  try {
+    const r = await native.lifecycleReport({ prs });
+    if (r?.onDuty !== true) { fx.n--; return false; }
+    return true;
+  } catch { return false; }
 }
 
 async function selectProjectedHolder({ holder, ...ports }) {
@@ -865,7 +981,13 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
   const since = normal(holder.since ?? holder.takenAt), expires = normal(keptAlive.find(k => k.claimId === holder.claimId)?.expiresAt);
   const need = job.frontBatchBudgetMs + STAGE8_ATTEMPT_MS + STAGE_MARGIN_MS;
   const left = now => Math.min(now + RUNNING_CLOCK_MS, Date.parse(since) + job.slotHardCapMinutes * 60_000, expires ? Date.parse(expires) : Infinity) - now;
-  if (!since || !(left(clock()) >= need)) return { refusal: 'TRAIN_FRONT_BUDGET_SHORT' };
+  if (!since || !(left(clock()) >= need)) {
+    // turnShort (Fable 2026-11-19): the hard cap is why (not the claim lease, not an unreadable since), and a new turn fits the batch
+    // (the cap and Native's running clock each leave it its need). Stage 10 then ends the turn (merge_queue_yield turn_short).
+    const capLeft = since ? Date.parse(since) + job.slotHardCapMinutes * 60_000 - clock() : NaN;
+    const turnShort = capLeft < need && job.slotHardCapMinutes * 60_000 >= need && RUNNING_CLOCK_MS >= need;
+    return { refusal: 'TRAIN_FRONT_BUDGET_SHORT', ...(turnShort ? { turnShort: true } : {}) };
+  }
   return { refusal: null, since, need };
 }
 
@@ -875,7 +997,7 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 // its stage 8, no attempt is counted and no second openFrontBatch reaches the executor. A regenerated test merge with the
 // same parents and tree is the same S for this purpose. Residual: an attempt that ended without a frontOutcome (an
 // infrastructure failure) counts as running until the holder's running clock or slot ends.
-async function openFront({ job, github, native, claimScope, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null }) {
+async function openFront({ job, github, native, claimScope, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null, compare = null }) {
   const no = decision => ({ decision, openFrontBatch: null });
   let previous, used;
   try {
@@ -885,7 +1007,7 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
     used = previous.length;
     if (pushing) { used = 0; for (const r of previous) { const b = await sweepStore.landingBatchByTest(r.testSha); if (!b || b.members.length === 1) used++; } }
   } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
-  const { refusal, need, running } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
+  const { refusal, need, running, turnShort = false } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
   if (running && normal(running.since) !== normal(holder.takenAt)) {
     // #1144: Native may reset takenAt after the certificate was written. The current round has freshly
     // proved this holder; reanchor the original tested S, never substitute a regenerated S with the same tree.
@@ -901,7 +1023,7 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
       await sweepStore.appendFrontBatch({ ...running, writtenAt: isoOf(clock()), runId: job.runId, since: currentSince });
     } catch { return no('TRAIN_FRONT_BUDGET_SHORT'); }
   }
-  if (refusal) return no(refusal);
+  if (refusal) return { ...no(refusal), turnShort };
   let composed = null;
   if (pushing) {
     composed = await composeBatch({ ...pushing, job, holder, front, mainSha, fx });
@@ -941,14 +1063,25 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
   // scanning again. A read that fails or does not fit names nothing (the front batch scans as before); it is never a refusal.
   let headTree = null;
   if (!members) try { const c = await github.readGitCommit(front.headSha); if (c?.sha === front.headSha && SHA.test(c.tree ?? '')) headTree = c.tree; } catch { headTree = null; }
-  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...batch, ...(members ? { members } : {}), ...(headTree ? { headTree } : {}) } };
+  // The review ruling (B2): that T is in H is this run's own compare of exactly (T, H) (read above for frontPullFacts), for a front of one
+  // member; stage 1 then reads nothing for the reuse. A compare of other ends, or one that says H lacks part of T, names nothing.
+  const baseInHead = !members && compare?.baseSha === batch.baseSha && compare?.headSha === batch.headSha && compare.behindBy === 0
+    && ['ahead', 'identical'].includes(compare.status);
+  return { decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...batch, ...(members ? { members } : {}), ...(headTree ? { headTree } : {}), ...(baseInHead ? { baseInHead: true } : {}) } };
 }
 
-// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, whose Native binding names a current claim of this install and
-// whose current head carries App 5368905's newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim); in
-// PR-number order, at most `want`. A read that fails ends the search (fewer riders, never a guess).
+// The PR's merge-admission layer is protected: its changed paths by the held policy (layerOfPaths), and a read that fails counts as protected.
+async function protectedPull({ github, job, layerOfPaths, pr, headSha, baseSha }) {
+  try { return layerOfPaths((await github.readChangedPaths({ repo: job.repo, pr, headSha, baseSha })).paths) === 'protected'; } catch { return true; }
+}
+
+// ADR 0018 §3 riders: open PRs into main (not the front), not drafts, from this repository, with GitHub auto-merge on (the author's will to
+// merge; D6 2026-11-19 §1 item 7), whose Native binding names a current claim of this install and whose current head carries App 5368905's
+// newest kooyumi-work-admission success (stage 1 admitted it, Native bound the claim), and whose changes are not protected-layer (D6 §1
+// item 8: a protected change lands only alone, under its own Grant for its exact head); in PR-number order, at most `want`. A read that
+// fails ends the search (fewer riders, never a guess); a layer that cannot be read only leaves that PR out.
 export const RIDER_MAX_READS = 10;
-async function findRiders({ github, native, fx, job, rows, claimScope, holder, want }) {
+async function findRiders({ github, native, fx, job, rows, claimScope, holder, want, layerOfPaths }) {
   const out = [];
   if (want <= 0) return out;
   const open = rows.filter(r => r?.state === 'open' && r.baseRef === 'main' && r.number !== holder.pr).sort((a, b) => a.number - b.number).slice(0, RIDER_MAX_READS);
@@ -956,14 +1089,16 @@ async function findRiders({ github, native, fx, job, rows, claimScope, holder, w
     if (out.length >= want) break;
     try {
       const pull = await github.readPullRequest(row.number);
-      if (!eligibleBindingPull(pull, job.repo)) continue;
+      if (!eligibleBindingPull(pull, job.repo) || pull.auto_merge == null) continue;
       const binding = await projectPull({ native, fx, pull, job, claimScope });
       if (binding.binding_status === 'conflict') fail('TRAIN_PR_BINDING_CONFLICT');
       if (binding.binding_status !== 'bound' || binding.claim.claim_id === holder.claimId) continue;
       const listed = await github.readChecks(pull.head.sha);
       const admitted = (listed?.checks ?? []).filter(c => c?.app?.id === APP_ID && c.name === 'kooyumi-work-admission' && c.head_sha === pull.head.sha)
         .sort((a, b) => b.id - a.id)[0];
-      if (admitted?.status === 'completed' && admitted.conclusion === 'success') out.push({ pr: pull.number, headSha: pull.head.sha, claimId: binding.claim.claim_id });
+      if (admitted?.status !== 'completed' || admitted.conclusion !== 'success') continue;
+      if (await protectedPull({ github, job, layerOfPaths, pr: pull.number, headSha: pull.head.sha, baseSha: pull.base.sha })) continue;
+      out.push({ pr: pull.number, headSha: pull.head.sha, claimId: binding.claim.claim_id });
     } catch (error) { if (error?.code === 'TRAIN_PR_BINDING_CONFLICT') throw error; break; }
   }
   return out;
@@ -972,10 +1107,14 @@ async function findRiders({ github, native, fx, job, rows, claimScope, holder, w
 // ADR 0018 §3: the members, S and S's tree of the batch push opens, with the landing port's writes (counted). One member: GitHub's test merge.
 // Several: clued-train/staging.tmp forced to T, each member merged in (a conflict or a head already in T leaves that member out), the
 // chain read back. Either way clued-train/staging is forced to S (the CI trigger for the required checks other Apps produce on S).
-async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx }) {
-  if (!state) return { refusal: 'TRAIN_SWEEP_INCOMPLETE' };
+async function composeBatch({ github, native, landing, max, rows, claimScope, state, job, holder, front, mainSha, fx, layerOfPaths, frontBaseSha }) {
+  // D6 §8.4 (b): the landing state could not be read while this node has landing batches (adoptLanded): its own decision, not a sweep's.
+  if (!state) return { refusal: 'TRAIN_LANDING_STATE_UNREADABLE' };
   const frontMember = { pr: holder.pr, headSha: front.headSha, claimId: holder.claimId };
-  const candidates = max > 1 ? await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1 }) : [];
+  // D6 §1 item 8: a protected-layer front (or one whose layer cannot be read) takes no riders.
+  const alone = max <= 1 || front.protectedLayer === true
+    || await protectedPull({ github, job, layerOfPaths, pr: holder.pr, headSha: front.headSha, baseSha: frontBaseSha });
+  const candidates = alone ? [] : await findRiders({ github, native, fx, job, rows, claimScope, holder, want: max - 1, layerOfPaths });
   const picked = pickMembers({ front: frontMember, candidates, bad: state.bad, suspect: state.suspect, max });
   let members = picked.members, testSha = front.testMerge?.sha ?? null, testTree = front.testMerge?.tree ?? null;
   try {
@@ -1009,7 +1148,15 @@ async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx
   const out = { facts: null, adopted: [], lostDuty: false, state: null };
   let state, batches;
   try { state = await sweepStore.readLandingState(); batches = await sweepStore.landingBatches(20); }
-  catch { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
+  catch (error) {
+    // D6 §8.4: the landing state only schedules (riders kept out, the bisection suspect, batches adopted or handled); main's safety is S's
+    // checks and each member's own admission. (a) A state that cannot be read while this node has no landing batch at all loses nothing:
+    // it is read as empty and a valid one is written this round, read back before anything uses it (the validator stays strict).
+    // (b) Otherwise the refusal stays: TRAIN_LANDING_STATE_UNREADABLE in the facts and, at the front batch, as the decision.
+    state = error?.code === 'TRAIN_LANDING_STATE_UNREADABLE' ? await resetLandingState({ sweepStore, job, clock }) : null;
+    if (!state) { out.facts = { error: 'TRAIN_LANDING_STATE_UNREADABLE' }; return out; }
+    batches = [];
+  }
   const notMarkedMerged = [], landed = [];
   let changed = false;
   for (const b of [...batches].reverse()) {
@@ -1044,6 +1191,16 @@ async function adoptLanded({ github, native, sweepStore, mainSha, job, clock, fx
   out.state = state;
   out.facts = { ...(out.facts ?? {}), mainSha, landed, adopted: out.adopted, notMarkedMerged };
   return out;
+}
+
+// D6 §8.4 (a): no landing batch of this node (readable or not) -> an empty landing state written and read back, or null (refuse).
+async function resetLandingState({ sweepStore, job, clock }) {
+  try {
+    if (await sweepStore.anyLandingBatch()) return null;
+    await sweepStore.writeLandingState({ writtenAt: isoOf(clock()), runId: job.runId, bad: [], suspect: null, adopted: [], handled: [] });
+    const again = await sweepStore.readLandingState();
+    return again.bad.length === 0 && again.suspect === null && again.adopted.length === 0 && again.handled.length === 0 ? again : null;
+  } catch { return null; }
 }
 
 // Generation 28 (resident ADR 0017, the 45-minute gap of ADR 0016): from the moment a claim becomes the queue head until stage 10's

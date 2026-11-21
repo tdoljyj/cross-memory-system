@@ -92,7 +92,7 @@ test('what the train would do (design §5.2, §5.6)', () => {
   assert.equal(d({ checks: green }), 'FRONT_GREEN_WAIT_MERGE');
   assert.equal(d({ checks: [{ ...green[0], app: { id: 1 } }] }), 'OPEN_FRONT_BATCH', 'only App 5368905 counts');
   assert.equal(d({ checks: [...green, { ...green[0], id: 8, conclusion: 'failure' }] }), 'OPEN_FRONT_BATCH', 'the newest judgement counts');
-  assert.ok(WOULD_DO.length === 9);
+  assert.ok(WOULD_DO.length === 11);
 });
 
 test('would revoke: ledgered greens neither in main nor the front head; revoked, merged-in and unknown ones stay out', () => {
@@ -169,6 +169,10 @@ test('shadow records are create-only and validated; the stage-10 outcome carries
   const open = b => ({ ...f, mode: 'on', decision: 'OPEN_FRONT_BATCH', openFrontBatch: b });
   assert.equal(validateTrainFacts(open({ ...batch, headTree: TREE })).openFrontBatch.headTree, TREE);
   for (const bad of [{ ...batch, headTree: 'x' }, { ...batch, headTree: null }, { ...batch, headTree: TREE, members: [{ pr: 910, headSha: H }, { pr: 911, headSha: OLD }] }])
+    assert.throws(() => validateTrainFacts(open(bad)), e => e.code === 'invalid_train_facts');
+  // Fable's review ruling B2: stage 10's own compare T...H says T is in H; only true, and only for a front of one member
+  assert.equal(validateTrainFacts(open({ ...batch, baseInHead: true })).openFrontBatch.baseInHead, true);
+  for (const bad of [{ ...batch, baseInHead: false }, { ...batch, baseInHead: 'true' }, { ...batch, baseInHead: true, members: [{ pr: 910, headSha: H }, { pr: 911, headSha: OLD }] }])
     assert.throws(() => validateTrainFacts(open(bad)), e => e.code === 'invalid_train_facts');
   assert.equal(validateTrainFacts({ ...f, mode: 'on', decision: 'TRAIN_LANDED_TREE_MISMATCH', requestPause: 'TRAIN_LANDED_TREE_MISMATCH' }).requestPause, 'TRAIN_LANDED_TREE_MISMATCH');
   assert.equal(validateTrainFacts({ ...f, mode: 'revoke-only', decision: 'REVOKE_ONLY_DONE', sweep: { ...f.sweep, revoked: 3 } }).sweep.revoked, 3);

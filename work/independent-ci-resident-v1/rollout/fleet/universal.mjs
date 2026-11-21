@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { CIV1, CLOSURE, PREPARE_RECORD, RESIDENT, computeUniversalFacts } from './facts.mjs';
+import { RESIDENT_EXTERNAL } from '../../tools/build-package.mjs';
 import { pyCanonical } from './pyjson.mjs';
 import { extractTar, writeTar } from './tar.mjs';
 
@@ -44,14 +45,37 @@ export const TREE_FILES = Object.freeze([`${RESIDENT}/rollout/precheck.mjs`, `${
   `${RESIDENT}/reinstall/launcher/template.ps1`, `${RESIDENT}/reinstall/launcher/expected-plan.ps1`, `${RESIDENT}/reinstall/launcher/continue.py`,
   `${RESIDENT}/reinstall/launcher/continue-install.ps1`, `${RESIDENT}/reinstall/tools/file-locks.ps1`, `${RESIDENT}/reinstall/tools/ledger-evidence.py`,
   `${RESIDENT}/reinstall/tools/rconfig.py`, `${RESIDENT}/reinstall/linux/assemble.py`,
-  CLOSURE, PREPARE_RECORD, `${CIV1}/src/resident-v2/record.mjs`]);
+  CLOSURE, PREPARE_RECORD, `${CIV1}/src/resident-v2/record.mjs`,
+  // the resident files whose one source lies outside the resident tree (build-package.mjs RESIDENT_EXTERNAL): the node builds from this tree
+  ...RESIDENT_EXTERNAL.map(e => e.source)]);
 const excluded = p => TREE_EXCLUDED.some(x => p.startsWith(x)) || (p.startsWith(`${RESIDENT}/`) && EXCLUDED_PART.test(p.slice(RESIDENT.length + 1)));
+// A packaged PowerShell script is ASCII (tab, LF, CR, 0x20-0x7e), with one exception. Windows PowerShell 5.1 reads a script with a BOM as
+// UTF-8 and one without as the system ANSI code page, and the launcher parses verify-resident.ps1 from its bytes as a third reader;
+// only ASCII means the same to all three (a BOM made the launcher's parse fail with VERIFY_SCRIPT_PARSE_ERRORS; a UTF-8 comment under
+// cp936 swallowed the next line). The exception is the section sign, bytes C2 A7: frozen texts carry it and cannot change (the
+// compile recipe of upgrade-apply.ps1 is compared word for word with install-resident.ps1's); as two bytes it reads as one character
+// under 936/950/949 and as two under 932 and the single-byte code pages, and swallows no neighbour. This set is a constant, never a
+// place to add characters later. A BOM is not ASCII, so it needs no rule of its own.
+export const PS1_ALLOWED_MULTIBYTE = Object.freeze(['c2a7']);
+const PS1_ALLOWED = PS1_ALLOWED_MULTIBYTE.map(h => Buffer.from(h, 'hex'));
+const PS1_SCRIPT = /\.(?:ps1|psm1|psd1)$/i;
 const IMPORT_RE = /\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]|\bimport\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]|new URL\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*,\s*import\.meta\.url/g;
 
 const sha = b => createHash('sha256').update(b).digest('hex');
 const fail = (code, detail) => { throw Object.assign(new Error(detail === undefined ? code : `${code} ${JSON.stringify(detail)}`), { code, detail }); };
 const check = (ok, code, detail) => { if (!ok) fail(code, detail); };
 const byteOrder = (a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+// the offset of the first byte of a script that is neither ASCII text nor an allowed sequence, or -1
+function firstNonAscii(buf) {
+  for (let i = 0; i < buf.length;) {
+    const b = buf[i];
+    if (b === 0x09 || b === 0x0a || b === 0x0d || (b >= 0x20 && b <= 0x7e)) { i += 1; continue; }
+    const hit = PS1_ALLOWED.find(seq => seq.length <= buf.length - i && buf.compare(seq, 0, seq.length, i, i + seq.length) === 0);
+    if (!hit) return i;
+    i += hit.length;
+  }
+  return -1;
+}
 
 // The tree subset. listing: Map(path -> { mode, oid }); read(paths) -> Map(path -> Buffer) (async, batched).
 export async function selectTree(listing, read) {
@@ -78,7 +102,15 @@ export async function selectTree(listing, read) {
   // the node entry (bootstrap.ps1) extracts the archive with Windows' own tar.exe, which cannot write a name outside ASCII: a package
   // never holds one (review M6; none at the commit this rule was added with)
   for (const p of chosen) check(/^[\x20-\x7e]+$/.test(p), 'UNIVERSAL_TREE_PATH_NOT_ASCII', p);
-  return [...chosen].sort(byteOrder);
+  // the scripts a node runs or parses are ASCII (see PS1_ALLOWED_MULTIBYTE): the package cannot be built with another byte
+  const sorted = [...chosen].sort(byteOrder);
+  const scripts = sorted.filter(p => PS1_SCRIPT.test(p));
+  const bytes = scripts.length ? await read(scripts) : new Map();
+  for (const p of scripts) {
+    const offset = firstNonAscii(bytes.get(p));
+    check(offset < 0, 'UNIVERSAL_TREE_PS1_NOT_ASCII', { path: p, offset });
+  }
+  return sorted;
 }
 
 // ---- git (publishing machine only)

@@ -879,6 +879,8 @@ test('gen 28: an idle front is not renewed (green, needs main, closed, unbound, 
   const soon = { holder: { mergeSlotUntil: iso(NOW + 10 * 60_000) } };
   const green = await setup(t, { native: soon });
   green.gh.green(31, H);
+  // Fable 11-20 (#1192): green, wait for merge needs every check main's rules require on the head, not the merge slot alone.
+  for (const [i, name] of ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified'].entries()) green.gh.green(32 + i, H, { name });
   assert.deepEqual([(await green.run()).facts.decision, touchesOf(green)], ['FRONT_GREEN_WAIT_MERGE', []]);
   const greenClock = await setup(t, { native: { holder: { ...soon.holder, ciState: 'green', ciHeadSha: H } } });
   greenClock.streamDown = true;
@@ -909,6 +911,92 @@ test('gen 28: an idle front is not renewed (green, needs main, closed, unbound, 
   lost.native.port = { ...lost.native.port, async touch(i) { await touch(i); return { onDuty: false, touched: false, until: null, claims: [], returned: null }; } };
   const l = await lost.run();
   assert.deepEqual([l.facts.decision, l.facts.actions.touchedRunning, l.sideEffects], ['NOT_ON_DUTY', false, 1]);
+});
+
+// ---- turn_short (Fable 2026-11-19, field #1169 -> #1173): a turn too short for the front batch is ended by the train itself ----
+// Production 2026-11-19 (Beijing): claim 28ab365c took the slot at 07:32:36 (hard cap 120 minutes), used it for #1169, was rebound to
+// #1173 at 08:38:46 and from 08:40:24 every round ended TRAIN_FRONT_BUDGET_SHORT (68 minutes used, 52 left, a batch needs 64.5) until a
+// person gave the claim up, claimed again, authorized the head again and edited the PR body. Now the round that finds the hard cap too
+// short for the batch asks Native (merge_queue_yield, reason turn_short) to end the turn: the same claim joins again (behind any waiting
+// claim; alone, head again at once with a whole turn), and the next round opens the batch.
+const PROD_BUDGET = { frontBatchBudgetMs: 3_600_000 };
+const landablePulls = e => { const read = e.gh.readPullRequest; e.gh.readPullRequest = async n => ({ ...(await read(n)), auto_merge: { merge_method: 'merge' } }); };
+const yieldsOf = e => e.native.calls.filter(c => c[0] === 'yield').map(c => c[1]);
+// Native's merge_queue_yield as the fake sees it: turn_short alone in the queue starts a whole new turn for the same claim now.
+const yielding = (e, answer = null) => {
+  e.native.port.yieldSlot = async i => {
+    e.native.calls.push(['yield', i]);
+    if (answer) return answer;
+    if (i.reason === 'turn_short') e.native.holder = { ...e.native.holder, takenAt: iso(e.now), mergeSlotUntil: iso(e.now + 45 * 60_000), ciState: null, ciHeadSha: null, hardCapUntil: null };
+    return { onDuty: true, yielded: true };
+  };
+};
+
+test('turn_short: a front the hard cap leaves too little for its batch ends its turn and joins again; the next round opens the batch', async t => {
+  const e = await setup(t, { job: PROD_BUDGET, native: { holder: { takenAt: iso(NOW - 68 * 60_000), mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+  landablePulls(e); yielding(e);
+  const first = await e.run();
+  validateTrainFacts(first.facts);
+  assert.deepEqual(yieldsOf(e), [{ pr: 910, headSha: H, reason: 'turn_short' }], JSON.stringify(first.facts));
+  assert.deepEqual([first.facts.decision, first.facts.actions.returned, first.facts.openFrontBatch, touchesOf(e), first.sideEffects],
+    ['FRONT_RETURNED', true, null, [], 2], 'keepalive + the yield; no touch, no attempt counted');
+  assert.equal((await e.store.frontBatches({ pr: 910, headSha: H })).length, 0);
+  e.now += 5 * 60_000;
+  e.native.calls.length = 0;
+  const second = await e.run();
+  validateTrainFacts(second.facts);
+  assert.equal(second.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(second.facts));
+  assert.deepEqual(second.facts.openFrontBatch, { pr: 910, headSha: H, baseSha: T, testSha: S, testTree: TREE, claimId: CLAIM, since: iso(NOW), attempt: 1 });
+  assert.deepEqual(yieldsOf(e), [], 'the new turn is not given up again');
+});
+
+test('turn_short is asked only when the hard cap is why: not for a short lease, a cap no batch fits, a running batch, a server without it', async t => {
+  await t.test('lease too short', async t => {
+    const e = await setup(t, { job: PROD_BUDGET, native: { expiresAt: iso(NOW + 20 * 60_000), holder: { mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+    landablePulls(e); yielding(e);
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e)], ['TRAIN_FRONT_BUDGET_SHORT', []]);
+  });
+  await t.test('a 60-minute cap that no 64.5-minute batch fits', async t => {
+    const e = await setup(t, { job: { ...PROD_BUDGET, slotHardCapMinutes: 60 }, native: { holder: { takenAt: iso(NOW - 40 * 60_000), mergeSlotUntil: iso(NOW + 10 * 60_000) } } });
+    landablePulls(e); yielding(e);
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e), touchesOf(e)], ['TRAIN_FRONT_BUDGET_SHORT', [], []], 'a new turn could not open it either');
+  });
+  await t.test('a front batch running', async t => {
+    const e = await setup(t);
+    landablePulls(e); yielding(e);
+    assert.equal((await e.run()).facts.decision, 'OPEN_FRONT_BATCH');
+    e.now += 85 * 60_000; // 30 minutes of the cap left, less than the batch's 34.5: the batch already running keeps its turn
+    e.native.calls.length = 0;
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e)], ['TRAIN_FRONT_BATCH_RUNNING', []]);
+  });
+  await t.test('a server without turn_short', async t => {
+    const e = await setup(t, { job: PROD_BUDGET, native: { holder: { takenAt: iso(NOW - 68 * 60_000), mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+    landablePulls(e); yielding(e, { onDuty: null, yielded: false });
+    const r = await e.run();
+    assert.deepEqual(yieldsOf(e), [{ pr: 910, headSha: H, reason: 'turn_short' }]);
+    assert.deepEqual([r.facts.decision, r.facts.actions.returned, r.sideEffects], ['TRAIN_FRONT_BUDGET_SHORT', false, 1], 'nothing written: as before');
+  });
+  await t.test('a front that cannot land yields as before, without a reason', async t => {
+    const e = await setup(t, { job: PROD_BUDGET, native: { holder: { takenAt: iso(NOW - 68 * 60_000), mergeSlotUntil: iso(NOW + 40 * 60_000) } } });
+    yielding(e); // auto-merge off
+    const r = await e.run();
+    assert.deepEqual([r.facts.decision, yieldsOf(e)], ['FRONT_RETURNED', [{ pr: 910, headSha: H }]]);
+  });
+});
+
+test('merge-slot-native yieldSlot: the reason is sent only when given, and only turn_short or cannot_land', async () => {
+  const { createMergeSlotNative } = await import('../src/independent-control-checks-v2/merge-slot-native.mjs');
+  const sent = [];
+  const native = createMergeSlotNative({ config: { supabaseUrl: 'https://x.supabase.co', publishableKey: 'pk', scope: 'project:p', repository: REPO }, nativeToken: 'clued_bnd_secret',
+    fetchImpl: async (url, init) => { sent.push(JSON.parse(init.body).p_input); return new Response(JSON.stringify({ status: 'ok', yielded: true }), { status: 200 }); } });
+  assert.deepEqual(await native.yieldSlot({ pr: 910, headSha: H }), { onDuty: true, yielded: true });
+  assert.deepEqual(await native.yieldSlot({ pr: 910, headSha: H, reason: 'turn_short' }), { onDuty: true, yielded: true });
+  assert.deepEqual(await native.yieldSlot({ pr: 910, headSha: H, reason: 'whatever' }), { onDuty: null, yielded: false });
+  assert.deepEqual(sent, [{ action: 'merge_queue_yield', scope: 'project:p', pr_ref: `${REPO}#910`, head_sha: H },
+    { action: 'merge_queue_yield', scope: 'project:p', pr_ref: `${REPO}#910`, head_sha: H, reason: 'turn_short' }]);
 });
 
 test('adopt when merged as [T, H] with S\'s tree; a different tree pauses the train; return only when closed unmerged', async t => {

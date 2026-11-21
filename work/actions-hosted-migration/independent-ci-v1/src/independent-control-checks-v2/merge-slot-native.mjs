@@ -3,7 +3,7 @@
 // 20261010161848) returns the live merge-slot holder of the repository's queue in this scope. It needs the
 // ci-admission role, so it doubles as the on-duty probe: without the role Native answers
 // {status:'ok', holders:[], reason:'admission_binding_required'}, which means "not on duty", never "queue empty".
-// Merge train (DESIGN §41.4, §41.6): the writes touch, adopt, return, keepalive and the sweep watermark, and the read
+// Merge train (DESIGN §41.4, §41.6): the writes touch, adopt, return, lifecycleReport, keepalive and the sweep watermark, and the read
 // nodesStatus (ci_nodes_status: nodes, watchdog, watermarks), are Source A's port (scripts/ci/clued-merge-train-native.mjs),
 // offered here with the same config and token. Holders require the Native Task/PR
 // projection; an older API is unknown, never authority from its old scalar column.
@@ -14,6 +14,7 @@ export const HOLDERS_RPC = 'clued_work_merge_slot_holders_v1';
 export const NOT_ON_DUTY = 'admission_binding_required';
 export const HOLDERS_PROJECTION_UNSUPPORTED = 'MERGE_SLOT_HOLDERS_PROJECTION_UNSUPPORTED';
 export const YIELD_ACTION = 'merge_queue_yield';
+export const YIELD_REASONS = Object.freeze(['cannot_land', 'turn_short']);
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const PR_REF = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,9}$/;
 const ISO = v => typeof v === 'string' && Number.isFinite(Date.parse(v));
@@ -92,19 +93,23 @@ export function createMergeSlotNative({ config, fetchImpl, nativeToken }) {
     touch: async input => write().touch(input),
     adopt: async input => write().adopt(input),
     returnSlot: async input => write().returnSlot(input),
+    lifecycleReport: async input => write().lifecycleReport(input),
     keepalive: async input => write().keepalive(input),
     reportSweepWatermark: async input => write().reportSweepWatermark(input),
     nodesStatus: async () => write().nodesStatus(),
     // Migration 20261115150000: the head claim whose front PR cannot land joins its queue again at the back when another claim waits
     // (CI door action merge_queue_yield). -> {onDuty, yielded}; onDuty null: a server without the action (or an answer that cannot be
     // read), which yields nothing and changes nothing. Never throws.
-    async yieldSlot({ pr, headSha } = {}) {
-      if (!Number.isSafeInteger(pr) || pr < 1 || !/^[0-9a-f]{40}$/.test(headSha ?? '')) return { onDuty: null, yielded: false };
+    // Migration 20261119120000: reason turn_short (sent only when given; absent means cannot_land) ends a head's turn that is too short
+    // for its front batch even when nobody waits. A server without it refuses the unknown key: onDuty null, nothing written.
+    async yieldSlot({ pr, headSha, reason } = {}) {
+      if (!Number.isSafeInteger(pr) || pr < 1 || !/^[0-9a-f]{40}$/.test(headSha ?? '')
+        || (reason !== undefined && !YIELD_REASONS.includes(reason))) return { onDuty: null, yielded: false };
       let response, body;
       try {
         response = await fetchImpl(`${config.supabaseUrl.replace(/\/$/, '')}/rest/v1/rpc/clued_work_verify_v1`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
           headers: { apikey: config.publishableKey, authorization: `Bearer ${config.publishableKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { action: YIELD_ACTION, scope: config.scope, pr_ref: `${config.repository}#${pr}`, head_sha: headSha } }) });
+          body: JSON.stringify({ p_token_hash: digest(nativeToken), p_input: { action: YIELD_ACTION, scope: config.scope, pr_ref: `${config.repository}#${pr}`, head_sha: headSha, ...(reason !== undefined ? { reason } : {}) } }) });
         body = await roleProbeBody(response);
       } catch { return { onDuty: null, yielded: false }; }
       if (response.status === 200 && plain(body) && body.status === 'rejected' && body.error_code === NOT_ON_DUTY) return { onDuty: false, yielded: false };

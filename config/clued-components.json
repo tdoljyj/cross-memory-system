@@ -33,7 +33,7 @@
     {
       "id": "agent-contract",
       "kind": "contract",
-      "version": "60",
+      "version": "61",
       "description": "BeamingFace Agent Contract, served at /clued-agent.md.",
       "root": "protocol/agent",
       "files": [
@@ -676,7 +676,7 @@
     {
       "id": "script.required-applicability",
       "kind": "script",
-      "version": "1.0.11",
+      "version": "1.0.15",
       "description": "Request-bound independent complete diff and fixed trusted-base selector evidence; no serialized flag can mint live qualification.",
       "root": "scripts/ci",
       "files": [
@@ -846,7 +846,7 @@
     {
       "id": "ci.temporary-storage-lifecycle",
       "kind": "script",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "description": "Job temporary-storage setup and exact pre-bootstrap lifecycle classification; scan permission writes remain explicit.",
       "root": ".",
       "files": [

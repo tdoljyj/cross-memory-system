@@ -11,7 +11,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import {allowRawTestBindings} from './raw-binding-grants-fixture.mjs';
 // 在校验网关完整授权清单的迁移套件里，同步验证新门的调用方和端到端行为。
 import './work-claims-pr-merged-event-db.test.mjs';
-import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES,CI_NODE_GATEWAY_SIGNATURES,WORKER_DUE_SIGNATURE,CONNECTION_SELF_SIGNATURE,PR_MERGED_EVENT_SIGNATURE} from './worker-gateway-caller-fixture.mjs';
+import {workerGatewayRpc,setWorkerGatewayCaller,WORKER_SIGNATURES,CI_SIGNATURES,CI_NODE_GATEWAY_SIGNATURES,WORKER_DUE_SIGNATURE,CONNECTION_SELF_SIGNATURE,PR_MERGED_EVENT_SIGNATURE,PR_LIFECYCLE_REPORT_SIGNATURE,RENEW_SIGNATURES} from './worker-gateway-caller-fixture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const uuid=()=>crypto.randomUUID();
@@ -128,10 +128,10 @@ test('physical scan-start Native K: real transactions, exact existing authority 
         and has_function_privilege($1,p.oid,'EXECUTE') order by 1`,[role])).rows.map(r=>r.s.replace(/^public\./,''));
       // 后续迁移各自显式登记新增的网关签名。
       assert.deepEqual(await names('clued_worker_gateway'),[...WORKER_SIGNATURES,...newGateway,...CI_NODE_GATEWAY_SIGNATURES,
-        WORKER_DUE_SIGNATURE,PR_MERGED_EVENT_SIGNATURE].sort());
+        WORKER_DUE_SIGNATURE,PR_MERGED_EVENT_SIGNATURE,...RENEW_SIGNATURES].sort());
       const anon=(await admin.query(`select p.oid::regprocedure::text s from pg_proc p where p.pronamespace='public'::regnamespace and p.prosecdef
         and has_function_privilege('anon',p.oid,'EXECUTE') order by 1`)).rows.map(r=>r.s.replace(/^public\./,''));
-      assert.deepEqual(anon,[...CI_SIGNATURES, CONNECTION_SELF_SIGNATURE].sort());
+      assert.deepEqual(anon,[...CI_SIGNATURES, CONNECTION_SELF_SIGNATURE, PR_LIFECYCLE_REPORT_SIGNATURE].sort());
       assert.equal(afterCommands.replace("  if op='scan_start_independent' then\n    return clued_private.ci_scan_start_local_v1(p_token_hash,p_input);\n  end if;\n",''),
         beforeCommands);
       for(const [original,copy] of Object.entries(cloneOf)){

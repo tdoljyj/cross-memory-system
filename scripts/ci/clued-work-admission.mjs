@@ -18,8 +18,10 @@
 //                     green check does not outlive its claim
 //   --mode adopt      the run on a closed pull request: reports a merge to
 //                     Clued so that, when the Task runs as a multi-copy race,
-//                     the copy on this pull request is adopted (adoptMerged()),
-//                     and returns the merge slot of a merged or closed one
+//                     the copy on this pull request is adopted (adoptMerged());
+//                     a pull request closed without a merge is not reported here
+//                     (its binding ends on GitHub's facts: the webhook and the
+//                     resident's PR lifecycle report, migration 20261119140000)
 //
 // The admission run also posts the kooyumi-merge-slot check (mergeSlotState()):
 // a pull request that contains the base branch's tip can merge only while its
@@ -88,6 +90,9 @@ import {createNaturalRecorder,observeEvaluation} from "./merge-admission-source-
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { proxyBootstrapArguments } from "../runner/clued-runner-job-started.mjs";
+// The one failure rule (Fable 11-20, 单一判定): the classifier and the repair history, in the protected scripts/ci/** path.
+import { MAX_LOG_CHARS, requiredTestsRepairHistory } from "./required-tests-failure-rule.mjs";
+export { SETUP_STEPS, MAX_LOG_CHARS, failedSteps, diedInSetup, neverAssigned, jobFailureKind, requiredTestsRepairHistory } from "./required-tests-failure-rule.mjs";
 import { resolvePRTaskBinding, claimReferenceFromBinding, PRTaskBindingError } from './clued-pr-task-binding.mjs';
 
 import {
@@ -297,52 +302,6 @@ export async function githubJson(fetchImpl, env, route, { allowMissing = false }
   if (allowMissing && response.status === 404) return null;
   if (!response.ok) throw new Error(`GitHub API ${route} returned ${response.status}`);
   return await response.json();
-}
-
-// Kept in the pinned gate, standalone runner hook and resident lane. The admission self-tests compare all three copies.
-export const SETUP_STEPS = ["Set up job", "Set up runner"];
-// A log longer than this is never classified (the tail with the verdict may be missing): not environment.
-export const MAX_LOG_CHARS = 3_500_000;
-const NETWORK_FAILURE = [
-  /\bECONNRESET\b/, /\bETIMEDOUT\b/, /\bEAI_AGAIN\b/, /\bENOTFOUND\b/, /\bECONNREFUSED\b/, /\bEPIPE\b/,
-  /socket hang up/i, /network (?:aborted|timeout|socket disconnected)/i, /connection reset by peer/i, /TLS handshake timeout/i,
-  /could not resolve host/i, /temporary failure in name resolution/i, /unexpected disconnect while reading sideband/i,
-  /RPC failed; curl \d+/, /early EOF/i, /\b429 Too Many Requests\b/i,
-  /npm (?:ERR!|error) network/i, /request to https?:\/\/\S+ failed, reason:/i,
-];
-const TEST_FAILURE = [
-  /\bnot ok \d+/, /# fail [1-9]\d*/, /\bAssertionError\b/, /✖/, /\b[1-9]\d* (?:failed|failing)\b/i, /(?:^|\s)FAIL(?:\s|$)/,
-];
-export function failedSteps(job) {
-  return Array.isArray(job?.steps) ? job.steps.filter((step) => step && step.conclusion === "failure") : null;
-}
-// Did the job die in the runner's own setup, before any workflow step ran?
-export function diedInSetup(job) {
-  if (!job || job.status !== "completed" || job.conclusion !== "failure") return false;
-  const failed = failedSteps(job);
-  return failed !== null && failed.length > 0 && failed.every((step) => SETUP_STEPS[job.steps.indexOf(step)] === step.name);
-}
-// The timeout annotation is emitted on the cancelled job's check run, independently of its log.
-function hasTimeoutAnnotation(annotations) {
-  return Array.isArray(annotations) && annotations.some(note =>
-    typeof note?.message === "string" && note.message.startsWith("The job has exceeded the maximum execution time of "));
-}
-export function jobFailureKind(job, log = null, annotations = null) {
-  const no = (why) => ({ environment: false, kind: "unknown", why });
-  if (job?.status !== "completed" || !["failure", "cancelled"].includes(job.conclusion)) return no("the job did not fail or cancel");
-  if (diedInSetup(job)) return { environment: true, kind: "setup", why: `the runner's ${failedSteps(job).map((step) => step.name).join(", ")} step failed` };
-  const failed = failedSteps(job);
-  const cancelled = job.conclusion === "cancelled";
-  if (cancelled) {
-    if (failed === null || !job.steps.length || failed.length > 0
-      || job.steps.some(step => typeof step?.conclusion !== "string")) return no("the cancelled job lacks a complete record without failed steps");
-    if (!hasTimeoutAnnotation(annotations)) return no("the cancelled job has no timeout annotation");
-  } else if (!failed?.length) return no("the job record names no failed step");
-  if (typeof log !== "string" || log.length === 0 || log.length > MAX_LOG_CHARS) return no("the job log is missing or too long to judge");
-  if (TEST_FAILURE.some((pattern) => pattern.test(log))) return { environment: false, kind: "test", why: "the log shows a failed test" };
-  if (cancelled) return { environment: true, kind: "timeout", why: "the job exceeded its maximum execution time and the log shows no failed test" };
-  const network = NETWORK_FAILURE.find((pattern) => pattern.test(log));
-  return network ? { environment: true, kind: "network", why: `the log shows a network failure (${network.source.slice(0, 40)}) and no failed test` } : no("the log shows no network failure");
 }
 
 // A job's log is plain text behind a redirect; fetch follows it (and drops the token for the other host).
@@ -2767,123 +2726,6 @@ export async function independentAdmissionCheck(fetchImpl, env, repository, head
   return { settled: true, check: newest, bound, admitted: bound && newest.conclusion === "success" };
 }
 
-// GitHub's earlier attempts are the repair budget. Skipped jobs after a
-// known gate refusal or setup death do not consume it.
-const REPAIR_GATE_JOB = "admission-gate";
-const REPAIR_NOT_ADMITTED = /^(?:ADMISSION_PENDING|RERUN_REFUSED):/;
-const REPAIR_TRANSIENT_API_ERROR = /^GitHub API \S+ (?:returned 5[0-9]{2}|could not be reached after [0-9]+ attempts)/;
-
-async function repairAnnotations(read, repository, jobId) {
-  if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("the job has no check run ID");
-  const notes = [];
-  for (let page = 1; page <= 50; page += 1) {
-    const batch = await read(`/repos/${repository}/check-runs/${jobId}/annotations?per_page=100&page=${page}`);
-    if (!Array.isArray(batch) || batch.length > 100) throw new Error("the job annotations are unreadable");
-    notes.push(...batch);
-    if (batch.length < 100) return notes;
-  }
-  throw new Error("the job annotations are incomplete");
-}
-
-async function repairEnvironmentFailures({ read, readLog, repository, heavy }) {
-  if (heavy.some(job => job.status !== "completed" || !["success", "skipped", "failure", "cancelled"].includes(job.conclusion))) return null;
-  const failures = [];
-  for (const job of heavy) {
-    if (job.conclusion === "success" || job.conclusion === "skipped") continue;
-    const setup = diedInSetup(job);
-    const cancelled = job.conclusion === "cancelled";
-    const steps = failedSteps(job);
-    if (!setup && (!Number.isSafeInteger(job.id) || job.id <= 0 || !steps || (cancelled ? steps.length > 0 : steps.length === 0))) return null;
-    const annotations = cancelled ? await repairAnnotations(read, repository, job.id) : null;
-    if (cancelled && !hasTimeoutAnnotation(annotations)) return null;
-    const log = setup ? null : await readLog(`/repos/${repository}/actions/jobs/${job.id}/logs`);
-    const evidence = jobFailureKind(job, log, annotations);
-    if (!evidence.environment || typeof job.name !== "string" || !job.name) return null;
-    failures.push({ name: job.name, kind: evidence.kind });
-  }
-  return failures.length > 0 ? failures : null;
-}
-
-async function hasRepairRecovery({ read, repository, runId, workflowId, head, after, jobs }) {
-  if (!Number.isSafeInteger(workflowId) || workflowId <= 0 || !Number.isFinite(after)) return false;
-  const needed = new Set(jobs);
-  // Include old attempts of other runs and successes in runs that failed a
-  // different job. A run may have started before the failed attempt ended.
-  for (let page = 1; page <= 50; page += 1) {
-    const listing = await read(`/repos/${repository}/actions/workflows/${workflowId}/runs?per_page=100&page=${page}`);
-    const runs = listing?.workflow_runs;
-    if (!Array.isArray(runs) || runs.length > 100) return false;
-    for (const run of runs) {
-      if (run?.workflow_id !== workflowId || !Number.isSafeInteger(run.id) || run.id <= 0 || String(run.id) === String(runId)
-        || !/^[a-f0-9]{40}$/.test(run.head_sha ?? "") || run.head_sha === head
-        || (run.status === "completed" && Date.parse(run.updated_at) <= after)) continue;
-      for (let jobPage = 1; jobPage <= 50; jobPage += 1) {
-        const { jobs: candidates } = await read(`/repos/${repository}/actions/runs/${run.id}/jobs?filter=all&per_page=100&page=${jobPage}`) ?? {};
-        if (!Array.isArray(candidates) || candidates.length > 100) return false;
-        for (const job of candidates) {
-          if (job?.head_sha === run.head_sha && job.status === "completed" && job.conclusion === "success"
-            && Date.parse(job.completed_at) > after) needed.delete(job.name);
-        }
-        if (needed.size === 0) return true;
-        if (candidates.length < 100) break;
-      }
-    }
-    if (runs.length < 100) break;
-  }
-  return false;
-}
-
-async function requiredTestsRepairHistory({ read, readLog, repository, runId, head, attempt, workflowId }) {
-  const refuse = reason => ({ allowed: false, reason });
-  const attempts = [];
-  let realAttempts = 0;
-  let lastFailures = [];
-  let completedAt;
-  try {
-    for (let earlier = 1; earlier < attempt; earlier += 1) {
-      const body = await read(`/repos/${repository}/actions/runs/${runId}/attempts/${earlier}/jobs?per_page=100`);
-      const jobs = body?.jobs;
-      if (!Array.isArray(jobs) || body.total_count !== jobs.length || jobs.length > 100 || jobs.some(job => !job || typeof job !== "object"))
-        return refuse(`attempt ${earlier}'s job list is incomplete`);
-      const gates = jobs.filter(job => job.name === REPAIR_GATE_JOB);
-      const heavy = jobs.filter(job => job.name !== REPAIR_GATE_JOB);
-      if (gates.length !== 1 || heavy.length === 0)
-        return refuse(`attempt ${earlier} does not list one ${REPAIR_GATE_JOB} job and its heavy jobs`);
-      if (jobs.some(job => job.head_sha !== head))
-        return refuse(`attempt ${earlier} has a job of another head than ${head}`);
-      if (jobs.some(job => job.run_attempt != null && Number(job.run_attempt) !== earlier))
-        return refuse(`attempt ${earlier} has a job of another attempt`);
-      const [gateJob] = gates;
-      const ran = heavy.filter(job => job.status !== "completed" || job.conclusion !== "skipped");
-      if (ran.length > 0) {
-        realAttempts += 1;
-        if (realAttempts === 3) return refuse("three real attempts have already run");
-        const failures = gateJob.status === "completed" && gateJob.conclusion === "success"
-          ? await repairEnvironmentFailures({ read, readLog, repository, heavy }) : null;
-        if (!failures)
-          return refuse(`attempt ${earlier} already ran ${ran.map(job => `${String(job.name).slice(0, 80)}: ${job.status}/${job.conclusion ?? "none"}`).join(", ")}; its gate or environment evidence does not allow repair`);
-        lastFailures = failures.map(job => job.name);
-        completedAt = Math.max(...jobs.map(job => Date.parse(job.completed_at)));
-        attempts.push({ attempt: earlier, heavy_jobs: heavy.length, environment_failure: lastFailures,
-          environment_failure_kinds: Object.fromEntries(failures.map(job => [job.name, job.kind])) });
-        continue;
-      }
-      const setup = diedInSetup(gateJob);
-      const notes = !setup && gateJob.status === "completed" ? await repairAnnotations(read, repository, gateJob.id) : [];
-      if (!setup && !notes.some(note =>
-        (note?.title === REPAIR_GATE_JOB && REPAIR_NOT_ADMITTED.test(note.message ?? "")) ||
-        (note?.title === "kooyumi-work-admission" && REPAIR_TRANSIENT_API_ERROR.test(note.message ?? ""))))
-        return refuse(`the ${REPAIR_GATE_JOB} job of attempt ${earlier} did not end in ADMISSION_PENDING, RERUN_REFUSED or a GitHub API outage`);
-      attempts.push({ attempt: earlier, heavy_jobs: heavy.length });
-    }
-    if (realAttempts === 2 && !await hasRepairRecovery({ read, repository, runId, workflowId, head, after: completedAt, jobs: lastFailures }))
-      return refuse("the second repair needs recovery evidence: a later success of each failed job in the same workflow on another commit");
-  } catch (error) {
-    return refuse(`the earlier attempts could not be read (${error instanceof Error ? error.message : String(error)})`);
-  }
-  return { allowed: true, attempts };
-}
-
 export async function independentRepairRerun({ fetchImpl, env, pr, head = pr?.head.sha, attempt, self }) {
   const repository = env.GITHUB_REPOSITORY;
   const runId = env.GITHUB_RUN_ID;
@@ -3219,6 +3061,19 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
   if (attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/clued-train/staging"
     && workflowFileOf(env) === "clued-required-tests.yml")
     return stagingRepairGate({ env, fetchImpl, outcome, attempt });
+  if (!attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/main") {
+    const reused = await mainPushTreeReuse({ env, fetchImpl });
+    if (reused && reused.run_heavy === false) {
+      outcome.verdict = "TREE_ALREADY_TESTED";
+      outcome.head_sha = env.GITHUB_SHA;
+      outcome.tree_reuse = reused;
+      outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} already passed ${workflowFileOf(env)} `
+        + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr}; `
+        + `prior PR evidence only, the skipped heavy jobs do not qualify this main commit; "Re-run all jobs" runs them`];
+      return outcome;
+    }
+    if (reused) outcome.notices.push(`main push tree reuse: ${reused.reason}; the heavy jobs run`);
+  }
   if (!PR_EVENTS.has(eventName)) {
     outcome.admitted = true;
     outcome.verdict = "NOT_APPLICABLE";
@@ -3426,6 +3281,22 @@ function workflowFileOf(env) {
   return match ? match[1] : null;
 }
 
+// Rule 41ab823a by tree (FABLE-main-push-tree-reuse §2.2): the first attempt of a main push of a required-test
+// workflow in the reuse table (proof "ancestry") reuses the merged PR head's passing run of the same tree.
+// scripts/ci/clued-tree-reuse.mjs decides (no repository imports); it reads only GitHub's own records with this job's token and
+// returns run_heavy=true on anything it cannot prove. Null: not a subject, nothing was read.
+async function mainPushTreeReuse({ env, fetchImpl }) {
+  const workflow = workflowFileOf(env);
+  let reuse;
+  try {
+    reuse = await import("./clued-tree-reuse.mjs");
+  } catch (error) {
+    return { run_heavy: true, reason: `reuse table unreadable (${error instanceof Error ? error.message : String(error)})` };
+  }
+  if (!workflow || !Object.hasOwn(reuse.TARGETS, workflow) || reuse.TARGETS[workflow].proof !== "ancestry") return null;
+  return reuse.evaluatePush({ ...env, REUSE_WORKFLOW: workflow }, fetchImpl);
+}
+
 async function stagingRepairGate({ env, fetchImpl, outcome, attempt }) {
   const refuse = reason => Object.assign(outcome, { verdict: "RERUN_REFUSED", reasons: [`staging run attempt ${attempt}: ${reason}`] });
   const repository = env.GITHUB_REPOSITORY;
@@ -3502,6 +3373,9 @@ async function requiredTestsDispatchGate({ env, event, fetchImpl, sleep, now, ou
         return refuse('required_tests_dispatch_prior_jobs_ran_or_unknown');
     }
   }
+  // Fable 11-20 补“补跑上限的范围”: the re-run budget is per run ID; this dispatch is a new run (its own first attempt), and a re-run of it
+  // is judged by required-tests-failure-rule.mjs on its own attempts. Earlier runs bound it only as above: one dispatch a head, none after a
+  // heavy job ran.
   const admitted = await gate({ env, event: { ...event, pull_request: pr }, eventName: 'pull_request', fetchImpl, sleep, now });
   if (!live(await githubJson(fetchImpl, env, `/repos/${repository}/pulls/${number}`)))
     return refuse('required_tests_dispatch_pr_changed_during_gate');
@@ -3908,7 +3782,6 @@ export const ADOPT_RPC = "clued_work_claim_adopt_v1";
 export const ADOPT_QUIET_REASONS = new Set(["no_copy_for_pr", "not_a_copy"]);
 // A pull request closed without a merge gives its merge slot back
 // (migration 20261006120000, Owner Decision 2ea795e4).
-export const MERGE_SLOT_RETURN_RPC = "clued_work_merge_slot_return_v1";
 
 export async function resolvePullRequestBinding(fetchImpl, env, pr,
   { workspace = env.GITHUB_WORKSPACE, scope, readOnly = false } = {}) {
@@ -3959,50 +3832,9 @@ export async function cluedRpc(fetchImpl, env, workspace, rpc, input) {
   return { status: response.status, body, detail: describe(response.status, body, text, response.headers) };
 }
 
-async function returnMergeSlot({ env, pr, fetchImpl, workspace, result }) {
-  result.pr_ref = `${env.GITHUB_REPOSITORY}#${pr.number}`;
-  result.closed_unmerged = true;
-  if (!env.CLUED_CONTEXT_READ_TOKEN) {
-    result.reason = "CLUED_CONTEXT_READ_TOKEN is not set; merge slot not returned";
-    return result;
-  }
-  try {
-    const reference = await claimReferenceOf(fetchImpl, env, pr, { requireCurrent: false, workspace });
-    if (!reference) {
-      result.reason = "no Native PR Task binding; no merge slot to return";
-      return result;
-    }
-    result.claim_id = reference.claim_id;
-    result.scope = reference.scope;
-    const { status, body, detail } = await cluedRpc(fetchImpl, env, workspace, MERGE_SLOT_RETURN_RPC,
-      { scope: reference.scope, pr_ref: result.pr_ref });
-    if (status === 404 && body && body.code === "PGRST202") {
-      result.reason = `${MERGE_SLOT_RETURN_RPC} is not deployed (${detail}); the slot lapses on its own`;
-      return result;
-    }
-    if (status !== 200 || !body || typeof body !== "object" || body.status !== "ok") {
-      throw new Error(`Clued ${MERGE_SLOT_RETURN_RPC} returned ${detail}`);
-    }
-    result.payload = body;
-    if (body.reason === "admission_binding_required") {
-      result.error = "merge slot not returned: admission_binding_required";
-      return result;
-    }
-    const returned = Array.isArray(body.merge_slot_returned) ? body.merge_slot_returned : [];
-    result.merge_slot_returned = returned;
-    result.reason = returned.length ? `closed without a merge; merge slot returned (${returned.join(", ")})` : "closed without a merge; no merge slot held";
-  } catch (error) {
-    result.error = error instanceof Error ? error.message : String(error);
-  }
-  return result;
-}
-
 export async function adoptMerged({ env, event, eventName, fetchImpl, workspace }) {
   const pr = event && event.pull_request;
   const result = { adopted: false, pr_ref: null, merge_sha: null, claim_id: null, scope: null, reason: null, error: null, payload: null };
-  if (eventName === "pull_request_target" && event && event.action === "closed" && pr && pr.merged === false) {
-    return returnMergeSlot({ env, pr, fetchImpl, workspace, result });
-  }
   if (eventName !== "pull_request_target" || !event || event.action !== "closed" || !pr || pr.merged !== true) {
     result.reason = "not a merged pull request";
     return result;
@@ -4055,8 +3887,7 @@ export async function adoptMerged({ env, event, eventName, fetchImpl, workspace 
 }
 
 function renderAdoptSummary(result) {
-  const lines = [result.closed_unmerged ? "## kooyumi-work-admission: merge slot of a closed pull request"
-    : "## kooyumi-work-admission: multi-copy adoption", ""];
+  const lines = ["## kooyumi-work-admission: multi-copy adoption", ""];
   lines.push(`- Pull request: ${result.pr_ref ?? "n/a"}`);
   if (result.merge_sha) lines.push(`- Merge commit: \`${result.merge_sha}\``);
   if (result.claim_id) lines.push(`- Claim: \`${result.claim_id}\` (${result.scope})`);
@@ -4064,7 +3895,7 @@ function renderAdoptSummary(result) {
     const out = Array.isArray(result.payload?.not_adopted) ? result.payload.not_adopted.length : 0;
     lines.push(`- Adopted copy ${result.payload?.copy_index ?? "?"} of Task \`${result.payload?.task_id ?? "?"}\`${result.payload?.replayed ? " (already adopted)" : ""}; ${out} other cop${out === 1 ? "y" : "ies"} put out.`);
   }
-  if (!result.closed_unmerged && Array.isArray(result.merge_slot_returned) && result.merge_slot_returned.length) {
+  if (Array.isArray(result.merge_slot_returned) && result.merge_slot_returned.length) {
     lines.push(`- Merge slot returned: ${result.merge_slot_returned.map((id) => `\`${id}\``).join(", ")}`);
   }
   if (result.reason) lines.push(`- ${result.reason}`);

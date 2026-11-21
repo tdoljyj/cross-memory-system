@@ -243,6 +243,32 @@ test('terminal admission removed: no renew command advertises or accepts termina
   assert.equal(JSON.stringify(tools).includes('terminal_release_ready'),false);
 });
 
+// Task 0ca0479d (Fable 2026-11-20 §2.1, §3 T2): a pull request's target branch is the server's, so authorize_head does not
+// require it, and a call without it reaches the RPC unchanged for Binding and OAuth callers.
+test('authorize_head does not require target_branch and a call without it reaches the RPC',async()=>{
+  const worker=await loadContinuityWorker();
+  const tools=(await (await worker.fetch(list(bindingToken),enabled,ctx)).json()).result.tools;
+  const schema=tools.find(tool=>tool.name==='clued_work_renew').inputSchema;
+  const branch=schema.anyOf.find(alternative=>alternative.properties.action.const==='authorize_head');
+  assert.deepEqual(branch.required,['action','claim_id','fence','lease_version','lease_key','repository','head_sha','idempotency_key']);
+  assert.match(schema.properties.target_branch.description,/work_claim_target_branch_not_served/);
+  const Ajv=require('ajv'),ajv=new Ajv({allErrors:true,formats:{uuid:/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i}});
+  const validate=ajv.compile(schema);
+  const business={action:'authorize_head',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,lease_version:1,
+    lease_key:'clued_lk_'+'e'.repeat(64),repository:'owner/repository',head_sha:'f'.repeat(40),pr_number:12,idempotency_key:'served-target-fixture'};
+  assert.equal(validate(business),true,JSON.stringify(validate.errors));
+  assert.equal(validate({...business,target_branch:'main'}),true,'older clients that send main stay valid');
+  const {calls,restore}=mockFetch(()=>Response.json({status:'committed',authorization_id:'fixture'}));
+  try{
+    for(const token of [bindingToken,oauthToken]){
+      const result=(await (await worker.fetch(mcp(token,'clued_work_renew',business),enabled,ctx)).json()).result;
+      assert.equal(result.structuredContent.status,'committed',JSON.stringify(result));
+      const command=calls.findLast(call=>call.rpc==='clued_work_renew_v1'||call.tool==='clued_work_renew');
+      assert.deepEqual(command.body.p_input,business);
+    }
+  }finally{restore();}
+});
+
 test('real Worker Binding and OAuth preserve holder edit and authorize business fields but never use Host metadata as proof',async()=>{
   const worker=await loadContinuityWorker();
   const editing={action:'verify_edit',scope:'global',claim_id:'22222222-2222-4222-8222-222222222222',fence:1,execution_epoch:2,

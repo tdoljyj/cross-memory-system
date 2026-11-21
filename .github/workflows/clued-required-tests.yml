@@ -192,6 +192,8 @@ jobs:
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: node "$SELECTOR" --run clued-cloud --root candidate
 
   ci-suites:
@@ -276,12 +278,31 @@ jobs:
           fi
           echo "selector=$selector" >> "$GITHUB_OUTPUT"
           node "$selector" --check ci-suites
+      # Clued Task 10399304: the applications whose dependencies the selected suites need (SUITE_APP_DEPENDENCIES in the
+      # selection, written as app_deps), installed offline from the runner's store by the trusted ci-deps.mjs. The marker
+      # tells those suites a missing dependency is a failure, not a skip. A base selection without app_deps installs nothing.
+      # The step runs every time (the execution proof requires each registered step to succeed) and decides from app_deps.
+      - name: Install the application dependencies the selected suites need
+        env:
+          APP_DEPS: ${{ steps.select.outputs.app_deps }}
+        run: |
+          apps=$(node -e 'for (const a of JSON.parse(process.env.APP_DEPS || "[]")) console.log(a)')
+          if [ -z "$apps" ]; then
+            echo "No selected suite needs application dependencies; nothing installed."
+            exit 0
+          fi
+          for app in $apps; do
+            node trusted/scripts/ci/ci-deps.mjs install "candidate/$app"
+          done
+          echo "CLUED_CI_APP_DEPS=1" >> "$GITHUB_ENV"
       - name: Run the selected suites
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
           SUITES: ${{ steps.select.outputs.suites }}
           CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: |
           failed=""
           for suite in $(node -e 'for (const s of JSON.parse(process.env.SUITES)) console.log(s)'); do
@@ -394,6 +415,8 @@ jobs:
         if: steps.select.outputs.run_production_schema == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
+          CLUED_UNDER_TEST: "1"
         run: |
           status=0
           node "$SELECTOR" --run production-schema --root candidate || status=$?

@@ -124,7 +124,7 @@ LAUNCH_DIR = os.path.abspath(opt('--launch-dir', os.path.join(R4, 'launch-' + GE
 assert not os.path.exists(LAUNCH_DIR), ('LAUNCH_DIR_EXISTS_NEVER_REUSED', LAUNCH_DIR)
 
 TEMPLATE = os.path.join(HERE, 'template.ps1')
-TEMPLATE_SHA = '7cad34ddacad4bd14cb0b487a7857f020bc4e398e750a9dedf4b98d20ed4ad26'
+TEMPLATE_SHA = '0dce6ae6a2ed1c241438399ecd5a7d8bc0e31fa07e62350d530a4923182cee2a'
 EXPECTED_PLAN = os.path.join(HERE, 'expected-plan.ps1')
 POWERSHELL = BS.join(['C:', 'Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'])
 LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])
@@ -693,7 +693,7 @@ lines += [
     '$FleetLinuxManifestSha256 = ' + _fq(FLEET and pkg['linux']['manifestSha256']) + '   # the version facts B writes must name it (and $CiSourceManifestSha256, generation 1)',
     '$FleetFileLocks = ' + _fq(FLEET and FLEET['fileLocks'][0]) + '   # reinstall/tools/file-locks.ps1 of the unpacked package, run elevated',
     '$FleetFileLocksSha256 = ' + _fq(FLEET and FLEET['fileLocks'][1]),
-    '$FleetUpgradeTokenFingerprint = ' + _fq(FLEET and PLAN['secrets']['upgradeToken']['fingerprint']) + '   # the installed resident-upgrade token (install receipt): carried over by the launcher ($UpgradeTokenFile is set at run time)',
+    '$FleetUpgradeTokenFingerprint = ' + _fq(FLEET and PLAN['secrets']['upgradeToken']['fingerprint']) + '   # the installed resident-upgrade token (current public pin or install receipt): carried over by the launcher ($UpgradeTokenFile is set at run time)',
     '$FleetHeartbeatTokenFingerprint = ' + _fq(FLEET and PLAN['secrets']['heartbeatToken'] and PLAN['secrets']['heartbeatToken']['fingerprint']) + '   # the installed heartbeat token, when there is one ($HeartbeatTokenFile is set at run time)',
     '$FleetW1PauseReason = ' + _fq(FLEET and CFG['launcher']['w1PauseReason']) + '   # with $InstalledPausedSha256: the W1 pause of this launch, lifted again by a stop before anything changed',
     '$FleetInstalledRearmSha256 = ' + _fq(FLEET and not FIRST and sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'rearm-resident.ps1'))) + '   # the Resume door of the installed resident (rearm-resident.ps1)',

@@ -145,7 +145,6 @@ import {
   DOOR_RETRY_DELAYS_MS,
   ownerReviewDoor,
   MERGE_SLOT_CHECK_NAME,
-  MERGE_SLOT_RETURN_RPC,
   mergeSlotCheck,
   mergeSlotOutputs,
   mergeSlotState,
@@ -2994,35 +2993,14 @@ test("merge slot: re-verification fails a green kooyumi-merge-slot check whose s
   assert.match(renderReverifySummary(result), /#460: failing kooyumi-merge-slot 5005 posted, Merge slot not held: merge:o\/r:main/);
 });
 
-const SLOT_RETURN = `POST ${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`;
-test("merge slot: a pull request closed without a merge gives its slot back; a merge reports what it returned", async () => {
+test("merge slot: a pull request closed without a merge is not reported here; a merge reports what it returned", async () => {
+  // FABLE 11-19 L3: the binding of a PR closed without a merge ends on GitHub's facts (webhook, the resident's PR lifecycle report);
+  // the adopt mode makes no call for it, and nothing here gives a merge slot back.
   const closed = () => merged({ pull_request: { merged: false, merge_commit_sha: null } });
-  let { fetchImpl, calls } = fakeFetch({ [SLOT_RETURN]: { body: { status: "ok", returned: true, pr_ref: "o/r#452", merge_slot_returned: [CLAIM] } } });
+  let { fetchImpl, calls } = fakeFetch({});
   let r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
-  assert.deepEqual([r.adopted, r.error, r.closed_unmerged, r.merge_slot_returned], [false, null, true, [CLAIM]]);
-  assert.match(r.reason, /merge slot returned/);
-  assert.deepEqual(calls.map((c) => c.url), [RPC_URL, `${PUBLIC.url}/rest/v1/rpc/${MERGE_SLOT_RETURN_RPC}`]);
-  assert.equal(calls[0].body.p_input.read_only, true);
-  assert.deepEqual(calls[1].body, { p_token_hash: sha256Hex("clued_bnd_test"), p_input: { scope: "global", pr_ref: "o/r#452" } });
-  // Nothing held, not deployed yet, no trailer, no token: quiet.
-  for (const [script, reason] of [[{ [SLOT_RETURN]: { body: { status: "ok", returned: false, merge_slot_returned: [] } } }, /no merge slot held/],
-    [{ [SLOT_RETURN]: { status: 404, body: { code: "PGRST202" } } }, /not deployed/]]) {
-    r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
-    assert.deepEqual([r.error, reason.test(r.reason)], [null, true]);
-  }
-  ({ fetchImpl, calls } = fakeFetch({ [`${VERIFY}#resolve_pr_claim`]: call => ({ body: bindingPayload(call.body.p_input,
-    { binding_status: 'unbound', scope: null, task_id: null, claim: null, head_authorization_id: null }) }) }));
-  r = await adoptMerged({ env: env(), event: merged({ body: "none", pull_request: { merged: false } }), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
-  assert.match(r.reason, /no Native PR Task binding/);
-  assert.ok(calls.every(c => c.body?.p_input?.action === 'resolve_pr_claim'), 'no return mutation without a binding');
-  r = await adoptMerged({ env: env({ CLUED_CONTEXT_READ_TOKEN: "" }), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch({}).fetchImpl, workspace: ROOT });
-  assert.match(r.reason, /not set/);
-  // Refusals are errors.
-  for (const script of [{ [SLOT_RETURN]: { body: { status: "ok", returned: false, reason: "admission_binding_required" } } },
-    { [SLOT_RETURN]: { status: 400, body: { code: "22023", message: "work_claim_pr_ref_invalid" } } }, {}]) {
-    r = await adoptMerged({ env: env(), event: closed(), eventName: "pull_request_target", fetchImpl: fakeFetch(script).fetchImpl, workspace: ROOT });
-    assert.ok(r.error, JSON.stringify(script));
-  }
+  assert.deepEqual([r.adopted, r.error, r.reason, r.closed_unmerged], [false, null, "not a merged pull request", undefined]);
+  assert.deepEqual(calls, []);
   // A merge: adoption answers with the slots it returned.
   ({ fetchImpl } = fakeFetch({ [ADOPT]: { body: { status: "ok", adopted: false, reason: "no_copy_for_pr", merge_slot_returned: [CLAIM] } } }));
   r = await adoptMerged({ env: env(), event: merged(), eventName: "pull_request_target", fetchImpl, workspace: ROOT });
@@ -3332,14 +3310,17 @@ test('bot head dispatch: active, dispatch, foreign, empty or previously executed
   ]) assert.equal((await requiredDispatch({ others: [skippedDispatchRun()], jobs: { 8001: skippedDispatchJobs() }, ...opts })).outcome.admitted, false, JSON.stringify(opts));
 });
 
-test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse', async () => {
-  const others = [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })];
+test('bot head dispatch: all runs and earlier attempts are checked, incomplete inventories refuse; the dispatch is a new run with its own budget', async () => {
+  const twoAttempts = [skippedDispatchRun({ run_attempt: 2 })], twoRuns = [skippedDispatchRun(), skippedDispatchRun({ id: 8002 })];
   const jobs = { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), 8002: skippedDispatchJobs() };
-  assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true);
+  for (const others of [twoAttempts, twoRuns]) assert.equal((await requiredDispatch({ others, jobs })).outcome.admitted, true, 'two attempts and this dispatch: three');
+  // Fable 11-20 补“补跑上限的范围”: the dispatch is a new run with its own budget, whatever earlier runs used.
+  const three = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 2 }), skippedDispatchRun({ id: 8002 })], jobs });
+  assert.equal(three.outcome.admitted, true, JSON.stringify(three.outcome.reasons));
   const ran = skippedDispatchJobs(); ran[1].conclusion = 'failure';
-  for (const changed of [
-    { ...jobs, 8001: ran }, { ...jobs, 8002: ran },
-    { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } },
+  for (const [others, changed] of [
+    [twoAttempts, { ...jobs, 8001: ran }], [twoAttempts, { ...jobs, '8001:2': ran }], [twoRuns, { ...jobs, 8002: ran }],
+    [twoRuns, { ...jobs, 8001: { total_count: 5, jobs: skippedDispatchJobs() } }],
   ]) assert.equal((await requiredDispatch({ others, jobs: changed })).outcome.admitted, false);
 });
 
@@ -3473,7 +3454,7 @@ const earlierAttempt = (n, { heavy = ["skipped", "skipped", "skipped"], notes = 
     conclusion === "in_progress" ? null : conclusion, conclusion === "in_progress" ? { status: "in_progress" } : {})), ...extraJobs],
   notes,
 });
-async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {}, staging = false } = {}) {
+async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nativeCheck()], selfRun = {}, script = {}, listStatus = {}, envOverrides = {}, staging = false, otherRuns = [] } = {}) {
   const extra = [];
   const base = fakeFetch({ ...SELF_RUN, [THIS_RUN]: { body: { id: 9001, run_attempt: attempt, head_sha: HEAD, created_at: RUN_CREATED,
     workflow_id: timeoutIncident.workflow_id, ...(staging ? { event: "push", head_branch: "clued-train/staging", path: stagingWorkflow, actor: { login: stagingActor } } : {}), ...selfRun } },
@@ -3481,6 +3462,12 @@ async function repairGate(earlier, { attempt = earlier.length + 1, checks = [nat
   // The attempt-jobs and annotation URLs extend the run URL key, so they are served here, not by the first-prefix script.
   const fetchImpl = async (url, init = {}) => {
     const text = String(url);
+    // The head's runs (Fable 11-20: three attempts per head and workflow): this run at its attempt, and any other run of the head.
+    if (/\/actions\/runs\?head_sha=/.test(text)) {
+      extra.push({ url: text, method: init.method ?? "GET" });
+      const runs = [{ id: 9001, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: attempt }, ...otherRuns];
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ total_count: runs.length, workflow_runs: runs }), text: async () => "" };
+    }
     const jobs = /\/actions\/runs\/9001\/attempts\/(\d+)\/jobs/.exec(text);
     const notes = /\/check-runs\/(\d+)\/annotations/.exec(text);
     const logs = /\/actions\/jobs\/(\d+)\/logs/.exec(text);
@@ -3511,7 +3498,7 @@ test("independent gate repair re-run: earlier attempts that only ended in ADMISS
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.reasons, slept], [true, "ADMITTED", [], []]);
   assert.deepEqual(outcome.repair_rerun, { attempt: 2, earlier_attempts: [{ attempt: 1, heavy_jobs: 3 }] });
   assert.deepEqual(extra.map((call) => call.url.replace("https://api.test/repos/o/r/", "").replace(/\?.*$/, "")),
-    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations"]);
+    ["actions/runs/9001/attempts/1/jobs", "check-runs/100/annotations"], "the budget is this run's own attempt number: no other run is read");
   assert.ok([...calls, ...extra].every((call) => call.method === "GET" || call.url === EPOCH_URL), "read-only, besides the public epoch observation");
   // A first re-run that was itself refused (an old gate, or a stale head) ran nothing: the next one is still the repair.
   const second = await repairGate([earlierAttempt(1), earlierAttempt(2, { notes: [refusedNote] })]);
@@ -3631,18 +3618,22 @@ test("staging gate: the required-tests push uses the same repair budget on S wit
   }
 });
 
-test("required-tests failure evidence is identical across three copies and repair history agrees between the gate and hook", () => {
+// Fable 11-20 (单一判定, B1) and review 2 high 4: the one failure rule is scripts/ci/required-tests-failure-rule.mjs, under the protected
+// scripts/ci/** path, which the gate imports. The companion's env-failure.mjs is the same file byte for byte (its package cannot import
+// scripts/ci), and the runner hook, run by its loader as one file from main, keeps a copy of the classifier and the repair history.
+test("required-tests failure rule: one protected module the gate imports; the companion's and the hook's copies equal it byte for byte", () => {
   const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
   const classifier = text => text.match(/export const SETUP_STEPS[\s\S]*?\nexport function jobFailureKind[\s\S]*?\n\}/)?.[0];
-  const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nasync function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
-  const gateSource = source("./clued-work-admission.mjs");
+  const history = text => text.match(/const REPAIR_GATE_JOB[\s\S]*?\nexport async function requiredTestsRepairHistory[\s\S]*?\n\}/)?.[0];
+  const moduleSource = source("./required-tests-failure-rule.mjs");
   const hookSource = source("../runner/clued-runner-job-started.mjs");
-  const gateClassifier = classifier(gateSource);
-  assert.match(gateClassifier, /kind: "timeout"/);
-  assert.equal(classifier(hookSource), gateClassifier);
-  assert.equal(classifier(source("../../work/independent-ci-resident-v1/src/env-failure.mjs")), gateClassifier);
-  assert.match(history(gateSource), /hasRepairRecovery/);
-  assert.equal(history(hookSource), history(gateSource));
+  assert.equal(source("../../work/independent-ci-resident-v1/src/env-failure.mjs"), moduleSource, "the companion's copy is the module, byte for byte");
+  assert.match(classifier(moduleSource), /kind: "timeout"/);
+  assert.match(history(moduleSource), /hasRepairRecovery/);
+  assert.match(history(moduleSource), /REPAIR_ATTEMPTS_MAX/);
+  assert.equal(classifier(hookSource), classifier(moduleSource));
+  assert.equal(history(hookSource), history(moduleSource));
+  assert.equal(classifier(source("./clued-work-admission.mjs")), undefined, "the gate keeps no copy");
 });
 
 test("independent gate environment re-run: a network failure or a setup death of the one attempt that ran admits one re-run", async () => {
@@ -4116,3 +4107,238 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
 
 
 }
+
+// Main push tree reuse (FABLE-main-push-tree-reuse §2.2, §5 T1/T1w/T2): a merge whose tree equals the PR
+// head's tree, with main's old tip an ancestor of that head, reuses the head's passing required-test run.
+// The fixture is #1178's real GitHub replies (scripts/ci/fixtures/main-push-tree-reuse-1178.json).
+const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1178.json'), 'utf8'));
+function treeReuseCase(workflow, mutate = () => {}) {
+  const f = structuredClone(TREE_REUSE);
+  const w = f.workflows[workflow];
+  const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.merge.sha, GITHUB_RUN_ATTEMPT: '1',
+    GITHUB_RUN_ID: String(w.push_run.id), GITHUB_ACTOR: w.push_run.actor.login, GITHUB_REPOSITORY_OWNER: f.owner,
+    GITHUB_REPOSITORY: f.repository, GITHUB_TOKEN: 'test-only-placeholder',
+    GITHUB_WORKFLOW_REF: `${f.repository}/.github/workflows/${workflow}@refs/heads/main` };
+  const routes = {};
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    const route = routes[String(url)];
+    const body = typeof route === 'function' ? route() : route;
+    if (body instanceof Error) throw body;
+    if (body === undefined || body?.status >= 400) return { ok: false, status: body?.status ?? 404, headers: { get: () => null }, json: async () => ({}), text: async () => '' };
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => structuredClone(body), text: async () => JSON.stringify(body) };
+  };
+  const ctx = { f, w, env, routes, calls, fetchImpl, event: { ref: env.GITHUB_REF, after: f.merge.sha } };
+  const api = `https://api.github.com/repos/${f.repository}`;
+  const head = f.pr.head.sha;
+  ctx.runsRoute = `${api}/actions/workflows/${workflow}/runs?event=pull_request&head_sha=${head}&per_page=100`;
+  // Routes read the (possibly mutated) fixture objects at call time.
+  Object.assign(routes, {
+    [`${api}/commits/${f.merge.sha}`]: f.merge,
+    [`${api}/commits/${f.merge.sha}/pulls?per_page=100`]: () => f.pulls,
+    [`${api}/pulls/${f.pr.number}`]: f.pr,
+    [`${api}/commits/${head}`]: f.source,
+    [ctx.runsRoute]: () => w.runs,
+    [`${api}/actions/runs/${w.runs.workflow_runs[0].id}/attempts/${w.runs.workflow_runs[0].run_attempt}/jobs?per_page=100`]: w.jobs,
+    [`${api}/compare/${f.merge.parents[0].sha}...${head}`]: f.compare,
+  });
+  mutate(ctx);
+  return ctx;
+}
+const treeReuseGate = (ctx) => admissionModule.gate({ env: ctx.env, event: ctx.event, eventName: ctx.env.GITHUB_EVENT_NAME,
+  fetchImpl: ctx.fetchImpl, sleep: async () => {} });
+
+for (const [label, workflow] of [['T1 Linux', 'clued-required-tests.yml'], ['T1w Windows', 'clued-required-tests-windows.yml']]) {
+  test(`${label}: #1178's main push is not run again; the head's passing run of the same tree decides`, async () => {
+    const ctx = treeReuseCase(workflow);
+    const outcome = await treeReuseGate(ctx);
+    const source = ctx.w.runs.workflow_runs[0];
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_ALREADY_TESTED'], JSON.stringify(outcome));
+    const why = outcome.reasons.join(' ');
+    assert.match(why, new RegExp(`run ${source.id} attempt 1`));
+    assert.match(why, /PR #1178/);
+    assert.match(why, new RegExp(TREE_REUSE.merge.commit.tree.sha));
+    assert.equal(outcome.tree_reuse.qualification, 'PR_EVIDENCE_ONLY');
+    assert.equal(outcome.tree_reuse.current_sha_pass, false);
+  });
+}
+
+test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
+  try {
+    const eventPath = path.join(dir, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(ctx.event));
+    const code = await mainWith(['--mode', 'gate'], { ...ctx.env, GITHUB_EVENT_PATH: eventPath,
+      GITHUB_OUTPUT: path.join(dir, 'out'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary') }, ctx.fetchImpl);
+    assert.equal(code, 0);
+    const out = fs.readFileSync(path.join(dir, 'out'), 'utf8');
+    assert.match(out, /^admitted=false$/m);
+    assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('T2: every required job of both required-test workflows is in the reuse table, and so is every Actions-bound required check', async () => {
+  const { TARGETS } = await import('./clued-tree-reuse.mjs');
+  const covered = new Set();
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    const target = TARGETS[workflow];
+    assert.ok(target, `${workflow} is in the reuse table`);
+    assert.equal(target.proof, 'ancestry');
+    const text = fs.readFileSync(path.join(ROOT, '.github/workflows', workflow), 'utf8');
+    const jobs = workflowJobs(text).map((job) => job.name).filter((name) => name !== 'admission-gate');
+    assert.deepEqual([...target.jobs].sort(), [...jobs].sort(), `${workflow}: jobs and table agree`);
+    // The required name is the job id, or <id>-skipped when the job does not run.
+    for (const job of jobs) assert.ok(text.includes(`&& '${job}' || '${job}-skipped'`), `${workflow}: ${job} carries its required name`);
+    for (const job of target.jobs) covered.add(job);
+  }
+  // The main ruleset's required checks as recorded with the fixture (rules/branches/main, 2026-11-19).
+  const actionsBound = TREE_REUSE.required_checks.filter((check) => check.integration_id === 15368).map((check) => check.context);
+  assert.ok(actionsBound.length >= 4);
+  for (const check of actionsBound) assert.ok(covered.has(check), `required check ${check} is covered`);
+});
+
+// Guards: green before and after the fix. Each one must still run the heavy jobs.
+const STILL_RUNS = [
+  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }],
+  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }],
+  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }],
+  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }],
+  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }],
+  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
+  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }],
+  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }],
+  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }],
+  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }],
+  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }],
+  ['the run changed while the proof was read', (c) => { let reads = 0; const runs = c.w.runs;
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }],
+  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }],
+  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }],
+  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }],
+  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }],
+  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }],
+  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }],
+  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }],
+];
+for (const [label, mutate] of STILL_RUNS) {
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run`, async () => {
+      const outcome = await treeReuseGate(treeReuseCase(workflow, mutate));
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    });
+  }
+}
+
+test('tree reuse guard: every failed or thrown GitHub read runs the heavy jobs', async () => {
+  const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
+  assert.equal(keys.length, 7);
+  for (const key of keys) {
+    for (const failure of [{ status: 500 }, { status: 404 }, new Error('offline')]) {
+      const ctx = treeReuseCase('clued-required-tests.yml');
+      ctx.routes[key] = failure;
+      const outcome = await treeReuseGate(ctx);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], `${key}: ${JSON.stringify(outcome)}`);
+    }
+  }
+});
+
+test('tree reuse guard: a re-run, staging, another branch or a workflow outside the table reads nothing and runs', async () => {
+  for (const [label, mutate] of [
+    ['attempt 2 (Re-run all jobs is the manual way to force a real run)', (c) => { c.env.GITHUB_RUN_ATTEMPT = '2'; }],
+    ['clued-train/staging', (c) => { c.env.GITHUB_REF = 'refs/heads/clued-train/staging'; c.env.GITHUB_WORKFLOW_REF = c.env.GITHUB_WORKFLOW_REF.replace('@refs/heads/main', '@refs/heads/clued-train/staging'); }],
+    ['another branch', (c) => { c.env.GITHUB_REF = 'refs/heads/feature'; }],
+    ['a workflow with its own push-reuse job (G4)', (c) => { c.env.GITHUB_WORKFLOW_REF = `${c.f.repository}/.github/workflows/clued-g4-database.yml@refs/heads/main`; }],
+    ['a workflow outside the table', (c) => { c.env.GITHUB_WORKFLOW_REF = `${c.f.repository}/.github/workflows/public-mcp-behavior.yml@refs/heads/main`; }],
+    ['no workflow ref', (c) => { delete c.env.GITHUB_WORKFLOW_REF; }],
+  ]) {
+    const ctx = treeReuseCase('clued-required-tests.yml', mutate);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], label);
+    assert.deepEqual(ctx.calls, [], label);
+  }
+});
+
+test('the gate loads only the pure reuse judgement: clued-tree-reuse.mjs imports no repository file', () => {
+  // clued-work-admission.mjs is a Source v2 walk entry: whatever its gate imports ships in every resident package.
+  const gateText = fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-work-admission.mjs'), 'utf8');
+  assert.match(gateText, /await import\("\.\/clued-tree-reuse\.mjs"\)/);
+  assert.doesNotMatch(gateText, /clued-push-reuse\.mjs/);
+  const text = fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-tree-reuse.mjs'), 'utf8');
+  const specifiers = [...text.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  assert.deepEqual(specifiers.filter((spec) => !spec.startsWith('node:')), []);
+});
+
+// 9aba97c1 (Fable 11-20, 补：车头缺必需检查): a job no runner ever took ran nothing: no step, runner_id 0, runner_name null (GitHub's record
+// of job 136029949967 of run 44658316395 and job 134948221590 of run 44345691588). Like a setup death it is the process, not the change:
+// one repair re-run is admitted, with no log and no annotation read. The same for a gate job no runner took.
+const unassigned = (job) => ({ ...job, steps: [], runner_id: 0, runner_name: null });
+test("independent gate repair re-run: a required job or a gate job that no runner took admits one re-run", async () => {
+  for (const conclusion of ["cancelled", "failure"]) {
+    const earlier = ranAttempt(1, [pass, pass, pass]);
+    earlier.jobs[1] = unassigned({ ...earlier.jobs[1], conclusion });
+    const { outcome, extra } = await repairGate([earlier]);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], `${conclusion}: ${outcome.reasons.join("; ")}`);
+    assert.deepEqual(outcome.repair_rerun.earlier_attempts[0].environment_failure_kinds, { [earlier.jobs[1].name]: "unassigned" });
+    assert.ok(extra.every((call) => !/\/logs|\/annotations/.test(call.url)), "nothing ran: no log or annotation is evidence");
+  }
+  const gateNeverTaken = ranAttempt(1, [{ conclusion: "skipped" }, { conclusion: "skipped" }, { conclusion: "skipped" }],
+    { gate: unassigned(attemptJob(100, "admission-gate", "cancelled")) });
+  const { outcome } = await repairGate([gateNeverTaken]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
+  // A job a runner took that failed with no failed step on record is not proven to be the environment.
+  const taken = ranAttempt(1, [pass, pass, pass]);
+  taken.jobs[1] = { ...taken.jobs[1], conclusion: "failure", steps: [], runner_id: 7, runner_name: "clued-ci-company-linux-01" };
+  assert.equal((await repairGate([taken])).outcome.admitted, false);
+});
+
+// Independent review (Codex, 051b7d585) high 3: GitHub records a gate no runner took with every job after it cancelled the same way (run
+// 44658316395: steps [], runner_id 0 or null, runner_name null). Nothing ran: the repair re-run is admitted, as for the gate alone.
+test("independent gate repair re-run: a gate no runner took with its downstream jobs cancelled unrun admits one re-run", async () => {
+  const gate = unassigned(attemptJob(100, "admission-gate", "cancelled"));
+  const earlier = ranAttempt(1, [{ conclusion: "cancelled" }, { conclusion: "cancelled" }, { conclusion: "cancelled" }], { gate });
+  earlier.jobs = earlier.jobs.map((job) => job.name === "admission-gate" ? job : unassigned(job));
+  const { outcome, extra } = await repairGate([earlier]);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, "ADMITTED"], outcome.reasons.join("; "));
+  assert.ok(extra.every((call) => !/\/logs|\/annotations/.test(call.url)), "nothing ran: no log or annotation is evidence");
+});
+
+// Fable 11-20 (单一判定): one budget of three attempts per head and workflow, shared by both kinds of process cause (a run that produced no
+// result, and the environment rule's failures), counted over every run of the workflow on the head; the smaller of it and the environment
+// rule's own limit holds.
+test("independent gate repair re-run: skipped and environment-failed attempts share three attempts per head and workflow", async () => {
+  const third = await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass])]);
+  assert.deepEqual([third.outcome.admitted, third.outcome.verdict], [true, "ADMITTED"], third.outcome.reasons.join("; "));
+  const fourth = await repairGate([earlierAttempt(1), ranAttempt(2, [netFail, pass, pass]), ranAttempt(3, [netFail, pass, pass])]);
+  assert.equal(fourth.outcome.admitted, false);
+  assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
+  // Fable 11-20 补“补跑上限的范围”: the budget is per run ID; another run of the head, of this workflow or another, never counts
+  for (const workflowId of [timeoutIncident.workflow_id, timeoutIncident.workflow_id + 1]) {
+    const other = await repairGate([earlierAttempt(1)], { otherRuns: [{ id: 9002, workflow_id: workflowId, head_sha: HEAD, run_attempt: 3 }] });
+    assert.equal(other.outcome.admitted, true, other.outcome.reasons.join("; "));
+  }
+});
+
+test("one judgement: the gate defines no failure rule of its own, and the hook's copy is the companion's, byte for byte", () => {
+  const source = relative => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const gateSource = source("./clued-work-admission.mjs");
+  for (const name of ["jobFailureKind", "diedInSetup", "neverAssigned", "requiredTestsRepairHistory", "repairEnvironmentFailures", "hasRepairRecovery"])
+    assert.doesNotMatch(gateSource, new RegExp(`function ${name}\\b`), `the gate keeps no copy of ${name}`);
+  assert.match(gateSource, /from "\.\/required-tests-failure-rule\.mjs"/, "the gate imports the rule from the protected scripts/ci path");
+  assert.doesNotMatch(gateSource, /work\/independent-ci-resident-v1/, "and nothing outside it");
+});
+
+
+// Fable 11-20 补“补跑上限的范围”: the budget is per run ID. A new run of the same workflow on the head (the PR reopened) is admitted on its
+// first attempt as any run, and its re-runs count from 1, whatever other runs of the head used.
+test("independent gate repair re-run: the budget is per run; another run's attempts on the head never count", async () => {
+  const other = { id: 9000, workflow_id: timeoutIncident.workflow_id, head_sha: HEAD, run_attempt: 3 };
+  const second = await repairGate([earlierAttempt(1)], { otherRuns: [other] });
+  assert.deepEqual([second.outcome.admitted, second.outcome.verdict], [true, "ADMITTED"], second.outcome.reasons.join("; "));
+  const fourth = await repairGate([earlierAttempt(1), earlierAttempt(2), earlierAttempt(3)], { otherRuns: [other] });
+  assert.equal(fourth.outcome.admitted, false);
+  assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
+  const dispatched = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 3 })], jobs: { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), '8001:3': skippedDispatchJobs() } });
+  assert.equal(dispatched.outcome.admitted, true, `a re-dispatched run's first attempt is admitted: ${JSON.stringify(dispatched.outcome.reasons)}`);
+});

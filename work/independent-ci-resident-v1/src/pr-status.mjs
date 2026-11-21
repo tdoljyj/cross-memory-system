@@ -34,7 +34,11 @@ import path from 'node:path';
 import { HEX40, canonicalJson, check } from './canonical.mjs';
 import { FAILURE_TABLE } from './classify.mjs';
 import { STATUS_STALE_MS, leaseShort } from './status.mjs';
-import { MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
+import { ghPort } from './admission-rerun.mjs';
+import { CLAIM_REASONS, CLAIM_WHY } from './queue.mjs';
+import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
+export { RULES_UNREADABLE_REPORT_AFTER_MS };
+import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
@@ -43,6 +47,30 @@ export const MAX_POSTS_PER_PASS = 20;
 export const MAX_TOASTS_PER_PASS = 5;
 export const WAIT_NOTIFY_MS = 3_600_000;
 export const REQUIRED_CACHE_MS = 30 * 60_000;
+export const HEAD_CHECKS_CACHE_MS = 60_000;
+// The train decisions whose PR page line lists the front head's required-check gap (frontGap).
+const GAP_DECISIONS = Object.freeze(['FRONT_GREEN_WAIT_MERGE', ...FRONT_CHECKS_DECISIONS.filter(d => d !== 'FRONT_CHECKS_MISSING_YIELDED')]);
+// What the PR page says while main's ruleset cannot be read: a status is auxiliary, so the failure is said, never a silent stop.
+export const RULES_UNREADABLE_TEXT = '无法读取 main 规则集，暂不判断必需检查';
+const RULES_UNREADABLE_WANT = Object.freeze({ state: 'pending', description: RULES_UNREADABLE_TEXT, kind: null });
+// Which of main's required checks (rules: [{ context, integrationId }], the shared reader's answer) are not yet green on a head.
+// seen: [{ name, appId, source: 'run' | 'status', state: 'pass' | 'pending' | 'fail' | 'skipped' }] (headChecks). A rule pinned to an App is met only by
+// that App's check run; an unpinned rule by any run or a commit status. Returns [] when all are green, else words per missing or unfinished one;
+// null when either side is unknown. Skipped is never green (a gated workflow skipped by a late admission ran nothing).
+export function requiredGap(rules, seen) {
+  if (!Array.isArray(rules) || rules.length === 0 || !Array.isArray(seen)) return null;
+  const word = { pending: '进行中', fail: '未通过', skipped: '已跳过' };
+  const gap = [];
+  for (const { context, integrationId = null } of rules) {
+    const mine = seen.filter(o => o.name === context && (integrationId === null || (o.source === 'run' && o.appId === integrationId)));
+    if (mine.some(o => o.state === 'pass')) continue;
+    const why = ['pending', 'fail', 'skipped'].find(k => mine.some(o => o.state === k));
+    gap.push(`${context}（${word[why] ?? '未出现'}）`);
+  }
+  return gap;
+}
+const runState = (status, conclusion) => status !== 'completed' ? 'pending' : ['success', 'neutral'].includes(conclusion) ? 'pass' : conclusion === 'skipped' ? 'skipped' : 'fail';
+const STATUS_STATE = { success: 'pass', pending: 'pending', failure: 'fail', error: 'fail' };
 export const ADVISORY_TIMEOUT_MS = 15_000;
 export const PASS_BUDGET_MS = 60_000;
 // A head whose write failed is tried again after POST_RETRY_MS with the same text, and at the next pass when the text it should
@@ -150,6 +178,12 @@ const LIVE = new Set(['QUEUED', 'PARKED', 'WAITING', 'BACKOFF']);
 const NETWORK_CAUSE_TEXT = Object.freeze({ BUNDLE_UNAVAILABLE: '打包失败', REFS_GATE_UNCONFIRMED: 'refs 闸门没有答复',
   NATIVE_ADMISSION_UNAVAILABLE: '准入服务连不上', ADMISSION_VERIFICATION_UNAVAILABLE: '准入核验没有答复', GITHUB_TRANSIENT_UNAVAILABLE: 'GitHub 暂时不可用' });
 const hhmm = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
+// Task 0ca0479d: the text for CLAIM_NOT_CURRENT's claim reasons (queue.mjs#CLAIM_WHY). Without a reason code (an older status,
+// a reason not named there, anything malformed) the text is the code alone, as before.
+export const claimWhy = (code, reasonCodes) => (CLAIM_REASONS.includes(code) && Array.isArray(reasonCodes)
+  ? CLAIM_WHY.find(([codes]) => codes.some(c => reasonCodes.includes(c)))?.[1] ?? '' : '');
+// The code as the page shows it in parentheses: "CODE" or "CODE，<why>".
+const codeWhy = (code, reasonCodes) => { const why = claimWhy(code, reasonCodes); return why ? `${code}，${why}` : code; };
 const clip = s => s.length <= DESCRIPTION_MAX ? s : `${s.slice(0, DESCRIPTION_MAX - 1)}…`;
 
 // DESIGN §41.6a: while the heartbeat's answer shows the failover watchdog has not ticked for more than 5 minutes
@@ -322,10 +356,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
       }
       if (!(due && gate)) {
         const when = !due ? at : row.eta > now ? `约 ${hhmm(row.eta)} ` : status.current ? '当前批次结束后' : '即将';
-        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${code}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
+        if (row.state === 'WAITING') return { state: 'pending', description: clip(`${WAIT_TEXT[row.deferred] ?? `等待中（${codeWhy(code, row.reasonCodes)}）`}：${when}自动重试，批准或修正后编辑 PR 可提前`) };
         // Generation 12 (defect 050560ac): a network back-off names the cause and the next try; it needs nothing from the PR.
         if (row.network) return { state: 'pending', description: clip(`网络问题，${NETWORK_CAUSE_TEXT[row.deferred] ?? `未执行（${code}）`}，${when}自动重试，不用推新提交`) };
-        return { state: 'pending', description: clip(`未准入或未执行（${code}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
+        return { state: 'pending', description: clip(`未准入或未执行（${codeWhy(code, row.reasonCodes)}）：${when}自动重试（第 ${row.level} 次），修正后编辑 PR 可提前`) };
       }
     }
     // A row without a place among those that may run now (a deferral holds it) says no place, not "第 ? 位" (review round 22).
@@ -348,7 +382,7 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     return { state: 'pending', description: '网络故障重试次数已达今日上限：网络恢复后自动重试，不用推新提交' };
   }
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap') {
-    return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${row.deferred ?? '?'}）：请修正后推新提交`) };
+    return { state: 'failure', description: clip(`24 小时内已多次未准入或未执行（${codeWhy(row.deferred ?? '?', row.reasonCodes)}）：请修正后推新提交`) };
   }
   const recent = status.recent.find(mine);
   if (recent) {
@@ -447,7 +481,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
     const d = rowHold(status, p, now);
     const reason = d ?? p.state ?? 'QUEUED';
     out.push({ key: `wait:${p.pr}:${p.headSha}:${reason}`, title: `PR #${p.pr} 排队超过 1 小时`,
-      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${d}）` : '前面还有批次')}。` });
+      body: `提交 ${p.headSha.slice(0, 8)}：${DEFERRED_TEXT[d] ?? GATE_TEXT[d] ?? globalDeferText(d, status) ?? WAIT_TEXT[d] ?? (d ? `等待中（${codeWhy(d, p.reasonCodes)}）` : '前面还有批次')}。` });
   }
   // The executor's own notices (queue.mjs#notice), each key once.
   for (const n of status.notices ?? []) {
@@ -469,7 +503,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'stopped':
         if (status.notices?.some(b => b.budget && b.pr === n.pr && b.headSha === n.headSha
           && ['RELEASE_CAP_REACHED', 'NETWORK_RELEASE_CAP_REACHED'].includes(b.code))) break;
-        out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${n.code ?? '?'}）。请修正后推新提交。` }); break;
+        out.push({ key: `notice:${n.key}`, title: `PR #${n.pr} 已停住`, body: `提交 ${head}：24 小时内多次未准入或未执行（${codeWhy(n.code ?? '?', status.pending?.find(p => p.pr === n.pr && p.headSha === n.headSha)?.reasonCodes)}）。请修正后推新提交。` }); break;
       case 'stage8-budget': out.push({ key: `notice:${n.key}`,
         title: n.pr ? `PR #${n.pr} 的第 8 段重试额度已用完` : '今日第 8 段重试额度已用完',
         body: n.pr ? '这个 PR 在过去 24 小时内的重试已达上限，额度恢复后继续；其他 PR 的额度独立计算。' : '停靠批次的第 8 段重试今天已用完，明天继续。' }); break;
@@ -492,6 +526,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
       case 'upgrade-deferred': out.push({ key: `notice:${n.key}`, title: '常驻升级已延后', body: `原因：${n.code ?? '?'}。升级代理稍后自动再试，没有改动任何文件。` }); break;
       case 'upgrade-rolled-back': out.push({ key: `notice:${n.key}`, title: '常驻升级已回滚，执行器保持暂停', body: `升级未通过验证（${n.code ?? '?'}），已回到上一代。执行器保持暂停，请检查后由 Owner 恢复。` }); break;
       case 'upgrade-rollback-failed': out.push({ key: `notice:${n.key}`, title: '常驻升级回滚失败，需要 Owner 处理', body: `回滚没有完成（${n.code ?? '?'}）。执行器保持暂停；请用管理员权限按 upgrade-apply.ps1 -Recover 处理。` }); break;
+      case 'renewal-failed': out.push({ key: `notice:${n.key}`, title: '节点连接续期检查未通过', body: `原因：${n.code ?? '?'}。请查看 status.json 的 versions.renewal，核对连接观测与签名权限。` }); break;
       case 'selfcheck-failed': out.push({ key: `notice:${n.key}`, title: '节点用完即弃自检未通过', body: `原因：${n.code ?? '?'}（视图探针或遗留容器，详见 status.json 的 versions.selfcheck）。不影响准入和合入，请查明后处理。` }); break;
       // Step 3c-2b (DESIGN §41.4, §41.6): stage 10's decisions for the Owner.
       case 'train-owner': out.push({ key: `notice:${n.key}`, ...(TRAIN_OWNER_TEXT[n.code] ?? { title: '合并列车需要 Owner 处理', body: n.code ?? '?' }) }); break;
@@ -502,6 +537,7 @@ export function events({ status, statusError = false, now, pulls = [], startedAt
 }
 const TRAIN_OWNER_TEXT = Object.freeze({
   TRAIN_LANDED_TREE_MISMATCH: { title: '紧急：车头合入的树与测过的不同', body: '第 10 段发现落地的合并树不等于测过的 S 的树，已暂停常驻执行器、没有 adopt。请检查后由 Owner 恢复。' },
+  TRAIN_LANDING_STATE_UNREADABLE: { title: '合并列车的落地状态读不出', body: '第 10 段读不出本节点的落地状态（state\\v2\\train-sweep 下的 landing-state），而本节点已有落地批次，为不丢调度记录不开车头批次；main 不受影响。需要查明该记录。' },
   TRAIN_SOURCE_MISMATCH: { title: '常驻节点的 Source 不一致', body: '24 小时内有心跳的常驻节点里有一个跑着别的 Source，本节点不跑 on 模式的第 10 段。请让全部常驻节点装同一个包。' },
 });
 
@@ -581,16 +617,61 @@ export class PrStatusReporter {
   }
   inBudget() { return !this.stalled && this.clock() - this.passStartedAt < PASS_BUDGET_MS; }
 
-  // main's required status checks (rulesets), read with the Owner's gh login; null when unknown.
-  async requiredContexts() {
+  // The shared REST reader (admission-rerun.mjs#ghPort), over this reporter's own call(), every read as short as the other advisory ones: a stalled call ends the pass like any other.
+  gh() { return this.ghp ??= ghPort({ ghExe: this.ghExe, repo: this.repo, run: (a, o) => this.call(a, { ...o, timeoutMs: ADVISORY_TIMEOUT_MS }) }); }
+
+  // main's required status checks with their App pins, read by the one shared reader (main-required-checks.mjs); null when unknown.
+  async requiredChecks() {
     if (this.required && this.clock() - this.requiredAt < REQUIRED_CACHE_MS) return this.required;
-    const r = await this.call([this.ghExe, 'api', '--method', 'GET', '--paginate', `repos/${this.repo}/rules/branches/main`,
-      '--jq', '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'], { timeoutMs: ADVISORY_TIMEOUT_MS });
-    if (r.code !== 0) return null;
-    const list = String(r.stdout).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-    if (list.length === 0) return null; // main always requires checks: an empty answer is no answer
+    let list;
+    try { list = await readMainRequiredChecks((route, key) => this.gh().paged(route, key)); } catch (e) {
+      // A failed read is a flap until it has lasted RULES_UNREADABLE_REPORT_AFTER_MS: the last known rules keep speaking meanwhile. An answer of the
+      // wrong shape is not a flap. Either way an empty or unreadable answer is no answer (null).
+      if (e instanceof RulesShapeError) { this.required = null; this.rulesFailingSince = null; return null; }
+      this.rulesFailingSince ??= this.clock();
+      return this.clock() - this.rulesFailingSince >= RULES_UNREADABLE_REPORT_AFTER_MS ? null : (this.required ?? null);
+    }
+    this.rulesFailingSince = null;
     this.required = list; this.requiredAt = this.clock();
     return list;
+  }
+  // The names only (the collision check of this node's own contexts); null when unknown.
+  async requiredContexts() {
+    const list = await this.requiredChecks();
+    return list ? [...new Set(list.map(c => c.context))] : null;
+  }
+
+  // What one head shows, with where it came from: check runs (latest per name and App; App id kept) and commit statuses (latest per context).
+  // null when a read fails. A status and a run of the same name stay two observations.
+  async headChecks(headSha) {
+    const hit = this.headChecksCache?.get(headSha);
+    if (hit && this.clock() - hit.at < HEAD_CHECKS_CACHE_MS) return hit.value;
+    let value = null;
+    try {
+      const gh = this.gh();
+      const runs = await gh.paged(`/commits/${headSha}/check-runs?filter=latest`, 'check_runs');
+      const statuses = await gh.paged(`/commits/${headSha}/statuses`);
+      const seen = [];
+      for (const c of runs) if (c?.head_sha === headSha && typeof c.name === 'string') seen.push({ name: c.name, appId: Number.isSafeInteger(c.app?.id) ? c.app.id : null, source: 'run', state: runState(c.status, c.conclusion) });
+      const have = new Set();
+      for (const c of statuses) { // newest first: the first of a context is its latest
+        if (typeof c?.context !== 'string' || have.has(c.context)) continue;
+        have.add(c.context);
+        seen.push({ name: c.context, appId: null, source: 'status', state: STATUS_STATE[c.state] ?? 'pending' });
+      }
+      value = seen;
+    } catch { value = null; }
+    (this.headChecksCache ??= new Map()).set(headSha, { at: this.clock(), value });
+    if (this.headChecksCache.size > 64) this.headChecksCache.delete(this.headChecksCache.keys().next().value);
+    return value;
+  }
+
+  // Only the front PR whose train line names the head's required checks needs them: green, wait for merge, or (Fable 11-20, #1192) a
+  // merge-slot-green front still waiting for, or missing, a required check. FRONT_CHECKS_MISSING_YIELDED names none: the slot was given away.
+  async frontGap(pull, last, rules) {
+    const t = last && last.front?.headSha === pull.headSha ? (last.decision ?? last.wouldDo) : null;
+    if (!GAP_DECISIONS.includes(t) || this.stalled || !this.inBudget()) return null;
+    try { return requiredGap(rules, await this.headChecks(pull.headSha)); } catch { return null; }
   }
 
   async post(headSha, want, context) {
@@ -644,10 +725,13 @@ export class PrStatusReporter {
     if (prep) toasts = await this.showAll(prep.events, now, toasts);
     if (prep && this.prStatus !== false && pulls.length > 0 && !this.stalled) {
       const context = prep.context;
-      const required = await this.requiredContexts();
+      const requiredRules = await this.requiredChecks();
+      const required = requiredRules ? [...new Set(requiredRules.map(c => c.context))] : null;
       // Both contexts this node may write are checked against main's rules; either one there stops every write.
       if (!this.stalled) this.collision = (Array.isArray(required) ? [context, standbyContext(prep.node.name)].find(c => !contextFree(c, required)) : undefined) ?? false;
-      if (Array.isArray(required) && !this.collision && !this.stalled) {
+      // Said only once the failure has lasted (a flap writes nothing, as before); a wrong-shaped answer is said at once.
+      const rulesUnreadable = !Array.isArray(required) && !this.stalled && (this.rulesFailingSince == null || this.clock() - this.rulesFailingSince >= RULES_UNREADABLE_REPORT_AFTER_MS);
+      if ((Array.isArray(required) || rulesUnreadable) && !this.collision && !this.stalled) {
         const described = new Set();
         const write = async (headSha, want, ctx, key) => {
           const text = `${want.state}|${clip(want.description)}`;
@@ -672,7 +756,7 @@ export class PrStatusReporter {
           // The re-run line goes into the base text, so the duty word stays at the start (node-duty.mjs#parseDutyStatus reads it there)
           // and the watchdog tail stays last (review round 3, BLOCKER 1); the capacity line goes just before it.
           const base = withRerunLine(describe({ pull, status, now }), this.rerunLine?.(pull.headSha) ?? null);
-          const want = withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX)),
+          const want = rulesUnreadable ? RULES_UNREADABLE_WANT : withWatchdogLine(withCapacityLine(this.duty.want(pull, status, now, withTrainLine(base, status?.train?.last ?? null, pull, now, DESCRIPTION_MAX, await this.frontGap(pull, status?.train?.last ?? null, requiredRules))),
             capacity), this.watchdogStale?.() === true);
           if (!want) continue;
           described.add(pull.headSha);
@@ -689,7 +773,7 @@ export class PrStatusReporter {
           if (this.stalled) break;
         }
         let extra = [];
-        if (!this.stalled) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
+        if (!this.stalled && !rulesUnreadable) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
         for (const x of extra) {
           const ok = !this.stalled && await write(x.headSha, x.want, x.context, `${x.context}|${x.headSha}`);
           if (!ok) continue;

@@ -25,10 +25,10 @@
   "fleetRefs": { <进入 ciSourceManifestSha256 或 record 的、各节点必须相同的接受引用> } }
 ```
 
-- `ciSourceManifestSha256` 只由包与 `fleetRefs`（及 `repository`、`commit`）决定：写接受文件的人先写不含它的草稿，用只读子命令 `node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.mjs source-hash --artifact <tar> --artifact-sha <hex> --acceptance <草稿>` 算出后填入。每台节点的 `prepare` 重算，不等即拒绝 `FLEET_SOURCE_NOT_THE_ACCEPTED_ONE`；`repository` 不等于节点 record 的仓库即拒绝 `FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY`。`publish.mjs attach-acceptance` 用同一份校验（`install.mjs validateAcceptance`），并要求 `repository` 等于 `--repo`。
+- `ciSourceManifestSha256` 只由包与 `fleetRefs`（及 `repository`、`commit`）决定：`publish.mjs prepare` 在接受前用包内同一算法（`install.mjs sourceHashOf`，只读子命令 `source-hash`）算出并写进接受请求，没有人手填。每台节点的 `prepare` 重算，不等即拒绝 `FLEET_SOURCE_NOT_THE_ACCEPTED_ONE`；`repository` 不等于节点 record 的仓库即拒绝 `FLEET_ACCEPTANCE_NOT_THIS_REPOSITORY`。`publish.mjs seal` 用同一份校验（`install.mjs validateAcceptance`），并要求 `repository` 等于 `--repo`。
 
 - 规则：凡进入 `record\source-manifest.json`（从而进入 `ciSourceManifestSha256`）的引用必须在 `fleetRefs` 里，各节点相同，这样同一个包在两台上得到同一个 Source（列车 `TRAIN_SOURCE_MISMATCH` 只比这个哈希）。按节点不同的（CI 连接资格 `ciPrincipalQualificationRef`、App 指纹、binding 等）从本机记录读。块 1 列出确切字段并写进本文件第 6 节。
-- 由协调者在 Owner Decision 之后写出；块 3 的 `publish.mjs attach-acceptance` 把它作为追加资产上传（tar 不变）。
+- 由 `publish.mjs seal` 在 Owner Decision 之后从接受请求（`prepare` 的产物）填出并作为追加资产上传（tar 不变）；没有手写接受文件再挂的入口（README 第 4 节）。
 
 ## 3. 节点组装（块 1）
 
@@ -90,7 +90,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
   - `gh release create fleet-node-<version> <tar> <release.json> <SHA256SUMS> --target <commit>`；
   - 凭据只用 gh 自己的登录，不读、不写、不打印令牌，子进程环境去掉 `GH_TOKEN`/`GITHUB_TOKEN`；
   - 在索引文件追加一行。
-- `publish.mjs attach-acceptance --version <v> --acceptance <file>`：上传接受文件，补全索引行的接受时间与 Decision。
+- `publish.mjs prepare` / `seal`（README 第 4 节）：接受前出接受请求并挂 kit；接受后填 Decision、上传接受文件，补全索引行的接受时间、Decision 与首装演练。
 - 节点取包：`gh release download fleet-node-<version> --repo tdoljyj/cross-memory-system --pattern "fleet-node-<version>.*" --dir <新目录>`，然后由 `install.mjs prepare` 核哈希。
 - 索引文件：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`。表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision。
 - 已并入 Linux 工具修复 ee68029c（合并提交 af02e893）；组件版本在最后统一用 `scripts/ci/component-version-integration.py --base 94d7e0346 --write` 重算。
@@ -105,7 +105,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 | `sourceAcceptanceRef` | UUID | source-manifest（每个角色 relay）、acceptance、signers | 进 Source |
 | `hostQualificationRef` | UUID | source-manifest（relay）、acceptance、signers 的 `qualificationRef` | 进 Source；全体一个值。重装时 Linux A 的 derive-roles.py 允许它变（角色策略 `hostAcceptanceRef` 随之更新）；之后原地升级要求不变 |
 | `formalRoles` | 对象，恰 `gitleaks`/`trivy`/`contract-placement` | source-manifest | 进 Source；角色材料（镜像 digest、工具路径与 sha）。现值可用 `install.mjs fleet-refs` 从已装 record 读出 |
-| `ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` | UUID | acceptance.json | 不进 Source；全体相同（今天都等于 Decision） |
+| `ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` | UUID | acceptance.json | 不进 Source；全体相同。权威来源是已装节点的 `record/acceptance.json`：`publish.mjs prepare` 原样沿用进接受请求（与 `install.mjs fleet-refs` 同一来源；97c2c90c、3bc571a6 两代都等于 `sourceAcceptanceRef` 5c06efc1，即首次接受时的 Decision）。新包的 Decision 只进 `ownerDecisionRef`。这三项要换，须 Fable 另行裁定，`prepare` 没有改它们的入口 |
 | `ownerDecisionRef` | UUID | acceptance.json、policy `ownerAcceptance.decisionRef`、包 `acceptance.decisionRef`（Grant 资源） | 必须与 `cluedDecision` 相同（8hex 时为其前缀） |
 | `installationReceiptRef`、`ownerReceiptRef` | UUID，两者必须相等，且不等于 `ownerDecisionRef` | acceptance.json、policy `ownerAcceptance.installReceiptRef` | prep.py 要求两者相等 |
 

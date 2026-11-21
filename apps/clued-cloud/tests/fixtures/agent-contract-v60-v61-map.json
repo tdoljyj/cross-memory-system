@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-served-target-successor/1",
+  "source_version": 60,
+  "target_version": 61,
+  "source_document_normalized_sha256": "314358d9c77070f2a3d09b9bb82eb69b7da7df4cfc4703281f1ca96feb8e7151",
+  "target_document_normalized_sha256": "4f2113ec6d617326c8d53c57137792752d366ec80cb7ab7ae781c5c79d1f0c34",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 60",
+      "after": "Contract version: 61"
+    },
+    {
+      "id": "served-target",
+      "before": "- A guarded holder authorizes each exact full head SHA/repository/target branch, optional PR, or exact dispatch workflow using `clued_work_renew` action `authorize_head` with its current key, claim/fence/lease version and fresh idempotency key.",
+      "after": "- A guarded holder authorizes each exact full head SHA/repository, optional PR, or exact dispatch workflow and its target branch using `clued_work_renew` action `authorize_head` with its current key, claim/fence/lease version and fresh idempotency key. For a pull request, omit `target_branch`: the service decides the branch it merges into (`main`) and refuses any other, such as the PR's own head branch, with `work_claim_target_branch_not_served`, writing no authorization."
+    }
+  ]
+}
