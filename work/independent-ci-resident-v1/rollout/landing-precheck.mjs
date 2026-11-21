@@ -19,7 +19,9 @@
 //       On NO-GO every S with every check's conclusion, and for a check that did not succeed its title, summary and annotations
 //       (the runner hook's refusal is written there).
 //   P2  every node stage 10 last heard within 24 hours runs this node's Source, this node's Source record pins exactly this
-//       checkout's Source closure files, and this checkout is origin's main.
+//       checkout's Source closure files, and this checkout is origin's main; and (open points §3) this node's policy has the train on
+//       and landing push, stage 10's newest round (within 60 minutes) read a landing route (--before: github-merge), and this
+//       checkout's FLEET_TRAIN lands by push.
 //   P3  the newest stage-8 rehearsal reads both bypass states as never (the App token can read the field).
 //   P4  exactly one independent ruleset on the default branch: active, rules exactly deletion and non_fast_forward, no bypass actor;
 //       and main's branch rules carry those two rules from it.
@@ -31,7 +33,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { fleetSourceCheck } from './precheck.mjs';
 import { parseTrainLast, parseTrainNodes } from '../src/train.mjs';
@@ -93,7 +95,23 @@ export async function p1({ gh, repo, rules }) {
 }
 
 // ---- P2 ----
-export async function p2({ gh, repo, files, checkout, now }) {
+// Fable 11-21 open points §3: the stage file stage 10 reads is written from the node's installed policy (train.landing), which is not
+// in the CI Source closure: one Source does not prove one policy. Read off the objects: this node's status (train.enabled on, train.landing
+// push), stage 10's newest round within 60 minutes with landing.route (written only while push is in force; --before: github-merge, C not
+// saved), and this checkout's FLEET_TRAIN (what a package from main writes on every node). Residual: a standby node's policy is not
+// readable (the node view carries the Source hash only); it is inferred from one Source and main's FLEET_TRAIN.
+export const ROUND_FRESH_MS = 60 * 60_000;
+function policyFailures({ status, fleetTrain, mode, now }) {
+  const last = parseTrainLast(status?.train?.last);
+  const route = last?.landing?.route ?? null;
+  return [
+    ...(status?.train?.enabled !== 'on' ? ['NODE_TRAIN_NOT_ON'] : []),
+    ...(status?.train?.landing !== 'push' ? ['NODE_LANDING_NOT_PUSH'] : []),
+    ...(mode === 'before' && !(route === 'github-merge' && last && now - last.at <= ROUND_FRESH_MS && last.at <= now) ? ['STAGE10_ROUTE_NOT_READ'] : []),
+    ...(fleetTrain?.landing !== 'push' ? ['CHECKOUT_FLEET_LANDING_NOT_PUSH'] : []),
+  ];
+}
+export async function p2({ gh, repo, files, checkout, now, mode = 'before' }) {
   const head = await checkout.head();
   const main = (await gh.get(`repos/${repo}/branches/main`))?.commit?.sha;
   const bytes = await files.read(files.sourceManifest);
@@ -115,9 +133,12 @@ export async function p2({ gh, repo, files, checkout, now }) {
     ...(!roles.length || differ.length ? ['SOURCE_RECORD_NOT_THIS_CHECKOUT'] : []),
     ...(installed !== source ? ['SOURCE_RECORD_NOT_THIS_NODE'] : []),
     ...(fleet.status !== 'PASS' ? [`FLEET_${fleet.status}${fleet.reason ? `_${fleet.reason}` : ''}`] : []),
+    ...policyFailures({ status, fleetTrain: await checkout.fleetTrain(), mode, now }),
   ];
   return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), checkoutHead: head, mainSha: main ?? null, ciSourceManifestSha256: source,
-    installedCiSourceManifestSha256: installed, recordSourceSha: manifest?.sourceSha ?? null, ...(differ.length ? { rolesDiffer: differ } : {}), fleet };
+    installedCiSourceManifestSha256: installed, recordSourceSha: manifest?.sourceSha ?? null, ...(differ.length ? { rolesDiffer: differ } : {}), fleet,
+    policy: { trainEnabled: status?.train?.enabled ?? null, trainLanding: status?.train?.landing ?? null, lastAt: status?.train?.last?.at ?? null,
+      lastRoute: status?.train?.last?.landing?.route ?? null } };
 }
 
 // ---- P3 ----
@@ -209,7 +230,7 @@ export async function landingPrecheck({ mode, repo = DEFAULT_REPO, only = null, 
   const rulesOnce = async () => (rules ??= await gh.paged(`repos/${repo}/rules/branches/main`, null));
   if (mode === 'after') { try { snapshot = await files.readSnapshot(); } catch { snapshot = null; } }
   if (snapshot && snapshot.contract !== SNAPSHOT_CONTRACT) snapshot = null;
-  const run = { P1: async () => p1({ gh, repo, rules: await rulesOnce() }), P2: () => p2({ gh, repo, files, checkout, now: clock() }), P3: () => p3({ files }),
+  const run = { P1: async () => p1({ gh, repo, rules: await rulesOnce() }), P2: () => p2({ gh, repo, files, checkout, now: clock(), mode }), P3: () => p3({ files }),
     P4: async () => p4({ gh, repo, rules: await rulesOnce() }), P5: () => p5({ gh, repo, mode, snapshot }), P6: () => p6({ files, snapshot }) };
   for (const i of items) {
     try { result.items[i] = await run[i](); } catch (e) { result.items[i] = { pass: false, failed: [e instanceof ItemError ? e.code : 'READ_FAILED'], detail: clip(e?.detail ?? e?.message) }; }
@@ -250,7 +271,8 @@ export function filePorts({ root, receipts, snapshot }) {
     writeSnapshot: async v => fs.writeFile(snapshot, JSON.stringify(v, null, 2) + '\n', { flag: 'wx' }) };
 }
 export function checkoutPort(dir = CHECKOUT) {
-  return { head: async () => (await exec('git', ['-C', dir, 'rev-parse', 'HEAD'], { windowsHide: true })).stdout.trim(),
+  return { fleetTrain: async () => (await import(pathToFileURL(path.join(dir, 'work', 'independent-ci-resident-v1', 'src', 'policy.mjs')).href)).FLEET_TRAIN,
+    head: async () => (await exec('git', ['-C', dir, 'rev-parse', 'HEAD'], { windowsHide: true })).stdout.trim(),
     read: rel => fs.readFile(path.join(dir, ...rel.split('/'))) };
 }
 
