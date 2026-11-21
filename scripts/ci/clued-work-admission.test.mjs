@@ -4251,49 +4251,147 @@ test('T2: every required job of both required-test workflows is in the reuse tab
   for (const check of actionsBound) assert.ok(covered.has(check), `required check ${check} is covered`);
 });
 
-// Guards: green before and after the fix. Each one must still run the heavy jobs.
+// Guards: each one must still run the heavy jobs.
+// R3a (FABLE-tree-reuse-close-out §3): and the gate's notice says why, with exactly the code in the third column.
+const reuseNotice = (code) => `main push tree reuse: ${code}; the heavy jobs run`;
+const reuseNotices = (outcome) => outcome.notices.filter((notice) => notice.startsWith('main push tree reuse:'));
 const STILL_RUNS = [
-  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }],
-  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }],
-  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }],
-  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }],
-  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }],
-  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
-  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }],
-  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }],
-  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }],
-  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }],
-  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }],
+  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }, 'merged_tree_differs'],
+  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }, 'base_not_ancestor'],
+  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }, 'base_not_ancestor'],
+  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }, 'required_jobs_not_passed'],
+  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }, 'required_jobs_not_passed'],
+  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }, 'required_jobs_not_passed'],
+  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }, 'required_jobs_not_passed'],
+  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }, 'required_jobs_not_passed'],
+  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }, 'pr_run_not_passed'],
+  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }, 'pr_run_not_passed'],
+  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }, 'pr_run_not_passed'],
   ['the run changed while the proof was read', (c) => { let reads = 0; const runs = c.w.runs;
-    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }],
-  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }],
-  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }],
-  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }],
-  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }],
-  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }],
-  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }],
-  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }],
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }, 'latest_attempt_changed'],
+  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }, 'merged_pr_identity'],
+  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }, 'pr_run_actor'],
+  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }, 'push_context_not_eligible'],
+  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }, 'merged_pr_missing'],
+  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }, 'merged_pr_identity'],
+  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }, 'run_listing_incomplete'],
+  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }, 'job_listing_incomplete'],
+  ['the merge reply names another commit', (c) => { c.f.merge.sha = 'd'.repeat(40); }, 'merge_identity'],
+  ['the PR listing of the merge is at its limit', (c) => { c.f.pulls = Array.from({ length: 100 }, () => c.f.pulls[0]); }, 'pr_listing_incomplete'],
+  ['the head run is another workflow\'s', (c) => { c.w.runs.workflow_runs[0].path = '.github/workflows/other.yml'; }, 'pr_run_identity'],
+  ['the head run is not a pull_request run', (c) => { c.w.runs.workflow_runs[0].event = 'push'; }, 'pr_run_identity'],
+  ['the run listing is at its limit when read again', (c) => { let reads = 0; const runs = c.w.runs;
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, total_count: 100 }); }, 'latest_run_listing_incomplete'],
 ];
-for (const [label, mutate] of STILL_RUNS) {
+for (const [label, mutate, code] of STILL_RUNS) {
   for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
-    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run`, async () => {
+    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run, reason ${code}`, async () => {
       const outcome = await treeReuseGate(treeReuseCase(workflow, mutate));
       assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code)]);
     });
   }
 }
 
-test('tree reuse guard: every failed or thrown GitHub read runs the heavy jobs', async () => {
+// R3b: a read that failed or threw names its step (and the HTTP status), never the error text.
+const READ_STEPS = ['merge', 'pulls', 'pr', 'source', 'runs', 'jobs', 'compare'];
+const READ_FAILURES = [
+  [() => ({ status: 500 }), (step) => `github_request_failed@${step}:500`],
+  [() => ({ status: 404 }), (step) => `github_request_failed@${step}:404`],
+  [() => new Error('offline https://api.github.com/x?token=must-not-leak'), (step) => `github_request_threw@${step}`],
+];
+test('R3b: every failed or thrown GitHub read runs the heavy jobs and names its step and status', async () => {
   const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
-  assert.equal(keys.length, 7);
-  for (const key of keys) {
-    for (const failure of [{ status: 500 }, { status: 404 }, new Error('offline')]) {
+  assert.equal(keys.length, READ_STEPS.length);
+  for (const [index, key] of keys.entries()) {
+    for (const [failure, code] of READ_FAILURES) {
       const ctx = treeReuseCase('clued-required-tests.yml');
-      ctx.routes[key] = failure;
+      ctx.routes[key] = failure();
       const outcome = await treeReuseGate(ctx);
       assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], `${key}: ${JSON.stringify(outcome)}`);
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code(READ_STEPS[index]))], key);
     }
   }
+});
+
+test('R3b: the second read of the run listing is its own step (runs_again)', async () => {
+  for (const [failure, code] of READ_FAILURES) {
+    const ctx = treeReuseCase('clued-required-tests.yml');
+    const runs = ctx.w.runs;
+    let reads = 0;
+    ctx.routes[ctx.runsRoute] = () => (++reads === 1 ? runs : failure());
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice(code('runs_again'))]);
+  }
+});
+
+test('R3d: a malformed reply body is unexpected_error at its step, not a bare exception and not an empty code', async () => {
+  const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
+  for (const step of ['merge', 'pr', 'source', 'jobs', 'compare']) {
+    const ctx = treeReuseCase('clued-required-tests.yml');
+    ctx.routes[keys[READ_STEPS.indexOf(step)]] = null;
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice(`unexpected_error@${step}`)]);
+  }
+  // A reply of the right kind but the wrong shape: the PR has no head.
+  const ctx = treeReuseCase('clued-required-tests.yml', (c) => { delete c.f.pr.head; });
+  assert.deepEqual(reuseNotices(await treeReuseGate(ctx)), [reuseNotice('unexpected_error@pr')]);
+});
+
+// The codes the gate cannot reach (it calls only for an 'ancestry' target on a push): asked of the module directly.
+// The tree-report proof's own reads go under the step name "report".
+function reportCase() {
+  const ctx = treeReuseCase('clued-required-tests.yml');
+  const g4 = 'clued-g4-database.yml';
+  ctx.routes[ctx.runsRoute.replace('clued-required-tests.yml', g4)] = () => ctx.w.runs;
+  ctx.env.REUSE_WORKFLOW = g4;
+  return ctx;
+}
+const DIRECT_REASONS = [
+  ['pr_and_dispatch_always_run', (reuse, c) => reuse.evaluatePush({ ...c.env, GITHUB_EVENT_NAME: 'pull_request' }, c.fetchImpl)],
+  ['tree_report_proof_unavailable', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl)],
+  ['proof_kind', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: ({ evidence }) => reuse.validateAncestryEvidence({ ...evidence, compare: c.f.compare }) })],
+  ['request_budget', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: async ({ get }) => { for (let i = 0; i < 9; i += 1) await get(`/commits/${c.f.merge.sha}`); } })],
+  ['artifact_too_large', (reuse, c) => reuse.evaluatePush(c.env, async (url, init) => (String(url).endsWith('/zip')
+    ? { ok: true, status: 200, body: (async function* body() { yield Buffer.alloc(reuse.MAX_BYTES + 1); })() }
+    : c.fetchImpl(url, init)), { reportProof: ({ get }) => get('/zip', true) })],
+  ['github_request_failed@report:404', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl, { reportProof: ({ get }) => get('/missing') })],
+  ['unexpected_error@report', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: () => { throw new Error('must-not-leak'); } })],
+];
+for (const [code, ask] of DIRECT_REASONS) {
+  test(`R3 reason ${code}: the heavy jobs run and the reason is exactly this code`, async () => {
+    const reuse = await import('./clued-tree-reuse.mjs');
+    assert.deepEqual(await ask(reuse, reportCase()), { run_heavy: true, reason: code, current_sha_pass: false });
+  });
+}
+
+test('R3c: the reason vocabulary is closed - every code is in REASONS, and every code of clued-tree-reuse.mjs has a guard', async () => {
+  const reuse = await import('./clued-tree-reuse.mjs');
+  assert.ok(Array.isArray(reuse.REASONS) && Object.isFrozen(reuse.REASONS), 'REASONS is a frozen array');
+  assert.equal(new Set(reuse.REASONS).size, reuse.REASONS.length);
+  const literals = (name) => {
+    const text = fs.readFileSync(path.join(ROOT, 'scripts/ci', name), 'utf8');
+    const refusals = [...text.matchAll(/\brequireProof\((?:(?!requireProof\()[\s\S])*?'([a-z_]+)'\);/g)].map((m) => m[1]);
+    // Every requireProof call ends in a literal code: a computed code would escape this scan.
+    assert.equal(refusals.length, [...text.matchAll(/\brequireProof\(/g)].length, `${name}: every requireProof names a literal code`);
+    const fallbacks = [...text.matchAll(/\bfallback\('([a-z_]+)'\)/g)].map((m) => m[1]);
+    const families = [...text.matchAll(/`([a-z_]+)@\$\{/g)].map((m) => m[1]);
+    return [...new Set([...refusals, ...fallbacks, ...families])];
+  };
+  const own = literals('clued-tree-reuse.mjs');
+  const report = literals('clued-push-reuse.mjs');
+  for (const code of [...own, ...report]) assert.ok(reuse.REASONS.includes(code), `${code} is in REASONS`);
+  for (const code of reuse.REASONS) assert.ok(own.includes(code) || report.includes(code), `${code} is still produced`);
+  const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]),
+    'github_request_failed', 'github_request_threw', 'unexpected_error']);
+  for (const code of own) assert.ok(guarded.has(code), `${code} has a guard that expects it`);
+  for (const family of ['github_request_failed', 'github_request_threw', 'unexpected_error']) assert.ok(own.includes(family), family);
+  assert.ok(!reuse.REASONS.includes('proof_unavailable_or_not_applicable'), 'the catch-all word is gone');
 });
 
 test('tree reuse guard: a re-run, staging, another branch or a workflow outside the table reads nothing and runs', async () => {
