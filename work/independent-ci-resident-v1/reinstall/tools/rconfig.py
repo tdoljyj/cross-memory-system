@@ -56,6 +56,18 @@ def need(ok, code, detail=None):
         raise ConfigError(code, detail)
 
 
+VERIFY_VERDICT_LINE = re.compile(r'(?m)^status=\$\(\[ \$ok = 1 \] && echo ([A-Z][A-Z_]*[A-Z]) \|\| echo [A-Z_]+\)$')
+
+
+def verified_status(text):
+    """The status verify-resident-linux.sh prints when every check passed, read from its own verdict line. The one reader, for both
+    generators (first-install.py B11 and prep.py step (7) wait for exactly that word; r8 inventory N1: a word written by hand had its two
+    parts swapped and B11 refused every node). Anything but exactly one such line (missing, twice, indented, quoted, CRLF) is refused."""
+    found = VERIFY_VERDICT_LINE.findall(text)
+    need(len(found) == 1, 'VERIFY_RESIDENT_LINUX_VERDICT_NOT_ONE')
+    return found[0]
+
+
 def no_secrets(v, at='$'):
     if isinstance(v, dict):
         for k, x in v.items():

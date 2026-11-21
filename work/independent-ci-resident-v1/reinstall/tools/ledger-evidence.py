@@ -82,8 +82,10 @@ def select_terminal(root, halted_key=None, expected_receipt_sha=None):
                     plain(ledger, True)
                     ledgers.append(ledger)
     candidates = []
+    entries = 0
     for ledger in ledgers:
         for entry in sorted(ledger.iterdir()):
+            entries += 1
             if not re.fullmatch(r'[0-9a-f]{64}', entry.name):
                 raise ValueError('LEDGER_KEY_INVALID')
             plain(entry, True)
@@ -106,7 +108,13 @@ def select_terminal(root, halted_key=None, expected_receipt_sha=None):
                 candidates.append((identity.st_mtime_ns, ledger.relative_to(root).as_posix(), entry.name,
                                    digest))
     if not candidates:
+        # No batch ever ran (no entry in any ledger, none halted): the explicit empty-ledger evidence, which the
+        # launcher pins and accepts only while the kept ledger is still empty. An entry without a terminal record
+        # is not that, and is refused as before.
+        if halted_key is None and entries == 0:
+            return {'relativeDirectory': 'state/ledger', 'key': None, 'terminalSha256': None,
+                    'backfillManifestSha256': None, 'empty': True}
         raise ValueError('NO_TERMINAL_LEDGER_ENTRY')
     _, relative, key, digest = max(candidates)
     return {'relativeDirectory': relative, 'key': key, 'terminalSha256': digest,
-            'backfillManifestSha256': manifest_sha if relative != 'state/ledger' else None}
+            'backfillManifestSha256': manifest_sha if relative != 'state/ledger' else None, 'empty': False}

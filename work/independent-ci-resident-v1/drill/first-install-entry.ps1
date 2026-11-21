@@ -149,13 +149,37 @@ function Test-EntryStageVerdict($Terminal) {
   return ($s -is [string]) -and ($s.Length -gt 0) -and (@('STAGE_CHILD_PRINTED_NO_VERDICT', 'STAGE_GAVE_NO_VERDICT') -cnotcontains $s)
 }
 
-# This is the README section 5 exception for CLUED-DRILL only. No accepted file is rewritten.
-# Load the accepted bootstrap's helpers, keeping its asset/prerequisite/check/prepare/launcher order.
-function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]$FakeInputs, [string]$Output, [string]$ReleaseVersion) {
+# Fable ruling 0e418483 (r6 Linux phase A) 4.2: the launcher stage always meets a cold WSL, the worst case a new machine can give (how long
+# lies between its host preparation and its launcher is not ours to choose). Right before that stage the guest's WSL is shut down and what
+# still runs is listed (it should be nothing); both answers, raw (exit, stdout, stderr), are wsl-cold-start.json, which drill-vm.ps1 takes
+# into stage-evidence.json. The list is recorded, never judged: what wsl.exe prints and exits with when nothing runs was never measured. A
+# shutdown that fails or does not end stops the entry by name: the launcher would not run cold.
+function Invoke-EntryWslColdStart([string]$Output, [string]$LogDir, [string]$WslExe = 'C:\Program Files\WSL\wsl.exe') {
+  $answer = { param($r) [ordered]@{ exit = $r.exit; timedOut = $r.timedOut; stdout = $r.stdout; stderr = $r.stderr } }
+  $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); shutdown = $null; runningAfter = $null }
+  try {
+    $record.shutdown = & $answer (Invoke-EntryStreamedChild $WslExe @('--shutdown') 120 (Join-Path $LogDir 'wsl-shutdown.stdout.log') @{ WSL_UTF8 = '1' } -NoWindow)
+    $record.runningAfter = & $answer (Invoke-EntryStreamedChild $WslExe @('--list', '--running') 60 (Join-Path $LogDir 'wsl-list-running.stdout.log') @{ WSL_UTF8 = '1' } -NoWindow)
+  } finally {
+    [IO.File]::WriteAllText((Join-Path $Output 'wsl-cold-start.json'), ($record | ConvertTo-Json -Compress -Depth 4), (New-Object Text.UTF8Encoding($false)))
+  }
+  if ($record.shutdown.timedOut -or $record.shutdown.exit -ne 0) { throw ('DRILL_WSL_SHUTDOWN_FAILED:' + $(if ($record.shutdown.timedOut) { 'timedOut' } else { 'exit=' + $record.shutdown.exit })) }
+}
+
+# The one loader of the release's bootstrap: dot-source it (helpers only: its main runs only when it is not dot-sourced), then the entry's
+# own Stop-Bootstrap over the package's. Called dot-sourced (". Import-EntryBootstrap"), so everything lands in the caller's scope; a
+# test loads the repository's real bootstrap.ps1 through it (test/drill-r4-defects.test.mjs).
+function Import-EntryBootstrap([string]$Assets, [string]$ReleaseVersion) {
   $bootstrap = Join-Path $Assets "fleet-node-$ReleaseVersion.bootstrap.ps1"
   . $bootstrap -From $Assets
   # Helpers normally terminate the bootstrap process. Here the entry owns the single terminal result and cleanup.
   function Stop-Bootstrap([string]$step, [string]$code, $detail) { throw ($code + $(if ($null -ne $detail) { ':' + (@($detail) -join ',') } else { '' })) }
+}
+
+# This is the README section 5 exception for CLUED-DRILL only. No accepted file is rewritten.
+# Load the accepted bootstrap's helpers, keeping its asset/prerequisite/check/prepare/launcher order.
+function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]$FakeInputs, [string]$Output, [string]$ReleaseVersion) {
+  . Import-EntryBootstrap $Assets $ReleaseVersion
   # No package function is shadowed here: the package's own Expand-Cached runs (#1154 fixed its MAX_PATH defect; the drill-only stand-in
   # that kept covering it was removed, Fable renew-key ruling, supplement "companion account and evidence" section 3).
   $script:From = $Assets
@@ -285,6 +309,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $drillLauncher = Get-Key $prepared.last 'launcher'
     if ($prepared.exit -ne 0 -or @('FLEET_NODE_INSTALL_PREPARED', 'FLEET_NODE_FIRST_INSTALL_PREPARED') -cnotcontains [string](Get-Key $prepared.last 'status') -or
         -not (Test-SafePath ([string](Get-Key $drillLauncher 'path'))) -or [string](Get-Key $drillLauncher 'sha256') -cnotmatch '^[0-9a-f]{64}$') { throw 'PREPARE_REFUSED' }
+    # the launcher stage meets a cold WSL, every run (Fable ruling 0e418483 4.2)
+    Invoke-EntryWslColdStart $Output $script:Work
     # The launcher stage's output file (bootstrap.ps1 -Stage launcher -Result) is its whole printed output, and here it is launcher.stdout.log
     # itself: whatever it holds when the stage ends or is cut off is what the drill reads (Fable renew-key ruling, supplement "branch two,
     # two points" 1; the package will write it line by line).

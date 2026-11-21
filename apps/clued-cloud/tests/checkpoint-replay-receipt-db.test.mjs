@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -18,7 +18,7 @@ async function port(){const server=net.createServer();await new Promise(r=>serve
 
 test('checkpoint replay returns its unique original Receipt without changing stored history',{timeout:180000},async t=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'clued-checkpoint-receipt-'));
- const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:hash(),port:await port(),persistent:false,postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(m+'\n');}});
+ const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:hash(),port:await port(),persistent:false,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(m+'\n');}});
  const clients=[];let admin;
  try {
   await server.initialise();await server.start();admin=server.getPgClient();clients.push(admin);await admin.connect();

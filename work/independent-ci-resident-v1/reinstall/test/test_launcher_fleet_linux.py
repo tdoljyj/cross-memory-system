@@ -273,6 +273,33 @@ class FleetPins(unittest.TestCase):
         self.assertIn("'$FleetFirstInstall = ' + ('$true' if FIRST else '$null')", generator)
         self.assertIn("_fq(FLEET and not FIRST and sha(os.path.join(LIVE_ROOT, 'resident', installed_resident, 'windows', 'rearm-resident.ps1')))", generator)
 
+    def test_the_first_install_switch_and_the_values_it_withholds_are_written_without_error(self):
+        # probe round two (5be766cd): a first install's prepare stopped at LAUNCHER_CHECK_FAILED -- generate.py's _fq got the False of
+        # `FLEET and not FIRST and sha(...)` ($FleetInstalledRearmSha256: a first install pins no installed Resume door) and q() raised
+        # TypeError on it. The generator's own q and _fq, and the lines' own expressions, for a first install and a reinstall.
+        import ast
+        generator = GENERATE.read_text(encoding='utf-8')
+        defs = [n for n in ast.parse(generator).body if (isinstance(n, ast.FunctionDef) and n.name in ('q', '_fq'))
+                or (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == '_fq' for t in n.targets))]
+        self.assertEqual(len(defs), 2)
+        def load(**names):
+            env = dict({'re': re, 'sys': sys, 'os': os}, **names)
+            exec(compile(ast.Module(body=defs, type_ignores=[]), 'generate.py', 'exec'), env)
+            return env
+        rearm = re.search(r"'\$FleetInstalledRearmSha256 = ' \+ _fq\((.*?)\) \+ '", generator).group(1)
+        switch = re.search(r"'\$FleetFirstInstall = ' \+ (\('\$true' if FIRST else '\$null'\))", generator).group(1)
+        for first, rearm_line, switch_line in ((True, '$null', '$true'), (False, "'" + 'ab' * 32 + "'", '$null')):
+            env = load(FLEET={'planSha256': 'x'}, FIRST=first, LIVE_ROOT='C:/x', installed_resident='r', sha=lambda path: 'ab' * 32)
+            self.assertEqual(eval('_fq(' + rearm + ')', env), rearm_line, first)
+            self.assertEqual(eval(switch, env), switch_line, first)
+        # what a FLEET-and-condition gives when the condition does not hold, and no value at all: $null; a value: quoted; no FLEET: $null
+        env = load(FLEET={'planSha256': 'x'})
+        self.assertEqual([eval('_fq(v)', dict(env, v=v)) for v in (False, None, 'abc')], ['$null', '$null', "'abc'"])
+        self.assertEqual(eval('_fq(v)', dict(load(FLEET=None), v='abc')), '$null')
+        # anything else is no value to write: refused by name, never a silent $null
+        with self.assertRaises(SystemExit):
+            eval('_fq(v)', dict(env, v=True))
+
     def test_both_ways_run_the_script_with_the_registrars_command_line(self):
         template = TEMPLATE.read_text(encoding='utf-8')
         registrar = (ROOT.parent / 'windows' / 'CompanionTaskRegistrar.cs').read_text(encoding='utf-8')
@@ -357,6 +384,8 @@ class FleetPlanChecks(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix='fp'); self.addCleanup(self.tmp.cleanup)
         d = self.d = Path(self.tmp.name)
         shutil.copytree(ROOT, d / 'x' / 'R' / 'reinstall', ignore=shutil.ignore_patterns('test', '__pycache__'))
+        # r5 N7: a first install's generator pins registration/export-node-registration.ps1 of the unpacked package (the universal tree carries it)
+        (d / 'x' / 'R' / 'registration').mkdir(); shutil.copy2(ROOT.parent / 'registration' / 'export-node-registration.ps1', d / 'x' / 'R' / 'registration')
         self.generate = d / 'x' / 'R' / 'reinstall' / 'launcher' / 'generate.py'
         text = self.generate.read_text(encoding='utf-8')
         live = "LIVE_ROOT = BS.join(['C:', 'ProgramData', 'CluedIndependentCI', 'resident'])"

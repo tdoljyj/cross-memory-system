@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -23,7 +23,7 @@ async function freePort() {
 test('qualified activation drains legacy execution, preserves private holder and never completes later handover', {timeout:300000}, async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(),'clued-activation-candidate-'));
   const server = new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:hash(),port:await freePort(),
-    persistent:false,postgresFlags:['-c','io_method=sync'],onLog(){},onError(message){process.stderr.write(message+'\n');}});
+    persistent:false,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(message){process.stderr.write(message+'\n');}});
   const clients=[];
   try {
     await server.initialise(); await server.start();

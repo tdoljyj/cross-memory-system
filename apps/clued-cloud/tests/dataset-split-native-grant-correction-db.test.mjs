@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -41,7 +41,7 @@ for (const scene of ['boundaries','consume-race']) test(`Native correction (${sc
   const port = await freePort();
   const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'db'), user: 'postgres',
     password: hash(), port, persistent: true, createPostgresUser: false,
-    postgresFlags: ['-c', 'io_method=sync', '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, proc;
   const oldTemp = Object.fromEntries(['TEMP','TMP','TMPDIR'].map(k => [k,process.env[k]]));
   for (const k of ['TEMP','TMP','TMPDIR']) process.env[k] = dir;

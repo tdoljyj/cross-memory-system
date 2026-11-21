@@ -69,7 +69,7 @@ function Read-ContinueCaptured([string]$registrar, [string]$source, [string]$dir
 # $capture: $null, or the registrar and this continuation's capture directory (a companion node).
 function Get-ContinuePriorRunResult($report, [scriptblock]$stop, [string]$runDirectory, [string]$final, [string]$failedCode, $capture, [string]$label) {
   $processes = $null
-  try { $processes = @(Get-FleetRunProcesses $runDirectory) } catch { $report.state['runProcessQuery'] = [string]$_.Exception.Message }
+  try { $processes = Get-FleetRunProcesses $runDirectory } catch { $report.state['runProcessQuery'] = [string]$_.Exception.Message }
   if ($null -eq $processes) { & $stop 'RUN_PROCESS_QUERY_FAILED' }
   $report.state['runProcesses'] = $processes
   if ($processes.Count) { & $stop 'LINUX_PHASE_STILL_RUNNING_RETRY' }
@@ -287,7 +287,8 @@ function Step-ContinueAfterInstall {
   if ($from -gt 0) { $Done.Add($(if ((Get-Key $r.train 'notApplicable') -eq $true) { 'first-train-not-applicable' } elseif ((Get-Key $r.train 'observed') -eq $true -and (Get-Key $r.train 'halted') -ne $true) { 'first-train' } else { 'first-train-not-observed' })) }
   if ($from -gt 1) { $Done.Add('verify') }
   if ($from -gt 2) { $Done.Add('pause') }
-  if ($from -gt 3) { $r['companion'] = Step-StartCompanion }
+  # a first install (the plan's $FleetFirstInstall) goes to the companion switch without starting the interactive task first, as the main flow
+  if ($from -gt 3) { $r['companion'] = $(if ($FleetFirstInstall) { [ordered]@{ started = $false; firstInstallSwitch = $true; error = $null } } else { Step-StartCompanion }) }
   if ($from -gt 4) { $Done.Add($(if ((Get-Key $r.rearm 'notNeeded') -eq $true) { 'rearm-not-needed' } else { 'rearm' })) }
   Write-Json 'continue-report.json' $report
   $Done.Add('continued-after-install')

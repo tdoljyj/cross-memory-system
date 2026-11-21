@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -78,7 +78,7 @@ async function databaseFixture(dir) {
   const password = crypto.randomBytes(24).toString('hex'), port = await freePort();
   const server = new EmbeddedPostgres({ databaseDir:path.join(dir,'db'), user:'postgres',password,port,
     persistent:true,createPostgresUser:false,
-    postgresFlags:['-c','io_method=sync','-c','listen_addresses=127.0.0.1'],onLog(){},onError(){} });
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){} });
   let started = false;
   try {
     await server.initialise(); await server.start(); started=true;

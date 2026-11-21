@@ -144,6 +144,8 @@ for f in UPG_FILES:
 TREE_LINUX = os.path.join(HERE, '..', '..', 'linux') if FLEET else os.path.join(R, 'tree-' + COMMIT[:8], 'work', 'independent-ci-resident-v1', 'linux')
 for f in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):   # r7: + uninstall
     assert sha(os.path.join(IN, 'tools', f)) == sha(os.path.join(TREE_LINUX, f)), ('TOOL_NOT_THE_TREES', f)
+# the success word step (7) of phase B waits for, read from the verify script's own verdict line by the one reader (rconfig.py)
+VERIFIED = rconfig.verified_status(open(os.path.join(IN, 'tools', 'verify-resident-linux.sh'), 'rb').read().decode('utf-8'))
 # r7: the package's Linux resident files (install-resident-linux.sh FILES, in its order) and their install plan on the host as it will
 # be after the uninstall: systemd enabled in wsl.conf, systemd pid 1, cgroup v2 (verify-resident-linux showed all three on r5c2),
 # no resident-v1, no unit file. Phase A and B0 recompute it live (with those lines) and phase B applies exactly it.
@@ -229,22 +231,46 @@ WANT_A_CHECK = '' if FLEET else '[ "$(sha256sum "$STG/phaseA.sha256" | cut -d\' 
 BASE = '/root/clued-ci-reinstall-' + COMMIT[:8] + '-' + SUFFIX
 CI = 'work/actions-hosted-migration/independent-ci-v1'
 DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Observe only: never
-# start/restart a unit, and never turn failed/inactive/unknown into a retry.
+# start/restart a unit. One read of ActiveState and Job decides (Fable ruling 0e418483, 1.2):
+#   active                          -> ready
+#   activating, any job             -> not settled: read again after a second
+#   any other state, a queued job   -> not settled (systemd keeps a start job queued behind
+#                                      network-online.target and containerd as inactive)
+#   any other state, no job         -> final: refused at once (a failed job lands here)
+# One bound for all unsettled reads together. A refusal writes the scene to stderr first;
+# a query of the scene that fails changes no code.
+# Active, the image store decides (Fable ruling 0e418483, r7 phase B, 2.2): an image ID means
+# the containerd store's .Id, so docker info's DriverStatus must name io.containerd.snapshotter,
+# else DOCKER_IMAGE_STORE_NOT_CONTAINERD, the Driver and DriverStatus on stderr first.
 docker_ready() {
-  local started=$SECONDS remaining state
+  local limit=180 started=$SECONDS remaining out state job code= waited store
   while :; do
-    remaining=$((60 - (SECONDS - started)))
-    [ "$remaining" -gt 0 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-    state=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --value docker.service) || refuse SYSTEMCTL_FAILED
-    case "$state" in
-      active) return 0 ;;
-      activating)
-        [ "$((SECONDS - started))" -lt 60 ] || refuse DOCKER_SERVICE_ACTIVATION_TIMEOUT
-        sleep 1 || refuse DOCKER_SERVICE_WAIT_FAILED
-        ;;
-      *) refuse DOCKER_SERVICE_NOT_ACTIVE ;;
-    esac
+    remaining=$((limit - (SECONDS - started)))
+    if [ "$remaining" -le 0 ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
+    if ! out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then code=SYSTEMCTL_FAILED; break; fi
+    state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
+    if [ "$state" = active ]; then waited=$((SECONDS - started)); break; fi
+    if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
+    if [ "$((SECONDS - started))" -ge "$limit" ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
+    if ! sleep 1; then code=DOCKER_SERVICE_WAIT_FAILED; break; fi
   done
+  if [ -z "$code" ]; then
+    store=$(timeout --signal=KILL 60s docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store="(docker info: exit $?)"
+    case "$store" in *io.containerd.snapshotter*) echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$waited}"; return 0 ;; esac
+    {
+      echo "docker_ready: DOCKER_IMAGE_STORE_NOT_CONTAINERD; the store:"
+      echo "Driver=$(timeout --signal=KILL 10s docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)")"
+      echo "DriverStatus=$store"
+    } >&2 || :
+    refuse DOCKER_IMAGE_STORE_NOT_CONTAINERD
+  fi
+  {
+    echo "docker_ready: $code after $((SECONDS - started))s; the scene:"
+    timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"
+    { timeout --signal=KILL 10s systemctl list-jobs --no-legend || echo "(systemctl list-jobs: exit $?)"; } | head -n 20
+    timeout --signal=KILL 10s systemctl is-system-running || echo "(systemctl is-system-running: exit $?)"
+  } >&2 || :
+  refuse "$code"
 }
 """
 
@@ -363,7 +389,7 @@ reinstall_tail() {{
   $CLEAN $PY -I -c 'import json,sys; f=json.load(open(sys.argv[1])); sys.exit(not (f.get("contract")=="clued.independent-ci.linux-version-facts/1" and f.get("generation")==1 and f.get("staged") is None and f.get("ciSourceManifestSha256")==sys.argv[2] and f.get("manifestSha256")==sys.argv[3] and f.get("pinsOk") is True and f.get("sourceCommit")==sys.argv[4] and f.get("upgradeToolSha256")==sys.argv[5]))' "$VF" "$NEW_MANIFEST" "$LINUX_RES_MANIFEST" "$COMMIT" "$UPG_TOOL_SHA" || refuse VERSION_FACTS_NOT_THIS_PACKAGE
   # (7) verify-resident-linux, every check fatal (the resident half and the upgrade channel were just installed)
   bash --noprofile --norc "$STG/tools/verify-resident-linux.sh" > "$T/l7-verify.stdout.json" || true
-  grep -q RESIDENT_LINUX_VERIFIED "$T/l7-verify.stdout.json" && grep -q '"upgrade-v1-pins":true' "$T/l7-verify.stdout.json" && grep -q '"generation-current":true' "$T/l7-verify.stdout.json" || {{ cat "$T/l7-verify.stdout.json"; refuse RESIDENT_LINUX_NOT_VERIFIED_SEE_RECOVERY; }}
+  grep -q '"status":"{VERIFIED}"' "$T/l7-verify.stdout.json" && grep -q '"upgrade-v1-pins":true' "$T/l7-verify.stdout.json" && grep -q '"generation-current":true' "$T/l7-verify.stdout.json" || {{ cat "$T/l7-verify.stdout.json"; refuse RESIDENT_LINUX_NOT_VERIFIED_SEE_RECOVERY; }}
   # (8) evidence for the Windows generator, and a public review copy in a new directory each run
   E="{OUT}/linux-live-manifest.$(date -u +%Y%m%dT%H%M%SZ).txt"
   {{ echo "source: reinstall-linux-B (root, Owner)"; echo "package: $PKG_SHA"; echo "capturedAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "command: /usr/bin/sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json"; echo "exit: 0"; echo "sha256: $(sha256sum /etc/clued-independent-ci/formal-source-manifest-v2.json | cut -d' ' -f1)"; }} > "$E"
