@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Verification of an installed resident executor (DRAFT). Writes nothing, with one exception: run as SYSTEM (the upgrade channel's
   VERIFY step), on a node whose companion runs as its own account, it first appends the companion's relay-parent ACE if it is missing
@@ -22,7 +22,7 @@
   The App key and the ci-admission token files are checked for existence and security (owner an administrator principal, readable by SYSTEM, Administrators and the pinned controller only, no write for the
   controller); so are the folders that hold them (CluedControl\trusted, CluedIndependentCI\secrets) and every ancestor up to the drive
   root, by the runtime's own rule (runtime/verify-install-acl.ps1): administrator owners and protected ancestors.
-  自检读回 CI 令牌并核验当前指纹。安装时的身份与当前连接分别报告。
+  The self-check reads back the CI token and verifies the current fingerprint. The identity at install time and the current connection are reported separately.
   First HALT of 2026-10-29 (DESIGN.md section 33): the companion's relay and bundle scripts (config\companion.json) lie under the installed
   CI Source, source\<SHA-256 of record\source-manifest.json>\, and exist there; and the CI root C:\ProgramData\CluedIndependentCI carries the
   resident service's one READ_CONTROL entry (0x120080, this folder only), read from the live ACL.
@@ -112,7 +112,7 @@ function ConvertTo-NodeIdentityCanonical($id) {
   return '{' + ($rows -join ',') + '}'
 }
 
-# 与 Source v2 的解析器使用同一组字节夹具。安装回执始终按安装时的身份核验。
+# Uses the same byte fixtures as the Source v2 parser. The install receipt is always verified against the identity at install time.
 function Get-EffectiveCiPrincipal($identity, [byte[]]$bytes) {
   if ($null -eq $bytes) {
     return [pscustomobject]@{ bindingId = $identity.ciPrincipalBindingId; tokenPinSha256 = $identity.ciTokenPinSha256; generation = $null; receiptId = $null }
@@ -206,7 +206,7 @@ function Get-SecretFileState([string]$target, [string]$controllerSid) {
     if (Test-SecretFileSecurity (Get-Acl -LiteralPath $target) $controllerSid) { return 'ok' } else { return 'acl-refused' }
   } catch { return 'unreadable' }
 }
-# 先验证目录链，只有叶文件确实不存在才允许使用安装身份。共享读句柄禁止在读回期间替换文件。
+# Verify the directory chain first; only a leaf file that truly does not exist may use the install identity. The shared read handle forbids replacing the file during the read-back.
 function Read-CiPrivateBytes([string]$file, [string]$controllerSid, [switch]$Optional) {
   if ((Get-SecretPathState $file $controllerSid) -cne 'ok') { throw 'CI_PRIVATE_PATH_REFUSED' }
   try { $item = Get-Item -LiteralPath $file -Force -ErrorAction Stop }
@@ -228,7 +228,7 @@ function Read-CiPrivateBytes([string]$file, [string]$controllerSid, [switch]$Opt
   finally { $s.Dispose() }
 }
 function Get-CiAdmissionTokenPin([byte[]]$raw) {
-  # 与控制入口相同的令牌前缀、字母表和域分隔串。避免为令牌创建不可清零的字符串。
+  # Same token prefix, alphabet and domain separator as the control entry. Avoids creating a string for the token that cannot be zeroed.
   $start = 0; $end = $raw.Length
   while ($start -lt $end -and $raw[$start] -in @(9,10,11,12,13,32)) { $start++ }
   while ($end -gt $start -and $raw[$end-1] -in @(9,10,11,12,13,32)) { $end-- }
@@ -628,7 +628,7 @@ while (-not (Test-Path -LiteralPath $marker -PathType Leaf) -and [DateTime]::Utc
 $markerDetail = if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $m = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json; 'published ' + $m.published + ', unreadable ' + $m.unreadable } catch { 'marker unreadable' } } else { $null }
 Record 'executed-heads-backfilled' (Test-Path -LiteralPath $marker -PathType Leaf) $markerDetail
 
-# Service facts that sc.exe prints in the system language (DESK-W-591, 2026-10-30: `sc qfailure` printed 重新启动, not RESTART) are
+# Service facts that sc.exe prints in the system language (DESK-W-591, 2026-10-30: `sc qfailure` printed the Chinese word for restart, not RESTART) are
 # read from the SCM's own registry values and compared exactly with what install-resident.ps1 sets. sc.exe's field labels and the
 # numbers (START_TYPE, STATE, PID, SERVICE_START_NAME, BINARY_PATH_NAME, Se*Privilege names, SDDL) are not translated.
 $ServicesKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\'

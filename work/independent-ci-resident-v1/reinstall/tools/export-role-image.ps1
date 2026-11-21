@@ -17,7 +17,7 @@
   The out, in and staging directories are removed at the end, whatever the outcome; the registrar build too.
 
   powershell -NoProfile -ExecutionPolicy Bypass -File <tree>\work\independent-ci-resident-v1\reinstall\tools\export-role-image.ps1
-      -ImageId <64 hex> -RegistrarSha256 <universal manifest: windows/CompanionTaskRegistrar.cs> -HeadlessSha256 <… companion-headless.ps1>
+      -ImageId <64 hex> -RegistrarSha256 <universal manifest: windows/CompanionTaskRegistrar.cs> -HeadlessSha256 <sha256 of companion-headless.ps1>
       -Destination <new directory>
   -PureFunctionsOnly: define the functions and return (reinstall/test/test_export_role_image.py).
 #>
