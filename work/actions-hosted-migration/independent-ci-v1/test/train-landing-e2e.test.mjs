@@ -738,6 +738,8 @@ test(`three ways, today: a push-capable package still waits for the head's own r
   const e = await world(t, { prs: [910], rules: 'today' });
   const H = e.head(910);
   for (const [id, c] of e.W.checks) if (c.head_sha === H && c.name === 'ci-suites-windows') e.W.checks.delete(id);
+  // stage 1's other App checks on H, as production has them (the world models only kooyumi-work-admission): the one gap is the Windows check
+  for (const name of ['gitleaks', 'trivy', 'contract-placement']) { const id = e.W.nextCheck++; e.W.checks.set(id, { id, app: { id: APP }, name, head_sha: H, status: 'completed', conclusion: 'success' }); }
   const r = await stage10(e);
   assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
   const b = r.facts.openFrontBatch;
