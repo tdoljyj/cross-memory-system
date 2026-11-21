@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import * as admission from './clued-work-admission.mjs';
 import { ADMISSION_APP_ID, MAIN_MERGE_CHECK, evaluate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
 import { runFrontMainMerge } from './clued-front-main-merge.mjs';
 import { ciWorkflows } from './clued-merge-slot-ci.mjs';
@@ -21,6 +22,9 @@ const API = 'https://api.test';
 const PR = 1125, H = 'a'.repeat(40), T = '7'.repeat(40), X = 'e'.repeat(40), BASE = 'b'.repeat(40);
 const CLAIM = '0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f', TASK = '00000000-0000-4000-8000-000000000452';
 const AUTH = '00000000-0000-4000-8000-000000000453', CARRIED = '00000000-0000-4000-8000-000000000454';
+// The heads later update-branch calls make (after X), and the commits main moves to after T.
+const FRESH = Array.from({ length: 12 }, (_, i) => (i + 1).toString(16).padStart(2, '0').repeat(20));
+const MAINS = Array.from({ length: 12 }, (_, i) => `c${(i + 1).toString(16)}`.repeat(20));
 // One GitHub repository and one Native, as their HTTP answers. world.pr is the PR; world.commits the commits GitHub knows.
 function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file = 'docs/front.md' } = {}) {
   const w = {
@@ -28,7 +32,11 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
       base: { sha: BASE, ref: 'main', repo: { full_name: 'o/r', default_branch: 'main' } } },
     tip: T, checks: [], authorized: new Set([H]), carries: [], updates: [], calls: [],
     commits: new Map([[H, { sha: H, parents: [{ sha: BASE }] }]]),
+    // main's history, oldest first, and the newest main commit each head the PR had contains; update-branch makes the next of fresh.
+    mains: [BASE, T], contains: new Map([[H, behind > 0 ? BASE : T]]), fresh: [X, ...FRESH],
   };
+  // main moves: a new commit lands on it.
+  w.moveMain = sha => { w.mains.push(sha); w.tip = sha; };
   const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null },
     json: async () => body, text: async () => JSON.stringify(body) });
   w.fetchImpl = async (url, init = {}) => {
@@ -47,6 +55,8 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
       if (input.action === 'carry_main_merge') {
         w.carries.push(input);
         if (!w.authorized.has(input.from_head_sha)) return reply({ status: 'rejected', error_code: 'source_head_not_authorized' });
+        // Migration 20261116090000: a head the claim already authorized is answered committed, replayed, and nothing is written.
+        if (w.authorized.has(input.head_sha)) return reply({ status: 'committed', replayed: true, authorization_id: CARRIED, carried_from: AUTH, head_sha: input.head_sha });
         w.authorized.add(input.head_sha);
         return reply({ status: 'committed', replayed: false, authorization_id: CARRIED, carried_from: AUTH, head_sha: input.head_sha });
       }
@@ -63,12 +73,20 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
     if (method === 'GET' && route.startsWith('/repos/o/r/compare/')) {
       const [from, to] = route.slice('/repos/o/r/compare/'.length).split('?')[0].split('...');
-      if (from === w.tip && to === H) return reply({ status: 'diverged', behind_by: behind, ahead_by: 1, files: [{ filename: 'docs/front.md' }] });
-      if (from === w.tip && to === X) return reply({ status: 'ahead', behind_by: 0, ahead_by: 2, files: [{ filename: 'docs/front.md' }] });
       if (from === to) return reply({ status: 'identical', behind_by: 0, files: [] });
+      // main against one of the PR's heads: behind by the main commits the head does not contain.
+      if (w.mains.includes(from) && w.contains.has(to)) {
+        const behindBy = w.mains.indexOf(from) - w.mains.indexOf(w.contains.get(to));
+        return reply(behindBy > 0 ? { status: 'diverged', behind_by: behindBy, ahead_by: 1, files: [{ filename: 'docs/front.md' }] }
+          : { status: 'ahead', behind_by: 0, ahead_by: 2, files: [{ filename: 'docs/front.md' }] });
+      }
+      if (from === w.tip && to === X) return reply({ status: 'ahead', behind_by: 0, ahead_by: 2, files: [{ filename: 'docs/front.md' }] });
+      // A commit main never had is not contained by main's tip.
+      if (!w.mains.includes(from) && w.mains.includes(to)) return reply({ status: 'diverged', behind_by: 1, ahead_by: 1, files: [] });
       return reply({ status: 'ahead', behind_by: 0, files: [] });
     }
     const checkList = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})\/check-runs/.exec(route);
+    if (method === 'GET' && checkList && w.unreadable?.has(checkList[1])) return reply({ message: 'Server Error' }, 502);
     if (method === 'GET' && checkList) return reply({ check_runs: w.checks.filter(c => c.head_sha === checkList[1] && route.includes(`check_name=${c.name}`)) });
     const commit = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})$/.exec(route);
     if (method === 'GET' && commit) return w.commits.has(commit[1]) ? reply(w.commits.get(commit[1])) : reply({ message: 'Not Found' }, 404);
@@ -79,9 +97,11 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
       if (updateStatus !== 202) return reply({ message: 'merge conflict' }, updateStatus);
       if (body.expected_head_sha !== w.pr.head.sha) return reply({ message: 'expected head sha didn’t match current head ref.' }, 422);
       // GitHub merges main into the branch itself: parents [head, main], committed and signed by web-flow.
-      w.commits.set(X, { sha: X, parents: [{ sha: H }, { sha: w.tip }], committer: { login: updateMakes },
+      const made = w.fresh.shift();
+      w.commits.set(made, { sha: made, parents: [{ sha: body.expected_head_sha }, { sha: w.tip }], committer: { login: updateMakes },
         commit: { verification: { verified: updateMakes === 'web-flow', reason: updateMakes === 'web-flow' ? 'valid' : 'unsigned' } } });
-      w.pr.head.sha = X;
+      w.contains.set(made, w.tip);
+      w.pr.head.sha = made;
       return reply({ message: 'Updating pull request branch.' }, 202);
     }
     if (method === 'POST' && route === '/repos/o/r/check-runs') {
@@ -99,8 +119,8 @@ const env = (extra = {}) => ({ GITHUB_REPOSITORY: 'o/r', GITHUB_TOKEN: 'ghs_work
   GITHUB_RUN_ID: '9001', GITHUB_WORKSPACE: ROOT, CLUED_ADMISSION_APP_ID: String(ADMISSION_APP_ID), CLUED_ADMISSION_APP_PRIVATE_KEY: KEY, ...extra });
 const merge = (w, input = { pr: String(PR), head: H }, extra = {}) =>
   runFrontMainMerge({ env: env(extra), fetchImpl: w.fetchImpl, workspace: ROOT, input, sleep: async () => {} });
-const admit = (w, head = w.pr.head.sha) =>
-  evaluate({ env: env(), event: { pull_request: { ...structuredClone(w.pr), head: { ...w.pr.head, sha: head } } }, eventName: 'pull_request',
+const admit = (w, head = w.pr.head.sha, extra = {}) =>
+  evaluate({ env: env(extra), event: { pull_request: { ...structuredClone(w.pr), head: { ...w.pr.head, sha: head } } }, eventName: 'pull_request',
     fetchImpl: w.fetchImpl, workspace: ROOT, withSummary: false });
 
 test('a train front behind main is merged with main by the App and its merge commit is admitted without the holder', async () => {
@@ -148,6 +168,100 @@ test('the admission keeps the authorization only for an attested GitHub merge of
   await merge(w);
   out = await admit(w, X); assert.equal(out.verdict, 'REJECTED'); assert.equal(w.carries.length, 1);
   assert.ok(out.notices.some(n => n.startsWith('main_merge_not_carried: source_head_not_authorized')), out.notices.join());
+});
+
+// Task 30643342 (FABLE-botmerge-auth-carry-20261122 §1.3, §2 step 2, T2): main moved twice before the node on duty ever looked at the
+// first merge commit (#1220: 61eab1c0 -> 85624825 -> def14fe1, 18 minutes apart). The newest attestation names the middle merge commit,
+// which never got an authorization row, so the one-hop carry was refused (source_head_not_authorized) and the PR waited for the holder.
+// The admission now follows the chain of attested main merges back (each hop checked as before, at most MAIN_MERGE_CHAIN_DEPTH) and
+// carries it oldest hop first.
+const [Y] = FRESH, T2 = MAINS[0], MAIN_MERGE_CHAIN_DEPTH = 8;
+// The holder authorized H; the robot merged main T into it (X), main moved to T2, and the robot merged it again (Y): nobody admitted X.
+async function mergedTwice() {
+  const w = world();
+  assert.equal((await admit(w, H)).verdict, 'ADMITTED', 'the holder authorized H');
+  assert.equal((await merge(w)).result, 'merged');
+  w.moveMain(T2);
+  const again = await merge(w, { pr: String(PR), head: X });
+  assert.equal(again.result, 'merged', JSON.stringify(again));
+  assert.equal(w.pr.head.sha, Y);
+  assert.deepEqual(w.checks.map(c => parseMainMergeExternalId(c.external_id)), [{ pr: PR, from: H, main: T }, { pr: PR, from: X, main: T2 }]);
+  assert.equal(w.authorized.has(X), false, 'X was never admitted');
+  return w;
+}
+const carried = w => w.carries.map(c => [c.from_head_sha, c.head_sha, c.main_sha]);
+
+test('T2a: main merged twice with the middle head never admitted: the chain is carried oldest first and the newest head is admitted', async () => {
+  const w = await mergedTwice();
+  const out = await admit(w, Y);
+  assert.equal(out.verdict, 'ADMITTED', JSON.stringify({ reasons: out.reasons, notices: out.notices }));
+  assert.deepEqual(carried(w), [[H, X, T], [X, Y, T2]], 'H -> X first, then X -> Y');
+  assert.equal(out.claim_binding.binding_status, 'bound');
+  assert.equal(out.claim_binding.head_authorization_id, CARRIED);
+  // Carrying again is idempotent: a later admission of Y finds it authorized and carries nothing.
+  const again = await admit(w, Y);
+  assert.equal(again.verdict, 'ADMITTED'); assert.equal(w.carries.length, 2);
+});
+
+test('T2b: a hop that is unreadable or does not qualify cuts the chain there: the holder is needed as before', async () => {
+  const OTHER = 'd'.repeat(40);
+  for (const [name, spoil] of [
+    ['middle head has no attestation', w => { w.checks = w.checks.filter(c => c.head_sha !== X); }],
+    ['middle attestation from another App', w => { w.checks.find(c => c.head_sha === X).app.id = 5368905; }],
+    ['middle attestation for another PR', w => { w.checks.find(c => c.head_sha === X).external_id = mainMergeExternalId({ pr: PR + 1, from: H, main: T }); }],
+    ['middle parents are not [from, main]', w => { w.commits.get(X).parents = [{ sha: H }, { sha: OTHER }]; }],
+    ['middle main is not contained by the tip', w => {
+      w.commits.get(X).parents = [{ sha: H }, { sha: OTHER }];
+      w.checks.find(c => c.head_sha === X).external_id = mainMergeExternalId({ pr: PR, from: H, main: OTHER }); }],
+    ['middle attestation unreadable', w => { w.unreadable = new Set([X]); }],
+  ]) {
+    const w = await mergedTwice();
+    spoil(w);
+    const out = await admit(w, Y);
+    assert.equal(out.verdict, 'REJECTED', name);
+    assert.ok(out.reasons.includes('pr_task_binding_head_not_authorized'), `${name}: ${out.reasons.join()}`);
+    assert.ok(!w.carries.some(c => c.from_head_sha === H), `${name}: nothing is carried from H past a hop that does not qualify`);
+    assert.equal(w.authorized.has(Y), false, name);
+  }
+});
+
+test('T2c: the chain is followed at most MAIN_MERGE_CHAIN_DEPTH hops', async () => {
+  for (const hops of [MAIN_MERGE_CHAIN_DEPTH, MAIN_MERGE_CHAIN_DEPTH + 1]) {
+    const w = world();
+    const heads = [H];
+    for (let i = 0; i < hops; i++) {
+      if (i) w.moveMain(MAINS[i - 1]);
+      const r = await merge(w, { pr: String(PR), head: heads.at(-1) });
+      assert.equal(r.result, 'merged', JSON.stringify(r));
+      heads.push(w.pr.head.sha);
+    }
+    const out = await admit(w, heads.at(-1));
+    if (hops === MAIN_MERGE_CHAIN_DEPTH) {
+      assert.equal(out.verdict, 'ADMITTED', JSON.stringify({ reasons: out.reasons, notices: out.notices }));
+      assert.deepEqual(w.carries.map(c => [c.from_head_sha, c.head_sha]), heads.slice(1).map((h, i) => [heads[i], h]));
+    } else {
+      assert.equal(out.verdict, 'REJECTED', `${hops} hops`);
+      assert.ok(!w.carries.some(c => c.from_head_sha === H), 'the ninth hop back (to H) is never followed');
+      assert.equal(w.authorized.has(heads.at(-1)), false);
+    }
+  }
+  assert.equal(admission.MAIN_MERGE_CHAIN_DEPTH, MAIN_MERGE_CHAIN_DEPTH, 'the bound is the one the admission exports');
+});
+
+test('T2d: frozen admission follows no chain', async () => {
+  const w = await mergedTwice();
+  const out = await admit(w, Y, { CLUED_MERGE_ADMISSION_STATE: 'frozen' });
+  assert.notEqual(out.verdict, 'ADMITTED');
+  assert.equal(w.carries.length, 0);
+  assert.equal(w.authorized.has(Y), false);
+});
+
+test('T2e: a middle head the holder authorized directly still carries to the newest head when the oldest hop is refused', async () => {
+  const w = await mergedTwice();
+  w.authorized = new Set([X]);
+  const out = await admit(w, Y);
+  assert.equal(out.verdict, 'ADMITTED', JSON.stringify({ reasons: out.reasons, notices: out.notices }));
+  assert.deepEqual(carried(w).at(-1), [X, Y, T2]);
 });
 
 test('the workflow changes nothing that is no longer true', async () => {
