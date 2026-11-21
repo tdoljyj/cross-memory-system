@@ -183,18 +183,6 @@
       "reason": "2 处：1 处 work_claim_pr_binding_input_invalid；1 处期望错误码 work_claim_pr_ref_invalid 实得 work_claim_pr_binding_input_invalid（校验次序变了，先查是否有意再改断言）"
     },
     {
-      "path": "apps/kooyumi-connect/tests/connect-migration.test.mjs",
-      "kind": "unsorted",
-      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
-      "reason": "只在生产发布工作流第 19 步跑，必需检查不跑；B1 并入 clued-cloud 套件后删本条"
-    },
-    {
-      "path": "apps/kooyumi-connect/tests/release.test.mjs",
-      "kind": "unsorted",
-      "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
-      "reason": "只在生产发布工作流第 19 步跑，必需检查不跑；B1 并入 clued-cloud 套件后删本条"
-    },
-    {
       "path": "artifacts/clued-validation/**",
       "kind": "archive",
       "task": "700f2b68-b355-4edb-95c1-be97f04ea8de",
