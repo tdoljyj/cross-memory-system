@@ -921,8 +921,12 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   if (env.GITHUB_ACTIONS === 'true') return executeSuite(id, { root, env, log, captureKnown, keep });
   // The application's dependencies the CI job installs: a local run in a checkout without them (a fresh worktree) links
   // local-verify's store first, outside the slot (R2 review 11-21: a targeted database test failed on its first import).
-  const { linkSuiteDependencies } = await import('./local-verify.mjs');
-  linkSuiteDependencies(id, root, { env, log });
+  // Loaded only for a checkout that has the application and lacks its dependencies: every other run keeps its startup.
+  const app = path.join(root, 'apps', 'clued-cloud');
+  if (existsSync(path.join(app, 'package.json')) && !existsSync(path.join(app, 'node_modules'))) {
+    const { linkSuiteDependencies } = await import('./local-verify.mjs');
+    linkSuiteDependencies(id, root, { env, log });
+  }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
   return withLocalSuiteSlot(id, {
     root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
