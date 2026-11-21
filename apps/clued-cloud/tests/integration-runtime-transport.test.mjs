@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -80,7 +80,7 @@ test('T-A11-4b (a)(d): the Host disconnect through the real OAuth provider and W
   const { handleDelegatedOAuth } = await import(pathToFileURL(path.join(directory, 'delegated-oauth.mjs')).href);
   const server = new EmbeddedPostgres({
     databaseDir: path.join(directory, 'db'), user: 'postgres', password: sha(crypto.randomUUID()), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const previousFetch = globalThis.fetch;

@@ -1,3 +1,4 @@
+import { EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -24,7 +25,7 @@ async function port(){const s=net.createServer();await new Promise(r=>s.listen(0
 test('runtime reference repair preserves frozen layout and creates independently verifiable qualification',{timeout:300000},async t=>{
  const temp=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'clued-runtime-authority-'));
  const server=new EmbeddedPostgres({databaseDir:temp,user:'postgres',password:sha(id()),port:await port(),persistent:true,
-  postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+  initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
  let started=false;const clients=[];
  try{
   await server.initialise();await server.start();started=true;

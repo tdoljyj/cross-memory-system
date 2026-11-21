@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -25,7 +25,7 @@ test('Native owner lifecycle, real migrations and synthetic Google observations'
   const tempParent=await fs.realpath(os.tmpdir());
   const dir=await fs.mkdtemp(path.join(tempParent,'clued-owner-lifecycle-'));
   const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:sha(id()),port:await port(),persistent:true,
-    postgresFlags:['-c','listen_addresses=127.0.0.1'],onLog(){},onError(){}});
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'],onLog(){},onError(){}});
   const clients=[];let started=false;
   try{
     await server.initialise();await server.start();started=true;

@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -34,7 +34,7 @@ test('future-only owned consent policies: real full-chain PostgreSQL and concurr
   const started = performance.now();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-future-consent-'));
   const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: proof(),
-    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {},
+    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   try {

@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -32,7 +32,7 @@ test('raw direct Event inventory is complete, scoped, and CAS transitions are at
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-legacy-currentness-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'),
-    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   let db;

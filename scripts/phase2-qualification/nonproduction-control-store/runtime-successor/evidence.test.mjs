@@ -1,3 +1,4 @@
+import { EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from '../../../../apps/clued-cloud/tests/cluster-cleanup.mjs';
 // Reuses the existing disposable PG setup; only new remote-evidence checks follow.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -18,7 +19,7 @@ async function port(){const s=net.createServer();await new Promise(r=>s.listen(0
 
 test('same-domain runtime SQL candidate; synthetic local PG only',{timeout:180000},async t=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'clued-execution-store-'));
- const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),persistent:false,postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(m+'\n');}});
+ const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),persistent:false,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(m+'\n');}});
  const clients=[];
  try{
   await server.initialise();await server.start();const admin=server.getPgClient();clients.push(admin);await admin.connect();
