@@ -74,6 +74,17 @@ state=${line%%|*}; job=; case "$line" in *'|'*) job=${line#*|} ;; esac
 if [ "$form" = old ]; then printf '%s\\n' "$state"; else printf 'ActiveState=%s\\nJob=%s\\n' "$state" "$job"; fi
 ''', encoding='utf-8', newline='\n')
             fake.chmod(0o755)
+            # once active, the gate reads the image store (r7 phase B ruling, 2.2 item 2): a containerd store here, so these cases are
+            # decided by the unit's state alone (the store's own cases: test_role_image_load.py)
+            docker = binary / 'docker'
+            docker.write_text('''#!/bin/bash
+case "$*" in
+  'info --format {{json .DriverStatus}}') printf '[["driver-type","io.containerd.snapshotter.v1"]]\\n' ;;
+  'info --format {{.Driver}}') printf 'overlayfs\\n' ;;
+  *) exit 99 ;;
+esac
+''', encoding='utf-8', newline='\n')
+            docker.chmod(0o755)
             driver = root / 'driver.sh'
             driver.write_text('''set -euo pipefail
 CASE_DIR=$(cd "$CASE_DIR" && pwd); export CASE_DIR

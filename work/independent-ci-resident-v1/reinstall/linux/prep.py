@@ -237,18 +237,31 @@ DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Obser
 #   any other state, no job         -> final: refused at once (a failed job lands here)
 # One bound for all unsettled reads together. A refusal writes the scene to stderr first;
 # a query of the scene that fails changes no code.
+# Active, the image store decides (Fable ruling 0e418483, r7 phase B, 2.2): an image ID means
+# the containerd store's .Id, so docker info's DriverStatus must name io.containerd.snapshotter,
+# else DOCKER_IMAGE_STORE_NOT_CONTAINERD, the Driver and DriverStatus on stderr first.
 docker_ready() {
-  local limit=180 started=$SECONDS remaining out state job code
+  local limit=180 started=$SECONDS remaining out state job code= waited store
   while :; do
     remaining=$((limit - (SECONDS - started)))
     if [ "$remaining" -le 0 ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
     if ! out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then code=SYSTEMCTL_FAILED; break; fi
     state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
-    if [ "$state" = active ]; then echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$((SECONDS - started))}"; return 0; fi
+    if [ "$state" = active ]; then waited=$((SECONDS - started)); break; fi
     if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
     if [ "$((SECONDS - started))" -ge "$limit" ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
     if ! sleep 1; then code=DOCKER_SERVICE_WAIT_FAILED; break; fi
   done
+  if [ -z "$code" ]; then
+    store=$(timeout --signal=KILL 60s docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store="(docker info: exit $?)"
+    case "$store" in *io.containerd.snapshotter*) echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$waited}"; return 0 ;; esac
+    {
+      echo "docker_ready: DOCKER_IMAGE_STORE_NOT_CONTAINERD; the store:"
+      echo "Driver=$(timeout --signal=KILL 10s docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)")"
+      echo "DriverStatus=$store"
+    } >&2 || :
+    refuse DOCKER_IMAGE_STORE_NOT_CONTAINERD
+  fi
   {
     echo "docker_ready: $code after $((SECONDS - started))s; the scene:"
     timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"

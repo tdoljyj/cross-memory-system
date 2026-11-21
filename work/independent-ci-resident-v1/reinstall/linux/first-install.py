@@ -129,7 +129,8 @@ ROOTS = ('/var/lib/clued-independent-ci/workspaces', '/var/lib/clued-independent
 SPOOL_DIRS = ('/var/lib/clued-independent-ci/formal-spool', '/var/lib/clued-independent-ci/formal-spool/incoming', '/var/lib/clued-independent-ci/formal-spool/outgoing')
 # the role images: the worker runs them with --pull=never, so they must be in the node's docker before the first job. A registry
 # image pinned by digest is pulled by that digest; a local image id (built on the template node) is loaded from
-# <in-dir>/images/<hex>.tar (docker save on the template node); docker checks the id against the loaded content.
+# <in-dir>/images/<hex>.tar (docker save on the template node). An image ID means the containerd image store's .Id (the OCI index
+# or manifest digest; the classic store is not supported, Fable ruling 0e418483, r7 phase B, 2.1).
 PULL_IMAGES, LOCAL_IMAGES = [], []
 for role in ROLES:
     tp = json.load(open(os.path.join(TEMPLATE, role + '.json'), encoding='utf-8'))
@@ -219,18 +220,31 @@ DOCKER_READY = r"""# Docker may still be starting after the WSL cold boot. Obser
 #   any other state, no job         -> final: refused at once (a failed job lands here)
 # One bound for all unsettled reads together. A refusal writes the scene to stderr first;
 # a query of the scene that fails changes no code.
+# Active, the image store decides (Fable ruling 0e418483, r7 phase B, 2.2): an image ID means
+# the containerd store's .Id, so docker info's DriverStatus must name io.containerd.snapshotter,
+# else DOCKER_IMAGE_STORE_NOT_CONTAINERD, the Driver and DriverStatus on stderr first.
 docker_ready() {
-  local limit=180 started=$SECONDS remaining out state job code
+  local limit=180 started=$SECONDS remaining out state job code= waited store
   while :; do
     remaining=$((limit - (SECONDS - started)))
     if [ "$remaining" -le 0 ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
     if ! out=$(timeout --signal=KILL "${remaining}s" systemctl show --property=ActiveState --property=Job docker.service); then code=SYSTEMCTL_FAILED; break; fi
     state=$(printf '%s\n' "$out" | sed -n 's/^ActiveState=//p'); job=$(printf '%s\n' "$out" | sed -n 's/^Job=//p')
-    if [ "$state" = active ]; then echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$((SECONDS - started))}"; return 0; fi
+    if [ "$state" = active ]; then waited=$((SECONDS - started)); break; fi
     if [ "$state" != activating ] && [ -z "$job" ]; then code=DOCKER_SERVICE_NOT_ACTIVE; break; fi
     if [ "$((SECONDS - started))" -ge "$limit" ]; then code=DOCKER_SERVICE_ACTIVATION_TIMEOUT; break; fi
     if ! sleep 1; then code=DOCKER_SERVICE_WAIT_FAILED; break; fi
   done
+  if [ -z "$code" ]; then
+    store=$(timeout --signal=KILL 60s docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store="(docker info: exit $?)"
+    case "$store" in *io.containerd.snapshotter*) echo "{\"dockerReady\":\"active\",\"waitedSeconds\":$waited}"; return 0 ;; esac
+    {
+      echo "docker_ready: DOCKER_IMAGE_STORE_NOT_CONTAINERD; the store:"
+      echo "Driver=$(timeout --signal=KILL 10s docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)")"
+      echo "DriverStatus=$store"
+    } >&2 || :
+    refuse DOCKER_IMAGE_STORE_NOT_CONTAINERD
+  fi
   {
     echo "docker_ready: $code after $((SECONDS - started))s; the scene:"
     timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"
@@ -241,24 +255,42 @@ docker_ready() {
 }
 """
 
-# .Id is backend-defined: config digest on classic Docker, target index/manifest
-# digest on containerd. Keep the exact policy ID, never substitute a config ID,
-# tag, load stdout or a RepoDigest. An incompatible target store must refuse.
+# An image ID means the containerd image store's .Id (the OCI index or manifest digest; the classic store is not supported, Fable
+# ruling 0e418483, r7 phase B, 2.1): docker_ready refused any other store in A. B keeps the exact policy ID, never a config ID, tag,
+# load stdout or RepoDigest. docker load's output is kept in $T; an ID the store does not keep after the load refuses with the scene.
+# Done, one line: the store and each local image's .Id.
 LOCAL_IMAGE_LOAD = r"""# a local image's archive (pinned below when the generator saw it): images/<hex>.tar, or .tar.gz (gzip of the docker save)
+ids=
 while read -r hex name want; do
   [ -n "$hex" ] || continue
   if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
     [ "$name" != - ] && [ -f "$W/images/$name" ] || refuse "IMAGE_NOT_LOADED_PUT_THE_TEMPLATE_DOCKER_SAVE_AT:images/$hex.tar(.gz)"
     [ "$(sha256sum "$W/images/$name" | cut -d' ' -f1)" = "$want" ] || refuse "IMAGE_ARCHIVE_NOT_THE_PINNED_ONE:$name"
+    L="$T/image-load.$hex.txt"
     case "$name" in
-      *.tar.gz) gzip -dc "$W/images/$name" | docker load -q >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
-      *) docker load -q -i "$W/images/$name" >/dev/null || refuse "IMAGE_LOAD_FAILED:$hex" ;;
+      *.tar.gz) gzip -dc "$W/images/$name" | docker load -q >"$L" 2>&1 || { cat "$L" >&2; refuse "IMAGE_LOAD_FAILED:$hex"; } ;;
+      *) docker load -q -i "$W/images/$name" >"$L" 2>&1 || { cat "$L" >&2; refuse "IMAGE_LOAD_FAILED:$hex"; } ;;
     esac
+    if ! docker image inspect "sha256:$hex" >/dev/null 2>&1; then
+      {
+        echo "image sha256:$hex is not in this store after docker load; the load output:"; cat "$L"
+        echo "docker image ls --no-trunc --digests (first 20 lines):"; { docker image ls --no-trunc --digests 2>&1 || echo "(docker image ls: exit $?)"; } | head -n 20
+        echo "the store: Driver=$(docker info --format '{{.Driver}}' 2>&1 || echo "(docker info: exit $?)") DriverStatus=$(docker info --format '{{json .DriverStatus}}' 2>&1 || echo "(docker info: exit $?)")"
+      } >&2 || :
+      refuse "IMAGE_ID_NOT_KEPT_BY_THIS_STORE:$hex"
+    fi
   fi
   got=$(docker image inspect --format '{{.Id}}' "sha256:$hex") || refuse "IMAGE_INSPECT_FAILED:$hex"
   [ "$got" = "sha256:$hex" ] || refuse "IMAGE_NOT_PRESENT:$hex"
+  ids="$ids${ids:+,}\"$hex\":\"$got\""
 done <<'IMAGES'
 @@LOCAL_IMAGES@@IMAGES
+# the reading is a record, never a gate (the store was decided in A): unreadable, it is written as such
+store_driver=$(docker info --format '{{.Driver}}' 2>/dev/null) || store_driver=
+store_status=$(docker info --format '{{json .DriverStatus}}' 2>/dev/null) || store_status=
+[[ "$store_driver" =~ ^[A-Za-z0-9._-]+$ ]] || store_driver=unreadable
+[[ "$store_status" =~ ^\[.*\]$ ]] || store_status=null
+echo "{\"imageStore\":{\"driver\":\"$store_driver\",\"driverStatus\":$store_status},\"localImages\":{$ids}}"
 """
 
 COMMON = DOCKER_READY + r"""set -euo pipefail

@@ -56,7 +56,7 @@
                    facts.companionWsl.vhdxDirectory (...\wsl\CluedResident-Linux) is never made here (filled, it is residue): the M5-b
                    switch MOVES the disk there (see the note below);
     linux          as root in it (wsl --exec: no shell between): linux/first-host-prep.sh (the pinned .debs by dpkg, systemd, docker
-                   with the classic image store, the toolchain node), make-result-key.sh (create-only), first-install-facts.py;
+                   with the containerd image store, the toolchain node), make-result-key.sh (create-only), first-install-facts.py;
     credentials    H2: nothing is written before everything is in hand and checked. With facts.json there and every secret in place
                    with its recorded fingerprint: no dialog, only checked. With facts.json there and some secret missing: only those
                    are asked for, and each must have the recorded fingerprint. Without facts.json: -CredentialDirectory (only a directory
