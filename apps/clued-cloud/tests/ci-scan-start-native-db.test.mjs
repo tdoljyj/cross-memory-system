@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -30,7 +30,7 @@ async function freePort(){const s=net.createServer();await new Promise(r=>s.list
 test('physical scan-start Native K: real transactions, exact existing authority and permanent burns',{timeout:600000},async t=>{
   const parent=await fs.realpath(os.tmpdir()),dir=await fs.mkdtemp(path.join(parent,'clued-scan-start-native-'));
   const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:digest(uuid()),port:await freePort(),persistent:false,
-    postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(String(m)+'\n');}});
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(String(m)+'\n');}});
   const clients=[];
   const connect=async(role)=>{const c=server.getPgClient();clients.push(c);await c.connect();if(role)await c.query('set role '+role);return c;};
   const json=async(c,q,args=[])=>(await c.query(q,args)).rows[0].v;

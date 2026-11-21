@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SUITE_COMMANDS, expandArgv, filterCommand, globToRegExp } from './ci-required-selection.mjs';
+import { CI_SCRIPT_TEST_DIRS, SUITE_COMMANDS, expandArgv, filterCommand, globToRegExp } from './ci-required-selection.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_ROOT = path.resolve(HERE, '../..');
@@ -45,9 +45,10 @@ const readOr = (root, file) => {
 const resolve = (from, spec) => path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
 
 // Coverage by import counts a top-level static import declaration only: a line that starts with `import` outside
-// block comments. An import in a comment, a string or a function body is no coverage.
-export const topLevelImports = (source) => [...source.replace(/\/\*[\s\S]*?\*\//g, '')
-  .matchAll(/^import\s+(?:[^'";]*?\bfrom\s*)?['"](\.{1,2}\/[^'"]+)['"]/gm)].map((match) => match[1]);
+// block comments and template strings. An import in a comment, a string or a function body is no coverage, nor a
+// TypeScript `import type`, which is erased before the module runs.
+export const topLevelImports = (source) => [...source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/`(?:\\[\s\S]|[^\\`])*`/g, '``')
+  .matchAll(/^import\s+(?!type\s+(?:[{*]|[\w$]+\s+from\b))(?:[^'";]*?\bfrom\s*)?['"](\.{1,2}\/[^'"]+)['"]/gm)].map((match) => match[1]);
 // Any relative module a file reaches: static, dynamic, export-from, side-effect and require.
 const relativeSpecifiers = (source) => [...source.matchAll(
   /\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g)]
@@ -65,12 +66,13 @@ export function suiteFiles(root, { commands = SUITE_COMMANDS, tracked, listUnit 
   for (const [id, list] of Object.entries(commands)) {
     for (const command of list) {
       const cwd = path.join(root, command.cwd);
-      const argv = expandArgv(command.argv, { cwd, base: 'base', report: 'report', ...(listUnit ? { listUnit: () => listUnit(cwd) } : {}) });
+      const argv = expandArgv(command.argv, { cwd, root, base: 'base', report: 'report', ...(listUnit ? { listUnit: () => listUnit(cwd) } : {}) });
       for (const file of filterCommand(command, argv, named).matched) runs.set(file, [...(runs.get(file) ?? []), id]);
-      // Where a new file is taken without editing the command: {tests:<dir>} and unittest discover.
+      // Where a new file is taken without editing the command: {tests:<dir>}, {ci-script-tests} and unittest discover.
       for (const arg of command.argv) {
         const dir = /^\{tests:(.+)\}$/.exec(arg)?.[1];
         if (dir) collects.push(`${path.posix.join(command.cwd, dir)}/*.test.mjs -> ${id}`);
+        if (arg === '{ci-script-tests}') collects.push(...CI_SCRIPT_TEST_DIRS.map((ci) => `${ci}/*.test.mjs -> ${id}`));
       }
       const discover = command.argv.indexOf('discover');
       if (discover > 0 && command.argv[discover - 1] === 'unittest') {
@@ -202,7 +204,7 @@ if (import.meta.main) {
     process.exitCode = 1;
   } else {
     const { tests, runs, exempt, misnamed } = result.counts;
-    console.log(`test-coverage: ${tests} test files, ${runs} run in a required suite, ${exempt} listed in ${TABLE_PATH}` +
+    console.log(`tests covered: ${tests} test files, ${runs} run in a required suite, ${exempt} listed in ${TABLE_PATH}` +
       ` (${Object.entries(result.kinds).map(([kind, n]) => `${kind} ${n}`).join(', ')}); ${misnamed} runner files under another name, all listed`);
   }
 }

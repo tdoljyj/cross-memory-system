@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import { setWorkerGatewayCaller, workerGatewayRpc, findGatewayCloseoutMigration, snapshotCallerCatalog, assertGatewayCloseoutBoundary, replayGatewayCloseout } from './worker-gateway-caller-fixture.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from 'node:assert/strict';
@@ -62,7 +62,7 @@ test('S2c PR-2: identity, Installation Requests, claims, connections and ownersh
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-identity-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: sha(uid()), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync', '-c', 'max_connections=60'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'max_connections=60'],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -1694,7 +1694,7 @@ test('S2c PR-2 runs on the production-installed shape (no P5 migrations)', { tim
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-integration-prodshape-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: sha(uid()), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   let db, gateway;
   try {

@@ -6,7 +6,7 @@
 // authorizations named the PR's own branch; none named a real non-main target.
 // Invariant: a committed pull-request authorization makes the same head resolve as bound when CI asks with main.
 // Imported by work-claims-lease-pin-db.test.mjs, so it runs in the production-schema suite.
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -31,7 +31,7 @@ async function freePort() {
 test('a committed pull-request head authorization always resolves bound against main', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-served-target-'));
   const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
     await server.initialise(); await server.start();

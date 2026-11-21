@@ -1,7 +1,7 @@
 // issuer-credentials: disposable embedded PostgreSQL with extracted issuer tables/functions only.
 // Synthetic verifiers use real stage/activate paths; expired/staged/retired cases test refusal.
 // This fixture never enables test credential grants or accesses a live service.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -179,7 +179,7 @@ test('provision SQL enforces ownership, isolated registration and immutable repl
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'kooyumi-provision-test-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'),
-    port: await freePort(), persistent: false, initdbFlags: ['--locale=C'], postgresFlags: ['-c', 'io_method=sync'],
+    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS, '--locale=C'], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError() {},
   });
   const clients = [];

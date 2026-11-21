@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import { allowTestIssuerCredentials } from './issuer-credentials-fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -101,7 +101,7 @@ test("K-CONT explicit coverage preserves unabsorbed continuity", { timeout: 1800
     password: hash(),
     port: await freePort(),
     persistent: false,
-    postgresFlags: ["-c", "io_method=sync"],
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); },
   });
