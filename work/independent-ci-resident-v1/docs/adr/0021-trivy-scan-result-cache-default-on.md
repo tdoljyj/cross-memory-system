@@ -48,7 +48,7 @@ M4 的开关是 trivy 角色策略 `/etc/clued-independent-ci/roles-v3/trivy.jso
 - trivy 漏洞库缓存 `/var/lib/clued-independent-ci-trivy-cache`；
 - `/etc` 下的密钥与资格文件。
 
-worker unit 的视图（§70.3）里，状态根是 `ReadWritePaths`，缓存根也不在 `InaccessiblePaths` 或 `TemporaryFileSystem` 里，所以 trivy worker 能读能写。归档与 §35 的回收不碰它。
+worker unit 的视图（§70.3）里，状态根是 `ReadWritePaths`，缓存根也不在 `InaccessiblePaths` 或 `TemporaryFileSystem` 里，所以 trivy worker 能读能写。归档与 §35 的回收不碰它。trivy 漏洞库缓存 `/var/lib/clued-independent-ci-trivy-cache` 不在状态根下，也不是 `ReadWritePaths` 的可选项：它由 worker unit 的 `StateDirectory=`（`StateDirectoryMode=0700`）在每次启动、`ExecStartPre` 之前以 root:root 创建并保持可写，任何安装路径都不建它；单元、常驻工具的 `TRIVY_CACHE` 与角色材料的 `cacheRoot` 三处同值由 `test/test_trivy_cache_root.py` 守住。
 
 ## 理由
 

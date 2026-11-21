@@ -40,8 +40,8 @@
 //   run its commit and suites.)
 //
 // What runs is what CI runs for the pull request: the change merged into main
-// (CI tests refs/pull/N/merge), with the selection, known-failure list and
-// reporter of main's scripts/ci/ci-required-selection.mjs, CI_BASE_SHA set to
+// (CI tests refs/pull/N/merge), with the selection, command policy (including
+// additions from the PR), known-failure list and reporter of main's selector, CI_BASE_SHA set to
 // main, and the suites picked from the files the change itself touches. Each
 // suite runs in a clean worktree; unlike CI, every command of a failing suite
 // still runs, so each one can be compared. The application's dependencies come
@@ -1277,7 +1277,7 @@ const unitTestFilesWith = (cwd, env) => () => {
 // main. Each result: the exit status (128 for a signal, null when it could not
 // start), the command's test report (read as runSuite reads it, files relative
 // to root) and its known-failure key.
-export function runCommands(selector, id, root, main, logFile, { spawn = spawnSync, env = process.env, kill = killUnder } = {}) {
+export function runCommands(selector, id, root, main, logFile, { spawn = spawnSync, env = process.env, kill = killUnder, additions = true } = {}) {
   // Whatever env the caller passes (the in-process path on Linux and in Actions), the listing and each command get the
   // test environment, made for each child so a changed identity is not handed on (Codex reviews of 2ee162c2, high 1 and
   // second review medium 1).
@@ -1286,11 +1286,21 @@ export function runCommands(selector, id, root, main, logFile, { spawn = spawnSy
   const log = (line) => fs.writeSync(fd, `${line}\n`);
   const results = [];
   try {
-    for (const [index, command] of selector.SUITE_COMMANDS[id].entries()) {
+    // As runSuite: main's commands, then those the change adds to the suite (a main predating that has only its own list).
+    // Compared with the loaded file of main's selector, whichever module defines requiredCommands. Run on main to compare
+    // (additions false), only main's own commands: main adds nothing to its own list.
+    const trusted = selector.selectorUrl ? { trusted: fileURLToPath(selector.selectorUrl) } : {};
+    const commands = additions && selector.requiredCommands
+      ? selector.requiredCommands(id, root, { baseline: selector.SUITE_COMMANDS[id], ...trusted, env, base: main,
+        report: path.join(temporary, `${id}-report.json`) }) : selector.SUITE_COMMANDS[id];
+    for (const command of commands) {
+      const index = results.length;
       const cwd = path.join(root, command.cwd);
       const known = command.known ?? null;
       try {
-        const [program, ...args] = selector.expandArgv(command.argv, { cwd, base: main, report: path.join(temporary, `${id}-report.json`),
+        // commandArgv runs only the test files an added command adds to a trusted one (a main predating it has none such).
+        const argvOf = selector.commandArgv ?? ((it, options) => selector.expandArgv(it.argv, options));
+        const [program, ...args] = argvOf(command, { cwd, root, base: main, report: path.join(temporary, `${id}-report.json`),
           listUnit: unitTestFilesWith(cwd, env) });
         const reported = withFailureReport(program, args, { known: Boolean(known), reporterUrl: selector.reporterUrl,
           file: path.join(temporary, `command-${index}.jsonl`) });
@@ -1333,9 +1343,9 @@ class LocalSuiteTimeout extends Error {
 
 // The comparison runner needs every command result, so its worker uses
 // runCommands directly inside the same process-tree guard as the selector.
-async function runVerificationSuite(selector, id, root, main, logFile, env) {
+async function runVerificationSuite(selector, id, root, main, logFile, env, { additions = true } = {}) {
   if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS === 'true') {
-    return runCommands(selector, id, root, main, logFile, { env });
+    return runCommands(selector, id, root, main, logFile, { env, additions });
   }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
   const { LOCAL_TIMEOUT_EXIT } = await import('./ci-required-selection.mjs');
@@ -1343,7 +1353,7 @@ async function runVerificationSuite(selector, id, root, main, logFile, env) {
   try {
     const status = await withLocalSuiteSlot(id, {
       root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
-      work: { selectorUrl: selector.selectorUrl, reporterUrl: selector.reporterUrl, verify: { main, logFile, resultFile } },
+      work: { selectorUrl: selector.selectorUrl, reporterUrl: selector.reporterUrl, verify: { main, logFile, resultFile, additions } },
     });
     if (status === LOCAL_TIMEOUT_EXIT) throw new LocalSuiteTimeout(id, status);
     if (status !== 0) throw new Error(`${id}: local suite guard exited ${status}; see its output`);
@@ -1422,8 +1432,15 @@ export function compareCommand(head, base, { selector, known = [] }) {
 const SEVERITY = ['pass', 'base', 'unknown', 'new'];
 
 // A suite's verdict: its worst command, with what each failing command says.
-export function compareSuite(head, base, { selector, knownLists = {} }) {
-  const commands = head.map((result, index) => ({ index, ...compareCommand(result, base?.[index], { selector, known: knownLists[result.known] ?? [] }) }));
+// A command after the first baselineCount is one the change added: main does not have it, so any failure of it is new.
+export function compareSuite(head, base, { selector, knownLists = {}, baselineCount = head.length }) {
+  const commands = head.map((result, index) => {
+    const outcome = compareCommand(result, base?.[index], { selector, known: knownLists[result.known] ?? [] });
+    if (index >= baselineCount && outcome.verdict !== 'pass') {
+      return { index, verdict: 'new', detail: `command added by the candidate failed (${result.error ?? result.status})` };
+    }
+    return { index, ...outcome };
+  });
   const worst = commands.reduce((a, b) => (SEVERITY.indexOf(b.verdict) > SEVERITY.indexOf(a.verdict) ? b : a), { verdict: 'pass' });
   const details = commands.filter((command) => command.verdict !== 'pass').map((command) => `command ${command.index + 1}: ${command.verdict}${command.detail ? ` (${command.detail})` : ''}`);
   return { verdict: worst.verdict, ...(details.length ? { detail: details.join('; ') } : {}) };
@@ -1465,7 +1482,7 @@ function mainResults(selector, id, { root, main, home, logFile, env, freshBase, 
     return withLock(home, worktreeLock(worktreePath(root, main, home)), async () => {
       const dir = worktree(root, main, home);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
-      const results = await runVerificationSuite(selector, id, dir, main, logFile, env);
+      const results = await runVerificationSuite(selector, id, dir, main, logFile, env, { additions: false });
       writeCached(cache, results);
       return results;
     }, { what: `the worktree of main ${main.slice(0, 12)}`, log });
@@ -1517,12 +1534,14 @@ export async function verifySuites({ root, home, selector, main, dir, suites, lo
       cleanWorktree(dir);
       if (NEEDS_APP_DEPENDENCIES.has(id)) ensureAppDependencies(dir, home, { rebuild: id === 'production-schema', run });
       const head = await runVerificationSuite(selector, id, dir, main, log, env);
-      outcome = compareSuite(head, null, { selector, knownLists });
-      if (outcome.verdict !== 'pass') {
+      // Only main's own commands are run on main to compare; a failing addition is new without that.
+      const baselineCount = selector.SUITE_COMMANDS[id].length;
+      let theirs = null;
+      if (compareSuite(head.slice(0, baselineCount), null, { selector, knownLists }).verdict !== 'pass') {
         console.log(`local-verify: ${platform}: ${id} failed; running it on main ${main.slice(0, 12)} to compare`);
-        const theirs = await mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase, run });
-        outcome = compareSuite(head, theirs, { selector, knownLists });
+        theirs = await mainResults(selector, id, { root, main, home, logFile: path.join(logs, `${platform}-${id}.main.log`), env, freshBase, run });
       }
+      outcome = compareSuite(head, theirs, { selector, knownLists, baselineCount });
     } catch (error) {
       outcome = error instanceof LocalSuiteTimeout
         ? { verdict: 'timeout', detail: error.message, exitCode: error.exitCode }

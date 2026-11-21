@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import { drillKitManifest, prepareFrom, makeDrillKit, releasePins, readSums } from '../drill/make-drill-kit.mjs';
 import * as drillKit from '../drill/make-drill-kit.mjs';
-import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, publish, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { DRILL_PASS_CONCLUSIONS, DRILL_RESERVED, REQUEST_CONTRACT, acceptanceOf, prepare, readAcceptance, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { validateAcceptance } from '../rollout/fleet/install.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
@@ -1013,7 +1013,8 @@ test('checkpoint caller discards a result after a guard failure and restores the
     @{ outcome = $outcome; restores = $script:restores }`);
   assert.equal(r.outcome.preBoot.release.failed, null);
   delete r.outcome.preBoot;
-  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true, hostExecutorStates: [] });
+  assert.deepEqual(r.outcome, { result: null, failure: { code: 'DRILL_HOST_IS_ON_DUTY', detail: 'test' }, restored: true, hostExecutorStates: [],
+    runningMemory: { afterBootFreeGB: null, minRunningFreeGB: null } });
   assert.equal(r.restores, 1);
 });
 
@@ -1515,8 +1516,7 @@ async function sealWorld(t) {
   const saved = { FAKE_GH_STATE: process.env.FAKE_GH_STATE, GH_TOKEN: process.env.GH_TOKEN };
   process.env.FAKE_GH_STATE = path.join(d, 'gh-state.json'); delete process.env.GH_TOKEN;
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
-  const gh = [process.execPath, fake];
-  await publish({ dir: out, repo: 'tdoljyj/cross-memory-system', index, ghCommand: gh });
+  const gh = [process.execPath, fake];   // no release step: prepare makes the Release and the index row
   const image = 'e'.repeat(64), imageFile = path.join(d, `role-image-${image}.tar.gz`); fs.writeFileSync(imageFile, 'gzip of a docker save');
   const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
   const deps = { readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: S }),
@@ -1674,6 +1674,65 @@ test('each of the three PASS drill receipts is refused off main and seals on mai
   }
 });
 
+// T1 of FABLE-drill-release-step-20261121.md (the r4 and r9 refusal, PUBLISH_INDEX_LACKS_VERSION at prepare): a candidate from its build
+// alone, with an index holding its header only and an empty gh state, and no release step: prepare -> -From (prepareFrom) -> the kit
+// (makeDrillKit with --request) -> the receipt drill-vm.ps1's conclusion function wrote, finalized -> seal --drill-receipt.
+test('a candidate from its build alone: prepare makes the Release and the index row, then -From, the kit, the drill\'s own receipt and seal', opts, async t => {
+  const f = firstInstallAssets('candidate-from-build', { candidate: true });
+  const { version } = f, tag = `fleet-node-${version}`, commit = 'c'.repeat(40), repo = 'tdoljyj/cross-memory-system';
+  // the build as universal.mjs writes it: a release.json of the real contract naming this tar, the two-line SHA256SUMS
+  const tar = fs.readFileSync(path.join(f.build, `${tag}.tar`));
+  const source = { version, release_tag: tag, archive_sha256: sha(tar), commit, resident_manifest_sha256: '2'.repeat(64), source_manifest_sha256: '3'.repeat(64),
+    upgrader_manifest_sha256: '4'.repeat(64), bundle_sha256: '5'.repeat(64), universal_files_sha256: '6'.repeat(64) };
+  const release = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-release/1', source, archive: { name: `${tag}.tar`, bytes: tar.length, sha256: sha(tar) } }) + '\n');
+  fs.writeFileSync(path.join(f.build, `${tag}.release.json`), release);
+  fs.writeFileSync(path.join(f.build, 'SHA256SUMS'), `${sha(release)}  ${tag}.release.json\n${sha(tar)}  ${tag}.tar\n`);
+  const index = path.join(f.root, 'index.md');
+  fs.writeFileSync(index, '| 版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练 |\r\n|---|---|---|---|---|---|---|\r\n');
+  const fake = path.join(f.root, 'fake-gh.mjs'); fs.writeFileSync(fake, FAKE_GH);
+  const state = path.join(f.root, 'gh-state.json');
+  const saved = { FAKE_GH_STATE: process.env.FAKE_GH_STATE, GH_TOKEN: process.env.GH_TOKEN };
+  process.env.FAKE_GH_STATE = state; delete process.env.GH_TOKEN;
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  const gh = [process.execPath, fake];
+  const image = 'b'.repeat(64), imageFile = path.join(f.images, `role-image-${image}.tar.gz`);
+  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  const deps = { readKit: () => ({}), sourceHash: async () => ({ ciSourceManifestSha256: S }),
+    kitOf: async () => ({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', template: {}, config: { ciSourceManifestSha256: L }, images: { pull: [], local: [{ id: image, asset: `role-image-${image}.tar.gz` }] } }),
+    fleetMaterial: async () => ({ formalRoles: { gitleaks: {}, trivy: {}, 'contract-placement': {} },
+      installed: { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5), ciSourceManifestSha256: L } }) };
+  // 1. prepare, with nothing published before it
+  const accept = path.join(f.root, 'accept');
+  const p = await prepare({ version, dir: f.build, out: accept, images: [imageFile], index, repo, ghCommand: gh, deps });
+  assert.equal(p.status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const request = JSON.parse(fs.readFileSync(p.request, 'utf8'));
+  // 2. -From from the build and what prepare left; 3. the candidate's kit on that request
+  const from = path.join(f.root, 'from-prepared');
+  prepareFrom({ build: f.build, final: accept, images: accept, version, out: from });
+  const made = await makeDrillKit({ from, version, prereq: f.prereq, out: path.join(f.root, 'kit-prepared'), request: p.request });
+  assert.deepEqual(made.candidate, { acceptance: `${tag}.acceptance.json`, tarSha256: sha(tar), ciSourceManifestSha256: S, firstInstallKitSha256: request.firstInstallKitSha256 });
+  // 4. the receipt drill-vm.ps1's conclusion function writes for this candidate, read back (-Finalize)
+  const cand = m5DrillReceipt('candidate-from-build-run', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version,
+    pkg: { tarSha256: request.archive_sha256, firstInstallKitSha256: request.firstInstallKitSha256 } });
+  const done = finalize('candidate-from-build-finalize', cand, notTheDrillsSource());
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  // 5. the Owner accepts (the Decision record naming this request), seal --drill-receipt
+  const record = JSON.parse(fs.readFileSync(fileURLToPath(new URL('../rollout/fleet/test/fixtures/clued-decision-mutate-3bc571a6.json', import.meta.url)), 'utf8'));
+  record.supplemental.record.content = `TEST TEXT: the Owner accepts.\n${requestLineOf(version, sha(fs.readFileSync(p.request)))}\n`;
+  const decisionRecord = path.join(f.root, 'decision-record.json'); fs.writeFileSync(decisionRecord, JSON.stringify(record, null, 2));
+  const sealed = await seal({ request: p.request, decisionRecord, drillReceipt: done.receiptFile, index, repo, ghCommand: gh, deps });
+  assert.equal(sealed.status, 'FLEET_ACCEPTANCE_SEALED');
+  // the Release: the five package assets, the kit, the image, the first-install sums and the acceptance, once each
+  const names = JSON.parse(fs.readFileSync(state, 'utf8')).assets.map(a => a.name).sort();
+  assert.deepEqual(names, [`${tag}.tar`, `${tag}.release.json`, 'SHA256SUMS', `${tag}.bootstrap.ps1`, `${tag}.prereq-manifest.json`, `${tag}.first-install-kit.json`,
+    `role-image-${image}.tar.gz`, `${tag}.first-install.SHA256SUMS`, `${tag}.acceptance.json`].sort());
+  // the index row whole: the Release, this tar and commit, the acceptance, and the drill column naming this receipt
+  const drill = `PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(fs.readFileSync(done.receiptFile))}`;
+  assert.equal(sealed.drill, drill);
+  assert.deepEqual(fs.readFileSync(index, 'utf8').split('\r\n').slice(2),
+    [`| ${version} | https://github.com/${repo}/releases/tag/${tag} | ${sha(tar)} | ${commit} | 2026-11-19T12:22:39Z | ${record.target_refs[0].id} | ${drill} |`, '']);
+});
+
 test('abort cleanup checks VM ownership, stops before restore and never acts on a different marker', opts, () => {
   const r = ps(`
     $script:events = @(); $script:vm = @{ State = 'Running' }
@@ -1721,18 +1780,22 @@ test('the boot gate is the guest plus the running gate plus the single boot marg
 });
 
 // The receipt of run 20261119T172257Z: 19.7 GB free before boot, then aborted at 5.8 GB while an Actions runner job on the host was
-// growing the production WSL. With the job's Runner.Worker in the process list the boot is refused before it starts.
-test('the field sample of run 20261119T172257Z is refused before boot when an Actions runner job is executing', opts, () => {
+// growing the production WSL. With the job's Runner.Worker in the process list the boot gate takes the job tier (25.4 GB since the r6 receipt), and 19.7 GB is short
+// of it: the same boot is still refused before it starts, now by the memory it would have run out of (supplement "drill boot gate and the
+// train both want DESK").
+test('the field sample of run 20261119T172257Z is refused before boot: a runner job raises the gate to 25.4 GB', opts, () => {
   const r = ps(`Test-DrillHostSafety ${q(idleHostStatus())} ([long](19.7 * 1GB)) -ProcessNames @('Runner.Listener', 'Runner.Worker')`);
   assert.equal(r.action, 'refuse');
-  assert.equal(r.code, 'DRILL_HOST_CI_BUSY');
+  assert.equal(r.code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r.busyWith, 'ACTIONS_RUNNER_JOB');
+  assert.equal(Math.round(r.requiredFreeBytes / 2 ** 30 * 10) / 10, 25.4);
 });
 
 // Fable renew-key ruling, supplement "drill hold and the Actions self-hosted runners on the same host" (Clued Task e71ceb33): the hold
-// drains the resident but not the host's Actions runners, so a job one of them is executing (a Runner.Worker process) refuses the
-// boot. Judged from the process list, not from runner names; a job picked up after the boot is left to the running memory gate.
-test('the boot gate refuses while an Actions runner job is executing on the host, and a running drill is not aborted by one', opts, () => {
+// drains the resident but not the host's Actions runners. A job one of them is executing (a Runner.Worker process) no longer refuses the
+// boot (supplement "drill boot gate and the train both want DESK"): it selects the job tier. Judged from the process list, not from
+// runner names; a job picked up after the boot is left to the running memory gate.
+test('the boot gate boots at ample memory with an Actions runner job on the host, records it, and a running drill is not aborted by one', opts, () => {
   const r = ps(`
     function Read-DrillHostStatus { ${q(idleHostStatus())} }
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
@@ -1747,10 +1810,8 @@ test('the boot gate refuses while an Actions runner job is executing on the host
     $script:assigned = 8GB
     $running = Get-DrillHostSafety -Running
     @{ listening = $listening; busy = $busy; running = $running }`);
-  assert.equal(r.listening.action, 'start');
-  assert.equal(r.busy.action, 'refuse');
-  assert.equal(r.busy.code, 'DRILL_HOST_CI_BUSY');
-  assert.equal(r.busy.busyWith, 'ACTIONS_RUNNER_JOB');
+  assert.deepEqual([r.listening.action, r.listening.runnerJob, r.listening.requiredFreeBytes], ['start', 'no', 15 * 2 ** 30]);
+  assert.deepEqual([r.busy.action, r.busy.code, r.busy.busyWith, r.busy.runnerJob, Math.round(r.busy.requiredFreeBytes / 2 ** 30 * 10) / 10], ['start', null, 'ACTIONS_RUNNER_JOB', 'yes', 25.4]);
   assert.equal(r.running.action, 'continue');
 });
 
@@ -1758,7 +1819,7 @@ test('the boot gate refuses while an Actions runner job is executing on the host
 // inside a WSL distribution, where the Windows process list does not see their Runner.Worker. The question asked there is a yes or no,
 // answered by an exit code alone: pgrep -ix Runner.Worker. Its standard output is never read. Two small closed tables decide everything:
 // the probe's (exit x stderr x time out) and the running list's (the one output still read).
-test('the boot gate refuses a job on either side and a WSL side that could not be read', opts, () => {
+test('a job on either side, or a WSL side that could not be read, selects the high tier and boots at ample memory', opts, () => {
   const r = ps(`
     $s = ${q(idleHostStatus())}
     @{ wslJob = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Listener') -WslJob $true)
@@ -1766,11 +1827,131 @@ test('the boot gate refuses a job on either side and a WSL side that could not b
       unreadable = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Listener') -WslJob $null)
       windowsJob = (Test-DrillHostSafety $s 64GB -ProcessNames @('Runner.Worker') -WslJob $false)
       running = (Test-DrillHostSafety $s 64GB -Running -WslJob $true) }`);
-  assert.deepEqual([r.wslJob.action, r.wslJob.code, r.wslJob.busyWith], ['refuse', 'DRILL_HOST_CI_BUSY', 'WSL_ACTIONS_RUNNER_JOB']);
-  assert.equal(r.quiet.action, 'start');
-  assert.deepEqual([r.unreadable.action, r.unreadable.code], ['refuse', 'DRILL_HOST_WSL_UNREADABLE']);
-  assert.deepEqual([r.windowsJob.code, r.windowsJob.busyWith], ['DRILL_HOST_CI_BUSY', 'ACTIONS_RUNNER_JOB']);
+  assert.deepEqual([r.wslJob.action, r.wslJob.code, r.wslJob.busyWith, r.wslJob.runnerJob], ['start', null, 'WSL_ACTIONS_RUNNER_JOB', 'yes']);
+  assert.deepEqual([r.quiet.action, r.quiet.busyWith, r.quiet.runnerJob], ['start', null, 'no']);
+  assert.deepEqual([r.unreadable.action, r.unreadable.code, r.unreadable.busyWith, r.unreadable.runnerJob], ['start', null, 'WSL_UNREADABLE', 'unknown']);
+  assert.deepEqual([r.windowsJob.action, r.windowsJob.code, r.windowsJob.busyWith], ['start', null, 'ACTIONS_RUNNER_JOB']);
   assert.equal(r.running.action, 'continue');
+});
+
+// Fable renew-key ruling, supplement "drill boot gate and the train both want DESK": a runner job no longer refuses the boot; it is
+// converted back into what it stood for -- memory. Two tiers before boot: no job on either side 15 GB (reserve 6 + guest 8 + margin 1),
+// a job on either side 25.4 GB (10.4 more: the growth after boot in the r6 receipt; 6 before that calibration). A job query that failed takes the high
+// tier and is no refusal. The running gate (6 GB after the guest) is unchanged.
+test('the boot gate takes a runner job as the 25.4 GB memory tier, not a refusal; a failed job query takes that tier too', opts, () => {
+  const r = ps(`
+    $s = ${q(idleHostStatus())}
+    $gate = { param($free, $names, $wsl) $x = Test-DrillHostSafety $s $free -ProcessNames $names -WslJob $wsl
+      [ordered]@{ action = $x.action; code = $x.code; busyWith = $x.busyWith; runnerJob = $x.runnerJob; requiredGB = [Math]::Round($x.requiredFreeBytes / 1GB, 1) } }
+    [ordered]@{
+      windowsBusy26 = (& $gate 26GB @('Runner.Listener', 'Runner.Worker') $false)
+      wslBusy26 = (& $gate 26GB @('Runner.Listener') $true)
+      busy18 = (& $gate 18GB @('Runner.Worker') $false)
+      unreadable26 = (& $gate 26GB @('Runner.Listener') $null)
+      unreadable18 = (& $gate 18GB @('Runner.Listener') $null)
+      busyAtTier = (& $gate ([long](Test-DrillHostMemory 0 -RunnerJob).requiredFreeBytes) @('Runner.Worker') $false)
+      busyUnderTier = (& $gate ([long](Test-DrillHostMemory 0 -RunnerJob).requiredFreeBytes - 1) @('Runner.Worker') $false)
+      quiet15 = (& $gate 15GB @('Runner.Listener') $false)
+      quietUnder15 = (& $gate (15GB - 1) @('Runner.Listener') $false)
+      runningBusy = (Test-DrillHostSafety $s 6GB -Running -MemoryAssigned 8GB -WslJob $true).action
+      runningShort = (Test-DrillHostSafety $s (6GB - 1) -Running -MemoryAssigned 8GB).code }`);
+  assert.deepEqual(r.windowsBusy26, { action: 'start', code: null, busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 25.4 });
+  assert.deepEqual(r.wslBusy26, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 25.4 });
+  assert.deepEqual(r.busy18, { action: 'refuse', code: 'DRILL_HOST_MEMORY_SHORT', busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 25.4 });
+  assert.deepEqual(r.unreadable26, { action: 'start', code: null, busyWith: 'WSL_UNREADABLE', runnerJob: 'unknown', requiredGB: 25.4 });
+  assert.equal(r.unreadable18.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.equal(r.busyAtTier.action, 'start');
+  assert.equal(r.busyUnderTier.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.deepEqual(r.quiet15, { action: 'start', code: null, busyWith: null, runnerJob: 'no', requiredGB: 15 });
+  assert.equal(r.quietUnder15.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.equal(r.runningBusy, 'continue', 'the running gate is unchanged: 6 GB after the guest, a job is no abort');
+  assert.equal(r.runningShort, 'DRILL_HOST_MEMORY_SHORT');
+});
+
+// The r6 receipt (run 20261121T010455Z-2026.11.21-b7d92a1a-4b3f5ee5, evidence.hostMemory; Fable ruling on r6 Linux phase A, section 5):
+// a runner job at boot, 27.0 GB free before boot, 19.3 GB once the guest was up, 8.9 GB at the lowest while running -- the host's other
+// usage grew 10.4 GB after the boot. The figures are written here, not read from the script: a boot that just passes the job tier's boot
+// gate, then loses the guest and that growth, must still pass the running gate. At the old 21 GB tier it fell to 2.6 GB (aborted).
+test('the r6 receipt replayed: from the job tier of the boot gate, the measured growth after boot keeps the running gate passing', opts, () => {
+  const r = ps(`
+    $s = ${q(idleHostStatus())}
+    $boot = (Test-DrillHostSafety $s 0 -ProcessNames @('Runner.Worker')).requiredFreeBytes
+    $minRunning = $boot - 8GB - [long]((19.3 - 8.9) * 1GB)
+    @{ bootGB = [Math]::Round($boot / 1GB, 1); minRunningGB = [Math]::Round($minRunning / 1GB, 1)
+      atBoot = (Test-DrillHostSafety $s $boot -ProcessNames @('Runner.Worker')).action
+      running = (Test-DrillHostSafety $s $minRunning -Running -MemoryAssigned 8GB).action }`);
+  assert.equal(r.atBoot, 'start');
+  assert.equal(r.running, 'continue', `boot gate ${r.bootGB} GB leaves ${r.minRunningGB} GB after the r6 growth`);
+});
+
+// Codex review of f9ab1bb26, medium 1: the Windows process list that could not be read is a job query that failed, like the WSL side's:
+// the job tier, the WSL side and memory still read, no refusal by itself. A memory reading that fails still refuses (a resource failure).
+test('a Windows job query that fails takes the job tier and goes on to read memory; a memory read that fails still refuses', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) if ($script:memoryFails) { throw 'WMI unavailable' }; @{ FreePhysicalMemory = $script:free / 1KB } }
+    function Get-VM { param($ErrorAction) }
+    function Get-Process { param($ErrorAction) throw 'Access is denied' }
+    function Get-DrillRunnerDistributions { param($HostName) }
+    $script:memoryFails = $false
+    $script:free = 26GB; $at26 = Get-DrillHostSafety
+    $early = Get-DrillHostSafety -JobsOnly
+    $script:free = 20GB; $at20 = Get-DrillHostSafety
+    $script:memoryFails = $true; $script:free = 64GB; $noMemory = Get-DrillHostSafety
+    $pick = { param($x) $req = Get-Prop $x 'requiredFreeBytes'
+      [ordered]@{ action = $x.action; code = $x.code; busyWith = (Get-Prop $x 'busyWith'); runnerJob = (Get-Prop $x 'runnerJob'); requiredGB = $(if ($req) { [Math]::Round($req / 1GB, 1) }) } }
+    [ordered]@{ at26 = (& $pick $at26); early = (& $pick $early); at20 = (& $pick $at20); noMemory = (& $pick $noMemory) }`);
+  assert.deepEqual(r.at26, { action: 'start', code: null, busyWith: 'WINDOWS_UNREADABLE', runnerJob: 'unknown', requiredGB: 25.4 });
+  assert.deepEqual([r.early.action, r.early.busyWith, r.early.runnerJob], ['start', 'WINDOWS_UNREADABLE', 'unknown'], 'the early sample does not refuse either');
+  assert.deepEqual([r.at20.action, r.at20.code, r.at20.requiredGB], ['refuse', 'DRILL_HOST_MEMORY_SHORT', 25.4]);
+  assert.deepEqual([r.noMemory.action, r.noMemory.code], ['refuse', 'DRILL_HOST_RESOURCE_UNREADABLE']);
+});
+
+// Codex re-review of bde9aaa52, lows 1 and 2: a job confirmed in one runner distribution stays a confirmed job when another could not be
+// read; a sample the duty check refused before any job was read says nothing about jobs (not "no").
+test('a confirmed WSL job survives another distribution unread; a duty refusal carries no job reading', opts, () => {
+  const r = ps(`
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 64GB / 1KB } }
+    function Get-VM { param($ErrorAction) }
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    function Get-DrillWslRunnerState { param($HostName) @{ ok = $false; distributions = @('A', 'B'); running = @('A', 'B'); jobs = @('A'); reason = 'WSL_PROCESS_QUERY_FAILED' } }
+    $partial = Get-DrillHostSafety
+    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} }
+    $duty = Get-DrillHostSafety -JobsOnly
+    [ordered]@{ partial = [ordered]@{ action = $partial.action; busyWith = $partial.busyWith; runnerJob = $partial.runnerJob }
+      duty = [ordered]@{ code = $duty.code; busyWith = (Get-Prop $duty 'busyWith'); runnerJob = (Get-Prop $duty 'runnerJob') } }`);
+  assert.deepEqual(r.partial, { action: 'start', busyWith: 'WSL_ACTIONS_RUNNER_JOB', runnerJob: 'yes' });
+  assert.deepEqual(r.duty, { code: 'DRILL_HOST_IS_ON_DUTY', busyWith: null, runnerJob: null });
+});
+
+// The receipt keeps raw facts only (Fable renew-key ruling, supplement "contention label stop-loss"): free before boot and the tier, the
+// runner jobs at boot (yes / no / unknown) and what the gate saw, free once the guest is up (the running guard's first reading), the
+// lowest while running and the lowest of the whole run. No contention class, and no failure or step record is read to make one.
+test('the receipt memory record: raw facts -- before boot, the tier, the jobs at boot, after boot, the lowest -- and no class', opts, () => {
+  const r = ps(`
+    $state = [hashtable]::Synchronized(@{ afterBootFreeGB = $null; minRunningFreeGB = $null })
+    foreach ($g in @(12.5, 9.1, 10.4)) { Add-DrillRunningMemory $state @{ freeGB = $g } }
+    Add-DrillRunningMemory $state @{ freeGB = $null }
+    $running = [ordered]@{ afterBootFreeGB = $state.afterBootFreeGB; minRunningFreeGB = $state.minRunningFreeGB }
+    $yes = @{ bootGate = [ordered]@{ freeGB = 23.4; runnerJob = 'yes'; busyWith = 'WSL_ACTIONS_RUNNER_JOB'; requiredFreeGB = 21 } }
+    $unknown = @{ bootGate = [ordered]@{ freeGB = 8.2; runnerJob = 'unknown'; busyWith = 'WSL_UNREADABLE'; requiredFreeGB = 21 } }
+    [ordered]@{ yes = (Get-DrillHostMemoryEvidence $yes $running); unknown = (Get-DrillHostMemoryEvidence $unknown $running)
+      none = (Get-DrillHostMemoryEvidence $null $null)
+      params = @((Get-Command Get-DrillHostMemoryEvidence).Parameters.Keys | Where-Object { $_ -in @('PreBoot', 'RunningMemory', 'Failure', 'FirstInstallSteps', 'Entry') }) }`);
+  assert.deepEqual(r.yes, { beforeBootFreeGB: 23.4, requiredFreeGB: 21, runnerJobAtBoot: 'yes', runnerJobBefore: 'WSL_ACTIONS_RUNNER_JOB',
+    afterBootFreeGB: 12.5, minRunningFreeGB: 9.1, lowestFreeGB: 9.1 });
+  assert.deepEqual([r.unknown.runnerJobAtBoot, r.unknown.lowestFreeGB], ['unknown', 8.2], 'the lowest of the whole run includes the boot gate');
+  assert.deepEqual(r.none, { beforeBootFreeGB: null, requiredFreeGB: null, runnerJobAtBoot: null, runnerJobBefore: null,
+    afterBootFreeGB: null, minRunningFreeGB: null, lowestFreeGB: null });
+  assert.deepEqual(r.params, ['PreBoot', 'RunningMemory'], 'the record reads neither the failure nor the step record');
+});
+
+// Nothing in the drill classes a time-out (the stop-loss): no contention label, no code tables for it, no read-back of time-out text.
+test('no automatic contention class is left in the drill', () => {
+  const text = fs.readFileSync(script, 'utf8');
+  for (const gone of ['SUSPECTED_HOST_CONTENTION', 'Get-DrillHostContention', 'DrillGuestTimedStepCodes', 'DrillPackageTimedStepCodes',
+    'Get-DrillGuestCommandTimeout', 'DRILL_GUEST_COMMAND_TIMEOUT']) assert.ok(!text.includes(gone), gone);
 });
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,
@@ -1800,12 +1981,12 @@ test('the WSL world does not age: its host status still reads as fresh when the 
     function Get-DrillTime { $later }
     $script:probe = @{ exit = 0; stdout = ''; stderr = '' }
     $s = Get-DrillHostSafety; @{ action = $s.action; code = $s.code; busyWith = $s.busyWith }`);
-  assert.deepEqual(r, { action: 'refuse', code: 'DRILL_HOST_CI_BUSY', busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
+  assert.deepEqual(r, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
 });
 
 // The probe's closed table, cell by cell, end to end through the boot gate; and the reverse: across exits -2..9 and stderr empty, blank,
 // text, and missing, the one cell that gives "no job" is exit 1 with nothing on stderr; the one that gives "a job" is exit 0 with nothing.
-test('the probe: exit 0 a job, exit 1 none, anything else -- another exit, anything on stderr, a time out -- refuses; nothing else says none', opts, () => {
+test('the probe: exit 0 a job, exit 1 none, anything else -- another exit, anything on stderr, a time out -- reads as unreadable (high tier); nothing else says none', opts, () => {
   const r = ps(`${wslWorld}
     function Gate($probe) { $script:probe = $probe; $s = Get-DrillHostSafety; @{ action = $s.action; code = $s.code; busyWith = $s.busyWith } }
     $cells = [ordered]@{
@@ -1820,11 +2001,11 @@ test('the probe: exit 0 a job, exit 1 none, anything else -- another exit, anyth
       $sweep += [ordered]@{ exit = $exit; stderr = $err; verdict = $v } } }
     @{ cells = $cells; sweep = $sweep; probeArgv = @($script:calls | Where-Object { $_ -notlike '--list*' } | Select-Object -Unique) }`);
   const c = r.cells;
-  assert.deepEqual(c.job, { action: 'refuse', code: 'DRILL_HOST_CI_BUSY', busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
+  assert.deepEqual(c.job, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB' });
   assert.deepEqual(c.none, { action: 'start', code: null, busyWith: null });
   assert.deepEqual(c['none-whatever-stdout'], { action: 'start', code: null, busyWith: null }, 'stdout is never read');
   for (const cell of ['job-with-stderr', 'none-with-stderr', 'none-with-blank-stderr', 'syntax-error', 'fatal', 'no-exit', 'exit-as-text', 'timeout']) {
-    assert.deepEqual(c[cell], { action: 'refuse', code: 'DRILL_HOST_WSL_UNREADABLE', busyWith: null }, cell);
+    assert.deepEqual(c[cell], { action: 'start', code: null, busyWith: 'WSL_UNREADABLE' }, cell);
   }
   const none = r.sweep.filter(x => x.verdict === 'NO_JOB'), job = r.sweep.filter(x => x.verdict === 'JOB');
   assert.deepEqual(none.map(x => [x.exit, x.stderr]), [[1, ''], [1, null]]);
@@ -1836,7 +2017,7 @@ test('the probe: exit 0 a job, exit 1 none, anything else -- another exit, anyth
 // The running list, the one output still read, by one fixed rule: cut at line ends, only lines of length zero dropped, every other line
 // whole and untrimmed the name of a distribution this account has registered -- or the whole answer is refused. Its exit and stderr as
 // every WSL call. Then, only a distribution in a list that read is asked anything; one that is not running is asked nothing.
-test('the running list: whole registered names only, else refused; a distribution not in it is asked nothing', opts, () => {
+test('the running list: whole registered names only, else unreadable (high tier); a distribution not in it is asked nothing', opts, () => {
   const lists = {
     empty: ['', true, []], 'one-crlf': ['Fixture-CI\r\n', true, ['Fixture-CI']], 'one-lf': ['Fixture-CI\n', true, ['Fixture-CI']],
     'two-and-empty-lines': ['docker-desktop\r\n\r\nFixture-CI\r\n\r\n', true, ['docker-desktop', 'Fixture-CI']], 'only-line-ends': ['\r\n\n', true, []],
@@ -1852,19 +2033,19 @@ test('the running list: whole registered names only, else refused; a distributio
     foreach ($bad in @(@{ exit = 1; stdout = "Fixture-CI\`r\`n"; stderr = '' }, @{ exit = 0; stdout = "Fixture-CI\`r\`n"; stderr = 'wsl: x' }, @{ exit = 0; stdout = "Fixture-CI\`r\`n"; stderr = ' ' })) {
       $out["bad-$($out.Count)"] = try { ConvertFrom-DrillWslRunningList $bad @('Fixture-CI') } catch { (Get-DrillCode $_).code }
     }
-    # end to end: a list that does not read refuses the boot; a list without the runner distribution asks it nothing
+    # end to end: a list that does not read takes the high tier; a list without the runner distribution asks it nothing
     $script:probe = @{ exit = 0; stdout = ''; stderr = '' }
     $script:list = @{ exit = 0; stdout = "Fixture-CI \`r\`n"; stderr = '' }
     $refused = Get-DrillHostSafety
     $script:calls.Clear(); $script:list = @{ exit = 0; stdout = "docker-desktop\`r\`n"; stderr = '' }
     $stopped = Get-DrillHostSafety
-    @{ out = $out; refused = @{ code = $refused.code; why = $refused.wslUnreadable }; stopped = @{ action = $stopped.action }; stoppedCalls = @($script:calls) }`);
+    @{ out = $out; refused = @{ code = $refused.code; busyWith = $refused.busyWith; why = $refused.wslUnreadable }; stopped = @{ action = $stopped.action }; stoppedCalls = @($script:calls) }`);
   for (const [name, [, ok, names]] of Object.entries(lists)) {
     if (ok) assert.deepEqual(r.out[name], names, name);
     else assert.equal(r.out[name], 'WSL_RUNNING_LIST_UNREADABLE', name);
   }
   for (const k of Object.keys(r.out).filter(k => k.startsWith('bad-'))) assert.equal(r.out[k], 'WSL_RUNNING_LIST_FAILED', k);
-  assert.deepEqual(r.refused, { code: 'DRILL_HOST_WSL_UNREADABLE', why: 'WSL_RUNNING_LIST_UNREADABLE' });
+  assert.deepEqual(r.refused, { code: null, busyWith: 'WSL_UNREADABLE', why: 'WSL_RUNNING_LIST_UNREADABLE' }, 'unreadable: the high tier, no refusal');
   assert.deepEqual(r.stopped, { action: 'start' });
   assert.deepEqual(r.stoppedCalls, ['--list --running --quiet'], 'a distribution that is not running is asked nothing');
 });
@@ -1872,7 +2053,7 @@ test('the running list: whole registered names only, else refused; a distributio
 // Codex review of addf1ffa5, medium 1: only a host entry that has no Linux runner entry at all skips the probe. A runner entry whose
 // distro is missing, null, not a name, or a name with anything after it (a NUL, a line end), refuses the boot like an unreadable registry;
 // two names that differ only by such a character are never merged into one.
-test('a Linux runner entry without a readable distro refuses; only an entry with no Linux runner at all skips the probe', opts, () => {
+test('a Linux runner entry without a readable distro is unreadable (high tier); only an entry with no Linux runner at all skips the probe', opts, () => {
   const profiles = path.join(tmp, 'node-profiles-broken.json');
   const hosts = {
     'NO-DISTRO': { linux_runner: { name: 'r' } }, 'NULL-DISTRO': { linux_runner: { distro: null } }, 'NULL-RUNNER': { linux_runner: null },
@@ -1891,7 +2072,7 @@ test('a Linux runner entry without a readable distro refuses; only an entry with
     foreach ($h in ${q(Object.keys(hosts).join(','))}.Split(',')) {
       $out[$h] = try { ,@(Get-DrillRunnerDistributions $h) } catch { (Get-DrillCode $_).code }
     }
-    # end to end: such an entry refuses the boot, with no WSL call and no registry read
+    # end to end: such an entry reads as unreadable (the high tier), with no WSL call and no registry read
     $script:calls = 0
     function Get-DrillWslRegisteredNames { $script:calls++; 'Fixture-CI' }
     $script:DrillWslRunner = { param($a) $script:calls++; @{ exit = 1; stdout = ''; stderr = '' } }
@@ -1899,7 +2080,7 @@ test('a Linux runner entry without a readable distro refuses; only an entry with
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
     $env:COMPUTERNAME = 'NULL-DISTRO'
     $s = Get-DrillHostSafety -JobsOnly
-    @{ out = $out; gate = @{ action = $s.action; code = $s.code; why = $s.wslUnreadable }; calls = $script:calls }`);
+    @{ out = $out; gate = @{ action = $s.action; code = $s.code; busyWith = $s.busyWith; why = $s.wslUnreadable }; calls = $script:calls }`);
   for (const h of ['NO-DISTRO', 'NULL-DISTRO', 'NULL-RUNNER', 'NUMBER-DISTRO', 'EMPTY-DISTRO', 'ADDITIONAL-NULL', 'ADDITIONAL-NO-DISTRO',
     'ADDITIONAL-NOT-A-LIST', 'NUL-TWIN', 'LINE-END']) {
     assert.equal(r.out[h], 'NODE_PROFILES_RUNNER_DISTRIBUTION_INVALID', h);
@@ -1907,7 +2088,7 @@ test('a Linux runner entry without a readable distro refuses; only an entry with
   assert.deepEqual(r.out['NO-LINUX'], []);
   assert.deepEqual(r.out['NO-LINUX-EMPTY-LIST'], []);
   assert.deepEqual(r.out['TWO-SAME'], ['Fixture-CI', 'Fixture-CI-2']);
-  assert.deepEqual(r.gate, { action: 'refuse', code: 'DRILL_HOST_WSL_UNREADABLE', why: 'NODE_PROFILES_RUNNER_DISTRIBUTION_INVALID' });
+  assert.deepEqual(r.gate, { action: 'start', code: null, busyWith: 'WSL_UNREADABLE', why: 'NODE_PROFILES_RUNNER_DISTRIBUTION_INVALID' });
   assert.equal(r.calls, 0);
 });
 
@@ -2169,7 +2350,7 @@ test('from the real entry: early refusal without memory, the release, then the b
   assert.ok(!short.events.includes('boot'));
 });
 
-test('a job that appears after the early sample skips the release (the command finds it itself), and the boot gate refuses', shOpts, () => {
+test('a job that appears after the early sample skips the release (the command finds it itself), and the boot gate takes the job tier', shOpts, () => {
   const r = ps(`${preBootWorld()}
     $script:jobAfter = 1
     $wsl = Invoke-Entry
@@ -2180,18 +2361,60 @@ test('a job that appears after the early sample skips the release (the command f
   assert.ok(!r.wsl.events.includes('wsl-release exit 0'), 'nothing released');
   assert.deepEqual(r.wsl.out.hostPreBoot.release.skipped, { where: 'Fixture-CI', reason: 'WSL_ACTIONS_RUNNER_JOB' });
   assert.equal(r.wsl.out.hostPreBoot.release.failed, null, 'a skip is not a failure');
-  assert.deepEqual([r.wsl.out.code, r.wsl.out.hostPreBoot.bootGate.busyWith], ['DRILL_HOST_CI_BUSY', 'WSL_ACTIONS_RUNNER_JOB']);
+  assert.deepEqual([r.wsl.out.code, r.wsl.out.hostPreBoot.bootGate.busyWith, r.wsl.out.hostPreBoot.bootGate.requiredFreeGB],
+    ['DRILL_HOST_MEMORY_SHORT', 'WSL_ACTIONS_RUNNER_JOB', 25.4], 'nothing released: 10 GB is short of the job tier');
   assert.ok(!r.wsl.events.includes('boot'));
   assert.deepEqual(r.windows.out.hostPreBoot.release.skipped, { where: 'windows', reason: 'ACTIONS_RUNNER_JOB' });
   assert.ok(!r.windows.events.some(e => e.startsWith('wsl-release')), 'no command into the distribution');
-  assert.equal(r.windows.out.code, 'DRILL_HOST_CI_BUSY');
+  assert.deepEqual([r.windows.out.code, r.windows.out.hostPreBoot.bootGate.busyWith], ['DRILL_HOST_MEMORY_SHORT', 'ACTIONS_RUNNER_JOB']);
+});
+
+// Fable renew-key ruling, supplement "drill boot gate and the train both want DESK", from the real entry: a runner busy from the start is
+// no refusal. The release is not attempted (only when neither side has a job), and the boot gate boots at 26 GB, refuses at 18 GB; the
+// receipt's pre-boot record says a job was there and which tier was required.
+test('from the real entry: a runner busy from the start skips the release and boots at 26 GB, refuses at 18 GB', shOpts, () => {
+  const run = (free) => ps(`${preBootWorld({ freeBeforeRelease: free, freeAfterRelease: free })}
+    $script:jobAfter = 0
+    Invoke-Entry`);
+  const ok = run(26);
+  assert.equal(ok.out.status, 'DRILL_PREREQ_READY', JSON.stringify(ok.out));
+  assert.ok(ok.events.includes('boot'), ok.events.join(','));
+  assert.ok(!ok.events.some(e => e.startsWith('wsl-release')), 'no release with a job running');
+  const pre = ok.out.hostPreBoot;
+  assert.deepEqual([pre.early.ok, pre.early.busyWith, pre.early.runnerJob], [true, 'WSL_ACTIONS_RUNNER_JOB', 'yes']);
+  assert.deepEqual(pre.release.skipped, { where: 'early', reason: 'WSL_ACTIONS_RUNNER_JOB' });
+  assert.deepEqual([pre.bootGate.ok, pre.bootGate.runnerJob, pre.bootGate.freeGB, pre.bootGate.requiredFreeGB], [true, 'yes', 26, 25.4]);
+  const short = run(18);
+  assert.equal(short.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(short.out));
+  assert.deepEqual([short.out.hostPreBoot.bootGate.runnerJob, short.out.hostPreBoot.bootGate.requiredFreeGB], ['yes', 25.4]);
+  assert.ok(!short.events.includes('boot'));
+});
+
+// r6 conditions from the real entry (a runner job at boot, 24 GB free: the old 21 GB tier booted it, and the r6 growth would have taken it
+// under the running gate): refused before boot, and the refusal carries the figure the script computed and what it is made of -- the
+// guest, the boot margin, the runner job growth with the receipt it was measured in, the production reserve. No figure from outside.
+test('from the real entry: r6 conditions at 24 GB are refused before boot with the computed figure and its basis', shOpts, () => {
+  const r = ps(`${preBootWorld({ freeBeforeRelease: 24, freeAfterRelease: 24 })}
+    $script:jobAfter = 0
+    Invoke-Entry`);
+  assert.equal(r.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(r.out));
+  assert.ok(!r.events.includes('boot'), r.events.join(','));
+  const gate = r.out.hostPreBoot.bootGate;
+  assert.deepEqual([gate.runnerJob, gate.freeGB, gate.requiredFreeGB], ['yes', 24, 25.4]);
+  const b = gate.requiredBasis;
+  assert.deepEqual([b.guestGB, b.bootMarginGB, b.runnerJobGrowthGB, b.productionReserveGB], [8, 1, 10.4, 6], JSON.stringify(b));
+  assert.equal(Math.round((b.guestGB + b.bootMarginGB + b.runnerJobGrowthGB + b.productionReserveGB) * 10) / 10, gate.requiredFreeGB);
+  assert.match(b.runnerJobGrowthFrom, /20261121T010455Z-2026\.11\.21-b7d92a1a-4b3f5ee5/);
+  assert.match(b.runnerJobGrowthFrom, /afterBootFreeGB 19\.3/);
+  assert.match(b.runnerJobGrowthFrom, /minRunningFreeGB 8\.9/);
 });
 
 // Codex review of 74e7a65e7, medium 1: a refusal at the duty check carries no memory figure (nothing was read), and a built baseline
 // keeps its three stages in baseline.json.
 test('no memory figure where none was read, and baseline.json keeps the pre-boot stages', opts, () => {
   const r = ps(`
-    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} }
+    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: '2026-11-19T02:00:00Z' }))} }
+    function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
     $onDuty = Get-DrillHostSafety
     function Assert-DrillHost { @{ ok = $true } }
     function Invoke-DrillBaseline { param($RunDir, [switch]$ExistingOnly)
@@ -2417,6 +2640,9 @@ function guestWorkDir(name, files) {
   for (const [n, text] of Object.entries(files)) fs.writeFileSync(path.join(dir, n), text);
   return dir;
 }
+// What the entry writes right before the launcher stage (Invoke-EntryWslColdStart): part of every complete set of stage files.
+const WSL_COLD_START = JSON.stringify({ at: '2026-11-21T03:00:00Z', shutdown: { exit: 0, timedOut: false, stdout: '', stderr: '' },
+  runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } });
 
 // Section 2 of the same supplement (branch one), with this branch's collection: the guest evidence -- the entry's guest log and the stage
 // files, each read with read-write sharing -- is taken whether the first install succeeded, failed or ran out of time, before the
@@ -2456,17 +2682,19 @@ test('the guest evidence is collected after a timed-out first install too, and a
       record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); record2 = (Read-DrillJson (Join-Path ${q(runDir2)} 'guest-evidence.json'))
       steps = (Read-DrillFirstInstallSteps ${q(runDir)}); steps2 = (Read-DrillFirstInstallSteps ${q(runDir2)}) }`);
   assert.equal(r.first, 'DRILL_FIRST_INSTALL_TIMEOUT');
-  assert.deepEqual(r.firstSteps, ['first-install', 'stage-files', 'guest-evidence']);
+  // the read-only guest probe is an extra: only after every required piece (the stage files, the guest's first-install.log) is taken
+  assert.deepEqual(r.firstSteps, ['first-install', 'stage-files', 'guest-evidence', 'guest-probe']);
   // collected, but not all of it: ok only with nothing missing (Codex review of f33fc33e5, medium 2)
   assert.equal(r.record.ok, false);
   assert.equal(r.record.code, null);
-  assert.deepEqual(r.record.missing, ['prepare.stdout.log', 'launcher.stdout.log', 'launcher-result.json']);
+  assert.deepEqual(r.record.missing, ['prepare.stdout.log', 'launcher.stdout.log', 'launcher-result.json', 'wsl-cold-start.json']);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean),
     ['line one', '{"name":"prepare","result":"ok","rejectCode":null,"detail":null}']);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-timings.json'), 'utf8')).host, 12.5);
   assert.deepEqual(r.steps.steps.map(x => [x.stage, x.name]), [['entry', 'prepare'], ['host', 'residue']]);
   assert.equal(r.steps.noVerdict, true);
   assert.equal(r.second, 'DRILL_FIRST_INSTALL_TIMEOUT', 'a failed collection never replaces the run\'s own failure');
+  // a guest that could not be reached for the required evidence is not asked for the probe (no second readiness wait)
   assert.deepEqual(r.secondSteps, ['first-install', 'stage-files', 'guest-evidence']);
   assert.equal(r.record2.ok, false);
   assert.equal(r.record2.code, 'DRILL_GUEST_STEP_FAILED');
@@ -2503,6 +2731,7 @@ test('the returned entry output is kept when the stage files cannot be collected
       record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); record2 = (Read-DrillJson (Join-Path ${q(runDir2)} 'guest-evidence.json'))
       steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
   assert.deepEqual(r.keptSteps.slice(0, 3), ['first-install', 'stage-files', 'guest-evidence']);
+  assert.ok(!r.keptSteps.includes('guest-probe'), 'the collection failed: no probe');
   assert.equal(r.record.ok, false);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean).length, 2);
   assert.deepEqual(r.steps.steps.map(x => x.name), ['prepare']);
@@ -2770,7 +2999,8 @@ test('A8 captures the current launcher exit and indented terminal JSON from the 
     $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(commands.map(c => JSON.stringify(c))))}
     @($cases | ForEach-Object {
       [IO.File]::WriteAllText(${q(path.join(fleet, 'run-command.json'))}, $_)
-      $ri = & $script:GuestReinstall ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText
+      $up = & $script:GuestReinstallUpgrade ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' $script:DrillNativeText
+      $ri = & $script:GuestReinstall ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText $up
       @{ exit = $ri.launcherExit; status = $ri.launcherStatus; verdict = $ri.launcherVerdict; pass = (Test-DrillReinstallLauncher $ri);
         upgrade = $ri.upgradeStatus; prepare = $ri.prepareStatus; upgradeStderr = ([string]$ri.upgradeStderr).Trim(); prepareStderr = ([string]$ri.prepareStderr).Trim() }
     })`);
@@ -3299,6 +3529,20 @@ test('the drill reads its children with stdout and stderr apart: a stderr line n
   assert.equal(ps(`$g = & $script:GuestRead ${q(root)} $script:DrillNativeText; $null -eq $g.pause`), true);
 });
 
+// r8 drill: the guest receives the plan after a remote round trip, where commands is an ArrayList, not an Array. The guard used to
+// return null for it, so no command ran (DRILL_PROBE_NO_ANSWER after 8 seconds).
+test('GuestInspect runs the commands of a plan that crossed the remote serialization', opts, () => {
+  const r = ps(`$native = { param($exe, $argv, $secs, $enc) [pscustomobject]@{ exit = 0; stdout = ('ran:' + $argv[-1]); stderr = '' } }
+    $plan = New-DrillProbePlan @([ordered]@{ id = 'one'; script = 'echo 1'; args = @('a') }, [ordered]@{ id = 'two'; script = 'echo 2'; args = @() }) 'C:\nowhere\wsl.exe'
+    $back = [Management.Automation.PSSerializer]::Deserialize([Management.Automation.PSSerializer]::Serialize($plan, 4))
+    $kind = $back['commands'].GetType().FullName
+    $got = & $script:GuestInspect $back $native.ToString()
+    [ordered]@{ kind = $kind; ids = @($got.commands | ForEach-Object { $_.id }); exits = @($got.commands | ForEach-Object { $_.exit }) }`);
+  assert.notEqual(r.kind, 'System.Object[]', 'the round trip must not hand back an Array, or the test proves nothing');
+  assert.deepEqual(r.ids, ['one', 'two']);
+  assert.deepEqual(r.exits, [0, 0]);
+});
+
 const startedAt = '2026-11-16T02:00:00Z';
 const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bindings_created: 0, drill_liveness: 0, live_sources: [S] };
 const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });
@@ -3322,7 +3566,8 @@ test('-Finalize judges A5 and A9 from one read-only production read-back and rew
   const items = verdictOf(evidence()).items;
   const { receipt, receiptFile, status, output, bytes } = finalize('receipt', { items });
   assert.equal(status, 0);
-  assert.deepEqual(output, { status: 'DRILL_FINALIZED', conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN', receipt: receiptFile });
+  // failedItems and reason: the summary line names why a FAIL failed (Fable ruling 11-20 "first install r4" 5(b)); none here
+  assert.deepEqual(output, { status: 'DRILL_FINALIZED', conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN', failedItems: [], reason: null, receipt: receiptFile });
   const done = JSON.parse(bytes);
   assert.equal(done.items.find((i) => i.id === 'A9').pass, true);
   assert.equal(done.items.find((i) => i.id === 'A5').pass, true);
@@ -3409,7 +3654,7 @@ test('the merged collection feeds A1 and A6: complete logs pass, a missing stage
   const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
     'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
     'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
-    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1,"prepare":2,"launcher":3}' };
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'wsl-cold-start.json': WSL_COLD_START, 'stage-timings.json': '{"host":1,"prepare":2,"launcher":3}' };
   const collect = (name, change = {}) => {
     const all = { ...files, ...change };
     const guest = guestWorkDir(`merged-${name}-guest`, Object.fromEntries(Object.entries(all).filter(([, t]) => t !== null)));
@@ -3480,7 +3725,7 @@ test('guest-evidence ok is false on any missing file, and A6 reads the launcher 
   const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
     'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
     'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
-    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1}' };
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'wsl-cold-start.json': WSL_COLD_START, 'stage-timings.json': '{"host":1}' };
   const collect = (name, change = {}, failWrite = null) => {
     const guest = guestWorkDir(`r5-ok-${name}-guest`, Object.fromEntries(Object.entries({ ...files, ...change }).filter(([, t]) => t !== null)));
     const runDir = path.join(tmp, `r5-ok-${name}`); fs.mkdirSync(runDir, { recursive: true });
@@ -3589,6 +3834,7 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
       if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); exit = 0; stderr = '' } }
       if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
       if ($Step -ceq 'read-after-install' -or $Step -ceq 'read-after-reinstall') { return $read }
+      if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 0; stdout = '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; stderr = '' } }
       if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 0; launcherVerdict = 'BOOTSTRAP_DONE' } }
       if ($Step -ceq 'prepare-again') { return @{ status = 'FLEET_NODE_INSTALL_PREPARED'; exit = 0; stderr = '' } }
       throw "unexpected step $Step"
@@ -3609,6 +3855,61 @@ test('a successful same-package reinstall goes through the re-verify to prepare-
   assert.match(r.a8.detail, /upgrade=FLEET_NODE_ALREADY_AT_THIS_PACKAGE .*reverify=True prepareAgain=FLEET_NODE_INSTALL_PREPARED/);
   // the re-verify's input carries the same launcher verdict and the pause read after the reinstall
   assert.match(fs.readFileSync(script, 'utf8'), /\$reVerdict = Get-DrillVerdict @\{[^\n]*launcher = \$launcher; pause = \$again\.pause/);
+});
+
+// Codex narrow review of 4190b0f8e, medium: A8's upgrade fetch can answer FLEET_NODE_UPGRADE_REFUSED with its code, and the prepare that
+// follows can then reach its own 3600 s limit: the step throws and reinstall.json is never written. The upgrade runs as its own guest step;
+// the host keeps its raw result (exit, status, code, stdout, stderr) in reinstall-upgrade.json before the next command starts, and the
+// receipt carries it (evidence.reinstallUpgrade) beside the later failure: both can be traced from the receipt.
+test('A8: an upgrade refused and then a prepare that times out -- both are kept, the refusal before the prepare starts', opts, () => {
+  const e = JSON.parse(evidence());
+  const runDir = path.join(tmp, 'a8-refused-then-timeout'); fs.mkdirSync(runDir, { recursive: true });
+  const guest = guestWorkDir('a8-refused-guest', { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
+    'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: e.launcher }), 'stage-timings.json': '{"host":1}' });
+  const read = { status: e.status, current: e.current, facts: e.facts, pause: e.pause, verify: e.verify, readAt: e.now };
+  const refused = JSON.stringify({ status: 'FLEET_NODE_UPGRADE_REFUSED', code: 'UPGRADE_SAME_PACKAGE_REFUSED_FIXTURE', detail: 'fixture' });
+  const r = ps(`
+    $script:steps = [Collections.Generic.List[string]]::new()
+    $script:Interactive = $false; $SkipReinstall = $false
+    function New-PSSession { param($VMName, $Credential) 'session' }
+    function Remove-PSSession { param($Session) }
+    function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
+    function Invoke-Command { param($Session, $ScriptBlock, $ArgumentList, $VMName, $Credential, [switch]$AsJob, $ErrorAction) if ($ArgumentList -is [string]) { if ($ArgumentList -like '*.tar') { 'ab' } else { @{ contract = 'x' } } } }
+    function Wait-DrillGuest { param($Credential, $Minutes, $After) Get-DrillTime }
+    function Wait-DrillRebootRefresh { param($Cred, $Boot, $Deadline) (${q(JSON.stringify(e.reboot))} | ConvertFrom-Json) }
+    function Copy-DrillM5 { param($RunDir, $Cred) @{} }
+    $read = ${q(JSON.stringify(read))} | ConvertFrom-Json
+    $script:upgradeFileAtPrepare = $null
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
+      $script:steps.Add($Step)
+      if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); exit = 0; stderr = '' } }
+      if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
+      if ($Step -ceq 'read-after-install') { return $read }
+      if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 1; stdout = "fetching\`r\`n" + ${q(refused)} + "\`r\`n"; stderr = 'upgrade: refused' } }
+      if ($Step -ceq 'reinstall') {
+        $script:upgradeFileAtPrepare = Test-Path -LiteralPath (Join-Path ${q(runDir)} 'reinstall-upgrade.json')
+        throw (New-DrillError 'DRILL_GUEST_STEP_FAILED' @{ step = 'reinstall'; message = 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe' })
+      }
+      throw "unexpected step $Step"
+    }
+    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ${q(e.acceptanceSource)} }
+    $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; perNodeSteps = @(); prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
+    $failure = try { $null = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null; $null } catch { Get-DrillCode $_ }
+    @{ failure = $failure; steps = @($script:steps); atPrepare = $script:upgradeFileAtPrepare
+      reinstallJson = (Test-Path -LiteralPath (Join-Path ${q(runDir)} 'reinstall.json')); evidence = (Read-DrillReinstallUpgradeEvidence ${q(runDir)}) }`);
+  assert.deepEqual(r.steps.slice(-2), ['reinstall-upgrade', 'reinstall'], JSON.stringify(r.steps));
+  assert.equal(r.atPrepare, true, 'the upgrade result is on the host before the next command starts');
+  // the later failure, raw, as the receipt's failure
+  assert.deepEqual(r.failure, { code: 'DRILL_GUEST_STEP_FAILED', detail: { step: 'reinstall', message: 'COMMAND_TIMEOUT_NOTHING_KILLED: node.exe' } });
+  assert.equal(r.reinstallJson, false, 'the step that failed wrote nothing');
+  // and the refusal before it, raw, as the receipt's evidence.reinstallUpgrade
+  assert.deepEqual([r.evidence.exit, r.evidence.status, r.evidence.code, r.evidence.stderr], [1, 'FLEET_NODE_UPGRADE_REFUSED', 'UPGRADE_SAME_PACKAGE_REFUSED_FIXTURE', 'upgrade: refused']);
+  assert.match(r.evidence.stdout, /FLEET_NODE_UPGRADE_REFUSED/);
+  assert.deepEqual(ps(`@{ v = (Read-DrillReinstallUpgradeEvidence ${q(path.join(tmp, 'a8-no-such-run'))}) }`), { v: null }, 'no upgrade ran: nothing');
+  // the receipt takes it from the run directory whatever the run's end
+  assert.match(fs.readFileSync(script, 'utf8'), /\$evidence\.reinstallUpgrade = Read-DrillReinstallUpgradeEvidence \$runDir/);
 });
 
 // Codex review of f33fc33e5, low 1: the stage timings saved on their own are evidence taken too (an emergency restore after them only is
@@ -3721,7 +4022,7 @@ test('a launcher result read back without its terminal field is recorded as a fa
   const e = JSON.parse(evidence());
   const files = { 'first-install.stdout.log': STEP_LOGS['first-install.log'], 'host.stdout.log': STEP_LOGS['host.stdout.log'],
     'prepare.stdout.log': STEP_LOGS['prepare.stdout.log'], 'launcher.stdout.log': STEP_LOGS['launcher.stdout.log'],
-    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }), 'stage-timings.json': '{"host":1}' };
+    'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }), 'wsl-cold-start.json': WSL_COLD_START, 'stage-timings.json': '{"host":1}' };
   const collect = (name, launcher) => {
     const guest = guestWorkDir(`r7-readback-${name}-guest`, { ...files, 'launcher-result.json': launcher });
     const runDir = path.join(tmp, `r7-readback-${name}`); fs.mkdirSync(runDir, { recursive: true });
@@ -3803,4 +4104,51 @@ test('the fixtures never take the drill\'s machine-wide mutexes', opts, () => {
   const names = ps('@($script:Drill.HostMutex, $script:Drill.BootMutex)');
   assert.equal(names.length, 2);
   for (const name of names) assert.ok(/^Local\\/.test(name) && !/^Global\\/i.test(name), `a fixture holds the mutex ${name}`);
+});
+
+// Fable ruling 0e418483 (r6 Linux phase A) 4.2: the launcher stage always meets a cold WSL. Right before it, the entry shuts the guest's
+// WSL down and lists what still runs; both answers, raw, are wsl-cold-start.json, which the drill takes into stage-evidence.json. A
+// shutdown that fails stops the first install by name (the launcher would not run cold); the list is recorded as it came.
+test('the entry shuts the guest WSL down right before the launcher stage and records what still runs', opts, () => {
+  const text = fs.readFileSync(entryScript, 'utf8');
+  const body = text.slice(text.indexOf('function Invoke-FirstInstallAccepted'), text.indexOf('function Invoke-FirstInstallEntry'));
+  const prepared = body.indexOf("throw 'PREPARE_REFUSED'"), cold = body.indexOf('Invoke-EntryWslColdStart $Output'), launcher = body.indexOf("$launcherResult = Join-Path $Output 'launcher.stdout.log'");
+  assert.ok(prepared > 0 && cold > prepared && launcher > cold, 'after prepare, before the launcher stage');
+  assert.equal(body.split('Invoke-EntryWslColdStart').length, 2, 'once');
+  assert.match(text, /function Invoke-EntryWslColdStart\(\[string\]\$Output, \[string\]\$LogDir, \[string\]\$WslExe = 'C:\\Program Files\\WSL\\wsl\.exe'\)/);
+  const dir = path.join(tmp, 'wsl-cold'); fs.mkdirSync(dir, { recursive: true });
+  const fake = path.join(dir, 'wsl.cmd'), calls = path.join(dir, 'calls.txt');
+  fs.writeFileSync(fake, ['@echo off', '>>"%~dp0calls.txt" echo %*^|%WSL_UTF8%', 'if "%1"=="--shutdown" exit /b %FAKE_SHUTDOWN_EXIT%',
+    'if "%1"=="--list" (', '  echo There are no running distributions.', '  exit /b 1', ')', 'exit /b 9', ''].join('\r\n'));
+  const run = (name, shutdownExit) => {
+    const out = path.join(dir, name); fs.mkdirSync(out, { recursive: true });
+    if (fs.existsSync(calls)) fs.rmSync(calls);
+    const thrown = entryPs(`$env:FAKE_SHUTDOWN_EXIT = '${shutdownExit}'; try { Invoke-EntryWslColdStart ${q(out)} ${q(dir)} ${q(fake)}; 'NO THROW' } catch { $_.Exception.Message }`);
+    return { thrown, record: JSON.parse(fs.readFileSync(path.join(out, 'wsl-cold-start.json'), 'utf8')), calls: fs.readFileSync(calls, 'utf8').trim().split(/\r?\n/) };
+  };
+  const ok = run('ok', 0);
+  assert.equal(ok.thrown, 'NO THROW');
+  assert.deepEqual(ok.calls, ['--shutdown|1', '--list --running|1'], 'shutdown first, then the list; WSL_UTF8 set');
+  assert.equal(ok.record.shutdown.exit, 0);
+  assert.equal(ok.record.shutdown.timedOut, false);
+  assert.equal(ok.record.runningAfter.stdout.trim(), 'There are no running distributions.');
+  assert.equal(typeof ok.record.runningAfter.exit, 'number');
+  assert.ok(!Number.isNaN(Date.parse(ok.record.at)));
+  const failed = run('failed', 5);
+  assert.equal(failed.thrown, 'DRILL_WSL_SHUTDOWN_FAILED:exit=5');
+  assert.equal(failed.record.shutdown.exit, 5);
+  assert.equal(failed.record.runningAfter.stdout.trim(), 'There are no running distributions.', 'recorded before the stop');
+});
+
+test('the drill takes wsl-cold-start.json into stage-evidence.json', opts, () => {
+  const cold = { at: '2026-11-21T03:00:00Z', shutdown: { exit: 0, timedOut: false, stdout: '', stderr: '' }, runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } };
+  const work = guestWorkDir('wsl-cold-guest', { 'wsl-cold-start.json': JSON.stringify(cold),
+    'launcher-result.json': JSON.stringify({ exit: 0, terminal: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' } }) });
+  const runDir = path.join(tmp, 'wsl-cold-run'); fs.mkdirSync(runDir, { recursive: true });
+  const files = ps(`function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step) & $Script ${q(work)} $ArgumentList[1] }
+    (Save-DrillStageEvidence ${q(runDir)} $null).record.files`);
+  assert.equal(files['wsl-cold-start.json'].state, 'saved');
+  const evidence = JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'));
+  assert.deepEqual(evidence['wsl-cold-start.json'], cold);
+  assert.equal(evidence['launcher-result.json'].terminal.status, 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED');
 });

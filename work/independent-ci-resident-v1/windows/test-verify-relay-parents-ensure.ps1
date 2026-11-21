@@ -106,7 +106,7 @@ foreach ($c in @(
 $n = New-Node 'toctou'
 $plans = & {
   $ast2 = [Management.Automation.Language.Parser]::ParseFile($installer, [ref]$t, [ref]$e)
-  foreach ($x in @('Get-DaclPart', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence', 'Assert-CompanionRelayParentPlan', 'Add-CompanionRelayParentAce', 'Get-CompanionRelayParentsPlan')) {
+  foreach ($x in @('Get-DaclPart', 'Get-DaclShape', 'Get-ParentAce', 'Get-AceKeys', 'Get-ParentAclState', 'Add-ParentAce', 'Get-RelayParentAclPresence', 'Assert-CompanionRelayParentPlan', 'Add-CompanionRelayParentAce', 'Get-CompanionRelayParentsPlan')) {
     . ([scriptblock]::Create(@($ast2.FindAll({ param($y) $y -is [Management.Automation.Language.FunctionDefinitionAst] -and $y.Name -ceq $x }, $true))[0].Extent.Text)) }
   $OwnerSid = $companion; $CiRoot = $n.ci
   $p = Get-CompanionRelayParentsPlan ([ordered]@{ present = $true })

@@ -2,7 +2,7 @@
 // with a missing record_schema_version became an unreachable NULL-schema row
 // (readable as CURRENT, never again supersedable or updatable). The shared
 // validator and the supersede core must now reject it with a receipt.
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -35,7 +35,7 @@ test("decision supersede rejects a replacement without record_schema_version", {
     password: hash(),
     port: await freePort(),
     persistent: false,
-    postgresFlags: ["-c", "io_method=sync"],
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); },
   });

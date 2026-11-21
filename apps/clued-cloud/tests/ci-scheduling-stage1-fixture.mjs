@@ -1,3 +1,4 @@
+import { EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -22,7 +23,7 @@ export async function schedulingFixture({through}={}){
   const parent=await fs.realpath(os.tmpdir());
   const directory=await fs.mkdtemp(path.join(parent,'clued-ci-stage1-'));
   const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),persistent:false,
-    postgresFlags:['-c','io_method=sync'],onLog(){},onError(message){process.stderr.write(String(message)+'\n');}});
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(message){process.stderr.write(String(message)+'\n');}});
   const clients=[];
   const connect=async(role)=>{const c=server.getPgClient();clients.push(c);await c.connect();if(role)await c.query(`set role ${role}`);return c;};
   const close=async()=>{for(const c of clients.reverse())await c.end().catch(()=>{});

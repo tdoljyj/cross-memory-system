@@ -151,6 +151,54 @@ test('each suite first yields to the resident, from one wait for the whole run; 
   assert.equal((await verifySuites({ ...args, yieldTo: null })).length, 3);
 });
 
+// Gap A (FABLE r8 B2): local verification runs what CI runs, a command the change adds to a suite included.
+test('local verification reports a failing candidate addition without running that command on main', async (t) => {
+  const { dir, commit } = repository(t);
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({ 'scripts/ci/retrigger-counter.test.mjs': "import test from 'node:test'; test('baseline', () => {});" });
+  commit({ 'scripts/ci/ci-required-selection.mjs': `export const SUITE_COMMANDS = {
+    'retrigger-counter': [{ cwd: '.', argv: ['node', '-e', 'process.exit(23)'] }]
+  };` });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-addition-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  // In-process, as on Linux and in Actions: this test takes no machine-wide suite slot.
+  const saved = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = 'true';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = saved; });
+  const selector = { ...selection, reporterUrl: pathToFileURL(selection.REPORTER_PATH).href };
+  const [result] = await verifySuites({ root: dir, home, dir, selector, main, suites: ['retrigger-counter'], logs: home,
+    run: { run: { pid: process.pid }, touch() {} }, platform: process.platform, temp: home, yieldTo: null });
+  assert.equal(result.verdict, 'new', result.detail);
+  assert.match(result.detail, /command 2: new .*23/);
+  assert.match(fs.readFileSync(result.log, 'utf8'), /retrigger-counter\.test\.mjs[\s\S]*process\.exit\(23\)/);
+  assert.equal(fs.existsSync(path.join(home, `${process.platform}-retrigger-counter.main.log`)), false);
+});
+
+// Gap A review finding 4: as CI, a test file the change adds to a trusted command's list runs alone after that command.
+test('local verification runs a test file added to a trusted command list alone', async (t) => {
+  const { dir, commit } = repository(t);
+  fs.mkdirSync(path.join(dir, 'scripts/ci'), { recursive: true });
+  const main = commit({ 'scripts/ci/retrigger-counter.test.mjs': "import test from 'node:test'; test('baseline', () => {});" });
+  commit({ 'scripts/ci/added.test.mjs': "import test from 'node:test'; test('added', () => { process.exitCode = 23; throw new Error('added failed'); });",
+    'scripts/ci/ci-required-selection.mjs': `export const SUITE_COMMANDS = {
+    'retrigger-counter': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/added.test.mjs', 'scripts/ci/retrigger-counter.test.mjs'] }]
+  };` });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'local-verify-added-file-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const saved = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = 'true';
+  t.after(() => { if (saved === undefined) delete process.env.GITHUB_ACTIONS; else process.env.GITHUB_ACTIONS = saved; });
+  const selector = { ...selection, reporterUrl: pathToFileURL(selection.REPORTER_PATH).href };
+  const [result] = await verifySuites({ root: dir, home, dir, selector, main, suites: ['retrigger-counter'], logs: home,
+    run: { run: { pid: process.pid }, touch() {} }, platform: process.platform, temp: home, yieldTo: null });
+  assert.equal(result.verdict, 'new', result.detail);
+  assert.match(result.detail, /command 2: new/);
+  const groups = fs.readFileSync(result.log, 'utf8').split(/\r?\n/).filter((line) => line.startsWith('::group::'))
+    .map((line) => line.split(' ').filter((arg) => !arg.startsWith('--test-reporter')).join(' '));
+  assert.deepEqual(groups, ['::group::retrigger-counter: (.) node --test scripts/ci/retrigger-counter.test.mjs',
+    '::group::retrigger-counter: (.) node --test scripts/ci/added.test.mjs']);
+});
+
 test('Windows starts npm through its CLI next to node.exe (npm.cmd needs a shell); elsewhere npm itself', () => {
   const execPath = 'C:\\nodejs\\node.exe';
   const cli = 'C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
@@ -799,17 +847,17 @@ const forCheck = (picked, check) => picked.selections.find((entry) => entry.chec
 
 test('--affected selects exactly what the ci-suites job selects, from the selection it imports', () => {
   // The literal list below is the regression lock: it is what the real run
-  // selected for #1015 (plus ci-deps-entry and test-coverage, added since), so a change to the selection that alters it is to be looked at.
+  // selected for #1015 (plus ci-deps-entry, added since), so a change to the selection that alters it is to be looked at.
   const picked = selectAffected(selection, PR_1015_FILES);
   assert.deepEqual(forCheck(picked, 'ci-suites').suites, selection.selectSuites('ci-suites', PR_1015_FILES).suites, 'the same call the workflow makes');
   assert.deepEqual(forCheck(picked, 'ci-suites').suites,
-    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'test-coverage', 'selection']);
+    ['resident-node', 'resident-python', 'reinstall-python', 'offline-drill', 'source-v2-node', 'source-v2-python', 'components', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'selection']);
   assert.equal(forCheck(picked, 'ci-suites').reason, 'selected by changed paths');
   assert.deepEqual(picked.selections.map((entry) => entry.check), ['ci-suites', 'clued-cloud-tests', 'migration-verify']);
   assert.deepEqual(picked.suites, [...forCheck(picked, 'ci-suites').suites, 'clued-cloud'], "the application's tests run for every change; no schema file changed");
   // the line CI logs for the check, then why each suite is in
   assert.equal(picked.lines[0],
-    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, test-coverage, selection');
+    'ci-suites: selected by changed paths; suites: resident-node, resident-python, reinstall-python, offline-drill, source-v2-node, source-v2-python, components, admission-self-tests, pinned-registries, mechanical-outputs, ci-deps-entry, selection');
   // the first file of each top-level directory leads, so the resident's own files show too
   assert.ok(picked.lines.some((line) => /^ {2}offline-drill: scripts\/ci\/\S+, work\/independent-ci-resident-v1\/\S+, scripts\/ci\/\S+, \.\.\. \(10 more\)$/.test(line)), picked.lines.join('\n'));
   assert.ok(picked.lines.includes('  components: config/clued-components.json'));

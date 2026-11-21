@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { SPECIFIER_PATTERNS } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 import { coverage, isTestFile, TABLE_PATH, trackedFiles } from './check-tests-covered.mjs';
+import { CI_SCRIPT_TEST_DIRS, IMPORT_PATTERNS, SUITES, SUITE_COMMANDS, ciScriptTests, planFiles } from './ci-required-selection.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TASK = '700f2b68-b355-4edb-95c1-be97f04ea8de';
@@ -46,7 +49,7 @@ test('a listed file that no longer exists, or that now runs, fails: remove the e
   table.tests.push(entry('scripts/ci/long-gone.test.mjs'), entry('scripts/ci/ci-required-selection.test.mjs'));
   const { problems } = coverage({ root: ROOT, table });
   assert.deepEqual(problems, ['scripts/ci/long-gone.test.mjs: no such tracked file; remove the entry',
-    'scripts/ci/ci-required-selection.test.mjs: runs in a required suite (selection); remove the entry']);
+    'scripts/ci/ci-required-selection.test.mjs: runs in a required suite (selection, clued-cloud); remove the entry']);
 });
 
 test('a file in a directory a suite collects runs; the same file elsewhere is uncovered until listed', (t) => {
@@ -62,10 +65,16 @@ test('a file in a directory a suite collects runs; the same file elsewhere is un
 test('coverage by import counts top-level static imports of test files only', (t) => {
   const files = { 't/root.test.mjs': ["import '../x/a.test.mjs';", "import { x } from\n  '../x/b.test.mjs';", "// import '../x/c.test.mjs';",
     "/*\nimport '../x/d.test.mjs';\n*/", "const s = \"import '../x/e.test.mjs'\";", "if (x) await import('../x/e.test.mjs');",
-    "import '../x/helper.mjs';", ''].join('\n'), 'x/helper.mjs': "import './f.test.mjs';\n" };
-  for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) files[`x/${name}.test.mjs`] = '';
+    "import '../x/helper.mjs';", 'const t = `', "import '../x/g.test.mjs';", '`;', "import type { T } from '../x/h.test.ts';",
+    "import type * as N from '../x/i.test.ts';", "import type D from '../x/j.test.ts';", "import type from '../x/k.test.mjs';", ''].join('\n'),
+  'x/helper.mjs': "import './f.test.mjs';\n" };
+  for (const name of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'k']) files[`x/${name}.test.mjs`] = '';
+  for (const name of ['h', 'i', 'j']) files[`x/${name}.test.ts`] = '';
   const uncovered = fixture(t, files).problems.map((problem) => problem.split(':')[0]);
-  assert.deepEqual(uncovered, ['x/c.test.mjs', 'x/d.test.mjs', 'x/e.test.mjs', 'x/f.test.mjs']);
+  // A template string's lines are text, and `import type` is erased before the module runs (`import type from` imports
+  // a default export named type).
+  assert.deepEqual(uncovered, ['x/c.test.mjs', 'x/d.test.mjs', 'x/e.test.mjs', 'x/f.test.mjs', 'x/g.test.mjs', 'x/h.test.ts', 'x/i.test.ts',
+    'x/j.test.ts']);
 });
 
 test('Python tests count by the selection\'s own reading: discover, file operands and module names', (t) => {
@@ -73,8 +82,11 @@ test('Python tests count by the selection\'s own reading: discover, file operand
     { cwd: '.', argv: ['python3', '-m', 'unittest', 'tests.test_mod', 'scripts/test_path.py'] },
     { cwd: '.', argv: ['python3', '-I', 'tests/test_script.py'] }] };
   const files = { 'r/test/test_a.py': '', 'r/test/helper_test.py': '', 'tests/test_mod.py': '', 'scripts/test_path.py': '', 'tests/test_script.py': '',
-    'tests/test_other.py': '' };
-  assert.deepEqual(fixture(t, files, { commands }).problems.map((problem) => problem.split(':')[0]), ['r/test/helper_test.py', 'tests/test_other.py']);
+    'tests/test_other.py': '', 'r/test/sub/test_nested.py': '' };
+  // discover here takes the start directory's own files: a file in a subdirectory without __init__.py is never imported,
+  // and counting it would pass a test that does not run.
+  assert.deepEqual(fixture(t, files, { commands }).problems.map((problem) => problem.split(':')[0]),
+    ['r/test/helper_test.py', 'tests/test_other.py', 'r/test/sub/test_nested.py']);
 });
 
 test('entries need a known kind, a reason of 20 characters and a Clued Task; only archive may be a pattern', (t) => {
@@ -130,4 +142,78 @@ test('a file that imports a test runner under another name fails unless a test i
   assert.deepEqual(fixture(t, files, { commands, table: { tests: [entry('u/orphan.mjs'), entry('u/test_old.cjs'), entry('u/case.test.py')] } }).problems, []);
   assert.ok(fixture(t, files, { commands, table: { tests: [entry('u/plain.mjs')] } }).problems
     .includes('u/plain.mjs: neither a test file nor a file that imports a test runner; remove the entry'));
+});
+
+test('the CI-script tests run each in clued-cloud, which every change runs: the check\'s own test among them', () => {
+  assert.deepEqual(SUITES['clued-cloud-tests']['clued-cloud'], ['**']);
+  const { steps } = planFiles('clued-cloud', { root: ROOT, files: ['scripts/ci/check-tests-covered.test.mjs'], env: {} });
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0].command.known, 'clued-cloud');
+  assert.deepEqual(steps[0].argv.filter((arg) => arg.endsWith('.test.mjs')), ['../../scripts/ci/check-tests-covered.test.mjs']);
+  // No test-coverage suite any more: the check runs through this test.
+  assert.ok(!Object.hasOwn(SUITE_COMMANDS, 'test-coverage'));
+});
+
+test('{ci-script-tests}: the tests directly in the script directories, less what a unit test imports and the admission self-tests', (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'ci-script-tests-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const admission = SUITE_COMMANDS['admission-self-tests'].flatMap((command) => command.argv.filter((arg) => arg.endsWith('.test.mjs'))
+    .map((arg) => path.posix.join(command.cwd, arg)));
+  assert.ok(admission.length > 0);
+  const files = { 'app/tests/u.test.mjs': "import '../../scripts/ci/imported.test.mjs';\nconst m = await import('../../scripts/ci/dynamic.test.mjs');\n",
+    'scripts/ci/imported.test.mjs': "import './through.test.mjs';\n", 'scripts/ci/through.test.mjs': '', 'scripts/ci/dynamic.test.mjs': '',
+    'scripts/ci/a.test.mjs': '', 'scripts/ci/self-hosted/b.test.mjs': '', 'scripts/runner/c.test.mjs': '', 'scripts/d.test.mjs': '',
+    'scripts/ci/nested/e.test.mjs': '', 'scripts/ci/f.mjs': '', 'other/g.test.mjs': '' };
+  for (const file of admission) files[file] = '';
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  }
+  assert.deepEqual(CI_SCRIPT_TEST_DIRS, ['scripts', 'scripts/ci', 'scripts/ci/self-hosted', 'scripts/runner']);
+  assert.deepEqual(ciScriptTests(root, path.join(root, 'app'), ['tests/u.test.mjs']),
+    ['../scripts/ci/a.test.mjs', '../scripts/ci/self-hosted/b.test.mjs', '../scripts/d.test.mjs', '../scripts/runner/c.test.mjs']);
+  // Imports are read as the application's own test classification reads them.
+  assert.deepEqual(IMPORT_PATTERNS.map(String), SPECIFIER_PATTERNS.map(String));
+});
+
+// A throwaway git checkout with a test file in every directory a suite command collects, so every command expands.
+function cliCheckout(t) {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'tests-covered-cli-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const put = (file, text = '') => {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text);
+  };
+  for (const commands of Object.values(SUITE_COMMANDS)) {
+    for (const command of commands) {
+      for (const arg of command.argv) {
+        const dir = /^\{tests:(.+)\}$/.exec(arg)?.[1];
+        if (dir) put(path.posix.join(command.cwd, dir, 'a.test.mjs'));
+        if (arg === '{unit-tests}') {
+          for (const script of ['select-tests.mjs', 'run-tests.mjs']) {
+            put(path.posix.join(command.cwd, 'scripts', script), readFileSync(path.join(ROOT, 'apps/clued-cloud/scripts', script), 'utf8'));
+          }
+          put(path.posix.join(command.cwd, 'tests/u.test.mjs'));
+        }
+        if (arg === '{ci-script-tests}') put('scripts/ci/s.test.mjs');
+      }
+    }
+  }
+  const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  assert.equal(git('init', '-q').status, 0);
+  return { put, add: () => assert.equal(git('add', '-A').status, 0), run: () => spawnSync(process.execPath,
+    [path.join(ROOT, 'scripts/ci/check-tests-covered.mjs'), '--root', root], { encoding: 'utf8' }) };
+}
+
+test('the command line exits 0 when every test file is covered, 1 naming the file when one is not', (t) => {
+  const { put, add, run } = cliCheckout(t);
+  add();
+  const green = run();
+  assert.equal(green.status, 0, green.stderr);
+  assert.match(green.stdout, /^tests covered: \d+ test files, \d+ run in a required suite, 0 listed/);
+  put('orphan/lost.test.mjs');
+  add();
+  const red = run();
+  assert.equal(red.status, 1, red.stdout);
+  assert.match(red.stderr, /^TESTS_NOT_COVERED: 1 problem\(s\)\norphan\/lost\.test\.mjs: no required suite runs it/);
 });

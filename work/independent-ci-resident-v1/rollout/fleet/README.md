@@ -86,7 +86,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 
 1. 总览与顺序
 2. 发布机：构建一次
-3. 发布机：发布到 GitHub Release
+3. 发布机：Release 与索引行（由 prepare 建）
 4. 接受：接受前 prepare、接受后 seal（Owner 只说一次“接受”）
 5. 每台节点：唯一入口 bootstrap.ps1（重装与首装）
 6. 顺序与列车窗口（先 DESK，后 TURING）
@@ -96,7 +96,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 ## 1. 总览与顺序
 
 ```
-发布机   build（一次） -> publish release -> publish prepare（取 kit、备镜像、上传、写接受请求；Owner 面前的唯一产物） -> 候选演练（drill/，PASS 才往下） -> Owner 接受（一次；写 Decision 并保存返回） -> publish seal（读 Decision 记录、挂接受文件、写索引）
+发布机   build（一次） -> publish prepare（建 Release 与索引行、取 kit、备镜像、上传、写接受请求；Owner 面前的唯一产物） -> 候选演练（drill/，PASS 才往下） -> Owner 接受（一次；写 Decision 并保存返回） -> publish seal（读 Decision 记录、挂接受文件、写索引）
 节点     该版资产放进一个目录 -> fleet-node-<v>.bootstrap.ps1 -From <目录>（非提权；它取前置、解包、prepare，在要提权处自己请求 UAC）
 ```
 
@@ -116,19 +116,17 @@ node R/rollout/fleet/universal.mjs build --repo <git 目录> --commit <40 位 he
 
 每个版本只构建一次；节点不构建、不检出仓库。包内路径只许可打印 ASCII（`UNIVERSAL_TREE_PATH_NOT_ASCII`）：节点入口用 Windows 自带的 `tar.exe` 解包，它写不了非 ASCII 文件名。
 
-## 3. 发布机：发布到 GitHub Release
+## 3. 发布机：Release 与索引行（由 prepare 建）
 
-```
-node R/rollout/fleet/publish.mjs release --dir <构建输出目录> --repo tdoljyj/cross-memory-system [--index <索引文件>]
-```
+没有单独的发布命令：`publish.mjs release` 已撤掉（输入它得到 `USAGE`）。该版的 Release 和索引行由 4.1 的 `prepare` 在本地检查全部通过之后建出：先核构建输出（唯一的 release.json、tar 的 sha256、SHA256SUMS、包内的节点入口），再 `gh release create fleet-node-<version> <tar> <release.json> SHA256SUMS <bootstrap.ps1> <prereq-manifest.json> --target <commit>`，用 `gh release view` 核资产的名称与大小，最后在索引文件追加一行（Release 链接、tar sha256、commit；接受时间、Decision 与首装演练先空）。索引文件不存在时新建（带表头）。
 
-做的事：先核构建输出（唯一的 release.json、tar 的 sha256、SHA256SUMS），再 `gh release create fleet-node-<version> <tar> <release.json> SHA256SUMS --target <commit>`，用 `gh release view` 核三个资产的名称与大小，最后在索引文件追加一行（Release 链接、tar sha256、commit；接受时间与 Decision 先空）。索引里已有该版本则在调用 gh 之前拒绝；索引文件不存在时新建（带表头）。
+**候选 commit 必须已在远端**：Release 以该 commit 为 target 建 tag，`prepare` 建 Release 之前用 `gh api repos/<repo>/commits/<commit>` 核它在远端，GitHub 答“没有这个 commit”即拒绝（`PREPARE_COMMIT_NOT_ON_REMOTE`），不建 Release、不动索引；查询本身失败（断网、5xx）报 `PREPARE_COMMIT_LOOKUP_FAILED`，不当作没推送，原样重跑即可。
 
-索引文件默认：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`，表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision。
+索引文件默认：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`，表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练。
 
 ## 4. 接受：接受前 prepare、接受后 seal（Owner 只说一次“接受”）
 
-接受分两段，各是一条命令、都可以原样重跑；**首装 kit 的检查在 `prepare` 里**（缺 kit 的包造不出可接受的东西）。把 kit 或接受文件挂上 Release 只有这两条命令：挂 kit、挂接受文件的步骤没有单独的命令，手写的接受文件没有入口。两条命令对“请求与 Release 是否对应”用同一个核对（`checkRequestOnRelease`）：Release 的 `SHA256SUMS` 与 `release.json` 指名请求里的 tar，`release.json` 的 commit 等于请求的，用从 Release 下载的 tar 由包自带的 `source-hash` 重算 Source 并与请求比，再核 kit。`prepare` 写出的请求，`seal` 不会因这一核对而拒。
+接受分两段，各是一条命令、都可以原样重跑；**首装 kit 的检查在 `prepare` 里**（缺 kit 的包造不出可接受的东西）。把 kit 或接受文件挂上 Release 只有这两条命令：挂 kit、挂接受文件的步骤没有单独的命令，手写的接受文件没有入口。两条命令对“请求与 Release 是否对应”用同一个核对（`checkRequestOnRelease`）：Release 的 `SHA256SUMS` 与 `release.json` 指名请求里的 tar，`release.json` 的 commit 等于请求的，用从 Release 下载的 tar 由包自带的 `source-hash` 重算 Source 并与请求比，再核 kit。`prepare` 在往 GitHub 写任何东西之前，先用构建输出里的同一个 tar 算出 Source。`prepare` 写出的请求，`seal` 不会因这一核对而拒。
 
 **“已接受”只看 Release**：Release 上有 `fleet-node-<version>.acceptance.json` 就是已接受，索引行只是它的派生记录。
 
@@ -138,13 +136,17 @@ node R/rollout/fleet/publish.mjs release --dir <构建输出目录> --repo tdolj
 node R/rollout/fleet/publish.mjs prepare --version <version> --dir <构建输出目录> --out <目录> [--image <role-image-<id>.tar.gz> ...] [--repo tdoljyj/cross-memory-system] [--index <索引文件>]
 ```
 
-在 `release` 之后、Owner 接受之前，在**装着更早版本、Linux 与 Windows 同一包的本机已装节点**上运行（非提权，对节点只读），且**在本机升到该版之前**。不要 Decision、回执或时间，也不读任何手写的字段文件。它依次做，任何一步不过就不写接受请求：
+构建之后、Owner 接受之前，在**装着更早版本、Linux 与 Windows 同一包的本机已装节点**上运行（非提权，对节点只读），且**在本机升到该版之前**。不要 Decision、回执或时间，也不读任何手写的字段文件。能在本地做的检查（构建输出、节点入口、kit、Source、镜像）都在往 GitHub 或索引写任何东西之前做完；任何一步不过就不写接受请求，前 4 步不过则 Release 与索引都不动。它依次做：
 
-1. Release 上已有该版接受文件：拒绝（`PREPARE_VERSION_ALREADY_ACCEPTED`），不再挂 kit、不再写请求，Release 缺 kit 也一样；索引行还空着，说明上次 `seal` 在写索引之前断了，用原参数重跑 `seal` 补上。索引行有值而 Release 上没有接受文件：拒绝，不猜。
+1. Release 上已有该版接受文件：拒绝（`PREPARE_VERSION_ALREADY_ACCEPTED`），不再挂 kit、不再写请求，Release 缺 kit 也一样；索引行还空着，说明上次 `seal` 在写索引之前断了，用原参数重跑 `seal` 补上。索引行有值而 Release 上没有接受文件：拒绝，不猜。索引有该版的行而没有 Release：当场拒绝（`PREPARE_INDEX_ROW_WITHOUT_RELEASE`），不取 kit、不取镜像。
 2. 首装 kit：**Release 上已有该版 kit 就用 Release 上那一份**（下载），不再去节点取。kit 的 `template.versionFacts` 带 `observedAt`，每次从节点取都是不同的字节；挂上之后，Release 上那一份就是唯一事实。Release 上还没有，才从本机取。两种来源都按新节点的读法核（`readKit`），并核模板 Source 不等于本包 Source：相等即拒绝，说明本机已经升到这一版，须在升级之前执行。
-3. 接受请求的 `fleetRefs`：从本机已装记录只读带入，来源与 `install.mjs fleet-refs` 相同：`sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 三项进 Source；`ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` 三项不进 Source，每次接受都沿用（来源见 `BATCH1-INTERFACES.md` 第 6 节）。Source 用上面的同一核对，从 Release 的 tar 算出（Decision、回执与时间不进 Source，算时用演练保留值占位）。
+3. 接受请求的 `fleetRefs`：从本机已装记录只读带入，来源与 `install.mjs fleet-refs` 相同：`sourceAcceptanceRef`、`hostQualificationRef`、`formalRoles` 三项进 Source；`ownerAuthorizationRef`、`publisherQualificationRef`、`ownerPackageAcceptanceRef` 三项不进 Source，每次接受都沿用（来源见 `BATCH1-INTERFACES.md` 第 6 节）。Source 先从构建输出的 tar 算出（Decision、回执与时间不进 Source，算时用演练保留值占位），第 6 步再用同一核对从 Release 的 tar 重算比对。
 4. 备齐 kit 列的每个本地角色镜像：用 `--image` 给；没给就用索引里上一版 Release 的同 id `role-image-<id>.tar.gz`，并按该版 `first-install.SHA256SUMS` 核哈希。缺一个即拒绝；下载失败按下载失败报，不当作缺镜像。
-5. 把 kit 与镜像放进 `--out`，Release 上缺的 kit、镜像与 `fleet-node-<version>.first-install.SHA256SUMS` 补传。Release 上已有的按**内容**比，不按大小：相同不重传，不同的镜像或 sums 替换；Release 上是另一份 kit 则拒绝。sums 读回整份比对，整个请求再按同一核对比一遍 Release，最后写 `fleet-node-<version>.acceptance-request.json`（文件整份写成或不写）。
+5. 建 Release 与索引行（`ensureRelease`，第 3 节）：
+   - 没有 Release、索引也没有该版的行：核候选 commit 在远端（`PREPARE_COMMIT_NOT_ON_REMOTE`），再建 Release、核资产、追加索引行。
+   - 没有 Release，索引却已有该版的行：拒绝（`PREPARE_INDEX_ROW_WITHOUT_RELEASE`），不猜（第 1 步已拒，这里按当时的索引与 Release 再核一次）。
+   - 已有 Release（上次中途停下，或停在写索引之前）：Release 上已有的每个资产都与构建输出**按字节**核（大小相同不等于同一次构建：tar 按 512 字节对齐）：`SHA256SUMS` 与暂存的那份比，`release.json` 和两个节点入口文件下载后比，tar 下载后核 sha256 并留给第 6 步复用，不再下载第二次；任何一个不同即在补传之前拒绝（`ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES` / `ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS`），说明那是另一次构建的 Release，不覆盖；相同则只补传缺的资产（不覆盖已有的）、补上缺的索引行。
+6. 把 kit 与镜像放进 `--out`，Release 上缺的 kit、镜像与 `fleet-node-<version>.first-install.SHA256SUMS` 补传。Release 上已有的按**内容**比，不按大小：相同不重传，不同的镜像或 sums 替换；Release 上是另一份 kit 则拒绝。sums 读回整份比对，整个请求再按同一核对比一遍 Release，最后写 `fleet-node-<version>.acceptance-request.json`（文件整份写成或不写）。
 
 接受请求（合同 `clued.independent-ci.fleet-node-acceptance-request/1`）只有这些字段：`version`、`archive_sha256`、`commit`、`repository`、`ciSourceManifestSha256`、`firstInstallKitSha256`，以及上面六项 `fleetRefs`。**没有 Decision 字段**：这就是摆给 Owner 的那一份。输出里还有 `requestSha256` 和一行 `decisionLine`（`acceptance-request fleet-node-<version> sha256:<请求文件的 sha256>`），写 Decision 时把这一行原样放进正文。上传中途断了，原样重跑同一条命令（同一个 `--out`）即可。
 
@@ -263,7 +265,7 @@ bootstrap 依次做（每一步看它所运行程序的最后一个 JSON 对象�
   - A 之后停下（Linux 已是新包、Windows 还是旧装，节点保持暂停）：`python -I <tree>\work\independent-ci-resident-v1\reinstall\launcher\generate.py --fleet-continue <那次的 launcher.ps1> --out <新 launcher.ps1>`，再提权运行输出里的 `elevatedCommand`。暂停若已被解除，这条命令会重新请求。此时对同一个包重跑 bootstrap 会得到 `LINUX_SIDE_ALREADY_THIS_PACKAGE_CONTINUE_THE_STOPPED_LAUNCH`。首装的启动器不走这条（`PRIOR_LAUNCHER_IS_A_FIRST_INSTALL_NOT_CONTINUED`），见 5.1 的中途停止。
   - 那个包本身续不下去、已经换了新包：直接用新包的 bootstrap，两侧各从现状装到新包。
 - `RUNNER_SERVICE_NOT_AS_REVIEWED`：当班节点在暂停下仍会为自己的维护临时交换运行器，预检会等它换回（最多 600 秒）；到时仍不对才停。
-- `publish.mjs` 在 gh 失败时不动索引；`release` 失败后先看 Release 是否已建出一部分，不要重复创建同一 tag。
+- `publish.mjs` 在 gh 失败时不动索引；`prepare` 建 Release 中途断了，原样重跑同一条 `prepare`：它认出已建的那部分，只补缺的资产和索引行，不重复创建同一 tag。
 - `seal` 对已用另一个 Decision 接受的版本拒绝；接受文件写错要由协调者与 Owner 重新决定，不覆盖。`prepare` 或 `seal` 中途断了，原样重跑同一条命令。
 - B 在 Source 切换之后失败：模板自动用 B-resume 续跑一次；仍失败则停手，交协调者。
 - 节点装完 `verify` 不过：不继续装另一台。

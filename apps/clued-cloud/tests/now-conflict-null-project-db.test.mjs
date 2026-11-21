@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
@@ -34,7 +34,7 @@ test("project now-task writes ignore Global now tasks and still detect real conf
     password: hash(),
     port: await freePort(),
     persistent: false,
-    postgresFlags: ["-c", "io_method=sync"],
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); },
   });

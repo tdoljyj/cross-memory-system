@@ -4,22 +4,24 @@
 #   wsl.exe -d CluedResident-Linux -u root --exec /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=C LC_ALL=C HOME=/root \
 #       /usr/bin/bash --noprofile --norc <this file> <debs dir> <debs list> <toolchain node tarball> <toolchain node sha256>
 # It makes the host reinstall/linux/first-install.py's phase A expects (host_ready): systemd as PID 1, cgroup v2, docker.service active
-# with the CLASSIC image store, /usr/bin/python3.12 and /usr/bin/git, the toolchain node at its fixed path with the pinned sha256.
+# with the CONTAINERD image store, /usr/bin/python3.12 and /usr/bin/git, the toolchain node at its fixed path with the pinned sha256.
 # It does NOT make the result key (reinstall/linux/tools/make-result-key.sh, run next by P1) and installs nothing of the Linux CI itself.
 #
-#   <debs dir>, <debs list>  the docker closure as .deb files (the prerequisite manifest's `debs`, the drill VM's set), staged and held to
+#   <debs dir>, <debs list>  the docker closure and python3.12 as .deb files (the prerequisite manifest's `debs`), staged and held to
 #                     their sha256 by P1, and the list "<sha256>  <file name>" per line. Nothing is resolved or downloaded: the list is
 #                     checked with sha256sum -c in that directory, then dpkg -i installs exactly those files (apt-get, even with
 #                     --no-download, resolved against the image's lists and wanted the network: drill VM, 2026-11-16 12:58). python3.12
-#                     and git are the pinned Ubuntu image's own packages.
+#                     comes from these files too (its source package at the version whose /usr/bin/python3.12 the fleet pins, one patch
+#                     newer than the image's); git is the pinned Ubuntu image's own package.
 #   <toolchain node tarball>  the official node-v<ver>-linux-x64.tar.xz as P1 staged it (its sha256 checked by P1 against the manifest);
 #                     its bin/node must have <toolchain node sha256> (the template role policies' nodeExecutableSha256, from the kit).
 #
-# Docker's image store: Docker Engine 29 makes the containerd image store the default of a NEW install. There the image ID of a local
-# image is its manifest digest, not its config digest, so the role policies' `image: sha256:<config id>` (contract-placement, loaded
-# from the release asset role-image-<id>.tar.gz) would not resolve and `docker image inspect sha256:<id>` would not be that image.
-# The classic store is pinned here (/etc/docker/daemon.json "features": {"containerd-snapshotter": false}) and checked afterwards:
-# `docker info` must report the overlay2 graph driver and no containerd snapshotter in its driver status.
+# Docker's image store: an image ID means one thing, the containerd image store's `docker image inspect` .Id (the OCI index or manifest
+# digest; Fable ruling 0e418483, r7 phase B, 2.1). The classic store is not supported. The role policies, the kit, the release asset
+# role-image-<id>.tar.gz, phase B's check and the worker's all use that value, and the fleet's nodes run the containerd store. Docker
+# Engine 29 defaults a new install to it; this does not rely on the default: /etc/docker/daemon.json is written with
+# "features": {"containerd-snapshotter": true} (or, already there, must say so), and then only `docker info` decides: its driver status
+# must name the containerd snapshotter.
 #
 # Exit 0 and last line {"status":"LINUX_HOST_READY",...}; exit 2 and {"status":"RESTART_THIS_DISTRIBUTION"} when systemd was just
 # enabled (P1 then restarts ONLY this distribution, `wsl -t CluedResident-Linux`, never `wsl --shutdown`, and runs this again);
@@ -60,8 +62,8 @@ fi
 # 2. cgroup v2 (unified hierarchy)
 [ -e /sys/fs/cgroup/cgroup.controllers ] || refuse CGROUP_V2_REQUIRED
 
-# 3. the pinned docker closure: every listed file exactly as pinned, then dpkg -i of exactly those files (once; found installed at the
-#    listed versions, only checked). The list's names are plain .deb file names; nothing else in the directory is used.
+# 3. the pinned .debs (the docker closure, python3.12): every listed file exactly as pinned, then dpkg -i of exactly those files
+#    (once; found installed at the listed versions, only checked). The list's names are plain .deb file names; nothing else in the directory is used.
 grep -qvE '^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._+~-]{0,200}\.deb$' "$LIST" && refuse DEBS_LIST_SHAPE
 [ "$(grep -c . "$LIST")" -ge 1 ] || refuse DEBS_LIST_EMPTY
 (cd "$DEBS" && sha256sum --quiet --strict -c "$LIST") >"$LOG" 2>&1 || refuse_tail DEBS_NOT_THE_PINNED_FILES "$LOG"
@@ -85,11 +87,11 @@ if [ "$missing" = 1 ]; then
 fi
 [ -x /usr/bin/python3.12 ] && [ -x /usr/bin/git ] && [ -x /usr/bin/docker ] || refuse EXECUTABLES_MISSING
 
-# 4. docker: the classic image store, then enabled and active
-want_daemon='{"features":{"containerd-snapshotter":false}}'
+# 4. docker: the containerd image store, then enabled and active
+want_daemon='{"features":{"containerd-snapshotter":true}}'
 if [ -e "$DAEMON" ]; then
-  /usr/bin/python3.12 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("features",{}).get("containerd-snapshotter") is False else 1)' "$DAEMON" \
-    || refuse DOCKER_DAEMON_JSON_NOT_THE_CLASSIC_STORE
+  /usr/bin/python3.12 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("features",{}).get("containerd-snapshotter") is True else 1)' "$DAEMON" \
+    || refuse DOCKER_DAEMON_JSON_NOT_THE_CONTAINERD_STORE
 else
   install -d -o root -g root -m 0755 /etc/docker
   printf '%s\n' "$want_daemon" > "$DAEMON"
@@ -99,8 +101,7 @@ systemctl enable docker.service >"$LOG" 2>&1 || refuse_tail DOCKER_ENABLE_FAILED
 [ "$(systemctl is-active docker.service)" = active ] || systemctl start docker.service >"$LOG" 2>&1 || refuse_tail DOCKER_START_FAILED "$LOG"
 driver=$(docker info --format '{{.Driver}}' 2>"$LOG") || refuse_tail DOCKER_INFO_FAILED "$LOG"
 status=$(docker info --format '{{json .DriverStatus}}' 2>"$LOG") || refuse_tail DOCKER_INFO_FAILED "$LOG"
-[ "$driver" = overlay2 ] || refuse "DOCKER_NOT_THE_CLASSIC_STORE:$driver"
-case "$status" in *io.containerd.snapshotter*) refuse DOCKER_CONTAINERD_SNAPSHOTTER_ACTIVE ;; esac
+case "$status" in *io.containerd.snapshotter*) ;; *) refuse "DOCKER_NOT_THE_CONTAINERD_STORE:$driver" ;; esac
 
 # 5. the toolchain node at its fixed path (root-owned, not writable by others), with the pinned sha256
 if [ -e "$NODE" ]; then

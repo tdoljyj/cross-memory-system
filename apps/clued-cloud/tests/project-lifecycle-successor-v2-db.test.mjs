@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -76,7 +76,7 @@ test('Project Lifecycle v2 deterministically disposes legacy rows and preserves 
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-project-v2-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: true, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: true, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];

@@ -1,5 +1,5 @@
 // issuer-credentials: this historical test selects a migration chain before step 2b.
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -21,7 +21,7 @@ async function port(){const s=net.createServer();await new Promise(r=>s.listen(0
 
 test('project list uses current explicit Canonical project consent in real PostgreSQL',{timeout:180000},async(t)=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'clued-project-list-'));
- const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:hash(),port:await port(),persistent:false,postgresFlags:['-c','io_method=sync'],onLog(){},onError(m){process.stderr.write(m+'\n');}});
+ const server=new EmbeddedPostgres({databaseDir:dir,user:'postgres',password:hash(),port:await port(),persistent:false,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(m){process.stderr.write(m+'\n');}});
  const clients=[];let admin;
  try {
   await server.initialise();await server.start();admin=server.getPgClient();clients.push(admin);await admin.connect();

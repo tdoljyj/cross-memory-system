@@ -1,0 +1,274 @@
+{
+  "source": "D:/clued-drill/runs/20261120T112254Z-2026.11.20-70e8be94-066c9d6e/receipt.json (items, m5 and the fields the conclusion reads, as written)",
+  "candidate": true,
+  "failure": null,
+  "restoredToCheckpoint": true,
+  "conclusion": "FAIL",
+  "items": [
+    {
+      "id": "A1",
+      "pass": false,
+      "detail": "exit=1 status=FIRST_INSTALL_STOPPED stopCode=BOOTSTRAP_LAUNCHER_ENDED steps=complete",
+      "firstInstallSteps": {
+        "missing": false,
+        "incomplete": false,
+        "incompleteStages": [],
+        "incompleteReasons": {},
+        "noStageVerdict": [],
+        "stages": {
+          "entry": 0,
+          "host": 14,
+          "prepare": 0,
+          "launcher": 6
+        },
+        "steps": [
+          {
+            "stage": "host",
+            "name": "credential-files",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": {
+              "required": [
+                "appKey",
+                "ciToken",
+                "upgradeToken",
+                "public",
+                "companionToken"
+              ],
+              "optional": [
+                "heartbeatToken"
+              ]
+            }
+          },
+          {
+            "stage": "host",
+            "name": "operator",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "S-1-5-21-2818061261-3454747966-555822169-1000"
+          },
+          {
+            "stage": "host",
+            "name": "residue",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "none"
+          },
+          {
+            "stage": "host",
+            "name": "stage",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "C:\\Windows\\Temp\\clued-p1-1eddfaf19dbe49909f61d7bab5c55b37"
+          },
+          {
+            "stage": "host",
+            "name": "v1-base",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "present"
+          },
+          {
+            "stage": "host",
+            "name": "wsl",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "2.7.13.0"
+          },
+          {
+            "stage": "host",
+            "name": "features",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "enabled; standby-ac 0, hibernate off"
+          },
+          {
+            "stage": "host",
+            "name": "tools",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": {
+              "gh": {
+                "path": "C:\\Program Files\\GitHub CLI\\gh.exe",
+                "action": "installed"
+              },
+              "git-for-windows": {
+                "path": "C:\\Program Files\\Git\\cmd\\git.exe",
+                "action": "installed"
+              }
+            }
+          },
+          {
+            "stage": "host",
+            "name": "accounts",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": {
+              "controllerSid": "S-1-5-21-2818061261-3454747966-555822169-1002",
+              "companionSid": "S-1-5-21-2818061261-3454747966-555822169-1004",
+              "operatorSid": "S-1-5-21-2818061261-3454747966-555822169-1000"
+            }
+          },
+          {
+            "stage": "host",
+            "name": "ci-root",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": {
+              "C:\\ProgramData\\CluedIndependentCI": "made",
+              "formal-spool": "made",
+              "first-install": "made",
+              "credentials": "made",
+              "secrets": "made"
+            }
+          },
+          {
+            "stage": "host",
+            "name": "runner",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "actions.runner.tdoljyj-cross-memory-system.clued-ci-clued-drill"
+          },
+          {
+            "stage": "host",
+            "name": "distribution",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": {
+              "name": "CluedResident-Linux",
+              "importDirectory": "C:\\ProgramData\\CluedIndependentCI\\wsl-first-install\\CluedResident-Linux",
+              "switchTarget": "C:\\ProgramData\\CluedIndependentCI\\wsl\\CluedResident-Linux",
+              "account": "operator"
+            }
+          },
+          {
+            "stage": "host",
+            "name": "linux",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": "ready"
+          },
+          {
+            "stage": "host",
+            "name": "credentials",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": {
+              "plan": "collect-all",
+              "companionToken": "ask"
+            }
+          },
+          {
+            "stage": "launcher",
+            "name": "output",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": null
+          },
+          {
+            "stage": "launcher",
+            "name": "package",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": null
+          },
+          {
+            "stage": "launcher",
+            "name": "stage",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": null
+          },
+          {
+            "stage": "launcher",
+            "name": "first-install-preflight",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": null
+          },
+          {
+            "stage": "launcher",
+            "name": "tokens-carried",
+            "result": "ok",
+            "rejectCode": null,
+            "detail": null
+          },
+          {
+            "stage": "launcher",
+            "name": "launcher",
+            "result": "failed",
+            "rejectCode": "SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS",
+            "detail": null
+          }
+        ],
+        "lastStep": "launcher",
+        "lastCompletedStep": "tokens-carried",
+        "firstRejected": "launcher",
+        "verdict": {
+          "status": "FIRST_INSTALL_STOPPED",
+          "stopCode": "BOOTSTRAP_LAUNCHER_ENDED"
+        },
+        "stageVerdicts": {
+          "host": "FIRST_INSTALL_HOST_READY",
+          "launcher": "STOPPED"
+        },
+        "noVerdict": false
+      }
+    },
+    {
+      "id": "A2",
+      "pass": false,
+      "detail": "verify=NOT_RUN"
+    },
+    {
+      "id": "A3",
+      "pass": false,
+      "detail": "selfcheck= observedAt="
+    },
+    {
+      "id": "A4",
+      "pass": false,
+      "detail": "facts.generation= staged= pinsOk="
+    },
+    {
+      "id": "A5",
+      "pass": false,
+      "detail": "local= acceptance=5931fefde28cc75ea7eecd50e837718171abddf2f2c2c3e0b56d96c38eeb6970; candidate: no production half"
+    },
+    {
+      "id": "A6",
+      "pass": false,
+      "detail": "pause= confirmedByLauncher= paused= executor= mode= current=False live= halt="
+    },
+    {
+      "id": "A7",
+      "pass": false,
+      "detail": "refreshedAfterBoot=False selfcheckAfterBoot=False boot=2026-11-20T11:49:59.3889860Z selfcheck= observedAt="
+    },
+    {
+      "id": "A8",
+      "pass": null,
+      "detail": "skipped (-SkipReinstall): same-package reinstall not drilled (同包重装未演练)"
+    },
+    {
+      "id": "A9",
+      "pass": null,
+      "detail": "production read-back by -Finalize"
+    },
+    {
+      "id": "A10",
+      "pass": false,
+      "detail": "per-node steps: 未验证原入口的非提权检查 | 绕过 RunAs 提权 | 绕过凭据窗口 | 陪伴 GitHub 经典令牌替身（替的是 Owner 在凭据窗口给的陪伴 GitHub 经典令牌；因为演练不得使用真凭据；因此没验到令牌被 GitHub 接受、陪伴访问 GitHub 的各个通道；不可删，没验到的部分由真机首装后的运行状态承担） | adapted drill: non-elevated check, RunAs and credential dialogs not validated"
+    }
+  ],
+  "m5": {
+    "directory": "m5",
+    "result": "FAIL",
+    "missing": [
+      "profile.json",
+      "probe.json"
+    ],
+    "collectionCode": null,
+    "detail": "DRILL_M5_OBSERVATIONS_MISSING"
+  }
+}

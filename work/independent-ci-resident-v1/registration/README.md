@@ -42,9 +42,12 @@ Prerequisites:
 - The resident install's `C:\ProgramData\CluedIndependentCI\resident\record\source-manifest.json` (its `sourceSha` is the CI Source
   commit the node runs). Without a resident install pass `-SourceCommit <40-hex>` or `-SourceManifest <file>`; nothing is guessed.
 
-Keys: persisted, **non-exportable** CNG machine keys named `Clued-CI-Node-Identity-v1` and `Clued-CI-Node-Encryption-v1`, in the TPM
-(Microsoft Platform Crypto Provider) when it is usable, otherwise in the Microsoft Software Key Storage Provider. The script exports
-only the public blob. `identity_key_origin` in the profile says which (`tpm` or `software`).
+Keys: persisted, **non-exportable** CNG machine keys named `Clued-CI-Node-Identity-v1` and `Clued-CI-Node-Encryption-v1`. The identity
+key is in the TPM (Microsoft Platform Crypto Provider) when it is usable, otherwise in the Microsoft Software Key Storage Provider; the
+encryption key is always in the Microsoft Software Key Storage Provider: the TPM provider refuses an ECDH key with key-agreement usage
+(`NTE_NOT_SUPPORTED`, 0x80090029; seen on Intel PTT and on a Hyper-V vTPM), and only the identity key is required in the TPM (M5 checks
+it; the renewal signs with it). Both nodes in service have this layout. The script exports only the public blob.
+`identity_key_origin` in the profile says where the identity key is (`tpm` or `software`).
 
 Create the keys (approved install wave only):
 
@@ -52,9 +55,10 @@ Create the keys (approved install wave only):
 powershell -NoProfile -ExecutionPolicy Bypass -File .\export-node-registration.ps1 -Mode init-keys -ConfirmCreateKeys [-KeyProvider auto|tpm|software]
 ```
 
-`auto` tries the TPM first and falls back to software with a `WARNING:` line that carries the TPM's error; `tpm` refuses instead of
-falling back. The TPM path has not been run on a real TPM yet: on the first node of the install wave, check that the answer says
-`"origin": "tpm"` where a TPM exists. If it says `software` with a warning, stop and report the warning before registering. If a run is
+`-KeyProvider` says where the identity key goes: `auto` tries the TPM first and falls back to software with a `WARNING:` line that
+carries the TPM's error; `tpm` refuses instead of falling back (the host preparation uses it). The encryption key is made in software
+whatever `-KeyProvider` says. `-SelfTest -KeyProvider tpm` makes both keys the same way, unelevated, in the current user's store under
+names only that run uses, deletes them, and prints each key's origin: the tests run it on the real providers. If a run is
 interrupted hard (power loss) between the two keys, delete the leftover one by name (`Clued-CI-Node-Identity-v1`,
 `Clued-CI-Node-Encryption-v1`, machine scope) before running it again; a normal failure already deletes it.
 

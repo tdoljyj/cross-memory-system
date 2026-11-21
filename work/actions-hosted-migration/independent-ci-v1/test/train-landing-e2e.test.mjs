@@ -24,7 +24,7 @@ import { digest } from '../src/proof.mjs';
 import { createFixtureControlPublisherV2 } from '../src/independent-control-checks-v2/publisher.mjs';
 import { runTrain } from '../src/independent-control-checks-v2/train-maintenance.mjs';
 import { batchChainOk, parseStageTrainLanding, stageTrainLandingText } from '../src/independent-control-checks-v2/train-landing.mjs';
-import { validateTrainFacts } from '../src/independent-control-checks-v2/train-facts.mjs';
+import { validateTrainFacts, REQUIRED_CHECKS_MAX_WAIT_MS } from '../src/independent-control-checks-v2/train-facts.mjs';
 import { parseLandingArg } from '../src/resident-v2/invoke-stage.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import fs from 'node:fs/promises';
@@ -77,7 +77,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   W.merge = merge; W.ancestor = ancestor;
   const T0 = commit(h('T0'), [], []);
   W.refs.set('heads/main', T0);
-  // GitHub Actions: the four required checks of the main ruleset, by their own names (S's rehearsal reads exactly these)
+  // GitHub Actions: the four required checks of the main ruleset, by their own names
   const actions = sha => {
     for (const name of FOUR) {
       const id = W.nextCheck++;
@@ -174,6 +174,8 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
     async keepalive() { return { onDuty: true, keptAlive: queue.map(pr => ({ claimId: e.claimFor(pr), boundPr: `${REPO}#${pr}`, expiresAt: iso(e.now + 7_200_000) })) }; },
     async touch(i) {
       if (i.ciState === 'running') { ci = { ciState: 'running', ciHeadSha: i.headSha }; slotUntil = e.now + 90 * 60_000; }
+      // stage 8's touch green on the current path (publisher.mjs#touchGreen): Native's merge_slot_green_seconds (1800) from now
+      if (i.ciState === 'green') { ci = { ciState: 'green', ciHeadSha: i.headSha }; slotUntil = e.now + 30 * 60_000; }
       if (i.ciState === 'failed') { e.failed.push(i.pr); leave(i.pr); return { onDuty: true, touched: true, returned: true, claims: [e.claimFor(i.pr)] }; }
       return { onDuty: true, touched: true, until: iso(slotUntil), claims: [e.claimFor(i.pr)], returned: null };
     },
@@ -707,9 +709,8 @@ function githubMerges(e, b) {
 const greens = (e, sha) => [...e.gh.world.checks.values()].filter(c => c.head_sha === sha && c.name === 'kooyumi-merge-slot' && c.conclusion === 'success');
 const PUSH1 = Object.freeze({ landing: 'push', batchMax: 1, unreadable: false });
 const TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass'];
-// stage 10 reads no bypass state before kooyumi-train-landed (it cannot change the route then): what push lacks without it
-const S10_TODAY_MISSING = ['independent_ruleset_missing', 'train_landed_check_missing'];
-const ALL_FOUR = { 'ci-suites': 'success', 'clued-cloud-tests': 'success', 'migration-verify': 'success', 'ci-suites-windows': 'success' };
+// Fable 11-21 open points §5: stage 10 reads the bypass states every round too, so it names what push lacks as stage 8 does
+const S10_TODAY_MISSING = TODAY_MISSING;
 
 test('three ways, today (no independent ruleset, no kooyumi-train-landed, the App cannot bypass main): a push-capable package lands through GitHub as today and never parks', async t => {
   const { e, b, T } = await opened(t, [910], { rules: 'today' });
@@ -720,8 +721,8 @@ test('three ways, today (no independent ruleset, no kooyumi-train-landed, the Ap
   assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
   assert.equal(e.main(), T);
   assert.equal(greens(e, b.headSha).length, 1, 'the merge-slot green of the current path, on H');
-  // the receipt: what a push of this S would have needed on S itself
-  assert.deepEqual(p.rehearsal, { testSha: b.testSha, checks: ALL_FOUR, allSuccess: true, missing: TODAY_MISSING, bypass: { main: 'never', independent: 'absent' } });
+  // the receipt: S, what push still lacks and this App's bypass state; never S's checks (Fable 11-21 应修 2: the precheck reads them)
+  assert.deepEqual(p.rehearsal, { testSha: b.testSha, missing: TODAY_MISSING, bypass: { main: 'never', independent: 'absent' } });
   // GitHub merges it; the next stage 10 adopts it and says which way it read: the train went on
   const M = githubMerges(e, b);
   const s10 = (await stage10(e)).facts;
@@ -754,6 +755,262 @@ test(`three ways, today: a push-capable package still waits for the head's own r
   assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
 });
 
+// Fable 11-21 应修 1: a merge-slot green counts only on the current path. #1192's shape on today's rules (the front alone in the queue, its
+// head without ci-suites-windows): stage 8 wrote the current path's pair on H and GitHub cannot merge it. Then the Owner saves C. Before the
+// fix stage 10 read the leftover green as "green, wait for merge" (no rules given on route push, so the merge slot alone was green) and
+// waited for Native's hard cap; now it opens the front batch and stage 8 pushes S.
+const MIN = 60_000;
+function leftoverGreen(e) {
+  const H = e.head(910);
+  for (const [id, c] of e.W.checks) if (c.head_sha === H && c.name === 'ci-suites-windows') e.W.checks.delete(id);
+  for (const name of ['gitleaks', 'trivy', 'contract-placement']) { const id = e.W.nextCheck++; e.W.checks.set(id, { id, app: { id: APP }, name, head_sha: H, status: 'completed', conclusion: 'success' }); }
+  const slotCalls = [];
+  e.native.port.yieldSlot = async i => { slotCalls.push(['yield', i.pr, i.reason ?? null]); return { onDuty: true, yielded: false }; };
+  const returnSlot = e.native.port.returnSlot;
+  e.native.port.returnSlot = async i => { slotCalls.push(['return', i.pr]); return returnSlot(i); };
+  return { H, slotCalls };
+}
+async function greenOnTodayRules(t, e) {
+  const r = await stage10(e);
+  assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+  const b = r.facts.openFrontBatch;
+  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.equal(greens(e, b.headSha).length, 1, 'the merge-slot green of the current path, on H');
+  return { b, T: e.main(), greenAt: e.now };
+}
+
+test('应修 1 (T1): green on today\'s rules, GitHub does not merge, the Owner saves C -> the next stage 10 opens the front batch and stage 8 lands it', async t => {
+  const e = await world(t, { prs: [910], rules: 'today' });
+  const { H, slotCalls } = leftoverGreen(e);
+  const { T, greenAt } = await greenOnTodayRules(t, e);
+  e.W.setRules('push');
+  const s10 = await stage10(e);
+  assert.equal(s10.facts.landing?.route, 'push');
+  assert.equal(s10.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify({ decision: s10.facts.decision, front: s10.facts.front }));
+  assert.equal(s10.facts.front.green, false, 'the leftover green is not green on route push');
+  const b = s10.facts.openFrontBatch;
+  const p = await stage8(t, e, b);
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.notEqual(e.main(), T);
+  assert.equal(e.main(), b.testSha, 'main is S');
+  await stage10(e);
+  assert.deepEqual(e.adopted, [[910, b.testSha]], 'the front adopted at S');
+  assert.equal(e.queue.length, 0);
+  assert.deepEqual(slotCalls, [], 'no yield, no return');
+  assert.ok(e.now - greenAt < REQUIRED_CHECKS_MAX_WAIT_MS, `landed ${Math.round((e.now - greenAt) / MIN)} minutes after the green, under the 60-minute wait`);
+  assert.equal(greens(e, H).length, 1, 'no new green on H');
+});
+
+test('应修 1 (T1b): green on today\'s rules, then kooyumi-train-landed while the App cannot bypass main (park) -> open, park with the missing item, no new green, no yield loop; rules completed -> lands', async t => {
+  const e = await world(t, { prs: [910], rules: 'today' });
+  const { H, slotCalls } = leftoverGreen(e);
+  const { T, greenAt } = await greenOnTodayRules(t, e);
+  e.W.setRules('push'); e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' });
+  const s10 = await stage10(e);
+  assert.equal(s10.facts.landing?.route, 'park');
+  assert.equal(s10.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify({ decision: s10.facts.decision, front: s10.facts.front }));
+  assert.equal(s10.facts.front.green, false, 'the leftover green is not green on route park');
+  const b = s10.facts.openFrontBatch;
+  // stage 8 parks the batch at B with zero effects (failure-table: TRAIN_LANDING_RULES_MISSING, park); the executor tries it again after
+  // PARK_RETRY_MS (10, 20 minutes), stage 10 runs every few minutes meanwhile: past the 60 minutes after the green, nothing yields
+  const parked = [], decisions = new Set();
+  const first = e.now, retryAt = [first, first + 10 * MIN, first + 30 * MIN];
+  while (e.now - greenAt < REQUIRED_CHECKS_MAX_WAIT_MS + 5 * MIN) {
+    if (retryAt.length && e.now >= retryAt[0]) { retryAt.shift(); const p = await stage8(t, e, b); parked.push([p.status, p.reason, p.missing]); }
+    e.now += 4 * MIN;
+    const r = await stage10(e);
+    decisions.add(r.facts.decision);
+    assert.equal(r.facts.front?.green, false);
+    assert.equal(r.facts.openFrontBatch, null, 'no second batch of the same head while the first is parked');
+  }
+  assert.equal(parked.length, 3);
+  for (const x of parked) assert.deepEqual(x, ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', ['main_app_cannot_bypass']]);
+  assert.deepEqual([...decisions], ['TRAIN_FRONT_BATCH_RUNNING']);
+  assert.equal(greens(e, H).length, 1, 'no new green');
+  assert.deepEqual([e.W.pushes, e.main()], [[], T]);
+  assert.deepEqual(slotCalls, [], 'no 60-minute yield, no return');
+  // the Owner's save completed (the App can always bypass the main ruleset): the executor's next try of the same batch lands it
+  e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'always' });
+  e.now = Math.max(e.now, first + 70 * MIN); // the next PARK_RETRY_MS step (40 minutes after the third try)
+  const p = await stage8(t, e, b);
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.equal(e.main(), b.testSha, 'main is S');
+  await stage10(e);
+  assert.deepEqual(e.adopted, [[910, b.testSha]]);
+  assert.deepEqual(slotCalls, []);
+});
+
+// Fable 11-21 应修 1 (T3): the switch to C at every point of a front's way, each ending in a landing with no person and in a bounded number of
+// rounds. The executor here is production's: a batch stage 10 opens goes to stage 8 at once; a park (zero effects) is tried again after
+// PARK_RETRY_MS (10 minutes first); a final PR failure is the next stage 10's frontOutcome; a SETTLED current-path pair is done (GitHub
+// cannot merge H: it misses ci-suites-windows, #1192's shape). Stage 10 runs every 4 minutes besides.
+async function untilLanded(t, e, { batch = null, rounds = 30 } = {}) {
+  const T = e.main(), log = [];
+  let parked = batch ? { b: batch, at: e.now } : null, outcome = null;
+  for (let i = 0; i < rounds && e.main() === T; i++) {
+    if (parked && e.now >= parked.at) {
+      const { b } = parked; parked = null;
+      const p = await stage8(t, e, b);
+      log.push(['8', p.status, p.reason ?? null]);
+      if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason };
+      else if (p.status === 'BLOCKED' && p.sideEffects === 0) parked = { b, at: e.now + 10 * MIN };
+      continue;
+    }
+    const r = await stage10(e, outcome); outcome = null;
+    log.push(['10', r.facts.decision]);
+    if (r.facts.openFrontBatch) parked = { b: r.facts.openFrontBatch, at: e.now };
+    else e.now += 4 * MIN;
+  }
+  if (e.main() !== T) { const r = await stage10(e); log.push(['10', r.facts.decision]); }
+  return log;
+}
+test('应修 1 (T3): the switch to C at every point of the front\'s way -> no person, a bounded number of rounds, landed', async t => {
+  const landed = async (t, e, slotCalls, start, log) => {
+    assert.equal(e.W.pushes.at(-1), e.main(), `main is the pushed S: ${JSON.stringify(log)}`);
+    assert.deepEqual(e.adopted.map(a => a[0]), [910], JSON.stringify(log));
+    assert.deepEqual(slotCalls, [], `no yield, no return: ${JSON.stringify(log)}`);
+    t.diagnostic(`${Math.round((e.now - start) / MIN)} minutes after the switch: ${JSON.stringify(log)}`);
+  };
+  await t.test('before stage 10 opens the batch', async t => {
+    const e = await world(t, { prs: [910], rules: 'today' });
+    const { slotCalls } = leftoverGreen(e);
+    e.W.setRules('push');
+    const start = e.now, log = await untilLanded(t, e);
+    await landed(t, e, slotCalls, start, log);
+  });
+  // failS: the rehearsal S could not be built (clued-train/staging cannot be pointed), so the batch opens on GitHub's test merge, not on
+  // clued-train/staging, with no landing-batch record (rehearsalOnly). park: the batch opens while the rules read back as park (the same
+  // swallowed composition, Fable 11-21 open points §1's second source).
+  const openedThenSwitched = async (t, { failS, park = false, rounds = 30 }) => {
+    const e = await world(t, { prs: [910], rules: park ? 'push' : 'today' });
+    if (park) e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' });
+    const { slotCalls } = leftoverGreen(e);
+    const pointRef = e.port.pointRef;
+    if (failS) e.port.pointRef = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
+    const r = await stage10(e);
+    assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+    if (park) assert.equal(r.facts.landing?.route, 'park');
+    const b = r.facts.openFrontBatch;
+    if (failS) {
+      assert.equal(b.testSha, e.W.merge(e.main(), e.head(910)), 'GitHub\'s test merge');
+      assert.notEqual(e.W.refs.get('heads/clued-train/staging'), b.testSha, 'S is not on clued-train/staging');
+      assert.equal(await e.store.landingBatchByTest(b.testSha), null, 'no landing-batch record');
+      e.port.pointRef = pointRef;
+    }
+    if (park) e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'always' }); else e.W.setRules('push');
+    const start = e.now;
+    let log = [];
+    if (failS) {
+      // Fable 11-21 open points §1: route push, the running front batch's S not on clued-train/staging -> stage 10 attaches it this round
+      const s10 = await stage10(e);
+      assert.equal(s10.facts.landing?.route, 'push');
+      assert.equal(s10.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(s10.facts));
+      assert.equal(e.W.refs.get('heads/clued-train/staging'), b.testSha, 'the next stage 10 points clued-train/staging at S');
+      const rec = await e.store.landingBatchByTest(b.testSha);
+      assert.deepEqual(rec && [rec.frontPr, rec.frontHeadSha, rec.baseSha, rec.testTree, rec.attempt, rec.members.map(m => m.pr)],
+        [910, b.headSha, b.baseSha, b.testTree, b.attempt, [910]], 'a landing-batch record of the front alone');
+      log.push(['10', s10.facts.decision]);
+    }
+    log = [...log, ...await untilLanded(t, e, { batch: b, rounds })];
+    await landed(t, e, slotCalls, start, log);
+    if (failS) {
+      assert.equal(e.main(), b.testSha, 'main is S');
+      assert.ok(e.now - start < REQUIRED_CHECKS_MAX_WAIT_MS, `landed ${Math.round((e.now - start) / MIN)} minutes after the switch, under 60`);
+    }
+  };
+  await t.test('after stage 10 opened on today\'s rules (S on clued-train/staging), before stage 8', t => openedThenSwitched(t, { failS: false }));
+  // Review optional 6, ruled by Fable 11-21 open points §1: the rehearsal S could not be built, so the batch's S is GitHub's test merge, not
+  // on clued-train/staging. Before the fix it never got its Actions checks once C was saved: stage 8 parked it on CHECKS_PENDING while stage
+  // 10 read it as running up to the hard cap (about 220 minutes, then a turn_short yield). Now stage 10 attaches it to clued-train/staging.
+  await t.test('after stage 10 opened on today\'s rules with S = GitHub\'s test merge (the rehearsal S could not be built), before stage 8',
+    t => openedThenSwitched(t, { failS: true }));
+  await t.test('park source: opened while the rules read park with S = GitHub\'s test merge, then the rules completed to push',
+    t => openedThenSwitched(t, { failS: true, park: true }));
+  // Not past the line: on the current path the same batch (S = GitHub's test merge) gets no ref and no landing-batch record from stage 10.
+  await t.test('current path: the same running batch on GitHub\'s test merge -> stage 10 writes no ref', async t => {
+    const e = await world(t, { prs: [910], rules: 'today' });
+    const pointRef = e.port.pointRef, points = [];
+    e.port.pointRef = async () => { throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
+    const r = await stage10(e);
+    const b = r.facts.openFrontBatch;
+    assert.equal(b.testSha, e.W.merge(e.main(), e.head(910)));
+    e.port.pointRef = async (ref, s) => { points.push([ref, s]); return pointRef(ref, s); };
+    for (let i = 0; i < 3; i++) {
+      e.now += 4 * MIN;
+      const s10 = await stage10(e);
+      assert.equal(s10.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(s10.facts));
+    }
+    assert.deepEqual(points, [], 'no ref written');
+    assert.equal(await e.store.landingBatchByTest(b.testSha), null, 'no landing-batch record');
+  });
+  await t.test('after stage 8 wrote kooyumi-admission-verified only', async t => {
+    const e = await world(t, { prs: [910], rules: 'today' });
+    const { slotCalls } = leftoverGreen(e);
+    const r = await stage10(e);
+    const b = r.facts.openFrontBatch;
+    e.gh.world.hooks.create = c => { if (c.name === 'kooyumi-admission-verified') { e.W.setRules('push'); e.gh.world.hooks.create = null; } };
+    const start = e.now;
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    const log = [['8', p.status, p.reason ?? null], ...await untilLanded(t, e)];
+    await landed(t, e, slotCalls, start, log);
+  });
+  await t.test('after stage 8 wrote both (T1, the worst case: the front alone in the queue)', async t => {
+    const e = await world(t, { prs: [910], rules: 'today' });
+    const { slotCalls } = leftoverGreen(e);
+    await greenOnTodayRules(t, e);
+    e.W.setRules('push');
+    const start = e.now, log = await untilLanded(t, e);
+    await landed(t, e, slotCalls, start, log);
+  });
+  // A merge-slot success another job left on H before C (an S = H job, or a turn H lost), H not the front yet. Two moments: the green is
+  // still a success when H becomes the front (the 应修 1 state), or the sweep revoked it first (H was neither the front nor in main).
+  const promoted = async (t, { revokedFirst }) => {
+    const e = await world(t, { prs: [909, 910], rules: 'push' });
+    e.trainLanding = { landing: 'push', batchMax: 1, batchChain: false, unreadable: false }; // 909 alone, then 910 is the front
+    const { H, slotCalls } = leftoverGreen(e);
+    const green = () => { const id = Math.max(100, ...e.gh.world.checks.keys()) + 1;
+      e.gh.world.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-merge-slot', head_sha: H, status: 'completed', conclusion: 'success',
+        started_at: iso(e.now - 30 * MIN), completed_at: iso(e.now - 30 * MIN) }); return id; };
+    const id = revokedFirst ? green() : null;
+    const start = e.now;
+    const first = await untilLanded(t, e);
+    assert.deepEqual(e.adopted.map(a => a[0]), [909], JSON.stringify(first));
+    if (revokedFirst) assert.equal(e.gh.world.checks.get(id).conclusion, 'failure', 'the sweep revoked it while 909 was the front');
+    const late = revokedFirst ? null : green();
+    const log = await untilLanded(t, e);
+    t.diagnostic(`${Math.round((e.now - start) / MIN)} minutes, slot calls ${JSON.stringify(slotCalls)}${late ? `, the late green ended ${e.gh.world.checks.get(late).conclusion}` : ''}: ${JSON.stringify(log)}`);
+    assert.equal(e.W.pushes.at(-1), e.main(), `main is the pushed S: ${JSON.stringify(log)}`);
+    assert.deepEqual(e.adopted.map(a => a[0]), [909, 910], JSON.stringify(log));
+    return slotCalls;
+  };
+  // main unchanged since that green (the job before H left the queue without landing): the green is still a success when H is the front.
+  await t.test('a merge-slot green another job left on H, main unchanged, H the front', async t => {
+    const e = await world(t, { prs: [910], rules: 'push' });
+    const { H, slotCalls } = leftoverGreen(e);
+    const id = Math.max(100, ...e.gh.world.checks.keys()) + 1;
+    e.gh.world.checks.set(id, { id, app: { id: APP }, name: 'kooyumi-merge-slot', head_sha: H, status: 'completed', conclusion: 'success',
+      started_at: iso(e.now - 30 * MIN), completed_at: iso(e.now - 30 * MIN) });
+    const start = e.now, log = await untilLanded(t, e);
+    assert.equal(e.gh.world.checks.get(id).conclusion, 'success', 'the leftover green stayed a success');
+    assert.equal(log[0][1], 'OPEN_FRONT_BATCH', JSON.stringify(log));
+    assert.equal(e.W.pushes.at(-1), e.main(), `main is the pushed S: ${JSON.stringify(log)}`);
+    assert.deepEqual(e.adopted.map(a => a[0]), [910], JSON.stringify(log));
+    assert.deepEqual(slotCalls, [], 'no yield, no return');
+    t.diagnostic(`${Math.round((e.now - start) / MIN)} minutes: ${JSON.stringify(log)}`);
+  });
+  // main moved (909 landed) before H became the front: stage 10 revokes the front head's green in that round (main moved) and opens.
+  await t.test('the same green, main moved: the front before it lands, H is the front', async t => {
+    assert.deepEqual(await promoted(t, { revokedFirst: false }), [], 'no yield, no return');
+  });
+  // Observed, not either 应修's state (no success is involved): the revoked merge slot on H is a failed required check to landable
+  // (train-rules.mjs#requiredCheckFailure), so the new front asks Native to yield once; alone in the queue Native writes nothing and it lands.
+  // Reported to Fable with the T3 results.
+  await t.test('the same green revoked by the sweep before H becomes the front', async t => {
+    assert.deepEqual(await promoted(t, { revokedFirst: true }), [['yield', 910, null]]);
+  });
+});
+
 // The guard program (scripts/ci/clued-merge-executor.mjs) on the current path: a front head behind main is updated (main merged into it);
 // the PR's own CI and stage 1 run again on the new head.
 function updateBranch(e, pr) {
@@ -775,13 +1032,34 @@ test('three ways, today: three queued PRs go one by one through GitHub, none par
     const b = r.facts.openFrontBatch;
     if (!b) continue;
     const p = await stage8(t, e, b, { trainLanding: { landing: 'push', batchMax: 4, unreadable: false } });
-    log.push([b.pr, p.status, p.reason ?? null, p.rehearsal?.allSuccess ?? null]);
+    log.push([b.pr, p.status, p.reason ?? null, p.rehearsal?.testSha === b.testSha]);
     if (p.status === 'SETTLED') githubMerges(e, b);
   }
   assert.deepEqual(log, [[910, 'SETTLED', null, true], [911, 'SETTLED', null, true], [912, 'SETTLED', null, true]], JSON.stringify({ log, decisions }));
   assert.ok(decisions.includes('FRONT_NEEDS_MAIN_MERGE'), 'one PR a batch, each head up to date with main');
   assert.deepEqual(e.W.pushes, []);
   assert.deepEqual(e.adopted.map(a => a[0]), [910, 911, 912]);
+});
+
+// Fable 11-21 open points §5: the precheck's P3 reads the bypass states from state\status.json (the receipts directory is not readable
+// without elevation), so stage 10 reads them every round while push is in the package and its facts' landing carries them.
+test('open points §5: stage 10 (push in the package) reads both bypass states every round and its facts carry landing.bypass, today and after C', async t => {
+  let e = await world(t, { prs: [910], rules: 'today' });
+  let r = await stage10(e);
+  assert.equal(r.facts.landing?.route, 'github-merge');
+  assert.deepEqual(r.facts.landing?.bypass, { main: 'never', independent: 'absent' }, 'today: the App cannot bypass main, no independent ruleset');
+  validateTrainFacts(r.facts);
+  e = await world(t, { prs: [910], rules: 'today' });
+  e.W.rulesets.set(FF_RS, { id: FF_RS, currentUserCanBypass: 'never' });
+  e.W.rules = [...e.W.rules, { type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null }];
+  r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.bypass], ['github-merge', { main: 'never', independent: 'never' }], 'the independent ruleset created (R1): never/never');
+  e = await world(t, { prs: [910], rules: 'push' });
+  r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.bypass], ['push', { main: 'always', independent: 'never' }]);
+  // a facts landing.bypass of another shape is refused by the shared validator
+  for (const bypass of [{ main: 'x', independent: 'never' }, { main: 'never' }, { main: 'never', independent: 'never', other: 'never' }, 'never'])
+    assert.throws(() => validateTrainFacts({ ...r.facts, landing: { ...r.facts.landing, bypass } }), undefined, JSON.stringify(bypass));
 });
 
 test('three ways: the three conditions all read back -> push lands, the stage-10 facts say so', async t => {
@@ -880,14 +1158,13 @@ test('three ways, M1: stage 8\'s outcome on disk carries the rehearsal of a curr
   const root = await tempDir(t);
   const plan = { stage: 8, entryRole: 'control-checks' };
   const write = async (nonce, result) => { await writeOutcome({ receiptsRoot: root, nonce, plan, jobIds: [], result }); return JSON.parse(await fs.readFile(path.join(root, `outcome-${nonce}.json`), 'utf8')); };
-  // the current path, Windows not yet on S (before 6a): the record says so
+  // the current path, Windows not yet on S: the record carries S, what push lacks and the bypass state, nothing of S's checks
   const today = await opened(t, [910], { rules: 'today' });
   for (const [id, c] of today.e.W.checks) if (c.head_sha === today.b.testSha && c.name === 'ci-suites-windows') today.e.W.checks.delete(id);
   const p = await stage8(t, today.e, today.b, { trainLanding: PUSH1 });
   assert.equal(p.status, 'SETTLED');
   const o = await write('a'.repeat(32), p);
-  assert.deepEqual(o.rehearsal, { testSha: today.b.testSha, checks: { ...ALL_FOUR, 'ci-suites-windows': 'missing' }, allSuccess: false, missing: TODAY_MISSING,
-    bypass: { main: 'never', independent: 'absent' } });
+  assert.deepEqual(o.rehearsal, { testSha: today.b.testSha, missing: TODAY_MISSING, bypass: { main: 'never', independent: 'absent' } });
   assert.ok(!('landingMissing' in o));
   // a park on main's rules
   const half = await opened(t, [910]);
@@ -913,15 +1190,19 @@ test('three ways: the bypass lists are not the publisher\'s to read: who else is
   });
 });
 
-test('three ways, rehearsal: S without all four checks green still lands through GitHub; the receipt says which one', async t => {
+// Fable 11-21 应修 2: stage 8 settles before S's checks finish, so it reads none of them for the rehearsal (they are the precheck's, from GitHub).
+test('three ways, rehearsal: S without all four checks green still lands through GitHub; the receipt carries no snapshot of the checks on S', async t => {
   for (const [what, change] of [['missing', (W, id) => W.checks.delete(id)], ['pending', (W, id) => Object.assign(W.checks.get(id), { status: 'in_progress', conclusion: null })],
     ['failure', (W, id) => Object.assign(W.checks.get(id), { conclusion: 'failure' })]]) await t.test(what, async t => {
     const { e, b } = await opened(t, [910], { rules: 'today' });
     const [id] = [...e.W.checks].find(([, c]) => c.head_sha === b.testSha && c.name === 'ci-suites-windows');
     change(e.W, id);
+    const read = [], readChecks = e.gh.readChecks;
+    e.gh.readChecks = async sha => { read.push(sha); return readChecks(sha); };
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
     assert.equal(p.status, 'SETTLED', JSON.stringify(p));
-    assert.deepEqual([p.rehearsal.allSuccess, p.rehearsal.checks['ci-suites-windows'], p.rehearsal.checks['ci-suites']], [false, what, 'success']);
+    assert.deepEqual(Object.keys(p.rehearsal).sort(), ['bypass', 'missing', 'testSha'], JSON.stringify(p.rehearsal));
+    assert.ok(!read.includes(b.testSha), 'stage 8 on the current path reads no check of S');
     assert.equal(greens(e, b.headSha).length, 1);
   });
 });
@@ -1207,18 +1488,18 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
   for (let round = 0; round < 2; round++) {
     const r = await stage10(e);
     assert.equal(r.facts.decision, 'TRAIN_LANDING_STATE_UNREADABLE', JSON.stringify(r.facts));
-    assert.deepEqual(r.facts.landing, { route: 'push', missing: [], error: 'TRAIN_LANDING_STATE_UNREADABLE' });
+    assert.deepEqual(r.facts.landing, { route: 'push', missing: [], bypass: { main: 'always', independent: 'never' }, error: 'TRAIN_LANDING_STATE_UNREADABLE' });
     assert.equal(r.facts.openFrontBatch, null);
     validateTrainFacts(r.facts);
     assert.ok(!e.W.refs.has('heads/clued-train/staging') && !e.W.refs.has('heads/clued-train/staging.tmp'), 'nothing composed');
     assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
     // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
     const summary = trainSummary(r.facts);
-    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push' }]);
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
     const board = new StatusBoard({ clock: e.clock });
     board.update({ train: { enabled: 'on', last: summary } });
     const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
-    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push' }]);
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
     const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
     assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
     assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));

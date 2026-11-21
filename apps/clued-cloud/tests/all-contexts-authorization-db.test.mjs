@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -37,7 +37,7 @@ async function freePort() {
 test('all-contexts sources, exact permission inheritance and real transaction barriers', { timeout: 420000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-all-contexts-'));
   const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: proof(),
-    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {},
+    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {},
     onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   try {
