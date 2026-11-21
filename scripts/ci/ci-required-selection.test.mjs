@@ -1371,11 +1371,155 @@ test('the Windows job of the workflow selects and runs with the trusted selectio
   const labels = /\n {4}runs-on: \[([^\]]+)\]\n/.exec(job)[1].split(',').map((label) => label.trim());
   for (const label of ['self-hosted', 'Windows', 'trust-internal', 'cap-node24', 'cap-python312']) assert.ok(labels.includes(label), label);
   assert.ok(!labels.includes('Linux') && !/ubuntu|windows-latest/.test(job), 'no Linux route and no GitHub-hosted runner');
-  assert.match(job, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
   assert.match(job, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate\n {10}exit \$LASTEXITCODE\n/);
-  assert.equal(job.match(/\brun: /g).length, 1, 'one command: nothing else can pass or fail the job');
+  // Two commands: the push baseline (git only, before any trusted code loads) and the selection's own entry point.
+  assert.deepEqual([...job.matchAll(/\n {6}- name: (.+)\n(?:(?! {6}- ).*\n)*? {8}run: /g)].map((m) => m[1]),
+    ['Resolve push baseline before loading trusted commands', 'Select and run the suites declared for Windows'],
+    'nothing else can pass or fail the job');
   assert.doesNotMatch(job, /continue-on-error|setup-node|npm /);
 });
+
+// D6 N1: ci-suites-windows is a required check on main, and the train lands only when every required check
+// succeeded on S. The Windows workflow therefore runs on the train App's push to clued-train/staging under its
+// own name, exactly as clued-required-tests.yml does (ADR 0018 §8; ADR 0032 "counted the same way").
+test('bors staging, Windows side: the train App push to clued-train/staging publishes ci-suites-windows', () => {
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
+  assert.match(text, /\n {2}push:\n {4}branches: \[main, clued-train\/staging\]\n/);
+  assert.match(text, /group:.*github\.ref == 'refs\/heads\/clued-train\/staging' && github\.sha/);
+  assert.match(text, /cancel-in-progress: \$\{\{ github.event_name == 'pull_request' \}\}/);
+  const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
+  const expr = field => job.match(new RegExp(`^    ${field}: >-\\n([\\s\\S]*?)(?=^    [a-z])`, 'm'))[1]
+    .trim().replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.admission-gate', "needs['admission-gate']");
+  const evaluate = (field, change = {}, admitted = 'true') => Function('github', 'needs', `return (${expr(field)});`)(
+    { event_name: 'push', ref: 'refs/heads/clued-train/staging', actor: 'clued-ci-checks-turing-20261018[bot]',
+      repository: 'o/r', repository_owner: 'o', event: { pull_request: { base: {}, head: { repo: {} } } }, ...change },
+    { 'admission-gate': { outputs: { admitted } } });
+  for (const [change, admitted, allowed] of [[{}, 'true', true], [{ actor: 'owner' }, 'true', false],
+    [{ ref: 'refs/heads/clued-train/staging.tmp' }, 'true', false], [{ event_name: 'schedule' }, 'true', false],
+    [{}, 'false', false], [{ ref: 'refs/heads/main' }, 'true', true], [{ ref: 'refs/heads/main', actor: 'o' }, 'true', true]]) {
+    assert.equal(Boolean(evaluate('if', change, admitted)), allowed, JSON.stringify([change, admitted]));
+    assert.equal(evaluate('name', change, admitted), allowed ? 'ci-suites-windows' : 'ci-suites-windows-skipped');
+  }
+});
+
+test('bors staging, Windows side: T is resolved on main before the trusted selection loads, and is the base', () => {
+  const text = readFileSync(WINDOWS_WORKFLOW, 'utf8');
+  assert.doesNotMatch(text, /github\.event\.before/);
+  const job = text.slice(text.indexOf('\n  ci-suites-windows:\n') + 1);
+  const candidate = job.indexOf('path: candidate');
+  const resolver = job.indexOf('id: train-base');
+  const trusted = job.indexOf('path: trusted');
+  assert.ok(candidate > 0 && candidate < resolver && resolver < trusted, 'candidate, then the baseline, then trusted');
+  assert.match(job.slice(0, resolver), /fetch-depth: 0/);
+  const verification = job.slice(resolver, trusted);
+  assert.match(verification, /\n {8}shell: powershell\n/);
+  assert.match(verification, /git rev-parse "\$\(\$env:STAGING_SHA\)\^1"/);
+  // On staging, the runner hook's chain walk read from main (behaviour: the multi-member tests below).
+  assert.match(verification, /execFileSync\('git', \['show', 'origin\/main:scripts\/runner\/clued-runner-job-started\.mjs'\]\)/);
+  assert.ok(verification.indexOf('stagingBaseFromCheckout(process.env.STAGING_SHA)') < verification.indexOf('$env:GITHUB_OUTPUT'));
+  assert.match(job, /ref: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}\n {10}path: trusted\n/);
+  assert.match(job, /CI_BASE_SHA: \$\{\{ steps\.train-base\.outputs\.sha \|\| github\.event\.pull_request\.base\.sha \|\| steps\.train-base\.outputs\.ci_base \}\}\n/);
+});
+
+// A batch of N members is S = merge(...merge(T, H1)..., HN) (ADR 0019 §3): S^1 is an intermediate train merge, not on
+// main, and only T, the root of the member chain, is a trusted base. Each required job's push-baseline step runs here as
+// it does on the runner: its own script, its own shell, a real Git checkout whose origin/main is T and holds this
+// change's runner hook (the step's walk is the hook's, read from main).
+const LINUX_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
+const BASELINE_JOBS = [[LINUX_WORKFLOW, 'clued-cloud-tests'], [LINUX_WORKFLOW, 'ci-suites'], [LINUX_WORKFLOW, 'migration-verify'],
+  [WINDOWS_WORKFLOW, 'ci-suites-windows']];
+function baselineStep(file, id) {
+  const text = readFileSync(file, 'utf8');
+  const start = text.indexOf(`\n  ${id}:\n`);
+  assert.ok(start > 0, `${path.basename(file)} has job ${id}`);
+  const rest = text.slice(start + 1);
+  const end = rest.slice(1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+  const job = end < 0 ? rest : rest.slice(0, end + 1);
+  const step = job.slice(job.indexOf('        id: train-base\n'));
+  const shell = /\n {8}shell: (bash|powershell)\n/.exec(step)[1];
+  const lines = step.slice(step.indexOf('        run: |\n') + '        run: |\n'.length).split('\n');
+  const body = [];
+  for (const line of lines) { if (line.trim() && !line.startsWith(' '.repeat(10))) break; body.push(line.slice(10)); }
+  return { shell, script: body.join('\n').trimEnd() + '\n' };
+}
+// Never the bash on PATH under Windows (it may be WSL's): Git for Windows' own bash, or none.
+function shellCommand(shell) {
+  if (shell === 'powershell') return process.platform === 'win32' ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File']] : null;
+  if (process.platform !== 'win32') return ['bash', []];
+  const exec = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout?.trim();
+  const bash = exec && path.resolve(exec, '..', '..', '..', 'bin', 'bash.exe');
+  return bash && existsSync(bash) ? [bash, []] : null;
+}
+function trainCheckout(t) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-train-base-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@invalid', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=', ...args],
+      { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  git('init', '-q', '-b', 'work');
+  mkdirSync(path.join(dir, 'scripts', 'runner'), { recursive: true });
+  copyFileSync(path.join(ROOT, 'scripts', 'runner', 'clued-runner-job-started.mjs'), path.join(dir, 'scripts', 'runner', 'clued-runner-job-started.mjs'));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'T');
+  const T = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
+  // Each commit its own object: same tree, parents and second would otherwise give the same SHA (H1 = H2).
+  let made = 0;
+  const commit = (...parents) => git('commit-tree', tree, ...parents.flatMap((p) => ['-p', p]), '-m', `c${++made}`);
+  const [H1, H2, H3, X] = [commit(T), commit(T), commit(T), commit()];
+  git('update-ref', 'refs/remotes/origin/main', T);
+  const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
+  return { dir, T, H1, H2, one, two, three, commit, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
+}
+function runBaseline(t, { shell, script }, repo, env) {
+  const command = shellCommand(shell);
+  const output = path.join(repo, `output-${Math.random().toString(16).slice(2)}`);
+  const file = path.join(repo, `step-${Math.random().toString(16).slice(2)}.${shell === 'bash' ? 'sh' : 'ps1'}`);
+  writeFileSync(output, '');
+  writeFileSync(file, script);
+  const r = spawnSync(command[0], [...command[1], file], { cwd: repo, encoding: 'utf8',
+    env: { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`, GITHUB_OUTPUT: output, ...env } });
+  const outputs = Object.fromEntries(readFileSync(output, 'utf8').split('\n').filter(Boolean).map((line) => line.split('=')));
+  return { status: r.status, outputs, log: r.stdout + r.stderr };
+}
+const STAGING = { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/clued-train/staging' };
+for (const [file, id] of BASELINE_JOBS) {
+  const label = `${path.basename(file)} ${id}`;
+  const step = baselineStep(file, id);
+  const skip = shellCommand(step.shell) ? false : `no ${step.shell} for this platform`;
+  test(`bors staging, ${label}: the trusted base of a multi-member S is the chain root T, never S^1`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    for (const s of [repo.two, repo.three]) {
+      const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
+      assert.equal(r.status, 0, r.log);
+      assert.deepEqual(r.outputs, { sha: repo.T, ci_base: repo.T }, r.log);
+    }
+  });
+  test(`bors staging, ${label}: a one-member S keeps T = S^1; main pushes and pull requests are unchanged`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    const one = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: repo.one });
+    assert.equal(one.status, 0, one.log);
+    assert.deepEqual(one.outputs, { sha: repo.T, ci_base: repo.T }, one.log);
+    const main = runBaseline(t, step, repo.dir, { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.one });
+    assert.equal(main.status, 0, main.log);
+    assert.deepEqual(main.outputs, { ci_base: repo.T }, main.log);
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.one });
+    assert.equal(pr.status, 0, pr.log);
+    assert.deepEqual(pr.outputs, {}, pr.log);
+  });
+  test(`bors staging, ${label}: a chain that does not reach main through train merges gives no trusted base`, { skip }, (t) => {
+    const repo = trainCheckout(t);
+    // Rooted off main; a non-merge step; a non-merge S on main (git drops the repeated parent: the old S^1 check let it
+    // through); a member head already on main; S itself on main.
+    for (const s of [repo.offMain, repo.single, repo.commit(repo.T, repo.T), repo.commit(repo.one, repo.T), repo.T]) {
+      const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
+      assert.notEqual(r.status, 0, `${s}: ${r.log}`);
+      assert.equal(r.outputs.sha, undefined, r.log);
+    }
+  });
+}
 
 // The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
 // either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
