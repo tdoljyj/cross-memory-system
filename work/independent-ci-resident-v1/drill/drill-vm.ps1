@@ -129,6 +129,10 @@ $script:Drill = [ordered]@{
   PrereqTimeoutMinutes = 40
   ReceiptContract = 'clued.independent-ci.drill-receipt/1'
   ReadbackContract = 'clued.drill.production-readback/1'
+  # The read-only guest probe (4.3 of Fable ruling 0e418483): the distribution the first install makes (windows/first-install-host.ps1 $Distribution,
+  # checked by test/drill-guest-probe.test.mjs) and the one file inventory it reads.
+  ProbeDistribution = 'CluedResident-Linux'
+  ProbeFiles = (Join-Path (Split-Path -Parent $script:DrillScriptPath) 'guest-probe-files.json')
 }
 
 # A stop carries its code in the message so every catch reports one code (no free text from the guest reaches it).
@@ -2603,6 +2607,106 @@ function Wait-DrillRebootRefresh([pscredential]$Cred, [DateTimeOffset]$Boot, [Da
   return $reboot
 }
 
+# ---- The read-only guest probe (Fable ruling 0e418483, phase B image id, 4.3) ----------------------------------------------------------
+# After the launcher stage and before the checkpoint is restored, whether the first install passed or failed, one read-only pass over the
+# guest's WSL distribution: the docker storage (Driver, DriverStatus), the image list, each kit image's .Id and RepoDigests, the sha256 and
+# package version of every file the inventory names, systemctl --failed. The answers are kept raw in stage-evidence.json ('guest-probe'),
+# never judged, and the probe is no part of the candidate's behaviour: a probe that cannot be built, cannot reach the guest, or answers
+# nonsense is recorded as "not run" (stage-files.json) and changes nothing else.
+#
+# Where the file inventory comes from: drill/guest-probe-files.json, the one list (the files the offline inventory marks "needs a guest
+# reading"; it always holds /usr/bin/python3.12). The drill reads it from beside this script; adding a file is one line there. Where the image
+# references come from: the first-install kit among the release files the drill already holds (images.local[].id, referenced as sha256:<id>,
+# the form the role policies use for a local image).
+$script:ProbeFilesContract = 'clued.drill.guest-probe-files/1'
+$script:ProbeImageRef = '^sha256:[0-9a-f]{64}$'
+$script:ProbePath = '^/[A-Za-z0-9._+/-]+$'
+$script:DrillProbeImageIds = @()
+
+function Test-DrillProbePath([string]$Path) { ($Path -cmatch $script:ProbePath) -and ($Path -cnotmatch '(^|/)\.\.(/|$)') }
+
+# The inventory's paths, or a refusal by name (never an empty list read as "nothing to read").
+function Read-DrillProbeFiles([string]$File = $script:Drill.ProbeFiles) {
+  $doc = $null
+  try { $doc = Read-DrillJson $File } catch { throw (New-DrillError 'DRILL_PROBE_FILES_REFUSED' 'unreadable') }
+  if ([string](Get-Prop $doc 'contract') -cne $script:ProbeFilesContract) { throw (New-DrillError 'DRILL_PROBE_FILES_REFUSED' 'contract') }
+  $paths = @(Get-Prop $doc 'paths' | Where-Object { $null -ne $_ })
+  if ($paths.Count -lt 1) { throw (New-DrillError 'DRILL_PROBE_FILES_REFUSED' 'empty') }
+  foreach ($p in $paths) { if ($p -isnot [string] -or -not (Test-DrillProbePath $p)) { throw (New-DrillError 'DRILL_PROBE_FILES_REFUSED' 'path') } }
+  return @($paths | Sort-Object -Unique -CaseSensitive)
+}
+
+# The kit's local image references (sha256:<id>), sorted, once each, from the first-install kit among the release files. Anything that is not
+# a readable kit gives no references: the rest of the probe does not depend on them.
+function Get-DrillKitImageIds([string[]]$Files) {
+  $ids = @{}
+  foreach ($f in @($Files | Where-Object { $_ -and ([IO.Path]::GetFileName($_) -cmatch '\.first-install-kit\.json$') })) {
+    try {
+      $kit = Read-DrillJson $f
+      foreach ($i in @(Get-Prop $kit 'images.local')) { $id = [string](Get-Prop $i 'id'); if ($id -cmatch '^[0-9a-f]{64}$') { $ids['sha256:' + $id] = $true } }
+    } catch { }
+  }
+  return @($ids.Keys | Sort-Object -CaseSensitive)
+}
+
+# The commands, as data: an id, a bash script that only reads, and the arguments the script reads as $1. A reference or a path is an argument,
+# never part of the script, and is of an exact shape or refused.
+function Get-DrillProbeCommands([string[]]$ImageIds = @(), [string[]]$Files = @()) {
+  foreach ($r in @($ImageIds)) { if ($r -cnotmatch $script:ProbeImageRef) { throw (New-DrillError 'DRILL_PROBE_PLAN_REFUSED' 'image') } }
+  foreach ($p in @($Files)) { if (-not (Test-DrillProbePath $p)) { throw (New-DrillError 'DRILL_PROBE_PLAN_REFUSED' 'path') } }
+  $one = { param([string]$Id, [string]$Script, [string[]]$Arguments = @()) [ordered]@{ id = $Id; script = $Script; args = [string[]]@($Arguments) } }
+  $fileScript = @'
+p="$1"; sha256sum -- "$p"; dpkg-query -S -- "$p"; pkg=$(dpkg-query -S -- "$p" | head -n 1 | cut -d: -f1); [ -n "$pkg" ] && dpkg-query -W -f='${Package} ${Version}\n' "$pkg"
+'@.Trim()
+  $inspectScript = @'
+docker image inspect --format '{{.Id}} {{json .RepoDigests}}' "$1"
+'@.Trim()
+  $c = New-Object Collections.Generic.List[object]
+  $c.Add((& $one 'docker-driver' "docker info --format '{{json .Driver}}'"))
+  $c.Add((& $one 'docker-driver-status' "docker info --format '{{json .DriverStatus}}'"))
+  $c.Add((& $one 'docker-image-ls' 'docker image ls --no-trunc --digests'))
+  foreach ($r in @($ImageIds)) { $c.Add((& $one "image:$r" $inspectScript @($r))) }
+  foreach ($p in @($Files)) { $c.Add((& $one "file:$p" $fileScript @($p))) }
+  $c.Add((& $one 'systemd-failed' 'systemctl --failed --no-pager --plain'))
+  return $c.ToArray()
+}
+
+function New-DrillProbePlan($Commands, [string]$WslExe = '') {
+  [ordered]@{ distribution = $script:Drill.ProbeDistribution; wslExe = $WslExe; commands = @($Commands) }
+}
+
+# In the guest (a script block). Each command runs apart as root in a clean environment (the form GuestPrereq uses), bounded, and its answer
+# is kept raw; one that cannot answer is kept with the reason. Without a plan it does nothing.
+$script:GuestProbe = {
+  param($Plan, $NativeText)
+  if ($Plan -isnot [Collections.IDictionary] -or $Plan['commands'] -isnot [Array]) { return $null }
+  $native = [scriptblock]::Create($NativeText)
+  $wslExe = if ([string]$Plan['wslExe']) { [string]$Plan['wslExe'] } else { "$env:SystemRoot\System32\wsl.exe" }
+  $list = New-Object Collections.Generic.List[object]
+  foreach ($c in @($Plan['commands'])) {
+    $r = [ordered]@{ id = [string]$c['id']; script = [string]$c['script']; args = @(@($c['args']) | ForEach-Object { [string]$_ }); exit = $null; error = $null; stdout = ''; stderr = '' }
+    try {
+      $argv = @('-d', [string]$Plan['distribution'], '-u', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', 'LC_ALL=C', '/bin/bash', '-c', $r.script, '_') + @($r.args)
+      $n = & $native $wslExe $argv 120 'utf-8'
+      $out = [string]$n.stdout
+      $r.exit = [int]$n.exit; $r.stdout = $(if ($out.Length -gt 200000) { $out.Substring(0, 200000) } else { $out }); $r.stderr = [string]$n.stderr
+    } catch { $r.error = [string]$_.Exception.Message }
+    $list.Add($r)
+  }
+  [ordered]@{ schema = 'clued.drill.guest-probe/1'; distribution = [string]$Plan['distribution']; commands = $list.ToArray() }
+}
+
+# The host's side, once, before the stage files are taken. Returns @{ result; state; code }: the result only when the guest answered with a
+# probe of the expected shape. Never throws.
+function Invoke-DrillGuestProbe([pscredential]$Cred) {
+  try {
+    $plan = New-DrillProbePlan (Get-DrillProbeCommands -ImageIds @($script:DrillProbeImageIds) -Files @(Read-DrillProbeFiles))
+    $got = Invoke-DrillGuest $Cred $script:GuestProbe -ArgumentList @($plan, $script:DrillNativeText) -TimeoutMinutes 20 -Step 'guest-probe'
+    if ([string](Get-DrillField $got 'schema') -cne 'clued.drill.guest-probe/1' -or $null -eq (Get-DrillField $got 'commands')) { return @{ result = $null; state = 'not-run'; code = 'DRILL_PROBE_NO_ANSWER' } }
+    return @{ result = $got; state = 'read'; code = $null }
+  } catch { return @{ result = $null; state = 'not-run'; code = [string](Get-DrillCode $_).code } }
+}
+
 # The stage files the entry writes under the guest's work directory, read in the guest file by file with read-write sharing (a stage still
 # writing holds its log open: the entry's line-by-line writer, the package's appending one; Read-StageResult in bootstrap.ps1 reads them
 # the same way). One that cannot be read is named with its error, never taking the others with it.
@@ -2627,7 +2731,10 @@ $script:GuestStageFiles = {
 # stage-evidence.json, the timings as stage-timings.json), and records each one's outcome in stage-files.json: saved, absent, unreadable
 # in the guest, or not saved here. A failed collection is recorded and never replaces the run's own outcome.
 function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
-  $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); collection = $null; files = [ordered]@{} }
+  $record = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); collection = $null; files = [ordered]@{}; probe = $null }
+  # the read-only guest probe first (4.3): nothing else touches the guest between the launcher stage and it; its failure is only recorded
+  $probe = Invoke-DrillGuestProbe $Cred
+  $record.probe = [ordered]@{ state = $probe.state; code = $probe.code; at = (Get-DrillTime).ToString('o') }
   $got = $null
   try { $got = Invoke-DrillGuest $Cred $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), $script:DrillStageFiles) -TimeoutMinutes 2 -Step 'stage-files' }
   catch { $record.collection = (Get-DrillCode $_) }
@@ -2654,11 +2761,12 @@ function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
   # Written only from what was really read (Codex review of e0a3cded5, medium 2): no stage-evidence.json or stage-timings.json from nothing,
   # and every file's state says whether it reached the run directory.
   $stageEvidence = [ordered]@{ 'host-result.json' = $json['host-result.json']; 'launcher-result.json' = $json['launcher-result.json']; 'wsl-cold-start.json' = $json['wsl-cold-start.json'] }
+  if ($null -ne $probe.result) { $stageEvidence['guest-probe'] = $probe.result }
   $timings = $json['stage-timings.json']
   $results = @(@('host-result.json', 'launcher-result.json', 'wsl-cold-start.json') | Where-Object { $json.Contains($_) })
-  if ($results.Count) {
-    try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' } }
-    catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } } }
+  if ($results.Count -or $null -ne $probe.result) {
+    try { Write-DrillJson (Join-Path $RunDir 'stage-evidence.json') $stageEvidence; foreach ($n in $results) { $record.files[$n].state = 'saved' }; if ($null -ne $probe.result) { $record.probe.state = 'saved' } }
+    catch { foreach ($n in $results) { $record.files[$n] = [ordered]@{ state = 'not-saved'; error = [string]$_.Exception.Message } }; if ($null -ne $probe.result) { $record.probe = [ordered]@{ state = 'not-saved'; code = $null } } }
   }
   if ($json.Contains('stage-timings.json')) {
     try { Write-DrillJson (Join-Path $RunDir 'stage-timings.json') $timings; $record.files['stage-timings.json'].state = 'saved' }
@@ -2703,6 +2811,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
 
+  # the kit's image references for the guest probe, which runs on every end of the first install (Save-DrillStageEvidence)
+  $script:DrillProbeImageIds = @(try { Get-DrillKitImageIds @($Package.files) } catch { })
   $timings = $null; $launcher = $null
   if ($Interactive) {
     # the guest evidence on a timeout or a cancel as well (Codex review of ced480363, medium 8)

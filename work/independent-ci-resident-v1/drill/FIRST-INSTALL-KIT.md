@@ -154,6 +154,7 @@ Fable 11-19 裁定 §2.3：候选 → 演练 PASS → Owner 接受一次。`-Fro
 和 `host-result.json`、`launcher-result.json`、`wsl-cold-start.json`、`stage-timings.json`。阶段文件在来宾里逐个以读写共享方式读取（写端仍开着也能读），逐个存回运行目录，
 每个文件的结局记在 `stage-files.json`；不取任何凭据文件。
 `wsl-cold-start.json`：入口在 launcher 段之前对来宾 `wsl --shutdown`（失败即以 `DRILL_WSL_SHUTDOWN_FAILED` 停），再读 `wsl --list --running`，两次的原始应答（exit、stdout、stderr）原样记下、不判；与两份阶段结果一起存进 `stage-evidence.json`（Fable 裁定 0e418483 §4.2：每轮固定走冷启动）。取证失败只记录（`guest-evidence.json`、`stage-files.json`），不挡还原，也不替换本轮自己的失败码。
+只读来宾探针（Fable 裁定 0e418483 §4.3）：取阶段文件之前，在来宾里对 `CluedResident-Linux` 以 root 逐条跑只读命令一次——`docker info` 的 `Driver` 与 `DriverStatus`、`docker image ls --no-trunc --digests`、kit 里每个本地镜像（`images.local[].id`，按 `sha256:<id>` 引用）的 `docker image inspect` 的 `.Id` 与 `RepoDigests`、清单里每个文件的 `sha256sum` 与所属包版本（`dpkg-query`）、`systemctl --failed`；原始应答（exit、stdout、stderr，或无法作答的原因）原样存进 `stage-evidence.json` 的 `guest-probe`，不判。文件清单只有一处：`drill/guest-probe-files.json`（`/usr/bin/python3.12` 必在；其余照离线清点里记为“要来宾读数”的文件逐行加）。探针失败、清单读不出、来宾无应答，都只记入 `stage-files.json` 的 `probe`（`state: not-run` 与 `code`），不挡取证、不挡还原、不替换本轮自己的失败码。
 回执 A1 下的 `firstInstallSteps` 只从完整日志解析（阶段结果文件只取判决行）：各阶段的逐步结果行、最后完成的一步、首个被拒的一步、判决行；
 阶段已运行却缺日志、空日志、只有判决行、被截断、或后续阶段已抵达而它毫无证据，记 `incomplete`；一行也解析不到记 `missing`。A1 要求两者都不是。
 本轮在首装之后中断时，A1 由首装自己的结果（`entry-result.json`）单独形成。本轮没有判决就结束时（无 A1），记录在 `evidence.firstInstallSteps`。

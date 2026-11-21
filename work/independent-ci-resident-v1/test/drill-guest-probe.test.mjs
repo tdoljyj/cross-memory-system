@@ -93,25 +93,33 @@ test('the kit image ids come from the release files the drill already holds', op
   fs.writeFileSync(kit, JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1',
     images: { local: [{ id: HEX_B, asset: `role-image-${HEX_B}.tar.gz` }, { id: HEX_A, asset: `role-image-${HEX_A}.tar.gz` }, { id: HEX_A, asset: `role-image-${HEX_A}.tar.gz` }] } }));
   const other = path.join(dir, 'fleet-node-1.2.3.tar'); fs.writeFileSync(other, 'x');
-  assert.deepEqual(arr(ps(`@(Get-DrillKitImageIds @(${q(other)}, ${q(kit)}))`)), [`sha256:${HEX_A}`, `sha256:${HEX_B}`], 'sorted, once each');
-  assert.deepEqual(arr(ps(`@(Get-DrillKitImageIds @(${q(other)}))`)), [], 'no kit among the files: nothing to inspect');
+  assert.deepEqual(arr(ps(`[ordered]@{ v = @(Get-DrillKitImageIds @(${q(other)}, ${q(kit)})) }`).v), [`sha256:${HEX_A}`, `sha256:${HEX_B}`], 'sorted, once each');
+  assert.deepEqual(arr(ps(`[ordered]@{ v = @(Get-DrillKitImageIds @(${q(other)})) }`).v), [], 'no kit among the files: nothing to inspect');
   fs.writeFileSync(kit, '{ not json');
-  assert.deepEqual(arr(ps(`@(Get-DrillKitImageIds @(${q(kit)}))`)), [], 'an unreadable kit is no list (the probe still reads the rest)');
+  assert.deepEqual(arr(ps(`[ordered]@{ v = @(Get-DrillKitImageIds @(${q(kit)})) }`).v), [], 'an unreadable kit is no list (the probe still reads the rest)');
 });
 
-// A fake wsl.exe: node writes each call's arguments to calls.jsonl and answers by the script text; FAKE_FAIL names an id-less substring
-// whose command exits 7, FAKE_MISSING makes every call exit 1 with a message on stderr.
+// A fake wsl.exe, a real console program (a .cmd would let cmd.exe read the | and && of a script argument): it appends each call's arguments
+// (separated by U+001F, one call per line) to calls.txt beside it and answers by the script text; FAKE_FAIL is a substring of a script
+// whose command exits 7 with "boom" on stderr.
+const FAKE_WSL_CS = `using System; using System.IO;
+public static class P { public static int Main(string[] a) {
+  string dir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+  File.AppendAllText(Path.Combine(dir, "calls.txt"), string.Join("\\u001f", a) + "\\n");
+  int c = Array.IndexOf(a, "-c"); string s = (c >= 0 && c + 1 < a.Length) ? a[c + 1] : "";
+  int u = Array.IndexOf(a, "_"); string rest = (u >= 0) ? string.Join(",", a, u + 1, a.Length - u - 1) : "";
+  string fail = Environment.GetEnvironmentVariable("FAKE_FAIL");
+  if (!string.IsNullOrEmpty(fail) && s.Contains(fail)) { Console.Error.WriteLine("boom"); return 7; }
+  Console.Out.WriteLine("ANSWER " + s.Split(' ')[0] + " " + rest); return 0; } }`;
 function fakeWsl(name) {
   const dir = path.join(tmp, name); fs.mkdirSync(dir, { recursive: true });
-  const js = path.join(dir, 'fake-wsl.mjs'), cmd = path.join(dir, 'wsl.cmd'), calls = path.join(dir, 'calls.jsonl');
-  fs.writeFileSync(js, `import fs from 'node:fs';
-const a = process.argv.slice(2); fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(a) + '\\n');
-const s = a[a.indexOf('-c') + 1] ?? '';
-if (process.env.FAKE_FAIL && s.includes(process.env.FAKE_FAIL)) { process.stderr.write('boom\\n'); process.exit(7); }
-process.stdout.write('ANSWER ' + s.split(' ').slice(0, 3).join('_') + ' ' + a.slice(a.indexOf('_') + 1).join(',') + '\\n');
-`);
-  fs.writeFileSync(cmd, `@echo off\r\n"${process.execPath}" "${js}" %*\r\n`);
-  return { dir, cmd, calls: () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : []) };
+  const src = path.join(dir, 'fake.cs'), exe = path.join(dir, 'wsl.exe'), calls = path.join(dir, 'calls.txt');
+  fs.writeFileSync(src, FAKE_WSL_CS);
+  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+    `Add-Type -TypeDefinition ([IO.File]::ReadAllText(${q(src)})) -OutputType ConsoleApplication -OutputAssembly ${q(exe)}`], { encoding: 'utf8', timeout: 120000 });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const split = (text) => text.split('\n').filter(Boolean).map(l => l.split('\u001f'));
+  return { dir, cmd: exe, calls: () => (fs.existsSync(calls) ? split(fs.readFileSync(calls, 'utf8')) : []) };
 }
 const runGuest = (wslCmd, env = '') => ps(`${env}
   $c = Get-DrillProbeCommands ${PLAN_ARGS}
@@ -123,7 +131,7 @@ test('the guest side runs every command apart, as root, with a clean environment
   const r = runGuest(w.cmd);
   assert.equal(r.schema, 'clued.drill.guest-probe/1');
   assert.equal(r.distribution, 'CluedResident-Linux');
-  assert.ok(!Number.isNaN(Date.parse(r.at)));
+  assert.equal(r.at, undefined, 'no clock read in the guest: the host stamps the record');
   const ids = r.commands.map(x => x.id);
   assert.deepEqual(ids, ['docker-driver', 'docker-driver-status', 'docker-image-ls', `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`, 'file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', 'systemd-failed']);
   assert.ok(r.commands.every(x => x.exit === 0 && x.error === null && typeof x.stdout === 'string' && x.stdout.startsWith('ANSWER')));
@@ -164,7 +172,7 @@ function guestWork(name, files) {
   return dir;
 }
 const LAUNCHER_FAILED = JSON.stringify({ exit: 1, terminal: { status: 'BOOTSTRAP_REFUSED', code: 'LAUNCHER_STAGE_FAILED' } });
-const PROBE = { schema: 'clued.drill.guest-probe/1', at: '2026-11-21T03:00:00Z', distribution: 'CluedResident-Linux',
+const PROBE = { schema: 'clued.drill.guest-probe/1', distribution: 'CluedResident-Linux',
   commands: [{ id: 'docker-driver', script: 's', args: [], exit: 0, error: null, stdout: '"overlayfs"\n', stderr: '' }] };
 // A stub for Invoke-DrillGuest: the stage-file reader runs over the directory, the probe call is answered by $probeAnswer.
 const stub = (work, probeAnswer) => `

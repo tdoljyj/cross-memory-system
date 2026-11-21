@@ -2589,7 +2589,7 @@ test('the guest evidence is collected after a timed-out first install too, and a
       record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); record2 = (Read-DrillJson (Join-Path ${q(runDir2)} 'guest-evidence.json'))
       steps = (Read-DrillFirstInstallSteps ${q(runDir)}); steps2 = (Read-DrillFirstInstallSteps ${q(runDir2)}) }`);
   assert.equal(r.first, 'DRILL_FIRST_INSTALL_TIMEOUT');
-  assert.deepEqual(r.firstSteps, ['first-install', 'stage-files', 'guest-evidence']);
+  assert.deepEqual(r.firstSteps, ['first-install', 'guest-probe', 'stage-files', 'guest-evidence']);
   // collected, but not all of it: ok only with nothing missing (Codex review of f33fc33e5, medium 2)
   assert.equal(r.record.ok, false);
   assert.equal(r.record.code, null);
@@ -2600,7 +2600,7 @@ test('the guest evidence is collected after a timed-out first install too, and a
   assert.deepEqual(r.steps.steps.map(x => [x.stage, x.name]), [['entry', 'prepare'], ['host', 'residue']]);
   assert.equal(r.steps.noVerdict, true);
   assert.equal(r.second, 'DRILL_FIRST_INSTALL_TIMEOUT', 'a failed collection never replaces the run\'s own failure');
-  assert.deepEqual(r.secondSteps, ['first-install', 'stage-files', 'guest-evidence']);
+  assert.deepEqual(r.secondSteps, ['first-install', 'guest-probe', 'stage-files', 'guest-evidence']);
   assert.equal(r.record2.ok, false);
   assert.equal(r.record2.code, 'DRILL_GUEST_STEP_FAILED');
   assert.equal(r.steps2.missing, true);
@@ -2635,13 +2635,13 @@ test('the returned entry output is kept when the stage files cannot be collected
     @{ kept = $kept; keptSteps = $keptSteps; interactive = $interactiveCode; interactiveSteps = @($script:steps)
       record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); record2 = (Read-DrillJson (Join-Path ${q(runDir2)} 'guest-evidence.json'))
       steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
-  assert.deepEqual(r.keptSteps.slice(0, 3), ['first-install', 'stage-files', 'guest-evidence']);
+  assert.deepEqual(r.keptSteps.slice(0, 3), ['first-install', 'guest-probe', 'stage-files', 'guest-evidence']);
   assert.equal(r.record.ok, false);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean).length, 2);
   assert.deepEqual(r.steps.steps.map(x => x.name), ['prepare']);
   assert.deepEqual(r.steps.verdict, { status: 'FIRST_INSTALL_STOPPED', stopCode: 'X' });
   assert.equal(r.interactive, 'DRILL_INTERACTIVE_TIMEOUT');
-  assert.deepEqual(r.interactiveSteps, ['interactive', 'stage-files', 'guest-evidence']);
+  assert.deepEqual(r.interactiveSteps, ['interactive', 'guest-probe', 'stage-files', 'guest-evidence']);
   assert.equal(r.record2.ok, false);
 });
 

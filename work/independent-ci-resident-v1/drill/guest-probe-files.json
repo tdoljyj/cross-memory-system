@@ -1,0 +1,6 @@
+{
+  "contract": "clued.drill.guest-probe-files/1",
+  "paths": [
+    "/usr/bin/python3.12"
+  ]
+}
