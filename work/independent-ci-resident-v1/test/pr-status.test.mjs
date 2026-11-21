@@ -359,7 +359,7 @@ test('phase 2: the PR page says where the run queue has the head: its place and 
   assert.equal(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'WAITING', position: null, reason: 'OWNER_REVIEW_REQUIRED', nextAt: now + 40 * 60_000 })])), now }).description,
     '等 Owner 批准受保护改动：约 09:40Z 自动重试，批准或修正后编辑 PR 可提前');
   const back = describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'BACKOFF', position: null, reason: 'CLAIM_NOT_CURRENT', nextAt: now + 10 * 60_000, level: 1 })])), now });
-  assert.deepEqual([back.state, back.description], ['pending', '未准入或未执行（CLAIM_NOT_CURRENT）：约 09:10Z 自动重试（第 1 次），修正后编辑 PR 可提前']);
+  assert.deepEqual([back.state, back.description], ['pending', '未准入或未执行（CLAIM_NOT_CURRENT）：约 09:10Z 自动重试（第 1 次）；认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）']);
   assert.equal(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'STOPPED', position: null, reason: 'CLAIM_NOT_CURRENT', stopKind: 'release-cap' })])), now }).state, 'failure');
   assert.match(describe({ pull: pull(), status: s(b => b.setPending([row({ state: 'STOPPED', position: null, reason: 'PROTECTED_CHANGE_NOT_UP_TO_DATE', stopKind: 'burned' })])), now }).description, /请推新提交/);
   assert.match(describe({ pull: pull(), status: s(b => { b.setPending([row()]); b.update({ breaker: { state: 'open', nextTrialAt: now + 30 * 60_000 } }); }), now }).description, /熔断中，约 09:30Z 试跑/);
