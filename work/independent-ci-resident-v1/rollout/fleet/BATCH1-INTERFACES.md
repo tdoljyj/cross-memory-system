@@ -86,13 +86,14 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\install.m
 
 ## 5. 归档与并入（块 3）
 
-- `node R/rollout/fleet/publish.mjs release --dir <build out> --repo tdoljyj/cross-memory-system --index <索引文件>`：
-  - `gh release create fleet-node-<version> <tar> <release.json> <SHA256SUMS> --target <commit>`；
+- 没有单独的 `release` 命令（已撤掉，输入它得到 `USAGE`；FABLE-drill-release-step-20261121.md）。该版的 Release 和索引行由 `publish.mjs prepare` 在本地检查全部通过之后建出（README 第 3 节、4.1 第 5 步）：
+  - 候选 commit 必须已在远端：建 Release 之前用 `gh api repos/<repo>/commits/<commit>` 核，GitHub 答“没有这个 commit”即拒绝（`PREPARE_COMMIT_NOT_ON_REMOTE`），查询本身失败报 `PREPARE_COMMIT_LOOKUP_FAILED`；
+  - `gh release create fleet-node-<version> <tar> <release.json> <SHA256SUMS> <bootstrap.ps1> <prereq-manifest.json> --target <commit>`；
   - 凭据只用 gh 自己的登录，不读、不写、不打印令牌，子进程环境去掉 `GH_TOKEN`/`GITHUB_TOKEN`；
-  - 在索引文件追加一行。
-- `publish.mjs prepare` / `seal`（README 第 4 节）：接受前出接受请求并挂 kit；接受后填 Decision、上传接受文件，补全索引行的接受时间、Decision 与首装演练。
+  - 在索引文件追加一行；中途停下后原样重跑 `prepare`：Release 上已有的资产逐字节核过，才只补缺的资产和索引行。
+- `publish.mjs prepare` / `seal`（README 第 4 节）：接受前建 Release 与索引行、出接受请求并挂 kit；接受后填 Decision、上传接受文件，补全索引行的接受时间、Decision 与首装演练。
 - 节点取包：`gh release download fleet-node-<version> --repo tdoljyj/cross-memory-system --pattern "fleet-node-<version>.*" --dir <新目录>`，然后由 `install.mjs prepare` 核哈希。
-- 索引文件：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`。表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision。
+- 索引文件：`G:\我的云端硬盘\Clued_资料中心\10_E_工程与平台\CI基础设施\通用节点包_归档索引.md`。表头：版本 | Release | tar sha256 | commit | 接受时间 | Decision | 首装演练。
 - 已并入 Linux 工具修复 ee68029c（合并提交 af02e893）；组件版本在最后统一用 `scripts/ci/component-version-integration.py --base 94d7e0346 --write` 重算。
 - 文档：`R/rollout/fleet/README.md`（通用包重装操作说明），`R/reinstall/README.md` §7 指向它。另写一份 CluedDev-Linux 上验证真实 `statvfs` / `FS_IOC_GETVERSION` 与逐条目挂载检查的命令，只写不跑，交协调者。
 

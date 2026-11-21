@@ -360,7 +360,7 @@ test('every selectable suite has commands, every command directory and named tes
     for (const command of commands) {
       const cwd = path.join(ROOT, command.cwd);
       assert.ok(existsSync(cwd), `${id}: ${command.cwd}`);
-      const argv = expandArgv(command.argv, { cwd, base: 'abc', report: '/tmp/r.json', listUnit: () => ['tests/a.test.mjs'] });
+      const argv = expandArgv(command.argv, { cwd, root: ROOT, base: 'abc', report: '/tmp/r.json', listUnit: () => ['tests/a.test.mjs'] });
       for (const arg of argv.filter((value) => /\.(?:mjs|py)$/.test(value) && !value.includes('*') && value !== 'tests/a.test.mjs')) {
         assert.ok(existsSync(path.join(cwd, arg)), `${id}: ${arg}`);
       }
@@ -463,7 +463,7 @@ test('every Node suite runs when any file its tests reach through imports change
 });
 
 test('any workflow change runs the runner budget policy, the admission self-tests, the pinned-registry and the dependency-entry checks', () => {
-  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'test-coverage']);
+  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']);
 });
 
 test('a generator, the generated-file list or any file it names runs the mechanical-outputs audit', () => {
@@ -572,7 +572,7 @@ test('every file a moved database test imports selects production-schema', () =>
 });
 
 // Every database test, like every other test file, runs in a required suite or is listed in ci-uncovered-tests.json with its
-// kind, reason and Task: check-tests-covered.mjs (suite test-coverage) checks it; the database exemptions moved there.
+// kind, reason and Task: check-tests-covered.mjs (its test runs in clued-cloud) checks it; the database exemptions moved there.
 
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
@@ -739,7 +739,12 @@ test('the required primaries have no conditional step that a run can skip, excep
   const file = '.github/workflows/clued-required-tests.yml';
   const jobs = workflowJobs(readFileSync(path.join(ROOT, file), 'utf8'));
   // clued-cloud-tests selects clued-cloud for every change, so its run_clued_cloud condition always holds.
-  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] });
+  // These two jobs name their one suite in the workflow (its dependencies, timeout and the execution proof's conditional
+  // steps) and run no other: a new suite goes to ci-suites (FABLE-new-suite-run-points-20261121 §2).
+  assert.deepEqual(SUITES['clued-cloud-tests'], { 'clued-cloud': ['**'] },
+    'the clued-cloud-tests job names its suite in the workflow and runs no other: add a new suite to ci-suites');
+  assert.deepEqual(Object.keys(SUITES['migration-verify']), ['production-schema'],
+    'the migration-verify job names its suite in the workflow and runs no other: add a new suite to ci-suites');
   const expected = {
     'clued-cloud-tests': { 'Install from lockfile': "steps.select.outputs.run_clued_cloud == 'true'",
       'Lint, ledger, typecheck, build and unit tests': "steps.select.outputs.run_clued_cloud == 'true'" },
@@ -1086,7 +1091,7 @@ test('candidate commands: no known-failure allowance, nothing outside the checko
   const baseline = SUITE_COMMANDS['retrigger-counter'];
   const extra = { cwd: '.', argv: ['node', '--test', 'scripts/ci/retrigger-counter-extra.test.mjs'], known: 'retrigger-counter' };
   change('retrigger-counter', [...baseline, extra]);
-  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], [...baseline, { cwd: extra.cwd, argv: extra.argv }]);
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root)], [...baseline, { cwd: extra.cwd, argv: extra.argv, expanded: true }]);
   // --run-files plans a test file only the candidate's added command runs, with the command CI runs for it.
   writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), '');
   writeFileSync(path.join(dir, 'retrigger-counter-extra.test.mjs'), '');
@@ -1193,7 +1198,7 @@ test('an added test file runs without the trusted allowance, which still covers 
   // Guard: a switch added as well cannot be planned as files only, so the whole command is added, as before.
   const switched = [...middle.slice(0, 2), '--test-only', ...middle.slice(2)];
   change('admission-self-tests', [{ ...trusted, argv: switched }]);
-  assert.deepEqual([...selection.requiredCommands('admission-self-tests', root)], [trusted, { cwd: trusted.cwd, argv: switched }]);
+  assert.deepEqual([...selection.requiredCommands('admission-self-tests', root)], [trusted, { cwd: trusted.cwd, argv: switched, expanded: true }]);
   assert.deepEqual(suite(0).calls[1], switched);
 });
 
@@ -1228,7 +1233,7 @@ ${run.stdout}${run.stderr}`);
     `::group::retrigger-counter: (.) ${candidateCommand.argv.join(' ')}`]);
   assert.match(run.stdout, /b foo executed/);
   assert.deepEqual([...selection.requiredCommands('retrigger-counter', candidate.root, { baseline: [trustedCommand] })],
-    [trustedCommand, candidateCommand], 'the added command carries no files: it runs whole');
+    [trustedCommand, { ...candidateCommand, expanded: true }], 'the added command carries no files: it runs whole');
 });
 
 test('L1: filterCommand plans nothing for a switch that takes a separate value, and --run-files refuses the file', (t) => {
@@ -1253,13 +1258,16 @@ test('L1 guard: the --test-force-exit command of production-schema and a --switc
   const equals = ['node', '--test', '--test-name-pattern=foo', 'scripts/ci/a.test.mjs', 'scripts/ci/b.test.mjs'];
   assert.deepEqual(selection.filterCommand({ cwd: '.' }, equals, new Set(['scripts/ci/b.test.mjs'])).runs,
     [['node', '--test', '--test-name-pattern=foo', 'scripts/ci/b.test.mjs']]);
-  // A file added to that command still runs alone (unexpanded, as requiredCommands sees it).
+  // A file added to that command still runs alone (each side expands its own {db-concurrency}, as the run sees it).
   const { root, change } = candidateSelector(t);
   const added = 'tests/added-authorization-db.test.mjs';
   const argv = [...command.argv, added];
   change('production-schema', [{ ...command, argv }]);
+  const ran = expandArgv(argv, { cwd: path.join(root, command.cwd) });
   assert.deepEqual([...selection.requiredCommands('production-schema', root, { baseline: [command] })],
-    [command, { cwd: command.cwd, argv, files: [path.posix.join(command.cwd, added)] }]);
+    [command, { cwd: command.cwd, argv: ran, expanded: true, files: [path.posix.join(command.cwd, added)] }]);
+  assert.deepEqual(selection.commandArgv({ cwd: command.cwd, argv: ran, expanded: true, files: [path.posix.join(command.cwd, added)] }, {}),
+    ran.filter((arg) => !command.argv.slice(command.argv.indexOf('--test-force-exit') + 1).includes(arg)));
 });
 function runFixture(files) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-reporter-'));
@@ -1468,18 +1476,6 @@ test('a PowerShell script anywhere selects the bare-pipeline .Count scan, and ot
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('powershell-count'), file);
   }
   assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('powershell-count'), false);
-});
-
-test('a test file anywhere, the uncovered-tests table, the check or a workflow selects test-coverage; other files do not', () => {
-  for (const file of ['a.test.mjs', 'x/y/z.test.js', 'x/z.test.cjs', 'apps/x/z.test.ts', 'tests/test_x.py', 'legacy/a/b_test.py',
-    'scripts/ci/ci-uncovered-tests.json', 'scripts/ci/check-tests-covered.mjs', '.github/workflows/model-program-m0.yml',
-    'apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/scripts/select-tests.mjs']) {
-    assert.ok(selectSuites('ci-suites', [file]).suites.includes('test-coverage'), file);
-  }
-  for (const file of ['docs/README.md', 'scripts/ci/clued-merge-executor.mjs', 'tests/helper.py']) {
-    assert.equal(selectSuites('ci-suites', [file]).suites.includes('test-coverage'), false, file);
-  }
-  assert.deepEqual(suitePlatforms('test-coverage'), ['linux']);
 });
 
 test('run-files: a unittest module name counts as its file, so the components tests can be named by path', () => {

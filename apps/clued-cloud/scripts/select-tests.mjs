@@ -21,7 +21,7 @@ const USAGE = "usage: node scripts/select-tests.mjs <unit|db|all> [--list] [--] 
 
 // Module specifiers of static import / export-from statements, side-effect
 // imports and dynamic import() calls, with single or double quotes.
-const SPECIFIER_PATTERNS = [
+export const SPECIFIER_PATTERNS = [
   /\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
   /\bimport\s*['"]([^'"]+)['"]/g,
   /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
