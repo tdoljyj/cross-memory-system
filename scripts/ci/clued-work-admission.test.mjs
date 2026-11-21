@@ -4231,13 +4231,69 @@ for (const [label, mutate] of [
   }
 }
 
-test('T2: every required job of both required-test workflows is in the reuse table, and so is every Actions-bound required check', async () => {
+// R2 (FABLE-tree-reuse-close-out §2, §12.1): no workflow runs once on the PR and again on the main push of its merge
+// unless the reuse table covers it. Read off the trigger block of every workflow file; no list of names.
+function workflowTriggers(text) {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^(on|'on'|"on"):/.test(line));
+  assert.ok(start >= 0, 'the workflow has an on: block');
+  const inline = lines[start].replace(/^[^:]+:/, '').trim();
+  // `on: push` or `on: [push, pull_request]`: no filter, so a push trigger hits main.
+  if (inline) { const names = inline.replace(/[[\]'"]/g, '').split(',').map((name) => name.trim()); return { names, pushHitsMain: names.includes('push') }; }
+  let end = start + 1;
+  while (end < lines.length && (/^\s/.test(lines[end]) || lines[end] === '' || /^#/.test(lines[end]))) end += 1;
+  const block = lines.slice(start + 1, end);
+  const names = block.filter((line) => /^  [A-Za-z_]+:/.test(line)).map((line) => line.trim().replace(/:.*/, ''));
+  const at = block.findIndex((line) => /^  push:/.test(line));
+  if (at < 0) return { names, pushHitsMain: false };
+  let stop = at + 1;
+  while (stop < block.length && !/^  [A-Za-z_]+:/.test(block[stop])) stop += 1;
+  const push = block.slice(at + 1, stop);
+  const listOf = (key) => {
+    const index = push.findIndex((line) => new RegExp(`^    ${key}:`).test(line));
+    if (index < 0) return null;
+    const rest = push[index].replace(/^[^:]+:/, '').trim();
+    if (rest) return rest.replace(/[[\]'"]/g, '').split(',').map((item) => item.trim());
+    const items = [];
+    for (let i = index + 1; i < push.length && /^      - /.test(push[i]); i += 1) items.push(push[i].replace(/^      - /, '').replace(/['"]/g, '').trim());
+    return items;
+  };
+  const branches = listOf('branches');
+  // Tags only: no branch push triggers it. Otherwise it hits main unless every branch pattern plainly cannot.
+  const pushHitsMain = branches === null ? listOf('tags') === null && listOf('tags-ignore') === null
+    : branches.some((branch) => branch === 'main' || branch.includes('*'));
+  return { names, pushHitsMain };
+}
+
+test('R2: a workflow with a PR trigger and a main push trigger is in the reuse table; only Sources the gate holds byte-frozen are exempt, and never more of them', async () => {
+  const { TARGETS } = await import('./clued-tree-reuse.mjs');
+  const dir = path.join(ROOT, '.github/workflows');
+  const both = fs.readdirSync(dir).filter((file) => /\.ya?ml$/.test(file)).sort().filter((file) => {
+    const { names, pushHitsMain } = workflowTriggers(fs.readFileSync(path.join(dir, file), 'utf8'));
+    return pushHitsMain && (names.includes('pull_request') || names.includes('pull_request_target'));
+  });
+  // The reading finds every workflow of the table, so it is not blind.
+  for (const workflow of Object.keys(TARGETS)) assert.ok(both.includes(workflow), `${workflow} has both triggers`);
+  const outside = both.filter((file) => !Object.hasOwn(TARGETS, file));
+  // The only exemption is the gate's own word that the file's bytes are frozen (changing it takes a registered
+  // successor on trusted main first): its bootstrap ordinary Sources and its placement Source. No file name here.
+  const frozen = (file) => admissionModule.bootstrapOrdinaryKnownFile(`.github/workflows/${file}`) ||
+    `.github/workflows/${file}` === admissionModule.PLACEMENT_WORKFLOW;
+  assert.deepEqual(outside.filter((file) => !frozen(file)), [],
+    'these run on the PR and again on the main push of its merge: drop `push: main` or enter the reuse table');
+  // 5 on 2026-11-21 (two scans, placement, two public MCP), each waiting for its registered successor. This number
+  // only goes down: lower it with each one done, and delete the exemption at 0.
+  assert.ok(outside.filter(frozen).length <= 5, `byte-frozen workflows still running on main push: ${outside.filter(frozen).join(', ')}`);
+});
+
+test('T2: every required job of every gate-decided workflow of the reuse table is in the table, and so is every Actions-bound required check', async () => {
   const { TARGETS } = await import('./clued-tree-reuse.mjs');
   const covered = new Set();
-  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+  // Every 'ancestry' entry, not two names: a workflow entered in the table without the gate's job names is red here.
+  const ancestry = Object.keys(TARGETS).filter((workflow) => TARGETS[workflow].proof === 'ancestry');
+  assert.ok(ancestry.includes('clued-required-tests.yml') && ancestry.includes('clued-required-tests-windows.yml'));
+  for (const workflow of ancestry) {
     const target = TARGETS[workflow];
-    assert.ok(target, `${workflow} is in the reuse table`);
-    assert.equal(target.proof, 'ancestry');
     const text = fs.readFileSync(path.join(ROOT, '.github/workflows', workflow), 'utf8');
     const jobs = workflowJobs(text).map((job) => job.name).filter((name) => name !== 'admission-gate');
     assert.deepEqual([...target.jobs].sort(), [...jobs].sort(), `${workflow}: jobs and table agree`);
