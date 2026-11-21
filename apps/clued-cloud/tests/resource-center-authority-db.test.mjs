@@ -48,6 +48,9 @@ import { AUTHORIZATION_SUCCESSOR_MIGRATIONS, snapshotAuthorizationCallerBoundary
 
 const DATABASE_SETUP_LIMIT_MS = 60000;
 const FIXTURE_LIMIT_MS = 75000;
+const LEGACY_EXPIRY_FIXTURES = {
+  "resource-center-account-db.fixture.mjs": testStorageAccount,
+};
 
 const USER = "10000000-0000-4000-8000-000000000071";
 const PROJECT = "20000000-0000-4000-8000-000000000071";
@@ -164,7 +167,11 @@ const focusedAdopt = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-ado
 const focusedWorkClaim = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-work-claim";
 const focusedConnections = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-connections";
 const focusedAncestors = process.env.CLUED_RESOURCE_CENTER_DB_FOCUS === "storage-ancestors";
-for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focusedOnboard || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections || focusedAncestors ? ["legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"]) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, async (t) => {
+const focused = focusedCloud || focusedAdmin || focusedRead || focusedOnboard
+  || focusedDirectoryMove || focusedAdopt || focusedWorkClaim || focusedConnections || focusedAncestors;
+const bindingSchemas = focused ? ["production-no-legacy-expiry"] : ["legacy-expiry", "production-no-legacy-expiry"];
+for (const bindingSchema of bindingSchemas) test(`Canonical Resource Center registration and exact read-only authority (${bindingSchema})`, async (t) => {
+  const legacyExpiry = bindingSchema === "legacy-expiry";
   const clock = createPhaseClock(bindingSchema);
   const { phase } = clock;
   const fixture = (fn, ...args) => phase(fn.name, FIXTURE_LIMIT_MS, () => fn(t, ...args));
@@ -239,8 +246,10 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         for (const name of (await fs.readdir(migrationDir)).filter((name) => name.endsWith(".sql") && name !== closeout && !AUTHORIZATION_SUCCESSOR_MIGRATIONS.includes(name)).sort()) {
           signal.throwIfAborted();
           try {
-            if (name === "20260927145426_resource_center_default_refresh_consent_v1.sql") refreshUpgrade = await seedRefreshUpgrade(admin,server);
-            if (name === "20260927232454_resource_center_binding_expiry_compat_v1.sql" && bindingSchema === "production-no-legacy-expiry") {
+            if (!legacyExpiry && name === "20260927145426_resource_center_default_refresh_consent_v1.sql") {
+              refreshUpgrade = await seedRefreshUpgrade(admin,server);
+            }
+            if (!legacyExpiry && name === "20260927232454_resource_center_binding_expiry_compat_v1.sql") {
               // Model the deployed shape only in this ephemeral database. Prove the
               // native readback fails before this successor and works after it.
               await admin.query("alter table public.clued_agent_bindings drop column expires_at restrict");
@@ -274,12 +283,14 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
         await allowTestIssuerCredentials(admin);
         await t.test("Binding schema explicitly covers deployed missing-column and optional legacy shapes",async()=>{
           const has=(await admin.query("select exists(select 1 from information_schema.columns where table_schema='public' and table_name='clued_agent_bindings' and column_name='expires_at') present")).rows[0].present;
-          assert.equal(has,bindingSchema==="legacy-expiry");
+          assert.equal(has,legacyExpiry);
         });
-        await t.test("actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop",async()=>{
-          assert.ok(refreshUpgrade);
-          await verifyRefreshUpgrade(admin,server,refreshUpgrade);
-        });
+        if (!legacyExpiry) {
+          await t.test("actual upgrade never opts in pre-existing connections or old attempts, including a pre-delegation stop",async()=>{
+            assert.ok(refreshUpgrade);
+            await verifyRefreshUpgrade(admin,server,refreshUpgrade);
+          });
+        }
         await admin.query("insert into auth.users(id,email) values($1,'owner@example.invalid')", [USER]);
         await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key,certainty_status,confirmed_at)" +
           " values($1,$2,'Resource Center','resource center',$3,'confirmed',now())",
@@ -294,8 +305,16 @@ for (const bindingSchema of focusedCloud || focusedAdmin || focusedRead || focus
       });
     });
 
-    // Fast local diagnosis only. CI leaves this unset and runs both complete
-    // schema shapes plus every existing Resource Center regression.
+    if (legacyExpiry) {
+      // Each registered fixture prepares its own account data from the shared
+      // user, project and Decision seeded above.
+      for (const run of Object.values(LEGACY_EXPIRY_FIXTURES)) {
+        await fixture(run, admin, server, USER, DECISION);
+      }
+      return;
+    }
+
+    // Focused runs diagnose selected fixtures on the production schema.
     if (focusedCloud) {
       await fixture(testAccountCloud, admin, server, USER, DECISION,{demandRenewal:true});
       await fixture(qualifyCurrentCallers, admin, client, closeoutSql);
