@@ -1353,7 +1353,7 @@ function Invoke-DrillPreBootRelease([DateTimeOffset]$HoldUntil = [DateTimeOffset
   # boot gate's high tier decides alone
   $earlyJob = Get-Prop $early 'busyWith'
   if ($null -ne $earlyJob) {
-    $script:DrillPreBoot.release = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); distributions = @(); results = @(); released = @()
+    $script:DrillPreBoot.release = [ordered]@{ at = (Get-DrillTime).ToString('o'); distributions = @(); results = @(); released = @()
       skipped = [ordered]@{ where = 'early'; reason = $earlyJob }; failed = $null }
     return
   }

@@ -2320,7 +2320,8 @@ test('from the real entry: a runner busy from the start skips the release and bo
 // keeps its three stages in baseline.json.
 test('no memory figure where none was read, and baseline.json keeps the pre-boot stages', opts, () => {
   const r = ps(`
-    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: new Date().toISOString() }))} }
+    function Read-DrillHostStatus { ${q(activeHostStatus(null, { writtenAt: '2026-11-19T02:00:00Z' }))} }
+    function Get-DrillTime { [DateTimeOffset]'2026-11-19T02:00:00Z' }
     $onDuty = Get-DrillHostSafety
     function Assert-DrillHost { @{ ok = $true } }
     function Invoke-DrillBaseline { param($RunDir, [switch]$ExistingOnly)
@@ -3763,7 +3764,7 @@ test('A8: an upgrade refused and then a prepare that times out -- both are kept,
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
     function Invoke-Command { param($Session, $ScriptBlock, $ArgumentList, $VMName, $Credential, [switch]$AsJob, $ErrorAction) if ($ArgumentList -is [string]) { if ($ArgumentList -like '*.tar') { 'ab' } else { @{ contract = 'x' } } } }
-    function Wait-DrillGuest { param($Credential, $Minutes, $After) [DateTimeOffset]::UtcNow }
+    function Wait-DrillGuest { param($Credential, $Minutes, $After) Get-DrillTime }
     function Wait-DrillRebootRefresh { param($Cred, $Boot, $Deadline) (${q(JSON.stringify(e.reboot))} | ConvertFrom-Json) }
     function Copy-DrillM5 { param($RunDir, $Cred) @{} }
     $read = ${q(JSON.stringify(read))} | ConvertFrom-Json
