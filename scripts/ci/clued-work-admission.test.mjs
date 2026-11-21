@@ -4237,13 +4237,27 @@ function workflowTriggers(text) {
   const lines = text.split(/\r?\n/);
   const start = lines.findIndex((line) => /^(on|'on'|"on"):/.test(line));
   assert.ok(start >= 0, 'the workflow has an on: block');
-  const inline = lines[start].replace(/^[^:]+:/, '').trim();
+  // A spelling this reading does not know is refused, never read as "no push": R2 is the only stop.
+  const unread = (why) => assert.fail(`cannot read the trigger block (${why}): write it as block YAML with two-space keys, or teach workflowTriggers this spelling`);
+  const inline = lines[start].replace(/^[^:]+:/, '').replace(/\s+#.*$/, '').trim();
+  if (inline.includes('{')) unread('flow mapping after on:');
   // `on: push` or `on: [push, pull_request]`: no filter, so a push trigger hits main.
-  if (inline) { const names = inline.replace(/[[\]'"]/g, '').split(',').map((name) => name.trim()); return { names, pushHitsMain: names.includes('push') }; }
+  if (inline) {
+    const names = inline.replace(/[[\]'"]/g, '').split(',').map((name) => name.trim());
+    if (!names.length || names.some((name) => !/^[A-Za-z_]+$/.test(name))) unread(`on: ${inline}`);
+    return { names, pushHitsMain: names.includes('push') };
+  }
   let end = start + 1;
   while (end < lines.length && (/^\s/.test(lines[end]) || lines[end] === '' || /^#/.test(lines[end]))) end += 1;
   const block = lines.slice(start + 1, end);
+  for (const line of block) {
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    // Every trigger key sits at exactly two spaces and is a bare name; nothing under on: is a flow mapping.
+    if (/^ {0,2}\S/.test(line) && !/^  [A-Za-z_]+:/.test(line)) unread(`trigger key ${JSON.stringify(line)}`);
+    if (/^\s*[^\s#][^#]*:\s*\{/.test(line)) unread(`flow mapping ${JSON.stringify(line)}`);
+  }
   const names = block.filter((line) => /^  [A-Za-z_]+:/.test(line)).map((line) => line.trim().replace(/:.*/, ''));
+  if (!names.length) unread('no trigger name');
   const at = block.findIndex((line) => /^  push:/.test(line));
   if (at < 0) return { names, pushHitsMain: false };
   let stop = at + 1;
@@ -4282,8 +4296,9 @@ test('R2: a workflow with a PR trigger and a main push trigger is in the reuse t
   assert.deepEqual(outside.filter((file) => !frozen(file)), [],
     'these run on the PR and again on the main push of its merge: drop `push: main` or enter the reuse table');
   // 5 on 2026-11-21 (two scans, placement, two public MCP), each waiting for its registered successor. This number
-  // only goes down: lower it with each one done, and delete the exemption at 0.
-  assert.ok(outside.filter(frozen).length <= 5, `byte-frozen workflows still running on main push: ${outside.filter(frozen).join(', ')}`);
+  // only goes down, and the test holds that: it is an equality, so each one done lowers it here in the same change
+  // (and one more is red at once). Delete the exemption at 0.
+  assert.equal(outside.filter(frozen).length, 5, `byte-frozen workflows still running on main push: ${outside.filter(frozen).join(', ')}`);
 });
 
 test('R2: the trigger reading refuses a spelling it cannot read instead of reading no push out of it', () => {
