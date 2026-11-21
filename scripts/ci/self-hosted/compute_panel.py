@@ -739,12 +739,15 @@ def duplicate_findings(head: str, pull: dict, checks: list[dict], workflows: dic
         mix: dict[str, int] = {}
         for run in runs:
             mix[run["executor"]] = mix.get(run["executor"], 0) + 1
+        pushes = sorted({run["run"] for run in runs if run["origin"] == "merge" and run["run"] is not None})
         found.append({
             "head": head[:12], "tree": tree[:12] if tree else None, "pr": pull.get("number"), "check": short_name(key),
             "label": short_name(runs[0]["label"]), "count": len(runs), "mix": mix, "causes": causes,
             # "rerun" (after a pass) and "parallel" (alongside an unfinished run) break the rule and are announced;
             # "retry" (after failures only) is listed.
             "kind": duplicate_kind(runs),
+            # the main push runs of the merge commit: where the gate's log says why the tree was not reused
+            **({"push_runs": pushes[:DUP_RUNS_SHOWN]} if pushes else {}),
             "first": runs[0]["at"], "last": runs[-1]["at"],
             "runs": [{k: run[k] for k in ("executor", "at", "conclusion", "attempt", "run", "event")}
                      for run in runs[:DUP_RUNS_SHOWN]],
@@ -766,7 +769,9 @@ def duplicate_event(finding: dict) -> tuple[str, str]:
             counts[run["executor"]] = counts.get(run["executor"], 0) + 1
     names = {"resident": "常驻", "hosted": "托管"}
     parts = "、".join(f"{names.get(who, cell(who))} {n} 次" for who, n in counts.items())
-    why = "；".join(CAUSE_TEXT.get(cause, cell(cause)) for cause in finding.get("causes") or [])
+    pushes = "、".join(str(run) for run in finding.get("push_runs") or [])
+    why = "；".join(CAUSE_TEXT.get(cause, cell(cause)) + (f"（运行 {pushes}）" if cause == "main-push" and pushes else "")
+                   for cause in finding.get("causes") or [])
     span = f"{finding['first']} 至 {finding['last']}" if finding.get("first") else f"最近 {finding['last']}"
     detail = "；".join(part for part in (KIND_TEXT.get(finding.get("kind"), ""), parts, why, span) if part)
     tree = f"（树 {finding['tree'][:8]}）" if finding.get("tree") else ""
@@ -781,8 +786,28 @@ KIND_TEXT = {"rerun": "通过后又跑", "parallel": "并行或前一次未结�
 
 
 def short_finding(finding: dict) -> dict:
-    """What is kept of a finding beyond the first DUP_KEEP: enough to count it, carry it over and date it."""
-    return {key: finding[key] for key in ("head", "pr", "check", "count", "last") if key in finding}
+    """What is kept of a finding beyond the first DUP_KEEP: enough to count it by kind, carry it over and date it."""
+    return {key: finding[key] for key in ("head", "pr", "check", "count", "last", "kind") if key in finding}
+
+
+def duplicate_totals(found: list[dict]) -> dict[str, int]:
+    """Every finding by kind. "rerun" and "parallel" break the rule; "retry" is allowed and only listed.
+    A record without a kind (saved by an older panel, for a head GitHub no longer returns) counts as a rerun:
+    it is announced like one, and what cannot be classified is not filed under "allowed"."""
+    totals = {"rerun": 0, "parallel": 0, "retry": 0}
+    for item in found:
+        kind = item.get("kind")
+        totals[kind if kind in ("parallel", "retry") else "rerun"] += 1
+    return totals
+
+
+def violations(totals: dict) -> int:
+    return int(totals.get("rerun", 0)) + int(totals.get("parallel", 0))
+
+
+def totals_line(totals: dict) -> str:
+    return (f"违规 {violations(totals)} 项（通过后又跑 {totals.get('rerun', 0)}、并行 {totals.get('parallel', 0)}）；"
+            f"失败后重试 {totals.get('retry', 0)} 项（规则允许，只列出）")
 
 
 def retrying(call):
@@ -886,7 +911,7 @@ def mark_announced(state: dict, keys: list[str]) -> None:
 
 def pack_duplicates(scan: dict) -> dict:
     """The saved form of a scan: the first DUP_KEEP findings in full, the next DUP_MAX as short records.
-    `total` is the count of all of them, whatever is kept."""
+    `total` and `totals` (by kind) count all of them, whatever is kept."""
     found = scan["found"]
     packed = {key: value for key, value in scan.items() if key != "found"}
     packed["found"] = found[:DUP_KEEP]
@@ -983,10 +1008,12 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
         sha = str(pull["head"]["sha"])
         closed = pull.get("state") == "closed"
         key = settle_key(pull, sha)
-        if closed and settled_before.get(key) == pull.get("updated_at"):
+        kept = [item for item in old_found if item["head"] == sha[:12]]
+        # A record saved without its kind (by a panel that only summed) cannot be counted by kind: the head is read again.
+        if closed and settled_before.get(key) == pull.get("updated_at") and all("kind" in item for item in kept):
             settled[key] = pull["updated_at"]
             carried += 1
-            found.extend(item for item in old_found if item["head"] == sha[:12])
+            found.extend(kept)
             continue
         if client.low():
             raise BudgetLow("额度不足，未读完")
@@ -1013,8 +1040,11 @@ def scan_duplicates(client: GitHub, now: datetime, previous: dict) -> dict:
             best[(item["head"], item["check"])] = item
     found = [item for item in best.values() if (parse_time(item["last"]) or now) >= floor]
     found.sort(key=lambda item: item["last"], reverse=True)
+    # Violations first, allowed retries after, each newest first: what is cut off (DUP_KEEP, DUP_ROWS) is a retry first.
+    found.sort(key=lambda item: item.get("kind") == "retry")
     return {"as_of": iso(now), "window_days": DUP_LOOKBACK.days, "heads_read": heads, "skipped": skipped,
-            "skipped_heads": skipped_heads, "total": len(found), "found": found, "settled": settled}
+            "skipped_heads": skipped_heads, "total": len(found), "totals": duplicate_totals(found), "found": found,
+            "settled": settled}
 
 
 def alerts_for(pool: dict[str, dict], residents: dict[str, dict], stall: list[dict] | None = None) -> dict[str, str]:
@@ -1124,17 +1154,19 @@ def render(report: dict, state: dict) -> str:
                          f"{shown(m['queue_wait_minutes_median'])}/{shown(m['queue_wait_minutes_p90'])} | "
                          f"{shown(m['batch_minutes_median'])} | {m['retries']} | {m['burned_heads']} |")
     duplicates = report.get("duplicates") or {}
+    totals = duplicates.get("totals")  # absent only in a state saved before the kinds were counted apart
     lines += ["", f"### 重复执行（规则 41ab823a：同一棵树的同一检查只真跑一次，PR head 与其同树的合并提交算一棵树；"
               f"最近 {DUP_LOOKBACK.days} 天，{duplicates.get('as_of') or '尚未采集'}）", ""]
     if not duplicates.get("as_of"):
         lines.append("尚未采集（需要 checks: read；读取失败见页末说明）。")
     elif duplicates.get("omitted"):
-        lines.append(f"共 {duplicates.get('total', 0)} 项；正文接近 Issue 上限，明细已省略，下一轮扫描恢复。")
+        count = totals_line(totals) if totals else f"共 {duplicates.get('total', 0)} 项"
+        lines.append(f"{count}；正文接近 Issue 上限，明细已省略，下一轮扫描恢复。")
     elif not duplicates.get("found"):
         lines.append(f"没有发现：读了 {duplicates.get('heads_read', 0)} 个提交，没有同一检查真跑两次及以上。"
                      "取消、跳过、常驻的准入与第 8 段复查不算真跑。")
     else:
-        lines += ["“通过后又跑”“并行或前一次未结束又跑”违反规则并告警；“失败后重试”只列出。", "",
+        lines += [(totals_line(totals) + "。") if totals else "“通过后又跑”“并行或前一次未结束又跑”违反规则并告警；“失败后重试”只列出。", "",
                   "| PR | 提交 | 检查 | 真跑次数 | 类别 | 构成 | 原因 | 最近一次 |", "|---|---|---|---|---|---|---|---|"]
         for item in duplicates["found"]:
             who = {"resident": "常驻", "hosted": "托管"}
@@ -1146,7 +1178,10 @@ def render(report: dict, state: dict) -> str:
             lines.append(f"| #{item['pr']} | {item['head'][:8]} | {cell(item.get('label') or item['check'])} | {item['count']} | "
                          f"{KIND_TEXT.get(item.get('kind'), '—')} | {parts} | "
                          f"{'；'.join(CAUSE_TEXT.get(c, cell(c)) for c in item.get('causes') or []) or '—'} | {item['last']} |")
-        if duplicates.get("total", 0) > len(duplicates["found"]):
+        listed = sum(1 for item in duplicates["found"] if item.get("kind") != "retry")
+        if totals and violations(totals) > listed:
+            lines.append(f"违规 {violations(totals)} 项，只列最近 {listed} 项。")
+        elif not totals and duplicates.get("total", 0) > len(duplicates["found"]):
             lines.append(f"共 {duplicates['total']} 项，只列最近 {len(duplicates['found'])} 项。")
     if duplicates.get("skipped"):
         lines.append(f"有 {duplicates['skipped']} 个提交 GitHub 不返回（404、410 或 422），本次跳过，沿用以前的结果。")
@@ -1249,7 +1284,7 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         mark_announced(state, extra)
         for key in extra:
             del events[key]
-        events[f"dup-more:{duplicates.get('as_of')}"] = f"重复执行：另有 {len(extra)} 项，见面板“重复执行”表"
+        events[f"dup-more:{duplicates.get('as_of')}"] = f"重复执行：另有 {len(extra)} 项违规，见面板“重复执行”表"
     stall = None
     if client.low():
         errors.append("residents: 额度不足，沿用上一轮常驻状态")
@@ -1273,7 +1308,7 @@ def build(client: GitHub, now: datetime, state: dict) -> dict:
         "residents": residents,
         "others": OTHERS,
         "metrics": metrics,
-        "duplicates": {**{key: duplicates[key] for key in ("as_of", "window_days", "heads_read", "skipped", "total", "omitted") if key in duplicates},
+        "duplicates": {**{key: duplicates[key] for key in ("as_of", "window_days", "heads_read", "skipped", "total", "totals", "omitted") if key in duplicates},
                        "found": (duplicates.get("found") or [])[:DUP_ROWS]},
         "alerts": alerts_for(pool, residents, stall),
         "events": events,
