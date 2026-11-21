@@ -26,8 +26,12 @@ const { PAUSE_CONTRACT, BETWEEN_BATCHES_RUNNING } = executor;
 const T0 = Date.parse('2026-11-08T08:17:46Z');
 const json = v => Buffer.from(JSON.stringify(v));
 const realSleep = ms => new Promise(r => setTimeout(r, ms));
-// The 30-second budget of the defect, in test time: the hung companion wait is 10 minutes of the mailbox clock.
-const PROMPT_MS = 5_000;
+// The 30-second budget of the defect, in test time: the hung companion wait is 10 minutes of the mailbox clock. Every wait under it
+// returns as soon as its event comes, so the full 30 seconds costs a passing run nothing (one took 7.9 s on CI, run 44087930494).
+const PROMPT_MS = 30_000;
+// Ticks the queued batch takes to complete once the between-batches step has ended: measured 1 (it may take one more while the step's
+// ending settles), about ten times that. A count of ticks, not a wall-clock budget.
+const STEPS_TO_BATCH = 10;
 
 // A mailbox whose clock is real until `unwind()`: from then on every read of it is an hour later, so a wait that is still polling
 // (the unfixed loop) reaches its deadline at its next poll and the test ends instead of hanging for 10 minutes.
@@ -41,6 +45,24 @@ async function silentMailbox(root) {
     }
     return out;
   } };
+}
+
+// A service loop the test drives (Task fe9044fc): its sleep is no timer but a promise only step() lets go, so the loop runs exactly
+// one tick per step() and which of the test and the loop goes first is never left to the machine's load (CI run 44843986661).
+// parked(): the loop waits in its sleep. step(): one tick, then parked again. end(): every sleep from now on returns at once.
+function steppedLoop() {
+  let wake = null, ended = false, exited = false;
+  const waiting = [];
+  const parked = () => (wake ? Promise.resolve() : new Promise((resolve, reject) => {
+    if (exited) reject(new Error('the service loop has returned')); else waiting.push({ resolve, reject });
+  }));
+  return {
+    sleep: () => (ended ? Promise.resolve() : new Promise(r => { wake = r; for (const w of waiting.splice(0)) w.resolve(); })),
+    parked,
+    step: async () => { await parked(); const w = wake; wake = null; w(); await parked(); },
+    end: () => { ended = true; const w = wake; wake = null; w?.(); },
+    watch: loop => loop.finally(() => { exited = true; for (const w of waiting.splice(0)) w.reject(new Error('the service loop has returned')); }),
+  };
 }
 
 test('defect 8f8240ff: a Linux archive-prune that never answers no longer holds the loop; the upgrader pause is latched at once and a stop ends the wait', async t => {
@@ -98,18 +120,34 @@ test('defect 8f8240ff: while the between-batches step runs beside the loop no ne
   const results = [];
   let stop = false;
   const exec = { tick: async o => { const r = await f.exec.tick(o); results.push(r); return r; } };
-  const loop = serviceLoop({ exec, lock: { touch: async () => {} }, sleep: () => realSleep(10), stopRequested: async () => stop,
+  const steps = steppedLoop();
+  const loop = serviceLoop({ exec, lock: { touch: async () => {} }, sleep: steps.sleep, stopRequested: async () => stop,
     acknowledgeStop: async () => {}, onLoopException: async () => {}, betweenBatches: async () => { if (!started) { started = true; await gate; } } });
+  steps.watch(loop).catch(() => {});
   try {
-    await waitFor(() => started, 'the between-batches step to start');
+    // The first tick (nothing queued) ends quiet and starts the step beside the loop.
+    await steps.parked();
+    assert.equal(started, true, 'the between-batches step started after the first tick');
+    assert.equal(results.length, 1);
+    // One tick before the trigger lands, deferred by the running step: on CI such a tick had already ended when the trigger was
+    // written, and the check took it for the tick that read the trigger (run 44843986661). Kept, so every run has it.
+    await steps.step();
+    assert.deepEqual([results.at(-1).state, results.at(-1).reason], ['DEFERRED', BETWEEN_BATCHES_RUNNING]);
     await f.drop(triggerBytes());
-    await waitFor(() => results.some(r => r.state === 'DEFERRED' && r.reason === BETWEEN_BATCHES_RUNNING), 'a tick deferred by the running step', PROMPT_MS);
+    // Only the tick after the drop counts: it reads the trigger and, the step still running, opens nothing.
+    const from = results.length;
+    await steps.step();
+    assert.deepEqual(results.slice(from).map(r => [r.state, r.reason]), [['DEFERRED', BETWEEN_BATCHES_RUNNING]]);
     assert.equal(f.engine.calls.length, 0, 'no stage, no bundle while the step runs');
-    assert.equal(f.queue.row(884).state, 'QUEUED', 'the trigger is read, not lost');
+    assert.equal(f.queue.row(884)?.state, 'QUEUED', 'the trigger is read, not lost');
+    // A step's ending settles over a few microtasks: the first tick after it may still be deferred, so no claim on which one opens it.
     release();
-    await waitFor(() => results.some(r => r.state === 'COMPLETED'), 'the batch after the step', PROMPT_MS);
+    for (let n = 0; !results.some(r => r.state === 'COMPLETED'); n += 1) {
+      if (n >= STEPS_TO_BATCH) throw new Error(`no batch COMPLETED within ${STEPS_TO_BATCH} ticks after the step ended: ${results.map(r => r.state)}`);
+      await steps.step();
+    }
   } finally {
-    release(); stop = true;
+    release(); stop = true; steps.end();
     await withTimeout(loop, 'the service loop to stop', 30_000).catch(() => {});
   }
 });
@@ -273,4 +311,43 @@ test('review MINOR 5: a stop waits for the step at most leaveMaxMs', async () =>
   assert.equal(await withTimeout(loop, 'the stop', PROMPT_MS), 0);
   assert.ok(Date.now() - began >= 150 && Date.now() - began < PROMPT_MS);
   assert.deepEqual([acked, abandoned], [true, true]);
+});
+
+// ---- Task fe9044fc: a service loop running beside the test on a real timer races it ----
+
+// The tests that still run serviceLoop beside the test on a real-timer sleep; their checks wait for what the stimulus itself causes.
+// Only fewer: a new one drives its loop with steppedLoop().
+const REAL_TIMER_LOOPS = Object.freeze([
+  'defect 8f8240ff: a Linux archive-prune that never answers no longer holds the loop; the upgrader pause is latched at once and a stop ends the wait',
+  'review MAJOR 1: a claim re-check is not asked while the step runs: its pr-head would queue behind the hung prune in the companion lane',
+  'review MINOR 5: a stop waits for the step at most leaveMaxMs',
+]);
+// Every serviceLoop call in `text` not awaited where it is made (the test goes on beside it) whose sleep is not a steppedLoop()'s:
+// the name of the test it is in. Spaces and line breaks anywhere in the call count for nothing.
+function backgroundTimerLoops(text) {
+  const stepped = [...text.matchAll(/\bconst\s+(\w+)\s*=\s*steppedLoop\s*\(\s*\)/g)].map(m => m[1]);
+  const steppedSleep = stepped.length ? new RegExp(String.raw`\bsleep\s*:\s*(?:${stepped.join('|')})\.sleep\b`) : null;
+  const out = [];
+  for (const m of text.matchAll(/\bserviceLoop\s*\(/g)) {
+    if (/\bawait\s*$/.test(text.slice(0, m.index))) continue;
+    let depth = 0, end = m.index + m[0].length - 1;
+    do { const c = text[end++]; depth += c === '(' ? 1 : c === ')' ? -1 : 0; } while (depth > 0 && end < text.length);
+    if (steppedSleep?.test(text.slice(m.index, end))) continue;
+    out.push([...text.slice(0, m.index).matchAll(/\btest\s*\(\s*(['"`])(.*?)\1/g)].at(-1)?.[2] ?? null);
+  }
+  return out;
+}
+
+test('Task fe9044fc: a service loop beside the test runs on steppedLoop(); one on a real timer only in the tests listed, and only fewer', async () => {
+  const L = 'serviceLoop';
+  assert.deepEqual(backgroundTimerLoops(`test('a', () => { const loop = ${L}\n  (\n{ exec,\n sleep:\n () => realSleep(10) }); });`), ['a'], 'a call over several lines');
+  assert.deepEqual(backgroundTimerLoops(`test('b', () => { const loop = ${L}({ exec, sleep }); });`), ['b'], 'a sleep given by name');
+  assert.deepEqual(backgroundTimerLoops(`test('c', async () => { const s = steppedLoop(); const loop = ${L}({ exec, sleep:\n s.sleep }); await ${L}({ sleep: () => realSleep(1) }); });`), []);
+  const dir = new URL('.', import.meta.url);
+  const found = [];
+  for (const n of (await fs.readdir(dir)).filter(n => n.endsWith('.test.mjs')).sort()) {
+    for (const name of backgroundTimerLoops(await fs.readFile(new URL(n, dir), 'utf8'))) found.push(`${n}: ${name}`);
+  }
+  assert.deepEqual(found, REAL_TIMER_LOOPS.map(n => `retention-nonblocking.test.mjs: ${n}`),
+    'a service loop beside the test on a real-timer sleep: drive it with steppedLoop() instead (Task fe9044fc)');
 });
