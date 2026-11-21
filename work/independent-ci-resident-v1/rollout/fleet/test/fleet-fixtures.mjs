@@ -172,7 +172,8 @@ export const targetOf = (release, over = {}) => ({ id: randomUUID(), receipt_id:
 // The Release being published exists once it has assets (made by "release create", or seeded by the test): before that "release view",
 // "upload" and "download" of its tag answer "release not found" (exit 1) as the real gh does, and a second "release create" of a Release
 // that exists is refused. FAKE_GH_FAIL_CREATE=1: "release create" fails. "gh api repos/<repo>/commits/<sha>": the commit, unless the
-// state's commitMissing is true (HTTP 404, exit 1).
+// state's commitMissing is true (HTTP 404, exit 1), '422' (no commit found for the SHA, HTTP 422, exit 1) or 'fail' (no answer: a
+// dropped connection, exit 1).
 export const FAKE_GH = `import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -206,6 +207,8 @@ if (args[0] === 'api' && /^repos\\/[^/]+\\/[^/]+\\/compare\\/main\\.\\.\\.[0-9a-
 }
 if (args[0] === 'api' && /^repos\\/[^/]+\\/[^/]+\\/commits\\/[0-9a-f]{40}$/.test(args[1] ?? '')) {
   if (log.commitMissing === true) refuse('gh: Not Found (HTTP 404)');
+  if (log.commitMissing === '422') refuse('gh: No commit found for SHA: ' + args[1].split('/').pop() + ' (HTTP 422)');
+  if (log.commitMissing === 'fail') refuse('error connecting to api.github.com');
   console.log(JSON.stringify({ sha: args[1].split('/').pop() }));
 }
 if (args[0] === 'release' && args[1] === 'view') console.log(JSON.stringify({ url: 'https://github.com/' + args[args.indexOf('--repo') + 1] + '/releases/tag/' + args[2], tagName: args[2], assets: assetsOf(args[2]).map(a => ({ name: a.name, size: a.size })) }));

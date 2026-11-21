@@ -970,3 +970,89 @@ test('prepare refuses an archive without the node entry (bootstrap.ps1, prereq-m
   await assert.rejects(w.prep(), { code: 'PUBLISH_ARCHIVE_LACKS_NODE_ENTRY' });
   assert.equal((await w.calls()).length, 0);
 });
+
+// Review 0e418483 (D:/w/tmp/claude-drill-release-review.result.md). A Release of this version already there is held to this build byte for
+// byte, every asset it has, before anything goes up or into the index: the same size is not the same build (a tar is 512-byte aligned).
+const flip = (st, name, at) => { const a = st.assets.find(x => x.name === name); const b = Buffer.from(a.b64, 'base64'); b[at < 0 ? b.length + at : at] ^= 0x01; a.b64 = b.toString('base64'); a.sha256 = sha(b); if ('text' in a) a.text = b.toString('utf8'); };
+const nothingWritten = async (w, before) => {
+  assert.deepEqual(await releaseWrites(w), [], 'nothing uploaded, nothing created');
+  assert.ok((await fs.readFile(w.index)).equals(before), 'the index as it was');
+  await noRequest(w);
+};
+
+// REVIEW H1 (S1): the half Release holds only a tar, another build's of the same size
+test('prepare refuses a half Release whose tar is another build\'s of the same size, before any upload or index row', async t => {
+  const w = await prepWorld(t, { released: false });
+  await seedRelease(w, { only: [`${TAG}.tar`] });
+  await w.setState(st => flip(st, `${TAG}.tar`, -1));
+  const before = await fs.readFile(w.index);
+  await assert.rejects(w.prep(), { code: 'ACCEPTANCE_ARCHIVE_NOT_THE_RELEASES' });
+  await nothingWritten(w, before);
+  assert.deepEqual(await w.kitAssets(), []);
+});
+
+// REVIEW H2 (B1): a node-entry asset of other bytes, the same size: on a half Release, and on a whole one whose SHA256SUMS is this build's
+test('prepare refuses a Release whose bootstrap.ps1 or prereq-manifest.json is other bytes of the same size, half or whole, before any upload', async t => {
+  for (const name of [`${TAG}.bootstrap.ps1`, `${TAG}.prereq-manifest.json`]) {
+    const half = await prepWorld(t, { released: false });
+    await seedRelease(half, { only: [name] });
+    await half.setState(st => flip(st, name, 0));
+    const before = await fs.readFile(half.index);
+    await assert.rejects(half.prep(), { code: 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS' }, `half: ${name}`);
+    await nothingWritten(half, before);
+    const whole = await prepWorld(t, { released: false });
+    await seedRelease(whole, { row: true });
+    await whole.setState(st => flip(st, name, 0));
+    const beforeWhole = await fs.readFile(whole.index);
+    await assert.rejects(whole.prep(), { code: 'ACCEPTANCE_RELEASE_METADATA_NOT_THE_REQUESTS' }, `whole: ${name}`);
+    await nothingWritten(whole, beforeWhole);
+    assert.deepEqual(await whole.kitAssets(), [], 'refused before the kit is attached');
+  }
+});
+
+// the tar held at step 4 is the one step 5 checks: a half Release with this build's tar has it downloaded once
+test('prepare after a release that stopped after the tar: the Release\'s tar is downloaded once, held at step 4 and reused at step 5', async t => {
+  const w = await prepWorld(t, { released: false });
+  await seedRelease(w, { only: [`${TAG}.tar`] });
+  assert.equal((await w.prep()).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  const tarDownloads = (await w.calls()).filter(c => c.args[1] === 'download' && c.args[c.args.indexOf('--pattern') + 1] === `${TAG}.tar`);
+  assert.equal(tarDownloads.length, 1);
+});
+
+// REVIEW H3: no row of this version in the index yet (a candidate before its Release): the previous version's image is found
+test('prepare with no row of this version yet takes the previous version\'s image from its Release', async t => {
+  const w = await prepWorld(t, { released: false });
+  const PREV = '0.0.1', PTAG = `fleet-node-${PREV}`, img = Buffer.from('previous image bytes');
+  const sumsText = `${sha(img)}  role-image-${IMAGE}.tar.gz\n`;
+  await fs.appendFile(w.index, `| ${PREV} | https://github.com/${REPO}/releases/tag/${PTAG} | ${'1'.repeat(64)} | ${'2'.repeat(40)} | 2026-11-01T00:00:00Z | x | y |\r\n`);
+  await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], other: { [PTAG]: [
+    { name: `role-image-${IMAGE}.tar.gz`, size: img.length, sha256: sha(img), b64: img.toString('base64') },
+    { name: `${PTAG}.first-install.SHA256SUMS`, size: sumsText.length, sha256: sha(Buffer.from(sumsText)), b64: b64Of(sumsText), text: sumsText }] } }));
+  assert.equal((await w.prep({ images: [] })).status, 'FLEET_ACCEPTANCE_REQUEST_WRITTEN');
+  assert.ok((await w.calls()).some(c => c.args[1] === 'download' && c.args[2] === PTAG && c.args.includes(`role-image-${IMAGE}.tar.gz`)), 'taken from the previous Release');
+  assert.equal((await w.assets()).find(a => a.name === `role-image-${IMAGE}.tar.gz`)?.sha256, sha(img), 'and put on this one');
+});
+
+// the commit on the remote: only GitHub's "no such commit" is "not on the remote"; a lookup that fails otherwise (a dropped connection) is
+// reported as that, not as a commit never pushed
+test('prepare tells a commit not on the remote (404, or 422 no commit found) from a lookup that failed: nothing written either way', async t => {
+  for (const [missing, code] of [[true, 'PREPARE_COMMIT_NOT_ON_REMOTE'], ['422', 'PREPARE_COMMIT_NOT_ON_REMOTE'], ['fail', 'PREPARE_COMMIT_LOOKUP_FAILED']]) {
+    const w = await prepWorld(t, { released: false });
+    await fs.writeFile(w.state, JSON.stringify({ calls: [], assets: [], commitMissing: missing }));
+    const before = await fs.readFile(w.index);
+    await assert.rejects(w.prep(), { code }, String(missing));
+    await nothingWritten(w, before);
+  }
+});
+
+// an index row of this version without its Release is refused at step 0: no kit taken from the node, no Source computed, no download
+test('prepare refuses an index row without its Release at once: no kit taken, no Source computed, nothing downloaded', async t => {
+  const w = await prepWorld(t, { released: false });
+  await fs.appendFile(w.index, `${rowOf(w)}\r\n`);
+  const before = await fs.readFile(w.index);
+  await assert.rejects(w.prep(), { code: 'PREPARE_INDEX_ROW_WITHOUT_RELEASE' });
+  assert.equal(w.s.kitReads, 0, 'the node was not asked for its kit');
+  assert.deepEqual(w.s.sourceDrafts, [], 'no Source computed');
+  assert.deepEqual((await w.calls()).filter(c => c.args[1] === 'download'), [], 'nothing downloaded');
+  await nothingWritten(w, before);
+});
