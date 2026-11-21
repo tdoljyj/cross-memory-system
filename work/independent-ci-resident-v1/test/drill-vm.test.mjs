@@ -3436,6 +3436,20 @@ test('the drill reads its children with stdout and stderr apart: a stderr line n
   assert.equal(ps(`$g = & $script:GuestRead ${q(root)} $script:DrillNativeText; $null -eq $g.pause`), true);
 });
 
+// r8 drill: the guest receives the plan after a remote round trip, where commands is an ArrayList, not an Array. The guard used to
+// return null for it, so no command ran (DRILL_PROBE_NO_ANSWER after 8 seconds).
+test('GuestInspect runs the commands of a plan that crossed the remote serialization', opts, () => {
+  const r = ps(`$native = { param($exe, $argv, $secs, $enc) [pscustomobject]@{ exit = 0; stdout = ('ran:' + $argv[-1]); stderr = '' } }
+    $plan = New-DrillProbePlan @([ordered]@{ id = 'one'; script = 'echo 1'; args = @('a') }, [ordered]@{ id = 'two'; script = 'echo 2'; args = @() }) 'C:\nowhere\wsl.exe'
+    $back = [Management.Automation.PSSerializer]::Deserialize([Management.Automation.PSSerializer]::Serialize($plan, 4))
+    $kind = $back['commands'].GetType().FullName
+    $got = & $script:GuestInspect $back $native.ToString()
+    [ordered]@{ kind = $kind; ids = @($got.commands | ForEach-Object { $_.id }); exits = @($got.commands | ForEach-Object { $_.exit }) }`);
+  assert.notEqual(r.kind, 'System.Object[]', 'the round trip must not hand back an Array, or the test proves nothing');
+  assert.deepEqual(r.ids, ['one', 'two']);
+  assert.deepEqual(r.exits, [0, 0]);
+});
+
 const startedAt = '2026-11-16T02:00:00Z';
 const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bindings_created: 0, drill_liveness: 0, live_sources: [S] };
 const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });

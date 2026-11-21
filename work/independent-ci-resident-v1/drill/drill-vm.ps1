@@ -2719,7 +2719,7 @@ function New-DrillProbePlan($Commands, [string]$WslExe = '', [switch]$Windows, [
 # Without a plan it does nothing. No clock is read here (the host stamps the record).
 $script:GuestInspect = {
   param($Plan, $NativeText)
-  if ($Plan -isnot [Collections.IDictionary] -or $Plan['commands'] -isnot [Array]) { return $null }
+  if ($Plan -isnot [Collections.IDictionary] -or $Plan['commands'] -isnot [Collections.IList]) { return $null }
   $native = [scriptblock]::Create($NativeText)
   $wslExe = if ([string]$Plan['wslExe']) { [string]$Plan['wslExe'] } else { "$env:SystemRoot\System32\wsl.exe" }
   $each = if ([int]$Plan['commandSeconds'] -gt 0) { [int]$Plan['commandSeconds'] } else { 30 }
