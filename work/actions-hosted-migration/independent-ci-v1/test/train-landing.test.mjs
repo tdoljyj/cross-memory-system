@@ -170,9 +170,11 @@ test('T5: the rules after C x the stage 8/10 rule readers: kooyumi-train-landed,
   // a real failure still counts, and only it
   const failing = green.map(c => c.name === 'trivy' ? { ...c, conclusion: 'failure' } : c);
   assert.deepEqual(requiredCheckFailure(rules, { complete: true, checks: failing }, H1, APP), ['trivy']);
-  // pinned to another App it is not the train's never-published check: unknown to the gate (parks)
+  // pinned to another App it is not the train's never-published check: it is that App's required check, read from its runs
+  // (task 04f9b91b): absent is no failure (GitHub keeps it required), its failure is one
   const other = ruleState({ trainApp: 5164952 }).rules;
-  assert.throws(() => requiredCheckFailure(other, { complete: true, checks: green }, H1, APP), /REQUIRED_CHECKS_UNREADABLE/);
+  assert.deepEqual(requiredCheckFailure(other, { complete: true, checks: green }, H1, APP), []);
+  assert.deepEqual(requiredCheckFailure(other, { complete: true, checks: [...green, on(L.TRAIN_ONLY_CHECK, 5164952, { conclusion: 'failure' })] }, H1, APP), [L.TRAIN_ONLY_CHECK]);
 });
 
 test('landingRoute: no kooyumi-train-landed -> the current path whatever the bypass state; with it push only when all of push reads back true', () => {

@@ -73,12 +73,13 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
   for (const r of rules.filter(r => r.type === 'required_status_checks')) for (const required of r.parameters.required_status_checks) {
     check(typeof required.context === 'string' && (required.integration_id == null || required.integration_id === -1
       || (Number.isSafeInteger(required.integration_id) && required.integration_id > 0)), RULESET_UNREADABLE);
-    // This repository's supported producers are the resident's six Native
-    // check-runs and GitHub Actions. Legacy/unpinned/unknown providers cannot
-    // be qualified from a check-run inventory; park instead of assuming green.
+    // A check pinned to an App is read from that App's check runs (below), whichever App it is: the same name pinned to another App
+    // as well (the hosted scaffold ruleset next to #292, task 04f9b91b) is one more requirement, never a doubt about this App's.
+    // Two kinds cannot be qualified from a check-run inventory: a check pinned to no App (any App's run or a commit status would
+    // do), and one pinned to this App that it does not publish. Park on those instead of assuming green.
     // resident ADR 0018 §8 item 3: kooyumi-train-landed (pinned to this App) is known and never published: absent is not a failure.
     if (required.integration_id === appId && required.context === TRAIN_ONLY_CHECK) continue;
-    if (!(required.integration_id === 15368 || (required.integration_id === appId && REQUIRED_CHECK_NAMES.includes(required.context)))) uncertain = true;
+    if (!(required.integration_id > 0) || (required.integration_id === appId && !REQUIRED_CHECK_NAMES.includes(required.context))) uncertain = true;
     const matches = inventory.checks.filter(c => c.name === required.context
       && (!(required.integration_id > 0) || c.app.id === required.integration_id));
     const latest = matches.reduce((a, c) => !a || c.id > a.id ? c : a, null);
@@ -91,8 +92,10 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
 }
 
 // The rules GitHub applies to main, reduced to the three facts stage 8 needs. Anything that is not exactly understood is
-// unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks missing or pinned to another
-// integration (a disaster-recovery switch), a malformed rule.
+// unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks with no entry pinned to this App
+// (missing, or moved to another integration: a disaster-recovery switch), an entry of one of the six pinned to no App, a malformed
+// rule. Several rulesets aggregate: the same name pinned to another App as well is one more requirement, not a different pin
+// (task 04f9b91b; ruleset-backstop.mjs#rulesFacts reads the pin the same way, a test keeps the two equal).
 export function rulesetFacts(rules, appId) {
   check(Array.isArray(rules) && rules.length < 100 && rules.every(r => plain(r) && typeof r.type === 'string' && r.type.length > 0), RULESET_UNREADABLE);
   const required = rules.filter(r => r.type === 'required_status_checks');
@@ -102,9 +105,10 @@ export function rulesetFacts(rules, appId) {
   for (const r of required) for (const c of r.parameters.required_status_checks) {
     check(plain(c) && typeof c.context === 'string', RULESET_UNREADABLE);
     if (!REQUIRED_CHECK_NAMES.includes(c.context)) continue;
-    // A required check without an integration accepts any App: never this check's pin.
-    check(c.integration_id === appId, RULESET_UNREADABLE);
-    pinned.set(c.context, true);
+    // A required check without an integration accepts any App: never this check's pin, and never read as one.
+    check(Number.isSafeInteger(c.integration_id) && c.integration_id > 0, RULESET_UNREADABLE);
+    // Pinned to another App: one more requirement on the same name (requiredCheckFailure reads that App's runs), not this App's pin.
+    if (c.integration_id === appId) pinned.set(c.context, true);
   }
   check(REQUIRED_CHECK_NAMES.every(n => pinned.get(n) === true), RULESET_UNREADABLE);
   // Several rulesets aggregate, the strictest wins: strict holds if any rule asks for it; the merge methods allowed are

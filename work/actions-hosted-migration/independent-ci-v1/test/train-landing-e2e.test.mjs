@@ -1100,15 +1100,14 @@ test('three ways, fail closed: kooyumi-train-landed read while the rest is not c
     'train-landed pinned to another App': W => { W.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.find(x => x.context === 'kooyumi-train-landed').integration_id = 1; },
   };
   const expected = { 'no independent ruleset': 'independent_ruleset_missing', 'the App can bypass the independent ruleset': 'independent_ruleset_app_can_bypass',
-    'the App cannot bypass main': 'main_app_cannot_bypass', 'the App bypasses main for pull requests only': 'main_app_bypass_not_always', 'train-landed pinned to another App': null };
+    'the App cannot bypass main': 'main_app_cannot_bypass', 'the App bypasses main for pull requests only': 'main_app_bypass_not_always', 'train-landed pinned to another App': 'train_landed_check_missing' };
   for (const [name, change] of Object.entries(cases)) await t.test(name, async t => {
     const { e, b, T } = await opened(t, [910]);
     change(e.W);
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
-    // kooyumi-train-landed pinned to another App is an unknown provider to the queue head's required-check gate (train-rules.mjs), which
-    // parks first; landingRoute's own answer for it (train_landed_check_missing) is in train-landing.test.mjs
-    if (expected[name] === null) assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'REQUIRED_CHECKS_UNREADABLE', 0], JSON.stringify(p));
-    else assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
+    // kooyumi-train-landed pinned to another App is that App's required check to the queue head's gate (train-rules.mjs, task 04f9b91b:
+    // read from its runs, absent is no failure), so landingRoute answers for it: train_landed_check_missing
+    assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
     untouched(e, T); assert.deepEqual(e.W.pushes, []);
   });
 });

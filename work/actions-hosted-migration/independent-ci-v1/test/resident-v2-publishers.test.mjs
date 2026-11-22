@@ -36,12 +36,22 @@ test('required failures use exact head, pinned App and latest rerun across suppo
   assert.deepEqual(run([check(1, { app: { id: 999 } }), check(2, { name: 'optional' })]), []);
   assert.throws(() => run([check(1, { head_sha: BASE })]), /REQUIRED_CHECKS_UNREADABLE/);
   assert.throws(() => requiredCheckFailure(rules, { complete: false, checks: [] }, HEAD, 5368905), /REQUIRED_CHECKS_UNREADABLE/);
-  for (const integration_id of [null, -1, 999]) {
+  for (const integration_id of [null, -1]) {
     rules[2].parameters.required_status_checks.push({ context: 'unknown-or-legacy-ci', integration_id });
-    assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/, 'an unsupported required provider must never be assumed clear');
+    assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/, 'an unpinned required provider must never be assumed clear');
     assert.deepEqual(run([check(1)]), ['ci-suites'], 'known failures take priority over unrelated unsupported contexts');
     rules[2].parameters.required_status_checks.pop();
   }
+  // task 04f9b91b: pinned to any other App it is read from that App's runs (absent is no failure: GitHub keeps it required)
+  rules[2].parameters.required_status_checks.push({ context: 'other-app-ci', integration_id: 999 });
+  assert.deepEqual(run([]), []);
+  assert.deepEqual(run([check(1, { name: 'other-app-ci', app: { id: 999 } })]), ['other-app-ci']);
+  assert.deepEqual(run([check(1, { name: 'other-app-ci', app: { id: 15368 } })]), [], 'another App\'s run of the name is not that App\'s');
+  rules[2].parameters.required_status_checks.pop();
+  // a name this App does not publish, pinned to this App, stays unknown
+  rules[2].parameters.required_status_checks.push({ context: 'not-published-here', integration_id: 5368905 });
+  assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/);
+  rules[2].parameters.required_status_checks.pop();
 });
 
 test('failed required checks neither join nor extend, and an already queued claim returns its slot', async t => {
