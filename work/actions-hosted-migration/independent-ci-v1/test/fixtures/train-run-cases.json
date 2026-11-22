@@ -1,6 +1,6 @@
 {
   "contract": "clued.independent-ci.train-run-cases/1",
-  "note": "Shared cases for the two train-run /3 validators: resident-v2/train-run.mjs#validateTrainRun (test/train-run.test.mjs) and FormalPublicBoundaryV2.cs#ValidateTrainRun (windows/PureTestsV2.cs via test-pure-v2.ps1). Each case applies `set` to `base` (then `remove` / `add`); the id is recomputed with trainRunJobId unless `keepId` is true. Accepted cases must validate on both sides with the same id; refused cases must be refused on both.",
+  "note": "Shared cases for the two train-run /4 validators: resident-v2/train-run.mjs#validateTrainRun (test/train-run.test.mjs) and FormalPublicBoundaryV2.cs#ValidateTrainRun (windows/PureTestsV2.cs via test-pure-v2.ps1). Each case applies `set` to `base` (then `remove` / `add`); the id is recomputed with trainRunJobId unless `keepId` is true. Accepted cases must validate on both sides with the same id; refused cases must be refused on both.",
   "base": {
     "repo": "tdoljyj/cross-memory-system",
     "runId": "0123456789abcdef-0123456789ab",
@@ -39,6 +39,7 @@
     { "name": "on-since-year-0000", "set": { "mode": "on", "onSince": "0000-01-01T00:00:00.000Z" } },
     { "name": "contract-1", "set": { "contract": "clued.independent-ci.train-run/1" } },
     { "name": "contract-2", "set": { "contract": "clued.independent-ci.train-run/2" } },
+    { "name": "contract-3", "set": { "contract": "clued.independent-ci.train-run/3" } },
     { "name": "sweep-unknown", "set": { "sweep": "full" } },
     { "name": "sweep-null", "set": { "sweep": null } },
     { "name": "sweep-missing", "remove": "sweep" },
