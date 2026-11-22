@@ -863,3 +863,70 @@ test('§1: in each state of the rules exactly one of the two copies brings the f
     assert.deepEqual(bringers, [rules === 'scaffold' ? 'hosted' : 'self-hosted'], rules);
   }
 });
+
+// FABLE-scaffold-s5-pre §2: a head the App brought up to main that the admission does not pass (a failure, or nothing at all) is not
+// the front, so the next one was brought, and the next: a systemic cause (the authorization not carried, Clued unreachable, the
+// admission workflow disabled) spent the whole train one pull request per run. With 2 such heads on the train at once nobody else is
+// brought up; below 2 it goes on by itself. Nothing is kept between runs: both facts are on the heads.
+const [A, B, C, D] = [2001, 2002, 2003, 2004];
+function fourBehind(rules) {
+  const w = rulesOf(train(), rules);
+  [A, B, C, D].forEach((number, i) => w.open(number, { head: sha(number), auto: `2026-11-22T00:0${i}:00Z` }));
+  return w;
+}
+// Runs without inputs, the clock on by `every` after each; whatever was brought up gets `onBrought` (what the admission did on it).
+async function runs(w, count, extra, every, onBrought) {
+  const results = [];
+  for (let i = 0; i < count; i++) {
+    const seen = w.updates.length;
+    results.push(await w.run({}, extra));
+    for (const u of w.updates.slice(seen)) onBrought(u.to);
+    w.now += every;
+  }
+  return results;
+}
+const failsAdmission = (w, app) => head => w.check(head, INDEPENDENT_ADMISSION_CHECK, 'failure', app);
+const hostedGreen = w => head => { for (const name of HOSTED) w.check(head, name); };
+
+test('§2: brought-up heads the admission fails hold the train at 2; the others keep their heads', async () => {
+  for (const [rules, extra, app] of [['scaffold', SCAFFOLD, ADMISSION_APP_ID], ['framework', {}, INDEPENDENT_ADMISSION_APP_ID]]) {
+    const w = fourBehind(rules);
+    const results = await runs(w, 4, extra, 10 * MIN, failsAdmission(w, app));
+    assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], `${rules}: ${JSON.stringify(results.at(-1))}`);
+    assert.deepEqual(w.brought(), [A, B], rules);
+    for (const r of results.slice(2)) { assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/); assert.equal(r.pr, null); }
+    assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+    assert.match(renderSummary(results[3]), /nobody brought up: \*\*held\*\*/);
+  }
+});
+
+test('§2: brought-up heads the admission never answers hold the train at 2 as well', async () => {
+  const w = fourBehind('scaffold');
+  const results = await runs(w, 4, SCAFFOLD, 16 * MIN, hostedGreen(w));
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], JSON.stringify(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B]);
+  assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+});
+
+test('§2: the hold lifts by itself: one of the two admitted is the front; once it merged, the next is brought', async () => {
+  const w = fourBehind('scaffold');
+  await runs(w, 3, SCAFFOLD, 10 * MIN, failsAdmission(w, ADMISSION_APP_ID));
+  assert.deepEqual(w.brought(), [A, B]);
+  // A's head is admitted after all (DESK authorized it; later the admission carries it) and its checks are green.
+  w.check(w.headOf(A), INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID); hostedGreen(w)(w.headOf(A));
+  let r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2001 contains main and is under way/); assert.deepEqual(w.brought(), [A, B]);
+  // GitHub merges A and main moves: only B is brought and not admitted, below the limit: C is brought.
+  w.merged(A); w.now += 10 * MIN;
+  r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, C); assert.deepEqual(w.brought(), [A, B, C]);
+});
+
+test('§2: one head the admission fails does not hold the train; the next one admitted is the front', async () => {
+  const w = fourBehind('scaffold');
+  await runs(w, 1, SCAFFOLD, 10 * MIN, failsAdmission(w, ADMISSION_APP_ID));
+  await runs(w, 1, SCAFFOLD, 10 * MIN, head => { w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID); hostedGreen(w)(head); });
+  assert.deepEqual(w.brought(), [A, B]);
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2002 contains main and is under way/); assert.deepEqual(w.brought(), [A, B]);
+});
