@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { COMPARE_RETRY_MS, COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
-import { nodeContext, standbyContext } from '../src/node-duty.mjs';
+import { nodeContext, parseDutyStatus, standbyContext } from '../src/node-duty.mjs';
 // Task 9cac75be A3: no default node; these reporters are the node named node-b (node: 'node-b').
 const PR_STATUS_CONTEXT = nodeContext('node-b');
 
@@ -632,4 +632,41 @@ test('484bddac: a behind PR gets the same pending line under every train summary
     assert.deepEqual(d, { state: 'pending', description: LINE }, name);
     assert.equal(JSON.stringify(d).includes('请合入'), false, name);
   }
+});
+
+// Field defect 2026-11-23 (FABLE-resident-halt-merge-race-20261123 C): both residents were HALTed (PUBLICATION_UNCERTAIN) and the
+// compute panel showed them idle: a node wrote only on the commits it had queued or run, the PRs that ended the HALT were merged, and
+// the open PRs it never queued carried nothing. While HALTed, the node on duty says so on every eligible open PR head.
+test('HALT: the node on duty writes 执行器已停机（码） on every eligible open PR head, also one it never queued; a STANDBY writes none', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-11-23T00:30:00Z');
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const field = (a, k) => a.find(x => x.startsWith(`${k}=`))?.slice(k.length + 1);
+  const written = () => calls.filter(a => a.includes('POST')).map(a => [a.find(x => x.includes('/statuses/')).split('/').at(-1), field(a, 'state'), field(a, 'context'), field(a, 'description')]);
+  const nodeAs = mode => ({ name: 'node-b', mode, probe: { at: new Date(now - 30_000).toISOString(), result: mode === 'ACTIVE' ? 'held' : 'not-held', failures: 0, failingSince: null } });
+  const halted = mode => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: nodeAs(mode), halt: { code: 'PUBLICATION_UNCERTAIN', at: '2026-11-23T00:21:05Z' } }); }, now);
+  // Neither head was ever queued or run by this node (status.json names no row for them).
+  const pulls = [{ pr: 1240, headSha: H(4), eligible: true, hint: null, behindBy: 0 }, { pr: 1241, headSha: H(5), eligible: true, hint: null, behindBy: 0 }];
+  const TEXT = '执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位';
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false, writeRequest: async () => {} });
+  await reporter.pass({ pulls, status: halted('ACTIVE') });
+  assert.deepEqual(written(), [[H(4), 'error', PR_STATUS_CONTEXT, TEXT], [H(5), 'error', PR_STATUS_CONTEXT, TEXT]]);
+  // It is no duty word: another node never reads it as on duty, and it is not written again while unchanged.
+  assert.equal(parseDutyStatus({ context: PR_STATUS_CONTEXT, description: TEXT, created_at: new Date(now).toISOString(), login: 'tdoljyj' }, 'tdoljyj').word, null);
+  now += 20 * 60_000;
+  await reporter.pass({ pulls, status: halted('ACTIVE') });
+  assert.equal(written().length, 2, 'not refreshed');
+  // A STANDBY (the watchdog handed its role over) writes nothing under its queue context, HALTed or not.
+  const before = written().length;
+  const standby = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 'b.json'), () => now), notifications: false, writeRequest: async () => {} });
+  await standby.pass({ pulls, status: halted('STANDBY') });
+  assert.equal(written().length, before);
 });

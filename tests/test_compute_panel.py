@@ -140,6 +140,23 @@ class ResidentTests(unittest.TestCase):
         summary = panel.summarize_batches([batch, {**batch, "outcome": "running", "ended_at": None}], NOW, 7)
         self.assertEqual((summary["batches"], summary["failed"], summary["burned_heads"]), (1, 1, 1))
 
+    def test_halt_row_on_a_head_never_queued_shows_the_code(self) -> None:
+        # Field defect 2026-11-23: both residents HALTed (PUBLICATION_UNCERTAIN), the panel said idle. The node on duty now
+        # writes its HALT on every eligible open PR head (node-duty.mjs#want); the panel names the code.
+        text = "执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位"
+        combined = [(1240, {"statuses": [status(9, "error", text, "desk")]}), (1241, {"statuses": [status(9, "error", text, "desk")]})]
+        residents = panel.resident_latest(combined)
+        self.assertEqual((residents["desk"]["halted"], residents["desk"]["activity"]), (True, "halted"))
+        report = {"schema": panel.SCHEMA, "generated_at": panel.iso(NOW), "pool": {}, "utilization": {}, "residents": residents,
+                  "others": panel.OTHERS, "metrics": {}, "alerts": {}}
+        body = panel.render(report, {})
+        self.assertIn("| 常驻 desk | 停机（PUBLICATION_UNCERTAIN） |", body)
+        self.assertNotIn("空闲", body.split("| 常驻 desk |")[1].split("\n")[0])
+        # A stall code reads the same way; an error row without a code stays 停机.
+        for description, shown in (("停摆（STATUS_STALE）：执行器状态自 00:10Z 起未更新，可能已停止", "停机（STATUS_STALE）"), ("停机", "停机")):
+            row = {"desk": {"halted": True, "activity": "halted", "description": description, "pr": 3, "at": at(9)}}
+            self.assertIn(f"| 常驻 desk | {shown} |", panel.render({**report, "residents": row}, {}))
+
     def test_error_row_wins_as_halt(self) -> None:
         combined = [
             (1, {"statuses": [status(1, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),

@@ -150,7 +150,7 @@ function fakeGithub(o = {}) {
       if (state.pull.state !== 'open') throw Object.assign(new Error('pr_subject_changed'), { code: 'pr_subject_changed' });
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] };
     },
-    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: state.prBase ?? BASE, ref: 'main', repo: { full_name: REPO } } }; },
+    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: state.prHead ?? HEAD, repo: { full_name: REPO } }, base: { sha: state.prBase ?? BASE, ref: 'main', repo: { full_name: REPO } } }; },
     async readBranchRules(branch) { if (state.rulesError) throw Object.assign(new Error(state.rulesError), { code: state.rulesError }); return { complete: true, branch, rules: structuredClone(state.rules) }; },
     async readGitCommit(sha) { if (!state.commits[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' }); return structuredClone(state.commits[sha]); },
     async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
@@ -216,6 +216,67 @@ test('work admission v2: a settled check whose batch claim generation moved is r
   assert.equal(r.status, 'REVOKED');
   assert.equal(github.checks[0].conclusion, 'failure');
   assert.equal(github.checks.length, 1);
+});
+
+// Field defect 2026-11-23 (PR #1238, #1239; FABLE-resident-halt-merge-race-20261123 A): stage 1's success was the PR's last required
+// check, GitHub's auto-merge merged it 4-5 s later, the verification after the write failed (the PR is no longer open to Native) and
+// the withdrawal of a merged PR's check ended UNCERTAIN: both residents HALTed. A PR merged at exactly this head on this batch's base
+// is the legitimate ending the green was for: SETTLED (settledMerged), never withdrawn. Anything else is withdrawn as before.
+// GitHub's auto-merge, a moment after the work-admission green: `pull` is what the PR reads then, `landed` the commit it names.
+const mergeOnAdmission = (github, { landed = { sha: LANDED, tree: TREE, parents: [BASE, HEAD] }, pull = { state: 'closed', merged: true, mergeable: null, merge_commit_sha: LANDED }, prHead = null } = {}) => {
+  github.revokes = 0;
+  const revoke = github.revokeCheck.bind(github);
+  github.revokeCheck = async (...a) => { github.revokes++; return revoke(...a); };
+  github.state.onCreate = c => { if (c.name !== 'kooyumi-work-admission') return; github.state.pull = pull; if (landed) github.state.commits[landed.sha] = landed; if (prHead) github.state.prHead = prHead; };
+  return github;
+};
+// One stage-1 publication with that GitHub; Native admits the open PR and rejects it once it is not open any more (the field's
+// full_admission_rejected). nativeSeesClose false: the changed-paths read is what refuses first (pr_subject_changed).
+async function admissionRun(t, github, { nativeSeesClose = true } = {}) {
+  const jobs = jobsFor(), c = claim(), bc = await batchClaimsAt(t);
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  if (nativeSeesClose) {
+    const paths = github.readChangedPaths.bind(github);
+    github.readChangedPaths = async job => { const now = github.state.pull; github.state.pull = { ...now, state: 'open' }; try { return await paths(job); } finally { github.state.pull = now; } };
+  }
+  const admission = fakeAdmission((job, packet) => github.state.pull.state === 'open' ? admitted(job, c, packet) : blocked('full_admission_rejected'));
+  const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaims: bc, sleep: async () => {} });
+  const r = await pub.publish(jobs['work-admission']);
+  return { r, github, journal, effect: r.effectKey ? await journal.read(r.effectKey) : null };
+}
+
+test('work admission v2 (#1239 replay): a PR GitHub merged at this head right after the green is SETTLED (settledMerged), never withdrawn', async t => {
+  for (const nativeSeesClose of [true, false]) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub()), { nativeSeesClose });
+    assert.deepEqual([m.r.status, m.r.settledMerged, m.r.sideEffects, m.r.reason], ['SETTLED', true, 1, undefined], JSON.stringify(m.r));
+    assert.deepEqual(m.github.checks.map(x => [x.name, x.conclusion]), [['kooyumi-work-admission', 'success']]);
+    assert.equal(m.github.revokes, 0, 'no withdrawal is ever sent');
+    assert.deepEqual([m.effect.state, m.effect.details.settledMerged, m.effect.details.checkRunId], ['settled', LANDED, m.github.checks[0].id]);
+  }
+});
+
+test('work admission v2: a PR that is not merged at this head on this base still loses the green after the write', async t => {
+  const OTHER = '8'.repeat(40);
+  const cases = {
+    'closed, not merged': { landed: null, pull: { state: 'closed', merged: false, mergeable: null, merge_commit_sha: null } },
+    'merged at another head': { prHead: OTHER, landed: { sha: LANDED, tree: TREE, parents: [BASE, OTHER] } },
+    'merged on another first parent (not this batch\'s base)': { landed: { sha: LANDED, tree: TREE, parents: ['9'.repeat(40), HEAD] } },
+    'squashed (one parent)': { landed: { sha: LANDED, tree: TREE, parents: [BASE] } },
+    'the merge commit cannot be read': { landed: null },
+  };
+  for (const [name, how] of Object.entries(cases)) for (const nativeSeesClose of [true, false]) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), how), { nativeSeesClose });
+    assert.deepEqual([m.r.status, m.r.settledMerged, m.github.checks[0].conclusion, m.github.revokes], ['REVOKED', undefined, 'failure', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, 'revoked', name);
+  }
+  // merged at this head, but the green cannot be read back as the one success (a second check of the same identity): never settled
+  // on an unconfirmed check
+  const unread = mergeOnAdmission(fakeGithub());
+  const merge = unread.state.onCreate;
+  unread.state.onCreate = c => { merge(c); if (c.name === 'kooyumi-work-admission') unread.checks.push({ ...structuredClone(c), id: c.id + 50 }); };
+  const z = await admissionRun(t, unread);
+  assert.notEqual(z.r.status, 'SETTLED', JSON.stringify(z.r));
+  assert.equal(z.r.settledMerged, undefined);
 });
 
 test('control pair v2 (S8): read-only queue wait, then exactly two publications', async t => {
