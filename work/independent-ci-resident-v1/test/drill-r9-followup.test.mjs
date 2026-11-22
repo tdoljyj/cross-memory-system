@@ -98,3 +98,31 @@ test('F5: an abort for memory records the ten largest processes; any other abort
   const unread = run('f5-unread', 'DRILL_HOST_MEMORY_SHORT', "function Get-Process { throw 'no process list' }");
   assert.deepEqual([unread.code, unread.stopped, unread.restoredToCheckpoint, 'topProcesses' in unread], ['DRILL_HOST_MEMORY_SHORT', true, true, false]);
 });
+
+// Planning ruling FABLE-r9-lineB-points R2: the failure snapshot is the evidence of a first install that did not end done. Its absence
+// is nothing missing only when the entry itself said FIRST_INSTALL_DONE; stopped, timed out or no result at all, it is missing evidence
+// (the entry swallows a snapshot it could not write: r9 lost the resident's HALT and nothing said so).
+test('R2: a first install that did not end done and brought no failure snapshot is missing evidence; one that ended done is not', opts, () => {
+  const run = (name, entryOut) => {
+    const dir = path.join(tmp, name); fs.mkdirSync(dir);
+    return ps(`function Save-DrillProbe { }
+      function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Step)
+        $r = @{}
+        foreach ($n in @($ArgumentList[1])) {
+          if ($n -ceq 'resident-failure-snapshot.json') { $r[$n] = @{ present = $false; text = $null; error = $null } }
+          elseif ($n -ceq 'launcher-result.json') { $r[$n] = @{ present = $true; text = '{"exit":1,"terminal":null}'; error = $null } }
+          elseif ($n.EndsWith('.json')) { $r[$n] = @{ present = $true; text = '{}'; error = $null } }
+          else { $r[$n] = @{ present = $true; text = 'a line'; error = $null } }
+        }
+        $r }
+      $c = Save-DrillGuestEvidence ${q(dir)} $null ${entryOut}
+      [ordered]@{ ok = $c.record.ok; missing = @($c.record.missing); state = $c.record.stageFiles['resident-failure-snapshot.json'].state }`);
+  };
+  const out = line => `([ordered]@{ lines = @('a line', ${q(line)}); stderr = ''; exit = 1 })`;
+  assert.deepEqual(run('r2-done', out('{"status":"FIRST_INSTALL_DONE","stopCode":null}')), { ok: true, missing: [], state: 'absent' });
+  assert.deepEqual(run('r2-stopped', out('{"status":"FIRST_INSTALL_STOPPED","stopCode":"LAUNCHER_STOPPED:X"}')), { ok: false, missing: ['resident-failure-snapshot.json'], state: 'absent' });
+  assert.deepEqual(run('r2-unparsed', out('cut off in the middle')), { ok: false, missing: ['resident-failure-snapshot.json'], state: 'absent' });
+  // a first install cut off by its time limit returns nothing at all
+  assert.deepEqual(run('r2-none', '$null'), { ok: false, missing: ['resident-failure-snapshot.json'], state: 'absent' });
+});
+
