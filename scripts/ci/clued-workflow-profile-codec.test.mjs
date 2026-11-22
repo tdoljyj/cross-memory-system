@@ -45,8 +45,8 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.equal(sources(original).length,75);
   delete original.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary
-  // (its current bytes: the clued-train/staging route, D6 N1).
-  const WINDOWS='.github/workflows/clued-required-tests-windows.yml',WINDOWS_BLOB='58c31924b7564d1380431963b84f177cc4ea4993';
+  // (its current bytes: the clued-train/staging route, D6 N1; the sparse trusted checkout, R1).
+  const WINDOWS='.github/workflows/clued-required-tests-windows.yml',WINDOWS_BLOB='8ac775847916ea3287dbdcc848e6784533546c74';
   assert.equal(original.workflows[WINDOWS].workflow_blob,WINDOWS_BLOB);assert.deepEqual(original.workflows[WINDOWS].primary_ids,['ci-suites-windows']);
   assert.equal(Object.hasOwn(original.workflows[WINDOWS],'execution_mode'),false);delete original.workflows[WINDOWS];
   const G4='.github/workflows/clued-g4-database.yml',G4_BLOB='d7876890a4df616fddae675c4d66737a70eb7045';
