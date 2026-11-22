@@ -655,7 +655,11 @@ function workflowJobs(text) {
   const jobs = [];
   for (let i = 1; i < parts.length; i += 2) {
     const job = parts[i + 1];
-    const labels = /\n {4}runs-on: \[([^\]]+)\]/.exec(`\n${job}`)?.[1].split(',').map((label) => label.trim()) ?? [];
+    // runs-on is a self-hosted label list ([self-hosted, Windows, ...]) or one GitHub-hosted image label (windows-2025,
+    // ubuntu-24.04): a hosted Windows image is a Windows job too, so it is held to the Windows suites only.
+    const runsOn = /\n {4}runs-on: (.+)/.exec(`\n${job}`)?.[1].trim() ?? '';
+    const labels = (/^\[([^\]]+)\]/.exec(runsOn)?.[1] ?? runsOn).split(',').map((label) => label.trim())
+      .map((label) => (/^windows-/i.test(label) ? 'Windows' : label));
     const steps = job.split(/\n {6}- /).slice(1).map((step) => {
       const run = /(?:^|\n) {8}run: \|\n((?: {10}.*\n?| *\n)+)/.exec(step)?.[1].replace(/^ {10}/gm, '').trimEnd()
         ?? /(?:^|\n) {8}run: (.+)/.exec(step)?.[1];
@@ -730,6 +734,13 @@ test('every job of any workflow that can run a suite needing application depende
   const third = 'name: third\non:\n  pull_request:\njobs:\n  other:\n    runs-on: [self-hosted, Linux]\n    steps:\n'
     + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run pinned-registries --root candidate\n';
   assert.deepEqual(appDependencyFindings('third.yml', third), [`third.yml other: can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  // A job on a GitHub-hosted image label is classified by that label: windows-2025 runs only the Windows suites (none needs
+  // the application dependencies), ubuntu-24.04 runs the Linux ones and is held to the step (Task 04f9b91b).
+  const hosted = (label) => 'name: hosted\non:\n  pull_request:\njobs:\n  suites:\n    runs-on: ' + label + '\n    steps:\n'
+    + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate\n';
+  assert.deepEqual(appDependencyFindings('hosted.yml', hosted('windows-2025')), []);
+  assert.deepEqual(appDependencyFindings('hosted.yml', hosted('[self-hosted, Windows, X64]')), []);
+  assert.deepEqual(appDependencyFindings('hosted.yml', hosted('ubuntu-24.04')), [`hosted.yml suites: can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
   // The marker reaches the suites' processes through the environment the selection gives them.
   assert.equal(selection.testEnv({ [selection.APP_DEPS_MARKER]: '1' })[selection.APP_DEPS_MARKER], '1');
 });
