@@ -151,10 +151,11 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
  }
  // Train run /2 (step 3c-2b, DESIGN §41.7; train-run.mjs is the same table, test/fixtures/train-run-cases.json runs on both):
  // id = sha256(JSON(["clued.independent-ci.train-run/3",repo,runId,mode,sourceManifestSha256,slotHardCapMinutes,frontBatchBudgetMs,
- // sweepFreshMs,fullSweepMaxMs,onSince,frontPr,frontHeadSha,frontTestSha,frontAttempt,frontCode,revokeHeadRequestId,sweep])).
+ // sweepFreshMs,fullSweepMaxMs,onSince,frontPr,frontHeadSha,frontTestSha,frontAttempt,frontCode,frontFailed,revokeHeadRequestId,sweep])).
  // /3 (strict-permanent mode, resident DESIGN §65): /2 plus sweep (gate|audit|off, the policy's train.sweep); /2 is refused.
- static readonly string[] TrainRunFields={"contract","id","repo","runId","mode","sourceManifestSha256","createdAt","slotHardCapMinutes","frontBatchBudgetMs","sweepFreshMs","fullSweepMaxMs","onSince","frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","revokeHeadRequestId","sweep"};
- static readonly string[] TrainRunFront={"frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode"};
+ // R3 batch 2 (task 04f9b91b): frontFailed (a bool) after frontCode; set with the other front fields, null with them.
+ static readonly string[] TrainRunFields={"contract","id","repo","runId","mode","sourceManifestSha256","createdAt","slotHardCapMinutes","frontBatchBudgetMs","sweepFreshMs","fullSweepMaxMs","onSince","frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","frontFailed","revokeHeadRequestId","sweep"};
+ static readonly string[] TrainRunFront={"frontPr","frontHeadSha","frontTestSha","frontAttempt","frontCode","frontFailed"};
  public static string TrainRunId(Dictionary<string,object> job){
   var identity=new List<object>{"clued.independent-ci.train-run/3"};foreach(string f in TrainRunFields)if(f!="contract"&&f!="id"&&f!="createdAt")identity.Add(At(job,f));
   byte[] raw=new UTF8Encoding(false).GetBytes(new JavaScriptSerializer().Serialize(identity));using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(raw)).Replace("-","").ToLowerInvariant();
@@ -173,7 +174,7 @@ public sealed class FormalPublicBoundaryV2 : IDisposable {
   // onSince: null in shadow, set in on, either in revoke-only. frontOutcome: all null, or all set in on only. revokeHeadRequestId: null in shadow.
   object since=At(job,"onSince");if(!(since==null||IsoMs(since))||(mode=="shadow"&&since!=null)||(mode=="on"&&since==null))Deny("TRAIN_RUN_PARAMS_REQUIRED");
   bool none=true;foreach(string f in TrainRunFront)if(At(job,f)!=null)none=false;
-  if(!none){if(mode!="on"||!Commit(At(job,"frontHeadSha") as string)||!Commit(At(job,"frontTestSha") as string)||!UpperCode(At(job,"frontCode")))Deny("TRAIN_RUN_PARAMS_REQUIRED");Within(job,"frontPr",1,9007199254740991);Within(job,"frontAttempt",1,2);}
+  if(!none){if(mode!="on"||!Commit(At(job,"frontHeadSha") as string)||!Commit(At(job,"frontTestSha") as string)||!UpperCode(At(job,"frontCode"))||!(At(job,"frontFailed") is bool))Deny("TRAIN_RUN_PARAMS_REQUIRED");Within(job,"frontPr",1,9007199254740991);Within(job,"frontAttempt",1,2);}
   object request=At(job,"revokeHeadRequestId");if(!(request==null||(mode!="shadow"&&LowerUuid(request))))Deny("TRAIN_RUN_PARAMS_REQUIRED");
   string sweep=At(job,"sweep") as string;if(sweep!="gate"&&sweep!="audit"&&sweep!="off")Deny("TRAIN_RUN_PARAMS_REQUIRED");
   if(TrainRunId(job)!=Text(job,"id"))Deny("DETERMINISTIC_JOB_ID_REQUIRED");return job;

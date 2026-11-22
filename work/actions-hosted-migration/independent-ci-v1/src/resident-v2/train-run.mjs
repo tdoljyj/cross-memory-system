@@ -13,6 +13,10 @@
 //   gate   the take-over full sweep gates every batch and the full-sweep proof can cover a green with strict off (§41, §60-§62);
 //   audit  strict stays on for good: no full sweep gates anything; a full round is a background audit at most once a day;
 //   off    the same without the audit rounds.
+// R3 batch 2 (task 04f9b91b): the frontOutcome has one more flat field, frontFailed (boolean). The executor reports every final
+// end of a front batch that has no automatic attempt 2, so stage 10 never waits on a clock to learn the batch ended;
+// frontFailed is true only for a failure of the PR itself (failure table `deterministic-pr`), and only then does stage 10
+// touch failed, bisect a batch of several or skip opening (train-maintenance.mjs). The resident and the Source change together.
 // /2 is no longer produced or accepted (the resident and the Source change together).
 import { createHash } from 'node:crypto';
 import { digest } from '../proof.mjs';
@@ -21,18 +25,18 @@ export const TRAIN_RUN_CONTRACT = 'clued.independent-ci.train-run/3';
 export const TRAIN_RUN_KEY_CONTRACT = 'clued.independent-ci.train-run-key/1';
 export const TRAIN_RUN_ROLE = 'train-run';
 export const TRAIN_RUN_FIELDS = Object.freeze(['contract', 'id', 'repo', 'runId', 'mode', 'sourceManifestSha256', 'createdAt', 'slotHardCapMinutes', 'frontBatchBudgetMs',
-  'sweepFreshMs', 'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId', 'sweep']);
+  'sweepFreshMs', 'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'frontFailed', 'revokeHeadRequestId', 'sweep']);
 export const TRAIN_RUN_IDENTITY = Object.freeze(TRAIN_RUN_FIELDS.filter(k => !['contract', 'id', 'createdAt'].includes(k)));
 export const TRAIN_RUN_MODES = Object.freeze(['shadow', 'on', 'revoke-only']);
 export const TRAIN_RUN_SWEEPS = Object.freeze(['gate', 'audit', 'off']);
 // The fields after the four of /1: what the resident passes (derive-batch.mjs --train-params).
 export const TRAIN_RUN_PARAMS = Object.freeze(TRAIN_RUN_IDENTITY.slice(4));
-const FRONT = Object.freeze(['frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode']);
+const FRONT = Object.freeze(['frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'frontFailed']);
 // Policy /8 bounds (DESIGN §41.7).
 export const TRAIN_RUN_BOUNDS = Object.freeze({ slotHardCapMinutes: [60, 180], frontBatchBudgetMs: [60_000, 10_800_000], sweepFreshMs: [60_000, 3_600_000], fullSweepMaxMs: [600_000, 86_400_000] });
 // Shadow derivations that name no params (fixtures, derive-batch.mjs#deriveTrainRun only; the CLI always takes them).
 export const TRAIN_RUN_SHADOW_DEFAULTS = Object.freeze({ slotHardCapMinutes: 120, frontBatchBudgetMs: 3_600_000, sweepFreshMs: 900_000, fullSweepMaxMs: 21_600_000,
-  onSince: null, frontPr: null, frontHeadSha: null, frontTestSha: null, frontAttempt: null, frontCode: null, revokeHeadRequestId: null, sweep: 'gate' });
+  onSince: null, frontPr: null, frontHeadSha: null, frontTestSha: null, frontAttempt: null, frontCode: null, frontFailed: null, revokeHeadRequestId: null, sweep: 'gate' });
 
 const RUN_ID = /^[0-9a-f]{16}-[0-9a-f]{12}$/;
 const HEX64 = /^[0-9a-f]{64}$/, SHA = /^[0-9a-f]{40}$/, CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
@@ -46,7 +50,7 @@ const within = (v, [lo, hi]) => Number.isSafeInteger(v) && v >= lo && v <= hi;
 // (review R2 minor 10: year 0000 parses in JS only).
 const isoMs = v => typeof v === 'string' && ISO_MS.test(v) && !v.startsWith('0000') && Number.isFinite(Date.parse(v)) && new Date(Date.parse(v)).toISOString() === v;
 const frontOutcome = j => Number.isSafeInteger(j.frontPr) && j.frontPr > 0 && SHA.test(j.frontHeadSha ?? '') && SHA.test(j.frontTestSha ?? '')
-  && [1, 2].includes(j.frontAttempt) && typeof j.frontCode === 'string' && CODE.test(j.frontCode);
+  && [1, 2].includes(j.frontAttempt) && typeof j.frontCode === 'string' && CODE.test(j.frontCode) && typeof j.frontFailed === 'boolean';
 
 // A run key from a seed, for tests and fixtures. The resident draws its own random key and run id (engine-windows.mjs
 // #runTrainStage); the derivation checks only their shape: the id is the key's first 16 hex digits and a nonce.
