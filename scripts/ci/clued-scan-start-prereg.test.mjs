@@ -171,6 +171,17 @@ test('the integrated candidate uses exactly the two preregistered workflow bytes
   profileBefore.workflows[NODE22].accepted_sources = profileBefore.workflows[NODE22].accepted_sources.filter(x => x.workflow_blob !== NODE22_BLOB);
   assert.equal(Object.hasOwn(rolesBefore.workflows[NODE22].sources, NODE22_BLOB), true);
   delete rolesBefore.workflows[NODE22].sources[NODE22_BLOB];
+  // #1217 R2b: three gated workflows lost their main push trigger; each new byte form is a later additive Source and is
+  // the workflow on disk. Strip it like the other later successors.
+  for (const [file, blob] of [['.github/workflows/clued-cloud-node22-install.yml', 'a07a290c763654a7aaa749a1c2088d484afc4eed'],
+    ['.github/workflows/design-refs.yml', '0d5575fdabf9f2e811b893d6a09eb4b36d2e7600'],
+    ['.github/workflows/model-program-m2-scoped-consumer.yml', 'da6c77d5758f8f3e7a124fc3ab667fceebe235f8']]) {
+    assert.equal(profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob === blob).length, 1, file);
+    assert.equal(workflowBlob(fs.readFileSync(new URL(file, ROOT), 'utf8')), blob, file);
+    profileBefore.workflows[file].accepted_sources = profileBefore.workflows[file].accepted_sources.filter(x => x.workflow_blob !== blob);
+    assert.equal(Object.hasOwn(rolesBefore.workflows[file].sources, blob), true, file);
+    delete rolesBefore.workflows[file].sources[blob];
+  }
   // A preregisters this exact later successor without consuming its YAML.
   // Authenticate its full Source and unchanged roles before projecting history.
   // Verify the later automation route's exact bytes and both complete roles,

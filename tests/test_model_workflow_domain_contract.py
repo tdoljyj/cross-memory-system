@@ -69,14 +69,12 @@ class WorkflowDomainContractTests(unittest.TestCase):
         self.assertEqual(left["candidate_definition_package_sha256"], PIN)
         self.assertFalse(left["domain_adoption_verified"])
 
-    def test_domain_and_test_only_changes_trigger_both_existing_ci_events(self):
+    def test_domain_and_test_only_changes_trigger_the_pull_request_ci_event(self):
         workflow = ".github/workflows/model-program-m2-scoped-consumer.yml"
         raw = (ROOT / workflow).read_bytes(); text = raw.decode("utf-8")
         additions = ("development/contracts/model-program/workflow-domain/**", "tests/test_model_workflow_domain_contract.py")
-        pull = text.split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
-        push = text.split("  push:\n", 1)[1].split("\npermissions:\n", 1)[0]
-        for section in (pull, push):
-            for pattern in additions: self.assertIn('      - "' + pattern + '"', section)
+        pull = text.split("  pull_request:\n", 1)[1].split("\npermissions:\n", 1)[0]
+        for pattern in additions: self.assertIn('      - "' + pattern + '"', pull)
         blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
         profiles = json.loads((ROOT / "scripts/ci/clued-gated-proof-profiles.json").read_bytes())
         root = profiles["workflows"][workflow]

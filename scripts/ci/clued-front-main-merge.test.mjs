@@ -8,8 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { ADMISSION_APP_ID, MAIN_MERGE_CHECK, evaluate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
-import { runFrontMainMerge } from './clued-front-main-merge.mjs';
+import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, OWNER_REVIEW_RPC, evaluate, gate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
+import { main as frontMergeMain, renderSummary, runFrontMainMerge } from './clued-front-main-merge.mjs';
 import { ciWorkflows } from './clued-merge-slot-ci.mjs';
 import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlWorkflowSource, parseNonPrControlCatalogue } from './clued-non-pr-control-source.mjs';
 import { recognizeCatalogueWorkflow } from './clued-source-only-workflow.mjs';
@@ -17,16 +17,18 @@ import { parseWorkflowProfiles, roleDefinitionDigest, workflowBlob } from './clu
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RPC_URL = `${resolvePublicSupabaseConfig({}, ROOT).url}/rest/v1/rpc/clued_work_verify_v1`;
+const DOOR_URL = `${resolvePublicSupabaseConfig({}, ROOT).url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
 const API = 'https://api.test';
+const PROTECTED = 'scripts/ci/x.mjs';
 const PR = 1125, H = 'a'.repeat(40), T = '7'.repeat(40), X = 'e'.repeat(40), BASE = 'b'.repeat(40);
 const CLAIM = '0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f', TASK = '00000000-0000-4000-8000-000000000452';
 const AUTH = '00000000-0000-4000-8000-000000000453', CARRIED = '00000000-0000-4000-8000-000000000454';
 // One GitHub repository and one Native, as their HTTP answers. world.pr is the PR; world.commits the commits GitHub knows.
-function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file = 'docs/front.md' } = {}) {
+function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file = 'docs/front.md', mainTouches = ['docs/other.md'] } = {}) {
   const w = {
     pr: { number: PR, state: 'open', draft: false, body: 'Body', changed_files: 1, head: { sha: H, ref: 'claude/x', repo: { full_name: 'o/r' } },
       base: { sha: BASE, ref: 'main', repo: { full_name: 'o/r', default_branch: 'main' } } },
-    tip: T, checks: [], authorized: new Set([H]), carries: [], updates: [], calls: [],
+    tip: T, mainTouches, checks: [], authorized: new Set([H]), granted: new Set([H]), asked: [], carries: [], updates: [], calls: [],
     commits: new Map([[H, { sha: H, parents: [{ sha: BASE }] }]]),
   };
   const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null },
@@ -34,6 +36,13 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
   w.fetchImpl = async (url, init = {}) => {
     const method = init.method ?? 'GET', u = String(url), body = init.body ? JSON.parse(init.body) : null;
     w.calls.push({ method, url: u, body });
+    if (u === DOOR_URL) {
+      // The Owner review door: an Owner Grant exists only for the heads in w.granted; any other head is asked about and stays pending.
+      const head = body.p_input.resources[0].split('/').pop();
+      w.asked.push(head);
+      return w.granted.has(head) ? reply({ status: 'ok', admitted: true, grant: { grant_id: `grant-${head.slice(0, 4)}` } })
+        : reply({ status: 'ok', admitted: false, owner_request: { request_id: 'r1', status: 'pending', confirm_path: '/confirm/r1' } });
+    }
     if (u === RPC_URL) {
       const input = body.p_input;
       if (input.action === 'resolve_pr_claim') {
@@ -63,13 +72,15 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
     if (method === 'GET' && route.startsWith('/repos/o/r/compare/')) {
       const [from, to] = route.slice('/repos/o/r/compare/'.length).split('?')[0].split('...');
-      if (from === w.tip && to === H) return reply({ status: 'diverged', behind_by: behind, ahead_by: 1, files: [{ filename: 'docs/front.md' }] });
-      if (from === w.tip && to === X) return reply({ status: 'ahead', behind_by: 0, ahead_by: 2, files: [{ filename: 'docs/front.md' }] });
+      if (from === w.tip && to === H) return reply({ status: 'diverged', behind_by: behind, ahead_by: 1, merge_base_commit: { sha: BASE }, files: [{ filename: file }] });
+      if (from === w.tip && to === X) return reply({ status: 'ahead', behind_by: 0, ahead_by: 2, files: [{ filename: file }] });
       if (from === to) return reply({ status: 'identical', behind_by: 0, files: [] });
+      // What main changed since this branch forked (also what the merge brought into the head).
+      if ((from === BASE && to === w.tip) || (from === H && to === X)) return reply({ status: 'ahead', behind_by: 0, files: w.mainTouches.map(filename => ({ filename })) });
       return reply({ status: 'ahead', behind_by: 0, files: [] });
     }
     const checkList = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})\/check-runs/.exec(route);
-    if (method === 'GET' && checkList) return reply({ check_runs: w.checks.filter(c => c.head_sha === checkList[1] && route.includes(`check_name=${c.name}`)) });
+    if (method === 'GET' && checkList) return reply({ check_runs: w.checks.filter(c => c.head_sha === checkList[1] && (!route.includes('check_name=') || route.includes(`check_name=${c.name}`))) });
     const commit = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})$/.exec(route);
     if (method === 'GET' && commit) return w.commits.has(commit[1]) ? reply(w.commits.get(commit[1])) : reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && route === '/repos/o/r/installation') return reply({ id: 42 });
@@ -111,7 +122,7 @@ test('a train front behind main is merged with main by the App and its merge com
   assert.equal(result.result, 'merged', JSON.stringify(result));
   assert.deepEqual(w.updates, [{ expected_head_sha: H }], 'one update-branch, bound to the authorized head');
   assert.equal(w.pr.head.sha, X);
-  const [check] = w.checks;
+  const check = w.checks.find(c => c.name === MAIN_MERGE_CHECK);
   assert.equal(check.name, MAIN_MERGE_CHECK); assert.equal(check.head_sha, X); assert.equal(check.conclusion, 'success');
   assert.deepEqual(parseMainMergeExternalId(check.external_id), { pr: PR, from: H, main: T });
   // The node on duty admits the merge commit: Native carries the authorization of H, nobody authorized X.
@@ -157,13 +168,12 @@ test('the workflow changes nothing that is no longer true', async () => {
     ['up to date', world({ behind: 0 }), undefined, {}, 'none'],
     ['conflict', world({ updateStatus: 422 }), undefined, {}, 'refused'],
     ['bad input', world(), { pr: 'x', head: H }, {}, 'refused'],
-    ['protected layer (78a3052f item 2)', world({ file: '.github/workflows/x.yml' }), undefined, {}, 'none'],
+    ['frozen, protected layer', world({ file: PROTECTED }), undefined, { CLUED_MERGE_ADMISSION_STATE: 'frozen' }, 'none'],
   ]) {
     const r = await merge(w, input, extra);
     assert.equal(r.result, want, `${name}: ${JSON.stringify(r)}`);
     assert.equal(w.checks.length, 0, name);
     if (want === 'none' || name === 'bad input') assert.equal(w.updates.length, 0, name);
-    if (name.startsWith('protected')) assert.match(r.reason, /78a3052f/);
   }
   const draft = world(); draft.pr.draft = true;
   assert.equal((await merge(draft)).result, 'none'); assert.equal(draft.updates.length, 0);
@@ -173,11 +183,45 @@ test('the workflow changes nothing that is no longer true', async () => {
   assert.equal(r.result, 'unattested'); assert.equal(other.checks.length, 0);
 });
 
+// Owner 11-22 (replaces 78a3052f item 2, "protected-layer PRs are not updated yet"): the protected layer is brought up to main too.
+// Its admission needs an Owner Grant of the head; the grant of the earlier head carries over (Decision a0d93cd0) only while main
+// did not touch the protected files this PR changes.
+test('a protected-layer front behind main is merged with main; its Owner Grant carries when main left the protected files of the PR alone', async () => {
+  const w = world({ file: PROTECTED, mainTouches: ['scripts/ci/other.mjs', 'docs/other.md'] });
+  const admittedBefore = () => w.checks.push({ id: 900, name: APP_CHECK_NAME, head_sha: H, status: 'completed', conclusion: 'success', app: { id: ADMISSION_APP_ID } });
+  // H was admitted and granted while it contained main's older tip; main moved on since (so H alone is no longer admissible).
+  admittedBefore();
+  const result = await merge(w);
+  assert.equal(result.result, 'merged', JSON.stringify(result));
+  assert.deepEqual(w.updates, [{ expected_head_sha: H }]);
+  assert.equal(w.pr.head.sha, X);
+  assert.equal(w.checks.find(c => c.name === MAIN_MERGE_CHECK)?.head_sha, X);
+  w.asked.length = 0;
+  const after = await admit(w, X);
+  assert.equal(after.verdict, 'ADMITTED', JSON.stringify({ reasons: after.reasons, notices: after.notices }));
+  assert.equal(after.owner_review.carried_from, H);
+  assert.deepEqual(w.asked, [H], 'only the earlier head is asked at the door; the merge commit gets no new request');
+});
+
+test('a protected-layer front whose PR-changed protected file main also touched needs a new Grant for the merge commit', async () => {
+  const w = world({ file: PROTECTED, mainTouches: [PROTECTED] });
+  const admittedBefore = () => w.checks.push({ id: 900, name: APP_CHECK_NAME, head_sha: H, status: 'completed', conclusion: 'success', app: { id: ADMISSION_APP_ID } });
+  // H was admitted and granted while it contained main's older tip; main moved on since (so H alone is no longer admissible).
+  admittedBefore();
+  assert.equal((await merge(w)).result, 'merged');
+  w.asked.length = 0;
+  const after = await admit(w, X);
+  assert.equal(after.verdict, 'REJECTED', JSON.stringify(after.notices));
+  assert.ok(after.reasons.some(r => r.startsWith('owner_review_pending') || r.startsWith('owner_review')), after.reasons.join());
+  assert.equal(after.owner_review.carried_from, undefined, 'the old Grant is not carried');
+  assert.deepEqual(w.asked, [X], 'the Owner is asked about the new head');
+});
+
 // The workflow has no pull_request trigger, so it can never be a registered PR CI Source (compileRegisteredWorkflow
 // needs one). Unregistered, the PR CI enumeration counted it (it has an admission-gate) and its bytes had no catalogue
 // identity (CATALOGUE_SOURCE_NOT_IDENTIFIED), as ci-proof-profiles.test.mjs requires for every counted workflow. It is an
 // exact non-PR control Source like clued-native617-admission-dispatch.yml: its whole bytes and every job, the gate included, pinned.
-test('the dispatch-only workflow is an exact non-PR control Source; every counted CI workflow keeps its catalogue identity', () => {
+test('the workflow is an exact non-PR control Source; every counted CI workflow keeps its catalogue identity', () => {
   const file = '.github/workflows/clued-front-main-merge.yml';
   const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
   const catalogue = parseNonPrControlCatalogue(fs.readFileSync(path.join(ROOT, NON_PR_CONTROL_SOURCE_PATH)));
@@ -188,7 +232,7 @@ test('the dispatch-only workflow is an exact non-PR control Source; every counte
   assert.deepEqual(Object.keys(definition.jobs).sort(), ['admission-gate', 'merge-main']);
   assert.deepEqual({ workflow_blob: pin.workflow_blob, source_sha256: pin.source_sha256, workflow_definition_sha256: pin.workflow_definition_sha256,
     triggers: [...pin.triggers], roles: { ...pin.roles } }, { workflow_blob: workflowBlob(text), source_sha256: createHash('sha256').update(text).digest('hex'),
-    workflow_definition_sha256: roleDefinitionDigest(definition), triggers: ['workflow_dispatch'],
+    workflow_definition_sha256: roleDefinitionDigest(definition), triggers: ['push', 'schedule', 'workflow_dispatch'],
     roles: Object.fromEntries(Object.entries(definition.jobs).map(([id, job]) => [id, roleDefinitionDigest(job)])) });
   const selected = classifyNonPrControlWorkflowSource(catalogue, file, text);
   assert.equal(selected.passed, true, selected.reason);
@@ -199,4 +243,385 @@ test('the dispatch-only workflow is an exact non-PR control Source; every counte
   for (const [name, blob] of counted)
     assert.equal(recognizeCatalogueWorkflow({ registry, roleSpecs, file: name, blob }).source_identified, true, `${name}: no catalogue identity`);
   assert.equal(counted.has(file), false, 'a workflow without a pull_request trigger is not counted PR CI');
+});
+
+// Task ea22e734 (FABLE-front-merge-stale-summary-20261122 §2.1, §2.2): who gets main is decided by this workflow from GitHub's
+// own records, on every push to main, every 10 minutes and on a dispatch without inputs. The train is the open pull requests
+// with auto-merge on; its front is the one that contains main's tip and is under way; with no front, the earliest-enabled
+// candidate is brought up to main. Before, the decision hung on the node's stage-10 summary, which is empty after every merge
+// and stale during every long batch: the PR page then told every holder to merge main by hand (33 manual merges).
+const MIN = 60_000, NOW = Date.UTC(2026, 10, 22, 0, 23, 42);   // 11-22 08:23:42 Beijing time
+const REQUIRED = ['ci-suites', 'clued-cloud-tests'];
+const sha = n => n.toString(16).padStart(40, '0');
+const iso = ms => new Date(ms).toISOString();
+// One repository with several pull requests, as GitHub's HTTP answers. w.now is the clock; w.tip is main.
+function train() {
+  const w = { now: NOW, tip: T, prs: new Map(), heads: new Map(), updates: [], calls: [], required: REQUIRED, failing: null, made: 0, ruleFiller: 0, endless: false };
+  // A commit GitHub knows: which main tip it contains, when it appeared, and what ran on it.
+  w.head = (id, { contains = BASE, at = w.now - 600 * MIN, checks = [], statuses = [], runs = [], parents = [BASE] } = {}) => {
+    w.heads.set(id, { sha: id, contains, at, checks, statuses, runs, parents }); return id; };
+  w.open = (number, { head, auto = null, draft = false, mergeable = 'MERGEABLE', fork = false, base = 'main', ...rest }) => {
+    w.head(head, rest); w.prs.set(number, { number, head, auto, draft, mergeable, fork, base, updatedAt: rest.at ?? w.now - 600 * MIN }); return w; };
+  w.check = (id, name, conclusion = 'success', app = 15368, extra = {}) => w.heads.get(id).checks.push({ id: ++w.made, name, head_sha: id,
+    status: conclusion === null ? 'in_progress' : 'completed', conclusion, started_at: iso(w.now), app: { id: app }, output: { title: null }, ...extra });
+  w.green = id => { for (const name of REQUIRED) w.check(id, name); w.check(id, INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID); };
+  w.headOf = number => w.prs.get(number).head;
+  w.merged = number => { w.prs.delete(number); w.tip = sha(0x7000 + ++w.made); };   // GitHub merged it: main moved
+  const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null },
+    json: async () => body, text: async () => JSON.stringify(body) });
+  w.fetchImpl = async (url, init = {}) => {
+    const method = init.method ?? 'GET', route = String(url).slice(API.length), body = init.body ? JSON.parse(init.body) : null;
+    w.calls.push({ method, route, body });
+    if (w.failing && route.includes(w.failing)) return reply({ message: 'Server Error' }, 502);
+    if (method === 'POST' && route === '/graphql') return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: w.endless, endCursor: w.endless ? 'more' : null },
+      nodes: [...w.prs.values()].map(p => ({ number: p.number, isDraft: p.draft, baseRefName: p.base, headRefOid: p.head, mergeable: p.mergeable,
+        updatedAt: iso(p.updatedAt), autoMergeRequest: p.auto === null ? null : { enabledAt: p.auto },
+        headRepository: { nameWithOwner: p.fork ? 'someone/r' : 'o/r' } })) } } } });
+    // The branch's rules, 100 a page: w.ruleFiller full pages of other rules come before the page with the required checks.
+    const rules = /^\/repos\/o\/r\/rules\/branches\/main(?:\?(?:.*&)?page=([0-9]+))?/.exec(route);
+    if (method === 'GET' && rules) {
+      const page = Number(rules[1] ?? 1);
+      if (page <= w.ruleFiller) return reply(Array.from({ length: 100 }, () => ({ type: 'deletion' })));
+      return reply(page > w.ruleFiller + 1 ? [] : [{ type: 'deletion' },
+        ...(w.required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: w.required.map(context => ({ context })) } }] : [])]);
+    }
+    if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
+    const pull = /^\/repos\/o\/r\/pulls\/([0-9]+)$/.exec(route), p = pull && w.prs.get(Number(pull[1]));
+    if (method === 'GET' && pull) return p ? reply({ number: p.number, state: 'open', draft: p.draft, updated_at: iso(p.updatedAt),
+      head: { sha: p.head, repo: { full_name: p.fork ? 'someone/r' : 'o/r' } }, base: { ref: p.base, repo: { full_name: 'o/r', default_branch: 'main' } } })
+      : reply({ message: 'Not Found' }, 404);
+    const compare = /^\/repos\/o\/r\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/.exec(route);
+    if (method === 'GET' && compare) return reply({ behind_by: w.heads.get(compare[2])?.contains === compare[1] ? 0 : 3, ahead_by: 1 });
+    const of = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})(\/check-runs|\/status)?(?:\?|$)/.exec(route), h = of && w.heads.get(of[1]);
+    if (method === 'GET' && of && !h) return reply({ message: 'Not Found' }, 404);
+    if (method === 'GET' && of?.[2] === '/check-runs') return reply({ total_count: h.checks.length, check_runs: h.checks });
+    // Lists come 100 a page with the count of all of them, as GitHub answers.
+    const paged = list => list.slice((Number(/[?&]page=([0-9]+)/.exec(route)?.[1] ?? 1) - 1) * 100).slice(0, 100);
+    if (method === 'GET' && of?.[2] === '/status') return reply({ state: 'pending', total_count: h.statuses.length, statuses: paged(h.statuses) });
+    if (method === 'GET' && of) return reply({ sha: h.sha, parents: h.parents.map(s => ({ sha: s })), committer: { login: h.parents.length === 2 ? 'web-flow' : 'holder' },
+      commit: { committer: { date: iso(h.at) }, verification: { verified: h.parents.length === 2 } } });
+    const runs = /^\/repos\/o\/r\/actions\/runs\?.*head_sha=([0-9a-f]{40})/.exec(route);
+    if (method === 'GET' && runs) {
+      const all = w.heads.get(runs[1])?.runs ?? [];
+      return reply({ total_count: all.length, workflow_runs: all.slice((Number(/[?&]page=([0-9]+)/.exec(route)?.[1] ?? 1) - 1) * 100).slice(0, 100) });
+    }
+    if (method === 'GET' && route === '/repos/o/r/installation') return reply({ id: 42 });
+    if (method === 'POST' && route === '/app/installations/42/access_tokens') return reply({ token: 'ghs_app', permissions: body.permissions }, 201);
+    const update = /^\/repos\/o\/r\/pulls\/([0-9]+)\/update-branch$/.exec(route), u = update && w.prs.get(Number(update[1]));
+    if (method === 'PUT' && update) {
+      if (!u || u.mergeable === 'CONFLICTING') return reply({ message: 'merge conflict between base and head' }, 422);
+      if (body.expected_head_sha !== u.head) return reply({ message: 'expected head sha did not match current head ref.' }, 422);
+      // GitHub merges main into the branch itself; the new head appears now and nothing has run on it yet.
+      const merged = sha(0xe000 + ++w.made);
+      w.head(merged, { contains: w.tip, at: w.now, parents: [u.head, w.tip] });
+      w.updates.push({ pr: u.number, from: u.head, to: merged, main: w.tip });
+      u.head = merged; u.updatedAt = w.now;
+      return reply({ message: 'Updating pull request branch.' }, 202);
+    }
+    if (method === 'POST' && route === '/repos/o/r/check-runs') {
+      const check = { id: ++w.made, ...body, started_at: iso(w.now), app: { id: init.headers.authorization === 'Bearer ghs_app' ? ADMISSION_APP_ID : 0 } };
+      w.heads.get(body.head_sha).checks.push(check);
+      return reply(check, 201);
+    }
+    return reply({ message: `unscripted ${method} ${route}` }, 599);
+  };
+  w.run = (input = {}, extra = {}) => runFrontMainMerge({ env: env(extra), fetchImpl: w.fetchImpl, workspace: ROOT, input, now: () => w.now, sleep: async () => {} });
+  w.brought = () => w.updates.map(u => u.pr);
+  return w;
+}
+// 11-22 08:23 as GitHub had it: #1223 merged at 08:16 and main moved; every open pull request is behind.
+//   #1156 auto-merge on since 11-17, nobody working on it     #1217 auto-merge on since 11-21, its head tested and admitted
+//   #1224, #1225 auto-merge on since 11-22, never admitted    #1190 behind as well, auto-merge off
+function scene0823() {
+  const w = train();
+  w.open(1156, { head: sha(0x1156), auto: '2026-11-17T03:00:00Z' });
+  w.open(1217, { head: sha(0x1217), auto: '2026-11-21T10:00:00Z' }); w.green(sha(0x1217));
+  w.open(1224, { head: sha(0x1224), auto: '2026-11-22T00:02:00Z' });
+  w.open(1225, { head: sha(0x1225), auto: '2026-11-22T00:02:00Z' });
+  w.open(1190, { head: sha(0x1190) });
+  for (const p of w.prs.values()) w.heads.get(p.head).statuses.push({ context: 'resident-queue/turing', state: 'pending', description: '落后 main 3 个提交；请合入最新 main 并推送' });
+  return w;
+}
+
+test('11-22 08:23: main moved and nobody is the front; a run without inputs brings exactly one pull request up to main, in auto-merge order', async () => {
+  const w = scene0823();
+  const before = new Map([...w.prs.values()].map(p => [p.number, p.head]));
+  const first = await w.run();
+  assert.equal(first.result, 'merged', JSON.stringify(first));
+  assert.equal(first.pr, 1156, 'the earliest auto-merge request among the candidates');
+  assert.deepEqual(w.brought(), [1156], 'exactly one update-branch');
+  assert.deepEqual(w.updates[0], { pr: 1156, from: sha(0x1156), to: w.headOf(1156), main: T });
+  const attested = w.heads.get(w.headOf(1156)).checks.find(c => c.name === MAIN_MERGE_CHECK);
+  assert.deepEqual(parseMainMergeExternalId(attested.external_id), { pr: 1156, from: sha(0x1156), main: T }, 'the same attestation as a named run');
+  assert.equal(attested.app.id, ADMISSION_APP_ID);
+  for (const number of [1217, 1224, 1225, 1190]) assert.equal(w.headOf(number), before.get(number), `#${number} is left as it is`);
+  assert.equal(w.calls.filter(c => c.method !== 'GET' && c.route !== '/graphql' && !c.route.includes('/access_tokens')).length, 2, 'one update-branch and one check, nothing else is written');
+
+  // 10 minutes later (the schedule): #1156 contains main and its head is young: it is the front, nothing is done.
+  w.now += 10 * MIN;
+  const second = await w.run();
+  assert.equal(second.result, 'none', JSON.stringify(second)); assert.deepEqual(w.brought(), [1156]);
+  // Nobody works on #1156: 15 minutes after its head appeared nothing runs on it and its required checks are not green.
+  // It is idle, so not under way; the next one is brought. #1156 costs one merge commit and holds nobody up.
+  w.now += 6 * MIN;
+  const third = await w.run();
+  assert.equal(third.result, 'merged', JSON.stringify(third)); assert.equal(third.pr, 1217);
+  assert.deepEqual(w.brought(), [1156, 1217]);
+  // #1217 is admitted and its checks run: it is the front. A push to main and the schedule both find nothing to do.
+  w.heads.get(w.headOf(1217)).runs.push({ id: 1, status: 'in_progress', conclusion: null });
+  w.now += 10 * MIN;
+  assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), [1156, 1217]);
+  // Its required checks are green and GitHub is about to merge it (nothing runs any more, older than 15 minutes): still the front.
+  w.heads.get(w.headOf(1217)).runs[0] = { id: 1, status: 'completed', conclusion: 'success' }; w.green(w.headOf(1217));
+  w.now += 30 * MIN;
+  assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), [1156, 1217]);
+  // GitHub merges #1217 and main moves (the push event). #1156's head is the one the App made and the admission never
+  // admitted: it is not brought again until its holder pushes. The next in order is #1224 (enabled with #1225: lower number).
+  w.merged(1217);
+  const fourth = await w.run();
+  assert.equal(fourth.result, 'merged', JSON.stringify(fourth)); assert.equal(fourth.pr, 1224);
+  assert.deepEqual(w.brought(), [1156, 1217, 1224]);
+  assert.equal(w.headOf(1190), sha(0x1190), 'a pull request without auto-merge is never touched');
+  assert.equal(w.headOf(1225), sha(0x1225));
+  // #1156's holder pushes a new head (behind main again): it counts again, earliest request first, once the front is gone.
+  w.merged(1224);
+  w.prs.get(1156).head = w.head(sha(0x11560), { at: w.now }); w.prs.get(1156).updatedAt = w.now;
+  const fifth = await w.run();
+  assert.equal(fifth.pr, 1156, JSON.stringify(fifth)); assert.equal(fifth.result, 'merged');
+});
+
+test('a front that is under way keeps the train as it is; a red or idle front is passed over', async () => {
+  // Under way: contains main, something queued. Nothing is brought, whoever enabled auto-merge earlier.
+  let w = scene0823();
+  w.heads.get(sha(0x1225)).contains = T; w.check(sha(0x1225), 'ci-suites', null);
+  let r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.equal(w.calls.some(c => c.route.includes('/access_tokens')), false, 'no App token is minted when nothing is to be done');
+  // Under way: contains main, the resident's pending status says it is queued (no check yet), head older than 15 minutes.
+  w = scene0823();
+  w.heads.get(sha(0x1225)).contains = T; w.heads.get(sha(0x1225)).statuses = [{ context: 'resident-queue/turing', state: 'pending', description: '排队中' }];
+  assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), []);
+  // Red: a required check failed on the front's head. It is not under way; the next candidate is brought.
+  w = scene0823();
+  w.heads.get(sha(0x1225)).contains = T; w.check(sha(0x1225), 'ci-suites', 'failure'); w.check(sha(0x1225), 'clued-cloud-tests', null);
+  r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [1156]);
+  // A failed check that is not required does not make it red.
+  w = scene0823();
+  w.heads.get(sha(0x1225)).contains = T; w.check(sha(0x1225), 'optional-lint', 'failure'); w.check(sha(0x1225), 'clued-cloud-tests', null);
+  assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), []);
+  // Idle: contains main for 15 minutes, nothing queued, running or pending, required checks not all green (the resident
+  // said it stopped: that pending status is not something that will finish).
+  w = scene0823();
+  Object.assign(w.heads.get(sha(0x1225)), { contains: T, at: w.now - 15 * MIN, statuses: [{ context: 'resident-queue/turing', state: 'pending', description: '必需检查失败，已停止入队和延长；等待检查重跑' }] });
+  w.prs.get(1225).updatedAt = w.now - 15 * MIN; w.check(sha(0x1225), 'ci-suites');
+  r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [1156]);
+  // The same head one minute younger is not idle yet.
+  w = scene0823();
+  Object.assign(w.heads.get(sha(0x1225)), { contains: T, at: w.now - 14 * MIN, statuses: [] }); w.prs.get(1225).updatedAt = w.now - 14 * MIN;
+  assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), []);
+  // A front without auto-merge is not on the train: it does not hold the others.
+  w = scene0823();
+  w.heads.get(sha(0x1190)).contains = T; w.check(sha(0x1190), 'ci-suites', null);
+  assert.deepEqual([(await w.run()).result, w.brought()], ['merged', [1156]]);
+});
+
+test('only candidates are brought: not a conflict, a red head, a head the App brought that was never admitted, a draft, a fork, another base', async () => {
+  // GitHub reports the conflict: skipped without an update-branch; the holder resolves it.
+  let w = scene0823();
+  w.prs.get(1156).mergeable = 'CONFLICTING';
+  let r = await w.run();
+  assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
+  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 1, 'no update-branch for the conflicting one');
+  // GitHub has not computed mergeability yet (main just moved) and update-branch refuses: the next in order is brought in the same run.
+  w = scene0823();
+  const refuse = w.fetchImpl;
+  w.fetchImpl = async (url, init = {}) => (init.method === 'PUT' && String(url).endsWith('/pulls/1156/update-branch'))
+    ? { ok: false, status: 422, headers: { get: () => null }, json: async () => ({ message: 'merge conflict between base and head' }), text: async () => '' } : refuse(url, init);
+  w.prs.get(1156).mergeable = 'UNKNOWN';
+  r = await w.run();
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, 1217); assert.deepEqual(w.brought(), [1217]);
+  // A required check failed on the behind head: not brought (its holder has to push anyway).
+  w = scene0823();
+  w.check(sha(0x1156), 'clued-cloud-tests', 'failure');
+  assert.equal((await w.run()).pr, 1217); assert.deepEqual(w.brought(), [1217]);
+  // The App brought this head earlier and the admission never admitted it: not brought again.
+  w = scene0823();
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  assert.equal((await w.run()).pr, 1217); assert.deepEqual(w.brought(), [1217]);
+  // The same head, admitted by the independent CI (it ran, then main moved): brought again.
+  w = scene0823();
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  assert.equal((await w.run()).pr, 1156);
+  // A same-name attestation of another App does not mark the head; a same-name admission of another App does not clear it.
+  w = scene0823();
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', 15368);
+  assert.equal((await w.run()).pr, 1156);
+  w = scene0823();
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', 15368);
+  assert.equal((await w.run()).pr, 1217);
+  // Drafts, forks and pull requests into another branch are not on the train, auto-merge or not.
+  w = scene0823();
+  w.prs.get(1156).draft = true; w.prs.get(1217).fork = true; w.prs.get(1224).base = 'release';
+  r = await w.run();
+  assert.equal(r.pr, 1225, JSON.stringify(r)); assert.deepEqual(w.brought(), [1225]);
+  // Nobody on the train: nothing to do.
+  w = scene0823();
+  for (const p of w.prs.values()) p.auto = null;
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+});
+
+test('a run without inputs changes nothing while merge admission is frozen or GitHub cannot be read', async () => {
+  let w = scene0823();
+  let r = await w.run({}, { CLUED_MERGE_ADMISSION_STATE: 'frozen' });
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []); assert.equal(w.calls.length, 0, 'nothing is read either');
+  for (const failing of ['/graphql', '/rules/branches/main', '/branches/main', '/compare/', '/check-runs', '/status', '/actions/runs']) {
+    w = scene0823(); w.failing = failing;
+    // a front that needs every read: it contains main and is old enough to be idle
+    Object.assign(w.heads.get(sha(0x1225)), { contains: T, at: w.now - 20 * MIN }); w.prs.get(1225).updatedAt = w.now - 20 * MIN;
+    r = await w.run();
+    assert.equal(r.result, 'skipped', `${failing}: ${JSON.stringify(r)}`);
+    assert.deepEqual(w.brought(), [], failing);
+  }
+  // The App is not configured: the choice is made and nothing is written.
+  w = scene0823();
+  r = await w.run({}, { CLUED_ADMISSION_APP_ID: '' });
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+});
+
+test('a run with pr and head handles only the named pull request, as before', async () => {
+  // The node's dispatch names #1225 while #1156 is earlier and #1224 is under way: only #1225 is read and brought.
+  const w = scene0823();
+  w.heads.get(sha(0x1224)).contains = T; w.check(sha(0x1224), 'ci-suites', null);
+  const r = await w.run({ pr: '1225', head: sha(0x1225) });
+  assert.deepEqual(r, { result: 'merged', reason: `main ${T.slice(0, 12)} merged into ${sha(0x1225).slice(0, 12)} -> ${w.headOf(1225).slice(0, 12)}`,
+    pr: 1225, head_sha: sha(0x1225), merged_head_sha: w.headOf(1225), main_sha: T });
+  assert.deepEqual(w.brought(), [1225]);
+  assert.deepEqual(w.calls.map(c => `${c.method} ${c.route}`), [
+    'GET /repos/o/r/pulls/1225', 'GET /repos/o/r/branches/main', `GET /repos/o/r/compare/${T}...${sha(0x1225)}`,
+    'GET /repos/o/r/installation', 'POST /app/installations/42/access_tokens', 'PUT /repos/o/r/pulls/1225/update-branch',
+    'GET /repos/o/r/pulls/1225', `GET /repos/o/r/commits/${w.headOf(1225)}`, 'GET /repos/o/r/branches/main', 'POST /repos/o/r/check-runs']);
+  assert.equal(renderSummary(r), `## clued-front-main-merge\n\n- #1225 \`${sha(0x1225).slice(0, 12)}\`: **merged**: ${r.reason}\n`);
+  // Half an input is a mistake, not a run without inputs: refused, nothing read.
+  for (const input of [{ pr: '1225' }, { head: sha(0x1225) }, { pr: '1225', head: '' }, { pr: 'x', head: sha(0x1225) }]) {
+    const half = scene0823();
+    const refused = await half.run(input);
+    assert.deepEqual([refused.result, refused.reason, half.calls.length], ['refused', 'input needs pr (number) and head (full SHA)', 0], JSON.stringify(input));
+  }
+});
+
+test('push to main, the schedule and a dispatch without inputs all reach the choice; the summary says what was decided', async () => {
+  const dir = fs.mkdtempSync(path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', 'front-merge-'));
+  try {
+    for (const [name, payload] of [['push', { ref: 'refs/heads/main', after: T }], ['schedule', { schedule: '*/10 * * * *' }],
+      ['workflow_dispatch', { inputs: null }], ['workflow_dispatch', { inputs: { pr: '', head: '' } }]]) {
+      const w = scene0823();
+      const eventPath = path.join(dir, 'event.json'), summary = path.join(dir, 'summary.md');
+      fs.writeFileSync(eventPath, JSON.stringify(payload)); fs.writeFileSync(summary, '');
+      const code = await frontMergeMain(env({ GITHUB_EVENT_NAME: name, GITHUB_EVENT_PATH: eventPath, GITHUB_STEP_SUMMARY: summary }), w.fetchImpl,
+        { now: () => w.now, sleep: async () => {} });
+      assert.equal(code, 0, name); assert.deepEqual(w.brought(), [1156], `${name} ${JSON.stringify(payload)}`);
+      const text = fs.readFileSync(summary, 'utf8');
+      assert.match(text, /#1156 .*\*\*merged\*\*/, text);
+      for (const number of [1217, 1224, 1225]) assert.match(text, new RegExp(`#${number}\\b`), `the summary names every pull request on the train: ${text}`);
+      assert.doesNotMatch(text, /#1190\b/, 'not the one without auto-merge');
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  const text = fs.readFileSync(path.join(ROOT, '.github/workflows/clued-front-main-merge.yml'), 'utf8');
+  const on = text.slice(text.indexOf('\non:\n'), text.indexOf('\npermissions:\n'));
+  assert.match(on, /\n  push:\n    branches: \[main\]\n/, 'every advance of main');
+  assert.match(on, /\n  schedule:\n    - cron: "\*\/10 \* \* \* \*"\n/, 'every 10 minutes');
+  assert.match(on, /\n  workflow_dispatch:\n/);
+  assert.equal((on.match(/required: false/g) ?? []).length, 2, 'pr and head are optional: a dispatch without them chooses');
+  assert.doesNotMatch(on, /required: true|pull_request/);
+  // The job with the App key runs for the three triggers, on main only (the environment's deployment branches say the same).
+  assert.match(text, /\n    if: needs\.admission-gate\.outputs\.admitted == 'true' && \(github\.ref == 'refs\/heads\/main'\)\n/);
+});
+
+// Independent review of e37e3a33: with a required list read as empty every failure counted as red. The resident's info-only
+// status is a failure on every head for good, so the front under way was passed over and one more pull request was brought
+// up every 10 minutes: two under way at once. An empty or incomplete reading decides nothing.
+test('a run without inputs decides nothing when the required checks or the train cannot be read in full', async () => {
+  // The front under way, with the resident's info-only status failed as it is on every head.
+  const front = () => {
+    const w = scene0823();
+    w.heads.get(sha(0x1225)).contains = T; w.check(sha(0x1225), 'ci-suites', null);
+    w.heads.get(sha(0x1225)).statuses.unshift({ context: 'resident-queue/turing (info only)', state: 'failure', description: 'info only' });
+    return w;
+  };
+  let w = front();
+  assert.equal((await w.run()).result, 'none', 'with the required list read, an optional failure leaves the front as it is'); assert.deepEqual(w.brought(), []);
+  // The rules name no required check (or the token does not see them).
+  w = front(); w.required = [];
+  let r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.match(r.reason, /required/); assert.deepEqual(w.brought(), []);
+  // No front at all and no required list: nobody is brought up either.
+  w = scene0823(); w.required = [];
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.equal(w.calls.some(c => c.method === 'PUT' || c.route.includes('/access_tokens')), false);
+  // The required checks are on the second page of the rules: read.
+  w = front(); w.ruleFiller = 1;
+  assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), []);
+  w = scene0823(); w.ruleFiller = 9;
+  assert.equal((await w.run()).pr, 1156, 'ten pages are read');
+  // More rules than ten pages: the list is not known to be complete.
+  w = front(); w.ruleFiller = 10;
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.match(r.reason, /rules/); assert.deepEqual(w.brought(), []);
+  w = scene0823(); w.ruleFiller = 10;
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  // More open pull requests than ten pages: the train is not known in full.
+  w = scene0823(); w.endless = true;
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.match(r.reason, /pull requests/); assert.deepEqual(w.brought(), []);
+});
+
+// The first link (design step 0): merge-main needs the gate's admitted=true. The gate admits these events without reading anything.
+test('the admission gate admits this workflow on a push to main, on the schedule and on a dispatch without inputs', async () => {
+  for (const [eventName, event] of [['push', { ref: 'refs/heads/main', after: T }], ['schedule', { schedule: '*/10 * * * *' }],
+    ['workflow_dispatch', { inputs: null }], ['workflow_dispatch', { inputs: { pr: '', head: '' } }], ['workflow_dispatch', { inputs: { pr: '1225', head: H } }]]) {
+    const calls = [];
+    const outcome = await gate({ env: env({ GITHUB_EVENT_NAME: eventName, GITHUB_REF: 'refs/heads/main', GITHUB_REF_NAME: 'main', GITHUB_SHA: T, GITHUB_RUN_ATTEMPT: '1',
+      GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-front-main-merge.yml@refs/heads/main', CLUED_ADMISSION_GATE_SOURCE: 'independent-ci-native-work-admission' }),
+      event, eventName, fetchImpl: async url => { calls.push(String(url)); throw new Error('the gate reads nothing for this event'); }, sleep: async () => {} });
+    assert.equal(outcome.admitted, true, `${eventName}: ${JSON.stringify(outcome.reasons)}`);
+    assert.equal(outcome.verdict, 'NOT_APPLICABLE', eventName);
+    assert.deepEqual(calls, [], eventName);
+  }
+});
+
+// Second review of c1062091: statuses and workflow runs were read one page of 100. With more on one head and the one still
+// under way beyond the first page, the front was judged idle early and one more pull request was brought up.
+test('what is under way on the front is read to the end: beyond 100 statuses or workflow runs, and nothing is decided beyond ten pages', async () => {
+  // The front: contains main for 20 minutes, required checks not green yet; whether it is idle hangs on what is still under way.
+  const front = () => {
+    const w = scene0823();
+    Object.assign(w.heads.get(sha(0x1225)), { contains: T, at: w.now - 20 * MIN, statuses: [] }); w.prs.get(1225).updatedAt = w.now - 20 * MIN;
+    return w;
+  };
+  let w = front();
+  assert.deepEqual([(await w.run()).result, w.brought()], ['merged', [1156]], 'with nothing under way it is idle');
+  // 100 finished workflow runs, then the one still running.
+  w = front();
+  w.heads.get(sha(0x1225)).runs = [...Array.from({ length: 100 }, (_, i) => ({ id: i + 1, status: 'completed', conclusion: 'success' })), { id: 101, status: 'in_progress', conclusion: null }];
+  let r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  // 100 settled statuses, then the resident's pending one.
+  w = front();
+  w.heads.get(sha(0x1225)).statuses = [...Array.from({ length: 100 }, (_, i) => ({ context: `info-${i}`, state: 'success', description: '' })),
+    { context: 'resident-queue/turing', state: 'pending', description: '排队中' }];
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  // Exactly ten pages are read to the end; one more than ten pages is not known in full.
+  for (const [list, make] of [['runs', i => ({ id: i + 1, status: 'completed', conclusion: 'success' })], ['statuses', i => ({ context: `info-${i}`, state: 'success', description: '' })]]) {
+    w = front(); w.heads.get(sha(0x1225))[list] = Array.from({ length: 1000 }, (_, i) => make(i));
+    assert.deepEqual([(await w.run()).result, w.brought()], ['merged', [1156]], `${list}: ten full pages, all settled, idle`);
+    w = front(); w.heads.get(sha(0x1225))[list] = Array.from({ length: 1001 }, (_, i) => make(i));
+    r = await w.run();
+    assert.equal(r.result, 'skipped', `${list}: ${JSON.stringify(r)}`); assert.deepEqual(w.brought(), [], list);
+  }
 });
