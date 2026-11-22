@@ -6000,5 +6000,9 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 推送落地在写 main 之前再核一次，按紧挨着读到的规则（与选路同一次读，`reply.rules`；不用更早那次 `trainFacts`，两次读之间规则可能已改回本 App），并且更严：只算这个车头 subject 自己的 job（`frontJobIdsV2`），或 §75 的同树复用（车头只有一个成员，S 的树等于 H 的树，H 上有可复用的扫描）；
    - 没过就不写绿、不推送，零副作用，按 `TRAIN_BATCH_CHANGED` 结束这个批次（clean-final，烧 head）；
    - 端到端（`test/train-takeover-front.test.mjs`，修复前必红）：第 10 段读到三项钉 Actions，车头第 1 段之后规则改回本 App，推送落地开着：S 从不在没有本 App 三项扫描时落到 main，也没有合并位绿。
-   - 未决（交规划）：同一个 S 的第二个车头批次和烧掉的批次 key 相同（`executor.mjs#enqueueFront` 的 subject 固定 attempt 1），所以这个 head 要新提交才能再走；要不要让它不靠新提交自己恢复，由规划来定。
+   - 同一个 S 的第二个车头批次（第 10 段的序号 2，FABLE-r3-batch2-gate-20261122）不靠新提交自己恢复：
+     - 它是自己的批次：subject 的 attempt 取第 10 段的序号（`executor.mjs#rowSubject`，runRow、enqueueFront、releaseBreaker 与 `queue.mjs#readmit` 同一处），序号 1 留下的流程续跑只由序号 1 自己接；
+     - 它过 executed-heads 门的唯一条件（`executor.mjs#precheck`）：(H, S) 的记录全是序号 1 自己的（`onlyRecordsOf(subject, [序号 1 的 key])`），并且序号 1 的账本是 TERMINAL、FAILED_CLEAN、`facts.stage === 8`；读不到一律不放行。序号 1 在第 3、5、7 段占了 K 后结束的，序号 2 仍按 `HEAD_ALREADY_PUBLISHED_NO_RETRY` 忽略（否则会撞 `ROLE_ALREADY_PUBLISHED_ON_HEAD`）；
+     - 序号 2 按当场的规则重排计划、跑扫描；H 上已有本车头自己的角色检查时，第 1 段回读以 `HEAD_PUBLISHED_ON_GITHUB` 干净结束，不会出第二份扫描；
+     - 序号 1 若是在第 8 段因排空或超容量停在流程结束（不是 FAILED_CLEAN），序号 2 不放行，序号 1 的流程照旧由它自己续跑（方向安全）。
 4. **推送路由与第 8、10 段用同一条钉法**（独审 R3 问题 B，FABLE-r3-open-items-20261122 §2）：`train-landing.mjs#landingRoute` 认主规则集用 `train-rules.mjs#sixPinned`（单项钉法 `pinAllowed`，`rulesetFacts` 也调它），不再自带“六项都钉本 App”的判断。扫描钉 Actions 时推送路由可以是 push；S 上必须有 Actions 出的三项成功才会落地（`externalRequiredChecks` 把不钉本 App 的必需检查都算作 S 上的外部检查），在跑时 `TRAIN_LANDING_CHECKS_PENDING`，失败时 `TRAIN_LANDING_CHECK_FAILED`。准入、控制对仍只能钉本 App，扫描钉在未知 App 或不钉、六项分在两套规则集里，仍是 `main_ruleset_unidentified`（park）；`kooyumi-train-landed` 仍须钉本 App。常驻 `ruleset-backstop.mjs#rulesFacts` 是另一个包，由 `test/ruleset-backstop.test.mjs` 用同一张表锁住三处结论一致。

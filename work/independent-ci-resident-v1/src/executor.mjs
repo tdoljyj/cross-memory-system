@@ -3343,7 +3343,7 @@ export class ResidentExecutor {
   //   usage: ledger.mjs#usage for the last 24 hours; origin: how the queue picked the subject (queue.mjs#ORIGINS).
   //   claimChanged: the queue observed changed Native claim/authorization conditions after a refusal: no cool-down.
   // A deferral with perRow waits for this row only; any other one ends the scheduling pass.
-  async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued', claimChanged = false, flow = null } = {}) {
+  async precheck(key, hk, subject, { attempt1Key = null, usage, origin = 'queued', claimChanged = false, flow = null, frontKey1 = null } = {}) {
     const now = this.clock();
     const l = this.policy.limits;
     if (await this.ledger.headBurned(hk) && !(flow && await this.ledger.flowOwnsHead(hk, flow))) return { ignore: 'HEAD_ALREADY_EXECUTED_NO_RETRY' };
@@ -3351,9 +3351,15 @@ export class ResidentExecutor {
     // Source would otherwise run it as new and stop at ROLE_ALREADY_PUBLISHED_ON_HEAD (2026-10-22, Note 1550fef8). The
     // one exception: attempt 2 of the same head, when the only record is attempt 1's own "before stage R" one (stage R
     // relayed nothing, or attempt 2 would never have been scheduled). attempt 1's own ledger must say so too.
+    // And stage 10's front number 2 of the same (H, S) (frontKey1: front number 1's key, FABLE-r3-batch2-gate §1): when every record of
+    // (H, S) is front number 1's own and its ledger says it ended clean at stage 8 (FAILED_CLEAN, facts.stage 8: TRAIN_BATCH_CHANGED,
+    // say). Its publications are then at most the scans and the stage-8 attempt that ended with zero side effects; front number 2 runs
+    // under the rules read now, and stage 1 reads H back (HEAD_PUBLISHED_ON_GITHUB, clean-final) where a role is already published.
+    // Anything else (an end before stage 8 after a publication stage took K, an UNKNOWN, unreadable) is not let through.
     if (await this.executedHeads.published(subject)
       && !(flow && await this.executedHeads.onlyRecordsOf(subject, [flow.key, ...(flow.reserved.flowKeys ?? [])]))
-      && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE) && await this.relayedNothing(attempt1Key))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
+      && !(attempt1Key && await this.executedHeads.onlyRelayRecordOf(subject, attempt1Key, RELAY_STAGE) && await this.relayedNothing(attempt1Key))
+      && !(frontKey1 && await this.executedHeads.onlyRecordsOf(subject, [frontKey1]) && await this.endedCleanAtStage8(frontKey1))) return { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' };
     if ((await this.ledger.state(key)).state !== 'ABSENT') return { ignore: 'CONTENT_ALREADY_EXECUTED_NO_RETRY' };
     // DESIGN §34.5: while the two sides run different versions (consistent false, read now) nothing is reserved: a global
     // deferral, the PR pays nothing for the node's skew. Unknown (null) or no versions port: as before.
@@ -3382,6 +3388,14 @@ export class ResidentExecutor {
     const beat = await this.companion.heartbeat();
     if (!beat || typeof beat.at !== 'number' || now - beat.at > this.policy.companion.heartbeatMaxAgeMs) return { defer: 'COMPANION_NOT_READY' };
     return {};
+  }
+
+  // Front number 1 of a front (its batch key) ended clean at stage 8, as its own ledger says (precheck). Unreadable: false.
+  async endedCleanAtStage8(key1) {
+    try {
+      const s = await this.ledger.state(key1);
+      return s.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && s.terminal?.facts?.stage === 8;
+    } catch { return false; }
   }
 
   // The start-of-batch authority checks, run before a reservation and again on every resume of a waiting batch
@@ -3460,7 +3474,9 @@ export class ResidentExecutor {
     if (Object.hasOwn(c, 'testSha') && [1, 2].includes(c.frontAttempt)) this.frontKeys.set(batchKey(subject), c.frontAttempt);
     const key = batchKey(subject);
     const hk = headKey(subject);
-    const pre = await this.precheck(key, hk, subject, { usage, origin: c.origin, claimChanged: c.claimChanged === true, flow });
+    // Stage 10's front number 2 of this S: front number 1 (the same subject, attempt 1) may let it through the executed-heads gate (precheck).
+    const frontKey1 = Object.hasOwn(subject, 'testSha') && subject.attempt === 2 ? batchKey({ ...subject, attempt: 1 }) : null;
+    const pre = await this.precheck(key, hk, subject, { usage, origin: c.origin, claimChanged: c.claimChanged === true, flow, frontKey1 });
     if (pre.ignore) {
       if (flow) await this.ledger.retireFlow(flow, pre.ignore);
       this.queue.settle(c.pr, c.headSha, { kind: 'ignored', code: pre.ignore, klass: null }, this.clock());
