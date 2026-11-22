@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested, requiredCheckFailure, REQUIRED_CHECK_NAMES, appScansNotDone } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested, requiredCheckFailure, REQUIRED_CHECK_NAMES, appScansNotDone, appScansPinned } from '../src/independent-control-checks-v2/train-rules.mjs';
 import { batchJobsV2, frontJobIdsV2, scanExternalIdV2 } from '../src/job-v2.mjs';
 import { GreenLedger, validateGreenEntry, GREEN_LEDGER_CONTRACT } from '../src/independent-control-checks-v2/green-ledger.mjs';
 import { createGitHubChecksPort } from '../src/github.mjs';
@@ -218,4 +218,23 @@ test('S7 rules stay strict where they were: scaffold only, a disaster-recovery p
   const unpinned = [...mainRules(), { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: false, required_status_checks: [{ context: 'legacy-ci' }] } }];
   assert.throws(() => requiredCheckFailure(unpinned, { complete: true, checks: [] }, H, APP), e => e.code === 'REQUIRED_CHECKS_UNREADABLE');
   assert.deepEqual(requiredCheckFailure(unpinned, { complete: true, checks: [checkRun(1, 'trivy', APP, H, 'failure')] }, H, APP), ['trivy']);
+});
+
+// Task 04f9b91b (admission p90): the scans this App must publish are the ones some rule pins to it, whether or not the six are all there.
+// The scaffold ruleset alone (live 27843120) pins none: []. Rules that are not exactly understood: null (every scan runs).
+test('appScansPinned: the scaffold pins no scan to this App; #292 pins all three; a part pins a part; not understood is null', () => {
+  assert.deepEqual(appScansPinned(scaffoldRules(), APP), []);
+  assert.deepEqual(appScansPinned(scaffoldRules(S7_OTHER_ADMISSION), APP), []);
+  for (const rules of [s7Rules(), mainRules(), [required()]]) assert.deepEqual(appScansPinned(rules, APP), ['gitleaks', 'trivy', 'contract-placement']);
+  const two = [required({ names: ['kooyumi-work-admission', 'contract-placement', 'trivy'] }), required({ pinned: 15368, names: ['gitleaks', 'trivy'] })];
+  assert.deepEqual(appScansPinned(two, APP), ['trivy', 'contract-placement']);
+  assert.deepEqual(appScansPinned(mainRules({ pin: ADMISSION_APP }), APP), [], 'pinned to another App: not for this App to publish');
+  // the same answer as rulesetFacts wherever the rules read
+  for (const [name, rules, pinned] of PIN_TABLE) if (pinned) assert.deepEqual(appScansPinned(rules, APP), rulesetFacts(rules, APP).appScans, name);
+  for (const bad of [null, 'x', {}, [null], [{ type: '' }], [], [{ type: 'deletion' }], [{ type: 'required_status_checks' }],
+    [{ type: 'required_status_checks', parameters: { required_status_checks: [] } }],
+    [required({ extra: [null] })], [required({ extra: [{ integration_id: APP }] })],
+    mainRules({ extra: [{ context: 'gitleaks' }] }), [...scaffoldRules(), required({ pinned: -1, names: ['trivy'] })],
+    Array.from({ length: 100 }, () => ({ type: 'deletion' }))])
+    assert.equal(appScansPinned(bad, APP), null, JSON.stringify(bad)?.slice(0, 200));
 });

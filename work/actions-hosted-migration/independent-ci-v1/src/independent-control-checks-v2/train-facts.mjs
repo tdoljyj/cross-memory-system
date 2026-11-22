@@ -269,13 +269,16 @@ export function wouldRevoke({ entries, inMain, frontHeadSha }) {
 }
 
 // revoke: the would-revoke (shadow) or revocation targets (on, revoke-only) of this run; decision defaults to wouldDo.
-export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesReason = null, front, revoke, ledger, decision = null, openFrontBatch = null,
+export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesReason = null, appScans = null, front, revoke, ledger, decision = null, openFrontBatch = null,
   sweep = NO_SWEEP, actions = NO_ACTIONS, requestPause = null, nodes = null, nodesDropped = 0, frontBind = null, landing = null }) {
   const holder = holders?.[0] ?? null;
   const wouldDo = decideShadow({ onDuty, holders, holder, front, rules, mainSha });
   const facts = {
     contract: TRAIN_FACTS_CONTRACT, mode, at, onDuty, mainSha: mainSha ?? null,
     rules: rules ? { strict: rules.strict, mergeOnly: rules.mergeOnly, ...(Array.isArray(rules.appScans) ? { appScans: [...rules.appScans] } : {}) } : null, rulesReason,
+    // Task 04f9b91b (admission p90): the scans the rules pin to this App (train-rules.mjs#appScansPinned), also when rules is null (the
+    // scaffold ruleset alone: []). Absent: not read, every scan runs. The resident reads this one first (train.mjs#trainSummary).
+    ...(Array.isArray(appScans) ? { appScans: [...appScans] } : {}),
     holders: holders?.length ?? 0,
     front: holder ? { claimId: holder.claimId, pr: holder.pr, mergeSlotUntil: holder.mergeSlotUntil, takenAt: holder.takenAt, ciState: holder.ciState,
       ...(front ? { headSha: front.headSha, state: front.state, draft: front.draft, mergeable: front.mergeable, headContainsMain: front.headContainsMain, green: front.green,
@@ -373,7 +376,7 @@ const quiet = f => f.openFrontBatch === null && f.requestPause === null && f.swe
 export function validateTrainFacts(f) {
   if (!plain(f) || f.contract !== TRAIN_FACTS_CONTRACT || !TRAIN_MODES.includes(f.mode) || !iso(f.at) || typeof f.onDuty !== 'boolean'
     || !(f.mainSha === null || SHA.test(f.mainSha)) || !WOULD_DO.includes(f.wouldDo) || !Number.isSafeInteger(f.holders) || f.holders < 0
-    || !validRules(f.rules)
+    || !validRules(f.rules) || !(f.appScans === undefined || validAppScans(f.appScans))
     || !(f.rulesReason === null || (typeof f.rulesReason === 'string' && CODE.test(f.rulesReason)))
     || !(f.front === null || (plain(f.front) && UUID.test(f.front.claimId ?? '') && (f.front.pr === null || Number.isSafeInteger(f.front.pr))))
     || !Array.isArray(f.wouldRevoke) || f.wouldRevoke.length > MAX_REVOKE_LISTED

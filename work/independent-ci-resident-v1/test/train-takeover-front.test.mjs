@@ -12,6 +12,7 @@ import fs from 'node:fs/promises';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
 import { executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes, SOURCE, CI_SOURCE } from './helpers.mjs';
 import { setup, holderOf, sha, iso, T, H, S, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
+import { scaffoldRules } from '../../actions-hosted-migration/independent-ci-v1/test/s7-rules-fixture.mjs';
 import { tempDir, admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs';
 import { makeTrainRun } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
@@ -1113,6 +1114,42 @@ test('R3: only gitleaks required from Actions -> the front batch skips gitleaks 
   assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 4, 5, 6, 7, 8]);
   const skipped = (await f.receipts.latest(['scans-not-app-required'], 10)).map(r => r.value.body.roles);
   assert.ok(skipped.length > 0 && skipped.every(r => JSON.stringify(r) === JSON.stringify(['gitleaks'])), JSON.stringify(skipped));
+});
+
+// Task 04f9b91b (admission p90, 修复前必红): the scaffold phase. main's only rules are the scaffold ruleset as read back live (27843120:
+// kooyumi-work-admission pinned to this App, the three hosted-* scans pinned to GitHub Actions). Stage 10 cannot read the rules as the
+// six (nothing is published at stage 8), but no scan is pinned to this App: no batch runs stages 2-7 (13-15 minutes on the node), so the
+// next head's admission no longer queues behind them. Reverse: the same rules not given whole (unreadable): every scan runs, as before.
+for (const incomplete of [false, true]) test(`p90: the scaffold ruleset alone${incomplete ? ', not given whole' : ''} -> ${incomplete ? 'every scan runs' : 'no batch runs its own scans'}`, async t => {
+  const { e, f, engine } = await permanentArrival(t, { prepare: e => { e.gh.world.rules = scaffoldRules(); e.gh.world.rulesIncomplete = incomplete; } });
+  for (let i = 0; i < 30 && !engine.stages.some(s => s.pr === 910 && s.stage === 8); i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(engine.stages.some(s => s.pr === 910 && s.stage === 8), `stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.rulesReason}; stages ${JSON.stringify(engine.stages)}`);
+  assert.deepEqual([engine.lastFacts.rules, engine.lastFacts.rulesReason], [null, 'RULESET_UNREADABLE']);
+  const skipped = (await f.receipts.latest(['scans-not-app-required'], 10)).map(r => r.value.body.roles);
+  if (incomplete) {
+    assert.equal(Object.hasOwn(f.exec.trainLast, 'appScans'), false, JSON.stringify(f.exec.trainLast));
+    assert.deepEqual(engine.stages.filter(s => s.pr === 910).map(s => s.stage).slice(0, 8), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(skipped, []);
+  } else {
+    assert.deepEqual(engine.lastFacts.appScans, []);
+    assert.deepEqual(f.exec.trainLast.appScans, []);
+    assert.ok(!engine.stages.some(s => s.stage >= 2 && s.stage <= 7), `no scan stage runs: ${JSON.stringify(engine.stages)}`);
+    assert.ok(skipped.length > 0 && skipped.every(r => JSON.stringify(r) === JSON.stringify(['gitleaks', 'trivy', 'contract-placement'])), JSON.stringify(skipped));
+  }
+  assert.equal(slotGreen(e, H), undefined, 'the scaffold rules never green the merge slot');
+});
+
+// The top-level appScans (any rule's scans pinned to this App) and rules.appScans (the six read) come from one read; if they disagree the
+// summary keeps neither: every scan runs.
+test('p90: stage 10 answers a top-level appScans that disagrees with rules.appScans -> every scan runs', async t => {
+  const { e, f, engine } = await permanentArrival(t, { actionsScans: true, prepare: (e, engine) => {
+    const run = engine.runTrainStage;
+    engine.runTrainStage = async (...a) => { const r = await run(...a); if (r.train?.rules) r.train = { ...r.train, appScans: ['trivy'] }; return r; };
+  } });
+  const green = await untilGreen(f, e);
+  assert.ok(green, `no green; stages ${JSON.stringify(engine.stages)}`);
+  assert.equal(Object.hasOwn(f.exec.trainLast, 'appScans'), false, JSON.stringify(f.exec.trainLast));
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
 });
 
 // R3 lean, an unusable appScans (review of R3, gap c): stage 10 answers rules.appScans the resident cannot read (an unknown scan, one twice,

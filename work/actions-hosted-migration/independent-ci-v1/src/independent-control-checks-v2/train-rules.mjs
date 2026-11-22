@@ -130,7 +130,7 @@ export function rulesetFacts(rules, appId) {
     if (pinAllowed(c.context, c.integration_id, appId)) pins.set(c.context, new Set([...(pins.get(c.context) ?? []), c.integration_id]));
   }
   check(REQUIRED_CHECK_NAMES.every(n => pins.has(n)), RULESET_UNREADABLE);
-  const appScans = RULE_SCAN_NAMES.filter(n => pins.get(n).has(appId));
+  const appScans = appScansPinned(rules, appId);
   // Several rulesets aggregate, the strictest wins: strict holds if any rule asks for it; the merge methods allowed are
   // the ones every pull_request rule allows. No pull_request rule, or one whose methods cannot be read, is unknown, so
   // never "merge only"; that only matters to the train, never a reason to refuse the rules (review N6).
@@ -141,6 +141,28 @@ export function rulesetFacts(rules, appId) {
   const methods = prRules.length === 0 || !readable ? null
     : ['merge', 'squash', 'rebase'].filter(m => prRules.every(r => r.parameters.allowed_merge_methods.includes(m)));
   return { requiredPinned: true, strict, mergeOnly: methods !== null && methods.length === 1 && methods[0] === 'merge', appScans };
+}
+
+// Task 04f9b91b (admission p90, FABLE-admission-p90-20261122 §3 甲): the scans some rule of main pins to this App, in RULE_SCAN_NAMES
+// order, whether or not the six are all pinned. In the scaffold phase main's only rules are the scaffold ruleset (27843120): the six are
+// not there (rulesetFacts: unreadable, stage 8 publishes nothing), and no scan is pinned to this App, so the resident runs none
+// (executor.mjs#localPlan) instead of 13-15 minutes of scans per batch that nothing can use. A scan pinned to this App by any rule is this
+// App's to publish (the same scan pinned to Actions as well does not change that). Rules that are not exactly understood are null, never
+// [] (the caller runs every scan): not a list, a malformed rule, no required_status_checks rule, or an entry of a scan pinned to no App
+// (any App's run would do: nothing says who publishes it). When rulesetFacts reads the rules, its appScans is this.
+export function appScansPinned(rules, appId) {
+  if (!Array.isArray(rules) || rules.length >= 100 || !rules.every(r => plain(r) && typeof r.type === 'string' && r.type.length > 0)) return null;
+  const required = rules.filter(r => r.type === 'required_status_checks');
+  if (required.length === 0 || !required.every(r => plain(r.parameters) && Array.isArray(r.parameters.required_status_checks)
+    && typeof r.parameters.strict_required_status_checks_policy === 'boolean')) return null;
+  const own = new Set();
+  for (const r of required) for (const c of r.parameters.required_status_checks) {
+    if (!plain(c) || typeof c.context !== 'string') return null;
+    if (!RULE_SCAN_NAMES.includes(c.context)) continue;
+    if (!Number.isSafeInteger(c.integration_id) || c.integration_id <= 0) return null;
+    if (c.integration_id === appId) own.add(c.context);
+  }
+  return RULE_SCAN_NAMES.filter(n => own.has(n));
 }
 
 // Review of R3, problem A: the scans main's live rules still require from this App (rulesetFacts appScans) must be done for a train front
