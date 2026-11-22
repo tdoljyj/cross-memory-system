@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { HOST_KEEPS, VM_KEEPS, acquireNamedLock, admitRun, beginRun, dataRoot, ensureAppDependencies, missingDependencies, killCommand, leaveUmbrella, linuxScript, listRuns, pruneDependencyStores, pruneWorktrees,
   refreshUmbrella, roomForOneMore, sampleResources, sweepRunRefs, withLock, worktree, worktreeLock } from './local-verify.mjs';
+import { importsEmbeddedPostgres } from '../../apps/clued-cloud/scripts/select-tests.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOOL = path.join(ROOT, 'scripts', 'ci', 'local-verify.mjs');
@@ -247,18 +248,39 @@ test('a run has a worktree of its own, removed afterwards; a dead run\'s is prun
   assert.equal(git('worktree', 'list').split('\n').length, 2, "git's list has the repository and the shared worktree only");
 });
 
+// A file starts embedded PostgreSQL when it loads the package, read as the application's own test selection reads it
+// (scripts/select-tests.mjs puts those files in the database suite). Naming the class in a string or comment, as a
+// checker's samples do, starts nothing (#1220: ephemeral-postgres-flags-source.test.mjs was taken for a server).
+const startsEmbeddedPostgres = importsEmbeddedPostgres;
+const sharedServerProblems = (text) => [
+  ...(/new EmbeddedPostgres\([^)]*port:\s*\d/.test(text) || /\bport:\s*[1-9]\d{2,4}\b/.test(text) ? ['a fixed port'] : []),
+  ...(/mkdtemp/.test(text) ? [] : ['the data directory is made with mkdtemp']),
+];
+
+test('a file that names EmbeddedPostgres only in strings or comments starts no server; one that loads the package is checked', () => {
+  const samples = "const sample = `new EmbeddedPostgres({ port: 5432, databaseDir: 'pg' })`;\n// new EmbeddedPostgres({ port: 5432 })\n";
+  assert.equal(startsEmbeddedPostgres(samples), false, 'samples in a string or a comment start nothing');
+  const fixed = "import EmbeddedPostgres from 'embedded-postgres';\nconst pg = new EmbeddedPostgres({ databaseDir: 'pg', port: 5432 });\n";
+  assert.equal(startsEmbeddedPostgres(fixed), true);
+  assert.deepEqual(sharedServerProblems(fixed), ['a fixed port', 'the data directory is made with mkdtemp'], 'a real server keeps both rules');
+  const loaded = "const { default: Pg } = await import('embedded-postgres');\nconst pg = new Pg({ databaseDir: 'pg', port: 5432 });\n";
+  assert.equal(startsEmbeddedPostgres(loaded), true, 'a dynamic import under another name is a server too');
+  assert.deepEqual(sharedServerProblems(loaded), ['a fixed port', 'the data directory is made with mkdtemp']);
+  assert.deepEqual(sharedServerProblems("import EmbeddedPostgres from 'embedded-postgres';\nconst dir = await mkdtemp(base);\nnew EmbeddedPostgres({ databaseDir: dir, port: await freePort() });\n"), []);
+});
+
 test('embedded PostgreSQL tests choose a free port and a fresh temporary directory themselves, so runs side by side do not share them', () => {
   const tests = path.join(ROOT, 'apps', 'clued-cloud', 'tests');
   const files = fs.readdirSync(tests).filter((name) => /\.(mjs|js)$/.test(name)).map((name) => path.join(tests, name));
   let servers = 0;
+  const problems = [];
   for (const file of files) {
     const text = fs.readFileSync(file, 'utf8');
-    if (!text.includes('new EmbeddedPostgres(')) continue;
+    if (!startsEmbeddedPostgres(text)) continue;
     servers += 1;
-    assert.doesNotMatch(text, /new EmbeddedPostgres\([^)]*port:\s*\d/, `${path.basename(file)}: a fixed port`);
-    assert.doesNotMatch(text, /\bport:\s*[1-9]\d{2,4}\b/, `${path.basename(file)}: a fixed port`);
-    assert.match(text, /mkdtemp/, `${path.basename(file)}: the data directory is made with mkdtemp`);
+    problems.push(...sharedServerProblems(text).map((problem) => `${path.basename(file)}: ${problem}`));
   }
+  assert.deepEqual(problems, []);
   assert.ok(servers > 20, `${servers} files start embedded PostgreSQL`);
 });
 

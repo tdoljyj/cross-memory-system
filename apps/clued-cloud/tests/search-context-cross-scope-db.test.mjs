@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -29,8 +29,8 @@ test('context search covers readable scopes and non-literal queries', { timeout:
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
     // The token-order assertions use Unicode byte ordering, not host locale collation.
-    initdbFlags: ['--locale=C', '--encoding=UTF8'],
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS, '--locale=C', '--encoding=UTF8'],
+    persistent: false, postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];

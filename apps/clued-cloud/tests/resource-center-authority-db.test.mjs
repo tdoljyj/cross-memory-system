@@ -212,7 +212,7 @@ for (const bindingSchema of bindingSchemas) test(`Canonical Resource Center regi
           // Keep directory removal separate from the library's stop promise.
           server = new EmbeddedPostgres({
             databaseDir: directory, user: "postgres", password: crypto.randomBytes(32).toString("hex"),
-            port, persistent: true, postgresFlags: EPHEMERAL_POSTGRES_FLAGS, initdbFlags: EPHEMERAL_INITDB_FLAGS,
+            port, persistent: true, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: EPHEMERAL_POSTGRES_FLAGS,
             onLog: clock.postgresLog, onError: clock.postgresLog,
           });
           await server.initialise();

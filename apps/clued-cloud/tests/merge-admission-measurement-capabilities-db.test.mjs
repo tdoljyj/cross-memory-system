@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -45,7 +45,7 @@ test('measurement capabilities: current-chain publisher atomicity and real gatew
   const tempParent=await fs.realpath(os.tmpdir());
   const directory=await fs.mkdtemp(path.join(tempParent,'clued-r9-capabilities-'));
   const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:hash(),port:await freePort(),
-    persistent:true,postgresFlags:['-c','io_method=sync'],onLog(){},onError(message){process.stderr.write(message+'\n');}});
+    persistent:true,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(message){process.stderr.write(message+'\n');}});
   const clients=[];let admin,legacy,fixture,legacyBefore,beforeCatalog,beforeLedger;
   const rpc=async(client,token,input)=>{
     try{return await workerGatewayRpc(client,'clued_mcp_audit_receipts',token,input);}

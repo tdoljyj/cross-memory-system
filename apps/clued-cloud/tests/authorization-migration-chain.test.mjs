@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -14,7 +14,7 @@ for (const profile of ['complete-repository', 'production-installed-shape']) tes
   const listener = net.createServer(); await new Promise(r => listener.listen(0, '127.0.0.1', r));
   const port = listener.address().port; await new Promise(r => listener.close(r));
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-migration-chain-'));
-  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'), port, persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
+  const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: crypto.randomBytes(32).toString('hex'), port, persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
   let db;
   try {
     await server.initialise(); await server.start(); db = server.getPgClient(); await db.connect();

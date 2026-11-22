@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -21,7 +21,7 @@ test('typed C1 audit transport: actual database authorization and transaction bo
  const parent=await fs.realpath(process.env.CLUED_TEST_TMP_ROOT??os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'clued-clock-audit-'));
  const workerDirectory=await fs.mkdtemp(path.join(parent,'clued-clock-audit-worker-'));
  const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),
-   persistent:true,postgresFlags:['-c','io_method=sync'],onLog(){},onError(){}}),clients=[];let db;
+   persistent:true,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(){}}),clients=[];let db;
  try{
   await server.initialise();await server.start();db=server.getPgClient();clients.push(db);await db.connect();
   await db.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;

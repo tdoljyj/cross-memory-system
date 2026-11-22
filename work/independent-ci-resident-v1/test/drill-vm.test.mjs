@@ -1785,20 +1785,20 @@ test('the boot gate is the guest plus the running gate plus the single boot marg
 });
 
 // The receipt of run 20261119T172257Z: 19.7 GB free before boot, then aborted at 5.8 GB while an Actions runner job on the host was
-// growing the production WSL. With the job's Runner.Worker in the process list the boot gate takes the 21 GB tier, and 19.7 GB is short
+// growing the production WSL. With the job's Runner.Worker in the process list the boot gate takes the job tier (25.4 GB since the r6 receipt), and 19.7 GB is short
 // of it: the same boot is still refused before it starts, now by the memory it would have run out of (supplement "drill boot gate and the
 // train both want DESK").
-test('the field sample of run 20261119T172257Z is refused before boot: a runner job raises the gate to 21 GB', opts, () => {
+test('the field sample of run 20261119T172257Z is refused before boot: a runner job raises the gate to 25.4 GB', opts, () => {
   const r = ps(`Test-DrillHostSafety ${q(idleHostStatus())} ([long](19.7 * 1GB)) -ProcessNames @('Runner.Listener', 'Runner.Worker')`);
   assert.equal(r.action, 'refuse');
   assert.equal(r.code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r.busyWith, 'ACTIONS_RUNNER_JOB');
-  assert.equal(r.requiredFreeBytes, 21 * 2 ** 30);
+  assert.equal(Math.round(r.requiredFreeBytes / 2 ** 30 * 10) / 10, 25.4);
 });
 
 // Fable renew-key ruling, supplement "drill hold and the Actions self-hosted runners on the same host" (Clued Task e71ceb33): the hold
 // drains the resident but not the host's Actions runners. A job one of them is executing (a Runner.Worker process) no longer refuses the
-// boot (supplement "drill boot gate and the train both want DESK"): it selects the 21 GB tier. Judged from the process list, not from
+// boot (supplement "drill boot gate and the train both want DESK"): it selects the job tier. Judged from the process list, not from
 // runner names; a job picked up after the boot is left to the running memory gate.
 test('the boot gate boots at ample memory with an Actions runner job on the host, records it, and a running drill is not aborted by one', opts, () => {
   const r = ps(`
@@ -1816,7 +1816,7 @@ test('the boot gate boots at ample memory with an Actions runner job on the host
     $running = Get-DrillHostSafety -Running
     @{ listening = $listening; busy = $busy; running = $running }`);
   assert.deepEqual([r.listening.action, r.listening.runnerJob, r.listening.requiredFreeBytes], ['start', 'no', 15 * 2 ** 30]);
-  assert.deepEqual([r.busy.action, r.busy.code, r.busy.busyWith, r.busy.runnerJob, r.busy.requiredFreeBytes], ['start', null, 'ACTIONS_RUNNER_JOB', 'yes', 21 * 2 ** 30]);
+  assert.deepEqual([r.busy.action, r.busy.code, r.busy.busyWith, r.busy.runnerJob, Math.round(r.busy.requiredFreeBytes / 2 ** 30 * 10) / 10], ['start', null, 'ACTIONS_RUNNER_JOB', 'yes', 25.4]);
   assert.equal(r.running.action, 'continue');
 });
 
@@ -1841,41 +1841,57 @@ test('a job on either side, or a WSL side that could not be read, selects the hi
 
 // Fable renew-key ruling, supplement "drill boot gate and the train both want DESK": a runner job no longer refuses the boot; it is
 // converted back into what it stood for -- memory. Two tiers before boot: no job on either side 15 GB (reserve 6 + guest 8 + margin 1),
-// a job on either side 21 GB (6 more: the measured growth of the production WSL under a job). A job query that failed takes the high
+// a job on either side 25.4 GB (10.4 more: the growth after boot in the r6 receipt; 6 before that calibration). A job query that failed takes the high
 // tier and is no refusal. The running gate (6 GB after the guest) is unchanged.
-test('the boot gate takes a runner job as the 21 GB memory tier, not a refusal; a failed job query takes that tier too', opts, () => {
+test('the boot gate takes a runner job as the 25.4 GB memory tier, not a refusal; a failed job query takes that tier too', opts, () => {
   const r = ps(`
     $s = ${q(idleHostStatus())}
     $gate = { param($free, $names, $wsl) $x = Test-DrillHostSafety $s $free -ProcessNames $names -WslJob $wsl
       [ordered]@{ action = $x.action; code = $x.code; busyWith = $x.busyWith; runnerJob = $x.runnerJob; requiredGB = [Math]::Round($x.requiredFreeBytes / 1GB, 1) } }
     [ordered]@{
-      windowsBusy24 = (& $gate 24GB @('Runner.Listener', 'Runner.Worker') $false)
-      wslBusy24 = (& $gate 24GB @('Runner.Listener') $true)
+      windowsBusy26 = (& $gate 26GB @('Runner.Listener', 'Runner.Worker') $false)
+      wslBusy26 = (& $gate 26GB @('Runner.Listener') $true)
       busy18 = (& $gate 18GB @('Runner.Worker') $false)
-      unreadable22 = (& $gate 22GB @('Runner.Listener') $null)
+      unreadable26 = (& $gate 26GB @('Runner.Listener') $null)
       unreadable18 = (& $gate 18GB @('Runner.Listener') $null)
-      busy21 = (& $gate 21GB @('Runner.Worker') $false)
-      busyUnder21 = (& $gate (21GB - 1) @('Runner.Worker') $false)
+      busyAtTier = (& $gate ([long](Test-DrillHostMemory 0 -RunnerJob).requiredFreeBytes) @('Runner.Worker') $false)
+      busyUnderTier = (& $gate ([long](Test-DrillHostMemory 0 -RunnerJob).requiredFreeBytes - 1) @('Runner.Worker') $false)
       quiet15 = (& $gate 15GB @('Runner.Listener') $false)
       quietUnder15 = (& $gate (15GB - 1) @('Runner.Listener') $false)
       runningBusy = (Test-DrillHostSafety $s 6GB -Running -MemoryAssigned 8GB -WslJob $true).action
       runningShort = (Test-DrillHostSafety $s (6GB - 1) -Running -MemoryAssigned 8GB).code }`);
-  assert.deepEqual(r.windowsBusy24, { action: 'start', code: null, busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 21 });
-  assert.deepEqual(r.wslBusy24, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 21 });
-  assert.deepEqual(r.busy18, { action: 'refuse', code: 'DRILL_HOST_MEMORY_SHORT', busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 21 });
-  assert.deepEqual(r.unreadable22, { action: 'start', code: null, busyWith: 'WSL_UNREADABLE', runnerJob: 'unknown', requiredGB: 21 });
+  assert.deepEqual(r.windowsBusy26, { action: 'start', code: null, busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 25.4 });
+  assert.deepEqual(r.wslBusy26, { action: 'start', code: null, busyWith: 'WSL_ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 25.4 });
+  assert.deepEqual(r.busy18, { action: 'refuse', code: 'DRILL_HOST_MEMORY_SHORT', busyWith: 'ACTIONS_RUNNER_JOB', runnerJob: 'yes', requiredGB: 25.4 });
+  assert.deepEqual(r.unreadable26, { action: 'start', code: null, busyWith: 'WSL_UNREADABLE', runnerJob: 'unknown', requiredGB: 25.4 });
   assert.equal(r.unreadable18.code, 'DRILL_HOST_MEMORY_SHORT');
-  assert.equal(r.busy21.action, 'start');
-  assert.equal(r.busyUnder21.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.equal(r.busyAtTier.action, 'start');
+  assert.equal(r.busyUnderTier.code, 'DRILL_HOST_MEMORY_SHORT');
   assert.deepEqual(r.quiet15, { action: 'start', code: null, busyWith: null, runnerJob: 'no', requiredGB: 15 });
   assert.equal(r.quietUnder15.code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r.runningBusy, 'continue', 'the running gate is unchanged: 6 GB after the guest, a job is no abort');
   assert.equal(r.runningShort, 'DRILL_HOST_MEMORY_SHORT');
 });
 
+// The r6 receipt (run 20261121T010455Z-2026.11.21-b7d92a1a-4b3f5ee5, evidence.hostMemory; Fable ruling on r6 Linux phase A, section 5):
+// a runner job at boot, 27.0 GB free before boot, 19.3 GB once the guest was up, 8.9 GB at the lowest while running -- the host's other
+// usage grew 10.4 GB after the boot. The figures are written here, not read from the script: a boot that just passes the job tier's boot
+// gate, then loses the guest and that growth, must still pass the running gate. At the old 21 GB tier it fell to 2.6 GB (aborted).
+test('the r6 receipt replayed: from the job tier of the boot gate, the measured growth after boot keeps the running gate passing', opts, () => {
+  const r = ps(`
+    $s = ${q(idleHostStatus())}
+    $boot = (Test-DrillHostSafety $s 0 -ProcessNames @('Runner.Worker')).requiredFreeBytes
+    $minRunning = $boot - 8GB - [long]((19.3 - 8.9) * 1GB)
+    @{ bootGB = [Math]::Round($boot / 1GB, 1); minRunningGB = [Math]::Round($minRunning / 1GB, 1)
+      atBoot = (Test-DrillHostSafety $s $boot -ProcessNames @('Runner.Worker')).action
+      running = (Test-DrillHostSafety $s $minRunning -Running -MemoryAssigned 8GB).action }`);
+  assert.equal(r.atBoot, 'start');
+  assert.equal(r.running, 'continue', `boot gate ${r.bootGB} GB leaves ${r.minRunningGB} GB after the r6 growth`);
+});
+
 // Codex review of f9ab1bb26, medium 1: the Windows process list that could not be read is a job query that failed, like the WSL side's:
-// the 21 GB tier, the WSL side and memory still read, no refusal by itself. A memory reading that fails still refuses (a resource failure).
-test('a Windows job query that fails takes the 21 GB tier and goes on to read memory; a memory read that fails still refuses', opts, () => {
+// the job tier, the WSL side and memory still read, no refusal by itself. A memory reading that fails still refuses (a resource failure).
+test('a Windows job query that fails takes the job tier and goes on to read memory; a memory read that fails still refuses', opts, () => {
   const r = ps(`
     function Read-DrillHostStatus { ${q(idleHostStatus())} }
     function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) if ($script:memoryFails) { throw 'WMI unavailable' }; @{ FreePhysicalMemory = $script:free / 1KB } }
@@ -1883,16 +1899,16 @@ test('a Windows job query that fails takes the 21 GB tier and goes on to read me
     function Get-Process { param($ErrorAction) throw 'Access is denied' }
     function Get-DrillRunnerDistributions { param($HostName) }
     $script:memoryFails = $false
-    $script:free = 22GB; $at22 = Get-DrillHostSafety
+    $script:free = 26GB; $at26 = Get-DrillHostSafety
     $early = Get-DrillHostSafety -JobsOnly
     $script:free = 20GB; $at20 = Get-DrillHostSafety
     $script:memoryFails = $true; $script:free = 64GB; $noMemory = Get-DrillHostSafety
     $pick = { param($x) $req = Get-Prop $x 'requiredFreeBytes'
       [ordered]@{ action = $x.action; code = $x.code; busyWith = (Get-Prop $x 'busyWith'); runnerJob = (Get-Prop $x 'runnerJob'); requiredGB = $(if ($req) { [Math]::Round($req / 1GB, 1) }) } }
-    [ordered]@{ at22 = (& $pick $at22); early = (& $pick $early); at20 = (& $pick $at20); noMemory = (& $pick $noMemory) }`);
-  assert.deepEqual(r.at22, { action: 'start', code: null, busyWith: 'WINDOWS_UNREADABLE', runnerJob: 'unknown', requiredGB: 21 });
+    [ordered]@{ at26 = (& $pick $at26); early = (& $pick $early); at20 = (& $pick $at20); noMemory = (& $pick $noMemory) }`);
+  assert.deepEqual(r.at26, { action: 'start', code: null, busyWith: 'WINDOWS_UNREADABLE', runnerJob: 'unknown', requiredGB: 25.4 });
   assert.deepEqual([r.early.action, r.early.busyWith, r.early.runnerJob], ['start', 'WINDOWS_UNREADABLE', 'unknown'], 'the early sample does not refuse either');
-  assert.deepEqual([r.at20.action, r.at20.code, r.at20.requiredGB], ['refuse', 'DRILL_HOST_MEMORY_SHORT', 21]);
+  assert.deepEqual([r.at20.action, r.at20.code, r.at20.requiredGB], ['refuse', 'DRILL_HOST_MEMORY_SHORT', 25.4]);
   assert.deepEqual([r.noMemory.action, r.noMemory.code], ['refuse', 'DRILL_HOST_RESOURCE_UNREADABLE']);
 });
 
@@ -2344,7 +2360,7 @@ test('from the real entry: early refusal without memory, the release, then the b
   assert.ok(!short.events.includes('boot'));
 });
 
-test('a job that appears after the early sample skips the release (the command finds it itself), and the boot gate takes the 21 GB tier', shOpts, () => {
+test('a job that appears after the early sample skips the release (the command finds it itself), and the boot gate takes the job tier', shOpts, () => {
   const r = ps(`${preBootWorld()}
     $script:jobAfter = 1
     $wsl = Invoke-Entry
@@ -2356,7 +2372,7 @@ test('a job that appears after the early sample skips the release (the command f
   assert.deepEqual(r.wsl.out.hostPreBoot.release.skipped, { where: 'Fixture-CI', reason: 'WSL_ACTIONS_RUNNER_JOB' });
   assert.equal(r.wsl.out.hostPreBoot.release.failed, null, 'a skip is not a failure');
   assert.deepEqual([r.wsl.out.code, r.wsl.out.hostPreBoot.bootGate.busyWith, r.wsl.out.hostPreBoot.bootGate.requiredFreeGB],
-    ['DRILL_HOST_MEMORY_SHORT', 'WSL_ACTIONS_RUNNER_JOB', 21], 'nothing released: 10 GB is short of the job tier');
+    ['DRILL_HOST_MEMORY_SHORT', 'WSL_ACTIONS_RUNNER_JOB', 25.4], 'nothing released: 10 GB is short of the job tier');
   assert.ok(!r.wsl.events.includes('boot'));
   assert.deepEqual(r.windows.out.hostPreBoot.release.skipped, { where: 'windows', reason: 'ACTIONS_RUNNER_JOB' });
   assert.ok(!r.windows.events.some(e => e.startsWith('wsl-release')), 'no command into the distribution');
@@ -2364,24 +2380,43 @@ test('a job that appears after the early sample skips the release (the command f
 });
 
 // Fable renew-key ruling, supplement "drill boot gate and the train both want DESK", from the real entry: a runner busy from the start is
-// no refusal. The release is not attempted (only when neither side has a job), and the boot gate boots at 24 GB, refuses at 18 GB; the
+// no refusal. The release is not attempted (only when neither side has a job), and the boot gate boots at 26 GB, refuses at 18 GB; the
 // receipt's pre-boot record says a job was there and which tier was required.
-test('from the real entry: a runner busy from the start skips the release and boots at 24 GB, refuses at 18 GB', shOpts, () => {
+test('from the real entry: a runner busy from the start skips the release and boots at 26 GB, refuses at 18 GB', shOpts, () => {
   const run = (free) => ps(`${preBootWorld({ freeBeforeRelease: free, freeAfterRelease: free })}
     $script:jobAfter = 0
     Invoke-Entry`);
-  const ok = run(24);
+  const ok = run(26);
   assert.equal(ok.out.status, 'DRILL_PREREQ_READY', JSON.stringify(ok.out));
   assert.ok(ok.events.includes('boot'), ok.events.join(','));
   assert.ok(!ok.events.some(e => e.startsWith('wsl-release')), 'no release with a job running');
   const pre = ok.out.hostPreBoot;
   assert.deepEqual([pre.early.ok, pre.early.busyWith, pre.early.runnerJob], [true, 'WSL_ACTIONS_RUNNER_JOB', 'yes']);
   assert.deepEqual(pre.release.skipped, { where: 'early', reason: 'WSL_ACTIONS_RUNNER_JOB' });
-  assert.deepEqual([pre.bootGate.ok, pre.bootGate.runnerJob, pre.bootGate.freeGB, pre.bootGate.requiredFreeGB], [true, 'yes', 24, 21]);
+  assert.deepEqual([pre.bootGate.ok, pre.bootGate.runnerJob, pre.bootGate.freeGB, pre.bootGate.requiredFreeGB], [true, 'yes', 26, 25.4]);
   const short = run(18);
   assert.equal(short.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(short.out));
-  assert.deepEqual([short.out.hostPreBoot.bootGate.runnerJob, short.out.hostPreBoot.bootGate.requiredFreeGB], ['yes', 21]);
+  assert.deepEqual([short.out.hostPreBoot.bootGate.runnerJob, short.out.hostPreBoot.bootGate.requiredFreeGB], ['yes', 25.4]);
   assert.ok(!short.events.includes('boot'));
+});
+
+// r6 conditions from the real entry (a runner job at boot, 24 GB free: the old 21 GB tier booted it, and the r6 growth would have taken it
+// under the running gate): refused before boot, and the refusal carries the figure the script computed and what it is made of -- the
+// guest, the boot margin, the runner job growth with the receipt it was measured in, the production reserve. No figure from outside.
+test('from the real entry: r6 conditions at 24 GB are refused before boot with the computed figure and its basis', shOpts, () => {
+  const r = ps(`${preBootWorld({ freeBeforeRelease: 24, freeAfterRelease: 24 })}
+    $script:jobAfter = 0
+    Invoke-Entry`);
+  assert.equal(r.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(r.out));
+  assert.ok(!r.events.includes('boot'), r.events.join(','));
+  const gate = r.out.hostPreBoot.bootGate;
+  assert.deepEqual([gate.runnerJob, gate.freeGB, gate.requiredFreeGB], ['yes', 24, 25.4]);
+  const b = gate.requiredBasis;
+  assert.deepEqual([b.guestGB, b.bootMarginGB, b.runnerJobGrowthGB, b.productionReserveGB], [8, 1, 10.4, 6], JSON.stringify(b));
+  assert.equal(Math.round((b.guestGB + b.bootMarginGB + b.runnerJobGrowthGB + b.productionReserveGB) * 10) / 10, gate.requiredFreeGB);
+  assert.match(b.runnerJobGrowthFrom, /20261121T010455Z-2026\.11\.21-b7d92a1a-4b3f5ee5/);
+  assert.match(b.runnerJobGrowthFrom, /afterBootFreeGB 19\.3/);
+  assert.match(b.runnerJobGrowthFrom, /minRunningFreeGB 8\.9/);
 });
 
 // Codex review of 74e7a65e7, medium 1: a refusal at the duty check carries no memory figure (nothing was read), and a built baseline

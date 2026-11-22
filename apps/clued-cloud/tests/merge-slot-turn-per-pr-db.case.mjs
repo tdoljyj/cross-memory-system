@@ -7,7 +7,7 @@
 // a manual renew at 13:21) joins again the same way on the duty node's next queue keepalive; an idle lapse stays out.
 // A head whose PR cannot land (field #1121) gives way to a waiting claim through the CI door's merge_queue_yield.
 // Imported by work-claims-reject-receipts-db.test.mjs, so it runs in the production-schema suite.
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -33,7 +33,7 @@ async function freePort() {
 test('a merged PR ends its claim merge-slot turn; the claim joins again at the back', { timeout: 300000 }, async t => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-merge-turn-'));
   const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(m) { process.stderr.write(`${m}\n`); } });
   const clients = [];
   try {
     await server.initialise(); await server.start();

@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -40,7 +40,7 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-binding-roles-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];
@@ -183,14 +183,22 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     // Since 20261108161615 only the CI admission Binding's observation makes a
     // PR -> Task relation active; the holder's authorization alone leaves it
     // unknown, and nobody else's verify or observation activates or meters it.
+    // Since 20261122090000 an unknown relation reads as open (work_claim_pr_binding_open_v1): the
+    // observation answers what the holder authorized, still without binding anything.
+    const relation = async (pr) => (await admin.query(`select status from clued_private.work_claim_pr_task_bindings_v1
+      where user_id=$1 and repo_id=$2 and pr_number=$3`, [userId, pr.split('#')[0], Number(pr.split('#')[1])])).rows[0]?.status;
     const legacyTask = await createTask('legacy');
     const legacy = committed(await claim(legacyTask, 'claude', 'session-a', ['legacy/**'])).claim;
     await authorizeHead(legacy, 'o/r#1', sha(1));
     for (const who of ['reader', 'ci']) {
-      assert.deepEqual([(await observe(who, 'o/r#1', sha(1))).reason], ['pr_task_binding_unknown'], who);
+      const seen = await observe(who, 'o/r#1', sha(1));
+      assert.deepEqual([seen.binding_status, seen.claim?.claim_id, seen.auto_bound], ['bound', legacy.claim_id, false], who);
     }
+    assert.equal(await relation('o/r#1'), 'unknown', 'no observation before the role activates the relation');
     let v = await verifyAs('reader', legacy, { pr_ref: 'o/r#1', head_sha: sha(1) });
-    assert.deepEqual([v.verdict, v.reasons, v.bound_pr], ['REJECTED', ['pr_task_binding_unknown'], undefined]);
+    // The verify itself still needs an active relation (only the CI's write resolve makes one).
+    assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['pr_task_binding_required']]);
+    assert.equal(await relation('o/r#1'), 'unknown');
     assert.equal(await usage(legacyTask), 0);
     committed(await release('claude', legacy));
 
@@ -249,8 +257,9 @@ test('binding roles: CI admission and release-door Bindings, set by the Owner in
     const mine = committed(await claim(task, 'claude', 'session-a', ['roles/**'])).claim;
     // Another Binding's observation does not activate a PR either.
     await authorizeHead(mine, 'o/r#7', sha(2));
-    assert.equal((await observe('reader', 'o/r#7', sha(2))).reason, 'pr_task_binding_unknown');
-    assert.equal((await observe('ci', 'o/r#7', sha(2))).binding_status, 'bound');
+    assert.deepEqual([(await observe('reader', 'o/r#7', sha(2))).auto_bound, await relation('o/r#7')], [false, 'unknown']);
+    assert.equal((await observe('ci', 'o/r#7', sha(2))).auto_bound, true);
+    assert.equal(await relation('o/r#7'), 'active');
     for (const who of ['claude', 'codex', 'reader']) {
       v = await verifyAs(who, mine, { pr_ref: 'o/r#7', head_sha: sha(2) });
       assert.deepEqual([v.verdict, v.reasons], ['REJECTED', ['admission_binding_required']], who);

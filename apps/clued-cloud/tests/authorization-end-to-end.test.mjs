@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -34,7 +34,7 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export class WorkerEntrypoint {}' }));
   } }] }); stop();
   const { handleDelegatedOAuth } = await import(pathToFileURL(path.join(directory, 'delegated-oauth.mjs')));
-  const server = new EmbeddedPostgres({ databaseDir: path.join(directory, 'db'), user: 'postgres', password: crypto.randomBytes(32).toString('hex'), port, persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
+  const server = new EmbeddedPostgres({ databaseDir: path.join(directory, 'db'), user: 'postgres', password: crypto.randomBytes(32).toString('hex'), port, persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(message + '\n'); } });
   const originalFetch = globalThis.fetch; const connections = [];
   try {
     await server.initialise(); await server.start();

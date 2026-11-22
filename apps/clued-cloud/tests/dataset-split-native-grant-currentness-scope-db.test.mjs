@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -41,7 +41,7 @@ test('Native Owner validates a Project Task with a registered Global intent thro
   for (const k of Object.keys(oldTemp)) process.env[k] = dir;
   const server = new EmbeddedPostgres({ databaseDir: path.join(dir, 'db'), user: 'postgres',
     password: hash(), port: await freePort(), persistent: true, createPostgresUser: false,
-    postgresFlags: ['-c', 'io_method=sync', '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
+    initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS, '-c', 'listen_addresses=127.0.0.1'], onLog() {}, onError() {} });
   let db, proc;
   try {
     await server.initialise(); await server.start(); proc = server.process;

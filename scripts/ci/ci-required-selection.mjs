@@ -173,22 +173,18 @@ export const SUITES = {
     'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
-    // Every test file runs in a required suite or is listed in ci-uncovered-tests.json (check-tests-covered.mjs). Any test
-    // file anywhere, the table, the check, a workflow (other-workflow entries) and what decides the application's unit tests
-    // select it; a change to this file selects every suite already.
-    'test-coverage': ['**/*.test.mjs', '**/*.test.js', '**/*.test.cjs', '**/*.test.ts', '**/test_*.py', '**/*_test.py',
-      'scripts/ci/ci-uncovered-tests.json', 'scripts/ci/check-tests-covered.mjs', '.github/workflows/**',
-      'apps/clued-cloud/tests/**', 'apps/clued-cloud/scripts/select-tests.mjs'],
     // Its tests read the database tests of apps/clued-cloud/tests and what they import, so a new or changed test there, or
     // the classifier, selects it.
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
-      'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
+      'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
       'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
   // The application suite reads files from across the repository (workflow,
-  // contract and CI-script tests), so every change runs it.
+  // contract and CI-script tests), so every change runs it. Its CI-script tests
+  // include check-tests-covered.test.mjs: every test file runs in a required
+  // suite or is listed in ci-uncovered-tests.json, checked on every change.
   'clued-cloud-tests': {
     'clued-cloud': ['**'],
   },
@@ -229,7 +225,6 @@ export const SUITE_PLATFORMS = {
   'pinned-registries': { platforms: ['linux'], reason: 'a commit has one set of pinned bytes; checked once (needs the application dependencies)' },
   'mechanical-outputs': { platforms: ['linux'], reason: 'integrates a throwaway worktree from the Linux dependency store; one answer for a commit' },
   'ci-deps-entry': { platforms: ['linux'], reason: 'the dependency store it guards exists on the Linux pool only' },
-  'test-coverage': { platforms: ['linux'], reason: 'a commit has one set of test files and suite commands; checked once' },
   // Its 10 Windows failures on main (test_resume_launcher and others) are an open defect; until they are fixed a
   // required Windows run could never be green. Remove this entry with that fix: the reinstall tools run on Windows.
   'reinstall-python': { platforms: ['linux'], reason: 'fails on Windows on main today (open defect); joins win32 with its fix' },
@@ -260,7 +255,8 @@ export function appDependencyGap(root, needs, env = process.env) {
 // What each suite runs; cwd is relative to the checkout root. Source v2 tests
 // resolve paths from the root, so they run there. {tests:<dir>} expands to the
 // sorted *.test.mjs files directly in <dir> (relative to cwd), {unit-tests}
-// to the application's unit test files (scripts/select-tests.mjs), {base} to
+// to the application's unit test files (scripts/select-tests.mjs),
+// {ci-script-tests} to the CI-script tests (ciScriptTests), {base} to
 // the base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP. A
 // command with `known` runs Node's test runner with ci-test-failures-reporter.mjs
 // and passes only when every failure is an entry of ci-known-failures.json
@@ -319,9 +315,6 @@ export const SUITE_COMMANDS = {
     { cwd: '.', argv: ['node', 'scripts/ci/check-cron-budget.mjs'] }],
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
-  // Seconds: lists the tracked files and expands every suite command (FABLE-tests-outside-required-suites-20261121 §2).
-  'test-coverage': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/check-tests-covered.test.mjs'] },
-    { cwd: '.', argv: ['node', 'scripts/ci/check-tests-covered.mjs'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
     'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
@@ -330,7 +323,11 @@ export const SUITE_COMMANDS = {
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'typecheck'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'build'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{tests:../kooyumi-connect/tests}'] },
-    { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}'] },
+    // The CI tools' Python tests (FABLE-tests-outside-required-suites-20261121, C2). scripts/ci is listed file by file:
+    // test_check_design_refs.py is red on its first run (ci-uncovered-tests.json), and the components and runner budget
+    // suites run their own two.
+    { cwd: '.', argv: [PYTHON, '-B', '-m', 'unittest', 'scripts/ci/test_check_contract_placement.py', 'scripts/ci/test_clued_docs_only.py'] },
+    { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}', '{ci-script-tests}'] },
   ],
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/ci-connection-renew-db.test.mjs'] },
@@ -465,10 +462,16 @@ export function outputLines(check, selection) {
   ];
 }
 
-export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestFiles(cwd) }) {
+export function expandArgv(argv, { cwd, root, base, report, listUnit = () => unitTestFiles(cwd) }) {
+  let unit = null;
+  const units = () => (unit ??= listUnit());
   return argv.flatMap((arg) => {
+    if (arg === '{ci-script-tests}') {
+      if (!root) throw new Error('{ci-script-tests} needs the checkout root');
+      return ciScriptTests(root, cwd, units());
+    }
     if (arg === '{unit-tests}') {
-      const files = listUnit();
+      const files = units();
       // An empty list would make `node --test` run every file it finds.
       if (files.length === 0) throw new Error('no unit test files');
       return files;
@@ -491,6 +494,49 @@ export function expandArgv(argv, { cwd, base, report, listUnit = () => unitTestF
     if (arg === '{report}') return [report];
     return [arg];
   });
+}
+
+// {ci-script-tests}: the *.test.mjs files directly in CI_SCRIPT_TEST_DIRS (from the checkout root) that run in no other
+// way here, sorted, relative to cwd; a new file joins without an edit (defect ddc94356; FABLE-tests-outside-required-
+// suites-20261121, addendum ruling 1). Left out: what an application unit test (unit, relative to cwd) imports, and the
+// admission self-tests, which run in their own suite whenever their code changes, keep their own known failures and
+// print GitHub annotations; with both, the tests they import. Other suite-listed tests, such as the selection test,
+// check the whole repository but run only when a few files change: they stay.
+export const CI_SCRIPT_TEST_DIRS = ['scripts', 'scripts/ci', 'scripts/ci/self-hosted', 'scripts/runner'];
+// The module specifiers a file names, read as apps/clued-cloud/scripts/select-tests.mjs reads them (its SPECIFIER_PATTERNS;
+// check-tests-covered.test.mjs holds the two equal). Kept here because this file is loaded alone (local-verify copies it).
+export const IMPORT_PATTERNS = [
+  /\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
+  /\bimport\s*['"]([^'"]+)['"]/g,
+  /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+];
+const importSpecifiers = (source) => IMPORT_PATTERNS.flatMap((pattern) => [...source.matchAll(pattern)].map((match) => match[1]));
+export function ciScriptTests(root, cwd, unit) {
+  const source = (file) => {
+    try {
+      return readFileSync(file, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  const covered = new Set();
+  for (const file of unit.map((name) => path.resolve(cwd, name))) {
+    for (const specifier of importSpecifiers(source(file))) covered.add(path.resolve(path.dirname(file), specifier));
+  }
+  for (const command of SUITE_COMMANDS['admission-self-tests']) {
+    for (const arg of command.argv) if (arg.endsWith('.test.mjs')) covered.add(path.resolve(root, command.cwd, arg));
+  }
+  for (const file of covered) { // the Set visits what is added
+    if (!file.endsWith('.test.mjs')) continue;
+    for (const specifier of importSpecifiers(source(file))) {
+      if (specifier.startsWith('.')) covered.add(path.resolve(path.dirname(file), specifier));
+    }
+  }
+  const files = CI_SCRIPT_TEST_DIRS.flatMap((dir) => (existsSync(path.join(root, dir)) ? readdirSync(path.join(root, dir), { withFileTypes: true }) : [])
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.test.mjs')).map((entry) => `${dir}/${entry.name}`))
+    .filter((file) => !covered.has(path.resolve(root, file))).sort();
+  if (files.length === 0) throw new Error(`no CI-script test files under ${root}`);
+  return files.map((file) => path.relative(cwd, path.join(root, file)).replaceAll('\\', '/'));
 }
 
 const real = (file) => {
@@ -607,7 +653,7 @@ export function filterCommand(command, argv, named) {
     const pattern = optionValue(argv, '-p') ?? 'test*.py';
     result.accepts = [`${directory}/${pattern}`];
     for (const file of named) {
-      if (!file.startsWith(`${directory}/`) || !globToRegExp(pattern).test(path.posix.basename(file))) continue;
+      if (path.posix.dirname(file) !== directory || !globToRegExp(pattern).test(path.posix.basename(file))) continue;
       const argvFor = [...argv];
       argvFor[argv.indexOf('-p') + 1] = path.posix.basename(file);
       result.runs.push(argvFor);
@@ -749,7 +795,7 @@ export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], tru
   const key = ({ cwd, argv }) => JSON.stringify([cwd, argv]);
   // The trusted commands as they ran: expanded by this file's rules, with the same base commit and report file.
   const expanded = own.map((command) => ({ cwd: command.cwd,
-    argv: expandArgv(command.argv, { cwd: path.join(root, command.cwd), base, report }) }));
+    argv: expandArgv(command.argv, { cwd: path.join(root, command.cwd), root, base, report }) }));
   const seen = new Set(expanded.map(key));
   for (const command of commands ?? []) {
     const { cwd, argv } = command ?? {};
@@ -817,7 +863,7 @@ export function planFiles(id, { root, files, env = process.env }) {
   for (const command of requiredCommands(id, root, { env, base: env.CI_BASE_SHA || 'unset', report })) {
     const cwd = path.join(root, command.cwd);
     // {base} is not a test file; a placeholder keeps commands that need it plannable (they are skipped).
-    const argv = command.expanded ? command.argv : expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA || 'unset', report });
+    const argv = command.expanded ? command.argv : expandArgv(command.argv, { cwd, root, base: env.CI_BASE_SHA || 'unset', report });
     // A command that only adds test files to a trusted one runs no other file (the trusted command runs those).
     const filtered = filterCommand(command, argv, command.files ? new Set(command.files.filter((file) => named.has(file))) : named);
     accepts.push(...filtered.accepts);
@@ -826,9 +872,29 @@ export function planFiles(id, { root, files, env = process.env }) {
   }
   const unmatched = [...named].filter((file) => !matched.has(file));
   if (unmatched.length > 0) {
-    throw new RunFilesError(`suite ${id} does not run: ${unmatched.join(', ')}\nit runs: ${[...new Set(accepts)].join(' ') || '(no test file)'}`);
+    throw Object.assign(new RunFilesError(`suite ${id} does not run: ${unmatched.join(', ')}\nit runs: ${[...new Set(accepts)].join(' ') || '(no test file)'}`),
+      { unmatched });
   }
   return { steps, named };
+}
+
+// Where the files a suite refused run instead: the suites whose commands take each one, read as the coverage check reads
+// them (check-tests-covered.mjs), or why none does (its table). Only a hint: it says nothing when it cannot be read.
+async function whereFilesRun(files, root) {
+  if (!files?.length) return '';
+  try {
+    const { TABLE_PATH, readTable, suiteFiles } = await import('./check-tests-covered.mjs');
+    const { runs } = suiteFiles(root, { tracked: files });
+    const listed = new Map((readTable(root).tests ?? []).map((entry) => [entry.path, entry]));
+    return files.map((file) => {
+      const suites = [...new Set(runs.get(file) ?? [])];
+      if (suites.length > 0) return `\n${file} runs in ${suites.join(', ')}: --run-files ${suites[0]} ${file}`;
+      const entry = listed.get(file);
+      return `\n${file}: no required suite runs it${entry ? ` (${TABLE_PATH}: ${entry.kind}, ${entry.reason})` : ''}`;
+    }).join('');
+  } catch {
+    return '';
+  }
 }
 
 export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null } = {}) {
@@ -845,7 +911,7 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
       planFiles(id, { root, files, env });
     } catch (error) {
       if (!(error instanceof RunFilesError)) throw error;
-      log(`run-files ${id}: ${error.message}`);
+      log(`run-files ${id}: ${error.message}${await whereFilesRun(error.unmatched, root)}`);
       return 2;
     }
   }
@@ -853,6 +919,14 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
     throw new Error(`suite ${id} has no known-failure command`);
   }
   if (env.GITHUB_ACTIONS === 'true') return executeSuite(id, { root, env, log, captureKnown, keep });
+  // The application's dependencies the CI job installs: a local run in a checkout without them (a fresh worktree) links
+  // local-verify's store first, outside the slot (R2 review 11-21: a targeted database test failed on its first import).
+  // Loaded only for a checkout that has the application and lacks its dependencies: every other run keeps its startup.
+  const app = path.join(root, 'apps', 'clued-cloud');
+  if (existsSync(path.join(app, 'package.json')) && !existsSync(path.join(app, 'node_modules'))) {
+    const { linkSuiteDependencies } = await import('./local-verify.mjs');
+    linkSuiteDependencies(id, root, { env, log });
+  }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
   return withLocalSuiteSlot(id, {
     root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
@@ -882,7 +956,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    let argv = planned ?? commandArgv(command, { cwd, base: env.CI_BASE_SHA, report });
+    let argv = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
     let reportDir = null;
     if (command.known) {
       reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
@@ -984,7 +1058,7 @@ function writeKnown(id, root, env, keep = false) {
   const command = SUITE_COMMANDS[id]?.find((candidate) => candidate.known);
   if (!command) throw new Error(`suite ${id} has no known-failure command`);
   const cwd = path.join(root, command.cwd);
-  const argv = expandArgv(command.argv, { cwd, base: env.CI_BASE_SHA, report: '' });
+  const argv = expandArgv(command.argv, { cwd, root, base: env.CI_BASE_SHA, report: '' });
   const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-known-`));
   const out = path.join(dir, 'failures.jsonl');
   const index = argv.indexOf('--test');
@@ -1029,6 +1103,10 @@ async function main(argv, env = process.env) {
     }
     if (env.GITHUB_ACTIONS === 'true') {
       console.error('run-files: refused under GITHUB_ACTIONS; a targeted run is never a suite verdict, use --run');
+      return 2;
+    }
+    if (!Object.hasOwn(SUITE_COMMANDS, id) && Object.hasOwn(SUITES, id)) {
+      console.error(`run-files: ${id} is a required check, not a suite; its suites: ${Object.keys(SUITES[id]).join(', ')}`);
       return 2;
     }
     if (!Object.hasOwn(SUITE_COMMANDS, id) || named.length === 0) {

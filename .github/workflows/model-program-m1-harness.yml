@@ -9,16 +9,6 @@ on:
       - "tests/fixtures/model-program-m1-harness/**"
       - "tests/test_model_program_m1_harness.py"
       - ".github/workflows/model-program-m1-harness.yml"
-  push:
-    branches: [main]
-    paths:
-      - "development/contracts/model-program/m1/harness/**"
-      - "development/contracts/model-program/m1/schemas/**"
-      - "scripts/model-program/m1_invocation_harness.py"
-      - "scripts/model-program/validate_m1_harness.py"
-      - "tests/fixtures/model-program-m1-harness/**"
-      - "tests/test_model_program_m1_harness.py"
-      - ".github/workflows/model-program-m1-harness.yml"
 
 permissions:
   contents: read

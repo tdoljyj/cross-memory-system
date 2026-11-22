@@ -70,6 +70,7 @@ function slotFixture(t) {
   });
   return function start(name, {
     waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
+    extraEnv = {},
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -123,6 +124,7 @@ function slotFixture(t) {
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
     if (ci) env[ci] = 'true';
+    Object.assign(env, extraEnv);
     if (mode === '--run-selected') {
       writeFileSync(path.join(scripts, 'check-cron-budget.test.mjs'), probe);
       writeFileSync(path.join(scripts, 'check-cron-budget.mjs'), '');
@@ -360,7 +362,7 @@ test('every selectable suite has commands, every command directory and named tes
     for (const command of commands) {
       const cwd = path.join(ROOT, command.cwd);
       assert.ok(existsSync(cwd), `${id}: ${command.cwd}`);
-      const argv = expandArgv(command.argv, { cwd, base: 'abc', report: '/tmp/r.json', listUnit: () => ['tests/a.test.mjs'] });
+      const argv = expandArgv(command.argv, { cwd, root: ROOT, base: 'abc', report: '/tmp/r.json', listUnit: () => ['tests/a.test.mjs'] });
       for (const arg of argv.filter((value) => /\.(?:mjs|py)$/.test(value) && !value.includes('*') && value !== 'tests/a.test.mjs')) {
         assert.ok(existsSync(path.join(cwd, arg)), `${id}: ${arg}`);
       }
@@ -463,7 +465,7 @@ test('every Node suite runs when any file its tests reach through imports change
 });
 
 test('any workflow change runs the runner budget policy, the admission self-tests, the pinned-registry and the dependency-entry checks', () => {
-  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry', 'test-coverage']);
+  assert.deepEqual(selectSuites('ci-suites', ['.github/workflows/trivy.yml']).suites, ['runner-budget-policy', 'admission-self-tests', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']);
 });
 
 test('a generator, the generated-file list or any file it names runs the mechanical-outputs audit', () => {
@@ -572,7 +574,7 @@ test('every file a moved database test imports selects production-schema', () =>
 });
 
 // Every database test, like every other test file, runs in a required suite or is listed in ci-uncovered-tests.json with its
-// kind, reason and Task: check-tests-covered.mjs (suite test-coverage) checks it; the database exemptions moved there.
+// kind, reason and Task: check-tests-covered.mjs (its test runs in clued-cloud) checks it; the database exemptions moved there.
 
 test('a migration selects the production-schema check; ordinary documentation selects only the application check', (t) => {
   assert.deepEqual(selectSuites('migration-verify', ['apps/clued-cloud/supabase/migrations/20261101000000_x.sql']).suites,
@@ -1478,18 +1480,6 @@ test('a PowerShell script anywhere selects the bare-pipeline .Count scan, and ot
   assert.equal(selectSuites('ci-suites', ['docs/README.md']).suites.includes('powershell-count'), false);
 });
 
-test('a test file anywhere, the uncovered-tests table, the check or a workflow selects test-coverage; other files do not', () => {
-  for (const file of ['a.test.mjs', 'x/y/z.test.js', 'x/z.test.cjs', 'apps/x/z.test.ts', 'tests/test_x.py', 'legacy/a/b_test.py',
-    'scripts/ci/ci-uncovered-tests.json', 'scripts/ci/check-tests-covered.mjs', '.github/workflows/model-program-m0.yml',
-    'apps/clued-cloud/tests/cluster-cleanup.mjs', 'apps/clued-cloud/scripts/select-tests.mjs']) {
-    assert.ok(selectSuites('ci-suites', [file]).suites.includes('test-coverage'), file);
-  }
-  for (const file of ['docs/README.md', 'scripts/ci/clued-merge-executor.mjs', 'tests/helper.py']) {
-    assert.equal(selectSuites('ci-suites', [file]).suites.includes('test-coverage'), false, file);
-  }
-  assert.deepEqual(suitePlatforms('test-coverage'), ['linux']);
-});
-
 test('run-files: a unittest module name counts as its file, so the components tests can be named by path', () => {
   const { calls, spawn } = spawnRecorder();
   assert.equal(executeSuite('components', { root: ROOT, env: {}, spawn, log, files: ['tests/test_clued_version_check.py'] }), 0);
@@ -1939,4 +1929,65 @@ test('run-files 10: only the named file of a multi-file suite reaches the worker
   assert.deepEqual(await run.done, [0, null]);
   assert.ok(existsSync(path.join(run.root, 'ran-named')), 'the named file ran');
   assert.ok(!existsSync(path.join(run.root, 'ran-other')), 'the other file of the suite did not run');
+});
+
+// R2 review (11-21): a database test named for a local targeted run, in a fresh worktree, failed on its first import
+// (ERR_MODULE_NOT_FOUND): nothing gave the checkout the application's dependencies, which CI installs in the job and
+// local-verify links from its store. The entry links them from that same store before the run.
+test('run-files 11: a local run links the application dependencies a fresh checkout lacks before its database test runs', async (t) => {
+  const start = slotFixture(t);
+  const home = mkdtempSync(path.join(os.tmpdir(), 'clued-run-files-deps-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const packageJson = JSON.stringify({ name: 'fixture-app', private: true, dependencies: { 'fixture-dep': '1.0.0' } });
+  const lock = JSON.stringify({ name: 'fixture-app', lockfileVersion: 3, packages: { '': {}, 'node_modules/fixture-dep': { version: '1.0.0' } } });
+  const { dependencyKey } = await import('./local-verify.mjs');
+  // A store local-verify installed for this lockfile: complete, nothing to install or rebuild.
+  const ready = path.join(home, 'node_modules', dependencyKey({ lock: Buffer.from(lock), packageJson: Buffer.from(packageJson) }));
+  const dep = path.join(ready, 'node_modules', 'fixture-dep');
+  mkdirSync(dep, { recursive: true });
+  writeFileSync(path.join(dep, 'package.json'), JSON.stringify({ name: 'fixture-dep', version: '1.0.0', main: 'index.js' }));
+  writeFileSync(path.join(dep, 'index.js'), 'module.exports = 42;\n');
+  writeFileSync(path.join(ready, 'package-lock.json'), lock);
+  writeFileSync(path.join(ready, 'complete'), '');
+  const file = 'apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs';
+  const run = start('deps', { mode: '--run-files', suite: 'production-schema', named: [file], extraEnv: { CLUED_LOCAL_VERIFY_HOME: home },
+    extraFiles: { 'apps/clued-cloud/package.json': packageJson, 'apps/clued-cloud/package-lock.json': lock,
+      [file]: "import assert from 'node:assert/strict';\nimport value from 'fixture-dep';\nassert.equal(value, 42);\n" } });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.equal(realpathSync(path.join(run.root, 'apps/clued-cloud/node_modules')), realpathSync(path.join(ready, 'node_modules')));
+});
+
+// R2 review (11-21): database tests named to clued-cloud were refused with a list of what clued-cloud runs, and
+// migration-verify was refused as an unknown suite; production-schema runs them, and nothing said so.
+test('run-files 12: a refused file names the suite that runs it or why none does; a check name names its suites', async () => {
+  const lines = [];
+  const db = 'apps/clued-cloud/tests/storage-semantic-recovery-db.test.mjs';
+  const uncovered = 'apps/clued-cloud/tests/work-claims-handover-execution-db.test.mjs';
+  assert.equal(await selection.runSuite('clued-cloud', { root: ROOT, env: {}, log: (line) => lines.push(line), files: [db, uncovered] }), 2);
+  const text = lines.join('\n');
+  assert.match(text, new RegExp(`--run-files production-schema ${db}`));
+  assert.match(text, /work-claims-handover-execution-db\.test\.mjs: no required suite runs it \(scripts\/ci\/ci-uncovered-tests\.json/);
+  const check = spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', '--run-files', 'migration-verify', db],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+  assert.equal(check.status, 2);
+  assert.match(check.stdout + check.stderr, /migration-verify is a required check, not a suite; its suites: production-schema/);
+});
+
+// 11-21 17:03: four suite entries on the machine at once (a clued-cloud run, then three resident-node runs within a
+// minute) were read as four running suites. Their logs show two holders and two queued. Entries that start together
+// hold at most two slots; the others wait and say so, and one starts per freed slot.
+test('four local runs started together hold at most two slots; the other two queue', async (t) => {
+  const start = slotFixture(t);
+  const runs = ['a', 'b', 'c', 'd'].map((name) => start(name));
+  const ready = () => runs.filter((run) => run.ready());
+  await waitForSlotFixture(runs[0], () => ready().length >= 2);
+  const waiting = runs.filter((run) => !run.ready());
+  for (const run of waiting) await waitForSlotFixture(run, () => run.ready() || /queue position [12]/.test(run.output()));
+  assert.equal(ready().length, 2, runs.map((run) => run.output()).join('\n'));
+  const [first] = ready();
+  first.release();
+  assert.deepEqual(await first.done, [0, null]);
+  await waitForSlotFixture(waiting[0], () => ready().length >= 3);
+  await delay(1_000);
+  assert.equal(ready().length, 3, 'one freed slot starts exactly one waiting run');
 });

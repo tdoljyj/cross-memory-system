@@ -9,16 +9,6 @@ on:
       - "scripts/model-program/validate_m1_package_profile.py"
       - "tests/test_model_program_m1_package.py"
       - ".github/workflows/model-program-m1-package.yml"
-  push:
-    branches: [main]
-    paths:
-      - "development/contracts/model-program/m1/package/**"
-      - "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-PKG-*"
-      - "development/contracts/model-program/m1/evidence/M1PackageProfile*"
-      - "scripts/model-program/m1_prepare_package_variants.py"
-      - "scripts/model-program/validate_m1_package_profile.py"
-      - "tests/test_model_program_m1_package.py"
-      - ".github/workflows/model-program-m1-package.yml"
 
 permissions:
   contents: read
