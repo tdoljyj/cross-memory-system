@@ -984,9 +984,12 @@ async function roundsSinceSegment({ sweepStore, mode, lastFull }) {
 }
 
 // openFront's checks before any write (pure; also stage 10's forecast before the sweeps, task e30b5a36): the refusal, or null.
+// `finished` (also renewFrontSlot's): the executor's frontOutcome names this node's newest front batch of (H, S), or a later front number
+// of it (task 04f9b91b, FABLE-r3-batch2-followup §2b): the executor's own automatic attempt 2 is front number 2 of the same S, which stage
+// 10 never opened, so its newest record is still number 1; number 2 exists only once number 1 ended for good, so its end ends both.
 function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used = previous.length }) {
   const last = previous[0] ?? null;
-  const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
+  const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt >= last.attempt;
   if (last && !finished && last.claimId === holder.claimId && last.baseSha === mainSha && (last.testSha === front.testMerge.sha || last.testTree === front.testMerge.tree)
     && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock()) return { refusal: 'TRAIN_FRONT_BATCH_RUNNING', running: last };
   if (used >= MAX_FRONT_BATCHES_PER_HEAD) return { refusal: 'TRAIN_FRONT_ATTEMPTS_USED' };
@@ -1267,7 +1270,7 @@ async function renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo,
   if (holder.ciState === 'running' && holder.ciHeadSha === front.headSha) {
     let last = null;
     try { last = (await sweepStore?.frontBatches({ pr: holder.pr, headSha: front.headSha }))?.[0] ?? null; } catch { last = null; }
-    const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
+    const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt >= last.attempt;
     batchLive = !!last && !finished && last.claimId === holder.claimId;
   }
   // Waiting for the front batch counts only while the hard cap still leaves the batch its budget (frontBatchPlan's need): a front that
