@@ -820,7 +820,6 @@ test('R3 problem A, push: scans pinned back from Actions to this App between lan
 // one with all six pinned to this App: none, so stage 10 read park and stage 8 TRAIN_LANDING_RULES_MISSING, never landing. Now the main
 // ruleset is found by the same pin rule as stages 8 and 10: stage 10 reads push with no scan required from this App, and stage 8 pushes S
 // once its Actions scans passed on S (external checks); while gitleaks still runs on S it waits, a failed one fails the batch.
-const SCANS = ['gitleaks', 'trivy', 'contract-placement'];
 function scansFromActions(e) {
   e.W.rules = e.W.rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
     required_status_checks: r.parameters.required_status_checks.map(c => (SCANS.includes(c.context) ? { ...c, integration_id: ACTIONS } : c)) } }));
@@ -1883,7 +1882,6 @@ async function residentOver(t, e, { tamper = null, facts = null } = {}) {
   const plain = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => f.clock(), writeTrigger: async () => { throw new Error('origin/main proposes nothing here'); } });
   return { f, engine, real, board, status, poller, plain };
 }
-const BLOCKED_ROUTE = 'blocked (bc982192 result file): stage 10 and stage 8 read the route as park (main_ruleset_unidentified) when the three scans are required from Actions; train-landing.mjs#readLandingRoute, a design choice for planning';
 const rowsOf = f => [...f.queue.data.rows].map(r => ({ pr: r.pr, state: r.state, headSha: r.current?.headSha ?? null, baseSha: r.current?.baseSha ?? null, batchRoute: r.current?.batchRoute ?? null }));
 const passOf = p => p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]);
 
@@ -1894,11 +1892,11 @@ for (const scene of [
   { name: 'E1 route github-merge (today\'s rules)', rules: 'today' },
   { name: 'E1 route park (kooyumi-train-landed, the App cannot bypass main)', rules: 'push', prepare: e => { e.W.rulesets.set(MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }); } },
   { name: 'E1 no route read yet (no stage 10)', rules: 'push', appScans: [], noStage10: true },
-  { name: 'E1 the status cannot be read', rules: 'push', appScans: [], unreadable: true, todo: BLOCKED_ROUTE },
+  { name: 'E1 the status cannot be read', rules: 'push', appScans: [], unreadable: true },
   { name: 'E2 route push, all three scans from this App', rules: 'push' },
   { name: 'E2 route push, gitleaks still from this App', rules: 'push', appScans: ['gitleaks'] },
   { name: 'E2 route push, appScans not read (a Source before R3)', rules: 'push', appScans: [], facts: x => (x.rules ? { ...x, rules: Object.fromEntries(Object.entries(x.rules).filter(([k]) => k !== 'appScans')) } : x) },
-]) test(`bc982192 ${scene.name}: installed push -> no stamp, no proposal, merge-main, as origin/main`, scene.todo ? { todo: scene.todo } : {}, async t => {
+]) test(`bc982192 ${scene.name}: installed push -> no stamp, no proposal, merge-main, as origin/main`, async t => {
   const prs = [1401, 1402, 1403];
   const e = await world(t, { prs, behind: 2, rules: scene.rules, queued: false, admitted: false, ...(scene.appScans ? { appScans: scene.appScans } : {}) });
   scene.prepare?.(e);
@@ -1924,7 +1922,7 @@ for (const scene of [
 
 // E3 (the target scene, end to end): route push and no scan required from this App; three PRs each two commits behind main, nobody in the
 // merge queue, no admission yet; main moves once more on its own meanwhile. Nobody merges main into any PR; one batch lands all three.
-test('bc982192 E3: route push, appScans [] -> stamped at birth -> stage 1 on the merge base -> no scan stage -> stage 8 joins -> one front batch of three lands in one push within 30 minutes', { todo: BLOCKED_ROUTE }, async t => {
+test('bc982192 E3: route push, appScans [] -> stamped at birth -> stage 1 on the merge base -> no scan stage -> stage 8 joins -> one front batch of three lands in one push within 30 minutes', async t => {
   const prs = [1411, 1412, 1413];
   const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
   const r = await residentOver(t, e);
@@ -2030,7 +2028,7 @@ for (const [name, tamper] of [
 // E8 (the route changes after the batch is born): the rows were stamped push; then main's rules go back to today's (route github-merge).
 // Stage 1 of a stamped batch still admits it on its merge base (the stamp is the birth's), but nothing lands: stage 10 opens no front batch
 // for a head behind main, no stage 8 writes main, and the next poll says merge-main again.
-test('bc982192 E8: stamped push at birth, then the route turns github-merge -> stage 1 still admits, nothing lands, the poller says merge-main', { todo: BLOCKED_ROUTE }, async t => {
+test('bc982192 E8: stamped push at birth, then the route turns github-merge -> stage 1 still admits, nothing lands, the poller says merge-main', async t => {
   const prs = [1431, 1432];
   const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
   const r = await residentOver(t, e);
