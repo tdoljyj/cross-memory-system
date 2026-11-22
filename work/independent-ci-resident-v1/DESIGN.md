@@ -5245,7 +5245,7 @@ GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需
 
 **修法（只改常驻层 `executor.mjs`）。**
 - `resumeParked`：被新提交取代的 B 点停车批次，先于接管门的过滤就判（`supersededParked`：队列有更新的提交 + 一次实时读确认，`SUPERSEDED_AT_SAFE_POINT`，旧 head 烧掉、rename-only 归档）。结束一个被取代的批次不发布任何东西，所以不受列车门约束。
-- `enqueueFront` → `endSupersededForFront`：该 PR 的行正在跑**别的 head** 的、停在 B 的批次时，一次实时读确认 PR 的当前 head 就是车头的 head，就在安全点以同样的 `SUPERSEDED_AT_SAFE_POINT` 结束它（回执 `train-front-supersedes`），然后照常 `offerFront`。实时读不到或 PR 仍在旧 head：什么都不结束，与以前相同。
+- `enqueueFront` → `endSupersededForFront`（§84 起并入 `endRestingForFront`）：该 PR 的行正在跑**别的 head** 的、停在 B 的批次时，一次实时读确认 PR 的当前 head 就是车头的 head，就在安全点以同样的 `SUPERSEDED_AT_SAFE_POINT` 结束它（回执 `train-front-supersedes`），然后照常 `offerFront`。实时读不到或 PR 仍在旧 head：什么都不结束，与以前相同。
 - `frontRetry`：`offerFront` 只因行忙被拒的车头批次记下来；之后某次第 10 段对同一 PR、同一 head、同一 main 仍说 `TRAIN_FRONT_BATCH_RUNNING` 时（它刚刷新了这个 head 的 strict 观察），再提交一次（回执 `train-front-reoffered`）。成功入队、职责结束时清掉。
 - 第 8 段的实时检查一条没变；停在 A 的旧批次（只在 relay 开时出现）不在本修法内，仍由原路径处理。
 
@@ -5710,7 +5710,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 |---|---|
 | 停在 A（`waiting`）或 B（`parked`）的批次 | 每个 tick 一次（`endNotStanding` → `endParkedIfNotStanding`），在崩溃恢复、Owner 请求、HALT 与未归档现场检查、回填之后。不暂停时在读完本拍触发之后、任何停靠批次被尝试或继续之前；**PAUSE 期间也判**（在 tick 停在 PAUSED 之前）。一拍结束一个 |
 | 在途批次 | 原来的两个安全点 `before-relay-plan`、`before-workspace`（`endIfNotStanding`，先读一次收件箱）。独占区（ws-prep 到最后一个 Linux 段）内照旧不判 |
-| 第 10 段车头指向别的 head（§65.9） | `endSupersededForFront` 只把车头的 head 作为提示交给 `endParkedIfNotStanding`，结束了就写 `train-front-supersedes`，然后照常 `offerFront` |
+| 第 10 段车头指向别的 head（§65.9） | `endRestingForFront`（原 `endSupersededForFront`，§84）只把车头的 head 作为提示交给 `endParkedIfNotStanding`，结束了就写 `train-front-supersedes`，然后照常 `offerFront` |
 | 第 1 段之前 | 不变：按到达顺序释放（`supersededBeforeStart`，`SUPERSEDED`，不烧号）。那是预留的撤回，什么都没跑，判错可以恢复，所以不需要实时读 |
 | attempt 2（还不是批次） | 预检之后一次实时读：PR 已关闭 → `ATTEMPT2_PR_CLOSED`（并 `closePr`）；head 已变 → `ATTEMPT2_SUPERSEDED`；head 未变且排队表有更新提交 → `keepCurrent` 退回；读不到 → 照常跑，第 1 段决定 |
 
@@ -6022,3 +6022,18 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 带戳批次的扫描计划从戳推出（B1）：`localPlan` 对带戳批次（含车头）取 appScans = `[]`，不读 trainLast，所以第 2–7 段到不了，也不会以 `REFS_MAIN_BASE_CHANGED` 结束；回执 `scans-not-app-required` 照写。不带戳的批次不变（读不到就三项全跑）。出生后 Owner 把扫描改回本 App：带戳批次仍不进第 2 段，之后第 8 段与第 10 段按现场规则判；这条路径没实测，不为它加机制。
    - 待查、不在本次：切换日里 head 已 started、之后因 main 前进被第 8 段 `RESIDENT_BASE_MOVED` 结束的 PR（账本一次性规则不让重跑），属 C5 切换步骤与 C7 验收，由 DESK 登记缺陷行。
 5. **主规则集的认法。** 见 §82 第 4 条：`landingRoute` 与 `rulesetFacts` 共用 `sixPinned`/`pinAllowed`，扫描钉 Actions 时第 10 段读到 push、`appScans` 为空，第 1 条的条件在现场成立；端到端 `train-landing-e2e.test.mjs` 的 E3、E8、E1（读不到状态）锁住。
+
+## 84. 停放的车头批被新 S 取代：第 10 段一个定义，车头批每种结束都回报（bc982192，分支 `claude/parked-front-v2`，设计 FABLE-parked-front-vs-frontfailed-20261123，按 main 的 `frontFailed` 重做）
+
+**根因**：第 10 段判“车头批还在跑”有两处定义（`frontBatchPlan` 与 `renewFrontSlot`），前者还拿 S 与 GitHub 上车头单独的试合并比（多成员批永远不等），于是多成员批每轮重开一个新 S；常驻这边旧 S 停在 B，`offerFront` 答 busy，新 S 进不来，行一直跑被替换的 S。R3 第 2 批的 `frontFailed`（train-run /4）只覆盖了回报的一部分。
+
+**修法**：
+1. Source `train-maintenance.mjs#liveFrontBatch` 是唯一定义：本节点本 head 最新的车头批，未被执行器回报结束（frontOutcome 指名它，不论 `frontFailed`）、未被第 10 段二分（landing state 的 `handled` 含其 S）、同一认领、Native 的 CI 时钟在本 head 上走、合并位未过期。不再与 GitHub 的试合并比；批的内容是否仍成立由第 8 段判（`TRAIN_BATCH_CHANGED`、`TRAIN_TEST_COMMIT_GONE`），它结束批，执行器回报。
+2. 车头批（带 S）的每一种最终结束（无 attempt 2）只回报一次（`noteFrontOutcome`），由它走的那一条路报：
+   - 经过 `afterBatch` 的结束一律由 `afterBatch` 报：判据是结束后该 S 已离开运行队列（行不再以活状态持有这个 head 与 S），成功、HALT（FAILED_UNKNOWN）除外。含烧号（`fail()`、`abandonScannerStage` 不再自己报）、停掉了行的释放、第 1 段前成员移动而删出队列的 S（`TRAIN_BATCH_MEMBER_MOVED`）、取代、`TRAIN_FRONT_TAKES_OVER`；安全点重新准入、仍跑同一 S 的释放不算结束。
+   - 不经过 `afterBatch` 的三处自己报：预检忽略（`pre.ignore`，R3 第 2 批已有）；`restartedUnpublished`，且重启收尾前先从 `train-front-enqueued` 回执恢复车头账（`frontBookRecover`：尝试次数、绑定），否则取不到次数、也会多排一个车头批；`enqueueFront` 拒绝第 10 段已计数的批（次数用完、队列满）。
+   - `frontFailed` 只在失败类 deterministic-pr 时为真（touch failed / 二分，与以前相同），其余为假：第 10 段只把批记为已结束、下一轮重开。回执类型沿用 `train-front-outcome`（失败）与 `train-front-ended`（只结束）。`TRAIN_FRONT_TAKES_OVER` 与拒绝不置 urgent；只结束的回报在同 head 下一个车头批进队后算已清（moot）。
+3. `endOrdinaryForFront` 与 `endSupersededForFront` 合为 `endRestingForFront`：第 10 段点名 (H, S) 时，这个 PR 停在 A 或 B、又不是 (H, S) 的批一律结束——同 head 的普通批与同 head 另一个 S 的车头批以 `TRAIN_FRONT_TAKES_OVER`（不实时读：开车头批的只有第 10 段），别的 head 的 B 点批照旧先实时读。正在执行第 8 段尝试的批（`stage8Try` 先跑一次第 10 段，`stage8Trying`）不结束，仍答 busy，留给 `frontRetry`；busy 不回报结束（回报会让第 10 段再计一次尝试）。
+4. `train-landing-e2e.test.mjs` 的 `residentOver` 第 8 段结果码一律由 `stage-fact.mjs#outcomeFailureCode(outcome, 8)` 生成。
+
+合同层不动：train-run /4、C# 边界、`train-run-cases.json` 都不改。

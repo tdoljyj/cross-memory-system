@@ -102,9 +102,10 @@ import { boundedNotice, budgetNotice } from './budget-alert.mjs';
 //     an intake pause) in mode 'revoke-only', right before the tick returns PAUSED; never under HALT. Its train run (/2) carries
 //     the installed train settings, onSince (when this node became eligible: the change to on, or STANDBY -> ACTIVE,
 //     whichever is later, kept across restarts and UNCERTAIN spells by receipt 'train-duty'; a new one is due at once), the front
-//     outcome to report (frontOutcome: a front batch that finally ended FAILED_CLEAN with no attempt 2, or a front row the
-//     precheck ignored; its `failed` (the job's frontFailed, R3 batch 2) is true only for a failure of the PR itself, failure
-//     table deterministic-pr, and only then does stage 10 report failed on the slot; carried until stage 10 reports it) and an accepted revoke-head request; under an intake pause it runs revoke-only
+//     outcome to report (frontOutcome: every final end of a front batch with no attempt 2: afterBatch once its S left the run queue,
+//     a front row the precheck ignored, a restart close, enqueueFront's refusal of a batch stage 10 counted (bc982192 parked-front);
+//     its `failed` (the job's frontFailed, R3 batch 2) is true only for a failure of the PR itself, failure table deterministic-pr,
+//     and only then does stage 10 report failed on the slot; carried until stage 10 reports it or it is moot) and an accepted revoke-head request; under an intake pause it runs revoke-only
 //     whatever the queue holds;
 //   - its facts /2 may report side effects: a normal ending; a requestPause latches PAUSE (and tells the Owner); a confirmed
 //     OPEN_FRONT_BATCH is the ONLY producer of a subject with S (queue.mjs#offerFront, at most FRONT_BATCHES_PER_HEAD per head);
@@ -120,7 +121,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { EARLIER_BOOT_MARGIN_MS, uptimeMs } from './instance-lock.mjs';
 import { Ledger, MAX_TRIES, QUOTA_TIER_EVALUATION, UNCAPPED_RELEASES, batchKey, headKey } from './ledger.mjs';
-import { CLAIM_REASONS, RELEASE_BACKOFF_MS } from './queue.mjs';
+import { CLAIM_REASONS, LIVE_STATES, RELEASE_BACKOFF_MS } from './queue.mjs';
 import { ABORTABLE_IN_FLIGHT, BRIDGE_ABANDONED_UNPUBLISHED, EXECUTOR_RESTARTED_UNPUBLISHED, NOT_ADMITTED_CODES, OWNER_ABORTED, UNEXECUTED_REASON_RULES, abortStageEndingClean, archiveReason, decideFailure, failureRow,
   networkFailure, proofComplete, scannerAbandonEligible } from './classify.mjs';
 import { BUNDLE_NETWORK_UNAVAILABLE, RESIDENT_BASE_MOVED, TRAIN_BATCH_MEMBER_MOVED } from './companion.mjs';
@@ -234,6 +235,7 @@ export const TRAIN_FRONT_CLAIM_BOUND = 'TRAIN_FRONT_CLAIM_BOUND';
 // Task ad19ef19 (DESIGN §62.5): the clean end of an ordinary batch (no S) resting at a parking point when stage 10 opens the front batch
 // of the same PR and head. In train on its stage 8 can never publish the merge slot (trainHeadDecision wants a front job), yet its row
 // kept the PR busy, so the front batch was refused (TRAIN_FRONT_PR_BUSY) while stage 10 had already counted it and touched running.
+// bc982192 parked-front: also the end of a front batch of that head with another S resting at A or B (endRestingForFront).
 export const TRAIN_FRONT_TAKES_OVER = 'TRAIN_FRONT_TAKES_OVER';
 const FRONT_BIND_ASKED_MAX = 512;
 const FRONT_BIND_ASKED_PER_HEAD = 2;
@@ -493,6 +495,8 @@ export class ResidentExecutor {
     this.frontHeadScans = new Map();
     // Field defect PR #1035: the newest front batch offerFront refused only because the PR's row was busy (enqueueFront, trainActed).
     this.frontRetry = null;
+    // bc982192 parked-front: the key of the batch whose stage-8 try runs stage 10 first (stage8Try), never ended by endRestingForFront.
+    this.stage8Trying = null;
     this.trainStrictReadiness = null;
     this.trainStrictFrontReadiness = null;
     // DESIGN §62.4: the take-over binding runs (batch key -> { pr, headSha }; kept across a restart by receipt 'train-front-bind') and
@@ -1029,6 +1033,8 @@ export class ResidentExecutor {
     // unpublished and quiet is closed FAILED_CLEAN with its attempt 2; whatever is left goes the old way below.
     this.priorBootKeys ??= new Set(this.lockFromEarlierBoot === true ? open.map(e => e.key) : []);
     if (open.length > 0 && open.every(e => this.priorBootKeys.has(e.key) && codeFor(e) === 'EXECUTOR_RESTARTED_WITH_OPEN_BATCH')) {
+      // bc982192 parked-front (§1 item 3b): a front batch among them keeps its front attempt (frontKeys) and its binding's members.
+      if (open.some(e => Object.hasOwn(e.reserved?.subject ?? {}, 'testSha'))) { try { await this.frontBookRecover(); } catch { /* trainFrontRecover reads it later */ } }
       for (const entry of open) await this.restartedUnpublished(entry);
       open = await this.ledger.crashed();
     }
@@ -1094,7 +1100,9 @@ export class ResidentExecutor {
     }
     if (!closed) return;
     this.reportOutcome(subject, 'FAILED_CLEAN', { code, row, key });
-    await this.attempt2IfEligible(key, subject, { code, stageNumber: stage, phase: 'stage', relayedRoles: 0 });
+    const key2 = await this.attempt2IfEligible(key, subject, { code, stageNumber: stage, phase: 'stage', relayedRoles: 0 });
+    // bc982192 parked-front (§1 item 3b): a front batch closed here with no attempt 2 ended too (not through afterBatch).
+    if (!key2) await this.noteFrontOutcome(subject, key, code, row.class === 'deterministic-pr');
   }
 
   // Owner requests. Their authority is the directory ACL (only Administrators, i.e. the Owner's
@@ -2367,17 +2375,7 @@ export class ResidentExecutor {
   // effort: a chain that cannot be read here keeps what is in memory.
   async trainFrontRecover(runs) {
     try {
-      for (const e of await this.receipts.latest(['train-front-enqueued'], FRONT_RECOVER_RECEIPTS)) {
-        const b = e.value.body;
-        if (!Number.isSafeInteger(b?.pr) || typeof b.headSha !== 'string') continue;
-        const list = this.frontBatches.get(`${b.pr}:${b.headSha}`) ?? [];
-        // ADR 0019: a batch of several PRs (its receipt names members) is not one of the front's own attempts.
-        if (!list.some(x => x.testSha === b.testSha && x.attempt === b.attempt)) list.push({ testSha: b.testSha, attempt: b.attempt, solo: !Array.isArray(b.members) });
-        this.frontBatches.set(`${b.pr}:${b.headSha}`, list);
-        if (HEX64.test(b.key ?? '')) this.frontKeys.set(b.key, b.attempt);
-        const front = openFrontBatchOf(b);
-        if (front) this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
-      }
+      await this.frontBookRecover();
       for (const e of await this.receipts.latest(['train-front-bind'], FRONT_RECOVER_RECEIPTS)) {
         const b = e.value.body;
         if (HEX64.test(b?.key ?? '') && Number.isSafeInteger(b.pr) && HEX40.test(b.headSha ?? '')) this.frontBindKeys.set(b.key, { pr: b.pr, headSha: b.headSha });
@@ -2395,19 +2393,40 @@ export class ResidentExecutor {
     } catch { /* see above */ }
   }
 
-  // A front batch (subject with S) that finally ended FAILED_CLEAN with no attempt 2, or a front row the precheck ignored (R3 batch 2):
-  // owed to the next on-mode stage 10 as frontOutcome, so it knows the batch ended without waiting on the running clock. failed:
-  // true only for a failure of the PR itself (failure table deterministic-pr; DESIGN §41.4 "touch failed": stage 10 reports failed on
-  // the slot, or bisects a batch of several); false when the batch only ended.
-  async noteFrontOutcome(subject, key, code, failed) {
-    const attempt = this.frontKeys.get(key) ?? null;
+  // The front book from the receipts 'train-front-enqueued' (frontBatches, frontKeys, frontBindings; idempotent). Read by trainFrontRecover,
+  // and first by recover() when an earlier boot left a front batch open (bc982192 parked-front §1 item 3b): restartedUnpublished closes
+  // it before trainRecover runs, and needs its front attempt (no third front batch of the head; its end reported to stage 10). Throws.
+  async frontBookRecover() {
+    for (const e of await this.receipts.latest(['train-front-enqueued'], FRONT_RECOVER_RECEIPTS)) {
+      const b = e.value.body;
+      if (!Number.isSafeInteger(b?.pr) || typeof b.headSha !== 'string') continue;
+      const list = this.frontBatches.get(`${b.pr}:${b.headSha}`) ?? [];
+      // ADR 0019: a batch of several PRs (its receipt names members) is not one of the front's own attempts.
+      if (!list.some(x => x.testSha === b.testSha && x.attempt === b.attempt)) list.push({ testSha: b.testSha, attempt: b.attempt, solo: !Array.isArray(b.members) });
+      this.frontBatches.set(`${b.pr}:${b.headSha}`, list);
+      if (HEX64.test(b.key ?? '')) this.frontKeys.set(b.key, b.attempt);
+      const front = openFrontBatchOf(b);
+      if (front) this.frontBindings.set(`${front.pr}:${front.testSha}`, front);
+    }
+  }
+
+  // A front batch (subject with S) that ended for good with no attempt 2 (R3 batch 2; bc982192 parked-front: afterBatch once its S left the
+  // run queue, a front row the precheck ignored, restartedUnpublished, enqueueFront's refusal of one stage 10 already counted): owed to
+  // the next on-mode stage 10 as frontOutcome, so it knows the batch ended without waiting on the running clock. Each end is noted once,
+  // by the one path it takes. failed: true only for a failure of the PR itself (failure table deterministic-pr; DESIGN §41.4 "touch
+  // failed": stage 10 reports failed on the slot, or bisects a batch of several); false when the batch only ended (stage 10 counts it
+  // ended, train-maintenance.mjs#liveFrontBatch, and opens the next one). urgent false: no early stage-10 run for it (a take-over: the
+  // run that ended it opened the next batch; a refusal: the cadence's). attempt: the front number of a batch that never got a key
+  // (a refusal); key null then.
+  async noteFrontOutcome(subject, key, code, failed, { urgent = true, attempt: given = null } = {}) {
+    const attempt = this.frontKeys.get(key) ?? given;
     if (!Object.hasOwn(subject ?? {}, 'testSha') || ![1, 2].includes(attempt) || !CODE.test(code ?? '') || typeof failed !== 'boolean') return;
     const frontOutcome = { pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha, attempt, code, failed };
     try {
       // failed: 'train-front-outcome', as before (an older resident reads it, and only it, as failed); only ended: 'train-front-ended'.
-      const r = await this.receipt(failed ? 'train-front-outcome' : 'train-front-ended', { key, frontOutcome });
+      const r = await this.receipt(failed ? 'train-front-outcome' : 'train-front-ended', { key: key ?? null, frontOutcome });
       this.trainFrontOutcome = { ...frontOutcome, seq: r.seq, at: this.clock() };
-      this.trainUrgent = true;
+      if (urgent) this.trainUrgent = true;
     } catch { /* not reported: the slot runs out by its running clock */ }
   }
 
@@ -2422,10 +2441,11 @@ export class ResidentExecutor {
     if (list.some(x => x.testSha === front.testSha && x.attempt === front.attempt)) return null;
     if (solo && list.filter(x => x.solo !== false).length >= FRONT_BATCHES_PER_HEAD) {
       try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: 'TRAIN_FRONT_ATTEMPTS_USED' }); } catch { /* refused anyway */ }
+      // bc982192 parked-front (§1 item 3c): stage 10 counted it and touched running; it never runs, so its end is reported (not failed).
+      await this.noteFrontOutcome(front, null, 'TRAIN_FRONT_ATTEMPTS_USED', false, { urgent: false, attempt: front.attempt });
       return null;
     }
-    await this.endOrdinaryForFront(front);
-    await this.endSupersededForFront(front);
+    await this.endRestingForFront(front);
     // bc982192: stamped by the stage-10 facts that offer it (trainLast is that summary already).
     const offered = this.queue.offerFront({ pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, attempt: front.attempt }, this.clock(),
       { depth: this.policy.limits.queueDepth, batchRoute: this.batchRoute() });
@@ -2435,10 +2455,17 @@ export class ResidentExecutor {
       // run, still naming this head on this main, finds the row free.
       this.frontRetry = offered.action === 'busy' ? front : null;
       try { await this.receipt('train-front-refused', { pr: front.pr, headSha: front.headSha, testSha: front.testSha, attempt: front.attempt, failureCode: offered.code ?? 'TRAIN_FRONT_PR_BUSY' }); } catch { /* see above */ }
+      // bc982192 parked-front (§1 item 3c): a refusal other than busy (the queue is full) ends this batch for good: reported, not failed.
+      // busy (after endRestingForFront only a batch being executed) is kept for frontRetry, so it is not reported ended.
+      if (offered.action !== 'busy') await this.noteFrontOutcome(front, null, offered.code ?? 'TRAIN_FRONT_PR_BUSY', false, { urgent: false, attempt: front.attempt });
       return null;
     }
     list.push({ testSha: front.testSha, attempt: front.attempt, solo });
     this.frontBatches.set(headKey, list);
+    // bc982192 parked-front (§1 item 3d): a report that a batch of this head ended (not failed) is moot once the next one is in: the
+    // next clean run clears it (frontCleared), so it never makes stage 10 count the new batch ended.
+    const fo = this.trainFrontOutcome;
+    if (fo?.failed === false && fo.pr === front.pr && fo.headSha === front.headSha && fo.testSha !== front.testSha) fo.moot = true;
     if (this.frontRetry?.pr === front.pr) this.frontRetry = null;
     const key = batchKey(this.rowSubject(front.pr, { headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, frontAttempt: front.attempt }));
     this.frontKeys.set(key, front.attempt);
@@ -2450,38 +2477,42 @@ export class ResidentExecutor {
     return key;
   }
 
-  // Task ad19ef19 (DESIGN §62.5): the PR's ordinary batch (attempt 1 or 2, no S) of the front's head that rests at parking point A (after
-  // stage 1) or B (after stage 7) ends cleanly now, as TRAIN_FRONT_TAKES_OVER, so the front batch is not refused as busy. Its stage 8 could
-  // never publish the merge slot in train on (only a front job can); the front batch (H, S) has its own head key. A batch that is not
-  // resting at a parking point (none is while stage 10 runs) or of another head is left alone: offerFront decides as before.
-  async endOrdinaryForFront(front) {
+  // bc982192 parked-front (FABLE-parked-front-vs-frontfailed-20261123 §1 item 2; DESIGN §84): when stage 10 names the front batch (H, S),
+  // the batch of this PR resting at parking point A (after stage 1) or B (after stage 7) that is not (H, S) ends now, so offerFront
+  // refuses as busy only a batch that is being executed:
+  //   - an ordinary batch (attempt 1 or 2, no S) of H (Task ad19ef19, DESIGN §62.5): its stage 8 could never publish the merge slot in
+  //     train on (only a front job can); it ends cleanly as TRAIN_FRONT_TAKES_OVER;
+  //   - a front batch of H with another S: stage 10 is the only one that opens front batches, so its naming S is the fact (no live
+  //     read); the old S can never pass stage 8 again. TRAIN_FRONT_TAKES_OVER as well, and afterBatch reports its end to stage 10
+  //     (frontFailed false, not urgent);
+  //   - a batch parked at B of another head (field defect PR #1035, 2026-11-07: stage 10 read the PR's new head on GitHub before the
+  //     poller's trigger reached the queue): the front naming another head is a hint to the rule (DESIGN §72): the parked batch's live
+  //     read is due now, and the batch ends there when its head is no longer the PR's. No live answer, or the PR still at that head:
+  //     it stays.
+  // Never the batch whose stage-8 try is under way (stage8Try runs stage 10 first while that batch still rests at B: stage8Trying).
+  async endRestingForFront(front) {
     const run = this.queue.row(front.pr)?.running;
-    if (!run || Object.hasOwn(run, 'testSha') || run.headSha !== front.headSha) return;
+    if (!run || run.key === this.stage8Trying) return;
     let entry;
     try { entry = (await this.ledger.parkedEntries()).find(e => e.key === run.key); } catch { return; }
     const s = entry?.reserved?.subject;
-    if (!s || Object.hasOwn(s, 'testSha') || s.pr !== front.pr || s.headSha !== front.headSha) return;
+    if (!s || s.pr !== front.pr) return;
+    if (s.headSha !== front.headSha) {
+      if (run.headSha === front.headSha || !Ledger.parkedAt(entry)) return;
+      const outcome = await this.endParkedIfNotStanding(entry, front.headSha);
+      if (!outcome) return;
+      try { await this.receipt('train-front-supersedes', { key: entry.key, pr: s.pr, headSha: s.headSha, frontHeadSha: front.headSha, testSha: front.testSha, outcome: outcome?.state ?? null }); }
+      catch { /* a view */ }
+      return;
+    }
+    if (s.testSha === front.testSha) return;
     let ended = null;
     if (Ledger.parkedAt(entry)) ended = await this.endParkedB(entry, TRAIN_FRONT_TAKES_OVER);
     else if (Ledger.waitingAt(entry)) ended = await this.endWaitingA(entry, TRAIN_FRONT_TAKES_OVER);
-    if (ended) { try { await this.receipt('train-front-takes-over', { key: entry.key, pr: s.pr, headSha: s.headSha, testSha: front.testSha, outcome: ended.state ?? null }); } catch { /* a view */ } }
-  }
-
-  // Field defect PR #1035 (2026-11-07): stage 10 read the PR's new head on GitHub before the poller's trigger reached the queue, while the
-  // row still ran the older head's batch parked at B, so offerFront refused the new head's front batch as busy. The front naming another
-  // head is a hint to the rule (DESIGN §72): the parked batch's live read is due now, and the batch ends there when its head is no longer
-  // the PR's; the front batch is then offered as usual. No live answer, or the PR still at the parked head: offerFront decides as before.
-  async endSupersededForFront(front) {
-    const run = this.queue.row(front.pr)?.running;
-    if (!run || run.headSha === front.headSha) return;
-    let entry;
-    try { entry = (await this.ledger.parkedEntries()).find(e => e.key === run.key && Ledger.parkedAt(e)); } catch { return; }
-    const s = entry?.reserved?.subject;
-    if (!s || s.pr !== front.pr || s.headSha === front.headSha) return;
-    const outcome = await this.endParkedIfNotStanding(entry, front.headSha);
-    if (!outcome) return;
-    try { await this.receipt('train-front-supersedes', { key: entry.key, pr: s.pr, headSha: s.headSha, frontHeadSha: front.headSha, testSha: front.testSha, outcome: outcome?.state ?? null }); }
-    catch { /* a view */ }
+    if (ended) {
+      try { await this.receipt('train-front-takes-over', { key: entry.key, pr: s.pr, headSha: s.headSha, testSha: front.testSha, ...(Object.hasOwn(s, 'testSha') ? { replacedTestSha: s.testSha } : {}),
+        outcome: ended.state ?? null }); } catch { /* a view */ }
+    }
   }
 
   // One train run when it is due (train.mjs#trainDue): not under an intake pause (also with an empty queue, which ends
@@ -2586,8 +2617,9 @@ export class ResidentExecutor {
       wouldDo: summary?.wouldDo ?? null, frontPr: summary?.front?.pr ?? null, mainSha: summary?.mainSha ?? null, wouldRevokeCount: summary?.wouldRevokeCount ?? null };
     // The front outcome is cleared only when stage 10 reported failed, or reporting it became moot (the front is another PR or
     // head, or none), or the slot ran out by itself (slotHardCapMinutes after it was noted); otherwise the next run carries it again
-    // (review R3 MINOR 3: a take-over sweep, a lost duty or a touch that failed reports nothing).
-    const frontCleared = frontOutcome && summary && clean ? (summary.actions?.failedReported === true || summary.front?.pr !== frontOutcome.pr
+    // (review R3 MINOR 3: a take-over sweep, a lost duty or a touch that failed reports nothing). A report that a batch only ended is moot
+    // too once the next front batch of that head was enqueued (enqueueFront, bc982192 parked-front).
+    const frontCleared = frontOutcome && summary && clean ? (summary.actions?.failedReported === true || frontOutcome.moot === true || summary.front?.pr !== frontOutcome.pr
       || summary.front?.headSha !== frontOutcome.headSha || !(now - (frontOutcome.at ?? now) < trainSettings(train).slotHardCapMinutes * 60_000)) : false;
     await this.receipt('train-run', acting ? { ...base, runMode: mode, decision: summary?.decision ?? null, sideEffects: Number.isSafeInteger(o?.sideEffects) ? o.sideEffects : null,
       requestPause: summary?.requestPause ?? null, frontOutcomeSeq: frontOutcome?.seq ?? null, ...(frontOutcome ? { frontOutcomeCleared: frontCleared } : {}),
@@ -3018,7 +3050,10 @@ export class ResidentExecutor {
     if (this.policy.train.enabled === 'on' && this.frontProofShort(subject)) {
       this.trainUrgent = true;
       try { await this.receipt('train-front-proof-refresh', { key, pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha }); } catch { /* a view */ }
-      const refreshed = await this.trainMaintenance();
+      // bc982192 parked-front: this batch still rests at B during that run; a new S stage 10 names then never ends it (busy).
+      this.stage8Trying = key;
+      let refreshed;
+      try { refreshed = await this.trainMaintenance(); } finally { this.stage8Trying = null; }
       if (refreshed?.state === 'HALTED') return { state: 'PARKED', key, reason: refreshed.failureCode ?? 'TRAIN_STAGE_HALTED', until: this.clock(), position: null, tries: 0, settle: null };
     }
     const s = await this.ledger.state(key);
@@ -3775,6 +3810,18 @@ export class ResidentExecutor {
       if (s && (FALSIFYING_CODES.includes(s.code) || (s.code === 'STAGE_CHILD_REFUSED' && FALSIFYING_REASONS.includes(s.outcomeReason)))) await this.falsified(subject);
       await this.persistQueue();
     } catch { /* the queue and the breaker are a view; the next batch end writes them again */ }
+    // bc982192 parked-front (FABLE-parked-front-vs-frontfailed-20261123 §1 item 3a; DESIGN §41.4, §84): the one place a front batch's end
+    // that reaches afterBatch is owed to the next on-mode stage 10: a batch with S, no attempt 2, its S has left the run queue (the row
+    // no longer holds that head and S in a live state), not a success nor a HALT (FAILED_UNKNOWN: the slot runs out by its clock). That
+    // covers a burn (fail(), abandonScannerStage: they report nothing themselves), a release that stopped the row, an S dropped before
+    // stage 1 (TRAIN_BATCH_MEMBER_MOVED), a supersession, TRAIN_FRONT_TAKES_OVER (not urgent: the run that ended it opened the next
+    // batch). A release or a safe-point readmission that runs the same S again is not an end. failed only for a failure of the PR itself.
+    const row = this.queue.row(subject?.pr);
+    const stays = row?.current?.headSha === subject?.headSha && row.current.testSha === subject?.testSha && LIVE_STATES.includes(row.state);
+    if (Object.hasOwn(subject ?? {}, 'testSha') && !result.attempt2 && !['COMPLETED', 'HALTED', 'FAILED_UNKNOWN'].includes(result.state) && !stays) {
+      const code = result.failureCode ?? result.reason ?? s?.code ?? null;
+      await this.noteFrontOutcome(subject, result.key, code, s?.klass === 'deterministic-pr', { urgent: code !== TRAIN_FRONT_TAKES_OVER });
+    }
     this.reportQueue();
     return result;
   }
@@ -4331,9 +4378,8 @@ export class ResidentExecutor {
         const subject = (await this.ledger.state(key)).reserved?.subject;
         this.reportOutcome(subject, 'FAILED_CLEAN', { code: failure.code, row, key, retry: facts.retry });
         const key2 = await this.attempt2IfEligible(key, subject, failure);
-        // DESIGN §41.4: a front batch that finally ended is owed to the next on-mode stage 10 (R3 batch 2: every such end; "touch
-        // failed" only when it failed for the PR itself).
-        if (!key2) await this.noteFrontOutcome(subject, key, failure.code, row?.class === 'deterministic-pr');
+        // DESIGN §41.4: a front batch that finally ended is owed to the next on-mode stage 10; every caller hands this ending to
+        // afterBatch, which notes it (bc982192 parked-front: one place, one report).
         return { state: 'FAILED_CLEAN', key, failureCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: { ...settle, kind: 'burned' } };
       }
       return { ...(await this.unknown(key, failure.code, basis, batch, { stage: failure.stageNumber, ...facts })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
@@ -4428,8 +4474,8 @@ export class ResidentExecutor {
       this.reportOutcome(subject, 'FAILED_CLEAN', { code: BRIDGE_ABANDONED_UNPUBLISHED, row, key });
       const end = { ...settle, code: BRIDGE_ABANDONED_UNPUBLISHED, klass: row.class, breaker: row.breaker, kind: 'burned' };
       const key2 = await this.attempt2IfEligible(key, subject, { ...failure, code: BRIDGE_ABANDONED_UNPUBLISHED });
-      // R3 batch 2 follow-up §2a: a final end of a front batch like any other (no attempt 2 after stage 2): stage 10 is told.
-      if (!key2) await this.noteFrontOutcome(subject, key, BRIDGE_ABANDONED_UNPUBLISHED, row?.class === 'deterministic-pr');
+      // R3 batch 2 follow-up §2a: a final end of a front batch like any other (no attempt 2 after stage 2): stage 10 is told, by
+      // afterBatch (fail() hands this ending to it; bc982192 parked-front: one place, one report).
       return { state: 'FAILED_CLEAN', key, failureCode: BRIDGE_ABANDONED_UNPUBLISHED, originalCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: end };
     } catch (error) {
       return { ...(await this.unknown(key, codeOf(error), 'scanner-abandon-unconfirmed', batch, { ...context, ...archiveFacts(error) })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };

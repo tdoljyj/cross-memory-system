@@ -22,7 +22,7 @@ PR 关闭、节点失去当班都不在其中。结果这个节点的通用包�
 |---|---|---|
 | `supersededAfterStart`（在途安全点） | 排队表有更新的提交 | PR 关闭、失去当班 |
 | `supersededParked`（B，`resumeParked` 里两处） | 同上 | 同上 |
-| `endSupersededForFront`（#1035） | 第 10 段的车头是别的 head | 同上 |
+| `endSupersededForFront`（#1035；DESIGN §84 起为 `endRestingForFront` 的别的 head 一类） | 第 10 段的车头是别的 head | 同上 |
 | `runAttempt2` 的“有更新提交就读一次” | 同上 | 与其后的“PR 关闭就作废”是两次判断 |
 | `park.maxMs` | 24 小时 | —（兜底） |
 | 节点 STANDBY | 无：“在途批次照常续跑，去留由实时准入决定”（§29.2 第 3 条） | 停在 B 的批次要等下一次第 8 段尝试，最长退避 2 小时；准入读到的若是队列状况，就一直不结束 |
