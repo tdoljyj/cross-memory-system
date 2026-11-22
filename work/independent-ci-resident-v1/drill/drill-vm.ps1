@@ -247,7 +247,7 @@ function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
 # Without a deadline this is the standby-only gate (baseline installation and runs that did not request a hold).
 # A drill hold leaves the parked stage-8 tries and revoke-only train maintenance on the Windows side.
 function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
-  [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
+  [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = (Get-DrillTime),
   [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, $ProcessNames = @(), $WslJob = $false) {
   # Before boot only: a runner job on either side (or a side that could not be read) selects the boot gate's high memory tier; it refuses
   # nothing by itself (Fable renew-key ruling, supplement "drill boot gate and the train both want DESK"). A job picked up after the boot
@@ -1880,11 +1880,14 @@ function Start-DrillHostGuard([string]$RunDir, [switch]$RestoreCheckpoint, $Wind
     executorStates = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal);
     deadline = (Get-Prop $Window 'deadline'); holdUntil = (Get-Prop $Window 'holdUntil') })
   $worker = [PowerShell]::Create()
-  [void]$worker.AddScript({ param($file, $config, $state, $dir, $restore)
+  # The guard reads the time as the run that started it does: one clock for the gate and the guard (task ce2e5c1a step 2). Loading the
+  # script afresh gives the same Get-DrillTime in production; a run whose Get-DrillTime differs hands its own over, as text.
+  [void]$worker.AddScript({ param($file, $config, $state, $dir, $restore, $clock)
     . $file
     $script:Drill = $config
+    if ([string]${function:Get-DrillTime} -cne $clock) { Set-Item -LiteralPath function:Get-DrillTime -Value ([scriptblock]::Create($clock)) }
     Invoke-DrillHostGuardLoop $state $dir -RestoreCheckpoint:$restore
-  }).AddArgument($script:DrillScriptPath).AddArgument($script:Drill).AddArgument($state).AddArgument($RunDir).AddArgument([bool]$RestoreCheckpoint)
+  }).AddArgument($script:DrillScriptPath).AddArgument($script:Drill).AddArgument($state).AddArgument($RunDir).AddArgument([bool]$RestoreCheckpoint).AddArgument([string]${function:Get-DrillTime})
   $guard = @{ worker = $worker; pending = $worker.BeginInvoke(); state = $state }
   $script:HostGuard = $guard
   $until = [DateTime]::UtcNow.AddSeconds(15)

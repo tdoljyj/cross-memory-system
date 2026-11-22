@@ -10,13 +10,6 @@ on:
       - 'scripts/ci/check_design_refs.py'
       - 'scripts/ci/test_check_design_refs.py'
       - '.github/workflows/design-refs.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'development/contracts/**'
-      - 'scripts/ci/check_design_refs.py'
-      - 'scripts/ci/test_check_design_refs.py'
-      - '.github/workflows/design-refs.yml'
 
 permissions:
   contents: read

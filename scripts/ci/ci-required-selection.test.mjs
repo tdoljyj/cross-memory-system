@@ -70,6 +70,7 @@ function slotFixture(t) {
   });
   return function start(name, {
     waitMs = 25_000, holdMs = 35_000, ci, tree = false, probeErrors = 0, probeAfter = 0, suite = 'retrigger-counter', mode = '--run', body = null, named = null, extraFiles = {},
+    extraEnv = {},
   } = {}) {
     const root = path.join(dir, name);
     const scripts = path.join(root, 'scripts', 'ci');
@@ -123,6 +124,7 @@ function slotFixture(t) {
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
     if (ci) env[ci] = 'true';
+    Object.assign(env, extraEnv);
     if (mode === '--run-selected') {
       writeFileSync(path.join(scripts, 'check-cron-budget.test.mjs'), probe);
       writeFileSync(path.join(scripts, 'check-cron-budget.mjs'), '');
@@ -1732,7 +1734,7 @@ function trainCheckout(t) {
   const [H1, H2, H3, X] = [commit(T), commit(T), commit(T), commit()];
   git('update-ref', 'refs/remotes/origin/main', T);
   const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
-  return { dir, T, H1, H2, one, two, three, commit, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
+  return { dir, T, H1, H2, one, two, three, commit, git, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
 }
 function runBaseline(t, { shell, script }, repo, env) {
   const command = shellCommand(shell);
@@ -1778,6 +1780,84 @@ for (const [file, id] of BASELINE_JOBS) {
       const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
       assert.notEqual(r.status, 0, `${s}: ${r.log}`);
       assert.equal(r.outputs.sha, undefined, r.log);
+    }
+  });
+  // Task 6cd46765 (FABLE-dispatch-base-20261122 §2.2, §4): a lost-run dispatch tests the PR branch head itself, not a
+  // merge with main, so its CI_BASE_SHA is the main commit the head is based on, git merge-base origin/main <head>: always
+  // an ancestor of the head, unlike main's newest commit once main has moved on. The trusted checkout keeps main (sha=
+  // stays unset). The Windows job gets the same branch with its own dispatch trigger (PR-2).
+  if (file !== LINUX_WORKFLOW) continue;
+  const DISPATCH = { EVENT_NAME: 'workflow_dispatch', PUSH_REF: 'refs/heads/claude/some-branch' };
+  // origin/main moves T -> M2; the branch H1 forked at T; the train App's merge of main into it gives caughtUp.
+  const dispatchCheckout = (t) => {
+    const repo = trainCheckout(t);
+    const M2 = repo.commit(repo.T);
+    repo.git('update-ref', 'refs/remotes/origin/main', M2);
+    return { ...repo, M2, caughtUp: repo.commit(repo.H1, M2), behind: repo.commit(repo.H1) };
+  };
+  const isAncestor = (repo, a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: repo.dir }).status === 0;
+  test(`lost-run dispatch, ${label}: a head that just merged main is measured against that main commit, origin/main`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: repo.caughtUp });
+    assert.equal(r.status, 0, r.log);
+    assert.deepEqual(r.outputs, { ci_base: repo.M2 }, r.log);
+  });
+  test(`lost-run dispatch, ${label}: a head behind main is measured against its fork point, never main's newest commit`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    for (const head of [repo.H1, repo.behind]) {
+      const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
+      assert.equal(r.status, 0, r.log);
+      assert.deepEqual(r.outputs, { ci_base: repo.T }, r.log);
+      assert.ok(isAncestor(repo, r.outputs.ci_base, head), 'the base is an ancestor of the tested head');
+      assert.ok(!isAncestor(repo, repo.M2, head), 'main has moved past the head: main\'s newest commit would not be');
+    }
+  });
+  test(`lost-run dispatch, ${label}: a head with no history in common with main, or an event without a base, fails the step`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const unrelated = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: repo.commit(repo.commit()) });
+    assert.notEqual(unrelated.status, 0, unrelated.log);
+    assert.deepEqual(unrelated.outputs, {}, unrelated.log);
+    // A later trigger that nobody gave a base must fail here, not hand the suites an empty CI_BASE_SHA.
+    for (const EVENT_NAME of ['schedule', 'merge_group', 'repository_dispatch', '']) {
+      const r = runBaseline(t, step, repo.dir, { EVENT_NAME, PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.caughtUp });
+      assert.notEqual(r.status, 0, `${EVENT_NAME}: ${r.log}`);
+      assert.deepEqual(r.outputs, {}, `${EVENT_NAME}: ${r.log}`);
+    }
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.caughtUp });
+    assert.equal(pr.status, 0, pr.log);
+    assert.deepEqual(pr.outputs, {}, pr.log);
+  });
+  if (id !== 'ci-suites') continue;
+  // The consumer, end to end: the step's outputs, the job's own CI_BASE_SHA expression (GitHub's ||, a missing property
+  // is null; under dispatch there is no pull_request), then the selector expanding every command of the four suites
+  // that take {base}. Before the fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
+  test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const text = readFileSync(file, 'utf8');
+    const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
+    const expression = /\n {10}CI_BASE_SHA: \$\{\{ (.+?) \}\}\n/.exec(job.slice(job.indexOf('- name: Run the selected suites\n')))[1];
+    const operands = expression.split('||').map((operand) => operand.trim());
+    assert.ok(operands.every((operand) => /^[a-z_]+(\.[a-z_-]+)+$/.test(operand)), expression);
+    for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
+      const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
+      assert.equal(r.status, 0, r.log);
+      const context = { steps: { 'train-base': { outputs: r.outputs } },
+        github: { event_name: 'workflow_dispatch', event: { inputs: { pr: '9', head } } } };
+      const value = (operand) => operand.split('.').reduce((at, key) => (at == null ? null : at[key] ?? null), context);
+      const base = operands.map(value).find(Boolean) ?? '';
+      for (const suite of ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']) {
+        let compared = 0;
+        for (const command of SUITE_COMMANDS[suite]) {
+          const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base, report: path.join(repo.dir, 'r.json') });
+          const at = argv.indexOf('--base');
+          if (at < 0) continue;
+          assert.equal(argv[at + 1], expected, `${suite}: ${argv.join(' ')}`);
+          compared++;
+        }
+        assert.equal(compared, 1, `${suite} compares with the base once`);
+      }
+      assert.equal(base, expected, expression);
+      assert.ok(isAncestor(repo, base, head), 'the suites compare the head with one of its own ancestors');
     }
   });
 }
@@ -1927,4 +2007,65 @@ test('run-files 10: only the named file of a multi-file suite reaches the worker
   assert.deepEqual(await run.done, [0, null]);
   assert.ok(existsSync(path.join(run.root, 'ran-named')), 'the named file ran');
   assert.ok(!existsSync(path.join(run.root, 'ran-other')), 'the other file of the suite did not run');
+});
+
+// R2 review (11-21): a database test named for a local targeted run, in a fresh worktree, failed on its first import
+// (ERR_MODULE_NOT_FOUND): nothing gave the checkout the application's dependencies, which CI installs in the job and
+// local-verify links from its store. The entry links them from that same store before the run.
+test('run-files 11: a local run links the application dependencies a fresh checkout lacks before its database test runs', async (t) => {
+  const start = slotFixture(t);
+  const home = mkdtempSync(path.join(os.tmpdir(), 'clued-run-files-deps-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const packageJson = JSON.stringify({ name: 'fixture-app', private: true, dependencies: { 'fixture-dep': '1.0.0' } });
+  const lock = JSON.stringify({ name: 'fixture-app', lockfileVersion: 3, packages: { '': {}, 'node_modules/fixture-dep': { version: '1.0.0' } } });
+  const { dependencyKey } = await import('./local-verify.mjs');
+  // A store local-verify installed for this lockfile: complete, nothing to install or rebuild.
+  const ready = path.join(home, 'node_modules', dependencyKey({ lock: Buffer.from(lock), packageJson: Buffer.from(packageJson) }));
+  const dep = path.join(ready, 'node_modules', 'fixture-dep');
+  mkdirSync(dep, { recursive: true });
+  writeFileSync(path.join(dep, 'package.json'), JSON.stringify({ name: 'fixture-dep', version: '1.0.0', main: 'index.js' }));
+  writeFileSync(path.join(dep, 'index.js'), 'module.exports = 42;\n');
+  writeFileSync(path.join(ready, 'package-lock.json'), lock);
+  writeFileSync(path.join(ready, 'complete'), '');
+  const file = 'apps/clued-cloud/tests/ci-scan-start-native-db.test.mjs';
+  const run = start('deps', { mode: '--run-files', suite: 'production-schema', named: [file], extraEnv: { CLUED_LOCAL_VERIFY_HOME: home },
+    extraFiles: { 'apps/clued-cloud/package.json': packageJson, 'apps/clued-cloud/package-lock.json': lock,
+      [file]: "import assert from 'node:assert/strict';\nimport value from 'fixture-dep';\nassert.equal(value, 42);\n" } });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.equal(realpathSync(path.join(run.root, 'apps/clued-cloud/node_modules')), realpathSync(path.join(ready, 'node_modules')));
+});
+
+// R2 review (11-21): database tests named to clued-cloud were refused with a list of what clued-cloud runs, and
+// migration-verify was refused as an unknown suite; production-schema runs them, and nothing said so.
+test('run-files 12: a refused file names the suite that runs it or why none does; a check name names its suites', async () => {
+  const lines = [];
+  const db = 'apps/clued-cloud/tests/storage-semantic-recovery-db.test.mjs';
+  const uncovered = 'apps/clued-cloud/tests/work-claims-handover-execution-db.test.mjs';
+  assert.equal(await selection.runSuite('clued-cloud', { root: ROOT, env: {}, log: (line) => lines.push(line), files: [db, uncovered] }), 2);
+  const text = lines.join('\n');
+  assert.match(text, new RegExp(`--run-files production-schema ${db}`));
+  assert.match(text, /work-claims-handover-execution-db\.test\.mjs: no required suite runs it \(scripts\/ci\/ci-uncovered-tests\.json/);
+  const check = spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', '--run-files', 'migration-verify', db],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+  assert.equal(check.status, 2);
+  assert.match(check.stdout + check.stderr, /migration-verify is a required check, not a suite; its suites: production-schema/);
+});
+
+// 11-21 17:03: four suite entries on the machine at once (a clued-cloud run, then three resident-node runs within a
+// minute) were read as four running suites. Their logs show two holders and two queued. Entries that start together
+// hold at most two slots; the others wait and say so, and one starts per freed slot.
+test('four local runs started together hold at most two slots; the other two queue', async (t) => {
+  const start = slotFixture(t);
+  const runs = ['a', 'b', 'c', 'd'].map((name) => start(name));
+  const ready = () => runs.filter((run) => run.ready());
+  await waitForSlotFixture(runs[0], () => ready().length >= 2);
+  const waiting = runs.filter((run) => !run.ready());
+  for (const run of waiting) await waitForSlotFixture(run, () => run.ready() || /queue position [12]/.test(run.output()));
+  assert.equal(ready().length, 2, runs.map((run) => run.output()).join('\n'));
+  const [first] = ready();
+  first.release();
+  assert.deepEqual(await first.done, [0, null]);
+  await waitForSlotFixture(waiting[0], () => ready().length >= 3);
+  await delay(1_000);
+  assert.equal(ready().length, 3, 'one freed slot starts exactly one waiting run');
 });

@@ -4112,8 +4112,10 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
 // head's tree, with main's old tip an ancestor of that head, reuses the head's passing required-test run.
 // The fixture is #1178's real GitHub replies (scripts/ci/fixtures/main-push-tree-reuse-1178.json).
 const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1178.json'), 'utf8'));
-function treeReuseCase(workflow, mutate = () => {}) {
-  const f = structuredClone(TREE_REUSE);
+// #1202's real GitHub replies: its head is the executor bot's merge of main, so the bot triggered the head's runs.
+const TREE_REUSE_1202 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1202.json'), 'utf8'));
+function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE) {
+  const f = structuredClone(fixture);
   const w = f.workflows[workflow];
   const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.merge.sha, GITHUB_RUN_ATTEMPT: '1',
     GITHUB_RUN_ID: String(w.push_run.id), GITHUB_ACTOR: w.push_run.actor.login, GITHUB_REPOSITORY_OWNER: f.owner,
@@ -4179,13 +4181,165 @@ test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the h
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('T2: every required job of both required-test workflows is in the reuse table, and so is every Actions-bound required check', async () => {
+// R1 (FABLE-tree-reuse-close-out §1): a head run the executor bot triggered is same-tree evidence for the two
+// required-test workflows. The heavy jobs carry their real names only after the gate proved the bot's signed merge
+// of main, and the reuse requires those names, so no trust is added.
+for (const [label, workflow, sourceRun] of [['R1 Linux', 'clued-required-tests.yml', 44757766226],
+  ['R1w Windows', 'clued-required-tests-windows.yml', 44757766314]]) {
+  test(`${label}: #1202's main push is not run again; the head's run that the executor bot triggered decides`, async () => {
+    const ctx = treeReuseCase(workflow, undefined, TREE_REUSE_1202);
+    assert.deepEqual(ctx.w.runs.workflow_runs[0].actor, { login: 'clued-admission[bot]', id: 337003645, type: 'Bot' });
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_ALREADY_TESTED'], JSON.stringify(outcome));
+    const why = outcome.reasons.join(' ');
+    assert.match(why, new RegExp(`run ${sourceRun} attempt 1`));
+    assert.match(why, /PR #1202/);
+    assert.match(why, /tree a92406746d0a/);
+    assert.equal(outcome.tree_reuse.qualification, 'PR_EVIDENCE_ONLY');
+  });
+}
+
+test('R1: the gate step of #1202 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml', undefined, TREE_REUSE_1202);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
+  try {
+    const eventPath = path.join(dir, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(ctx.event));
+    const code = await mainWith(['--mode', 'gate'], { ...ctx.env, GITHUB_EVENT_PATH: eventPath,
+      GITHUB_OUTPUT: path.join(dir, 'out'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary') }, ctx.fetchImpl);
+    assert.equal(code, 0);
+    const out = fs.readFileSync(path.join(dir, 'out'), 'utf8');
+    assert.match(out, /^admitted=false$/m);
+    assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// R1 guards: green before and after the fix. Only the exact executor identity counts, and only a run whose heavy
+// jobs carry their real names (a bot run the gate did not prove gets "-skipped" names).
+for (const [label, mutate] of [
+  ['another bot id', (c) => { c.w.runs.workflow_runs[0].actor.id = 337003646; }],
+  ['the executor login on a User account', (c) => { c.w.runs.workflow_runs[0].actor.type = 'User'; }],
+  ['another bot login', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone[bot]'; }],
+  ['a heavy job under its "-skipped" name', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
+  ['a heavy job under its "-skipped" name that reports success', (c) => { c.w.jobs.jobs.at(-1).name += '-skipped'; }],
+]) {
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    test(`R1 guard (${workflow}, #1202): ${label} -> the heavy jobs run`, async () => {
+      const outcome = await treeReuseGate(treeReuseCase(workflow, mutate, TREE_REUSE_1202));
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    });
+  }
+}
+
+// R2 (FABLE-tree-reuse-close-out §2, §12.1): no workflow runs once on the PR and again on the main push of its merge
+// unless the reuse table covers it. Read off the trigger block of every workflow file; no list of names.
+function workflowTriggers(text) {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^(on|'on'|"on"):/.test(line));
+  assert.ok(start >= 0, 'the workflow has an on: block');
+  // A spelling this reading does not know is refused, never read as "no push": R2 is the only stop.
+  const unread = (why) => assert.fail(`cannot read the trigger block (${why}): write it as block YAML with two-space keys, or teach workflowTriggers this spelling`);
+  const inline = lines[start].replace(/^[^:]+:/, '').replace(/\s+#.*$/, '').trim();
+  if (inline.includes('{')) unread('flow mapping after on:');
+  // `on: push` or `on: [push, pull_request]`: no filter, so a push trigger hits main.
+  if (inline) {
+    const names = inline.replace(/[[\]'"]/g, '').split(',').map((name) => name.trim());
+    if (!names.length || names.some((name) => !/^[A-Za-z_]+$/.test(name))) unread(`on: ${inline}`);
+    return { names, pushHitsMain: names.includes('push') };
+  }
+  let end = start + 1;
+  while (end < lines.length && (/^\s/.test(lines[end]) || lines[end] === '' || /^#/.test(lines[end]))) end += 1;
+  const block = lines.slice(start + 1, end);
+  for (const line of block) {
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    // Every trigger key sits at exactly two spaces and is a bare name; nothing under on: is a flow mapping.
+    if (/^ {0,2}\S/.test(line) && !/^  [A-Za-z_]+:/.test(line)) unread(`trigger key ${JSON.stringify(line)}`);
+    if (/^\s*[^\s#][^#]*:\s*\{/.test(line)) unread(`flow mapping ${JSON.stringify(line)}`);
+  }
+  const names = block.filter((line) => /^  [A-Za-z_]+:/.test(line)).map((line) => line.trim().replace(/:.*/, ''));
+  if (!names.length) unread('no trigger name');
+  const at = block.findIndex((line) => /^  push:/.test(line));
+  if (at < 0) return { names, pushHitsMain: false };
+  let stop = at + 1;
+  while (stop < block.length && !/^  [A-Za-z_]+:/.test(block[stop])) stop += 1;
+  const push = block.slice(at + 1, stop);
+  const listOf = (key) => {
+    const index = push.findIndex((line) => new RegExp(`^    ${key}:`).test(line));
+    if (index < 0) return null;
+    const rest = push[index].replace(/^[^:]+:/, '').trim();
+    if (rest) return rest.replace(/[[\]'"]/g, '').split(',').map((item) => item.trim());
+    const items = [];
+    for (let i = index + 1; i < push.length && /^      - /.test(push[i]); i += 1) items.push(push[i].replace(/^      - /, '').replace(/['"]/g, '').trim());
+    return items;
+  };
+  const branches = listOf('branches');
+  // Tags only: no branch push triggers it. Otherwise it hits main unless every branch pattern plainly cannot.
+  const pushHitsMain = branches === null ? listOf('tags') === null && listOf('tags-ignore') === null
+    : branches.some((branch) => branch === 'main' || branch.includes('*'));
+  return { names, pushHitsMain };
+}
+
+test('R2: a workflow with a PR trigger and a main push trigger is in the reuse table; only Sources the gate holds byte-frozen are exempt, and never more of them', async () => {
+  const { TARGETS } = await import('./clued-tree-reuse.mjs');
+  const dir = path.join(ROOT, '.github/workflows');
+  const both = fs.readdirSync(dir).filter((file) => /\.ya?ml$/.test(file)).sort().filter((file) => {
+    const { names, pushHitsMain } = workflowTriggers(fs.readFileSync(path.join(dir, file), 'utf8'));
+    return pushHitsMain && (names.includes('pull_request') || names.includes('pull_request_target'));
+  });
+  // The reading finds every workflow of the table, so it is not blind.
+  for (const workflow of Object.keys(TARGETS)) assert.ok(both.includes(workflow), `${workflow} has both triggers`);
+  const outside = both.filter((file) => !Object.hasOwn(TARGETS, file));
+  // The only exemption is the gate's own word that the file's bytes are frozen (changing it takes a registered
+  // successor on trusted main first): its bootstrap ordinary Sources and its placement Source. No file name here.
+  const frozen = (file) => admissionModule.bootstrapOrdinaryKnownFile(`.github/workflows/${file}`) ||
+    `.github/workflows/${file}` === admissionModule.PLACEMENT_WORKFLOW;
+  assert.deepEqual(outside.filter((file) => !frozen(file)), [],
+    'these run on the PR and again on the main push of its merge: drop `push: main` or enter the reuse table');
+  // 5 on 2026-11-21 (two scans, placement, two public MCP), each waiting for its registered successor. This number
+  // only goes down, and the test holds that: it is an equality, so each one done lowers it here in the same change
+  // (and one more is red at once). Delete the exemption at 0.
+  assert.equal(outside.filter(frozen).length, 5, `byte-frozen workflows still running on main push: ${outside.filter(frozen).join(', ')}`);
+});
+
+test('R2: the trigger reading refuses a spelling it cannot read instead of reading no push out of it', () => {
+  // R2 is the only stop, so an unread trigger block must be red, never "no push here".
+  for (const [name, text] of [
+    ['flow mapping', 'name: x\non: {push: {branches: [main]}, pull_request: {}}\njobs:\n'],
+    ['flow mapping under a trigger', 'name: x\non:\n  pull_request:\n  push: {branches: [main]}\njobs:\n'],
+    ['four-space indent', 'name: x\non:\n    pull_request:\n    push:\n        branches: [main]\njobs:\n'],
+    ['quoted trigger name', 'name: x\non:\n  pull_request:\n  "push":\n    branches: [main]\njobs:\n'],
+    ['empty block', 'name: x\non:\njobs:\n'],
+  ]) assert.throws(() => workflowTriggers(text), /cannot read the trigger block/, name);
+  // What it does read stays read.
+  assert.deepEqual(workflowTriggers('on:\n  pull_request:\n  push:\n    branches: [main]\njobs:\n'), { names: ['pull_request', 'push'], pushHitsMain: true });
+  assert.deepEqual(workflowTriggers('on: [push, pull_request]\njobs:\n'), { names: ['push', 'pull_request'], pushHitsMain: true });
+});
+
+// R2b (FABLE-tree-reuse-registry B): a counted CI workflow whose bytes at this head are not a registered Source makes
+// the merge slot and the merge executor wait for ever on every head that carries it. The set is the merge slot's own
+// (ciWorkflows); no list of names. The YAML-parsing check of the entries stays in ci-proof-profiles.test.mjs.
+test('R2b: every counted CI workflow is a registered Source at this head', async () => {
+  const { ciWorkflows } = await import('./clued-merge-slot-ci.mjs');
+  const { recognizeCatalogueWorkflow } = await import('./clued-source-only-workflow.mjs');
+  const registry = parseWorkflowProfiles(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-profiles.json'), 'utf8'));
+  const roleSpecs = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-role-specs.json'), 'utf8'));
+  const counted = [...ciWorkflows(ROOT)];
+  assert.ok(counted.length > 0, 'the merge slot counts at least one workflow');
+  const unknown = counted.filter(([file, blob]) => recognizeCatalogueWorkflow({ registry, roleSpecs, file, blob }).source_identified !== true)
+    .map(([file, blob]) => `${file} (${blob})`);
+  assert.deepEqual(unknown, [],
+    'the bytes of these counted workflows are not a registered Source: register the new Source and its roles in ' +
+    'clued-gated-proof-profiles.json and clued-gated-proof-role-specs.json, then run merge-admission-r9-reregister.mjs --write');
+});
+
+test('T2: every required job of every gate-decided workflow of the reuse table is in the table, and so is every Actions-bound required check', async () => {
   const { TARGETS } = await import('./clued-tree-reuse.mjs');
   const covered = new Set();
-  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+  // Every 'ancestry' entry, not two names: a workflow entered in the table without the gate's job names is red here.
+  const ancestry = Object.keys(TARGETS).filter((workflow) => TARGETS[workflow].proof === 'ancestry');
+  assert.ok(ancestry.includes('clued-required-tests.yml') && ancestry.includes('clued-required-tests-windows.yml'));
+  for (const workflow of ancestry) {
     const target = TARGETS[workflow];
-    assert.ok(target, `${workflow} is in the reuse table`);
-    assert.equal(target.proof, 'ancestry');
     const text = fs.readFileSync(path.join(ROOT, '.github/workflows', workflow), 'utf8');
     const jobs = workflowJobs(text).map((job) => job.name).filter((name) => name !== 'admission-gate');
     assert.deepEqual([...target.jobs].sort(), [...jobs].sort(), `${workflow}: jobs and table agree`);
@@ -4199,51 +4353,151 @@ test('T2: every required job of both required-test workflows is in the reuse tab
   for (const check of actionsBound) assert.ok(covered.has(check), `required check ${check} is covered`);
 });
 
-// Guards: green before and after the fix. Each one must still run the heavy jobs.
+// Guards: each one must still run the heavy jobs.
+// R3a (FABLE-tree-reuse-close-out §3): and the gate's notice says why, with exactly the code in the third column.
+const reuseNotice = (code) => `main push tree reuse: ${code}; the heavy jobs run`;
+const reuseNotices = (outcome) => outcome.notices.filter((notice) => notice.startsWith('main push tree reuse:'));
 const STILL_RUNS = [
-  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }],
-  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }],
-  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }],
-  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }],
-  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }],
-  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
-  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }],
-  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }],
-  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }],
-  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }],
-  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }],
+  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }, 'merged_tree_differs'],
+  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }, 'base_not_ancestor'],
+  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }, 'base_not_ancestor'],
+  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }, 'required_jobs_not_passed'],
+  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }, 'required_jobs_not_passed'],
+  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }, 'required_jobs_not_passed'],
+  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }, 'required_jobs_not_passed'],
+  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }, 'required_jobs_not_passed'],
+  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }, 'pr_run_not_passed'],
+  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }, 'pr_run_not_passed'],
+  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }, 'pr_run_not_passed'],
   ['the run changed while the proof was read', (c) => { let reads = 0; const runs = c.w.runs;
-    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }],
-  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }],
-  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }],
-  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }],
-  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }],
-  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }],
-  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }],
-  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }],
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }, 'latest_attempt_changed'],
+  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }, 'merged_pr_identity'],
+  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }, 'pr_run_actor'],
+  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }, 'push_context_not_eligible'],
+  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }, 'merged_pr_missing'],
+  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }, 'merged_pr_identity'],
+  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }, 'run_listing_incomplete'],
+  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }, 'job_listing_incomplete'],
+  ['the merge reply names another commit', (c) => { c.f.merge.sha = 'd'.repeat(40); }, 'merge_identity'],
+  ['the PR listing of the merge is at its limit', (c) => { c.f.pulls = Array.from({ length: 100 }, () => c.f.pulls[0]); }, 'pr_listing_incomplete'],
+  ['the head run is another workflow\'s', (c) => { c.w.runs.workflow_runs[0].path = '.github/workflows/other.yml'; }, 'pr_run_identity'],
+  ['the head run is not a pull_request run', (c) => { c.w.runs.workflow_runs[0].event = 'push'; }, 'pr_run_identity'],
+  ['the run listing is at its limit when read again', (c) => { let reads = 0; const runs = c.w.runs;
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, total_count: 100 }); }, 'latest_run_listing_incomplete'],
 ];
-for (const [label, mutate] of STILL_RUNS) {
+for (const [label, mutate, code] of STILL_RUNS) {
   for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
-    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run`, async () => {
+    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run, reason ${code}`, async () => {
       const outcome = await treeReuseGate(treeReuseCase(workflow, mutate));
       assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code)]);
     });
   }
 }
 
-test('tree reuse guard: every failed or thrown GitHub read runs the heavy jobs', async () => {
+// R3b: a read that failed or threw names its step (and the HTTP status), never the error text.
+const READ_STEPS = ['merge', 'pulls', 'pr', 'source', 'runs', 'jobs', 'compare'];
+const READ_FAILURES = [
+  [() => ({ status: 500 }), (step) => `github_request_failed@${step}:500`],
+  [() => ({ status: 404 }), (step) => `github_request_failed@${step}:404`],
+  [() => new Error('offline https://api.github.com/x?token=must-not-leak'), (step) => `github_request_threw@${step}`],
+];
+test('R3b: every failed or thrown GitHub read runs the heavy jobs and names its step and status', async () => {
   const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
-  assert.equal(keys.length, 7);
-  for (const key of keys) {
-    for (const failure of [{ status: 500 }, { status: 404 }, new Error('offline')]) {
+  assert.equal(keys.length, READ_STEPS.length);
+  for (const [index, key] of keys.entries()) {
+    for (const [failure, code] of READ_FAILURES) {
       const ctx = treeReuseCase('clued-required-tests.yml');
-      ctx.routes[key] = failure;
+      ctx.routes[key] = failure();
       const outcome = await treeReuseGate(ctx);
       assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], `${key}: ${JSON.stringify(outcome)}`);
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code(READ_STEPS[index]))], key);
     }
   }
 });
 
+test('R3b: the second read of the run listing is its own step (runs_again)', async () => {
+  for (const [failure, code] of READ_FAILURES) {
+    const ctx = treeReuseCase('clued-required-tests.yml');
+    const runs = ctx.w.runs;
+    let reads = 0;
+    ctx.routes[ctx.runsRoute] = () => (++reads === 1 ? runs : failure());
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice(code('runs_again'))]);
+  }
+});
+
+test('R3d: a malformed reply body is unexpected_error at its step, not a bare exception and not an empty code', async () => {
+  const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
+  for (const step of ['merge', 'pr', 'source', 'jobs', 'compare']) {
+    const ctx = treeReuseCase('clued-required-tests.yml');
+    ctx.routes[keys[READ_STEPS.indexOf(step)]] = null;
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice(`unexpected_error@${step}`)]);
+  }
+  // A reply of the right kind but the wrong shape: the PR has no head.
+  const ctx = treeReuseCase('clued-required-tests.yml', (c) => { delete c.f.pr.head; });
+  assert.deepEqual(reuseNotices(await treeReuseGate(ctx)), [reuseNotice('unexpected_error@pr')]);
+});
+
+// The codes the gate cannot reach (it calls only for an 'ancestry' target on a push): asked of the module directly.
+// The tree-report proof's own reads go under the step name "report".
+function reportCase() {
+  const ctx = treeReuseCase('clued-required-tests.yml');
+  const g4 = 'clued-g4-database.yml';
+  ctx.routes[ctx.runsRoute.replace('clued-required-tests.yml', g4)] = () => ctx.w.runs;
+  ctx.env.REUSE_WORKFLOW = g4;
+  return ctx;
+}
+const DIRECT_REASONS = [
+  ['pr_and_dispatch_always_run', (reuse, c) => reuse.evaluatePush({ ...c.env, GITHUB_EVENT_NAME: 'pull_request' }, c.fetchImpl)],
+  ['tree_report_proof_unavailable', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl)],
+  ['proof_kind', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: ({ evidence }) => reuse.validateAncestryEvidence({ ...evidence, compare: c.f.compare }) })],
+  ['request_budget', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: async ({ get }) => { for (let i = 0; i < 9; i += 1) await get(`/commits/${c.f.merge.sha}`); } })],
+  ['artifact_too_large', (reuse, c) => reuse.evaluatePush(c.env, async (url, init) => (String(url).endsWith('/zip')
+    ? { ok: true, status: 200, body: (async function* body() { yield Buffer.alloc(reuse.MAX_BYTES + 1); })() }
+    : c.fetchImpl(url, init)), { reportProof: ({ get }) => get('/zip', true) })],
+  ['github_request_failed@report:404', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl, { reportProof: ({ get }) => get('/missing') })],
+  ['unexpected_error@report', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: () => { throw new Error('must-not-leak'); } })],
+];
+for (const [code, ask] of DIRECT_REASONS) {
+  test(`R3 reason ${code}: the heavy jobs run and the reason is exactly this code`, async () => {
+    const reuse = await import('./clued-tree-reuse.mjs');
+    assert.deepEqual(await ask(reuse, reportCase()), { run_heavy: true, reason: code, current_sha_pass: false });
+  });
+}
+
+test('R3c: the reason vocabulary is closed - every code is in REASONS, and every code of clued-tree-reuse.mjs has a guard', async () => {
+  const reuse = await import('./clued-tree-reuse.mjs');
+  assert.ok(Array.isArray(reuse.REASONS) && Object.isFrozen(reuse.REASONS), 'REASONS is a frozen array');
+  assert.equal(new Set(reuse.REASONS).size, reuse.REASONS.length);
+  const literals = (name) => {
+    const text = fs.readFileSync(path.join(ROOT, 'scripts/ci', name), 'utf8');
+    const refusals = [...text.matchAll(/\brequireProof\((?:(?!requireProof\()[\s\S])*?'([a-z_]+)'\);/g)].map((m) => m[1]);
+    // Every requireProof call ends in a literal code: a computed code would escape this scan.
+    assert.equal(refusals.length, [...text.matchAll(/\brequireProof\(/g)].length, `${name}: every requireProof names a literal code`);
+    const fallbacks = [...text.matchAll(/\bfallback\('([a-z_]+)'\)/g)].map((m) => m[1]);
+    const families = [...text.matchAll(/`([a-z_]+)@\$\{/g)].map((m) => m[1]);
+    return [...new Set([...refusals, ...fallbacks, ...families])];
+  };
+  const own = literals('clued-tree-reuse.mjs');
+  const report = literals('clued-push-reuse.mjs');
+  for (const code of [...own, ...report]) assert.ok(reuse.REASONS.includes(code), `${code} is in REASONS`);
+  for (const code of reuse.REASONS) assert.ok(own.includes(code) || report.includes(code), `${code} is still produced`);
+  const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]),
+    'github_request_failed', 'github_request_threw', 'unexpected_error']);
+  for (const code of own) assert.ok(guarded.has(code), `${code} has a guard that expects it`);
+  for (const family of ['github_request_failed', 'github_request_threw', 'unexpected_error']) assert.ok(own.includes(family), family);
+  assert.ok(!reuse.REASONS.includes('proof_unavailable_or_not_applicable'), 'the catch-all word is gone');
+});
+
+// This pins the scope of reuse to a first-attempt push to main (FABLE-tree-reuse-close-out §4).
+// 扩范围前先让 admission-rerun 按门的 verdict 判 final。
 test('tree reuse guard: a re-run, staging, another branch or a workflow outside the table reads nothing and runs', async () => {
   for (const [label, mutate] of [
     ['attempt 2 (Re-run all jobs is the manual way to force a real run)', (c) => { c.env.GITHUB_RUN_ATTEMPT = '2'; }],

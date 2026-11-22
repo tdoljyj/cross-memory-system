@@ -825,7 +825,7 @@ class DuplicateKeepTests(unittest.TestCase):
         self.assertNotIn("/commits/" + "0000" + "a" * 36 + "/check-runs", again.paths)
         self.assertEqual(state["duplicates"]["total"], 36)
         self.assertEqual((len(state["duplicates"]["found"]), len(state["duplicates"]["rest"])), (panel.DUP_KEEP, 36 - panel.DUP_KEEP))
-        self.assertIn("共 36 项，只列最近 10 项", panel.render(report, state))
+        self.assertIn("违规 36 项，只列最近 10 项", panel.render(report, state))
         # and a third pass still has them (the short records are carried, not dropped)
         panel.build(BuildClient(pulls, checks), NOW + timedelta(hours=2), state)
         self.assertEqual(state["duplicates"]["total"], 36)
@@ -1437,7 +1437,7 @@ class RecordedDataTests(unittest.TestCase):
         body = panel.render(report, state)
         self.assertIn("### 重复执行", body)
         self.assertEqual(sum(1 for line in body.splitlines() if line.startswith("| #")), panel.DUP_ROWS)
-        self.assertIn("共 33 项，只列最近 10 项", body)
+        self.assertIn("违规 33 项，只列最近 10 项", body)
         self.assertLess(len(body), 40000)
         self.assertEqual([key for key in report["events"] if key.startswith("dup")], [])  # the first scan announces nothing
         self.assertEqual(len(state["announced_dup"]), 33)
@@ -1680,6 +1680,141 @@ class TreeDuplicateTests(unittest.TestCase):
         self.assertIn("同一棵树", body)
         report = panel.build(Client(TREE_RECORDED[1178]), REC_NOW, {"duplicates": {"as_of": panel.iso(REC_NOW - timedelta(hours=2))}})
         self.assertEqual(len([key for key in report["events"] if key.startswith("dup:")]), 4)
+
+
+# R5 (FABLE-tree-reuse-close-out §5): violations and allowed retries are counted apart. GitHub REST replies recorded
+# read-only on 2026-11-21 (Beijing) in the TREE_RECORDED shape: #1202, whose two main push runs ran the head's tree
+# again (the reuse refused the executor bot's head run), and #1204, whose ci-suites-windows died in "Set up job" on
+# attempt 1 and passed on attempt 2 (a retry) and whose merge push ran clued-capture-guard again.
+TREE_1202_1204 = {
+    int(number): {**case, **{key: [tuple(row) for row in case[key]] for key in ("checks", "runs", "push_runs")},
+                  "jobs": {int(run): [tuple(row) for row in rows] for run, rows in case["jobs"].items()}}
+    for number, case in json.loads((ROOT / "tests" / "fixtures" / "compute-panel-tree-1202-1204.json").read_text(encoding="utf-8")).items()}
+TOTALS_NOW = datetime(2026, 11, 21, 8, 0, tzinfo=timezone.utc)
+
+
+class TreeRecordedPulls(TreeRecordedGitHub):
+    """Several recorded PRs at once, with the empty replies build() needs for everything else."""
+
+    def __init__(self, cases: list[dict]) -> None:
+        super().__init__(cases[0])
+        self.cases = cases
+
+    def get(self, path: str, params: dict | None = None):
+        params = params or {}
+        if path == "/pulls":
+            self.paths.append(path)
+            return [case["pull"] for case in self.cases] if params.get("state") == "all" else []
+        if path.startswith("/actions/workflows") or (path == "/actions/runs" and "head_sha" not in params):
+            return {"workflow_runs": []}
+        if path.endswith("/status"):
+            return {}
+        if path.endswith("/statuses"):
+            return []
+        if path.startswith("/actions/runs/") and path.endswith("/jobs"):
+            owners = [case for case in self.cases if int(path.split("/")[3]) in case["jobs"]]
+            self.case = owners[0] if owners else self.cases[0]
+            return super().get(path, params)
+        for case in self.cases:
+            self.case = case
+            try:
+                return super().get(path, params)
+            except panel.RequestError:
+                continue
+        raise panel.RequestError(f"GET {path} unscripted", 404)
+
+
+class DuplicateTotalsTests(unittest.TestCase):
+    HEADER = "违规 5 项（通过后又跑 5、并行 0）；失败后重试 1 项（规则允许，只列出）"
+
+    def both(self) -> TreeRecordedPulls:
+        return TreeRecordedPulls([TREE_1202_1204[1204], TREE_1202_1204[1202]])
+
+    def test_r5_the_scan_counts_violations_and_retries_apart_and_lists_violations_first(self) -> None:
+        scan = panel.scan_duplicates(self.both(), TOTALS_NOW, {})
+        self.assertEqual(scan["totals"], {"rerun": 5, "parallel": 0, "retry": 1, "unknown": 0})
+        self.assertEqual(scan["total"], 6)
+        self.assertEqual([item["kind"] for item in scan["found"]], ["rerun"] * 5 + ["retry"])
+        # each class newest first: #1204's capture guard push (17:02Z) before #1202's pushes (15:35Z)
+        self.assertEqual([item["pr"] for item in scan["found"]], [1204, 1202, 1202, 1202, 1202, 1204])
+        retry = scan["found"][-1]
+        self.assertEqual((retry["head"][:8], retry["label"], [run["attempt"] for run in retry["runs"]]),
+                         ("bed9cd12", "ci-suites-windows（clued-required-tests-windows.yml）", [1, 2]))
+        self.assertEqual(panel.pack_duplicates(scan)["totals"], scan["totals"])
+
+    def test_r5_the_panel_header_says_both_counts_and_no_retry_is_announced(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        self.assertEqual(report["duplicates"]["totals"], {"rerun": 5, "parallel": 0, "retry": 1, "unknown": 0})
+        body = panel.render(report, state)
+        self.assertIn(self.HEADER + "。", body)
+        self.assertNotIn("旧记录未记类别", body)
+        self.assertNotIn("共 6 项", body)
+        rows = [line for line in body.splitlines() if line.startswith("| #12")]
+        self.assertEqual(["失败后重试" in row for row in rows], [False] * 5 + [True])
+        announced = {key: text for key, text in report["events"].items() if key.startswith("dup")}
+        self.assertEqual(len(announced), 5)
+        self.assertEqual([text for text in announced.values() if "失败后重试" in text], [])
+        # A main push finding names its push run, the place to read the gate's reason code.
+        by_check = {text.split(" 的检查 ")[1].split(" 真跑")[0]: text for text in announced.values() if "#1202" in text}
+        self.assertIn("合入后 main push（运行 44764733435）", by_check["ci-suites-windows（clued-required-tests-windows.yml）"])
+        for name in ("ci-suites", "clued-cloud-tests", "migration-verify"):
+            self.assertIn("合入后 main push（运行 44764733439）", by_check[f"{name}（clued-required-tests.yml）"])
+
+    def test_r5_what_is_cut_off_and_what_is_left_out_are_said_in_violations(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        report["duplicates"]["totals"] = {"rerun": 29, "parallel": 1, "retry": 7}
+        body = panel.render(report, state)
+        self.assertIn("违规 30 项（通过后又跑 29、并行 1）；失败后重试 7 项（规则允许，只列出）", body)
+        self.assertIn("违规 30 项，只列最近 5 项。", body)
+        report["duplicates"].update(found=[], omitted=True)
+        body = panel.render(report, state)
+        self.assertIn("违规 30 项（通过后又跑 29、并行 1）；失败后重试 7 项（规则允许，只列出）", body)
+        self.assertIn("明细已省略", body)
+
+    def test_r5_a_short_record_keeps_its_kind_and_one_saved_without_it_is_counted_apart_not_as_a_violation(self) -> None:
+        # Ruling 12.2 #8: a short record an older panel saved has no kind. It is neither read again nor a violation:
+        # it is counted on its own until it leaves the window.
+        case = TREE_1202_1204[1202]
+        head = case["pull"]["head"]["sha"]
+        scan = panel.scan_duplicates(TreeRecordedGitHub(case), TOTALS_NOW, {})
+        self.assertEqual(panel.short_finding(scan["found"][0])["kind"], "rerun")
+        old = {"head": head[:12], "pr": 1202, "check": "an-older-panel::record", "count": 2, "last": "2026-11-20T15:35:31Z"}
+        previous = {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2)), "found": [], "rest": [old, {**old, "check": "b", "kind": "retry"}],
+                    "settled": {panel.settle_key(case["pull"], head): case["pull"]["updated_at"]}}
+        client = TreeRecordedGitHub(case)
+        scan = panel.scan_duplicates(client, TOTALS_NOW, previous)
+        self.assertNotIn(f"/commits/{head}/check-runs", client.paths)  # a settled head is carried over unread
+        self.assertEqual(scan["totals"], {"rerun": 0, "parallel": 0, "retry": 1, "unknown": 1})
+        self.assertEqual(panel.violations(scan["totals"]), 0)
+
+    def test_r5_the_line_for_what_a_burst_cut_off_counts_violations_only_and_old_records_apart(self) -> None:
+        # Ruling 12.2 #8 again: an old record without a kind is not a violation, in the burst line as anywhere else.
+        def record(index: int, kind: str | None) -> dict:
+            row = {"head": f"{index:012x}", "pr": 9000 + index, "check": "a-check", "count": 2, "last": "2026-11-20T15:35:31Z"}
+            return {**row, "kind": kind} if kind else row
+        found = [record(i, "rerun") for i in range(panel.DUP_ROWS + 1)] + [record(50, "parallel")] + [record(60 + i, None) for i in range(3)]
+        state: dict = {"events_at": panel.iso(TOTALS_NOW), "duplicates": {"as_of": panel.iso(TOTALS_NOW), "found": found}}  # no scan is due
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        more = [text for key, text in report["events"].items() if key.startswith("dup-more:")]
+        self.assertEqual(len(more), 1)
+        self.assertIn("另有 2 项违规", more[0])  # one rerun and one parallel beyond the first DUP_ROWS
+        self.assertIn("另有 3 项旧记录未记类别（不算违规）", more[0])
+        self.assertNotIn("5 项违规", more[0])
+        # Only old records cut off: the line says no violation at all.
+        found = [record(i, "rerun") for i in range(panel.DUP_ROWS)] + [record(60 + i, None) for i in range(2)]
+        state = {"events_at": panel.iso(TOTALS_NOW), "duplicates": {"as_of": panel.iso(TOTALS_NOW), "found": found}}
+        more = [text for key, text in panel.build(self.both(), TOTALS_NOW, state)["events"].items() if key.startswith("dup-more:")]
+        self.assertEqual(more, ["重复执行：另有 2 项旧记录未记类别（不算违规），见面板“重复执行”表"])
+
+    def test_r5_the_header_names_old_records_without_a_kind_only_when_there_are_some(self) -> None:
+        state: dict = {"duplicates": {"as_of": panel.iso(TOTALS_NOW - timedelta(hours=2))}}
+        report = panel.build(self.both(), TOTALS_NOW, state)
+        report["duplicates"]["totals"] = {"rerun": 2, "parallel": 0, "retry": 1, "unknown": 3}
+        body = panel.render(report, state)
+        self.assertIn(f"违规 2 项（通过后又跑 2、并行 0）；失败后重试 1 项（规则允许，只列出）；另有 3 项旧记录未记类别（{panel.DUP_LOOKBACK.days} 天内滚出）。", body)
+        self.assertNotIn("只列最近", body)  # 5 violation rows are listed for 2 counted: nothing is cut off
 
 
 if __name__ == "__main__":
