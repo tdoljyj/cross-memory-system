@@ -1112,7 +1112,10 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    const plain = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
+    const given = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
+    // What this host lacks is part of the command itself: the first run and the run again in full (passesAgain) both skip it.
+    const plain = skipSwitches.length > 0 && given[0] === 'node' && given[1] === '--test'
+      ? [given[0], given[1], ...skipSwitches, ...given.slice(2)] : given;
     let argv = plain;
     let reportDir = null;
     // A known-failure command reports to the trusted reporter for its verdict; any other node --test command of the trusted
@@ -1125,7 +1128,6 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       } catch { /* runs without a report */ }
     }
     if (reportDir) argv = withReporter(plain, path.join(reportDir, 'failures.jsonl'));
-    if (skipSwitches.length > 0 && argv[0] === 'node' && argv[1] === '--test') argv = [argv[0], argv[1], ...skipSwitches, ...argv.slice(2)];
     // Removing that report never decides a command (a known-failure command removes its own as before).
     const dropReport = () => {
       try {

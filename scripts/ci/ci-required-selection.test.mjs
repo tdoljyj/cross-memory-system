@@ -2102,7 +2102,8 @@ function hostLacksArgv(env, id = 'retrigger-counter') {
   const calls = [];
   const lines = [];
   const status = executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: 'b', ...env }, log: (line) => lines.push(String(line)),
-    spawn: (command, args) => { calls.push([command, ...args]); return { status: 0 }; } });
+    // The trusted reporter the entry adds for the run again in full (its directory differs each run) is not what these compare.
+    spawn: (command, args) => { calls.push([command, ...args].filter((arg) => !arg.startsWith('--test-reporter'))); return { status: 0 }; } });
   return { status, calls, lines };
 }
 
