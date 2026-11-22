@@ -323,7 +323,7 @@ test('U6 30 个一致 head 跨 7 天以上、中间夹着跳过的 head：跳过
   assert.equal(report.summary.counts.一致, 30);
   assert.equal(report.summary.streak.heads, 30);
   assert.equal(report.summary.streak.met, false);
-  assert.deepEqual(report.summary.streak.unmet, ['已合入 PR 不足 10 个', '没有非 Owner 作者的 head', '没有两边同红的 head']);
+  assert.deepEqual(report.summary.streak.unmet, ['已合入 PR 不足 10 个', '没有非 Owner 推送的 head', '没有两边同红的 head']);
   assert.match(report.summary.line, /跳过 4/);
 });
 
@@ -413,11 +413,18 @@ test('中间一个不一致：连续计数从它之后重新算', async () => {
   assert.equal(streak.met, false);
 });
 
-// S6 新退出判据（FABLE-s6-exit-shorten-20261122 §3，Decision efe2cee6）：连续 30 个 head、首尾相隔 ≥72 小时、逐项一致；
-// 出自 ≥10 个已合入 PR；≥1 个非 Owner 作者的 head；≥1 个 head 上同一项两边都红。同一组 head 序列，每次只拿掉一条。
-// 默认：30 个 head 按时间平均铺开，每 3 个一个 PR（1800…1809，最后一个是已合入 PR 的最终 head），
-// PR 1805 由 dependabot 开，第 8 个 head 的 gitleaks 两边都红。
-async function exitStreak({ heads = 30, spanHours = 72, unmerged = [], dependabot = true, botCommit = false, bothRed = true, lead = null } = {}) {
+// S6 新退出判据（FABLE-s6-exit-shorten-20261122 §3 与补答，Decision efe2cee6）：连续 30 个 head、首尾相隔 ≥72 小时、逐项一致；
+// 出自 ≥10 个已合入 PR；≥1 个非 Owner 推送的 head（pull_request 运行的 actor.login）；≥1 个 head 上同一项两边都红。
+// 同一组 head 序列，每次只拿掉一条。默认：30 个 head 按时间平均铺开，每 3 个一个 PR（1800…1809，最后一个是已合入 PR 的最终 head），
+// 第 16 个 head 由合 main 机器人推送，其余由 tdoljyj 推送（另带一次机器人的 workflow_dispatch，不算推送）；第 8 个 head 的 gitleaks 两边都红。
+const BOT = 'clued-admission[bot]';
+const pushesRoute = s => `/actions/runs?head_sha=${s}&event=pull_request&per_page=100&page=1`;
+const pushes = (...logins) => {
+  const runs = [...logins.map(login => ({ event: 'pull_request', actor: { login } })), { event: 'workflow_dispatch', actor: { login: BOT } }];
+  return { total_count: runs.length, workflow_runs: runs };
+};
+async function exitStreak({ heads = 30, spanHours = 72, unmerged = [], dependabot = false, botCommit = false, bothRed = true, lead = null,
+  pushers = { 15: BOT }, leadPusher = 'tdoljyj', pushError = [] } = {}) {
   const t0 = Date.parse('2026-11-23T00:00:00Z');
   const iso = ms => new Date(ms).toISOString().replace('.000Z', 'Z');
   const prs = [], checks = {};
@@ -435,16 +442,19 @@ async function exitStreak({ heads = 30, spanHours = 72, unmerged = [], dependabo
     prs.push({ number: 1799, state: 'closed', merged: true, user: 'tdoljyj', commits: [{ sha: s }] });
     checks[s] = runsAt(t, frameworkRed('trivy', t));
   }
-  const report = await compare({ prs: { from: 1799, to: 1899 }, api: api(prRoutes(prs.sort((a, b) => b.number - a.number), checks)), now: NOW });
+  const routes = prRoutes(prs.sort((a, b) => b.number - a.number), checks);
+  for (let i = 0; i < heads; i++) routes[pushesRoute(sha(5000 + i))] = pushError.includes(i) ? { error: 'gh GET 失败（退出码 1）' } : pushes(pushers[i] ?? 'tdoljyj');
+  if (lead !== null) routes[pushesRoute(sha(4999))] = pushes(leadPusher);
+  const report = await compare({ prs: { from: 1799, to: 1899 }, api: api(routes), now: NOW });
   return report.summary.streak;
 }
 
-test('S6-a 30 个一致、跨满 72 小时、10 个已合入 PR、有非 Owner 作者、有同红：达成', async () => {
+test('S6-a 30 个一致、跨满 72 小时、10 个已合入 PR、含一个机器人推送且判一致的 head、有同红：达成', async () => {
   const streak = await exitStreak();
   assert.equal(streak.heads, 30);
   assert.equal(streak.hours, 72);
   assert.equal(streak.mergedPrs, 10);
-  assert.equal(streak.nonOwnerHeads, 3);
+  assert.equal(streak.nonOwnerPushedHeads, 1);
   assert.equal(streak.bothRedHeads, 1);
   assert.deepEqual(streak.unmet, []);
   assert.equal(streak.met, true);
@@ -472,14 +482,28 @@ test('S6-d 同一序列 PR 1809 关闭未合入：已合入 PR 只有 9 个，�
   assert.deepEqual(streak.unmet, ['已合入 PR 不足 10 个']);
 });
 
-test('S6-e 同一序列没有非 Owner 作者：不算达成；只看 PR 作者，Owner PR 里的机器人提交（如合 main）不算', async () => {
-  const streak = await exitStreak({ spanHours: 8 * 24, dependabot: false });
-  assert.equal(streak.nonOwnerHeads, 0);
+test('S6-e 同一序列只有 tdoljyj 推送：不算达成；PR 作者是 dependabot、提交作者是机器人都不顶替推送者', async () => {
+  const streak = await exitStreak({ spanHours: 8 * 24, pushers: {}, dependabot: true, botCommit: true });
+  assert.equal(streak.heads, 30);
+  assert.equal(streak.nonOwnerPushedHeads, 0);
   assert.equal(streak.met, false);
-  assert.deepEqual(streak.unmet, ['没有非 Owner 作者的 head']);
-  const bot = await exitStreak({ dependabot: false, botCommit: true });
-  assert.equal(bot.nonOwnerHeads, 0);
-  assert.equal(bot.met, false);
+  assert.deepEqual(streak.unmet, ['没有非 Owner 推送的 head']);
+});
+
+test('S6-h 机器人推送的 head 判不一致、不在连续一致段里：不算达成', async () => {
+  const streak = await exitStreak({ spanHours: 8 * 24, pushers: {}, lead: 5, leadPusher: BOT });
+  assert.equal(streak.heads, 30);
+  assert.equal(streak.nonOwnerPushedHeads, 0);
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['没有非 Owner 推送的 head']);
+});
+
+test('S6-i 机器人推送的 head 推送者读不到：不算非 Owner 推送，不算达成', async () => {
+  const streak = await exitStreak({ spanHours: 8 * 24, pushError: [15] });
+  assert.equal(streak.heads, 30);
+  assert.equal(streak.nonOwnerPushedHeads, 0);
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['没有非 Owner 推送的 head']);
 });
 
 test('S6-f 同一序列没有两边同红的 head：不算达成', async () => {

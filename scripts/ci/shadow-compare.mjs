@@ -21,9 +21,9 @@ export const PAIRS = Object.freeze(['ci-suites', 'clued-cloud-tests', 'migration
 // 与 train-rules 一致：success、neutral、skipped 算过。cancelled、stale 等不是结论。
 const PASS = new Set(['success', 'neutral', 'skipped']);
 const FAIL = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
-// S6 退出判据（FABLE-s6-exit-shorten-20261122 §3，Decision efe2cee6）：连续 30 个 head、首尾相隔不少于 72 小时、逐项一致，
-// 其间出自不少于 10 个已合入 PR、至少 1 个非 Owner 作者的 head、至少 1 个 head 上同一项两边都红。
-export const STREAK = Object.freeze({ heads: 30, hours: 72, mergedPrs: 10, nonOwnerHeads: 1, bothRedHeads: 1 });
+// S6 退出判据（FABLE-s6-exit-shorten-20261122 §3 与补答，Decision efe2cee6）：连续 30 个 head、首尾相隔不少于 72 小时、逐项一致，
+// 其间出自不少于 10 个已合入 PR、至少 1 个非 Owner 推送的 head、至少 1 个 head 上同一项两边都红。
+export const STREAK = Object.freeze({ heads: 30, hours: 72, mergedPrs: 10, nonOwnerPushedHeads: 1, bothRedHeads: 1 });
 const LAST = 20;
 const SHA = /^[0-9a-f]{40}$/;
 const PAGE = 100;
@@ -158,10 +158,8 @@ async function candidatesOfPrs(get, { from, to }) {
     const head = pull.head?.sha;
     // 当前：open PR 的 head；最终：已合入 PR 的 head；其余（PR 的其他提交、关闭未合入 PR 的 head）是被取代。
     const roleOf = sha => sha !== head ? 'superseded' : pull.state === 'open' ? 'current' : pull.merged_at ? 'final' : 'superseded';
-    // 已合入 PR 的最终 head 记下 PR 号（判据 X1）；作者记 PR 作者的登录名（判据 X2，按报告的核对口径 pulls/<n>.user.login）。
-    // 不看提交作者：Owner 的代理提交（claude）与合 main 机器人（clued-admission[bot]）几乎每个 head 都有，会让 X2 形同虚设。
-    const facts = sha => ({ prs: [pull.number], role: roleOf(sha), mergedPrs: roleOf(sha) === 'final' ? [pull.number] : [],
-      authors: typeof pull.user?.login === 'string' && pull.user.login !== '' ? [pull.user.login] : [] });
+    // 已合入 PR 的最终 head 记下 PR 号（判据 X1）。
+    const facts = sha => ({ prs: [pull.number], role: roleOf(sha), mergedPrs: roleOf(sha) === 'final' ? [pull.number] : [] });
     try {
       const commits = await paged(get, `/pulls/${pull.number}/commits`, null, 3);
       for (const c of commits) if (SHA.test(c?.sha ?? '')) out.push({ sha: c.sha, ...facts(c.sha), committedAt: c.commit?.committer?.date });
@@ -178,12 +176,23 @@ async function candidatesOfPrs(get, { from, to }) {
       const union = key => [...new Set([...seen[key], ...c[key]])];
       seen.prs = union('prs').sort((a, b) => a - b);
       seen.mergedPrs = union('mergedPrs').sort((a, b) => a - b);
-      seen.authors = union('authors');
       if (ROLES[c.role] > ROLES[seen.role]) seen.role = c.role;
       seen.readError ??= c.readError;
     } else bySha.set(c.sha, { ...c });
   }
   return [...bySha.values()];
+}
+
+// 判据 X2：head 的推送者 = 这个 head 上 pull_request 事件运行的 actor.login（FABLE-s6-exit-shorten-20261122 补答）。
+// 不看 PR 作者、不看提交作者：合 main 机器人推的 head 算非 Owner；Owner 名下代理推的读回是 Owner。读不到返回 null，不算非 Owner。
+async function pushersOf(get, sha) {
+  try {
+    const runs = await paged(get, `/actions/runs?head_sha=${sha}&event=pull_request`, 'workflow_runs');
+    return [...new Set(runs.filter(r => r?.event === 'pull_request' && typeof r.actor?.login === 'string' && r.actor.login !== '')
+      .map(r => r.actor.login))];
+  } catch {
+    return null;
+  }
 }
 
 function summarize(heads, nowMs, owner) {
@@ -197,24 +206,24 @@ function summarize(heads, nowMs, owner) {
   const firstMs = run[0]?.atMs, lastMs = run.at(-1)?.atMs;
   const spanMs = n > 0 && Number.isFinite(firstMs) && Number.isFinite(lastMs) ? lastMs - firstMs : 0;
   const mergedPrs = new Set(run.flatMap(h => h.mergedPrs ?? [])).size;
-  const nonOwnerHeads = run.filter(h => (h.authors ?? []).some(login => login !== owner)).length;
+  const nonOwnerPushedHeads = run.filter(h => (h.pushers ?? []).some(login => login !== owner)).length;
   const bothRedHeads = run.filter(h => h.pairs.some(p => p.verdict === '一致' && FAIL.has(p.framework?.conclusion) && FAIL.has(p.hosted?.conclusion))).length;
   const unmet = [
     n < STREAK.heads && `连续一致不足 ${STREAK.heads} 个 head`,
     spanMs < STREAK.hours * 3600_000 && `首尾相隔不足 ${STREAK.hours} 小时`,
     mergedPrs < STREAK.mergedPrs && `已合入 PR 不足 ${STREAK.mergedPrs} 个`,
-    nonOwnerHeads < STREAK.nonOwnerHeads && '没有非 Owner 作者的 head',
+    nonOwnerPushedHeads < STREAK.nonOwnerPushedHeads && '没有非 Owner 推送的 head',
     bothRedHeads < STREAK.bothRedHeads && '没有两边同红的 head',
   ].filter(Boolean);
   const hours = Math.round(spanMs / 360_000) / 10, days = Math.round(spanMs / 8640_000) / 10;
   const rule = `连续 ${STREAK.heads} 个 head、首尾相隔不少于 ${STREAK.hours} 小时，七项逐项一致；出自不少于 ${STREAK.mergedPrs} 个已合入 PR，`
-    + `含至少 ${STREAK.nonOwnerHeads} 个非 Owner 作者的 head、至少 ${STREAK.bothRedHeads} 个两边同红的 head`;
-  const streak = { heads: n, hours, days, from: run[0]?.at ?? null, to: run.at(-1)?.at ?? null, mergedPrs, nonOwnerHeads, bothRedHeads,
+    + `含至少 ${STREAK.nonOwnerPushedHeads} 个非 Owner 推送的 head、至少 ${STREAK.bothRedHeads} 个两边同红的 head`;
+  const streak = { heads: n, hours, days, from: run[0]?.at ?? null, to: run.at(-1)?.at ?? null, mergedPrs, nonOwnerPushedHeads, bothRedHeads,
     met: unmet.length === 0, unmet, rule };
   const hostedGreenFrameworkRedLast20 = decided.slice(-LAST).flatMap(h => h.pairs).filter(p => p.direction === '框架红、托管绿').length;
   const mismatches = heads.flatMap(h => h.pairs.filter(p => p.verdict === '不一致').map(p => `${h.sha.slice(0, 7)} ${p.check} ${p.direction}`));
   const line = `影子对比 ${beijing(nowMs)}：${heads.length} 个 head，一致 ${counts.一致}、不一致 ${counts.不一致}、未知 ${counts.未知}、在跑 ${counts.在跑}、跳过 ${counts.跳过}；`
-    + `连续一致 ${n} 个 head / ${hours} 小时，已合入 PR ${mergedPrs} 个、非 Owner 作者 ${nonOwnerHeads} 个、两边同红 ${bothRedHeads} 个`
+    + `连续一致 ${n} 个 head / ${hours} 小时，已合入 PR ${mergedPrs} 个、非 Owner 推送 ${nonOwnerPushedHeads} 个、两边同红 ${bothRedHeads} 个`
     + `（判据：${streak.met ? '已达' : `未达，${unmet.join('、')}`}）`
     + (mismatches.length ? `；不一致：${mismatches.join('；')}` : '');
   return { counts, streak, hostedGreenFrameworkRedLast20, line };
@@ -225,16 +234,18 @@ export async function compare({ repo = REPO, prs = null, heads = null, api = ghR
   const pins = await readPins(get);
   const candidates = prs ? await candidatesOfPrs(get, prs)
     // 直接给的 head 视作当前 head：还没完成的判在跑。
-    : heads.map(sha => ({ sha, prs: [], mergedPrs: [], authors: [], role: 'current', committedAt: null }));
+    : heads.map(sha => ({ sha, prs: [], mergedPrs: [], role: 'current', committedAt: null }));
   const judged = [];
   for (const c of candidates) {
     if (c.readError) {
-      judged.push({ sha: c.sha, prs: c.prs, mergedPrs: c.mergedPrs, authors: c.authors, role: c.role, at: null, atMs: NaN, verdict: '未知',
+      judged.push({ sha: c.sha, prs: c.prs, mergedPrs: c.mergedPrs, role: c.role, at: null, atMs: NaN, verdict: '未知',
         pairs: PAIRS.map(p => ({ check: p.check, verdict: '未知', reason: c.readError })) });
       continue;
     }
     const head = await judgeHead(get, pins, c);
-    if (head) judged.push({ ...head, mergedPrs: c.mergedPrs, authors: c.authors });
+    if (!head) continue;
+    // 推送者只对一致 head 读（连续一致段只由它们组成）。
+    judged.push({ ...head, mergedPrs: c.mergedPrs, ...(head.verdict === '一致' ? { pushers: await pushersOf(get, c.sha) } : {}) });
   }
   // 按时间排（读不到时间的排最后，照样打断连续一致）；直接给 head 时保持给定顺序。
   if (prs) judged.sort((a, b) => (Number.isFinite(a.atMs) ? a.atMs : Infinity) - (Number.isFinite(b.atMs) ? b.atMs : Infinity) || a.sha.localeCompare(b.sha));
