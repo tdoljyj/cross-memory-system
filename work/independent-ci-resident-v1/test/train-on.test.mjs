@@ -1196,6 +1196,24 @@ test('open points §5: trainSummary and status.json keep landing.bypass; another
     assert.deepEqual(trainSummary(on({ route: 'push', bypass }))?.landing, { route: 'push' }, JSON.stringify(bypass));
 });
 
+// Task 04f9b91b (Fable s7-landing-gaps 11-22, 改动 3): the landing precheck's P3 --before reads what push still lacks (landing.missing) from
+// state\status.json: the resident keeps stage 10's list as written, checking the shape only (at most 16 distinct items, each a lower-case
+// word with an optional :suffix, as train-landing.mjs#validLandingMissing); another shape drops the list, the rest stays.
+test('task 04f9b91b: trainSummary and status.json keep landing.missing; another shape is dropped, the route and bypass stay', async () => {
+  const status = new StatusBoard({ clock: () => T0, pid: 1 });
+  const on = landing => ({ ...answer('on', { ...DONE, decision: 'NO_FRONT' }).train, landing });
+  const kept = { route: 'github-merge', missing: ['train_landed_check_missing', 'main_app_cannot_bypass'], bypass: { main: 'never', independent: 'never' } };
+  assert.deepEqual(trainSummary(on(kept))?.landing, kept);
+  status.update({ train: { enabled: 'on', last: trainSummary(on(kept)) } });
+  assert.deepEqual(parseStatus(Buffer.from(JSON.stringify(status.snapshot()))).train.last.landing, kept, 'status.json keeps it');
+  assert.deepEqual(trainSummary(on({ route: 'park', missing: ['ruleset_app_cannot_bypass:27843120'] }))?.landing, { route: 'park', missing: ['ruleset_app_cannot_bypass:27843120'] });
+  assert.deepEqual(trainSummary(on({ route: 'push', missing: [] }))?.landing, { route: 'push', missing: [] });
+  const wrong = [['not an array', 'x'], ['a number', [7]], ['upper case', ['Main']], ['a space', ['a b']], ['twice', ['main_x', 'main_x']],
+    ['seventeen', Array.from({ length: 17 }, (_, i) => `item_${String.fromCharCode(97 + i)}`)]]
+    .filter(([, missing]) => JSON.stringify(trainSummary(on({ route: 'push', missing }))?.landing) !== JSON.stringify({ route: 'push' })).map(([label]) => label);
+  assert.deepEqual(wrong, [], 'every other shape dropped, the route stays');
+});
+
 // Fable 11-21 open points §10 point 2: the resident only keeps what stage 10 wrote; it knows no list of bypass states (that list is
 // Source v2's train-landing.mjs#BYPASS_STATES alone, and the two may be of different generations). It checks the shape only: exactly the
 // keys main and independent, each a short string of lower-case letters and underscores. Which values are right is the reader's (P3).

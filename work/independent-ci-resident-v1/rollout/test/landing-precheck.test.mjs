@@ -51,7 +51,7 @@ function world() {
       { node: 'DESK', sourceManifestSha256: w.source, state: 'online', lastHeartbeatAt: iso(NOW - 120_000) }] },
     // stage 10's newest round (open points §5): its landing carries both bypass states, read without elevation
     last: { at: iso(NOW - 60_000), mode: 'on', wouldDo: 'NO_FRONT', decision: 'NO_FRONT', onDuty: true,
-      landing: { route: 'github-merge', bypass: { main: 'never', independent: 'never' } } } } };
+      landing: { route: 'github-merge', missing: ['train_landed_check_missing', 'main_app_cannot_bypass'], bypass: { main: 'never', independent: 'never' } } } } };
   return w;
 }
 // The fixture gh: the routes the precheck reads, by path; there is no write route at all.
@@ -195,11 +195,11 @@ test('T4 P1 (review B): required checks pinned to another App or to none are on 
 test('T4 P4: no independent ruleset, a second one, a bypass actor on it, other rules on it, not active, or a list the identity cannot read -> NO-GO', async () => {
   const cases = [
     ['no independent ruleset', w => w.rulesets.delete(FF), 'NO_INDEPENDENT_RULESET'],
-    ['two', w => w.rulesets.set(FF + 1, { ...structuredClone(w.rulesets.get(FF)), id: FF + 1 }), 'MORE_THAN_ONE_INDEPENDENT_RULESET'],
     ['a bypass actor', w => { w.rulesets.get(FF).bypass_actors = [{ actor_id: 1, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; }, 'BYPASS_ACTORS_NOT_EMPTY'],
     ['bypass list not shown (not an administrator)', w => { delete w.rulesets.get(FF).bypass_actors; }, 'BYPASS_ACTORS_UNREADABLE'],
-    ['another rule', w => { w.rulesets.get(FF).rules.push({ type: 'creation' }); }, 'RULES_NOT_EXACTLY_DELETION_AND_NON_FAST_FORWARD'],
-    ['evaluate only', w => { w.rulesets.get(FF).enforcement = 'evaluate'; }, 'NOT_ACTIVE'],
+    // task 04f9b91b: the guard ruleset is known by its shape; another shape, or one not active, is no guard ruleset at all
+    ['another rule', w => { w.rulesets.get(FF).rules.push({ type: 'creation' }); }, 'NO_INDEPENDENT_RULESET'],
+    ['evaluate only', w => { w.rulesets.get(FF).enforcement = 'evaluate'; }, 'NO_INDEPENDENT_RULESET'],
   ];
   for (const [label, change, code] of cases) {
     const w = world(); change(w);
@@ -207,6 +207,12 @@ test('T4 P4: no independent ruleset, a second one, a bypass actor on it, other r
     assert.equal(r.verdict, 'NO-GO', label);
     assert.ok(failedOf(r, 'P4').includes(code), `${label}: ${JSON.stringify(r.items.P4)}`);
     assert.equal(w.snapshot, null);
+  }
+  // task 04f9b91b: two guard rulesets both clean pass (the count was only there to find the one to check); one clean is enough
+  for (const [label, change] of [['two clean', () => {}], ['two, one with a bypass actor', r => { r.bypass_actors = [{ actor_id: 1, actor_type: 'RepositoryRole', bypass_mode: 'always' }]; }]]) {
+    const w = world(); const second = { ...structuredClone(w.rulesets.get(FF)), id: FF + 1 }; change(second); w.rulesets.set(FF + 1, second);
+    const r = await run(w, 'before', { only: ['P4'] });
+    assert.equal(r.verdict, 'PARTIAL-PASS', `${label}: ${JSON.stringify(r.items.P4)}`);
   }
   const w = world();
   assert.equal((await run(w, 'before', { only: ['P4'] })).verdict, 'PARTIAL-PASS', 'review optional 2: a subset that passes is never GO');
@@ -395,4 +401,57 @@ test('T4: the real gh port only runs `gh api <route>`: no method, no field, no i
     assert.ok(!args.some(a => /^(-X|--method|-f|-F|--field|--raw-field|--input)$/.test(a)), JSON.stringify(args));
   }
   assert.ok(seen.some(a => a.at(-1) === `repos/${REPO}/rules/branches/main?per_page=100&page=1`));
+});
+
+// ---- Task 04f9b91b (Fable s7-landing-gaps 11-22, 改动 3): S7, #292 next to the scaffold ruleset ----
+// The scaffold ruleset as read back live (27843120): deletion, non_fast_forward, a pull request, six hosted-* pinned to GitHub Actions and
+// kooyumi-work-admission pinned to this App; in S7 its bypass list holds App 5368905, always. A disabled old ruleset on the default branch
+// counts for nothing.
+const SCAFFOLD = 27843120, OLD = 23000001;
+const HOSTED = ['hosted-ci-suites', 'hosted-clued-cloud-tests', 'hosted-migration-verify', 'hosted-gitleaks', 'hosted-trivy', 'hosted-contract-placement'];
+const THE_APP = [{ actor_id: APP, actor_type: 'Integration', bypass_mode: 'always' }];
+function s7World() {
+  const w = world();
+  w.rulesets.set(SCAFFOLD, { id: SCAFFOLD, name: 'hosted scaffold (main)', target: 'branch', enforcement: 'active',
+    conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } }, bypass_actors: structuredClone(THE_APP),
+    rules: [{ type: 'deletion' }, { type: 'non_fast_forward' }, { type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
+      { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true,
+        required_status_checks: [...HOSTED.map(context => ({ context, integration_id: GHA })), { context: 'kooyumi-work-admission', integration_id: APP }] } }] });
+  w.rulesets.set(OLD, { id: OLD, name: 'old main policy', target: 'branch', enforcement: 'disabled', conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+    bypass_actors: [], rules: [{ type: 'pull_request', parameters: {} }] });
+  // hosted-required.yml runs on pushes to clued-train/staging: the hosted-* on the two newest S
+  for (const s of [w.S[0], w.S[1]]) for (const n of HOSTED) w.add(s, n);
+  return w;
+}
+test('S7 C1 (must-red): #292 and the scaffold ruleset enabled, the guard ruleset created, an old one disabled, the scaffold bypass exactly the App -> --before GO', async () => {
+  const w = s7World();
+  const r = await run(w, 'before');
+  assert.equal(r.verdict, 'GO', JSON.stringify(r.items));
+  assert.equal(r.items.P4.id, FF);
+  assert.deepEqual(r.items.P1.names, [...FOUR, ...HOSTED].sort(), 'kooyumi-work-admission pinned to this App is never waited for on S');
+  assert.equal(w.snapshot.required.length, 10, 'the snapshot is still #292 alone');
+});
+
+test('S7 C2 (must-red): the scaffold bypass list not exactly the App, or push lacking more than the save -> NO-GO naming it', async () => {
+  const wrong = [];
+  const NOT_THE_APP = `OTHER_RULESET_BYPASS_NOT_EXACTLY_THE_APP:${SCAFFOLD}`;
+  for (const [label, change, item, code] of [
+    ['bypass list empty (as read back live 11-22)', w => { w.rulesets.get(SCAFFOLD).bypass_actors = []; }, 'P4', NOT_THE_APP],
+    ['the App for pull requests only', w => { w.rulesets.get(SCAFFOLD).bypass_actors = [{ ...THE_APP[0], bypass_mode: 'pull_request' }]; }, 'P4', NOT_THE_APP],
+    ['the App and a role', w => { w.rulesets.get(SCAFFOLD).bypass_actors.push({ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }); }, 'P4', NOT_THE_APP],
+    ['bypass list not shown', w => { delete w.rulesets.get(SCAFFOLD).bypass_actors; }, 'P4', NOT_THE_APP],
+    ['stage 10 says push lacks the scaffold too', w => { w.status.train.last.landing.missing.push(`ruleset_app_cannot_bypass:${SCAFFOLD}`); }, 'P3', 'PUSH_LACKS_MORE_THAN_THE_SAVE'],
+    ['stage 10 says push lacks the guard ruleset too', w => { w.status.train.last.landing.missing.unshift('independent_ruleset_missing'); }, 'P3', 'PUSH_LACKS_MORE_THAN_THE_SAVE'],
+    ['stage 10 wrote no missing items', w => { delete w.status.train.last.landing.missing; }, 'P3', 'PUSH_LACKS_NOT_READ'],
+  ]) {
+    const w = s7World(); change(w);
+    const r = await run(w, 'before');
+    if (r.verdict !== 'NO-GO' || !failedOf(r, item).includes(code) || w.snapshot !== null) wrong.push([label, r.verdict, failedOf(r, item)]);
+  }
+  assert.deepEqual(wrong, [], 'every case NO-GO naming its code, no snapshot');
+  const w = s7World(); w.status.train.last.landing.missing.push(`ruleset_app_cannot_bypass:${SCAFFOLD}`);
+  assert.deepEqual((await run(w, 'before', { only: ['P3'] })).items.P3.lacks, [`ruleset_app_cannot_bypass:${SCAFFOLD}`], 'the extra item named');
+  // --after: P6 judges the route; P3 does not read the missing items there
+  const after = s7World(); after.status.train.last.landing = { route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } };
+  assert.equal((await run(after, 'after', { only: ['P3'] })).items.P3.pass, true);
 });
