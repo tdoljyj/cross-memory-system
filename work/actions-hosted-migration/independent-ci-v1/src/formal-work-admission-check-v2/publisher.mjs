@@ -44,12 +44,20 @@
 //     job id, which covers S; job-v2.mjs#frontJobIdsV2): the non-front run H normally has first does not refuse it (§41.4);
 //   - a front job's SETTLED result names, from the same read, the scans H already carries (headScans, resident DESIGN §75): the
 //     resident runs none of them again when S's tree is H's tree. A read that does not fit names none; it never changes the ending.
+//
+// Merged at this head (field defect 2026-11-23, PR #1238 and #1239): when this check is the PR's last required one, GitHub's
+// auto-merge merges the PR within seconds of the green, and the verification after the write then fails (the PR is not open any
+// more). Before anything is withdrawn, the PR and its merge commit are read: merged at exactly this job's head on this job's base
+// (train-rules.mjs#mergedAtHead, the one statement of it) and the green read back as the one success -> SETTLED with settledMerged,
+// never withdrawn: the green did what it was for (the same rule as stage 8's merged-as-tested). Anything else (closed without a
+// merge, merged at another head or on another first parent, squashed, a read that fails, a green that cannot be confirmed) is
+// withdrawn as before. The resident then ends the batch at its next safe point, where the live read shows the PR closed.
 import { prepareNativePublication, nativePublicationNoPostProof } from '../../../../../scripts/ci/clued-independent-publication-port.mjs';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../proof.mjs';
 import { freshStamp } from '../clock-skew.mjs';
 import { validateJobV2, subjectOfV2, admissionEffectKeyV2, admissionExternalIdV2, claimGeneration, sameClaimGeneration, MAX_ATTEMPT_V2, isTrainFrontJobV2, frontJobIdsV2 } from '../job-v2.mjs';
-import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob } from '../independent-control-checks-v2/train-rules.mjs';
+import { TRAIN_MODES, TRAIN_MODE_DEFAULT, trainFrontRefused, trainFrontRefusal, projectedHolderForJob, mergedAtHead } from '../independent-control-checks-v2/train-rules.mjs';
 import { fullAdmissionFailureV2, admittedFactsMatchJobV2 } from '../full-admission-v2.mjs';
 import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, headScansOf, ofJobIds, readPublishedChecks } from '../published-on-github-v2.mjs';
 import { scanStartSubjectLine } from '../scan-start-v1/subject.mjs';
@@ -192,6 +200,15 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   }
   async function readback(job, externalId, id, conclusion) { const m = await inventory(job, externalId); check(m.length === 1 && m[0].id === id && m[0].status === 'completed' && m[0].conclusion === conclusion, 'NATIVE_CHECK_READBACK_UNCONFIRMED'); return m[0]; }
   async function transition(key, phase, next, details) { try { return await journal.transition(key, phase, next, details); } catch { return null; } }
+  // GitHub's own answer for the PR now: the merge commit's sha when it merged the PR at exactly this job's head on this job's base
+  // (train-rules.mjs#mergedAtHead), else null (also when it cannot be read: no new fact, the withdrawal goes on as before).
+  async function mergedAtThisHead(job) {
+    try {
+      const pull = await github.readPullRequest(job.pr);
+      const mergeCommit = /^[a-f0-9]{40}$/.test(pull?.merge_commit_sha ?? '') ? await github.readGitCommit(pull.merge_commit_sha) : null;
+      return mergedAtHead({ pull, mergeCommit, job }) ? pull.merge_commit_sha : null;
+    } catch { return null; }
+  }
   async function revoke({ job, key, externalId, known, phase, cause, sideEffects, admissionDiagnostic }) {
     const revKey = digest({ action: 'native-work-admission-revoke/2', effectKey: key, checkRunId: known.id }); let revPhase = 'intent', logged = false;
     try { const m = await inventory(job, externalId); check(m.length === 1 && m[0].id === known.id, 'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED'); }
@@ -346,6 +363,24 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         return { status: 'BLOCKED', effectKey: key, reason: 'native_publication_not_sent', sideEffects: 0, productionAuthorized: false };
       }
       if (sent && !known) { try { const m = await inventory(job, externalId); if (m.length === 1) known = m[0]; } catch { /* read-only discovery cannot prove a missing POST */ } }
+      // Merged at this head: the green stands (header).
+      if (sent && known) {
+        const mergeSha = await mergedAtThisHead(job);
+        let settledNow = false;
+        if (mergeSha) {
+          try {
+            await readback(job, externalId, known.id, 'success');
+            await journal.transition(key, 'sent', 'settled', { checkRunId: known.id, externalId, conclusion: 'success', settledMerged: mergeSha,
+              nativeObservationBeforeSha256: before.facts.observationSha256, bindingSha256: before.bindingSha256 });
+            settledNow = true;
+          } catch { /* not confirmed: compensate as before */ }
+        }
+        // Settled is settled: the log after it is best-effort and can never turn it into a withdrawal.
+        if (settledNow) {
+          try { record('native_check_settled_merged', { jobId: job.id, effectKey: key, checkRunId: known.id, mergeSha, cause: safe(e) }); } catch { /* best-effort */ }
+          return settled({ status: 'SETTLED', effectKey: key, checkRunId: known.id, nativeObservationBeforeSha256: before.facts.observationSha256, sideEffects, productionAuthorized: production, scheduling, settledMerged: true });
+        }
+      }
       if (sent && known) return revoke({ job, key, externalId, known, phase, cause: safe(e), sideEffects, admissionDiagnostic: diagnosticOf(e) });
       await transition(key, phase, sent ? 'uncertain' : 'not_sent', { reason: safe(e), externalId });
       return { status: sent ? 'UNCERTAIN' : 'BLOCKED', effectKey: key, reason: safe(e), sideEffects, productionAuthorized: false };
