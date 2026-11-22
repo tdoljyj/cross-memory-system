@@ -148,7 +148,7 @@ test('one node (status.json without node): no reads, no lock; its own queued com
   assert.deepEqual(t.d.want(pull(1), { ...s, paused: true }, NOW, base).description, '停摆（PAUSED）：执行器已暂停，等 Owner 恢复');
   assert.deepEqual(t.d.want(pull(2), s, NOW, { state: 'success', description: '已完成：常驻执行器跑完八段，检查已发布' }).kind, 'result');
   assert.equal(t.d.want(pull(3), s, NOW, { state: 'pending', description: '已提议，等待执行器读取', weak: true }), null, 'not its commit: nothing (only its own commits)');
-  assert.equal(t.d.want(pull(4, { eligible: false }), s, NOW, { state: 'failure', description: '落后 main 2 个提交：请合入最新 main 并推送' }).kind, 'hint', 'review NIT 3: the hint stays');
+  assert.equal(t.d.want(pull(4, { eligible: false }), s, NOW, { state: 'pending', description: '落后 main 2 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）' }).kind, 'hint', 'review NIT 3: the hint stays');
 });
 
 test('the take-over check at a probe that confirms the role: another node on duty locks this one through the intake pause (C6)', async () => {

@@ -83,19 +83,17 @@ The resident's PR page used to tell every behind PR "请合入最新 main 并推
 after each merge, so N queued PRs produced O(N²) merge-only heads (Task
 `570bd3e3` reached GenericWorkClaim §10.4's 40 heads in 24 h on 2026-11-15; #1123
 alone had three heads that only took main in). Now
-(`work/independent-ci-resident-v1/src/pr-status.mjs`) a behind PR that a train
-run of the last 30 minutes saw is not the front is told to wait; the front is
-still told to take main in. Each PR then needs at most one merge-only head, at
-its turn, and that head is a plain merge: O(N).
+(`work/independent-ci-resident-v1/src/pr-status.mjs`, Task `484bddac`) the page
+never asks for a hand merge: every behind head gets one pending line, "落后 main
+N 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）", whatever the
+train summary says, and the robot (`clued-front-main-merge`) takes main into a
+PR only when it is the front. Each PR then needs at most one merge-only head, at
+its turn, and that head is a plain merge: O(N). There is no degraded case that
+asks every behind PR to take main in any more (that fallback, used whenever the
+summary was stale or named no front, was where the 34 hand merges came from).
 
-Degraded case: when no train run of the last 30 minutes named a front (the
-train is stopped, its facts are unreadable or stale), every behind PR is asked
-to take main in, as before, and O(N²) heads come back for that time. That is
-the safe direction: a PR is never left waiting for a front that nobody computes.
-
-Taking main into the front is still a new head under `strict`. Owner Decisions
-`9e2511fe` item 3 and `78a3052f` item 2 already authorize a robot to update a
-BEHIND front's branch (`clued-merge-executor`, update-branch, merge method;
-protected-layer PRs not yet); it is not implemented in this change. §10.4's 40
-heads per Task per 24 h needs no change: at most one merge-only head per merge
-remains, and the cap is there to stop runaway loops.
+Taking main into the front is still a new head under `strict`; the robot does it
+under Owner Decisions `9e2511fe` item 3 and `78a3052f` item 2, protected-layer
+PRs included since 2026-11-22 (resident DESIGN §65.6, §80). §10.4's 40 heads per
+Task per 24 h needs no change: at most one merge-only head per merge remains,
+and the cap is there to stop runaway loops.

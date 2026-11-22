@@ -195,7 +195,7 @@ const boardStatus = (fn, now) => { const b = new StatusBoard({ clock: () => now 
 test('the PR page text per head: running stage, queue position, outcome, HALT, stale; generic texts are weak', () => {
   const now = Date.parse('2026-10-22T09:00:00Z');
   const pull = (o = {}) => ({ pr: 7, headSha: H(7), eligible: true, hint: null, behindBy: 0, ...o });
-  assert.deepEqual(describe({ pull: pull({ eligible: false, hint: 'merge-main', behindBy: 4 }), status: null, now }).state, 'failure');
+  assert.deepEqual(describe({ pull: pull({ eligible: false, hint: 'merge-main', behindBy: 4 }), status: null, now }).state, 'pending');
   assert.match(describe({ pull: pull({ eligible: false, hint: 'push-any-commit' }), status: null, now }).description, /推一个任意提交即可/);
   assert.equal(describe({ pull: pull({ eligible: false, hint: 'compare-unavailable' }), status: null, now }), null);
   const s = fn => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 } }); fn(b); }, now);
@@ -275,7 +275,7 @@ test('the reporter writes a status only when it changes, never over a required c
   const posts = () => calls.filter(a => a.includes('POST'));
   assert.deepEqual(await reporter.pass({ pulls, status }), { posted: 2, toasts: 0, collision: false, stalled: false });
   const first = posts();
-  assert.deepEqual(first.map(a => a[a.indexOf('-f') + 1]), ['state=success', 'state=failure']);
+  assert.deepEqual(first.map(a => a[a.indexOf('-f') + 1]), ['state=success', 'state=pending']);
   assert.ok(first.every(a => a.includes(`context=${PR_STATUS_CONTEXT}`) && a.includes(`repos/${REPO}/statuses/${a[4].split('/').pop()}`)));
   assert.ok(first.every(a => !a.some(x => /comments/.test(x))), 'never a comment');
   assert.equal((await reporter.pass({ pulls, status })).posted, 0, 'unchanged: nothing written');
@@ -611,20 +611,25 @@ test('node governance: companion-main.mjs hands the reporter the node status', a
   assert.ok(src.includes("import { NODE_STATUS_FILE, readCapacityAlert, resourceHoldAlert } from './host-capacity.mjs';"), 'companion-main.mjs imports the status read');
 });
 
-// Defect C (2026-11-15): strict means only the PR about to merge must contain main. Telling every behind PR to merge main
-// after each merge made N queued PRs push O(N^2) merge-only heads (Task 570bd3e3 hit its 40 heads/24 h). A behind PR that
-// is not the train's front (seen in the last 30 minutes) is told to wait; the front, or any PR when no front is known, is
-// still told to take main in.
-test('a behind PR that is not the front is not asked to merge main; the front is', () => {
-  const now = Date.parse('2026-11-15T12:00:00Z');
+// Task 484bddac (FABLE-front-merge-stale-summary §2.3): the page never asks anyone to merge main by hand. A behind head gets one pending
+// sentence whatever the train summary says: stale (defect 甲), no front in it (乙), another PR named, or this PR named. Before the fix the
+// first two said "请合入最新 main 并推送" (a failure): 34 hand merges of main came from it. A conflict is GitHub's own DIRTY, not this line.
+test('484bddac: a behind PR gets the same pending line under every train summary, never "请合入"', () => {
+  const now = Date.parse('2026-11-22T02:00:00Z');
   const behind = pr => ({ pr, headSha: H(pr), eligible: false, hint: 'merge-main', behindBy: 3 });
   const status = (front, at = now - 60_000) => ({ writtenAt: now, current: null, pending: [], recent: [],
-    train: { enabled: 'shadow', last: { at, mode: 'shadow', wouldDo: 'FRONT_NEEDS_MAIN_MERGE', front: { pr: front, headSha: H(front) } } } });
-  const waiting = describe({ pull: behind(8), status: status(7), now });
-  assert.equal(waiting.state, 'pending');
-  assert.match(waiting.description, /落后 main 3 个提交：排队中，不必现在合 main/);
-  assert.equal(describe({ pull: behind(7), status: status(7), now }).state, 'failure', 'the front takes main in');
-  assert.match(describe({ pull: behind(7), status: status(7), now }).description, /请合入最新 main 并推送/);
-  assert.equal(describe({ pull: behind(8), status: null, now }).state, 'failure', 'no front known: as before');
-  assert.equal(describe({ pull: behind(8), status: status(7, now - 31 * 60_000), now }).state, 'failure', 'a stale front is not known');
+    train: { enabled: 'on', last: { at, mode: 'on', wouldDo: front ? 'FRONT_NEEDS_MAIN_MERGE' : 'NO_FRONT', front: front ? { pr: front, headSha: H(front) } : null } } });
+  const LINE = '落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）';
+  const inputs = {
+    'summary stale': status(7, now - 31 * 60_000),
+    'no front in the summary': status(null),
+    'summary names another PR': status(7),
+    'summary names this PR': status(8),
+    'no status at all': null,
+  };
+  for (const [name, s] of Object.entries(inputs)) {
+    const d = describe({ pull: behind(8), status: s, now });
+    assert.deepEqual(d, { state: 'pending', description: LINE }, name);
+    assert.equal(JSON.stringify(d).includes('请合入'), false, name);
+  }
 });
