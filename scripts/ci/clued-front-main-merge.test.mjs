@@ -295,11 +295,16 @@ function train() {
     const of = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})(\/check-runs|\/status)?(?:\?|$)/.exec(route), h = of && w.heads.get(of[1]);
     if (method === 'GET' && of && !h) return reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && of?.[2] === '/check-runs') return reply({ total_count: h.checks.length, check_runs: h.checks });
-    if (method === 'GET' && of?.[2] === '/status') return reply({ state: 'pending', statuses: h.statuses });
+    // Lists come 100 a page with the count of all of them, as GitHub answers.
+    const paged = list => list.slice((Number(/[?&]page=([0-9]+)/.exec(route)?.[1] ?? 1) - 1) * 100).slice(0, 100);
+    if (method === 'GET' && of?.[2] === '/status') return reply({ state: 'pending', total_count: h.statuses.length, statuses: paged(h.statuses) });
     if (method === 'GET' && of) return reply({ sha: h.sha, parents: h.parents.map(s => ({ sha: s })), committer: { login: h.parents.length === 2 ? 'web-flow' : 'holder' },
       commit: { committer: { date: iso(h.at) }, verification: { verified: h.parents.length === 2 } } });
     const runs = /^\/repos\/o\/r\/actions\/runs\?.*head_sha=([0-9a-f]{40})/.exec(route);
-    if (method === 'GET' && runs) return reply({ workflow_runs: w.heads.get(runs[1])?.runs ?? [] });
+    if (method === 'GET' && runs) {
+      const all = w.heads.get(runs[1])?.runs ?? [];
+      return reply({ total_count: all.length, workflow_runs: all.slice((Number(/[?&]page=([0-9]+)/.exec(route)?.[1] ?? 1) - 1) * 100).slice(0, 100) });
+    }
     if (method === 'GET' && route === '/repos/o/r/installation') return reply({ id: 42 });
     if (method === 'POST' && route === '/app/installations/42/access_tokens') return reply({ token: 'ghs_app', permissions: body.permissions }, 201);
     const update = /^\/repos\/o\/r\/pulls\/([0-9]+)\/update-branch$/.exec(route), u = update && w.prs.get(Number(update[1]));
@@ -586,5 +591,37 @@ test('the admission gate admits this workflow on a push to main, on the schedule
     assert.equal(outcome.admitted, true, `${eventName}: ${JSON.stringify(outcome.reasons)}`);
     assert.equal(outcome.verdict, 'NOT_APPLICABLE', eventName);
     assert.deepEqual(calls, [], eventName);
+  }
+});
+
+// Second review of c1062091: statuses and workflow runs were read one page of 100. With more on one head and the one still
+// under way beyond the first page, the front was judged idle early and one more pull request was brought up.
+test('what is under way on the front is read to the end: beyond 100 statuses or workflow runs, and nothing is decided beyond ten pages', async () => {
+  // The front: contains main for 20 minutes, required checks not green yet; whether it is idle hangs on what is still under way.
+  const front = () => {
+    const w = scene0823();
+    Object.assign(w.heads.get(sha(0x1225)), { contains: T, at: w.now - 20 * MIN, statuses: [] }); w.prs.get(1225).updatedAt = w.now - 20 * MIN;
+    return w;
+  };
+  let w = front();
+  assert.deepEqual([(await w.run()).result, w.brought()], ['merged', [1156]], 'with nothing under way it is idle');
+  // 100 finished workflow runs, then the one still running.
+  w = front();
+  w.heads.get(sha(0x1225)).runs = [...Array.from({ length: 100 }, (_, i) => ({ id: i + 1, status: 'completed', conclusion: 'success' })), { id: 101, status: 'in_progress', conclusion: null }];
+  let r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  // 100 settled statuses, then the resident's pending one.
+  w = front();
+  w.heads.get(sha(0x1225)).statuses = [...Array.from({ length: 100 }, (_, i) => ({ context: `info-${i}`, state: 'success', description: '' })),
+    { context: 'resident-queue/turing', state: 'pending', description: '排队中' }];
+  r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  // Exactly ten pages are read to the end; one more than ten pages is not known in full.
+  for (const [list, make] of [['runs', i => ({ id: i + 1, status: 'completed', conclusion: 'success' })], ['statuses', i => ({ context: `info-${i}`, state: 'success', description: '' })]]) {
+    w = front(); w.heads.get(sha(0x1225))[list] = Array.from({ length: 1000 }, (_, i) => make(i));
+    assert.deepEqual([(await w.run()).result, w.brought()], ['merged', [1156]], `${list}: ten full pages, all settled, idle`);
+    w = front(); w.heads.get(sha(0x1225))[list] = Array.from({ length: 1001 }, (_, i) => make(i));
+    r = await w.run();
+    assert.equal(r.result, 'skipped', `${list}: ${JSON.stringify(r)}`); assert.deepEqual(w.brought(), [], list);
   }
 });
