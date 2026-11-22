@@ -3,7 +3,7 @@
 // trusted base checkout with --test-reporter=<this file> and writes one JSON
 // line per event it keeps:
 //   {"type":"fail","file":<abs>,"path":[names...],"failure_type":...,"fingerprint":...}
-//   {"type":"pass","file":<abs>,"path":[names...]}
+//   {"type":"pass","file":<abs>,"path":[names...],"skip":true?}   (skip only for a skipped test)
 //   {"type":"summary","counts":{...},"success":bool}   (the run's own summary)
 // Every test:fail counts: a test, a suite, a hook (failure_type hookFailed), a
 // parent that throws after its subtests, a file that fails to load. So does
@@ -76,7 +76,9 @@ export default async function* reporter(source) {
       yield `${JSON.stringify({ type: 'fail', file: data.file ?? null, path: [data.file ? '<async activity after the test ended>' : '<run>', test],
         failure_type: 'asyncActivityAfterTest', fingerprint: failureFingerprint({ failureType: 'asyncActivityAfterTest', message }) })}\n`;
     } else if (event.type === 'test:pass') {
-      yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data) })}\n`;
+      // A skipped test is reported as passed by Node; it did not run (a failure run alone again must run).
+      const skipped = data.skip !== undefined && data.skip !== false;
+      yield `${JSON.stringify({ type: 'pass', file: data.file ?? null, path: pathOf(data), ...(skipped ? { skip: true } : {}) })}\n`;
     } else if (event.type === 'test:summary' && data.file === undefined) {
       yield `${JSON.stringify({ type: 'summary', counts: data.counts ?? null, success: data.success === true })}\n`;
     }
