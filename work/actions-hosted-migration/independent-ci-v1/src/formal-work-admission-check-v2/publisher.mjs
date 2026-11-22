@@ -72,6 +72,9 @@ import { withdrawalTitle, withdrawalNote, verificationUnavailable, admissionVeri
 export const VERIFY_REREAD_DELAYS_MS = Object.freeze([10_000, 30_000, 60_000]);
 export const VERIFY_WAIT_WINDOW_MS = 180_000;
 export const VERIFY_REVOKE_RESERVE_MS = 120_000;
+// A withdrawal whose confirmation failed is read again on GitHub: at once, then after these waits (revoke#withdrawn). Reads only,
+// inside the same live deadline as every other read; when they run out the result is UNCERTAIN as before.
+export const WITHDRAWN_REREAD_DELAYS_MS = Object.freeze([1_000, 3_000]);
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const ROLE = 'work-admission', CHECK_NAME = 'kooyumi-work-admission', APP_ID = 5368905, REPO = 'tdoljyj/cross-memory-system';
 const DEFINITION = Object.freeze({ name: CHECK_NAME, appId: APP_ID });
@@ -209,8 +212,19 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return mergedAtHead({ pull, mergeCommit, job }) ? pull.merge_commit_sha : null;
     } catch { return null; }
   }
+  // GitHub's own answer for a withdrawal whose confirmation did not go through (field evidence 2026-11-23, PR #1238: the negative
+  // PATCH answered 200 and a step after it said "unconfirmed"; FABLE-resident-halt-merge-race-20261123 B): the head's complete
+  // inventory is read again, at most WITHDRAWN_REREAD_DELAYS_MS.length + 1 times (the list can lag the PATCH), and the withdrawal
+  // stands when this effect's one check is there completed/failure. Never throws; a read that fails or still shows another
+  // conclusion is "not confirmed", and so is a lost lease (no wait and no read past it). Asked only once the PATCH was sent.
+  async function withdrawn(job, externalId, id) {
+    for (const delay of [0, ...WITHDRAWN_REREAD_DELAYS_MS]) {
+      try { assertLive(); if (delay) await sleep(delay); await readback(job, externalId, id, 'failure'); return true; } catch { /* next read */ }
+    }
+    return false;
+  }
   async function revoke({ job, key, externalId, known, phase, cause, sideEffects, admissionDiagnostic }) {
-    const revKey = digest({ action: 'native-work-admission-revoke/2', effectKey: key, checkRunId: known.id }); let revPhase = 'intent', logged = false;
+    const revKey = digest({ action: 'native-work-admission-revoke/2', effectKey: key, checkRunId: known.id }); let revPhase = 'intent', logged = false, patching = false, said = false;
     try { const m = await inventory(job, externalId); check(m.length === 1 && m[0].id === known.id, 'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED'); }
     catch { return { status: 'UNCERTAIN', reason: 'NEGATIVE_COMPENSATION_IDENTITY_UNCONFIRMED', effectKey: key, sideEffects, productionAuthorized: false }; }
     try {
@@ -221,14 +235,25 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
     try {
       assertLive(); sideEffects++;
       const unavailable = unverified(cause, admissionDiagnostic);
+      patching = true;
       const patched = await github.revokeCheck(known.id, { status: 'completed', conclusion: 'failure', output: { title: withdrawalTitle('Work admission', cause, unavailable), summary: `Reconcile Native admission check ${key}; ${cause}.${withdrawalNote(cause, unavailable)} No Native ticket or Receipt is asserted.` } });
       check(identity(patched, job, externalId) && patched.status === 'completed' && patched.conclusion === 'failure', 'NEGATIVE_COMPENSATION_UNCONFIRMED'); await readback(job, externalId, known.id, 'failure');
       if (logged) await journal.transition(revKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
       const current = await journal.read(key); check(['sent', 'uncertain', 'settled'].includes(current?.state), 'NEGATIVE_COMPENSATION_STATE_UNCONFIRMED');
       await journal.transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}) });
-      record('native_check_revoked', { effectKey: key, checkRunId: known.id, cause });
+      said = true; record('native_check_revoked', { effectKey: key, checkRunId: known.id, cause });
       return { status: 'REVOKED', reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false };
     } catch {
+      // The withdrawal is a fact on GitHub, not in this node's journal or log: when GitHub shows the check withdrawn, the result is
+      // REVOKED whichever step failed above (the PATCH's answer, its read-back, a journal or log write). The local records are then
+      // brought as far as they go, best effort; none of them can turn a confirmed withdrawal into UNCERTAIN.
+      if (patching && await withdrawn(job, externalId, known.id)) {
+        if (revPhase === 'sent') await transition(revKey, 'sent', 'settled', { checkRunId: known.id, conclusion: 'failure' });
+        let current = null; try { current = await journal.read(key); } catch { /* best effort */ }
+        if (['sent', 'uncertain', 'settled'].includes(current?.state)) await transition(key, current.state, 'revoked', { checkRunId: known.id, externalId, reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}) });
+        if (!said) try { record('native_check_revoked', { effectKey: key, checkRunId: known.id, cause, confirmedByReread: true }); } catch { /* best effort */ }
+        return { status: 'REVOKED', reason: cause, ...(admissionDiagnostic ? { admissionDiagnostic } : {}), effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false };
+      }
       if (revPhase === 'sent') await transition(revKey, 'sent', 'uncertain', { checkRunId: known.id, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' });
       if (phase === 'sent') await transition(key, 'sent', 'uncertain', { checkRunId: known.id, externalId, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' });
       return { status: 'UNCERTAIN', effectKey: key, checkRunId: known.id, sideEffects, productionAuthorized: false, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' };
