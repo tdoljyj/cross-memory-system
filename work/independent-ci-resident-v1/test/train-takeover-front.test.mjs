@@ -1827,3 +1827,24 @@ test('parked-front N8: the TRAIN_FRONT_TAKES_OVER report makes no early stage 10
   assert.deepEqual((await f.receipts.latest(['train-front-ended'], 5)).map(r => r.value.body.frontOutcome.code), ['TRAIN_FRONT_TAKES_OVER']);
   assert.equal(f.exec.trainUrgent, false, 'not urgent');
 });
+
+// ---- bc982192 parked-front v2, review 2 must-fix 1: holdsFront's frontRetry branch (DESIGN §84 item 3: busy is not an end) ----
+// H1: the T3b scene. The new S2 is refused as busy while the batch (H, S) is in its own stage-8 try, so it is kept as frontRetry.
+// Nothing here ends (H, S2): it is offered again. So no end of S2 is reported: a report would make stage 10 count S2 ended (another of
+// the head's front attempts used up, or a batch of several taken over by a new S). Offered again once the try is over, it is taken; the
+// only end reported is the old batch's (TRAIN_FRONT_TAKES_OVER).
+test('parked-front H1: a front batch refused as busy is kept for frontRetry and not reported ended; taken later, one report in all', async t => {
+  const { f, next, S2 } = await parkedFront(t);
+  let inTry = false, offered;
+  f.exec.frontProofShort = subject => { inTry = subject?.testSha === S && offered === undefined; return inTry; };
+  f.exec.trainMaintenance = async () => { if (!inTry) return null; inTry = false; offered = await f.exec.enqueueFront(next); return null; };
+  for (let i = 0; i < 40 && offered === undefined; i++) { await f.exec.tick(); f.advance(5 * MIN); }
+  assert.equal(offered, null, 'refused as busy');
+  assert.equal(f.exec.frontRetry?.testSha, S2, 'kept to offer again');
+  const ended = async () => (await f.receipts.latest(['train-front-ended', 'train-front-outcome'], 10)).map(r => [r.value.body.frontOutcome.testSha, r.value.body.frontOutcome.code]);
+  assert.deepEqual(await ended(), [], 'busy is not an end');
+  assert.equal(f.exec.trainFrontOutcome?.testSha === S2, false);
+  assert.notEqual(await f.exec.enqueueFront(next), null, 'taken once the try is over');
+  assert.equal(f.queue.row(910).current.testSha, S2);
+  assert.deepEqual(await ended(), [[S, 'TRAIN_FRONT_TAKES_OVER']], 'one report in all: the old batch\'s');
+});

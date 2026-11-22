@@ -1445,3 +1445,34 @@ test('parked-front N7: number 2 of an S whose automatic attempt 2 is still pendi
   for (let n = 0; n < 3; n++) { f.advance(10 * MIN); await f.exec.tick(); }
   assert.deepEqual(await endedOf(f), [[884, S, 2, 'BRIDGE_TRANSPORT_TIMEOUT', false]]);
 });
+
+// ---- bc982192 parked-front v2, review 2 must-fix 1: holdsFront's live-row branch (DESIGN §84 item 2: a release that runs the same S
+// again is not an end) ----
+// H2: the A2 scene. Stage 10's front number 2 is released for the node role at stage 1; the row stays queued with (H, S) and runs it
+// again. That release passes afterBatch but is no end: nothing is reported (a report would make stage 10 count the batch ended and open
+// the next one while this one still runs). Stage 10 naming the same (S, 2) again meanwhile is the dedup in enqueueFront: the row still
+// holds (H, S), so nothing is reported there either. The batch then passes: still no report (a success is not an end to report).
+test('parked-front H2: a front batch released with its row still holding (H, S) is not reported ended, nor is a dedup of it', async t => {
+  const stages = { 1: notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE_HERE) };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...FRONT1, attempt: 2 } }, 1), m => answer(m, DONE, 0)];
+  const e = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens front number 2
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_ADMITTED', 'NODE_ROLE_NOT_HELD'], JSON.stringify(r));
+  const row = f.queue.row(884);
+  assert.deepEqual([row?.current?.testSha, row?.current?.frontAttempt], [S, 2], 'the row still holds (H, S)');
+  const ended = async () => (await f.receipts.latest(['train-front-ended', 'train-front-outcome'], 10)).map(x => x.value.body.frontOutcome.code);
+  assert.deepEqual(await ended(), [], 'a release that runs the same S again is not an end');
+  f.exec.trainUrgent = false;
+  assert.equal(await f.exec.enqueueFront({ ...FRONT1, attempt: 2 }), null, 'the same (S, 2) is in already');
+  assert.deepEqual(await ended(), [], 'its row still holds (H, S): the dedup reports nothing');
+  assert.equal(f.exec.trainUrgent, false);
+  delete stages[1];
+  const ranBefore = e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
+  for (let k = 0; k < 10 && e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length === ranBefore; k++) { f.advance(11 * MIN); await f.exec.tick(); }
+  assert.ok(e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length > ranBefore, 'the row runs (H, S) again');
+  assert.deepEqual(await ended(), []);
+});
