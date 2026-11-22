@@ -1,0 +1,19 @@
+{
+  "schema": "clued.agent-contract-session-cap-in-hand-successor/1",
+  "source_version": 61,
+  "target_version": 62,
+  "source_document_normalized_sha256": "4f2113ec6d617326c8d53c57137792752d366ec80cb7ab7ae781c5c79d1f0c34",
+  "target_document_normalized_sha256": "cdc8026f18eac368c151e2b4d1e31516a50bfba7583371e5de24deec2146a4b2",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 61",
+      "after": "Contract version: 62"
+    },
+    {
+      "id": "session-cap-in-hand",
+      "before": "| `work_claim_budget_exhausted` | `limit` names the cap: live claims per session or per Binding, or a start-rate bucket (`task_claim_rate`, `binding_claim_rate`) | For a live-claim cap, finish or release a claim you hold first. For a rate bucket, read `continuation.reason` when present ([Appendix A.8](#appendix-a8)), then wait until `retry_after`, or give the Owner the `owner_request.confirm_url` the refusal carries (§6.6) and claim again once they have approved it; never claim under another Task, key or Binding to get around it ([Appendix A.8](#appendix-a8)) |",
+      "after": "| `work_claim_budget_exhausted` | `limit` names the cap: claims in hand per session (a claim whose Task has a PR the CI has confirmed open does not count) or live claims per Binding, or a start-rate bucket (`task_claim_rate`, `binding_claim_rate`) | For a live-claim cap, finish or release a claim you hold first. For a rate bucket, read `continuation.reason` when present ([Appendix A.8](#appendix-a8)), then wait until `retry_after`, or give the Owner the `owner_request.confirm_url` the refusal carries (§6.6) and claim again once they have approved it; never claim under another Task, key or Binding to get around it ([Appendix A.8](#appendix-a8)) |"
+    }
+  ]
+}

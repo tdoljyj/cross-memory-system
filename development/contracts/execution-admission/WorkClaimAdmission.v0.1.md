@@ -335,6 +335,7 @@ claim 的创建、续期、释放、接管都走现有 `clued_private` 事务模
 
 - **每 Binding 并发 claim 上限**（默认 3）：一个失控 Host 不能把所有 Task 都占了。
   - **实现（2026-10-02，Owner Decision `533a5286`，迁移 `20261002060001`）**：改为每个会话（Agent 自报的 `holder_session_ref`）最多 3 个活认领、每个 Binding 合计最多 10 个。原因：Owner 的所有 Claude Code 会话共用一个 Binding，原来的「每 Binding 3 个」会让并行会话互相挤占。会话标识是自报的，所以保留 Binding 总上限兜底；没有 `holder_session_ref` 的认领单独算一组。拒绝时 `limit` 字段写明撞到的是哪个上限。
+  - **实现（2026-11-22，Task `e642d087`，迁移 `20261122130000`）**：会话上限只数在手的认领。认领所属 Task 已有 CI 确认为 active 的 PR 绑定时不计入；持有者自己 authorize_head 写出的 `unknown` 仍计入。发放和接收交接两处口径相同。Binding 10 个的上限照旧数全部活认领。会话上限的拒绝回执多带 `delivered`（本会话已交付几条）。
 - **每 claim CI 分钟上限**（原设计）：`admission-gate` 在放行重任务前调用 `clued_work_verify` 并上报本次预计分钟数；超出上限返回 REJECTED，重任务不启动。实际消耗由 workflow 完成后以 observed 回写（finalize）。
 - **模型 token**：claim 只记录 Agent 自报的估算，标为 `declared_unenforced`。不宣称预留。
 - （原设计）取消、失联或 UNKNOWN 时**不释放预留**；只有 finalize 或 takeover 事务才结算。没有分钟预留后不再适用。
