@@ -768,7 +768,7 @@ export class PrStatusReporter {
           if (this.stalled) break;
         }
         let extra = [];
-        if (!this.stalled && !rulesUnreadable) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
+        if (!this.stalled && !rulesUnreadable) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now, status }); } catch { extra = []; } }
         for (const x of extra) {
           const ok = !this.stalled && await write(x.headSha, x.want, x.context, `${x.context}|${x.headSha}`);
           if (!ok) continue;
