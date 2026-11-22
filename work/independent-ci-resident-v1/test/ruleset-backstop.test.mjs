@@ -9,6 +9,8 @@ import { PAUSE_CONTRACT as EXECUTOR_PAUSE } from '../src/executor.mjs';
 import { Inbox } from '../src/inbox.mjs';
 import { REQUIRED_CHECK_NAMES as SOURCE_CHECKS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
 import { APP_ID as SOURCE_APP } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
+import { rulesetFacts as sourceRulesetFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
+import { PIN_TABLE, s7Rules, scaffoldRules } from '../../actions-hosted-migration/independent-ci-v1/test/s7-rules-fixture.mjs';
 
 const rules = ({ strict = true, pinned = APP_ID, names = REQUIRED_CHECK_NAMES } = {}) => [{ type: 'deletion' },
   { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict, required_status_checks: names.map(context => ({ context, integration_id: pinned })) } }];
@@ -41,6 +43,25 @@ test('strict off without the train pauses and notifies; an unpinned or disabled 
   for (const r of [rules({ pinned: 5164952 }), rules({ names: REQUIRED_CHECK_NAMES.slice(1) }), [{ type: 'deletion' }]])
     assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode: 'off' }), { pause: false, notify: 'RULESET_NOT_PINNED' });
   for (const bad of [null, {}, 'x', [1]]) assert.deepEqual(backstopDecision({ facts: rulesFacts(bad), trainMode: 'off' }), { pause: false, notify: null });
+});
+
+// Task 04f9b91b: in S7 #292 is enabled again next to the scaffold ruleset, which pins kooyumi-admission-verified to App 5164952
+// as well. One more requirement, not another pin: the six stay pinned and nothing is told (must-red 6). The scaffold alone still
+// only notifies, never pauses (stay green).
+test('backstop: S7 rules keep the six pinned and say nothing; the scaffold alone only notifies', () => {
+  assert.deepEqual(rulesFacts(s7Rules()), { strict: true, pinned: true });
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(s7Rules()), trainMode: 'off' }), { pause: false, notify: null });
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(scaffoldRules()), trainMode: 'off' }), { pause: false, notify: 'RULESET_NOT_PINNED' });
+});
+
+// The companion and stage 8 read the same rules in two packages with two implementations (must-red 7): one table, both readers,
+// row by row, against what the row means.
+test('backstop and Source v2 agree on the pin, row by row, over one table of rules', () => {
+  for (const [name, rules, pinned] of PIN_TABLE) {
+    let source;
+    try { source = sourceRulesetFacts(rules, SOURCE_APP).requiredPinned === true; } catch (e) { if (e.code !== 'RULESET_UNREADABLE') throw e; source = false; }
+    assert.deepEqual({ name, source, backstop: rulesFacts(rules)?.pinned }, { name, source: pinned, backstop: pinned });
+  }
 });
 
 // DESIGN §65 (strict-permanent mode, Owner decision 9e2511fe): strict off is never a state to work in. With the policy's train.sweep 'audit'
