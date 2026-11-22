@@ -69,7 +69,7 @@ def frozen(text, name="legacy.yml"):
 class RunnerBudgetPolicyTests(unittest.TestCase):
     def evaluate(self, texts, baseline=None, owner_hosted=None):
         return policy.evaluate_workflows(texts, {} if baseline is None else baseline,
-                                         {} if owner_hosted is None else owner_hosted)
+                                         {} if owner_hosted is None else owner_hosted, {})
 
     def assert_pass(self, report):
         self.assertEqual(report["violations"], [], report["violations"])
@@ -287,18 +287,18 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
             debt = ({filename: policy.LEGACY_HOSTED_DEBT[filename]} if successor["kind"] == "legacy" else {})
             owner = ({filename: policy.OWNER_DECISION_HOSTED_JOBS[filename]} if successor["kind"] == "owner" else {})
-            self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner))
+            self.assert_pass(policy.evaluate_workflows({filename: text}, debt, owner, {}))
             # Full workflow identity and exact previous-map identity are both
             # mandatory. A candidate hash is never a generic hosted permit.
             changed = text.replace("    runs-on: ubuntu", "    timeout-minutes: 360\n    runs-on: ubuntu", 1)
             self.assertNotEqual(changed, text)
-            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner)["status"], "FAIL")
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner, {})["status"], "FAIL")
             changed = text.replace("jobs:\n", "jobs:\n  extra-paid-job:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo extra\n", 1)
-            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner)["status"], "FAIL")
+            self.assertEqual(policy.evaluate_workflows({filename: changed}, debt, owner, {})["status"], "FAIL")
             altered_debt, altered_owner = copy.deepcopy(debt), copy.deepcopy(owner)
             target = altered_debt if debt else altered_owner
             target[filename]["control_sha256"] = "a" * 64
-            self.assertEqual(policy.evaluate_workflows({filename: text}, altered_debt, altered_owner)["status"], "FAIL")
+            self.assertEqual(policy.evaluate_workflows({filename: text}, altered_debt, altered_owner, {})["status"], "FAIL")
     def test_hosted_executors_never_carry_a_required_check_name(self):
         # Owner Decision bc6fdad1: a same-name hosted check run counts as the
         # required check even though the ruleset pins App 5368905.
@@ -483,6 +483,63 @@ class RunnerBudgetPolicyTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())["status"], "FAIL")
 
 
+class HostedScaffoldTests(unittest.TestCase):
+    """Owner Decisions 61b65d61 and 494326b5: the hosted- copies of the required checks, pinned exactly."""
+
+    def real(self):
+        return {p.name: p.read_text(encoding="utf-8") for p in policy.WORKFLOW_DIR.glob("*.yml")}
+
+    def test_real_scaffold_is_exact_and_hosted_named(self):
+        texts = self.real()
+        report = policy.evaluate_workflows(texts)
+        self.assertEqual(report["status"], "PASS", report["violations"])
+        self.assertEqual(report["hosted_scaffold_jobs"], 7)
+        self.assertEqual(set(policy.HOSTED_SCAFFOLD_JOBS), {"hosted-required.yml"})
+        _, jobs, _ = policy.split_workflow(texts["hosted-required.yml"])
+        names = set()
+        for job_id, block in jobs.items():
+            self.assertEqual(policy.classify_route("hosted-required.yml", job_id, policy.job_fields(block))[0], "hosted")
+            names |= policy.job_check_names(job_id, policy.job_fields(block))
+        self.assertEqual(names, {"hosted-ci-suites", "hosted-clued-cloud-tests", "hosted-migration-verify",
+                                 "hosted-ci-suites-windows", "hosted-gitleaks", "hosted-trivy", "hosted-contract-placement"})
+        self.assertFalse(names & policy.REQUIRED_CHECK_NAMES)
+
+    def test_changed_renamed_moved_or_removed_scaffold_fails(self):
+        texts = self.real()
+        text = texts["hosted-required.yml"]
+        cases = {
+            "hosted scaffold job changed": text.replace("    timeout-minutes: 25\n", "    timeout-minutes: 26\n", 1),
+            "hosted scaffold workflow controls changed": text.replace("  contents: read\n\nconcurrency:", "  contents: write\n\nconcurrency:", 1),
+            "check name only": text.replace("    name: hosted-gitleaks\n", "    name: gitleaks\n", 1),
+            "must be deleted once its job leaves": text.replace("    runs-on: windows-2025\n", "    runs-on: " + SELF_HOSTED + "\n", 1),
+            "new GitHub-hosted execution is prohibited": text + job("extra", "ubuntu-24.04"),
+        }
+        for reason, changed in cases.items():
+            with self.subTest(reason=reason):
+                self.assertNotEqual(changed, text)
+                report = policy.evaluate_workflows({**texts, "hosted-required.yml": changed})
+                self.assertEqual(report["status"], "FAIL")
+                self.assertTrue(any(reason in row["reason"] for row in report["violations"]), report["violations"])
+        removed = {name: body for name, body in texts.items() if name != "hosted-required.yml"}
+        report = policy.evaluate_workflows(removed)
+        self.assertTrue(any("removed hosted scaffold job must be deleted" in row["reason"] for row in report["violations"]))
+
+    def test_scaffold_table_schema_fails_closed(self):
+        text = PREFIX + job("check", "ubuntu-24.04").replace("  check:\n", "  check:\n    name: hosted-check\n", 1)
+        exact = frozen(text)
+        self.assertEqual(policy.evaluate_workflows({"legacy.yml": text}, {}, {}, exact)["status"], "PASS")
+        for invalid in [[], {"legacy.yml": {"control_sha256": "0" * 64, "jobs": {}}},
+                        {"legacy.yml": {**exact["legacy.yml"], "extra": True}}]:
+            with self.subTest(invalid=invalid):
+                report = policy.evaluate_workflows({"legacy.yml": text}, {}, {}, invalid)
+                self.assertTrue(any("hosted scaffold" in row["reason"] for row in report["violations"]), report)
+        self.assertTrue(any("never both" in row["reason"]
+                            for row in policy.evaluate_workflows({"legacy.yml": text}, {}, exact, exact)["violations"]))
+        unnamed = PREFIX + job("check", "ubuntu-24.04")
+        report = policy.evaluate_workflows({"legacy.yml": unnamed}, {}, {}, frozen(unnamed))
+        self.assertTrue(any("check name only" in row["reason"] for row in report["violations"]), report)
+
+
 class Native617MigrationTests(unittest.TestCase):
     def test_three_primary_routes_leave_no_hosted_debt_permit(self):
         workflows = {
@@ -493,7 +550,7 @@ class Native617MigrationTests(unittest.TestCase):
         for filename, primary in workflows.items():
             self.assertNotIn(filename, policy.LEGACY_HOSTED_DEBT)
             text = (policy.WORKFLOW_DIR / filename).read_text(encoding="utf-8")
-            report = policy.evaluate_workflows({filename: text}, baseline={}, owner_hosted={})
+            report = policy.evaluate_workflows({filename: text}, baseline={}, owner_hosted={}, scaffold={})
             self.assertEqual(report["status"], "PASS", report)
             self.assertIn("handover-native-", text)
             self.assertIn("node scripts/ci/clued-handover-native-entry.mjs --check", text)
@@ -504,7 +561,7 @@ class Native617MigrationTests(unittest.TestCase):
             restored = text.replace("runs-on: " + route, "runs-on: ubuntu-24.04")
             self.assertNotEqual(restored, text)
             self.assertEqual(policy.evaluate_workflows({filename: restored}, baseline={},
-                                                      owner_hosted={})["status"], "FAIL")
+                                                      owner_hosted={}, scaffold={})["status"], "FAIL")
 
 
 if __name__ == "__main__":
