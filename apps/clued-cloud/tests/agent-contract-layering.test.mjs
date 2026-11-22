@@ -19,6 +19,7 @@ const leasePin = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v5
 const prEndRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v58-v59-map.json', import.meta.url), 'utf8'));
 const holderPreflight = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v59-v60-map.json', import.meta.url), 'utf8'));
 const servedTarget = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v60-v61-map.json', import.meta.url), 'utf8'));
+const ciJoinOnly = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v61-v62-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -32,7 +33,28 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // authorize_head omit the target branch the service decides (Task 0ca0479d).
 // Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+// The v62 successor makes the resident CI the only way into a served repository's merge queue (A.6): the holder no
+// longer joins by renewing with the merge ref, and no longer renews hourly to keep a place.
+function v61Source() {
+  assert.equal(ciJoinOnly.schema,'clued.agent-contract-ci-join-only-successor/1');
+  assert.equal(ciJoinOnly.source_version,61);assert.equal(ciJoinOnly.target_version,62);
+  assert.deepEqual(ciJoinOnly.edits.map(row=>row.id),['version','ci-join-only','no-hourly-renewal']);
+  assert.deepEqual(ciJoinOnly.edits[0],{id:'version',before:'Contract version: 61',after:'Contract version: 62'});
+  assert.equal(sha256(source),ciJoinOnly.target_document_normalized_sha256);
+  for(const edit of ciJoinOnly.edits.slice(1)) for(const text of [edit.before,edit.after])
+    assert.equal(/\n|### |<a id=/.test(text),false,`${edit.id}: the edit stays inside one A.6 line`);
+  assert.ok(ciJoinOnly.edits[1].after.includes('you do not join it yourself')&&ciJoinOnly.edits[1].after.includes('has no effect'));
+  assert.equal(ciJoinOnly.edits[2].after.includes('once an hour'),false);
+  let restored=source;
+  for(const {id,before,after} of [...ciJoinOnly.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact CI-join-only successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),ciJoinOnly.source_document_normalized_sha256);
+  return restored;
+}
 function v60Source() {
+  const source=v61Source();
   assert.equal(servedTarget.schema,'clued.agent-contract-served-target-successor/1');
   assert.equal(servedTarget.source_version,60);assert.equal(servedTarget.target_version,61);
   assert.deepEqual(servedTarget.edits.map(row=>row.id),['version','served-target']);
@@ -309,7 +331,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v61 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v62 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);

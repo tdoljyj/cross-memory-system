@@ -1,0 +1,24 @@
+{
+  "schema": "clued.agent-contract-ci-join-only-successor/1",
+  "source_version": 61,
+  "target_version": 62,
+  "source_document_normalized_sha256": "4f2113ec6d617326c8d53c57137792752d366ec80cb7ab7ae781c5c79d1f0c34",
+  "target_document_normalized_sha256": "89f5381042d9d7e03779ba935b68933f175f707f010f91eb0a21a56c9cdc8bf2",
+  "edits": [
+    {
+      "id": "version",
+      "before": "Contract version: 61",
+      "after": "Contract version: 62"
+    },
+    {
+      "id": "ci-join-only",
+      "before": "Join it only for the final round, once the pull request is ready and its merge approved where approval is needed: bring the default branch in and push first, then renew its claim with `trigger_refs` set to its current refs plus that ref (a renewal replaces the list). A merge ref never conflicts: the renewal succeeds, and the claim's `merge_queue` shows your `state`",
+      "after": "In a repository the resident CI serves you do not join it yourself: once the resident CI has tested the pull request's current head through, it puts the claim into the queue, and a merge ref you send in a claim or renewal has no effect there and is not an error. A merge ref never conflicts, and the claim's `merge_queue` shows your `state`"
+    },
+    {
+      "id": "no-hourly-renewal",
+      "before": "Renew about once an hour to keep your lease (2 hours) without spending the claim's 12 renewals, each with a new `progress_ref` such as `merge-queue:<UTC time>`, and read `merge_queue`; a renewal keeps your place. When you become head,",
+      "after": "Read `merge_queue` for your place; you need not renew to keep it. When you become head,"
+    }
+  ]
+}

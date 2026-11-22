@@ -269,7 +269,7 @@ node scripts/ci/local-verify.mjs --affected
 - **载体 runner 的注册 14 天会被移除。** 交换代理用的载体服务（TURING 上是 `clued-ci-home-win-02`）平时就是停的，而 GitHub 会移除离线超过 14 天的 runner 注册（Decision `0d3ab1a6`）。所以在主机实测（§10 P4）证明注册被移除后交换代理仍然能用之前，演练间隔要短于 14 天；证明之后，再按每月一次。
 
 - **2026-10-30 第一次演练（Z1）**：TURING→DESK 15:26Z 移交；DESK 15:31Z 生效后不久公司网络升级断网，当时没有节点当班；Owner 15:49Z 在 `/bindings` 移交回 TURING（相当于一次计划外切换，不碰任何机器），15:54Z 生效。还差：DESK 当班跑一个真实 PR，以及 DESK 联网后确认它探测到“没有角色”回到待命（Note `e34fb95e`、`e2e56148`）。
-- 移交前先看当班节点手上有没有批次（PR 页面 `resident-queue/<节点>`），有就等它合入或结束；PR 的认领要带合并位（`merge:tdoljyj/cross-memory-system:main`），否则批次会一直停在第 8 段前排队。
+- 移交前先看当班节点手上有没有批次（PR 页面 `resident-queue/<节点>`），有就等它合入或结束；合并位（`merge:tdoljyj/cross-memory-system:main`）由常驻测通后自动入队，认领自己带这个 ref 不生效；要退出，就在续期时给不含它的列表，或释放认领。
 - **无人登录演练（2026-11-12 起的做法）**：被验证的节点重启时本机会话会断，所以验证用的 PR 先开成**草稿**（常驻跳过草稿，`poller.mjs` 里 `isDraft` 即跳过），重启前不会有批次开跑；节点重启、不登录后，在手机上把 PR 点 Ready for review，看 `resident-queue/<节点>` 是否无人值守跑完八段。2026-11-12 TURING 用 #1074 做过一次：14:06 重启未登录，14:32–14:51 八段跑完并合入。
 - **两台 Windows runner 的启动钩子**：2026-11-12 起 DESK、TURING 都是 `work-handover-native-admission-retry-v1`（组件 1.0.2，sha256 `c86615e8…`，Owner Decision `cb682403`）；在此之前 DESK 一直是旧版 `e0cec3d4`，旧准入 workflow 停用后会拒绝改了 workflow 的 PR 的 Windows 任务。改了钩子就两台都装，并在两台的任务启动日志里各确认一次 `[hook …]`。
 
