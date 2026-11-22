@@ -5979,3 +5979,32 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - 第 8 段只有在有零副作用的证明时才可停靠。试满或到龄后休眠，归还停靠名额。PR 或 main 变化、检查或规则观察变化、合并列车队首变化可唤醒，仍受每 PR 每日重试预算约束。唤醒信号只使第 8 段到期，由该段重新核验。关闭 PR 或替换 head 仍按 §72 结束批次。
 - 停靠超容量时走现有第 8 段安全点再入队路径。持久记录停靠结束并计入释放额度。仓库、PR、head、base、试合并提交和 Source 一致后，按现有释放退避重新检查第 8 段。一般续跑批次由 D4 的 T6 实现，此处只记录其资格。
 - 保留现有落地模式的队列与试合并等待行。切换落地后按产生路径验证是否退役。第 R 段和三个旧一次性状态已退出常驻失败表，旧 Source 的阶段事实格式仍可读取。
+
+## 82. 三项扫描可钉在 GitHub Actions（R3 瘦身版，FABLE-keep-train-replan-20261122 §1.1，分支 `claude/r3-lean`）
+
+**用途**：R4 开关 A 的前置。规则集把三项扫描（`gitleaks`、`trivy`、`contract-placement`）改为要 GitHub Actions（integration 15368）的检查之前，常驻层要先能认这种钉法。代码只认规则集，不自带开关：规则集不改，行为和以前完全一样。strict、控制对、strict 关时锁 PAUSE（§65.3、ADR 0007 第 4 条）都不变。
+
+1. **扫描可钉 Actions，第 8 段不等自己的扫描**：核过，没有现成的策略开关。`localPlan` 总是跑全部重扫描，只有 §75 的同树复用例外；`train.enabled`、`nonFrontRuns` 都管不到这一点。改法如下：
+   - 规则读取（`train-rules.mjs#rulesetFacts`，以及常驻 `ruleset-backstop.mjs#rulesFacts`，两边同一条规则，测试核两边对同一组规则判法一致）允许三项扫描钉在本 App 或 Actions 上；`kooyumi-work-admission` 和控制对仍只能钉本 App；六项仍都必须在。否则开关 A 之后 companion 每天报一次 `RULESET_NOT_PINNED`，第 8 段的 github-merge 落地也读不进规则（推送落地见第 4 条）；
+   - 第 10 段把“仍要本 App 发的扫描”写进事实 `rules.appScans`（按 `RULE_SCAN_NAMES` 的顺序；同一扫描被两套规则分别钉本 App 和 Actions 时，本 App 仍要发）；
+   - `executor.mjs#localPlan` 按 `trainLast.appScans` 不再跑 GitHub 不要本 App 出的扫描，并写回执 `scans-not-app-required`；
+   - 没读到 `appScans`（重启后第 10 段还没跑过、读失败、R3 之前的 Source）时照旧全跑。
+   - 端到端（`test/train-takeover-front.test.mjs`）：strict 开、扫描钉 Actions 时，车头批次只跑第 1、8 段并拿到合并位绿，没有批次跑第 2–7 段；扫描全钉本 App 时照旧全跑；strict 关（扫描钉本 App 或 Actions）照旧 `TRAIN_STRICT_OFF`、锁 PAUSE。
+2. **strict 从哪里读**（供 R1 的 `clued-front-main-merge` 复用）：
+   - 唯一来源是 `github.readBranchRules('main')`（Source v2 `github.mjs`）的规则集；
+   - 由 `train-rules.mjs#rulesetFacts(rules, appId).strict` 判定：任一 `required_status_checks` 规则的 `strict_required_status_checks_policy` 为真即算开；规则读不全或形状不对时抛错，调用方按“没读到”处理，不当作关；
+   - 常驻端 `ruleset-backstop.mjs#rulesFacts` 是同一条规则；
+   - 第 10 段把结果写进事实 `rules.strict`，执行器从 `trainLast.strict` 读，不另加开关。
+3. **第 8 段按当场读到的规则核本 App 的扫描**（独审 R3 问题 A，`train-rules.mjs#appScansNotDone`）：`trainLast.appScans` 来自上一次第 10 段，规则从 Actions 改回本 App 之后它可能已经过时，执行器会照旧跳过扫描；而推送落地只核其他 App 的检查（`train-landing.mjs#externalRequiredChecks` 先排除了本 App 的）。所以：
+   - 车头的第 8 段在写合并位绿之前，用本次 `trainFacts` 读到的 `rulesetFacts(...).appScans` 核：规则仍要本 App 出的每一项扫描，在 H 上本 App 最新的那条都已完成且成功（任何批次都算，这正是 GitHub 合并 H 前自己要的）；
+   - 推送落地在写 main 之前再核一次，按紧挨着读到的规则（与选路同一次读，`reply.rules`；不用更早那次 `trainFacts`，两次读之间规则可能已改回本 App），并且更严：只算这个车头 subject 自己的 job（`frontJobIdsV2`），或 §75 的同树复用（车头只有一个成员，S 的树等于 H 的树，H 上有可复用的扫描）；
+   - 没过就不写绿、不推送，零副作用，按 `TRAIN_BATCH_CHANGED` 结束这个批次（clean-final，烧 head）；
+   - 端到端（`test/train-takeover-front.test.mjs`，修复前必红）：第 10 段读到三项钉 Actions，车头第 1 段之后规则改回本 App，推送落地开着：S 从不在没有本 App 三项扫描时落到 main，也没有合并位绿。
+   - 同一个 S 的第二个车头批次（第 10 段的序号 2，FABLE-r3-batch2-gate-20261122）不靠新提交自己恢复：
+     - 它是自己的批次：subject 的 attempt 取第 10 段的序号（`executor.mjs#rowSubject`，runRow、enqueueFront、releaseBreaker 与 `queue.mjs#readmit` 同一处），序号 1 留下的流程续跑只由序号 1 自己接；
+     - 它过 executed-heads 门的唯一条件（`executor.mjs#precheck`）：(H, S) 的记录全是序号 1 自己的（`onlyRecordsOf(subject, [序号 1 的 key])`），并且序号 1 的账本是 TERMINAL、FAILED_CLEAN、`facts.stage === 8`；读不到一律不放行。序号 1 在第 3、5、7 段占了 K 后结束的，序号 2 仍按 `HEAD_ALREADY_PUBLISHED_NO_RETRY` 忽略（否则会撞 `ROLE_ALREADY_PUBLISHED_ON_HEAD`）；
+     - 序号 2 按当场的规则重排计划、跑扫描；H 上已有本车头自己的角色检查时，第 1 段回读以 `HEAD_PUBLISHED_ON_GITHUB` 干净结束，不会出第二份扫描；
+     - 序号 1 若是在第 8 段因排空或超容量停在流程结束（不是 FAILED_CLEAN），序号 2 不放行，序号 1 的流程照旧由它自己续跑（方向安全）。
+   - 只是结束（`frontFailed` 为 false）的车头批次记成回执 `train-front-ended`，不用 `train-front-outcome`（FABLE-r3-batch2-followup §1b）：自动回滚到上一代常驻时，它把每张 `train-front-outcome` 都当失败读，会对没失败的 PR 报 failed；重启（`executor.mjs#trainFrontRecover`）读两种里最新的一张。
+   - 扫描段被放弃（第 4、6 段 `BRIDGE_ABANDONED_UNPUBLISHED`，`executor.mjs#abandonScannerStage`）也是车头批次的终局，同样上报（FABLE-r3-batch2-followup §2a）：没有 attempt 2 时，下一次第 10 段被告知批次已结束，不再判 `TRAIN_FRONT_BATCH_RUNNING` 空占合并位。
+4. **推送路由与第 8、10 段用同一条钉法**（独审 R3 问题 B，FABLE-r3-open-items-20261122 §2）：`train-landing.mjs#landingRoute` 认主规则集用 `train-rules.mjs#sixPinned`（单项钉法 `pinAllowed`，`rulesetFacts` 也调它），不再自带“六项都钉本 App”的判断。扫描钉 Actions 时推送路由可以是 push；S 上必须有 Actions 出的三项成功才会落地（`externalRequiredChecks` 把不钉本 App 的必需检查都算作 S 上的外部检查），在跑时 `TRAIN_LANDING_CHECKS_PENDING`，失败时 `TRAIN_LANDING_CHECK_FAILED`。准入、控制对仍只能钉本 App，扫描钉在未知 App 或不钉、六项分在两套规则集里，仍是 `main_ruleset_unidentified`（park）；`kooyumi-train-landed` 仍须钉本 App。常驻 `ruleset-backstop.mjs#rulesFacts` 是另一个包，由 `test/ruleset-backstop.test.mjs` 用同一张表锁住三处结论一致。
