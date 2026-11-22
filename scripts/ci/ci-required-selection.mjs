@@ -33,7 +33,7 @@
 //     (--keep also keeps the entries already listed).
 // All three run modes wait for a machine-wide suite slot outside GitHub Actions.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -175,7 +175,8 @@ export const SUITES = {
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     // Its tests read the database tests of apps/clued-cloud/tests and what they import, so a new or changed test there, or
     // the classifier, selects it.
-    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs', 'scripts/ci/local-suite-slots.mjs',
+    'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
+      'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
       'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
@@ -260,7 +261,8 @@ export function appDependencyGap(root, needs, env = process.env) {
 // the base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP. A
 // command with `known` runs Node's test runner with ci-test-failures-reporter.mjs
 // and passes only when every failure is an entry of ci-known-failures.json
-// under that key (knownFailureVerdict).
+// under that key (knownFailureVerdict). Any other node --test command of this list reports to it as well, so that a command
+// that fails once can run again in full (passesAgain).
 const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
@@ -316,7 +318,7 @@ export const SUITE_COMMANDS = {
   'ci-deps-entry': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-deps.test.mjs', 'scripts/ci/check-ci-deps-entry.test.mjs'] },
     { cwd: '.', argv: ['node', 'scripts/ci/check-ci-deps-entry.mjs', '--base', '{base}'] }],
   'selection': [{ cwd: '.', argv: ['node', '--test', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs',
-    'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs'] }],
+    'scripts/ci/ci-required-selection-flaky.test.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs'] }],
   'clued-cloud': [
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'lint'] },
     { cwd: 'apps/clued-cloud', argv: ['npm', 'run', 'ledger:verify'] },
@@ -934,9 +936,132 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
+// A failed command run again in full (Task 11092b8b; FABLE-flaky-fingerprint-20261122 §7.3). When a node --test command
+// fails only because of one to RERUN_MAX_FAILURES tests (a known-failure command: tests off its list) in at most
+// RERUN_MAX_FILES files the change did not touch, and that run took at most RERUN_MAX_ELAPSED_MS, the same command runs once
+// more, whole and with the same arguments, with an empty temporary directory of its own (TEMP, TMP, TMPDIR) and a timeout
+// of twice the first run (at least RERUN_MIN_TIMEOUT_MS). The command passes when that run finishes with a summary, passes
+// as the command does (exit 0; a known-failure command: knownFailureVerdict) and passes, not skips, every test that failed,
+// with one flaky warning per test. Anything else keeps the failure: a runner that crashed, was killed or timed out (exit
+// other than 1, no summary in the report), a missing dependency, a test file that differs from the base commit's
+// (CI_BASE_SHA) or that git cannot read, a run too long, any error on the way. It starts only after a command failed, so it
+// never fails a command that passed; --run-files never does it. It is the job's own run again: a failure the command's
+// context makes every time (another file of the same run) fails again; what this lets through is a failure one full run has
+// and the next has not.
+export const RERUN_MAX_FAILURES = 3;
+export const RERUN_MAX_FILES = 2;
+export const RERUN_MAX_ELAPSED_MS = 10 * 60_000;
+export const RERUN_MIN_TIMEOUT_MS = 2 * 60_000;
+const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
+function withReporter(argv, out) {
+  const index = argv.indexOf('--test');
+  // The reporter comes from this file's (trusted base) checkout.
+  return [...argv.slice(0, index + 1), '--test-reporter=spec', '--test-reporter-destination=stdout',
+    `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${out}`, ...argv.slice(index + 1)];
+}
+const testAt = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
+
+// Each file as the base commit has it: its blob there equals the checkout's file as git would store it. Local reads only.
+function unchangedSinceBase(root, base, files, env) {
+  if (typeof base !== 'string' || !/^[0-9a-f]{7,64}$/i.test(base) || /^0+$/.test(base)) return 'CI_BASE_SHA is not a commit';
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30_000,
+      env: { ...env, GIT_TERMINAL_PROMPT: '0' } });
+    return result.status === 0 && !result.error ? result.stdout.trim() : null;
+  };
+  for (const file of files) {
+    const before = git('rev-parse', '--verify', '--quiet', `${base}:${file}`);
+    if (!before) return `${file} is not in the base commit ${base} (or git cannot read it)`;
+    if (git('hash-object', '--', file) !== before) return `${file} differs from the base commit ${base}`;
+  }
+  return null;
+}
+
+// Why a failed command cannot run again, or null.
+function rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, root, base, env }) {
+  if (signal || status !== 1) return `the test runner exited ${status ?? signal}`;
+  if (report.corrupt || !report.summary) return 'the test report has no summary of the run';
+  if (failures.length === 0) return 'no failing test in the report';
+  if (failures.length > RERUN_MAX_FAILURES) return `${failures.length} failing tests (more than ${RERUN_MAX_FAILURES})`;
+  if (failures.some((event) => typeof event.file !== 'string' || !event.file || !Array.isArray(event.path))) return 'a failure names no test file';
+  if (failures.some((event) => event.missing_dependency)) return 'a module cannot be loaded';
+  const files = [...new Set(failures.map((event) => event.file))];
+  if (files.length > RERUN_MAX_FILES) return `failures in ${files.length} test files (more than ${RERUN_MAX_FILES})`;
+  if (!(elapsed <= maxElapsed)) return `the run took ${Math.round(elapsed)} ms (more than ${maxElapsed} ms)`;
+  return unchangedSinceBase(root, base, files, env);
+}
+
+// Runs the failed command once more, whole; true when that run passes as the command does and passes every test that
+// failed. Logs why not otherwise.
+function passesAgain(id, { command, argv, failures, report, status, signal, elapsed, root, cwd, env, spawn, platform, list, log,
+  readReportFile, maxElapsed, minTimeout }) {
+  const refusal = rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, root, base: env.CI_BASE_SHA, env });
+  if (refusal) {
+    log(`${id}: not run again in full: ${refusal}`);
+    return false;
+  }
+  const timeout = Math.max(2 * Math.ceil(elapsed), minTimeout);
+  const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-again-`));
+  let text = '';
+  let result;
+  try {
+    // What the first run left in its temporary directory is not there for this one.
+    const temp = path.join(dir, 'tmp');
+    mkdirSync(temp);
+    const kept = Object.entries(testEnv(env)).filter(([name]) => !/^(TEMP|TMP|TMPDIR)$/i.test(name));
+    log(`::group::${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
+    const run = resolveCommand(withReporter(argv, path.join(dir, 'failures.jsonl')), { platform });
+    result = spawn(run[0], run.slice(1), { cwd, env: { ...Object.fromEntries(kept), TEMP: temp, TMP: temp, TMPDIR: temp },
+      stdio: 'inherit', timeout });
+    log('::endgroup::');
+    text = readReportFile(path.join(dir, 'failures.jsonl'));
+  } finally {
+    // Removing it never decides the command (a process the run left may still hold a file there).
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+      log(`${id}: could not remove ${dir}: ${error?.message ?? error}`);
+    }
+  }
+  const again = readReport(text, root);
+  const failed = again.events.filter((event) => event.type === 'fail');
+  const problems = new Set();
+  if (result.error) problems.add(result.error.message);
+  if (again.corrupt || !again.summary) problems.add('the test report has no summary of the run');
+  if (command.known) {
+    const verdict = knownFailureVerdict({ status: result.signal ? 128 : result.status, report: again, known: list });
+    for (const problem of verdict.problems) problems.add(problem);
+    for (const event of verdict.unexpected) problems.add(`${testAt(event)} failed`);
+  } else if (result.status !== 0) {
+    problems.add(`the test runner exited ${result.status ?? result.signal}`);
+    for (const event of failed) problems.add(`${testAt(event)} failed`);
+  }
+  // A skipped test did not pass: it did not run.
+  const passed = new Set(again.events.filter((event) => event.type === 'pass' && !event.skip).map(testAt));
+  const failedAt = new Set(failed.map(testAt));
+  const notPassed = failures.filter((event) => failedAt.has(testAt(event)) || !passed.has(testAt(event)));
+  if (notPassed.length > 0) problems.add(`${notPassed.map(testAt).join('; ')} did not pass`);
+  if (problems.size > 0) {
+    log(`${id}: run again in full, still failing (整条再跑仍失败): ${[...problems].join('; ')}`);
+    return false;
+  }
+  return true;
+}
+
+function reportFlaky(id, failures, { env, log }) {
+  for (const event of failures) log(`::warning title=${id} flaky::${testAt(event)} fingerprint=${event.fingerprint}`);
+  log(`${id}: ${failures.length} test(s) failed once and passed when the command ran again in full (flaky): the command passes`);
+  try {
+    if (env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(env.GITHUB_STEP_SUMMARY, failures.map((event) => `- \`${id}\` flaky: ${testAt(event)} (fingerprint ${event.fingerprint})\n`).join(''));
+    }
+  } catch { /* the annotations above are the record */ }
+}
+
 // The CI process or the already guarded worker executes the suite here.
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
-  captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
+  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS } = {}) {
   if (captureKnown) return writeKnown(id, root, env, keep);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   // The trusted commands, then the candidate's additions (read once the trusted ones have run), or, for a suite only the
@@ -956,19 +1081,31 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    let argv = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
+    const plain = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
+    let argv = plain;
     let reportDir = null;
-    if (command.known) {
-      reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
-      const index = argv.indexOf('--test');
-      // The reporter comes from this file's (trusted base) checkout.
-      argv = [...argv.slice(0, index + 1), '--test-reporter=spec', '--test-reporter-destination=stdout',
-        `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${path.join(reportDir, 'failures.jsonl')}`,
-        ...argv.slice(index + 1)];
+    // A known-failure command reports to the trusted reporter for its verdict; any other node --test command of the trusted
+    // list for the run again in full (passesAgain), which a missing reporter or report directory only rules out. A command the
+    // candidate adds gets none: what it adds carries no policy. The log shows such a command as it is, without the reporter.
+    if (command.known) reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
+    else if (!files && !command.expanded && isNodeTest(plain) && existsSync(REPORTER_PATH)) {
+      try {
+        reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
+      } catch { /* runs without a report */ }
     }
-    log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
+    if (reportDir) argv = withReporter(plain, path.join(reportDir, 'failures.jsonl'));
+    // Removing that report never decides a command (a known-failure command removes its own as before).
+    const dropReport = () => {
+      try {
+        if (reportDir && !command.known) rmSync(reportDir, { recursive: true, force: true });
+      } catch { /* a temporary directory left behind */ }
+    };
+    const shown = command.known ? argv : plain;
+    log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
     const run = resolveCommand(argv, { platform });
+    const started = performance.now();
     const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
       const text = result.stdout.toString();
@@ -976,19 +1113,37 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     }
     log('::endgroup::');
     if (result.error) {
-      log(`${id}: ${argv[0]} did not start: ${result.error.message}`);
+      dropReport();
+      log(`${id}: ${shown[0]} did not start: ${result.error.message}`);
       return 1;
     }
+    // Every error on the way to running again keeps the failure (FABLE-flaky-no-new-commit-20261122 §2.5).
+    const again = (failures, { report: ran, status, list = [] }) => {
+      if (files) return false;
+      try {
+        return passesAgain(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, elapsed, root, cwd, env,
+          spawn, platform, list, log, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs });
+      } catch (error) {
+        log(`${id}: not run again in full: ${error?.message ?? error}`);
+        return false;
+      }
+    };
     if (command.known) {
       const list = ((known ?? readKnownFailures())[command.known] ?? []).filter((entry) => !named || named.has(entry.file));
       const text = readReportFile(path.join(reportDir, 'failures.jsonl'));
       rmSync(reportDir, { recursive: true, force: true });
       const status = result.signal ? 128 : result.status;
-      const verdict = knownFailureVerdict({ status, report: readReport(text, root), known: list });
+      const ran = readReport(text, root);
+      const verdict = knownFailureVerdict({ status, report: ran, known: list });
       const label = (entry) => `${entry.file} :: ${entry.path.join(' > ')}`;
       for (const entry of verdict.expected) log(`::warning title=${id} known failure::${label(entry)}`);
       for (const entry of verdict.fixed) log(`::warning title=${id} known failure now passes::${label(entry)}; remove it from ci-known-failures.json`);
       for (const entry of verdict.missing) log(`::warning title=${id} known failure no longer runs::${label(entry)}; remove it from ci-known-failures.json`);
+      if (!verdict.ok && verdict.problems.length === 0
+          && again(verdict.unexpected, { report: ran, status, list })) {
+        reportFlaky(id, verdict.unexpected, { env, log });
+        continue;
+      }
       for (const entry of verdict.unexpected) {
         log(`::error title=${id} new failure::${label(entry)} (${entry.failure_type ?? 'failure'}, fingerprint ${entry.fingerprint})`);
       }
@@ -1000,9 +1155,24 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       continue;
     }
     if (result.status !== 0) {
-      log(`${id}: ${argv.join(' ')} exited ${result.status ?? result.signal}`);
+      log(`${id}: ${shown.join(' ')} exited ${result.status ?? result.signal}`);
+      if (reportDir) {
+        let ran = null;
+        try {
+          ran = readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
+        } catch (error) {
+          log(`${id}: not run again in full: the test report cannot be read (${error?.message ?? error})`);
+        }
+        dropReport();
+        const failures = ran ? ran.events.filter((event) => event.type === 'fail') : [];
+        if (ran && again(failures, { report: ran, status: result.status })) {
+          reportFlaky(id, failures, { env, log });
+          continue;
+        }
+      }
       return result.status || 1;
     }
+    dropReport();
   }
   return 0;
 }
