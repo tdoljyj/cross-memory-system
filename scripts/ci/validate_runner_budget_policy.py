@@ -328,8 +328,10 @@ OWNER_DECISION_HOSTED_JOBS = {
 # (hosted-required.yml), which the scaffold ruleset requires. Pinned exactly like
 # the tables above (workflow controls and every job's bytes); every check name a
 # scaffold job can carry starts with "hosted-", so none can stand in for a
-# check of the independent CI. Temporary: at the switch back (stage S8) the
-# workflow and this entry are deleted in one change; a stale entry fails.
+# check of the independent CI. The hosted copy of the front-merge-main workflow
+# (clued-front-main-merge-hosted.yml) belongs to the same scaffold under the same
+# rule: its two jobs carry hosted- names. Temporary: at the switch back (stage S8) the
+# workflows and these entries are deleted in one change; a stale entry fails.
 HOSTED_SCAFFOLD_SOURCE = "61b65d61"
 HOSTED_SCAFFOLD_PREFIX = "hosted-"
 HOSTED_SCAFFOLD_JOBS = {
@@ -343,6 +345,13 @@ HOSTED_SCAFFOLD_JOBS = {
             "gitleaks": "34fb7757358cb9d40a8fb3fbd7158a62d573763deed911baaeec64236ee47f39",
             "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
             "contract-placement": "09bb827cb7f40aba3a64afde726c9740382ca22cca78b7f775e00cd496b25882"
+        }
+    },
+    "clued-front-main-merge-hosted.yml": {
+        "control_sha256": "5f732deb1d366951e326ad41fb74df57a56db845b79be95956c25352346cd8a7",
+        "jobs": {
+            "scaffold-phase": "973b475909436bd551f30f1cfc8d64d06178c340d89f4ceeb98725169edac16c",
+            "merge-main": "fcaa51b208689f3427c000b2f31e94c89a51c49e9ecf7a1500eb6db9a983c04d"
         }
     }
 }

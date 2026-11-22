@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   scaffold-phase:
-    name: scaffold-phase
+    name: hosted-scaffold-phase
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
@@ -61,7 +61,7 @@ jobs:
   merge-main:
     needs: scaffold-phase
     if: needs.scaffold-phase.outputs.in_force == 'true' && github.ref == 'refs/heads/main'
-    name: clued-front-main-merge-hosted
+    name: hosted-clued-front-main-merge
     runs-on: ubuntu-slim
     timeout-minutes: 5
     environment: clued-admission
