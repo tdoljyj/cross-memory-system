@@ -9,7 +9,7 @@ import { GreenLedger, validateGreenEntry, GREEN_LEDGER_CONTRACT } from '../src/i
 import { createGitHubChecksPort } from '../src/github.mjs';
 import { generateKeyPairSync } from 'node:crypto';
 import { tempDir } from './resident-v2-fixtures.mjs';
-import { ADMISSION, ADMISSION_APP, PIN_TABLE, checkRun, s7Green, s7Rules, scaffoldRules, mainRules } from './s7-rules-fixture.mjs';
+import { ADMISSION, ADMISSION_APP, PIN_TABLE, S7_OTHER_ADMISSION, checkRun, s7Green, s7Rules, scaffoldRules, mainRules } from './s7-rules-fixture.mjs';
 
 const APP = 5368905, H = 'a'.repeat(40), T = 'b'.repeat(40), TREE = 'c'.repeat(40), M = 'd'.repeat(40);
 const required = ({ strict = true, pinned = APP, names = REQUIRED_CHECK_NAMES, extra = [] } = {}) => ({ type: 'required_status_checks',
@@ -144,11 +144,13 @@ test('S7 rules: every required check green on the head is no failure (must-red 2
 });
 
 test('S7 rules: the admission App own failure is a failed required check, even with this App same-named success (must-red 3)', () => {
-  const checks = s7Green(H).map(c => (c.name === ADMISSION && c.app.id === ADMISSION_APP ? { ...c, conclusion: 'failure' } : c));
+  // the scaffold variant whose admission check is pinned to another App (live it is pinned to this App: s7-rules-fixture.mjs)
+  const o = S7_OTHER_ADMISSION;
+  const checks = s7Green(H, o).map(c => (c.name === ADMISSION && c.app.id === ADMISSION_APP ? { ...c, conclusion: 'failure' } : c));
   assert.ok(checks.some(c => c.name === ADMISSION && c.app.id === APP && c.conclusion === 'success'));
-  assert.deepEqual(requiredCheckFailure(s7Rules(), { complete: true, checks }, H, APP), [ADMISSION]);
+  assert.deepEqual(requiredCheckFailure(s7Rules(o), { complete: true, checks }, H, APP), [ADMISSION]);
   // and absent (not yet run) is no failure: GitHub keeps it required, the gate does not guess
-  assert.deepEqual(requiredCheckFailure(s7Rules(), { complete: true, checks: s7Green(H).filter(c => c.app.id !== ADMISSION_APP) }, H, APP), []);
+  assert.deepEqual(requiredCheckFailure(s7Rules(o), { complete: true, checks: s7Green(H, o).filter(c => c.app.id !== ADMISSION_APP) }, H, APP), []);
 });
 
 test('S7 rules stay strict where they were: scaffold only, a disaster-recovery pin, an unpinned entry, one of the six only pinned elsewhere (stay green)', () => {
