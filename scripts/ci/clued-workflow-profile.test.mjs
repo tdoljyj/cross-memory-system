@@ -68,14 +68,14 @@ test('unsupported triggers, routes, reuse, matrix and empty execution never regi
   }
 });
 
-test('only the exact required-tests Source and its three complete independent roles compile compound mode',()=>{
+test('only the exact required-tests Source and its six complete independent roles compile compound mode',()=>{
   const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
   const raw=fs.readFileSync(new URL('../../'+REQUIRED_TESTS_SOURCE.file,import.meta.url),'utf8'),value=yaml.parse(raw);
   const primary_ids=[...REQUIRED_TESTS_SOURCE.primary_ids],roles=primary_ids.map(job_id=>({job_id,
     definition_sha256:roleDefinitionDigest(value.jobs[job_id]),definition:value.jobs[job_id]}));
   const options={primary_ids,parseYaml:yaml.parse,accepted_roles:roles},compiled=compileRegisteredWorkflow(raw,options);
   assert.equal(isExactAllRequiredPrimariesProfile(compiled,REQUIRED_TESTS_SOURCE.file),true);
-  assert.equal(compiled.execution_mode,'all_required_primaries');assert.equal(compiled.routes.length,3);
+  assert.equal(compiled.execution_mode,'all_required_primaries');assert.equal(compiled.routes.length,primary_ids.length);assert.equal(primary_ids.length,6);
   assert.equal(compiled.routes.every(route=>route.self_hosted),true);
   assert.equal(compiled.routes[2].required_steps['Not affected'],undefined);
   assert.equal(compiled.routes[2].command_digests['Not affected'].length,1,'the auxiliary command is not removed from Source');

@@ -1765,6 +1765,7 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
 // change's runner hook (the step's walk is the hook's, read from main).
 const LINUX_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
 const BASELINE_JOBS = [[LINUX_WORKFLOW, 'clued-cloud-tests'], [LINUX_WORKFLOW, 'ci-suites'], [LINUX_WORKFLOW, 'migration-verify'],
+  [LINUX_WORKFLOW, 'gitleaks'], [LINUX_WORKFLOW, 'trivy'], [LINUX_WORKFLOW, 'contract-placement'],
   [WINDOWS_WORKFLOW, 'ci-suites-windows']];
 function baselineStep(file, id) {
   const text = readFileSync(file, 'utf8');
