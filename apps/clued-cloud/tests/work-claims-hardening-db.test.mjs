@@ -417,6 +417,55 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     committed(await release(tokens.A, headClaim));
     committed(await release(tokens.A, headTwo));
 
+    // --- Accepting a handover uses the same session cap, counted the same
+    // way (Task e642d087): through the real prepare/offer/accept doors, the
+    // sender on Binding A, the receiver on Binding B. Last in this test: it
+    // activates the execution policy the free handover needs. ---
+    await admin.query("update clued_private.work_claim_execution_policy_v1 set activated_at=clock_timestamp(),qualification_commit=$1",
+      ['f'.repeat(40)]);
+    const handOver = async (label, session) => {
+      const source = committed(await claim(tokens.A, { task_id: await createTask(`handover ${label}`),
+        write_set: [`handover/${label}`], holder_session_ref: 'src' })).claim;
+      const receiving = (input) => call(tokens.B, 'clued_work_renew_v1', { scope: 'global', claim_id: source.claim_id,
+        fence: source.fence, ...input });
+      const prepared = committed(await receiving({ action: 'prepare_handover', idempotency_key: uuid(),
+        holder_label: `receiver ${label}`, holder_session_ref: session }));
+      committed(await call(tokens.A, 'clued_work_renew_v1', { scope: 'global', claim_id: source.claim_id, fence: source.fence,
+        lease_version: source.lease_version, progress_ref: uuid(), action: 'offer_handover', request_id: prepared.request_id,
+        lease_key: holders.get(source.claim_id).lease_key }));
+      return receiving({ action: 'accept_handover', request_id: prepared.request_id, receiver_key: prepared.receiver_key });
+    };
+    // h1: three claims of B, each Task's PR seen open by the CI.
+    for (let i = 0; i < 3; i += 1) {
+      const c = await handClaim('h1', `h1-${i}`);
+      const prRef = `o/r#${921 + i}`;
+      const head = (0xf100 + i).toString(16).padStart(40, '0');
+      await authorizeHead(c, prRef, head);
+      const seen = await verify({ action: 'resolve_pr_claim', pr_ref: prRef, head_sha: head, base_sha: base,
+        target_branch: 'main', scope: undefined });
+      assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
+      assert.deepEqual(await prStatus(c), ['active']);
+    }
+    const intoDelivered = await handOver('h1', 'h1');
+    assert.equal(intoDelivered.status, 'committed', JSON.stringify(intoDelivered));
+    assert.equal(intoDelivered.claim.holder_session_ref, 'h1');
+    // h2: three claims whose PRs only the holder named are in hand.
+    for (let i = 0; i < 3; i += 1) {
+      const c = await handClaim('h2', `h2-${i}`);
+      await authorizeHead(c, `o/r#${931 + i}`, (0xf200 + i).toString(16).padStart(40, '0'));
+      assert.deepEqual(await prStatus(c), ['unknown']);
+    }
+    const intoHands = await handOver('h2', 'h2');
+    assert.equal(intoHands.error_code, 'work_claim_budget_exhausted', JSON.stringify(intoHands));
+    // Ten live claims on B (3 h1 + the one handed over + 3 h2 + 3 h3): an
+    // empty session is still refused by the Binding cap.
+    for (let i = 0; i < 3; i += 1) await handClaim('h3', `h3-${i}`);
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.work_claims_v1 w
+      join public.clued_agent_bindings b on b.id=w.holder_binding_id
+      where b.user_id=$1 and b.agent_name='B' and w.status in ('ACTIVE','DRAINING') and w.expires_at>now()`, [userId])).rows[0].n, 10);
+    const intoFullBinding = await handOver('h4', 'h4');
+    assert.equal(intoFullBinding.error_code, 'work_claim_budget_exhausted', JSON.stringify(intoFullBinding));
+
     // The column is not writable through the client role, and verify is
     // still the only anon entry that touches it.
     await assert.rejects(() => anon.query('update clued_private.work_claims_v1 set bound_pr=null'), /permission denied/);
