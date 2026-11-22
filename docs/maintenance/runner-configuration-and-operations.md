@@ -112,7 +112,7 @@ wsl.exe -d CluedCI-Linux -u runner -e systemctl show actions.runner.tdoljyj-cros
 | watch 无进程 | 调度、重复入口、账号、执行结果 | 核对脚本/账号后恢复监督，再实测退出恢复 |
 | Docker 冲突/孤儿进程 | 同机锁、cgroup、容器归属 | 排空后处理目标资源，不能全机 prune/杀所有进程 |
 
-[健康监控](../../scripts/ci/self-hosted/ci_health.py)每小时分析；[路由心跳](../../.github/workflows/clued-ci-runner-heartbeat.yml)每 15 分钟探测。基线 matrix 只有公司 Linux01/02 与两 Windows（company-win-01、home-win-01）四个目标，**不包含公司 Linux03/04**；已退役的家里 Linux01 既不探测，也不在健康监控的期望集内。不得把它称为六个 active 节点的完整覆盖；03/04 先用直接 API 与指定实际 job 证据核对，监控覆盖补齐另走受审变更。
+[健康监控](../../scripts/ci/self-hosted/ci_health.py)每 6 小时分析（回看 24 小时）；[路由心跳](../../.github/workflows/clued-ci-runner-heartbeat.yml)每小时探测一次（第 23 分）。基线 matrix 只有公司 Linux01/02 与两 Windows（company-win-01、home-win-01）四个目标，**不包含公司 Linux03/04**；已退役的家里 Linux01 既不探测，也不在健康监控的期望集内。不得把它称为六个 active 节点的完整覆盖；03/04 先用直接 API 与指定实际 job 证据核对，监控覆盖补齐另走受审变更。
 
 告警运输 PR 是 do-not-merge 的事件载体，不合入 main。恢复后以机器与实际作业证据结案，再登记 KooYomi；不把 API 状态延迟、采样缺口或旧资格说明当结论。
 

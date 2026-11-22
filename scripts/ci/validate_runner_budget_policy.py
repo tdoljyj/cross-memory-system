@@ -322,6 +322,40 @@ OWNER_DECISION_HOSTED_JOBS = {
     }
 }
 
+# Owner Decisions 61b65d61 and 494326b5 (FABLE-cicd-framework-v1 §2.3, G7): the
+# hosted scaffold. Until the independent CI blocks merges on its own, the seven
+# required checks run once more on GitHub-hosted runners under hosted- names
+# (hosted-required.yml), which the scaffold ruleset requires. Pinned exactly like
+# the tables above (workflow controls and every job's bytes); every check name a
+# scaffold job can carry starts with "hosted-", so none can stand in for a
+# check of the independent CI. The hosted copy of the front-merge-main workflow
+# (clued-front-main-merge-hosted.yml) belongs to the same scaffold under the same
+# rule: its two jobs carry hosted- names. Temporary: at the switch back (stage S8) the
+# workflows and these entries are deleted in one change; a stale entry fails.
+HOSTED_SCAFFOLD_SOURCE = "61b65d61"
+HOSTED_SCAFFOLD_PREFIX = "hosted-"
+HOSTED_SCAFFOLD_JOBS = {
+    "hosted-required.yml": {
+        "control_sha256": "623f3e7945af830898e3a730d209d020c6b53f316410d401542ea1ec837155e2",
+        "jobs": {
+            "clued-cloud-tests": "160df4a5660ec26b48d406507aab5f42d5153597bba28fda35ce7e640ed66a09",
+            "ci-suites": "5bcfffd67e214013b9edff9ab2636709ac52d38d67d68ca48531bea009865476",
+            "migration-verify": "b5c25479376be9eb07294e380043fdaa0c89df3d156d9a233ca091467172b889",
+            "ci-suites-windows": "e701e85162c93401f4357e38a7ca4c9ad78ada37746ae8f4f4f9f2e87052cfd3",
+            "gitleaks": "7cc1a410d14a6bd8fc140ac5a86ce1f65365f33f23e72fa15f0aa6a0b49d0022",
+            "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
+            "contract-placement": "a07add60bcd9ec6caee62f0e86213c48ce3d16700894dc71e38b75a9493334df"
+        }
+    },
+    "clued-front-main-merge-hosted.yml": {
+        "control_sha256": "5f732deb1d366951e326ad41fb74df57a56db845b79be95956c25352346cd8a7",
+        "jobs": {
+            "scaffold-phase": "973b475909436bd551f30f1cfc8d64d06178c340d89f4ceeb98725169edac16c",
+            "merge-main": "fcaa51b208689f3427c000b2f31e94c89a51c49e9ecf7a1500eb6db9a983c04d"
+        }
+    }
+}
+
 # Exact local Source-candidate successors only. The original 42 debt rows,
 # six Owner jobs and their historical hashes above remain byte-for-byte intact.
 # Matching both the entire workflow and exact predecessor map never activates
@@ -579,7 +613,8 @@ def owner_decision_findings(exceptions: object, baseline: dict) -> list[str]:
 
 
 def evaluate_workflows(texts: dict[str, str], baseline: object = None,
-                       owner_hosted: object = None) -> dict[str, object]:
+                       owner_hosted: object = None, scaffold: object = None) -> dict[str, object]:
+    scaffold = HOSTED_SCAFFOLD_JOBS if scaffold is None else scaffold
     baseline = LEGACY_HOSTED_DEBT if baseline is None else baseline
     owner_hosted = OWNER_DECISION_HOSTED_JOBS if owner_hosted is None else owner_hosted
     violations: list[dict[str, str]] = []
@@ -596,8 +631,18 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
         reject("<embedded-owner-decision>", error)
     if owner_errors:
         owner_hosted = {}
+    scaffold_errors = [error.replace("Owner-decision hosted", "hosted scaffold")
+                       for error in owner_decision_findings(scaffold, baseline)]
+    for file, entry in (scaffold.items() if isinstance(scaffold, dict) else []):
+        if file in owner_hosted:
+            scaffold_errors.append("a workflow is either Owner-decision hosted or hosted scaffold, never both")
+    for error in scaffold_errors:
+        reject("<embedded-hosted-scaffold>", error)
+    if scaffold_errors:
+        scaffold = {}
     observed = set()
     observed_owner = set()
+    observed_scaffold = set()
     for filename, text in sorted(texts.items()):
         try:
             control, jobs, top = split_workflow(text)
@@ -607,6 +652,7 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
             continue
         entry = baseline.get(filename)
         owner_entry = owner_hosted.get(filename)
+        scaffold_entry = scaffold.get(filename)
         successor = EXACT_SOURCE_CANDIDATE_SUCCESSORS.get(filename)
         if successor and source_hash(text) == successor["workflow_sha256"]:
             if successor["kind"] == "legacy" and entry == successor["predecessor"]:
@@ -643,10 +689,25 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
                     if job_check_names(job_id, fields[job_id]) & REQUIRED_CHECK_NAMES:
                         reject(filename, "Owner-decision hosted executor carries a required check name "
                                "(Owner Decision bc6fdad1)", job_id)
+            scaffold_hash = scaffold_entry["jobs"].get(job_id) if scaffold_entry else None
+            if scaffold_hash:
+                observed_scaffold.add((filename, job_id))
+                if kind != "hosted":
+                    reject(filename, "Owner Decision " + HOSTED_SCAFFOLD_SOURCE +
+                           " hosted scaffold entry must be deleted once its job leaves the literal hosted route", job_id)
+                else:
+                    if source_hash(control) != scaffold_entry["control_sha256"]:
+                        reject(filename, "hosted scaffold workflow controls changed", job_id)
+                    if source_hash(block) != scaffold_hash:
+                        reject(filename, "hosted scaffold job changed", job_id)
+                    names = job_check_names(job_id, fields[job_id])
+                    if not names or any(not name.startswith(HOSTED_SCAFFOLD_PREFIX) for name in names):
+                        reject(filename, "hosted scaffold job must carry a " + HOSTED_SCAFFOLD_PREFIX +
+                               " check name only (Owner Decision " + HOSTED_SCAFFOLD_SOURCE + ")", job_id)
             if kind == "unknown":
                 reject(filename, "unknown, dynamic, reusable or mixed runner route is prohibited", job_id)
             elif kind != "self-hosted":
-                if not legacy_hash and not owner_hash:
+                if not legacy_hash and not owner_hash and not scaffold_hash:
                     reject(filename, "new GitHub-hosted execution is prohibited; use literal self-hosted routing", job_id)
             else:
                 if "trust-internal" not in labels:
@@ -658,7 +719,7 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
                         reject(filename, "PR-triggered self-hosted workflow is missing cancel-in-progress", job_id)
             routes.append({"job": job_id, "kind": kind, "runs_on": fields[job_id].get("runs-on"),
                            "job_sha256": source_hash(block), "legacy_migration_debt": bool(legacy_hash),
-                           "owner_decision_hosted": bool(owner_hash)})
+                           "owner_decision_hosted": bool(owner_hash), "hosted_scaffold": bool(scaffold_hash)})
         records.append({
             "workflow": filename, "jobs": routes, "control_sha256": source_hash(control),
             "runs_on": [row["runs_on"] for row in routes],
@@ -678,6 +739,10 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
         for job_id in entry["jobs"]:
             if (filename, job_id) not in observed_owner:
                 reject(filename, "removed Owner-decision hosted job must be deleted; stale permits are prohibited", job_id)
+    for filename, entry in scaffold.items():
+        for job_id in entry["jobs"]:
+            if (filename, job_id) not in observed_scaffold:
+                reject(filename, "removed hosted scaffold job must be deleted; stale permits are prohibited", job_id)
     return {"schema": "clued.ci-runner-budget-policy/v3", "status": "FAIL" if violations else "PASS",
             "policy": "self-hosted-only-new-execution; exact legacy debt must shrink on migration; "
                       "exact Owner Decision " + OWNER_DECISION_HOSTED_SOURCE + " hosted executor jobs",
@@ -685,6 +750,8 @@ def evaluate_workflows(texts: dict[str, str], baseline: object = None,
             "legacy_debt_jobs": sum(len(entry["jobs"]) for entry in baseline.values()),
             "owner_decision_hosted_source": OWNER_DECISION_HOSTED_SOURCE,
             "owner_decision_hosted_jobs": sum(len(entry["jobs"]) for entry in owner_hosted.values()),
+            "hosted_scaffold_source": HOSTED_SCAFFOLD_SOURCE,
+            "hosted_scaffold_jobs": sum(len(entry["jobs"]) for entry in scaffold.values()),
             "historical_hosted_only_notes": HOSTED_ONLY_ALLOWLIST,
             "concurrency_exemptions": CONCURRENCY_EXEMPTIONS,
             "workflows": records, "violations": violations}

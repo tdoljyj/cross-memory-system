@@ -10,9 +10,12 @@
 name: clued-compute-panel
 
 on:
+  # The cron is only the fallback (04f9b91b 题 2): the dispatcher on the resident node starts a run every five
+  # minutes, so while it is up every cron run is surplus. Twice an hour keeps the panel alive when it is not;
+  # off the hour, where GitHub drops schedules most.
   schedule:
-    - cron: "*/5 * * * *"
-  # A run by hand: GitHub may delay or skip */5 schedules (none ran in the first hour after #935).
+    - cron: "11,41 * * * *"
+  # A run by hand (the dispatcher's route): GitHub may delay or skip schedules (none ran in the first hour after #935).
   workflow_dispatch:
 
 permissions:

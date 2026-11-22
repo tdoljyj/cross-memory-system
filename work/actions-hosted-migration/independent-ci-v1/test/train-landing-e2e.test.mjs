@@ -40,6 +40,7 @@ import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from 
 import { parseStatus, pollerLandingOf, StatusBoard } from '../../../independent-ci-resident-v1/src/status.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
 import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
+import { HOSTED, SCAFFOLD_RULESET as SCAFFOLD_RS, portRules, scaffoldRules } from './s7-rules-fixture.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -57,26 +58,33 @@ const FOUR = ['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-w
 // R3 lean: the three scans, each required from this App or (not in appScans) from GitHub Actions, which then runs it on every commit.
 const SCANS = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 function rulesOf(kind, appScans = SCANS) {
-  const push = kind === 'push';
+  const push = ruleKind(kind) === 'push';
   return [{ type: 'pull_request', rulesetId: MAIN_RS, parameters: { allowed_merge_methods: ['merge'] } },
     { type: 'non_fast_forward', rulesetId: MAIN_RS, parameters: null }, { type: 'deletion', rulesetId: MAIN_RS, parameters: null },
     ...(push ? [{ type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null }] : []),
     { type: 'required_status_checks', rulesetId: MAIN_RS, parameters: { strict_required_status_checks_policy: true, required_status_checks: [
       ...['kooyumi-work-admission', ...appScans, 'kooyumi-admission-verified', 'kooyumi-merge-slot', ...(push ? ['kooyumi-train-landed'] : [])]
         .map(context => ({ context, integration_id: 5368905 })),
-      ...[...FOUR, ...SCANS.filter(n => !appScans.includes(n))].map(context => ({ context, integration_id: 15368 }))] } }];
+      ...[...FOUR, ...SCANS.filter(n => !appScans.includes(n))].map(context => ({ context, integration_id: 15368 }))] } },
+    ...(kind.startsWith('s7') ? portRules(scaffoldRules()) : [])];
 }
-const rulesetsOf = kind => new Map(kind === 'push'
+// Task 04f9b91b (Fable s7-landing-gaps 11-22): the hosted trial's S7 adds the scaffold ruleset (as read back live: s7-rules-fixture.mjs).
+// 's7' is S7 after both of the Owner's steps (#292 with C, the guard ruleset, the scaffold ruleset with App 5368905 on its bypass list);
+// 's7-step1' is S7's first step only (#292 enabled as today, the scaffold ruleset the App can bypass, no guard ruleset yet).
+const rulesetsOf = kind => new Map([...(kind === 'push' || kind === 's7'
   ? [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'always' }], [FF_RS, { id: FF_RS, currentUserCanBypass: 'never' }]]
-  : [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }]]);
+  : [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }]]),
+  ...(kind.startsWith('s7') ? [[SCAFFOLD_RS, { id: SCAFFOLD_RS, currentUserCanBypass: 'always' }]] : [])]);
+const ruleKind = kind => (kind === 's7' ? 'push' : kind === 's7-step1' ? 'today' : kind);
 
 // queued false: nobody is in Native's merge queue yet (stage 8 joins it); admitted false: no stage 1 has run on any head yet; appScans: the
 // scans main requires from this App (bc982192 E3: none).
-async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push', behind = 0, queued = true, admitted = true, appScans = SCANS }) {
+async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push', behind = 0, queued = true, admitted = true, appScans = SCANS,
+  hosted = rules.startsWith('s7') }) {
   const e = await setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 });
   e.claimFor = sharedClaim ? () => claimOf(prs[0]) : claimOf;
   e.native.bindings = new Map(prs.map(pr => [pr, { claimId: e.claimFor(pr), scope: SCOPE, headAuthorizationId: claimOf(pr) }]));
-  const W = { commits: new Map(), content: new Map(), refs: new Map(), checks: new Map(), pulls: new Map(), nextCheck: 1000, beforeFastForward: null, pushes: [] };
+  const W = { commits: new Map(), content: new Map(), refs: new Map(), checks: new Map(), pulls: new Map(), nextCheck: 1000, beforeFastForward: null, pushes: [], refused: [] };
   e.W = W;
   const treeOf = set => h(`tree:${[...set].sort().join(',')}`);
   const commit = (sha, parents, content) => { if (!W.commits.has(sha)) { W.commits.set(sha, { sha, tree: treeOf(content), parents }); W.content.set(sha, new Set(content)); } return sha; };
@@ -90,9 +98,10 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   let tip = T0;
   for (let i = 1; i <= behind; i++) tip = commit(h(`M${i}`), [tip], Array.from({ length: i }, (_, k) => `m${k + 1}`));
   W.refs.set('heads/main', tip); W.T0 = T0;
-  // GitHub Actions: the four required checks of the main ruleset, by their own names
+  // GitHub Actions: the four required checks of the main ruleset, by their own names (and in S7 the scaffold's six hosted-*: hosted-required.yml
+  // runs on pull requests and on pushes to clued-train/staging)
   const actions = sha => {
-    for (const name of [...FOUR, ...SCANS.filter(n => !appScans.includes(n))]) {
+    for (const name of [...FOUR, ...SCANS.filter(n => !appScans.includes(n)), ...(hosted ? HOSTED : [])]) {
       const id = W.nextCheck++;
       W.checks.set(id, { id, app: { id: ACTIONS }, name, head_sha: sha, status: 'completed',
         conclusion: bad(W.content.get(sha)) ? 'failure' : 'success', completed_at: iso(e.now - 5 * 60_000) });
@@ -148,12 +157,29 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   gh.readPullsUpdatedSince = async () => ({ complete: true, pulls: [], newest: null });
   gh.readPullCommitsBounded = async n => ({ complete: true, tooMany: false, count: 1, headSha: W.pulls.get(n).head, commits: [W.pulls.get(n).head] });
   gh.readForcePushes = async () => ({ complete: true, events: [] });
+  // GitHub refuses a push to main by the rulesets as GitHub does (task 04f9b91b): every ruleset on main this App cannot always bypass
+  // must hold for the pushed commit. A pull request rule never holds for a push; a required check holds when the newest run by id of its
+  // pinned App on that commit is a success (non_fast_forward and deletion hold for a fast-forward).
+  const refusedBy = s => {
+    for (const id of [...new Set(W.rules.map(r => r.rulesetId))].sort((a, b) => a - b)) {
+      if (W.rulesets.get(id)?.currentUserCanBypass === 'always') continue;
+      const list = W.rules.filter(r => r.rulesetId === id);
+      if (list.some(r => r.type === 'pull_request')) return id;
+      for (const c of list.filter(r => r.type === 'required_status_checks').flatMap(r => r.parameters.required_status_checks)) {
+        const newest = listChecks(s).filter(k => k.name === c.context && (!(c.integration_id > 0) || k.app.id === c.integration_id)).reduce((a, k) => (!a || k.id > a.id ? k : a), null);
+        if (newest?.status !== 'completed' || newest.conclusion !== 'success') return id;
+      }
+    }
+    return null;
+  };
   // The landing port (refs only), as train-landing-port.mjs answers.
   e.port = {
     async fastForwardMain(s) {
       W.beforeFastForward?.(); W.beforeFastForward = null;
       W.pushes.push(s);
       if (!W.commits.has(s) || !ancestor(W.refs.get('heads/main'), s)) return { status: 422, sha: null };
+      const by = refusedBy(s);
+      if (by !== null) { W.refused.push([s, by]); return { status: 422, sha: null }; }
       W.refs.set('heads/main', s); markMerged();
       return { status: 200, sha: s };
     },
@@ -208,7 +234,8 @@ async function stage10(e, outcome = null) {
   e.now += 60_000;
   const runId = `${(++runN).toString(16).padStart(16, '0')}-0123456789ab`;
   const job = jobOf({ createdAt: iso(e.now), runId, sweep: 'audit', onSince: iso(NOW - 3_600_000),
-    ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code } : {}) });
+    ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code,
+      ...(Object.hasOwn(outcome, 'frontFailed') ? { frontFailed: outcome.frontFailed } : {}) } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
     claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
 }
@@ -246,7 +273,7 @@ async function drive(t, e, { until, steps = 40, opened = null }) {
     const members = typeof e.store.landingBatchByTest === 'function' ? (await e.store.landingBatchByTest(b.testSha))?.members.map(m => m.pr) ?? null : null;
     const p = await stage8(t, e, b);
     log.push(['8', p.status, p.reason ?? null, members]);
-    if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason };
+    if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason, frontFailed: true };
   }
   return log;
 }
@@ -344,6 +371,30 @@ test('push: the middle PR breaks the combination -> bisection -> the other two l
   assert.deepEqual(e.adopted.map(a => a[0]).sort(), [910, 912]);
   // every commit main ever pointed at was a tested S of a batch this node recorded
   for (const s of e.W.pushes.filter(s => e.W.ancestor(s, e.main()))) assert.ok(await e.store.landingBatchByTest?.(s), s);
+});
+
+// FABLE-r3-batch2-gate F2, F3 (修复前必红: before the fix the job refuses the field): frontOutcome carries frontFailed. false (the batch
+// ended clean, say TRAIN_BATCH_CHANGED at stage 8, or its row was ignored): stage 10 learns only that the batch ended: no bisection, no new
+// bad member, no touch failed, and its plan is no longer TRAIN_FRONT_BATCH_RUNNING. true (a final deterministic-pr failure): as today.
+for (const frontFailed of [false, true]) test(`R3 batch 2 ${frontFailed ? 'F3' : 'F2'}: a batch of three ended (frontFailed ${frontFailed}) -> ${frontFailed ? 'bisection as today' : 'no bisection, no bad, no touch failed'}`, async t => {
+  const e = await world(t, { prs: [910, 911, 912] });
+  let b = null;
+  for (let i = 0; i < 6 && !b; i++) b = (await stage10(e)).facts.openFrontBatch;
+  assert.ok(b, 'a batch opened');
+  assert.deepEqual((await e.store.landingBatchByTest(b.testSha)).members.map(m => m.pr), [910, 911, 912]);
+  const before = await e.store.readLandingState();
+  const code = frontFailed ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_BATCH_CHANGED';
+  const r = await stage10(e, { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code, frontFailed });
+  const after = await e.store.readLandingState();
+  assert.deepEqual(e.failed, [], 'no touch failed for a batch of several');
+  if (frontFailed) {
+    assert.deepEqual(r.facts.landing?.bisect?.failed, [910, 911, 912], JSON.stringify(r.facts.landing));
+    assert.ok(after.handled.includes(b.testSha));
+  } else {
+    assert.notEqual(r.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(r.facts));
+    assert.equal(r.facts.landing?.bisect, undefined, JSON.stringify(r.facts.landing));
+    assert.deepEqual([after.bad, after.suspect, after.handled], [before.bad, before.suspect, before.handled], 'the landing state is unchanged');
+  }
 });
 
 test('push: main moved by someone else between the check and the write -> the fast-forward is refused -> retested on the new main -> lands', async t => {
@@ -948,7 +999,7 @@ async function untilLanded(t, e, { batch = null, rounds = 30 } = {}) {
       const { b } = parked; parked = null;
       const p = await stage8(t, e, b);
       log.push(['8', p.status, p.reason ?? null]);
-      if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason };
+      if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason, frontFailed: true };
       else if (p.status === 'BLOCKED' && p.sideEffects === 0) parked = { b, at: e.now + 10 * MIN };
       continue;
     }
@@ -1195,15 +1246,14 @@ test('three ways, fail closed: kooyumi-train-landed read while the rest is not c
     'train-landed pinned to another App': W => { W.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.find(x => x.context === 'kooyumi-train-landed').integration_id = 1; },
   };
   const expected = { 'no independent ruleset': 'independent_ruleset_missing', 'the App can bypass the independent ruleset': 'independent_ruleset_app_can_bypass',
-    'the App cannot bypass main': 'main_app_cannot_bypass', 'the App bypasses main for pull requests only': 'main_app_bypass_not_always', 'train-landed pinned to another App': null };
+    'the App cannot bypass main': 'main_app_cannot_bypass', 'the App bypasses main for pull requests only': 'main_app_bypass_not_always', 'train-landed pinned to another App': 'train_landed_check_missing' };
   for (const [name, change] of Object.entries(cases)) await t.test(name, async t => {
     const { e, b, T } = await opened(t, [910]);
     change(e.W);
     const p = await stage8(t, e, b, { trainLanding: PUSH1 });
-    // kooyumi-train-landed pinned to another App is an unknown provider to the queue head's required-check gate (train-rules.mjs), which
-    // parks first; landingRoute's own answer for it (train_landed_check_missing) is in train-landing.test.mjs
-    if (expected[name] === null) assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'REQUIRED_CHECKS_UNREADABLE', 0], JSON.stringify(p));
-    else assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
+    // kooyumi-train-landed pinned to another App is that App's required check to the queue head's gate (train-rules.mjs, task 04f9b91b:
+    // read from its runs, absent is no failure), so landingRoute answers for it: train_landed_check_missing
+    assert.deepEqual([p.status, p.reason, p.sideEffects, p.missing], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', 0, [expected[name]]], JSON.stringify(p));
     untouched(e, T); assert.deepEqual(e.W.pushes, []);
   });
 });
@@ -1590,11 +1640,12 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
     assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
     // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
     const summary = trainSummary(r.facts);
-    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
+    // (task 04f9b91b: the summary keeps what push lacks too, for the landing precheck's P3)
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } }]);
     const board = new StatusBoard({ clock: e.clock });
     board.update({ train: { enabled: 'on', last: summary } });
     const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
-    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } }]);
     const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
     assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
     assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));
@@ -2238,4 +2289,82 @@ test('bc982192 E11 (switch day): stopped under github-merge, then the rules turn
   assert.equal(r.triggers.length, 1, `the poller did not send again: ${diag}`);
   assert.equal(e.head(1471), head);
   assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// ---- Task 04f9b91b (Fable s7-landing-gaps 11-22): S7, #292 and the scaffold ruleset both on main ----
+// Pushing main must pass every ruleset on main (改动 1). A guard ruleset (deletion and non_fast_forward only) a fast-forward passes; every
+// other ruleset but the main one this App must always bypass, or GitHub refuses the push (the world above refuses as GitHub does). The
+// scaffold ruleset (27843120, as read back live: deletion, non_fast_forward, a pull request, six hosted-* and kooyumi-work-admission pinned
+// to this App) is not the guard ruleset.
+const S7_SAVE_MISSING = ['train_landed_check_missing', 'main_app_cannot_bypass'];
+test('S7 E1 (stay green): #292 with C, the guard ruleset, the scaffold ruleset the App always bypasses -> three PRs land in one batch, no write refused', async t => {
+  const e = await world(t, { prs: [910, 911, 912], rules: 's7' });
+  const log = await drive(t, e, { until: () => e.queue.length === 0, steps: 6 });
+  const landings = log.filter(l => l[0] === '8');
+  assert.deepEqual(landings, [['8', 'SETTLED', null, [910, 911, 912]]], JSON.stringify(log));
+  const S = e.W.pushes.at(-1);
+  assert.equal(e.main(), S, 'main is exactly the tested S');
+  assert.deepEqual([910, 911, 912].map(pr => e.W.pulls.get(pr).merged), [true, true, true]);
+  assert.deepEqual(e.W.refused, [], 'no push GitHub refused');
+  assert.ok(HOSTED.every(n => [...e.W.checks.values()].some(c => c.head_sha === S && c.name === n && c.conclusion === 'success')), 'the hosted-* ran on S');
+});
+
+test('S7 E2 (must-red): the scaffold ruleset the App cannot bypass -> park naming it, nothing written to main; App 5368905 added to its bypass list -> lands, no write ever refused', async t => {
+  const e = await world(t, { prs: [910], rules: 's7' });
+  e.W.rulesets.get(SCAFFOLD_RS).currentUserCanBypass = 'never';
+  const T = e.main();
+  const s10 = await stage10(e);
+  assert.deepEqual([s10.facts.landing?.route, s10.facts.landing?.missing], ['park', [`ruleset_app_cannot_bypass:${SCAFFOLD_RS}`]], JSON.stringify(s10.facts.landing));
+  assert.deepEqual(s10.facts.landing?.bypass, { main: 'always', independent: 'never' }, 'the guard ruleset alone is the independent one');
+  assert.equal(s10.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(s10.facts.decision));
+  const b = s10.facts.openFrontBatch;
+  const p = await stage8(t, e, b);
+  assert.deepEqual([p.status, p.reason, p.missing, p.sideEffects], ['BLOCKED', 'TRAIN_LANDING_RULES_MISSING', [`ruleset_app_cannot_bypass:${SCAFFOLD_RS}`], 0], JSON.stringify(p));
+  assert.deepEqual([e.W.pushes, e.W.refused, e.main()], [[], [], T], 'never a write GitHub refuses');
+  untouched(e, T);
+  e.W.rulesets.get(SCAFFOLD_RS).currentUserCanBypass = 'always';
+  e.now += 10 * MIN;
+  const again = await stage8(t, e, b);
+  assert.equal(again.status, 'SETTLED', JSON.stringify(again));
+  assert.deepEqual([e.main(), e.W.pushes, e.W.refused], [b.testSha, [b.testSha], []]);
+});
+
+test('S7 E4 (must-red): S7 step 1 (#292 as today, the scaffold ruleset, no guard ruleset yet) lands through GitHub, the independent ruleset absent; the guard ruleset created -> never, push lacks only what the save adds', async t => {
+  let e = await world(t, { prs: [910], rules: 's7-step1' });
+  let r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.missing, r.facts.landing?.bypass],
+    ['github-merge', ['independent_ruleset_missing', ...S7_SAVE_MISSING], { main: 'never', independent: 'absent' }], JSON.stringify(r.facts.landing));
+  assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts.decision));
+  const b = r.facts.openFrontBatch;
+  const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+  assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+  assert.deepEqual(p.rehearsal, { testSha: b.testSha, missing: ['independent_ruleset_missing', ...S7_SAVE_MISSING], bypass: { main: 'never', independent: 'absent' } });
+  assert.deepEqual([e.W.pushes, e.W.refused], [[], []]);
+  assert.equal(greens(e, b.headSha).length, 1, 'the merge-slot green of the current path');
+  const M = githubMerges(e, b);
+  await stage10(e);
+  assert.deepEqual(e.adopted, [[910, M]]);
+  // the Owner's step 1 included the guard ruleset ("main 只许快进"): the App cannot bypass it
+  e = await world(t, { prs: [910], rules: 's7-step1' });
+  e.W.rulesets.set(FF_RS, { id: FF_RS, currentUserCanBypass: 'never' });
+  e.W.rules = [...e.W.rules, { type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null }];
+  r = await stage10(e);
+  assert.deepEqual([r.facts.landing?.route, r.facts.landing?.missing, r.facts.landing?.bypass],
+    ['github-merge', S7_SAVE_MISSING, { main: 'never', independent: 'never' }], 'push lacks exactly what the save of C adds');
+  validateTrainFacts(r.facts);
+});
+
+test('S7 (stay green): green hosted-* on same-tree H cannot replace missing, pending or failed hosted-* on S', async t => {
+  for (const testChecks of ['missing', 'pending', 'failed']) await t.test(testChecks, async t => {
+    const { e, b, T } = await opened(t, [910], { rules: 's7' });
+    assert.equal(e.W.commits.get(b.headSha).tree, e.W.commits.get(b.testSha).tree);
+    for (const [id, c] of e.W.checks) if (c.head_sha === b.testSha && HOSTED.includes(c.name)) {
+      if (testChecks === 'missing') e.W.checks.delete(id);
+      else Object.assign(c, { status: testChecks === 'pending' ? 'in_progress' : 'completed', conclusion: testChecks === 'pending' ? null : 'failure' });
+    }
+    const p = await stage8(t, e, b, { trainLanding: PUSH1 });
+    assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', testChecks === 'failed' ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_LANDING_CHECKS_PENDING', 0]);
+    untouched(e, T);
+    assert.deepEqual(e.W.pushes, []);
+  });
 });
