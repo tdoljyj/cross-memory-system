@@ -14,7 +14,7 @@ import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, tempDir, fixtureRecord, signResult, FAR_FUTURE } from './resident-v2-fixtures.mjs';
 import { requiredCheckFailure } from '../src/independent-control-checks-v2/train-rules.mjs';
 import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 
@@ -109,7 +109,7 @@ test('#1176: a stage-8 required check failure gives back only the merge slot; th
 });
 
 // A complete admitted v2 observation for `job` under `observed` (shape of full-admission-v2 facts).
-const SLOT_UNTIL = Date.now() + 3600_000; // Native's merge-slot deadline does not move between observations
+const SLOT_UNTIL = FAR_FUTURE; // Native's merge-slot deadline does not move between observations
 function admitted(job, observed, packet, { mergeQueueHead = false, slotUntil = SLOT_UNTIL, batchClaim = null, observedAt = Date.now() } = {}) {
   const facts = { contract: 'clued.independent-ci.full-admission/2', status: 'ADMITTED', admitted: true, completeAdmission: true, evaluator: 'scripts/ci/clued-work-admission.mjs#evaluate',
     domain: 'fixture', repository: REPO, scope: 'project:x', prRef: `${REPO}#${job.pr}`, headSha: job.headSha, baseSha: job.baseSha, jobId: job.id, role: job.role, attempt: job.attempt,
