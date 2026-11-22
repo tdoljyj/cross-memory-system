@@ -33,7 +33,7 @@
 //     (--keep also keeps the entries already listed).
 // All three run modes wait for a machine-wide suite slot outside GitHub Actions.
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -261,8 +261,8 @@ export function appDependencyGap(root, needs, env = process.env) {
 // the base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP. A
 // command with `known` runs Node's test runner with ci-test-failures-reporter.mjs
 // and passes only when every failure is an entry of ci-known-failures.json
-// under that key (knownFailureVerdict). Any other node --test command of this list reports to it as well, so that a test
-// that fails once can run alone again (passesAlone).
+// under that key (knownFailureVerdict). Any other node --test command of this list reports to it as well, so that a command
+// that fails once can run again in full (passesAgain).
 const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const RESIDENT = 'work/independent-ci-resident-v1';
 const SOURCE_V2 = 'work/actions-hosted-migration/independent-ci-v1';
@@ -936,17 +936,22 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
-// A failing test run alone again (Task 11092b8b; FABLE-flaky-no-new-commit-20261122 §2). When a node --test command fails
-// only because of one to RERUN_MAX_FAILURES tests (a known-failure command: tests off its list) in at most RERUN_MAX_FILES
-// files the change did not touch, those files run alone with the same command, twice; the command passes when both runs
-// finish and pass every one of those tests, with one flaky warning per test. Anything else keeps the failure: a runner that
-// crashed, was killed or timed out (exit other than 1, no summary in the report), a missing dependency, a test file that
-// differs from the base commit's (CI_BASE_SHA) or that git cannot read, a command that cannot run only those files, any
-// error on the way. It starts only after a command failed, so it never fails a command that passed; --run-files never does
-// it. A determinate regression fails alone too; what this lets through is a test that passes alone twice.
+// A failed command run again in full (Task 11092b8b; FABLE-flaky-fingerprint-20261122 §7.3). When a node --test command
+// fails only because of one to RERUN_MAX_FAILURES tests (a known-failure command: tests off its list) in at most
+// RERUN_MAX_FILES files the change did not touch, and that run took at most RERUN_MAX_ELAPSED_MS, the same command runs once
+// more, whole and with the same arguments, with an empty temporary directory of its own (TEMP, TMP, TMPDIR) and a timeout
+// of twice the first run (at least RERUN_MIN_TIMEOUT_MS). The command passes when that run finishes with a summary, passes
+// as the command does (exit 0; a known-failure command: knownFailureVerdict) and passes, not skips, every test that failed,
+// with one flaky warning per test. Anything else keeps the failure: a runner that crashed, was killed or timed out (exit
+// other than 1, no summary in the report), a missing dependency, a test file that differs from the base commit's
+// (CI_BASE_SHA) or that git cannot read, a run too long, any error on the way. It starts only after a command failed, so it
+// never fails a command that passed; --run-files never does it. It is the job's own run again: a failure the command's
+// context makes every time (another file of the same run) fails again; what this lets through is a failure one full run has
+// and the next has not.
 export const RERUN_MAX_FAILURES = 3;
 export const RERUN_MAX_FILES = 2;
-export const RERUN_TIMEOUT_MS = 5 * 60_000;
+export const RERUN_MAX_ELAPSED_MS = 10 * 60_000;
+export const RERUN_MIN_TIMEOUT_MS = 2 * 60_000;
 const isNodeTest = (argv) => argv[0] === 'node' && argv.includes('--test');
 function withReporter(argv, out) {
   const index = argv.indexOf('--test');
@@ -972,8 +977,8 @@ function unchangedSinceBase(root, base, files, env) {
   return null;
 }
 
-// Why the failures of a command cannot be run alone, or null.
-function rerunRefusal({ status, signal, report, failures, root, base, env }) {
+// Why a failed command cannot run again, or null.
+function rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, root, base, env }) {
   if (signal || status !== 1) return `the test runner exited ${status ?? signal}`;
   if (report.corrupt || !report.summary) return 'the test report has no summary of the run';
   if (failures.length === 0) return 'no failing test in the report';
@@ -982,57 +987,70 @@ function rerunRefusal({ status, signal, report, failures, root, base, env }) {
   if (failures.some((event) => event.missing_dependency)) return 'a module cannot be loaded';
   const files = [...new Set(failures.map((event) => event.file))];
   if (files.length > RERUN_MAX_FILES) return `failures in ${files.length} test files (more than ${RERUN_MAX_FILES})`;
+  if (!(elapsed <= maxElapsed)) return `the run took ${Math.round(elapsed)} ms (more than ${maxElapsed} ms)`;
   return unchangedSinceBase(root, base, files, env);
 }
 
-// Runs the failing tests' files alone twice; true when both runs pass every one of those tests. Logs why not otherwise.
-function passesAlone(id, { command, argv, failures, report, status, signal, root, cwd, env, spawn, platform, list, log, plan,
-  readReportFile, timeout }) {
-  const refusal = rerunRefusal({ status, signal, report, failures, root, base: env.CI_BASE_SHA, env });
+// Runs the failed command once more, whole; true when that run passes as the command does and passes every test that
+// failed. Logs why not otherwise.
+function passesAgain(id, { command, argv, failures, report, status, signal, elapsed, root, cwd, env, spawn, platform, list, log,
+  readReportFile, maxElapsed, minTimeout }) {
+  const refusal = rerunRefusal({ status, signal, report, failures, elapsed, maxElapsed, root, base: env.CI_BASE_SHA, env });
   if (refusal) {
-    log(`${id}: not run alone again: ${refusal}`);
+    log(`${id}: not run again in full: ${refusal}`);
     return false;
   }
-  const files = [...new Set(failures.map((event) => event.file))];
-  const { runs, matched } = plan(command, argv, new Set(files));
-  if (runs.length !== 1 || !files.every((file) => matched.includes(file))) {
-    log(`${id}: not run alone again: the command cannot run only ${files.join(', ')}`);
-    return false;
-  }
-  const known = list.filter((entry) => files.includes(entry.file));
-  for (const attempt of [1, 2]) {
-    const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-alone-`));
-    let text = '';
-    let result;
+  const timeout = Math.max(2 * Math.ceil(elapsed), minTimeout);
+  const dir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-again-`));
+  let text = '';
+  let result;
+  try {
+    // What the first run left in its temporary directory is not there for this one.
+    const temp = path.join(dir, 'tmp');
+    mkdirSync(temp);
+    const kept = Object.entries(testEnv(env)).filter(([name]) => !/^(TEMP|TMP|TMPDIR)$/i.test(name));
+    log(`::group::${id}: run again in full (timeout ${Math.ceil(timeout / 1000)} s): (${command.cwd}) ${argv.join(' ')}`);
+    const run = resolveCommand(withReporter(argv, path.join(dir, 'failures.jsonl')), { platform });
+    result = spawn(run[0], run.slice(1), { cwd, env: { ...Object.fromEntries(kept), TEMP: temp, TMP: temp, TMPDIR: temp },
+      stdio: 'inherit', timeout });
+    log('::endgroup::');
+    text = readReportFile(path.join(dir, 'failures.jsonl'));
+  } finally {
+    // Removing it never decides the command (a process the run left may still hold a file there).
     try {
-      const alone = withReporter(runs[0], path.join(dir, 'failures.jsonl'));
-      log(`::group::${id}: run alone again (${attempt}/2): (${command.cwd}) ${runs[0].join(' ')}`);
-      const run = resolveCommand(alone, { platform });
-      result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: 'inherit', timeout });
-      log('::endgroup::');
-      text = readReportFile(path.join(dir, 'failures.jsonl'));
-    } finally {
       rmSync(dir, { recursive: true, force: true });
+    } catch (error) {
+      log(`${id}: could not remove ${dir}: ${error?.message ?? error}`);
     }
-    const again = readReport(text, root);
-    const verdict = knownFailureVerdict({ status: result.signal ? 128 : result.status, report: again, known });
-    const failed = new Set(again.events.filter((event) => event.type === 'fail').map(testAt));
-    // A skipped test did not pass: it did not run.
-    const passed = new Set(again.events.filter((event) => event.type === 'pass' && !event.skip).map(testAt));
-    const notPassed = failures.filter((event) => failed.has(testAt(event)) || !passed.has(testAt(event)));
-    if (result.error || result.signal || !verdict.ok || notPassed.length > 0) {
-      const why = result.error ? result.error.message : !verdict.ok ? [...verdict.problems, ...verdict.unexpected.map(testAt)].join('; ')
-        : `${notPassed.map(testAt).join('; ')} did not pass`;
-      log(`${id}: run alone again (${attempt}/2), still failing (单独再跑仍失败): ${why}`);
-      return false;
-    }
+  }
+  const again = readReport(text, root);
+  const failed = again.events.filter((event) => event.type === 'fail');
+  const problems = new Set();
+  if (result.error) problems.add(result.error.message);
+  if (again.corrupt || !again.summary) problems.add('the test report has no summary of the run');
+  if (command.known) {
+    const verdict = knownFailureVerdict({ status: result.signal ? 128 : result.status, report: again, known: list });
+    for (const problem of verdict.problems) problems.add(problem);
+    for (const event of verdict.unexpected) problems.add(`${testAt(event)} failed`);
+  } else if (result.status !== 0) {
+    problems.add(`the test runner exited ${result.status ?? result.signal}`);
+    for (const event of failed) problems.add(`${testAt(event)} failed`);
+  }
+  // A skipped test did not pass: it did not run.
+  const passed = new Set(again.events.filter((event) => event.type === 'pass' && !event.skip).map(testAt));
+  const failedAt = new Set(failed.map(testAt));
+  const notPassed = failures.filter((event) => failedAt.has(testAt(event)) || !passed.has(testAt(event)));
+  if (notPassed.length > 0) problems.add(`${notPassed.map(testAt).join('; ')} did not pass`);
+  if (problems.size > 0) {
+    log(`${id}: run again in full, still failing (整条再跑仍失败): ${[...problems].join('; ')}`);
+    return false;
   }
   return true;
 }
 
 function reportFlaky(id, failures, { env, log }) {
   for (const event of failures) log(`::warning title=${id} flaky::${testAt(event)} fingerprint=${event.fingerprint}`);
-  log(`${id}: ${failures.length} test(s) failed once and passed alone twice (flaky): the command passes`);
+  log(`${id}: ${failures.length} test(s) failed once and passed when the command ran again in full (flaky): the command passes`);
   try {
     if (env.GITHUB_STEP_SUMMARY) {
       appendFileSync(env.GITHUB_STEP_SUMMARY, failures.map((event) => `- \`${id}\` flaky: ${testAt(event)} (fingerprint ${event.fingerprint})\n`).join(''));
@@ -1043,7 +1061,7 @@ function reportFlaky(id, failures, { env, log }) {
 // The CI process or the already guarded worker executes the suite here.
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
-  planRerun = filterCommand, rerunTimeoutMs = RERUN_TIMEOUT_MS } = {}) {
+  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS } = {}) {
   if (captureKnown) return writeKnown(id, root, env, keep);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   // The trusted commands, then the candidate's additions (read once the trusted ones have run), or, for a suite only the
@@ -1067,7 +1085,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     let argv = plain;
     let reportDir = null;
     // A known-failure command reports to the trusted reporter for its verdict; any other node --test command of the trusted
-    // list for the run alone again (passesAlone), which a missing reporter or report directory only rules out. A command the
+    // list for the run again in full (passesAgain), which a missing reporter or report directory only rules out. A command the
     // candidate adds gets none: what it adds carries no policy. The log shows such a command as it is, without the reporter.
     if (command.known) reportDir = mkdtempSync(path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-tests-`));
     else if (!files && !command.expanded && isNodeTest(plain) && existsSync(REPORTER_PATH)) {
@@ -1085,7 +1103,9 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
     const shown = command.known ? argv : plain;
     log(`::group::${id}: (${command.cwd}) ${shown.join(' ')}`);
     const run = resolveCommand(argv, { platform });
+    const started = performance.now();
     const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+    const elapsed = performance.now() - started;
     if (command.quiet && result.stdout) {
       // The runner budget report is long; print its head on success, all of it on failure.
       const text = result.stdout.toString();
@@ -1097,14 +1117,14 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       log(`${id}: ${shown[0]} did not start: ${result.error.message}`);
       return 1;
     }
-    // Every error on the way to running alone again keeps the failure (FABLE-flaky-no-new-commit-20261122 §2.5).
-    const alone = (failures, { report: ran, status, list = [] }) => {
+    // Every error on the way to running again keeps the failure (FABLE-flaky-no-new-commit-20261122 §2.5).
+    const again = (failures, { report: ran, status, list = [] }) => {
       if (files) return false;
       try {
-        return passesAlone(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, root, cwd, env, spawn,
-          platform, list, log, plan: planRerun, readReportFile, timeout: rerunTimeoutMs });
+        return passesAgain(id, { command, argv: plain, failures, report: ran, status, signal: result.signal, elapsed, root, cwd, env,
+          spawn, platform, list, log, readReportFile, maxElapsed: rerunMaxElapsedMs, minTimeout: rerunMinTimeoutMs });
       } catch (error) {
-        log(`${id}: not run alone again: ${error?.message ?? error}`);
+        log(`${id}: not run again in full: ${error?.message ?? error}`);
         return false;
       }
     };
@@ -1120,7 +1140,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       for (const entry of verdict.fixed) log(`::warning title=${id} known failure now passes::${label(entry)}; remove it from ci-known-failures.json`);
       for (const entry of verdict.missing) log(`::warning title=${id} known failure no longer runs::${label(entry)}; remove it from ci-known-failures.json`);
       if (!verdict.ok && verdict.problems.length === 0
-          && alone(verdict.unexpected, { report: ran, status, list })) {
+          && again(verdict.unexpected, { report: ran, status, list })) {
         reportFlaky(id, verdict.unexpected, { env, log });
         continue;
       }
@@ -1141,11 +1161,11 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
         try {
           ran = readReport(readReportFile(path.join(reportDir, 'failures.jsonl')), root);
         } catch (error) {
-          log(`${id}: not run alone again: the test report cannot be read (${error?.message ?? error})`);
+          log(`${id}: not run again in full: the test report cannot be read (${error?.message ?? error})`);
         }
         dropReport();
         const failures = ran ? ran.events.filter((event) => event.type === 'fail') : [];
-        if (ran && alone(failures, { report: ran, status: result.status })) {
+        if (ran && again(failures, { report: ran, status: result.status })) {
           reportFlaky(id, failures, { env, log });
           continue;
         }

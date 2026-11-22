@@ -1,8 +1,8 @@
-// A test that fails once and passes when its file runs alone again is let through in the job (Task 11092b8b;
-// FABLE-flaky-no-new-commit-20261122 §2): executeSuite runs the failing tests' files alone twice and passes the command only
-// when both runs pass every one of them, with a flaky warning per test; anything else stays red. These run the real
-// `node --test` in a throwaway git checkout (a base commit, the suite's test directory); a counter file beside each test file
-// says which run it is (the suite environment drops variables, so the count cannot come from one).
+// A test that fails once and passes when its command runs again in full is let through in the job (Task 11092b8b;
+// FABLE-flaky-fingerprint-20261122 §7.3): executeSuite runs the failed command once more, whole, and passes it only when
+// that run passes as the command does and passes every test that failed, with a flaky warning per test; anything else stays
+// red. These run the real `node --test` in a throwaway git checkout (a base commit, the suite's test directory); a counter
+// file beside each test file says which run it is (the suite environment drops variables, so the count cannot come from one).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -44,7 +44,8 @@ function testFile(tests, { header = '' } = {}) {
 // A git checkout with the files committed as the base; `changed` is committed on top (HEAD).
 function checkout(t, files, { changed = {} } = {}) {
   const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'ci-flaky-')));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // A test process a killed runner left may hold the directory for a moment.
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }));
   const write = (entries) => {
     for (const [file, text] of Object.entries(entries)) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -98,13 +99,13 @@ test('A: a test that fails once and passes when the command runs again in full p
   assert.match(warnings[0], new RegExp(`::${FLAKY.replaceAll('.', '\\.')} :: flaky one fingerprint=[0-9a-f]{16}$`));
 });
 
-test('B: a test that fails every time stays red; the second run alone is not started after the first fails', (t) => {
+test('B: a test that fails every time stays red; the command runs again once', (t) => {
   const { root, base, runsOf } = checkout(t, suite({ 'always': true }));
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
   assert.equal(calls.length, 2, out);
   assert.equal(runsOf(FLAKY), 2);
-  assert.match(out, /单独再跑仍失败/);
+  assert.match(out, /整条再跑仍失败/);
   assert.doesNotMatch(out, /flaky::/);
 });
 
@@ -113,7 +114,7 @@ test('C: a failing test file the change edited is not run again', (t) => {
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
   assert.equal(calls.length, 1, out);
-  assert.match(out, /not run alone again: .*flaky\.test\.mjs differs from the base commit/);
+  assert.match(out, /not run again in full: .*flaky\.test\.mjs differs from the base commit/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
@@ -122,7 +123,7 @@ test('D: four failing tests are not run again', (t) => {
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
   assert.equal(calls.length, 1, out);
-  assert.match(out, /not run alone again: 4 failing tests/);
+  assert.match(out, /not run again in full: 4 failing tests/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
@@ -142,7 +143,7 @@ test('F: a runner that is killed (no summary in the report) is not run again', (
   const { status, calls, out } = run(root, base);
   assert.notEqual(status, 0, out);
   assert.equal(calls.length, 1, out);
-  assert.match(out, /not run alone again: (the test runner exited|the test report has no summary)/);
+  assert.match(out, /not run again in full: (the test runner exited|the test report has no summary)/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
@@ -152,32 +153,39 @@ test('G: without CI_BASE_SHA, or with a base git cannot read, nothing is run aga
     const { status, calls, out } = run(root, base);
     assert.equal(status, 1, `${base}: ${out}`);
     assert.equal(calls.length, 1, `${base}: ${out}`);
-    assert.match(out, base ? /not run alone again: .* is not in the base commit/ : /not run alone again: CI_BASE_SHA is not a commit/);
+    assert.match(out, base ? /not run again in full: .* is not in the base commit/ : /not run again in full: CI_BASE_SHA is not a commit/);
     assert.equal(runsOf(FLAKY), 1);
   }
 });
 
-test('H: an error while planning the run alone leaves the command red and is not thrown', (t) => {
+test('H: an error while reading the report of the run again leaves the command red and is not thrown', (t) => {
   const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [1] }));
+  let reads = 0;
+  const readReportFile = (file) => {
+    reads += 1;
+    if (reads > 1) throw new Error('reading broke');
+    return readFileSync(file, 'utf8');
+  };
   let result;
-  assert.doesNotThrow(() => { result = run(root, base, { planRerun: () => { throw new Error('planning broke'); } }); });
+  assert.doesNotThrow(() => { result = run(root, base, { readReportFile }); });
   assert.equal(result.status, 1, result.out);
-  assert.equal(result.calls.length, 1, result.out);
-  assert.match(result.out, /not run alone again: planning broke/);
-  assert.equal(runsOf(FLAKY), 1);
+  assert.equal(result.calls.length, 2, result.out);
+  assert.match(result.out, /not run again in full: reading broke/);
+  assert.doesNotMatch(result.out, /flaky::/);
+  assert.equal(runsOf(FLAKY), 2);
 });
 
-test('I: a run alone in which the failed test is skipped does not count as a pass', (t) => {
+test('I: a run again in which the failed test is skipped does not count as a pass', (t) => {
   const { root, base } = checkout(t, suite({ 'skipped later':
     "test('skipped later', { skip: run > 1 }, () => { throw new Error('first run fails'); });\ntest('other', () => {});\n" }));
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
-  assert.equal(calls.length, 2, 'it ran alone once and stopped');
-  assert.match(out, /单独再跑仍失败\): .*skipped later did not pass/);
+  assert.equal(calls.length, 2, 'it ran again once');
+  assert.match(out, /整条再跑仍失败\): .*skipped later did not pass/);
   assert.doesNotMatch(out, /flaky::/);
 });
 
-test('J: with a known-failure list, a failure off the list that passes alone passes; a listed one still only warns', (t) => {
+test('J: with a known-failure list, a failure off the list that passes the run again passes; a listed one still only warns', (t) => {
   const [first, ...rest] = ADMISSION_FILES;
   const files = Object.fromEntries(rest.map((file) => [file, "import test from 'node:test';\ntest('fine', () => {});\n"]));
   files[first] = testFile({ 'known broken': true, 'flaky one': [1] });
@@ -188,8 +196,8 @@ test('J: with a known-failure list, a failure off the list that passes alone pas
   const known = { 'admission-self-tests': [{ file: first, path: ['known broken'], fingerprint, reason: 'listed' }] };
   const { status, lines, calls, out } = run(root, base, { suite: 'admission-self-tests', known });
   assert.equal(status, 0, out);
-  assert.equal(calls.length, 3, out);
-  assert.equal(runsOf(first), 3);
+  assert.equal(calls.length, 2, out);
+  assert.equal(runsOf(first), 2);
   assert.ok(lines.some((line) => line === `::warning title=admission-self-tests known failure::${first} :: known broken`), out);
   assert.ok(lines.some((line) => line.startsWith(`::warning title=admission-self-tests flaky::${first} :: flaky one fingerprint=`)), out);
 });
@@ -199,7 +207,7 @@ test('K: under --run-files a failure is returned as it is and nothing is run aga
   const { status, calls, out } = run(root, base, { files: [FLAKY] });
   assert.equal(status, 1, out);
   assert.equal(calls.length, 1, out);
-  assert.doesNotMatch(out, /run alone again/);
+  assert.doesNotMatch(out, /run again in full/);
   assert.equal(runsOf(FLAKY), 1);
 });
 
@@ -264,5 +272,37 @@ test('needs what the first run left', () => {
   assert.equal(calls.length, 2, out);
   assert.equal(runsOf(FLAKY), 2);
   assert.match(out, /整条再跑仍失败/);
+  assert.doesNotMatch(out, /flaky::/);
+});
+
+test('O: a run again that times out leaves the command red', (t) => {
+  // The second run waits until the runner that started it is gone (the timeout ends the runner, not its test processes).
+  const { root, base, runsOf } = checkout(t, suite({ 'hangs the second run': `test('hangs the second run', async () => {
+  if (run === 1) throw new Error('the first run fails');
+  await new Promise(() => setInterval(() => {
+    try {
+      process.kill(process.ppid, 0);
+    } catch {
+      process.exit(1);
+    }
+  }, 100));
+});
+` }));
+  const { status, calls, out } = run(root, base, { rerunMinTimeoutMs: 0 });
+  assert.equal(status, 1, out);
+  assert.equal(calls.length, 2, out);
+  assert.equal(runsOf(FLAKY), 2);
+  assert.match(out, /整条再跑仍失败\): .*ETIMEDOUT/);
+  assert.doesNotMatch(out, /flaky::/);
+});
+
+test('P: a run again without a summary in its report leaves the command red', (t) => {
+  const { root, base, runsOf } = checkout(t, suite({ 'kills the second runner':
+    "test('kills the second runner', () => { if (run === 1) throw new Error('the first run fails'); process.kill(process.ppid, 'SIGKILL'); });\n" }));
+  const { status, calls, out } = run(root, base);
+  assert.equal(status, 1, out);
+  assert.equal(calls.length, 2, out);
+  assert.equal(runsOf(FLAKY), 2);
+  assert.match(out, /整条再跑仍失败\): .*the test report has no summary of the run/);
   assert.doesNotMatch(out, /flaky::/);
 });
