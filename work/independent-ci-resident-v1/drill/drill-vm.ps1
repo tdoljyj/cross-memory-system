@@ -2897,8 +2897,8 @@ function Save-DrillLateProbe([string]$RunDir, [pscredential]$Cred) { Save-DrillP
 # the same way). One that cannot be read is named with its error, never taking the others with it.
 # wsl-cold-start.json: what the entry found right after shutting the guest's WSL down before the launcher stage (Fable ruling 0e418483 4.2).
 # resident-failure-snapshot.json: what the entry read of the guest when the first install did not end done (the resident's HALT, the
-# launcher's progress records; r9 follow-up 1.3 B). Kept in the run directory as the guest wrote it; a first install that ended done
-# writes none, so its absence is not a missing piece of evidence (Save-DrillGuestEvidence).
+# launcher's progress records; r9 follow-up 1.3 B). Kept in the run directory as the guest wrote it. Only a first install that ended
+# done writes none: after any other end its absence is a missing piece of evidence (Save-DrillGuestEvidence).
 $script:DrillStageFiles = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log', 'host-result.json', 'launcher-result.json', 'wsl-cold-start.json', 'stage-timings.json', 'resident-failure-snapshot.json')
 $script:DrillFailureStageFiles = @('resident-failure-snapshot.json')
 $script:GuestStageFiles = {
@@ -3107,8 +3107,13 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
     $c = Get-DrillCode $_
     $record.code = $c.code; $record.detail = $c.detail
   }
-  # the stage files that did not reach the run directory are missing too (their states: stage-files.json)
-  $record.missing = @(@($record.missing) + @(@($stage.record.files.Keys) | Where-Object { $state = [string]$stage.record.files[$_].state; $state -cne 'saved' -and -not ($state -ceq 'absent' -and $script:DrillFailureStageFiles -ccontains $_) }))
+  # the stage files that did not reach the run directory are missing too (their states: stage-files.json). The failure snapshot is
+  # written only when the first install did not end done, so its absence is nothing missing only when the entry itself said
+  # FIRST_INSTALL_DONE: stopped, cut off, or no result returned at all, it is missing (FABLE-r9-lineB-points R2: the entry swallows a
+  # snapshot it could not write, and r9 lost the resident's HALT without anything saying so).
+  $entryDone = $false
+  if ($null -ne $EntryOut) { try { $entryDone = ([string](Read-DrillEntryResult @($EntryOut.lines) 0).status -ceq 'FIRST_INSTALL_DONE') } catch { $entryDone = $false } }
+  $record.missing = @(@($record.missing) + @(@($stage.record.files.Keys) | Where-Object { $state = [string]$stage.record.files[$_].state; $state -cne 'saved' -and -not ($state -ceq 'absent' -and $entryDone -and $script:DrillFailureStageFiles -ccontains $_) }))
   $record.stageFiles = $stage.record.files
   # the launcher's verdict for A6 only as saved in the run directory and read back from there (same review): never the collected object.
   # A read-back that fails is recorded with its detail (6th review round, low 2).
