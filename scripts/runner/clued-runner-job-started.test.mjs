@@ -116,13 +116,15 @@ function fakeFetch(script) {
 const RUN = `${API}/actions/runs/555`;
 const RUN_CREATED = "2026-10-04T05:00:00Z";
 const thisRun = (overrides = {}) => ({ body: { id: 555, run_attempt: 1, created_at: RUN_CREATED, ...overrides } });
-// Main's admission runs on the head (re-review 5, n1).
+// The legacy admission workflow's runs on the head: the hook no longer reads them (scaffold open-qs 1.1).
 const ADMISSION_RUNS = `${API}/actions/workflows/clued-work-admission.yml/runs?head_sha=${HEAD}&event=pull_request_target`;
 const admissionRun = (overrides = {}) => ({ id: 1, event: "pull_request_target", head_sha: HEAD, created_at: RUN_CREATED,
   status: "completed", conclusion: "success", ...overrides });
 const admissionRuns = (...list) => ({ body: { workflow_runs: list } });
 const run = async (overrides, script, event = prEvent()) => {
-  const fake = fakeFetch({ [RUN]: thisRun(), [ADMISSION_RUNS]: admissionRuns(admissionRun()), ...script });
+  // By default the head has its Native admission and the pull request is open at it.
+  const fake = fakeFetch({ [RUN]: thisRun(), [NATIVE]: { body: { total_count: 1, check_runs: [nativeCheck()] } },
+    [`${API}/pulls/9`]: { body: { state: "open", base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } } }, ...script });
   const sleeps = [];
   const result = await decide({ env: env(overrides), fetchImpl: fake.fetchImpl, sleep: async (ms) => { sleeps.push(ms); },
     readFile: (p) => (p === "/token" ? "ghp_read\n" : event) });
@@ -136,7 +138,6 @@ const nativeCheck = (overrides = {}) => ({ id: 80, name: "kooyumi-work-admission
   external_id: `independent-ci:native-work-admission:v2:${"c".repeat(64)}:a1:c1234abcd:f1:e1`,
   output: { summary: "Native work admission o/r#9" }, ...overrides });
 const nativeScript = (...checks) => ({
-  [PRODUCER]: { body: { path: ".github/workflows/clued-work-admission.yml", state: "disabled_manually" } },
   [COMPARE]: files(".github/workflows/gitleaks.yml"),
   [NATIVE]: { body: { total_count: checks.length, check_runs: checks } },
   [`${API}/pulls/9`]: { body: { state: "open", base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } } },
@@ -346,7 +347,7 @@ test('G3 hook: required-tests dispatch stays bound to its current PR/head', asyn
     'branch dispatch still requires workflows identical to main');
 });
 
-test("Native hook: manually retired producer reads only the exact App/head/PR Native check; legacy success cannot stand in", async () => {
+test("Native hook: only the exact App/head/PR Native check is read; legacy success cannot stand in", async () => {
   const { result, calls } = await run({}, nativeScript(nativeCheck()));
   assert.equal(result.allow, true);
   assert.match(result.reason, /Native admission 80: succeeded/);
@@ -378,8 +379,9 @@ test("Native hook: a complete multi-page response is required and the newest pro
   await assert.rejects(run({}, { ...script, [`${NATIVE}&filter=all&per_page=100&page=2`]: page([]) }), /incomplete/);
 });
 
-test("Native hook: no fallback on unknown producer/Checks failure, incomplete pagination, closed or moved PR; no Native rerun allowance", async () => {
-  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [PRODUCER]: { body: { state: "disabled_inactivity" } } }), /producer state/);
+test("Native hook: no fallback on a Checks failure, incomplete pagination, closed or moved PR; no Native rerun allowance", async () => {
+  // The legacy workflow's state selects nothing any more (scaffold open-qs 1.1).
+  assert.equal((await run({}, { ...nativeScript(nativeCheck()), [PRODUCER]: { body: { state: "disabled_inactivity" } } })).result.allow, true);
   await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: { status: 403, body: null } }), /returned 403/);
   await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: { body: { total_count: 1001, check_runs: [] } } }), /incomplete/);
   await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: { body: { total_count: 1, check_runs: [] } } }), /incomplete/);
@@ -524,7 +526,7 @@ test("runner hook (04f9b91b, 5): a same-repository pull request is judged as bef
     let { result } = await run({}, { [COMPARE]: files("apps/x.ts") }, prEvent("main", headRepo));
     assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes no workflow"]);
     ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml") }, prEvent("main", headRepo)));
-    assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes .github/workflows/heavy.yml; admission run 1 succeeded"]);
+    assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes .github/workflows/heavy.yml; Native admission 80: succeeded"]);
     const target = await run({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REF: "refs/heads/main" }, {}, prEvent("main", headRepo));
     assert.deepEqual([target.result.allow, target.result.reason, target.calls.length], [true, "pull_request_target on main", 0]);
   }
@@ -547,7 +549,7 @@ test("runner hook: other branches, other events and other repositories are refus
   assert.deepEqual([result.allow, result.reason], [false, "pull request into feature, not main"]);
 });
 
-test("runner hook: a pull request into main runs when it changes no workflow, else only after its admission run succeeds", async () => {
+test("runner hook: a pull request into main runs when it changes no workflow, else only after its Native admission succeeds", async () => {
   let { result, calls } = await run({}, { [COMPARE]: files("apps/x.ts") });
   assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes no workflow"]);
   assert.equal(calls[0].url, RUN);
@@ -556,36 +558,31 @@ test("runner hook: a pull request into main runs when it changes no workflow, el
   // A changed workflow, even another one than the running job's (a called workflow), needs admission.
   const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
   ({ result, calls } = await run({}, change));
-  assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes .github/workflows/heavy.yml; admission run 1 succeeded"]);
-  assert.equal(calls[3].url, `${ADMISSION_RUNS}&per_page=100`);
-  // Task b979d5a2: a fine-grained token cannot read the Checks API, so nothing reads it.
-  assert.equal(calls.some((c) => /check-runs|check-suites/.test(c.url)), false);
-  // Not a failed or cancelled run, not one on another head, not another event's.
-  for (const overrides of [{ conclusion: "failure" }, { conclusion: "cancelled" }, { conclusion: "action_required" },
-    { head_sha: SHA }, { event: "pull_request" }, { event: "workflow_dispatch" }]) {
-    ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun(overrides)) }));
+  assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes .github/workflows/heavy.yml; Native admission 80: succeeded"]);
+  assert.deepEqual(urls(calls), [RUN, `${COMPARE}${HEAD}`, `${NATIVE}&filter=all&per_page=100&page=1`, `${API}/pulls/9`]);
+  // Not a failed or cancelled check, not one on another head.
+  for (const overrides of [{ conclusion: "failure" }, { conclusion: "cancelled" }, { conclusion: "action_required" }, { head_sha: SHA }]) {
+    ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [NATIVE]: { body: { total_count: 1, check_runs: [nativeCheck(overrides)] } } }));
     assert.equal(result.allow, false, JSON.stringify(overrides));
   }
-  ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" })) }));
-  assert.match(result.reason, /no successful clued-work-admission\.yml run on b{40} from this event .*admission run 1: completed\/failure/);
   // A renamed workflow counts by its old name too; a truncated list counts as changed.
   ({ result, calls } = await run({}, { [COMPARE]: { body: { files: [{ filename: "x.yml", previous_filename: ".github/workflows/old.yml" }] } } }));
-  assert.match(result.reason, /changes \.github\/workflows\/old\.yml; admission run 1/);
-  assert.equal(calls.length, 4, "the producer state and admission run were consulted");
+  assert.match(result.reason, /changes \.github\/workflows\/old\.yml; Native admission 80/);
+  assert.equal(calls.length, 4, "the run, the compare, the Native check and the pull request");
   const many = Array.from({ length: 300 }, (_, i) => `apps/f${i}.ts`);
-  ({ result } = await run({}, { [COMPARE]: files(...many), [ADMISSION_RUNS]: admissionRuns() }));
+  ({ result } = await run({}, { [COMPARE]: files(...many), [NATIVE]: { body: { total_count: 0, check_runs: [] } } }));
   assert.equal(result.allow, false);
   assert.match(result.reason, /truncated/);
-  // It waits for a run that is still going.
+  // It waits for a check that is still going.
   let polls = 0;
   let sleeps;
   ({ result, sleeps } = await run({}, { ...change,
-    [ADMISSION_RUNS]: () => { polls += 1; return admissionRuns(admissionRun(polls < 3 ? { status: "in_progress", conclusion: null } : {})); } }));
+    [NATIVE]: () => { polls += 1; return { body: { total_count: 1, check_runs: [nativeCheck(polls < 3 ? { status: "in_progress", conclusion: null } : {})] } }; } }));
   assert.deepEqual([result.allow, polls, sleeps.length], [true, 3, 2]);
   // And gives up after CLUED_RUNNER_HOOK_WAIT_SECONDS.
-  ({ result, sleeps } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ status: "in_progress", conclusion: null })) }));
+  ({ result, sleeps } = await run({}, { ...change, [NATIVE]: { body: { total_count: 1, check_runs: [nativeCheck({ status: "in_progress", conclusion: null })] } } }));
   assert.deepEqual([result.allow, sleeps.length], [false, 2]);
-  assert.match(result.reason, /admission run 1: in_progress\/none/);
+  assert.match(result.reason, /Native admission 80: not admitted/);
 });
 
 test("runner hook: a hand dispatch off main runs only when its workflow files are exactly main's", async () => {
@@ -627,7 +624,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "fork-refusal-v1");
+  assert.equal(HOOK_VERSION, "native-only-admission-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -922,11 +919,11 @@ test("runner hook (Task 26cced7e): another ungated workflow may be re-run once, 
   ({ result } = await rerun(2, BUDGET, { ...ungated(2), [`${FILE}${SHA}`]: { status: 500, body: null } }));
   assert.equal(result.allow, false);
   assert.match(result.reason, /cannot compare \.github\/workflows\/runner-budget-policy\.yml with main/);
-  // The workflow-change rule still applies afterwards: a pull request that changes a workflow needs its successful admission run.
+  // The workflow-change rule still applies afterwards: a pull request that changes a workflow needs its successful Native admission.
   ({ result } = await rerun(2, BUDGET, { ...ungated(2), ...blobs("c".repeat(40), "c".repeat(40)),
-    [COMPARE]: files(".github/workflows/other.yml"), [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" })) }));
+    [COMPARE]: files(".github/workflows/other.yml"), [NATIVE]: { body: { total_count: 1, check_runs: [nativeCheck({ conclusion: "failure" })] } } }));
   assert.equal(result.allow, false);
-  assert.match(result.reason, /changes \.github\/workflows\/other\.yml; no successful clued-work-admission\.yml run/);
+  assert.match(result.reason, /changes \.github\/workflows\/other\.yml; Native admission 80: not admitted/);
   // A gated workflow is still judged by its gate: a gate that did not run again in this attempt refuses.
   ({ result } = await rerun(2, HEAVY, { [JOBS(2)]: jobsOf(heavyJob(), gateJob({ started_at: "2026-10-04T05:30:00Z" })) }));
   assert.equal(result.allow, false);
@@ -996,33 +993,20 @@ test("runner hook: the run attempt on the runner and on GitHub must agree", asyn
   }
 });
 
-test("runner hook (re-review 3, N-R1): a re-run of a pull request that changes a workflow still needs its successful admission run", async () => {
+test("runner hook (re-review 3, N-R1): a re-run of a pull request that changes a workflow still needs its successful Native admission", async () => {
   const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
   for (const overrides of [HEAVY, GATE, GITLEAKS]) {
-    let { result, calls } = await rerun(2, overrides, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" })) });
-    assert.equal(result.allow, false, overrides.GITHUB_JOB);
-    assert.match(result.reason, /^pull request #9 changes \.github\/workflows\/heavy\.yml; no successful clued-work-admission\.yml run on b{40} from this event .*admission run 1: completed\/failure\); run attempt 2 (of \S+ )?on the current head/);
-    assert.equal(urls(calls).at(-1), `${ADMISSION_RUNS}&per_page=100`);
-    ({ result } = await rerun(2, overrides, { ...change, [ADMISSION_RUNS]: admissionRuns() }));
-    assert.equal(result.allow, false, `${overrides.GITHUB_JOB}: no admission run`);
-    ({ result, calls } = await rerun(2, overrides, change));
-    assert.equal(result.allow, true, overrides.GITHUB_JOB);
-    assert.match(result.reason, /^pull request #9 changes \.github\/workflows\/heavy\.yml; admission run 1 succeeded; run attempt 2 (of \S+ )?on the current head/);
+    for (const native of [[nativeCheck({ conclusion: "failure" })], []]) {
+      const { result, calls } = await rerun(2, overrides, { ...change, [NATIVE]: { body: { total_count: native.length, check_runs: native } } });
+      assert.equal(result.allow, false, `${overrides.GITHUB_JOB}: ${JSON.stringify(native)}`);
+      assert.match(result.reason, /^pull request #9 changes \.github\/workflows\/heavy\.yml; Native admission (80|absent): not admitted .*; run attempt 2 (of \S+ )?on the current head/);
+      assert.equal(calls.some((c) => c.url.startsWith(ADMISSION_RUNS)), false);
+    }
   }
-  // After an Owner grant the pull request body is edited: that event's newer
-  // admission run decides for the re-run, not the first event's failed one.
-  const granted = admissionRun({ id: 2, created_at: "2026-10-04T05:40:00Z" });
-  let { result } = await rerun(2, HEAVY, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" }), granted) });
-  assert.match(result.reason, /admission run 2 succeeded; run attempt 2/);
-  assert.equal(result.allow, true);
-  ({ result } = await rerun(2, HEAVY, { ...change,
-    [ADMISSION_RUNS]: admissionRuns(admissionRun(), admissionRun({ id: 2, created_at: "2026-10-04T05:40:00Z", conclusion: "failure" })) }));
-  assert.equal(result.allow, false, "the newest admission run decides");
-  // The re-run check comes first: a refused re-run never reaches the admission run.
-  let calls;
-  ({ result, calls } = await rerun(2, HEAVY, { ...change, [JOBS(2)]: jobsOf(gateJob({ started_at: "2026-10-04T05:00:04Z" })) }));
+  // The re-run check comes first: a refused re-run never reaches the admission.
+  const { result, calls } = await rerun(2, HEAVY, { ...change, [JOBS(2)]: jobsOf(gateJob({ started_at: "2026-10-04T05:00:04Z" })) });
   assert.equal(result.allow, false);
-  assert.equal(calls.some((c) => c.url.startsWith(ADMISSION_RUNS) || c.url.startsWith(COMPARE)), false);
+  assert.equal(calls.some((c) => c.url.startsWith(NATIVE) || c.url.startsWith(COMPARE)), false);
 });
 
 // Defect B (2026-11-15, PR #1121 run 43720693841, #1122 run 43720708199): a pull request that changes a workflow is pushed long
@@ -1113,32 +1097,6 @@ test("Native hook (defect B): an earlier attempt that ran anything, or that cann
     { ...nativeScript(), [RUN]: rerunOf(2), [JOBS(1)]: jobsOf(refusedInSetup(), skippedHeavy()) });
   assert.equal(result.allow, false);
   assert.equal(urls(calls).some((u) => u.startsWith(JOBS(1))), false);
-});
-
-test("runner hook (re-review 3 N-R1, re-review 5 n1): only the admission run of this event decides", async () => {
-  const change = { [COMPARE]: files(".github/workflows/heavy.yml") };
-  const earlier = admissionRun({ created_at: "2026-10-04T04:59:44Z" });
-  let { result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(earlier) });
-  assert.equal(result.allow, false);
-  assert.match(result.reason, /from this event \(created since 2026-10-04T05:00:00Z less 15s; no admission run\)/);
-  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ created_at: "2026-10-04T04:59:46Z" })) }));
-  assert.equal(result.allow, true, "a few seconds before the run (same event)");
-  // Closed and reopened within seconds: the newer admission run decides.
-  const reopened = (overrides = {}) => admissionRun({ id: 2, created_at: "2026-10-04T05:00:01Z", ...overrides });
-  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened({ conclusion: "failure" })) }));
-  assert.deepEqual([result.allow, /admission run 2: completed\/failure/.test(result.reason)], [false, true]);
-  ({ result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...change,
-    [ADMISSION_RUNS]: admissionRuns(admissionRun(), reopened({ status: "queued", conclusion: null })) }));
-  assert.equal(result.allow, false, "an older success does not stand in while the newer run is going");
-  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun({ conclusion: "failure" }), reopened()) }));
-  assert.deepEqual([result.allow, result.reason.endsWith("admission run 2 succeeded")], [true, true]);
-  // The same creation time: the higher run id decides.
-  ({ result } = await run({}, { ...change, [ADMISSION_RUNS]: admissionRuns(admissionRun(), admissionRun({ id: 0, conclusion: "failure" })) }));
-  assert.equal(result.allow, true);
-  // A skipped admission run (a pull request into another branch) is passed over.
-  ({ result } = await run({}, { ...change,
-    [ADMISSION_RUNS]: admissionRuns(admissionRun(), admissionRun({ id: 3, created_at: "2026-10-04T05:00:02Z", conclusion: "skipped" })) }));
-  assert.equal(result.allow, true);
 });
 
 test("runner hook (re-review 3, N-R2): only the dispatch-gated workflows may be dispatched off main", async () => {
@@ -1298,17 +1256,9 @@ test("transient reads: a 503 that lasts the whole wait refuses with that failure
   const malformed = cut(0, { body: { total_count: 1, check_runs: "x" } });
   await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [NATIVE]: malformed }), /incomplete or malformed/);
   assert.equal(malformed.count(), 1);
-  // the producer state read is a single call: a cut longer than its attempts refuses
-  const producer = cut(Infinity, null);
-  await assert.rejects(run({}, { ...nativeScript(nativeCheck()), [PRODUCER]: producer }), /ECONNRESET/);
-  assert.equal(producer.count(), READ_ATTEMPTS);
 });
 
-test("transient reads: the legacy admission run and a re-run's admission-gate job are polled through a cut", async () => {
-  const runs = cut(3, admissionRuns(admissionRun()));
-  const legacy = await run({}, { [COMPARE]: files(".github/workflows/gitleaks.yml"), [ADMISSION_RUNS]: runs });
-  assert.equal(legacy.result.allow, true, legacy.result.reason);
-  assert.equal(runs.count(), 4);
+test("transient reads: a re-run's admission-gate job is polled through a cut", async () => {
   const jobs = cut(3, jobsOf(gateJob(), heavyJob()));
   const gate = await rerun(2, HEAVY, { [JOBS(2)]: jobs });
   assert.equal(gate.result.allow, true, gate.result.reason);
@@ -1486,4 +1436,22 @@ test('required-tests dispatch: a new run, admitted in the hook whatever earlier 
   assert.equal((await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 2 }) }, payload)).result.allow, true, 'two attempts and this one: three');
   const used = await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 3 }) }, payload);
   assert.equal(used.result.allow, true, used.result.reason);
+});
+
+// FABLE-scaffold-open-qs 问题 1 改法 1: the hook admits a pull request that changes a workflow on Native admission only. The
+// legacy clued-work-admission.yml state no longer selects a route: enabling that workflow again must not let its
+// pull_request_target success stand in for Native, and its state is not read at all (one GitHub read less per job).
+test("Native only (scaffold open-qs 1.1): an active legacy workflow with a successful run on the head never admits without Native", async () => {
+  const { result, calls } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(),
+    [PRODUCER]: { body: { path: ".github/workflows/clued-work-admission.yml", state: "active" } },
+    [ADMISSION_RUNS]: admissionRuns(admissionRun()) });
+  assert.equal(result.allow, false, result.reason);
+  assert.match(result.reason, /Native admission absent: not admitted/);
+  assert.equal(calls.some(c => c.url.startsWith(PRODUCER)), false, "neither the workflow's state nor its runs are read");
+});
+test("Native only (scaffold open-qs 1.1): the legacy workflow's state is not read, so a 404 for it does not refuse a Native success", async () => {
+  const { result, calls } = await run({}, { ...nativeScript(nativeCheck()), [PRODUCER]: { status: 404, body: { message: "Not Found" } } });
+  assert.equal(result.allow, true, result.reason);
+  assert.match(result.reason, /Native admission 80: succeeded/);
+  assert.equal(calls.some(c => c.url.startsWith(PRODUCER)), false);
 });

@@ -23,14 +23,12 @@
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
-//   - a pull request into main that changes a workflow, once the current
-//     admission producer has admitted this head and event. The active legacy
-//     workflow uses its pull_request_target run; explicit manual retirement
-//     selects the exact Native App/PR/head check and the current epoch guard.
+//   - a pull request into main that changes a workflow, once the Native
+//     admission has admitted this head and event: the exact App 5368905/PR/
+//     head kooyumi-work-admission check and the current epoch guard.
 //     (Re-review 3, N-R1, and re-review 5, n1: an older success on the same
-//     head cannot stand in.) Task b979d5a2: the hook reads that run, not the
-//     clued-admission App's check, because a fine-grained token cannot read
-//     the Checks API. See admissionRun below.
+//     head cannot stand in.) The legacy clued-work-admission.yml is not read,
+//     whether it is enabled or not (FABLE-scaffold-open-qs 问题 1 改法 1).
 //   - a hand dispatch on another branch of one of DISPATCH_GATED_WORKFLOWS,
 //     whose .github/workflows directory is exactly main's. That workflow keeps
 //     the dispatch gate, which needs a Clued admission run for the dispatched
@@ -56,7 +54,7 @@
 //         checks, such as runner-budget-policy) whose file at the head is the
 //         default branch's, byte for byte (Task 26cced7e, Owner Decision
 //         661f8c36). A pull request that changes a workflow has every job of
-//         its first run refused until its admission run succeeds, so without
+//         its first run refused until its Native admission succeeds, so without
 //         this its short checks could only run again on a new commit or a
 //         close and reopen;
 //       - every other job starts only when this attempt's admission-gate job
@@ -85,7 +83,7 @@
 //                                  a read-only GitHub token (actions, contents
 //                                  and pull requests: read); used only when no App is set
 //   CLUED_RUNNER_HOOK_ENFORCE      "true" refuses; anything else only reports
-//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the admission run, and
+//   CLUED_RUNNER_HOOK_WAIT_SECONDS how long to wait for the Native admission, and
 //                                  separately for a re-run's admission-gate
 //                                  job (480 each). A heavy job of a re-run of a
 //                                  pull request that changes a workflow can
@@ -103,7 +101,7 @@
 // (the installation-token mint: a new token is harmless; the read-only
 // execution_current observation). Any other answer (401, 403, 404, 429, a
 // malformed body) is final at once, as before. While the hook waits for the
-// admission run, the Native kooyumi-work-admission check or a re-run's
+// Native kooyumi-work-admission check or a re-run's
 // admission-gate job, a poll that still fails transiently is "not settled
 // yet", never a refusal, until the wait ends; then the last failure refuses.
 // Every wait ends by the clock (CLUED_RUNNER_HOOK_WAIT_SECONDS), however long
@@ -331,7 +329,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "fork-refusal-v1";
+export const HOOK_VERSION = "native-only-admission-v1";
 export const COMPONENT_VERSION = "1.0.7";
 
 // Transient reads (see the header).
@@ -523,32 +521,10 @@ async function workflowsDifferFromMain(fetchImpl, token, repository, base, sha) 
   return [...names].filter((name) => mine.get(name) !== main.get(name)).sort();
 }
 
-// The admission run of this run's own event (re-review 5, n1; the same
-// selection as eventAdmissionCheck in scripts/ci/clued-work-admission.mjs).
-// The runs of one event are created together, so it is the newest
-// pull_request_target run of the admission workflow on this head created no
-// earlier than SAME_EVENT_MS before this run. A run's creation time, not a
-// later posting time, tells a closed and reopened pull request's events apart.
-// Skipped runs are passed over: the admission job skips a pull request into
-// another branch, and an Agent can open one on the same head.
-//
-// The run stands in for the clued-admission App's check, which a fine-grained
-// token cannot read (Task b979d5a2):
-//   - pull_request_target always runs the default branch's copy of the
-//     workflow, whatever the pull request's base, and that copy admits only
-//     pull requests into the default branch (re-review 6, B1). No branch's
-//     edited copy of the file runs on pull_request_target. Runs are listed by
-//     the workflow's file name, so a workflow another file adds under the same
-//     display name does not count.
-//   - The run succeeds only when its admit step does, the same condition on
-//     which it posts a successful check.
-// The check also named its pull request (re-review 4, m1); a run does not
-// (its pull_requests list names every open pull request with the same head).
-// Another pull request into main with the same head and an event within
-// SAME_EVENT_MS can therefore stand in. Its run judged the same commit and the
-// same workflow changes.
+// A Native check started no earlier than SAME_EVENT_MS before this run and
+// completed no later than SAME_EVENT_MS after it was read belongs to this
+// run's event (re-review 5, n1).
 export const SAME_EVENT_MS = 15_000;
-const ADMISSION_WORKFLOW = "clued-work-admission.yml";
 // Installed standalone: keep these producer bindings identical to the
 // independent gate in scripts/ci/clued-work-admission.mjs. A status/name alone
 // and the negative-only execution_current observation never admit a job.
@@ -583,16 +559,6 @@ export async function nativeAdmissionCheck(fetchImpl, token, repository, headSha
     && Number.isFinite(started) && Number.isFinite(completed) && completed >= started
     && completed <= observed + SAME_EVENT_MS && Number.isFinite(since) && started >= since - SAME_EVENT_MS;
   return { settled: true, check: newest, admitted: bound && newest.conclusion === "success" };
-}
-
-async function admissionRun(fetchImpl, token, repository, headSha, since) {
-  const runs = (await github(fetchImpl, token,
-    `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}/runs?head_sha=${headSha}&event=pull_request_target&per_page=100`))
-    ?.workflow_runs ?? [];
-  return runs
-    .filter((run) => run && run.event === "pull_request_target" && run.head_sha === headSha && run.conclusion !== "skipped"
-      && Date.parse(run.created_at) >= since - SAME_EVENT_MS)
-    .sort((a, b) => (Date.parse(b.created_at) - Date.parse(a.created_at)) || (Number(b.id) - Number(a.id)))[0] ?? null;
 }
 
 // The workflows whose required checks the train needs on S (ADR 0018 §8):
@@ -909,7 +875,7 @@ async function rerunVerdict({ env, fetchImpl, token, repository, defaultBranch, 
   if (!Number.isFinite(attemptStarted)) return refuse("the run has no run_started_at; re-run refused");
   // A heavy job needs the gate, so a gate job of this attempt still shown as
   // not started or not completed is the API's lag: wait for it, like for the
-  // admission run below, and refuse at the end of the wait.
+  // Native admission below, and refuse at the end of the wait.
   let seen;
   try {
     seen = await waitForAttemptGate({ fetchImpl, token, repository, runId, attempt, attemptStarted, limit, sleep, now });
@@ -1096,65 +1062,42 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     }
     const since = Date.parse(run && run.created_at);
     if (!Number.isFinite(since)) throw new Error(`run ${runId} has no created_at.`);
-    // GitHub's workflow state is an Owner-controlled producer switch. Only
-    // explicit manual retirement selects Native. Unknown/404/403 fail closed;
-    // a failed Native check never falls back to legacy success.
-    const producer = await github(fetchImpl, token, `/repos/${repository}/actions/workflows/${ADMISSION_WORKFLOW}`);
-    if (producer?.path !== `.github/workflows/${ADMISSION_WORKFLOW}`
-      || !["active", "disabled_manually"].includes(producer.state)) throw new Error("Admission producer state is unavailable or unsupported.");
-    if (producer.state === "disabled_manually") {
-      const nativeToken = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
-      let native;
-      const waitUntil = now() + limit * 1000;
-      for (let waited = 0; ; waited += 10) {
-        try {
-          native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now);
-        } catch (error) {
-          // Not settled yet while the wait lasts; the last transient failure refuses at its end (fail closed).
-          if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
-          native = { settled: false, check: null, admitted: false };
-        }
-        if (native.settled || waited >= limit || now() >= waitUntil) break;
-        await sleep(10_000);
-      }
-      const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
-      const live = current?.state === "open" && current.base?.ref === defaultBranch
-        && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
-      let repair = { ok: true, why: "" };
-      if (native.admitted && live && runnerAttempt > 1) {
-        if (workflow !== ".github/workflows/clued-required-tests.yml") {
-          repair = await earlierAttemptsRanNothing(fetchImpl, token, repository, runId, runnerAttempt);
-        } else if (run.head_sha !== pr.head.sha || run.path !== workflow || run.event !== "pull_request") {
-          repair = { ok: false, why: "the run does not bind this workflow and PR head" };
-        } else {
-          const history = await requiredTestsRepairHistory({ repository, runId, head: pr.head.sha, attempt: runnerAttempt,
-            workflowId: run.workflow_id, read: route => github(fetchImpl, nativeToken, route),
-            readLog: route => github(fetchImpl, nativeToken, route, { asText: true }) });
-          repair = { ok: history.allowed, why: history.reason };
-        }
-      }
-      result.allow = Boolean(native.admitted && live && repair.ok);
-      result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
-        + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
-      return result;
-    }
-    let found = null;
+    // Native admission only (FABLE-scaffold-open-qs 问题 1 改法 1): the one admission publisher is the
+    // independent CI's App 5368905. The legacy clued-work-admission.yml's state is not read and its
+    // pull_request_target run never stands in, whether or not that workflow is enabled again.
+    const nativeToken = await readToken({ env, fetchImpl, readFile, now, repository, checksRead: true });
+    let native;
     const waitUntil = now() + limit * 1000;
     for (let waited = 0; ; waited += 10) {
       try {
-        found = await admissionRun(fetchImpl, token, repository, pr.head.sha, since);
+        native = await nativeAdmissionCheck(fetchImpl, nativeToken, repository, pr.head.sha, pr.number, since, now);
       } catch (error) {
+        // Not settled yet while the wait lasts; the last transient failure refuses at its end (fail closed).
         if (!transient(error) || waited >= limit || now() >= waitUntil) throw error;
-        found = null;
+        native = { settled: false, check: null, admitted: false };
       }
-      if ((found && found.status === "completed") || waited >= limit || now() >= waitUntil) break;
+      if (native.settled || waited >= limit || now() >= waitUntil) break;
       await sleep(10_000);
     }
-    result.allow = Boolean(found && found.status === "completed" && found.conclusion === "success");
-    const what = [...new Set(changed)].join(", ");
-    const seen = !found ? "no admission run" : `admission run ${found.id}: ${found.status}/${found.conclusion ?? "none"}`;
-    result.reason = result.allow ? `pull request #${pr.number} changes ${what}; admission run ${found.id} succeeded${rerun}`
-      : `pull request #${pr.number} changes ${what}; no successful ${ADMISSION_WORKFLOW} run on ${pr.head.sha} from this event (created since ${run.created_at} less ${SAME_EVENT_MS / 1000}s; ${seen})${rerun}`;
+    const current = await github(fetchImpl, token, `/repos/${repository}/pulls/${pr.number}`);
+    const live = current?.state === "open" && current.base?.ref === defaultBranch
+      && current.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase() && current.head?.sha === pr.head.sha;
+    let repair = { ok: true, why: "" };
+    if (native.admitted && live && runnerAttempt > 1) {
+      if (workflow !== ".github/workflows/clued-required-tests.yml") {
+        repair = await earlierAttemptsRanNothing(fetchImpl, token, repository, runId, runnerAttempt);
+      } else if (run.head_sha !== pr.head.sha || run.path !== workflow || run.event !== "pull_request") {
+        repair = { ok: false, why: "the run does not bind this workflow and PR head" };
+      } else {
+        const history = await requiredTestsRepairHistory({ repository, runId, head: pr.head.sha, attempt: runnerAttempt,
+          workflowId: run.workflow_id, read: route => github(fetchImpl, nativeToken, route),
+          readLog: route => github(fetchImpl, nativeToken, route, { asText: true }) });
+        repair = { ok: history.allowed, why: history.reason };
+      }
+    }
+    result.allow = Boolean(native.admitted && live && repair.ok);
+    result.reason = `pull request #${pr.number} changes ${[...new Set(changed)].join(", ")}; Native admission ${native.check?.id ?? "absent"}: `
+      + `${result.allow ? "succeeded" : `not admitted (binding, current head, conclusion, freshness or rerun${repair.why ? `: ${repair.why}` : ""})`}${rerun}`;
     return result;
   }
   throw new Error(`unreachable event ${event}`);

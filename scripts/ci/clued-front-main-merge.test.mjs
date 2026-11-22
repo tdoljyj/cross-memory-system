@@ -71,6 +71,8 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
     if (method === 'GET' && route === '/repos/o/r') return reply({ full_name: 'o/r', default_branch: 'main' });
     if (method === 'GET' && route.startsWith('/repos/o/r/rules/branches/main')) return reply([{ type: 'required_status_checks',
       parameters: { required_status_checks: [{ context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }] } }]);
+    // The train a named run reads first (open-qs 2): nobody brought up and stranded, so the named run goes on.
+    if (method === 'POST' && route === '/graphql') return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } });
     if (method === 'GET' && route === `/repos/o/r/pulls/${PR}`) return reply(structuredClone(w.pr));
     if (method === 'GET' && route.startsWith(`/repos/o/r/pulls/${PR}/files`)) return reply([{ filename: file, status: 'modified' }]);
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
@@ -511,9 +513,14 @@ test('a run with pr and head handles only the named pull request, as before', as
   assert.deepEqual(r, { result: 'merged', reason: `main ${T.slice(0, 12)} merged into ${sha(0x1225).slice(0, 12)} -> ${w.headOf(1225).slice(0, 12)}`,
     pr: 1225, head_sha: sha(0x1225), merged_head_sha: w.headOf(1225), main_sha: T });
   assert.deepEqual(w.brought(), [1225]);
-  assert.deepEqual(w.calls.map(c => `${c.method} ${c.route}`), [
-    // which copy brings the front (FABLE-scaffold-s5-pre §1): the rules in force, read first
-    'GET /repos/o/r', 'GET /repos/o/r/rules/branches/main?per_page=100&page=1',
+  const calls = w.calls.map(c => `${c.method} ${c.route}`), named = calls.indexOf('GET /repos/o/r/pulls/1225');
+  // which copy brings the front (FABLE-scaffold-s5-pre §1): the rules in force, read first
+  assert.deepEqual(calls.slice(0, 2), ['GET /repos/o/r', 'GET /repos/o/r/rules/branches/main?per_page=100&page=1']);
+  // then the train, once, for the hold (scaffold open-qs 2): reads only; #1224 is under way, so nobody is held
+  const choice = calls.slice(2, named);
+  assert.equal(choice[0], 'POST /graphql'); assert.ok(choice.includes('GET /repos/o/r/rules/branches/main?per_page=100&page=1'));
+  assert.ok(choice.slice(1).every(c => c.startsWith('GET ')), JSON.stringify(choice));
+  assert.deepEqual(calls.slice(named), [
     'GET /repos/o/r/pulls/1225', 'GET /repos/o/r/branches/main', `GET /repos/o/r/compare/${T}...${sha(0x1225)}`,
     'GET /repos/o/r/installation', 'POST /app/installations/42/access_tokens', 'PUT /repos/o/r/pulls/1225/update-branch',
     'GET /repos/o/r/pulls/1225', `GET /repos/o/r/commits/${w.headOf(1225)}`, 'GET /repos/o/r/branches/main', 'POST /repos/o/r/check-runs']);
@@ -650,8 +657,10 @@ function rulesOf(w, phase) {
   w.pins = {};
   if (phase === 'framework' || phase === 'both') for (const name of FRAMEWORK) w.pins[name] = INDEPENDENT_ADMISSION_APP_ID;
   if (phase === 'scaffold' || phase === 'both' || phase === 'loose') for (const name of HOSTED) w.pins[name] = phase === 'loose' ? undefined : GITHUB_ACTIONS_APP_ID;
-  if (phase === 'scaffold') w.pins[INDEPENDENT_ADMISSION_CHECK] = ADMISSION_APP_ID;
-  w.required = phase === 'framework' ? FRAMEWORK : phase === 'both' ? [...FRAMEWORK, ...HOSTED] : [...HOSTED, INDEPENDENT_ADMISSION_CHECK];
+  // The scaffold ruleset's eighth check is the clued-admission App's kooyumi-admission-verified (scaffold open-qs 1.3: App 5164952
+  // never posts a check named kooyumi-work-admission; that is the job name of its workflow, a GitHub Actions check).
+  if (phase === 'scaffold') w.pins[APP_CHECK_NAME] = ADMISSION_APP_ID;
+  w.required = phase === 'framework' ? FRAMEWORK : phase === 'both' ? [...FRAMEWORK, ...HOSTED] : [...HOSTED, APP_CHECK_NAME];
   if (phase === 'both') w.pins[INDEPENDENT_ADMISSION_CHECK] = INDEPENDENT_ADMISSION_APP_ID;
   return w;
 }
@@ -747,7 +756,7 @@ test('hosted copy: with the scaffold ruleset in force only the pull request abou
 test('hosted copy: the admission that counts is the one the rules in force pin', async () => {
   // A head the App brought up earlier, admitted by the scaffold's admission App 5164952 only: brought again under the scaffold.
   let w = rulesOf(scene0823(), 'scaffold');
-  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID);
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), APP_CHECK_NAME, 'success', ADMISSION_APP_ID);
   assert.equal((await w.run({}, SCAFFOLD)).pr, 1156);
   // Admitted only by the independent CI (its shadow): under the scaffold that is not the admission, so it is passed over.
   w = rulesOf(scene0823(), 'scaffold');
@@ -755,7 +764,7 @@ test('hosted copy: the admission that counts is the one the rules in force pin',
   assert.equal((await w.run({}, SCAFFOLD)).pr, 1217);
   // And under #292 the other way round, as before.
   w = rulesOf(scene0823(), 'framework');
-  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID);
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), APP_CHECK_NAME, 'success', ADMISSION_APP_ID);
   assert.equal((await w.run()).pr, 1217);
 });
 
@@ -905,7 +914,9 @@ async function runs(w, count, extra, every, onBrought) {
   }
   return results;
 }
-const failsAdmission = (w, app) => head => w.check(head, INDEPENDENT_ADMISSION_CHECK, 'failure', app);
+// The admission each App posts: the independent CI's kooyumi-work-admission, the clued-admission App's kooyumi-admission-verified.
+const admissionOf = app => (app === ADMISSION_APP_ID ? APP_CHECK_NAME : INDEPENDENT_ADMISSION_CHECK);
+const failsAdmission = (w, app) => head => w.check(head, admissionOf(app), 'failure', app);
 const hostedGreen = w => head => { for (const name of HOSTED) w.check(head, name); };
 
 test('§2: brought-up heads the admission fails hold the train at 2; the others keep their heads', async () => {
@@ -933,7 +944,7 @@ test('§2: the hold lifts by itself: one of the two admitted is the front; once 
   await runs(w, 3, SCAFFOLD, 10 * MIN, failsAdmission(w, ADMISSION_APP_ID));
   assert.deepEqual(w.brought(), [A, B]);
   // A's head is admitted after all (DESK authorized it; later the admission carries it) and its checks are green.
-  w.check(w.headOf(A), INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID); hostedGreen(w)(w.headOf(A));
+  w.check(w.headOf(A), APP_CHECK_NAME, 'success', ADMISSION_APP_ID); hostedGreen(w)(w.headOf(A));
   let r = await w.run({}, SCAFFOLD);
   assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2001 contains main and is under way/); assert.deepEqual(w.brought(), [A, B]);
   // GitHub merges A and main moves: only B is brought and not admitted, below the limit: C is brought.
@@ -945,8 +956,96 @@ test('§2: the hold lifts by itself: one of the two admitted is the front; once 
 test('§2: one head the admission fails does not hold the train; the next one admitted is the front', async () => {
   const w = fourBehind('scaffold');
   await runs(w, 1, SCAFFOLD, 10 * MIN, failsAdmission(w, ADMISSION_APP_ID));
-  await runs(w, 1, SCAFFOLD, 10 * MIN, head => { w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID); hostedGreen(w)(head); });
+  await runs(w, 1, SCAFFOLD, 10 * MIN, head => { w.check(head, APP_CHECK_NAME, 'success', ADMISSION_APP_ID); hostedGreen(w)(head); });
   assert.deepEqual(w.brought(), [A, B]);
   const r = await w.run({}, SCAFFOLD);
   assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2002 contains main and is under way/); assert.deepEqual(w.brought(), [A, B]);
+});
+
+// FABLE-scaffold-open-qs 问题 1 改法 3: the admission the rules pin is read under the name and App the rules give it. The scaffold
+// ruleset's eighth check is kooyumi-admission-verified of App 5164952; a head that App admitted is admitted, not stranded.
+test('scaffold open-qs 1.3: under the scaffold ruleset heads App 5164952 admitted (kooyumi-admission-verified) are not stranded', async () => {
+  // A and B were brought up before and App 5164952 admitted both; then main moved on, so both are behind again.
+  const w = fourBehind('scaffold');
+  for (const n of [A, B]) { w.check(sha(n), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(n), APP_CHECK_NAME, 'success', ADMISSION_APP_ID); }
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, A); assert.deepEqual(w.brought(), [A]);
+  for (const n of [A, B]) assert.doesNotMatch(r.train.members.find(m => m.pr === n).state, /not admitted/, `#${n}`);
+  // Its new head admitted by App 5164952 with the hosted checks green: the front, and nobody else is brought.
+  w.check(w.headOf(A), APP_CHECK_NAME, 'success', ADMISSION_APP_ID); hostedGreen(w)(w.headOf(A));
+  const again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.match(again.reason, /#2001 contains main and is under way/);
+});
+
+// 改法 4: a check pinned to an App is read only from that App. Once both Apps post kooyumi-merge-slot (the legacy workflow enabled
+// again), App 5164952's newer failure must not make #292's front red and bring the next one up.
+test('scaffold open-qs 1.4: under #292 a newer same-name check of another App does not make the front red', async () => {
+  const w = fourBehind('framework');
+  w.heads.get(sha(A)).contains = w.tip;
+  w.check(sha(A), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);   // under way
+  w.check(sha(A), 'kooyumi-merge-slot', 'success', INDEPENDENT_ADMISSION_APP_ID);
+  w.check(sha(A), 'kooyumi-merge-slot', 'failure', ADMISSION_APP_ID);   // newer, same name, another App
+  const r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2001 contains main and is under way/);
+  assert.equal(r.train.members.find(m => m.pr === A).state, 'front');
+  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 0); assert.deepEqual(w.brought(), []);
+});
+
+// FABLE-scaffold-open-qs 问题 2: a named run (the companion's dispatch or a person) goes through the same hold. It reads the train
+// once; with BROUGHT_UNADMITTED_LIMIT heads brought up and not admitted (and no front) it holds, naming the pull request it was given.
+const named = (w, number, extra = {}) => w.run({ pr: String(number), head: w.headOf(number) }, extra);
+const writesSince = (w, from) => w.calls.slice(from).filter(c => c.method !== 'GET' && c.route !== '/graphql');
+for (const [rules, extra, app] of [['framework', {}, INDEPENDENT_ADMISSION_APP_ID], ['scaffold', SCAFFOLD, ADMISSION_APP_ID]]) {
+  test(`open-qs 2 (${rules}): a named run holds while two brought-up heads are not admitted; nothing is written`, async () => {
+    const w = fourBehind(rules);
+    await runs(w, 2, extra, 10 * MIN, failsAdmission(w, app));
+    assert.deepEqual(w.brought(), [A, B]);
+    const from = w.calls.length;
+    const r = await named(w, C, extra);
+    assert.equal(r.result, 'held', JSON.stringify(r));
+    assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/);
+    assert.deepEqual([r.pr, r.head_sha], [C, sha(C)]);
+    assert.deepEqual(writesSince(w, from), [], 'no update-branch, no App token, no check');
+    assert.equal(w.calls.slice(from).filter(c => c.route?.startsWith('/app/installations/')).length, 0);
+    assert.equal(w.headOf(C), sha(C)); assert.deepEqual(w.brought(), [A, B]);
+  });
+}
+
+test('open-qs 2: named one after another, each brought head failing the admission, only two are brought', async () => {
+  const w = fourBehind('framework');
+  const results = [];
+  for (const n of [A, B, C, D]) {
+    const seen = w.updates.length;
+    results.push(await named(w, n));
+    for (const u of w.updates.slice(seen)) failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID)(u.to);
+    w.now += 10 * MIN;
+  }
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], JSON.stringify(results.at(-1)));
+  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 2);
+  assert.deepEqual(w.brought(), [A, B]); assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+});
+
+test('open-qs 2: a named run that cannot read the train changes nothing; the next run looks again', async () => {
+  const w = fourBehind('framework');
+  w.failing = '/graphql';
+  const r = await named(w, C);
+  assert.equal(r.result, 'skipped', JSON.stringify(r));
+  assert.match(r.reason, /^GitHub could not be read \(.*\); nothing is changed, the next run looks again$/);
+  assert.deepEqual([r.pr, r.head_sha], [C, sha(C)]);
+  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 0); assert.deepEqual(w.brought(), []);
+});
+
+test('open-qs 2: below the limit, or with a front under way, a named run brings its pull request up as before', async () => {
+  // One brought-up head not admitted: below the limit.
+  let w = fourBehind('framework');
+  await runs(w, 1, {}, 10 * MIN, failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID));
+  let r = await named(w, C);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [A, C]);
+  // Two, but one of them is admitted after all and is the front: the hold counts only without a front.
+  w = fourBehind('framework');
+  await runs(w, 2, {}, 10 * MIN, failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID));
+  w.check(w.headOf(A), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  w.check(w.headOf(A), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
+  r = await named(w, C);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [A, B, C]);
 });
