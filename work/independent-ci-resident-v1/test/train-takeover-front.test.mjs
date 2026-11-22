@@ -1341,6 +1341,33 @@ test('R3 batch 2 F4: front number 2 ignored by the gate -> the next stage 10 say
   assert.deepEqual(scene.touches.filter(x => x.ciState === 'failed'), [], 'nothing failed is reported on the slot');
 });
 
+// FABLE-r3-batch2-followup §2a (修复前必红): front number 1 opened by stage 10 is abandoned at stage 4 (DESIGN §27: the pump lost, the
+// stage stopped through its stop path, quiescence proven): FAILED_CLEAN BRIDGE_ABANDONED_UNPUBLISHED, class environment, no automatic
+// attempt 2 (stage 2 only). That is a final end: the next stage 10 is told (frontFailed false), does not say TRAIN_FRONT_BATCH_RUNNING,
+// and reports nothing failed; no clock is pushed to the running clock's end. Before the fix nothing was reported and stage 10 said
+// TRAIN_FRONT_BATCH_RUNNING until the running clock ran out (up to 90 minutes).
+const abandonedAt = () => ({ ok: false, code: 'BRIDGE_STAGE_STOPPED_PUMP_LOST', proof: PROOF, outcome: null,
+  bridge: { pumpCode: 'RELAY_REFUSED_NO_RETRY', stopRequestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'STOP_SENT', stageCode: 'STAGE_OUTCOME_MISSING', pumpQuiet: true } });
+test('R3 batch 2 F5: front number 1 abandoned at stage 4 (scanner) is reported ended to the next stage 10 (frontFailed false), not TRAIN_FRONT_BATCH_RUNNING', async t => {
+  const ends = [];
+  const frontEnd = (subject, stage) => (subject.attempt === 1 && stage === 4 ? (ends.push(stage), abandonedAt()) : null);
+  const scene = await problemA(t, { flips: 0, until: () => ends.length > 0, engineOptions: { roleKeys: true, frontEnd } });
+  const { f, engine } = scene;
+  const [first] = await enqueuedOf(f);
+  await untilScene(scene, async () => (await f.ledger.state(first.key)).state === 'TERMINAL');
+  const end = await f.ledger.state(first.key);
+  assert.deepEqual([end.outcome, end.terminal?.facts?.failureCode, end.terminal?.facts?.stage, end.terminal?.facts?.class], ['FAILED_CLEAN', 'BRIDGE_ABANDONED_UNPUBLISHED', 4, 'environment'], await why(scene));
+  assert.equal(await f.ledger.halted(), null);
+  const runsBefore = engine.trainRuns.length;
+  for (let i = 0; i < 15 && engine.trainRuns.length === runsBefore; i++) { await f.exec.tick(); if (engine.trainRuns.length === runsBefore) f.advance(MIN); }
+  assert.ok(engine.trainRuns.length > runsBefore, 'a stage 10 ran');
+  const input = engine.trainInputs[runsBefore];
+  assert.notEqual(engine.trainRuns[runsBefore].decision, 'TRAIN_FRONT_BATCH_RUNNING', `${JSON.stringify(input)}; ${await why(scene)}`);
+  assert.deepEqual([input.frontPr, input.frontHeadSha, input.frontTestSha, input.frontAttempt, input.frontCode, input.frontFailed],
+    [910, H, S, 1, 'BRIDGE_ABANDONED_UNPUBLISHED', false], JSON.stringify(input));
+  assert.deepEqual(scene.touches.filter(x => x.ciState === 'failed'), [], 'nothing failed is reported on the slot');
+});
+
 // G2 (防回归): front number 1 ran its three scans and ended clean at stage 8. Front number 2 passes the gate; its stage 1 reads back this
 // front's own scans on H (published-on-github-v2.mjs) and ends HEAD_PUBLISHED_ON_GITHUB (clean-final): no second set of scans, no HALT.
 test('R3 batch 2 G2: front number 1 scanned and ended clean at stage 8 -> front number 2 passes the gate and ends at stage 1 (HEAD_PUBLISHED_ON_GITHUB)', async t => {
