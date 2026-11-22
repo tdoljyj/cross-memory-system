@@ -17,7 +17,7 @@ const pullRule = methods => ({ type: 'pull_request', parameters: { allowed_merge
 const fails = (fn, code = 'RULESET_UNREADABLE') => assert.throws(fn, e => e.code === code);
 
 test('branch rules: the six checks pinned to 5368905, strict and merge methods; anything else is unreadable', () => {
-  assert.deepEqual(rulesetFacts([{ type: 'deletion', parameters: null }, pullRule(['merge', 'squash', 'rebase']), required()], APP), { requiredPinned: true, strict: true, mergeOnly: false });
+  assert.deepEqual(rulesetFacts([{ type: 'deletion', parameters: null }, pullRule(['merge', 'squash', 'rebase']), required()], APP), { requiredPinned: true, strict: true, mergeOnly: false, appScans: ['gitleaks', 'trivy', 'contract-placement'] });
   // the ruleset disabled (no required checks), one check missing, one pinned elsewhere or to no integration
   fails(() => rulesetFacts([{ type: 'deletion', parameters: null }], APP));
   fails(() => rulesetFacts([required({ names: REQUIRED_CHECK_NAMES.slice(0, 5) })], APP));
@@ -36,7 +36,31 @@ test('branch rules: the six checks pinned to 5368905, strict and merge methods; 
   assert.equal(rulesetFacts([required()], APP).mergeOnly, false, 'no pull_request rule: the methods are unknown');
   // unreadable merge methods are unknown, never "merge only", and never a reason to refuse the rules (review N6)
   for (const parameters of [{ allowed_merge_methods: 'merge' }, {}, null, { allowed_merge_methods: [1] }])
-    assert.deepEqual(rulesetFacts([required(), pullRule(['merge']), { type: 'pull_request', parameters }], APP), { requiredPinned: true, strict: true, mergeOnly: false });
+    assert.deepEqual(rulesetFacts([required(), pullRule(['merge']), { type: 'pull_request', parameters }], APP), { requiredPinned: true, strict: true, mergeOnly: false, appScans: ['gitleaks', 'trivy', 'contract-placement'] });
+});
+
+// R3 lean (resident DESIGN §82 item 1): a scan may be required from GitHub Actions (15368): this App need not publish it (appScans).
+// Admission and the control pair stay pinned to this App; all six are still required, with strict on or off.
+test('branch rules R3: scans pinned to Actions are pinned and leave appScans; admission and the control pair stay App-only', () => {
+  const SCAN = ['gitleaks', 'trivy', 'contract-placement'], PAIR = ['kooyumi-admission-verified', 'kooyumi-merge-slot'];
+  const ACTIONS_INTEGRATION_ID = 15368;
+  const rule = ({ strict = true, pins }) => ({ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict,
+    required_status_checks: pins.map(([context, integration_id]) => ({ context, integration_id })) } });
+  const own = names => names.map(n => [n, APP]), actions = names => names.map(n => [n, ACTIONS_INTEGRATION_ID]);
+  for (const strict of [true, false])
+    assert.deepEqual(rulesetFacts([rule({ strict, pins: [...own(['kooyumi-work-admission']), ...actions(SCAN), ...own(PAIR)] }), pullRule(['merge'])], APP),
+      { requiredPinned: true, strict, mergeOnly: true, appScans: [] }, `strict ${strict}`);
+  assert.equal(rulesetDecision(rulesetFacts([rule({ pins: [...own(['kooyumi-work-admission']), ...actions(SCAN), ...own(PAIR)] })], APP), 'on'), null);
+  assert.deepEqual(rulesetFacts([rule({ pins: [...own(['kooyumi-work-admission']), ['gitleaks', ACTIONS_INTEGRATION_ID], ...own(['trivy', 'contract-placement']), ...own(PAIR)] })], APP).appScans,
+    ['trivy', 'contract-placement']);
+  // a scan two rulesets require, one from Actions and one from this App: this App still publishes it
+  assert.deepEqual(rulesetFacts([rule({ pins: [...own(['kooyumi-work-admission']), ...actions(SCAN), ...own(PAIR)] }), rule({ pins: [['trivy', APP]] })], APP).appScans, ['trivy']);
+  // refused: admission or one of the pair from Actions, the pair gone (strict on or off), half the pair, a scan missing, a scan from another App
+  for (const strict of [true, false]) for (const pins of [[['kooyumi-work-admission', ACTIONS_INTEGRATION_ID], ...actions(SCAN), ...own(PAIR)],
+    [...own(['kooyumi-work-admission']), ...actions(SCAN), ['kooyumi-admission-verified', APP], ['kooyumi-merge-slot', ACTIONS_INTEGRATION_ID]],
+    [...own(['kooyumi-work-admission']), ...actions(SCAN)], [...own(['kooyumi-work-admission']), ...actions(SCAN), ['kooyumi-merge-slot', APP]],
+    [...own(['kooyumi-work-admission']), ...actions(['gitleaks', 'trivy']), ...own(PAIR)], [...own(['kooyumi-work-admission']), ['gitleaks', 5164952], ...actions(['trivy', 'contract-placement']), ...own(PAIR)]])
+    fails(() => rulesetFacts([rule({ strict, pins })], APP));
 });
 
 test('branch rules decide: strict off needs the train; with the train, strict off needs merge-only', () => {

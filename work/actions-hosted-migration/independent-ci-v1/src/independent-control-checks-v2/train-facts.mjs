@@ -32,6 +32,7 @@
 // only: stage 10 sets front.protectedLayer from the PR's changed paths and the admission policy (train-maintenance.mjs);
 // shadow mode reports FRONT_NEEDS_MAIN_MERGE only from GitHub's own facts, as before.
 import { BYPASS_STATES, validLandingMissing } from './train-landing.mjs';
+import { RULE_SCAN_NAMES } from './train-rules.mjs';
 import { validStrictReadiness, validStrictFrontReadiness, validTrainProviderBudget, validSweepProgress } from './train-strict.mjs';
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/2';
 export const WOULD_DO = Object.freeze(['NOT_ON_DUTY', 'NO_FRONT', 'FRONT_AMBIGUOUS', 'FRONT_NOT_BOUND', 'FRONT_NOT_RUNNABLE', 'FRONT_NEEDS_MAIN_MERGE',
@@ -274,7 +275,7 @@ export function trainFacts({ mode, at, onDuty, holders, mainSha, rules, rulesRea
   const wouldDo = decideShadow({ onDuty, holders, holder, front, rules, mainSha });
   const facts = {
     contract: TRAIN_FACTS_CONTRACT, mode, at, onDuty, mainSha: mainSha ?? null,
-    rules: rules ? { strict: rules.strict, mergeOnly: rules.mergeOnly } : null, rulesReason,
+    rules: rules ? { strict: rules.strict, mergeOnly: rules.mergeOnly, ...(Array.isArray(rules.appScans) ? { appScans: [...rules.appScans] } : {}) } : null, rulesReason,
     holders: holders?.length ?? 0,
     front: holder ? { claimId: holder.claimId, pr: holder.pr, mergeSlotUntil: holder.mergeSlotUntil, takenAt: holder.takenAt, ciState: holder.ciState,
       ...(front ? { headSha: front.headSha, state: front.state, draft: front.draft, mergeable: front.mergeable, headContainsMain: front.headContainsMain, green: front.green,
@@ -359,6 +360,11 @@ const validLanding = l => plain(l) && Object.keys(l).every(k => ['error', 'mainS
   && (l.landed === undefined || (Array.isArray(l.landed) && l.landed.length <= 20 && l.landed.every(b => plain(b) && SHA.test(b.testSha ?? '') && prList(b.members))))
   && (l.adopted === undefined || prList(l.adopted)) && (l.notMarkedMerged === undefined || prList(l.notMarkedMerged))
   && (l.bisect === undefined || (plain(l.bisect) && prList(l.bisect.failed) && (l.bisect.suspect === null || prList(l.bisect.suspect))));
+// R3 lean: the rules' optional appScans (train-rules.mjs#rulesetFacts): the scans this App must still publish, RULE_SCAN_NAMES order, each once.
+const validAppScans = v => Array.isArray(v) && v.length <= RULE_SCAN_NAMES.length && v.every(n => RULE_SCAN_NAMES.includes(n))
+  && v.every((n, i) => i === 0 || RULE_SCAN_NAMES.indexOf(v[i - 1]) < RULE_SCAN_NAMES.indexOf(n));
+const validRules = r => r === null || (plain(r) && typeof r.strict === 'boolean' && typeof r.mergeOnly === 'boolean'
+  && Object.keys(r).every(k => ['strict', 'mergeOnly', 'appScans'].includes(k)) && (r.appScans === undefined || validAppScans(r.appScans)));
 const quiet = f => f.openFrontBatch === null && f.requestPause === null && f.sweep.revoked === 0 && f.sweep.unconfirmed === 0 && !f.sweep.proofWritten
   && Object.entries(NO_ACTIONS).every(([k, v]) => f.actions[k] === v);
 
@@ -367,7 +373,7 @@ const quiet = f => f.openFrontBatch === null && f.requestPause === null && f.swe
 export function validateTrainFacts(f) {
   if (!plain(f) || f.contract !== TRAIN_FACTS_CONTRACT || !TRAIN_MODES.includes(f.mode) || !iso(f.at) || typeof f.onDuty !== 'boolean'
     || !(f.mainSha === null || SHA.test(f.mainSha)) || !WOULD_DO.includes(f.wouldDo) || !Number.isSafeInteger(f.holders) || f.holders < 0
-    || !(f.rules === null || (plain(f.rules) && typeof f.rules.strict === 'boolean' && typeof f.rules.mergeOnly === 'boolean'))
+    || !validRules(f.rules)
     || !(f.rulesReason === null || (typeof f.rulesReason === 'string' && CODE.test(f.rulesReason)))
     || !(f.front === null || (plain(f.front) && UUID.test(f.front.claimId ?? '') && (f.front.pr === null || Number.isSafeInteger(f.front.pr))))
     || !Array.isArray(f.wouldRevoke) || f.wouldRevoke.length > MAX_REVOKE_LISTED

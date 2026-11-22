@@ -32,7 +32,7 @@ function fakeGithub(e, w) {
     async createCheck(body) { const id = Math.max(100, ...world.checks.keys()) + 1; const c = { id, app: { id: APP }, ...structuredClone(body) }; world.checks.set(id, c); world.hooks.create?.(c); return structuredClone(c); },
     async readBranchHead(name) { call('branch'); return { name, sha: world.main }; },
     async readBranchRules() { call('rules'); return { complete: true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
-      { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: world.strict === true, required_status_checks: ['kooyumi-work-admission', 'gitleaks', 'trivy',
+      { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: world.strict === true, required_status_checks: world.ruleChecks ?? ['kooyumi-work-admission', 'gitleaks', 'trivy',
         'contract-placement', 'kooyumi-admission-verified', SLOT].map(context => ({ context, integration_id: APP })) } }] }; },
     async readPullRequest(n) { call('pull'); const p = world.pulls.get(n); return { number: n, state: p.state, draft: false, merged: !!p.merged, mergeable: true,
       merge_commit_sha: p.mergeCommitSha ?? null, head: { sha: p.head }, base: { ref: p.base ?? 'main', sha: world.main } }; },

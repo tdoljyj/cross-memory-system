@@ -967,9 +967,14 @@ test('a settled front-open debt does not repeatedly preempt busy ticks, includin
 const permanentPolicy = (extra = {}) => rawPolicy({ contract: POLICY_CONTRACT_V8, ...extra,
   train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, ...(extra.train ?? {}) } });
 
-async function permanentArrival(t, { strict = true, restart = false, sweep } = {}) {
+// R3 lean (DESIGN §82 item 1): main's rules with the three scans required from GitHub Actions (15368), the rest from this App.
+const ACTIONS_SCAN_RULES = Object.freeze([['kooyumi-work-admission', 5368905], ['gitleaks', 15368], ['trivy', 15368], ['contract-placement', 15368],
+  ['kooyumi-admission-verified', 5368905], ['kooyumi-merge-slot', 5368905]].map(([context, integration_id]) => Object.freeze({ context, integration_id })));
+
+async function permanentArrival(t, { strict = true, restart = false, sweep, actionsScans = false } = {}) {
   const e = await world(t);
   e.gh.world.strict = strict;
+  if (actionsScans) e.gh.world.ruleChecks = ACTIONS_SCAN_RULES.map(c => ({ ...c }));
   const at = { t };
   const engine = engineFor(e, at);
   const pol = permanentPolicy(sweep ? { train: { sweep } } : {});
@@ -1024,6 +1029,24 @@ for (const restart of [false, true]) test(`strict-permanent (DESIGN §65): train
   // The PR that is not the queue head is no longer held for the sweep: it runs, and its stage 8 rests at B (only a front batch greens).
   assert.ok(engine.stages.some(s => s.pr === 911 && s.stage === 8), JSON.stringify(engine.stages));
   assert.equal(slotGreen(e, sha(0x7777)), undefined);
+  // R3 lean regression: every scan pinned to this App: stage 10 says so and the resident runs every scan, as before.
+  assert.deepEqual(engine.lastFacts.rules.appScans, ['gitleaks', 'trivy', 'contract-placement'], JSON.stringify(engine.lastFacts.rules));
+  assert.equal((await f.receipts.latest(['scans-not-app-required'], 10)).length, 0);
+});
+
+// R3 lean (DESIGN §82 item 1): the scans main requires from GitHub Actions (integration 15368), not from this App: the resident runs none of
+// them. With strict on, the front batch runs stages 1 and 8 only and still gets the merge-slot green; no batch runs stages 2-7.
+test('R3: scans required from Actions, strict on -> no batch runs its own scans; the front batch runs stages 1 and 8 and gets the merge-slot green', async t => {
+  const { e, f, engine } = await permanentArrival(t, { actionsScans: true });
+  const green = await untilGreen(f, e);
+  assert.ok(green, `no green; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo} rules ${JSON.stringify(engine.lastFacts?.rules)}; stages ${JSON.stringify(engine.stages)}`);
+  assert.deepEqual(engine.lastFacts.rules.appScans, [], JSON.stringify(engine.lastFacts.rules));
+  assert.deepEqual(f.exec.trainLast.appScans, []);
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 8]);
+  assert.ok(!engine.stages.some(s => s.stage >= 2 && s.stage <= 7), `no scan stage runs: ${JSON.stringify(engine.stages)}`);
+  const skipped = (await f.receipts.latest(['scans-not-app-required'], 10)).map(r => r.value.body.roles);
+  assert.ok(skipped.length > 0 && skipped.every(r => JSON.stringify(r) === JSON.stringify(['gitleaks', 'trivy', 'contract-placement'])), JSON.stringify(skipped));
+  assert.deepEqual((await f.receipts.latest(['paused'], 10)).map(r => r.value.body.reason), []);
 });
 
 // Gate mode retains an unbound PR that has no exact holder authorization: body prose or a claim label cannot discover it.
@@ -1037,9 +1060,9 @@ test('strict-permanent (DESIGN §65): train.sweep gate still holds an unbound PR
 });
 
 // Strict read off in strict-permanent mode: stage 10 decides TRAIN_STRICT_OFF, opens no front batch and asks for PAUSE; the executor
-// latches PAUSE (receipt 'paused') and tells the Owner; no merge-slot green.
-test('strict-permanent (DESIGN §65): strict off -> no green, TRAIN_STRICT_OFF, PAUSE latched and an Owner notice', async t => {
-  const { e, f, engine } = await permanentArrival(t, { strict: false });
+// latches PAUSE (receipt 'paused') and tells the Owner; no merge-slot green. R3 lean regression: the same with the scans pinned to Actions.
+for (const actionsScans of [false, true]) test(`strict-permanent (DESIGN §65): strict off${actionsScans ? ', scans from Actions' : ''} -> no green, TRAIN_STRICT_OFF, PAUSE latched and an Owner notice`, async t => {
+  const { e, f, engine } = await permanentArrival(t, { strict: false, actionsScans });
   assert.equal(await untilGreen(f, e), null);
   const paused = (await f.receipts.latest(['paused'], 10)).map(r => r.value.body.reason);
   assert.ok(paused.includes('train-maintenance: TRAIN_STRICT_OFF'), JSON.stringify(paused));
