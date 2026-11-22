@@ -66,6 +66,11 @@ function Set-Dacl([string]$p, [string]$sddl) { $s = New-Object Security.AccessCo
 function Dacl([string]$p) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Access).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) }
 # The test account owns every folder it made (owner rights: READ_CONTROL, WRITE_DAC), so it can always give itself full control back to clean up.
 function Restore-Mine([string[]]$dirs) { foreach ($d in $dirs) { if ([IO.Directory]::Exists($d)) { try { Set-Dacl $d ('D:(A;OICI;FA;;;' + $me + ')') } catch { } } } }
+# state's DACL as the fixture reads it: the fixture account's own entry (A;;FA;;;<sid>) taken out, the rest compared with the production DACL.
+function Get-FixtureFreeState([string]$sddl, [string]$sid, [string]$terminal) {
+  $dacl = $sddl -replace [regex]::Escape('(A;;FA;;;' + $sid + ')'), ''
+  [ordered]@{ dacl = $dacl; terminal = ($dacl -ceq $terminal) }
+}
 `;
 // The installer's state-parent-acl rule, by exact name (the functions verify-resident.ps1 loads too).
 const STATE_RULE = ['Get-DaclShape', 'Get-StateParentSddl', 'Get-StateParentTarget', 'Get-StateParentState', 'Invoke-StateParentAcl'];
@@ -125,7 +130,7 @@ foreach ($real in ($chain | Sort-Object)) {
   }
   $checked += $real
 }
-$stateDacl = (Dacl $stateDir) -replace [regex]::Escape('(A;;FA;;;' + $me + ')'), ''
+$stateDacl = $(if ($stateStep) { Get-FixtureFreeState (Dacl $stateDir) $me ${psLiteral(TERMINAL_DACL)} } else { $null })
 Restore-Mine @($fx, $stateDir)
 ConvertTo-Json -Depth 6 -Compress -InputObject ([ordered]@{ migrate = $migrate.status; checked = $checked; refused = $refused; stateStep = $stateStep; stateDacl = $stateDacl })`;
 
@@ -151,7 +156,7 @@ test('r13 fix: the first install\'s state-parent-acl makes state, and the helper
   assert.deepEqual([...r.checked].sort(), SIX_CHAINS);
   assert.deepEqual(r.refused, [], JSON.stringify(r.refused));
   assert.equal(r.stateStep.action, 'create'); assert.equal(r.stateStep.wrote, true); assert.equal(r.stateStep.before, null);
-  assert.equal(r.stateDacl, TERMINAL_DACL, 'state carries the production DACL after migrate-acl');
+  assert.equal(r.stateDacl.terminal, true, `state carries the production DACL after migrate-acl: ${r.stateDacl.dacl}`);
 });
 
 // The installer runs the rule as its own step, before source-v2-acl, with the plan's path and the receipt's record.
@@ -239,4 +244,20 @@ $out.changed = [ordered]@{ result = $(try { Invoke-StateParentAcl $p $C } catch 
   for (const k of ['stranger', 'strangerDelete', 'everyone', 'nullDacl', 'link']) assert.match(r[k].result, /^STATE_PARENT_ACL_REFUSED:/, k);
   assert.match(r.stranger.result, new RegExp(`OTHER_WRITER:${STRANGER}`));
   assert.equal(r.changed.result, 'STATE_PARENT_ACL_CHANGED_SINCE_PLAN');
+});
+
+// The hosted Windows runner (run 45055934390, job 137311039345) runs as the built-in Administrator (RID 500 of the machine's domain), which
+// Windows writes as the alias LA, not as its SID; and DirectorySecurity (the fixture's Set-Dacl) sorts explicit allow entries by SID once
+// one sorts before the controller's, swapping the controller's two entries. Both are the fixture's own doing, not the rule's: here on
+// real NTFS, the rule makes state, the fixture appends its entry for such an account, and the read must still find the production DACL.
+test('fixture read: the fixture account as the built-in Administrator (alias LA) or sorting before the controller still reads as the production DACL', { skip, timeout: 300_000 }, (t) => {
+  const r = rule(path.join(tempDir(t, 'r13-hosted-'), 'r'), `
+$la = $me.Substring(0, $me.LastIndexOf('-')) + '-500'
+$s = Join-Path $root 'state'; $made.Add($s); $p = Get-StateParentState $s $C; $p.sddl = $p.sddl -replace '^O:BAG:BA', ''; [void](Invoke-StateParentAcl $p $C)
+$base = Dacl $s
+foreach ($x in @($la, 'S-1-5-21-1-2-3-500')) { Set-Dacl $s ($base + '(A;;FA;;;' + $x + ')'); $out[$x] = Get-FixtureFreeState (Dacl $s) $x ${psLiteral(TERMINAL_DACL)} }
+# the exact DACL the hosted runner read back (its LA is this machine's LA here)
+$out.hostedLog = Get-FixtureFreeState ${psLiteral(`D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;FA;;;LA)(A;;0x1200a9;;;${CONTROLLER})(A;OICIIO;0x1301bf;;;${CONTROLLER})`)} $la ${psLiteral(TERMINAL_DACL)}`);
+  for (const [k, v] of Object.entries(r)) assert.equal(v.terminal, true, `${k}: ${v.dacl}`);
+  assert.equal(Object.keys(r).length, 3);
 });
