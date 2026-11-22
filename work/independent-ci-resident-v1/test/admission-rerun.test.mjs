@@ -1817,3 +1817,68 @@ test('T5: the rules after C: a never-published kooyumi-train-landed changes noth
   assert.deepEqual(seen[0].posts, [700], 'today: the skipped required tests are re-run');
   assert.deepEqual(seen[1], seen[0]);
 });
+
+// 04f9b91b B (Fable 11-22 scaffold shadow fix §2 B, §4): under the hosted scaffold rules (ruleset-scaffold-main-7.json) main pins only
+// hosted-X to Actions; the framework side X is produced by an active gated workflow (clued-required-tests.yml) and is treated as required:
+// a bot head's skipped run is re-dispatched, a heavy job that died in setup is re-run, a lost run is dispatched. A hosted-X whose X no active
+// gated workflow produces (gitleaks, trivy, contract-placement) adds nothing and reports no scope issue.
+const HOSTED_CHECKS = ['hosted-ci-suites', 'hosted-clued-cloud-tests', 'hosted-migration-verify', 'hosted-gitleaks', 'hosted-trivy', 'hosted-contract-placement'];
+const scaffoldRules = () => [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: true, required_status_checks: [
+  ...HOSTED_CHECKS.map(context => ({ context, integration_id: 15368 })), { context: 'kooyumi-work-admission', integration_id: 5368905 }] } }];
+const scaffoldWorld = (o = {}) => world({ rules: scaffoldRules(), workflows: [...WORKFLOWS, hostedWorkflow],
+  checks: [nativeCheck(), ...HOSTED_CHECKS.map(name => actionCheck(name))], ...o });
+
+test('04f9b91b B1: scaffold rules, a bot head whose clued-required-tests skipped every heavy job is re-dispatched once', async t => {
+  const w = scaffoldWorld({ runs: [botRun()] });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.equal(d.action, 'redispatch');
+  assert.deepEqual([d.workflowId, d.checks.sort()], [LINUX_WORKFLOW, [...CHECK_NAMES].sort()]);
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.dispatches, ['ref=claude/x']);
+  assert.equal(l.state.data.heads[HEAD].scopeIssue, undefined);
+  assert.deepEqual(l.state.data.heads[HEAD].missing.sort(), [...CHECK_NAMES].sort());
+  assert.equal(l.state.data.heads[HEAD].final, null, 'not settled while the framework side checks are missing');
+});
+
+test('04f9b91b B2: scaffold rules, a heavy job that died in Set up job is re-run (not judged final outside the required checks)', async t => {
+  const w = scaffoldWorld({ runs: [run(700, [ran([setupFail, ok, ok])])] });
+  const d = await decide({ gh: w.gh, headSha: HEAD });
+  assert.deepEqual([d.action, d.runId, d.attempt], ['rerun', 700, 1]);
+  assert.deepEqual(d.checks.sort(), [...CHECK_NAMES].sort());
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.deepEqual(w.posts, [700]);
+});
+
+test('04f9b91b B3: scaffold rules, a lost clued-required-tests run is dispatched after 5 minutes; gitleaks with no active gated workflow is no scope issue', async t => {
+  const w = scaffoldWorld({ runs: [] });
+  const d = await decide({ gh: w.gh, headSha: HEAD, headAgeMs: LOST_RUN_AFTER_MS });
+  assert.equal(d.action, 'redispatch');
+  assert.equal(d.workflowId, LINUX_WORKFLOW);
+  const l = await lane(t, w);
+  await l.r.step(); l.advance(LOST_RUN_AFTER_MS + HEAD_RECHECK_MS); await l.r.step();
+  assert.deepEqual(w.dispatches, ['ref=claude/x'], 'only the framework workflow; the Windows one supplies no mapped check');
+  assert.equal(l.state.data.heads[HEAD].scopeIssue, undefined);
+  assert.ok(!l.toasts.some(text => /找不到对应工作流|无法核对/.test(text)), l.toasts.join('\n'));
+});
+
+test('04f9b91b B4: scaffold rules, framework checks present settle the head; a hosted-X without a producer is never asked for', async t => {
+  const w = scaffoldWorld({ runs: [run(700, [ran([ok, ok, ok])])], checks: [nativeCheck(), ...HOSTED_CHECKS.map(name => actionCheck(name)),
+    ...CHECK_NAMES.map(name => actionCheck(name))] });
+  const l = await lane(t, w);
+  await l.r.step();
+  assert.match(l.state.data.heads[HEAD].final, /all appeared/);
+  assert.equal(l.state.data.heads[HEAD].scopeIssue, undefined);
+  assert.deepEqual([w.posts, w.dispatches, l.toasts], [[], [], []]);
+});
+
+test('04f9b91b B5: a hosted-X that is itself also required, or rules with no hosted-X, read no workflow inventory (the #292 rules unchanged)', async () => {
+  const w = world({ rules: [requiredRule(...CHECK_NAMES)], checks: allChecksShown(), runs: [run(700, [ran([ok, ok, ok])])] });
+  assert.equal((await decide({ gh: w.gh, headSha: HEAD })).action, 'final');
+  assert.equal(w.calls.filter(c => c.target.includes('/actions/workflows?')).length, 0);
+  const both = world({ rules: [requiredRule(...CHECK_NAMES, 'hosted-ci-suites')], checks: [...allChecksShown(), actionCheck('hosted-ci-suites')],
+    runs: [run(700, [ran([ok, ok, ok])])] });
+  assert.equal((await decide({ gh: both.gh, headSha: HEAD })).action, 'final');
+  assert.equal(both.calls.filter(c => c.target.includes('/actions/workflows?')).length, 0);
+});
