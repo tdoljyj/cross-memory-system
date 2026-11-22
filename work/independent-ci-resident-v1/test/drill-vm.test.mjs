@@ -2557,6 +2557,31 @@ test('from the real entry: r6 conditions at 24 GB are refused before boot with t
   assert.match(b.runnerJobGrowthFrom, /minRunningFreeGB 8\.9/);
 });
 
+// Fable ruling 0e418483 "drill memory root" 2.3, step 3, under Decision f572ac5b (it replaces 21db5a9c's "while idle, no Runner.Worker
+// job"): the release runs with a job on either side, before the boot as while running; the command no longer asks pgrep.
+test('G1 step 3: a Runner.Worker on both sides: the release still runs and releases, before the boot and while running; no pgrep in the command', shOpts, () => {
+  const r = ps(`${preBootWorld()}
+    $script:jobAfter = 0; $script:windowsJobAfter = 0
+    Invoke-Entry`);
+  assert.ok(r.events.includes('wsl-release exit 0'), r.events.join(','));
+  const pre = r.out.hostPreBoot;
+  assert.deepEqual([pre.early.busyWith, pre.release.released, pre.release.failed], ['ACTIONS_RUNNER_JOB', ['Fixture-CI'], null]);
+  assert.equal(Object.hasOwn(pre.release, 'skipped'), false, 'no skip branch left');
+  assert.ok(r.events.includes('boot'), r.events.join(','));
+  const running = ps(`
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Worker' } }
+    function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillWslRegisteredNames { 'Fixture-CI' }
+    $script:sent = [Collections.Generic.List[string]]::new()
+    $script:DrillWslRunner = { param($a, $t) if ($a[0] -ceq '--list') { return @{ exit = 0; stdout = "Fixture-CI\`r\`n"; stderr = '' } }; $script:sent.Add($a -join ' '); @{ exit = 0; stdout = ''; stderr = '' } }
+    $o = Invoke-DrillWslCacheRelease -WithinSeconds 20
+    @{ released = @($o.released); sent = @($script:sent); command = $script:DrillWslReleaseCommand }`);
+  assert.deepEqual(running.released, ['Fixture-CI']);
+  assert.deepEqual(running.sent, [`--distribution Fixture-CI --user root --exec sh -c ${running.command}`]);
+  assert.doesNotMatch(running.command, /pgrep/);
+  assert.equal(running.command, 'sync || exit 5; echo 1 > /proc/sys/vm/drop_caches || exit 5; exit 0');
+});
+
 // Codex review of 74e7a65e7, medium 1: a refusal at the duty check carries no memory figure (nothing was read), and a built baseline
 // keeps its three stages in baseline.json.
 test('no memory figure where none was read, and baseline.json keeps the pre-boot stages', opts, () => {
