@@ -97,7 +97,7 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 
 候选演练默认跑 A8 并要求它为真；跳过 A8 只能显式带 `-SkipReinstall`（不是默认，Fable 裁定补“候选跳过 A8”）。候选回执的 A1–A7 必须逐项为真，A8 为真或被显式跳过，其他情况都是 `FAIL`。跳过了 A8 的候选，回读后最好只能得到 `PASS_A_REINSTALL_NOT_DRILLED`，A8 的 detail 写“同包重装未演练”；这个值原样写进索引的演练格，永远不会是另外两种 PASS。
 
-演练 kit 平铺存放 `first-install-entry.ps1`、`release-pins.json`、WSL MSI、Ubuntu rootfs、全部 .deb 和 `kit.json`。
+演练 kit 平铺存放 `first-install-entry.ps1`、`guest-failure-files.json`（入口失败快照可读的来宾文件清单）、`release-pins.json`、WSL MSI、Ubuntu rootfs、全部 .deb 和 `kit.json`。
 除 `kit.json` 自身外，每个文件都在 `files` 中钉 sha256。prereq.json 按原始字节绑定；其 WSL/rootfs/debs 与正式
 prereq-manifest 的文件名、sha256、字节数相符才拷入。Node/Python/Git/runner/Linux Node 的正式前置仍由 bootstrap 的
 已钉清单取得；本构建器不联网。
@@ -220,6 +220,11 @@ Get-LauncherVerdict 判定，要求唯一结果文件、有效 PNG 截图、tree
 ## 回执和时间
 
 A 档在 guest 的 work/stage-timings.json 记录 host、prepare、launcher 实测秒数；未运行阶段为 null。
+host 之前另记 assets、prereq、unpack、check 四段（r9 后续）。
+
+首装结局不是 `FIRST_INSTALL_DONE` 时，入口在来宾写 `work/resident-failure-snapshot.json`：按 `guest-failure-files.json` 读来宾文件（只读 .json，单个 64 KiB、合计 1 MiB，清单或通配碰到 secrets、credentials 目录即拒或跳过），加 Service Control Manager 自入口开始以来的事件（至多 50 条、每条 300 字）。它随阶段文件原样回到运行目录，A1 的 detail 带上 HALT 的 code、failureCode、engineError。
+
+因内存不足中止时，host-guard.json 加记工作集最大的 10 个进程（topProcesses）。
 宿主回执 evidence.stageTimingsSeconds 同时记录这些值，stage-evidence.json 保存 host/launcher 终态与来源。
 bootstrapException 标明 README §5 例外，entryMode 区分适配和交互模式。交互模式的分段时间不作推算。
 本次只实现并做离线验证，没有 VM 实测秒数。

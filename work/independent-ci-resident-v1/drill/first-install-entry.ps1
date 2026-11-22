@@ -166,6 +166,184 @@ function Invoke-EntryWslColdStart([string]$Output, [string]$LogDir, [string]$Wsl
   if ($record.shutdown.timedOut -or $record.shutdown.exit -ne 0) { throw ('DRILL_WSL_SHUTDOWN_FAILED:' + $(if ($record.shutdown.timedOut) { 'timedOut' } else { 'exit=' + $record.shutdown.exit })) }
 }
 
+# r9 follow-up (task 0e418483, FABLE-drill-r9-followup 3.2 (3)): the 683 s the entry spent before the host stage had no parts. The phases
+# before it are timed by name into the same stage-timings.json: assets (the asset set and its hashes), prereq (copying and expanding the
+# tools), unpack (the two tar extractions, added up), check (first-install-check). A phase not reached stays null; one cut off by a stop
+# keeps the time it ran.
+function New-EntryMeasurements {
+  [ordered]@{ assets = $null; prereq = $null; unpack = $null; check = $null; host = $null; prepare = $null; launcher = $null }
+}
+function New-EntryPhaseClock { @{ name = $null; watch = (New-Object Diagnostics.Stopwatch) } }
+# Ends the phase that is open (its seconds are added to its name) and opens $Name; an empty $Name only ends.
+function Enter-EntryPhase($Measurements, $Clock, [string]$Name) {
+  if ($Clock.name) { $Measurements[$Clock.name] = [double]$Measurements[$Clock.name] + $Clock.watch.Elapsed.TotalSeconds }
+  $Clock.name = $(if ($Name) { $Name } else { $null })
+  $Clock.watch.Restart()
+}
+function Write-EntryStageTimings([string]$Output, $Measurements) {
+  [IO.File]::WriteAllText((Join-Path $Output 'stage-timings.json'), ($Measurements | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+}
+
+# r9 follow-up (FABLE-drill-r9-followup 1.3 B): a first install that did not end FIRST_INSTALL_DONE leaves resident-failure-snapshot.json
+# in the entry's output directory, beside launcher-result.json, so it goes back with the stage files before any restore (r9's HALT.json
+# never left the guest). What it reads is one fixed list, drill/guest-failure-files.json (in the kit, beside this script): the resident's
+# HALT, PAUSED and status records, the launcher's progress records and verify's full answer. Plus the Service Control Manager's System
+# events since the entry started. Bounded: 64 KiB of each file, 1 MiB for the whole snapshot. Never a secret: a list that names a
+# secrets or credentials directory, or a file that is not .json, is refused whole, and a wildcard that reaches one reads nothing there.
+$script:EntryFailureFilesContract = 'clued.drill.guest-failure-files/1'
+$script:EntryFailureSnapshotContract = 'clued.drill.resident-failure-snapshot/1'
+$script:EntryFailureFileBytes = 64KB
+$script:EntryFailureTotalBytes = 1MB
+$script:EntryFailureEventMax = 50
+$script:EntryFailureEventChars = 300
+$script:EntryFailureMatchMax = 200
+$script:EntryFailureSiblingMax = 50
+$script:EntryFailureSiblingChars = 120
+$script:EntryFailureRoots = @{ ci = 'C:\ProgramData\CluedIndependentCI'; work = $null }   # work: the bootstrap's work directory, known once it is made
+
+function Test-EntryFailureSecretSegment([string]$Segment) { $Segment -match '^(secrets|credentials)$' }
+
+# The list's entries ({ root, path }), or a refusal by name. A path is relative, backslash separated, of plain segments in which * stands
+# for any run of characters within one segment; its leaf ends in .json.
+function Read-EntryFailureFiles([string]$File) {
+  $doc = $null
+  try { $doc = [IO.File]::ReadAllText($File) | ConvertFrom-Json } catch { throw 'DRILL_FAILURE_FILES_REFUSED:unreadable' }
+  if ([string](Get-EntryProperty $doc 'contract') -cne $script:EntryFailureFilesContract) { throw 'DRILL_FAILURE_FILES_REFUSED:contract' }
+  $files = @(Get-EntryProperty $doc 'files' | Where-Object { $null -ne $_ })
+  if ($files.Count -lt 1 -or $files.Count -gt 32) { throw 'DRILL_FAILURE_FILES_REFUSED:count' }
+  $out = @()
+  foreach ($f in $files) {
+    $root = Get-EntryProperty $f 'root'; $path = Get-EntryProperty $f 'path'
+    if ($root -isnot [string] -or @('ci', 'work') -cnotcontains $root) { throw 'DRILL_FAILURE_FILES_REFUSED:root' }
+    if ($path -isnot [string] -or $path -cnotmatch '^[A-Za-z0-9._*-]+(\\[A-Za-z0-9._*-]+)*$') { throw 'DRILL_FAILURE_FILES_REFUSED:path' }
+    $segments = @($path.Split('\'))
+    foreach ($segment in $segments) {
+      if ($segment -match '^\.+$') { throw 'DRILL_FAILURE_FILES_REFUSED:path' }
+      if (Test-EntryFailureSecretSegment $segment) { throw 'DRILL_FAILURE_FILES_REFUSED:secret-path' }
+    }
+    if ($segments[-1] -notmatch '\.json$') { throw 'DRILL_FAILURE_FILES_REFUSED:not-json' }
+    $out += , ([ordered]@{ root = $root; path = $path })
+  }
+  return , $out
+}
+
+# The files one entry names under its root, sorted: each * segment is listed, nothing is followed out of the root, and a secrets or
+# credentials directory a wildcard reaches is passed over.
+# $Trace (optional): when the walk finds nothing, where it stopped -- stoppedAt, the segment of the list's path nothing matched, and
+# dir, the last directory that is there ($null when not even the root is).
+function Resolve-EntryFailurePath([string]$Root, [string]$Path, [hashtable]$Trace = $null) {
+  $segments = @($Path.Split('\'))
+  $at = @($Root)
+  for ($i = 0; $i -lt $segments.Count; $i++) {
+    $segment = $segments[$i]; $last = ($i -eq $segments.Count - 1); $next = @()
+    if ($null -ne $Trace) { $Trace['stoppedAt'] = $segment; $Trace['dir'] = (@($at | Where-Object { [IO.Directory]::Exists($_) }) | Select-Object -First 1) }
+    foreach ($dir in $at) {
+      if (-not [IO.Directory]::Exists($dir)) { continue }
+      if ($segment.Contains('*')) {
+        $found = if ($last) { [IO.Directory]::GetFiles($dir, $segment) } else { [IO.Directory]::GetDirectories($dir, $segment) }
+        foreach ($x in @($found | Sort-Object)) { if (-not (Test-EntryFailureSecretSegment ([IO.Path]::GetFileName($x)))) { $next += $x } }
+      } else {
+        $x = Join-Path $dir $segment
+        if ($(if ($last) { [IO.File]::Exists($x) } else { [IO.Directory]::Exists($x) })) { $next += $x }
+      }
+    }
+    $at = @($next | Select-Object -First $script:EntryFailureMatchMax)
+    if (-not $at.Count) { break }
+  }
+  return , @($at | Where-Object { $_ -match '\.json$' })
+}
+
+# What a directory holds, by name only: files and directories, sorted, at most $script:EntryFailureSiblingMax names of
+# $script:EntryFailureSiblingChars characters; a secrets or credentials name is passed over. A directory that is not there holds nothing.
+function Get-EntryFailureSiblings([string]$Dir) {
+  if (-not $Dir -or -not [IO.Directory]::Exists($Dir)) { return , @() }
+  $names = New-Object Collections.Generic.List[string]
+  foreach ($x in [IO.Directory]::GetFileSystemEntries($Dir)) {
+    $name = [IO.Path]::GetFileName($x)
+    if (Test-EntryFailureSecretSegment $name) { continue }
+    if ($name.Length -gt $script:EntryFailureSiblingChars) { $name = $name.Substring(0, $script:EntryFailureSiblingChars) }
+    $names.Add($name)
+  }
+  $names.Sort([StringComparer]::Ordinal)
+  return , @($names | Select-Object -First $script:EntryFailureSiblingMax)
+}
+
+# One file's record: its first $script:EntryFailureFileBytes bytes as UTF-8 text, read while its writer may hold it open.
+function Read-EntryFailureFile([string]$File) {
+  $fs = New-Object IO.FileStream -ArgumentList $File, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+  try {
+    $length = $fs.Length; $want = [int][Math]::Min($length, [long]$script:EntryFailureFileBytes)
+    $buffer = New-Object byte[] $want; $got = 0
+    while ($got -lt $want) { $n = $fs.Read($buffer, $got, $want - $got); if ($n -le 0) { break }; $got += $n }
+    [ordered]@{ bytes = $length; truncated = ($length -gt $got); text = (New-Object Text.UTF8Encoding($false)).GetString($buffer, 0, $got) }
+  } finally { $fs.Dispose() }
+}
+
+# The Service Control Manager's System events since $Since, newest first, at most $Max.
+$script:EntryFailureEventReader = {
+  param([DateTimeOffset]$Since, [int]$Max)
+  try { @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = $Since.LocalDateTime } -MaxEvents $Max -ErrorAction Stop) }
+  catch { if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() } else { throw } }
+}
+
+# Writes the snapshot and returns it. Never throws and never changes the entry's result: what could not be read is named in its place.
+function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtable]$Roots, [DateTimeOffset]$Since, $Result, [scriptblock]$EventReader = $script:EntryFailureEventReader) {
+  $utf8 = New-Object Text.UTF8Encoding($false)
+  $cost = { param($v) $utf8.GetByteCount((ConvertTo-Json -InputObject $v -Compress -Depth 6)) }
+  $snapshot = [ordered]@{ contract = $script:EntryFailureSnapshotContract; at = [DateTimeOffset]::UtcNow.ToString('o'); since = $Since.ToString('o')
+    entry = [ordered]@{ status = (Get-EntryProperty $Result 'status'); stopCode = (Get-EntryProperty $Result 'stopCode') }
+    limits = [ordered]@{ fileBytes = [int]$script:EntryFailureFileBytes; totalBytes = [int]$script:EntryFailureTotalBytes; events = $script:EntryFailureEventMax; eventChars = $script:EntryFailureEventChars }
+    list = [ordered]@{ state = 'read'; code = $null }; files = @(); events = [ordered]@{ state = 'not-read'; error = $null; items = @() } }
+  try {
+    $left = [long]$script:EntryFailureTotalBytes - 4KB   # the frame around the records
+    $records = New-Object Collections.ArrayList
+    # the events first: they are small and bounded, and no file can take their room
+    try {
+      $items = @()
+      foreach ($e in @(& $EventReader $Since $script:EntryFailureEventMax | Select-Object -First $script:EntryFailureEventMax)) {
+        $message = ([string]$e.Message -replace '\s+', ' ').Trim()
+        if ($message.Length -gt $script:EntryFailureEventChars) { $message = $message.Substring(0, $script:EntryFailureEventChars) }
+        $items += , ([ordered]@{ at = $(try { ([DateTimeOffset]$e.TimeCreated).ToUniversalTime().ToString('o') } catch { $null }); id = $e.Id; level = [string]$e.LevelDisplayName; message = $message })
+      }
+      $snapshot.events = [ordered]@{ state = 'read'; error = $null; items = $items }
+    } catch { $snapshot.events = [ordered]@{ state = 'unreadable'; error = [string]$_.Exception.Message; items = @() } }
+    $left -= (& $cost $snapshot.events)
+    $list = @()
+    try { $list = Read-EntryFailureFiles $ListFile } catch { $snapshot.list = [ordered]@{ state = 'refused'; code = [string]$_.Exception.Message } }
+    foreach ($entry in @($list)) {
+      $root = $Roots[$entry.root]
+      if (-not $root) { [void]$records.Add([ordered]@{ root = $entry.root; pattern = $entry.path; state = 'root-unknown' }); continue }
+      $found = @(); $trace = @{}
+      try { $found = Resolve-EntryFailurePath $root $entry.path $trace }
+      catch { [void]$records.Add([ordered]@{ root = $entry.root; pattern = $entry.path; state = 'unreadable'; error = [string]$_.Exception.Message }); continue }
+      if (-not $found.Count) {
+        # absent: where the walk stopped and what is there instead, so a path of the list that is wrong can be put right from one run
+        # (FABLE-r9-lineB-points R3); a directory that cannot be listed leaves the record without the two
+        $record = [ordered]@{ root = $entry.root; pattern = $entry.path; state = 'absent' }
+        try {
+          $siblings = Get-EntryFailureSiblings $trace['dir']
+          $with = [ordered]@{ root = $entry.root; pattern = $entry.path; state = 'absent'; stoppedAt = [string]$trace['stoppedAt']; siblings = @($siblings) }
+          $size = & $cost $with
+          if ($size -le $left) { $record = $with; $left -= $size }
+        } catch { }
+        [void]$records.Add($record); continue
+      }
+      foreach ($file in $found) {
+        $record = [ordered]@{ root = $entry.root; pattern = $entry.path; path = $file; state = 'read'; bytes = $null; truncated = $null; text = $null }
+        try { $read = Read-EntryFailureFile $file; $record.bytes = $read.bytes; $record.truncated = $read.truncated; $record.text = $read.text }
+        catch { $record.state = 'unreadable'; $record['error'] = [string]$_.Exception.Message }
+        $size = & $cost $record
+        if ($size -gt $left) { $record.state = 'over-total-limit'; $record.text = $null; $size = & $cost $record }
+        $left -= $size
+        [void]$records.Add($record)
+      }
+    }
+    $snapshot.files = @($records)
+  } catch { $snapshot['error'] = [string]$_.Exception.Message }
+  try { [IO.File]::WriteAllText((Join-Path $Output 'resident-failure-snapshot.json'), (ConvertTo-Json -InputObject $snapshot -Compress -Depth 6), $utf8) } catch { }
+  return $snapshot
+}
+
 # The one loader of the release's bootstrap: dot-source it (helpers only: its main runs only when it is not dot-sourced), then the entry's
 # own Stop-Bootstrap over the package's. Called dot-sourced (". Import-EntryBootstrap"), so everything lands in the caller's scope; a
 # test loads the repository's real bootstrap.ps1 through it (test/drill-r4-defects.test.mjs).
@@ -183,11 +361,12 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
   # No package function is shadowed here: the package's own Expand-Cached runs (#1154 fixed its MAX_PATH defect; the drill-only stand-in
   # that kept covering it was removed, Fable renew-key ruling, supplement "companion account and evidence" section 3).
   $script:From = $Assets
-  $measurements = [ordered]@{ host = $null; prepare = $null; launcher = $null }
+  $measurements = New-EntryMeasurements; $phase = New-EntryPhaseClock
   $inputCredentials = Join-Path $Output 'credentials'
   $entryTree = ''; $entryNode = ''; $hostStage = $null
   try {
     if ([IO.File]::Exists($ReceiptFile)) { throw 'DRILL_ENTRY_REQUIRES_FIRST_INSTALL' }
+    Enter-EntryPhase $measurements $phase 'assets'
     $prefix = 'fleet-node-' + $ReleaseVersion
     $present = @(Get-ChildItem -LiteralPath $Assets -File -Force | ForEach-Object { $_.Name })
     if ((Get-ReleaseVersion $present) -cne $ReleaseVersion) { throw 'DRILL_RELEASE_VERSION_MISMATCH' }
@@ -202,7 +381,9 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
       foreach ($name in @($set.Keys)) { if ((Sha256File (Join-Path $Assets $name)) -cne $set[$name]) { throw 'ASSET_HASH_MISMATCH' } }
     }
     $pc = Test-PrereqManifest $manifest (Get-NeededPrereqs $true) $true; $pc = @($pc | ForEach-Object { $_ }); if ($pc.Count) { throw ('PREREQ_MANIFEST_REFUSED:' + ($pc -join ',')) }
+    Enter-EntryPhase $measurements $phase 'prereq'
     $script:Work = Join-Path $WorkParent ([guid]::NewGuid().ToString('N'))
+    $script:EntryFailureRoots.work = $script:Work
     [void][IO.Directory]::CreateDirectory($script:Work)
     $pre = Join-Path $script:Work 'prereq'; [void][IO.Directory]::CreateDirectory($pre)
     $tools = @{}
@@ -230,6 +411,7 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     if ($nodeFiles.Count -ne 1 -or $pyFiles.Count -ne 1 -or $gitFiles.Count -ne 1) { throw 'PREREQ_TOOL_NOT_ONE' }
     $entryNode = $nodeFiles[0].FullName
     $childEnv = @{ PATH = $pyFiles[0].DirectoryName + ';' + $gitFiles[0].DirectoryName + ';' + $nodeFiles[0].DirectoryName + ';C:\Windows\System32;C:\Windows'; PSModulePath = $env:PSModulePath }
+    Enter-EntryPhase $measurements $phase 'unpack'
     $archive = Join-Path $Assets "$prefix.tar"; $archiveHash = $sums["$prefix.tar"]
     $unpack = Join-Path $script:Work 'x'; [void][IO.Directory]::CreateDirectory($unpack)
     & $TarExe -x -f $archive -C $unpack 'tree' 'universal-manifest.json' | Out-Null
@@ -237,7 +419,9 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $entryTree = Join-Path $unpack 'tree'
     $fleet = Join-Path $entryTree 'work\independent-ci-resident-v1\rollout\fleet'
     $install = Join-Path $fleet 'install.mjs'; $acceptance = Join-Path $Assets "$prefix.acceptance.json"
+    Enter-EntryPhase $measurements $phase 'check'
     $check = Invoke-NonElevated $entryNode @($install, 'first-install-check', '--artifact', $archive, '--artifact-sha', $archiveHash, '--acceptance', $acceptance, '--from', $Assets) $childEnv
+    Enter-EntryPhase $measurements $phase ''
     $pins = $check.last
     if ($check.exit -ne 0 -or (Test-FirstInstallCheck $pins $archiveHash $firstSums["$prefix.first-install-kit.json"] (Sha256File $entryNode)).Count) { throw 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED' }
     # Same local-copy boundary as bootstrap; host gets the accepted archive tree, never a repository tree.
@@ -253,8 +437,11 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $hostStage = Join-Path 'C:\Windows\Temp' ('clued-drill-host-' + [guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($hostStage, $ds)
     $hostArchive = Copy-ToWork $localArchive $hostStage $archiveHash
+    Enter-EntryPhase $measurements $phase 'unpack'
     & $TarExe -x -f $hostArchive -C $hostStage 'tree' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'ARCHIVE_EXTRACT_FAILED' }
+    $hostTarExit = $LASTEXITCODE
+    Enter-EntryPhase $measurements $phase ''
+    if ($hostTarExit -ne 0) { throw 'ARCHIVE_EXTRACT_FAILED' }
     $hostTree = Join-Path $hostStage 'tree'
     if ([IO.Directory]::Exists($inputCredentials)) { throw 'DRILL_CREDENTIAL_INPUT_ALREADY_EXISTS' }
     [void][IO.Directory]::CreateDirectory($inputCredentials, $ds)
@@ -329,7 +516,8 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
     $verdict = Get-LauncherVerdict $true $terminal
     return (ConvertTo-FirstInstallEntryResult $verdict $(if ($launch.timedOut -or $null -eq $launch.exit) { 1 } else { [int]$launch.exit }) $entryTree $entryNode)
   } finally {
-    [IO.File]::WriteAllText((Join-Path $Output 'stage-timings.json'), ($measurements | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    Enter-EntryPhase $measurements $phase ''   # a phase a stop cut off keeps the time it ran
+    Write-EntryStageTimings $Output $measurements
     # Both the injected input and the host's transient token directory die on every end.
     foreach ($directory in @($inputCredentials, $CredentialDirectory)) {
       if (-not (Clear-CredentialDirectory $directory).cleared) { throw 'DRILL_CREDENTIAL_CLEANUP_FAILED' }
@@ -342,10 +530,15 @@ function Invoke-FirstInstallAccepted([string]$Assets, [string]$Payload, [string]
   }
 }
 
-function Invoke-FirstInstallEntry {
-  $tree = ''; $node = ''; $result = $null
+# The entry's result. Anything but FIRST_INSTALL_DONE on the drill guest also leaves the failure snapshot (never on another machine: a
+# refusal before the guest is known reads nothing).
+function Get-FirstInstallEntryResult {
+  $tree = ''; $node = ''; $result = $null; $guest = $false
+  $output = $Work; $kitDirectory = $Kit   # $Work is the bootstrap's own work directory once its helpers are loaded
+  $since = [DateTimeOffset]::UtcNow
   try {
     Assert-FirstInstallGuest
+    $guest = $true
     Assert-FirstInstallRelease
     $result = Invoke-FirstInstallAccepted $From $Kit $Fake $Work $Version
   } catch {
@@ -357,6 +550,14 @@ function Invoke-FirstInstallEntry {
     }
     $result = [ordered]@{ status = 'FIRST_INSTALL_STOPPED'; stopCode = $code; tree = $tree; node = $node }
   }
+  if ($guest -and [string](Get-EntryProperty $result 'status') -cne 'FIRST_INSTALL_DONE') {
+    try { [void](Write-EntryFailureSnapshot $output (Join-Path $kitDirectory 'guest-failure-files.json') $script:EntryFailureRoots $since $result) } catch { }
+  }
+  return $result
+}
+
+function Invoke-FirstInstallEntry {
+  $result = Get-FirstInstallEntryResult
   $result | ConvertTo-Json -Depth 8 -Compress
   if ($result.stopCode) { exit 1 }
 }
