@@ -474,6 +474,8 @@ export class ResidentExecutor {
     this.trainOnSince = null;
     this.trainTakeoverDone = false;
     this.trainUrgent = false;
+    // FABLE-keep-train-replan §3.4: a head got its admission while the train was idle; the next stage-10 run goes before batch work.
+    this.trainAdmitOwed = false;
     this.trainFrontOwed = new Map(); // reconstructed from parked stage-8 tries, never from a status view
     // Defect b0426896: the mode of this duty's newest stage-10 run (trainResumeOwed).
     this.trainLastMode = null;
@@ -522,7 +524,7 @@ export class ResidentExecutor {
       const on = this.policy.train.enabled === 'on';
       if (!on || this.nodeMode() === 'STANDBY') {
         this.trainOnSince = null; this.trainTakeoverDone = false; this.trainDutyCandidate = null; this.trainStrictReadiness = null; this.trainStrictFrontReadiness = null;
-        this.trainProgressReady = false;
+        this.trainProgressReady = false; this.trainAdmitOwed = false;
         if (this.trainSweep?.fullSinceOn === true) this.trainSweep = Object.freeze({ ...this.trainSweep, fullSinceOn: false });
         // A front row (S) belongs to the duty that ended (or to an install whose train is not on any more): it never runs
         // (review R3 MINOR 5).
@@ -654,9 +656,12 @@ export class ResidentExecutor {
 
   // After the take-over: the ordinary batch of a head without S passed its stage 1 (the admission binds the claim), so stage 10 can now
   // name the front: due at once, once per head here (two per head with the arrival ask), under the daily cap like every urgent run.
+  // FABLE-keep-train-replan §3.4: with the train idle (the newest run named no bound front, so trainFrontWaits does not order it) that run
+  // also goes before the next batch work (trainAdmitOwed), or another PR's ordinary batch in the next tick ran first and the grouping
+  // waited for it, longer than the cadence. A running batch is not cut into (the order is read at the tick's start only).
   trainAskAfterBind(subject) {
     if (this.policy.train.enabled !== 'on' || !this.trainEligible() || !this.trainTakeoverDone || !subject || Object.hasOwn(subject, 'testSha')) return;
-    this.frontBindAskedNote(`${subject.pr}:${subject.headSha}`);
+    if (this.frontBindAskedNote(`${subject.pr}:${subject.headSha}`) && !this.trainFrontWaits()) this.trainAdmitOwed = true;
   }
 
   // DESIGN §62.6 (the residue of §62.5): after the take-over, train on, a head's ordinary batch (no S, attempt 1) whose stage 1 Native
@@ -2012,7 +2017,8 @@ export class ResidentExecutor {
     // PR #1142: a tested ordinary head at B gets the same priority, once, so a busy queue cannot starve its front batch.
     // FABLE-ci-10min §3.2 P1b (field 2026-11-19 06:39, #1171): a due stage-10 run also goes first while a front is bound; otherwise a trigger
     // of another PR in the same tick reserved its ordinary batch first and held stage 10 for 14-24 minutes.
-    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || await this.trainFrontOpenOwed() || this.trainFrontWaits())) {
+    // FABLE-keep-train-replan §3.4: so does the run a head's admission asked for while the train was idle (trainAdmitOwed).
+    if (!this.betweenBatchesRunning && (this.trainResumeOwed() || this.trainAdmitOwed || await this.trainFrontOpenOwed() || this.trainFrontWaits())) {
       const owed = await this.trainMaintenance({ routineOnly: true });
       if (owed) return owed;
     }
@@ -2505,6 +2511,7 @@ export class ResidentExecutor {
     this.trainRuns.push(now);
     if (idleProgressExtra) { this.trainExtraRuns.push(now); this.trainProgressConsumed = progressKey; }
     this.trainUrgent = false;
+    this.trainAdmitOwed = false;
     this.trainLastMode = mode;
     this.report(s => s.setState('RUNNING', 'TRAIN_MAINTENANCE'));
     let r;
