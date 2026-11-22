@@ -6002,3 +6002,11 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 端到端（`test/train-takeover-front.test.mjs`，修复前必红）：第 10 段读到三项钉 Actions，车头第 1 段之后规则改回本 App，推送落地开着：S 从不在没有本 App 三项扫描时落到 main，也没有合并位绿。
    - 未决（交规划）：同一个 S 的第二个车头批次和烧掉的批次 key 相同（`executor.mjs#enqueueFront` 的 subject 固定 attempt 1），所以这个 head 要新提交才能再走；要不要让它不靠新提交自己恢复，由规划来定。
 4. **推送落地在扫描钉 Actions 时走不通**（独审 R3 问题 B，代码不改）：推送路由 `train-landing.mjs#landingRoute` 仍要求同一套规则集里六项都钉本 App。扫描一旦钉到 Actions，它返回 `main_ruleset_unidentified`，第 8 段停在 `TRAIN_LANDING_RULES_MISSING`（park，零副作用）。方向是停，安全；但 §3.3 的推送落地和 R4 开关 A 不能同时开。R4 里要不要改 `landingRoute`，由规划来定。
+
+## 83. 批次路由戳：落后 main 的 head 按合并基跑，只由批次出生时的一个事实决定（C3 返修方案“戊”，FABLE-c3-batch-rule-channel-20261122 §3，分支 `claude/push-mode-merge-base`）
+
+1. **来源只有一处。** 执行器入队时（`intake` 的 `queue.offer`、`enqueueFront` 的 `queue.offerFront`、`readmit`）调 `executor.mjs#batchRoute()`：列车开着、第 10 段自己现读的生效路由 `trainLast.landing.route` 为 push、且读到的 `trainLast.appScans` 是空数组（三项扫描都已不由本 App 出，§82），才返回 `'push'`，否则 null。结果写进队列行 `current.batchRoute`（只存 `'push'`，没有就是没有），之后不再改；`candidates`、`begin`、批次 subject、`attempt2Subject` 都从行上带出。安装值 `train.landing`、触发器内容都决定不了它。状态板 `train.batchRoute` 只在 `batchRoute()` 为 push 时写，轮询器（`companion-main.mjs` → `status.mjs#pollerLandingOf`）只认这个键；读不到状态即 github-merge。
+2. **读戳的地方。** 引擎 `derive`：subject 带戳且 S = H 才写描述符 `baseRule: 'on-main'`，并把 `batchRoute` 带到返回的批次上；`stageArgs(1|8, batch)` 对带戳批次加 `--batch-route push`，调用器写只建不改的 `batch-route.json`（契约 `clued.independent-ci.stage-batch-route/1`，`batch-route.mjs`），第 1、8 段 `startup.mjs` 读它传给端口：第 1 段 S = H 不要求 `pr.base.sha === job.baseSha` 而必须过 `baseOnMain`，`frontSlot` 只在带戳时转换，`readChangedPaths` 带戳 S = H 接受任意 base；第 8 段带戳且非车头时 main 前进不报 `RESIDENT_BASE_MOVED`。第 2–7 段不读。文件缺失、超长、值不认识、不是精确字节都读成 null，即 origin/main 的尖端规则。
+3. **stopBase。** 执行器恢复无条件调用；`queue.mjs#stopBase` 只跳过“带戳且 S = H”的行，同一旧尖端上的车头行和不带戳的行照旧停（L1）。
+4. **失败去向。** 状态板旧了：入队时路由已不是 push，行不盖戳，按尖端规则结束，下一轮回到 merge-main 提示。出生后路由变回 github-merge：戳不变，第 1 段照过；第 10 段开批与第 8 段落地都读现场路由，落后 head 不落地。出生后扫描改回本 App：进第 2 段，以 `REFS_MAIN_BASE_CHANGED` 结束。
+5. **未决（结果文件 bc982192 卡点）。** `train-landing.mjs#readLandingRoute` 认主规则集要求六个必需检查都钉在本 App；三项扫描钉到 Actions 后它读成 `park`（`main_ruleset_unidentified`），于是第 1 条的条件在现场永远不成立，目标场景走不通。怎么认主规则集答案不止一种，交规划定。

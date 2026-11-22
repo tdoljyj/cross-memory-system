@@ -21,14 +21,12 @@ const S = '4'.repeat(40), MOVED = '9'.repeat(40);
 const base = (o = {}) => ({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha: HEAD, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(NOW), attempt: 1, ...o });
 const claim = () => ({ claimId: randomUUID(), fence: 2, epoch: 1, expiresAt: iso(NOW + 3600_000) });
 
-// bc982192 (push landing): GitHub's base.sha is a fact for every batch, not only a front one; stage 1 proves the batch base on main.
-test('job /3: a train front batch is exactly S != H; every batch accepts any PR base.sha GitHub reads', () => {
+test('job /3: a train front batch is exactly S != H; only it accepts a PR base.sha other than T', () => {
   const head = makeJobV2({ ...base(), role: 'trivy' }), front = makeJobV2({ ...base({ testSha: S }), role: 'trivy' });
   assert.deepEqual([isTrainFrontJobV2(head), isTrainFrontJobV2(front)], [false, true]);
   // no tested commit (a v1 job) or a malformed one is never a front batch
   for (const j of [{ headSha: HEAD }, { headSha: HEAD, testSha: null }, { headSha: HEAD, testSha: 'X'.repeat(40) }, null]) assert.equal(isTrainFrontJobV2(j), false);
-  assert.deepEqual([prBaseAcceptedV2(head, BASE), prBaseAcceptedV2(head, MOVED)], [true, true]);
-  for (const bad of [undefined, null, '', 'X'.repeat(40), MOVED.slice(1)]) assert.equal(prBaseAcceptedV2(head, bad), false);
+  assert.deepEqual([prBaseAcceptedV2(head, BASE), prBaseAcceptedV2(head, MOVED)], [true, false]);
   assert.deepEqual([prBaseAcceptedV2(front, BASE), prBaseAcceptedV2(front, MOVED)], [true, true]);
   for (const bad of [undefined, null, '', 'X'.repeat(40), MOVED.slice(1)]) assert.equal(prBaseAcceptedV2(front, bad), false);
 });
@@ -104,7 +102,7 @@ test('resident subject: S joins the subject and the batch key only for a front b
   assert.throws(() => deriveBatch({ recordDocs: r.docs, subject: f, batchKey: headKey, batchId: headKey.slice(0, 16) + '-123456789abc', now: NOW }), { code: 'RESIDENT_BATCH_KEY_MISMATCH' });
 });
 
-test('protected refs observation: the PR base.sha is a fact for every batch (bc982192), and main must still be T', async () => {
+test('protected refs observation: the PR base.sha is a fact for a front batch, and main must still be T', async () => {
   const reply = mainSha => ({ data: { repository: { databaseId: 1334673495, nameWithOwner: REPO, refs: null } }, mainSha });
   const page = (prefix, mainSha) => {
     const edges = prefix === 'refs/heads/' ? [{ cursor: 'c1', node: { name: 'main', prefix, target: { oid: mainSha, __typename: 'Commit' } } }] : [];
@@ -121,9 +119,7 @@ test('protected refs observation: the PR base.sha is a fact for every batch (bc9
   const head = makeJobV2({ ...base({ createdAt: iso(Date.now()) }), role: 'gitleaks' }), front = makeJobV2({ ...base({ testSha: S, createdAt: iso(Date.now()) }), role: 'gitleaks' });
   assert.equal((await run(front, MOVED)).refs[0].objectSha, BASE);
   assert.equal((await run(head, BASE)).complete, true);
-  assert.equal((await run(head, MOVED)).complete, true);
-  await assert.rejects(run(head, [BASE, MOVED]), { code: 'REFS_PR_SUBJECT_CHANGED' });
-  await assert.rejects(run(head, MOVED, MOVED), { code: 'REFS_MAIN_BASE_CHANGED' });
+  await assert.rejects(run(head, MOVED), { code: 'REFS_PR_SUBJECT_CHANGED' });
   await assert.rejects(run(front, MOVED, MOVED), { code: 'REFS_MAIN_BASE_CHANGED' });
   // §38.8 n2: the base.sha GitHub reports for a front batch must be the same commit before and after the refs passes
   assert.equal((await run(front, [MOVED, MOVED])).complete, true);

@@ -68,7 +68,7 @@ function packetValid(job, packet) {
 }
 // The PR's base.sha: the batch base for a batch that tests the head; for a train front batch (S != H) the commit GitHub
 // reads, which every read of one admission must report alike (`base`: the first read's; design v0.5 §5.7).
-// bc982192: GitHub's compare of base...x is 'ahead' or 'identical' exactly when x contains base.
+// bc982192 (C3, batch route push only): GitHub's compare of base...x is 'ahead' or 'identical' exactly when x contains base.
 async function baseOnMain(readFetch, env, job) {
   for (const to of [job.headSha, 'main']) {
     const c = await githubJson(readFetch, env, `/repos/${REPO}/compare/${job.baseSha}...${to}`);
@@ -76,16 +76,20 @@ async function baseOnMain(readFetch, env, job) {
   }
   return true;
 }
-// bc982192 (push landing): a train front batch tests S = merge(T, H...), which contains main's tip T even when H does not; the
-// evaluator judged H (not_needed). On exactly that tip, outside the protected layer (whose head must still contain the tip:
-// MergeAdmission v0.2 §2.4, the evaluator rejects it), the slot is the claim's own, by the evaluator's same rule (mergeSlotState).
-function frontSlot(job, outcome, native) {
+// bc982192 (push landing, a batch stamped push only): a train front batch tests S = merge(T, H...), which contains main's tip T even
+// when H does not; the evaluator judged H (not_needed). On exactly that tip, outside the protected layer (whose head must still contain
+// the tip: MergeAdmission v0.2 §2.4, the evaluator rejects it), the slot is the claim's own, by the evaluator's same rule
+// (mergeSlotState). No route: the evaluator's slot, as on origin/main.
+function frontSlot(job, outcome, native, routePush) {
   const slot = outcome.merge_slot;
-  if (!isTrainFrontJobV2(job) || slot?.state !== 'not_needed' || slot.tip !== job.baseSha || outcome.admission_mode?.layer === 'protected') return structuredClone(slot);
+  if (!routePush || !isTrainFrontJobV2(job) || slot?.state !== 'not_needed' || slot.tip !== job.baseSha || outcome.admission_mode?.layer === 'protected') return structuredClone(slot);
   return mergeSlotState({ repository: REPO, branch: 'main', tip: job.baseSha, upToDate: true, claim: native?.claim ?? null, verifiedAt: native?.verified_at ?? null });
 }
-function samePr(pr, job, base = null) {
-  return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha && prBaseAcceptedV2(job, pr.base?.sha)
+// routePush (bc982192): a batch stamped push; its S = H job runs on the merge base of head and main, so GitHub's base.sha is a fact
+// for it too (every read of one admission must still agree), and the batch base is proven on main instead (baseOnMain).
+function samePr(pr, job, base = null, routePush = false) {
+  return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha
+    && (prBaseAcceptedV2(job, pr.base?.sha) || (routePush && /^[0-9a-f]{40}$/.test(pr.base?.sha ?? '')))
     && (base === null || pr.base.sha === base)
     && pr.head.repo?.full_name === job.repo && pr.base.repo?.full_name === job.repo && pr.base.ref === 'main';
 }
@@ -96,8 +100,13 @@ const batchClaimValid = c => c === null || c === undefined || (plain(c) && uuid.
 // batch's sticky claim generation (null only for the batch's first admission, stage 1). options.scheduling
 // (optional) receives the scheduling facts (schedulingFactsV2) of every evaluation that reached Native,
 // admitted or not; it is told, never asked, and nothing it does can change the admission.
+// batchRoute (bc982192): the batch's route stamp its stage read (batch-route.mjs); only 'push' changes anything (samePr, baseOnMain,
+// frontSlot), anything else is null: every answer exactly as on origin/main.
 export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, modeProvider, recorderProvider,
-  fetchImpl = globalThis.fetch, clock = Date.now, monotonic = () => performance.now(), fixtureHooks = null } = {}) {
+  fetchImpl = globalThis.fetch, clock = Date.now, monotonic = () => performance.now(), fixtureHooks = null, batchRoute = null } = {}) {
+  const routePush = batchRoute === 'push';
+  // Two fixed commits compare the same way and main only moves forward: a batch base proven on main stays proven (per process).
+  const onMain = new Set();
   const config = plain(protectedConfig) ? structuredClone(protectedConfig) : null;
   const configured = config && ['production', 'fixture'].includes(config.domain) && config.repository === REPO
     && config.finiteFirstRun !== true && config.observationOnly !== true
@@ -195,13 +204,16 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           CLUED_SUPABASE_PUBLISHABLE_KEY: config.publishableKey, [VARIABLE]: mode.exists ? mode.value : '' };
         phase = 'pull_request'; if (prResult.status === 'rejected') throw prResult.reason;
         const pr = prResult.value;
-        if (!samePr(pr, job)) return blocked('full_admission_subject_changed');
+        if (!samePr(pr, job, null, routePush)) return blocked('full_admission_subject_changed');
         const prBase = pr.base.sha;
-        // bc982192 (push landing): an S = H batch whose base is not the PR's base.sha runs on the merge base of the head and main; it
-        // counts only while GitHub shows it an ancestor of the head and of main's tip (or that tip). Equal to base.sha: as before.
-        phase = 'base';
-        if (!isTrainFrontJobV2(job) && prBase !== job.baseSha && !(await baseOnMain(readFetch, env, job))) return blocked('full_admission_subject_changed');
-        phase = 'pull_request';
+        // bc982192 (batch route push): an S = H batch runs on the merge base of its head and main; it counts only while GitHub shows that
+        // base an ancestor of the head and of main's tip (or that tip), proven every time, also when it happens to equal base.sha.
+        if (routePush && !isTrainFrontJobV2(job) && !onMain.has(`${job.baseSha}:${job.headSha}`)) {
+          phase = 'base';
+          if (!(await baseOnMain(readFetch, env, job))) return blocked('full_admission_subject_changed');
+          onMain.add(`${job.baseSha}:${job.headSha}`);
+          phase = 'pull_request';
+        }
         // The evaluator resolves Native's current PR -> Task -> claim. Source
         // does not repeat that RPC or trust an advisory body/commit trailer.
         // The age of Native's answer is measured on this host's monotonic clock from the send of its verify call
@@ -237,7 +249,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         if (outcome.head_sha !== job.headSha || outcome.base_sha !== prBase || outcome.pr_ref !== prRef
           || outcome.claim_id !== reference.claim_id || outcome.scope !== config.scope
           || digest([...outcome.changed_paths].sort()) !== digest([...packet.paths].sort())
-          || !samePr(await githubJson(readFetch, env, `/repos/${REPO}/pulls/${job.pr}`), job, prBase)) return blocked('full_admission_subject_changed');
+          || !samePr(await githubJson(readFetch, env, `/repos/${REPO}/pulls/${job.pr}`), job, prBase, routePush)) return blocked('full_admission_subject_changed');
         phase = 'native'; const claim = native?.claim;
         // The guard in force (admission-facts-v2.mjs#effectiveGuard): a handed-over claim runs while Native's policy is staged.
         const guarded = effectiveGuard(native?.execution_policy, claim?.lease_key_required);
@@ -270,7 +282,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           ...(active ? { publicationRequired: true, headAuthorizationId: guarded ? native.head_authorization_id : null } : {}),
           mergeQueueHead: isCurrentMergeQueueHeadV2(claim, observedClaim, job, finished),
           mode: { state: outcome.admission_mode.state, layer: outcome.admission_mode.layer, policyVersion: outcome.admission_mode.policy_version },
-          mergeSlot: frontSlot(job, outcome, native), ownerReview: outcome.owner_review ? {
+          mergeSlot: frontSlot(job, outcome, native, routePush), ownerReview: outcome.owner_review ? {
             kind: outcome.owner_review.kind, grantId: outcome.owner_review.grant_id, carriedFrom: outcome.owner_review.carried_from ?? null } : null,
           workflowGateFindings: [...(outcome.workflow_gate_findings ?? [])], observedAt: new Date(finished).toISOString(),
           claimExpiresAt: claim.expires_at, modeProofRef: mode.proofRef, observationRef: observation.observationRef,

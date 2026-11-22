@@ -1807,8 +1807,16 @@ export class ResidentExecutor {
     try { this.reportLimits(await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null, budgetTimes: true }), now); } catch { /* a view: the next tick tries again */ }
   }
 
-  // bc982192: push landing in force for this service (the train on, its installed landing push): S = H batches run on a merge base.
-  pushLanding() { return this.policy.train.enabled === 'on' && trainLandingMode(this.policy.train) === 'push'; }
+  // bc982192 (C3, plan 戊): the batch route a batch born now is stamped with (queue.mjs: current.batchRoute). 'push' exactly when the
+  // train is on, stage 10's own reading of the effective landing route is push (train.mjs#landingOf: trainLast.landing.route; an
+  // installed github-merge never reads one, and before the first stage 10 of this process there is none) and that same reading found no
+  // scan required from this App any more (trainLast.appScans read and empty; R3 lean), so a batch on a merge base never reaches stages
+  // 2-7. Otherwise null: main's tip is the batch base, as on origin/main. One reading for the bundle (the descriptor's baseRule), stages 1
+  // and 8 (batch-route.json), stopBase and the poller (the status board's train.batchRoute).
+  batchRoute() {
+    const last = this.trainLast;
+    return this.policy.train.enabled === 'on' && last?.landing?.route === 'push' && Array.isArray(last.appScans) && last.appScans.length === 0 ? 'push' : null;
+  }
 
   // The status board's `train` (status.mjs): the mode and the newest summary as in step 3c-1; the sweep, the revoke-head request,
   // onSince and NOT_ON_DUTY only when they have a value.
@@ -1823,6 +1831,7 @@ export class ResidentExecutor {
       // DESIGN §65: the companion's backstop reads it (strict off in strict-permanent mode: PAUSE at once, no grace).
       t.sweepMode = trainSweepMode(this.policy.train);
       t.landing = trainLandingMode(this.policy.train); // ADR 0018
+      if (this.batchRoute() === 'push') t.batchRoute = 'push'; // bc982192: what the poller proposes a head behind main by
       t.backgroundAllPending = r?.backgroundAllPending != null || this.trainSweep?.fullAllPending != null;
       t.maintenanceExtraUsed = this.trainExtraRuns.filter(at => at > this.clock() - DAY).length;
       t.maintenanceExtraLimit = Math.max(0, this.policy.train.maintenanceMaxPerDay - Math.ceil(DAY / this.policy.train.maintenanceEveryMs));
@@ -2376,8 +2385,9 @@ export class ResidentExecutor {
     }
     await this.endOrdinaryForFront(front);
     await this.endSupersededForFront(front);
+    // bc982192: stamped by the stage-10 facts that offer it (trainLast is that summary already).
     const offered = this.queue.offerFront({ pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, attempt: front.attempt }, this.clock(),
-      { depth: this.policy.limits.queueDepth });
+      { depth: this.policy.limits.queueDepth, batchRoute: this.batchRoute() });
     if (offered.action !== 'front') {
       // Field defect PR #1035: stage 10 counted this front batch and touched running, so it says TRAIN_FRONT_BATCH_RUNNING from now on and
       // never offers it again. A front refused only because the row was busy is kept and offered again (trainActed) once a later stage-10
@@ -3126,7 +3136,8 @@ export class ResidentExecutor {
         continue;
       }
       const previousPrUpdate = this.queue.row(t.pr)?.prUpdatedAt;
-      const r = this.queue.offer(t, now, { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs });
+      // bc982192: the batch route of now, never the trigger's (an Agent's trigger may name any base; it cannot choose the rule).
+      const r = this.queue.offer(t, now, { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs, batchRoute: this.batchRoute() });
       if (r.action === 'refused') {
         this.queue.notice(boundedNotice({ code: 'QUEUE_DEPTH_EXCEEDED', used: this.queue.live().length, limit: this.policy.limits.queueDepth, now }));
         done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-refused', { failureCode: r.code, pr: t.pr, headSha: t.headSha, bytesSha256 }] });
@@ -3433,8 +3444,9 @@ export class ResidentExecutor {
   // One queue row: its current commit as attempt 1.
   async runRow(c, usage) {
     // A train front commit carries S (queue.mjs#offerFront, only from on-mode stage 10): its subject names it (step 3c-2b).
+    // bc982192: and the row's batch route stamp (not part of the batch key; ledger.mjs#batchKey).
     const subject = { repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1,
-      ...(Object.hasOwn(c, 'testSha') ? { testSha: c.testSha } : {}) };
+      ...(Object.hasOwn(c, 'testSha') ? { testSha: c.testSha } : {}), ...(c.batchRoute === 'push' ? { batchRoute: 'push' } : {}) };
     const flow = (await this.ledger.pendingFlowEnds()).find(s => {
       const old = s.reserved.subject;
       return old.repo === subject.repo && old.pr === subject.pr && old.headSha === subject.headSha && old.baseSha === subject.baseSha
@@ -3676,9 +3688,9 @@ export class ResidentExecutor {
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
       if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
-      // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase). bc982192: with
-      // push landing the other rows on that base run on the merge base of their head and main, which main moving never ends.
-      if (s?.code === RESIDENT_BASE_MOVED && s.kind === 'ignored' && !this.pushLanding()) this.queue.stopBase(subject.baseSha, RESIDENT_BASE_MOVED, now);
+      // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase; bc982192: but
+      // not a row stamped push that tests its head, which runs on a merge base main moving never ends).
+      if (s?.code === RESIDENT_BASE_MOVED && s.kind === 'ignored') this.queue.stopBase(subject.baseSha, RESIDENT_BASE_MOVED, now);
       if (settled === 'stopped') {
         const capCode = network && networkReleases24h >= this.networkPolicy()?.releasesPerHeadPer24h ? 'NETWORK_RELEASE_CAP_REACHED'
           : counted && releases24h >= this.policy.limits.releasesPerHeadPer24h ? 'RELEASE_CAP_REACHED' : null;

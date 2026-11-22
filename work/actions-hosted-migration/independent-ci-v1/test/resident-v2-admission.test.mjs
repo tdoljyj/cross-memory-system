@@ -25,7 +25,7 @@ test('terminal admission removed: a Native reply naming one yields facts without
 });
 
 // testSha: the tested commit S (a train front batch when S != H); prBase: the base.sha GitHub and Native report.
-function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, bindingOverrides = {}, commitTrailer = null, outcomeOverrides = {}, testSha = HEAD, prBase = BASE, prBaseAfter = prBase, monotonic, compare = {} } = {}) {
+function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOverrides = {}, claimOverrides = {}, bindingOverrides = {}, commitTrailer = null, outcomeOverrides = {}, testSha = HEAD, prBase = BASE, prBaseAfter = prBase, monotonic } = {}) {
   const job = makeJobV2({ repo: REPO, pr: 888, headSha: HEAD, baseSha: BASE, testSha, sourceManifestSha256: 'd'.repeat(64), createdAt: iso(Date.now() - 60_000), attempt: 1, role: 'control-merge-slot' });
   const prRef = `${REPO}#888`;
   const body = trailer === undefined ? `Fix\n\nClued-Work-Claim: ${claimId}\nClued-Work-Scope: ${SCOPE}\n` : trailer;
@@ -46,9 +46,6 @@ function world({ trailer, claimId = randomUUID(), fence = 3, epoch = 1, nativeOv
   const fetchImpl = async url => {
     const u = new URL(url);
     if (u.pathname.endsWith('/pulls/888')) { const p = structuredClone(pr); if (++prReads > 1) p.base.sha = prBaseAfter; return { ok: true, status: 200, json: async () => p }; }
-    // GitHub's compare base...x (bc982192), only where a test names its status
-    const c = u.pathname.split('/compare/')[1];
-    if (c !== undefined && Object.hasOwn(compare, c)) return { ok: true, status: 200, json: async () => ({ status: compare[c] }) };
     if (u.pathname.endsWith(`/commits/${HEAD}`)) return { ok: true, status: 200, json: async () => ({ commit: { message: commitTrailer ?? 'no trailer' } }) };
     return { ok: false, status: 404, json: async () => ({}) };
   };
@@ -263,41 +260,9 @@ test('full admission v2 (step 3c-2a): a train front batch is admitted on whateve
   assert.equal((await between.port.evaluatePr(between.job, between.packet)).reason, 'full_admission_subject_changed');
   const native = world({ testSha: S, prBase: moved, nativeOverrides: { base_sha: '8'.repeat(40) } });
   assert.equal((await native.port.evaluatePr(native.job, native.packet)).reason, 'full_admission_native_changed');
-  // bc982192: a batch that tests the head on another base than base.sha (push landing: the merge base of head and main) is admitted
-  // only while GitHub shows that base an ancestor of the head and of main's tip (or that tip); a compare it cannot read admits nothing
-  const on = (toHead, toMain) => ({ [`${BASE}...${HEAD}`]: toHead, [`${BASE}...main`]: toMain });
-  for (const [toHead, toMain] of [['ahead', 'ahead'], ['ahead', 'identical'], ['identical', 'ahead']]) {
-    const head = world({ prBase: moved, compare: on(toHead, toMain) });
-    const f = await head.port.evaluatePr(head.job, head.packet);
-    assert.equal(f.status, 'ADMITTED', JSON.stringify({ toHead, toMain, f }));
-    assert.equal(f.baseSha, BASE);
-  }
-  for (const [toHead, toMain] of [['behind', 'ahead'], ['diverged', 'ahead'], ['ahead', 'behind'], ['ahead', 'diverged']]) {
-    const head = world({ prBase: moved, compare: on(toHead, toMain) });
-    assert.equal((await head.port.evaluatePr(head.job, head.packet)).reason, 'full_admission_subject_changed', `${toHead} ${toMain}`);
-  }
-  const unread = world({ prBase: moved });
-  assert.equal((await unread.port.evaluatePr(unread.job, unread.packet)).reason, 'full_admission_unavailable');
-  // base.sha equal to the job's base: no compare is read, as before
-  const same = world();
-  assert.equal((await same.port.evaluatePr(same.job, same.packet)).status, 'ADMITTED');
-});
-
-// bc982192: the evaluator judges H, so a front head behind main's tip T is not_needed; the front tests S = merge(T, H...), which contains
-// T, so on exactly T and outside the protected layer its slot is the claim's own (mergeSlotState), and only there.
-test('full admission v2 (bc982192): a front batch whose head is behind main holds the slot on T; protected, another tip or S = H stay not_needed', async () => {
-  const S = '4'.repeat(40), REF = `merge:${REPO}:main`;
-  const notNeeded = (tip = BASE, layer = 'code') => ({ merge_slot: { ref: REF, tip, until: null, state: 'not_needed' }, admission_mode: { state: 'normal', layer, policy_version: 1 } });
-  const slotOf = async o => { const w = world({ claimOverrides: { trigger_refs: [REF] }, ...o }); const f = await w.port.evaluatePr(w.job, w.packet); assert.equal(f.status, 'ADMITTED', JSON.stringify(f)); return f.mergeSlot; };
-  const held = await slotOf({ testSha: S, outcomeOverrides: notNeeded() });
-  assert.equal(held.state, 'held');
-  assert.equal(held.tip, BASE);
-  assert.ok(Date.parse(held.until) > Date.now());
-  assert.equal((await slotOf({ testSha: S, outcomeOverrides: notNeeded(BASE, 'protected') })).state, 'not_needed');
-  assert.equal((await slotOf({ testSha: S, outcomeOverrides: notNeeded('7'.repeat(40)) })).state, 'not_needed');
-  assert.equal((await slotOf({ outcomeOverrides: notNeeded() })).state, 'not_needed');
-  // a claim that does not name the merge ref holds nothing (the evaluator's own rule)
-  assert.equal((await slotOf({ testSha: S, claimOverrides: {}, outcomeOverrides: notNeeded() })).state, 'missing');
+  // a batch that tests the head still needs base.sha = T
+  const head = world({ prBase: moved });
+  assert.equal((await head.port.evaluatePr(head.job, head.packet)).reason, 'full_admission_subject_changed');
 });
 
 // Decision 1100a0ed: Native's verified_at is never compared with this host's clock; its age is the monotonic time since

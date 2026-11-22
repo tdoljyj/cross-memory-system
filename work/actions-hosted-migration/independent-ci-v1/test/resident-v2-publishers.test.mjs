@@ -658,7 +658,7 @@ test('control pair v2 (step 3c-2a): a train front batch needs the train; a batch
   assert.deepEqual([head.r.status, head.r.reason, head.github.checks.length], ['BLOCKED', 'TRAIN_TEST_MERGE_TREE_DIFFERS', 0]);
 });
 
-test('scanner publisher v2 (step 3c-2a, bc982192): the PR base.sha is a fact for every batch', async t => {
+test('scanner publisher v2 (step 3c-2a): the PR base.sha is a fact for a train front batch and still T for every other batch', async t => {
   const { signer, docs } = fixtureRecord();
   const record = validateRecordV2(docs, { now: Date.now() });
   const refs = Object.fromEntries(['sourceAcceptanceRef', 'hostQualificationRef', 'ownerAuthorizationRef', 'publisherQualificationRef', 'ciPrincipalQualificationRef'].map(k => [k, record.accepted[k]]));
@@ -678,7 +678,7 @@ test('scanner publisher v2 (step 3c-2a, bc982192): the PR base.sha is a fact for
   const front = await run(jobsFor(1, TEST_MERGE).trivy, moved());
   assert.equal(front.status, 'SETTLED', JSON.stringify(front));
   const head = await run(jobsFor().trivy, moved());
-  assert.equal(head.status, 'SETTLED', JSON.stringify(head));
+  assert.notEqual(head.status, 'SETTLED');
   assert.equal((await run(jobsFor().trivy, fakeGithub())).status, 'SETTLED');
 });
 

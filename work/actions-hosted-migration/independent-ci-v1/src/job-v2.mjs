@@ -64,12 +64,10 @@ export const subjectOfV2 = job => Object.fromEntries(SUBJECT_V2.map(k => [k, job
 // Step 3c-2 (design v0.5 §5.2, §5.7): a train front batch tests GitHub's test merge S of [T, H], so S != H; every other
 // batch tests the head itself (S = H).
 export const isTrainFrontJobV2 = job => SHA.test(job?.testSha ?? '') && SHA.test(job?.headSha ?? '') && job.testSha !== job.headSha;
-// The PR base GitHub (and Native) report for a job. GitHub moves base.sha only on a push, so it is whatever commit it reads,
-// recorded as a fact; each admission still requires every read of it to agree (full-admission-v2.mjs). A train front batch
-// runs on main's tip T; an S = H batch on T (github-merge: the head contains main's tip) or, with push landing (bc982192), on
-// the merge base of the head and main, which stage 1 proves an ancestor of both (full-admission-v2.mjs#baseOnMain) and the
-// bundle scripts check again (build-bundle.ps1, prepare-workspaces.py: baseRule on-main).
-export const prBaseAcceptedV2 = (job, observed) => SHA.test(observed ?? '');
+// The PR base GitHub (and Native) report for a job. S = H: exactly the batch base T, as before (the head contains main's
+// tip). A train front batch: GitHub moves base.sha only on a push, so it is whatever commit it reads, recorded as a fact;
+// each admission still requires every read of it to agree (full-admission-v2.mjs).
+export const prBaseAcceptedV2 = (job, observed) => SHA.test(observed ?? '') && (isTrainFrontJobV2(job) || observed === job.baseSha);
 
 // The six jobs of one batch share everything but the role.
 export function batchJobsV2(subject) {

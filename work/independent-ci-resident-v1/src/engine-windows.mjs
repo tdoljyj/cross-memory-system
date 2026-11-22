@@ -50,9 +50,12 @@ export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descript
 // Written only for a batch whose stage 10 named members, and stage 10 names members only when this engine told it the installed
 // components take /4 (batchChainSupported).
 export const DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4';
-// bc982192: the descriptor's optional baseRule. 'on-main': baseSha is an ancestor of the head and of main's tip, or that tip (push
-// landing, S = H); absent: main's tip is baseSha (build-bundle.ps1 and prepare-workspaces.py read it; neither accepts another value).
+// bc982192: the descriptor's optional baseRule. 'on-main': baseSha is an ancestor of the head and of main's tip, or that tip (a batch
+// stamped push that tests its head, S = H); absent: main's tip is baseSha (build-bundle.ps1 and prepare-workspaces.py read it; neither
+// accepts another value).
 export const DESCRIPTOR_BASE_RULE_ON_MAIN = 'on-main';
+// bc982192: the invoker's --batch-route for stages 1 and 8 (Source v2 batch-route.mjs#BATCH_ROUTE_STAGES): the batch's own stamp.
+export const BATCH_ROUTE_STAGES = Object.freeze([1, 8]);
 // The literals batchChainSupported looks for in the installed Source v2 (resident-v2/): the bundle and the workspace preparation take
 // /4, and the invoker takes the stage-10 argument ':chain' (Source v2 invoke-stage.mjs#parseLandingArg).
 export const BATCH_CHAIN_SOURCE_MARKERS = Object.freeze([
@@ -451,9 +454,10 @@ export class WindowsEngine {
   }
 
   // The invoker's arguments for a stage: trainModeArgs, and for stage 10 in push mode with batchMax > 1 the ':chain' suffix when
-  // batchChainSupported says yes (ADR 0019; without it stage 10 composes one PR per batch, as before).
-  async stageArgs(number) {
-    const args = this.trainModeArgs(number);
+  // batchChainSupported says yes (ADR 0019; without it stage 10 composes one PR per batch, as before). bc982192: for stages 1 and 8 of
+  // a batch stamped push (derive: batch.batchRoute, from its subject), --batch-route push; nothing for any other batch or stage.
+  async stageArgs(number, batch = null) {
+    const args = [...this.trainModeArgs(number), ...(batch?.batchRoute === 'push' && BATCH_ROUTE_STAGES.includes(number) ? ['--batch-route', 'push'] : [])];
     if (number !== 10 || this.trainLanding?.landing !== 'push' || !(this.trainLanding.batchMax > 1)) return args;
     const i = args.indexOf('--train-landing');
     let chain = false;
@@ -505,14 +509,15 @@ export class WindowsEngine {
     check(chain === null || c !== null, 'RESIDENT_DERIVATION_REFUSED');
     const dir = path.join(this.paths.outboxRoot, batchId);
     await ensureDir(dir);
-    // bc982192: with push landing an S = H batch runs on the merge base of its head and main; the bundle scripts then require only that
-    // baseSha be an ancestor of the head and of main's tip (or that tip). Without baseRule (github-merge, a front batch, an older
-    // script that ignores it): main's tip must be baseSha exactly, as before.
-    const onMain = this.trainMode === 'on' && this.trainLanding?.landing === 'push' && v.testSha === subject.headSha;
+    // bc982192: a batch stamped push (its subject's batchRoute, from the queue row: executor.mjs#batchRoute) that tests its head runs on
+    // the merge base of its head and main; the bundle scripts then require only that baseSha be an ancestor of the head and of main's
+    // tip (or that tip). Without baseRule (no stamp, a front batch, an older script that ignores it): main's tip must be baseSha exactly.
+    const route = subject.batchRoute === 'push' ? 'push' : null;
+    const onMain = route === 'push' && v.testSha === subject.headSha;
     await writeNew(path.join(dir, 'descriptor.json'), { contract: c ? DESCRIPTOR_CHAIN_CONTRACT : DESCRIPTOR_CONTRACT, batchId, batchKey: key, repo: subject.repo, pr: subject.pr,
       headSha: subject.headSha, baseSha: subject.baseSha, ...(onMain ? { baseRule: DESCRIPTOR_BASE_RULE_ON_MAIN } : {}), testSha: v.testSha, ...(c ? { testTree: c.testTree, members: c.members } : {}), attempt: subject.attempt,
       ciSourceManifestSha256: v.ciSourceManifestSha256, sourceCommit: v.sourceCommit, gitleaksTomlSha256: v.gitleaksTomlSha256, linuxJobIds, createdAt: v2.createdAt });
-    return { batchId, key, dir: out, packageSha256: v.packageSha256, stages: v.stages, ciSourceManifestSha256: v.ciSourceManifestSha256 };
+    return { batchId, key, dir: out, packageSha256: v.packageSha256, stages: v.stages, ciSourceManifestSha256: v.ciSourceManifestSha256, ...(route ? { batchRoute: route } : {}) };
   }
 
   // Windows half of a protocol archive through the Source v2 handle-based tool (never Node path
@@ -739,7 +744,7 @@ export class WindowsEngine {
       let r;
       try {
         r = await this.run([this.paths.nodeExe, invoke, '--batch-dir', batch.dir, '--stage', String(stage.number), '--work-manifest-sha256', row.workManifestSha256,
-          '--batch-key', batch.key, ...(await this.stageArgs(stage.number))], { timeoutMs: stage.runMilliseconds + 360_000 });
+          '--batch-key', batch.key, ...(await this.stageArgs(stage.number, batch))], { timeoutMs: stage.runMilliseconds + 360_000 });
       } finally {
         await observer?.stop();
       }

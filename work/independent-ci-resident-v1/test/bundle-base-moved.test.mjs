@@ -10,7 +10,6 @@ import fs from 'node:fs';
 import { COMPANION_CONFIG_CONTRACT, Companion, validateCompanionConfig } from '../src/companion.mjs';
 import { describe } from '../src/pr-status.mjs';
 import { TEST_NODE, TEST_NODE_SHA, executorFixture, fakeEngine, triggerBytes } from './helpers.mjs';
-import { ResidentExecutor } from '../src/executor.mjs';
 
 const MIN = 60_000;
 const H = n => String(n).repeat(40).slice(0, 40);
@@ -96,20 +95,23 @@ test('a real environment fault of the bundle still counts: three of them open th
   assert.equal((await f.exec.tick()).reason, 'BREAKER_OPEN');
 });
 
-// bc982192: with push landing an S = H row runs on the merge base of its head and main, which main moving never ends: one subject that
-// found its base gone (a front on the old tip) stops alone, the rows on that base keep their place.
-test('push landing: a subject answered RESIDENT_BASE_MOVED stops alone; the other rows on its base are not stopped', async t => {
+// bc982192 (C3, plan 戊, review L1): each row carries the batch route it was born with (queue.mjs current.batchRoute). A row stamped push
+// that tests its head runs on the merge base of its head and main, which main moving never ends; every other row on the old base (no
+// stamp: main's tip is its base) stops with the subject that found main moved, as on origin/main, whatever the installed landing says.
+test('batch route (L1): a subject answered RESIDENT_BASE_MOVED stops the rows on its base without the stamp; a row stamped push keeps its place', async t => {
   const moved = { ok: false, code: 'RESIDENT_BASE_MOVED' };
   const f = await fixture(t, { 1: moved });
-  f.exec.pushLanding = () => true;
-  for (const n of [1, 2, 3]) await f.drop(triggerBytes({ pr: n, headSha: H(n) }));
+  for (const [n, route] of [[1, null], [2, 'push'], [3, null]]) {
+    f.exec.batchRoute = () => route; // the route this executor stamps a batch born now with (unit-tested in batch-route-stamp.test.mjs)
+    await f.drop(triggerBytes({ pr: n, headSha: H(n) }));
+    await f.exec.intake();
+  }
+  delete f.exec.batchRoute;
+  assert.deepEqual([1, 2, 3].map(n => f.queue.row(n).current.batchRoute ?? null), [null, 'push', null]);
   const r = await f.exec.tick();
   assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'RESIDENT_BASE_MOVED']);
-  assert.equal(f.queue.row(1).state, 'STOPPED');
-  for (const n of [2, 3]) assert.equal(f.queue.row(n).state, 'QUEUED', `PR ${n}`);
+  assert.deepEqual([f.queue.row(1).state, f.queue.row(3).state, f.queue.row(3).reason], ['STOPPED', 'STOPPED', 'RESIDENT_BASE_MOVED']);
+  assert.equal(f.queue.row(2).state, 'QUEUED');
   assert.equal((await f.exec.tick()).state, 'COMPLETED', 'PR 2 runs next on the same base');
-  // in force only with the train on and push landing installed
-  const on = train => ResidentExecutor.prototype.pushLanding.call({ policy: { train } });
-  assert.deepEqual([on({ enabled: 'on', landing: 'push' }), on({ enabled: 'on', landing: 'github-merge' }), on({ enabled: 'shadow', landing: 'push' }), on({ enabled: 'on' })],
-    [true, false, false, false]);
+  assert.deepEqual(f.bundles, [1, 2]);
 });
