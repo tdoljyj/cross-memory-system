@@ -1225,6 +1225,16 @@ export function ensureAppDependencies(dir, home, { rebuild, log = console.log, r
   return key;
 }
 
+// A local --run or --run-files of a suite that needs the application's dependencies (ci-required-selection.mjs runSuite),
+// in a checkout without them, such as a fresh worktree: the store and link a local verification uses. CI installs them in
+// the job instead. A checkout with its own node_modules keeps it; one without the application's manifest has nothing to link.
+export function linkSuiteDependencies(id, root, { env = process.env, log = console.log } = {}) {
+  const app = path.join(root, APP);
+  if (!NEEDS_APP_DEPENDENCIES.has(id) || fs.existsSync(path.join(app, 'node_modules'))) return null;
+  if (!fs.existsSync(path.join(app, 'package.json')) || !fs.existsSync(path.join(app, 'package-lock.json'))) return null;
+  return ensureAppDependencies(root, cacheHome(env), { rebuild: id === 'production-schema', log });
+}
+
 // All but the newest stores go, except those a live run uses or holds the lock of.
 export function pruneDependencyStores(home, { keep = null, alive = processAlive, now = Date.now } = {}) {
   const store = path.join(home, 'node_modules');

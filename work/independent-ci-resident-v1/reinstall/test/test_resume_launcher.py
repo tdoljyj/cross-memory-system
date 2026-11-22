@@ -19,6 +19,28 @@ PS = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerS
 sha = lambda value: hashlib.sha256(value).hexdigest()
 
 
+class LocalPaths(unittest.TestCase):
+    """A local path names a drive letter, a root and plain parts. Any drive: the reinstall configuration takes every drive
+    letter (rconfig.WIN_PATH), and a work or temporary directory on D: is local (RESUME_LOCAL_PATH_REQUIRED, 10 failures
+    of reinstall-python with TEMP on D:)."""
+
+    def test_any_drive_letter_is_a_local_path(self):
+        for value in [r'C:\w\x', r'D:\agent-temp\run-slots\tmp\clued-resume-1', r'e:\data']:
+            self.assertEqual(RESUME.windows_path(value), value)
+
+    def test_relative_unc_device_and_dot_paths_stay_refused(self):
+        unc = chr(92) * 2   # two backslashes: a UNC or device path prefix
+        for value in [r'D:relative', unc + r'server\share\x', unc + r'?\C:\x', r'D:\a\..\b', r'D:\a' + unc + 'b', 'D:' + chr(92),
+                      r'CD:\x', r'1:\x', r'D:\a\.', None]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'RESUME_LOCAL_PATH_REQUIRED'):
+                RESUME.windows_path(value)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows paths are the source contract')
+    def test_output_on_another_drive_is_outside_the_work_directory(self):
+        with self.assertRaisesRegex(ValueError, 'RESUME_OUTPUT_OUTSIDE_WORKDIR'):
+            RESUME.output_path(r'D:\elsewhere\out.ps1', r'C:\work')
+
+
 @unittest.skipUnless(os.name == 'nt', 'Windows paths are the source contract')
 class ResumeLauncher(unittest.TestCase):
     def setUp(self):
