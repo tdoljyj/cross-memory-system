@@ -65,7 +65,8 @@ export const REASONS = Object.freeze([
   'tested_tree_identity', 'tested_isolation_identity', 'artifact_listing_incomplete', 'artifact_identity', 'artifact_digest',
   'report_context', 'report_checkout', 'report_run', 'report_dirty_paths', 'report_isolation_diff',
 ]);
-// The reads, in order; "report" is every read of the tested-tree artifact proof.
+// The reads, in the reuse branch's order; "report" is every read of the tested-tree artifact proof. The in-flight
+// branch (甲2) reads compare before jobs, and jobs up to 1 + TREE_RUN_POLLS times.
 export const STEPS = Object.freeze(['merge', 'pulls', 'pr', 'source', 'runs', 'jobs', 'runs_again', 'compare', 'report']);
 // 甲2: a head run whose gate is still deciding is read again this often, at most this many more times (60 s in all).
 export const TREE_RUN_POLL_INTERVAL_MS = 10_000;
