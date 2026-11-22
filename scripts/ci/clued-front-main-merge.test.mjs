@@ -70,6 +70,7 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
     if (method === 'GET' && route === `/repos/o/r/pulls/${PR}`) return reply(structuredClone(w.pr));
     if (method === 'GET' && route.startsWith(`/repos/o/r/pulls/${PR}/files`)) return reply([{ filename: file, status: 'modified' }]);
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
+    if (method === 'GET' && /^\/repos\/o\/r\/rules\/branches\/main(?:\?|$)/.test(route)) return w.rules ? reply(/[?&]page=1(?:&|$)/.test(route) ? w.rules : []) : reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && route.startsWith('/repos/o/r/compare/')) {
       const [from, to] = route.slice('/repos/o/r/compare/'.length).split('?')[0].split('...');
       if (from === w.tip && to === H) return reply({ status: 'diverged', behind_by: behind, ahead_by: 1, merge_base_commit: { sha: BASE }, files: [{ filename: file }] });
@@ -255,6 +256,13 @@ const REQUIRED = ['ci-suites', 'clued-cloud-tests'];
 const sha = n => n.toString(16).padStart(40, '0');
 const iso = ms => new Date(ms).toISOString();
 // One repository with several pull requests, as GitHub's HTTP answers. w.now is the clock; w.tip is main.
+// main's rules as GitHub answers them today (rules/branches/main): merge only; the six checks of the independent CI pinned to its App,
+// the Actions checks pinned to GitHub Actions; strict on or off.
+const SIX = ['kooyumi-work-admission', 'gitleaks', 'trivy', 'contract-placement', 'kooyumi-admission-verified', 'kooyumi-merge-slot'];
+const mainRules = (strict, actions = REQUIRED) => [{ type: 'deletion' }, { type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
+  { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict,
+    required_status_checks: [...SIX.map(context => ({ context, integration_id: INDEPENDENT_ADMISSION_APP_ID })),
+      ...actions.map(context => ({ context, integration_id: 15368 }))] } }];
 function train() {
   const w = { now: NOW, tip: T, prs: new Map(), heads: new Map(), updates: [], calls: [], required: REQUIRED, failing: null, made: 0, ruleFiller: 0, endless: false };
   // A commit GitHub knows: which main tip it contains, when it appeared, and what ran on it.
@@ -282,6 +290,7 @@ function train() {
     if (method === 'GET' && rules) {
       const page = Number(rules[1] ?? 1);
       if (page <= w.ruleFiller) return reply(Array.from({ length: 100 }, () => ({ type: 'deletion' })));
+      if (typeof w.strict === 'boolean') return reply(page > w.ruleFiller + 1 ? [] : mainRules(w.strict, w.required));
       return reply(page > w.ruleFiller + 1 ? [] : [{ type: 'deletion' },
         ...(w.required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: w.required.map(context => ({ context })) } }] : [])]);
     }
@@ -501,7 +510,7 @@ test('a run with pr and head handles only the named pull request, as before', as
   assert.deepEqual(w.brought(), [1225]);
   assert.deepEqual(w.calls.map(c => `${c.method} ${c.route}`), [
     'GET /repos/o/r/pulls/1225', 'GET /repos/o/r/branches/main', `GET /repos/o/r/compare/${T}...${sha(0x1225)}`,
-    'GET /repos/o/r/installation', 'POST /app/installations/42/access_tokens', 'PUT /repos/o/r/pulls/1225/update-branch',
+    'GET /repos/o/r/rules/branches/main?per_page=100&page=1', 'GET /repos/o/r/installation', 'POST /app/installations/42/access_tokens', 'PUT /repos/o/r/pulls/1225/update-branch',
     'GET /repos/o/r/pulls/1225', `GET /repos/o/r/commits/${w.headOf(1225)}`, 'GET /repos/o/r/branches/main', 'POST /repos/o/r/check-runs']);
   assert.equal(renderSummary(r), `## clued-front-main-merge\n\n- #1225 \`${sha(0x1225).slice(0, 12)}\`: **merged**: ${r.reason}\n`);
   // Half an input is a mistake, not a run without inputs: refused, nothing read.
@@ -624,4 +633,31 @@ test('what is under way on the front is read to the end: beyond 100 statuses or 
     r = await w.run();
     assert.equal(r.result, 'skipped', `${list}: ${JSON.stringify(r)}`); assert.deepEqual(w.brought(), [], list);
   }
+});
+
+// FABLE-r3-decisions-20261122 item 5: with strict off (the no-train mode) GitHub merges a pull request that is behind main as it
+// is, so bringing main in only makes a new head whose checks all start again. strict is read as the resident's stage 10 reads it
+// (Source v2 train-rules.mjs#rulesetFacts): off, nothing is brought and the result says why; on, everything is as before.
+const STRICT_OFF = 'strict is off in the rules of main (the no-train mode): GitHub merges a pull request behind main as it is, so main is not brought in';
+test('strict off: a run without inputs brings nobody up to main and says why; strict on, the same run brings one as before', async () => {
+  const off = scene0823(); off.strict = false;
+  const r = await off.run();
+  assert.deepEqual([r.result, r.reason, r.pr], ['none', STRICT_OFF, null], JSON.stringify(r));
+  assert.deepEqual(off.brought(), []);
+  assert.equal(off.calls.filter(c => c.method !== 'GET' && c.route !== '/graphql').length, 0, 'nothing is written, no App token is made');
+  assert.match(renderSummary(r), /nobody brought up: \*\*none\*\*: strict is off/);
+  const on = scene0823(); on.strict = true;
+  const again = await on.run();
+  assert.deepEqual([again.result, again.pr, on.brought()], ['merged', 1156, [1156]], JSON.stringify(again));
+});
+test('strict off: a named run (a person, or a dispatch from before) leaves the pull request behind main; strict on, it is merged as before', async () => {
+  const off = world(); off.rules = mainRules(false);
+  const r = await merge(off);
+  assert.deepEqual([r.result, r.reason, r.pr, r.head_sha], ['none', STRICT_OFF, PR, H], JSON.stringify(r));
+  assert.deepEqual(off.updates, []);
+  assert.equal(off.pr.head.sha, H);
+  assert.equal(off.calls.some(c => c.url.endsWith('/access_tokens')), false, 'no App token is made');
+  const on = world(); on.rules = mainRules(true);
+  assert.equal((await merge(on)).result, 'merged');
+  assert.deepEqual(on.updates, [{ expected_head_sha: H }]);
 });
