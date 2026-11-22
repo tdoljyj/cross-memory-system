@@ -1,4 +1,4 @@
-// 托管脚手架 hosted-required.yml 的结构约束（任务 04f9b91b）。纯文本读取，零依赖。
+// 托管脚手架 hosted-required.yml 的结构约束（任务 04f9b91b）。纯文本读取；gitleaks 一条另读 Native 的固定值来源。
 // staging 会被列车强制改指：上一批没落地时 github.event.before 在检出里不存在，拿它当基线检查就报错变红。
 // 所以凡是给命令传比较基线的作业，staging 推送时一律按 stagingBaseFromCheckout 现算（与四个测试作业同一来源）。
 import assert from 'node:assert/strict';
@@ -45,4 +45,32 @@ test('选择套件的 --check 参数与自托管一致', () => {
   const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
   const checks = source => [...source.matchAll(/--check [^"'`;|&\n]*/g)].map(m => m[0].trim()).sort();
   assert.deepEqual(checks(text), checks(selfHosted));
+});
+
+// hosted-gitleaks 校验的固定值（三个受信文件、审核提交集、审核 ignore）只有一个来源：Native 在跑的 gitleaks worker
+// （protected-job-bridge-v4 → formal-gitleaks-v4 → required-history/prepare.mjs）。作业从受信基线读它，自己不抄值；
+// 抄来的值会过期（从已停用的 gitleaks.yml 抄的五个值与 main 不符，任务 04f9b91b 缺陷 B）。
+const NATIVE_GITLEAKS = 'work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/prepare.mjs';
+test('hosted-gitleaks 不抄固定值，从 Native 在跑的 prepare.mjs 读，读到的值与本树文件一致', async () => {
+  const block = jobs(text).get('gitleaks');
+  assert.ok(block, 'hosted-required.yml 没有 gitleaks 作业');
+  const copied = [...block.matchAll(/\b[0-9a-f]{64}\b/g)].map(m => m[0])
+    .filter(hex => !block.includes(`gitleaks:v8.30.1@sha256:${hex}`));
+  assert.deepEqual(copied, [], 'gitleaks 作业里抄了固定值');
+  assert.ok(block.includes(`await import('./${NATIVE_GITLEAKS}')`), `gitleaks 作业不读 ${NATIVE_GITLEAKS}`);
+  const read = p => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
+  assert.match(read('work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/linux-worker.mjs'),
+    /from '\.\.\/formal-gitleaks-v4\/adapter\.mjs'/, 'Native bridge 换了 gitleaks worker，托管作业要跟着改路径');
+  const { createHash } = await import('node:crypto');
+  const sha = bytes => createHash('sha256').update(bytes).digest('hex');
+  const m = await import(new URL(`../../${NATIVE_GITLEAKS}`, import.meta.url));
+  assert.deepEqual(Object.keys(m.SOURCE_PINS).sort(),
+    ['.gitleaks.toml', 'scripts/ci/reviewed_gitleaks.py', 'scripts/ci/reviewed_gitleaks_historical.py']);
+  for (const [file, pin] of Object.entries(m.SOURCE_PINS)) {
+    assert.equal(sha(readFileSync(new URL(`../../${file}`, import.meta.url))), pin, file);
+  }
+  const commits = [...new Set([...read('.gitleaks.toml').matchAll(/^# clued-reviewed-finding: \{"fingerprint":"([0-9a-f]{40}):.*$/gm)]
+    .map(x => x[1]))].sort();
+  assert.equal(sha(`${commits.join('\n')}\n`), m.REVIEWED_COMMITS.sha256, '审核提交集');
+  assert.match(m.REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256, /^[0-9a-f]{64}$/);
 });

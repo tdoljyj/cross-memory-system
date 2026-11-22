@@ -369,11 +369,24 @@ jobs:
           export LC_ALL=C GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1
           scan="$RUNNER_TEMP/clued-gitleaks"; repo="$scan/repo"; control="$scan/control"
           mkdir "$scan" "$repo" "$control"
-          echo "f21a46cb2a0c2a61a63e0ebaf9115759cd244abcd99682c1d83da36d3b78061b  .gitleaks.toml" | sha256sum -c --quiet -
-          echo "4441bbee3b022be40a0e6533ee6f56241621babc961b0389c25d4484a298d67f  scripts/ci/reviewed_gitleaks.py" | sha256sum -c --quiet -
-          echo "d395d46b18aa0dd642ecd5417d846750647152e1a97a20597b2bd295fd630870  scripts/ci/reviewed_gitleaks_historical.py" | sha256sum -c --quiet -
+          # The one departure from gitleaks.yml's bytes: the pins are not copied here (copies go stale: the five of the
+          # disabled gitleaks.yml no longer match main). They
+          # are read from the trusted base's Native gitleaks worker that protected-job-bridge-v4 runs, the one place a
+          # reviewed change of .gitleaks.toml or the helpers re-pins them (Task 04f9b91b; hosted-required.test.mjs).
+          node --input-type=module -e "
+            const { writeFileSync } = await import('node:fs');
+            const m = await import('./work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/prepare.mjs');
+            const [control, ignore] = process.argv.slice(1);
+            const hex = (value) => { if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('not a sha256 pin: ' + value); return value; };
+            const files = Object.keys(m.SOURCE_PINS).sort();
+            if (files.join(' ') !== '.gitleaks.toml scripts/ci/reviewed_gitleaks.py scripts/ci/reviewed_gitleaks_historical.py') throw new Error('pinned files: ' + files);
+            writeFileSync(control + '/source.sha256', files.map((file) => hex(m.SOURCE_PINS[file]) + '  ' + file + '\n').join(''));
+            writeFileSync(control + '/reviewed-commits.sha256', hex(m.REVIEWED_COMMITS.sha256) + '  ' + control + '/reviewed-commits\n');
+            writeFileSync(control + '/reviewed-ignore.sha256', hex(m.REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256) + '  ' + ignore + '\n');
+          " "$control" "$control/reviewed.ignore"
+          sha256sum -c --quiet "$control/source.sha256"
           sed -n 's/^# clued-reviewed-finding: {"fingerprint":"\([0-9a-f]\{40\}\):.*$/\1/p' .gitleaks.toml | sort -u > "$control/reviewed-commits"
-          echo "576a86a6061e6c4331ec952b4bc498570fe614b46131d1387c871c59d2cf80cb  $control/reviewed-commits" | sha256sum -c --quiet -
+          sha256sum -c --quiet "$control/reviewed-commits.sha256"
           git init --quiet --template= "$repo"
           auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
           fetch() {
@@ -408,7 +421,7 @@ jobs:
           set -eu
           scan="$RUNNER_TEMP/clued-gitleaks"
           image=ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          echo "61b4af25bf5aea6dbc40591245d736f6ff26f7103f7c1d9bd16b878614a935fd  $scan/control/reviewed.ignore" | sha256sum -c --quiet -
+          sha256sum -c --quiet "$scan/control/reviewed-ignore.sha256"
           chmod 0444 "$scan/control/reviewed.ignore"
           docker pull --quiet "$image" > /dev/null
           docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \

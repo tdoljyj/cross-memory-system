@@ -342,7 +342,7 @@ HOSTED_SCAFFOLD_JOBS = {
             "ci-suites": "5bcfffd67e214013b9edff9ab2636709ac52d38d67d68ca48531bea009865476",
             "migration-verify": "b5c25479376be9eb07294e380043fdaa0c89df3d156d9a233ca091467172b889",
             "ci-suites-windows": "e9b30277c4bb8ccfdd89bc6e98aed43f180f3603182f1a309155177932a4e7ce",
-            "gitleaks": "34fb7757358cb9d40a8fb3fbd7158a62d573763deed911baaeec64236ee47f39",
+            "gitleaks": "46d7f90134717cf101de002c892906272043fb01fe20e9c82714f3ea0858ad7a",
             "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
             "contract-placement": "a07add60bcd9ec6caee62f0e86213c48ce3d16700894dc71e38b75a9493334df"
         }
