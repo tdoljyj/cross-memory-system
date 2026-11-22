@@ -66,10 +66,14 @@ function Set-Dacl([string]$p, [string]$sddl) { $s = New-Object Security.AccessCo
 function Dacl([string]$p) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Access).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) }
 # The test account owns every folder it made (owner rights: READ_CONTROL, WRITE_DAC), so it can always give itself full control back to clean up.
 function Restore-Mine([string[]]$dirs) { foreach ($d in $dirs) { if ([IO.Directory]::Exists($d)) { try { Set-Dacl $d ('D:(A;OICI;FA;;;' + $me + ')') } catch { } } } }
-# state's DACL as the fixture reads it: the fixture account's own entry (A;;FA;;;<sid>) taken out, the rest compared with the production DACL.
+# state's DACL as the fixture reads it: the fixture account's own entries taken out by SID (Windows writes the built-in Administrator as
+# LA, not as its SID), the rest compared by the installer's own Get-DaclShape (the order of the entries is not what the DACL grants, and
+# DirectorySecurity sorts them by SID when it writes the fixture's entry).
 function Get-FixtureFreeState([string]$sddl, [string]$sid, [string]$terminal) {
-  $dacl = $sddl -replace [regex]::Escape('(A;;FA;;;' + $sid + ')'), ''
-  [ordered]@{ dacl = $dacl; terminal = ($dacl -ceq $terminal) }
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  for ($i = $raw.DiscretionaryAcl.Count - 1; $i -ge 0; $i--) { if ($raw.DiscretionaryAcl[$i].SecurityIdentifier.Value -ceq $sid) { $raw.DiscretionaryAcl.RemoveAce($i) } }
+  $dacl = $raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
+  [ordered]@{ dacl = $dacl; terminal = ((Get-DaclShape $dacl) -ceq (Get-DaclShape $terminal)) }
 }
 `;
 // The installer's state-parent-acl rule, by exact name (the functions verify-resident.ps1 loads too).
