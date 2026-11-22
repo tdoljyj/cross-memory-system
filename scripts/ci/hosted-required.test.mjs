@@ -74,3 +74,44 @@ test('hosted-gitleaks 不抄固定值，从 Native 在跑的 prepare.mjs 读，�
   assert.equal(sha(`${commits.join('\n')}\n`), m.REVIEWED_COMMITS.sha256, '审核提交集');
   assert.match(m.REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256, /^[0-9a-f]{64}$/);
 });
+
+// 托管第 5 步（任务 04f9b91b）：helper 校验两条历史补丁的摘要，摘要含 git 的 index 行，钉的是 8 位缩写；
+// 完整历史下 git 自动缩写到 9 位以上，helper 就报 “Reviewed-finding verification failed”。Native 的自检垫片
+// 对这两条 diff 固定 core.abbrev=8。托管作业让 helper 的 git 走同一个 safeGitArguments，不另抄规则；
+// 这里取工作流里的那段 git.mjs，真跑这两条 diff，摘要必须等于 helper 钉的值。
+test('hosted-gitleaks 自检的 git 走 Native 垫片的 safeGitArguments，两条历史补丁摘要与 helper 钉值一致', async () => {
+  const block = jobs(text).get('gitleaks');
+  const step = block.slice(block.indexOf('- name: Validate exact historical exceptions and detection regressions'));
+  const shim = 'work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/selftest-shim.mjs';
+  assert.ok(step.includes(`$PWD/${shim}`), `自检一步不复用 ${shim}`);
+  assert.match(step, /PATH="\$shim\/bin:\$PATH" python3 -I -B scripts\/ci\/reviewed_gitleaks\.py/, 'helper 的 git 没有走垫片');
+  const source = /cat > "\$shim\/git\.mjs" <<'EOF'\n([\s\S]*?)\n\s*EOF\n/.exec(step);
+  assert.ok(source, '自检一步没有写 git.mjs');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  const historical = readFileSync(new URL('./reviewed_gitleaks_historical.py', import.meta.url), 'utf8');
+  const constant = name => new RegExp(`^${name} = '([0-9a-f]+)'$`, 'm').exec(historical)[1];
+  const pins = [[constant('H'), constant('PATCH_SHA')],
+    [constant('H2'), /H2: \{[\s\S]*?'patch_sha': '([0-9a-f]{64})'/.exec(historical)[1]]];
+  const dir = mkdtempSync(path.join(tmpdir(), 'hosted-gitleaks-shim-'));
+  try {
+    const file = path.join(dir, 'git.mjs');
+    writeFileSync(file, source[1].split('\n').map(line => line.replace(/^ {10}/, '')).join('\n') + '\n');
+    for (const [commit, pin] of pins) {
+      const args = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--diff-algorithm=myers', '--unified=0',
+        `${commit}^`, commit, '--', 'scripts/ci/clued-gated-proof-profiles.json'];
+      const run = spawnSync(process.execPath, [file, 'git', path.join(root, shim), dir, ...args], { cwd: root, maxBuffer: 16 * 1024 * 1024 });
+      assert.equal(run.status, 0, `${commit}: ${run.stderr}`);
+      assert.equal(createHash('sha256').update(run.stdout).digest('hex'), pin, `${commit} 的补丁摘要（需要完整历史）`);
+    }
+    const refused = spawnSync(process.execPath, [file, 'git', path.join(root, shim), dir, 'fetch', 'origin'], { cwd: root });
+    assert.notEqual(refused.status, 0, '垫片白名单外的 git 命令应被拒');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
