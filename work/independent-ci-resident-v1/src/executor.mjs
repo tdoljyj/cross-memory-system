@@ -940,9 +940,7 @@ export class ResidentExecutor {
     const b = breakerOf(this.queue.breaker);
     if (b.state === 'closed') {
       check(this.queue.breaker === b, 'BREAKER_NOT_OPEN');
-      const subjectOf = row => ({ repo: this.policy.repo, pr: row.pr, headSha: row.current.headSha, baseSha: row.current.baseSha,
-        sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1,
-        ...(Object.hasOwn(row.current, 'testSha') ? { testSha: row.current.testSha } : {}) });
+      const subjectOf = row => this.rowSubject(row.pr, row.current);
       const candidates = this.queue.data.rows.filter(row => row.state === 'STOPPED' && row.stopKind === 'release-cap'
         && row.stopClass === 'environment' && row.current && !row.running);
       check(candidates.length > 0, 'BREAKER_NOT_OPEN');
@@ -2386,8 +2384,7 @@ export class ResidentExecutor {
     list.push({ testSha: front.testSha, attempt: front.attempt, solo });
     this.frontBatches.set(headKey, list);
     if (this.frontRetry?.pr === front.pr) this.frontRetry = null;
-    const subject = { repo: this.policy.repo, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1, testSha: front.testSha };
-    const key = batchKey(subject);
+    const key = batchKey(this.rowSubject(front.pr, { headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, frontAttempt: front.attempt }));
     this.frontKeys.set(key, front.attempt);
     await this.persistQueue();
     await this.receipt('train-front-enqueued', { key, pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, testTree: front.testTree,
@@ -3427,15 +3424,24 @@ export class ResidentExecutor {
     return { state: 'DEFERRED', key, reason: pre.defer };
   }
 
-  // One queue row: its current commit as attempt 1.
+  // A queue commit as its batch subject, the one place it is made (runRow, enqueueFront, releaseBreaker). A train front commit carries S
+  // (queue.mjs#offerFront, only from on-mode stage 10; step 3c-2b) and stage 10's front number (frontAttempt, 1 or 2, the count
+  // train-maintenance.mjs#openFront keeps): that number is its attempt, so stage 10's second front batch of the same S is a batch of its
+  // own (R3 open item 1: the first one ended at stage 8, the second runs the scans under the rules read now). Any other commit: attempt 1.
+  rowSubject(pr, c) {
+    const front = Object.hasOwn(c, 'testSha');
+    return { repo: this.policy.repo, pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256,
+      attempt: front ? c.frontAttempt : 1, ...(front ? { testSha: c.testSha } : {}) };
+  }
+
+  // One queue row: its current commit as its subject (rowSubject).
   async runRow(c, usage) {
-    // A train front commit carries S (queue.mjs#offerFront, only from on-mode stage 10): its subject names it (step 3c-2b).
-    const subject = { repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1,
-      ...(Object.hasOwn(c, 'testSha') ? { testSha: c.testSha } : {}) };
+    const subject = this.rowSubject(c.pr, c);
+    // A flow end of this commit goes on as it was; a front's only with the same front number (attempt), never another one's.
     const flow = (await this.ledger.pendingFlowEnds()).find(s => {
       const old = s.reserved.subject;
       return old.repo === subject.repo && old.pr === subject.pr && old.headSha === subject.headSha && old.baseSha === subject.baseSha
-        && old.testSha === subject.testSha;
+        && old.testSha === subject.testSha && (!Object.hasOwn(subject, 'testSha') || old.attempt === subject.attempt);
     }) ?? null;
     if (flow) subject.attempt = flow.reserved.subject.attempt;
     const resumeStage8 = !!flow?.parked && flow.parked.batch.ciSourceManifestSha256 === this.policy.ciSourceManifestSha256;
