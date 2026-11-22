@@ -52,6 +52,8 @@ const SHA = /^[0-9a-f]{40}$/;
 // A head that contains main is idle once it is this old with nothing queued, running or pending on it and its required
 // checks not all green (the rule of the hooks' wait-pr exit 5): nothing will finish it, so it is not the front.
 export const IDLE_AFTER_MS = 15 * 60_000;
+// A list (open pull requests, branch rules) is read 100 a page, at most this many pages; one that goes on is not known in full.
+const PAGES = 10;
 const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required']);
 const GREEN = new Set(['success', 'skipped', 'neutral']);
 // The independent CI withdrew this check (no verdict on the code); its pending status that says it stopped will not finish.
@@ -83,13 +85,11 @@ async function headRecords({ env, fetchImpl, repository, head, required }) {
   for (const run of runs) if (!checks.has(run.name) || newer(run, checks.get(run.name))) checks.set(run.name, run);
   for (const status of statuses) if (!contexts.has(status.context)) contexts.set(status.context, status);
   const withdrawn = run => String(run.output?.title ?? '').startsWith(WITHDRAWN);
-  // Without a required list every failure counts and nothing is known to be green.
-  const names = required.length ? required : [...new Set([...checks.keys(), ...contexts.keys()])];
-  const failed = names.filter(name => {
+  const failed = required.filter(name => {
     const run = checks.get(name), state = contexts.get(name)?.state;
     return (run && FAILED.has(run.conclusion) && !withdrawn(run)) || state === 'failure' || state === 'error';
   });
-  const green = required.length > 0 && required.every(name => {
+  const green = required.every(name => {
     const run = checks.get(name);
     return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || contexts.get(name)?.state === 'success';
   });
@@ -105,21 +105,31 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   const repository = env.GITHUB_REPOSITORY, [owner, name] = repository.split('/');
   const open = [];
   let main = 'main';
-  for (let after = null, page = 0; page < 10; page++) {
+  for (let after = null, page = 0; page < PAGES; page++) {
     const answer = await appRequest(fetchImpl, env, 'POST', '/graphql', env.GITHUB_TOKEN, { query: TRAIN_QUERY, variables: { owner, name, after } });
     const repo = answer.body?.data?.repository, list = repo?.pullRequests;
     if (answer.status !== 200 || answer.body?.errors?.length || !Array.isArray(list?.nodes)) throw new Error(`the open pull requests could not be read (HTTP ${answer.status})`);
     main = repo.defaultBranchRef?.name ?? main;
     open.push(...list.nodes);
     if (!list.pageInfo?.hasNextPage) break;
+    if (page === PAGES - 1) throw new Error(`more than ${PAGES * 100} open pull requests: the train is not known in full`);
     after = list.pageInfo.endCursor;
   }
   const tip = (await githubJson(fetchImpl, env, `/repos/${repository}/branches/${encodeURIComponent(main)}`))?.commit?.sha;
   if (!SHA.test(tip ?? '')) throw new Error(`the tip of ${main} could not be read`);
-  const rules = await githubJson(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(main)}`);
-  if (!Array.isArray(rules)) throw new Error(`the rules of ${main} could not be read`);
+  // Which checks are required decides who is red, green or idle. Read without them (none named, a page not read) every
+  // optional failure would make the front red and one more pull request would be brought up each run: then nothing is decided.
+  const rules = [];
+  for (let page = 1; ; page++) {
+    const chunk = await githubJson(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(main)}?per_page=100&page=${page}`);
+    if (!Array.isArray(chunk)) throw new Error(`the rules of ${main} could not be read`);
+    rules.push(...chunk);
+    if (chunk.length < 100) break;
+    if (page === PAGES) throw new Error(`the rules of ${main} fill more than ${PAGES} pages: the required checks are not known in full`);
+  }
   const required = [...new Set(rules.filter(rule => rule?.type === 'required_status_checks')
     .flatMap(rule => (rule.parameters?.required_status_checks ?? []).map(check => check?.context)).filter(Boolean))];
+  if (!required.length) throw new Error(`the rules of ${main} name no required check`);
   const train = open.filter(pr => pr?.autoMergeRequest && pr.isDraft === false && pr.baseRefName === main
     && pr.headRepository?.nameWithOwner === repository && SHA.test(pr.headRefOid ?? ''))
     .map(pr => ({ pr: pr.number, head: pr.headRefOid, enabled: String(pr.autoMergeRequest.enabledAt ?? ''), mergeable: pr.mergeable,
