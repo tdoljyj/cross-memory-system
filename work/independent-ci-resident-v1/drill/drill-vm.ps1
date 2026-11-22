@@ -1568,9 +1568,9 @@ function Assert-DrillWslReleaseCommandLiteral {
 # this release shares that one budget, and one that would start with less than a second of it left fails the release instead.
 function Invoke-DrillWslCacheRelease([string]$HostName = $env:COMPUTERNAME, [int]$WithinSeconds = 0) {
   $out = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); distributions = @(); results = @(); released = @(); skipped = $null; failed = $null }
-  $until = if ($WithinSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($WithinSeconds) } else { $null }
+  $until = if ($WithinSeconds -gt 0) { (Get-DrillTime).AddSeconds($WithinSeconds) } else { $null }
   $left = { if ($null -eq $until) { return $script:Drill.WslTimeoutSeconds }
-    $s = [int][Math]::Floor(($until - [DateTime]::UtcNow).TotalSeconds); if ($s -lt 1) { throw (New-DrillError 'DRILL_WSL_CACHE_RELEASE_TIMEOUT') }; $s }
+    $s = [int][Math]::Floor(($until - (Get-DrillTime)).TotalSeconds); if ($s -lt 1) { throw (New-DrillError 'DRILL_WSL_CACHE_RELEASE_TIMEOUT') }; $s }
   try {
     Assert-DrillWslReleaseCommandLiteral
     $out.distributions = @(Get-DrillRunnerDistributions $HostName)
