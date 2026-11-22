@@ -243,7 +243,7 @@ async function admissionRun(t, github, { nativeSeesClose = true, tamper = null, 
   tamper?.(github, journal);
   const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record, authority: {}, batchClaims: bc, sleep: async () => {} });
   const r = await pub.publish(jobs['work-admission']);
-  return { r, github, journal, effect: r.effectKey ? await journal.read(r.effectKey) : null };
+  return { r, github, journal, pub, job: jobs['work-admission'], effect: r.effectKey ? await journal.read(r.effectKey) : null };
 }
 
 test('work admission v2 (#1239 replay): a PR GitHub merged at this head right after the green is SETTLED (settledMerged), never withdrawn', async t => {
@@ -329,6 +329,60 @@ test('work admission v2: a withdrawal GitHub does not confirm stays UNCERTAIN', 
     assert.deepEqual([m.r.status, m.r.reason, m.github.checks[0].conclusion, m.github.revokes], ['UNCERTAIN', 'NEGATIVE_COMPENSATION_UNCONFIRMED', 'success', 1], `${name}: ${JSON.stringify(m.r)}`);
     assert.equal(m.effect.state, 'uncertain', name);
   }
+});
+
+// Follow-up (FABLE-resident-halt-merge-race-followup-20261123 §3): what the re-read may take as "withdrawn" is this effect's one check
+// only (its check id and identity), in a complete inventory, with no success of this effect key beside it on the head.
+test("work admission v2: the re-read confirms only this effect's one check in a complete inventory", async t => {
+  const lost = github => { const patch = github.revokeCheck; let done = false;
+    github.revokeCheck = async (...a) => { await patch(...a); done = true; throw Object.assign(new Error('github_timeout'), { code: 'github_timeout' }); };
+    return () => done; };
+  const cases = {
+    'the inventory after the PATCH is not complete': github => { const done = lost(github), read = github.readChecks.bind(github);
+      github.readChecks = async head => { const list = await read(head); return done() ? { ...list, complete: false } : list; }; },
+    'a second check of this effect key says success beside the withdrawn one': github => { const done = lost(github), read = github.readChecks.bind(github);
+      github.readChecks = async head => { const list = await read(head); if (done()) list.checks.push({ ...structuredClone(list.checks[0]), id: list.checks[0].id + 1, conclusion: 'success' }); return list; }; },
+    'the withdrawn check is another check id of this effect key': github => { const done = lost(github), read = github.readChecks.bind(github);
+      github.readChecks = async head => { const list = await read(head); if (done()) list.checks[0].id += 1; return list; }; },
+  };
+  for (const [name, tamper] of Object.entries(cases)) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), { tamper });
+    assert.deepEqual([m.r.status, m.r.reason, m.github.revokes], ['UNCERTAIN', 'NEGATIVE_COMPENSATION_UNCONFIRMED', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, 'uncertain', name);
+  }
+});
+
+// A withdrawal confirmed on GitHub whose journal could not be brought to "revoked" leaves the effect at sent / uncertain. The same
+// job asked again must not end RECONCILIATION_REQUIRED (a HALT-class ending) for a journal that is merely behind GitHub: GitHub is
+// read, this effect's one check is completed/failure, the journal is brought forward and the answer is REVOKED, nothing written.
+test('work admission v2: REVOKED with the journal left behind, then the same job again: REVOKED, never RECONCILIATION_REQUIRED', async t => {
+  const boom = () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }); };
+  for (const left of ['sent', 'uncertain']) {
+    let broken = true, move = null;
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), { tamper: (github, journal) => {
+      move = journal.transition.bind(journal);
+      journal.transition = async (key, from, to, details) => (broken && (to === 'revoked' || to === 'uncertain' || (from === 'sent' && to === 'settled')) ? boom() : move(key, from, to, details));
+    } });
+    // 'uncertain' is the record both field nodes hold today (written by the code before the fix), GitHub showing the check failure.
+    if (left === 'uncertain') await move(m.r.effectKey, 'sent', 'uncertain', { checkRunId: m.github.checks[0].id, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' });
+    m.effect = await m.journal.read(m.r.effectKey);
+    assert.deepEqual([m.r.status, m.github.checks[0].conclusion], ['REVOKED', 'failure'], `${left}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, left, `${left}: the journal is behind GitHub`);
+    broken = false;
+    const again = await m.pub.publish(m.job);
+    assert.deepEqual([again.status, again.sideEffects, m.github.revokes, m.github.checks.length], ['REVOKED', 0, 1, 1], `${left}: ${JSON.stringify(again)}`);
+    assert.equal((await m.journal.read(m.r.effectKey)).state, 'revoked', left);
+    // and once more, from the journal alone
+    assert.equal((await m.pub.publish(m.job)).status, 'REVOKED', left);
+  }
+});
+
+// The journal behind a check GitHub does NOT show withdrawn keeps its ending.
+test('work admission v2: an unconfirmed withdrawal asked again stays RECONCILIATION_REQUIRED', async t => {
+  const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), { tamper: github => { github.revokeCheck = async () => { github.revokes++; throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; } });
+  assert.deepEqual([m.r.status, m.effect.state, m.github.checks[0].conclusion], ['UNCERTAIN', 'uncertain', 'success']);
+  const again = await m.pub.publish(m.job);
+  assert.deepEqual([again.status, again.sideEffects, m.github.checks[0].conclusion], ['RECONCILIATION_REQUIRED', 0, 'success'], JSON.stringify(again));
 });
 
 test('control pair v2 (S8): read-only queue wait, then exactly two publications', async t => {
