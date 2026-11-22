@@ -352,6 +352,33 @@ test('executor, on: a front batch that finally failed for the PR itself is the n
   assert.equal(g.exec.trainFrontOutcome.failed, true, 'R3 batch 2: a receipt from before frontFailed was a failed report');
 });
 
+// FABLE-r3-batch2-followup §1b (修复前必红): a front batch that only ended (frontFailed false) is receipted as 'train-front-ended', never
+// as 'train-front-outcome': a resident of the generation before (an automatic roll-back) reads every 'train-front-outcome' as failed and
+// its stage 10 would touch failed on a PR that did not fail. A restart reads the newest of the two types; the next stage 10 is told.
+test('R3 batch 2 1b: an ended front batch is a train-front-ended receipt, not a train-front-outcome; a restart carries it with frontFailed false', async t => {
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, {}, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick();
+  const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
+  f.exec.frontKeys.set('k'.repeat(64), 1);
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'TRAIN_BATCH_CHANGED', false);
+  assert.deepEqual(await f.receipts.latest(['train-front-outcome'], 1), [], 'what an older resident reads as failed is not written');
+  assert.deepEqual((await f.receipts.latest(['train-front-ended'], 1)).map(r => [r.value.body.frontOutcome.code, r.value.body.frontOutcome.failed]), [['TRAIN_BATCH_CHANGED', false]]);
+  const ge = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, {}, 0) }) });
+  const g = await executorFixture(t, { policy: policyV8(), root: f.root, engine: ge.engine });
+  await g.exec.trainRecover();
+  assert.deepEqual([g.exec.trainFrontOutcome?.pr, g.exec.trainFrontOutcome?.failed], [884, false], 'a restart finds it');
+  await g.exec.tick();
+  assert.deepEqual([ge.inputs.at(-1)?.input.frontPr, ge.inputs.at(-1)?.input.frontCode, ge.inputs.at(-1)?.input.frontFailed], [884, 'TRAIN_BATCH_CHANGED', false]);
+  // a failure of the PR itself is a train-front-outcome as before, and the newest of the two is the one a restart carries
+  f.exec.frontKeys.set('m'.repeat(64), 2);
+  await f.exec.noteFrontOutcome({ ...subject, attempt: 2 }, 'm'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
+  assert.deepEqual((await f.receipts.latest(['train-front-outcome'], 1)).map(r => [r.value.body.frontOutcome.attempt, r.value.body.frontOutcome.failed]), [[2, true]]);
+  const h = await executorFixture(t, { policy: policyV8(), root: f.root });
+  await h.exec.trainRecover();
+  assert.deepEqual([h.exec.trainFrontOutcome?.attempt, h.exec.trainFrontOutcome?.failed], [2, true]);
+});
+
 test('requests\\: the probe request only marks the probe urgent; the revoke-head request goes to stage 10 and its result to the status', async t => {
   assert.throws(() => validateResidentRequest({ ...probeRequest({ reason: 'x' }, () => T0) }, T0 + 61 * MIN), { code: 'RESIDENT_REQUEST_EXPIRED' });
   assert.throws(() => validateResidentRequest({ ...probeRequest({ reason: 'x' }, () => T0), extra: 1 }, T0), { code: 'RESIDENT_REQUEST_REFUSED' });
