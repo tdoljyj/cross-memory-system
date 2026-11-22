@@ -9,7 +9,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, OWNER_REVIEW_RPC, evaluate, gate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
-import { main as frontMergeMain, renderSummary, runFrontMainMerge } from './clued-front-main-merge.mjs';
+import { GITHUB_ACTIONS_APP_ID, main as frontMergeMain, pendingAuthorizationLine, renderSummary, runFrontMainMerge } from './clued-front-main-merge.mjs';
 import { ciWorkflows } from './clued-merge-slot-ci.mjs';
 import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlWorkflowSource, parseNonPrControlCatalogue } from './clued-non-pr-control-source.mjs';
 import { recognizeCatalogueWorkflow } from './clued-source-only-workflow.mjs';
@@ -256,7 +256,8 @@ const sha = n => n.toString(16).padStart(40, '0');
 const iso = ms => new Date(ms).toISOString();
 // One repository with several pull requests, as GitHub's HTTP answers. w.now is the clock; w.tip is main.
 function train() {
-  const w = { now: NOW, tip: T, prs: new Map(), heads: new Map(), updates: [], calls: [], required: REQUIRED, failing: null, made: 0, ruleFiller: 0, endless: false };
+  const w = { now: NOW, tip: T, prs: new Map(), heads: new Map(), updates: [], calls: [], required: REQUIRED, failing: null, made: 0, ruleFiller: 0, endless: false,
+    pins: {}, comments: [] };
   // A commit GitHub knows: which main tip it contains, when it appeared, and what ran on it.
   w.head = (id, { contains = BASE, at = w.now - 600 * MIN, checks = [], statuses = [], runs = [], parents = [BASE] } = {}) => {
     w.heads.set(id, { sha: id, contains, at, checks, statuses, runs, parents }); return id; };
@@ -283,7 +284,14 @@ function train() {
       const page = Number(rules[1] ?? 1);
       if (page <= w.ruleFiller) return reply(Array.from({ length: 100 }, () => ({ type: 'deletion' })));
       return reply(page > w.ruleFiller + 1 ? [] : [{ type: 'deletion' },
-        ...(w.required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: w.required.map(context => ({ context })) } }] : [])]);
+        ...(w.required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: w.required.map(context =>
+          (w.pins[context] === undefined ? { context } : { context, integration_id: w.pins[context] })) } }] : [])]);
+    }
+    if (method === 'GET' && route === '/repos/o/r') return reply({ full_name: 'o/r', default_branch: 'main' });
+    const comment = /^\/repos\/o\/r\/issues\/([0-9]+)\/comments$/.exec(route);
+    if (method === 'POST' && comment) {
+      w.comments.push({ pr: Number(comment[1]), body: body.body, app: init.headers.authorization === 'Bearer ghs_app' });
+      return reply({ id: w.comments.length }, 201);
     }
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
     const pull = /^\/repos\/o\/r\/pulls\/([0-9]+)$/.exec(route), p = pull && w.prs.get(Number(pull[1]));
@@ -624,4 +632,156 @@ test('what is under way on the front is read to the end: beyond 100 statuses or 
     r = await w.run();
     assert.equal(r.result, 'skipped', `${list}: ${JSON.stringify(r)}`); assert.deepEqual(w.brought(), [], list);
   }
+});
+
+// The hosted copy (framework v1 §2.3, hosted scaffold report §1.4, Decision 85effa31). While the hosted scaffold ruleset is in force
+// (#292 disabled) GitHub's auto-merge lands with strict on and nobody brings the next front up: this copy does, with the same entry.
+const HOSTED = ['hosted-ci-suites', 'hosted-clued-cloud-tests', 'hosted-migration-verify', 'hosted-ci-suites-windows', 'hosted-gitleaks',
+  'hosted-trivy', 'hosted-contract-placement'];
+const FRAMEWORK = ['gitleaks', 'trivy', INDEPENDENT_ADMISSION_CHECK, 'kooyumi-admission-verified', 'kooyumi-merge-slot', 'contract-placement'];
+// main's rules in force: 'framework' (#292 only, today), 'scaffold' (the scaffold ruleset only), 'both' (the trial switch), 'loose' (unpinned).
+function rulesOf(w, phase) {
+  w.pins = {};
+  if (phase === 'framework' || phase === 'both') for (const name of FRAMEWORK) w.pins[name] = INDEPENDENT_ADMISSION_APP_ID;
+  if (phase === 'scaffold' || phase === 'both' || phase === 'loose') for (const name of HOSTED) w.pins[name] = phase === 'loose' ? undefined : GITHUB_ACTIONS_APP_ID;
+  if (phase === 'scaffold') w.pins[INDEPENDENT_ADMISSION_CHECK] = ADMISSION_APP_ID;
+  w.required = phase === 'framework' ? FRAMEWORK : phase === 'both' ? [...FRAMEWORK, ...HOSTED] : [...HOSTED, INDEPENDENT_ADMISSION_CHECK];
+  if (phase === 'both') w.pins[INDEPENDENT_ADMISSION_CHECK] = INDEPENDENT_ADMISSION_APP_ID;
+  return w;
+}
+const SCAFFOLD = { CLUED_FRONT_MERGE_PHASE: 'scaffold' };
+const minted = w => w.calls.filter(c => c.route?.startsWith('/app/installations/')).length;
+const phaseOutput = async (w) => {
+  const dir = fs.mkdtempSync(path.join(process.env.TEMP ?? process.env.TMPDIR ?? '.', 'front-merge-phase-'));
+  try {
+    const output = path.join(dir, 'output'), summary = path.join(dir, 'summary.md');
+    fs.writeFileSync(output, ''); fs.writeFileSync(summary, '');
+    // The first job holds no App key.
+    const { CLUED_ADMISSION_APP_ID: _id, CLUED_ADMISSION_APP_PRIVATE_KEY: _key, ...keyless } = env({ GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary });
+    const code = await frontMergeMain(keyless, w.fetchImpl, {}, ['--phase']);
+    return { code, output: fs.readFileSync(output, 'utf8'), summary: fs.readFileSync(summary, 'utf8') };
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+};
+
+test('hosted copy: while the scaffold ruleset is not in force it changes nothing, named or not, and holds no App token', async () => {
+  for (const phase of ['framework', 'both', 'loose']) {
+    const w = rulesOf(scene0823(), phase);
+    for (const input of [{}, { pr: '1156', head: sha(0x1156) }]) {
+      const r = await w.run(input, SCAFFOLD);
+      assert.equal(r.result, 'none', `${phase} ${JSON.stringify(r)}`);
+      assert.match(r.reason, phase === 'both' ? /#292 in force/ : /not in force/);
+    }
+    assert.deepEqual(w.brought(), [], phase); assert.equal(minted(w), 0, `${phase}: no App token`);
+    assert.equal(w.calls.filter(c => c.method !== 'GET').length, 0, `${phase}: reads only`); assert.deepEqual(w.comments, []);
+    const out = await phaseOutput(w);
+    assert.equal(out.code, 0); assert.equal(out.output, 'in_force=false\n', phase); assert.match(out.summary, /not in force/);
+  }
+  // The rules cannot be read: nothing is decided, nothing is changed.
+  const w = rulesOf(scene0823(), 'scaffold');
+  w.failing = '/rules/branches/main';
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []); assert.equal(minted(w), 0);
+  assert.equal((await phaseOutput(w)).output, 'in_force=false\n');
+  // Another phase value is not a switch that could be on.
+  assert.equal((await rulesOf(scene0823(), 'scaffold').run({}, { CLUED_FRONT_MERGE_PHASE: 'always' })).result, 'refused');
+  // Without the phase (the self-hosted workflow) the train path is as before: the same scene is brought up.
+  const before = rulesOf(scene0823(), 'framework');
+  assert.equal((await before.run()).result, 'merged'); assert.deepEqual(before.brought(), [1156]); assert.deepEqual(before.comments, []);
+});
+
+test('hosted copy: with the scaffold ruleset in force only the pull request about to be the front gets main, and the new head is named for DESK', async () => {
+  const w = rulesOf(scene0823(), 'scaffold');
+  assert.equal((await phaseOutput(w)).output, 'in_force=true\n');
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [1156], 'one pull request, the first enabled');
+  const { to } = w.updates[0];
+  assert.equal(r.merged_head_sha, to);
+  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 1, 'one update-branch, no other write to the branch');
+  // GitHub's merge of main into the head: two parents, the head first; no rebase, no force push.
+  assert.deepEqual(w.heads.get(to).parents, [sha(0x1156), w.tip]);
+  // The pending authorization on the pull request and in the summary; nothing authorizes it here.
+  assert.deepEqual(w.comments.map(c => [c.pr, c.body.split('\n')[0], c.app]), [[1156, `新 head ${to}，待补授权`, true]]);
+  assert.equal(pendingAuthorizationLine(to), `新 head ${to}，待补授权`);
+  const summary = renderSummary(r);
+  assert.match(summary, new RegExp(`#1156 新 head ${to}，待补授权（PR 评论 posted）`), summary);
+  assert.equal(w.calls.some(c => /rpc|authoriz/i.test(c.route ?? '')), false, 'no authorization call');
+  // Now the front contains main and is under way: the next run (a push, the schedule) leaves the train as it is.
+  const again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.match(again.reason, /#1156 contains main and is under way/);
+  assert.deepEqual(w.brought(), [1156]); assert.equal(w.comments.length, 1);
+  // A comment GitHub refuses is reported; the merge stands.
+  const refused = rulesOf(scene0823(), 'scaffold'), fetch = refused.fetchImpl;
+  refused.fetchImpl = async (url, init = {}) => String(url).endsWith('/issues/1156/comments')
+    ? { ok: false, status: 403, headers: { get: () => null }, json: async () => ({}), text: async () => '' } : fetch(url, init);
+  const r2 = await refused.run({}, SCAFFOLD);
+  assert.equal(r2.result, 'merged'); assert.equal(r2.comment, 'not posted (HTTP 403)');
+  assert.match(renderSummary(r2), /待补授权（PR 评论 not posted \(HTTP 403\)）/);
+});
+
+test('hosted copy: the admission that counts is the one the rules in force pin', async () => {
+  // A head the App brought up earlier, admitted by the scaffold's admission App 5164952 only: brought again under the scaffold.
+  let w = rulesOf(scene0823(), 'scaffold');
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID);
+  assert.equal((await w.run({}, SCAFFOLD)).pr, 1156);
+  // Admitted only by the independent CI (its shadow): under the scaffold that is not the admission, so it is passed over.
+  w = rulesOf(scene0823(), 'scaffold');
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  assert.equal((await w.run({}, SCAFFOLD)).pr, 1217);
+  // And under #292 the other way round, as before.
+  w = rulesOf(scene0823(), 'framework');
+  w.check(sha(0x1156), MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID); w.check(sha(0x1156), INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID);
+  assert.equal((await w.run()).pr, 1217);
+});
+
+test('hosted copy: a merge conflict stops it for that pull request and is reported, never retried', async () => {
+  // Named: update-branch refuses (422), one attempt, nothing else is written, the run says why.
+  let w = rulesOf(scene0823(), 'scaffold');
+  w.prs.get(1156).mergeable = 'CONFLICTING';
+  let r = await w.run({ pr: '1156', head: sha(0x1156) }, SCAFFOLD);
+  assert.equal(r.result, 'refused', JSON.stringify(r)); assert.match(r.reason, /HTTP 422: merge conflict/);
+  assert.equal(w.calls.filter(c => c.method === 'PUT').length, 1); assert.deepEqual(w.brought(), []); assert.deepEqual(w.comments, []);
+  assert.equal(w.calls.filter(c => c.method === 'POST' && c.route === '/repos/o/r/check-runs').length, 0);
+  assert.match(renderSummary(r), /\*\*refused\*\*: update-branch answered HTTP 422/);
+  // Chosen: a conflict GitHub reports is not attempted; one it has not computed yet is attempted once, then the next in order.
+  w = rulesOf(scene0823(), 'scaffold');
+  w.prs.get(1156).mergeable = 'CONFLICTING';
+  r = await w.run({}, SCAFFOLD);
+  assert.equal(r.pr, 1217); assert.equal(w.calls.filter(c => c.method === 'PUT' && c.route.includes('/1156/')).length, 0);
+  assert.match(renderSummary(r), /#1156 .*conflict/);
+  w = rulesOf(scene0823(), 'scaffold');
+  const fetch = w.fetchImpl;
+  let attempts = 0;
+  w.fetchImpl = async (url, init = {}) => (init.method === 'PUT' && String(url).endsWith('/pulls/1156/update-branch') && ++attempts)
+    ? { ok: false, status: 422, headers: { get: () => null }, json: async () => ({ message: 'merge conflict between base and head' }), text: async () => '' } : fetch(url, init);
+  w.prs.get(1156).mergeable = 'UNKNOWN';
+  r = await w.run({}, SCAFFOLD);
+  assert.equal(attempts, 1, 'tried once, not again');
+  assert.match(renderSummary(r), /#1156 .*refused: update-branch answered HTTP 422: merge conflict/);
+  assert.deepEqual(w.comments.map(c => c.pr), [1217]);
+});
+
+test('hosted copy: the workflow runs the same entry on a hosted machine, only from main, the App key only after the phase', () => {
+  const read = file => fs.readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8');
+  const text = read('clued-front-main-merge-hosted.yml'), original = read('clued-front-main-merge.yml');
+  const on = text.slice(text.indexOf('\non:\n'), text.indexOf('\npermissions:\n'));
+  assert.equal(on, original.slice(original.indexOf('\non:\n'), original.indexOf('\npermissions:\n')), 'the same triggers and inputs as the self-hosted workflow');
+  assert.doesNotMatch(on, /pull_request/);
+  const jobs = text.slice(text.indexOf('\njobs:\n'));
+  const [phase, merge] = jobs.split('\n  merge-main:\n');
+  assert.equal((jobs.match(/\n    runs-on: ubuntu-slim\n/g) ?? []).length, 2, 'both jobs on a GitHub-hosted machine');
+  const uncommented = part => part.split('\n').filter(line => !/^\s*#/.test(line)).join('\n');
+  assert.doesNotMatch(uncommented(jobs), /self-hosted/);
+  assert.match(phase, /\n        run: node scripts\/ci\/clued-front-main-merge\.mjs --phase\n/);
+  assert.doesNotMatch(phase, /secrets\.|environment:/, 'the phase job has no App key');
+  assert.match(merge, /^    needs: scaffold-phase\n    if: needs\.scaffold-phase\.outputs\.in_force == 'true' && github\.ref == 'refs\/heads\/main'\n/);
+  assert.match(merge, /\n    environment: clued-admission\n/);
+  assert.match(merge, /\n          CLUED_FRONT_MERGE_PHASE: scaffold\n/);
+  assert.match(merge, /\n        run: node scripts\/ci\/clued-front-main-merge\.mjs\n/, 'the same entry as the self-hosted workflow');
+  assert.match(original, /\n        run: node scripts\/ci\/clued-front-main-merge\.mjs\n/);
+  assert.match(merge, /\n    concurrency:\n      group: clued-front-main-merge\n      cancel-in-progress: false\n/, 'one at a time across both workflows');
+  assert.match(original, /\n      group: clued-front-main-merge\n/);
+  // Default-branch code, no credential left in the checkout, nothing written with this run's token, no push of any kind.
+  assert.equal((jobs.match(/\n          ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false\n/g) ?? []).length, 2);
+  const code = text.split('\n').filter(line => !/^\s*#/.test(line)).join('\n');
+  assert.doesNotMatch(code, /: write\b|git push|rebase|--force|CLUED_ADMISSION_CLUED_TOKEN|CLUED_CONTEXT_READ_TOKEN/);
 });
