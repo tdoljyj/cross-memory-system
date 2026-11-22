@@ -992,8 +992,11 @@ test('a settled front-open debt does not repeatedly preempt busy ticks, includin
   assert.equal(engine.lastFacts.wouldDo, 'NO_FRONT');
   f = await executorFixture(t, { policy: policy(), engine, root: f.root, now: f.clock() });
   Object.assign(at, { clock: f.clock, advance: f.advance });
-  for (let i = 0; i < 2; i++) { f.advance(1000); await f.exec.tick(); }
-  assert.equal(engine.trainRuns.length, before + 1, 'no repeated empty stage 10 in non-quiet ticks');
+  // FABLE-keep-train-replan §3.4: a busy PR's admission with the train idle asks one stage 10 ahead of the next batch; that is not the debt.
+  let admissions = 0;
+  for (let i = 0; i < 2; i++) { f.advance(1000); if (f.exec.trainAdmitOwed) admissions++; await f.exec.tick(); }
+  assert.ok(admissions <= 1, `${admissions} admission asks`);
+  assert.equal(engine.trainRuns.length, before + 1 + admissions, 'no repeated empty stage 10 in non-quiet ticks');
 });
 
 // ---- Strict-permanent mode (Owner decision 9e2511fe, Task 40f0dfb7, DESIGN §65) ----
@@ -1069,6 +1072,8 @@ for (const restart of [false, true]) test(`strict-permanent (DESIGN §65): train
   assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal((await f.receipts.latest(['train-front-bind'], 5)).length, 0, 'no take-over binding exception was needed');
   // The PR that is not the queue head is no longer held for the sweep: it runs, and its stage 8 rests at B (only a front batch greens).
+  // (Since §3.4 the front batch goes first, so 911 may run after the green.)
+  for (let i = 0; i < 10 && !engine.stages.some(s => s.pr === 911 && s.stage === 8); i++) { f.advance(MIN); await f.exec.tick(); }
   assert.ok(engine.stages.some(s => s.pr === 911 && s.stage === 8), JSON.stringify(engine.stages));
   assert.equal(slotGreen(e, sha(0x7777)), undefined);
   // R3 lean regression: every scan pinned to this App: stage 10 says so and the resident runs every scan, as before.

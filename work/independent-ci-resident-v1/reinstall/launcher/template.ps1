@@ -71,7 +71,11 @@ $Done.add_CollectionChanged({ param($sender, $e)
     if ($e.Action -ne [Collections.Specialized.NotifyCollectionChangedAction]::Add) { return }
     foreach ($step in @($e.NewItems)) {
       $lineDetail = $Progress['detail']; $Progress['detail'] = $null   # what the step left for its own line (Step-WaitFirstTrain), once
-      try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = [string]$step; result = 'ok'; rejectCode = $null; detail = $lineDetail }) -Depth 6 -Compress)) } catch { }   # the step line (see Write-StepLine)
+      # A step that ran to its end and did not pass (Step-Verify) leaves its reject code, once: its line then says failed. The step is
+      # recorded all the same (completed, the progress record): it ran, and what it found is in its own output.
+      $lineReject = $Progress['rejectCode']; $Progress['rejectCode'] = $null
+      $lineResult = if ($lineReject) { 'failed' } else { 'ok' }
+      try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = [string]$step; result = $lineResult; rejectCode = $lineReject; detail = $lineDetail }) -Depth 6 -Compress)) } catch { }   # the step line (see Write-StepLine)
       $Progress.count++
       if (-not $Progress.out) { continue }   # before the launch directory exists (Step-Output): nothing of this launch has changed anything yet
       $leaf = $Progress.count.ToString('000') + '-' + ([string]$step -replace '[^A-Za-z0-9-]', '_') + '.json'
@@ -481,8 +485,14 @@ function Step-Verify([string]$receiptSha) {
   $v = Invoke-Child 'verify' $script (@('-ExpectedInstallReceiptSha256', $receiptSha) + (Get-VerifyFactsArgs))   # r5c: -LinuxVersionFactsFile
   $vv = Parse-Json $v.stdout; $checks = Get-Key $vv 'checks'
   $failed = @(); if ($checks -is [Collections.IDictionary]) { foreach ($k in @($checks.Keys)) { if ((Get-Key $checks[$k] 'ok') -ne $true) { $failed += $k } } }
+  # Not passed: the step's line says so (r9, task 0e418483; it said ok beside a terminal that said verify not passed).
+  $status = Get-Key $vv 'status'
+  if ($status -cne 'RESIDENT_VERIFIED') {
+    $Progress['rejectCode'] = $(if ($status -is [string] -and $status -cmatch '^[A-Z][A-Z0-9_]{0,99}$') { $status } else { 'VERIFY_GAVE_NO_VERDICT' })
+    $Progress['detail'] = [ordered]@{ status = $status; exit = $v.exit; notOk = $failed }
+  }
   $Done.Add('verify')
-  [ordered]@{ exit = $v.exit; status = (Get-Key $vv 'status'); notOk = $failed; linuxVersionFacts = $R5c.factsStaged }
+  [ordered]@{ exit = $v.exit; status = $status; notOk = $failed; linuxVersionFacts = $R5c.factsStaged }
 }
 # ---- Reinstall: the installed resident is uninstalled first, by its own INSTALLED uninstall-resident.ps1 ----
 $InstalledUninstall = Join-Path $ResidentRoot ('resident\' + $InstalledResidentManifestSha256 + '\windows\uninstall-resident.ps1')
@@ -802,7 +812,8 @@ function Step-WaitFirstTrain {
 # contract clued.independent-ci.resident-pause/1 with exactly {contract, reason}, written create-only into this run's
 # admin-only staging directory with the DACL a request in requests\ inherits ($PauseRequestDacl), read back, closed and
 # only then moved atomically into requests\. Confirmed when state\PAUSED.json names this request's sha256 within
-# $PauseWaitSeconds. Not confirmed, or verify not passed: CluedCIResident is stopped and the companion is not started.
+# $PauseWaitSeconds. Not confirmed, or verify not passed: CluedCIResident is stopped and the companion is not started. Verify not passed:
+# stopped at once, without a request.
 function Find-PauseRequest([string]$name) {
   $f = [ordered]@{ pendingInRequests = $false; archived = @() }
   if ($name) {
@@ -815,8 +826,10 @@ function Find-PauseRequest([string]$name) {
   $f
 }
 function Step-PauseAfterInstall([bool]$verified) {
-  $r = [ordered]@{ verified = $verified; request = $null; requestSha256 = $null; staged = $null; daclReadback = $null; confirmed = $false; paused = $null; found = $null; residentStop = $null; residentStopped = $null; waitSeconds = $PauseWaitSeconds; error = $null }
-  try {
+  $r = [ordered]@{ verified = $verified; request = $null; requestSha256 = $null; staged = $null; daclReadback = $null; confirmed = $false; paused = $null; found = $null; residentStop = $null; residentStopped = $null; waitSeconds = $(if ($verified) { $PauseWaitSeconds } else { 0 }); error = $null }
+  # Verify not passed (r9, task 0e418483): the ending is the same whether the pause is confirmed or not (the resident is stopped below), so
+  # no request is posted and nothing is waited for: request stays null, waitSeconds 0, and the resident does not run on meanwhile.
+  if ($verified) { try {
     $body = $U8.GetBytes('{"contract":"clued.independent-ci.resident-pause/1","reason":"' + $PauseReason + '"}')
     $rnd = New-Object byte[] 6; $rng = [Security.Cryptography.RandomNumberGenerator]::Create(); try { $rng.GetBytes($rnd) } finally { $rng.Dispose() }
     $name = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()).ToString('0000000000000') + '-' + ([BitConverter]::ToString($rnd)).Replace('-', '').ToLowerInvariant() + '.json'
@@ -835,7 +848,7 @@ function Step-PauseAfterInstall([bool]$verified) {
     $want = $r.requestSha256
     $r.confirmed = Wait-Until { [IO.File]::Exists($pausedFile) -and ((Get-Key (Get-Key (Parse-Json ([IO.File]::ReadAllText($pausedFile))) 'source') 'requestSha256') -ceq $want) } $PauseWaitSeconds
     if ([IO.File]::Exists($pausedFile)) { $r.paused = [ordered]@{ sha256 = (Get-FileSha $pausedFile); text = (Tail ([IO.File]::ReadAllText($pausedFile))) } }
-  } catch { $r.error = $_.Exception.Message }
+  } catch { $r.error = $_.Exception.Message } }
   if (-not ($verified -and $r.confirmed)) {
     $r.residentStop = (& $Sc stop CluedCIResident | Out-String).Trim()
     $r.residentStopped = Wait-Until { ((Get-ScState 'CluedCIResident').state -eq 1) -and -not (Test-ExecutorAlive).alive } 600

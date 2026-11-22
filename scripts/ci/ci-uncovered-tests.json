@@ -69,12 +69,6 @@
       "reason": "2 处，同一原因：/v1/development 和 /mcp 都返回 503（期望 200）；疑为新增网关配置缺失时失败即关闭，待读 worker 的 503 分支确认生产默认环境不会出现"
     },
     {
-      "path": "apps/clued-cloud/tests/merge-train-failover-db.test.mjs",
-      "kind": "stale-or-suspect",
-      "task": "aeefed92-1839-46a9-9e8d-9301e90c643b",
-      "reason": "5 处：:643“单次 4.9 分钟与单独 UNKNOWN 不触发”实得 handed_over（期望 holder_alive），疑为故障转移触发条件变了；:760、:886、:1255 得 rejected / ci_admission_target_not_heard；:468 夹具违反 20261115120000 新增的 ci_node_liveness_v1_steady_since_check 约束（过时）"
-    },
-    {
       "path": "apps/clued-cloud/tests/merge-train-queue-db.test.mjs",
       "kind": "stale-or-suspect",
       "task": "5ba48256-3a1d-4297-9936-b0fe257a70a8",

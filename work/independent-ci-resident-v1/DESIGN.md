@@ -1558,7 +1558,7 @@ PASS 之后又修了三个次要项。这三处只经过测试验证（53/53）�
   - 已入队：“已测通，在合并队列第 N 位：等成为队首，<时间>再查第 8 段”；
   - 不知道位置：“已测通：等合并队列，<时间>再查第 8 段”（不说已在队列里）；
   - （第 12 代：被观察的行和租约提醒见 §56.2、§56.3）
-  - main 移动后结束：“main 已移动：请合入最新 main 并推新提交”；
+  - main 移动后结束：“main 已移动：等待系统更新 PR 的基线”（2026-11-22 按代码更正；页面不叫人手工合 main，484bddac）；
   - 停靠名额满时排队的行：“排队第 N 位：停靠的批次已满，等它们结束”（不给按空闲执行器估的开始时间）。名额满不满每个 tick 都写进状态（`queue.parkingFull`），不只在推迟新批次的那个 tick；HALT、暂停或回填中的 tick 不更新它，那时 PR 页面先显示停机、暂停或回填的文字。
 - 停靠中的 PR 有了还没测的新提交时，新提交在状态里显示为跑着的批次后面的提交，不显示“已测通”。
 - 执行器状态多了 `PARKED`；通知多了“今日第 8 段重试额度已用完”。
@@ -5040,7 +5040,7 @@ strict关闭、不可读或App pin不符时不得使用本路径。Native既有A
 - 该行 attempt 1、不带 S；
 - 第1段自己的结局 `SETTLED`，且 Native 在这次准入里报的合并队列条目（`outcome.scheduling.mergeQueue`，Source `queue-facts.mjs#mergeQueueEntryV2`）是 `entered=true`、`state=head`、位置为 1 或未给出。
 
-让位与 §62.4 绑定批次的结束完全同一条路：写 `train-front-yield` 回执（key、PR、head、队列条目，尽力而为），以 `TRAIN_FRONT_CLAIM_BOUND`（第1段，Windows-only）结束，`fail()` 在两端证明齐全时释放成 `TRAIN_FRONT_BOUND`（NOT_EXECUTED，不烧 head、不计熔断），写 `train-front-bound` 回执并设 `frontBound`：本次当班内这个 head 不再跑普通批次，也不会被第二次绑定；第10段立刻到期（`trainAskAfterBind` 计一次 + `frontBindEnd` 的 urgent，受每日上限约束）。之后的第10段读到已绑定的 holder，给出 `OPEN_FRONT_BATCH`，车头批次 (H, S) 跑第1–8段；车头批次有自己的 head key，第8段的实时 strict/holder/claim generation/Source/frozen/ticket 检查全部不变。
+让位与 §62.4 绑定批次的结束完全同一条路：写 `train-front-yield` 回执（key、PR、head、队列条目，尽力而为），以 `TRAIN_FRONT_CLAIM_BOUND`（第1段，Windows-only）结束，`fail()` 在两端证明齐全时释放成 `TRAIN_FRONT_BOUND`（NOT_EXECUTED，不烧 head、不计熔断），写 `train-front-bound` 回执并设 `frontBound`：本次当班内这个 head 不再跑普通批次，也不会被第二次绑定；第10段立刻到期（`trainAskAfterBind` 计一次 + `frontBindEnd` 的 urgent，受每日上限约束）。列车空闲（最近一次第10段没有点名已绑定的车头）时，这次第10段还排在下一个批次工作之前（`trainAdmitOwed`，2026-11-22，FABLE-keep-train-replan §3.4）：否则下一拍别的 PR 的普通批次先跑，组批要等它跑完（现场 13–15 分钟，超过 10 分钟周期）。周期不调、每日上限照旧；只在 tick 开头排序，不打断在跑的批次。一批落地（push）或车头终局失败（`noteFrontOutcome`）今天已立刻要第10段，且最近一次第10段点名了车头，`trainFrontWaits` 已让它排在批次工作之前。之后的第10段读到已绑定的 holder，给出 `OPEN_FRONT_BATCH`，车头批次 (H, S) 跑第1–8段；车头批次有自己的 head key，第8段的实时 strict/holder/claim generation/Source/frozen/ticket 检查全部不变。
 
 不让位的情形（行为与修复前相同）：不是队首（`waiting`、`lapsed`、`out`、`none`，或 head 但位置不是 1）；第1段结局没有队列条目（Native 没答、旧 Source）——这时仍由 §62.5 的停车点接替兜底；shadow、off；接管未完成（那是 §62.4 绑定批次的事）；attempt 2；带 S 的车头批次；最新一次第10段不是 on、不当班或 strict 不是 true。
 
@@ -5207,7 +5207,7 @@ version facts 本来就是 companion（Owner 会话、非提权的计划任务�
 
 ### 65.6 车头落后自动更新分支：已获授权，未实现
 
-**更正（2026-11-16，缺陷 C）**：本节原题“需要 Owner 决定”已过时。Owner 决定 `9e2511fe` 第 3 条（机器人自动给落后 main 的车头更新分支）与 `78a3052f` 第 2 条（`clued-merge-executor` 重新启用，范围收窄为列车开时只给 BEHIND 的车头 update-branch、merge 方式；受保护层 PR 暂不自动更新；测过再启用）已授权下文的建议方案，下文“需要 Owner 决定”的 ① 已答，② 答为“暂不”。现状仍是未实现、工作流 `disabled_manually`。**再更正（2026-11-22）**：② 受保护层“暂不”已被 Owner 11-22 的要求取代——受保护层 PR 的车头也由 `clued-front-main-merge.mjs` 自动合 main（见 §80），Grant 延续仍按 `a0d93cd0`。另：组件版本规则 v0.4（`development/contracts/components/ComponentVersioning.v0.4.md`）之后合 main 是普通合并、不需重生成，update-branch 产生的 head 本身就是正确的；PR 页面只提示车头合 main，其余落后的 PR 显示“排队中，不必现在合 main”（30 分钟内没有列车给出车头时退回旧提示）。
+**更正（2026-11-16，缺陷 C）**：本节原题“需要 Owner 决定”已过时。Owner 决定 `9e2511fe` 第 3 条（机器人自动给落后 main 的车头更新分支）与 `78a3052f` 第 2 条（`clued-merge-executor` 重新启用，范围收窄为列车开时只给 BEHIND 的车头 update-branch、merge 方式；受保护层 PR 暂不自动更新；测过再启用）已授权下文的建议方案，下文“需要 Owner 决定”的 ① 已答，② 答为“暂不”。现状仍是未实现、工作流 `disabled_manually`。**再更正（2026-11-22）**：② 受保护层“暂不”已被 Owner 11-22 的要求取代——受保护层 PR 的车头也由 `clued-front-main-merge.mjs` 自动合 main（见 §80），Grant 延续仍按 `a0d93cd0`。另：组件版本规则 v0.4（`development/contracts/components/ComponentVersioning.v0.4.md`）之后合 main 是普通合并、不需重生成，update-branch 产生的 head 本身就是正确的；PR 页面对落后 main 的 head 一律只写一句 pending：“落后 main N 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）”，不读列车摘要（2026-11-22，484bddac：原先摘要过期或没有车头时退回“请合入最新 main 并推送”，是 34 次手工合 main 的来源）。
 
 GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需要有人把 main 合进 PR 分支（update-branch，merge 方式），然后对新 head 走正常流程（第 1 段重新准入、第 10 段重开车头批次）。只读核对（2026-11-07）：
 
