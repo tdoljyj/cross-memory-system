@@ -2634,7 +2634,7 @@ test('the boot gate sample carries wslMemory like the abort; one not read leaves
   const run = (fails, world = {}) => ps(`${preBootWorld(world)}
     $script:wslMemoryFails = $${fails}
     Invoke-Entry`);
-  const verdict = x => { const g = x.out.hostPreBoot.bootGate; return [x.out.status ?? x.out.code, g.ok, g.code, g.freeGB, g.requiredFreeGB, x.events.includes('boot')]; };
+  const verdict = x => { const g = x.out.hostPreBoot.bootGate; return [x.out.status, x.out.code ?? null, g.ok, g.code, g.freeGB, g.requiredFreeGB, x.events.includes('boot')]; };
   const read = run(false);
   assert.deepEqual(read.out.hostPreBoot.bootGate.wslMemory, [{ ...WSL_MEMORY, runnerWorkers: 0 }], JSON.stringify(read.out.hostPreBoot.bootGate));
   assert.equal(Object.hasOwn(read.out.hostPreBoot.bootGate, 'wslWorkingSetGB'), false);
@@ -2642,12 +2642,12 @@ test('the boot gate sample carries wslMemory like the abort; one not read leaves
   assert.ok(unread.events.includes('wsl-meminfo'), unread.events.join(','));
   assert.equal(Object.hasOwn(unread.out.hostPreBoot.bootGate, 'wslMemory'), false, 'not read: no key');
   assert.deepEqual(verdict(unread), verdict(read));
-  assert.deepEqual(verdict(read), ['DRILL_PREREQ_READY', true, null, 64, 15, true]);
+  assert.deepEqual(verdict(read), ['DRILL_PREREQ_READY', null, true, null, 64, 15, true]);
   const refused = run(false, { freeAfterRelease: 10 }), refusedUnread = run(true, { freeAfterRelease: 10 });
   assert.deepEqual(refused.out.hostPreBoot.bootGate.wslMemory, [{ ...WSL_MEMORY, runnerWorkers: 0 }], 'a refusal carries it too');
   assert.equal(Object.hasOwn(refusedUnread.out.hostPreBoot.bootGate, 'wslMemory'), false);
   assert.deepEqual(verdict(refusedUnread), verdict(refused));
-  assert.deepEqual(verdict(refused).slice(0, 3), ['DRILL_HOST_MEMORY_SHORT', false, 'DRILL_HOST_MEMORY_SHORT']);
+  assert.deepEqual(verdict(refused), ['DRILL_PREREQ_FAILED', 'DRILL_HOST_MEMORY_SHORT', false, 'DRILL_HOST_MEMORY_SHORT', 10, 15, false]);
 });
 
 // r6 conditions from the real entry (a runner job at boot, 24 GB free: the old 21 GB tier booted it, and the r6 growth would have taken it
@@ -4366,18 +4366,21 @@ test('the real clock is read only through Get-DrillTime; the reads that predate 
     }
   };
 
-  // Product side: the Get-DrillTime definition, and the two lines the guest runs on its own clock (no Get-DrillTime there).
+  // Product side: the Get-DrillTime definition, and the two lines the guest runs on its own clock (no Get-DrillTime there); and the one
+  // monotonic clock the running guard's release is spaced by (Decision f572ac5b's "at most every 2 minutes", which a wall clock step must
+  // not shorten: independent review of a643c4b42, suggestion 2), defined once like Get-DrillTime and read only through it.
   const product = fs.readFileSync(script, 'utf8').split(/\r?\n/);
   const allowed = [`function Get-DrillTime { [DateTimeOffset]::${NOW} }`,
     `if ($when -le [DateTimeOffset]::${NOW}) { throw 'DRILL_RUN_TIMEOUT' }`,
-    `$seconds = [Math]::Ceiling(($when - [DateTimeOffset]::${NOW}).TotalSeconds)`];
+    `$seconds = [Math]::Ceiling(($when - [DateTimeOffset]::${NOW}).TotalSeconds)`,
+    `function Get-DrillMonotonicSeconds { [Diagnostics.${SW}]::GetTimestamp() / [double][Diagnostics.${SW}]::Frequency }`];
   const timerAt = product.indexOf('$script:GuestShutdownTimer = {');
   const timerEnd = product.indexOf('}', timerAt);
   assert.ok(timerAt >= 0 && timerEnd > timerAt, 'drill-vm.ps1 must hold $script:GuestShutdownTimer');
   for (const [i, line] of allowed.entries()) {
     const at = product.flatMap((text, n) => text.trim() === line ? [n] : []);
     assert.equal(at.length, 1, `drill-vm.ps1 must hold exactly one: ${line}`);
-    if (i > 0) assert.ok(at[0] > timerAt && at[0] < timerEnd, `outside $script:GuestShutdownTimer: ${line}`);
+    if (i === 1 || i === 2) assert.ok(at[0] > timerAt && at[0] < timerEnd, `outside $script:GuestShutdownTimer: ${line}`);
   }
   over('drill-vm.ps1', product.map(text => allowed.includes(text.trim()) ? '' : text), {
     wallClock: new RegExp(String.raw`\[(?:System\.)?DateTime(?:Offset)?\]::(?:${NOW}|Now)\b`, 'gi'),
