@@ -36,8 +36,10 @@
   An existing target is never overwritten. Neither value is printed or kept: the plan and the receipt hold fingerprints only.
   This script never deletes the file you downloaded; delete it yourself afterwards.
 
-  Nothing existing is overwritten, deleted or re-ACLed, with one exception: one read-only ACE is APPENDED to the existing CI root
-  C:\ProgramData\CluedIndependentCI (step parent-acl, DESIGN.md section 33; the plan shows the DACL it expects). The runner service is NOT modified: its
+  Nothing existing is overwritten, deleted or re-ACLed, with two exceptions: one read-only ACE is APPENDED to the existing CI root
+  C:\ProgramData\CluedIndependentCI (step parent-acl, DESIGN.md section 33; the plan shows the DACL it expects), and the DACL of
+  C:\ProgramData\CluedIndependentCI\state is this install's rule (step state-parent-acl, r13): made when missing, the controller's write on
+  state itself made inherit-only, any other writer refused. The runner service is NOT modified: its
   configuration is changed only by CluedCISwapBroker (LocalSystem), which can switch the binary path
   between the original and an installed, allow-listed helper and nothing else (review M2).
   The Linux half is linux/install-resident-linux.sh, run separately as root.
@@ -982,6 +984,86 @@ function Get-CompanionRelayParentsPlan($residentParent) {
   return ,$parents
 }
 
+# ---- <CiRoot>\state, the parent of Source v2's state\v2 (Fable ruling 0e418483 r13, option 戊; DESIGN.md section 8) ----
+# The generic helper opens state (FormalPublicBoundaryV2.Parents of StateV2) and refuses any "allow, not inherit-only" ACE on it that can
+# write, delete, delete a child, change permissions or take ownership, of anyone but SYSTEM, Administrators and TrustedInstaller
+# (DangerFor and WriterAllowed: clued-control may write only below state\v2). When this install did not make state, migrate-acl.ps1's
+# CreateDirectory(state\v2) did, and Windows PowerShell 5.1 gives that intermediate folder the same DACL, the controller's modify entry
+# included: the r13 HALT. So this rule owns state's DACL: the install's step state-parent-acl (before source-v2-acl) and
+# verify-resident.ps1 run as SYSTEM by an upgrade (Invoke-StateParentEnsure, these functions by name) run it; nothing else makes state.
+#   missing                         -> made with Get-StateParentSddl (the production DACL, TURING 2026-10-21)
+#   passes the helper's rule        -> nothing written
+#   only the controller fails it    -> its failing entries of state itself become inherit-only (what the children inherit is unchanged;
+#                                      one that is not inheritable is dropped) and it gets (A;;0x1200a9;;;CTRL) on state itself
+#   anyone else fails it            -> STATE_PARENT_ACL_REFUSED:<why> (nothing is guessed, nothing written)
+function Get-StateParentSddl([string]$controllerSid) { 'O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICIIO;0x1301bf;;;' + $controllerSid + ')(A;;0x1200a9;;;' + $controllerSid + ')' }
+# Pure: what the rule does to a DACL (SDDL): [ordered]@{ action = 'none'|'converge'; sddl = the DACL wanted (Access section) }, or throws.
+# Danger: DangerFor's rights under the CI root (0xD0156) and GENERIC_ALL, GENERIC_WRITE (0x50000000), as verify-resident.ps1 reads them.
+function Get-StateParentTarget([string]$sddl, [string]$controllerSid) {
+  $danger = 0x500D0156
+  $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  $acl = $raw.DiscretionaryAcl
+  if ($null -eq $acl) { throw 'STATE_PARENT_ACL_REFUSED:NULL_DACL' }
+  $fix = @()
+  for ($i = 0; $i -lt $acl.Count; $i++) {
+    $a = $acl[$i]
+    if ($a -isnot [Security.AccessControl.CommonAce]) { if ($a.AceType -match 'Allowed') { throw 'STATE_PARENT_ACL_REFUSED:OTHER_ACE_TYPE' }; continue }
+    if ($a.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or ([int]$a.AceFlags -band 8) -ne 0) { continue }   # 8: INHERIT_ONLY
+    if (([int64]$a.AccessMask -band $danger) -eq 0 -or $trusted -ccontains $a.SecurityIdentifier.Value) { continue }
+    if ($a.SecurityIdentifier.Value -cne $controllerSid) { throw ('STATE_PARENT_ACL_REFUSED:OTHER_WRITER:' + $a.SecurityIdentifier.Value) }
+    if ($a.IsInherited) { throw 'STATE_PARENT_ACL_REFUSED:INHERITED_CONTROLLER_WRITE' }
+    $fix += $i
+  }
+  if ($fix.Count -eq 0) { return [ordered]@{ action = 'none'; sddl = $raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access) } }
+  $sid = New-Object Security.Principal.SecurityIdentifier($controllerSid)
+  [array]::Reverse($fix)
+  foreach ($i in $fix) {
+    $a = $acl[$i]; $acl.RemoveAce($i)
+    if (([int]$a.AceFlags -band 3) -ne 0) {   # 3: OBJECT_INHERIT, CONTAINER_INHERIT
+      $acl.InsertAce($i, (New-Object Security.AccessControl.CommonAce(([Security.AccessControl.AceFlags][byte]([int]$a.AceFlags -bor 8)), [Security.AccessControl.AceQualifier]::AccessAllowed, $a.AccessMask, $sid, $false, $null)))
+    }
+  }
+  $read = $false
+  foreach ($a in $acl) { if ($a -is [Security.AccessControl.CommonAce] -and -not $a.IsInherited -and [int]$a.AceFlags -eq 0 -and $a.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $a.SecurityIdentifier.Value -ceq $controllerSid -and [int64]$a.AccessMask -eq 0x1200a9) { $read = $true } }
+  if (-not $read) {
+    $at = 0; while ($at -lt $acl.Count -and -not $acl[$at].IsInherited) { $at++ }   # after the explicit entries, before the inherited ones
+    $acl.InsertAce($at, (New-Object Security.AccessControl.CommonAce([Security.AccessControl.AceFlags]::None, [Security.AccessControl.AceQualifier]::AccessAllowed, 0x1200a9, $sid, $false, $null)))
+  }
+  [ordered]@{ action = 'converge'; sddl = $raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access) }
+}
+# The folder as it is now and what the rule will do: [ordered]@{ path; action = 'create'|'none'|'converge'; before (null when missing); sddl }.
+function Get-StateParentState([string]$path, [string]$controllerSid) {
+  if (-not [IO.Directory]::Exists($path)) {
+    if ([IO.File]::Exists($path)) { throw 'STATE_PARENT_ACL_REFUSED:NOT_A_DIRECTORY' }
+    if (-not [IO.Directory]::Exists([IO.Path]::GetDirectoryName($path))) { throw 'STATE_PARENT_ACL_REFUSED:CI_ROOT_MISSING' }
+    return [ordered]@{ path = $path; action = 'create'; before = $null; sddl = (Get-StateParentSddl $controllerSid) }
+  }
+  if (((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'STATE_PARENT_ACL_REFUSED:LINK' }
+  $before = (Get-Acl -LiteralPath $path).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+  $t = Get-StateParentTarget $before $controllerSid
+  [ordered]@{ path = $path; action = $t.action; before = $before; sddl = $t.sddl }
+}
+# Writes what Get-StateParentState planned: compared before the write (the DACL's shape, or still missing), read back after it (the planned
+# shape, and the rule finds nothing more to do). Only the DACL is written to an existing folder. Returns path, action, before, after, wrote.
+function Invoke-StateParentAcl($p, [string]$controllerSid) {
+  if ($p.action -ceq 'none') { return [ordered]@{ path = $p.path; action = 'none'; before = $p.before; after = $p.before; wrote = $false } }
+  $ds = New-Object Security.AccessControl.DirectorySecurity
+  if ($p.action -ceq 'create') {
+    if ([IO.Directory]::Exists($p.path) -or [IO.File]::Exists($p.path)) { throw 'STATE_PARENT_ACL_CHANGED_SINCE_PLAN' }
+    $ds.SetSecurityDescriptorSddlForm($p.sddl)
+    [void][IO.Directory]::CreateDirectory($p.path, $ds)
+  } elseif ($p.action -ceq 'converge') {
+    $now = (Get-Acl -LiteralPath $p.path).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+    if ((Get-DaclShape $now) -cne (Get-DaclShape $p.before)) { throw 'STATE_PARENT_ACL_CHANGED_SINCE_PLAN' }
+    $ds.SetSecurityDescriptorSddlForm($p.sddl, [Security.AccessControl.AccessControlSections]::Access)
+    [IO.Directory]::SetAccessControl($p.path, $ds)
+  } else { throw 'STATE_PARENT_ACL_REFUSED:PLAN' }
+  $after = (Get-Acl -LiteralPath $p.path).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+  if ((Get-DaclShape $after) -cne (Get-DaclShape $p.sddl) -or (Get-StateParentTarget $after $controllerSid).action -cne 'none') { throw ('STATE_PARENT_ACL_READBACK_MISMATCH:' + $p.path) }
+  [ordered]@{ path = $p.path; action = $p.action; before = $p.before; after = $after; wrote = $true }
+}
+
 # ---- Carry-forward of the executed heads (resident quota redesign v0.6 + section 9, phase 1, item 7) ----
 # uninstall-resident.ps1 renames the whole resident directory to resident-uninstalled-<UTC>-<hex>, so a reinstall starts
 # with an empty state. The resident's Source-independent executed heads (src/executed-heads.mjs) must survive that: this
@@ -1204,6 +1286,9 @@ function Build-Plan {
     files = @($pkg.files).Count
     acl = Get-AclPlan $res
     parentAcl = Get-ParentAclState $CiRoot $res   # the one ACE appended to an existing folder, with the DACL it expects (DESIGN.md section 33)
+    # r13 (Fable ruling 0e418483): <CiRoot>\state is made or brought to the helper's rule by step state-parent-acl, before source-v2-acl.
+    # The plan names the rule only: what it finds is read by the elevated step (state is admin-only) and recorded in the receipt.
+    stateParent = [ordered]@{ path = (Join-Path $CiRoot 'state'); sddl = (Get-StateParentSddl $ControllerSid); rule = 'missing: made with sddl; passes the helper''s rule: not written; only the controller can write state itself: its entries become inherit-only plus (A;;0x1200a9;;;controller); any other writer: refused' }
     runnerBefore = Read-RunnerState
     runnerModified = $false
     services = [ordered]@{
@@ -1432,6 +1517,12 @@ Step 'resident-firewall' {
   $rule = Get-NetFirewallRule -Name $FirewallRuleName; $filter = $rule | Get-NetFirewallServiceFilter
   if ([string]$rule.Direction -cne 'Outbound' -or [string]$rule.Action -cne 'Block' -or [string]$rule.Enabled -cne 'True' -or $filter.Service -cne $ServiceName) { throw 'FIREWALL_RULE_READBACK_MISMATCH' }
   $script:receipt.firewallRule = $FirewallRuleName
+}
+# 4c. r13 (Fable ruling 0e418483): <CiRoot>\state by this install's rule (Get-StateParentState, Invoke-StateParentAcl), before
+#     source-v2-acl: migrate-acl.ps1 then only makes state\v2 under it and never makes state itself.
+Step 'state-parent-acl' {
+  $sp = Get-StateParentState $plan.stateParent.path $ControllerSid
+  $script:receipt.stateParentAcl = Invoke-StateParentAcl $sp $ControllerSid
 }
 # 5. Source v2's own reviewed ACL migration of the one-shot install (formal-spool, state) so the
 #    resident SID can do what the elevated Owner did per batch. Fixed args, installed copy only.
