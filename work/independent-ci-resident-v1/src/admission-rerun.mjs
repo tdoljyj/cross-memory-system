@@ -64,7 +64,10 @@ const MAX_RECOVERY_PAGES = 50;
 // 6: every gated run of a PR head is in scope (54a2b67a); verdicts of 5 are judged again.
 // 7: a never-ran refusal read within GATE_EVIDENCE_SETTLE_MS of the attempt's end is no verdict (Fable 11-20 finalRuns); a final or a
 //    finalRuns entry of 6 may have been read too early, so it is judged again.
-const REPAIR_RULE_VERSION = 7;
+// 8: the framework side counterpart X of a required hosted-X is required too (04f9b91b B); a verdict of 7 may have left it outside.
+const REPAIR_RULE_VERSION = 8;
+// 04f9b91b B (Fable 11-22 scaffold shadow fix §2 B): the hosted scaffold rules pin hosted-X to Actions; X is its framework side counterpart.
+const HOSTED_PREFIX = 'hosted-';
 // A run that ran nothing is refused on its gate's annotations alone (env-failure.mjs), which GitHub may hang on the check run a while
 // after the job ended: within this time of the latest attempt's end (or with no readable end) that refusal is no verdict yet. A job end that
 // cannot be read is taken from the run's updated_at, never earlier than the attempt's end (Fable 11-20 open points 一.2).
@@ -523,6 +526,33 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
   const say = (action, reason) => ({ action, reason, pr: frontPr, runId: null, attempt: null });
   const readError = e => say('error', 'nothing re-run: ' + (e instanceof Error ? short(e.message) : 'a read failed'));
   const mappingError = e => ({ ...readError(e), scopeIssue: '无法核对必需检查对应工作流，自动补跑已暂停' });
+  // The active workflows of the base with their gated check names, read once per base (the lane keeps them); false: unreadable, told.
+  async function* loadInventory(base) {
+    if (workflowInventory?.base !== base) {
+      let workflows;
+      try { workflows = workflowInventory?.entries ?? await activeWorkflows(gh); } catch (e) {
+        yield mappingError(e);
+        return false;
+      }
+      workflowInventory = { base, entries: workflows.map(({ id, path }) => ({ id, path })) };
+      yield { action: 'inventory', workflowInventory };
+    }
+    if (workflowInventory.entries.some(entry => entry.blob === undefined)) {
+      const entries = [];
+      try {
+        for (const { id, path } of workflowInventory.entries) {
+          const source = await workflowChecks(gh, path, base, workflowMemo, workflowInventory);
+          entries.push({ id, path, ...source });
+        }
+      } catch (e) {
+        yield mappingError(e);
+        return false;
+      }
+      workflowInventory = { base, entries };
+      yield { action: 'inventory', workflowInventory };
+    }
+    return true;
+  }
   try {
     if (!HEX40.test(headSha ?? '') || (staging && (!HEX40.test(testSha ?? '') || testSha === headSha || !positive(frontPr)))) {
       yield say('skip', 'invalid head or staging subject');
@@ -566,7 +596,16 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
     }
     rulesRead();
     const required = new Set(rules.filter(c => c.integrationId === ACTIONS_APP_ID).map(c => c.context));
-    const missing = staging ? [] : await missingActionsChecks(gh, sha, required);
+    // 04f9b91b B: on a PR head, the counterpart X of a required hosted-X is treated as required when an active gated workflow of this base
+    // supplies it (clued-required-tests.yml supplies ci-suites, clued-cloud-tests, migration-verify). It joins the scope's check filter and
+    // the missing list only. An X no active gated workflow supplies (gitleaks, trivy, contract-placement) is left out here, so it can never
+    // reach unmapped and its "找不到对应工作流" stop; a missing X that is in is always found there (the same inventory).
+    const counterparts = staging ? [] : [...required].filter(c => c.startsWith(HOSTED_PREFIX))
+      .map(c => c.slice(HOSTED_PREFIX.length)).filter(c => c && !required.has(c));
+    if (counterparts.length && !(yield* loadInventory(base))) return;
+    const wanted = new Set([...required,
+      ...counterparts.filter(c => workflowInventory.entries.some(entry => entry.checks.includes(c)))]);
+    const missing = staging ? [] : await missingActionsChecks(gh, sha, wanted);
     const runs = await runsOf(gh, sha);
     const byWorkflow = Map.groupBy(runs, r => r.workflow_id);
     const select = staging ? r => r.event === 'push' && r.head_branch === STAGING_BRANCH
@@ -582,7 +621,7 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
         const file = typeof newest.path === 'string' ? newest.path.split('@', 1)[0] : '';
         let outside = false;
         try {
-          outside = WORKFLOW_PATH.test(file) && !(await workflowChecks(gh, file, base, workflowMemo, workflowInventory)).checks.some(c => required.has(c));
+          outside = WORKFLOW_PATH.test(file) && !(await workflowChecks(gh, file, base, workflowMemo, workflowInventory)).checks.some(c => wanted.has(c));
         } catch { outside = false; /* judged in full below, which reports the read */ }
         if (outside) continue;
       }
@@ -606,7 +645,7 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
         yield mappingError(e);
         return;
       }
-      const checks = source.checks.filter(c => required.has(c));
+      const checks = source.checks.filter(c => wanted.has(c));
       // 54a2b67a: a gated PR run outside the required checks stays in scope, for the never-ran repair only (the scope is the run's own).
       if (!checks.length && staging) continue;
       for (const context of checks) unmapped.delete(context);
@@ -616,29 +655,7 @@ async function* decisions({ gh, headSha, pr: frontPr, testSha, defaultBranch = '
 
     const absent = [];
     if (unmapped.size) {
-      if (workflowInventory?.base !== base) {
-        let workflows;
-        try { workflows = workflowInventory?.entries ?? await activeWorkflows(gh); } catch (e) {
-          yield mappingError(e);
-          return;
-        }
-        workflowInventory = { base, entries: workflows.map(({ id, path }) => ({ id, path })) };
-        yield { action: 'inventory', workflowInventory };
-      }
-      if (workflowInventory.entries.some(entry => entry.blob === undefined)) {
-        const entries = [];
-        try {
-          for (const { id, path } of workflowInventory.entries) {
-            const source = await workflowChecks(gh, path, base, workflowMemo, workflowInventory);
-            entries.push({ id, path, ...source });
-          }
-        } catch (e) {
-          yield mappingError(e);
-          return;
-        }
-        workflowInventory = { base, entries };
-        yield { action: 'inventory', workflowInventory };
-      }
+      if (!(yield* loadInventory(base))) return;
       const uncovered = new Set(unmapped);
       for (const target of workflowInventory.entries) {
         if (!target.checks.some(c => uncovered.has(c))) continue;

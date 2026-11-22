@@ -1,9 +1,9 @@
 {
-  "schema": "clued.agent-contract-ci-join-only-successor/1",
+  "schema": "clued.agent-contract-session-cap-in-hand-successor/1",
   "source_version": 61,
   "target_version": 62,
   "source_document_normalized_sha256": "4f2113ec6d617326c8d53c57137792752d366ec80cb7ab7ae781c5c79d1f0c34",
-  "target_document_normalized_sha256": "625c9ca0b074cdda98be41b7c99cba30e1c328db865b9b5f10134c98a02e366d",
+  "target_document_normalized_sha256": "cdc8026f18eac368c151e2b4d1e31516a50bfba7583371e5de24deec2146a4b2",
   "edits": [
     {
       "id": "version",
@@ -11,34 +11,9 @@
       "after": "Contract version: 62"
     },
     {
-      "id": "core-names-queue",
-      "before": "A merge reference joins its FIFO queue and never conflicts.",
-      "after": "A merge reference names its FIFO queue and never conflicts."
-    },
-    {
-      "id": "conflict-row",
-      "before": "A merge ref never conflicts; it queues",
-      "after": "A merge ref never conflicts ([Appendix A.6](#appendix-a6))"
-    },
-    {
-      "id": "resume-claims",
-      "before": "it never conflicts, it queues ([Appendix A.6](#appendix-a6)).",
-      "after": "it never conflicts ([Appendix A.6](#appendix-a6))."
-    },
-    {
-      "id": "ci-join-only",
-      "before": "Join it only for the final round, once the pull request is ready and its merge approved where approval is needed: bring the default branch in and push first, then renew its claim with `trigger_refs` set to its current refs plus that ref (a renewal replaces the list). A merge ref never conflicts: the renewal succeeds, and the claim's `merge_queue` shows your `state`",
-      "after": "In a repository the resident CI serves you do not join it yourself: once the resident CI has tested the pull request's current head through, it puts the claim into the queue, and a merge ref you send in a claim or renewal never puts you into that queue and is not an error. A merge ref never conflicts, and the claim's `merge_queue` shows your `state`"
-    },
-    {
-      "id": "unmarked-ref-dropped",
-      "before": "Changing or adding a merge ref (other than its letter case) joins every queue of the claim again at the back.",
-      "after": "Changing or adding a merge ref (other than its letter case) joins every queue of the claim again at the back; in a repository the resident CI serves, a ref the CI did not put on the claim is dropped instead and changes nothing."
-    },
-    {
-      "id": "no-hourly-renewal",
-      "before": "Renew about once an hour to keep your lease (2 hours) without spending the claim's 12 renewals, each with a new `progress_ref` such as `merge-queue:<UTC time>`, and read `merge_queue`; a renewal keeps your place. When you become head,",
-      "after": "Read `merge_queue` for your place; you need not renew to keep it. When you become head,"
+      "id": "session-cap-in-hand",
+      "before": "| `work_claim_budget_exhausted` | `limit` names the cap: live claims per session or per Binding, or a start-rate bucket (`task_claim_rate`, `binding_claim_rate`) | For a live-claim cap, finish or release a claim you hold first. For a rate bucket, read `continuation.reason` when present ([Appendix A.8](#appendix-a8)), then wait until `retry_after`, or give the Owner the `owner_request.confirm_url` the refusal carries (§6.6) and claim again once they have approved it; never claim under another Task, key or Binding to get around it ([Appendix A.8](#appendix-a8)) |",
+      "after": "| `work_claim_budget_exhausted` | `limit` names the cap: claims in hand per session (a claim whose Task has a PR the CI has confirmed open does not count) or live claims per Binding, or a start-rate bucket (`task_claim_rate`, `binding_claim_rate`) | For a live-claim cap, finish or release a claim you hold first. For a rate bucket, read `continuation.reason` when present ([Appendix A.8](#appendix-a8)), then wait until `retry_after`, or give the Owner the `owner_request.confirm_url` the refusal carries (§6.6) and claim again once they have approved it; never claim under another Task, key or Binding to get around it ([Appendix A.8](#appendix-a8)) |"
     }
   ]
 }

@@ -204,7 +204,7 @@ end $$;
 -- and sweeps its queue before it looks for the claim to join.
 do $ci_join_marks_first$
 declare body text;
-  v_mark text:=$a$    -- The CI's mark first: the join gate keeps the ref only with it (20261122130000).
+  v_mark text:=$a$    -- The CI's mark first: the join gate keeps the ref only with it (20261122140000).
     v_receipt:=extensions.gen_random_uuid();
     insert into clued_private.work_claim_ci_merge_refs_v1(claim_id,user_id,merge_ref,joined_at,receipt_id)
       values(c.claim_id,c.user_id,v_ref,v_now,v_receipt)
@@ -237,7 +237,7 @@ $a$;
 $a$;
   a5 text:=$a$  perform clued_private.work_claim_merge_front_sync_all_v1(b.user_id,v_prefix);
 $a$;
-  v_sweep text:=$a$  -- An entry that joined itself before this ref was served leaves here, this call's own claim too (20261122130000 item 4).
+  v_sweep text:=$a$  -- An entry that joined itself before this ref was served leaves here, this call's own claim too (20261122140000 item 4).
   perform clued_private.work_claim_merge_unmarked_sweep_v1(b.user_id,b.id,v_ref,
     jsonb_build_object('reason','no_ci_join_mark','ci_binding_id',b.id));
 $a$;
@@ -280,7 +280,7 @@ begin
       values(c.user_id,null,c.context_key,'work_claim_merge_queue_ci_mark_backfill','work_claim',c.claim_id::text,c.fence,
         jsonb_build_object('receipt_kind','WORK_CLAIM_MERGE_QUEUE_CI_MARK_BACKFILLED','claim_id',c.claim_id,
           'task_id',c.task_id,'fence',c.fence,'execution_epoch',c.execution_epoch,'merge_ref',v_low,
-          'queued_at',c.merge_queued_at,'migration','20261122130000_merge_queue_ci_join_only_v1'))
+          'queued_at',c.merge_queued_at,'migration','20261122140000_merge_queue_ci_join_only_v1'))
       returning id into v_receipt;
       insert into clued_private.work_claim_ci_merge_refs_v1(claim_id,user_id,merge_ref,joined_at,receipt_id)
         values(c.claim_id,c.user_id,v_low,coalesce(c.merge_queued_at,v_now),v_receipt);
@@ -293,7 +293,7 @@ begin
     perform clued_private.work_claim_lock(r.user_id);
     perform clued_private.work_claim_merge_unmarked_sweep_v1(r.user_id,null,r.ref,
       jsonb_build_object('reason','no_ci_join_mark_and_no_current_admission',
-        'migration','20261122130000_merge_queue_ci_join_only_v1'));
+        'migration','20261122140000_merge_queue_ci_join_only_v1'));
   end loop;
 end $existing_rows$;
 

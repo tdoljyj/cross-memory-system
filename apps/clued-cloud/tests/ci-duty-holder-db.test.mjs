@@ -61,7 +61,7 @@ const ALLOWED={
     'clued_private.ci_phase_3_to_4_v1','clued_private.ci_phase_4_to_3_v1','public.clued_binding_roles_list_v1'],
   holders:['clued_private.binding_role_handover_view_v1','clued_private.ci_admission_failover_owner_v1','clued_private.ci_duty_admits_decide_v1',
     'clued_private.ci_failover_candidates_v1','clued_private.ci_failover_change_view_v1','public.clued_resident_failover_v1',
-    // 20261122130000: asks only whether the account has a resident row, never who is on duty.
+    // 20261122140000: asks only whether the account has a resident row, never who is on duty.
     'clued_private.work_claim_merge_ref_served_v1'],
   // 20261108161615 renamed the adopt/return bodies (with their merge-slot check) to the *_before_pr_task predecessors;
   // the public adopt asks it again before its own copy-ambiguity check (terminal admission removed by 20261113151000).

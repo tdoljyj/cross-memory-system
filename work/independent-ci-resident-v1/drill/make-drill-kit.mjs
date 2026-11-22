@@ -256,11 +256,14 @@ export function releasePins(from, version) {
   return { version, files, candidate };
 }
 
+// What the kit carries from this directory: the entry, and the list of guest files its failure snapshot may read.
+export const KIT_DRILL_FILES = ['first-install-entry.ps1', 'guest-failure-files.json'];
+
 // `request`: a candidate's acceptance request (publish.mjs prepare's --out); required for a candidate, refused for an accepted version.
 export async function makeDrillKit({ from, version, prereq, out, request, timeoutMinutes = 240, now = Date.now() }) {
   const { candidate: isCandidate, ...pins } = releasePins(from, version);
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const payloads = Object.fromEntries(['first-install-entry.ps1'].map(name => [name, read(here, name)]));
+  const payloads = Object.fromEntries(KIT_DRILL_FILES.map(name => [name, read(here, name)]));
   let candidate = null;
   check(isCandidate || !request, 'DRILL_REQUEST_FOR_AN_ACCEPTED_VERSION');
   let acceptance = null;   // the kit's acceptance: the candidate's (drill-only) or the Owner's in the From directory
