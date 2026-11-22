@@ -2087,7 +2087,7 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "081a73390f8ae8f618b4700e79b14ff1fe5cca27": [
+        "e607a08efdd564e13ae779c57f3085c61c04cf7c": [
           {
             "job_id": "clued-cloud-tests",
             "definition_sha256": "a3db7cdc0e4207ca8c8331b47a4689c994e6f03663b8a1b760e70ab2e93722a4",
@@ -2590,7 +2590,7 @@
           },
           {
             "job_id": "contract-placement",
-            "definition_sha256": "36cd9dbb0c908a2c4d1f489c1701e2cf47decf82c2b0ece1f745b987bb3a3987",
+            "definition_sha256": "2e73739e51349c495a3de1f68bd474dcc813bdac9df29b388970c19cf816a6ae",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'contract-placement' || 'contract-placement-skipped' }}",
               "needs": "admission-gate",
@@ -2679,7 +2679,7 @@
                   "env": {
                     "CANDIDATE": "${{ github.sha }}"
                   },
-                  "run": "npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1\nnode \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\\n  --bundle --platform=node --format=esm --external:js-tiktoken/* \\\n  --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"\n"
+                  "run": "# esbuild alone, from the runner's dependency store (offline) by the trusted ci-deps.mjs; installed outside\n# the candidate tree so the placement check sees no node_modules of its own.\nmkdir -p \"$RUNNER_TEMP/contract-build\"\ncp scripts/ci/contract-build/package.json scripts/ci/contract-build/package-lock.json \"$RUNNER_TEMP/contract-build/\"\nnode ../trusted/scripts/ci/ci-deps.mjs install \"$RUNNER_TEMP/contract-build\"\nnode \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\\n  --bundle --platform=node --format=esm --external:js-tiktoken/* \\\n  --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"\n"
                 },
                 {
                   "name": "Render all actual and synthetic contract parts",

@@ -37,18 +37,12 @@
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
 // does, one per run. A red or idle front, a lost event or a failed run need no
 // memory: the next run reads the same records again.
-//
-// strict off (FABLE-r3-decisions-20261122 item 5, the no-train mode of R3): GitHub merges a pull request that is behind
-// main as it is, so bringing main in would only make a new head whose checks all start again. Neither kind of run brings
-// anything then; it says so. strict is the fact the resident's stage 10 decides the no-train mode on (Source v2
-// train-rules.mjs#rulesetFacts, read here, not restated). Rules it does not understand leave everything as before.
 
 import fs from 'node:fs';
 import { ADMISSION_APP_ID, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, appJwt, githubJson, githubPaged,
   mainMergeExternalId } from './clued-work-admission.mjs';
 import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
-import { rulesetFacts } from '../../work/actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
 
 export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_requests: 'write', checks: 'write' });
 // update-branch answers 202 and merges asynchronously; the new head is read this often, at most this many times.
@@ -64,7 +58,6 @@ const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required'])
 const GREEN = new Set(['success', 'skipped', 'neutral']);
 // The independent CI withdrew this check (no verdict on the code); its pending status that says it stopped will not finish.
 const WITHDRAWN = 'Independent CI check withdrawn', STOPPED = '已停止';
-export const STRICT_OFF = 'strict is off in the rules of main (the no-train mode): GitHub merges a pull request behind main as it is, so main is not brought in';
 const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){defaultBranchRef{name} '
   + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
@@ -118,22 +111,6 @@ async function headRecords({ env, fetchImpl, repository, head, required }) {
   return { failed, green, unfinished, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID), admitted: by(INDEPENDENT_ADMISSION_CHECK, INDEPENDENT_ADMISSION_APP_ID) };
 }
 
-// The rules GitHub applies to the branch, 100 a page, read to the end; throws when they cannot be read in full.
-async function branchRules(fetchImpl, env, repository, main) {
-  const rules = [];
-  for (let page = 1; ; page++) {
-    const chunk = await githubJson(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(main)}?per_page=100&page=${page}`);
-    if (!Array.isArray(chunk)) throw new Error(`the rules of ${main} could not be read`);
-    rules.push(...chunk);
-    if (chunk.length < 100) return rules;
-    if (page === PAGES) throw new Error(`the rules of ${main} fill more than ${PAGES} pages: the required checks are not known in full`);
-  }
-}
-// true only when the rules are understood as stage 10 understands them and say strict is off.
-function strictOff(rules) {
-  try { return rulesetFacts(rules, INDEPENDENT_ADMISSION_APP_ID).strict === false; } catch { return false; }
-}
-
 // The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
 // order. Reads only; throws when GitHub cannot be read (then nothing is decided).
 export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
@@ -154,8 +131,14 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   if (!SHA.test(tip ?? '')) throw new Error(`the tip of ${main} could not be read`);
   // Which checks are required decides who is red, green or idle. Read without them (none named, a page not read) every
   // optional failure would make the front red and one more pull request would be brought up each run: then nothing is decided.
-  const rules = await branchRules(fetchImpl, env, repository, main);
-  if (strictOff(rules)) return { main, tip, train: [], candidates: [], strictOff: true };
+  const rules = [];
+  for (let page = 1; ; page++) {
+    const chunk = await githubJson(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(main)}?per_page=100&page=${page}`);
+    if (!Array.isArray(chunk)) throw new Error(`the rules of ${main} could not be read`);
+    rules.push(...chunk);
+    if (chunk.length < 100) break;
+    if (page === PAGES) throw new Error(`the rules of ${main} fill more than ${PAGES} pages: the required checks are not known in full`);
+  }
   const required = [...new Set(rules.filter(rule => rule?.type === 'required_status_checks')
     .flatMap(rule => (rule.parameters?.required_status_checks ?? []).map(check => check?.context)).filter(Boolean))];
   if (!required.length) throw new Error(`the rules of ${main} name no required check`);
@@ -204,7 +187,6 @@ async function runFrontChoice(ports) {
   } catch (error) {
     return done('skipped', `GitHub could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again`);
   }
-  if (chosen.strictOff) return done('none', STRICT_OFF);
   const train = { main: chosen.tip, members: chosen.train.map(({ pr, head, behind, state }) => ({ pr, head, behind, state })) };
   const front = chosen.train.find(member => member.state === 'front');
   if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
@@ -239,8 +221,6 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
   if (!SHA.test(tip ?? '')) return done('error', `the tip of ${main} could not be read`);
   const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${head}`);
   if (!(Number(compare?.behind_by) > 0)) return done('none', `the head already contains ${main}`);
-  // Rules that cannot be read leave this run as it was before the no-train mode.
-  if (strictOff(await branchRules(fetchImpl, env, repository, main).catch(() => null))) return done('none', STRICT_OFF);
   const { token, reason } = await frontMergeToken({ env, fetchImpl, now });
   if (!token) return done('skipped', reason);
   const update = await appRequest(fetchImpl, env, 'PUT', `/repos/${repository}/pulls/${number}/update-branch`, token, { expected_head_sha: head });
@@ -272,10 +252,9 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
 
 export function renderSummary(r) {
   const named = `## clued-front-main-merge\n\n- #${r.pr ?? '?'} \`${String(r.head_sha ?? '').slice(0, 12)}\`: **${r.result}**: ${r.reason}\n`;
-  const line = r.pr === null ? `## clued-front-main-merge\n\n- nobody brought up: **${r.result}**: ${r.reason}\n` : named;
-  if (!r.train) return line;
+  if (!r.train) return named;
   // A run without inputs: what it did, then everyone on the train and why each was or was not the one.
-  return line
+  return (r.pr === null ? `## clued-front-main-merge\n\n- nobody brought up: **${r.result}**: ${r.reason}\n` : named)
     + `\nThe train (auto-merge on) at main \`${String(r.train.main).slice(0, 12)}\`, in order:\n\n`
     + (r.train.members.map(m => `- #${m.pr} \`${String(m.head).slice(0, 12)}\`: ${m.behind === 0 ? 'contains main' : `behind by ${m.behind}`}, ${m.state}\n`).join('') || '- nobody\n');
 }

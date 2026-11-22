@@ -6902,7 +6902,7 @@
         {
           "command_digests": {
             "Build actual public bootstrap without the application dependency tree": [
-              "3b44b30adbae4fff996c9307b13094ed74be091c7818b55b9f869feee04b1651"
+              "6503a2fb762b7f41e4640ec9731a4cdc19c6e1d1de1486eef9d834b2305688ec"
             ],
             "Enforce placement and one-time production gate": [
               "51f416bc3d0213f96ee451f3e688c63ef542d334c1e8d5cd036cfea23ec072aa"
@@ -6933,7 +6933,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "d8ee9a8ded8a698d186608fdd42471268840e740e66a2245e5a7a41873f12bea",
+      "source_sha256": "0b88cefe4fbcef4effb4532f622bc3cc1d601248283fbf4b59d3608eb7ec37de",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -7889,7 +7889,11 @@
 "        env:",
 "          CANDIDATE: ${{ github.sha }}",
 "        run: |",
-"          npm install --prefix \"$RUNNER_TEMP/contract-build\" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1",
+"          # esbuild alone, from the runner's dependency store (offline) by the trusted ci-deps.mjs; installed outside",
+"          # the candidate tree so the placement check sees no node_modules of its own.",
+"          mkdir -p \"$RUNNER_TEMP/contract-build\"",
+"          cp scripts/ci/contract-build/package.json scripts/ci/contract-build/package-lock.json \"$RUNNER_TEMP/contract-build/\"",
+"          node ../trusted/scripts/ci/ci-deps.mjs install \"$RUNNER_TEMP/contract-build\"",
 "          node \"$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild\" apps/clued-cloud/worker/continuity.ts \\",
 "            --bundle --platform=node --format=esm --external:js-tiktoken/* \\",
 "            --define:__CLUED_BUILD_SHA__=\"\\\"$CANDIDATE\\\"\" --outfile=\"$RUNNER_TEMP/contract-bootstrap.mjs\"",
@@ -7904,7 +7908,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "081a73390f8ae8f618b4700e79b14ff1fe5cca27"
+      "workflow_blob": "e607a08efdd564e13ae779c57f3085c61c04cf7c"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

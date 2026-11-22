@@ -952,7 +952,11 @@ jobs:
         env:
           CANDIDATE: ${{ github.sha }}
         run: |
-          npm install --prefix "$RUNNER_TEMP/contract-build" --no-save --package-lock=false --ignore-scripts esbuild@0.28.1
+          # esbuild alone, from the runner's dependency store (offline) by the trusted ci-deps.mjs; installed outside
+          # the candidate tree so the placement check sees no node_modules of its own.
+          mkdir -p "$RUNNER_TEMP/contract-build"
+          cp scripts/ci/contract-build/package.json scripts/ci/contract-build/package-lock.json "$RUNNER_TEMP/contract-build/"
+          node ../trusted/scripts/ci/ci-deps.mjs install "$RUNNER_TEMP/contract-build"
           node "$RUNNER_TEMP/contract-build/node_modules/esbuild/bin/esbuild" apps/clued-cloud/worker/continuity.ts \
             --bundle --platform=node --format=esm --external:js-tiktoken/* \
             --define:__CLUED_BUILD_SHA__="\"$CANDIDATE\"" --outfile="$RUNNER_TEMP/contract-bootstrap.mjs"
