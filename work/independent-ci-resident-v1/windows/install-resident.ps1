@@ -984,7 +984,7 @@ function Get-CompanionRelayParentsPlan($residentParent) {
   return ,$parents
 }
 
-# ---- <CiRoot>\state, the parent of Source v2's state\v2 (Fable ruling 0e418483 r13, option 戊; DESIGN.md section 8) ----
+# ---- <CiRoot>\state, the parent of Source v2's state\v2 (Fable ruling 0e418483 r13, option wu; DESIGN.md section 8) ----
 # The generic helper opens state (FormalPublicBoundaryV2.Parents of StateV2) and refuses any "allow, not inherit-only" ACE on it that can
 # write, delete, delete a child, change permissions or take ownership, of anyone but SYSTEM, Administrators and TrustedInstaller
 # (DangerFor and WriterAllowed: clued-control may write only below state\v2). When this install did not make state, migrate-acl.ps1's

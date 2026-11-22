@@ -539,7 +539,7 @@ function Invoke-CompanionRelayParentsEnsure([string]$root, [string]$sid, [string
     $written
   } $root $sid $installer $installerSha256
 }
-# r13 (Fable ruling 0e418483, option 戊): <CiRoot>\state by install-resident.ps1's rule state-parent-acl, here for a node installed or
+# r13 (Fable ruling 0e418483, option wu): <CiRoot>\state by install-resident.ps1's rule state-parent-acl, here for a node installed or
 # upgraded before that step existed. Same shape as Invoke-CompanionRelayParentsEnsure: the rule is install-resident.ps1's own functions
 # (this generation's copy, its pinned sha256; the bytes read once, hashed, parsed from that read), loaded by exact name into a child scope.
 # -Write (SYSTEM, the upgrade channel's VERIFY): the rule runs (made when missing; the controller's write on state itself made inherit-only;
