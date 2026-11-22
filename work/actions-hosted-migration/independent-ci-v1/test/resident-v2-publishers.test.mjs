@@ -232,7 +232,7 @@ const mergeOnAdmission = (github, { landed = { sha: LANDED, tree: TREE, parents:
 };
 // One stage-1 publication with that GitHub; Native admits the open PR and rejects it once it is not open any more (the field's
 // full_admission_rejected). nativeSeesClose false: the changed-paths read is what refuses first (pr_subject_changed).
-async function admissionRun(t, github, { nativeSeesClose = true } = {}) {
+async function admissionRun(t, github, { nativeSeesClose = true, tamper = null, record = () => {} } = {}) {
   const jobs = jobsFor(), c = claim(), bc = await batchClaimsAt(t);
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   if (nativeSeesClose) {
@@ -240,7 +240,8 @@ async function admissionRun(t, github, { nativeSeesClose = true } = {}) {
     github.readChangedPaths = async job => { const now = github.state.pull; github.state.pull = { ...now, state: 'open' }; try { return await paths(job); } finally { github.state.pull = now; } };
   }
   const admission = fakeAdmission((job, packet) => github.state.pull.state === 'open' ? admitted(job, c, packet) : blocked('full_admission_rejected'));
-  const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record() {}, authority: {}, batchClaims: bc, sleep: async () => {} });
+  tamper?.(github, journal);
+  const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record, authority: {}, batchClaims: bc, sleep: async () => {} });
   const r = await pub.publish(jobs['work-admission']);
   return { r, github, journal, effect: r.effectKey ? await journal.read(r.effectKey) : null };
 }
@@ -277,6 +278,57 @@ test('work admission v2: a PR that is not merged at this head on this base still
   const z = await admissionRun(t, unread);
   assert.notEqual(z.r.status, 'SETTLED', JSON.stringify(z.r));
   assert.equal(z.r.settledMerged, undefined);
+});
+
+// Field evidence 2026-11-23 (TURING, PR #1238; FABLE-resident-halt-merge-race-20261123 B): the negative PATCH answered 200 at
+// 15:57:18.884 and 0.6 s later the effect was recorded uncertain / NEGATIVE_COMPENSATION_UNCONFIRMED; GitHub shows the check
+// completed/failure. The withdrawal landed and a step after it (the answer's comparison, the read-back, a journal or log write) said
+// "unconfirmed": the resident HALTed. A withdrawal GitHub itself confirms (a bounded re-read finds the one check completed/failure) is
+// REVOKED whatever local step failed after the PATCH; one that GitHub does not confirm stays UNCERTAIN.
+const CLOSED = { landed: null, pull: { state: 'closed', merged: false, mergeable: null, merge_commit_sha: null } };
+test('work admission v2 (#1238 evidence): a withdrawal that landed is REVOKED even when a step after the PATCH fails', async t => {
+  const boom = () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }); };
+  const after = {
+    'the read-back right after the PATCH still lists the old conclusion (list lag)': { tamper: github => {
+      const read = github.readChecks.bind(github), patch = github.revokeCheck; let stale = 0;
+      github.revokeCheck = async (...a) => { const c = await patch(...a); stale = 1; return c; };
+      github.readChecks = async head => { const list = await read(head); if (stale-- > 0) for (const c of list.checks) c.conclusion = 'success'; return list; };
+    } },
+    'the PATCH landed, its answer was lost': { tamper: github => {
+      const patch = github.revokeCheck; github.revokeCheck = async (...a) => { await patch(...a); throw Object.assign(new Error('github_timeout'), { code: 'github_timeout' }); };
+    } },
+    'the answer is not the check (another shape)': { tamper: github => {
+      const patch = github.revokeCheck; github.revokeCheck = async (...a) => { await patch(...a); return {}; };
+    } },
+    'the withdrawal record cannot be settled in the journal': { tamper: (github, journal) => {
+      const move = journal.transition.bind(journal); journal.transition = async (key, from, to, details) => (from === 'sent' && to === 'settled' ? boom() : move(key, from, to, details));
+    } },
+    'the effect cannot be marked revoked in the journal': { tamper: (github, journal) => {
+      const move = journal.transition.bind(journal); journal.transition = async (key, from, to, details) => (to === 'revoked' ? boom() : move(key, from, to, details));
+    } },
+    'the log of the withdrawal throws': { record: event => { if (event === 'native_check_revoked') boom(); } },
+  };
+  for (const [name, how] of Object.entries(after)) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), how);
+    assert.deepEqual([m.r.status, m.r.reason, m.github.checks[0].conclusion, m.github.revokes], ['REVOKED', 'full_admission_rejected', 'failure', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.github.checks.length, 1, name);
+  }
+});
+
+test('work admission v2: a withdrawal GitHub does not confirm stays UNCERTAIN', async t => {
+  const none = {
+    'the PATCH did not land': { tamper: github => { github.revokeCheck = async () => { github.revokes++; throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; } },
+    'the PATCH did not land and the checks cannot be read any more': { tamper: github => {
+      const read = github.readChecks.bind(github); let dead = false;
+      github.revokeCheck = async () => { github.revokes++; dead = true; throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
+      github.readChecks = async head => { if (dead) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return read(head); };
+    } },
+  };
+  for (const [name, how] of Object.entries(none)) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), how);
+    assert.deepEqual([m.r.status, m.r.reason, m.github.checks[0].conclusion, m.github.revokes], ['UNCERTAIN', 'NEGATIVE_COMPENSATION_UNCONFIRMED', 'success', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, 'uncertain', name);
+  }
 });
 
 test('control pair v2 (S8): read-only queue wait, then exactly two publications', async t => {
