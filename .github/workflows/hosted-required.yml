@@ -165,7 +165,7 @@ jobs:
         id: select
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node trusted/scripts/ci/ci-required-selection.mjs --check ci-suites --root candidate
+        run: node trusted/scripts/ci/ci-required-selection.mjs --check ci-suites
       - name: Install the application dependencies the selected suites need
         env:
           APP_DEPS: ${{ steps.select.outputs.app_deps }}
