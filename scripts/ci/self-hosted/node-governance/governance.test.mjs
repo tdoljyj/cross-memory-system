@@ -253,11 +253,17 @@ test('a sweep goes to WSL as one bash -c with the script base64-encoded and no d
 // The renderer protects the node's Windows runner root. A fixture under the temp folder is only outside it if the runner
 // root is somewhere else, so the test pins the root instead of inheriting whichever machine it runs on (on clued-ci-home-win-01
 // TEMP is inside the runner root and the sweep correctly refused the fixture).
-function windowsSweepCase(t, runnerRoot) {
+// The protected folder the sweep must refuse is that runner root, a fixture folder that exists with an old file in it: the
+// refusal is only reached for a folder that exists, so a production path (C:\ProgramData\CluedIndependentCI) gave the
+// expected refusal only on a machine that has it, and pointed the delete function at it (task 04f9b91b: on the
+// GitHub-hosted runner it does not exist and the case failed).
+function windowsSweepCase(t) {
+  const runnerRoot = tempDir(t, 'governance-runner-root-');
+  const old = new Date(Date.now() - 40 * 86_400_000);
+  fs.writeFileSync(path.join(runnerRoot, 'protected-old.bin'), 'x'); fs.utimesSync(path.join(runnerRoot, 'protected-old.bin'), old, old);
   const r = render(t, 'home-primary', (d) => { d.hosts.find((h) => h.host_id === 'home-primary').windows_runner.root = runnerRoot; });
   const root = path.join(r.dir, 'cache');
   fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
-  const old = new Date(Date.now() - 40 * 86_400_000);
   for (const f of ['old.bin', 'sub/old2.bin']) { fs.writeFileSync(path.join(root, f), 'x'); fs.utimesSync(path.join(root, f), old, old); }
   fs.writeFileSync(path.join(root, 'new.bin'), 'x');
   const target = path.join(r.dir, 'elsewhere');
@@ -266,16 +272,17 @@ function windowsSweepCase(t, runnerRoot) {
   const dry = run(t, r, ['windows-sweep'], [`$DryRun=$true; $x = Remove-OldFiles ${quote(root)} 30; 'n=' + $x.Files`]);
   assert.equal(at(dry.lines, 'n'), '2');
   assert.ok(fs.existsSync(path.join(root, 'old.bin')));
-  const real = run(t, r, ['windows-sweep'], [`$x = Remove-OldFiles ${quote(root)} 30; 'n=' + $x.Files`, "'p=' + (Remove-OldFiles 'C:\\ProgramData\\CluedIndependentCI' 1).Files"]);
+  const real = run(t, r, ['windows-sweep'], [`$x = Remove-OldFiles ${quote(root)} 30; 'n=' + $x.Files`, `'p=' + (Remove-OldFiles ${quote(runnerRoot)} 1).Files`]);
   assert.equal(at(real.lines, 'n'), '2');
   assert.deepEqual(fs.readdirSync(root).sort(), ['link', 'new.bin', 'sub']);
   assert.ok(fs.existsSync(path.join(target, 'keep.bin')), 'a junction is never entered');
   assert.equal(at(real.lines, 'p'), '0');
-  assert.match(real.log, /refused: a protected folder/);
+  assert.ok(fs.existsSync(path.join(runnerRoot, 'protected-old.bin')), 'nothing inside the protected folder is removed');
+  assert.ok(real.log.includes(`${runnerRoot} refused: a protected folder`), real.log);
 }
 
 test('the Windows sweep removes only old files under its roots, never through a link or inside a protected folder; a dry run removes nothing', { skip }, (t) => {
-  windowsSweepCase(t, 'Z:/no-such-runner-root');
+  windowsSweepCase(t);
 });
 
 test('the Windows sweep gives the same result wherever TEMP is, except that a fixture inside the runner root is refused', { skip }, (t) => {

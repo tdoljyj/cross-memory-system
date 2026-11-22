@@ -70,10 +70,10 @@ function checkout(t, files, { changed = {} } = {}) {
   } };
 }
 
-function run(root, base, options = {}) {
+function run(root, base, { hostEnv = {}, ...options } = {}) {
   const lines = [];
   const calls = [];
-  const env = { ...process.env, RUNNER_TEMP: root, ...(base === undefined ? {} : { CI_BASE_SHA: base }) };
+  const env = { ...process.env, ...hostEnv, RUNNER_TEMP: root, ...(base === undefined ? {} : { CI_BASE_SHA: base }) };
   delete env.NODE_TEST_CONTEXT;
   delete env.GITHUB_STEP_SUMMARY;
   if (base === undefined) delete env.CI_BASE_SHA;
@@ -305,4 +305,20 @@ test('P: a run again without a summary in its report leaves the command red', (t
   assert.equal(runsOf(FLAKY), 2);
   assert.match(out, /整条再跑仍失败\): .*the test report has no summary of the run/);
   assert.doesNotMatch(out, /flaky::/);
+});
+
+// Task 04f9b91b (FABLE-hosted-windows-suites §2.3) with the run again in full: a host that lacks a capability
+// (CLUED_CI_HOST_LACKS) runs neither the first run nor the run again of a [needs:<capability>] test. Here the marked test
+// fails every time it runs, so a run again without the skip pattern fails on it and keeps the command red.
+test('Q: with CLUED_CI_HOST_LACKS, the run again in full carries the same skip pattern as the first run', (t) => {
+  const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [1], 'needs what this host lacks [needs:non-elevated]': true }));
+  const { status, calls, out } = run(root, base, { hostEnv: { CLUED_CI_HOST_LACKS: 'non-elevated' } });
+  assert.equal(calls.length, 2, `the suite run and one run of the same command:\n${out}`);
+  const skips = calls.map((args) => args.filter((arg) => arg.startsWith('--test-skip-pattern')));
+  assert.equal(skips[0].length, 1, `the first run skips the marked test: ${calls[0].join(' ')}`);
+  assert.deepEqual(skips[1], skips[0], `the run again carries the same skip pattern: ${calls[1].join(' ')}`);
+  assert.equal(status, 0, out);
+  assert.equal(runsOf(FLAKY), 2);
+  assert.match(out, /flaky::.*flaky one/);
+  assert.match(out, /run again in full \(timeout \d+ s\): .*--test-skip-pattern/, 'the log shows the run again as it runs');
 });

@@ -3,7 +3,9 @@
 // 所以凡是给命令传比较基线的作业，staging 推送时一律按 stagingBaseFromCheckout 现算（与四个测试作业同一来源）。
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const text = readFileSync(new URL('../../.github/workflows/hosted-required.yml', import.meta.url), 'utf8');
 
@@ -114,4 +116,24 @@ test('hosted-gitleaks 自检的 git 走 Native 垫片的 safeGitArguments，两�
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// 主机缺什么只由托管工作流自己声明（FABLE-hosted-windows-suites §2.3、§2.4）：唯一入口读 CLUED_CI_HOST_LACKS，
+// 不跑带 [needs:<能力>] 的用例。节点工作流若也设了它，节点上这些用例会悄悄不跑，所以 .github 下别处出现即红；
+// 托管的 Windows 套件步骤只声明 non-elevated（作业进程是提权管理员，日志已证实）。S8 删托管工作流时本条一起删。
+test('只有 hosted-required.yml 的 Windows 套件步骤声明 CLUED_CI_HOST_LACKS: non-elevated，.github 下别处出现即红', () => {
+  const root = fileURLToPath(new URL('../../.github/', import.meta.url));
+  const elsewhere = readdirSync(root, { recursive: true, withFileTypes: true }).filter(e => e.isFile())
+    .map(e => path.join(e.parentPath ?? e.path, e.name))
+    .filter(file => path.relative(root, file).replaceAll('\\', '/') !== 'workflows/hosted-required.yml')
+    .filter(file => readFileSync(file, 'utf8').includes('CLUED_CI_HOST_LACKS'))
+    .map(file => path.relative(root, file).replaceAll('\\', '/'));
+  assert.deepEqual(elsewhere, [], '只有托管工作流可以声明主机缺的能力');
+  assert.equal(text.split('CLUED_CI_HOST_LACKS').length, 2, 'hosted-required.yml 只声明一处');
+  const windows = jobs(text).get('ci-suites-windows') ?? '';
+  const at = windows.indexOf('- name: Select and run the suites declared for Windows');
+  assert.ok(at >= 0, 'Windows 套件步骤还在');
+  const step = windows.slice(at).split(/\n {6}- /)[0];
+  assert.match(step, /\n {10}CLUED_CI_HOST_LACKS: non-elevated\n/, '声明在 Windows 套件那一步的 env 里');
+  for (const [id, block] of jobs(text)) if (id !== 'ci-suites-windows') assert.doesNotMatch(block, /CLUED_CI_HOST_LACKS/, id);
 });
