@@ -2314,8 +2314,9 @@ export class ResidentExecutor {
 
   // Train on: the front batches per head, whatever their age (a head keeps its count for good: review R3 MINOR 11; the newest
   // FRONT_RECOVER_RECEIPTS, so a restart never opens a third one for a head; stage 10 counts them itself too, train facts attempt),
-  // and a front outcome no on-mode run has cleared yet (receipt 'train-front-outcome' with no later ok 'train-run' naming its seq
-  // with frontOutcomeCleared: stage 10 reported it, or reporting it became moot; review R3 MINOR 3), at most a day old. Best
+  // and a front outcome no on-mode run has cleared yet (the newest receipt 'train-front-outcome' or 'train-front-ended' with no later
+  // ok 'train-run' naming its seq with frontOutcomeCleared: stage 10 reported it, or reporting it became moot; review R3 MINOR 3), at
+  // most a day old. Best
   // effort: a chain that cannot be read here keeps what is in memory.
   async trainFrontRecover(runs) {
     try {
@@ -2338,7 +2339,9 @@ export class ResidentExecutor {
         const b = e.value.body, at = Date.parse(e.value.at);
         if (Number.isSafeInteger(b?.pr) && HEX40.test(b.headSha ?? '') && Number.isFinite(at)) this.frontBound.set(`${b.pr}:${b.headSha}`, at);
       }
-      const [fo] = await this.receipts.latest(['train-front-outcome'], 1);
+      // R3 batch 2 follow-up §1b: an ended (not failed) front batch is its own receipt type, train-front-ended, which a resident of the
+      // generation before (an automatic roll-back) never reads; the newest of the two is the one owed.
+      const [fo] = await this.receipts.latest(['train-front-outcome', 'train-front-ended'], 1);
       const cleared = runs.some(e => e.type === 'train-run' && e.value.body?.frontOutcomeSeq === fo?.seq && e.value.body?.ok === true && e.value.body?.frontOutcomeCleared !== false);
       // R3 batch 2: a receipt from before `failed` was always a failed report (only deterministic-pr was reported then).
       if (fo && !cleared && Date.parse(fo.value.at) > this.clock() - DAY) this.trainFrontOutcome = { failed: true, ...fo.value.body.frontOutcome, seq: fo.seq, at: Date.parse(fo.value.at) };
@@ -2354,7 +2357,8 @@ export class ResidentExecutor {
     if (!Object.hasOwn(subject ?? {}, 'testSha') || ![1, 2].includes(attempt) || !CODE.test(code ?? '') || typeof failed !== 'boolean') return;
     const frontOutcome = { pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha, attempt, code, failed };
     try {
-      const r = await this.receipt('train-front-outcome', { key, frontOutcome });
+      // failed: 'train-front-outcome', as before (an older resident reads it, and only it, as failed); only ended: 'train-front-ended'.
+      const r = await this.receipt(failed ? 'train-front-outcome' : 'train-front-ended', { key, frontOutcome });
       this.trainFrontOutcome = { ...frontOutcome, seq: r.seq, at: this.clock() };
       this.trainUrgent = true;
     } catch { /* not reported: the slot runs out by its running clock */ }
