@@ -757,6 +757,49 @@ test(`three ways, today: a push-capable package still waits for the head's own r
   assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
 });
 
+// Rereview of R3, item 3 (修复前必红: stage 8's green-time check off, today's rules go green): a front batch that ran no scan (H carries none
+// of this App's) while main's rules require them from this App: stage 8 writes no green and pushes nothing, the batch ends
+// (TRAIN_BATCH_CHANGED); the same on push's rules.
+test('R3 problem A, three ways: H without this App\'s scans -> no green on today\'s rules, no push on push\'s rules', async t => {
+  for (const rules of ['today', 'push']) await t.test(rules, async t => {
+    const { e, b, T } = await opened(t, [910], { rules });
+    const p = await stage8(t, e, b, { trainLanding: PUSH1, scans: false });
+    assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_BATCH_CHANGED', 0], JSON.stringify(p));
+    assert.equal(greens(e, b.headSha).length, 0, 'no merge-slot green on H');
+    assert.equal([...e.gh.world.checks.values()].filter(c => c.name === 'kooyumi-admission-verified').length, 0);
+    assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
+    assert.equal(e.main(), T);
+  });
+});
+
+// Rereview of R3, item 1 (修复前必红): push lands under the rules it read last. landOne reads the train facts (main's rules once), then
+// main's rules again for the route; the scans went back from GitHub Actions to this App between those two reads (they had been pinned to
+// Actions just after this stage 8 chose push). H carries this App's scans of another run (not this front's own, never reusable): the
+// green-time check (any job of this App) passes; before the fix the push check took the first read's appScans ([]) and pushed S with no
+// scan of this front subject. Now it checks against the second read: nothing lands, the batch ends (TRAIN_BATCH_CHANGED).
+test('R3 problem A, push: scans pinned back from Actions to this App between landOne\'s two reads of the rules -> S is not pushed', async t => {
+  const { e, b, T } = await opened(t, [910]);
+  for (const name of ['gitleaks', 'trivy', 'contract-placement']) { const id = e.W.nextCheck++; e.W.checks.set(id, { id, app: { id: APP }, name, head_sha: b.headSha, status: 'completed', conclusion: 'success' }); }
+  const toActions = rules => rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+    required_status_checks: r.parameters.required_status_checks.map(c => (['gitleaks', 'trivy', 'contract-placement'].includes(c.context) ? { ...c, integration_id: ACTIONS } : c)) } }));
+  // phase: 'app' until the route read (its ruleset reads), then one read pinned to Actions (landOne's train facts), then this App again
+  let phase = 'app';
+  const read = e.gh.readBranchRules, readRuleset = e.gh.readRuleset;
+  e.gh.readRuleset = async id => { if (phase === 'app') phase = 'next'; return readRuleset(id); };
+  e.gh.readBranchRules = async () => {
+    const r = await read();
+    if (phase !== 'next') return r;
+    phase = 'back';
+    return { ...r, rules: toActions(r.rules) };
+  };
+  const p = await stage8(t, e, b, { trainLanding: PUSH1, scans: false });
+  assert.equal(phase, 'back', 'landOne read the rules pinned to Actions once');
+  assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_BATCH_CHANGED', 0], JSON.stringify(p));
+  assert.deepEqual(p.missing, ['gitleaks', 'trivy', 'contract-placement']);
+  assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
+  untouched(e, T);
+});
+
 // Fable 11-21 应修 1: a merge-slot green counts only on the current path. #1192's shape on today's rules (the front alone in the queue, its
 // head without ci-suites-windows): stage 8 wrote the current path's pair on H and GitHub cannot merge it. Then the Owner saves C. Before the
 // fix stage 10 read the leftover green as "green, wait for merge" (no rules given on route push, so the merge slot alone was green) and

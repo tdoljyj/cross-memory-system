@@ -257,6 +257,25 @@ test('stage 8, train on: no green the proof does not cover, at once and with zer
   assert.ok(STAGE8_NOT_READY_REASONS.includes(TRAIN_SINGLE_GREEN_NOT_PROVEN), 'the batch parks and waits for the next stage 10');
 });
 
+// Rereview of R3 (修复前必红: the green-time check off, this goes green): main's rules require the three scans from this App, H has none of
+// this App's that passed (or the newest gitleaks failed): stage 8 writes no green, touches nothing and ends the batch (TRAIN_BATCH_CHANGED).
+// The same with the scans pinned to GitHub Actions is a green: the rules read now decide what is required.
+test('R3 problem A, stage 8: no green while a scan main\'s rules require from this App has not passed on H', async t => {
+  const none = fakeGithub(); none.state.headScans = false;
+  const failed = fakeGithub(); failed.checks.push({ id: 60_000, app: { id: 5368905 }, name: 'gitleaks', head_sha: HEAD, status: 'completed', conclusion: 'failure', output: { title: 'gitleaks', summary: '' } });
+  for (const [name, github] of [['no scan on H', none], ['the newest gitleaks failed', failed]]) {
+    const x = await stage8(t, { github });
+    assert.deepEqual([x.r.status, x.r.reason, x.r.sideEffects, x.greenLedger.records.length, x.touches.length], ['BLOCKED', 'TRAIN_BATCH_CHANGED', 0, 0, 0], `${name}: ${JSON.stringify(x.r)}`);
+    assert.equal(x.github.checks.filter(c => c.name === 'kooyumi-merge-slot' || c.name === 'kooyumi-admission-verified').length, 0, name);
+    assert.ok(x.logs.some(([k, d]) => k === 'native_train_app_scans_missing' && d.missing.includes('gitleaks')), name);
+    assert.equal(code8(x.r), 'TRAIN_BATCH_CHANGED', name);
+  }
+  const actions = fakeGithub({ rules: trainRules().map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+    required_status_checks: r.parameters.required_status_checks.map(c => (SCAN_CHECK_NAMES.includes(c.context) ? { ...c, integration_id: 15368 } : c)) } })) });
+  actions.state.headScans = false;
+  assert.equal((await stage8(t, { github: actions })).r.status, 'SETTLED', 'scans pinned to Actions: nothing required from this App');
+});
+
 test('stage 8: S != H only with the train on; strict off without the train is still refused (off and shadow)', async t => {
   for (const trainMode of ['off', 'shadow']) {
     const x = await stage8(t, { trainMode });

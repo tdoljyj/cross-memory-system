@@ -620,8 +620,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(reply?.complete === true, RULESET_UNREADABLE);
       const route = await readLandingRoute({ github, appId: APP_ID, rules: reply.rules });
       if (route.route !== 'push') return blocked(TRAIN_LANDING_RULES_MISSING, { missing: route.missing });
-      // Review of R3, problem A: this App's own scans of the front subject, under the rules read in this run, right before the write.
-      const scansMissing = await frontScansNotDone(job, liveTrain, (await github.readChecks(job.headSha))?.checks, { own: true });
+      // Review of R3, problem A: this App's own scans of the front subject, right before the write, under the rules just read (reply.rules,
+      // the ones the route was read from; liveTrain's read is older: the scans may have been pinned back to this App since, rereview 1).
+      const scansMissing = await frontScansNotDone(job, { ...liveTrain, ruleset: rulesetFacts(reply.rules, APP_ID) },
+        (await github.readChecks(job.headSha))?.checks, { own: true });
       if (scansMissing.length) return blocked(TRAIN_BATCH_CHANGED, { missing: scansMissing });
       // every member: open, its head, into main; every rider: its own complete admission (never frozen, never a guarded publication),
       // the claim the batch recorded, in the merge queue
