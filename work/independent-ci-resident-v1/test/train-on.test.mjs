@@ -14,6 +14,7 @@ import { installedTrainMode } from '../src/engine-windows.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
 import { executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes, HEAD, BASE, SAFE_REFUSAL } from './helpers.mjs';
 import { breakerOf } from '../src/breaker.mjs';
+import { ResidentExecutor } from '../src/executor.mjs';
 import { makeTrainRun, TRAIN_RUN_PARAMS } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
 import { DECISIONS as SOURCE_DECISIONS, NO_ACTIONS, NO_SWEEP, trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
 import { TRAIN_CODES as SOURCE_TRAIN_CODES } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
@@ -1234,4 +1235,92 @@ test('open points §10: a bypass state the resident never heard of is kept as wr
   const wrong = bad.filter(([, bypass]) => JSON.stringify(trainSummary(on({ route: 'push', bypass }))?.landing) !== JSON.stringify({ route: 'push' })).map(([label]) => label);
   assert.deepEqual(wrong, [], 'every other shape dropped, the route stays');
   assert.deepEqual(trainSummary(on({ route: 'push', bypass: { main: 'a'.repeat(32), independent: 'never' } }))?.landing?.bypass?.main, 'a'.repeat(32), '32 characters is short enough');
+});
+
+// ---- bc982192 parked-front, redone on frontFailed: every end of a front batch reaches stage 10 (D:/w/tmp/FABLE-parked-front-vs-frontfailed-20261123.md §1 items 3a-3c) ----
+// R1 (3a): a batch of several whose member moved on before stage 1 is released and its S dropped from the run queue (ADR 0019 review 2):
+// that is its end. The next on-mode stage 10 carries it (frontFailed false), so it counts the batch ended and composes the next one;
+// otherwise train-maintenance.mjs#liveFrontBatch counts it running and the merge slot is renewed up to its hard cap.
+test('parked-front R1: a batch of several dropped before stage 1 (TRAIN_BATCH_MEMBER_MOVED) is reported ended to the next stage 10, frontFailed false', async t => {
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }];
+  const FRONTM = { ...FRONT1, members };
+  const e = withInput(scripted([m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONTM }, 1), m => answer(m, DONE, 0)]));
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine, companion: fakeCompanion({ bundle: { ok: false, code: 'TRAIN_BATCH_MEMBER_MOVED' } }) });
+  await f.exec.tick(); // opens the batch of two
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'TRAIN_BATCH_MEMBER_MOVED'], JSON.stringify(r));
+  assert.equal(f.queue.row(884).current, null, 'the S is dropped');
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = e.inputs.at(-1).input;
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
+    [884, HEAD, S, 1, 'TRAIN_BATCH_MEMBER_MOVED', false], JSON.stringify(carried));
+  assert.equal((await ofType(f.receipts, 'train-front-ended')).length, 1, 'reported once');
+});
+
+// R2 (3b): a front batch an earlier boot left open before stage 1 is closed at the restart (DESIGN §71, restartedUnpublished), before
+// trainRecover. The front book (frontKeys, frontBatches) is read first, so the batch keeps its front attempt: the head's second front
+// batch gets no attempt 2 (never a third), and its end reaches the first on-mode stage 10 of the new process (frontFailed false).
+const HANG = () => new Promise(() => {});
+test('parked-front R2: the head\'s second front batch interrupted by a reboot closes without attempt 2, its end reported to the new process\'s stage 10', async t => {
+  const FRONT2 = { ...FRONT1, attempt: 2 };
+  const e = scripted([m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT2 }, 1), m => answer(m, DONE, 0)]);
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens the front batch (attempt 2 of the head)
+  f.advance(MIN);
+  let died;
+  const reached = new Promise(resolve => { died = resolve; });
+  f.companion.buildBundle = () => { died(); return HANG(); };
+  f.exec.tick(); // dies in the bundle: the entry is left RESERVED
+  await reached;
+  f.exec.sleep = HANG;
+  const g = withInput({ inputs: [], engine: fakeEngine({ train: m => answer(m, DONE, 0) }) });
+  const exec = new ResidentExecutor({ ...f.ports, engine: g.engine, companion: fakeCompanion({}, f.clock), lockFromEarlierBoot: true });
+  f.advance(10 * MIN);
+  const r = await exec.tick();
+  assert.notEqual(r.state, 'HALTED', JSON.stringify(r));
+  const terminal = (await ofType(f.receipts, 'batch-terminal')).at(-1);
+  assert.deepEqual([terminal?.outcome, terminal?.failureCode], ['FAILED_CLEAN', 'EXECUTOR_RESTARTED_UNPUBLISHED'], JSON.stringify(terminal));
+  assert.deepEqual(await ofType(f.receipts, 'attempt2-scheduled'), [], 'its front attempt was 2: no third front batch of the head');
+  f.advance(10 * MIN);
+  await exec.tick();
+  const carried = g.inputs.find(x => x.input.frontPr !== null)?.input ?? null;
+  assert.ok(carried, `a stage 10 of the new process carries the end: ${JSON.stringify(g.inputs.map(x => x.input.frontPr))}`);
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
+    [884, HEAD, S, 2, 'EXECUTOR_RESTARTED_UNPUBLISHED', false], JSON.stringify(carried));
+});
+
+// 3c: stage 10 counted a front batch and touched running before enqueueFront refused it; the batch never runs, so its end is owed to
+// the next stage 10 (frontFailed false) instead of a TRAIN_FRONT_BATCH_RUNNING until the running clock runs out. Not urgent (§1 item 3d):
+// the cadence's run carries it. A refusal for a busy row is kept for frontRetry and not reported.
+test('parked-front 3c: a front batch refused as TRAIN_FRONT_ATTEMPTS_USED is reported ended to the next stage 10, frontFailed false', async t => {
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, DONE, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick();
+  f.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: S, attempt: 1 }, { testSha: '8'.repeat(40), attempt: 2 }]);
+  const third = { ...FRONT1, testSha: '9'.repeat(40), attempt: 2 };
+  assert.equal(await f.exec.enqueueFront(third), null);
+  assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'TRAIN_FRONT_ATTEMPTS_USED');
+  assert.equal(f.exec.trainUrgent, false, 'not urgent');
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = e.inputs.at(-1).input;
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
+    [884, HEAD, '9'.repeat(40), 2, 'TRAIN_FRONT_ATTEMPTS_USED', false], JSON.stringify(carried));
+});
+
+test('parked-front 3c: a front batch refused because the queue is full (QUEUE_DEPTH_EXCEEDED) is reported ended to the next stage 10, frontFailed false', async t => {
+  const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, DONE, 0) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick();
+  f.exec.policy.limits.queueDepth = 1;
+  assert.equal(f.queue.offer({ pr: 990, headSha: '2'.repeat(40), baseSha: BASE }, f.clock(), { depth: 1, cooldownMs: 0 }).action, 'new', 'the queue is full now');
+  assert.equal(await f.exec.enqueueFront(FRONT1), null);
+  assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'QUEUE_DEPTH_EXCEEDED');
+  f.advance(10 * MIN);
+  await f.exec.tick();
+  const carried = e.inputs.at(-1).input;
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
+    [884, HEAD, S, 1, 'QUEUE_DEPTH_EXCEEDED', false], JSON.stringify(carried));
 });
