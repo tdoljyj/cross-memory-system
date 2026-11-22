@@ -143,7 +143,7 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
   };
   engine.runStage = async (batch, stage) => {
     const subject = subjects.get(batch.key);
-    stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha ?? null, stage: stage.number, at: at.clock() });
+    stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha ?? null, stage: stage.number, at: at.clock(), attempt: subject.attempt });
     engine.calls.push(['stage', stage.number]);
     // A slow front batch (generation 22, PR #1029): its stages 2-7 take frontStageMs each on the simulated clock.
     if (subject.testSha && stage.number >= 2 && stage.number <= 7) at.advance(frontStageMs);
@@ -1120,14 +1120,15 @@ for (const bad of [['gitleaks', 'nope'], ['trivy', 'trivy'], 'gitleaks', ['gitle
     assert.equal((await f.receipts.latest(['scans-not-app-required'], 10)).length, 0);
   });
 
-/// The scene of problem A, up to the end of the first front batch. push: push landing (ADR 0018), else github-merge (stage 8 writes the
+// The scene of problem A, up to the end of the first front batch. push: push landing (ADR 0018), else github-merge (stage 8 writes the
 // merge-slot green). flips: how many front batches find the rules moved back to this App after their stage 1 (each one plans on stage
 // 10's read of Actions and its stage 8 then refuses: TRAIN_BATCH_CHANGED); the rules are on Actions again whenever stage 10 opens a batch
-// that is to flip. engineOptions: more engineFor options. Returns the scene with a log of Native's touches.
-async function problemA(t, { push = true, flips = 1, engineOptions = {} } = {}) {
+// that is to flip; 0: the rules are on this App from the start and never move. until(scene): when the first part ends (default: S landed or
+// a batch ended TRAIN_BATCH_CHANGED). engineOptions: more engineFor options. Returns the scene with a log of Native's touches.
+async function problemA(t, { push = true, flips = 1, until = null, engineOptions = {} } = {}) {
   const MAIN_RS = 24182890, FF_RS = 27500001;
   const APP_RULES = ACTIONS_SCAN_RULES.map(c => ({ ...c, integration_id: 5368905 }));
-  const scene = { kind: 'actions', pushes: [], touches: [], flipped: 0 };
+  const scene = { kind: flips === 0 ? 'app' : 'actions', pushes: [], touches: [], flipped: 0 };
   let e = null;
   const setKind = k => { scene.kind = k; if (!push) e.gh.world.ruleChecks = (k === 'actions' ? ACTIONS_SCAN_RULES : APP_RULES).map(c => ({ ...c })); };
   scene.ownScans = () => {
@@ -1137,7 +1138,7 @@ async function problemA(t, { push = true, flips = 1, engineOptions = {} } = {}) 
   };
   const landing = push ? { async fastForwardMain(s) { scene.pushes.push({ sha: s, scans: scene.ownScans(), kind: scene.kind }); e.gh.world.main = s; return { status: 200, sha: s }; } } : null;
   const ended = engine => (engine.publishedAll ?? []).filter(p => p.reason === 'TRAIN_BATCH_CHANGED').length;
-  const arrived = await permanentArrival(t, { actionsScans: true, engineOptions: { ...(landing ? { landing } : {}), passReason: true, ranScansOnly: true, ...engineOptions }, prepare: (world, engine) => {
+  const arrived = await permanentArrival(t, { actionsScans: flips > 0, engineOptions: { ...(landing ? { landing } : {}), passReason: true, ranScansOnly: true, ...engineOptions }, prepare: (world, engine) => {
     e = world;
     if (push) {
       e.gh.readBranchRules = async () => ({ complete: true, branch: 'main', rules: [
@@ -1166,7 +1167,8 @@ async function problemA(t, { push = true, flips = 1, engineOptions = {} } = {}) 
     };
   } });
   const { f, engine } = arrived;
-  for (let i = 0; i <= 60 && scene.pushes.length === 0 && !ended(engine); i++) { await f.exec.tick(); if (scene.pushes.length === 0 && !ended(engine)) f.advance(MIN); }
+  const first = () => (until ? until(scene) : scene.pushes.length > 0 || ended(engine) > 0);
+  for (let i = 0; i <= 60 && !first(); i++) { await f.exec.tick(); if (!first()) f.advance(MIN); }
   Object.assign(scene, arrived, { ended: () => ended(engine), landed: () => (push ? scene.pushes.length > 0 : !!slotGreen(e, H)) });
   return scene;
 }
@@ -1288,6 +1290,75 @@ test('R3 open item 1 F1: a front batch that ended clean at stage 8 is reported e
   assert.deepEqual([input.frontPr, input.frontHeadSha, input.frontTestSha, input.frontAttempt, input.frontCode, input.frontFailed],
     [910, H, S, 1, 'TRAIN_BATCH_CHANGED', false], JSON.stringify(input));
   assert.deepEqual(scene.touches.filter(x => x.ciState === 'failed'), [], 'nothing failed is reported on the slot');
+});
+
+// FABLE-r3-batch2-gate G1, G2, F4: the executed-heads gate lets stage 10's front number 2 of the same S through only after front number 1
+// ended clean at stage 8 with no other record of (H, S) (executor.mjs#precheck). A stage's clean ending of the front's own: zero side effects.
+const cleanEnd = code => ({ ok: false, code, proof: PROOF, outcome: { status: 'BLOCKED', reason: code, sideEffects: 0, mayHavePublished: false, safeToRerun: false } });
+const scanChecksOnH = e => [...e.gh.world.checks.values()].filter(c => c.head_sha === H && c.app.id === 5368905 && SCAN_CHECK_NAMES.includes(c.name) && c.external_id).length;
+// G1's scene: the rules are on this App throughout; front number 1 takes K(H, S, gitleaks) at stage 3 and that stage then ends clean
+// (PUBLICATION_BLOCKED). A new Native tenure; stage 10 opens front number 2 of the same S; it reaches the executor's gate.
+async function g1Scene(t) {
+  const ends = [];
+  const frontEnd = (subject, stage) => (subject.attempt === 1 && stage === 3 ? (ends.push(stage), cleanEnd('PUBLICATION_BLOCKED')) : null);
+  const scene = await problemA(t, { flips: 0, until: () => ends.length > 0, engineOptions: { roleKeys: true, frontEnd } });
+  assert.deepEqual(frontStages(scene.engine), [1, 2, 3], await why(scene));
+  newTenure(scene);
+  await untilScene(scene, async () => (await ignoredOf(scene.f)).length > 0);
+  return scene;
+}
+
+// G1 (防回归, green before and after the fix; without `stage === 8` in the gate it turns red: front number 2 would run stage 3 into
+// ROLE_ALREADY_PUBLISHED_ON_HEAD, an UNKNOWN HALT).
+test('R3 batch 2 G1: front number 1 took K at stage 3 and failed clean -> front number 2 is ignored by the gate, no HALT, no ROLE_ALREADY_PUBLISHED_ON_HEAD', async t => {
+  const scene = await g1Scene(t);
+  const { f, engine } = scene;
+  const second = (await enqueuedOf(f)).find(b => b.attempt === 2);
+  assert.ok(second, `front number 2 was never opened: ${await why(scene)}`);
+  assert.deepEqual((await ignoredOf(f)).map(b => [b.key, b.failureCode]), [[second.key, 'HEAD_ALREADY_PUBLISHED_NO_RETRY']], await why(scene));
+  assert.ok(!engine.stages.some(s => s.testSha === S && s.attempt === 2), 'front number 2 ran no stage');
+  assert.equal(await f.ledger.halted(), null);
+  const codes = (await f.receipts.latest(['batch-terminal'], 50)).map(r => r.value.body.failureCode);
+  assert.ok(!codes.includes('ROLE_ALREADY_PUBLISHED_ON_HEAD'), JSON.stringify(codes));
+});
+
+// F4 (修复前必红): G1 continued: the ignored front number 2 is reported ended to the next stage 10 (frontFailed false), which says
+// TRAIN_FRONT_ATTEMPTS_USED, not TRAIN_FRONT_BATCH_RUNNING.
+test('R3 batch 2 F4: front number 2 ignored by the gate -> the next stage 10 says TRAIN_FRONT_ATTEMPTS_USED, not TRAIN_FRONT_BATCH_RUNNING', async t => {
+  const scene = await g1Scene(t);
+  const { f, engine } = scene;
+  const runsBefore = engine.trainRuns.length;
+  for (let i = 0; i < 15 && engine.trainRuns.length === runsBefore; i++) { await f.exec.tick(); if (engine.trainRuns.length === runsBefore) f.advance(MIN); }
+  assert.ok(engine.trainRuns.length > runsBefore, 'a stage 10 ran');
+  assert.equal(engine.trainRuns[runsBefore].decision, 'TRAIN_FRONT_ATTEMPTS_USED', `${JSON.stringify(engine.trainInputs[runsBefore])}; ${await why(scene)}`);
+  const input = engine.trainInputs[runsBefore];
+  assert.deepEqual([input.frontPr, input.frontAttempt, input.frontCode, input.frontFailed], [910, 2, 'HEAD_ALREADY_PUBLISHED_NO_RETRY', false]);
+  assert.deepEqual(scene.touches.filter(x => x.ciState === 'failed'), [], 'nothing failed is reported on the slot');
+});
+
+// G2 (防回归): front number 1 ran its three scans and ended clean at stage 8. Front number 2 passes the gate; its stage 1 reads back this
+// front's own scans on H (published-on-github-v2.mjs) and ends HEAD_PUBLISHED_ON_GITHUB (clean-final): no second set of scans, no HALT.
+test('R3 batch 2 G2: front number 1 scanned and ended clean at stage 8 -> front number 2 passes the gate and ends at stage 1 (HEAD_PUBLISHED_ON_GITHUB)', async t => {
+  const ends = [];
+  const frontEnd = (subject, stage) => (subject.attempt === 1 && stage === 8 ? (ends.push(stage), cleanEnd('TRAIN_BATCH_CHANGED')) : null);
+  const scene = await problemA(t, { flips: 0, until: () => ends.length > 0, engineOptions: { readBack: true, roleKeys: true, frontEnd } });
+  const { e, f, engine } = scene;
+  assert.deepEqual(frontStages(engine), [1, 2, 3, 4, 5, 6, 7, 8], await why(scene));
+  const scans = scanChecksOnH(e);
+  assert.equal(scans, 3, 'front number 1 published its three scans');
+  newTenure(scene);
+  let second = null;
+  await untilScene(scene, async () => {
+    second ??= (await enqueuedOf(f)).find(b => b.attempt === 2) ?? null;
+    return second !== null && (await f.ledger.state(second.key)).state === 'TERMINAL';
+  });
+  assert.ok(second, `front number 2 was never opened: ${await why(scene)}`);
+  const ended = await f.ledger.state(second.key);
+  assert.deepEqual([ended.state, ended.outcome, ended.terminal?.facts?.failureCode, ended.terminal?.facts?.stage], ['TERMINAL', 'FAILED_CLEAN', 'HEAD_PUBLISHED_ON_GITHUB', 1], await why(scene));
+  assert.deepEqual(engine.stages.filter(s => s.testSha === S && s.attempt === 2).map(s => s.stage), [1]);
+  assert.deepEqual(await ignoredOf(f), []);
+  assert.equal(scanChecksOnH(e), scans, 'no second set of scans');
+  assert.equal(await f.ledger.halted(), null);
 });
 
 // Gate mode retains an unbound PR that has no exact holder authorization: body prose or a claim label cannot discover it.
