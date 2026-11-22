@@ -1358,15 +1358,15 @@ test('R3 batch 2 F4: front number 2 ignored by the gate -> the next stage 10 say
 // TRAIN_FRONT_BATCH_RUNNING until the running clock ran out (up to 90 minutes).
 const abandonedAt = () => ({ ok: false, code: 'BRIDGE_STAGE_STOPPED_PUMP_LOST', proof: PROOF, outcome: null,
   bridge: { pumpCode: 'RELAY_REFUSED_NO_RETRY', stopRequestId: '0a1b2c3d-0000-4000-8000-000000000001', stopCode: 'STOP_SENT', stageCode: 'STAGE_OUTCOME_MISSING', pumpQuiet: true } });
-test('R3 batch 2 F5: front number 1 abandoned at stage 4 (scanner) is reported ended to the next stage 10 (frontFailed false), not TRAIN_FRONT_BATCH_RUNNING', async t => {
+for (const at of [4, 6]) test(`R3 batch 2 F5: front number 1 abandoned at stage ${at} (scanner) is reported ended to the next stage 10 (frontFailed false), not TRAIN_FRONT_BATCH_RUNNING`, async t => {
   const ends = [];
-  const frontEnd = (subject, stage) => (subject.attempt === 1 && stage === 4 ? (ends.push(stage), abandonedAt()) : null);
+  const frontEnd = (subject, stage) => (subject.attempt === 1 && stage === at ? (ends.push(stage), abandonedAt()) : null);
   const scene = await problemA(t, { flips: 0, until: () => ends.length > 0, engineOptions: { roleKeys: true, frontEnd } });
   const { f, engine } = scene;
   const [first] = await enqueuedOf(f);
   await untilScene(scene, async () => (await f.ledger.state(first.key)).state === 'TERMINAL');
   const end = await f.ledger.state(first.key);
-  assert.deepEqual([end.outcome, end.terminal?.facts?.failureCode, end.terminal?.facts?.stage, end.terminal?.facts?.class], ['FAILED_CLEAN', 'BRIDGE_ABANDONED_UNPUBLISHED', 4, 'environment'], await why(scene));
+  assert.deepEqual([end.outcome, end.terminal?.facts?.failureCode, end.terminal?.facts?.stage, end.terminal?.facts?.class], ['FAILED_CLEAN', 'BRIDGE_ABANDONED_UNPUBLISHED', at, 'environment'], await why(scene));
   assert.equal(await f.ledger.halted(), null);
   const runsBefore = engine.trainRuns.length;
   for (let i = 0; i < 15 && engine.trainRuns.length === runsBefore; i++) { await f.exec.tick(); if (engine.trainRuns.length === runsBefore) f.advance(MIN); }
@@ -1376,6 +1376,69 @@ test('R3 batch 2 F5: front number 1 abandoned at stage 4 (scanner) is reported e
   assert.deepEqual([input.frontPr, input.frontHeadSha, input.frontTestSha, input.frontAttempt, input.frontCode, input.frontFailed],
     [910, H, S, 1, 'BRIDGE_ABANDONED_UNPUBLISHED', false], JSON.stringify(input));
   assert.deepEqual(scene.touches.filter(x => x.ciState === 'failed'), [], 'nothing failed is reported on the slot');
+});
+
+// FABLE-r3-batch2-followup §2b (task 04f9b91b, 修复前必红): front number 1 opened by stage 10 fails clean at stage 2 for a reason that is
+// not the PR's (REMOTE_REFS_CHANGED_SINCE_BUNDLE, transient): the executor schedules the head's one automatic attempt 2 (its front number
+// 2). That attempt 2 then ends for good: it fails clean at stage 2 again ('ends'), or the precheck ignores it ('ignored'). Either way the
+// next stage 10 is told (frontAttempt 2, frontFailed false) and does not say TRAIN_FRONT_BATCH_RUNNING; within two stage-10 rounds it says
+// TRAIN_FRONT_ATTEMPTS_USED; nothing failed is reported on the slot; no clock is pushed to the running clock's end (one-minute ticks only).
+// Before the fix stage 10's newest record of the head was its own front number 1, so the report of number 2 never matched it (an ignored
+// attempt 2 was not reported at all) and stage 10 said TRAIN_FRONT_BATCH_RUNNING until the running clock ran out.
+// 'main-moved': as 'ends', then main moves on before the next stage 10, which opens front number 2 on the new test merge S3; the executor
+// refuses it (the head's two front batches are used) and reports that refused batch ended. Before the fix stage 10's newest record was that
+// refused (S3, 2) and the report named S: stage 10 said TRAIN_FRONT_BATCH_RUNNING.
+const ENDS = { ends: 'ends clean as front number 2', ignored: 'is ignored by the precheck', 'main-moved': 'ends, then main moves on before stage 10 opens front number 2' };
+for (const end of Object.keys(ENDS)) test(`04f9b91b: the automatic attempt 2 of a front batch ${ENDS[end]} -> the next stage 10 says it ended, then TRAIN_FRONT_ATTEMPTS_USED`, async t => {
+  const fails = [];
+  const frontEnd = (subject, stage) => (stage === 2 && (subject.attempt === 1 || end !== 'ignored') ? (fails.push(subject.attempt), cleanEnd('REMOTE_REFS_CHANGED_SINCE_BUNDLE')) : null);
+  const scene = await problemA(t, { flips: 0, until: () => fails.length > 0, engineOptions: { roleKeys: true, frontEnd } });
+  const { f, engine } = scene;
+  if (end === 'ignored') {
+    const precheck = f.exec.precheck.bind(f.exec);
+    f.exec.precheck = async (key, hk, subject, o = {}) => (o.origin === 'attempt2' ? { ignore: 'HEAD_ALREADY_PUBLISHED_NO_RETRY' } : precheck(key, hk, subject, o));
+  }
+  const [first] = await enqueuedOf(f);
+  await untilScene(scene, async () => (await f.receipts.latest(['attempt2-scheduled'], 5)).some(r => r.value.body.key === first.key));
+  const [scheduled] = (await f.receipts.latest(['attempt2-scheduled'], 5)).map(r => r.value.body).filter(b => b.key === first.key);
+  assert.ok(scheduled, `no automatic attempt 2: ${await why(scene)}`);
+  const key2 = scheduled.attempt2;
+  const done = end !== 'ignored' ? async () => (await f.ledger.state(key2)).state === 'TERMINAL'
+    : async () => (await f.receipts.latest(['attempt2-ignored'], 5)).some(r => r.value.body.key === key2);
+  await untilScene(scene, done, 30);
+  assert.ok(await done(), `the automatic attempt 2 did not end: ${await why(scene)}`);
+  if (end !== 'ignored') {
+    const s2 = await f.ledger.state(key2);
+    assert.deepEqual([s2.outcome, s2.terminal?.facts?.failureCode, s2.terminal?.facts?.stage], ['FAILED_CLEAN', 'REMOTE_REFS_CHANGED_SINCE_BUNDLE', 2], await why(scene));
+  }
+  assert.equal(await f.ledger.halted(), null);
+  const T2 = sha(0x7d7d), S3 = sha(0x7e7e);
+  if (end === 'main-moved') {
+    scene.e.gh.world.commits.set(S3, { sha: S3, tree: sha(0x7f7f), parents: [T2, H] });
+    scene.e.gh.world.main = T2;
+    scene.e.gh.world.pulls.get(910).mergeCommitSha = S3;
+  }
+  const runsBefore = engine.trainRuns.length;
+  for (let i = 0; i < 15 && engine.trainRuns.length === runsBefore; i++) { await f.exec.tick(); if (engine.trainRuns.length === runsBefore) f.advance(MIN); }
+  assert.ok(engine.trainRuns.length > runsBefore, 'a stage 10 ran');
+  const input = engine.trainInputs[runsBefore];
+  assert.deepEqual([input.frontPr, input.frontHeadSha, input.frontTestSha, input.frontAttempt, input.frontCode, input.frontFailed],
+    [910, H, S, 2, end !== 'ignored' ? 'REMOTE_REFS_CHANGED_SINCE_BUNDLE' : 'HEAD_ALREADY_PUBLISHED_NO_RETRY', false], JSON.stringify(input));
+  assert.notEqual(engine.trainRuns[runsBefore].decision, 'TRAIN_FRONT_BATCH_RUNNING', `${JSON.stringify(input)}; ${await why(scene)}`);
+  // Two stage-10 rounds at most, one-minute ticks: TRAIN_FRONT_ATTEMPTS_USED, never TRAIN_FRONT_BATCH_RUNNING in between.
+  for (let i = 0; i < 15 && engine.trainRuns.length < runsBefore + 2 && !engine.trainRuns.slice(runsBefore).some(r => r.decision === 'TRAIN_FRONT_ATTEMPTS_USED'); i++) {
+    await f.exec.tick(); f.advance(MIN);
+  }
+  const after = engine.trainRuns.slice(runsBefore, runsBefore + 2).map(r => r.decision);
+  assert.ok(after.includes('TRAIN_FRONT_ATTEMPTS_USED'), `${JSON.stringify(after)}; ${await why(scene)}`);
+  assert.ok(!after.includes('TRAIN_FRONT_BATCH_RUNNING'), JSON.stringify(after));
+  assert.deepEqual(scene.touches.filter(x => x.ciState === 'failed'), [], 'nothing failed is reported on the slot');
+  assert.deepEqual(fails, end !== 'ignored' ? [1, 2] : [1], 'no third front batch ran');
+  if (end === 'main-moved') {
+    const refused = (await f.receipts.latest(['train-front-refused'], 5)).map(r => r.value.body);
+    assert.deepEqual(refused.map(b => [b.testSha, b.attempt, b.failureCode]), [[S3, 2, 'TRAIN_FRONT_ATTEMPTS_USED']], `${JSON.stringify(after)}; ${await why(scene)}`);
+  }
+  assert.equal(await f.ledger.halted(), null);
 });
 
 // G2 (防回归): front number 1 ran its three scans and ended clean at stage 8. Front number 2 passes the gate; its stage 1 reads back this
