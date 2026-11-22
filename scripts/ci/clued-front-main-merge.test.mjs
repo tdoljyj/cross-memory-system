@@ -722,6 +722,26 @@ test('hosted copy: with the scaffold ruleset in force only the pull request abou
   const r2 = await refused.run({}, SCAFFOLD);
   assert.equal(r2.result, 'merged'); assert.equal(r2.comment, 'not posted (HTTP 403)');
   assert.match(renderSummary(r2), /待补授权（PR 评论 not posted \(HTTP 403\)）/);
+  // A network failure while posting the comment, or while minting its token, is only reported too: a helper that fails
+  // does nothing; it never turns the merge run red.
+  const offline = rulesOf(scene0823(), 'scaffold'), fetch3 = offline.fetchImpl;
+  offline.fetchImpl = async (url, init = {}) => {
+    if (String(url).endsWith('/issues/1156/comments')) throw new TypeError('fetch failed');
+    return fetch3(url, init);
+  };
+  const r3 = await offline.run({}, SCAFFOLD);
+  assert.equal(r3.result, 'merged', JSON.stringify(r3)); assert.equal(r3.pending_authorization, true);
+  assert.equal(r3.comment, 'not posted (fetch failed)');
+  assert.match(renderSummary(r3), /待补授权（PR 评论 not posted \(fetch failed\)）/);
+  const tokenless = rulesOf(scene0823(), 'scaffold'), fetch4 = tokenless.fetchImpl;
+  let merged = false;
+  tokenless.fetchImpl = async (url, init = {}) => {
+    if ((init.method ?? 'GET') === 'PUT' && /\/update-branch$/.test(String(url))) merged = true;
+    if (merged && /\/installation$/.test(String(url))) throw new TypeError('fetch failed');
+    return fetch4(url, init);
+  };
+  const r4 = await tokenless.run({}, SCAFFOLD);
+  assert.equal(r4.result, 'merged', JSON.stringify(r4)); assert.equal(r4.comment, 'not posted (fetch failed)');
 });
 
 test('hosted copy: the admission that counts is the one the rules in force pin', async () => {

@@ -339,12 +339,12 @@ HOSTED_SCAFFOLD_JOBS = {
         "control_sha256": "623f3e7945af830898e3a730d209d020c6b53f316410d401542ea1ec837155e2",
         "jobs": {
             "clued-cloud-tests": "160df4a5660ec26b48d406507aab5f42d5153597bba28fda35ce7e640ed66a09",
-            "ci-suites": "92989042cc78d3d77e5b8859f4aa0d19951dec16e708e4a499ef7043cf5801a8",
+            "ci-suites": "5bcfffd67e214013b9edff9ab2636709ac52d38d67d68ca48531bea009865476",
             "migration-verify": "b5c25479376be9eb07294e380043fdaa0c89df3d156d9a233ca091467172b889",
             "ci-suites-windows": "e9b30277c4bb8ccfdd89bc6e98aed43f180f3603182f1a309155177932a4e7ce",
             "gitleaks": "34fb7757358cb9d40a8fb3fbd7158a62d573763deed911baaeec64236ee47f39",
             "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
-            "contract-placement": "09bb827cb7f40aba3a64afde726c9740382ca22cca78b7f775e00cd496b25882"
+            "contract-placement": "a07add60bcd9ec6caee62f0e86213c48ce3d16700894dc71e38b75a9493334df"
         }
     },
     "clued-front-main-merge-hosted.yml": {

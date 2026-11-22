@@ -39,3 +39,10 @@ test('传比较基线的作业都先按 stagingBaseFromCheckout 算出 staging �
   }
   assert.ok(users.includes('contract-placement'), `contract-placement 应传基线：${users.join(',')}`);
 });
+
+// 影子对比要比的是同一选择：托管的 --check 与自托管 clued-required-tests.yml 逐字同参数（--check 带 --root 会多选候选自加的套件）。
+test('选择套件的 --check 参数与自托管一致', () => {
+  const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
+  const checks = source => [...source.matchAll(/--check [^"'`;|&\n]*/g)].map(m => m[0].trim()).sort();
+  assert.deepEqual(checks(text), checks(selfHosted));
+});

@@ -294,14 +294,23 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
 }
 
 // Until 6b809301 is on the nodes (Decision 85effa31) a head the hosted copy made waits for DESK's authorize_head: one line on the
-// pull request says so. A comment that cannot be posted is only reported; the merge stands either way.
+// pull request says so. A comment that cannot be posted (refused, or the network failed) is only reported; the merge
+// stands either way and the run is not failed by this helper.
 async function notePendingAuthorization({ env, fetchImpl, result, now }) {
   if (!SHA.test(result.merged_head_sha ?? '') || !result.pr) return result;
-  const { token, reason } = await frontMergeToken({ env, fetchImpl, now });
-  if (!token) return { ...result, pending_authorization: true, comment: `not posted (${reason})` };
-  const posted = await appRequest(fetchImpl, env, 'POST', `/repos/${env.GITHUB_REPOSITORY}/issues/${result.pr}/comments`, token,
-    { body: `${pendingAuthorizationLine(result.merged_head_sha)}\n\nclued-front-main-merge-hosted: main merged into ${String(result.head_sha).slice(0, 12)}.` });
-  return { ...result, pending_authorization: true, comment: posted.status === 201 ? 'posted' : `not posted (HTTP ${posted.status})` };
+  let comment;
+  try {
+    const { token, reason } = await frontMergeToken({ env, fetchImpl, now });
+    if (!token) comment = `not posted (${reason})`;
+    else {
+      const posted = await appRequest(fetchImpl, env, 'POST', `/repos/${env.GITHUB_REPOSITORY}/issues/${result.pr}/comments`, token,
+        { body: `${pendingAuthorizationLine(result.merged_head_sha)}\n\nclued-front-main-merge-hosted: main merged into ${String(result.head_sha).slice(0, 12)}.` });
+      comment = posted.status === 201 ? 'posted' : `not posted (HTTP ${posted.status})`;
+    }
+  } catch (error) {
+    comment = `not posted (${error?.message ?? String(error)})`;
+  }
+  return { ...result, pending_authorization: true, comment };
 }
 
 const WITHOUT_INPUT = input => !String(input?.pr ?? '').trim() && !String(input?.head ?? '').trim();
