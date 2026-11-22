@@ -7,6 +7,7 @@ import { GreenLedger } from '../src/independent-control-checks-v2/green-ledger.m
 import { TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun } from '../src/resident-v2/train-run.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
 import { resolvePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { scanExternalIdV2 } from '../src/job-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, SLOT = 'kooyumi-merge-slot';
 const sha = n => n.toString(16).padStart(40, '0');
@@ -80,6 +81,15 @@ function fakeGithub(e, w) {
   };
   gh.green = (id, head, o = {}) => world.checks.set(id, { id, app: { id: o.app ?? APP }, name: o.name ?? SLOT, head_sha: head, status: 'completed', conclusion: o.conclusion ?? 'success',
     output: { title: 'Complete Native control', summary: o.summary ?? summaryOf(world.main) } });
+  // A front batch's stages 2-7 passed (review of R3, problem A): this App's successful scans on H under the batch's own job ids
+  // (jobs: batchJobsV2 of the front subject), each once; stage 8 lands S only with them.
+  gh.frontScans = jobs => { for (const role of ['gitleaks', 'trivy', 'contract-placement']) {
+    const job = jobs[role], external_id = scanExternalIdV2(job);
+    if ([...world.checks.values()].some(c => c.external_id === external_id)) continue;
+    const id = Math.max(900000, ...world.checks.keys()) + 1;
+    world.checks.set(id, { id, app: { id: APP }, name: role, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id,
+      output: { title: role, summary: `tested ${job.testSha}` } });
+  } };
   gh.pull = (number, o = {}) => world.pulls.set(number, { number, state: 'open', updated: iso(NOW - 3_600_000), head: sha(0x8000 + number), ...o });
   return gh;
 }

@@ -5985,7 +5985,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 **用途**：R4 开关 A 的前置。规则集把三项扫描（`gitleaks`、`trivy`、`contract-placement`）改为要 GitHub Actions（integration 15368）的检查之前，常驻层要先能认这种钉法。代码只认规则集，不自带开关：规则集不改，行为和以前完全一样。strict、控制对、strict 关时锁 PAUSE（§65.3、ADR 0007 第 4 条）都不变。
 
 1. **扫描可钉 Actions，第 8 段不等自己的扫描**：核过，没有现成的策略开关。`localPlan` 总是跑全部重扫描，只有 §75 的同树复用例外；`train.enabled`、`nonFrontRuns` 都管不到这一点。改法如下：
-   - 规则读取（`train-rules.mjs#rulesetFacts`，以及常驻 `ruleset-backstop.mjs#rulesFacts`，两边同一条规则，测试核两边对同一组规则判法一致）允许三项扫描钉在本 App 或 Actions 上；`kooyumi-work-admission` 和控制对仍只能钉本 App；六项仍都必须在。否则开关 A 之后 companion 每天报一次 `RULESET_NOT_PINNED`，第 8 段也读不进规则；
+   - 规则读取（`train-rules.mjs#rulesetFacts`，以及常驻 `ruleset-backstop.mjs#rulesFacts`，两边同一条规则，测试核两边对同一组规则判法一致）允许三项扫描钉在本 App 或 Actions 上；`kooyumi-work-admission` 和控制对仍只能钉本 App；六项仍都必须在。否则开关 A 之后 companion 每天报一次 `RULESET_NOT_PINNED`，第 8 段的 github-merge 落地也读不进规则（推送落地见第 4 条）；
    - 第 10 段把“仍要本 App 发的扫描”写进事实 `rules.appScans`（按 `RULE_SCAN_NAMES` 的顺序；同一扫描被两套规则分别钉本 App 和 Actions 时，本 App 仍要发）；
    - `executor.mjs#localPlan` 按 `trainLast.appScans` 不再跑 GitHub 不要本 App 出的扫描，并写回执 `scans-not-app-required`；
    - 没读到 `appScans`（重启后第 10 段还没跑过、读失败、R3 之前的 Source）时照旧全跑。
@@ -5995,3 +5995,10 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 由 `train-rules.mjs#rulesetFacts(rules, appId).strict` 判定：任一 `required_status_checks` 规则的 `strict_required_status_checks_policy` 为真即算开；规则读不全或形状不对时抛错，调用方按“没读到”处理，不当作关；
    - 常驻端 `ruleset-backstop.mjs#rulesFacts` 是同一条规则；
    - 第 10 段把结果写进事实 `rules.strict`，执行器从 `trainLast.strict` 读，不另加开关。
+3. **第 8 段按当场读到的规则核本 App 的扫描**（独审 R3 问题 A，`train-rules.mjs#appScansNotDone`）：`trainLast.appScans` 来自上一次第 10 段，规则从 Actions 改回本 App 之后它可能已经过时，执行器会照旧跳过扫描；而推送落地只核其他 App 的检查（`train-landing.mjs#externalRequiredChecks` 先排除了本 App 的）。所以：
+   - 车头的第 8 段在写合并位绿之前，用本次 `trainFacts` 读到的 `rulesetFacts(...).appScans` 核：规则仍要本 App 出的每一项扫描，在 H 上本 App 最新的那条都已完成且成功（任何批次都算，这正是 GitHub 合并 H 前自己要的）；
+   - 推送落地在写 main 之前再核一次，并且更严：只算这个车头 subject 自己的 job（`frontJobIdsV2`），或 §75 的同树复用（车头只有一个成员，S 的树等于 H 的树，H 上有可复用的扫描）；
+   - 没过就不写绿、不推送，零副作用，按 `TRAIN_BATCH_CHANGED` 结束这个批次（clean-final，烧 head）；
+   - 端到端（`test/train-takeover-front.test.mjs`，修复前必红）：第 10 段读到三项钉 Actions，车头第 1 段之后规则改回本 App，推送落地开着：S 从不在没有本 App 三项扫描时落到 main，也没有合并位绿。
+   - 未决（交规划）：同一个 S 的第二个车头批次和烧掉的批次 key 相同（`executor.mjs#enqueueFront` 的 subject 固定 attempt 1），所以这个 head 要新提交才能再走；要不要让它不靠新提交自己恢复，由规划来定。
+4. **推送落地在扫描钉 Actions 时走不通**（独审 R3 问题 B，代码不改）：推送路由 `train-landing.mjs#landingRoute` 仍要求同一套规则集里六项都钉本 App。扫描一旦钉到 Actions，它返回 `main_ruleset_unidentified`，第 8 段停在 `TRAIN_LANDING_RULES_MISSING`（park，零副作用）。方向是停，安全；但 §3.3 的推送落地和 R4 开关 A 不能同时开。R4 里要不要改 `landingRoute`，由规划来定。

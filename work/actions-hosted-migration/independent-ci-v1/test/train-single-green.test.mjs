@@ -46,7 +46,12 @@ function fakeGithub(o = {}) {
       if (!state.commits[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' });
       return structuredClone(state.commits[sha]);
     },
-    async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
+    // headScans (stage8 below sets it): this App's three scans passed on H before stage 8 (review of R3, problem A: no green without
+    // them), read with the checks but not among them (the tests count the checks stage 8 writes); only a name no check on H has already.
+    async readChecks(head) { return { complete: true, checks: [...(state.headScans !== true || head !== HEAD ? [] : SCAN_CHECK_NAMES
+      .filter(name => !checks.some(c => c.head_sha === HEAD && c.name === name)).map((name, i) => ({ id: 50_000 + i,
+      app: { id: 5368905 }, name, head_sha: HEAD, status: 'completed', conclusion: 'success', output: { title: name, summary: '' } }))),
+      ...checks.filter(c => c.head_sha === head).map(c => structuredClone(c))] }; },
     // compare T...H: counted (rule 41ab823a, R3: stage 1 never reads it for the reuse); H contains T unless the state says otherwise.
     async readCompare(base, head) {
       state.compares = (state.compares ?? 0) + 1;
@@ -88,6 +93,7 @@ const ports = (w, { touch = null } = {}) => {
 async function stage8(t, { trainMode = 'on', trainModeUnreadable = false, testSha = S, github = fakeGithub(), edit = () => {}, ledger = null, touch = null, answer = null } = {}) {
   const jobs = jobsFor(testSha), c = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) };
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  github.state.headScans ??= true;
   let time = Date.now();
   const w = proven(time, c.claimId); edit(w);
   const p = ports(w, { touch }), greenLedger = ledger ?? listLedger(), logs = [], pullReads = [];

@@ -13,6 +13,7 @@
 // Pure.
 import { isTrainFrontJobV2, sameClaimGeneration, validateClaimGeneration } from '../job-v2.mjs';
 import { validateStrictProof, validateStrictFrontProof, recordFollows } from './train-strict.mjs';
+import { headScansOf, ofJobIds } from '../published-on-github-v2.mjs';
 
 export const TRAIN_MODES = Object.freeze(['off', 'shadow', 'on']);
 // resident ADR 0018 §8 item 3 (train-landing.mjs#TRAIN_ONLY_CHECK, inlined: this module stays free of the landing module).
@@ -123,6 +124,29 @@ export function rulesetFacts(rules, appId) {
   const methods = prRules.length === 0 || !readable ? null
     : ['merge', 'squash', 'rebase'].filter(m => prRules.every(r => r.parameters.allowed_merge_methods.includes(m)));
   return { requiredPinned: true, strict, mergeOnly: methods !== null && methods.length === 1 && methods[0] === 'merge', appScans };
+}
+
+// Review of R3, problem A: the scans main's live rules still require from this App (rulesetFacts appScans) must be done for a train front
+// subject (H, S) before its stage 8 writes a green or lands S. The resident skips a scan by stage 10's newest read of the rules
+// (executor.mjs#localPlan), which may be older than the rules now (the scans pinned back from GitHub Actions to this App), and push checks
+// only the other Apps' checks on S (train-landing.mjs#externalChecksDecision): without this, S could land with no scan of this App.
+// checks: H's complete check inventory (every App). jobIds: the front subject's job ids (job-v2.mjs#frontJobIdsV2) when S is what lands
+// (push): per required scan, the newest of this App's checks of that name on H among the front's own jobs is completed and successful,
+// or reuse (the front alone, S has H's tree: rule 41ab823a, resident DESIGN §75) and H carries one the resident reuses
+// (published-on-github-v2.mjs#headScansOf). jobIds null when GitHub merges H (github-merge): the newest of this App's checks of that name
+// on H, of any job, is completed and successful, which is what GitHub's rule itself asks before it merges.
+// appScans not a list (never from rulesetFacts): every scan is required. -> the required scans not done, in RULE_SCAN_NAMES order.
+export function appScansNotDone({ appScans, checks, jobIds, headSha, appId, reuse = false }) {
+  const required = Array.isArray(appScans) ? RULE_SCAN_NAMES.filter(n => appScans.includes(n)) : [...RULE_SCAN_NAMES];
+  if (required.length === 0) return [];
+  const list = Array.isArray(checks) ? checks.filter(plain) : [];
+  const ids = jobIds instanceof Set ? jobIds : null;
+  const reused = reuse && ids ? headScansOf(list, ids, headSha).map(x => x.role) : [];
+  return required.filter(n => {
+    const newest = list.filter(c => c.name === n && c.app?.id === appId && c.head_sha === headSha && (!ids || ofJobIds(c, ids)))
+      .reduce((a, c) => (!a || c.id > a.id ? c : a), null);
+    return !(newest?.status === 'completed' && newest.conclusion === 'success') && !reused.includes(n);
+  });
 }
 
 // Rule 5 of §5.3: may stage 8 write a green at all under these rules? null when it may.
