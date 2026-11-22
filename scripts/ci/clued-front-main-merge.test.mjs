@@ -785,3 +785,42 @@ test('hosted copy: the workflow runs the same entry on a hosted machine, only fr
   const code = text.split('\n').filter(line => !/^\s*#/.test(line)).join('\n');
   assert.doesNotMatch(code, /: write\b|git push|rebase|--force|CLUED_ADMISSION_CLUED_TOKEN|CLUED_CONTEXT_READ_TOKEN/);
 });
+
+// FABLE-scaffold-s5-pre §3: the clued-admission App 5164952 had no workflows permission, so update-branch answered 403 for every
+// candidate once main changed a workflow file and nobody was brought up. The token asks for workflows: write exactly when the
+// installation has it (read from the installation, so the code may land before or after the Owner grants it).
+const WORKFLOW_403 = 'refusing to allow a GitHub App to create or update workflow `.github/workflows/x.yml` without `workflows` permission';
+function mainChangedAWorkflow(w, installed) {
+  const fetch = w.fetchImpl;
+  w.minted = [];
+  w.fetchImpl = async (url, init = {}) => {
+    const method = init.method ?? 'GET', route = String(url).slice(API.length), body = init.body ? JSON.parse(init.body) : null;
+    const reply = (b, status) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => b, text: async () => JSON.stringify(b) });
+    if (method === 'GET' && route === '/repos/o/r/installation') { w.calls.push({ method, route, body }); return reply({ id: 42, permissions: installed }, 200); }
+    if (method === 'POST' && route === '/app/installations/42/access_tokens') w.minted.push(body.permissions);
+    // main changed a workflow file: GitHub merges it into the branch only with a token that holds workflows: write.
+    if (method === 'PUT' && /\/update-branch$/.test(route) && w.minted.at(-1)?.workflows !== 'write') { w.calls.push({ method, route, body }); return reply({ message: WORKFLOW_403 }, 403); }
+    return fetch(url, init);
+  };
+  return w;
+}
+const BASE_PERMISSIONS = { checks: 'write', contents: 'write', pull_requests: 'write', metadata: 'read' };
+
+test('§3: with workflows in the installation the token asks for it, and a main that changed a workflow file is still brought in', async () => {
+  const w = mainChangedAWorkflow(scene0823(), { ...BASE_PERMISSIONS, workflows: 'write' });
+  const r = await w.run();
+  assert.deepEqual(w.minted, [{ contents: 'write', pull_requests: 'write', checks: 'write', workflows: 'write' }]);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, 1156); assert.deepEqual(w.brought(), [1156]);
+});
+
+test('§3: without workflows in the installation the token asks for the three as before; the 403 says why', async () => {
+  const w = mainChangedAWorkflow(scene0823(), BASE_PERMISSIONS);
+  const r = await w.run({ pr: '1156', head: sha(0x1156) });
+  assert.deepEqual(w.minted, [{ contents: 'write', pull_requests: 'write', checks: 'write' }]);
+  assert.equal(r.result, 'refused', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.match(r.reason, /HTTP 403/); assert.match(r.reason, /main 改了工作流文件且 App 无 workflows 权限/);
+  // An installation record without permissions at all (as the fakes above answer) mints the three, never fails.
+  const bare = scene0823();
+  assert.equal((await bare.run()).result, 'merged');
+  assert.deepEqual(bare.calls.filter(c => c.route.endsWith('/access_tokens')).map(c => c.body.permissions), [{ contents: 'write', pull_requests: 'write', checks: 'write' }]);
+});
