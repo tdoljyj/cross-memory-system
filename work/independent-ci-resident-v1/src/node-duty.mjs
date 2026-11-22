@@ -185,6 +185,9 @@ export function allOnDutyElsewhere(others, now, since = null) {
 // Task 63c3c879, ADR 0028: a reminder a STANDBY left pending under its standbyContext before ADR 0028 ends as success (GitHub counts a
 // pending status, even one no rule requires, as an unfinished check: mergeStateStatus UNSTABLE, PR #1027).
 export const STANDBY_DONE_TEXT = Object.freeze({ state: 'success', description: '备用提醒已取消（ADR 0028）' });
+// What ends a HALT row (want(): kind 'halted') once the reset is seen: a result row, no duty word, none of the words the panel reads
+// as progress, HALT or stall (compute_panel.py#resident_latest, #resident_stall).
+export const HALT_CLEARED_TEXT = Object.freeze({ state: 'success', description: '执行器已复位', kind: 'reset' });
 
 // The read helpers' argv (fixed; every variable part matched first).
 export function statusesArgv(ghExe, repo, headSha) {
@@ -474,9 +477,10 @@ export class NodeDuty {
   //   - 已交班 on every head owed one (prepare), until it is written;
   //   - after the companion started: an open head whose 当班 or 双活停机 of the last DUTY_WINDOW_MS was not described again
   //     gets 停摆（NODE_RESTARTED） (NIT 4); the reporter ends the restart once those are written (m4);
+  //   - after a reset: the HALT rows this node left end as HALT_CLEARED_TEXT (status: this pass's status.json, or null);
   //   - ADR 0028: a reminder this node left pending under its standbyContext before ends as success (STANDBY_DONE_TEXT, standbyDone: the
   //     head); a head no longer open is forgotten.
-  async extra({ posted, described, pulls, now }) {
+  async extra({ posted, described, pulls, now, status = null }) {
     const node = this.node, own = nodeContext(node.name), out = [], m = this.memory;
     for (const headSha of Object.keys(m.handover)) {
       if (!described.has(headSha)) out.push({ headSha, context: own, want: handedText(posted[headSha]?.context === own ? posted[headSha] : null), handover: true });
@@ -496,6 +500,16 @@ export class NodeDuty {
     // ADR 0028: a reminder left pending before is ended once, while its head is still open; a closed one is forgotten.
     m.standby ??= {};
     const open = new Set(pulls.map(p => p.headSha));
+    // The HALT rows are owed their end (FABLE-resident-halt-merge-race-followup-20261123 §2), in every mode: once a fresh status
+    // carries no halt, each one this node left on a still-open head that this pass did not describe again (and that is owed no
+    // 已交班 above) is rewritten once as HALT_CLEARED_TEXT. A node still on duty never describes a PR it did not queue, and a STANDBY
+    // describes none, so without this the error row stayed until the PR closed: the panel read the node as HALTed and the PR as
+    // stalled. A stale or unreadable status is no reset known now: nothing.
+    if (status && !status.halt && now - status.writtenAt <= this.staleMs) {
+      for (const [headSha, last] of Object.entries(posted)) {
+        if (last?.context === own && last.kind === 'halted' && open.has(headSha) && !described.has(headSha) && !Object.hasOwn(m.handover, headSha)) out.push({ headSha, context: own, want: HALT_CLEARED_TEXT });
+      }
+    }
     for (const headSha of Object.keys(m.standby)) {
       if (!open.has(headSha)) delete m.standby[headSha];
       else out.push({ headSha, context: standbyContext(node.name), want: STANDBY_DONE_TEXT, standbyDone: headSha });
