@@ -24,10 +24,10 @@ function run(name, app, conclusion = 'success', { status = 'completed', started 
 // 一个 head 上两边八项全绿，另带无关检查；override(name, side) 返回 undefined 表示缺这一条，返回数组表示替换。
 function greenRuns({ started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', hostedCompleted = '2026-11-23T01:12:00Z', override = () => null } = {}) {
   const runs = [run('admission-gate', 15368), run('kooyumi-merge-slot', 5368905)];
-  for (const check of [...Object.keys(HOSTED), 'kooyumi-work-admission']) {
+  for (const check of [...Object.keys(HOSTED), 'kooyumi-admission-verified']) {
     const sides = {
       framework: [run(check, FRAMEWORK_PINS[check], 'success', { started, completed })],
-      hosted: [check === 'kooyumi-work-admission' ? run(check, 5164952, 'success', { started, completed: hostedCompleted })
+      hosted: [check === 'kooyumi-admission-verified' ? run(check, 5164952, 'success', { started, completed: hostedCompleted })
         : run(HOSTED[check], 15368, 'success', { started, completed: hostedCompleted })],
     };
     for (const side of ['framework', 'hosted']) {
@@ -54,7 +54,7 @@ const NOW = '2026-12-10T00:00:00+08:00';
 
 test('对比的是托管八项：七项 hosted- 钉 Actions，准入同名钉 App 5164952', () => {
   assert.deepEqual(PAIRS.map(p => [p.check, p.hosted.name, p.hosted.app]), [
-    ...Object.entries(HOSTED).map(([check, hosted]) => [check, hosted, 15368]), ['kooyumi-work-admission', 'kooyumi-work-admission', 5164952]]);
+    ...Object.entries(HOSTED).map(([check, hosted]) => [check, hosted, 15368]), ['kooyumi-admission-verified', 'kooyumi-admission-verified', 5164952]]);
 });
 
 test('两边八项结论相同判一致，记完成时刻差，框架侧来源从 #292 读', async () => {
@@ -119,25 +119,25 @@ test('同名不同来源不算数：准入只认各自的 App，hosted- 只认 A
   const s = sha(4);
   const runs = greenRuns({ override: (check, side) => {
     // 托管准入不在：5164952 没发；常驻 5368905 发的同名检查不能顶替托管那一边。
-    if (check === 'kooyumi-work-admission' && side === 'hosted') return undefined;
+    if (check === 'kooyumi-admission-verified' && side === 'hosted') return undefined;
     // 托管 gitleaks 由别的 App 发：不是托管检查。
     if (check === 'gitleaks' && side === 'hosted') return [run('hosted-gitleaks', 5368905)];
     return null;
   } });
   const head = await finalHead(s, runs);
-  assert.equal(pairOf(head, 'kooyumi-work-admission').reason, '托管缺检查');
+  assert.equal(pairOf(head, 'kooyumi-admission-verified').reason, '托管缺检查');
   assert.equal(pairOf(head, 'gitleaks').reason, '托管缺检查');
   assert.equal(head.verdict, '未知');
 });
 
 test('托管准入红、框架准入绿：同名两条按来源分开比', async () => {
   const s = sha(5);
-  const runs = greenRuns({ override: (check, side) => check === 'kooyumi-work-admission' && side === 'hosted'
-    ? [run('kooyumi-work-admission', 5164952, 'failure', { title: 'Grant missing' })] : null });
+  const runs = greenRuns({ override: (check, side) => check === 'kooyumi-admission-verified' && side === 'hosted'
+    ? [run('kooyumi-admission-verified', 5164952, 'failure', { title: 'Grant missing' })] : null });
   const [head] = (await compare({ heads: [s], api: api(headRoutes([[s, runs]])), now: NOW })).heads;
-  assert.equal(pairOf(head, 'kooyumi-work-admission').verdict, '不一致');
-  assert.equal(pairOf(head, 'kooyumi-work-admission').framework.conclusion, 'success');
-  assert.equal(pairOf(head, 'kooyumi-work-admission').hosted.conclusion, 'failure');
+  assert.equal(pairOf(head, 'kooyumi-admission-verified').verdict, '不一致');
+  assert.equal(pairOf(head, 'kooyumi-admission-verified').framework.conclusion, 'success');
+  assert.equal(pairOf(head, 'kooyumi-admission-verified').hosted.conclusion, 'failure');
 });
 
 test('读 check-runs 失败判未知（读取失败），不判一致', async () => {
@@ -299,7 +299,7 @@ test('U3 被取代 head 框架项 queued：判跳过', async () => {
 test('U4 open PR 当前 head 框架七项未出、准入已出：判在跑，前面的连续计数保留（#1230 实况）', async () => {
   const [m, p, q] = [sha(231), sha(232), sha(233)];
   const pendingCurrent = (check, side) => {
-    if (check === 'kooyumi-work-admission') return null;
+    if (check === 'kooyumi-admission-verified') return null;
     return side === 'framework' ? undefined : [run(HOSTED[check], 15368, null, { status: 'queued', started: at(23, 3) })];
   };
   const routes = prRoutes([
@@ -309,7 +309,7 @@ test('U4 open PR 当前 head 框架七项未出、准入已出：判在跑，前
   const report = await compare({ prs: { from: 1630, to: 1631 }, api: api(routes), now: NOW });
   assert.deepEqual(verdicts(report), ['一致', '一致', '在跑']);
   assert.equal(pairOf(report.heads[2], 'ci-suites').verdict, '在跑');
-  assert.equal(pairOf(report.heads[2], 'kooyumi-work-admission').verdict, '一致');
+  assert.equal(pairOf(report.heads[2], 'kooyumi-admission-verified').verdict, '一致');
   assert.equal(report.summary.streak.heads, 2);
 });
 

@@ -1487,3 +1487,21 @@ test('required-tests dispatch: a new run, admitted in the hook whatever earlier 
   const used = await run(overrides, { ...script, ...runs(self, { id: 556, head_sha: HEAD, run_attempt: 3 }) }, payload);
   assert.equal(used.result.allow, true, used.result.reason);
 });
+
+// FABLE-scaffold-open-qs 问题 1 改法 1: the hook admits a pull request that changes a workflow on Native admission only. The
+// legacy clued-work-admission.yml state no longer selects a route: enabling that workflow again must not let its
+// pull_request_target success stand in for Native, and its state is not read at all (one GitHub read less per job).
+test("Native only (scaffold open-qs 1.1): an active legacy workflow with a successful run on the head never admits without Native", async () => {
+  const { result, calls } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(),
+    [PRODUCER]: { body: { path: ".github/workflows/clued-work-admission.yml", state: "active" } },
+    [ADMISSION_RUNS]: admissionRuns(admissionRun()) });
+  assert.equal(result.allow, false, result.reason);
+  assert.match(result.reason, /Native admission absent: not admitted/);
+  assert.equal(calls.some(c => c.url.startsWith(PRODUCER)), false, "neither the workflow's state nor its runs are read");
+});
+test("Native only (scaffold open-qs 1.1): the legacy workflow's state is not read, so a 404 for it does not refuse a Native success", async () => {
+  const { result, calls } = await run({}, { ...nativeScript(nativeCheck()), [PRODUCER]: { status: 404, body: { message: "Not Found" } } });
+  assert.equal(result.allow, true, result.reason);
+  assert.match(result.reason, /Native admission 80: succeeded/);
+  assert.equal(calls.some(c => c.url.startsWith(PRODUCER)), false);
+});

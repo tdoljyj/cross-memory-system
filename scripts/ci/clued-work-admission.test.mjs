@@ -4597,3 +4597,21 @@ test("independent gate repair re-run: the budget is per run; another run's attem
   const dispatched = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 3 })], jobs: { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), '8001:3': skippedDispatchJobs() } });
   assert.equal(dispatched.outcome.admitted, true, `a re-dispatched run's first attempt is admitted: ${JSON.stringify(dispatched.outcome.reasons)}`);
 });
+
+// FABLE-scaffold-open-qs 问题 1 改法 2: a gate with the independent source admits on Native only. Enabling the legacy
+// clued-work-admission.yml again must not let its event-bound App check decide first (it settles in a minute or two, Native's
+// p90 is ten), so every pull request would be judged by the legacy workflow again.
+test("independent gate, Native only (scaffold open-qs 1.2): a legacy failure that settles first does not decide; Native's later success admits", async () => {
+  let nativeReads = 0;
+  const { outcome, calls } = await independentGate((call) => {
+    const native = call.url.includes("check_name=kooyumi-work-admission") && ++nativeReads > 1;
+    return { body: { check_runs: [appCheckRun({ conclusion: "failure" }), ...(native ? [nativeCheck()] : [])] } };
+  });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", INDEPENDENT_GATE_SOURCE], JSON.stringify(outcome.reasons));
+  assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false, "the legacy run is not read");
+});
+test("independent gate, Native only (scaffold open-qs 1.2): a legacy success without Native in time is ADMISSION_PENDING, not ADMITTED", async () => {
+  const { outcome, calls } = await independentGate([appCheckRun()], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false);
+});
