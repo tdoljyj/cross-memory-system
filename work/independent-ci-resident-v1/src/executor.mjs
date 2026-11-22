@@ -2153,8 +2153,10 @@ export class ResidentExecutor {
     this.roleProbeRunning = true;
     try {
       const intent = await this.receipt('role-probe-intent', { mode, urgent: this.roleProbe.urgent === true, ...(watch ? { watchPr: watch.pr } : {}) });
-      let r;
-      try { r = await (watch ? this.engine.runRoleProbe({ watchPr: watch.pr }) : this.engine.runRoleProbe()); } catch { r = null; }
+      // What the engine threw is kept as a code (r9, task 0e418483): the HALT below names it, so an ending without a fact is told apart.
+      let r, engineError = null;
+      try { r = await (watch ? this.engine.runRoleProbe({ watchPr: watch.pr }) : this.engine.runRoleProbe()); }
+      catch (e) { r = null; engineError = typeof e?.code === 'string' && CODE.test(e.code) ? e.code : 'ENGINE_THREW'; }
       // Only the engine's pre-broker busy guard is a deferral, not a role fact. BROKER_BUSY after a
       // request is not whitelisted here and retains the original unknown/HALT behavior.
       const deferred = r?.deferred === true && r.code === 'ROLE_PROBE_BUSY';
@@ -2174,7 +2176,15 @@ export class ResidentExecutor {
         fact = Object.freeze({ result: 'uncertain', code: ROLE_PROBE_CODES.uncertain });
       }
       const watchedHead = !!watch && fact?.code === ROLE_PROBE_CODES.watchedHead;
-      if (!deferred && !fact) await this.haltWith('ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED', { intentSeq: intent.seq, failureCode: r?.code ?? null });
+      // The HALT says how the probe ended, in codes and booleans only (no holder, no credential data): what the engine threw, whether it
+      // answered ok, the two cleanup proofs, the outcome's status and reason, and whether the answer carried a role fact at all.
+      if (!deferred && !fact) {
+        const code = v => typeof v === 'string' && CODE.test(v) ? v : null, proof = r?.proof, outcome = r?.outcome;
+        await this.haltWith('ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED', { intentSeq: intent.seq, failureCode: r?.code ?? null, engineError,
+          ok: r ? r.ok === true : null,
+          proof: proof && typeof proof === 'object' ? { windowsTreeZero: proof.windowsTreeZero === true, serviceOriginalStopped: proof.serviceOriginalStopped === true } : null,
+          outcomeStatus: code(outcome?.status), outcomeReason: code(outcome?.reason), roleProbeFact: r?.roleProbe != null });
+      }
       const observedAt = this.clock();
       const observe = fact && (!watch || (fact.result !== 'uncertain' && (this.roleProbe.last === null || observedAt >= this.roleProbe.last.at)));
       if (observe) {
