@@ -285,13 +285,14 @@ function train() {
         updatedAt: iso(p.updatedAt), autoMergeRequest: p.auto === null ? null : { enabledAt: p.auto },
         headRepository: { nameWithOwner: p.fork ? 'someone/r' : 'o/r' } })) } } } });
     // The branch's rules, 100 a page: w.ruleFiller full pages of other rules come before the page with the required checks.
+    // A required check is a name (pinned as w.pins says) or a { context, integration_id } pair: one name may be pinned twice.
     const rules = /^\/repos\/o\/r\/rules\/branches\/main(?:\?(?:.*&)?page=([0-9]+))?/.exec(route);
     if (method === 'GET' && rules) {
       const page = Number(rules[1] ?? 1);
       if (page <= w.ruleFiller) return reply(Array.from({ length: 100 }, () => ({ type: 'deletion' })));
       return reply(page > w.ruleFiller + 1 ? [] : [{ type: 'deletion' },
         ...(w.required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: w.required.map(context =>
-          (w.pins[context] === undefined ? { context } : { context, integration_id: w.pins[context] })) } }] : [])]);
+          (typeof context === 'object' ? context : w.pins[context] === undefined ? { context } : { context, integration_id: w.pins[context] })) } }] : [])]);
     }
     if (method === 'GET' && route === '/repos/o/r') return reply({ full_name: 'o/r', default_branch: 'main' });
     const comment = /^\/repos\/o\/r\/issues\/([0-9]+)\/comments$/.exec(route);
@@ -655,15 +656,18 @@ const FRAMEWORK = ['gitleaks', 'trivy', INDEPENDENT_ADMISSION_CHECK, 'kooyumi-ad
 // main's rules in force: 'framework' (#292 only, today), 'scaffold' (the scaffold ruleset only), 'both' (the trial switch), 'loose' (unpinned).
 function rulesOf(w, phase) {
   w.pins = {};
-  if (phase === 'framework' || phase === 'both') for (const name of FRAMEWORK) w.pins[name] = INDEPENDENT_ADMISSION_APP_ID;
-  if (phase === 'scaffold' || phase === 'both' || phase === 'loose') for (const name of HOSTED) w.pins[name] = phase === 'loose' ? undefined : GITHUB_ACTIONS_APP_ID;
+  if (phase === 'framework') for (const name of FRAMEWORK) w.pins[name] = INDEPENDENT_ADMISSION_APP_ID;
+  if (phase === 'scaffold' || phase === 'loose') for (const name of HOSTED) w.pins[name] = phase === 'loose' ? undefined : GITHUB_ACTIONS_APP_ID;
   // The scaffold ruleset's eighth check is the clued-admission App's kooyumi-admission-verified (scaffold open-qs 1.3: App 5164952
   // never posts a check named kooyumi-work-admission; that is the job name of its workflow, a GitHub Actions check).
   if (phase === 'scaffold') w.pins[APP_CHECK_NAME] = ADMISSION_APP_ID;
-  w.required = phase === 'framework' ? FRAMEWORK : phase === 'both' ? [...FRAMEWORK, ...HOSTED] : [...HOSTED, APP_CHECK_NAME];
-  if (phase === 'both') w.pins[INDEPENDENT_ADMISSION_CHECK] = INDEPENDENT_ADMISSION_APP_ID;
+  // The trial switch (S7) is both rulesets as they are: #292's six of App 5368905 (kooyumi-admission-verified among them, its
+  // merge-slot control), the scaffold's seven hosted- of GitHub Actions and kooyumi-admission-verified of App 5164952. One name, two pins.
+  w.required = phase === 'framework' ? FRAMEWORK : phase === 'both' ? BOTH : [...HOSTED, APP_CHECK_NAME];
   return w;
 }
+const BOTH = [...FRAMEWORK.map(context => ({ context, integration_id: INDEPENDENT_ADMISSION_APP_ID })),
+  ...HOSTED.map(context => ({ context, integration_id: GITHUB_ACTIONS_APP_ID })), { context: APP_CHECK_NAME, integration_id: ADMISSION_APP_ID }];
 const SCAFFOLD = { CLUED_FRONT_MERGE_PHASE: 'scaffold' };
 const minted = w => w.calls.filter(c => c.route?.startsWith('/app/installations/')).length;
 const phaseOutput = async (w) => {
@@ -1048,4 +1052,107 @@ test('open-qs 2: below the limit, or with a front under way, a named run brings 
   w.check(w.headOf(A), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);
   r = await named(w, C);
   assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [A, B, C]);
+});
+
+// FABLE-scaffold-gate-leak 改法 1: at the trial switch (S7) both rulesets are in force and each pins its own admission:
+// kooyumi-work-admission of App 5368905 (#292) and kooyumi-admission-verified of App 5164952 (the scaffold). A head the App brought
+// up is admitted only when every admission the rules require passed; the first one found does not stand for both.
+const nativeAdmits = w => head => w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+const appAdmits = (w, conclusion = 'success') => head => w.check(head, APP_CHECK_NAME, conclusion, ADMISSION_APP_ID);
+const statesOf = r => JSON.stringify(r.train?.members.map(m => [m.pr, m.state]));
+// Every required check of 'both' green but the scaffold's admission (App 5164952), which says nothing.
+const bothGreenButTheApp = w => head => { for (const { context, integration_id } of BOTH) if (integration_id !== ADMISSION_APP_ID) w.check(head, context, 'success', integration_id); };
+
+test('gate-leak 1: at the trial switch heads Native admits and App 5164952 fails hold the train at 2', async () => {
+  const w = fourBehind('both');
+  const results = await runs(w, 4, {}, 10 * MIN, head => { nativeAdmits(w)(head); appAdmits(w, 'failure')(head); });
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], statesOf(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B]);
+  for (const r of results.slice(2)) { assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/); }
+  assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+});
+
+test('gate-leak 2: at the trial switch heads App 5164952 never answers hold the train at 2 as well', async () => {
+  const w = fourBehind('both');
+  const results = await runs(w, 4, {}, 16 * MIN, bothGreenButTheApp(w));
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], statesOf(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B]);
+  for (const r of results.slice(2)) { assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/); }
+  assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+});
+
+test('gate-leak 3: at the trial switch a named run holds as well; no update-branch, no App token', async () => {
+  const w = fourBehind('both');
+  await runs(w, 2, {}, 10 * MIN, head => { nativeAdmits(w)(head); appAdmits(w, 'failure')(head); });
+  assert.deepEqual(w.brought(), [A, B]);
+  const from = w.calls.length;
+  const r = await named(w, C);
+  assert.equal(r.result, 'held', `${JSON.stringify({ result: r.result, reason: r.reason })} ${statesOf(r)}`);
+  assert.equal(w.calls.slice(from).filter(c => c.method === 'PUT').length, 0);
+  assert.equal(w.calls.slice(from).filter(c => c.route?.startsWith('/app/installations/')).length, 0, 'no App token');
+  assert.equal(w.headOf(C), sha(C));
+});
+
+// 改法 2 (独审建议 3): a required check pinned to an App is read only from that App's check runs, never from a commit status of the
+// same name (the merge-status API does not say who posted it). An unpinned one still reads both.
+test('gate-leak 4: a failure status named like a pinned check does not make the front red', async () => {
+  const w = fourBehind('framework');
+  w.heads.get(sha(A)).contains = w.tip;
+  w.check(sha(A), 'gitleaks', null, INDEPENDENT_ADMISSION_APP_ID);   // under way
+  w.check(sha(A), 'kooyumi-merge-slot', 'success', INDEPENDENT_ADMISSION_APP_ID);
+  w.heads.get(sha(A)).statuses.push({ context: 'kooyumi-merge-slot', state: 'failure', description: '' });
+  const r = await w.run();
+  assert.equal(r.train.members.find(m => m.pr === A).state, 'front', statesOf(r));
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(w.calls.filter(c => c.method === 'PUT').length, 0);
+});
+
+test('gate-leak 5: success statuses named like pinned checks do not make a quiet front green: it is idle', async () => {
+  const w = fourBehind('framework');
+  w.heads.get(sha(A)).contains = w.tip;   // appeared 600 minutes ago, nothing under way
+  w.check(sha(A), 'gitleaks', 'success', INDEPENDENT_ADMISSION_APP_ID);
+  for (const context of FRAMEWORK) w.heads.get(sha(A)).statuses.push({ context, state: 'success', description: '' });
+  const r = await w.run();
+  assert.equal(r.train.members.find(m => m.pr === A).state, 'idle', statesOf(r));
+  assert.equal(r.pr, B, JSON.stringify(r));
+});
+
+// Kept as they are (not more than the leak): the gate at the trial switch, by name and App, and unpinned statuses.
+test('gate-leak kept: at the trial switch heads Native fails and App 5164952 admits hold at 2', async () => {
+  const w = fourBehind('both');
+  const results = await runs(w, 4, {}, 10 * MIN, head => { failsAdmission(w, INDEPENDENT_ADMISSION_APP_ID)(head); appAdmits(w)(head); });
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], statesOf(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B]);
+});
+
+test('gate-leak kept: at the trial switch a head both admissions pass is the front; nobody else is brought', async () => {
+  const w = fourBehind('both');
+  const results = await runs(w, 3, {}, 16 * MIN, head => { bothGreenButTheApp(w)(head); appAdmits(w)(head); });
+  assert.deepEqual(results.map(r => r.result), ['merged', 'none', 'none'], statesOf(results.at(-1)));
+  assert.match(results[2].reason, /#2001 contains main and is under way/);
+  assert.deepEqual(w.brought(), [A]);
+});
+
+test('gate-leak kept: under #292 its kooyumi-admission-verified (App 5368905, merge-slot control) is not an admission', async () => {
+  for (const conclusion of [null, 'failure']) {   // missing, or failed
+    const w = fourBehind('framework');
+    const results = await runs(w, 4, {}, 16 * MIN, head => { nativeAdmits(w)(head); if (conclusion) w.check(head, APP_CHECK_NAME, conclusion, INDEPENDENT_ADMISSION_APP_ID); });
+    assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'merged', 'merged'], `${conclusion}: ${statesOf(results.at(-1))}`);
+    for (const r of results) assert.doesNotMatch(statesOf(r), /not admitted/);
+    assert.deepEqual(w.brought(), [A, B, C, D], String(conclusion));
+  }
+});
+
+test('gate-leak kept: an unpinned required check still reads its status: a failure is red, a success is green', async () => {
+  let w = fourBehind('loose');
+  w.heads.get(sha(A)).contains = w.tip;
+  w.heads.get(sha(A)).statuses.push({ context: 'hosted-ci-suites', state: 'failure', description: '' });
+  let r = await w.run();
+  assert.match(r.train.members.find(m => m.pr === A).state, /^red \(hosted-ci-suites\)$/, statesOf(r));
+  assert.equal(r.pr, B);
+  w = fourBehind('loose');
+  w.heads.get(sha(A)).contains = w.tip;   // quiet for 600 minutes, green by its statuses alone
+  for (const context of [...HOSTED, APP_CHECK_NAME]) w.heads.get(sha(A)).statuses.push({ context, state: 'success', description: '' });
+  r = await w.run();
+  assert.equal(r.train.members.find(m => m.pr === A).state, 'front', statesOf(r));
+  assert.equal(r.result, 'none', JSON.stringify(r));
 });
