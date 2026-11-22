@@ -4373,6 +4373,8 @@ export class ResidentExecutor {
       this.reportOutcome(subject, 'FAILED_CLEAN', { code: BRIDGE_ABANDONED_UNPUBLISHED, row, key });
       const end = { ...settle, code: BRIDGE_ABANDONED_UNPUBLISHED, klass: row.class, breaker: row.breaker, kind: 'burned' };
       const key2 = await this.attempt2IfEligible(key, subject, { ...failure, code: BRIDGE_ABANDONED_UNPUBLISHED });
+      // R3 batch 2 follow-up §2a: a final end of a front batch like any other (no attempt 2 after stage 2): stage 10 is told.
+      if (!key2) await this.noteFrontOutcome(subject, key, BRIDGE_ABANDONED_UNPUBLISHED, row?.class === 'deterministic-pr');
       return { state: 'FAILED_CLEAN', key, failureCode: BRIDGE_ABANDONED_UNPUBLISHED, originalCode: failure.code, ...(key2 ? { attempt2: key2 } : {}), settle: end };
     } catch (error) {
       return { ...(await this.unknown(key, codeOf(error), 'scanner-abandon-unconfirmed', batch, { ...context, ...archiveFacts(error) })), settle: { ...settle, kind: 'burned', klass: 'unknown' } };
