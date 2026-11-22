@@ -824,7 +824,10 @@ function ConvertFrom-DrillFirstInstallSteps($Logs, $StageEvidence) {
       if ($name -isnot [string] -or -not $name -or $null -eq $o.PSObject.Properties['result']) { continue }
       $reject = Get-DrillField $o 'rejectCode'
       if ($reject -isnot [string] -or -not $reject) { $reject = $null }
-      [void]$steps.Add([ordered]@{ stage = $Stage; name = $name; result = $o.result; rejectCode = $reject; detail = (Get-DrillField $o 'detail') })
+      # at: when the step ended, as the line itself says (the host stage's lines carry it); null when it does not
+      $at = Get-DrillField $o 'at'
+      if ($at -isnot [string] -or -not $at) { $at = $null }
+      [void]$steps.Add([ordered]@{ stage = $Stage; name = $name; result = $o.result; rejectCode = $reject; detail = (Get-DrillField $o 'detail'); at = $at })
       $n++
     }
     $n
@@ -997,7 +1000,7 @@ function Get-DrillVerdict($E) {
   # A1 needs the step record (Read-DrillFirstInstallSteps, read before this verdict): a first install whose steps cannot be shown -- none
   # parsed, or a stage that ran without its complete log -- does not pass, and the detail says why (Codex review of 1cedea9ef, high 1;
   # branch one 74e7a65e7 holds the same).
-  [void]$items.Add((Get-DrillA1Item $entry (Get-Prop $E 'firstInstallSteps')))
+  [void]$items.Add((Get-DrillA1Item $entry (Get-Prop $E 'firstInstallSteps') (Get-Prop $E 'failureSnapshot')))
   $vs = [string](Get-Prop $E.verify 'status')
   [void]$items.Add((New-DrillItem 'A2' ($vs -ceq 'RESIDENT_VERIFIED') "verify=$vs"))
   [void]$items.Add((Test-DrillSelfcheck 'A3' $E.status $now))
@@ -1062,10 +1065,31 @@ function Test-DrillAfterBoot([string]$At, [string]$Boot) {
 
 # A1 on its own: the entry's result and the step record. Also formed when the run stops after the first install (Codex review of
 # e0a3cded5, medium 1), so a verdict the first install gave is never lost with the run.
-function Get-DrillA1Item($Entry, $Steps) {
+# $Snapshot: the entry's failure snapshot when the run brought one home (Read-DrillFailureSnapshot): the detail then names what halted
+# the resident (HALT.json's code, its facts' failureCode and engineError), or says the snapshot holds no HALT.json.
+function Get-DrillA1Item($Entry, $Steps, $Snapshot = $null) {
   $stepsWhy = if ($null -eq $Steps -or (Get-Prop $Steps 'missing') -ne $false) { 'steps=missing' } elseif ((Get-Prop $Steps 'incomplete') -ne $false) { 'steps=incomplete:' + (@(Get-Prop $Steps 'incompleteStages') -join ',') } else { 'steps=complete' }
   $a1 = ($null -ne $Entry) -and (Get-Prop $Entry 'parsed') -eq $true -and (Get-Prop $Entry 'exitCode') -eq 0 -and $null -eq (Get-Prop $Entry 'stopCode') -and [string](Get-Prop $Entry 'status') -ceq 'FIRST_INSTALL_DONE' -and $stepsWhy -ceq 'steps=complete'
-  New-DrillItem 'A1' $a1 $(if ($null -eq $Entry) { "no entry result $stepsWhy" } else { "exit=$(Get-Prop $Entry 'exitCode') status=$(Get-Prop $Entry 'status') stopCode=$(Get-Prop $Entry 'stopCode') $stepsWhy" })
+  $detail = if ($null -eq $Entry) { "no entry result $stepsWhy" } else { "exit=$(Get-Prop $Entry 'exitCode') status=$(Get-Prop $Entry 'status') stopCode=$(Get-Prop $Entry 'stopCode') $stepsWhy" }
+  if ($null -ne $Snapshot) { $detail += ' ' + (Get-DrillSnapshotHaltSummary $Snapshot) }
+  New-DrillItem 'A1' $a1 $detail
+}
+
+# The resident's HALT as the failure snapshot holds it, in one line. Only code-shaped values are repeated; anything else is named "other".
+function Get-DrillSnapshotHaltSummary($Snapshot) {
+  $file = @(@(Get-DrillField $Snapshot 'files') | Where-Object { [string](Get-DrillField $_ 'pattern') -ceq 'resident\state\HALT.json' -and [string](Get-DrillField $_ 'state') -ceq 'read' }) | Select-Object -First 1
+  if ($null -eq $file) { return 'halt=none' }
+  $halt = $null
+  try { $halt = [string](Get-DrillField $file 'text') | ConvertFrom-Json } catch { $halt = $null }
+  if ($null -eq $halt) { return 'halt=unreadable' }
+  $word = { param($v) if ($null -eq $v) { 'null' } elseif ($v -is [string] -and $v -cmatch '^[A-Z][A-Z0-9_:]{0,119}$') { $v } else { 'other' } }
+  $facts = Get-DrillField $halt 'facts'
+  "halt=$(& $word (Get-DrillField $halt 'code')) failureCode=$(& $word (Get-DrillField $facts 'failureCode')) engineError=$(& $word (Get-DrillField $facts 'engineError'))"
+}
+function Read-DrillFailureSnapshot([string]$RunDir) {
+  $file = Join-Path $RunDir 'resident-failure-snapshot.json'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+  try { return Read-DrillJson $file } catch { return $null }
 }
 
 function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
@@ -1774,6 +1798,15 @@ function Add-DrillRunningMemory($State, $Safety) {
   if ($null -eq $State['minRunningFreeGB'] -or $free -lt $State['minRunningFreeGB']) { $State['minRunningFreeGB'] = $free }
 }
 
+# The processes with the largest working sets (r9 follow-up 2.3: what to look at when the host ran short of memory under the drill).
+function Get-DrillTopProcesses([int]$Count = 10) {
+  @(Get-Process -ErrorAction Stop | Sort-Object -Property WorkingSet64 -Descending | Select-Object -First $Count | ForEach-Object {
+    $started = $null
+    try { $started = ([DateTimeOffset]$_.StartTime).ToUniversalTime().ToString('o') } catch { $started = $null }   # a protected process does not say
+    [ordered]@{ name = [string]$_.ProcessName; pid = [int]$_.Id; workingSetGB = [Math]::Round($_.WorkingSet64 / 1GB, 2); startedAt = $started }
+  })
+}
+
 # A separate runspace owns this loop: guest jobs, Copy-Item, Read-Host and long waits cannot delay host protection.
 # The start and abort share a lock, so an abort can never be followed by a late Start-VM.
 function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreCheckpoint) {
@@ -1803,6 +1836,8 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
         $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
           hostExecutorStates = @($State.executorStates.Values);
           abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null; cleanupDone = $false }
+        # short of memory: who held it, read before the shutdown changes the picture; a list that cannot be read is left out
+        if ([string]$State.failure.code -ceq 'DRILL_HOST_MEMORY_SHORT') { try { $top = @(Get-DrillTopProcesses); if ($top.Count) { $receipt['topProcesses'] = $top } } catch { } }
         # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
         try {
@@ -2852,7 +2887,11 @@ function Save-DrillLateProbe([string]$RunDir, [pscredential]$Cred) { Save-DrillP
 # writing holds its log open: the entry's line-by-line writer, the package's appending one; Read-StageResult in bootstrap.ps1 reads them
 # the same way). One that cannot be read is named with its error, never taking the others with it.
 # wsl-cold-start.json: what the entry found right after shutting the guest's WSL down before the launcher stage (Fable ruling 0e418483 4.2).
-$script:DrillStageFiles = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log', 'host-result.json', 'launcher-result.json', 'wsl-cold-start.json', 'stage-timings.json')
+# resident-failure-snapshot.json: what the entry read of the guest when the first install did not end done (the resident's HALT, the
+# launcher's progress records; r9 follow-up 1.3 B). Kept in the run directory as the guest wrote it; a first install that ended done
+# writes none, so its absence is not a missing piece of evidence (Save-DrillGuestEvidence).
+$script:DrillStageFiles = @('host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log', 'host-result.json', 'launcher-result.json', 'wsl-cold-start.json', 'stage-timings.json', 'resident-failure-snapshot.json')
+$script:DrillFailureStageFiles = @('resident-failure-snapshot.json')
 $script:GuestStageFiles = {
   param($Work, $Names)
   $r = [ordered]@{}
@@ -2887,9 +2926,8 @@ function Save-DrillStageEvidence([string]$RunDir, [pscredential]$Cred) {
     # a stage JSON is evidence only when it reads as JSON (a cut one is named so, never "saved"); it is written below with the others
     if ($name.EndsWith('.json')) {
       $parsed = $null; try { $parsed = $text | ConvertFrom-Json } catch { $parsed = $null }
-      if ($null -eq $parsed) { $record.files[$name] = [ordered]@{ state = 'unreadable-json'; bytes = $text.Length } }
-      else { $json[$name] = $parsed; $record.files[$name] = [ordered]@{ state = 'read'; bytes = $text.Length } }
-      continue
+      if ($null -eq $parsed) { $record.files[$name] = [ordered]@{ state = 'unreadable-json'; bytes = $text.Length }; continue }
+      if ($script:DrillFailureStageFiles -cnotcontains $name) { $json[$name] = $parsed; $record.files[$name] = [ordered]@{ state = 'read'; bytes = $text.Length }; continue }
     }
     try {
       [IO.File]::WriteAllText((Join-Path $RunDir $name), $text, (New-Object Text.UTF8Encoding($false)))
@@ -3061,7 +3099,7 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
     $record.code = $c.code; $record.detail = $c.detail
   }
   # the stage files that did not reach the run directory are missing too (their states: stage-files.json)
-  $record.missing = @(@($record.missing) + @(@($stage.record.files.Keys) | Where-Object { [string]$stage.record.files[$_].state -cne 'saved' }))
+  $record.missing = @(@($record.missing) + @(@($stage.record.files.Keys) | Where-Object { $state = [string]$stage.record.files[$_].state; $state -cne 'saved' -and -not ($state -ceq 'absent' -and $script:DrillFailureStageFiles -ccontains $_) }))
   $record.stageFiles = $stage.record.files
   # the launcher's verdict for A6 only as saved in the run directory and read back from there (same review): never the collected object.
   # A read-back that fails is recorded with its detail (6th review round, low 2).
@@ -3191,18 +3229,19 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
   # branch one's rule and this branch's: present, not missing, not incomplete), and it is kept under A1, or in the evidence when the run
   # ended before there was a verdict.
   $firstInstallSteps = Read-DrillFirstInstallSteps $runDir
+  $failureSnapshot = Read-DrillFailureSnapshot $runDir   # the entry's, when the first install did not end done
   $evidence.reinstallUpgrade = Read-DrillReinstallUpgradeEvidence $runDir
   $guestEvidence = Join-Path $runDir 'guest-evidence.json'
   if (Test-Path -LiteralPath $guestEvidence -PathType Leaf) { try { $evidence.guestEvidence = Read-DrillJson $guestEvidence } catch { $evidence.guestEvidence = @{ unreadable = $true } } }
   if ($run) {
     $evidence.localSource = [string](Get-Prop $run.first.current 'ciSourceManifestSha256')
     $evidence.stageTimingsSeconds = $run.timings
-    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps }
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = [bool]$SkipReinstall; kit = $kitInfo; candidate = [bool]$package['candidate']; firstInstallSteps = $firstInstallSteps; failureSnapshot = $failureSnapshot }
   }
   # the run stopped after the first install gave its result: A1 from that result alone (the other items are missing, so the receipt fails)
   $entryResultFile = Join-Path $runDir 'entry-result.json'
   if (-not $run -and (Test-Path -LiteralPath $entryResultFile -PathType Leaf)) {
-    $items = @(Get-DrillA1Item $(try { Read-DrillJson $entryResultFile } catch { $null }) $firstInstallSteps)
+    $items = @(Get-DrillA1Item $(try { Read-DrillJson $entryResultFile } catch { $null }) $firstInstallSteps $failureSnapshot)
   }
   $a1Item = @($items | Where-Object { $_.id -eq 'A1' }) | Select-Object -First 1
   if ($a1Item) { $a1Item.firstInstallSteps = $firstInstallSteps } else { $evidence.firstInstallSteps = $firstInstallSteps }
