@@ -9,7 +9,8 @@
 //   - How the merged PR's own batch ends is the second test, a TODO: the design expects FAILED_CLEAN / SUPERSEDED_AT_SAFE_POINT at
 //     before-relay-plan with no change to the resident, but the executor counts stage 1 as the batch's first live read
 //     (executor.mjs, "Stage 1's admission just read the PR open at this head"), so no live read is due there for
-//     SUPERSEDE_LIVE_READ_MS and the batch goes on to its next stages. Left to planning; nothing here changes the executor.
+//     SUPERSEDE_LIVE_READ_MS and the batch goes on to its next stages. Planning decided (follow-up 2026-11-23 section 1): the executor
+//     safe-point change is its own PR and turns this TODO into a real case; nothing on this branch changes the executor.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -103,7 +104,7 @@ test("#1238/#1239: stage 1's green merges the PR: SETTLED, nothing withdrawn, no
 });
 
 test("design A item 2: the merged PR's batch ends SUPERSEDED_AT_SAFE_POINT at before-relay-plan, nothing after stage 1 runs",
-  { todo: 'the executor counts stage 1 as the first live read (SUPERSEDE_LIVE_READ_MS): no read is due at before-relay-plan; for planning' }, async t => {
+  { todo: 'fixed by the executor safe-point change (its own PR, FABLE-resident-halt-merge-race-followup-20261123 section 1): the executor counts stage 1 as the first live read, so no read is due at before-relay-plan' }, async t => {
     const { n, r } = await mergedRun(t);
     assert.deepEqual([r.state, r.failureCode, r.safePoint], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT', 'before-relay-plan'], JSON.stringify(r));
     assert.deepEqual(n.stages(), [1], 'nothing after stage 1 ran for the merged PR');
