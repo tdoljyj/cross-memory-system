@@ -9,6 +9,8 @@ import { PAUSE_CONTRACT as EXECUTOR_PAUSE } from '../src/executor.mjs';
 import { Inbox } from '../src/inbox.mjs';
 import { REQUIRED_CHECK_NAMES as SOURCE_CHECKS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
 import { APP_ID as SOURCE_APP } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
+import { rulesetFacts as sourceRulesetFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
+import { PIN_TABLE, s7Rules, scaffoldRules } from '../../actions-hosted-migration/independent-ci-v1/test/s7-rules-fixture.mjs';
 // Namespace imports: the R3 constants are read as properties, so this file still loads (and goes red, not unloadable) before R3.
 import * as BACKSTOP from '../src/ruleset-backstop.mjs';
 import * as SOURCE_RULES from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
@@ -45,6 +47,25 @@ test('strict off without the train pauses and notifies; an unpinned or disabled 
   for (const r of [rules({ pinned: 5164952 }), rules({ names: REQUIRED_CHECK_NAMES.slice(1) }), [{ type: 'deletion' }]])
     assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode: 'off' }), { pause: false, notify: 'RULESET_NOT_PINNED' });
   for (const bad of [null, {}, 'x', [1]]) assert.deepEqual(backstopDecision({ facts: rulesFacts(bad), trainMode: 'off' }), { pause: false, notify: null });
+});
+
+// Task 04f9b91b: in S7 #292 is enabled again next to the scaffold ruleset, which pins kooyumi-admission-verified to App 5164952
+// as well. One more requirement, not another pin: the six stay pinned and nothing is told (must-red 6). The scaffold alone still
+// only notifies, never pauses (stay green).
+test('backstop: S7 rules keep the six pinned and say nothing; the scaffold alone only notifies', () => {
+  assert.deepEqual(rulesFacts(s7Rules()), { strict: true, pinned: true });
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(s7Rules()), trainMode: 'off' }), { pause: false, notify: null });
+  assert.deepEqual(backstopDecision({ facts: rulesFacts(scaffoldRules()), trainMode: 'off' }), { pause: false, notify: 'RULESET_NOT_PINNED' });
+});
+
+// The companion and stage 8 read the same rules in two packages with two implementations (must-red 7): one table, both readers,
+// row by row, against what the row means.
+test('backstop and Source v2 agree on the pin, row by row, over one table of rules', () => {
+  for (const [name, rules, pinned] of PIN_TABLE) {
+    let source;
+    try { source = sourceRulesetFacts(rules, SOURCE_APP).requiredPinned === true; } catch (e) { if (e.code !== 'RULESET_UNREADABLE') throw e; source = false; }
+    assert.deepEqual({ name, source, backstop: rulesFacts(rules)?.pinned }, { name, source: pinned, backstop: pinned });
+  }
 });
 
 // R3 lean (DESIGN §82 item 1): the three scans may be required from GitHub Actions (15368). Without it the R4 rules (scans from Actions)
