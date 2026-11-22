@@ -21,14 +21,14 @@ function run(name, app, conclusion = 'success', { status = 'completed', started 
   return { id: id ?? nextId++, name, app: { id: app }, status, conclusion: status === 'completed' ? conclusion : null,
     started_at: started, completed_at: status === 'completed' ? completed : null, output: { title } };
 }
-// 一个 head 上两边八项全绿，另带无关检查；override(name, side) 返回 undefined 表示缺这一条，返回数组表示替换。
+// 一个 head 上两边七项全绿，另带无关检查（含两边的准入，它们不在比对里）；override(name, side) 返回 undefined 表示缺这一条，返回数组表示替换。
 function greenRuns({ started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', hostedCompleted = '2026-11-23T01:12:00Z', override = () => null } = {}) {
-  const runs = [run('admission-gate', 15368), run('kooyumi-merge-slot', 5368905)];
-  for (const check of [...Object.keys(HOSTED), 'kooyumi-admission-verified']) {
+  const runs = [run('admission-gate', 15368), run('kooyumi-merge-slot', 5368905), run('kooyumi-work-admission', 5368905),
+    run('kooyumi-main-merge', 5164952)];
+  for (const check of Object.keys(HOSTED)) {
     const sides = {
       framework: [run(check, FRAMEWORK_PINS[check], 'success', { started, completed })],
-      hosted: [check === 'kooyumi-admission-verified' ? run(check, 5164952, 'success', { started, completed: hostedCompleted })
-        : run(HOSTED[check], 15368, 'success', { started, completed: hostedCompleted })],
+      hosted: [run(HOSTED[check], 15368, 'success', { started, completed: hostedCompleted })],
     };
     for (const side of ['framework', 'hosted']) {
       const replaced = override(check, side);
@@ -52,18 +52,18 @@ const headRoutes = (entries, rs = ruleset()) => ({ [RULESET_ROUTE]: rs, ...Objec
 const pairOf = (head, check) => head.pairs.find(p => p.check === check);
 const NOW = '2026-12-10T00:00:00+08:00';
 
-test('对比的是托管八项：七项 hosted- 钉 Actions，准入同名钉 App 5164952', () => {
-  assert.deepEqual(PAIRS.map(p => [p.check, p.hosted.name, p.hosted.app]), [
-    ...Object.entries(HOSTED).map(([check, hosted]) => [check, hosted, 15368]), ['kooyumi-admission-verified', 'kooyumi-admission-verified', 5164952]]);
+test('对比的是托管七项：hosted- 钉 Actions；准入与框架同源，不比', () => {
+  assert.deepEqual(PAIRS.map(p => [p.check, p.hosted.name, p.hosted.app]), Object.entries(HOSTED).map(([check, hosted]) => [check, hosted, 15368]));
+  assert.ok(!PAIRS.some(p => /admission/.test(p.check)));
 });
 
-test('两边八项结论相同判一致，记完成时刻差，框架侧来源从 #292 读', async () => {
+test('两边七项结论相同判一致，记完成时刻差，框架侧来源从 #292 读', async () => {
   const s = sha(1);
   const report = await compare({ heads: [s], api: api(headRoutes([[s, greenRuns()]])), now: NOW });
   assert.equal(report.heads.length, 1);
   const [head] = report.heads;
   assert.equal(head.verdict, '一致');
-  assert.equal(head.pairs.length, 8);
+  assert.equal(head.pairs.length, 7);
   for (const pair of head.pairs) {
     assert.equal(pair.verdict, '一致', pair.check);
     assert.equal(pair.completionDeltaSeconds, 120);
@@ -115,29 +115,21 @@ test('一边缺检查：最终 head 判未知；当前 head 判在跑；都不�
   assert.equal(pairOf(head, 'gitleaks').reason, '框架缺检查');
 });
 
-test('同名不同来源不算数：准入只认各自的 App，hosted- 只认 Actions', async () => {
+test('同名不同来源不算数：hosted- 只认 Actions', async () => {
   const s = sha(4);
-  const runs = greenRuns({ override: (check, side) => {
-    // 托管准入不在：5164952 没发；常驻 5368905 发的同名检查不能顶替托管那一边。
-    if (check === 'kooyumi-admission-verified' && side === 'hosted') return undefined;
-    // 托管 gitleaks 由别的 App 发：不是托管检查。
-    if (check === 'gitleaks' && side === 'hosted') return [run('hosted-gitleaks', 5368905)];
-    return null;
-  } });
+  // 托管 gitleaks 由别的 App 发：不是托管检查。
+  const runs = greenRuns({ override: (check, side) => check === 'gitleaks' && side === 'hosted' ? [run('hosted-gitleaks', 5368905)] : null });
   const head = await finalHead(s, runs);
-  assert.equal(pairOf(head, 'kooyumi-admission-verified').reason, '托管缺检查');
   assert.equal(pairOf(head, 'gitleaks').reason, '托管缺检查');
   assert.equal(head.verdict, '未知');
 });
 
-test('托管准入红、框架准入绿：同名两条按来源分开比', async () => {
+test('准入不在比对里：5164952 只发 kooyumi-main-merge、准入红或缺都不影响一致（第八对已删）', async () => {
   const s = sha(5);
-  const runs = greenRuns({ override: (check, side) => check === 'kooyumi-admission-verified' && side === 'hosted'
-    ? [run('kooyumi-admission-verified', 5164952, 'failure', { title: 'Grant missing' })] : null });
-  const [head] = (await compare({ heads: [s], api: api(headRoutes([[s, runs]])), now: NOW })).heads;
-  assert.equal(pairOf(head, 'kooyumi-admission-verified').verdict, '不一致');
-  assert.equal(pairOf(head, 'kooyumi-admission-verified').framework.conclusion, 'success');
-  assert.equal(pairOf(head, 'kooyumi-admission-verified').hosted.conclusion, 'failure');
+  const runs = [...greenRuns(), run('kooyumi-admission-verified', 5164952, 'failure', { title: 'Grant missing' })];
+  const head = await finalHead(s, runs);
+  assert.equal(head.verdict, '一致');
+  assert.equal(pairOf(head, 'kooyumi-admission-verified'), undefined);
 });
 
 test('读 check-runs 失败判未知（读取失败），不判一致', async () => {
@@ -215,8 +207,9 @@ test('还在跑：当前 head 判在跑，不是当前 head 判未知', async ()
 function prRoutes(prs, checks, rs = ruleset()) {
   const routes = { [RULESET_ROUTE]: rs };
   routes['/pulls?state=all&sort=created&direction=desc&per_page=100&page=1'] = prs.map(p => ({ number: p.number, state: p.state,
-    merged_at: p.merged ? '2026-11-26T00:00:00Z' : null, head: { sha: p.commits.at(-1).sha } }));
-  for (const p of prs) routes[`/pulls/${p.number}/commits?per_page=100&page=1`] = p.commits.map(c => ({ sha: c.sha, commit: { committer: { date: c.date } } }));
+    merged_at: p.merged ? '2026-11-26T00:00:00Z' : null, head: { sha: p.commits.at(-1).sha }, user: { login: p.user ?? 'tdoljyj' } }));
+  for (const p of prs) routes[`/pulls/${p.number}/commits?per_page=100&page=1`] = p.commits.map(c => ({ sha: c.sha,
+    author: { login: c.author ?? 'tdoljyj' }, commit: { committer: { date: c.date } } }));
   for (const [s, runs] of Object.entries(checks)) routes[checksRoute(s)] = page(runs);
   return routes;
 }
@@ -276,7 +269,7 @@ test('U1 被取代 head 框架项 cancelled：判跳过，连续计数不断', a
   assert.equal(report.summary.counts.跳过, 1);
 });
 
-test('U2 被取代 head 框架八项全缺但有别的检查：判跳过，不判未知', async () => {
+test('U2 被取代 head 框架七项全缺但有别的检查：判跳过，不判未知', async () => {
   const [x, y] = [sha(211), sha(212)];
   const routes = prRoutes([{ number: 1610, state: 'open', commits: [{ sha: x }, { sha: y }] }],
     { [x]: runsAt(at(23), (_check, side) => side === 'framework' ? undefined : null), [y]: runsAt(at(23, 2)) });
@@ -298,10 +291,7 @@ test('U3 被取代 head 框架项 queued：判跳过', async () => {
 
 test('U4 open PR 当前 head 框架七项未出、准入已出：判在跑，前面的连续计数保留（#1230 实况）', async () => {
   const [m, p, q] = [sha(231), sha(232), sha(233)];
-  const pendingCurrent = (check, side) => {
-    if (check === 'kooyumi-admission-verified') return null;
-    return side === 'framework' ? undefined : [run(HOSTED[check], 15368, null, { status: 'queued', started: at(23, 3) })];
-  };
+  const pendingCurrent = (check, side) => side === 'framework' ? undefined : [run(HOSTED[check], 15368, null, { status: 'queued', started: at(23, 3) })];
   const routes = prRoutes([
     { number: 1631, state: 'open', commits: [{ sha: p }, { sha: q }] },
     { number: 1630, state: 'closed', merged: true, commits: [{ sha: m }] },
@@ -309,7 +299,6 @@ test('U4 open PR 当前 head 框架七项未出、准入已出：判在跑，前
   const report = await compare({ prs: { from: 1630, to: 1631 }, api: api(routes), now: NOW });
   assert.deepEqual(verdicts(report), ['一致', '一致', '在跑']);
   assert.equal(pairOf(report.heads[2], 'ci-suites').verdict, '在跑');
-  assert.equal(pairOf(report.heads[2], 'kooyumi-admission-verified').verdict, '一致');
   assert.equal(report.summary.streak.heads, 2);
 });
 
@@ -322,7 +311,7 @@ test('U5 已关闭未合入 PR 的最后一个 head 框架缺检查：判跳过'
   assert.equal(pairOf(report.heads[0], 'gitleaks').reason, '框架缺检查，已被取代');
 });
 
-test('U6 30 个一致 head 跨 7 天以上、中间夹着跳过的 head：达标，summary.line 含跳过数', async () => {
+test('U6 30 个一致 head 跨 7 天以上、中间夹着跳过的 head：跳过不打断，summary.line 含跳过数；全出自一个 open PR，判据未达', async () => {
   const commits = [], checks = {};
   for (let i = 0; i < 34; i++) {
     const s = sha(300 + i), t = new Date(Date.parse(at(23)) + i * 6 * 3600_000).toISOString().replace('.000Z', 'Z');
@@ -333,7 +322,8 @@ test('U6 30 个一致 head 跨 7 天以上、中间夹着跳过的 head：达标
   assert.equal(report.summary.counts.跳过, 4);
   assert.equal(report.summary.counts.一致, 30);
   assert.equal(report.summary.streak.heads, 30);
-  assert.equal(report.summary.streak.met, true);
+  assert.equal(report.summary.streak.met, false);
+  assert.deepEqual(report.summary.streak.unmet, ['已合入 PR 不足 10 个', '没有非 Owner 作者的 head', '没有两边同红的 head']);
   assert.match(report.summary.line, /跳过 4/);
 });
 
@@ -357,7 +347,7 @@ test('U8 被取代 head 一项比出不一致、另一项 cancelled：整个 hea
   assert.equal(pairOf(report.heads[0], 'trivy').verdict, '跳过');
 });
 
-test('U9 被取代 head 八项都比了而且一致：计入连续计数', async () => {
+test('U9 被取代 head 七项都比了而且一致：计入连续计数', async () => {
   const [x, y] = [sha(271), sha(272)];
   const routes = prRoutes([{ number: 1680, state: 'open', commits: [{ sha: x }, { sha: y }] }], { [x]: runsAt(at(23)), [y]: runsAt(at(23, 2)) });
   const report = await compare({ prs: { from: 1680, to: 1680 }, api: api(routes), now: NOW });
@@ -395,7 +385,7 @@ test('U11 同一 sha 在 PR A 里被取代、在 PR B 里是当前：按当前�
   assert.equal(pairOf(head, 'trivy').verdict, '在跑');
 });
 
-// 连续一致：S6 退出判据（连续 30 个 head 且不少于 7 天）。
+// 连续一致的计数（判据全文见下方 S6 用例）。
 async function streakOf(verdicts, spanHours) {
   const entries = verdicts.map((v, i) => {
     const t = new Date(Date.parse('2026-11-23T00:00:00Z') + Math.round(i * spanHours * 3600_000 / (verdicts.length - 1))).toISOString().replace('.000Z', 'Z');
@@ -406,16 +396,12 @@ async function streakOf(verdicts, spanHours) {
   return (await compare({ heads: entries.map(e => e[0]), api: api(headRoutes(entries)), now: NOW })).summary.streak;
 }
 
-test('连续 30 个一致且跨 7 天以上：达标', async () => {
+test('直接给的 head 不属于已合入 PR：30 个一致跨 8 天也不算达成', async () => {
   const streak = await streakOf(Array(30).fill('ok'), 8 * 24);
   assert.equal(streak.heads, 30);
-  assert.equal(streak.met, true);
   assert.equal(streak.days, 8);
-});
-
-test('30 个一致但不满 7 天：未达标', async () => {
-  const streak = await streakOf(Array(30).fill('ok'), 6 * 24);
-  assert.equal(streak.heads, 30);
+  assert.equal(streak.hours, 192);
+  assert.equal(streak.mergedPrs, 0);
   assert.equal(streak.met, false);
 });
 
@@ -424,6 +410,90 @@ test('中间一个不一致：连续计数从它之后重新算', async () => {
   verdicts[15] = 'bad';
   const streak = await streakOf(verdicts, 10 * 24);
   assert.equal(streak.heads, 24);
+  assert.equal(streak.met, false);
+});
+
+// S6 新退出判据（FABLE-s6-exit-shorten-20261122 §3，Decision efe2cee6）：连续 30 个 head、首尾相隔 ≥72 小时、逐项一致；
+// 出自 ≥10 个已合入 PR；≥1 个非 Owner 作者的 head；≥1 个 head 上同一项两边都红。同一组 head 序列，每次只拿掉一条。
+// 默认：30 个 head 按时间平均铺开，每 3 个一个 PR（1800…1809，最后一个是已合入 PR 的最终 head），
+// PR 1805 由 dependabot 开，第 8 个 head 的 gitleaks 两边都红。
+async function exitStreak({ heads = 30, spanHours = 72, unmerged = [], dependabot = true, botCommit = false, bothRed = true, lead = null } = {}) {
+  const t0 = Date.parse('2026-11-23T00:00:00Z');
+  const iso = ms => new Date(ms).toISOString().replace('.000Z', 'Z');
+  const prs = [], checks = {};
+  for (let i = 0; i < heads; i++) {
+    const s = sha(5000 + i), t = iso(t0 + Math.round(i * spanHours * 3600_000 / (heads - 1))), number = 1800 + Math.floor(i / 3);
+    let pr = prs.find(p => p.number === number);
+    if (!pr) prs.push(pr = { number, state: 'closed', merged: !unmerged.includes(number), user: number === 1805 && dependabot ? 'dependabot[bot]' : 'tdoljyj', commits: [] });
+    pr.commits.push({ sha: s, author: botCommit && i === 13 ? 'kooyumi-app[bot]' : 'tdoljyj' });
+    checks[s] = runsAt(t, bothRed && i === 7 ? (check, side) => check === 'gitleaks'
+      ? [run(side === 'framework' ? 'gitleaks' : 'hosted-gitleaks', side === 'framework' ? 5368905 : 15368, 'failure', { started: t, completed: t })] : null : undefined);
+  }
+  // lead：在序列之前 leadHours 小时放一个不一致的 head（单独一个已合入 PR）。
+  if (lead !== null) {
+    const s = sha(4999), t = iso(t0 - lead * 3600_000);
+    prs.push({ number: 1799, state: 'closed', merged: true, user: 'tdoljyj', commits: [{ sha: s }] });
+    checks[s] = runsAt(t, frameworkRed('trivy', t));
+  }
+  const report = await compare({ prs: { from: 1799, to: 1899 }, api: api(prRoutes(prs.sort((a, b) => b.number - a.number), checks)), now: NOW });
+  return report.summary.streak;
+}
+
+test('S6-a 30 个一致、跨满 72 小时、10 个已合入 PR、有非 Owner 作者、有同红：达成', async () => {
+  const streak = await exitStreak();
+  assert.equal(streak.heads, 30);
+  assert.equal(streak.hours, 72);
+  assert.equal(streak.mergedPrs, 10);
+  assert.equal(streak.nonOwnerHeads, 3);
+  assert.equal(streak.bothRedHeads, 1);
+  assert.deepEqual(streak.unmet, []);
+  assert.equal(streak.met, true);
+});
+
+test('S6-b 同一序列跨 71 小时：不算达成（天数按小时比，不四舍五入成 3 天）', async () => {
+  const streak = await exitStreak({ spanHours: 71 });
+  assert.equal(streak.heads, 30);
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['首尾相隔不足 72 小时']);
+});
+
+test('S6-c 只有 29 个 head、跨 8 天：不算达成', async () => {
+  const streak = await exitStreak({ heads: 29, spanHours: 8 * 24 });
+  assert.equal(streak.heads, 29);
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['连续一致不足 30 个 head']);
+});
+
+test('S6-d 同一序列 PR 1809 关闭未合入：已合入 PR 只有 9 个，不算达成', async () => {
+  const streak = await exitStreak({ spanHours: 8 * 24, unmerged: [1809] });
+  assert.equal(streak.heads, 30);
+  assert.equal(streak.mergedPrs, 9);
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['已合入 PR 不足 10 个']);
+});
+
+test('S6-e 同一序列没有非 Owner 作者：不算达成；只看 PR 作者，Owner PR 里的机器人提交（如合 main）不算', async () => {
+  const streak = await exitStreak({ spanHours: 8 * 24, dependabot: false });
+  assert.equal(streak.nonOwnerHeads, 0);
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['没有非 Owner 作者的 head']);
+  const bot = await exitStreak({ dependabot: false, botCommit: true });
+  assert.equal(bot.nonOwnerHeads, 0);
+  assert.equal(bot.met, false);
+});
+
+test('S6-f 同一序列没有两边同红的 head：不算达成', async () => {
+  const streak = await exitStreak({ spanHours: 8 * 24, bothRed: false });
+  assert.equal(streak.bothRedHeads, 0);
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['没有两边同红的 head']);
+});
+
+test('S6-g 天数从第一个一致 head 起算：前面 5 小时的不一致 head 不算进跨度', async () => {
+  const streak = await exitStreak({ spanHours: 71, lead: 5 });
+  assert.equal(streak.heads, 30);
+  assert.equal(streak.hours, 71);
+  assert.equal(streak.from, '2026-11-23T08:00:00+08:00');
   assert.equal(streak.met, false);
 });
 
