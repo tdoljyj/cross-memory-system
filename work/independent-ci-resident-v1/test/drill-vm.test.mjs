@@ -1169,6 +1169,9 @@ const STEP_LOGS = {
   'stage-evidence.json': JSON.stringify({ 'host-result.json': { exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } },
     'launcher-result.json': { exit: 0, terminal: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' } } }),
 };
+// What the entry of a first install that ended done returned (Save-DrillGuestEvidence's third argument): only after this result is a
+// run without a failure snapshot missing nothing (planning ruling FABLE-r9-lineB-points R2).
+const DONE_ENTRY_OUT = `([ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); stderr = ''; exit = 0 })`;
 // skip: the run was started with -SkipReinstall; reinstall: 'absent' leaves the run without an A8 result at all; steps: false leaves the
 // run directory without the first install's logs.
 function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, skip = false, steps = true } = {}) {
@@ -2697,7 +2700,8 @@ test('the guest evidence is collected after a timed-out first install too, and a
   // collected, but not all of it: ok only with nothing missing (Codex review of f33fc33e5, medium 2)
   assert.equal(r.record.ok, false);
   assert.equal(r.record.code, null);
-  assert.deepEqual(r.record.missing, ['prepare.stdout.log', 'launcher.stdout.log', 'launcher-result.json', 'wsl-cold-start.json']);
+  // a first install cut off by its time limit returned no result: the failure snapshot it did not bring is missing too (ruling R2)
+  assert.deepEqual(r.record.missing, ['prepare.stdout.log', 'launcher.stdout.log', 'launcher-result.json', 'wsl-cold-start.json', 'resident-failure-snapshot.json']);
   assert.deepEqual(fs.readFileSync(path.join(runDir, 'first-install.log'), 'utf8').split(/\r?\n/).filter(Boolean),
     ['line one', '{"name":"prepare","result":"ok","rejectCode":null,"detail":null}']);
   assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'stage-timings.json'), 'utf8')).host, 12.5);
@@ -3671,7 +3675,7 @@ test('the merged collection feeds A1 and A6: complete logs pass, a missing stage
     const runDir = path.join(tmp, `merged-${name}`); fs.mkdirSync(runDir, { recursive: true });
     return ps(`
       function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script ${q(guest)} $ArgumentList[1] }
-      $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+      $c = Save-DrillGuestEvidence ${q(runDir)} $null ${DONE_ENTRY_OUT}
       @{ record = $c.record; launcher = $c.launcher; steps = (Read-DrillFirstInstallSteps ${q(runDir)}) }`);
   };
   const judged = c => { const r = verdictOf(evidence({ firstInstallSteps: c.steps, launcher: c.launcher })); return { ...pass(r), detail: Object.fromEntries(r.items.map(i => [i.id, i.detail])) }; };
@@ -3744,7 +3748,7 @@ test('guest-evidence ok is false on any missing file, and A6 reads the launcher 
     return ps(`
       ${override}
       function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script ${q(guest)} $ArgumentList[1] }
-      $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+      $c = Save-DrillGuestEvidence ${q(runDir)} $null ${DONE_ENTRY_OUT}
       @{ record = (Read-DrillJson (Join-Path ${q(runDir)} 'guest-evidence.json')); launcher = $c.launcher }`);
   };
   const full = collect('full');
@@ -4038,7 +4042,7 @@ test('a launcher result read back without its terminal field is recorded as a fa
     const runDir = path.join(tmp, `r7-readback-${name}`); fs.mkdirSync(runDir, { recursive: true });
     return ps(`
       function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script ${q(guest)} $ArgumentList[1] }
-      $c = Save-DrillGuestEvidence ${q(runDir)} $null $null
+      $c = Save-DrillGuestEvidence ${q(runDir)} $null ${DONE_ENTRY_OUT}
       @{ record = (Get-Content -Raw -LiteralPath (Join-Path ${q(runDir)} 'guest-evidence.json') | ConvertFrom-Json); launcher = $c.launcher }`);
   };
   const missing = collect('missing', JSON.stringify({ exit: 0 }));
