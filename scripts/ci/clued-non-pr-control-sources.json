@@ -593,7 +593,7 @@
   "workflows": {
     ".github/workflows/clued-compute-panel.yml": {
       "family": "compute_panel",
-      "source_sha256": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
+      "source_sha256": "cafc0ca821d1be2ada06295bf19a313cab7b4bb8bfe22bf991ff77657e82f18a",
       "source_yaml_lines": [
         "# Compute panel (Task 679a0c2b, Owner Decision 183ee67c): every five minutes",
         "# each general-pool runner answers a route probe (its name, free disk,",
@@ -607,9 +607,12 @@
         "name: clued-compute-panel",
         "",
         "on:",
+        "  # The cron is only the fallback (04f9b91b 题 2): the dispatcher on the resident node starts a run every five",
+        "  # minutes, so while it is up every cron run is surplus. Twice an hour keeps the panel alive when it is not;",
+        "  # off the hour, where GitHub drops schedules most.",
         "  schedule:",
-        "    - cron: \"*/5 * * * *\"",
-        "  # A run by hand: GitHub may delay or skip */5 schedules (none ran in the first hour after #935).",
+        "    - cron: \"11,41 * * * *\"",
+        "  # A run by hand (the dispatcher's route): GitHub may delay or skip schedules (none ran in the first hour after #935).",
         "  workflow_dispatch:",
         "",
         "permissions:",
@@ -932,7 +935,7 @@
         "        run: python3 -I scripts/ci/self-hosted/compute_panel.py",
         ""
       ],
-      "workflow_blob": "baa297ef49804984999afd5b05d51386aa84cac4",
+      "workflow_blob": "f3171203ca531f0cb4ce47574d4dc1c356a2e93e",
       "workflow_definition": {
         "concurrency": {
           "cancel-in-progress": true,
@@ -1250,7 +1253,7 @@
         "on": {
           "schedule": [
             {
-              "cron": "*/5 * * * *"
+              "cron": "11,41 * * * *"
             }
           ],
           "workflow_dispatch": null
@@ -1259,7 +1262,7 @@
           "contents": "read"
         }
       },
-      "workflow_definition_sha256": "0bac13a8f87320e17f74205826c98b78d4d2513133f51e628181538fc6f7869d"
+      "workflow_definition_sha256": "0a09a6a88ff14065d1941ac60c3ca3fe6e615efe873b19d737efded4546b7d5d"
     },
     ".github/workflows/clued-front-main-merge.yml": {
       "family": "front_main_merge_dispatch",
