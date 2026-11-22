@@ -1,0 +1,97 @@
+name: clued-front-main-merge-hosted
+
+# The hosted copy of clued-front-main-merge.yml for the hosted scaffold (framework v1 §2.3; hosted scaffold report §1.4).
+# While the scaffold ruleset is in force (#292 disabled) the train does not land and GitHub's own auto-merge does, with
+# strict on: the pull request about to be the front has to contain main first. This copy brings main into it exactly as
+# the self-hosted workflow does, with the same script and the same environment, on a GitHub-hosted machine: one
+# update-branch (GitHub merges main in itself, never a rebase or a force push; a conflict or a moved head is refused and
+# reported, not retried), for the one pull request the choice names. Before the scaffold and from the trial switch on
+# (#292 enabled again) the first job reads the rules in force and the second does not start.
+#
+# Until migration 6b809301 is on the nodes (Decision 85effa31) the new head waits for DESK's authorize_head: the run
+# summary and a comment on the pull request say "新 head <sha>，待补授权". Nothing here authorizes; no Clued credential.
+#
+# Never a pull request event: this file and the script run from the default branch, with the clued-admission
+# environment's App key (deployment branches limited to main); the inputs are only a request, every fact is read again.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number of the train front (empty with head - the workflow chooses)
+        type: string
+        required: false
+      head:
+        description: Its head SHA as the train saw it
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  scaffold-phase:
+    name: hosted-scaffold-phase
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      in_force: ${{ steps.phase.outputs.in_force }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      # Reads the rules in force on main with this run's token; no App key in this job.
+      - id: phase
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-front-main-merge.mjs --phase
+
+  merge-main:
+    needs: scaffold-phase
+    if: needs.scaffold-phase.outputs.in_force == 'true' && github.ref == 'refs/heads/main'
+    name: hosted-clued-front-main-merge
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    environment: clued-admission
+    # The choice reads what ran on each head of the train: workflow runs (actions) and commit statuses besides the checks.
+    # Every write (update-branch, the check, the comment) is made with the clued-admission App's token, not this one.
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+      statuses: read
+    # The group of the self-hosted workflow: one at a time across both, a second run reads the state the first one left.
+    concurrency:
+      group: clued-front-main-merge
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Configure job temporary storage
+        uses: ./.github/actions/ci-temporary-storage
+      - name: Bring main into the front
+        env:
+          CLUED_FRONT_MERGE_PHASE: scaffold
+          CLUED_ADMISSION_APP_ID: ${{ secrets.CLUED_ADMISSION_APP_ID }}
+          CLUED_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.CLUED_ADMISSION_APP_KEY }}
+          CLUED_MERGE_ADMISSION_STATE: ${{ vars.CLUED_MERGE_ADMISSION_STATE }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/clued-front-main-merge.mjs

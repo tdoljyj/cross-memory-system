@@ -219,14 +219,17 @@ async function stage10(e, outcome = null) {
   e.now += 60_000;
   const runId = `${(++runN).toString(16).padStart(16, '0')}-0123456789ab`;
   const job = jobOf({ createdAt: iso(e.now), runId, sweep: 'audit', onSince: iso(NOW - 3_600_000),
-    ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code } : {}) });
+    ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code,
+      ...(Object.hasOwn(outcome, 'frontFailed') ? { frontFailed: outcome.frontFailed } : {}) } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
     claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
 }
-async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal' } = {}) {
+// scans: the front batch's stages 2-7 passed and published its own scans on H (gh.frontScans); false for a batch that ran none.
+async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, unreadable: false }, mode = () => 'normal', scans = true } = {}) {
   e.now += 60_000;
   const claim = pr => ({ claimId: e.claimFor(pr), fence: 3, epoch: 1, expiresAt: iso(e.now + 3_600_000) });
   const jobs = batchJobsV2({ repo: REPO, pr: b.pr, headSha: b.headSha, baseSha: b.baseSha, testSha: b.testSha, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: b.attempt });
+  if (scans) e.gh.frontScans(jobs);
   e.journal ??= await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const publisher = createFixtureControlPublisherV2({ github: e.gh, journal: e.journal, trainMode: 'on', batchClaim: claimGeneration(claim(b.pr)), slotNative: e.native.port,
     sweepStore: e.store, greenLedger: e.ledger, pullsUpdatedSince: cursor => e.gh.readPullsUpdatedSince(cursor),
@@ -253,7 +256,7 @@ async function drive(t, e, { until, steps = 40, opened = null }) {
     const members = typeof e.store.landingBatchByTest === 'function' ? (await e.store.landingBatchByTest(b.testSha))?.members.map(m => m.pr) ?? null : null;
     const p = await stage8(t, e, b);
     log.push(['8', p.status, p.reason ?? null, members]);
-    if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason };
+    if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason, frontFailed: true };
   }
   return log;
 }
@@ -351,6 +354,30 @@ test('push: the middle PR breaks the combination -> bisection -> the other two l
   assert.deepEqual(e.adopted.map(a => a[0]).sort(), [910, 912]);
   // every commit main ever pointed at was a tested S of a batch this node recorded
   for (const s of e.W.pushes.filter(s => e.W.ancestor(s, e.main()))) assert.ok(await e.store.landingBatchByTest?.(s), s);
+});
+
+// FABLE-r3-batch2-gate F2, F3 (修复前必红: before the fix the job refuses the field): frontOutcome carries frontFailed. false (the batch
+// ended clean, say TRAIN_BATCH_CHANGED at stage 8, or its row was ignored): stage 10 learns only that the batch ended: no bisection, no new
+// bad member, no touch failed, and its plan is no longer TRAIN_FRONT_BATCH_RUNNING. true (a final deterministic-pr failure): as today.
+for (const frontFailed of [false, true]) test(`R3 batch 2 ${frontFailed ? 'F3' : 'F2'}: a batch of three ended (frontFailed ${frontFailed}) -> ${frontFailed ? 'bisection as today' : 'no bisection, no bad, no touch failed'}`, async t => {
+  const e = await world(t, { prs: [910, 911, 912] });
+  let b = null;
+  for (let i = 0; i < 6 && !b; i++) b = (await stage10(e)).facts.openFrontBatch;
+  assert.ok(b, 'a batch opened');
+  assert.deepEqual((await e.store.landingBatchByTest(b.testSha)).members.map(m => m.pr), [910, 911, 912]);
+  const before = await e.store.readLandingState();
+  const code = frontFailed ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_BATCH_CHANGED';
+  const r = await stage10(e, { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code, frontFailed });
+  const after = await e.store.readLandingState();
+  assert.deepEqual(e.failed, [], 'no touch failed for a batch of several');
+  if (frontFailed) {
+    assert.deepEqual(r.facts.landing?.bisect?.failed, [910, 911, 912], JSON.stringify(r.facts.landing));
+    assert.ok(after.handled.includes(b.testSha));
+  } else {
+    assert.notEqual(r.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(r.facts));
+    assert.equal(r.facts.landing?.bisect, undefined, JSON.stringify(r.facts.landing));
+    assert.deepEqual([after.bad, after.suspect, after.handled], [before.bad, before.suspect, before.handled], 'the landing state is unchanged');
+  }
 });
 
 test('push: main moved by someone else between the check and the write -> the fast-forward is refused -> retested on the new main -> lands', async t => {
@@ -780,6 +807,84 @@ test(`three ways, today: a push-capable package still waits for the head's own r
   assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
 });
 
+// Rereview of R3, item 3 (修复前必红: stage 8's green-time check off, today's rules go green): a front batch that ran no scan (H carries none
+// of this App's) while main's rules require them from this App: stage 8 writes no green and pushes nothing, the batch ends
+// (TRAIN_BATCH_CHANGED); the same on push's rules.
+test('R3 problem A, three ways: H without this App\'s scans -> no green on today\'s rules, no push on push\'s rules', async t => {
+  for (const rules of ['today', 'push']) await t.test(rules, async t => {
+    const { e, b, T } = await opened(t, [910], { rules });
+    const p = await stage8(t, e, b, { trainLanding: PUSH1, scans: false });
+    assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_BATCH_CHANGED', 0], JSON.stringify(p));
+    assert.equal(greens(e, b.headSha).length, 0, 'no merge-slot green on H');
+    assert.equal([...e.gh.world.checks.values()].filter(c => c.name === 'kooyumi-admission-verified').length, 0);
+    assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
+    assert.equal(e.main(), T);
+  });
+});
+
+// Rereview of R3, item 1 (修复前必红): push lands under the rules it read last. landOne reads the train facts (main's rules once), then
+// main's rules again for the route; the scans went back from GitHub Actions to this App between those two reads (they had been pinned to
+// Actions just after this stage 8 chose push). H carries this App's scans of another run (not this front's own, never reusable): the
+// green-time check (any job of this App) passes; before the fix the push check took the first read's appScans ([]) and pushed S with no
+// scan of this front subject. Now it checks against the second read: nothing lands, the batch ends (TRAIN_BATCH_CHANGED).
+test('R3 problem A, push: scans pinned back from Actions to this App between landOne\'s two reads of the rules -> S is not pushed', async t => {
+  const { e, b, T } = await opened(t, [910]);
+  for (const name of ['gitleaks', 'trivy', 'contract-placement']) { const id = e.W.nextCheck++; e.W.checks.set(id, { id, app: { id: APP }, name, head_sha: b.headSha, status: 'completed', conclusion: 'success' }); }
+  const toActions = rules => rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+    required_status_checks: r.parameters.required_status_checks.map(c => (['gitleaks', 'trivy', 'contract-placement'].includes(c.context) ? { ...c, integration_id: ACTIONS } : c)) } }));
+  // phase: 'app' until the route read (its ruleset reads), then one read pinned to Actions (landOne's train facts), then this App again
+  let phase = 'app';
+  const read = e.gh.readBranchRules, readRuleset = e.gh.readRuleset;
+  e.gh.readRuleset = async id => { if (phase === 'app') phase = 'next'; return readRuleset(id); };
+  e.gh.readBranchRules = async () => {
+    const r = await read();
+    if (phase !== 'next') return r;
+    phase = 'back';
+    return { ...r, rules: toActions(r.rules) };
+  };
+  const p = await stage8(t, e, b, { trainLanding: PUSH1, scans: false });
+  assert.equal(phase, 'back', 'landOne read the rules pinned to Actions once');
+  assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', 'TRAIN_BATCH_CHANGED', 0], JSON.stringify(p));
+  assert.deepEqual(p.missing, ['gitleaks', 'trivy', 'contract-placement']);
+  assert.deepEqual(e.W.pushes, [], 'nothing pushed to main');
+  untouched(e, T);
+});
+
+// R3 open item 2 (修复前必红): the three scans pinned to GitHub Actions with push's rules set up. Before the fix push's main ruleset was the
+// one with all six pinned to this App: none, so stage 10 read park and stage 8 TRAIN_LANDING_RULES_MISSING, never landing. Now the main
+// ruleset is found by the same pin rule as stages 8 and 10: stage 10 reads push with no scan required from this App, and stage 8 pushes S
+// once its Actions scans passed on S (external checks); while gitleaks still runs on S it waits, a failed one fails the batch.
+const SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+function scansFromActions(e) {
+  e.W.rules = e.W.rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+    required_status_checks: r.parameters.required_status_checks.map(c => (SCANS.includes(c.context) ? { ...c, integration_id: ACTIONS } : c)) } }));
+}
+const actionsScanOn = (e, sha, name, o = {}) => { const id = e.W.nextCheck++; e.W.checks.set(id, { id, app: { id: ACTIONS }, name, head_sha: sha, status: 'completed', conclusion: 'success', completed_at: iso(e.now - 10 * 60_000), ...o }); return id; };
+test('R3 open item 2: scans from GitHub Actions with push rules -> stage 10 reads push, stage 8 lands S once its Actions scans passed on S', async t => {
+  for (const scan of ['passed', 'running', 'failed']) await t.test(scan, async t => {
+    const e = await world(t, { prs: [910] });
+    scansFromActions(e);
+    const r = await stage10(e);
+    assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+    assert.deepEqual([r.facts.landing?.route, r.facts.landing?.missing, r.facts.rules?.appScans], ['push', [], []], JSON.stringify([r.facts.landing, r.facts.rules]));
+    const b = r.facts.openFrontBatch, T = e.main();
+    for (const name of SCANS) actionsScanOn(e, b.testSha, name, name !== 'gitleaks' || scan === 'passed' ? {}
+      : scan === 'running' ? { status: 'in_progress', conclusion: null, completed_at: null } : { conclusion: 'failure' });
+    // the front ran no scan (none is required from this App): its stage 8 has none on H
+    const p = await stage8(t, e, b, { trainLanding: PUSH1, scans: false });
+    if (scan === 'passed') {
+      assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+      assert.deepEqual(e.W.pushes, [b.testSha]);
+      assert.equal(e.main(), b.testSha);
+      assert.equal(greens(e, b.headSha).length, 0, 'push writes no merge-slot green');
+    } else {
+      assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', scan === 'running' ? 'TRAIN_LANDING_CHECKS_PENDING' : 'TRAIN_LANDING_CHECK_FAILED', 0], JSON.stringify(p));
+      assert.deepEqual(e.W.pushes, []);
+      untouched(e, T);
+    }
+  });
+});
+
 // Fable 11-21 应修 1: a merge-slot green counts only on the current path. #1192's shape on today's rules (the front alone in the queue, its
 // head without ci-suites-windows): stage 8 wrote the current path's pair on H and GitHub cannot merge it. Then the Owner saves C. Before the
 // fix stage 10 read the leftover green as "green, wait for merge" (no rules given on route push, so the merge slot alone was green) and
@@ -878,7 +983,7 @@ async function untilLanded(t, e, { batch = null, rounds = 30 } = {}) {
       const { b } = parked; parked = null;
       const p = await stage8(t, e, b);
       log.push(['8', p.status, p.reason ?? null]);
-      if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason };
+      if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason, frontFailed: true };
       else if (p.status === 'BLOCKED' && p.sideEffects === 0) parked = { b, at: e.now + 10 * MIN };
       continue;
     }

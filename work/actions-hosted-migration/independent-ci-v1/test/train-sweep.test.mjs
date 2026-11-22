@@ -749,7 +749,7 @@ test('stage 10: S7 rules read; a code-layer front behind main under strict needs
   e.gh.readChangedPaths = async () => { e.gh.world.calls.push('paths'); return { complete: true, paths: ['apps/x.ts'] }; };
   const r = await runTrain({ job: jobOf(), github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
     layerOfPaths: paths => (paths.some(p => p.startsWith('scripts/ci/')) ? 'protected' : 'code') });
-  assert.deepEqual([r.facts.decision, r.facts.rules, r.facts.rulesReason], ['FRONT_NEEDS_MAIN_MERGE', { strict: true, mergeOnly: false }, null]);
+  assert.deepEqual([r.facts.decision, r.facts.rules, r.facts.rulesReason], ['FRONT_NEEDS_MAIN_MERGE', { strict: true, mergeOnly: false, appScans: ['gitleaks', 'trivy', 'contract-placement'] }, null]);
 });
 
 test('the protected layer: a front whose H does not contain T needs main merged in first, in mode on only (review R2 M4)', async t => {
@@ -820,7 +820,7 @@ test('a compare GitHub answers 404 for (gone or unrelated history) is "not in ma
 });
 
 test('touch failed only from frontOutcome, while this claim is the front and the head is still H', async t => {
-  const outcome = { frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 2, frontCode: 'GITLEAKS_FINDINGS' };
+  const outcome = { frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 2, frontCode: 'GITLEAKS_FINDINGS', frontFailed: true };
   const e = await setup(t, { job: outcome });
   const { facts } = await e.run();
   assert.deepEqual([facts.decision, facts.actions.failedReported, e.native.calls.find(c => c[0] === 'touch')[1]], ['FRONT_FAILED_REPORTED', true,
@@ -831,6 +831,28 @@ test('touch failed only from frontOutcome, while this claim is the front and the
     await x.run();
     assert.ok(!x.native.calls.some(c => c[0] === 'touch' && c[1].ciState === 'failed'), JSON.stringify(o));
   }
+});
+
+// FABLE-r3-batch2-gate F2 (修复前必红) and F3: frontFailed false (the front batch ended clean, or its row was ignored) never touches failed and
+// does not keep the plan at TRAIN_FRONT_BATCH_RUNNING: the batch is finished, the head's next front batch opens (attempt 2). frontFailed true:
+// as today (the test above).
+test('R3 batch 2 F2: frontOutcome with frontFailed false ends the running front batch: no touch failed, not TRAIN_FRONT_BATCH_RUNNING', async t => {
+  // A short batch budget, so the slot's hard cap leaves room for a second batch in the same tenure (otherwise turn_short, §2.2).
+  const e = await setup(t, { job: { frontBatchBudgetMs: 600_000 } });
+  const first = await e.run();
+  assert.deepEqual([first.facts.decision, first.facts.openFrontBatch?.attempt], ['OPEN_FRONT_BATCH', 1]);
+  e.native.calls.length = 0;
+  const running = await e.run();
+  assert.equal(running.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', 'without a frontOutcome the batch is running');
+  e.native.calls.length = 0;
+  e.now += 5 * 60_000; // the batch ended a few minutes later: a new touch running moves the clock on
+  const ended = await e.run(jobOf({ frontBatchBudgetMs: 600_000, frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 1, frontCode: 'TRAIN_BATCH_CHANGED', frontFailed: false }));
+  validateTrainFacts(ended.facts);
+  assert.notEqual(ended.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(ended.facts));
+  assert.notEqual(ended.facts.decision, 'FRONT_FAILED_REPORTED');
+  assert.ok(!e.native.calls.some(c => c[0] === 'touch' && c[1].ciState === 'failed'), JSON.stringify(e.native.calls));
+  assert.equal(ended.facts.actions.failedReported, false);
+  assert.deepEqual([ended.facts.decision, ended.facts.openFrontBatch?.attempt], ['OPEN_FRONT_BATCH', 2], 'the second front batch of the head');
 });
 
 // ---- generation 28 (resident ADR 0017): the 45-minute gap between becoming the queue head and the front batch's touch ----

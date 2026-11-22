@@ -470,12 +470,27 @@ public static class RenewalTests {
         Check(commits==1 && restarted.Read("intent")==null && Renewal.Digest(restarted.Read("token"))==proof &&
             Renewal.Str(Renewal.Object(restarted.Read("record")),"bindingId")==Next,"disk restart failed at "+point);
     }
+    // On a refusal from the shared ACL rules (PROFILE_*), say who the fixture ran as, how SDDL writes that SID, and the last
+    // descriptor the fixture mapped, so a run on another host shows the refused SID and its rights (task 04f9b91b: on the
+    // GitHub-hosted runner this case failed with PROFILE_UNTRUSTED_MUTATION_RIGHT_REFUSED and nothing else).
     static void FileFixture(string dir) {
+        string sid=WindowsIdentity.GetCurrent().User.Value, lastMapped="(none yet)";
+        try { FileFixture(dir,sid,mapped=>lastMapped=mapped); }
+        catch(InvalidOperationException e) {
+            if(!e.Message.StartsWith("PROFILE_")) throw;
+            var probe=new FileSecurity();
+            probe.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;"+sid+")");
+            string frame=(new StringReader(e.StackTrace??"").ReadLine()??"").Trim();
+            throw new Exception(e.Message+" (fixture: current user "+sid+" reads back in SDDL as "+
+                probe.GetSecurityDescriptorSddlForm(AccessControlSections.Access)+"; last mapped descriptor "+lastMapped+"; "+frame+")");
+        }
+    }
+    static void FileFixture(string dir,string sid,Action<string> mappedSeen) {
         string baseDir=Path.Combine(dir,"disk"), root=Path.Combine(baseDir,"resident");
         Directory.CreateDirectory(Path.Combine(baseDir,"secrets"));
         Directory.CreateDirectory(Path.Combine(root,"secrets"));
         Directory.CreateDirectory(Path.Combine(root,"install"));
-        string sid=WindowsIdentity.GetCurrent().User.Value, controller="S-1-5-21-1-2-3-1111";
+        string controller="S-1-5-21-1-2-3-1111";
         Action<string> parents=file=>Check(Path.GetFullPath(file).StartsWith(baseDir+Path.DirectorySeparatorChar),"escaped fixture");
         Func<string,FileSecurity> create=sddl=>{
             var security=new FileSecurity();
@@ -487,6 +502,7 @@ public static class RenewalTests {
             var dacl=security.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
             Check(security.AreAccessRulesProtected,"staging inherited rights");
             var mapped=new RawSecurityDescriptor("O:SYG:SY"+dacl.Replace(";;;"+sid+")",";;;SY)"));
+            mappedSeen(mapped.GetSddlForm(AccessControlSections.All));
             var bytes=new byte[mapped.BinaryLength]; mapped.GetBinaryForm(bytes,0); return bytes;
         };
         foreach(string kind in new[]{"ci","upgrade"}) {

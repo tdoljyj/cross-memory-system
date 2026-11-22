@@ -13,9 +13,10 @@
 //     Owner decision 9e2511fe): strict must never be off there, so the pause request and the urgent notice come at once, on every
 //     node, whatever the sweep or the duty says (STRICT_OFF_STRICT_PERMANENT; no SWEEP_GRACE_MS). Stage 8 writes no green then and
 //     stage 10 asks for PAUSE too (TRAIN_STRICT_OFF); this is the backstop for a node whose stage 10 does not run;
-//   - a required check with no entry pinned to App 5368905, or listed without an App, or no required_status_checks at all (the
-//     ruleset disabled): raise an Owner notification (no pause: stage 8 already writes no green then). The same name pinned to
-//     another App as well (the hosted scaffold ruleset next to #292) is one more requirement, not a lost pin (task 04f9b91b);
+//   - a required check with no entry pinned to App 5368905 (R3: a scan may be pinned to GitHub Actions 15368 instead), or listed
+//     without an App, or no required_status_checks at all (the ruleset disabled): raise an Owner notification (no pause: stage 8
+//     already writes no green then). The same name pinned to another App as well (the hosted scaffold ruleset next to #292) is one
+//     more requirement, not a lost pin (task 04f9b91b);
 //   - the rules cannot be read: nothing (stage 8 parks on RULESET_UNREADABLE by itself).
 // Each notification is raised once per kind per day; a pause request is written once per kind per day as well.
 // Pure decision plus thin ports; the caller supplies the gh read, the pause writer and the notifier.
@@ -30,21 +31,27 @@ export const REQUIRED_CHECK_NAMES = Object.freeze(['kooyumi-work-admission', 'gi
 export const PAUSE_CONTRACT = 'clued.independent-ci.resident-pause/1';
 export const BACKSTOP_KINDS = Object.freeze(['STRICT_OFF_WITHOUT_TRAIN', 'RULESET_NOT_PINNED', 'STRICT_OFF_SWEEP_INCOMPLETE', 'STRICT_OFF_SWEEP_PENDING',
   'STRICT_OFF_STRICT_PERMANENT']);
+// R3 lean: must equal Source v2 train-rules.mjs ACTIONS_INTEGRATION_ID and RULE_SCAN_NAMES (a test keeps them equal).
+export const ACTIONS_INTEGRATION_ID = 15368;
+export const RULE_SCAN_NAMES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 // The policy sweep modes of strict-permanent mode (policy.mjs TRAIN_SWEEPS without 'gate').
 export const STRICT_PERMANENT_MODES = Object.freeze(['audit', 'off']);
 const DAY = 24 * 3600_000;
 // The longest a full sweep may take (policy train.fullSweepMaxMs is at most 24 hours): a newer eligibility only notifies.
 export const SWEEP_GRACE_MS = DAY;
 
-// gh api repos/{repo}/rules/branches/main -> { strict, pinned } or null when the reply is not a rules list.
+// gh api repos/{repo}/rules/branches/main -> { strict, pinned } or null when the reply is not a rules list. pinned: the rule of Source v2
+// train-rules.mjs#rulesetFacts, each of the six required, every requirement of it from App 5368905 (a scan: or from GitHub Actions, R3).
 export function rulesFacts(reply) {
   if (!Array.isArray(reply) || reply.length >= 100 || !reply.every(r => r && typeof r === 'object' && typeof r.type === 'string')) return null;
   const required = reply.filter(r => r.type === 'required_status_checks');
   const checks = required.flatMap(r => Array.isArray(r.parameters?.required_status_checks) ? r.parameters.required_status_checks : []);
   // Source v2 train-rules.mjs#rulesetFacts reads the pin the same way (a test runs both over one table): each of the six has an
-  // entry pinned to this App, and none of their entries is pinned to no App; another App pinning the same name is one more requirement.
+  // entry pinned to this App (a scan: or to GitHub Actions, R3), and none of their entries is pinned to no App; another App pinning
+  // the same name is one more requirement.
+  const allowed = n => (RULE_SCAN_NAMES.includes(n) ? [APP_ID, ACTIONS_INTEGRATION_ID] : [APP_ID]);
   const named = checks.filter(c => REQUIRED_CHECK_NAMES.includes(c?.context));
-  const pinned = required.length > 0 && REQUIRED_CHECK_NAMES.every(n => named.some(c => c.context === n && c.integration_id === APP_ID))
+  const pinned = required.length > 0 && REQUIRED_CHECK_NAMES.every(n => named.some(c => c.context === n && allowed(n).includes(c.integration_id)))
     && named.every(c => Number.isSafeInteger(c.integration_id) && c.integration_id > 0);
   return { strict: required.some(r => r.parameters?.strict_required_status_checks_policy === true), pinned };
 }
@@ -75,7 +82,7 @@ const TEXT = {
   STRICT_OFF_SWEEP_INCOMPLETE: 'main 的规则集已关掉 strict，合并列车开着但清扫没完成（本节点开车或接班后还没完成全量清扫）：已暂停常驻执行器（不再发新绿）。请把 strict 改回开，等清扫完成后再关。',
   STRICT_OFF_SWEEP_PENDING: 'main 的规则集已关掉 strict，本节点刚开车、接班或重启，清扫还在进行：清扫完成前不发新绿（未暂停）。若这不是计划内的操作，请把 strict 改回开。',
   STRICT_OFF_STRICT_PERMANENT: 'main 的规则集已关掉 strict，而合并列车运行在 strict 永久开模式：已暂停常驻执行器（不再发新绿）。请立即把 strict 改回开，然后恢复执行器。',
-  RULESET_NOT_PINNED: 'main 的必需检查不再全部钉在 App 5368905（或规则集被停用）：常驻执行器不会再发合并位。若是灾备切换，请按运维手册的流程走。',
+  RULESET_NOT_PINNED: 'main 的必需检查不再全部钉在 App 5368905（三项扫描钉在 GitHub Actions 也算钉住；或规则集被停用）：常驻执行器不会再发合并位。若是灾备切换，请按运维手册的流程走。',
 };
 export const backstopText = kind => TEXT[kind] ?? null;
 

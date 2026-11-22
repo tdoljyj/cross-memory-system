@@ -19,9 +19,11 @@ const tail = (s, n = 6000) => (String(s ?? '').length > n ? String(s).slice(-n) 
 // a child of `node --test` must not think it reports to this runner, and carries the test marker itself (as test/fleet-node.test.mjs)
 const childEnv = () => { const e = { ...process.env }; delete e.NODE_TEST_CONTEXT; e.CLUED_UNDER_TEST = '1'; return e; };
 
-for (const [file, status] of [['test-companion-relay-parent-acl.ps1', 'COMPANION_RELAY_PARENT_TEMP_PASS'],
-  ['test-verify-relay-parents-ensure.ps1', 'VERIFY_RELAY_PARENTS_ENSURE_TEMP_PASS']]) {
-  test(`windows/${file}: passes on real NTFS in a new temporary scratch`, { skip, timeout: 900_000 }, (t) => {
+// The ensure script refuses an elevated administrator (NON_ELEVATED_TEST_REQUIRED, its line 8): it tests the ACL a standard
+// user gets, so its name says so and a host that cannot give it (CLUED_CI_HOST_LACKS) does not run it (task 04f9b91b).
+for (const [file, status, needs = ''] of [['test-companion-relay-parent-acl.ps1', 'COMPANION_RELAY_PARENT_TEMP_PASS'],
+  ['test-verify-relay-parents-ensure.ps1', 'VERIFY_RELAY_PARENTS_ENSURE_TEMP_PASS', ' [needs:non-elevated]']]) {
+  test(`windows/${file}: passes on real NTFS in a new temporary scratch${needs}`, { skip, timeout: 900_000 }, (t) => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-relay-parent-'));
     t.after(() => { try { fs.rmSync(parent, { recursive: true, force: true }); } catch { /* the scratch is the temporary directory's */ } });
     const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(RES, 'windows', file), '-Scratch', path.join(parent, 'scratch')],

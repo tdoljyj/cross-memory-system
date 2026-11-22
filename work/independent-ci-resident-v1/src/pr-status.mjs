@@ -39,7 +39,7 @@ import { ghPort } from './admission-rerun.mjs';
 import { CLAIM_REASONS, CLAIM_WHY } from './queue.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 export { RULES_UNREADABLE_REPORT_AFTER_MS };
-import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
+import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
@@ -272,21 +272,15 @@ export function timingText(status, now, room) {
   return table ? `${out}；${table}`.slice(0, room) : out;
 }
 
-// A train run of the last TRAIN_PAGE_MAX_AGE_MS named a front, and it is another PR. Unknown or stale: false.
-const notTheFront = (last, pr, now) => Number.isFinite(last?.at) && now - last.at <= TRAIN_PAGE_MAX_AGE_MS
-  && Number.isSafeInteger(last?.front?.pr) && last.front.pr !== pr;
-
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
 export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   if (!pull || !HEX40.test(pull.headSha ?? '')) return null;
   if (!pull.eligible) {
-    // Defect C: under strict only the PR about to merge has to contain main. A behind PR that a recent train run did not
-    // see at the front waits instead (each merge used to ask every queued PR for a merge-only head: O(N^2) heads).
-    if (pull.hint === 'merge-main' && notTheFront(status?.train?.last, pull.pr, now)) {
-      return { state: 'pending', description: clip(`落后 main ${pull.behindBy} 个提交：排队中，不必现在合 main（轮到它合入时再合一次）`) };
-    }
-    if (pull.hint === 'merge-main') return { state: 'failure', description: clip(`落后 main ${pull.behindBy} 个提交：请合入最新 main 并推送`) };
+    // Task 484bddac (FABLE-front-merge-stale-summary §2.3): a behind head is never asked to merge main by hand; the robot
+    // (clued-front-main-merge) takes main in when its turn comes. One line, whatever the train summary says (stale, no front, another
+    // PR or this one): the summary-based branch told every PR to merge main whenever it was stale or empty (34 hand merges).
+    if (pull.hint === 'merge-main') return { state: 'pending', description: clip(`落后 main ${pull.behindBy} 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）`) };
     if (pull.hint === 'push-any-commit') return { state: 'failure', description: '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可' };
     return null;
   }

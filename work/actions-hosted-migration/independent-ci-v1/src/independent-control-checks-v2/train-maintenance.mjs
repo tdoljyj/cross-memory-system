@@ -429,7 +429,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const lastBatchMs = previousBatches?.[0] ? Date.parse(previousBatches[0].writtenAt) : -Infinity;
   const judgedBefore = lastProof?.mode === 'on' && lastProof.pr === holder?.pr && lastProof.headSha === front?.headSha && lastProof.claimId === holder?.claimId
     && lastProof.mainSha === mainSha && Date.parse(lastProof.writtenAt) > lastBatchMs;
-  const frontPlan = Array.isArray(previousBatches) && !(job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha)
+  const frontPlan = Array.isArray(previousBatches) && !(job.frontFailed === true && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha)
     && decideShadow({ onDuty: true, holders: duty.holders, holder, front, rules, mainSha }) === 'OPEN_FRONT_BATCH'
     ? frontBatchPlan({ job, holder, front, mainSha, previous: previousBatches, keptAlive: [], clock }).refusal : 'NONE';
   const skippedSince = async () => roundsSinceSegment({ sweepStore, mode, lastFull });
@@ -613,7 +613,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
     }
     if (!takeoverPending && !lostDuty && holder?.pr && front && !frontLanded) {
       try {
-        const batchOfOutcome = push && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
+        const batchOfOutcome = push && job.frontFailed === true && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha
           ? await sweepStore.landingBatchByTest(job.frontTestSha) : null;
         if (batchOfOutcome && batchOfOutcome.members.length > 1 && !landingState) {
           // the landing state could not be read: neither bisect nor touch failed (the front is not alone to blame); the next run tries again
@@ -648,8 +648,9 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
           fx.n++;
           const r = await native.returnSlot({ pr: holder.pr });
           if (!r.onDuty) { lostDuty = true; fx.n--; } else actions.returned = r.returned === true;
-        } else if (job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha) {
-          // §41.4 touch failed: only from the executor's frontOutcome, while this claim is the front and the head is still H
+        } else if (job.frontFailed === true && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha) {
+          // §41.4 touch failed: only from the executor's frontOutcome of a failure of the PR itself (frontFailed, R3 batch 2), while this
+          // claim is the front and the head is still H. A frontOutcome with frontFailed false only says the batch ended (frontBatchPlan's `finished`).
           fx.n++; fx.slotTouched = true;
           const t = await native.touch({ pr: holder.pr, headSha: job.frontHeadSha, ciState: 'failed', reason: job.frontCode });
           if (!t.onDuty) { lostDuty = true; fx.n--; } else actions.failedReported = t.touched === true || t.returned === true;
@@ -1008,8 +1009,9 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 // The batch this node already opened for (claim, T, S) that is still running (the holder's CI clock runs on H; its attempt
 // not reported finished by the executor's frontOutcome) is not opened again (review R2 M1): this run refreshed the proof for
 // its stage 8, no attempt is counted and no second openFrontBatch reaches the executor. A regenerated test merge with the
-// same parents and tree is the same S for this purpose. Residual: an attempt that ended without a frontOutcome (an
-// infrastructure failure) counts as running until the holder's running clock or slot ends.
+// same parents and tree is the same S for this purpose. Since R3 batch 2 the executor reports every final end of an attempt
+// that has no automatic attempt 2 (frontFailed says whether the PR itself failed). Residual: an end it never got to report
+// counts as running until the holder's running clock or slot ends.
 async function openFront({ job, github, native, claimScope, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null, compare = null }) {
   const no = decision => ({ decision, openFrontBatch: null });
   let previous, used;
