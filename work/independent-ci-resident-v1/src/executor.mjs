@@ -3910,8 +3910,10 @@ export class ResidentExecutor {
     // Admitted and published: from here on this head is burned.
     await this.ledger.markStarted(key, { batchId: batch.batchId });
     await this.receipt('batch-started', { key });
-    // Stage 1's admission just read the PR open at this head: the batch's first live read of the rule (DESIGN §72).
-    this.liveReadDue(key);
+    // Stage 1's admission just read the PR open at this head: the batch's first live read of the rule (DESIGN §72). Not when it settled
+    // on a PR that merged meanwhile (the publisher's settledMerged, field 2026-11-23 #1233-#1239): the read stays due, so the next safe
+    // point reads the PR and ends the batch the one way (supersededEnd).
+    if (first.outcome?.settledMerged !== true) this.liveReadDue(key);
     // The wait's anchor (t0) and the derived batch, durable before the first wait evaluation: a later tick,
     // or a restarted service, continues from here without deriving or running stage 1 again.
     await this.ledger.beginWait(key, { t0, batch, claimExpiresAt: this.leaseOf(subject) });
