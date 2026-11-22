@@ -126,6 +126,10 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
     return { batchId: `${key.slice(0, 16)}-${'0'.repeat(12)}`, key, packageSha256: 'c'.repeat(64), ciSourceManifestSha256: CI_SOURCE }; };
   engine.runTrainStage = async (mode, input) => {
     engine.calls.push(['stage', 10, mode]);
+    // A stage-10 run is its own process and takes real time, so it never starts in the millisecond the previous run wrote its records in.
+    // The simulated clock stands still between ticks; without this a third run in that millisecond finds two newest proofs of one stamp
+    // that differ (train-sweep-store.mjs#latestProofStrict) and answers TRAIN_SWEEP_INCOMPLETE, which no node can meet.
+    if (engine.trainEndedAt !== undefined && at.clock() <= engine.trainEndedAt) at.advance(engine.trainEndedAt + 1 - at.clock());
     e.now = at.clock();
     const { mode: m, ...params } = input;
     const runId = `${(++run).toString(16).padStart(16, '0')}-0123456789ab`;
@@ -137,6 +141,7 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
     engine.trainRuns.push({ decision: r.facts.decision, frontBind: r.facts.frontBind ?? null, open: r.facts.openFrontBatch !== null, created: created() - before,
       ms: e.now - began, full: r.facts.sweep?.fullSweep?.state ?? null });
     at.advance(e.now - at.clock());
+    engine.trainEndedAt = at.clock();
     engine.lastFacts = r.facts;
     return { ok: true, runId, proof: PROOF, train: r.facts,
       outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: r.sideEffects, mayHavePublished: r.sideEffects > 0, diagnostic: null, scheduling: null, safeToRerun: false } };
