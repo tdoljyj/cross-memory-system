@@ -1241,9 +1241,14 @@ test('R3 open item 1 R2: a restart between enqueueing front number 2 and running
   const scene = await problemA(t, { push: true });
   const { engine } = scene;
   newTenure(scene);
-  // One tick at a time until stage 10 enqueued front number 2 (a tick that enqueues it runs it only on a later tick: the row is new).
+  // One tick at a time until stage 10 enqueued front number 2; the same tick could run it at once, so this executor runs no row once it is
+  // enqueued (the service stops right after the enqueue, before the row runs).
   const stagesBefore = engine.stages.length;
-  for (let i = 0; i <= 30 && !(await enqueuedOf(scene.f)).some(b => b.attempt === 2); i++) { await scene.f.exec.tick(); if (!(await enqueuedOf(scene.f)).some(b => b.attempt === 2)) scene.f.advance(MIN); }
+  const old = scene.f.exec, enqueue = old.enqueueFront.bind(old), runRow = old.runRow.bind(old);
+  let stopped = false;
+  old.enqueueFront = async front => { const k = await enqueue(front); if (k && front.attempt === 2) stopped = true; return k; };
+  old.runRow = async (c, usage) => (stopped ? { state: 'DEFERRED', key: null, reason: 'R2_STOPPED' } : runRow(c, usage));
+  for (let i = 0; i <= 30 && !stopped; i++) { await old.tick(); if (!stopped) scene.f.advance(MIN); }
   const second = (await enqueuedOf(scene.f)).find(b => b.attempt === 2);
   assert.ok(second, `front number 2 never enqueued: ${await why(scene)}`);
   const ranSince = engine.stages.slice(stagesBefore).filter(x => x.testSha === S).length;
