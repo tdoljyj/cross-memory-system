@@ -106,7 +106,8 @@ test("current-state answers are sourced from BeamingFace on every injected surfa
   // Merge slot (Owner Decision 0edf7889): one session at a time brings main in, runs CI and merges.
   assert.match(contract, /The slot is the trigger ref `merge:<owner>\/<name>:<branch>`/);
   // Merge Admission step 4 (Owner Decision 661f8c36, Task 38e0c90d): the slot is a queue; a merge ref never conflicts.
-  // v62: in a repository the resident CI serves only the CI joins; a merge ref the holder sends has no effect.
+  // v62: in a repository the resident CI serves only the CI joins; a merge ref the holder sends never puts it into the queue.
+  assert.match(contract, /a merge ref you send in a claim or renewal never puts you into that queue and is not an error\./);
   assert.match(contract, /you do not join it yourself: once the resident CI has tested the pull request's current head through, it puts the claim into the queue/);
   assert.match(contract, /A merge ref never conflicts, and the claim's `merge_queue` shows your `state`/);
   assert.doesNotMatch(contract, /bring the default branch in and push first, then renew its claim/);

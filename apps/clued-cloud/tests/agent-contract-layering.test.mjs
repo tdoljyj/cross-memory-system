@@ -34,17 +34,20 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
 // The v62 successor makes the resident CI the only way into a served repository's merge queue (A.6): the holder no
-// longer joins by renewing with the merge ref, and no longer renews hourly to keep a place.
+// longer joins by renewing with the merge ref, and no longer renews hourly to keep a place. The three other places that
+// said a merge ref "joins" or "queues" (§1.7, the refusal table of §4, A.1) now only say that it never conflicts.
 function v61Source() {
   assert.equal(ciJoinOnly.schema,'clued.agent-contract-ci-join-only-successor/1');
   assert.equal(ciJoinOnly.source_version,61);assert.equal(ciJoinOnly.target_version,62);
-  assert.deepEqual(ciJoinOnly.edits.map(row=>row.id),['version','ci-join-only','no-hourly-renewal']);
+  assert.deepEqual(ciJoinOnly.edits.map(row=>row.id),['version','core-names-queue','conflict-row','resume-claims','ci-join-only','unmarked-ref-dropped','no-hourly-renewal']);
   assert.deepEqual(ciJoinOnly.edits[0],{id:'version',before:'Contract version: 61',after:'Contract version: 62'});
   assert.equal(sha256(source),ciJoinOnly.target_document_normalized_sha256);
   for(const edit of ciJoinOnly.edits.slice(1)) for(const text of [edit.before,edit.after])
-    assert.equal(/\n|### |<a id=/.test(text),false,`${edit.id}: the edit stays inside one A.6 line`);
-  assert.ok(ciJoinOnly.edits[1].after.includes('you do not join it yourself')&&ciJoinOnly.edits[1].after.includes('has no effect'));
-  assert.equal(ciJoinOnly.edits[2].after.includes('once an hour'),false);
+    assert.equal(/\n|### |<a id=/.test(text),false,`${edit.id}: the edit stays inside one line`);
+  const after=Object.fromEntries(ciJoinOnly.edits.map(row=>[row.id,row.after]));
+  assert.ok(after['ci-join-only'].includes('you do not join it yourself')&&after['ci-join-only'].includes('never puts you into that queue'));
+  assert.equal(ciJoinOnly.edits.some(row=>row.after.includes('has no effect')),false);
+  assert.equal(after['no-hourly-renewal'].includes('once an hour'),false);
   let restored=source;
   for(const {id,before,after} of [...ciJoinOnly.edits].reverse()) {
     assert.equal(restored.split(after).length-1,1,`${id}: exact CI-join-only successor text`);
