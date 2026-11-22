@@ -22,9 +22,25 @@
 // of that head to the merge commit (migration 20261116090000): no person and no
 // lease key take part. Anything else it leaves as it is and says why.
 // No retries here: the dispatcher asks again while stage 10 still says so.
+//
+// Without pr and head (Task ea22e734: a push to main, the schedule, or a dispatch
+// without inputs) it chooses the pull request itself, from GitHub's records of
+// this moment and nothing kept between runs (chooseFront below):
+//   the train   = the open, ready pull requests of this repository into main
+//                 that have auto-merge on (auto-merge on is the one way aboard);
+//   the front   = one of them that contains main's tip and is under way: no
+//                 required check failed on its head, and it is not idle;
+//   a candidate = one of them behind main, not reported as a conflict, no
+//                 required check failed on its head, and its head is not one the
+//                 App brought up that the independent CI never admitted.
+// With a front it does nothing. Without one it brings the candidate whose
+// auto-merge was enabled first (ties: the lower number) exactly as a named run
+// does, one per run. A red or idle front, a lost event or a failed run need no
+// memory: the next run reads the same records again.
 
 import fs from 'node:fs';
-import { ADMISSION_APP_ID, MAIN_MERGE_CHECK, appJwt, githubJson, mainMergeExternalId } from './clued-work-admission.mjs';
+import { ADMISSION_APP_ID, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, appJwt, githubJson, githubPaged,
+  mainMergeExternalId } from './clued-work-admission.mjs';
 import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
 
@@ -33,6 +49,16 @@ export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_r
 export const HEAD_READ_EVERY_MS = 3_000;
 export const HEAD_READS = 20;
 const SHA = /^[0-9a-f]{40}$/;
+// A head that contains main is idle once it is this old with nothing queued, running or pending on it and its required
+// checks not all green (the rule of the hooks' wait-pr exit 5): nothing will finish it, so it is not the front.
+export const IDLE_AFTER_MS = 15 * 60_000;
+const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required']);
+const GREEN = new Set(['success', 'skipped', 'neutral']);
+// The independent CI withdrew this check (no verdict on the code); its pending status that says it stopped will not finish.
+const WITHDRAWN = 'Independent CI check withdrawn', STOPPED = '已停止';
+const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repository(owner:$owner,name:$name){defaultBranchRef{name} '
+  + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
+  + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
 
 // An installation token of the clued-admission App with exactly these permissions, or the reason there is none.
 export async function frontMergeToken({ env, fetchImpl, now = () => Date.now() }) {
@@ -47,8 +73,118 @@ export async function frontMergeToken({ env, fetchImpl, now = () => Date.now() }
   return { token: null, reason: `the clued-admission App token with ${Object.entries(FRONT_MERGE_PERMISSIONS).map(([k, v]) => `${k}: ${v}`).join(', ')} was refused (HTTP ${minted.status})` };
 }
 
+// What ran on one head, as the ruleset reads it: the newest check run of each name and the newest status of each context.
+async function headRecords({ env, fetchImpl, repository, head, required }) {
+  const runs = await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${head}/check-runs`, 'check_runs');
+  const statuses = (await githubJson(fetchImpl, env, `/repos/${repository}/commits/${head}/status?per_page=100`))?.statuses;
+  if (!Array.isArray(statuses)) throw new Error(`the statuses of ${head} could not be read`);
+  const checks = new Map(), contexts = new Map();
+  const newer = (a, b) => String(a.started_at ?? '') > String(b.started_at ?? '') || (a.started_at === b.started_at && Number(a.id) > Number(b.id));
+  for (const run of runs) if (!checks.has(run.name) || newer(run, checks.get(run.name))) checks.set(run.name, run);
+  for (const status of statuses) if (!contexts.has(status.context)) contexts.set(status.context, status);
+  const withdrawn = run => String(run.output?.title ?? '').startsWith(WITHDRAWN);
+  // Without a required list every failure counts and nothing is known to be green.
+  const names = required.length ? required : [...new Set([...checks.keys(), ...contexts.keys()])];
+  const failed = names.filter(name => {
+    const run = checks.get(name), state = contexts.get(name)?.state;
+    return (run && FAILED.has(run.conclusion) && !withdrawn(run)) || state === 'failure' || state === 'error';
+  });
+  const green = required.length > 0 && required.every(name => {
+    const run = checks.get(name);
+    return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || contexts.get(name)?.state === 'success';
+  });
+  const unfinished = runs.filter(run => run.status !== 'completed').length
+    + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
+  const by = (name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
+  return { failed, green, unfinished, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID), admitted: by(INDEPENDENT_ADMISSION_CHECK, INDEPENDENT_ADMISSION_APP_ID) };
+}
+
+// The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
+// order. Reads only; throws when GitHub cannot be read (then nothing is decided).
+export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
+  const repository = env.GITHUB_REPOSITORY, [owner, name] = repository.split('/');
+  const open = [];
+  let main = 'main';
+  for (let after = null, page = 0; page < 10; page++) {
+    const answer = await appRequest(fetchImpl, env, 'POST', '/graphql', env.GITHUB_TOKEN, { query: TRAIN_QUERY, variables: { owner, name, after } });
+    const repo = answer.body?.data?.repository, list = repo?.pullRequests;
+    if (answer.status !== 200 || answer.body?.errors?.length || !Array.isArray(list?.nodes)) throw new Error(`the open pull requests could not be read (HTTP ${answer.status})`);
+    main = repo.defaultBranchRef?.name ?? main;
+    open.push(...list.nodes);
+    if (!list.pageInfo?.hasNextPage) break;
+    after = list.pageInfo.endCursor;
+  }
+  const tip = (await githubJson(fetchImpl, env, `/repos/${repository}/branches/${encodeURIComponent(main)}`))?.commit?.sha;
+  if (!SHA.test(tip ?? '')) throw new Error(`the tip of ${main} could not be read`);
+  const rules = await githubJson(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(main)}`);
+  if (!Array.isArray(rules)) throw new Error(`the rules of ${main} could not be read`);
+  const required = [...new Set(rules.filter(rule => rule?.type === 'required_status_checks')
+    .flatMap(rule => (rule.parameters?.required_status_checks ?? []).map(check => check?.context)).filter(Boolean))];
+  const train = open.filter(pr => pr?.autoMergeRequest && pr.isDraft === false && pr.baseRefName === main
+    && pr.headRepository?.nameWithOwner === repository && SHA.test(pr.headRefOid ?? ''))
+    .map(pr => ({ pr: pr.number, head: pr.headRefOid, enabled: String(pr.autoMergeRequest.enabledAt ?? ''), mergeable: pr.mergeable,
+      updated: Date.parse(pr.updatedAt), behind: null, state: null }))
+    .sort((a, b) => (a.enabled < b.enabled ? -1 : a.enabled > b.enabled ? 1 : a.pr - b.pr));
+  for (const member of train) {
+    const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${member.head}`);
+    if (!Number.isSafeInteger(compare?.behind_by)) throw new Error(`#${member.pr} could not be compared with ${main}`);
+    member.behind = compare.behind_by;
+  }
+  for (const member of train.filter(member => member.behind === 0)) {
+    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required });
+    const running = (await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}&per_page=100`))?.workflow_runs;
+    if (!Array.isArray(running)) throw new Error(`the workflow runs of ${member.head} could not be read`);
+    if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
+    member.state = 'front';
+    if (records.green || records.unfinished + running.filter(run => run.status !== 'completed').length > 0) continue;
+    // Quiet and not green. The head appeared with its commit or, for an older commit pushed later, with the push (the PR's last change).
+    const committed = Date.parse((await githubJson(fetchImpl, env, `/repos/${repository}/commits/${member.head}`))?.commit?.committer?.date);
+    const appeared = Math.max(Number.isFinite(committed) ? committed : 0, Number.isFinite(member.updated) ? member.updated : 0);
+    if (!(appeared > 0)) throw new Error(`the age of ${member.head} could not be read`);
+    if (now() - appeared >= IDLE_AFTER_MS) member.state = 'idle';
+  }
+  const candidates = [];
+  if (!train.some(member => member.state === 'front')) for (const member of train.filter(member => member.behind > 0)) {
+    if (member.mergeable === 'CONFLICTING') { member.state = 'conflict'; continue; }
+    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required });
+    if (records.failed.length) member.state = `red (${records.failed.join(', ')})`;
+    else if (records.brought && !records.admitted) member.state = 'brought up before and not admitted';
+    else { member.state = 'candidate'; candidates.push(member); }
+  }
+  for (const member of train) member.state ??= 'behind';
+  return { main, tip, train, candidates };
+}
+
+// A run without inputs: with no front, the first candidate that GitHub lets it update.
+async function runFrontChoice(ports) {
+  const { env, fetchImpl, workspace, readPolicyFile, now } = ports;
+  const done = (result, reason, train) => ({ result, reason, pr: null, head_sha: null, ...(train ? { train } : {}) });
+  if (resolveMode({ env, workspace, readFile: readPolicyFile }).state === 'frozen') return done('none', 'merge admission is frozen: nothing is changed');
+  let chosen;
+  try {
+    chosen = await chooseFront({ env, fetchImpl, now });
+  } catch (error) {
+    return done('skipped', `GitHub could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again`);
+  }
+  const train = { main: chosen.tip, members: chosen.train.map(({ pr, head, behind, state }) => ({ pr, head, behind, state })) };
+  const front = chosen.train.find(member => member.state === 'front');
+  if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
+  if (!chosen.candidates.length)
+    return done('none', chosen.train.length ? 'no pull request on the train can be brought up now' : 'no open pull request has auto-merge on', train);
+  for (const candidate of chosen.candidates) {
+    const result = await runFrontMainMerge({ ...ports, input: { pr: String(candidate.pr), head: candidate.head } });
+    const member = train.members.find(m => m.pr === candidate.pr);
+    // update-branch refused (a conflict GitHub had not reported yet, or main changed a workflow file): the next one, so that one cannot hold all.
+    if (result.result === 'refused') { member.state = `refused: ${result.reason}`; continue; }
+    member.state = 'chosen';
+    return { ...result, train };
+  }
+  return done('refused', 'update-branch refused every candidate', train);
+}
+
 export async function runFrontMainMerge({ env, fetchImpl, workspace, input, readPolicyFile = fs.readFileSync, now = () => Date.now(),
   sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  if (!String(input?.pr ?? '').trim() && !String(input?.head ?? '').trim()) return runFrontChoice({ env, fetchImpl, workspace, readPolicyFile, now, sleep });
   const repository = env.GITHUB_REPOSITORY;
   const done = (result, reason, extra = {}) => ({ result, reason, pr: Number(input?.pr) || null, head_sha: input?.head ?? null, ...extra });
   if (!/^[1-9][0-9]{0,9}$/.test(String(input?.pr ?? '')) || !SHA.test(String(input?.head ?? ''))) return done('refused', 'input needs pr (number) and head (full SHA)');
@@ -94,12 +230,18 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
 }
 
 export function renderSummary(r) {
-  return `## clued-front-main-merge\n\n- #${r.pr ?? '?'} \`${String(r.head_sha ?? '').slice(0, 12)}\`: **${r.result}**: ${r.reason}\n`;
+  const named = `## clued-front-main-merge\n\n- #${r.pr ?? '?'} \`${String(r.head_sha ?? '').slice(0, 12)}\`: **${r.result}**: ${r.reason}\n`;
+  if (!r.train) return named;
+  // A run without inputs: what it did, then everyone on the train and why each was or was not the one.
+  return (r.pr === null ? `## clued-front-main-merge\n\n- nobody brought up: **${r.result}**: ${r.reason}\n` : named)
+    + `\nThe train (auto-merge on) at main \`${String(r.train.main).slice(0, 12)}\`, in order:\n\n`
+    + (r.train.members.map(m => `- #${m.pr} \`${String(m.head).slice(0, 12)}\`: ${m.behind === 0 ? 'contains main' : `behind by ${m.behind}`}, ${m.state}\n`).join('') || '- nobody\n');
 }
 
-export async function main(env = process.env, fetchImpl = globalThis.fetch) {
+// clock: { now, sleep } for tests.
+export async function main(env = process.env, fetchImpl = globalThis.fetch, clock = {}) {
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
-  const result = await runFrontMainMerge({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, input: event.inputs ?? {} });
+  const result = await runFrontMainMerge({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, input: event.inputs ?? {}, ...clock });
   console.log(JSON.stringify(result, null, 2));
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, renderSummary(result));
   if (!['merged', 'none'].includes(result.result)) console.error(`::notice title=clued-front-main-merge::${result.result}: ${result.reason}`);
