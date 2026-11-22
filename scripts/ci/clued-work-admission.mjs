@@ -2842,10 +2842,30 @@ function boundedChecks(value) {
     Array.isArray(value.check_runs) && value.check_runs.length === value.total_count, 'check_listing_incomplete');
   return value.check_runs;
 }
-function samePR(pr, { repository, number, head, base, branch, owner }) {
-  return pr?.number === number && pr.state === 'open' && identity(pr.user, owner) &&
+function samePRFields(pr, { repository, number, head, base, branch, owner }) {
+  return pr?.number === number && identity(pr.user, owner) &&
     pr.head?.sha === head && pr.head.ref === branch && pr.head.repo?.full_name === repository &&
     pr.base?.sha === base && pr.base.ref === 'main' && pr.base.repo?.full_name === repository;
+}
+function samePR(pr, context) { return pr?.state === 'open' && samePRFields(pr, context); }
+// 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): the same PR, merged with this very head.
+function mergedAsIs(pr, context) {
+  return pr?.state === 'closed' && pr.merged === true && SHA.test(pr.merge_commit_sha ?? '') && samePRFields(pr, context);
+}
+// The PR as it is now. Open: null, and the caller compares main's tip with the base as before. Merged with this very
+// head (when the admission is the last required check, GitHub merges within seconds, while the gate polls every
+// 30 s): its merge commit must have exactly the parents [base, head]; that is the after-the-fact proof of "open, and
+// main's tip at the base", since the first parent of GitHub's merge commit is main's tip when it merged. Anything
+// else (closed unmerged, another head, a squash, a first parent that is not the base) is refused as before.
+async function livePR(read, repository, context) {
+  const live = await read(`/repos/${repository}/pulls/${context.number}`);
+  if (samePR(live, context)) return null;
+  requireProof(mergedAsIs(live, context), 'live_pr_changed');
+  const merge = await read(`/repos/${repository}/commits/${live.merge_commit_sha}`);
+  const parents = merge?.parents?.map(parent => parent?.sha);
+  requireProof(merge?.sha === live.merge_commit_sha && parents?.length === 2 && parents[1] === context.head, 'live_pr_changed');
+  requireProof(parents[0] === context.base, 'main_tip_changed');
+  return live.merge_commit_sha;
 }
 
 // read is the gate's authenticated, GET-only GitHub JSON reader. Returned
@@ -2884,10 +2904,10 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     requireProof(run.triggering_actor?.login === env.GITHUB_TRIGGERING_ACTOR &&
       (attempt === 1 ? identity(run.triggering_actor, AUTOMATION_BOT) :
         identity(run.triggering_actor, AUTOMATION_BOT) || identity(run.triggering_actor, owner)), 'triggering_actor_identity');
-    const live = await read(`/repos/${repository}/pulls/${pr.number}`);
-    requireProof(samePR(live, context), 'live_pr_changed');
-    const main = await read(`/repos/${repository}/branches/main`);
-    requireProof(main?.name === 'main' && main.commit?.sha === pr.base.sha, 'main_tip_changed');
+    if (await livePR(read, repository, context) === null) {
+      const main = await read(`/repos/${repository}/branches/main`);
+      requireProof(main?.name === 'main' && main.commit?.sha === pr.base.sha, 'main_tip_changed');
+    }
     const commit = await read(`/repos/${repository}/commits/${pr.head.sha}`);
     const parents = commit?.parents?.map(parent => parent?.sha);
     requireProof(commit?.sha === pr.head.sha && parents?.length === 2 && parents.every(parent => SHA.test(parent ?? '')) &&
@@ -2938,7 +2958,7 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     const latest = boundedChecks(await read(checksPath(pr.head.sha))).filter(check =>
       (native ? check?.name === admissionName && check?.app?.id === INDEPENDENT_ADMISSION_APP_ID && check?.head_sha === pr.head.sha : validCheck(check, pr.head.sha, pr.number))).sort((a, b) => b.id - a.id)[0];
     requireProof(latest?.id === currentAdmission.id && validCheck(latest, pr.head.sha, pr.number) && successful(latest), 'current_admission_changed');
-    requireProof(samePR(await read(`/repos/${repository}/pulls/${pr.number}`), context), 'live_pr_changed');
+    await livePR(read, repository, context);
     return { qualified: true, reason: 'admitted_owner_pr_signed_main_refresh', run_id: run.id, run_attempt: attempt,
       pr_number: pr.number, head_sha: pr.head.sha, previous_head_sha: parents[0], main_sha: parents[1],
       actor_id: AUTOMATION_BOT.id, prior_check_id: prior?.id ?? null, prior_admission_run_id: priorRunId,
@@ -3078,6 +3098,18 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} already passed ${workflowFileOf(env)} `
         + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr}; `
         + `prior PR evidence only, the skipped heavy jobs do not qualify this main commit; "Re-run all jobs" runs them`];
+      return outcome;
+    }
+    // 甲 (FABLE-main-push-same-tree-parallel-20261123 §3): the merged head's run of this very tree is still going
+    // (scaffold: its gate waits for the admission, its heavy jobs start after the merge). That run is the tree's
+    // one real run; this push runs no heavy job. Not a pass: run_heavy stays true and nothing here claims one.
+    if (reused && reused.run_heavy === true && reused.reason === "pr_run_in_flight") {
+      outcome.verdict = "TREE_RUN_IN_FLIGHT";
+      outcome.head_sha = env.GITHUB_SHA;
+      outcome.tree_reuse = reused;
+      outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} is being tested by ${workflowFileOf(env)} `
+        + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr} (${reused.source_status}); `
+        + `that run is this tree's one real run, so the heavy jobs do not run here; "Re-run all jobs" runs them`];
       return outcome;
     }
     if (reused) outcome.notices.push(`main push tree reuse: ${reused.reason}; the heavy jobs run`);
