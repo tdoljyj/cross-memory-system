@@ -4238,14 +4238,20 @@ export class ResidentExecutor {
         reasonCodes: [facts.reasonCodes, facts.nativeReasonCodes].flatMap(c => (Array.isArray(c) ? c : [])),
         ...(typeof failure.windowsOnly === 'boolean' ? { windowsOnly: failure.windowsOnly } : {}) };
       if (!started && release) {
+        // R3 batch 2 §3: the reservation (its origin and subject) is read before the release moves the entry away.
+        let reserved = null;
+        try { reserved = (await this.ledger.state(key)).reserved ?? null; } catch { reserved = null; }
         await this.closeOrThrow(batch);
         await this.ledger.releaseUnexecuted(key, release, { failureCode: failure.code, basis, ...facts, breakerState });
         await this.receipt('batch-unexecuted', { key, failureCode: failure.code, release, class: facts.class });
         // C3 (DESIGN §29.10): attempt 2 is consumed before its reservation; a node-role release decided nothing about the PR, so the
         // same attempt 2 is given back (its key is the same: never an attempt 3). A failure here only loses attempt 2 (the safe side).
         // The stage-1 release of a passing GitHub / Native fault (nothing written, DESIGN 49) gives it back the same way: the fault says
-        // nothing about the PR, and attempt 2 is the head's only automatic second chance.
-        if ((row?.class === 'node-role' || STAGE1_TRANSIENT_RELEASE_CODES.includes(failure.code)) && this.current?.key === key && this.current.attempt === 2) await this.reopenAttempt2(key, failure.code);
+        // nothing about the PR, and attempt 2 is the head's only automatic second chance. R3 batch 2 §3: only an attempt-2 intent
+        // (reservation origin 'attempt2'); stage 10's front number 2 is a queue row with attempt 2 that stays queued and retries.
+        if ((row?.class === 'node-role' || STAGE1_TRANSIENT_RELEASE_CODES.includes(failure.code)) && this.current?.key === key && reserved?.origin === 'attempt2') {
+          await this.reopenAttempt2(key, failure.code, reserved.subject);
+        }
         this.reportOutcome(await subjectOf() ?? this.current, release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', { code: failure.code, row, key });
         return { state: release === 'NOT_ADMITTED' ? 'NOT_ADMITTED' : 'NOT_EXECUTED', key, failureCode: failure.code, release, settle: { ...settle, kind: 'released', reason: release } };
       }
@@ -4277,11 +4283,11 @@ export class ResidentExecutor {
     }
   }
 
-  // The attempt-2 intent of this attempt-2 batch (key2), given back after a node-role release. Never throws.
-  async reopenAttempt2(key2, failureCode = 'NODE_ROLE_NOT_HELD') {
+  // The attempt-2 intent of this attempt-2 batch (key2), given back after a node-role release. Never throws. subject: the ledger's
+  // reserved subject of key2 (R3 batch 2 §3: the one source; a front batch's carries S, this.current does not).
+  async reopenAttempt2(key2, failureCode = 'NODE_ROLE_NOT_HELD', subject) {
     try {
-      const c = this.current;
-      const key1 = batchKey({ repo: this.policy.repo, pr: c.pr, headSha: c.headSha, baseSha: c.baseSha, sourceManifestSha256: this.policy.sourceManifestSha256, attempt: 1 });
+      const key1 = batchKey({ ...subject, attempt: 1 });
       await this.ledger.reopenAttempt2(key1, { key2, failureCode });
       await this.receipt('attempt2-reopened', { key: key2, attempt1: key1 });
     } catch { /* attempt 2 stays spent */ }
