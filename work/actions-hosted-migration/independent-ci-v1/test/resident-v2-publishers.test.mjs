@@ -16,6 +16,7 @@ import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
 import { HEAD, BASE, tempDir, fixtureRecord, signResult, FAR_FUTURE } from './resident-v2-fixtures.mjs';
 import { requiredCheckFailure } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { s7Rules, scaffoldRules } from './s7-rules-fixture.mjs';
 import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -35,12 +36,22 @@ test('required failures use exact head, pinned App and latest rerun across suppo
   assert.deepEqual(run([check(1, { app: { id: 999 } }), check(2, { name: 'optional' })]), []);
   assert.throws(() => run([check(1, { head_sha: BASE })]), /REQUIRED_CHECKS_UNREADABLE/);
   assert.throws(() => requiredCheckFailure(rules, { complete: false, checks: [] }, HEAD, 5368905), /REQUIRED_CHECKS_UNREADABLE/);
-  for (const integration_id of [null, -1, 999]) {
+  for (const integration_id of [null, -1]) {
     rules[2].parameters.required_status_checks.push({ context: 'unknown-or-legacy-ci', integration_id });
-    assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/, 'an unsupported required provider must never be assumed clear');
+    assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/, 'an unpinned required provider must never be assumed clear');
     assert.deepEqual(run([check(1)]), ['ci-suites'], 'known failures take priority over unrelated unsupported contexts');
     rules[2].parameters.required_status_checks.pop();
   }
+  // task 04f9b91b: pinned to any other App it is read from that App's runs (absent is no failure: GitHub keeps it required)
+  rules[2].parameters.required_status_checks.push({ context: 'other-app-ci', integration_id: 999 });
+  assert.deepEqual(run([]), []);
+  assert.deepEqual(run([check(1, { name: 'other-app-ci', app: { id: 999 } })]), ['other-app-ci']);
+  assert.deepEqual(run([check(1, { name: 'other-app-ci', app: { id: 15368 } })]), [], 'another App\'s run of the name is not that App\'s');
+  rules[2].parameters.required_status_checks.pop();
+  // a name this App does not publish, pinned to this App, stays unknown
+  rules[2].parameters.required_status_checks.push({ context: 'not-published-here', integration_id: 5368905 });
+  assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/);
+  rules[2].parameters.required_status_checks.pop();
 });
 
 test('failed required checks neither join nor extend, and an already queued claim returns its slot', async t => {
@@ -533,6 +544,17 @@ test('control pair v2 (step 3a): live branch rules decide before anything is wri
   const ok = await pairRun(t);
   assert.equal(ok.r.status, 'SETTLED');
   assert.deepEqual(ok.github.checks.map(x => [x.name, x.conclusion]), [['kooyumi-admission-verified', 'success'], ['kooyumi-merge-slot', 'success']]);
+});
+
+// Task 04f9b91b: in S7 #292 is enabled again next to the scaffold ruleset, which pins kooyumi-admission-verified to App 5164952 as
+// well. One more requirement, not another pin of this App's check: stage 8 writes the pair (must-red 4). The scaffold alone still
+// parks (S5, S6: no green, as designed).
+test('control pair v2: S7 rules (#292 and the scaffold ruleset) write the pair; the scaffold alone parks', async t => {
+  const s7 = await pairRun(t, { github: fakeGithub({ rules: s7Rules() }) });
+  assert.equal(s7.r.status, 'SETTLED', s7.r.reason);
+  assert.deepEqual(s7.github.checks.map(x => [x.name, x.conclusion]), [['kooyumi-admission-verified', 'success'], ['kooyumi-merge-slot', 'success']]);
+  const s5 = await pairRun(t, { github: fakeGithub({ rules: scaffoldRules() }) });
+  assert.deepEqual([s5.r.status, s5.r.reason, s5.r.sideEffects, s5.github.checks.length], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0]);
 });
 
 test('control pair v2 (step 3a): the test merge must be exactly [T, H] with the tested tree', async t => {

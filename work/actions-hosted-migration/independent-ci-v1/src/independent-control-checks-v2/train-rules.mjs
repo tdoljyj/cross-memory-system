@@ -78,12 +78,13 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
   for (const r of rules.filter(r => r.type === 'required_status_checks')) for (const required of r.parameters.required_status_checks) {
     check(typeof required.context === 'string' && (required.integration_id == null || required.integration_id === -1
       || (Number.isSafeInteger(required.integration_id) && required.integration_id > 0)), RULESET_UNREADABLE);
-    // This repository's supported producers are the resident's six Native
-    // check-runs and GitHub Actions. Legacy/unpinned/unknown providers cannot
-    // be qualified from a check-run inventory; park instead of assuming green.
+    // A check pinned to an App is read from that App's check runs (below), whichever App it is: the same name pinned to another App
+    // as well (the hosted scaffold ruleset next to #292, task 04f9b91b) is one more requirement, never a doubt about this App's.
+    // Two kinds cannot be qualified from a check-run inventory: a check pinned to no App (any App's run or a commit status would
+    // do), and one pinned to this App that it does not publish. Park on those instead of assuming green.
     // resident ADR 0018 §8 item 3: kooyumi-train-landed (pinned to this App) is known and never published: absent is not a failure.
     if (required.integration_id === appId && required.context === TRAIN_ONLY_CHECK) continue;
-    if (!(required.integration_id === 15368 || (required.integration_id === appId && REQUIRED_CHECK_NAMES.includes(required.context)))) uncertain = true;
+    if (!(required.integration_id > 0) || (required.integration_id === appId && !REQUIRED_CHECK_NAMES.includes(required.context))) uncertain = true;
     const matches = inventory.checks.filter(c => c.name === required.context
       && (!(required.integration_id > 0) || c.app.id === required.integration_id));
     const latest = matches.reduce((a, c) => !a || c.id > a.id ? c : a, null);
@@ -99,16 +100,20 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
 // ruleset-backstop.mjs#rulesFacts is another package and is held to the same rule by its own test): a check pinned to this App, or a scan
 // pinned to GitHub Actions. A required check without an integration accepts any App: never a pin.
 export const pinAllowed = (context, integrationId, appId) => integrationId === appId || (RULE_SCAN_NAMES.includes(context) && integrationId === ACTIONS_INTEGRATION_ID);
-// checks: required_status_checks entries ({ context, integration_id }). Every one of the six is there, and each entry of it is pinned
-// as pinAllowed allows.
+// checks: required_status_checks entries ({ context, integration_id }). Every one of the six has an entry pinned as pinAllowed allows,
+// and none of their entries is pinned to no App. The same name pinned to another App as well is one more requirement (requiredCheckFailure
+// reads that App's runs), not a different pin (task 04f9b91b: the hosted scaffold ruleset next to #292).
 export const sixPinned = (checks, appId) => Array.isArray(checks) && REQUIRED_CHECK_NAMES.every(n => {
   const of = checks.filter(c => plain(c) && c.context === n);
-  return of.length > 0 && of.every(c => pinAllowed(n, c.integration_id, appId));
+  return of.some(c => pinAllowed(n, c.integration_id, appId)) && of.every(c => Number.isSafeInteger(c.integration_id) && c.integration_id > 0);
 });
 
 // The rules GitHub applies to main, reduced to the facts stages 8 and 10 need. Anything that is not exactly understood is
-// unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks missing or pinned to another
-// integration (a disaster-recovery switch; a scan may be pinned to this App or to GitHub Actions, R3), a malformed rule.
+// unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks with no entry pinned as pinAllowed allows
+// (missing, or moved to another integration: a disaster-recovery switch; a scan may be pinned to this App or to GitHub Actions, R3), an
+// entry of one of the six pinned to no App, a malformed rule. Several rulesets aggregate: the same name pinned to another App as well is
+// one more requirement, not a different pin (task 04f9b91b; ruleset-backstop.mjs#rulesFacts reads the pin the same way, a test keeps
+// the two equal).
 // appScans: the scans this App must still publish (pinned to it by at least one rule), in RULE_SCAN_NAMES order.
 export function rulesetFacts(rules, appId) {
   check(Array.isArray(rules) && rules.length < 100 && rules.every(r => plain(r) && typeof r.type === 'string' && r.type.length > 0), RULESET_UNREADABLE);
@@ -119,8 +124,10 @@ export function rulesetFacts(rules, appId) {
   for (const r of required) for (const c of r.parameters.required_status_checks) {
     check(plain(c) && typeof c.context === 'string', RULESET_UNREADABLE);
     if (!REQUIRED_CHECK_NAMES.includes(c.context)) continue;
-    check(pinAllowed(c.context, c.integration_id, appId), RULESET_UNREADABLE);
-    pins.set(c.context, new Set([...(pins.get(c.context) ?? []), c.integration_id]));
+    // A required check without an integration accepts any App: never this check's pin, and never read as one.
+    check(Number.isSafeInteger(c.integration_id) && c.integration_id > 0, RULESET_UNREADABLE);
+    // Pinned to another App: one more requirement on the same name (requiredCheckFailure reads that App's runs), not a pin of the six.
+    if (pinAllowed(c.context, c.integration_id, appId)) pins.set(c.context, new Set([...(pins.get(c.context) ?? []), c.integration_id]));
   }
   check(REQUIRED_CHECK_NAMES.every(n => pins.has(n)), RULESET_UNREADABLE);
   const appScans = RULE_SCAN_NAMES.filter(n => pins.get(n).has(appId));

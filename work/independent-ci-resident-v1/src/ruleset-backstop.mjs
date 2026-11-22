@@ -13,9 +13,10 @@
 //     Owner decision 9e2511fe): strict must never be off there, so the pause request and the urgent notice come at once, on every
 //     node, whatever the sweep or the duty says (STRICT_OFF_STRICT_PERMANENT; no SWEEP_GRACE_MS). Stage 8 writes no green then and
 //     stage 10 asks for PAUSE too (TRAIN_STRICT_OFF); this is the backstop for a node whose stage 10 does not run;
-//   - a required check no longer pinned to App 5368905 (R3: a scan may be pinned to GitHub Actions 15368 instead), or no
-//     required_status_checks at all (the ruleset disabled):
-//     raise an Owner notification (no pause: stage 8 already writes no green then);
+//   - a required check with no entry pinned to App 5368905 (R3: a scan may be pinned to GitHub Actions 15368 instead), or listed
+//     without an App, or no required_status_checks at all (the ruleset disabled): raise an Owner notification (no pause: stage 8
+//     already writes no green then). The same name pinned to another App as well (the hosted scaffold ruleset next to #292) is one
+//     more requirement, not a lost pin (task 04f9b91b);
 //   - the rules cannot be read: nothing (stage 8 parks on RULESET_UNREADABLE by itself).
 // Each notification is raised once per kind per day; a pause request is written once per kind per day as well.
 // Pure decision plus thin ports; the caller supplies the gh read, the pause writer and the notifier.
@@ -45,8 +46,13 @@ export function rulesFacts(reply) {
   if (!Array.isArray(reply) || reply.length >= 100 || !reply.every(r => r && typeof r === 'object' && typeof r.type === 'string')) return null;
   const required = reply.filter(r => r.type === 'required_status_checks');
   const checks = required.flatMap(r => Array.isArray(r.parameters?.required_status_checks) ? r.parameters.required_status_checks : []);
+  // Source v2 train-rules.mjs#rulesetFacts reads the pin the same way (a test runs both over one table): each of the six has an
+  // entry pinned to this App (a scan: or to GitHub Actions, R3), and none of their entries is pinned to no App; another App pinning
+  // the same name is one more requirement.
   const allowed = n => (RULE_SCAN_NAMES.includes(n) ? [APP_ID, ACTIONS_INTEGRATION_ID] : [APP_ID]);
-  const pinned = required.length > 0 && REQUIRED_CHECK_NAMES.every(n => checks.some(c => c?.context === n) && checks.filter(c => c?.context === n).every(c => allowed(n).includes(c.integration_id)));
+  const named = checks.filter(c => REQUIRED_CHECK_NAMES.includes(c?.context));
+  const pinned = required.length > 0 && REQUIRED_CHECK_NAMES.every(n => named.some(c => c.context === n && allowed(n).includes(c.integration_id)))
+    && named.every(c => Number.isSafeInteger(c.integration_id) && c.integration_id > 0);
   return { strict: required.some(r => r.parameters?.strict_required_status_checks_policy === true), pinned };
 }
 

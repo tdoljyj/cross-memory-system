@@ -26,8 +26,12 @@
 //       checkout's FLEET_TRAIN lands by push.
 //   P3  stage 10's newest round in state\status.json (train.last.landing.bypass) reads this App's bypass state of the main and the
 //       independent ruleset: --before both never (the App token can read the field); --after main always and independent never.
-//   P4  exactly one independent ruleset on the default branch: active, rules exactly deletion and non_fast_forward, no bypass actor;
-//       and main's branch rules carry those two rules from it.
+//       --before also (task 04f9b91b): what push still lacks that round (train.last.landing.missing) is nothing but what the save of C
+//       adds (kooyumi-train-landed, the main ruleset's bypass); read with the App's own token, it covers rulesets of any shape.
+//   P4  the independent ruleset, known by its shape (train-landing.mjs#guardRuleset): at least one active ruleset on the default branch
+//       whose rules are exactly deletion and non_fast_forward, with no bypass actor, whose two rules main's branch rules carry; and
+//       (task 04f9b91b) every other active ruleset on the default branch but the main one has exactly Integration 5368905 always on its
+//       bypass list (a bypass list only an administrator can read, so here and not in the landing route).
 //   P5  the main ruleset 24182890. --before: no bypass actor, no kooyumi-train-landed. --after: the bypass actors exactly Integration
 //       5368905 always, the required checks the snapshot's plus kooyumi-train-landed pinned to 5368905, everything else as the snapshot.
 //   P6  --after: stage 10's newest round after the snapshot reads the landing route push (nothing missing).
@@ -40,7 +44,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { FLEET_HEARTBEAT_WINDOW_MS, fleetSourceCheck } from './precheck.mjs';
 import { parseTrainLast, parseTrainNodes } from '../src/train.mjs';
-import { externalChecksDecision, externalRequiredChecks, runsOfRequired } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
+import { externalChecksDecision, externalRequiredChecks, guardRuleset, runsOfRequired } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
 
 export const LANDING_PRECHECK_CONTRACT = 'clued.independent-ci.landing-precheck/1';
 export const SNAPSHOT_CONTRACT = 'clued.independent-ci.landing-precheck-snapshot/1';
@@ -163,6 +167,8 @@ export async function p2({ gh, repo, files, checkout, now, mode = 'before' }) {
 }
 
 // ---- P3 ----
+// What push lacks before the save of C, and only that (train-landing.mjs#landingRoute's names).
+const SAVE_ADDS = Object.freeze(['train_landed_check_missing', 'main_app_cannot_bypass']);
 // Fable 11-21 open points §5: from state\status.json, the round stage 10 last wrote (train.last.landing.bypass), never the receipts.
 // --after: the state route push needs (main always, independent never); P6 judges the route itself.
 export async function p3({ files, mode = 'before' }) {
@@ -170,34 +176,43 @@ export async function p3({ files, mode = 'before' }) {
   const last = parseTrainLast(status?.train?.last);
   const bypass = last?.landing?.bypass ?? null;
   const want = mode === 'after' ? 'always' : 'never';
-  const failed = !bypass ? ['BYPASS_NOT_READ'] : [
+  const missing = last?.landing?.missing ?? null;
+  const lacks = mode === 'before' && Array.isArray(missing) ? missing.filter(m => !SAVE_ADDS.includes(m)) : [];
+  const failed = [...(!bypass ? ['BYPASS_NOT_READ'] : [
     ...(bypass.main !== want ? [mode === 'after' ? 'BYPASS_MAIN_NOT_ALWAYS' : 'BYPASS_MAIN_NOT_NEVER'] : []),
     ...(bypass.independent !== 'never' ? ['BYPASS_INDEPENDENT_NOT_NEVER'] : []),
-  ];
-  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), at: last ? new Date(last.at).toISOString() : null, bypass };
+  ]), ...(mode === 'before' && !Array.isArray(missing) ? ['PUSH_LACKS_NOT_READ'] : lacks.length ? ['PUSH_LACKS_MORE_THAN_THE_SAVE'] : [])];
+  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), at: last ? new Date(last.at).toISOString() : null, bypass,
+    ...(mode === 'before' ? { missing } : {}), ...(lacks.length ? { lacks } : {}) };
 }
 
 // ---- P4 ----
 const ruleTypes = rs => (Array.isArray(rs?.rules) ? rs.rules.map(r => r?.type).sort() : null);
 const onDefault = rs => (rs?.conditions?.ref_name?.include ?? []).some(x => x === '~DEFAULT_BRANCH' || x === 'refs/heads/main' || x === '~ALL');
+const THE_APP_ALWAYS = canon([{ actor_id: APP_ID, actor_type: 'Integration', bypass_mode: 'always' }]);
 export async function p4({ gh, repo, rules }) {
   const list = await gh.paged(`repos/${repo}/rulesets?includes_parents=true`, null);
-  const others = [];
+  // a disabled or evaluate-only ruleset GitHub does not enforce: it counts for nothing here
+  const active = [];
   for (const r of list.filter(r => r?.target === 'branch' && r.id !== MAIN_RULESET_ID)) {
     const full = await gh.get(`repos/${repo}/rulesets/${r.id}`);
-    if (onDefault(full)) others.push(full);
+    if (onDefault(full) && full?.enforcement === 'active') active.push(full);
   }
-  if (others.length !== 1) return { pass: false, failed: [others.length ? 'MORE_THAN_ONE_INDEPENDENT_RULESET' : 'NO_INDEPENDENT_RULESET'], rulesets: others.map(r => r.id) };
-  const rs = others[0];
-  const branch = new Set(rules.filter(r => r?.ruleset_id === rs.id).map(r => r.type));
-  const failed = [
-    ...(rs.enforcement !== 'active' ? ['NOT_ACTIVE'] : []),
-    ...(canon(ruleTypes(rs)) !== canon(['deletion', 'non_fast_forward']) ? ['RULES_NOT_EXACTLY_DELETION_AND_NON_FAST_FORWARD'] : []),
-    ...(!Array.isArray(rs.bypass_actors) ? ['BYPASS_ACTORS_UNREADABLE'] : rs.bypass_actors.length ? ['BYPASS_ACTORS_NOT_EMPTY'] : []),
-    ...(!branch.has('deletion') || !branch.has('non_fast_forward') ? ['MAIN_BRANCH_RULES_LACK_IT'] : []),
-  ];
-  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), id: rs.id, name: rs.name ?? null, enforcement: rs.enforcement ?? null,
-    rules: ruleTypes(rs), bypassActors: rs.bypass_actors ?? null };
+  active.sort((a, b) => a.id - b.id);
+  const guards = active.filter(rs => guardRuleset(ruleTypes(rs)));
+  // every guard's own defects; the item passes when one guard has none
+  const defects = rs => {
+    const branch = new Set(rules.filter(r => r?.ruleset_id === rs.id).map(r => r.type));
+    return [...(!Array.isArray(rs.bypass_actors) ? ['BYPASS_ACTORS_UNREADABLE'] : rs.bypass_actors.length ? ['BYPASS_ACTORS_NOT_EMPTY'] : []),
+      ...(!branch.has('deletion') || !branch.has('non_fast_forward') ? ['MAIN_BRANCH_RULES_LACK_IT'] : [])];
+  };
+  const rs = guards.find(g => defects(g).length === 0) ?? guards[0] ?? null;
+  const notTheApp = active.filter(o => !guards.includes(o)).filter(o => !Array.isArray(o.bypass_actors)
+    || canon(o.bypass_actors.map(a => ({ actor_id: a?.actor_id ?? null, actor_type: a?.actor_type ?? null, bypass_mode: a?.bypass_mode ?? null }))) !== THE_APP_ALWAYS);
+  const failed = [...(!rs ? ['NO_INDEPENDENT_RULESET'] : defects(rs)), ...notTheApp.map(o => `OTHER_RULESET_BYPASS_NOT_EXACTLY_THE_APP:${o.id}`)];
+  return { pass: failed.length === 0, ...(failed.length ? { failed } : {}), id: rs?.id ?? null, name: rs?.name ?? null, enforcement: rs?.enforcement ?? null,
+    rules: rs ? ruleTypes(rs) : null, bypassActors: rs?.bypass_actors ?? null, guards: guards.map(g => g.id),
+    others: active.filter(o => !guards.includes(o)).map(o => ({ id: o.id, name: o.name ?? null, bypassActors: o.bypass_actors ?? null })) };
 }
 
 // ---- P5 ----
