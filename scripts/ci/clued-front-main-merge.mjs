@@ -37,6 +37,14 @@
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
 // does, one per run. A red or idle front, a lost event or a failed run need no
 // memory: the next run reads the same records again.
+//
+// The hosted copy (.github/workflows/clued-front-main-merge-hosted.yml; framework v1 §2.3, hosted scaffold report §1.4) runs this
+// same entry with CLUED_FRONT_MERGE_PHASE=scaffold. It acts only while the hosted scaffold ruleset is the one in force on main
+// (scaffoldInForce below: main requires hosted- checks pinned to GitHub Actions and none of the independent CI App 5368905, so
+// #292 is disabled and the train does not land). Before that, and from the trial switch on (#292 enabled again), it changes nothing.
+// Until migration 6b809301 is on the nodes (Decision 85effa31) the admission does not carry the authorization to the merge
+// commit: the copy says "新 head <sha>，待补授权" on the run summary and on the pull request, and DESK authorizes that head.
+// It takes no authorization step itself; it holds no Clued credential.
 
 import fs from 'node:fs';
 import { ADMISSION_APP_ID, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, appJwt, githubJson, githubPaged,
@@ -49,6 +57,11 @@ export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_r
 export const HEAD_READ_EVERY_MS = 3_000;
 export const HEAD_READS = 20;
 const SHA = /^[0-9a-f]{40}$/;
+// The hosted copy's phase: who publishes main's required checks decides which ruleset is in force.
+export const SCAFFOLD_PHASE = 'scaffold';
+export const GITHUB_ACTIONS_APP_ID = 15368;
+export const HOSTED_CHECK_PREFIX = 'hosted-';
+export const pendingAuthorizationLine = merged => `新 head ${merged}，待补授权`;
 // A head that contains main is idle once it is this old with nothing queued, running or pending on it and its required
 // checks not all green (the rule of the hooks' wait-pr exit 5): nothing will finish it, so it is not the front.
 export const IDLE_AFTER_MS = 15 * 60_000;
@@ -89,7 +102,7 @@ async function listedInFull(fetchImpl, env, route, key, what) {
 }
 
 // What ran on one head, as the ruleset reads it: the newest check run of each name and the newest status of each context.
-async function headRecords({ env, fetchImpl, repository, head, required }) {
+async function headRecords({ env, fetchImpl, repository, head, required, admitters }) {
   const runs = await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${head}/check-runs`, 'check_runs');
   const statuses = await listedInFull(fetchImpl, env, `/repos/${repository}/commits/${head}/status`, 'statuses', `the statuses of ${head}`);
   const checks = new Map(), contexts = new Map();
@@ -108,7 +121,52 @@ async function headRecords({ env, fetchImpl, repository, head, required }) {
   const unfinished = runs.filter(run => run.status !== 'completed').length
     + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
   const by = (name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
-  return { failed, green, unfinished, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID), admitted: by(INDEPENDENT_ADMISSION_CHECK, INDEPENDENT_ADMISSION_APP_ID) };
+  return { failed, green, unfinished, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID), admitted: admitters.every(app => by(INDEPENDENT_ADMISSION_CHECK, app)) };
+}
+
+// The rules in force on a branch (every enabled ruleset), 100 a page, read to the end or not at all.
+async function branchRules({ env, fetchImpl, repository, branch }) {
+  const rules = [];
+  for (let page = 1; ; page++) {
+    const chunk = await githubJson(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(branch)}?per_page=100&page=${page}`);
+    if (!Array.isArray(chunk)) throw new Error(`the rules of ${branch} could not be read`);
+    rules.push(...chunk);
+    if (chunk.length < 100) return rules;
+    if (page === PAGES) throw new Error(`the rules of ${branch} fill more than ${PAGES} pages: the required checks are not known in full`);
+  }
+}
+
+// Every required check of those rules with the App it is pinned to (integration_id null: any source).
+const requiredChecks = rules => rules.filter(rule => rule?.type === 'required_status_checks')
+  .flatMap(rule => rule.parameters?.required_status_checks ?? []).filter(check => check?.context)
+  .map(check => ({ context: String(check.context), integration_id: Number.isSafeInteger(check.integration_id) ? check.integration_id : null }));
+
+// Whether the hosted scaffold ruleset is the one in force on the default branch (hosted scaffold report §1.1): main requires
+// hosted- checks of GitHub Actions and nothing of the independent CI App (#292 disabled). Both in force is the trial switch,
+// where the train lands and brings its own front up; neither is the time before the scaffold. Throws when it cannot be read.
+export async function scaffoldInForce({ env, fetchImpl }) {
+  const repository = env.GITHUB_REPOSITORY;
+  const main = (await githubJson(fetchImpl, env, `/repos/${repository}`))?.default_branch;
+  if (!main) throw new Error('the default branch could not be read');
+  const checks = requiredChecks(await branchRules({ env, fetchImpl, repository, branch: main }));
+  const hosted = checks.filter(check => check.context.startsWith(HOSTED_CHECK_PREFIX) && check.integration_id === GITHUB_ACTIONS_APP_ID);
+  const framework = checks.filter(check => check.integration_id === INDEPENDENT_ADMISSION_APP_ID);
+  if (!hosted.length) return { inForce: false, reason: `${main} requires no hosted- check of GitHub Actions: the hosted scaffold ruleset is not in force` };
+  if (framework.length) return { inForce: false, reason: `${main} still requires ${framework.length} check(s) of the independent CI App ${INDEPENDENT_ADMISSION_APP_ID} (#292 in force): the train brings its front up` };
+  return { inForce: true, reason: `${main} requires ${hosted.length} hosted- check(s) of GitHub Actions and none of the independent CI: the hosted scaffold ruleset is in force` };
+}
+
+// The hosted copy's phase, read again at the start of every run: null to go on, or what it changes (nothing) and why.
+async function phaseGate(env, fetchImpl) {
+  const phase = env.CLUED_FRONT_MERGE_PHASE ?? '';
+  if (phase === '') return null;
+  if (phase !== SCAFFOLD_PHASE) return { result: 'refused', reason: `unknown CLUED_FRONT_MERGE_PHASE ${JSON.stringify(phase).slice(0, 40)}: nothing is changed` };
+  try {
+    const { inForce, reason } = await scaffoldInForce({ env, fetchImpl });
+    return inForce ? null : { result: 'none', reason };
+  } catch (error) {
+    return { result: 'skipped', reason: `the rules in force could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again` };
+  }
 }
 
 // The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
@@ -131,17 +189,13 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   if (!SHA.test(tip ?? '')) throw new Error(`the tip of ${main} could not be read`);
   // Which checks are required decides who is red, green or idle. Read without them (none named, a page not read) every
   // optional failure would make the front red and one more pull request would be brought up each run: then nothing is decided.
-  const rules = [];
-  for (let page = 1; ; page++) {
-    const chunk = await githubJson(fetchImpl, env, `/repos/${repository}/rules/branches/${encodeURIComponent(main)}?per_page=100&page=${page}`);
-    if (!Array.isArray(chunk)) throw new Error(`the rules of ${main} could not be read`);
-    rules.push(...chunk);
-    if (chunk.length < 100) break;
-    if (page === PAGES) throw new Error(`the rules of ${main} fill more than ${PAGES} pages: the required checks are not known in full`);
-  }
-  const required = [...new Set(rules.filter(rule => rule?.type === 'required_status_checks')
-    .flatMap(rule => (rule.parameters?.required_status_checks ?? []).map(check => check?.context)).filter(Boolean))];
+  const pinned = requiredChecks(await branchRules({ env, fetchImpl, repository, branch: main }));
+  const required = [...new Set(pinned.map(check => check.context))];
   if (!required.length) throw new Error(`the rules of ${main} name no required check`);
+  // The admission that counts is the one the rules in force pin (#292: App 5368905; the hosted scaffold: App 5164952).
+  const admitters = [...new Set(pinned.filter(check => check.context === INDEPENDENT_ADMISSION_CHECK && check.integration_id !== null)
+    .map(check => check.integration_id))];
+  if (!admitters.length) admitters.push(INDEPENDENT_ADMISSION_APP_ID);
   const train = open.filter(pr => pr?.autoMergeRequest && pr.isDraft === false && pr.baseRefName === main
     && pr.headRepository?.nameWithOwner === repository && SHA.test(pr.headRefOid ?? ''))
     .map(pr => ({ pr: pr.number, head: pr.headRefOid, enabled: String(pr.autoMergeRequest.enabledAt ?? ''), mergeable: pr.mergeable,
@@ -153,7 +207,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     member.behind = compare.behind_by;
   }
   for (const member of train.filter(member => member.behind === 0)) {
-    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required });
+    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
     const running = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
     member.state = 'front';
@@ -167,7 +221,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   const candidates = [];
   if (!train.some(member => member.state === 'front')) for (const member of train.filter(member => member.behind > 0)) {
     if (member.mergeable === 'CONFLICTING') { member.state = 'conflict'; continue; }
-    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required });
+    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
     if (records.failed.length) member.state = `red (${records.failed.join(', ')})`;
     else if (records.brought && !records.admitted) member.state = 'brought up before and not admitted';
     else { member.state = 'candidate'; candidates.push(member); }
@@ -193,7 +247,7 @@ async function runFrontChoice(ports) {
   if (!chosen.candidates.length)
     return done('none', chosen.train.length ? 'no pull request on the train can be brought up now' : 'no open pull request has auto-merge on', train);
   for (const candidate of chosen.candidates) {
-    const result = await runFrontMainMerge({ ...ports, input: { pr: String(candidate.pr), head: candidate.head } });
+    const result = await bringUp({ ...ports, input: { pr: String(candidate.pr), head: candidate.head } });
     const member = train.members.find(m => m.pr === candidate.pr);
     // update-branch refused (a conflict GitHub had not reported yet, or main changed a workflow file): the next one, so that one cannot hold all.
     if (result.result === 'refused') { member.state = `refused: ${result.reason}`; continue; }
@@ -205,6 +259,24 @@ async function runFrontChoice(ports) {
 
 export async function runFrontMainMerge({ env, fetchImpl, workspace, input, readPolicyFile = fs.readFileSync, now = () => Date.now(),
   sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  const off = await phaseGate(env, fetchImpl);
+  if (off) return { ...off, pr: Number(input?.pr) || null, head_sha: String(input?.head ?? '').trim() || null };
+  const result = await bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep });
+  return env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? notePendingAuthorization({ env, fetchImpl, result, now }) : result;
+}
+
+// Until 6b809301 is on the nodes (Decision 85effa31) a head the hosted copy made waits for DESK's authorize_head: one line on the
+// pull request says so. A comment that cannot be posted is only reported; the merge stands either way.
+async function notePendingAuthorization({ env, fetchImpl, result, now }) {
+  if (!SHA.test(result.merged_head_sha ?? '') || !result.pr) return result;
+  const { token, reason } = await frontMergeToken({ env, fetchImpl, now });
+  if (!token) return { ...result, pending_authorization: true, comment: `not posted (${reason})` };
+  const posted = await appRequest(fetchImpl, env, 'POST', `/repos/${env.GITHUB_REPOSITORY}/issues/${result.pr}/comments`, token,
+    { body: `${pendingAuthorizationLine(result.merged_head_sha)}\n\nclued-front-main-merge-hosted: main merged into ${String(result.head_sha).slice(0, 12)}.` });
+  return { ...result, pending_authorization: true, comment: posted.status === 201 ? 'posted' : `not posted (HTTP ${posted.status})` };
+}
+
+async function bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep }) {
   if (!String(input?.pr ?? '').trim() && !String(input?.head ?? '').trim()) return runFrontChoice({ env, fetchImpl, workspace, readPolicyFile, now, sleep });
   const repository = env.GITHUB_REPOSITORY;
   const done = (result, reason, extra = {}) => ({ result, reason, pr: Number(input?.pr) || null, head_sha: input?.head ?? null, ...extra });
@@ -251,7 +323,8 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
 }
 
 export function renderSummary(r) {
-  const named = `## clued-front-main-merge\n\n- #${r.pr ?? '?'} \`${String(r.head_sha ?? '').slice(0, 12)}\`: **${r.result}**: ${r.reason}\n`;
+  const named = `## clued-front-main-merge\n\n- #${r.pr ?? '?'} \`${String(r.head_sha ?? '').slice(0, 12)}\`: **${r.result}**: ${r.reason}\n`
+    + (r.pending_authorization ? `- #${r.pr} ${pendingAuthorizationLine(r.merged_head_sha)}（PR 评论 ${r.comment}）\n` : '');
   if (!r.train) return named;
   // A run without inputs: what it did, then everyone on the train and why each was or was not the one.
   return (r.pr === null ? `## clued-front-main-merge\n\n- nobody brought up: **${r.result}**: ${r.reason}\n` : named)
@@ -260,13 +333,24 @@ export function renderSummary(r) {
 }
 
 // clock: { now, sleep } for tests.
-export async function main(env = process.env, fetchImpl = globalThis.fetch, clock = {}) {
+export async function main(env = process.env, fetchImpl = globalThis.fetch, clock = {}, argv = process.argv.slice(2)) {
+  if (argv[0] === '--phase') return phaseMain(env, fetchImpl);
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const result = await runFrontMainMerge({ env, fetchImpl, workspace: env.GITHUB_WORKSPACE, input: event.inputs ?? {}, ...clock });
   console.log(JSON.stringify(result, null, 2));
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, renderSummary(result));
   if (!['merged', 'none'].includes(result.result)) console.error(`::notice title=clued-front-main-merge::${result.result}: ${result.reason}`);
   return result.result === 'error' ? 1 : 0;
+}
+
+// The hosted copy's first job, without the App key: in_force=true|false on GITHUB_OUTPUT, reading only; exit 0 either way.
+async function phaseMain(env, fetchImpl) {
+  const off = await phaseGate({ ...env, CLUED_FRONT_MERGE_PHASE: SCAFFOLD_PHASE }, fetchImpl);
+  const line = `in_force=${off ? 'false' : 'true'}`;
+  console.log(off ? `${line} (${off.result}: ${off.reason})` : line);
+  if (env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, `${line}\n`);
+  if (env.GITHUB_STEP_SUMMARY && off) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `## clued-front-main-merge-hosted\n\n- not in force, **${off.result}**: ${off.reason}\n`);
+  return 0;
 }
 
 if (import.meta.main) {
