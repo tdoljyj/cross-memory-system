@@ -120,6 +120,8 @@ const AUTHORIZATION_DB_TESTS = [
   'storage-legacy-create-registration-db', 'storage-legacy-directory-recovery-db', 'storage-master-control-db',
   'storage-registration-reconcile-db', 'storage-semantic-recovery-db', 'task-goal-delivery-db', 'task-goal-delivery-production-schema-db',
   'task-owner-detail-db', 'work-claims-generated-files-db', 'work-claims-lease-pin-db',
+  // The merge queue of a served repository is joined only through the CI door (20261122130000).
+  'merge-queue-ci-join-only-db',
 ].map((name) => `apps/clued-cloud/tests/${name}.test.mjs`);
 // What those tests read besides the migrations: their shared test helpers, the worker code some of them bundle, the
 // Resource Center host and policy modules, the context compiler and the vendored Information Flow and DatasetSplit
