@@ -20,7 +20,9 @@ const env = (overrides = {}) => ({
   GITHUB_RUN_ID: "555",
   ...overrides,
 });
-const prEvent = (base = "main") => JSON.stringify({ pull_request: { number: 9, base: { ref: base }, head: { sha: HEAD } } });
+// A real pull request event names both repositories; a same-repository pull request by default (04f9b91b 题 1).
+const prEvent = (base = "main", headRepo = { full_name: "o/r" }) => JSON.stringify({ pull_request: { number: 9,
+  base: { ref: base, repo: { full_name: "o/r" } }, head: { sha: HEAD, ...(headRepo === "absent" ? {} : { repo: headRepo }) } } });
 
 test('bors staging: only the required-tests workflow pushed by App 5368905 may be considered off main', async () => {
   const staging = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging',
@@ -473,6 +475,64 @@ test("runner hook (re-review 7, m1): pull_request_target counts as main only for
   assert.deepEqual([result.allow, result.reason, calls.length], [false, "pull_request_target for a pull request into feature, not main", 0]);
 });
 
+// 04f9b91b 题 1: a pull request whose head is not in this repository (a fork, or a head repository GitHub no longer
+// names) never runs on this runner, on either pull request event, whatever the workflow's own if says.
+const FORK_REFUSED = "pull request #9 comes from fork stranger/r, not o/r; a fork's head never runs on this runner";
+test("runner hook (04f9b91b, 1): a fork's pull_request that changes no workflow is refused before the head is read", async () => {
+  // Before: ALLOW "changes no workflow".
+  const { result, calls } = await run({}, { [COMPARE]: files("apps/x.ts") }, prEvent("main", { full_name: "stranger/r" }));
+  assert.deepEqual([result.allow, result.reason], [false, FORK_REFUSED]);
+  assert.equal(calls.some((c) => c.url.startsWith(COMPARE)), false, "nothing about the head is read");
+  // A fork named like this repository but another repository is still a fork.
+  assert.equal((await run({}, { [COMPARE]: files() }, prEvent("main", { full_name: "o/r-fork" }))).result.allow, false);
+});
+test("runner hook (04f9b91b, 2): a fork's pull_request that changes a workflow is refused as a fork, not on admission", async () => {
+  // Before: ALLOW on the (successful) admission run.
+  const { result, calls } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml") }, prEvent("main", { full_name: "stranger/r" }));
+  assert.deepEqual([result.allow, result.reason], [false, FORK_REFUSED]);
+  assert.equal(calls.some((c) => c.url.startsWith(ADMISSION_RUNS) || c.url.startsWith(PRODUCER)), false);
+});
+test("runner hook (04f9b91b, 3): a fork's pull_request_target into main is refused without a call", async () => {
+  // Before: ALLOW as main's own run.
+  const { result, calls } = await run({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REF: "refs/heads/main" }, {},
+    prEvent("main", { full_name: "stranger/r" }));
+  assert.deepEqual([result.allow, result.reason, calls.length],
+    [false, "pull_request_target for pull request #9 comes from fork stranger/r, not o/r; a fork's head never runs on this runner", 0]);
+});
+test("runner hook (04f9b91b, 4): no readable head or base repository (a deleted fork) refuses on both events", async () => {
+  let result, calls;
+  for (const headRepo of [null, "absent", {}, { full_name: "" }]) {
+    ({ result } = await run({}, { [COMPARE]: files() }, prEvent("main", headRepo)));
+    assert.deepEqual([result.allow, result.reason],
+      [false, "pull request #9 comes from an unreadable head repository (a deleted fork?), not o/r; a fork's head never runs on this runner"],
+      JSON.stringify(headRepo));
+    ({ result, calls } = await run({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REF: "refs/heads/main" }, {}, prEvent("main", headRepo)));
+    assert.deepEqual([result.allow, calls.length], [false, 0], `pull_request_target ${JSON.stringify(headRepo)}`);
+    assert.match(result.reason, /^pull_request_target for pull request #9 comes from an unreadable head repository/);
+  }
+  // A base repository that is not this one (or unreadable) is refused the same way: head and base must both be o/r.
+  const otherBase = JSON.stringify({ pull_request: { number: 9, base: { ref: "main", repo: { full_name: "stranger/r" } },
+    head: { sha: HEAD, repo: { full_name: "o/r" } } } });
+  ({ result } = await run({}, { [COMPARE]: files() }, otherBase));
+  assert.equal(result.allow, false);
+  assert.match(result.reason, /comes from base repository stranger\/r, not o\/r/);
+});
+
+test("runner hook (04f9b91b, 5): a same-repository pull request is judged as before on both events", async () => {
+  // Same repository, any letter case: unchanged.
+  for (const headRepo of [{ full_name: "o/r" }, { full_name: "O/R" }]) {
+    let { result } = await run({}, { [COMPARE]: files("apps/x.ts") }, prEvent("main", headRepo));
+    assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes no workflow"]);
+    ({ result } = await run({}, { [COMPARE]: files(".github/workflows/heavy.yml") }, prEvent("main", headRepo)));
+    assert.deepEqual([result.allow, result.reason], [true, "pull request #9 changes .github/workflows/heavy.yml; admission run 1 succeeded"]);
+    const target = await run({ GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REF: "refs/heads/main" }, {}, prEvent("main", headRepo));
+    assert.deepEqual([target.result.allow, target.result.reason, target.calls.length], [true, "pull_request_target on main", 0]);
+  }
+  // The base check still comes first: a fork's pull request into another branch keeps that reason.
+  const { result } = await run({}, { [COMPARE]: files() }, prEvent("feature", { full_name: "stranger/r" }));
+  assert.deepEqual([result.allow, result.reason], [false, "pull request into feature, not main"]);
+});
+
 test("runner hook: other branches, other events and other repositories are refused", async () => {
   for (const [overrides, reason] of [
     [{ GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/feat/clued-two-level-views-v1" }, /push on refs\/heads\/feat/],
@@ -567,7 +627,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "required-tests-dispatch-v1");
+  assert.equal(HOOK_VERSION, "fork-refusal-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));
@@ -786,8 +846,9 @@ test("runner hook (Decision 77216370): a re-run of an old head, a closed or a re
     }
   }
   // An event without a usable number or head refuses without asking GitHub.
-  for (const event of [JSON.stringify({ pull_request: { base: { ref: "main" }, head: { sha: HEAD } } }),
-    JSON.stringify({ pull_request: { number: 9, base: { ref: "main" }, head: {} } })]) {
+  const own = { full_name: "o/r" };
+  for (const event of [JSON.stringify({ pull_request: { base: { ref: "main", repo: own }, head: { sha: HEAD, repo: own } } }),
+    JSON.stringify({ pull_request: { number: 9, base: { ref: "main", repo: own }, head: { repo: own } } })]) {
     const fake = fakeFetch({ [RUN]: rerunOf(2), [PULLS]: pull() });
     const result = await decide({ env: env({ GITHUB_RUN_ATTEMPT: "2", ...GATE }), fetchImpl: fake.fetchImpl, sleep: async () => {},
       readFile: (p) => (p === "/token" ? "ghp_read\n" : event) });

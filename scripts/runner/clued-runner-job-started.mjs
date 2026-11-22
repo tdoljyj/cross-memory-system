@@ -9,7 +9,7 @@
 //   - main: push, schedule, workflow_run, pull_request_target, or a hand
 //     dispatch on main. Those workflow files are main's own. A
 //     pull_request_target run counts only for a pull request into main
-//     (re-review 7, m1).
+//     (re-review 7, m1) whose head is this repository's (04f9b91b).
 //   - clued-train/staging: only clued-required-tests.yml or
 //     clued-required-tests-windows.yml (STAGING_WORKFLOWS) pushed by the
 //     App 5368905 bot (ADR 0018), with a merge chain rooted at live main T.
@@ -18,6 +18,8 @@
 //     This deliberately requires admission for every member, so workflow
 //     and protected-path changes cannot take a weaker staging exception.
 //     Missing, ambiguous or unreadable evidence refuses before any step.
+//   Neither pull request event ever starts a job for a fork's head, or for a
+//   head repository GitHub no longer names (forkRefusal, 04f9b91b 题 1).
 //   - a pull request into main that changes no file under .github/workflows/.
 //     Its workflows are main's, so each keeps its admission-gate job, which
 //     waits for the Clued admission of the pull request.
@@ -329,7 +331,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HOOK_VERSION = "required-tests-dispatch-v1";
+export const HOOK_VERSION = "fork-refusal-v1";
 export const COMPONENT_VERSION = "1.0.7";
 
 // Transient reads (see the header).
@@ -943,6 +945,19 @@ function hookReads({ env, fetchImpl, sleep, now, timeoutSignal }) {
   const deadline = now() + 2 * waitLimitSeconds(env) * 1000 + READ_ALLOWANCE_MS;
   return retryingFetch(fetchImpl, { sleep, now, deadlineAt: () => deadline, ...(timeoutSignal ? { timeoutSignal } : {}) });
 }
+// 04f9b91b 题 1: a pull request's code runs on this runner only when its head and its base are both this
+// repository. A fork's head, or one GitHub no longer names (a deleted fork: head.repo is null), is refused on
+// pull_request and pull_request_target alike, whatever the workflow's own if says; this is the one place
+// that holds for every self-hosted job. "" when the pull request is this repository's own.
+export function forkRefusal(pr, repository) {
+  const own = repository.toLowerCase();
+  const name = (side) => { const value = pr?.[side]?.repo?.full_name; return typeof value === "string" && value ? value : null; };
+  const head = name("head"), base = name("base");
+  if (head?.toLowerCase() === own && base?.toLowerCase() === own) return "";
+  const from = head === null ? "an unreadable head repository (a deleted fork?)"
+    : head.toLowerCase() !== own ? `fork ${head}` : `base repository ${base ?? "(unreadable)"}`;
+  return `pull request #${pr?.number ?? "(unknown)"} comes from ${from}, not ${repository}; a fork's head never runs on this runner`;
+}
 export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileSync, sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = () => Date.now(), timeoutSignal = null }) {
   const fetchImpl = hookReads({ env, fetchImpl: rawFetch, sleep, now, timeoutSignal });
@@ -974,6 +989,11 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
       const base = payload && payload.pull_request && payload.pull_request.base;
       if (!base || base.ref !== defaultBranch) {
         result.reason = `pull_request_target for a pull request into ${base ? base.ref : "(unknown)"}, not ${defaultBranch}`;
+        return result;
+      }
+      const fork = forkRefusal(payload.pull_request, repository);
+      if (fork) {
+        result.reason = `pull_request_target for ${fork}`;
         return result;
       }
     }
@@ -1041,6 +1061,11 @@ export async function decide({ env, fetchImpl: rawFetch, readFile = fs.readFileS
     if (!pr || !pr.base || !pr.head) throw new Error("pull_request payload is missing.");
     if (pr.base.ref !== defaultBranch) {
       result.reason = `pull request into ${pr.base.ref}, not ${defaultBranch}`;
+      return result;
+    }
+    const fork = forkRefusal(pr, repository);
+    if (fork) {
+      result.reason = fork;
       return result;
     }
     const limit = waitLimitSeconds(env);

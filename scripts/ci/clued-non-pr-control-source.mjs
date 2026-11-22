@@ -13,9 +13,9 @@ const freeze=value=>{if(value&&typeof value==='object'){Object.values(value).for
 export const NON_PR_CONTROL_FILES=freeze({
   ".github/workflows/clued-compute-panel.yml": {
     "family": "compute_panel",
-    "workflow_blob": "baa297ef49804984999afd5b05d51386aa84cac4",
-    "source_sha256": "5a922a93e1b8b97d35103079ea19246238da319eadc86be9fe0d475d46111483",
-    "workflow_definition_sha256": "0bac13a8f87320e17f74205826c98b78d4d2513133f51e628181538fc6f7869d",
+    "workflow_blob": "f3171203ca531f0cb4ce47574d4dc1c356a2e93e",
+    "source_sha256": "cafc0ca821d1be2ada06295bf19a313cab7b4bb8bfe22bf991ff77657e82f18a",
+    "workflow_definition_sha256": "0a09a6a88ff14065d1941ac60c3ca3fe6e615efe873b19d737efded4546b7d5d",
     "triggers": [
       "schedule",
       "workflow_dispatch"

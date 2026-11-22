@@ -1460,7 +1460,7 @@ function hookPort(w) {
     const env = { CLUED_RUNNER_HOOK_REPOSITORY: REPO, CLUED_RUNNER_HOOK_TOKEN_FILE: '/token', GITHUB_REPOSITORY: REPO,
       GITHUB_WORKFLOW_REF: `${REPO}/${wf.path}@refs/pull/452/merge`, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/452/merge',
       GITHUB_SHA: MERGE_SHA, GITHUB_EVENT_PATH: '/event.json', GITHUB_RUN_ID: String(wf.runId), GITHUB_RUN_ATTEMPT: String(attemptNumber), GITHUB_JOB: job };
-    const event = JSON.stringify({ pull_request: { number: 452, base: { ref: 'main' }, head: { sha: HEAD } } });
+    const event = JSON.stringify({ pull_request: { number: 452, base: { ref: 'main', repo: { full_name: REPO } }, head: { sha: HEAD, repo: { full_name: REPO } } } });
     const from = reads.length;
     const result = await hookDecide({ env, fetchImpl, readFile: p => (p === '/token' ? 'test-only' : event),
       sleep: async ms => { now += ms; }, now: () => now });
