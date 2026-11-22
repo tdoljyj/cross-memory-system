@@ -53,6 +53,10 @@ import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
 
 export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_requests: 'write', checks: 'write' });
+// update-branch with a main that changed a workflow file needs workflows: write (FABLE-scaffold-s5-pre §3). It is asked for only
+// when the installation holds it, read from the installation on every run: granted or withdrawn by the Owner, the token follows.
+export const WORKFLOWS_PERMISSION = Object.freeze({ workflows: 'write' });
+export const WORKFLOWS_REFUSED = 'main 改了工作流文件且 App 无 workflows 权限';
 // update-branch answers 202 and merges asynchronously; the new head is read this often, at most this many times.
 export const HEAD_READ_EVERY_MS = 3_000;
 export const HEAD_READS = 20;
@@ -75,17 +79,20 @@ const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repositor
   + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
 
-// An installation token of the clued-admission App with exactly these permissions, or the reason there is none.
+// An installation token of the clued-admission App with exactly these permissions (and workflows: write when the installation
+// holds it), or the reason there is none.
 export async function frontMergeToken({ env, fetchImpl, now = () => Date.now() }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? '').trim(), key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? '').trim();
   if (!appId || !key) return { token: null, reason: 'the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)' };
   const jwt = appJwt(appId, key, Math.floor(now() / 1000));
   const installation = await appRequest(fetchImpl, env, 'GET', `/repos/${env.GITHUB_REPOSITORY}/installation`, jwt);
   if (installation.status !== 200 || !installation.body?.id) return { token: null, reason: `GET installation returned ${installation.status}` };
+  const workflows = installation.body.permissions?.workflows === 'write';
+  const permissions = workflows ? { ...FRONT_MERGE_PERMISSIONS, ...WORKFLOWS_PERMISSION } : FRONT_MERGE_PERMISSIONS;
   const minted = await appRequest(fetchImpl, env, 'POST', `/app/installations/${installation.body.id}/access_tokens`, jwt,
-    { repositories: [env.GITHUB_REPOSITORY.split('/')[1]], permissions: FRONT_MERGE_PERMISSIONS });
-  if (minted.status === 201 && minted.body?.token) return { token: minted.body.token, reason: null };
-  return { token: null, reason: `the clued-admission App token with ${Object.entries(FRONT_MERGE_PERMISSIONS).map(([k, v]) => `${k}: ${v}`).join(', ')} was refused (HTTP ${minted.status})` };
+    { repositories: [env.GITHUB_REPOSITORY.split('/')[1]], permissions });
+  if (minted.status === 201 && minted.body?.token) return { token: minted.body.token, reason: null, workflows };
+  return { token: null, reason: `the clued-admission App token with ${Object.entries(permissions).map(([k, v]) => `${k}: ${v}`).join(', ')} was refused (HTTP ${minted.status})` };
 }
 
 // One list of a head (body[key], 100 a page) read to the end: GitHub says how many there are (total_count). A list that
@@ -293,11 +300,13 @@ async function bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, 
   if (!SHA.test(tip ?? '')) return done('error', `the tip of ${main} could not be read`);
   const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${head}`);
   if (!(Number(compare?.behind_by) > 0)) return done('none', `the head already contains ${main}`);
-  const { token, reason } = await frontMergeToken({ env, fetchImpl, now });
+  const { token, reason, workflows } = await frontMergeToken({ env, fetchImpl, now });
   if (!token) return done('skipped', reason);
   const update = await appRequest(fetchImpl, env, 'PUT', `/repos/${repository}/pulls/${number}/update-branch`, token, { expected_head_sha: head });
-  // 422: a conflict (the holder resolves it by hand) or the head moved; 403: e.g. main changed a workflow file and the App has no workflows permission.
-  if (update.status !== 202) return done('refused', `update-branch answered HTTP ${update.status}: ${String(update.body?.message ?? '').slice(0, 300)}`);
+  // 422: a conflict (the holder resolves it by hand) or the head moved; 403 with a token without workflows: write: main changed a
+  // workflow file and the App's installation has no workflows permission (the Owner grants it once, §3; the token follows).
+  if (update.status !== 202) return done('refused', `update-branch answered HTTP ${update.status}: ${String(update.body?.message ?? '').slice(0, 300)}`
+    + (update.status === 403 && !workflows ? `（可能是${WORKFLOWS_REFUSED}）` : ''));
   let merged = null;
   for (let read = 0; read < HEAD_READS && !merged; read++) {
     await sleep(HEAD_READ_EVERY_MS);
