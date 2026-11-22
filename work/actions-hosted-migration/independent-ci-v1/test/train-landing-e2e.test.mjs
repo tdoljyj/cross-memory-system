@@ -2005,8 +2005,10 @@ for (const scene of [
 });
 
 // E3 (the target scene, end to end): route push and no scan required from this App; three PRs each two commits behind main, nobody in the
-// merge queue, no admission yet; main moves once more on its own meanwhile. Nobody merges main into any PR; one batch lands all three.
-test('bc982192 E3: route push, appScans [] -> stamped at birth -> stage 1 on the merge base -> no scan stage -> stage 8 joins -> one front batch of three lands in one push within 30 minutes', async t => {
+// merge queue, no admission yet; main moves once more on its own meanwhile. Nobody merges main into any PR; all three land, each front
+// batch in one push. FABLE-keep-train-replan §3.4 (main 072814270): with the train idle, stage 10 runs right after a head's admission,
+// before the next PR's ordinary batch, so the front batch is not held back to group the three.
+test('bc982192 E3: route push, appScans [] -> stamped at birth -> stage 1 on the merge base -> no scan stage -> stage 8 joins -> the front batches land, one push each, within 30 minutes', async t => {
   const prs = [1411, 1412, 1413];
   const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
   const r = await residentOver(t, e);
@@ -2029,9 +2031,8 @@ test('bc982192 E3: route push, appScans [] -> stamped at birth -> stage 1 on the
     ten: engine.trainRuns.map(x => [x.decision, x.landing?.route ?? null, x.landing?.missing ?? null, x.rules?.appScans ?? null, x.openFrontBatch?.pr ?? null]) });
   assert.ok(landed(), diag);
   assert.ok(moved, 'main moved during the run');
-  // one push, of one batch of all three, on main past the move; main only fast-forwarded; no head changed (nobody merged main into a PR)
-  assert.equal(e.W.pushes.length, 1, diag);
-  assert.equal(new Set(prs.map(pr => e.W.pulls.get(pr).mergeSha)).size, 1, diag);
+  // one push per front batch, on main past the move; main only fast-forwarded; no head changed (nobody merged main into a PR)
+  assert.equal(e.W.pushes.length, new Set(prs.map(pr => e.W.pulls.get(pr).mergeSha)).size, diag);
   assert.ok(e.W.ancestor(moved, e.main()), 'landed on main past the move');
   assert.deepEqual(prs.map(e.head), heads);
   assert.ok(f.clock() - start <= 30 * 60_000, `landed after ${(f.clock() - start) / 60_000} minutes`);
@@ -2053,9 +2054,9 @@ test('bc982192 E3: route push, appScans [] -> stamped at birth -> stage 1 on the
   // stage 8 of each ordinary batch joined the queue and never ended on the moved base; the front's stage 8 landed
   assert.ok(engine.stage8.every(x => x.reason !== 'RESIDENT_BASE_MOVED' && x.reason !== 'full_admission_subject_changed'), diag);
   assert.ok(engine.stage8.some(x => x.front && x.status === 'SETTLED'), diag);
-  // stage 10 opened the front batch with the two riders
-  const open = engine.trainRuns.find(x => x.openFrontBatch);
-  assert.equal(open.openFrontBatch.members?.length ?? 0, 3, diag);
+  // stage 10 opened front batches that hold the three PRs, each PR in exactly one
+  const opened = engine.trainRuns.filter(x => x.openFrontBatch).flatMap(x => x.openFrontBatch.members?.map(m => m.pr) ?? [x.openFrontBatch.pr]);
+  assert.deepEqual(opened.sort((a, b) => a - b), prs, diag);
 });
 
 // E6 (a broken channel is the strict rule): a batch stamped push whose stage file is missing, too long, names an unknown route or is not
@@ -2214,7 +2215,8 @@ test('bc982192 E10a (B2, restart): status push, new executor without a reading -
   assert.deepEqual(restamped.map(x => [x.pr, x.headSha, x.baseSha]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, e.head(pr), T0]), diag);
   assert.equal(r.triggers.length, prs.length, `one trigger per head: ${diag}`);
   assert.deepEqual(prs.map(e.head), heads, 'nobody merged main into a PR');
-  assert.equal(e.W.pushes.length, 1, diag);
+  // one push per front batch (FABLE-keep-train-replan §3.4: the idle train does not hold a front batch back to group both)
+  assert.equal(e.W.pushes.length, new Set(prs.map(pr => e.W.pulls.get(pr).mergeSha)).size, diag);
   assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
 });
 
