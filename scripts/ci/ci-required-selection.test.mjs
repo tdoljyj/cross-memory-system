@@ -1734,7 +1734,7 @@ function trainCheckout(t) {
   const [H1, H2, H3, X] = [commit(T), commit(T), commit(T), commit()];
   git('update-ref', 'refs/remotes/origin/main', T);
   const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
-  return { dir, T, H1, H2, one, two, three, commit, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
+  return { dir, T, H1, H2, one, two, three, commit, git, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
 }
 function runBaseline(t, { shell, script }, repo, env) {
   const command = shellCommand(shell);
@@ -1780,6 +1780,84 @@ for (const [file, id] of BASELINE_JOBS) {
       const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
       assert.notEqual(r.status, 0, `${s}: ${r.log}`);
       assert.equal(r.outputs.sha, undefined, r.log);
+    }
+  });
+  // Task 6cd46765 (FABLE-dispatch-base-20261122 §2.2, §4): a lost-run dispatch tests the PR branch head itself, not a
+  // merge with main, so its CI_BASE_SHA is the main commit the head is based on, git merge-base origin/main <head>: always
+  // an ancestor of the head, unlike main's newest commit once main has moved on. The trusted checkout keeps main (sha=
+  // stays unset). The Windows job gets the same branch with its own dispatch trigger (PR-2).
+  if (file !== LINUX_WORKFLOW) continue;
+  const DISPATCH = { EVENT_NAME: 'workflow_dispatch', PUSH_REF: 'refs/heads/claude/some-branch' };
+  // origin/main moves T -> M2; the branch H1 forked at T; the train App's merge of main into it gives caughtUp.
+  const dispatchCheckout = (t) => {
+    const repo = trainCheckout(t);
+    const M2 = repo.commit(repo.T);
+    repo.git('update-ref', 'refs/remotes/origin/main', M2);
+    return { ...repo, M2, caughtUp: repo.commit(repo.H1, M2), behind: repo.commit(repo.H1) };
+  };
+  const isAncestor = (repo, a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: repo.dir }).status === 0;
+  test(`lost-run dispatch, ${label}: a head that just merged main is measured against that main commit, origin/main`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: repo.caughtUp });
+    assert.equal(r.status, 0, r.log);
+    assert.deepEqual(r.outputs, { ci_base: repo.M2 }, r.log);
+  });
+  test(`lost-run dispatch, ${label}: a head behind main is measured against its fork point, never main's newest commit`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    for (const head of [repo.H1, repo.behind]) {
+      const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
+      assert.equal(r.status, 0, r.log);
+      assert.deepEqual(r.outputs, { ci_base: repo.T }, r.log);
+      assert.ok(isAncestor(repo, r.outputs.ci_base, head), 'the base is an ancestor of the tested head');
+      assert.ok(!isAncestor(repo, repo.M2, head), 'main has moved past the head: main\'s newest commit would not be');
+    }
+  });
+  test(`lost-run dispatch, ${label}: a head with no history in common with main, or an event without a base, fails the step`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const unrelated = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: repo.commit(repo.commit()) });
+    assert.notEqual(unrelated.status, 0, unrelated.log);
+    assert.deepEqual(unrelated.outputs, {}, unrelated.log);
+    // A later trigger that nobody gave a base must fail here, not hand the suites an empty CI_BASE_SHA.
+    for (const EVENT_NAME of ['schedule', 'merge_group', 'repository_dispatch', '']) {
+      const r = runBaseline(t, step, repo.dir, { EVENT_NAME, PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.caughtUp });
+      assert.notEqual(r.status, 0, `${EVENT_NAME}: ${r.log}`);
+      assert.deepEqual(r.outputs, {}, `${EVENT_NAME}: ${r.log}`);
+    }
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.caughtUp });
+    assert.equal(pr.status, 0, pr.log);
+    assert.deepEqual(pr.outputs, {}, pr.log);
+  });
+  if (id !== 'ci-suites') continue;
+  // The consumer, end to end: the step's outputs, the job's own CI_BASE_SHA expression (GitHub's ||, a missing property
+  // is null; under dispatch there is no pull_request), then the selector expanding every command of the four suites
+  // that take {base}. Before the fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
+  test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const text = readFileSync(file, 'utf8');
+    const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
+    const expression = /\n {10}CI_BASE_SHA: \$\{\{ (.+?) \}\}\n/.exec(job.slice(job.indexOf('- name: Run the selected suites\n')))[1];
+    const operands = expression.split('||').map((operand) => operand.trim());
+    assert.ok(operands.every((operand) => /^[a-z_]+(\.[a-z_-]+)+$/.test(operand)), expression);
+    for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
+      const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
+      assert.equal(r.status, 0, r.log);
+      const context = { steps: { 'train-base': { outputs: r.outputs } },
+        github: { event_name: 'workflow_dispatch', event: { inputs: { pr: '9', head } } } };
+      const value = (operand) => operand.split('.').reduce((at, key) => (at == null ? null : at[key] ?? null), context);
+      const base = operands.map(value).find(Boolean) ?? '';
+      for (const suite of ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']) {
+        let compared = 0;
+        for (const command of SUITE_COMMANDS[suite]) {
+          const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base, report: path.join(repo.dir, 'r.json') });
+          const at = argv.indexOf('--base');
+          if (at < 0) continue;
+          assert.equal(argv[at + 1], expected, `${suite}: ${argv.join(' ')}`);
+          compared++;
+        }
+        assert.equal(compared, 1, `${suite} compares with the base once`);
+      }
+      assert.equal(base, expected, expression);
+      assert.ok(isAncestor(repo, base, head), 'the suites compare the head with one of its own ancestors');
     }
   });
 }
