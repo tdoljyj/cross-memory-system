@@ -67,6 +67,10 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
           expires_at: '2099-01-01T00:00:00Z', base_commit: BASE, write_set: ['docs/**'] } });
     }
     const route = u.slice(API.length);
+    // main's rules as today (#292 in force): every run reads them first (FABLE-scaffold-s5-pre §1).
+    if (method === 'GET' && route === '/repos/o/r') return reply({ full_name: 'o/r', default_branch: 'main' });
+    if (method === 'GET' && route.startsWith('/repos/o/r/rules/branches/main')) return reply([{ type: 'required_status_checks',
+      parameters: { required_status_checks: [{ context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }] } }]);
     if (method === 'GET' && route === `/repos/o/r/pulls/${PR}`) return reply(structuredClone(w.pr));
     if (method === 'GET' && route.startsWith(`/repos/o/r/pulls/${PR}/files`)) return reply([{ filename: file, status: 'modified' }]);
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
@@ -508,6 +512,8 @@ test('a run with pr and head handles only the named pull request, as before', as
     pr: 1225, head_sha: sha(0x1225), merged_head_sha: w.headOf(1225), main_sha: T });
   assert.deepEqual(w.brought(), [1225]);
   assert.deepEqual(w.calls.map(c => `${c.method} ${c.route}`), [
+    // which copy brings the front (FABLE-scaffold-s5-pre §1): the rules in force, read first
+    'GET /repos/o/r', 'GET /repos/o/r/rules/branches/main?per_page=100&page=1',
     'GET /repos/o/r/pulls/1225', 'GET /repos/o/r/branches/main', `GET /repos/o/r/compare/${T}...${sha(0x1225)}`,
     'GET /repos/o/r/installation', 'POST /app/installations/42/access_tokens', 'PUT /repos/o/r/pulls/1225/update-branch',
     'GET /repos/o/r/pulls/1225', `GET /repos/o/r/commits/${w.headOf(1225)}`, 'GET /repos/o/r/branches/main', 'POST /repos/o/r/check-runs']);
@@ -823,4 +829,37 @@ test('§3: without workflows in the installation the token asks for the three as
   const bare = scene0823();
   assert.equal((await bare.run()).result, 'merged');
   assert.deepEqual(bare.calls.filter(c => c.route.endsWith('/access_tokens')).map(c => c.body.permissions), [{ contents: 'write', pull_requests: 'write', checks: 'write' }]);
+});
+
+// FABLE-scaffold-s5-pre §1: the self-hosted workflow (no CLUED_FRONT_MERGE_PHASE) and the hosted copy both brought fronts up while
+// the scaffold ruleset was in force, and only the hosted one said "待补授权". The two are exclusive on the same fact (scaffoldInForce):
+// the hosted copy while the scaffold ruleset is in force, the self-hosted one otherwise.
+test('§1: without the phase (the self-hosted workflow) nothing is changed while the scaffold ruleset is in force, named or not', async () => {
+  for (const input of [{}, { pr: '1156', head: sha(0x1156) }]) {
+    const w = rulesOf(scene0823(), 'scaffold');
+    const r = await w.run(input);
+    assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /脚手架规则集在用，由托管副本带车头/);
+    assert.equal(w.calls.filter(c => c.method === 'PUT').length, 0, 'no update-branch');
+    assert.equal(w.calls.filter(c => c.method === 'POST' && c.route === '/repos/o/r/check-runs').length, 0, 'no check');
+    assert.deepEqual(w.comments, []); assert.equal(minted(w), 0, 'no App token');
+  }
+  // The rules cannot be read: nothing is changed, the next run looks again (as the hosted copy).
+  const w = rulesOf(scene0823(), 'scaffold'); w.failing = '/rules/branches/main';
+  for (const input of [{}, { pr: '1156', head: sha(0x1156) }]) {
+    const r = await w.run(input);
+    assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []); assert.equal(minted(w), 0);
+  }
+});
+
+test('§1: in each state of the rules exactly one of the two copies brings the front up', async () => {
+  for (const rules of ['framework', 'scaffold', 'both']) {
+    const bringers = [];
+    for (const [copy, extra] of [['self-hosted', {}], ['hosted', SCAFFOLD]]) {
+      const w = rulesOf(scene0823(), rules);
+      const r = await w.run({}, extra);
+      if (r.result === 'merged') { assert.deepEqual(w.brought(), [1156], `${rules} ${copy}`); bringers.push(copy); }
+      else { assert.equal(r.result, 'none', `${rules} ${copy}: ${JSON.stringify(r)}`); assert.deepEqual(w.brought(), [], `${rules} ${copy}`); }
+    }
+    assert.deepEqual(bringers, [rules === 'scaffold' ? 'hosted' : 'self-hosted'], rules);
+  }
 });
