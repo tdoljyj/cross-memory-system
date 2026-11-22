@@ -4185,6 +4185,74 @@ test('#1235 replay without the Native source stays refused for the missing earli
  const read=f.read;f.read=async route=>route.includes('check_name=kooyumi-admission-verified')&&route.includes(`/commits/${f.from}/`)?f.x.prior_head_admission:read(route);
  assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason:'prior_pr_admission_missing'});
 });
+// 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): when the admission is the last required check, GitHub merges
+// within seconds, and the gate polling every 30 s reads the PR already merged. A PR merged with this very head, by a
+// merge whose parents are exactly [base, head], is the after-the-fact proof of "still open and main at base".
+// #1239 fff02b115 (scripts/ci/fixtures/automation-route-1239-fff02b11.json): merged 16:20:52Z, its gate ended 16:21:09Z.
+const R1239=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/fixtures/automation-route-1239-fff02b11.json'),'utf8'));
+function replay1239(){
+ const x=structuredClone(R1239),repository=x.repository.full_name,pr=x.pull_request,run=x.run,commit=x.commit;
+ const [from,main]=commit.parents.map(p=>p.sha),current=x.current_admission.check_runs[0];
+ const env={GITHUB_REPOSITORY:repository,GITHUB_REPOSITORY_OWNER:x.repository.owner.login,GITHUB_EVENT_NAME:'pull_request',GITHUB_ACTOR:run.actor.login,GITHUB_TRIGGERING_ACTOR:run.triggering_actor.login,GITHUB_RUN_ID:String(run.id),GITHUB_RUN_ATTEMPT:String(run.run_attempt),GITHUB_REF:`refs/pull/${pr.number}/merge`,GITHUB_HEAD_REF:pr.head.ref,GITHUB_BASE_REF:'main',CLUED_ADMISSION_GATE_SOURCE:INDEPENDENT_GATE_SOURCE,CLUED_ADMISSION_GATE_WAIT_SECONDS:'0',GITHUB_API_URL:'https://api.test',GITHUB_TOKEN:'fixture',GITHUB_WORKSPACE:ROOT};
+ const f={x,env,event:{action:'synchronize',pull_request:pr},run,pr,commit,from,main,currentAdmission:current,epochReads:0,liveReads:0};
+ // Each read of the PR answers with the next entry of f.lives (the last repeats): merged at once by default.
+ f.lives=[x.live_pull_request];
+ f.read=async route=>{
+  if(route===`/repos/${repository}`)return x.repository;
+  if(route===`/repos/${repository}/pulls/${pr.number}`)return f.lives[Math.min(f.liveReads++,f.lives.length-1)];
+  if(route===`/repos/${repository}/branches/main`)return {name:'main',commit:{sha:x.merge_commit.sha}};
+  if(route===`/repos/${repository}/commits/${x.merge_commit.sha}`)return x.merge_commit;
+  if(route===`/repos/${repository}/commits/${pr.head.sha}`)return commit;
+  if(route.includes('check_name=kooyumi-main-merge'))return x.main_merge_attestation;
+  if(route.includes(`/commits/${from}/check-runs`))return x.prior_head_admission;
+  if(route.includes(`/commits/${pr.head.sha}/check-runs`))return x.current_admission;
+  if(route===`/repos/${repository}/actions/runs/${run.id}`)return run;
+  throw new Error(`unscripted ${route}`);
+ };
+ f.fetchImpl=async(url,init={})=>{
+  let body;
+  if(init.method==='POST'){f.epochReads++;body={status:'ok',guard_required:true,epoch_current:true};}
+  else body=await f.read(String(url).replace('https://api.test',''));
+  return {ok:true,status:200,headers:{get:()=>null},json:async()=>body,text:async()=>JSON.stringify(body)};
+ };
+ return f;
+}
+test('#1239 fff02b115 replay (戊): the PR merged with this head while the gate polled; the bot refresh is admitted and self-hosted',async()=>{
+ const f=replay1239();
+ assert.deepEqual([f.x.live_pull_request.state,f.x.live_pull_request.merged,f.x.live_pull_request.head.sha],['closed',true,f.pr.head.sha]);
+ assert.deepEqual(f.x.merge_commit.parents.map(p=>p.sha),[f.pr.base.sha,f.pr.head.sha]);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[true,'ADMITTED',true],JSON.stringify(r.reasons));
+ assert.deepEqual([r.automation_route.reason,r.automation_route.previous_head_sha,r.automation_route.main_sha],['admitted_owner_pr_signed_main_refresh',f.from,f.main]);
+});
+test('#1239 replay (戊): open at the first read and merged with this head by the last read is admitted too',async()=>{
+ const f=replay1239();f.lives=[{...f.pr},f.x.live_pull_request];
+ const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.pr.base.sha}}:read(route);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[true,'ADMITTED',true],JSON.stringify(r.reasons));
+});
+// 戊 keeps every refusal it does not prove (green before and after the fix).
+const mergedDenials=[
+ ['a PR closed without merging',f=>{Object.assign(f.x.live_pull_request,{merged:false,merged_at:null});}],
+ ['a PR merged with another head',f=>{f.x.live_pull_request.head={...f.x.live_pull_request.head,sha:'0'.repeat(40)};}],
+ ['a merge whose first parent is not the base (main had moved)',f=>{f.x.merge_commit.parents[0].sha='1'.repeat(40);}],
+ ['a merge whose second parent is not the head',f=>{f.x.merge_commit.parents[1].sha='2'.repeat(40);}],
+ ['a squash merge (one parent)',f=>{f.x.merge_commit.parents=[{sha:f.pr.base.sha}];}],
+ ['a merge reply naming another commit',f=>{f.x.merge_commit.sha='3'.repeat(40);}],
+ ['a PR merged into another branch',f=>{f.x.live_pull_request.base={...f.x.live_pull_request.base,ref:'release'};}],
+ ['a merged PR of another author',f=>{f.x.live_pull_request.user={...f.x.live_pull_request.user,id:1};}],
+ ['open at the first read, then closed without merging',f=>{f.lives=[{...f.pr},{...f.x.live_pull_request,merged:false,merged_at:null}];
+  const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.pr.base.sha}}:read(route);}],
+];
+for(const [label,change]of mergedDenials)test(`#1239 replay (戊) still refuses ${label}`,async()=>{
+ const f=replay1239();change(f);
+ const route=await qualifyTrustedAutomationRoute(f);
+ assert.equal(route.qualified,false,JSON.stringify(route));
+ f.liveReads=0;
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.automation_self_hosted],[false,false],JSON.stringify(r.reasons));
+ assert.ok(r.reasons.some(reason=>reason.startsWith('trusted_automation_route:')),JSON.stringify(r.reasons));
+});
 
 
 }
@@ -4293,6 +4361,83 @@ test('R1: the gate step of #1202 main push exits 0 with admitted=false, so the h
     assert.match(out, /^admitted=false$/m);
     assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 甲 (FABLE-main-push-same-tree-parallel-20261123 §3, §4): during the scaffold the merge can land while the head's
+// same-tree PR run is still going (its gate waits for the admission, its heavy jobs start after the merge). The main
+// push then runs no heavy job: that PR run is the one real run of the tree. Fixture: #1233's real replies
+// (merge 41c281a50, head 1e850a63d, runs the executor bot triggered); its latest run is set to in_progress here.
+const TREE_REUSE_1233 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1233.json'), 'utf8'));
+const IN_FLIGHT_REASON = 'pr_run_in_flight';
+const inFlight = (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); };
+for (const [workflow, sourceRun] of [['clued-required-tests.yml', 45028759952], ['clued-required-tests-windows.yml', 45028759940]]) {
+  test(`甲 (${workflow}, #1233 41c281a50): the head's same-tree PR run is in flight -> TREE_RUN_IN_FLIGHT, the heavy jobs do not run`, async () => {
+    const ctx = treeReuseCase(workflow, inFlight, TREE_REUSE_1233);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_RUN_IN_FLIGHT'], JSON.stringify(outcome));
+    assert.equal(outcome.head_sha, TREE_REUSE_1233.merge.sha);
+    assert.deepEqual([outcome.tree_reuse.run_heavy, outcome.tree_reuse.reason, outcome.tree_reuse.source_run_id,
+      outcome.tree_reuse.source_pr, outcome.tree_reuse.tested_tree, outcome.tree_reuse.current_sha_pass],
+    [true, IN_FLIGHT_REASON, sourceRun, 1233, TREE_REUSE_1233.merge.commit.tree.sha, false]);
+    const why = outcome.reasons.join(' ');
+    assert.match(why, new RegExp(`run ${sourceRun} attempt 1 of PR #1233`));
+    // It proves identity, tree, actor and ancestry; it reads no job (nothing finished) and claims no pass.
+    const api = `https://api.github.com/repos/${TREE_REUSE_1233.repository}`;
+    assert.deepEqual(ctx.calls, [`${api}/commits/${TREE_REUSE_1233.merge.sha}`, `${api}/commits/${TREE_REUSE_1233.merge.sha}/pulls?per_page=100`,
+      `${api}/pulls/1233`, `${api}/commits/${TREE_REUSE_1233.pr.head.sha}`, ctx.runsRoute,
+      `${api}/compare/${TREE_REUSE_1233.merge.parents[0].sha}...${TREE_REUSE_1233.pr.head.sha}`]);
+  });
+}
+
+test('甲 (#1178): an owner-triggered head run still in flight is TREE_RUN_IN_FLIGHT too', async () => {
+  const outcome = await treeReuseGate(treeReuseCase('clued-required-tests.yml', inFlight));
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
+});
+
+test('甲: the gate step of #1233 main push with the PR run in flight exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml', inFlight, TREE_REUSE_1233);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
+  try {
+    const eventPath = path.join(dir, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(ctx.event));
+    const code = await mainWith(['--mode', 'gate'], { ...ctx.env, GITHUB_EVENT_PATH: eventPath,
+      GITHUB_OUTPUT: path.join(dir, 'out'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary') }, ctx.fetchImpl);
+    assert.equal(code, 0);
+    const out = fs.readFileSync(path.join(dir, 'out'), 'utf8');
+    assert.match(out, /^admitted=false$/m);
+    assert.match(out, /^verdict=TREE_RUN_IN_FLIGHT$/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// 甲 keeps the real run (green before and after the fix): an in-flight run proves nothing it cannot prove when green.
+for (const [label, mutate] of [
+  ['the PR run ended and failed', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'failure' }); }],
+  ['the PR run ended and was cancelled', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'cancelled' }); }],
+  ['the tree differs', (c) => { inFlight(c); c.f.source.commit.tree.sha = 'f'.repeat(40); }],
+  ['the merge is not a two-parent merge of the head', (c) => { inFlight(c); c.f.merge.parents[1].sha = 'e'.repeat(40); }],
+  ['the run was triggered by someone other than the owner or the executor bot', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.login = 'someone'; }],
+  ['the run was triggered by a bot with the executor login but another id', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.id = 337003646; }],
+  ['main\'s old tip is not an ancestor of the head', (c) => { inFlight(c); Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }],
+  ['the head run is not a pull_request run', (c) => { inFlight(c); c.w.runs.workflow_runs[0].event = 'workflow_dispatch'; }],
+  ['the head run is another workflow\'s', (c) => { inFlight(c); c.w.runs.workflow_runs[0].path = '.github/workflows/other.yml'; }],
+  ['the PR author is not the owner', (c) => { inFlight(c); c.f.pr.user.login = 'someone'; }],
+  ['the compare cannot be read', (c) => { inFlight(c); c.routes[`https://api.github.com/repos/${c.f.repository}/compare/${c.f.merge.parents[0].sha}...${c.f.pr.head.sha}`] = { status: 502 }; }],
+]) {
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    test(`甲 guard (${workflow}, #1233): ${label} -> the heavy jobs run`, async () => {
+      const outcome = await treeReuseGate(treeReuseCase(workflow, mutate, TREE_REUSE_1233));
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      const notices = reuseNotices(outcome);
+      assert.equal(notices.length, 1, JSON.stringify(outcome.notices));
+      assert.notEqual(notices[0], reuseNotice(IN_FLIGHT_REASON));
+    });
+  }
+}
+test('甲 guard: a re-run (attempt 2) of the main push with the PR run in flight reads nothing and runs the heavy jobs', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml', (c) => { inFlight(c); c.env.GITHUB_RUN_ATTEMPT = '2'; }, TREE_REUSE_1233);
+  const outcome = await treeReuseGate(ctx);
+  assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE']);
+  assert.deepEqual(ctx.calls, []);
 });
 
 // R1 guards: green before and after the fix. Only the exact executor identity counts, and only a run whose heavy
@@ -4447,7 +4592,7 @@ const STILL_RUNS = [
   ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }, 'required_jobs_not_passed'],
   ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }, 'required_jobs_not_passed'],
   ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }, 'required_jobs_not_passed'],
-  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }, 'pr_run_not_passed'],
+  // A latest run still running is no longer here: with the same tree, actor and ancestry it is TREE_RUN_IN_FLIGHT (甲).
   ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }, 'pr_run_not_passed'],
   ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }, 'pr_run_not_passed'],
   ['the run changed while the proof was read', (c) => { let reads = 0; const runs = c.w.runs;
@@ -4570,7 +4715,7 @@ test('R3c: the reason vocabulary is closed - every code is in REASONS, and every
   const report = literals('clued-push-reuse.mjs');
   for (const code of [...own, ...report]) assert.ok(reuse.REASONS.includes(code), `${code} is in REASONS`);
   for (const code of reuse.REASONS) assert.ok(own.includes(code) || report.includes(code), `${code} is still produced`);
-  const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]),
+  const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]), IN_FLIGHT_REASON,
     'github_request_failed', 'github_request_threw', 'unexpected_error']);
   for (const code of own) assert.ok(guarded.has(code), `${code} has a guard that expects it`);
   for (const family of ['github_request_failed', 'github_request_threw', 'unexpected_error']) assert.ok(own.includes(family), family);

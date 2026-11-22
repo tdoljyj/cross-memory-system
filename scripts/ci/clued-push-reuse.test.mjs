@@ -74,6 +74,14 @@ test('reuse qualifies only earlier PR evidence and never claims main PASS', asyn
   assert.match(fake.calls[5], /\/attempts\/2\/jobs/);
 });
 
+// 甲 (FABLE-main-push-same-tree-parallel-20261123 §3) reads an in-flight head run for the gate-decided ('ancestry')
+// workflows only: a tree-report workflow whose head run is still going runs its heavy job, as before, after five reads.
+test('a tree-report workflow whose head run is still in flight runs, as before; the in-flight reading is the gate's alone', async () => {
+  const fake = api(proof(), { 4: { total_count: 1, workflow_runs: [{ ...proof().run, status: 'in_progress', conclusion: null }] } });
+  assert.deepEqual(await evaluatePush(env, fake.fetch), { run_heavy: true, reason: 'pr_run_not_passed', current_sha_pass: false });
+  assert.equal(fake.calls.length, 5);
+});
+
 test('the existing executor bot can reuse an Owner PR without widening runner trust', async () => {
   const p = proof(); p.pr.merged_by = { login: 'clued-admission[bot]', id: 337003645, type: 'Bot' };
   assert.equal((await evaluatePush({ ...env, GITHUB_ACTOR: 'clued-admission[bot]' }, api(p).fetch)).run_heavy, false);

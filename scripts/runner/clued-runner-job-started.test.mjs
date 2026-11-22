@@ -1482,3 +1482,33 @@ test("Native only (scaffold open-qs 1.1): the legacy workflow's state is not rea
   assert.match(result.reason, /Native admission 80: succeeded/);
   assert.equal(calls.some(c => c.url.startsWith(PRODUCER)), false);
 });
+
+// 戊 (FABLE-main-push-same-tree-parallel-20261123 §7): a workflow-changing PR whose admission is the last required
+// check is merged by GitHub within seconds, while this hook still waits for that admission. Read again then, the
+// same PR's job changes no workflow (its head is in main) and starts on the :1061 path with no admission at all;
+// so a PR merged with this very head, whose head main's tip now contains, starts after its successful admission.
+const MERGED = { state: "closed", merged: true, merged_at: "2026-10-04T05:00:30Z", merge_commit_sha: "e".repeat(40),
+  base: { ref: "main", repo: { full_name: "o/r" } }, head: { sha: HEAD } };
+// The compare answers "changes a workflow" before the merge and "changes nothing" after it.
+const mergedMeanwhile = (after = files()) => { let reads = 0; return () => (++reads === 1 ? files(".github/workflows/gitleaks.yml") : after); };
+test("戊 hook: a workflow-changing PR merged with this head while the hook waited for its Native admission starts", async () => {
+  const { result, calls } = await run({}, { ...nativeScript(nativeCheck()), [COMPARE]: mergedMeanwhile(), [`${API}/pulls/9`]: { body: MERGED } });
+  assert.equal(result.allow, true, result.reason);
+  assert.match(result.reason, /Native admission 80: succeeded/);
+  assert.equal(calls.filter((c) => c.url === `${COMPARE}${HEAD}`).length, 2, "the compare is read again after the merge");
+});
+test("戊 hook: refusals stay (closed unmerged, another head, another base, still changing workflows after the merge, no admission)", async () => {
+  for (const [label, current, compare] of [
+    ["closed without merging", { ...MERGED, merged: false, merged_at: null }, mergedMeanwhile()],
+    ["merged with another head", { ...MERGED, head: { sha: SHA } }, mergedMeanwhile()],
+    ["merged into another branch", { ...MERGED, base: { ref: "release", repo: { full_name: "o/r" } } }, mergedMeanwhile()],
+    ["merged in another repository", { ...MERGED, base: { ref: "main", repo: { full_name: "x/r" } } }, mergedMeanwhile()],
+    ["merged, but main does not contain the head (a squash)", MERGED, mergedMeanwhile(files(".github/workflows/gitleaks.yml"))],
+  ]) {
+    const { result } = await run({}, { ...nativeScript(nativeCheck()), [COMPARE]: compare, [`${API}/pulls/9`]: { body: current } });
+    assert.equal(result.allow, false, `${label}: ${result.reason}`);
+  }
+  const { result } = await run({ CLUED_RUNNER_HOOK_WAIT_SECONDS: "0" }, { ...nativeScript(nativeCheck({ conclusion: "failure" })),
+    [COMPARE]: mergedMeanwhile(), [`${API}/pulls/9`]: { body: MERGED } });
+  assert.equal(result.allow, false, `merged, admission failed: ${result.reason}`);
+});
