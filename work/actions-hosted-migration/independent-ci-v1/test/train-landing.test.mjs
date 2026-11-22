@@ -217,6 +217,39 @@ test('landingRoute, fail closed: rules that cannot be read are never the current
   assert.equal(L.landingRoute({ ...today, rulesets: new Map([[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never', bypassActors: [{ actor_id: 9, actor_type: 'Team', bypass_mode: 'always' }] }]]) }).route, 'github-merge');
 });
 
+// R3 open item 2 (修复前必红): push's main ruleset is found by the pin rule stages 8 and 10 read (train-rules.mjs#sixPinned), no longer by
+// its own "all six pinned to this App": with the scans pinned to GitHub Actions the route can be push (S then waits for their Actions runs,
+// externalRequiredChecks). Nothing else widens: admission or the control pair off this App, a scan on an unknown App or on none, the six
+// split over two rulesets are still no main ruleset (park).
+const repin = (input, pins) => ({ ...input, rules: input.rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+  required_status_checks: r.parameters.required_status_checks.map(c => {
+    if (!Object.hasOwn(pins, c.context)) return c;
+    if (pins[c.context] === null) { const { integration_id, ...rest } = c; return rest; }
+    return { ...c, integration_id: pins[c.context] };
+  }) } })) });
+test('R3 open item 2: landingRoute finds the main ruleset by the stage 8/10 pin rule: scans from GitHub Actions can be push, nothing else widens', () => {
+  const ACTIONS_SCANS = { gitleaks: ACTIONS, trivy: ACTIONS, 'contract-placement': ACTIONS };
+  assert.deepEqual(L.landingRoute(repin(ruleState(), ACTIONS_SCANS)), { route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } });
+  assert.deepEqual(L.landingRoute(repin(ruleState(), { gitleaks: ACTIONS })).route, 'push', 'one scan from Actions');
+  assert.deepEqual(rulesetFacts(repin(ruleState(), ACTIONS_SCANS).rules, APP).appScans, [], 'the same rules as stages 8 and 10 read them');
+  // the other two ways are unchanged with the scans from Actions
+  assert.deepEqual(route(TODAY, repin(ruleState(TODAY), ACTIONS_SCANS)).slice(0, 2), ['github-merge', ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass']]);
+  assert.deepEqual(route({}, repin(ruleState({ mainCan: 'never' }), ACTIONS_SCANS)).slice(0, 2), ['park', ['main_app_cannot_bypass']]);
+  const unidentified = (input, name) => assert.deepEqual([L.landingRoute(input).route, L.landingRoute(input).missing], ['park', ['main_ruleset_unidentified']], name);
+  unidentified(repin(ruleState(), { ...ACTIONS_SCANS, 'kooyumi-work-admission': ACTIONS }), 'admission from Actions');
+  unidentified(repin(ruleState(), { ...ACTIONS_SCANS, 'kooyumi-admission-verified': ACTIONS }), 'admission-verified from Actions');
+  unidentified(repin(ruleState(), { 'kooyumi-merge-slot': ACTIONS }), 'merge-slot from Actions');
+  unidentified(repin(ruleState(), { gitleaks: 5164952 }), 'a scan on an unknown App');
+  unidentified(repin(ruleState(), { trivy: null }), 'a scan pinned to no App');
+  // the six split over two rulesets: gitleaks (from Actions) stays in main's, trivy and contract-placement in another one
+  const split = repin(ruleState(), { gitleaks: ACTIONS });
+  const moved = ['trivy', 'contract-placement'];
+  split.rules = [...split.rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+    required_status_checks: r.parameters.required_status_checks.filter(c => !moved.includes(c.context)) } })),
+    { type: 'required_status_checks', rulesetId: 31000001, parameters: { strict_required_status_checks_policy: true, required_status_checks: moved.map(context => ({ context, integration_id: ACTIONS })) } }];
+  unidentified(split, 'the six split over two rulesets');
+});
+
 // Fable 11-21 open points §5: stage 10 reads the bypass states every round too (no 'when-train-landed' any more), for landing.bypass.
 test('readLandingRoute: stages 8 and 10 read every ruleset\'s bypass state with the rules (one GET /rulesets/{id} each), today and after C', async () => {
   const reads = [];
