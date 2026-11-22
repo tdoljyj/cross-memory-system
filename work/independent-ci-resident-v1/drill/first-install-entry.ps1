@@ -197,6 +197,8 @@ $script:EntryFailureTotalBytes = 1MB
 $script:EntryFailureEventMax = 50
 $script:EntryFailureEventChars = 300
 $script:EntryFailureMatchMax = 200
+$script:EntryFailureSiblingMax = 50
+$script:EntryFailureSiblingChars = 120
 $script:EntryFailureRoots = @{ ci = 'C:\ProgramData\CluedIndependentCI'; work = $null }   # work: the bootstrap's work directory, known once it is made
 
 function Test-EntryFailureSecretSegment([string]$Segment) { $Segment -match '^(secrets|credentials)$' }
@@ -227,11 +229,14 @@ function Read-EntryFailureFiles([string]$File) {
 
 # The files one entry names under its root, sorted: each * segment is listed, nothing is followed out of the root, and a secrets or
 # credentials directory a wildcard reaches is passed over.
-function Resolve-EntryFailurePath([string]$Root, [string]$Path) {
+# $Trace (optional): when the walk finds nothing, where it stopped -- stoppedAt, the segment of the list's path nothing matched, and
+# dir, the last directory that is there ($null when not even the root is).
+function Resolve-EntryFailurePath([string]$Root, [string]$Path, [hashtable]$Trace = $null) {
   $segments = @($Path.Split('\'))
   $at = @($Root)
   for ($i = 0; $i -lt $segments.Count; $i++) {
     $segment = $segments[$i]; $last = ($i -eq $segments.Count - 1); $next = @()
+    if ($null -ne $Trace) { $Trace['stoppedAt'] = $segment; $Trace['dir'] = (@($at | Where-Object { [IO.Directory]::Exists($_) }) | Select-Object -First 1) }
     foreach ($dir in $at) {
       if (-not [IO.Directory]::Exists($dir)) { continue }
       if ($segment.Contains('*')) {
@@ -246,6 +251,21 @@ function Resolve-EntryFailurePath([string]$Root, [string]$Path) {
     if (-not $at.Count) { break }
   }
   return , @($at | Where-Object { $_ -match '\.json$' })
+}
+
+# What a directory holds, by name only: files and directories, sorted, at most $script:EntryFailureSiblingMax names of
+# $script:EntryFailureSiblingChars characters; a secrets or credentials name is passed over. A directory that is not there holds nothing.
+function Get-EntryFailureSiblings([string]$Dir) {
+  if (-not $Dir -or -not [IO.Directory]::Exists($Dir)) { return , @() }
+  $names = New-Object Collections.Generic.List[string]
+  foreach ($x in [IO.Directory]::GetFileSystemEntries($Dir)) {
+    $name = [IO.Path]::GetFileName($x)
+    if (Test-EntryFailureSecretSegment $name) { continue }
+    if ($name.Length -gt $script:EntryFailureSiblingChars) { $name = $name.Substring(0, $script:EntryFailureSiblingChars) }
+    $names.Add($name)
+  }
+  $names.Sort([StringComparer]::Ordinal)
+  return , @($names | Select-Object -First $script:EntryFailureSiblingMax)
 }
 
 # One file's record: its first $script:EntryFailureFileBytes bytes as UTF-8 text, read while its writer may hold it open.
@@ -293,10 +313,21 @@ function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtab
     foreach ($entry in @($list)) {
       $root = $Roots[$entry.root]
       if (-not $root) { [void]$records.Add([ordered]@{ root = $entry.root; pattern = $entry.path; state = 'root-unknown' }); continue }
-      $found = @()
-      try { $found = Resolve-EntryFailurePath $root $entry.path }
+      $found = @(); $trace = @{}
+      try { $found = Resolve-EntryFailurePath $root $entry.path $trace }
       catch { [void]$records.Add([ordered]@{ root = $entry.root; pattern = $entry.path; state = 'unreadable'; error = [string]$_.Exception.Message }); continue }
-      if (-not $found.Count) { [void]$records.Add([ordered]@{ root = $entry.root; pattern = $entry.path; state = 'absent' }); continue }
+      if (-not $found.Count) {
+        # absent: where the walk stopped and what is there instead, so a path of the list that is wrong can be put right from one run
+        # (FABLE-r9-lineB-points R3); a directory that cannot be listed leaves the record without the two
+        $record = [ordered]@{ root = $entry.root; pattern = $entry.path; state = 'absent' }
+        try {
+          $siblings = Get-EntryFailureSiblings $trace['dir']
+          $with = [ordered]@{ root = $entry.root; pattern = $entry.path; state = 'absent'; stoppedAt = [string]$trace['stoppedAt']; siblings = @($siblings) }
+          $size = & $cost $with
+          if ($size -le $left) { $record = $with; $left -= $size }
+        } catch { }
+        [void]$records.Add($record); continue
+      }
       foreach ($file in $found) {
         $record = [ordered]@{ root = $entry.root; pattern = $entry.path; path = $file; state = 'read'; bytes = $null; truncated = $null; text = $null }
         try { $read = Read-EntryFailureFile $file; $record.bytes = $read.bytes; $record.truncated = $read.truncated; $record.text = $read.text }
