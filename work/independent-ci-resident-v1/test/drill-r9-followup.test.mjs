@@ -74,6 +74,14 @@ test(`F2 (${host5or7}): a step line that carries its own "at" keeps it; one with
   assert.ok(r.every(s => Object.keys(s).join() === 'stage,name,result,rejectCode,detail,at'));
 });
 
+// A fixed process list in place of the machine's (Get-Process is looked up by name, so a function of that name shadows the cmdlet):
+// what the ten largest are on the host that runs the test is not the test's business. start: an ISO time, null, or 'denied' (the
+// getter throws, as a protected process's StartTime does).
+const fakeProcesses = list => `function Get-Process { ${list.map(p => `$p = [pscustomobject]@{ ProcessName = ${q(p.name)}; Id = ${p.pid}; WorkingSet64 = [long](${p.gb} * 1GB) }; `
+  + (p.start === 'denied' ? "$p | Add-Member ScriptProperty StartTime { throw 'Access is denied' }"
+    : p.start === null ? '$p | Add-Member NoteProperty StartTime $null'
+    : `$p | Add-Member NoteProperty StartTime ([DateTimeOffset]::Parse(${q(p.start)}, [Globalization.CultureInfo]::InvariantCulture).LocalDateTime)`) + '; $p').join('\n')} }`;
+
 test('F5: an abort for memory records the ten largest processes; any other abort, or a failed read, records none', opts, () => {
   const run = (name, code, extra = '') => {
     const dir = path.join(tmp, name); fs.mkdirSync(dir);
@@ -85,14 +93,26 @@ test('F5: an abort for memory records the ten largest processes; any other abort
       $state.failure.code`);
     return JSON.parse(fs.readFileSync(path.join(dir, 'host-guard.json'), 'utf8'));
   };
-  const short = run('f5-short', 'DRILL_HOST_MEMORY_SHORT');
-  assert.deepEqual([short.code, short.stopped, short.restoredToCheckpoint, short.cleanupDone], ['DRILL_HOST_MEMORY_SHORT', true, true, true]);
-  assert.ok(Array.isArray(short.topProcesses) && short.topProcesses.length >= 1 && short.topProcesses.length <= 10, JSON.stringify(short.topProcesses));
-  for (const p of short.topProcesses) assert.deepEqual(Object.keys(p), ['name', 'pid', 'workingSetGB', 'startedAt']);
-  const whole = short.topProcesses.filter(p => typeof p.name === 'string' && p.name && Number.isInteger(p.pid) && typeof p.workingSetGB === 'number' && typeof p.startedAt === 'string' && !Number.isNaN(Date.parse(p.startedAt)));
-  assert.ok(whole.length >= 1, 'at least one row has all four');
-  const sizes = short.topProcesses.map(p => p.workingSetGB);
-  assert.deepEqual(sizes, [...sizes].sort((a, b) => b - a), 'largest first');
+  const top = (name, list) => {
+    const r = run(name, 'DRILL_HOST_MEMORY_SHORT', fakeProcesses(list));
+    assert.deepEqual([r.code, r.stopped, r.restoredToCheckpoint, r.cleanupDone], ['DRILL_HOST_MEMORY_SHORT', true, true, true]);
+    for (const p of r.topProcesses) assert.deepEqual(Object.keys(p), ['name', 'pid', 'workingSetGB', 'startedAt']);
+    return r.topProcesses.map(p => [p.name, p.pid, p.workingSetGB, p.startedAt === null ? null : new Date(p.startedAt).toISOString()]);
+  };
+  // twelve, out of order: the ten largest, largest first; a row whose start time is null or cannot be read is kept, with null
+  const gbs = [3, 0.25, 5, 1, 7, 0.5, 2, 6, 4, 0.75, 8, 1.5];
+  const starts = { 8: '2026-11-21T08:40:12.000Z', 6: 'denied', 5: null, 3: '2026-11-21T07:00:00.000Z' };
+  const twelve = gbs.map((gb, i) => ({ name: `p${gb}`, pid: 100 + i, gb, start: gb in starts ? starts[gb] : '2026-11-20T23:59:59.000Z' }));
+  assert.deepEqual(top('f5-short', twelve), [...twelve].sort((x, y) => y.gb - x.gb).slice(0, 10)
+    .map(p => [p.name, p.pid, p.gb, p.start === 'denied' ? null : p.start]));
+  // clued-ci-company-win-01 (#1229): the ten largest all protected. Every row is still recorded, and the abort record is whole.
+  const shut = Array.from({ length: 11 }, (_, i) => ({ name: `svc${i}`, pid: 400 + i, gb: i + 1, start: 'denied' }));
+  assert.deepEqual(top('f5-protected', shut), shut.slice(1).reverse().map(p => [p.name, p.pid, p.gb, null]));
+  // the real process objects pass through the same function: shape only, true on any machine
+  const real = ps('@(Get-DrillTopProcesses 3)');
+  assert.ok(real.length >= 1 && real.length <= 3, JSON.stringify(real));
+  for (const p of real) assert.ok(Object.keys(p).join() === 'name,pid,workingSetGB,startedAt' && Number.isInteger(p.pid) && typeof p.workingSetGB === 'number'
+    && (p.startedAt === null || !Number.isNaN(Date.parse(p.startedAt))), JSON.stringify(p));
 
   assert.equal('topProcesses' in run('f5-duty', 'DRILL_HOST_IS_ON_DUTY'), false);
   const unread = run('f5-unread', 'DRILL_HOST_MEMORY_SHORT', "function Get-Process { throw 'no process list' }");
