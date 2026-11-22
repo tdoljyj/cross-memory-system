@@ -6933,7 +6933,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "526685df3ddca26b4ac32f70eacee16f67d6ef4379183e5edef26a4d4bd8f00b",
+      "source_sha256": "3b5ff66cf0cc23177744297052b2c6f1793dce70ee32fad82a29c897a8fec242",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -7329,7 +7329,7 @@
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
 "        with:",
 "          persist-credentials: false",
-"          fetch-depth: ${{ github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' && '0' || '2' }}",
+"          fetch-depth: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging')) && '0' || '2' }}",
 "          path: candidate",
 "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
 "        with:",
@@ -7634,7 +7634,7 @@
 "        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
 "        with:",
 "          persist-credentials: false",
-"          fetch-depth: ${{ github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' && '0' || '2' }}",
+"          fetch-depth: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging')) && '0' || '2' }}",
 "          path: candidate",
 "      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
 "        with:",
@@ -7974,7 +7974,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "d09fb4df69dde234c1f08eb8d09c66919747911f"
+      "workflow_blob": "095d75173b66e6f10fd733a00edbd251a14ca819"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

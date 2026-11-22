@@ -391,10 +391,35 @@ test('Linux required jobs fail before invoking the selector when the trusted cop
   }
 });
 
-test('the migration candidate checkout only fetches full history for staging pushes', () => {
+test('the migration candidate checkout only fetches full history for lost-run dispatches and staging pushes', () => {
   const migration = requiredWorkflowJobs().find(([, id]) => id === 'migration-verify');
   assert.ok(migration);
-  assert.match(migration[2], /\n      - name: Check out the candidate\n(?:(?!      - )[^\n]*\n)*? {10}fetch-depth: \$\{\{ github\.event_name == 'push' && github\.ref == 'refs\/heads\/clued-train\/staging' && '0' \|\| '2' \}\}\n/);
+  assert.match(migration[2], /\n      - name: Check out the candidate\n(?:(?!      - )[^\n]*\n)*? {10}fetch-depth: \$\{\{ \(github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/clued-train\/staging'\)\) && '0' \|\| '2' \}\}\n/);
+});
+
+// A lost-run dispatch (git merge-base origin/main <head>) and a staging push (the chain root T) both walk main's history in
+// train-base, so the candidate checkout must hold it; a depth-2 clone has no origin/main and the step fails. Only the
+// other events may stay shallow. The expression is evaluated, not matched, so any job that adds train-base is covered.
+test('every Linux required job with train-base checks the candidate out with full history for a dispatch and a staging push', () => {
+  const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8').replaceAll('\r\n', '\n');
+  const jobs = [...text.matchAll(/^  ([a-z][a-z-]+):\n((?:.*\n)*?)(?=^  [a-z][a-z-]+:\n|(?![\s\S]))/gm)]
+    .filter(([, , job]) => job.includes('        id: train-base\n'));
+  assert.deepEqual(jobs.map(([, id]) => id), ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'gitleaks', 'trivy', 'contract-placement']);
+  const depthFor = (value, eventName, ref) => {
+    const expression = /^\$\{\{ (.+) \}\}$/.exec(value);
+    if (!expression) return value;
+    const js = expression[1].replaceAll('github.event_name', JSON.stringify(eventName)).replaceAll('github.ref', JSON.stringify(ref));
+    assert.match(js, /^[\s"'a-z0-9_/.=&|()-]+$/i, value);
+    return String(Function(`return (${js});`)());
+  };
+  for (const [, id, job] of jobs) {
+    const checkout = /\n      - name: Check out the candidate\n((?:(?!      - )[^\n]*\n)*)/.exec(job);
+    assert.ok(checkout, `${id}: candidate checkout step`);
+    const depth = /^ {10}fetch-depth: (.+)$/m.exec(checkout[1]);
+    assert.ok(depth, `${id}: candidate checkout declares fetch-depth`);
+    assert.equal(depthFor(depth[1], 'workflow_dispatch', 'refs/heads/claude/some-branch'), '0', `${id}: lost-run dispatch`);
+    assert.equal(depthFor(depth[1], 'push', 'refs/heads/clued-train/staging'), '0', `${id}: staging push`);
+  }
 });
 
 test('glob patterns match across and within segments', () => {

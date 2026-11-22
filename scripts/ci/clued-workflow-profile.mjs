@@ -195,17 +195,17 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'d09fb4df69dde234c1f08eb8d09c66919747911f',
-  source_sha256:'526685df3ddca26b4ac32f70eacee16f67d6ef4379183e5edef26a4d4bd8f00b',
-  workflow_definition_sha256:'811a97342254145be26b5de2e24006c106cf166343492b379724ba3ab542048e',
-  profile_sha256:'fa239b4af4a2e9087446c101c9458cfe1b58884cba2f825f9aae93e95ad4dae2',
+  workflow_blob:'095d75173b66e6f10fd733a00edbd251a14ca819',
+  source_sha256:'3b5ff66cf0cc23177744297052b2c6f1793dce70ee32fad82a29c897a8fec242',
+  workflow_definition_sha256:'efc346d62b4619dd44db81185e125b2ea2bb8e5cc23ae583c93f1444873c2204',
+  profile_sha256:'69391e2d1f3002378fff35c9a2375232c9f92e948e2f3b618ae2f2ecc2d0676b',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
     'clued-cloud-tests':'d05c0813bdcc408b1109e5c1bc6c4287089448fe5f4ed97a58557bcfe954fa42',
     'ci-suites':'480820a7b22a8bbbccf35e7ac3aff0dc963ecc0553e011ac7035d1416d39af56',
-    'migration-verify':'5bc084ab57a02585bba5d10df217b95fcb6a4e3441aae156e14e92f06caa2abf',
+    'migration-verify':'88e509c64bed8cc7461d507833e9f95d8c765720e25d015049d8b705fcf3e197',
     'gitleaks':'8ba529df09135a0468457158d678890cdae2b019c3116ca596703e486248ef1f',
-    'trivy':'9f113c9f9ea8e0f13b6c851bb6f3ffc4f00736b296aa9f94211db39b16caaae9',
+    'trivy':'db53df5ff61fc99513d23af891d7dc035052736f100eda22526289247c5ded2c',
     'contract-placement':'8e260c7eafaef15ec60f9fa020d656f9e6c519a055dcdc842c8bcd083c4b7993',
   }),
 });

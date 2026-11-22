@@ -2087,7 +2087,7 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "d09fb4df69dde234c1f08eb8d09c66919747911f": [
+        "095d75173b66e6f10fd733a00edbd251a14ca819": [
           {
             "job_id": "clued-cloud-tests",
             "definition_sha256": "d05c0813bdcc408b1109e5c1bc6c4287089448fe5f4ed97a58557bcfe954fa42",
@@ -2282,7 +2282,7 @@
           },
           {
             "job_id": "migration-verify",
-            "definition_sha256": "5bc084ab57a02585bba5d10df217b95fcb6a4e3441aae156e14e92f06caa2abf",
+            "definition_sha256": "88e509c64bed8cc7461d507833e9f95d8c765720e25d015049d8b705fcf3e197",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
               "needs": "admission-gate",
@@ -2306,7 +2306,7 @@
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
-                    "fetch-depth": "${{ github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' && '0' || '2' }}",
+                    "fetch-depth": "${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging')) && '0' || '2' }}",
                     "path": "candidate"
                   }
                 },
@@ -2485,7 +2485,7 @@
           },
           {
             "job_id": "trivy",
-            "definition_sha256": "9f113c9f9ea8e0f13b6c851bb6f3ffc4f00736b296aa9f94211db39b16caaae9",
+            "definition_sha256": "db53df5ff61fc99513d23af891d7dc035052736f100eda22526289247c5ded2c",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'trivy' || 'trivy-skipped' }}",
               "needs": "admission-gate",
@@ -2510,7 +2510,7 @@
                   "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
                   "with": {
                     "persist-credentials": false,
-                    "fetch-depth": "${{ github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' && '0' || '2' }}",
+                    "fetch-depth": "${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging')) && '0' || '2' }}",
                     "path": "candidate"
                   }
                 },
