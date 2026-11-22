@@ -934,10 +934,41 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   });
 }
 
+// What a host cannot give a test (FABLE-hosted-windows-suites-20261122 §2.3, task 04f9b91b). The host says what it lacks
+// in CLUED_CI_HOST_LACKS (only the hosted workflow sets it: hosted-required.test.mjs), a test says what it needs in its own
+// name ("... [needs:non-elevated]"), and every node --test command of a suite gets Node's skip pattern for those names:
+// the marked tests and every subtest under them do not run there (ci-required-selection.test.mjs runs Node on a fixture).
+// A host that does not set it runs them all, so a node that turns elevated stays red rather than skipping in silence.
+// A value not in this table runs nothing.
+export const HOST_LACKS_VARIABLE = 'CLUED_CI_HOST_LACKS';
+export const HOST_CAPABILITIES = {
+  'non-elevated': 'the job process is not an elevated administrator (GitHub-hosted Windows runners run elevated)',
+};
+export function hostLacks(env = process.env) {
+  const value = String(env[HOST_LACKS_VARIABLE] ?? '');
+  const lacks = [...new Set(value.split(/[\s,]+/).filter(Boolean))].sort();
+  const unknown = lacks.filter((name) => !Object.hasOwn(HOST_CAPABILITIES, name));
+  if (unknown.length > 0) {
+    return { lacks: [], error: `${HOST_LACKS_VARIABLE}=${value}: unknown capability ${unknown.join(', ')}; known: ${Object.keys(HOST_CAPABILITIES).join(', ')}; nothing runs` };
+  }
+  return { lacks, error: null };
+}
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const hostLacksSwitches = (lacks) => (lacks.length === 0 ? []
+  : [`--test-skip-pattern=\\[needs:(?:${lacks.map(escapeRegExp).join('|')})\\]`]);
+export const hostLacksNote = (lacks) => `本机缺 ${lacks.join('、')}（${HOST_LACKS_VARIABLE}），带 ${lacks.map((name) => `[needs:${name}]`).join('、')} 的用例不在此运行`;
+
 // The CI process or the already guarded worker executes the suite here.
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '') } = {}) {
+  const host = hostLacks(env);
+  if (host.error) {
+    log(`::error title=${id}::${host.error}`);
+    return 2;
+  }
   if (captureKnown) return writeKnown(id, root, env, keep);
+  const skipSwitches = hostLacksSwitches(host.lacks);
+  if (skipSwitches.length > 0) log(`${id}: ${hostLacksNote(host.lacks)}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
   // The trusted commands, then the candidate's additions (read once the trusted ones have run), or, for a suite only the
   // candidate has, the candidate's commands (requiredCommands throws for a suite neither has).
@@ -966,6 +997,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
         `--test-reporter=${pathToFileURL(REPORTER_PATH).href}`, `--test-reporter-destination=${path.join(reportDir, 'failures.jsonl')}`,
         ...argv.slice(index + 1)];
     }
+    if (skipSwitches.length > 0 && argv[0] === 'node' && argv[1] === '--test') argv = [argv[0], argv[1], ...skipSwitches, ...argv.slice(2)];
     log(`::group::${id}: (${command.cwd}) ${argv.join(' ')}`);
     const run = resolveCommand(argv, { platform });
     const result = spawn(run[0], run.slice(1), { cwd, env: testEnv(env), stdio: command.quiet ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
@@ -1012,6 +1044,16 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
 // it the check. Nothing selected is a pass: the change touches no suite of
 // this platform.
 export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {} } = {}) {
+  const host = hostLacks(env);
+  if (host.error) {
+    log(`::error title=${HOST_LACKS_VARIABLE}::${host.error}`);
+    summary(`- **${host.error}**\n`);
+    return 2;
+  }
+  if (host.lacks.length > 0) {
+    log(hostLacksNote(host.lacks));
+    summary(`- ${hostLacksNote(host.lacks)}\n`);
+  }
   const failed = [];
   let timedOut = false;
   for (const id of suites) {
