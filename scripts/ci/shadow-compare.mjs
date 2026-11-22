@@ -2,6 +2,9 @@
 // （FABLE-hosted-ci-bootstrap-20261122 §1.5、§1.6；框架 v1 §2.3，S6 退出判据从这里读）。
 // 不建新存储：GitHub 的 check-runs 就是记录。读取只走 retrigger-counter 的 ghReader（gh api GET）。
 // 读不到、缺一边、没结论都判“未知”，从不判一致。只输出一行 JSON；不一致不改退出码（观察工具，不挡任何路径）。
+// head 的角色从 PR 字段定（FABLE-shadow-superseded-20261122，丙）：当前（open PR 的 head）缺检查或未完成判“在跑”；
+// 最终（已合入 PR 的 head）严格口径；被取代（PR 的其他提交、关闭未合入 PR 的 head）两侧都有红/绿终态才比，
+// 比不了判“跳过”。“在跑”“跳过”都不计入、不打断连续一致。读取失败、#292 读不到或没钉住不分角色判未知。
 //
 //   node scripts/ci/shadow-compare.mjs --prs <起>-[<止>]      PR 范围内每个 PR 的每个被测 head
 //   node scripts/ci/shadow-compare.mjs --head <sha> [--head <sha>]...
@@ -88,23 +91,27 @@ function side(runs, name, app) {
 }
 const shown = s => s && (({ completedMs, ...rest }) => rest)(s);
 
-function judge(pair, runs, pins, current) {
+// head 的角色：当前 > 最终 > 被取代（同一提交在几个 PR 里取最严的一个）。
+export const ROLES = Object.freeze({ current: 3, final: 2, superseded: 1 });
+
+function judge(pair, runs, pins, role) {
   const base = { check: pair.check };
   if (pins === null) return { ...base, verdict: '未知', reason: '#292 读不到，框架侧来源不明' };
   const app = pins.get(pair.check);
   if (app === undefined) return { ...base, verdict: '未知', reason: `${pair.check} 未在 #292 钉住来源` };
   const framework = side(runs, pair.check, app), hosted = side(runs, pair.hosted.name, pair.hosted.app);
   const out = { ...base, framework: shown(framework), hosted: shown(hosted), frameworkReruns: framework ? framework.runs - 1 : null };
-  if (!framework || !hosted) return { ...out, verdict: '未知', reason: !framework && !hosted ? '两边都缺检查' : !framework ? '框架缺检查' : '托管缺检查' };
+  // 比不了的一项：被取代判跳过，当前判在跑（无结论除外：当前 head 上没有新推送去取消它），最终判未知。
+  const unjudgeable = (reason, { pending }) => role === 'superseded' ? { ...out, verdict: '跳过', reason: `${reason}，已被取代` }
+    : role === 'current' && pending ? { ...out, verdict: '在跑', reason }
+      : { ...out, verdict: '未知', reason };
+  if (!framework || !hosted) return unjudgeable(!framework && !hosted ? '两边都缺检查' : !framework ? '框架缺检查' : '托管缺检查', { pending: true });
   for (const [label, s] of [['框架', framework], ['托管', hosted]]) {
-    if (s.status !== 'completed') {
-      return current ? { ...out, verdict: '在跑', reason: `${label}未完成（${s.status}）` }
-        : { ...out, verdict: '未知', reason: `${label}未完成（${s.status}），已不是 PR 的当前 head` };
-    }
+    if (s.status !== 'completed') return unjudgeable(`${label}未完成（${s.status}）`, { pending: true });
   }
   const cls = s => PASS.has(s.conclusion) ? '绿' : FAIL.has(s.conclusion) ? '红' : null;
   for (const [label, s] of [['框架', framework], ['托管', hosted]]) {
-    if (cls(s) === null) return { ...out, verdict: '未知', reason: `${label}无结论（${s.conclusion}）` };
+    if (cls(s) === null) return unjudgeable(`${label}无结论（${s.conclusion}）`, { pending: false });
   }
   out.completionDeltaSeconds = Number.isFinite(framework.completedMs) && Number.isFinite(hosted.completedMs)
     ? Math.round((hosted.completedMs - framework.completedMs) / 1000) : null;
@@ -118,7 +125,7 @@ const NAMES = new Set(PAIRS.flatMap(p => [p.check, p.hosted.name]));
 
 // 一个候选 head：读 check-runs；一条检查都没有的（多提交推送的中间提交）返回 null。只要跑过任何检查就算 head：
 // 对比检查一条都没出（如工作流改坏、作业名成了表达式原文）正是要报的“未知”，不能当中间提交跳过。
-async function judgeHead(get, pins, { sha, prs, current, committedAt }) {
+async function judgeHead(get, pins, { sha, prs, role, committedAt }) {
   let runs;
   try {
     runs = await paged(get, `/commits/${sha}/check-runs?filter=all`, 'check_runs');
@@ -131,10 +138,11 @@ async function judgeHead(get, pins, { sha, prs, current, committedAt }) {
   const ours = runs.filter(r => NAMES.has(r?.name));
   const starts = (ours.length ? ours : runs).map(r => Date.parse(r?.started_at ?? '')).filter(Number.isFinite);
   const atMs = starts.length ? Math.min(...starts) : Date.parse(committedAt ?? '');
-  const pairs = PAIRS.map(p => judge(p, runs, pins, current));
+  const pairs = PAIRS.map(p => judge(p, runs, pins, role));
   const has = v => pairs.some(p => p.verdict === v);
-  const verdict = has('不一致') ? '不一致' : has('未知') ? '未知' : has('在跑') ? '在跑' : '一致';
-  return { sha, prs, at: beijing(atMs), atMs, verdict, pairs };
+  // 不一致 > 未知 > 在跑 > 跳过 > 一致：八项都比了且都一致才是一致 head。
+  const verdict = has('不一致') ? '不一致' : has('未知') ? '未知' : has('在跑') ? '在跑' : has('跳过') ? '跳过' : '一致';
+  return { sha, prs, role, at: beijing(atMs), atMs, verdict, pairs };
 }
 
 async function candidatesOfPrs(get, { from, to }) {
@@ -149,30 +157,34 @@ async function candidatesOfPrs(get, { from, to }) {
   const out = [];
   for (const pull of pulls.sort((a, b) => a.number - b.number)) {
     const head = pull.head?.sha;
-    const currentOf = sha => pull.state === 'open' && sha === head;
+    // 当前：open PR 的 head；最终：已合入 PR 的 head；其余（PR 的其他提交、关闭未合入 PR 的 head）是被取代。
+    const roleOf = sha => sha !== head ? 'superseded' : pull.state === 'open' ? 'current' : pull.merged_at ? 'final' : 'superseded';
     try {
       const commits = await paged(get, `/pulls/${pull.number}/commits`, null, 3);
-      for (const c of commits) if (SHA.test(c?.sha ?? '')) out.push({ sha: c.sha, prs: [pull.number], current: currentOf(c.sha), committedAt: c.commit?.committer?.date });
+      for (const c of commits) if (SHA.test(c?.sha ?? '')) out.push({ sha: c.sha, prs: [pull.number], role: roleOf(c.sha), committedAt: c.commit?.committer?.date });
     } catch (error) {
       if (!SHA.test(head ?? '')) continue;
-      out.push({ sha: head, prs: [pull.number], current: currentOf(head), committedAt: null, readError: `读取失败：${error.message}` });
+      out.push({ sha: head, prs: [pull.number], role: roleOf(head), committedAt: null, readError: `读取失败：${error.message}` });
     }
   }
-  // 同一提交出现在两个 PR 里只比一次。
+  // 同一提交出现在两个 PR 里只比一次，角色取最严的一个。
   const bySha = new Map();
   for (const c of out) {
     const seen = bySha.get(c.sha);
-    if (seen) { seen.prs = [...new Set([...seen.prs, ...c.prs])].sort((a, b) => a - b); seen.current ||= c.current; seen.readError ??= c.readError; }
-    else bySha.set(c.sha, { ...c });
+    if (seen) {
+      seen.prs = [...new Set([...seen.prs, ...c.prs])].sort((a, b) => a - b);
+      if (ROLES[c.role] > ROLES[seen.role]) seen.role = c.role;
+      seen.readError ??= c.readError;
+    } else bySha.set(c.sha, { ...c });
   }
   return [...bySha.values()];
 }
 
 function summarize(heads, nowMs) {
-  const counts = { 一致: 0, 不一致: 0, 未知: 0, 在跑: 0 };
+  const counts = { 一致: 0, 不一致: 0, 未知: 0, 在跑: 0, 跳过: 0 };
   for (const h of heads) counts[h.verdict]++;
-  // 连续一致：从最新往回数，“在跑”不计也不打断，其余非一致即断。
-  const decided = heads.filter(h => h.verdict !== '在跑');
+  // 连续一致：从最新往回数，“在跑”“跳过”不计也不打断，其余非一致即断。
+  const decided = heads.filter(h => h.verdict !== '在跑' && h.verdict !== '跳过');
   let n = 0;
   while (n < decided.length && decided[decided.length - 1 - n].verdict === '一致') n++;
   const run = decided.slice(decided.length - n);
@@ -182,7 +194,7 @@ function summarize(heads, nowMs) {
     rule: `连续 ${STREAK.heads} 个 head 且不少于 ${STREAK.days} 天，八项逐项一致` };
   const hostedGreenFrameworkRedLast20 = decided.slice(-LAST).flatMap(h => h.pairs).filter(p => p.direction === '框架红、托管绿').length;
   const mismatches = heads.flatMap(h => h.pairs.filter(p => p.verdict === '不一致').map(p => `${h.sha.slice(0, 7)} ${p.check} ${p.direction}`));
-  const line = `影子对比 ${beijing(nowMs)}：${heads.length} 个 head，一致 ${counts.一致}、不一致 ${counts.不一致}、未知 ${counts.未知}、在跑 ${counts.在跑}；`
+  const line = `影子对比 ${beijing(nowMs)}：${heads.length} 个 head，一致 ${counts.一致}、不一致 ${counts.不一致}、未知 ${counts.未知}、在跑 ${counts.在跑}、跳过 ${counts.跳过}；`
     + `连续一致 ${n} 个 head / ${days} 天（判据 ${STREAK.heads} 个且 ≥${STREAK.days} 天：${streak.met ? '已达' : '未达'}）`
     + (mismatches.length ? `；不一致：${mismatches.join('；')}` : '');
   return { counts, streak, hostedGreenFrameworkRedLast20, line };
@@ -193,11 +205,11 @@ export async function compare({ repo = REPO, prs = null, heads = null, api = ghR
   const pins = await readPins(get);
   const candidates = prs ? await candidatesOfPrs(get, prs)
     // 直接给的 head 视作当前 head：还没完成的判在跑。
-    : heads.map(sha => ({ sha, prs: [], current: true, committedAt: null }));
+    : heads.map(sha => ({ sha, prs: [], role: 'current', committedAt: null }));
   const judged = [];
   for (const c of candidates) {
     if (c.readError) {
-      judged.push({ sha: c.sha, prs: c.prs, at: null, atMs: NaN, verdict: '未知', pairs: PAIRS.map(p => ({ check: p.check, verdict: '未知', reason: c.readError })) });
+      judged.push({ sha: c.sha, prs: c.prs, role: c.role, at: null, atMs: NaN, verdict: '未知', pairs: PAIRS.map(p => ({ check: p.check, verdict: '未知', reason: c.readError })) });
       continue;
     }
     const head = await judgeHead(get, pins, c);
