@@ -2,7 +2,9 @@ name: clued-ci-runner-heartbeat
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # Once an hour (04f9b91b 题 2): the one reader, clued-ci-health, runs every six hours and looks back 24 hours;
+    # live offline alerts come from clued-compute-panel.
+    - cron: "23 * * * *"
   workflow_dispatch:
 
 permissions:

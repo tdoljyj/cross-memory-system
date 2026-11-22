@@ -4,7 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested, REQUIRED_CHECK_NAMES } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested, REQUIRED_CHECK_NAMES, appScansNotDone } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { batchJobsV2, frontJobIdsV2, scanExternalIdV2 } from '../src/job-v2.mjs';
 import { GreenLedger, validateGreenEntry, GREEN_LEDGER_CONTRACT } from '../src/independent-control-checks-v2/green-ledger.mjs';
 import { createGitHubChecksPort } from '../src/github.mjs';
 import { generateKeyPairSync } from 'node:crypto';
@@ -17,7 +18,7 @@ const pullRule = methods => ({ type: 'pull_request', parameters: { allowed_merge
 const fails = (fn, code = 'RULESET_UNREADABLE') => assert.throws(fn, e => e.code === code);
 
 test('branch rules: the six checks pinned to 5368905, strict and merge methods; anything else is unreadable', () => {
-  assert.deepEqual(rulesetFacts([{ type: 'deletion', parameters: null }, pullRule(['merge', 'squash', 'rebase']), required()], APP), { requiredPinned: true, strict: true, mergeOnly: false });
+  assert.deepEqual(rulesetFacts([{ type: 'deletion', parameters: null }, pullRule(['merge', 'squash', 'rebase']), required()], APP), { requiredPinned: true, strict: true, mergeOnly: false, appScans: ['gitleaks', 'trivy', 'contract-placement'] });
   // the ruleset disabled (no required checks), one check missing, one pinned elsewhere or to no integration
   fails(() => rulesetFacts([{ type: 'deletion', parameters: null }], APP));
   fails(() => rulesetFacts([required({ names: REQUIRED_CHECK_NAMES.slice(0, 5) })], APP));
@@ -36,7 +37,60 @@ test('branch rules: the six checks pinned to 5368905, strict and merge methods; 
   assert.equal(rulesetFacts([required()], APP).mergeOnly, false, 'no pull_request rule: the methods are unknown');
   // unreadable merge methods are unknown, never "merge only", and never a reason to refuse the rules (review N6)
   for (const parameters of [{ allowed_merge_methods: 'merge' }, {}, null, { allowed_merge_methods: [1] }])
-    assert.deepEqual(rulesetFacts([required(), pullRule(['merge']), { type: 'pull_request', parameters }], APP), { requiredPinned: true, strict: true, mergeOnly: false });
+    assert.deepEqual(rulesetFacts([required(), pullRule(['merge']), { type: 'pull_request', parameters }], APP), { requiredPinned: true, strict: true, mergeOnly: false, appScans: ['gitleaks', 'trivy', 'contract-placement'] });
+});
+
+// R3 lean (resident DESIGN §82 item 1): a scan may be required from GitHub Actions (15368): this App need not publish it (appScans).
+// Admission and the control pair stay pinned to this App; all six are still required, with strict on or off.
+test('branch rules R3: scans pinned to Actions are pinned and leave appScans; admission and the control pair stay App-only', () => {
+  const SCAN = ['gitleaks', 'trivy', 'contract-placement'], PAIR = ['kooyumi-admission-verified', 'kooyumi-merge-slot'];
+  const ACTIONS_INTEGRATION_ID = 15368;
+  const rule = ({ strict = true, pins }) => ({ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict,
+    required_status_checks: pins.map(([context, integration_id]) => ({ context, integration_id })) } });
+  const own = names => names.map(n => [n, APP]), actions = names => names.map(n => [n, ACTIONS_INTEGRATION_ID]);
+  for (const strict of [true, false])
+    assert.deepEqual(rulesetFacts([rule({ strict, pins: [...own(['kooyumi-work-admission']), ...actions(SCAN), ...own(PAIR)] }), pullRule(['merge'])], APP),
+      { requiredPinned: true, strict, mergeOnly: true, appScans: [] }, `strict ${strict}`);
+  assert.equal(rulesetDecision(rulesetFacts([rule({ pins: [...own(['kooyumi-work-admission']), ...actions(SCAN), ...own(PAIR)] })], APP), 'on'), null);
+  assert.deepEqual(rulesetFacts([rule({ pins: [...own(['kooyumi-work-admission']), ['gitleaks', ACTIONS_INTEGRATION_ID], ...own(['trivy', 'contract-placement']), ...own(PAIR)] })], APP).appScans,
+    ['trivy', 'contract-placement']);
+  // a scan two rulesets require, one from Actions and one from this App: this App still publishes it
+  assert.deepEqual(rulesetFacts([rule({ pins: [...own(['kooyumi-work-admission']), ...actions(SCAN), ...own(PAIR)] }), rule({ pins: [['trivy', APP]] })], APP).appScans, ['trivy']);
+  // refused: admission or one of the pair from Actions, the pair gone (strict on or off), half the pair, a scan missing, a scan from another App
+  for (const strict of [true, false]) for (const pins of [[['kooyumi-work-admission', ACTIONS_INTEGRATION_ID], ...actions(SCAN), ...own(PAIR)],
+    [...own(['kooyumi-work-admission']), ...actions(SCAN), ['kooyumi-admission-verified', APP], ['kooyumi-merge-slot', ACTIONS_INTEGRATION_ID]],
+    [...own(['kooyumi-work-admission']), ...actions(SCAN)], [...own(['kooyumi-work-admission']), ...actions(SCAN), ['kooyumi-merge-slot', APP]],
+    [...own(['kooyumi-work-admission']), ...actions(['gitleaks', 'trivy']), ...own(PAIR)], [...own(['kooyumi-work-admission']), ['gitleaks', 5164952], ...actions(['trivy', 'contract-placement']), ...own(PAIR)]])
+    fails(() => rulesetFacts([rule({ strict, pins })], APP));
+});
+
+// Review of R3, problem A: the scans main's rules still require from this App must be done before stage 8 writes a green or lands S.
+test('appScansNotDone: own-job scans for push, any job of this App for a green GitHub merges on, reuse, and an unusable appScans', () => {
+  const S = 'e'.repeat(40), SRC = 'f'.repeat(64), ALL = ['gitleaks', 'trivy', 'contract-placement'];
+  const jobs = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 910, headSha: H, baseSha: T, testSha: S, sourceManifestSha256: SRC, createdAt: '2026-11-22T08:00:00.000Z', attempt: 1 });
+  const other = batchJobsV2({ repo: 'tdoljyj/cross-memory-system', pr: 910, headSha: H, baseSha: T, testSha: H, sourceManifestSha256: SRC, createdAt: '2026-11-22T07:00:00.000Z', attempt: 1 });
+  const ids = frontJobIdsV2(jobs['work-admission']);
+  let next = 1;
+  const scan = (role, o = {}) => ({ id: next++, app: { id: APP }, name: role, head_sha: H, status: 'completed', conclusion: 'success',
+    external_id: scanExternalIdV2((o.of ?? jobs)[role]), output: { title: role, summary: `tested ${o.tested ?? S}` }, ...o.c });
+  const own = ALL.map(r => scan(r)), ordinary = ALL.map(r => scan(r, { of: other, tested: H }));
+  const not = (appScans, checks, o = {}) => appScansNotDone({ appScans, checks, jobIds: o.any ? null : ids, headSha: H, appId: APP, reuse: o.reuse });
+  assert.deepEqual(not(ALL, own), []);
+  assert.deepEqual(not([], []), [], 'every scan from Actions: none required from this App');
+  assert.deepEqual(not(ALL, []), ALL);
+  assert.deepEqual(not(['trivy'], own.filter(c => c.name !== 'trivy')), ['trivy']);
+  assert.deepEqual(not(['gitleaks', 'contract-placement'], own.filter(c => c.name !== 'trivy')), []);
+  // another job's scans of H do not count for push (S lands), unless reused (S has H's tree); they do for a green GitHub merges H on
+  assert.deepEqual(not(ALL, ordinary), ALL);
+  assert.deepEqual(not(ALL, ordinary, { reuse: true }), []);
+  assert.deepEqual(not(ALL, ordinary, { any: true }), []);
+  // the newest of the name decides: a later failure or a still running one is not done; another App's or another commit's never counts
+  assert.deepEqual(not(ALL, [...own, scan('trivy', { c: { conclusion: 'failure' } })]), ['trivy']);
+  assert.deepEqual(not(ALL, [...own.filter(c => c.name !== 'gitleaks'), scan('gitleaks', { c: { status: 'in_progress', conclusion: null } })]), ['gitleaks']);
+  assert.deepEqual(not(ALL, [...own.filter(c => c.name !== 'gitleaks'), scan('gitleaks', { c: { app: { id: 15368 } } }), scan('gitleaks', { c: { head_sha: T } })], { any: true }), ['gitleaks']);
+  // appScans not a list (never from rulesetFacts): every scan is required
+  for (const bad of [null, undefined, 'gitleaks', {}]) assert.deepEqual(not(bad, []), ALL, String(bad));
+  assert.deepEqual(not(['gitleaks', 'nope'], []), ['gitleaks'], 'only scan names count');
 });
 
 test('branch rules decide: strict off needs the train; with the train, strict off needs merge-only', () => {

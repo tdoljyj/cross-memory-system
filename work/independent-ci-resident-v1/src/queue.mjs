@@ -206,7 +206,8 @@ export class RunQueue {
       r = this.row(subject.pr);
     }
     r.current ??= { headSha: subject.headSha, baseSha: subject.baseSha, seq: this.seq(), firstAt: now };
-    if (Object.hasOwn(subject, 'testSha')) r.current = { ...r.current, testSha: subject.testSha, frontAttempt: 1 };
+    // A front flow keeps its front number (its attempt: executor.mjs#rowSubject), so runRow goes on with exactly that flow.
+    if (Object.hasOwn(subject, 'testSha')) r.current = { ...r.current, testSha: subject.testSha, frontAttempt: subject.attempt };
     Object.assign(r, { nextAt: null, stopKind: null, stopClass: null, poke: null, deferred: null, deferUntil: null, order: this.seq() });
     this.setState(r, 'QUEUED', 'SAFE_POINT_READMISSION', now);
     return true;

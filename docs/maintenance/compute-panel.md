@@ -19,7 +19,7 @@ Task `679a0c2b`，Owner 决定 `183ee67c`。
 
 ## 怎么运行
 
-`.github/workflows/clued-compute-panel.yml`，每 5 分钟一次，只用工作流自带的 `GITHUB_TOKEN`，没有任何 Secret 进入资源池：
+`.github/workflows/clued-compute-panel.yml`，每 5 分钟一次（派发器发起，见下），只用工作流自带的 `GITHUB_TOKEN`，没有任何 Secret 进入资源池：
 
 1. `admission-gate`：与其他自建工作流相同的门禁；定时事件直接准入。
 2. 6 个 `compute-probe / <runner>` 作业，各走一条字面路由，核对机器名并打印一行 `COMPUTE_PANEL_PROBE {...}`（磁盘空闲、可用内存）。
@@ -27,7 +27,7 @@ Task `679a0c2b`，Owner 决定 `183ee67c`。
 
 新一轮运行会取消上一轮，所以离线机器最多只挂着一个排队中的探测。
 
-除了每 5 分钟的定时运行，也可以在 Actions 里手动运行（workflow_dispatch）。GitHub 对 `*/5` 的定时常有推迟或跳过：#935 合入后的第一个小时里一次也没跑。
+每 5 分钟由常驻节点的派发器以 workflow_dispatch 发起一轮（`work/independent-ci-resident-v1/src/panel-dispatch.mjs`）；工作流自己的定时 `11,41 * * * *` 只是兜底，派发器不在岗时每小时两轮，让面板不停（04f9b91b 题 2）。也可以在 Actions 里手动运行。GitHub 的定时常有推迟或跳过：#935 合入后的第一个小时里一次也没跑。
 
 ## 判定规则
 

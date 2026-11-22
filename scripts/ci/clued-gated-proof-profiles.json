@@ -6768,7 +6768,7 @@
               "e4cba6549ca820ef23089afe03eb55ae3f1726c11535a00cdc8184fb9c2763eb"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
+              "d9bb929be0843f5dd6d0ac090ae539130ad98c0fc7bf44913cc1e031a9590fb2"
             ],
             "Select suites": [
               "9f7702b0fc58c2901bea72d96dc213d761fb52ad035cb96b3d7067a1a6e240cc"
@@ -6790,7 +6790,7 @@
               "511e1108529d91041e013a3cd32568c97b1b0e9cbca78d7c19dee5be3cb6933e"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
+              "d9bb929be0843f5dd6d0ac090ae539130ad98c0fc7bf44913cc1e031a9590fb2"
             ],
             "Run the selected suites": [
               "475750114c5326faa66b30b574e09592613b3b7206332f195a7af6c1befbd32f"
@@ -6818,7 +6818,7 @@
               "7ad1c0568b557617b13f6a9fa7423856cdac4105bd14ff3543254d73db321f1c"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
+              "d9bb929be0843f5dd6d0ac090ae539130ad98c0fc7bf44913cc1e031a9590fb2"
             ],
             "Select suites": [
               "5ea62c29ee58d8189b47dea38c8b4c840186ca674ba828945447ee721ca72a6d"
@@ -6843,7 +6843,7 @@
               "7de033d24b3f9b27189b487cd3472700d37af841dbd1b80c6a27f6a8d8cd2546"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
+              "d9bb929be0843f5dd6d0ac090ae539130ad98c0fc7bf44913cc1e031a9590fb2"
             ],
             "Resolve the changed range": [
               "b7d80e2946e9b35be7bbc4c4c3f6e89016e340a511d5dfe9936da6c358c52804"
@@ -6874,7 +6874,7 @@
               "a20287867df17670cab634cb7d42669a4beec1fd6d3383505b0d7abe766d35c6"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
+              "d9bb929be0843f5dd6d0ac090ae539130ad98c0fc7bf44913cc1e031a9590fb2"
             ],
             "Secrets": [
               "d06b163808a894ce71136bf7981fd6e831068c725f1f78caeee9961d510331ef"
@@ -6914,7 +6914,7 @@
               "9df862325ae71c0657b06648d3c043f19dd422e4610912aef1e962114a44071d"
             ],
             "Resolve push baseline before loading trusted commands": [
-              "fa6e9b128a7eb08e85f342db258218e883afb4a4e1c8dde02918cbaf1e1cb9f3"
+              "d9bb929be0843f5dd6d0ac090ae539130ad98c0fc7bf44913cc1e031a9590fb2"
             ],
             "Resolve the changed range": [
               "b7d80e2946e9b35be7bbc4c4c3f6e89016e340a511d5dfe9936da6c358c52804"
@@ -6933,7 +6933,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "0b88cefe4fbcef4effb4532f622bc3cc1d601248283fbf4b59d3608eb7ec37de",
+      "source_sha256": "526685df3ddca26b4ac32f70eacee16f67d6ef4379183e5edef26a4d4bd8f00b",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -7088,8 +7088,19 @@
 "        shell: bash",
 "        run: |",
 "          set -euo pipefail",
-"          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"          # A pull request is measured against its event's base.sha. Every other event names its base here;",
+"          # one without a base fails, never handing the suites an empty CI_BASE_SHA.",
+"          if [ \"$EVENT_NAME\" = pull_request ]; then exit 0; fi",
+"          if [ \"$EVENT_NAME\" = workflow_dispatch ]; then",
+"            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it",
+"            # contains, always its ancestor (main's newest is not once main moves on); git fails when there",
+"            # is no common history. The trusted checkout stays on main: this is only what to compare with.",
+"            base=$(git merge-base origin/main \"$STAGING_SHA\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
+"          elif [ \"$EVENT_NAME\" != push ]; then",
+"            echo \"No CI base is defined for the $EVENT_NAME event.\" >&2",
+"            exit 1",
+"          elif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
 "            # Checkout fetched full history; no candidate code has run. T is the",
 "            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
 "            # member), walked by the runner hook's own code read from main.",
@@ -7196,8 +7207,19 @@
 "        shell: bash",
 "        run: |",
 "          set -euo pipefail",
-"          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"          # A pull request is measured against its event's base.sha. Every other event names its base here;",
+"          # one without a base fails, never handing the suites an empty CI_BASE_SHA.",
+"          if [ \"$EVENT_NAME\" = pull_request ]; then exit 0; fi",
+"          if [ \"$EVENT_NAME\" = workflow_dispatch ]; then",
+"            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it",
+"            # contains, always its ancestor (main's newest is not once main moves on); git fails when there",
+"            # is no common history. The trusted checkout stays on main: this is only what to compare with.",
+"            base=$(git merge-base origin/main \"$STAGING_SHA\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
+"          elif [ \"$EVENT_NAME\" != push ]; then",
+"            echo \"No CI base is defined for the $EVENT_NAME event.\" >&2",
+"            exit 1",
+"          elif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
 "            # Checkout fetched full history; no candidate code has run. T is the",
 "            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
 "            # member), walked by the runner hook's own code read from main.",
@@ -7327,8 +7349,19 @@
 "        shell: bash",
 "        run: |",
 "          set -euo pipefail",
-"          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"          # A pull request is measured against its event's base.sha. Every other event names its base here;",
+"          # one without a base fails, never handing the suites an empty CI_BASE_SHA.",
+"          if [ \"$EVENT_NAME\" = pull_request ]; then exit 0; fi",
+"          if [ \"$EVENT_NAME\" = workflow_dispatch ]; then",
+"            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it",
+"            # contains, always its ancestor (main's newest is not once main moves on); git fails when there",
+"            # is no common history. The trusted checkout stays on main: this is only what to compare with.",
+"            base=$(git merge-base origin/main \"$STAGING_SHA\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
+"          elif [ \"$EVENT_NAME\" != push ]; then",
+"            echo \"No CI base is defined for the $EVENT_NAME event.\" >&2",
+"            exit 1",
+"          elif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
 "            # Checkout fetched full history; no candidate code has run. T is the",
 "            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
 "            # member), walked by the runner hook's own code read from main.",
@@ -7460,8 +7493,19 @@
 "        shell: bash",
 "        run: |",
 "          set -euo pipefail",
-"          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"          # A pull request is measured against its event's base.sha. Every other event names its base here;",
+"          # one without a base fails, never handing the suites an empty CI_BASE_SHA.",
+"          if [ \"$EVENT_NAME\" = pull_request ]; then exit 0; fi",
+"          if [ \"$EVENT_NAME\" = workflow_dispatch ]; then",
+"            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it",
+"            # contains, always its ancestor (main's newest is not once main moves on); git fails when there",
+"            # is no common history. The trusted checkout stays on main: this is only what to compare with.",
+"            base=$(git merge-base origin/main \"$STAGING_SHA\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
+"          elif [ \"$EVENT_NAME\" != push ]; then",
+"            echo \"No CI base is defined for the $EVENT_NAME event.\" >&2",
+"            exit 1",
+"          elif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
 "            # Checkout fetched full history; no candidate code has run. T is the",
 "            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
 "            # member), walked by the runner hook's own code read from main.",
@@ -7610,8 +7654,19 @@
 "        shell: bash",
 "        run: |",
 "          set -euo pipefail",
-"          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"          # A pull request is measured against its event's base.sha. Every other event names its base here;",
+"          # one without a base fails, never handing the suites an empty CI_BASE_SHA.",
+"          if [ \"$EVENT_NAME\" = pull_request ]; then exit 0; fi",
+"          if [ \"$EVENT_NAME\" = workflow_dispatch ]; then",
+"            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it",
+"            # contains, always its ancestor (main's newest is not once main moves on); git fails when there",
+"            # is no common history. The trusted checkout stays on main: this is only what to compare with.",
+"            base=$(git merge-base origin/main \"$STAGING_SHA\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
+"          elif [ \"$EVENT_NAME\" != push ]; then",
+"            echo \"No CI base is defined for the $EVENT_NAME event.\" >&2",
+"            exit 1",
+"          elif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
 "            # Checkout fetched full history; no candidate code has run. T is the",
 "            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
 "            # member), walked by the runner hook's own code read from main.",
@@ -7824,8 +7879,19 @@
 "        shell: bash",
 "        run: |",
 "          set -euo pipefail",
-"          if [ \"$EVENT_NAME\" != push ]; then exit 0; fi",
-"          if [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
+"          # A pull request is measured against its event's base.sha. Every other event names its base here;",
+"          # one without a base fails, never handing the suites an empty CI_BASE_SHA.",
+"          if [ \"$EVENT_NAME\" = pull_request ]; then exit 0; fi",
+"          if [ \"$EVENT_NAME\" = workflow_dispatch ]; then",
+"            # Lost-run recovery tests the PR head itself, unmerged. Its base is the newest main commit it",
+"            # contains, always its ancestor (main's newest is not once main moves on); git fails when there",
+"            # is no common history. The trusted checkout stays on main: this is only what to compare with.",
+"            base=$(git merge-base origin/main \"$STAGING_SHA\")",
+"            [[ \"$base\" =~ ^[0-9a-f]{40}$ ]]",
+"          elif [ \"$EVENT_NAME\" != push ]; then",
+"            echo \"No CI base is defined for the $EVENT_NAME event.\" >&2",
+"            exit 1",
+"          elif [ \"$PUSH_REF\" = 'refs/heads/clued-train/staging' ]; then",
 "            # Checkout fetched full history; no candidate code has run. T is the",
 "            # root of S's member chain (ADR 0019), a commit on main (S^1 for one",
 "            # member), walked by the runner hook's own code read from main.",
@@ -7908,7 +7974,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "e607a08efdd564e13ae779c57f3085c61c04cf7c"
+      "workflow_blob": "d09fb4df69dde234c1f08eb8d09c66919747911f"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [

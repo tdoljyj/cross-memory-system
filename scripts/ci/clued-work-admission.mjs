@@ -2684,10 +2684,12 @@ export const GATE_POLL_SECONDS = 10;
 // at most INDEPENDENT_GATE_WAIT_SECONDS. Only the newest check of App 5368905
 // counts: success, the exact head, the independent CI's native-work-admission
 // external_id and a summary that names this pull request. A same-name check
-// of any other App is never read. While the Owner's disaster-recovery switch
-// runs the clued-admission workflow again, its event-bound App check below
-// still decides when it settles first. The job is digest-pinned, so a pull
-// request cannot select this source for another workflow.
+// of any other App is never read, and neither is the clued-admission App's
+// event-bound check: if the clued-admission workflow runs again, this gate is
+// still decided by Native alone (FABLE-scaffold-open-qs 问题 1 改法 2; before,
+// that check decided when it settled first, which it mostly does). The job is
+// digest-pinned, so a pull request cannot select this source for another
+// workflow.
 export const INDEPENDENT_GATE_SOURCE = "independent-ci-native-work-admission";
 export const INDEPENDENT_ADMISSION_APP_ID = 5368905;
 export const INDEPENDENT_ADMISSION_CHECK = "kooyumi-work-admission";
@@ -3117,14 +3119,17 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     let independent = null;
     const what = `${APP_CHECK_NAME} of App ${ADMISSION_APP_ID} for #${pr.number} from the admission run of this event (created since ${self.created_at} less ${SAME_EVENT_MS / 1000}s)`;
     for (let waited = 0; ;) {
+      let settled;
       if (independentSource) {
+        // Native only (FABLE-scaffold-open-qs 问题 1 改法 2): the legacy check is not read.
         independent = await independentAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, pr.number);
-        if (independent.settled) break;
+        settled = independent.settled;
+      } else {
+        found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
+        // On a re-run the admission run may itself be running again under its
+        // old id, with its previous attempt's check posted: wait for it to end.
+        settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
       }
-      found = await eventAdmissionCheck(fetchImpl, env, env.GITHUB_REPOSITORY, pr.head.sha, since, pr.number);
-      // On a re-run the admission run may itself be running again under its
-      // old id, with its previous attempt's check posted: wait for it to end.
-      const settled = found.check && found.check.status === "completed" && (!attempt || !found.run || found.run.status === "completed");
       // The pauses of retried GitHub reads count into the wait.
       const used = waited + retryBudget.spentMs / 1000;
       if (settled || used >= limit) break;
@@ -3132,10 +3137,9 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
       await sleep(delay * 1000);
       waited += delay;
     }
-    // The independent source decides unless the clued-admission App's
-    // event-bound check (disaster recovery only) settled first.
-    if (independentSource && (independent?.settled || !(found.check && found.check.status === "completed")))
-      return await independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self });
+    // A gate with the independent source is decided by the Native check alone, whether or not the
+    // clued-admission workflow runs again: its event-bound check never stands in.
+    if (independentSource) return await independentGateOutcome({ env, event, fetchImpl, outcome, pr, attempt, independent, limit, self });
     // Merge Admission step 2 (review MINOR-3/4): on a re-run, the newest
     // check for this pull request on this head decides, whichever admission
     // run (or re-verification) posted it: every later check is a later

@@ -2645,9 +2645,10 @@ test("owner review: the workflows on main that hold an environment are exactly t
     assert.deepEqual(ownerReviewFindings(text, text).filter((f) => f !== "environment_workflow_changed"), [], file);
   }
   // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
-  // DESIGN §80: the train front's main merge reads the clued-admission App key (update-branch and its attestation check).
+  // DESIGN §80: the train front's main merge reads the clued-admission App key (update-branch and its attestation check);
+  // its hosted copy for the scaffold (framework v1 §2.3) the same key in the same environment.
   assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-front-main-merge.yml", "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-front-main-merge-hosted.yml", "clued-front-main-merge.yml", "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });
 
@@ -3884,11 +3885,12 @@ test("independent gate repair re-run: an attempt that ended in a GitHub API outa
   }
 });
 
-test("independent gate: under the Owner's disaster-recovery switch the clued-admission App check of this event still decides", async () => {
-  const { outcome } = await independentGate([appCheckRun()]);
-  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", undefined]);
-  const failed = (await independentGate([appCheckRun({ conclusion: "failure" })])).outcome;
-  assert.deepEqual([failed.admitted, failed.verdict], [false, "REJECTED"]);
+test("independent gate: the clued-admission App check of this event never decides, even with its workflow running again", async () => {
+  // Before FABLE-scaffold-open-qs 问题 1 改法 2 the legacy check decided when it settled first (the Owner's disaster-recovery switch).
+  const { outcome } = await independentGate([appCheckRun()], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  const failed = (await independentGate([appCheckRun({ conclusion: "failure" }), nativeCheck()])).outcome;
+  assert.deepEqual([failed.admitted, failed.verdict], [true, "ADMITTED"]);
 });
 
 test("independent gate: the Source v2 native-work-admission id admits; malformed or foreign v2 ids refuse", async () => {
@@ -4094,7 +4096,7 @@ test('Legacy proof remains valid with Native source configured during disaster r
  const f=legacyFixture();assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
  delete f.env.CLUED_ADMISSION_GATE_SOURCE;assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
 });
-test('Native-source gate preserves actual settled legacy disaster-recovery branch',async()=>{
+test('Native-source gate does not take a settled legacy check (scaffold open-qs 1.2): without Native it waits, and admits nothing',async()=>{
  const f=legacyFixture(),read=f.read;
  f.legacyOrigin.created_at='2026-11-17T07:01:00Z';
  f.read=async route=>{
@@ -4102,7 +4104,7 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
   if(route.includes('/actions/workflows/clued-work-admission.yml/runs'))return {workflow_runs:[f.legacyOrigin]};
   return read(route);
  };
- const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.automation_self_hosted],[true,true],JSON.stringify(r));assert.equal(f.epochReads,2);
+ const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[false,'ADMISSION_PENDING',false],JSON.stringify(r));assert.equal(f.epochReads,0);
 });
 
 
@@ -4612,4 +4614,22 @@ test("independent gate repair re-run: the budget is per run; another run's attem
   assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
   const dispatched = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 3 })], jobs: { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), '8001:3': skippedDispatchJobs() } });
   assert.equal(dispatched.outcome.admitted, true, `a re-dispatched run's first attempt is admitted: ${JSON.stringify(dispatched.outcome.reasons)}`);
+});
+
+// FABLE-scaffold-open-qs 问题 1 改法 2: a gate with the independent source admits on Native only. Enabling the legacy
+// clued-work-admission.yml again must not let its event-bound App check decide first (it settles in a minute or two, Native's
+// p90 is ten), so every pull request would be judged by the legacy workflow again.
+test("independent gate, Native only (scaffold open-qs 1.2): a legacy failure that settles first does not decide; Native's later success admits", async () => {
+  let nativeReads = 0;
+  const { outcome, calls } = await independentGate((call) => {
+    const native = call.url.includes("check_name=kooyumi-work-admission") && ++nativeReads > 1;
+    return { body: { check_runs: [appCheckRun({ conclusion: "failure" }), ...(native ? [nativeCheck()] : [])] } };
+  });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", INDEPENDENT_GATE_SOURCE], JSON.stringify(outcome.reasons));
+  assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false, "the legacy run is not read");
+});
+test("independent gate, Native only (scaffold open-qs 1.2): a legacy success without Native in time is ADMISSION_PENDING, not ADMITTED", async () => {
+  const { outcome, calls } = await independentGate([appCheckRun()], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false);
 });

@@ -730,7 +730,11 @@ function workflowJobs(text) {
   const jobs = [];
   for (let i = 1; i < parts.length; i += 2) {
     const job = parts[i + 1];
-    const labels = /\n {4}runs-on: \[([^\]]+)\]/.exec(`\n${job}`)?.[1].split(',').map((label) => label.trim()) ?? [];
+    // runs-on is a self-hosted label list ([self-hosted, Windows, ...]) or one GitHub-hosted image label (windows-2025,
+    // ubuntu-24.04): a hosted Windows image is a Windows job too, so it is held to the Windows suites only.
+    const runsOn = /\n {4}runs-on: (.+)/.exec(`\n${job}`)?.[1].trim() ?? '';
+    const labels = (/^\[([^\]]+)\]/.exec(runsOn)?.[1] ?? runsOn).split(',').map((label) => label.trim())
+      .map((label) => (/^windows-/i.test(label) ? 'Windows' : label));
     const steps = job.split(/\n {6}- /).slice(1).map((step) => {
       const run = /(?:^|\n) {8}run: \|\n((?: {10}.*\n?| *\n)+)/.exec(step)?.[1].replace(/^ {10}/gm, '').trimEnd()
         ?? /(?:^|\n) {8}run: (.+)/.exec(step)?.[1];
@@ -805,6 +809,13 @@ test('every job of any workflow that can run a suite needing application depende
   const third = 'name: third\non:\n  pull_request:\njobs:\n  other:\n    runs-on: [self-hosted, Linux]\n    steps:\n'
     + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run pinned-registries --root candidate\n';
   assert.deepEqual(appDependencyFindings('third.yml', third), [`third.yml other: can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
+  // A job on a GitHub-hosted image label is classified by that label: windows-2025 runs only the Windows suites (none needs
+  // the application dependencies), ubuntu-24.04 runs the Linux ones and is held to the step (Task 04f9b91b).
+  const hosted = (label) => 'name: hosted\non:\n  pull_request:\njobs:\n  suites:\n    runs-on: ' + label + '\n    steps:\n'
+    + '      - name: Run\n        run: node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate\n';
+  assert.deepEqual(appDependencyFindings('hosted.yml', hosted('windows-2025')), []);
+  assert.deepEqual(appDependencyFindings('hosted.yml', hosted('[self-hosted, Windows, X64]')), []);
+  assert.deepEqual(appDependencyFindings('hosted.yml', hosted('ubuntu-24.04')), [`hosted.yml suites: can run pinned-registries, which need apps/clued-cloud, and has no step "${APP_DEPS_STEP}"`]);
   // The marker reaches the suites' processes through the environment the selection gives them.
   assert.equal(selection.testEnv({ [selection.APP_DEPS_MARKER]: '1' })[selection.APP_DEPS_MARKER], '1');
 });
@@ -1810,7 +1821,7 @@ function trainCheckout(t) {
   const [H1, H2, H3, X] = [commit(T), commit(T), commit(T), commit()];
   git('update-ref', 'refs/remotes/origin/main', T);
   const one = commit(T, H1), two = commit(one, H2), three = commit(two, H3);
-  return { dir, T, H1, H2, one, two, three, commit, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
+  return { dir, T, H1, H2, one, two, three, commit, git, offMain: commit(commit(X, H1), H2), single: commit(commit(T), H2) };
 }
 function runBaseline(t, { shell, script }, repo, env) {
   const command = shellCommand(shell);
@@ -1856,6 +1867,84 @@ for (const [file, id] of BASELINE_JOBS) {
       const r = runBaseline(t, step, repo.dir, { ...STAGING, STAGING_SHA: s });
       assert.notEqual(r.status, 0, `${s}: ${r.log}`);
       assert.equal(r.outputs.sha, undefined, r.log);
+    }
+  });
+  // Task 6cd46765 (FABLE-dispatch-base-20261122 §2.2, §4): a lost-run dispatch tests the PR branch head itself, not a
+  // merge with main, so its CI_BASE_SHA is the main commit the head is based on, git merge-base origin/main <head>: always
+  // an ancestor of the head, unlike main's newest commit once main has moved on. The trusted checkout keeps main (sha=
+  // stays unset). The Windows job gets the same branch with its own dispatch trigger (PR-2).
+  if (file !== LINUX_WORKFLOW) continue;
+  const DISPATCH = { EVENT_NAME: 'workflow_dispatch', PUSH_REF: 'refs/heads/claude/some-branch' };
+  // origin/main moves T -> M2; the branch H1 forked at T; the train App's merge of main into it gives caughtUp.
+  const dispatchCheckout = (t) => {
+    const repo = trainCheckout(t);
+    const M2 = repo.commit(repo.T);
+    repo.git('update-ref', 'refs/remotes/origin/main', M2);
+    return { ...repo, M2, caughtUp: repo.commit(repo.H1, M2), behind: repo.commit(repo.H1) };
+  };
+  const isAncestor = (repo, a, b) => spawnSync('git', ['merge-base', '--is-ancestor', a, b], { cwd: repo.dir }).status === 0;
+  test(`lost-run dispatch, ${label}: a head that just merged main is measured against that main commit, origin/main`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: repo.caughtUp });
+    assert.equal(r.status, 0, r.log);
+    assert.deepEqual(r.outputs, { ci_base: repo.M2 }, r.log);
+  });
+  test(`lost-run dispatch, ${label}: a head behind main is measured against its fork point, never main's newest commit`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    for (const head of [repo.H1, repo.behind]) {
+      const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
+      assert.equal(r.status, 0, r.log);
+      assert.deepEqual(r.outputs, { ci_base: repo.T }, r.log);
+      assert.ok(isAncestor(repo, r.outputs.ci_base, head), 'the base is an ancestor of the tested head');
+      assert.ok(!isAncestor(repo, repo.M2, head), 'main has moved past the head: main\'s newest commit would not be');
+    }
+  });
+  test(`lost-run dispatch, ${label}: a head with no history in common with main, or an event without a base, fails the step`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const unrelated = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: repo.commit(repo.commit()) });
+    assert.notEqual(unrelated.status, 0, unrelated.log);
+    assert.deepEqual(unrelated.outputs, {}, unrelated.log);
+    // A later trigger that nobody gave a base must fail here, not hand the suites an empty CI_BASE_SHA.
+    for (const EVENT_NAME of ['schedule', 'merge_group', 'repository_dispatch', '']) {
+      const r = runBaseline(t, step, repo.dir, { EVENT_NAME, PUSH_REF: 'refs/heads/main', STAGING_SHA: repo.caughtUp });
+      assert.notEqual(r.status, 0, `${EVENT_NAME}: ${r.log}`);
+      assert.deepEqual(r.outputs, {}, `${EVENT_NAME}: ${r.log}`);
+    }
+    const pr = runBaseline(t, step, repo.dir, { EVENT_NAME: 'pull_request', PUSH_REF: 'refs/pull/9/merge', STAGING_SHA: repo.caughtUp });
+    assert.equal(pr.status, 0, pr.log);
+    assert.deepEqual(pr.outputs, {}, pr.log);
+  });
+  if (id !== 'ci-suites') continue;
+  // The consumer, end to end: the step's outputs, the job's own CI_BASE_SHA expression (GitHub's ||, a missing property
+  // is null; under dispatch there is no pull_request), then the selector expanding every command of the four suites
+  // that take {base}. Before the fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
+  test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
+    const repo = dispatchCheckout(t);
+    const text = readFileSync(file, 'utf8');
+    const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
+    const expression = /\n {10}CI_BASE_SHA: \$\{\{ (.+?) \}\}\n/.exec(job.slice(job.indexOf('- name: Run the selected suites\n')))[1];
+    const operands = expression.split('||').map((operand) => operand.trim());
+    assert.ok(operands.every((operand) => /^[a-z_]+(\.[a-z_-]+)+$/.test(operand)), expression);
+    for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
+      const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
+      assert.equal(r.status, 0, r.log);
+      const context = { steps: { 'train-base': { outputs: r.outputs } },
+        github: { event_name: 'workflow_dispatch', event: { inputs: { pr: '9', head } } } };
+      const value = (operand) => operand.split('.').reduce((at, key) => (at == null ? null : at[key] ?? null), context);
+      const base = operands.map(value).find(Boolean) ?? '';
+      for (const suite of ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']) {
+        let compared = 0;
+        for (const command of SUITE_COMMANDS[suite]) {
+          const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base, report: path.join(repo.dir, 'r.json') });
+          const at = argv.indexOf('--base');
+          if (at < 0) continue;
+          assert.equal(argv[at + 1], expected, `${suite}: ${argv.join(' ')}`);
+          compared++;
+        }
+        assert.equal(compared, 1, `${suite} compares with the base once`);
+      }
+      assert.equal(base, expected, expression);
+      assert.ok(isAncestor(repo, base, head), 'the suites compare the head with one of its own ancestors');
     }
   });
 }
@@ -2066,4 +2155,97 @@ test('four local runs started together hold at most two slots; the other two que
   await waitForSlotFixture(waiting[0], () => ready().length >= 3);
   await delay(1_000);
   assert.equal(ready().length, 3, 'one freed slot starts exactly one waiting run');
+});
+
+// Task 04f9b91b (FABLE-hosted-windows-suites §2.3): a host says what it lacks (CLUED_CI_HOST_LACKS, set by the hosted
+// workflow only), a test says what it needs in its own name ([needs:<capability>]); the entry adds Node's skip pattern for
+// those names to every node --test command, so neither side lists the other. A run of the real Node test runner on a
+// fixture pins the behaviour: a marked test and every subtest under it, and a marked subtest of an unmarked parent, do not
+// run; everything else does. Without the variable the commands are unchanged; an unknown capability runs nothing.
+const HOST_LACKS_FIXTURE = `import test from 'node:test';
+import { appendFileSync } from 'node:fs';
+const ran = (name) => appendFileSync(process.env.HOST_LACKS_RAN, name + '\\n');
+test('marked parent [needs:non-elevated]', async (t) => { ran('marked parent'); await t.test('child of the marked parent', () => ran('child of the marked parent')); });
+test('unmarked parent', async (t) => {
+  ran('unmarked parent');
+  await t.test('marked child [needs:non-elevated]', () => ran('marked child'));
+  await t.test('unmarked child', () => ran('unmarked child'));
+});
+test('needs non-elevated in words only, no marker', () => ran('words only'));
+`;
+
+function hostLacksArgv(env, id = 'retrigger-counter') {
+  const calls = [];
+  const lines = [];
+  const status = executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: 'b', ...env }, log: (line) => lines.push(String(line)),
+    // The trusted reporter the entry adds for the run again in full (its directory differs each run) is not what these compare.
+    spawn: (command, args) => { calls.push([command, ...args].filter((arg) => !arg.startsWith('--test-reporter'))); return { status: 0 }; } });
+  return { status, calls, lines };
+}
+
+function testsThatRan(t, switches) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-host-lacks-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'host-lacks-fixture.test.mjs');
+  const ranFile = path.join(dir, 'ran.txt');
+  writeFileSync(file, HOST_LACKS_FIXTURE);
+  writeFileSync(ranFile, '');
+  const env = { ...process.env, HOST_LACKS_RAN: ranFile };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, ['--test', ...switches, file], { cwd: dir, env, encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  return readFileSync(ranFile, 'utf8').split('\n').filter(Boolean).sort();
+}
+
+test('CLUED_CI_HOST_LACKS=non-elevated: the [needs:non-elevated] tests and their subtests do not run; the others do', (t) => {
+  const plain = hostLacksArgv({});
+  assert.equal(plain.status, 0);
+  const lacking = hostLacksArgv({ CLUED_CI_HOST_LACKS: 'non-elevated' });
+  assert.equal(lacking.status, 0, lacking.lines.join('\n'));
+  assert.equal(lacking.calls.length, plain.calls.length);
+  const [argv] = lacking.calls;
+  const testAt = argv.indexOf('--test');
+  assert.ok(testAt > 0, argv.join(' '));
+  const switches = argv.filter((arg) => arg.startsWith('--test-skip-pattern'));
+  assert.equal(switches.length, 1, `one skip pattern after --test: ${argv.join(' ')}`);
+  assert.equal(argv[testAt + 1], switches[0], 'the skip pattern follows --test (before any test file)');
+  assert.deepEqual(argv.filter((arg) => !switches.includes(arg)), plain.calls[0], 'nothing else changes');
+  assert.ok(lacking.lines.some((line) => line.includes('non-elevated') && line.includes('[needs:non-elevated]')),
+    `the log says what does not run here:\n${lacking.lines.join('\n')}`);
+  // The real Node test runner, with the switch the entry gave: a marked test is not run, nor anything under it.
+  assert.deepEqual(testsThatRan(t, switches), ['unmarked child', 'unmarked parent', 'words only']);
+  // The same fixture without it runs everything: the marker alone skips nothing.
+  assert.deepEqual(testsThatRan(t, []), ['child of the marked parent', 'marked child', 'marked parent', 'unmarked child', 'unmarked parent', 'words only']);
+});
+
+test('CLUED_CI_HOST_LACKS reaches every node --test command of a suite, the resident one included; unset or empty changes none', () => {
+  const plain = hostLacksArgv({}, 'resident-node');
+  const empty = hostLacksArgv({ CLUED_CI_HOST_LACKS: '' }, 'resident-node');
+  assert.deepEqual(empty.calls, plain.calls, 'an empty value is no capability missing');
+  assert.ok(plain.calls.length > 0 && plain.calls.every((argv) => !argv.some((arg) => arg.startsWith('--test-skip-pattern'))));
+  const lacking = hostLacksArgv({ CLUED_CI_HOST_LACKS: 'non-elevated' }, 'resident-node');
+  assert.equal(lacking.calls.length, plain.calls.length);
+  for (const argv of lacking.calls) assert.equal(argv.filter((arg) => arg.startsWith('--test-skip-pattern')).length, 1, argv.slice(0, 4).join(' '));
+});
+
+test('a CLUED_CI_HOST_LACKS value the entry does not know runs nothing (exit 2) and names the known ones', async () => {
+  for (const value of ['tpm', 'non-elevated,tpm', 'Non-Elevated']) {
+    const { status, calls, lines } = hostLacksArgv({ CLUED_CI_HOST_LACKS: value });
+    assert.equal(status, 2, `${value}: ${lines.join('\n')}`);
+    assert.deepEqual(calls, [], `${value}: no command starts`);
+    assert.ok(lines.some((line) => line.includes('CLUED_CI_HOST_LACKS') && line.includes('non-elevated')), lines.join('\n'));
+  }
+  // The job step (--run-selected) refuses before any suite, and says so in the step summary.
+  const ran = [];
+  const summary = [];
+  const status = await runSelected(['retrigger-counter'], { root: ROOT, env: { CLUED_CI_HOST_LACKS: 'tpm' }, log,
+    run: async (id) => { ran.push(id); return 0; }, summary: (text) => summary.push(text) });
+  assert.equal(status, 2);
+  assert.deepEqual(ran, []);
+  assert.match(summary.join(''), /CLUED_CI_HOST_LACKS/);
+  // A known value: the summary says what does not run on this host, and the suites run.
+  const okSummary = [];
+  assert.equal(await runSelected(['retrigger-counter'], { root: ROOT, env: { CLUED_CI_HOST_LACKS: 'non-elevated' }, log,
+    run: async () => 0, summary: (text) => okSummary.push(text) }), 0);
+  assert.match(okSummary.join(''), /\[needs:non-elevated\]/);
 });
