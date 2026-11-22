@@ -493,15 +493,17 @@ class HostedScaffoldTests(unittest.TestCase):
         texts = self.real()
         report = policy.evaluate_workflows(texts)
         self.assertEqual(report["status"], "PASS", report["violations"])
-        self.assertEqual(report["hosted_scaffold_jobs"], 7)
-        self.assertEqual(set(policy.HOSTED_SCAFFOLD_JOBS), {"hosted-required.yml"})
-        _, jobs, _ = policy.split_workflow(texts["hosted-required.yml"])
+        self.assertEqual(report["hosted_scaffold_jobs"], 9)
+        self.assertEqual(set(policy.HOSTED_SCAFFOLD_JOBS), {"hosted-required.yml", "clued-front-main-merge-hosted.yml"})
         names = set()
-        for job_id, block in jobs.items():
-            self.assertEqual(policy.classify_route("hosted-required.yml", job_id, policy.job_fields(block))[0], "hosted")
-            names |= policy.job_check_names(job_id, policy.job_fields(block))
+        for filename in policy.HOSTED_SCAFFOLD_JOBS:
+            _, jobs, _ = policy.split_workflow(texts[filename])
+            for job_id, block in jobs.items():
+                self.assertEqual(policy.classify_route(filename, job_id, policy.job_fields(block))[0], "hosted", (filename, job_id))
+                names |= policy.job_check_names(job_id, policy.job_fields(block))
         self.assertEqual(names, {"hosted-ci-suites", "hosted-clued-cloud-tests", "hosted-migration-verify",
-                                 "hosted-ci-suites-windows", "hosted-gitleaks", "hosted-trivy", "hosted-contract-placement"})
+                                 "hosted-ci-suites-windows", "hosted-gitleaks", "hosted-trivy", "hosted-contract-placement",
+                                 "hosted-scaffold-phase", "hosted-clued-front-main-merge"})
         self.assertFalse(names & policy.REQUIRED_CHECK_NAMES)
 
     def test_changed_renamed_moved_or_removed_scaffold_fails(self):
@@ -520,6 +522,11 @@ class HostedScaffoldTests(unittest.TestCase):
                 report = policy.evaluate_workflows({**texts, "hosted-required.yml": changed})
                 self.assertEqual(report["status"], "FAIL")
                 self.assertTrue(any(reason in row["reason"] for row in report["violations"]), report["violations"])
+        front = texts["clued-front-main-merge-hosted.yml"]
+        renamed = front.replace("    name: hosted-scaffold-phase\n", "    name: scaffold-phase\n", 1)
+        self.assertNotEqual(renamed, front)
+        report = policy.evaluate_workflows({**texts, "clued-front-main-merge-hosted.yml": renamed})
+        self.assertTrue(any("check name only" in row["reason"] for row in report["violations"]), report["violations"])
         removed = {name: body for name, body in texts.items() if name != "hosted-required.yml"}
         report = policy.evaluate_workflows(removed)
         self.assertTrue(any("removed hosted scaffold job must be deleted" in row["reason"] for row in report["violations"]))
