@@ -178,7 +178,7 @@ export const SUITES = {
     'selection': ['scripts/ci/ci-required-selection.mjs', 'scripts/ci/test-env.mjs', 'scripts/ci/ci-required-selection.test.mjs', 'scripts/ci/ci-required-selection-candidate.test.mjs', 'scripts/ci/local-suite-slots.mjs',
       'scripts/ci/local-suite-slot-guard.mjs', 'scripts/ci/local-suite-slot-job.ps1', 'scripts/ci/ci-test-failures-reporter.mjs',
       'scripts/ci/local-verify.mjs', 'scripts/ci/local-verify.test.mjs', 'scripts/ci/local-verify-concurrency.test.mjs',
-      'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
+      'scripts/ci/check-tests-covered.mjs', 'scripts/ci/ci-known-failures.json', '.github/workflows/clued-required-tests-windows.yml', 'apps/clued-cloud/tests/**',
       'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
   // The application suite reads files from across the repository (workflow,
@@ -872,9 +872,29 @@ export function planFiles(id, { root, files, env = process.env }) {
   }
   const unmatched = [...named].filter((file) => !matched.has(file));
   if (unmatched.length > 0) {
-    throw new RunFilesError(`suite ${id} does not run: ${unmatched.join(', ')}\nit runs: ${[...new Set(accepts)].join(' ') || '(no test file)'}`);
+    throw Object.assign(new RunFilesError(`suite ${id} does not run: ${unmatched.join(', ')}\nit runs: ${[...new Set(accepts)].join(' ') || '(no test file)'}`),
+      { unmatched });
   }
   return { steps, named };
+}
+
+// Where the files a suite refused run instead: the suites whose commands take each one, read as the coverage check reads
+// them (check-tests-covered.mjs), or why none does (its table). Only a hint: it says nothing when it cannot be read.
+async function whereFilesRun(files, root) {
+  if (!files?.length) return '';
+  try {
+    const { TABLE_PATH, readTable, suiteFiles } = await import('./check-tests-covered.mjs');
+    const { runs } = suiteFiles(root, { tracked: files });
+    const listed = new Map((readTable(root).tests ?? []).map((entry) => [entry.path, entry]));
+    return files.map((file) => {
+      const suites = [...new Set(runs.get(file) ?? [])];
+      if (suites.length > 0) return `\n${file} runs in ${suites.join(', ')}: --run-files ${suites[0]} ${file}`;
+      const entry = listed.get(file);
+      return `\n${file}: no required suite runs it${entry ? ` (${TABLE_PATH}: ${entry.kind}, ${entry.reason})` : ''}`;
+    }).join('');
+  } catch {
+    return '';
+  }
 }
 
 export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null } = {}) {
@@ -891,7 +911,7 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
       planFiles(id, { root, files, env });
     } catch (error) {
       if (!(error instanceof RunFilesError)) throw error;
-      log(`run-files ${id}: ${error.message}`);
+      log(`run-files ${id}: ${error.message}${await whereFilesRun(error.unmatched, root)}`);
       return 2;
     }
   }
@@ -899,6 +919,14 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
     throw new Error(`suite ${id} has no known-failure command`);
   }
   if (env.GITHUB_ACTIONS === 'true') return executeSuite(id, { root, env, log, captureKnown, keep });
+  // The application's dependencies the CI job installs: a local run in a checkout without them (a fresh worktree) links
+  // local-verify's store first, outside the slot (R2 review 11-21: a targeted database test failed on its first import).
+  // Loaded only for a checkout that has the application and lacks its dependencies: every other run keeps its startup.
+  const app = path.join(root, 'apps', 'clued-cloud');
+  if (existsSync(path.join(app, 'package.json')) && !existsSync(path.join(app, 'node_modules'))) {
+    const { linkSuiteDependencies } = await import('./local-verify.mjs');
+    linkSuiteDependencies(id, root, { env, log });
+  }
   const { withLocalSuiteSlot } = await import('./local-suite-slots.mjs');
   return withLocalSuiteSlot(id, {
     root, env, timeoutExit: LOCAL_TIMEOUT_EXIT,
@@ -1075,6 +1103,10 @@ async function main(argv, env = process.env) {
     }
     if (env.GITHUB_ACTIONS === 'true') {
       console.error('run-files: refused under GITHUB_ACTIONS; a targeted run is never a suite verdict, use --run');
+      return 2;
+    }
+    if (!Object.hasOwn(SUITE_COMMANDS, id) && Object.hasOwn(SUITES, id)) {
+      console.error(`run-files: ${id} is a required check, not a suite; its suites: ${Object.keys(SUITES[id]).join(', ')}`);
       return 2;
     }
     if (!Object.hasOwn(SUITE_COMMANDS, id) || named.length === 0) {

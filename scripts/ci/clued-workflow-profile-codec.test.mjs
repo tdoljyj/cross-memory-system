@@ -38,11 +38,11 @@ test('all original sources and complete successors roundtrip without losing byte
   assert.deepEqual(decoded,semantic);
   assert.equal(wire.schema,'clued.gated-proof-profiles/3');
   assert.equal(decoded.schema,'clued.gated-proof-profiles/2');
-  assert.equal(sources(decoded).length,52);
+  assert.equal(sources(decoded).length,55);
   // The original catalogue still registered the ten workflows deleted later; restore them before comparing it.
   const original=structuredClone(decoded),oldRoles=structuredClone(specs);
   assert.equal(restoreRetiredEntries(original,oldRoles).length,10);
-  assert.equal(sources(original).length,72);
+  assert.equal(sources(original).length,75);
   delete original.workflows[REQUIRED_TESTS_SOURCE.file];
   // Resident ADR 0032 step 2: the Windows side of the required tests is a later, additive Source with one primary
   // (its current bytes: the clued-train/staging route, D6 N1).
@@ -74,6 +74,17 @@ test('all original sources and complete successors roundtrip without losing byte
   const NODE22='.github/workflows/clued-cloud-node22-install.yml',NODE22_BLOB='30e783feb7ab54a578b5ed3b692fa664e00207d1';
   assert.equal(original.workflows[NODE22].accepted_sources.filter(source=>source.workflow_blob===NODE22_BLOB).length,1);
   original.workflows[NODE22].accepted_sources=original.workflows[NODE22].accepted_sources.filter(source=>source.workflow_blob!==NODE22_BLOB);
+  // #1217 R2b: three gated workflows lost their main push trigger; each new byte form is a later additive Source with the
+  // roles of the entry it follows, and is the workflow on disk; strip it like the other later successors.
+  const NO_PUSH=[['.github/workflows/clued-cloud-node22-install.yml','a07a290c763654a7aaa749a1c2088d484afc4eed'],
+    ['.github/workflows/design-refs.yml','0d5575fdabf9f2e811b893d6a09eb4b36d2e7600'],
+    ['.github/workflows/model-program-m2-scoped-consumer.yml','da6c77d5758f8f3e7a124fc3ab667fceebe235f8']];
+  for(const [file,blob] of NO_PUSH) {
+    const added=original.workflows[file].accepted_sources.filter(source=>source.workflow_blob===blob);
+    assert.equal(added.length,1,file);
+    assert.equal(workflowBlob(fs.readFileSync(new URL(`../../${file}`,import.meta.url),'utf8')),blob,file);
+    original.workflows[file].accepted_sources=original.workflows[file].accepted_sources.filter(source=>source.workflow_blob!==blob);
+  }
   assert.equal(sources(original).length,66);
   assert.equal(roleDefinitionDigest(original),'9d6b910708b3d447bde534d883d0d6ca27a3a62ee42c9bc422abaa0951487a42');
   delete oldRoles.workflows[REQUIRED_TESTS_SOURCE.file];
@@ -87,6 +98,10 @@ test('all original sources and complete successors roundtrip without losing byte
   delete oldRoles.workflows['.github/workflows/gitleaks.yml'].sources['6441fc32b084002de697415ea8343af07816c929'];
   assert.equal(oldRoles.workflows[NODE22].sources[NODE22_BLOB].length,2);
   delete oldRoles.workflows[NODE22].sources[NODE22_BLOB];
+  for(const [file,blob] of NO_PUSH) {
+    assert.ok(Array.isArray(oldRoles.workflows[file].sources[blob])&&oldRoles.workflows[file].sources[blob].length>0,file);
+    delete oldRoles.workflows[file].sources[blob];
+  }
   assert.equal(roleDefinitionDigest(oldRoles),'4e8f58e671141c58eb28184f477aa7d3639556eef35b9c340ccde6b76a16aa29');
   assert.ok(Buffer.byteLength(text)<=WORKFLOW_PROFILES_MAX_BYTES);
   assert.notEqual(hash(text),hash(JSON.stringify(semantic,null,2)+'\n'),'disk Source identity changes');

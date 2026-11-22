@@ -15,7 +15,7 @@ import { CHECKS_V2 } from '../src/resident-v2/prepare-record.mjs';
 import { HEAD_INTERRUPTED_ON_GITHUB, HEAD_PUBLISHED_ON_GITHUB, PUBLISHED_ROLE_CHECK_NAMES, PUBLISHER_APP_ID, ROLE_ALREADY_ON_GITHUB, publishedNames, readPublishedChecks } from '../src/published-on-github-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../src/formal-work-admission-check-v2/publisher.mjs';
 import { CONTROL_CHECKS_V2, createFixtureControlPublisherV2, QUEUE_POLL_MS } from '../src/independent-control-checks-v2/publisher.mjs';
-import { HEAD, BASE, tempDir, admittedFacts } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, tempDir, admittedFacts, FAR_FUTURE } from './resident-v2-fixtures.mjs';
 import { TRANSIENT_CODES, outcomeFailureCode } from '../src/resident-v2/stage-fact.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, OTHER_APP = 15368;
@@ -49,7 +49,7 @@ function fakeGithub(seed = [], { narrowed = true } = {}) {
   return port;
 }
 // Native's merge-slot deadline does not move between the observations before and after the write.
-const SLOT_UNTIL = Date.now() + 3600_000;
+const SLOT_UNTIL = FAR_FUTURE;
 function fakeAdmission(c) {
   let calls = 0;
   return { fixture: true, get calls() { return calls; }, async evaluatePr(job, packet) { calls++; return admittedFacts(job, c, packet, { domain: 'fixture', slotUntil: SLOT_UNTIL }); } };
