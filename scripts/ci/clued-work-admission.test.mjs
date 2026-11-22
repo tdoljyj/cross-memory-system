@@ -4406,6 +4406,13 @@ const gateWaitingJobs = (c) => {
   for (const job of jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id;
   return jobs;
 };
+// The gate passed and nothing else listed yet: #1239's recorded gate job alone (its real completed_at 16:21:09Z;
+// the other jobs were created a second later), for this case's run. Constructed: the list without the other jobs.
+const gatePassedAloneJobs = (c) => {
+  const gate = structuredClone(TREE_REUSE_1239.workflows[workflowOfCase(c)].jobs.jobs.find((job) => job.name === 'admission-gate'));
+  gate.run_id = c.w.runs.workflow_runs[0].id;
+  return { total_count: 1, jobs: [gate] };
+};
 const inFlight = (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); c.w.jobs = admittedJobs(c); };
 // #1239 at its main push: the PR run in flight (constructed status); its job list is the case's to choose.
 const inFlight1239 = (c) => { Object.assign(c.w.runs.workflow_runs[0], c.f.workflows[workflowOfCase(c)].in_flight_at_push.run_status); };
@@ -4413,7 +4420,8 @@ const WORKFLOWS = ['clued-required-tests.yml', 'clued-required-tests-windows.yml
 
 // The eight cases of FABLE-same-tree-main-push-redesign-20261123 §8 are titled [§8-n]; [§8-8] is the 戊 real replay above.
 for (const workflow of WORKFLOWS) {
-  test(`[§8-1] #1239 549789505 real replay (${workflow}): the PR run's gate was waiting, then refused (heavy jobs "-skipped") -> the heavy jobs run, pr_run_not_admitted`, async () => {
+  // Constructed: the run in_progress and the first list (in_flight_at_push); the second list is the recorded reply.
+  test(`[§8-1] #1239 549789505 replies, in-flight state constructed (${workflow}): the PR run's gate was waiting, then refused (heavy jobs "-skipped") -> the heavy jobs run, pr_run_not_admitted`, async () => {
     let reads = 0;
     const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const recorded = c.w.jobs;
       c.routes[c.jobsRoute] = () => (++reads === 1 ? gateWaitingJobs(c) : recorded); }, TREE_REUSE_1239);
@@ -4452,13 +4460,13 @@ for (const workflow of WORKFLOWS) {
     assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
     assert.deepEqual([outcome.tree_reuse.run_heavy, outcome.tree_reuse.current_sha_pass, outcome.tree_reuse.source_pr], [true, false, 1239]);
   });
-  test(`[§8-6] #1239 (${workflow}): the gate waits at the first read and has admitted at the second -> TREE_RUN_IN_FLIGHT, one pause at most`, async () => {
+  test(`[§8-6] #1239 (${workflow}): the gate waits at the first read and has admitted at the second -> TREE_RUN_IN_FLIGHT, two reads and one pause`, async () => {
     let reads = 0;
     const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const admitted = admittedJobs(c);
       c.routes[c.jobsRoute] = () => (++reads === 1 ? gateWaitingJobs(c) : admitted); }, TREE_REUSE_1239);
     const outcome = await treeReuseGate(ctx);
     assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
-    assert.ok(pollSleeps(ctx) <= 1 && reads <= 2, `pauses ${pollSleeps(ctx)}, reads ${reads}`);
+    assert.deepEqual([reads, pollSleeps(ctx)], [2, 1]);
   });
   test(`[§8-7] S2 guard #1239 (${workflow}): the in-flight run's pull_requests names another PR -> the heavy jobs run, pr_run_identity`, async () => {
     const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c); c.w.runs.workflow_runs[0].pull_requests = [{ number: 1240 }]; }, TREE_REUSE_1239);
@@ -4466,6 +4474,60 @@ for (const workflow of WORKFLOWS) {
     assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
     assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_identity')]);
   });
+
+  // Review M6: the gate has passed but its jobs are not listed yet (#1239: gate completed 16:21:09Z, the "-skipped"
+  // jobs created 16:21:10Z). That is no admission: it is read again, and the refusal that follows is seen.
+  test(`甲2 review M6 #1239 (${workflow}, constructed): only the gate listed, passed, then the "-skipped" list -> read twice, pr_run_not_admitted`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const recorded = c.w.jobs;
+      c.routes[c.jobsRoute] = () => (++reads === 1 ? gatePassedAloneJobs(c) : recorded); }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [2, 1]);
+  });
+  test(`甲2 review M6 #1239 (${workflow}, constructed): only the gate listed and passed at every read -> read ${TREE_RUN_POLLS + 1} times, pr_run_gate_undecided`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.routes[c.jobsRoute] = () => { reads += 1; return gatePassedAloneJobs(c); }; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_gate_undecided')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [TREE_RUN_POLLS + 1, TREE_RUN_POLLS]);
+  });
+  // Review M4: an admitted list of another run (only run_id differs) is not this run's admission.
+  test(`甲2 review M4 #1239 (${workflow}): the admitted job list belongs to another run -> the heavy jobs run, pr_run_not_admitted`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c);
+      for (const job of c.w.jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id + 1; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+  });
+  // Review M3: an admitted list with one more job (a "-skipped" copy or a job the table does not know) is not the
+  // run the table describes.
+  for (const [label, extra] of [
+    ['a "-skipped" copy of a required job', (job) => ({ ...job, id: 1, name: `${job.name}-skipped`, status: 'completed', conclusion: 'skipped' })],
+    ['a job the table does not know', (job) => ({ ...job, id: 1, name: 'new-required-job' })],
+  ]) {
+    test(`甲2 review M3 #1239 (${workflow}): the admitted job list has ${label} as well -> the heavy jobs run, pr_run_not_admitted`, async () => {
+      const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c);
+        c.w.jobs.jobs.push(extra(c.w.jobs.jobs.at(-1))); c.w.jobs.total_count += 1; }, TREE_REUSE_1239);
+      const outcome = await treeReuseGate(ctx);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+    });
+  }
+  // Review M7: the in-flight branch refuses a job list it did not read whole.
+  for (const [label, change] of [
+    ['is at its limit (total_count 100)', (jobs) => { jobs.total_count = 100; }],
+    ['counts more jobs than it lists', (jobs) => { jobs.total_count += 1; }],
+  ]) {
+    test(`甲2 review M7 #1239 (${workflow}): the admitted job list ${label} -> the heavy jobs run, job_listing_incomplete`, async () => {
+      const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c); change(c.w.jobs); }, TREE_REUSE_1239);
+      const outcome = await treeReuseGate(ctx);
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice('job_listing_incomplete')]);
+    });
+  }
 }
 
 // Admitted and in flight, the order of the reads, and the absence of any pause.
