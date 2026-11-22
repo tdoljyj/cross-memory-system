@@ -157,6 +157,20 @@ class ResidentTests(unittest.TestCase):
             row = {"desk": {"halted": True, "activity": "halted", "description": description, "pr": 3, "at": at(9)}}
             self.assertIn(f"| 常驻 desk | {shown} |", panel.render({**report, "residents": row}, {}))
 
+    def test_halt_row_rewritten_after_the_reset_is_neither_halt_nor_stall(self) -> None:
+        # Follow-up 2026-11-23: after the Owner's reset the node rewrites its HALT rows (node-duty.mjs#extra) as a
+        # success row without a duty word. The panel then shows no HALT for the node and no stalled PR; while the
+        # error rows are still there it shows both.
+        halt = "执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位"
+        before = [(1240, {"sha": "a" * 40, "statuses": [status(30, "error", halt, "desk")]})]
+        after = [(1240, {"sha": "a" * 40, "statuses": [status(1, "success", "执行器已复位", "desk")]})]
+        pulls = [{"number": 1240, "draft": False}]
+        self.assertTrue(panel.resident_latest(before)["desk"]["halted"])
+        self.assertEqual([row["pr"] for row in panel.resident_stall(None, pulls, before, NOW)], [1240])
+        row = panel.resident_latest(after)["desk"]
+        self.assertEqual((row["halted"], row["activity"]), (False, "idle"))
+        self.assertEqual(panel.resident_stall(None, pulls, after, NOW), [])
+
     def test_error_row_wins_as_halt(self) -> None:
         combined = [
             (1, {"statuses": [status(1, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),
