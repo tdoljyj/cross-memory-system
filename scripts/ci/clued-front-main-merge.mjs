@@ -80,11 +80,13 @@ export const IDLE_AFTER_MS = 15 * 60_000;
 // whole train one pull request per run. With this many such heads on the train at once nobody else is brought up; below it the
 // train goes on by itself (FABLE-scaffold-s5-pre §2). 2, not 1: one protected-layer head waiting for a new Owner Grant holds nobody.
 export const BROUGHT_UNADMITTED_LIMIT = 2;
-// The admission check of the rules in force, by the name and App they pin (open-qs 改法 3): #292 pins the independent CI's
-// kooyumi-work-admission (App 5368905); the hosted scaffold ruleset pins the clued-admission App's kooyumi-admission-verified
-// (App 5164952, which never posts a check named kooyumi-work-admission: that is the job name of its workflow, a GitHub Actions
-// check). The first name pinned to an App decides; with neither pinned, the independent CI's admission.
-export const ADMISSION_CHECK_NAMES = Object.freeze([INDEPENDENT_ADMISSION_CHECK, APP_CHECK_NAME]);
+// The admission verdict each admitter publishes, by name and App (open-qs 改法 3, gate-leak 改法 1): the independent CI's
+// kooyumi-work-admission (App 5368905, pinned by #292) and the clued-admission App's kooyumi-admission-verified (App 5164952,
+// pinned by the hosted scaffold ruleset; it never posts a check named kooyumi-work-admission: that is the job name of its
+// workflow, a GitHub Actions check). The admission that counts is every row the rules in force require, the pair exactly
+// (#292's own kooyumi-admission-verified of App 5368905 is its merge-slot control, not an admission); with none, the first row.
+export const ADMISSIONS = Object.freeze([Object.freeze({ context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }),
+  Object.freeze({ context: APP_CHECK_NAME, integration_id: ADMISSION_APP_ID })]);
 // A list (open pull requests, branch rules) is read 100 a page, at most this many pages; one that goes on is not known in full.
 const PAGES = 10;
 const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required']);
@@ -125,7 +127,8 @@ async function listedInFull(fetchImpl, env, route, key, what) {
 }
 
 // What ran on one head, as the ruleset reads it: for each required check (context, integration_id) the newest check run of that
-// name from the App it is pinned to (any App when unpinned), and the newest status of each context.
+// name from the App it is pinned to (any App when unpinned), and for an unpinned one also the newest status of its context. A
+// pinned one never reads a status: the status API does not say who posted it (gate-leak 改法 2).
 async function headRecords({ env, fetchImpl, repository, head, required, admitters }) {
   const runs = await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${head}/check-runs`, 'check_runs');
   const statuses = await listedInFull(fetchImpl, env, `/repos/${repository}/commits/${head}/status`, 'statuses', `the statuses of ${head}`);
@@ -135,13 +138,14 @@ async function headRecords({ env, fetchImpl, repository, head, required, admitte
     && (integration_id === null || Number(run.app?.id) === integration_id)).reduce((best, run) => (!best || newer(run, best) ? run : best), null);
   for (const status of statuses) if (!contexts.has(status.context)) contexts.set(status.context, status);
   const withdrawn = run => String(run.output?.title ?? '').startsWith(WITHDRAWN);
+  const stateOf = check => (check.integration_id === null ? contexts.get(check.context)?.state : undefined);
   const failed = [...new Set(required.filter(check => {
-    const run = newest(check), state = contexts.get(check.context)?.state;
+    const run = newest(check), state = stateOf(check);
     return (run && FAILED.has(run.conclusion) && !withdrawn(run)) || state === 'failure' || state === 'error';
   }).map(check => check.context))];
   const green = required.every(check => {
     const run = newest(check);
-    return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || contexts.get(check.context)?.state === 'success';
+    return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || stateOf(check) === 'success';
   });
   const unfinished = runs.filter(run => run.status !== 'completed').length
     + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
@@ -220,13 +224,10 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   const pinned = requiredChecks(await branchRules({ env, fetchImpl, repository, branch: main }));
   const required = [...new Map(pinned.map(check => [`${check.context}@${check.integration_id}`, check])).values()];
   if (!required.length) throw new Error(`the rules of ${main} name no required check`);
-  // The admission that counts is the one the rules in force pin, by its name and App (#292: kooyumi-work-admission of App 5368905;
-  // the hosted scaffold: kooyumi-admission-verified of App 5164952), see ADMISSION_CHECK_NAMES.
-  const admission = ADMISSION_CHECK_NAMES.find(name => pinned.some(check => check.context === name && check.integration_id !== null));
-  const admitters = admission
-    ? [...new Set(pinned.filter(check => check.context === admission && check.integration_id !== null).map(check => check.integration_id))]
-      .map(integration_id => ({ context: admission, integration_id }))
-    : [{ context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }];
+  // The admissions that count are those the rules in force require, by name and App (#292: kooyumi-work-admission of App 5368905;
+  // the hosted scaffold: kooyumi-admission-verified of App 5164952; the trial switch: both), see ADMISSIONS.
+  const inForce = ADMISSIONS.filter(row => required.some(check => check.context === row.context && check.integration_id === row.integration_id));
+  const admitters = inForce.length ? inForce : [ADMISSIONS[0]];
   const train = open.filter(pr => pr?.autoMergeRequest && pr.isDraft === false && pr.baseRefName === main
     && pr.headRepository?.nameWithOwner === repository && SHA.test(pr.headRefOid ?? ''))
     .map(pr => ({ pr: pr.number, head: pr.headRefOid, enabled: String(pr.autoMergeRequest.enabledAt ?? ''), mergeable: pr.mergeable,
