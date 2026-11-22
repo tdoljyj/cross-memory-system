@@ -237,7 +237,7 @@ test('S7 landingRoute (must-red): the scaffold ruleset is not the guard ruleset;
   // the scaffold ruleset the App cannot (or not always) bypass: park, named; never push
   for (const scaffoldCan of ['never', 'pull_requests_only', 'exempt']) assert.deepEqual(route({}, s7State({ scaffoldCan })).slice(0, 2), ['park', [SCAF]], scaffoldCan);
   // its bypass state not readable: park, named
-  assert.deepEqual(route({}, s7State({ scaffoldCan: undefined })).slice(0, 2), ['park', [`ruleset_can_bypass_unreadable:${SCAFFOLD_RULESET}`]]);
+  assert.deepEqual(route({}, s7State({ scaffoldCan: null })).slice(0, 2), ['park', [`ruleset_can_bypass_unreadable:${SCAFFOLD_RULESET}`]]);
   assert.deepEqual(route({}, s7State({ scaffoldCan: 'sometimes' })).slice(0, 2), ['park', [`ruleset_can_bypass_unreadable:${SCAFFOLD_RULESET}`]]);
   // S7 step 1 (#292 as today, the scaffold ruleset, no guard ruleset yet): the current path, the independent ruleset absent
   const step1 = { trainLanded: false, guard: false, mainCan: 'never' };

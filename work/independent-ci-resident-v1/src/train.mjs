@@ -293,11 +293,17 @@ const LANDING_ROUTES = Object.freeze(['push', 'github-merge', 'park']);
 const BYPASS_STATE = /^[a-z_]{1,32}$/;
 const bypassOf = b => (plain(b) && Object.keys(b).sort().join('|') === 'independent|main' && typeof b.main === 'string' && BYPASS_STATE.test(b.main)
   && typeof b.independent === 'string' && BYPASS_STATE.test(b.independent) ? Object.freeze({ main: b.main, independent: b.independent }) : null);
+// Task 04f9b91b (Fable s7-landing-gaps 11-22): and missing, what push still lacks as stage 10 read it that round, which P3 --before reads
+// (exactly what the save of C adds); the shape only, as Source v2's train-landing.mjs#validLandingMissing: at most 16 distinct items, each
+// a lower-case word with an optional :suffix. Another shape drops the list, the rest stays.
+const MISSING_ITEM = /^[a-z][a-z_]{1,59}(?::[A-Za-z0-9_.-]{1,40})?$/;
+const missingOf = m => (Array.isArray(m) && m.length <= 16 && m.every(x => typeof x === 'string' && MISSING_ITEM.test(x)) && new Set(m).size === m.length
+  ? Object.freeze([...m]) : null);
 const landingOf = l => {
   if (!plain(l)) return null;
-  const bypass = bypassOf(l.bypass);
+  const bypass = bypassOf(l.bypass), missing = missingOf(l.missing);
   const out = { ...(typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? { error: l.error } : {}), ...(LANDING_ROUTES.includes(l.route) ? { route: l.route } : {}),
-    ...(bypass ? { bypass } : {}) };
+    ...(missing ? { missing } : {}), ...(bypass ? { bypass } : {}) };
   return Object.keys(out).length ? Object.freeze(out) : null;
 };
 const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunning === true, adopted: a.adopted === true, returned: a.returned === true, failedReported: a.failedReported === true,

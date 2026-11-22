@@ -1519,11 +1519,12 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
     assert.equal((await fs.readdir(e.store.directory)).filter(n => n.startsWith('landing-state-')).length, 1, 'no state written over it');
     // the resident: status.json train.last carries the error, the front's PR line names it, the decision is an Owner notice
     const summary = trainSummary(r.facts);
-    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
+    // (task 04f9b91b: the summary keeps what push lacks too, for the landing precheck's P3)
+    assert.deepEqual([summary.decision, summary.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } }]);
     const board = new StatusBoard({ clock: e.clock });
     board.update({ train: { enabled: 'on', last: summary } });
     const last = parseStatus(Buffer.from(JSON.stringify(board.snapshot()))).train.last;
-    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', bypass: { main: 'always', independent: 'never' } }]);
+    assert.deepEqual([last.decision, last.landing], ['TRAIN_LANDING_STATE_UNREADABLE', { error: 'TRAIN_LANDING_STATE_UNREADABLE', route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } }]);
     const line = withTrainLine({ state: 'pending', description: '排队中' }, last, { pr: 910, headSha: e.head(910) }, e.now, 400);
     assert.match(line.description, /落地状态.*TRAIN_LANDING_STATE_UNREADABLE/, line.description);
     assert.ok(TRAIN_OWNER_NOTICE_DECISIONS.includes(summary.decision));
