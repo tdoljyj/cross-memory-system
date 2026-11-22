@@ -2310,45 +2310,41 @@ function shWorld(name, { pgrep = 1, sync = 0 } = {}) {
 }
 const commandIn = (world, command) => world.prefix + command.split('/proc/sys/vm/drop_caches').join(world.drop);
 
-// Codex review of addf1ffa5, low 1: the probe and the release look for the same pattern, one constant, its dot a literal dot: as an
-// extended regular expression matched whole (pgrep -x) and in any case (-i) it takes Runner.Worker and runner.worker, never RunnerXWorker.
-// Run here through Git's grep -ixE, the same regular-expression form pgrep compiles; the release command carries the constant verbatim.
-test('one job pattern, its dot literal, in the probe and the release command alike', shOpts, () => {
+// Codex review of addf1ffa5, low 1: the probe and the memory abort's Runner.Worker count look for the same pattern, one constant, its dot
+// a literal dot: as an extended regular expression matched whole (pgrep -x) and in any case (-i) it takes Runner.Worker and runner.worker,
+// never RunnerXWorker. Run here through Git's grep -ixE, the same regular-expression form pgrep compiles. The release command no longer
+// asks pgrep (Decision f572ac5b).
+test('one job pattern, its dot literal, in the probe and the memory count alike; none in the release command', shOpts, () => {
   const r = ps(`@{ pattern = $script:Drill.WslJobPattern; command = $script:DrillWslReleaseCommand }`);
   assert.equal(r.pattern, 'Runner[.]Worker');
-  assert.ok(r.command.startsWith(`pgrep -ix '${r.pattern}' >/dev/null;`), r.command);
+  assert.doesNotMatch(r.command, /pgrep/, r.command);
   const grep = path.join(path.dirname(path.dirname(gitSh)), 'usr', 'bin', 'grep.exe');
   const names = ['Runner.Worker', 'runner.worker', 'RunnerXWorker', 'Runner.Workers', 'xRunner.Worker', 'Runner.Listener'];
   const hit = spawnSync(grep, ['-ixE', r.pattern], { input: names.join('\n') + '\n', encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
   assert.deepEqual(hit, ['Runner.Worker', 'runner.worker']);
-  // the release command hands pgrep exactly these arguments
-  const w = shWorld('pgrep-args', { pgrep: 1 });
-  const winDir = w.drop.replace(/\/drop_caches$/, '').replace(/^\/([a-z])\//, (m, d) => `${d.toUpperCase()}:/`);
-  fs.writeFileSync(path.join(winDir, 'pgrep'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${w.drop.replace(/drop_caches$/, 'pgrep.args')}'\nexit 1\n`);
-  const run = spawnSync(gitSh, ['-c', commandIn(w, r.command)], { encoding: 'utf8', timeout: 60000 });
-  assert.equal(run.status, 0, run.stderr);
-  assert.deepEqual(fs.readFileSync(path.join(winDir, 'pgrep.args'), 'utf8').split('\n').filter(Boolean), ['-ix', 'Runner[.]Worker']);
 });
 
-// The release command's own closed table, run: pgrep found (0) -> exit 3, nothing synced or released; none (1) -> sync, release, exit 0;
-// pgrep failed (2, 3) -> exit 4, nothing synced or released; the sync failing -> exit 5. The only way to the release is pgrep's exit 1.
-test('the release command: only pgrep\'s "none" reaches the release; a job exits 3, a failed lookup 4, a failed release 5', shOpts, () => {
+// The release command's own closed table, run (Decision f572ac5b: no job question in it): sync, release, exit 0 -- a pgrep stand-in on
+// PATH that would say "a job" changes nothing; the sync failing, or the write failing, -> exit 5. Nothing else is released.
+test('the release command: sync then the release, exit 0; a failed sync or a failed write exits 5; a job changes nothing', shOpts, () => {
   const command = ps('$script:DrillWslReleaseCommand');
-  const cases = { job: [{ pgrep: 0 }, 3, false], none: [{ pgrep: 1 }, 0, true], 'pgrep-syntax': [{ pgrep: 2 }, 4, false], 'pgrep-fatal': [{ pgrep: 3 }, 4, false],
-    'pgrep-killed': [{ pgrep: 137 }, 4, false], 'sync-fails': [{ pgrep: 1, sync: 1 }, 5, false] };
-  for (const [name, [world, exit, released]] of Object.entries(cases)) {
+  const cases = { none: [{ pgrep: 1 }, 0, true, true], job: [{ pgrep: 0 }, 0, true, true], 'sync-fails': [{ sync: 1 }, 5, false, true],
+    'write-fails': [{}, 5, false, true] };
+  for (const [name, [world, exit, released, synced]] of Object.entries(cases)) {
     const w = shWorld(name, world);
+    const winDrop = w.drop.replace(/^\/([a-z])\//, (m, d) => `${d.toUpperCase()}:/`);
+    if (name === 'write-fails') fs.mkdirSync(winDrop);   // a directory where the write goes: the redirection fails
     const r = spawnSync(gitSh, ['-c', commandIn(w, command)], { encoding: 'utf8', timeout: 60000 });
     assert.equal(r.status, exit, `${name}: ${r.stdout}${r.stderr}`);
-    assert.equal(w.dropped(), released, `${name}: released`);
-    assert.equal(w.synced(), released || name === 'sync-fails', `${name}: synced`);
+    assert.equal(fs.existsSync(winDrop) && fs.statSync(winDrop).isFile(), released, `${name}: released`);
+    assert.equal(w.synced(), synced, `${name}: synced`);
   }
 });
 
-// The host's side of the release, closed too: exit 0 released, exit 3 skipped (no failure: the boot gate decides), anything else a failed
-// release (no failure of the drill either); nothing else is recorded as released. Before each distribution the running list, then the
-// Windows side, are read again; a distribution not running, or a Windows job, gets no command.
-test('the release on the host: exit 0 released, 3 skipped, anything else failed; read again before each distribution', opts, () => {
+// The host's side of the release, closed too: exit 0 released, anything else -- 3 included -- a failed release (no failure of the drill);
+// nothing else is recorded as released. Before each distribution the running list is read again; a distribution not running gets no
+// command. A Runner.Worker on Windows stops nothing, and the Windows side is not read (Decision f572ac5b).
+test('the release on the host: exit 0 released, anything else failed; the running list read again before each distribution; a Windows job stops nothing', opts, () => {
   const r = ps(`
     function Get-DrillWslRegisteredNames { 'Fixture-A'; 'Fixture-B'; 'Fixture-C' }
     function Get-DrillRunnerDistributions { param($HostName) 'Fixture-A' }
@@ -2364,7 +2360,7 @@ test('the release on the host: exit 0 released, 3 skipped, anything else failed;
       $script:answer = @{ exit = $exit; stdout = 'anything'; stderr = 'anything' }
       $o = Invoke-DrillWslCacheRelease
       $key = if ($null -eq $exit) { 'null|null' } else { "$exit|$($exit.GetType().Name)" }
-      $table[$key] = @{ released = @($o.released); skipped = $o.skipped; failed = $(if ($o.failed) { $o.failed.code } else { $null }) }
+      $table[$key] = @{ released = @($o.released); skipped = (Get-Prop $o 'skipped'); failed = $(if ($o.failed) { $o.failed.code } else { $null }) }
     }
     $script:answer = @{ exit = 0; stdout = ''; stderr = '' }
     $script:calls.Clear(); $script:jobAfterC = $true
@@ -2376,15 +2372,14 @@ test('the release on the host: exit 0 released, 3 skipped, anything else failed;
     @{ table = $table; first = $first; firstCalls = $firstCalls; during = $during; duringCalls = @($script:calls) }`);
   const t = r.table;
   assert.deepEqual(t['0|Int32'], { released: ['Fixture-A'], skipped: null, failed: null });
-  assert.deepEqual(t['3|Int32'], { released: [], skipped: { where: 'Fixture-A', reason: 'WSL_ACTIONS_RUNNER_JOB' }, failed: null });
-  for (const k of Object.keys(t).filter(k => !['0|Int32', '3|Int32'].includes(k))) {
+  for (const k of Object.keys(t).filter(k => k !== '0|Int32')) {
     assert.deepEqual(t[k], { released: [], skipped: null, failed: 'DRILL_WSL_CACHE_RELEASE_FAILED' }, k);
   }
-  assert.deepEqual(r.firstCalls, ['list', 'windows', 'Fixture-A', 'list', 'list', 'windows', 'Fixture-C']);
+  assert.deepEqual(r.firstCalls, ['list', 'Fixture-A', 'list', 'list', 'Fixture-C'], 'the Windows side is not read');
   assert.deepEqual(r.first.released, ['Fixture-A', 'Fixture-C']);
   assert.deepEqual(r.first.results.map(x => [x.distribution, x.running]), [['Fixture-A', true], ['Fixture-B', false], ['Fixture-C', true]]);
-  assert.deepEqual(r.duringCalls, ['list', 'windows'], 'a Windows job picked up while the list was asked for: no command');
-  assert.deepEqual(r.during.skipped, { where: 'windows', reason: 'ACTIONS_RUNNER_JOB' });
+  assert.deepEqual(r.duringCalls, ['list', 'Fixture-A', 'list', 'list', 'Fixture-C'], 'a Windows job picked up while the list was asked for: the release goes on');
+  assert.deepEqual(r.during.released, ['Fixture-A', 'Fixture-C']);
 });
 
 test('the release command is one literal in single quotes, nothing put into it, and one that is not that literal is never sent', opts, () => {
@@ -2480,12 +2475,12 @@ const bootGate = ['status', 'windows-processes', 'wsl-running', 'wsl-probe', 'me
 test('from the real entry: early refusal without memory, the release, then the boot gate judges memory once; short before the release still boots', shOpts, () => {
   const r = ps(`${preBootWorld()}
     Invoke-Entry`);
-  assert.deepEqual(r.events, ['status', ...early, 'wsl-running', 'windows-processes', 'wsl-release exit 0', 'restore', 'status', ...bootGate, 'boot', 'restore-end']);
+  assert.deepEqual(r.events, ['status', ...early, 'wsl-running', 'wsl-release exit 0', 'restore', 'status', ...bootGate, 'boot', 'restore-end']);
   assert.ok(!r.events.some(e => e.startsWith('STOP')));
   assert.equal(r.out.status, 'DRILL_PREREQ_READY', JSON.stringify(r.out));
   const pre = r.out.hostPreBoot;
   assert.deepEqual([pre.early.ok, pre.early.freeGB], [true, null]);
-  assert.deepEqual([pre.release.released, pre.release.skipped, pre.release.failed], [['Fixture-CI'], null, null]);
+  assert.deepEqual([pre.release.released, pre.release.failed, Object.hasOwn(pre.release, 'skipped')], [['Fixture-CI'], null, false]);
   assert.deepEqual([pre.bootGate.ok, pre.bootGate.freeGB], [true, 64]);
   for (const s of [pre.early, pre.release, pre.bootGate]) assert.match(s.at, /^\d{4}-\d\d-\d\dT/);
   for (const s of [pre.early, pre.bootGate]) assert.equal(Object.hasOwn(s, 'wslStartedByProbe'), false, 'no run-time record any more');
@@ -2498,39 +2493,37 @@ test('from the real entry: early refusal without memory, the release, then the b
   assert.ok(!short.events.includes('boot'));
 });
 
-test('a job that appears after the early sample skips the release (the command finds it itself), and the boot gate takes the job tier', shOpts, () => {
+test('a job that appears after the early sample, on either side, still gets the release, and the boot gate takes the job tier', shOpts, () => {
   const r = ps(`${preBootWorld()}
     $script:jobAfter = 1
     $wsl = Invoke-Entry
     $script:events.Clear(); $script:released = $false; $script:jobAfter = -1; $script:windowsJobAfter = 1
     $windows = Invoke-Entry
     @{ wsl = $wsl; windows = $windows }`);
-  assert.ok(r.wsl.events.includes('wsl-release exit 3'), r.wsl.events.join(','));
-  assert.ok(!r.wsl.events.includes('wsl-release exit 0'), 'nothing released');
-  assert.deepEqual(r.wsl.out.hostPreBoot.release.skipped, { where: 'Fixture-CI', reason: 'WSL_ACTIONS_RUNNER_JOB' });
-  assert.equal(r.wsl.out.hostPreBoot.release.failed, null, 'a skip is not a failure');
-  assert.deepEqual([r.wsl.out.code, r.wsl.out.hostPreBoot.bootGate.busyWith, r.wsl.out.hostPreBoot.bootGate.requiredFreeGB],
-    ['DRILL_HOST_MEMORY_SHORT', 'WSL_ACTIONS_RUNNER_JOB', 25.4], 'nothing released: 10 GB is short of the job tier');
-  assert.ok(!r.wsl.events.includes('boot'));
-  assert.deepEqual(r.windows.out.hostPreBoot.release.skipped, { where: 'windows', reason: 'ACTIONS_RUNNER_JOB' });
-  assert.ok(!r.windows.events.some(e => e.startsWith('wsl-release')), 'no command into the distribution');
-  assert.deepEqual([r.windows.out.code, r.windows.out.hostPreBoot.bootGate.busyWith], ['DRILL_HOST_MEMORY_SHORT', 'ACTIONS_RUNNER_JOB']);
+  for (const [side, busy] of [['wsl', 'WSL_ACTIONS_RUNNER_JOB'], ['windows', 'ACTIONS_RUNNER_JOB']]) {
+    const x = r[side];
+    assert.ok(x.events.includes('wsl-release exit 0'), `${side}: ${x.events.join(',')}`);
+    assert.deepEqual([x.out.hostPreBoot.release.released, x.out.hostPreBoot.release.failed], [['Fixture-CI'], null], side);
+    assert.deepEqual([x.out.status, x.out.hostPreBoot.bootGate.busyWith, x.out.hostPreBoot.bootGate.requiredFreeGB, x.out.hostPreBoot.bootGate.freeGB],
+      ['DRILL_PREREQ_READY', busy, 25.4, 64], `${side}: released, 64 GB passes the job tier`);
+    assert.ok(x.events.includes('boot'), side);
+  }
 });
 
 // Fable renew-key ruling, supplement "drill boot gate and the train both want DESK", from the real entry: a runner busy from the start is
-// no refusal. The release is not attempted (only when neither side has a job), and the boot gate boots at 26 GB, refuses at 18 GB; the
-// receipt's pre-boot record says a job was there and which tier was required.
-test('from the real entry: a runner busy from the start skips the release and boots at 26 GB, refuses at 18 GB', shOpts, () => {
+// no refusal. The release runs all the same (Decision f572ac5b), and the boot gate boots at 26 GB, refuses at 18 GB; the receipt's
+// pre-boot record says a job was there and which tier was required.
+test('from the real entry: a runner busy from the start gets the release and boots at 26 GB, refuses at 18 GB', shOpts, () => {
   const run = (free) => ps(`${preBootWorld({ freeBeforeRelease: free, freeAfterRelease: free })}
     $script:jobAfter = 0
     Invoke-Entry`);
   const ok = run(26);
   assert.equal(ok.out.status, 'DRILL_PREREQ_READY', JSON.stringify(ok.out));
   assert.ok(ok.events.includes('boot'), ok.events.join(','));
-  assert.ok(!ok.events.some(e => e.startsWith('wsl-release')), 'no release with a job running');
+  assert.ok(ok.events.includes('wsl-release exit 0'), 'the release with a job running');
   const pre = ok.out.hostPreBoot;
   assert.deepEqual([pre.early.ok, pre.early.busyWith, pre.early.runnerJob], [true, 'WSL_ACTIONS_RUNNER_JOB', 'yes']);
-  assert.deepEqual(pre.release.skipped, { where: 'early', reason: 'WSL_ACTIONS_RUNNER_JOB' });
+  assert.deepEqual(pre.release.released, ['Fixture-CI']);
   assert.deepEqual([pre.bootGate.ok, pre.bootGate.runnerJob, pre.bootGate.freeGB, pre.bootGate.requiredFreeGB], [true, 'yes', 26, 25.4]);
   const short = run(18);
   assert.equal(short.out.code, 'DRILL_HOST_MEMORY_SHORT', JSON.stringify(short.out));
