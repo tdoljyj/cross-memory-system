@@ -3090,7 +3090,7 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
     && workflowFileOf(env) === "clued-required-tests.yml")
     return stagingRepairGate({ env, fetchImpl, outcome, attempt });
   if (!attempt && eventName === "push" && env.GITHUB_REF === "refs/heads/main") {
-    const reused = await mainPushTreeReuse({ env, fetchImpl });
+    const reused = await mainPushTreeReuse({ env, fetchImpl, sleep });
     if (reused && reused.run_heavy === false) {
       outcome.verdict = "TREE_ALREADY_TESTED";
       outcome.head_sha = env.GITHUB_SHA;
@@ -3100,15 +3100,17 @@ export async function gate({ env, event, eventName, fetchImpl, sleep = (ms) => n
         + `prior PR evidence only, the skipped heavy jobs do not qualify this main commit; "Re-run all jobs" runs them`];
       return outcome;
     }
-    // 甲 (FABLE-main-push-same-tree-parallel-20261123 §3): the merged head's run of this very tree is still going
-    // (scaffold: its gate waits for the admission, its heavy jobs start after the merge). That run is the tree's
-    // one real run; this push runs no heavy job. Not a pass: run_heavy stays true and nothing here claims one.
+    // 甲2 (FABLE-same-tree-main-push-redesign-20261123 §3): the merged head's run of this very tree is still going
+    // and its gate was seen to admit it (scaffold: its heavy jobs start after the merge). That run is the tree's one
+    // real run; this push runs no heavy job. Not a pass: run_heavy stays true and nothing here claims one. A gate
+    // still deciding, a refusal or a failed job comes back as another code and takes the notice below.
     if (reused && reused.run_heavy === true && reused.reason === "pr_run_in_flight") {
       outcome.verdict = "TREE_RUN_IN_FLIGHT";
       outcome.head_sha = env.GITHUB_SHA;
       outcome.tree_reuse = reused;
       outcome.reasons = [`main push ${env.GITHUB_SHA}: tree ${reused.tested_tree} is being tested by ${workflowFileOf(env)} `
-        + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr} (${reused.source_status}); `
+        + `in run ${reused.source_run_id} attempt ${reused.source_attempt} of PR #${reused.source_pr} `
+        + `(${reused.source_status}; its gate admitted, ${reused.source_jobs} jobs listed); `
         + `that run is this tree's one real run, so the heavy jobs do not run here; "Re-run all jobs" runs them`];
       return outcome;
     }
@@ -3327,7 +3329,7 @@ function workflowFileOf(env) {
 // workflow in the reuse table (proof "ancestry") reuses the merged PR head's passing run of the same tree.
 // scripts/ci/clued-tree-reuse.mjs decides (no repository imports); it reads only GitHub's own records with this job's token and
 // returns run_heavy=true on anything it cannot prove. Null: not a subject, nothing was read.
-async function mainPushTreeReuse({ env, fetchImpl }) {
+async function mainPushTreeReuse({ env, fetchImpl, sleep }) {
   const workflow = workflowFileOf(env);
   let reuse;
   try {
@@ -3336,7 +3338,7 @@ async function mainPushTreeReuse({ env, fetchImpl }) {
     return { run_heavy: true, reason: `reuse table unreadable (${error instanceof Error ? error.message : String(error)})` };
   }
   if (!workflow || !Object.hasOwn(reuse.TARGETS, workflow) || reuse.TARGETS[workflow].proof !== "ancestry") return null;
-  return reuse.evaluatePush({ ...env, REUSE_WORKFLOW: workflow }, fetchImpl);
+  return reuse.evaluatePush({ ...env, REUSE_WORKFLOW: workflow }, fetchImpl, { sleep });
 }
 
 async function stagingRepairGate({ env, fetchImpl, outcome, attempt }) {
