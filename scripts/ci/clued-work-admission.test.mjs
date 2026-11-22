@@ -4222,7 +4222,7 @@ function replay1239({admission='constructed_admission_after_1244'}={}){
  };
  return f;
 }
-test('#1239 fff02b115 real replay (戊): the admission GitHub keeps (withdrawn to failure, no PR named) is refused, no automation route',async()=>{
+test('[§8-8] #1239 fff02b115 real replay (戊): the admission GitHub keeps (withdrawn to failure, no PR named) is refused, no automation route',async()=>{
  const f=replay1239({admission:'recorded_admission'});
  assert.deepEqual([f.currentAdmission.id,f.currentAdmission.conclusion],[137272320595,'failure']);
  const r=await gate({...f,eventName:'pull_request'});
@@ -4297,6 +4297,7 @@ function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE) {
   const api = `https://api.github.com/repos/${f.repository}`;
   const head = f.pr.head.sha;
   ctx.runsRoute = `${api}/actions/workflows/${workflow}/runs?event=pull_request&head_sha=${head}&per_page=100`;
+  ctx.jobsRoute = `${api}/actions/runs/${w.runs.workflow_runs[0].id}/attempts/${w.runs.workflow_runs[0].run_attempt}/jobs?per_page=100`;
   // Routes read the (possibly mutated) fixture objects at call time.
   Object.assign(routes, {
     [`${api}/commits/${f.merge.sha}`]: f.merge,
@@ -4304,14 +4305,15 @@ function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE) {
     [`${api}/pulls/${f.pr.number}`]: f.pr,
     [`${api}/commits/${head}`]: f.source,
     [ctx.runsRoute]: () => w.runs,
-    [`${api}/actions/runs/${w.runs.workflow_runs[0].id}/attempts/${w.runs.workflow_runs[0].run_attempt}/jobs?per_page=100`]: w.jobs,
+    [ctx.jobsRoute]: () => w.jobs,
     [`${api}/compare/${f.merge.parents[0].sha}...${head}`]: f.compare,
   });
   mutate(ctx);
   return ctx;
 }
+// Every pause the gate asks for is recorded (ctx.sleeps), none is waited.
 const treeReuseGate = (ctx) => admissionModule.gate({ env: ctx.env, event: ctx.event, eventName: ctx.env.GITHUB_EVENT_NAME,
-  fetchImpl: ctx.fetchImpl, sleep: async () => {} });
+  fetchImpl: ctx.fetchImpl, sleep: async (ms) => { (ctx.sleeps ??= []).push(ms); } });
 
 for (const [label, workflow] of [['T1 Linux', 'clued-required-tests.yml'], ['T1w Windows', 'clued-required-tests-windows.yml']]) {
   test(`${label}: #1178's main push is not run again; the head's passing run of the same tree decides`, async () => {
@@ -4376,38 +4378,124 @@ test('R1: the gate step of #1202 main push exits 0 with admitted=false, so the h
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-// 甲 (FABLE-main-push-same-tree-parallel-20261123 §3, §4): during the scaffold the merge can land while the head's
+// 甲2 (FABLE-same-tree-main-push-redesign-20261123 §3): during the scaffold the merge can land while the head's
 // same-tree PR run is still going (its gate waits for the admission, its heavy jobs start after the merge). The main
-// push then runs no heavy job: that PR run is the one real run of the tree. Fixture: #1233's real replies
-// (merge 41c281a50, head 1e850a63d, runs the executor bot triggered); its latest run is set to in_progress here.
+// push runs no heavy job only when it sees that run's gate admitted: the gate job passed and every required job is
+// there under its real name, not failed. A gate still waiting is read again every 10 s, 6 times at most; anything
+// else runs the heavy jobs with its code. So the tree always has at least one real run.
+// Fixtures: #1233's and #1178's real replies (latest run set in_progress here), #1239's real main push
+// (main-push-tree-reuse-1239.json; its in-flight state is constructed, named in_flight_at_push, see _source) and
+// #1242's PR runs read after their gates admitted and before they ended (pr-run-admitted-in-flight-1242.json).
 const TREE_REUSE_1233 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1233.json'), 'utf8'));
+const TREE_REUSE_1239 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1239.json'), 'utf8'));
+const ADMITTED_1242 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/pr-run-admitted-in-flight-1242.json'), 'utf8'));
 const IN_FLIGHT_REASON = 'pr_run_in_flight';
-const inFlight = (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); };
-for (const [workflow, sourceRun] of [['clued-required-tests.yml', 45028759952], ['clued-required-tests-windows.yml', 45028759940]]) {
-  test(`甲 (${workflow}, #1233 41c281a50): the head's same-tree PR run is in flight -> TREE_RUN_IN_FLIGHT, the heavy jobs do not run`, async () => {
+const TREE_RUN_POLL_MS = 10_000;
+const TREE_RUN_POLLS = 6;
+const pollSleeps = (ctx) => (ctx.sleeps ?? []).filter((ms) => ms === TREE_RUN_POLL_MS).length;
+const workflowOfCase = (c) => c.w.runs.workflow_runs[0].path.replace('.github/workflows/', '');
+// #1242's job list of the same workflow, verbatim but for run_id, rewritten to this case's run (the one constructed field).
+const admittedJobs = (c) => {
+  const jobs = structuredClone(ADMITTED_1242.workflows[workflowOfCase(c)].jobs);
+  for (const job of jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id;
+  return jobs;
+};
+// The gate still waiting: #1239's constructed list (only the gate job, in_progress), for this case's run.
+const gateWaitingJobs = (c) => {
+  const jobs = structuredClone(TREE_REUSE_1239.workflows[workflowOfCase(c)].in_flight_at_push.jobs_while_gate_waits);
+  for (const job of jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id;
+  return jobs;
+};
+const inFlight = (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); c.w.jobs = admittedJobs(c); };
+// #1239 at its main push: the PR run in flight (constructed status); its job list is the case's to choose.
+const inFlight1239 = (c) => { Object.assign(c.w.runs.workflow_runs[0], c.f.workflows[workflowOfCase(c)].in_flight_at_push.run_status); };
+const WORKFLOWS = ['clued-required-tests.yml', 'clued-required-tests-windows.yml'];
+
+// The eight cases of FABLE-same-tree-main-push-redesign-20261123 §8 are titled [§8-n]; [§8-8] is the 戊 real replay above.
+for (const workflow of WORKFLOWS) {
+  test(`[§8-1] #1239 549789505 real replay (${workflow}): the PR run's gate was waiting, then refused (heavy jobs "-skipped") -> the heavy jobs run, pr_run_not_admitted`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const recorded = c.w.jobs;
+      c.routes[c.jobsRoute] = () => (++reads === 1 ? gateWaitingJobs(c) : recorded); }, TREE_REUSE_1239);
+    assert.ok(ctx.w.jobs.jobs.slice(1).every((job) => job.conclusion === 'skipped' && job.name.endsWith("-skipped'")), 'the recorded list is a refusal');
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [2, 1]);
+  });
+  test(`[§8-2] #1239 (${workflow}): the PR run's gate stays in_progress -> read ${TREE_RUN_POLLS + 1} times, 10 s apart, then the heavy jobs run, pr_run_gate_undecided`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.routes[c.jobsRoute] = () => { reads += 1; return gateWaitingJobs(c); }; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_gate_undecided')]);
+    assert.deepEqual([reads, pollSleeps(ctx)], [TREE_RUN_POLLS + 1, TREE_RUN_POLLS]);
+    const reuse = await import('./clued-tree-reuse.mjs');
+    assert.deepEqual([reuse.TREE_RUN_POLL_INTERVAL_MS, reuse.TREE_RUN_POLLS], [TREE_RUN_POLL_MS, TREE_RUN_POLLS]);
+  });
+  test(`[§8-3] #1239 (${workflow}): admitted, but a required job already failed -> the heavy jobs run, pr_run_not_admitted`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c);
+      Object.assign(c.w.jobs.jobs.at(-1), { status: 'completed', conclusion: 'failure', completed_at: '2026-11-22T18:50:00Z' }); }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
+  });
+  test(`[§8-4] #1239 (${workflow}): the PR run's job list answers 502 -> the heavy jobs run, github_request_failed@jobs:502`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.routes[c.jobsRoute] = { status: 502 }; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('github_request_failed@jobs:502')]);
+  });
+  test(`[§8-5] #1239 (${workflow}): the PR run's gate admitted (#1242's real in-flight job list) -> TREE_RUN_IN_FLIGHT`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c); }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
+    assert.deepEqual([outcome.tree_reuse.run_heavy, outcome.tree_reuse.current_sha_pass, outcome.tree_reuse.source_pr], [true, false, 1239]);
+  });
+  test(`[§8-6] #1239 (${workflow}): the gate waits at the first read and has admitted at the second -> TREE_RUN_IN_FLIGHT, one pause at most`, async () => {
+    let reads = 0;
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const admitted = admittedJobs(c);
+      c.routes[c.jobsRoute] = () => (++reads === 1 ? gateWaitingJobs(c) : admitted); }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
+    assert.ok(pollSleeps(ctx) <= 1 && reads <= 2, `pauses ${pollSleeps(ctx)}, reads ${reads}`);
+  });
+  test(`[§8-7] S2 guard #1239 (${workflow}): the in-flight run's pull_requests names another PR -> the heavy jobs run, pr_run_identity`, async () => {
+    const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); c.w.jobs = admittedJobs(c); c.w.runs.workflow_runs[0].pull_requests = [{ number: 1240 }]; }, TREE_REUSE_1239);
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_identity')]);
+  });
+}
+
+// Admitted and in flight, the order of the reads, and the absence of any pause.
+for (const [workflow, sourceRun, jobCount] of [['clued-required-tests.yml', 45028759952, 4], ['clued-required-tests-windows.yml', 45028759940, 2]]) {
+  test(`甲2 (${workflow}, #1233 41c281a50): the head's same-tree PR run is in flight and its gate admitted -> TREE_RUN_IN_FLIGHT, the heavy jobs do not run`, async () => {
     const ctx = treeReuseCase(workflow, inFlight, TREE_REUSE_1233);
     const outcome = await treeReuseGate(ctx);
     assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_RUN_IN_FLIGHT'], JSON.stringify(outcome));
     assert.equal(outcome.head_sha, TREE_REUSE_1233.merge.sha);
     assert.deepEqual([outcome.tree_reuse.run_heavy, outcome.tree_reuse.reason, outcome.tree_reuse.source_run_id,
-      outcome.tree_reuse.source_pr, outcome.tree_reuse.tested_tree, outcome.tree_reuse.current_sha_pass],
-    [true, IN_FLIGHT_REASON, sourceRun, 1233, TREE_REUSE_1233.merge.commit.tree.sha, false]);
+      outcome.tree_reuse.source_pr, outcome.tree_reuse.tested_tree, outcome.tree_reuse.current_sha_pass, outcome.tree_reuse.source_jobs],
+    [true, IN_FLIGHT_REASON, sourceRun, 1233, TREE_REUSE_1233.merge.commit.tree.sha, false, jobCount]);
     const why = outcome.reasons.join(' ');
     assert.match(why, new RegExp(`run ${sourceRun} attempt 1 of PR #1233`));
-    // It proves identity, tree, actor and ancestry; it reads no job (nothing finished) and claims no pass.
+    assert.match(why, new RegExp(`its gate admitted, ${jobCount} jobs listed`));
+    // Identity, tree, actor and ancestry first; then the job list, once (the gate had admitted), and no pause.
     const api = `https://api.github.com/repos/${TREE_REUSE_1233.repository}`;
     assert.deepEqual(ctx.calls, [`${api}/commits/${TREE_REUSE_1233.merge.sha}`, `${api}/commits/${TREE_REUSE_1233.merge.sha}/pulls?per_page=100`,
       `${api}/pulls/1233`, `${api}/commits/${TREE_REUSE_1233.pr.head.sha}`, ctx.runsRoute,
-      `${api}/compare/${TREE_REUSE_1233.merge.parents[0].sha}...${TREE_REUSE_1233.pr.head.sha}`]);
+      `${api}/compare/${TREE_REUSE_1233.merge.parents[0].sha}...${TREE_REUSE_1233.pr.head.sha}`, ctx.jobsRoute]);
+    assert.equal(pollSleeps(ctx), 0);
   });
 }
 
-test('甲 (#1178): an owner-triggered head run still in flight is TREE_RUN_IN_FLIGHT too', async () => {
+test('甲2 (#1178): an owner-triggered head run in flight whose gate admitted is TREE_RUN_IN_FLIGHT too', async () => {
   const outcome = await treeReuseGate(treeReuseCase('clued-required-tests.yml', inFlight));
   assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.reason], [false, 'TREE_RUN_IN_FLIGHT', IN_FLIGHT_REASON], JSON.stringify(outcome));
 });
 
-test('甲: the gate step of #1233 main push with the PR run in flight exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+test('甲2: the gate step of #1233 main push with the PR run in flight and admitted exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
   const ctx = treeReuseCase('clued-required-tests.yml', inFlight, TREE_REUSE_1233);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
   try {
@@ -4422,30 +4510,30 @@ test('甲: the gate step of #1233 main push with the PR run in flight exits 0 wi
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-// 甲 keeps the real run (green before and after the fix): an in-flight run proves nothing it cannot prove when green.
-for (const [label, mutate] of [
-  ['the PR run ended and failed', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'failure' }); }],
-  ['the PR run ended and was cancelled', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'cancelled' }); }],
-  ['the tree differs', (c) => { inFlight(c); c.f.source.commit.tree.sha = 'f'.repeat(40); }],
-  ['the merge is not a two-parent merge of the head', (c) => { inFlight(c); c.f.merge.parents[1].sha = 'e'.repeat(40); }],
-  ['the run was triggered by someone other than the owner or the executor bot', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.login = 'someone'; }],
-  ['the run was triggered by a bot with the executor login but another id', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.id = 337003646; }],
-  ['main\'s old tip is not an ancestor of the head', (c) => { inFlight(c); Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }],
-  ['the head run is not a pull_request run', (c) => { inFlight(c); c.w.runs.workflow_runs[0].event = 'workflow_dispatch'; }],
-  ['the head run is another workflow\'s', (c) => { inFlight(c); c.w.runs.workflow_runs[0].path = '.github/workflows/other.yml'; }],
-  ['the PR author is not the owner', (c) => { inFlight(c); c.f.pr.user.login = 'someone'; }],
-  ['the compare cannot be read', (c) => { inFlight(c); c.routes[`https://api.github.com/repos/${c.f.repository}/compare/${c.f.merge.parents[0].sha}...${c.f.pr.head.sha}`] = { status: 502 }; }],
-]) {
-  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
-    test(`甲 guard (${workflow}, #1233): ${label} -> the heavy jobs run`, async () => {
+// 甲2 keeps the real run (S3: each guard names its code): an in-flight run proves nothing it cannot prove when green.
+const IN_FLIGHT_GUARDS = [
+  ['the PR run ended and failed', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'failure' }); }, 'pr_run_not_passed'],
+  ['the PR run ended and was cancelled', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'completed', conclusion: 'cancelled' }); }, 'pr_run_not_passed'],
+  ['the tree differs', (c) => { inFlight(c); c.f.source.commit.tree.sha = 'f'.repeat(40); }, 'merged_tree_differs'],
+  ['the merge is not a two-parent merge of the head', (c) => { inFlight(c); c.f.merge.parents[1].sha = 'e'.repeat(40); }, 'merged_tree_differs'],
+  ['the run was triggered by someone other than the owner or the executor bot', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.login = 'someone'; }, 'pr_run_actor'],
+  ['the run was triggered by a bot with the executor login but another id', (c) => { inFlight(c); c.w.runs.workflow_runs[0].actor.id = 337003646; }, 'pr_run_actor'],
+  ['main\'s old tip is not an ancestor of the head', (c) => { inFlight(c); Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }, 'base_not_ancestor'],
+  ['the head run is not a pull_request run', (c) => { inFlight(c); c.w.runs.workflow_runs[0].event = 'workflow_dispatch'; }, 'pr_run_identity'],
+  ['the head run is another workflow\'s', (c) => { inFlight(c); c.w.runs.workflow_runs[0].path = '.github/workflows/other.yml'; }, 'pr_run_identity'],
+  ['the PR author is not the owner', (c) => { inFlight(c); c.f.pr.user.login = 'someone'; }, 'merged_pr_identity'],
+  ['the compare cannot be read', (c) => { inFlight(c); c.routes[`https://api.github.com/repos/${c.f.repository}/compare/${c.f.merge.parents[0].sha}...${c.f.pr.head.sha}`] = { status: 502 }; }, 'github_request_failed@compare:502'],
+];
+for (const [label, mutate, code] of IN_FLIGHT_GUARDS) {
+  for (const workflow of WORKFLOWS) {
+    test(`甲 guard (${workflow}, #1233): ${label} -> the heavy jobs run, reason ${code}`, async () => {
       const outcome = await treeReuseGate(treeReuseCase(workflow, mutate, TREE_REUSE_1233));
       assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
-      const notices = reuseNotices(outcome);
-      assert.equal(notices.length, 1, JSON.stringify(outcome.notices));
-      assert.notEqual(notices[0], reuseNotice(IN_FLIGHT_REASON));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code)]);
     });
   }
 }
+
 test('甲 guard: a re-run (attempt 2) of the main push with the PR run in flight reads nothing and runs the heavy jobs', async () => {
   const ctx = treeReuseCase('clued-required-tests.yml', (c) => { inFlight(c); c.env.GITHUB_RUN_ATTEMPT = '2'; }, TREE_REUSE_1233);
   const outcome = await treeReuseGate(ctx);
@@ -4729,6 +4817,7 @@ test('R3c: the reason vocabulary is closed - every code is in REASONS, and every
   for (const code of [...own, ...report]) assert.ok(reuse.REASONS.includes(code), `${code} is in REASONS`);
   for (const code of reuse.REASONS) assert.ok(own.includes(code) || report.includes(code), `${code} is still produced`);
   const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]), IN_FLIGHT_REASON,
+    ...IN_FLIGHT_GUARDS.map((row) => row[2].split('@')[0]), 'pr_run_gate_undecided', 'pr_run_not_admitted',
     'github_request_failed', 'github_request_threw', 'unexpected_error']);
   for (const code of own) assert.ok(guarded.has(code), `${code} has a guard that expects it`);
   for (const family of ['github_request_failed', 'github_request_threw', 'unexpected_error']) assert.ok(own.includes(family), family);
