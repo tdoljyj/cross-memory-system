@@ -4189,9 +4189,14 @@ test('#1235 replay without the Native source stays refused for the missing earli
 // within seconds, and the gate polling every 30 s reads the PR already merged. A PR merged with this very head, by a
 // merge whose parents are exactly [base, head], is the after-the-fact proof of "still open and main at base".
 // #1239 fff02b115 (scripts/ci/fixtures/automation-route-1239-fff02b11.json): merged 16:20:52Z, its gate ended 16:21:09Z.
+// The fixture's _source says which fields are GitHub's replies and which are constructed. The admission as GitHub
+// keeps it (recorded_admission) was withdrawn to failure after the merge: the real replay reads that one and refuses.
+// constructed_admission_after_1244 is the admission as it would look had it stayed success after #1244; the tests
+// that read it are named constructed scenarios, not replays.
 const R1239=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/fixtures/automation-route-1239-fff02b11.json'),'utf8'));
-function replay1239(){
+function replay1239({admission='constructed_admission_after_1244'}={}){
  const x=structuredClone(R1239),repository=x.repository.full_name,pr=x.pull_request,run=x.run,commit=x.commit;
+ x.current_admission=x[admission];
  const [from,main]=commit.parents.map(p=>p.sha),current=x.current_admission.check_runs[0];
  const env={GITHUB_REPOSITORY:repository,GITHUB_REPOSITORY_OWNER:x.repository.owner.login,GITHUB_EVENT_NAME:'pull_request',GITHUB_ACTOR:run.actor.login,GITHUB_TRIGGERING_ACTOR:run.triggering_actor.login,GITHUB_RUN_ID:String(run.id),GITHUB_RUN_ATTEMPT:String(run.run_attempt),GITHUB_REF:`refs/pull/${pr.number}/merge`,GITHUB_HEAD_REF:pr.head.ref,GITHUB_BASE_REF:'main',CLUED_ADMISSION_GATE_SOURCE:INDEPENDENT_GATE_SOURCE,CLUED_ADMISSION_GATE_WAIT_SECONDS:'0',GITHUB_API_URL:'https://api.test',GITHUB_TOKEN:'fixture',GITHUB_WORKSPACE:ROOT};
  const f={x,env,event:{action:'synchronize',pull_request:pr},run,pr,commit,from,main,currentAdmission:current,epochReads:0,liveReads:0};
@@ -4217,7 +4222,15 @@ function replay1239(){
  };
  return f;
 }
-test('#1239 fff02b115 replay (戊): the PR merged with this head while the gate polled; the bot refresh is admitted and self-hosted',async()=>{
+test('#1239 fff02b115 real replay (戊): the admission GitHub keeps (withdrawn to failure, no PR named) is refused, no automation route',async()=>{
+ const f=replay1239({admission:'recorded_admission'});
+ assert.deepEqual([f.currentAdmission.id,f.currentAdmission.conclusion],[137272320595,'failure']);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[false,'REJECTED',false],JSON.stringify(r.reasons));
+ assert.ok(r.reasons.some(reason=>reason.includes('does not bind this pull request')),JSON.stringify(r.reasons));
+ assert.equal(r.automation_route,undefined,JSON.stringify(r.automation_route));
+});
+test('#1239 constructed scenario (戊, admission as after #1244): the PR merged with this head while the gate polled; the bot refresh is admitted and self-hosted',async()=>{
  const f=replay1239();
  assert.deepEqual([f.x.live_pull_request.state,f.x.live_pull_request.merged,f.x.live_pull_request.head.sha],['closed',true,f.pr.head.sha]);
  assert.deepEqual(f.x.merge_commit.parents.map(p=>p.sha),[f.pr.base.sha,f.pr.head.sha]);
@@ -4225,7 +4238,7 @@ test('#1239 fff02b115 replay (戊): the PR merged with this head while the gate 
  assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[true,'ADMITTED',true],JSON.stringify(r.reasons));
  assert.deepEqual([r.automation_route.reason,r.automation_route.previous_head_sha,r.automation_route.main_sha],['admitted_owner_pr_signed_main_refresh',f.from,f.main]);
 });
-test('#1239 replay (戊): open at the first read and merged with this head by the last read is admitted too',async()=>{
+test('#1239 constructed scenario (戊, admission as after #1244): open at the first read and merged with this head by the last read is admitted too',async()=>{
  const f=replay1239();f.lives=[{...f.pr},f.x.live_pull_request];
  const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.pr.base.sha}}:read(route);
  const r=await gate({...f,eventName:'pull_request'});
@@ -4244,7 +4257,7 @@ const mergedDenials=[
  ['open at the first read, then closed without merging',f=>{f.lives=[{...f.pr},{...f.x.live_pull_request,merged:false,merged_at:null}];
   const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.pr.base.sha}}:read(route);}],
 ];
-for(const [label,change]of mergedDenials)test(`#1239 replay (戊) still refuses ${label}`,async()=>{
+for(const [label,change]of mergedDenials)test(`#1239 constructed scenario (戊, admission as after #1244) still refuses ${label}`,async()=>{
  const f=replay1239();change(f);
  const route=await qualifyTrustedAutomationRoute(f);
  assert.equal(route.qualified,false,JSON.stringify(route));

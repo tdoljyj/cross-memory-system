@@ -1,5 +1,9 @@
 {
-  "_source": "GitHub GET replies read 2026-11-23 (Beijing) for #1239 head fff02b115 (the clued-admission[bot] main refresh of c4552421), Linux required-tests run 45042307550. The PR was merged at 16:20:52Z with this head (merge 549789505, parents [base 61611c57, head fff02b11]); the gate job ended 16:21:09Z. pull_request is the synchronize payload (state open, as at the event). live_pull_request and merge_commit are verbatim. current_admission is reconstructed to the case of FABLE-main-push-same-tree-parallel-20261123 §7 (Native admission succeeded, summary names #1239): the recorded check 137272320595 is a reconcile failure (\"full_admission_rejected\", no PR named), recorded_admission keeps it verbatim. Everything else is verbatim, trimmed to the fields the route reads.",
+  "_source": [
+    "GitHub GET replies (gh api, read-only) read 2026-11-23 (Beijing) for #1239 head fff02b115 (the clued-admission[bot] main refresh of c4552421), Linux required-tests run 45042307550. The PR was merged at 16:20:52Z with this head (merge 549789505, parents [base 61611c57, head fff02b11]); the gate job ended 16:21:09Z. Trimmed to the fields the route reads; values as read unless named below.",
+    "verbatim: live_pull_request, merge_commit, run, commit, main_merge_attestation, prior_head_admission, recorded_admission. recorded_admission is the App 5368905 check 137272320595 as it is now (re-read 2026-11-23 02:52 Beijing): failure, summary \"Reconcile ... full_admission_rejected\", no PR named. It was created success at 16:20:48Z and withdrawn after the merge (FABLE-same-tree-main-push-redesign-20261123 §1); the real replay reads this one.",
+    "constructed: pull_request is the synchronize event payload as at the event, not a GET reply: live_pull_request with state \"open\" and without merged, merged_at and merge_commit_sha (the PR was open until 16:20:52Z). constructed_admission_after_1244 is NOT a GitHub reply: check 137272320595 written as the admission would look if it had stayed success after #1244 (conclusion \"success\", summary naming tdoljyj/cross-memory-system#1239, its first sentence shortened from the summary of #1240 check 137299496678); id, app, external_id, head_sha and timestamps are the recorded check's. Only the constructed-scenario tests read it."
+  ],
   "repository": {
     "default_branch": "main",
     "full_name": "tdoljyj/cross-memory-system",
@@ -132,7 +136,7 @@
     ],
     "sha": "fff02b115ad4690dfe8c5759e8d85be1cc8e4275"
   },
-  "current_admission": {
+  "constructed_admission_after_1244": {
     "total_count": 1,
     "check_runs": [
       {
