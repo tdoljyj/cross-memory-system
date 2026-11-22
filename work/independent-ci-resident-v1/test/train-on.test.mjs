@@ -590,6 +590,47 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   assert.equal(await h.exec.attempt2IfEligible('b'.repeat(64), subject, { code: 'BRIDGE_TRANSPORT_TIMEOUT', stageNumber: 2 }), null);
 });
 
+// FABLE-r3-batch2-gate R5 (防回归): front batch 1 fails transiently, its automatic attempt 2 is scheduled, and stage 10 opens front
+// number 2 of the same S as well: both are attempt 2 of the same (H, S), one batch key; enqueueFront takes it only once (S + attempt), so
+// attempt 2 runs once.
+test('R3 batch 2 R5: an automatic attempt 2 and stage 10\'s front number 2 of the same S are one batch: it runs once', async t => {
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT1 }, 1), m => answer(m, DONE, 0)];
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  await f.exec.tick(); // opens the front batch
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], 'a transient stage-2 failure: attempt 2');
+  assert.equal(await f.exec.enqueueFront({ ...FRONT1, attempt: 2 }), null, 'front number 2 of the same S is the attempt 2 already scheduled');
+  stages[2] = { ok: true, factsSha256: 'd'.repeat(64) };
+  for (let n = 0; n < 6; n++) { f.advance(10 * MIN); await f.exec.tick(); }
+  const reserved = (await ofType(f.receipts, 'batch-reserved')).filter(b => b.subject?.testSha === S);
+  assert.deepEqual(reserved.map(b => [b.subject.attempt, b.origin]), [[1, 'queued'], [2, 'attempt2']], JSON.stringify(reserved));
+  assert.equal(reserved[1].key, r.attempt2);
+  assert.equal(f.engine.calls.filter(c => c[0] === 'derive').length, 2, JSON.stringify(f.engine.calls));
+  assert.deepEqual((await ofType(f.receipts, 'train-front-enqueued')).map(b => [b.attempt, b.auto === true]), [[1, false], [2, true]]);
+});
+
+// R6 (防回归): a batch of several PRs that fails transiently still gets its automatic attempt 2, the same members and S, as before.
+test('R3 batch 2 R6: a batch of several PRs that fails transiently still gets its automatic attempt 2 (same members, same S)', async t => {
+  const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }];
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...FRONT1, members } }, 1), m => answer(m, DONE, 0)];
+  const f = await executorFixture(t, { policy: policyV8(), engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  await f.exec.tick();
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string']);
+  stages[2] = { ok: true, factsSha256: 'd'.repeat(64) };
+  for (let n = 0; n < 6; n++) { f.advance(10 * MIN); await f.exec.tick(); }
+  const reserved = (await ofType(f.receipts, 'batch-reserved')).filter(b => b.subject?.testSha === S);
+  assert.deepEqual(reserved.map(b => [b.subject.attempt, b.origin]), [[1, 'queued'], [2, 'attempt2']], JSON.stringify(reserved));
+  const derives = f.engine.calls.filter(c => c[0] === 'derive');
+  assert.ok(derives.length === 2 && derives.every(c => JSON.stringify(c[2]?.members) === JSON.stringify(members)), JSON.stringify(derives));
+});
+
 test('ADR 0019 review blocker 1: batches of several PRs never use up the front\'s two attempts (bisection reaches the front alone); attempt 2 keeps /4', async t => {
   const members = [{ pr: 884, headSha: HEAD }, { pr: 885, headSha: '3'.repeat(40) }, { pr: 886, headSha: '4'.repeat(40) }];
   const FRONTM = { ...FRONT1, members };
