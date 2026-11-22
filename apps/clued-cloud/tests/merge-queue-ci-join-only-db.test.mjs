@@ -9,7 +9,8 @@
 //
 // Now a merge ref of a served repository stays on a claim only while work_claim_ci_merge_refs_v1 holds the CI's
 // mark of it for that claim; without the mark it is dropped from trigger_refs, with no error. The holder can
-// still leave. T1-T9 are the design's cases; T1-T5, T7b, T8 and T9 are red before the migration. Every step goes
+// still leave. T1-T9 are the design's cases; T1-T5, T7b, T8 and T9 are red before the migration. N1-N6 are the review's
+// (FABLE-merge-queue-head-review-fixes-20261122): whether a repository is served must not flip under a queue. Every step goes
 // through the public RPCs; only the passing of time is written straight into the tables, as the other merge
 // queue cases do.
 import { stopCluster, removeTestDirectory, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
@@ -54,6 +55,7 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     const names = (await fs.readdir(path.join(cloud, 'supabase/migrations'))).filter(n => n.endsWith('.sql')).sort();
     const gate = names.find(n => GATE.test(n));
+    const gateSql = gate ? await fs.readFile(path.join(cloud, 'supabase/migrations', gate), 'utf8') : '';
     const apply = async list => {
       for (const name of list) {
         try { await admin.query(await fs.readFile(path.join(cloud, 'supabase/migrations', name), 'utf8')); }
@@ -66,18 +68,20 @@ test('merge queue: a served repository is joined only through the CI door', { ti
 
     // served: an account with a resident ci-admission Binding on duty. old: the same, for the rows the migration finds (T8).
     // plain: an account without any ci-admission row.
-    const users = { served: uuid(), old: uuid(), plain: uuid() };
+    const users = { served: uuid(), old: uuid(), plain: uuid(), gap: uuid() };
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'join-only@example.invalid',now()),
-      ($2,'join-only-old@example.invalid',now()),($3,'join-only-plain@example.invalid',now())`, [users.served, users.old, users.plain]);
+      ($2,'join-only-old@example.invalid',now()),($3,'join-only-plain@example.invalid',now()),($4,'join-only-gap@example.invalid',now())`,
+      [users.served, users.old, users.plain, users.gap]);
     const tokens = {}, ids = {};
     const WRITE = ['context:read', 'context:write'];
     for (const [name, owner, scopes] of [['holder', users.served, WRITE], ['holder2', users.served, WRITE], ['ci', users.served, ['context:read']],
-      ['oldholder', users.old, WRITE], ['oldci', users.old, ['context:read']], ['plainholder', users.plain, WRITE]]) {
+      ['oldholder', users.old, WRITE], ['oldci', users.old, ['context:read']], ['plainholder', users.plain, WRITE],
+      ['gapholder', users.gap, WRITE], ['gapholder2', users.gap, WRITE], ['gapci', users.gap, ['context:read']], ['gapci2', users.gap, ['context:read']]]) {
       tokens[name] = hash(); ids[name] = (await admin.query(`insert into public.clued_agent_bindings
         (user_id,vendor,agent_name,token_hash,scopes,context_keys) values($1,'synthetic',$2,$3,$4,array['*']) returning id`,
         [owner, name, tokens[name], scopes])).rows[0].id;
     }
-    for (const [who, owner] of [['ci', users.served], ['oldci', users.old]]) {
+    for (const [who, owner] of [['ci', users.served], ['oldci', users.old], ['gapci', users.gap]]) {
       const roleReceipt = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,version,metadata,status)
         values($1,'global','fixture_role','binding',$2,1,'{}','committed') returning id`, [owner, ids[who]])).rows[0].id;
       await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,purpose)
@@ -193,6 +197,19 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       // An account without a resident is not touched.
       assert.deepEqual(await row(d8), before8.d);
       assert.equal((await queue(users.plain, R8OPEN)).head?.claim_id, d8.claim.claim_id);
+    });
+
+    await t.test('T8 replay of the migration: it stops at its predecessor check and changes nothing', async () => {
+      const state = async () => (await admin.query(`select
+        (select md5(p.prosrc) from pg_proc p where p.oid='clued_private.work_claim_ci_queue_join_v1(public.clued_agent_bindings,jsonb)'::regprocedure) door,
+        (select count(*)::int from pg_trigger g where g.tgrelid='clued_private.work_claims_v1'::regclass and g.tgname='work_claims_v1_merge_join_gate') gate,
+        (select count(*)::int from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_private') functions,
+        (select count(*)::int from clued_private.work_claim_ci_merge_refs_v1) marks,
+        (select count(*)::int from public.clued_audit_receipts) receipts`)).rows[0];
+      const before = await state();
+      assert.equal(before.gate, 1);
+      await assert.rejects(() => admin.query(gateSql), /merge_queue_ci_join_only_predecessor_mismatch/);
+      assert.deepEqual(await state(), before, 'the whole file rolled back');
     });
 
     await t.test('T1 (#1227): a claim issued with the merge ref and no pull request is not queued', async () => {
@@ -346,7 +363,20 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.deepEqual(back.merge_queue.map(x => x.state), ['head']);
       assert.deepEqual(await marks(i6), [ref(repo)]);
       assert.deepEqual((await receipts('work_claim_merge_queue_join_by_ci', i6)).map(x => [x.metadata.rejoined, x.metadata.previous_state]), [[false, 'none'], [true, 'lapsed']]);
-      await finish(q6, k6, i6);
+      // A lapsed entry the CI joined: the holder's renewal without trigger_refs keeps the ref and joins again at the back (contract A.6).
+      repo = 'fixture/join-only-t6-renew'; await serve('holder', 'ci', repo);
+      const r6 = await claim('holder'), headR = '0a'.repeat(20);
+      await admitted('ci', r6, repo, 10, headR); await joined('ci', repo, 10, headR);
+      await admin.query(`update clued_private.work_claims_v1 set merge_queued_at=now()-interval '60 minutes',merge_slot_taken_at=now()-interval '60 minutes',
+        merge_slot_at=now()-interval '50 minutes',merge_slot_hard_cap_seconds=7200 where claim_id=$1`, [r6.claim.claim_id]);
+      assert.equal(entry(await queue(users.served, repo), r6).state, 'lapsed');
+      at = await now();
+      await renew(r6);
+      q = await queue(users.served, repo);
+      assert.equal(q.head?.claim_id, r6.claim.claim_id, 'the renewal joined again: ' + JSON.stringify(q));
+      assert.ok((await row(r6)).merge_queued_at >= at, 'at the back: a new join time');
+      assert.deepEqual(await marks(r6), [ref(repo)], 'the mark stays');
+      await finish(q6, k6, i6, r6);
     });
 
     await t.test('T7 not served: an account without a resident, a repository it never admitted, another branch stay open', async () => {
@@ -391,6 +421,127 @@ test('merge queue: a served repository is joined only through the CI door', { ti
       assert.deepEqual(again.claim.trigger_refs, ['task:t9']);
       await assertOut(users.served, repo, { claim: first.claim }, 'the replayed claim');
       await finish({ ...again, who: 'holder' });
+    });
+
+    // --- Review 2026-11-22: "served" must not flip under a queue. A separate account, because these cases move its resident role. ---
+    const zero = {};   // the claims N6, N4 and N5 find, made while the account had no resident row at all
+    await t.test('N2 first admission of a repository: the entry that joined itself before leaves when the CI first joins there', async () => {
+      const repo = 'fixture/join-only-n2';
+      const a = await claim('gapholder', { trigger_refs: [ref(repo)] });
+      assert.equal((await queue(users.gap, repo)).head?.claim_id, a.claim.claim_id, 'open until the resident admits there: A is head');
+      const b = await claim('gapholder'), headB = 'a2'.repeat(20);
+      await admitted('gapci', b, repo, 2, headB); await joined('gapci', repo, 2, headB);
+      const q = await queue(users.gap, repo);
+      assert.equal(q.head?.claim_id, b.claim.claim_id, 'B is head at once: ' + JSON.stringify(q));
+      await assertOut(users.gap, repo, a, 'A');
+      assert.equal((await row(a)).status, 'ACTIVE');
+      const left = await receipts('work_claim_merge_queue_unadmitted_leave', a);
+      assert.deepEqual(left.map(x => [x.metadata.receipt_kind, x.metadata.merge_ref, x.binding_id, 'migration' in x.metadata]),
+        [['WORK_CLAIM_MERGE_QUEUE_UNADMITTED_REMOVED', ref(repo), ids.gapci, false]], 'one receipt, by the resident, not the migration');
+      await finish(a, b);
+    });
+
+    await t.test('N3 a claim that joined itself and was admitted afterwards is joined by the door, with the mark', async () => {
+      const repo = 'fixture/join-only-n3';
+      const a = await claim('gapholder', { trigger_refs: [ref(repo)] }), head = 'a3'.repeat(20);
+      assert.equal((await queue(users.gap, repo)).head?.claim_id, a.claim.claim_id);
+      await admitted('gapci', a, repo, 3, head);
+      const at = await now();
+      const j = await join('gapci', repo, 3, head);
+      assert.equal(j.joined, true, 'not already_queued: ' + JSON.stringify(j));
+      assert.deepEqual(await marks(a), [ref(repo)]);
+      assert.ok((await row(a)).merge_queued_at >= at, 'the join time is the one of this call');
+      await renew(a);
+      assert.equal((await queue(users.gap, repo)).head?.claim_id, a.claim.claim_id, 'still head after its own renewal');
+      await finish(a);
+    });
+
+    await t.test('N1 handover gap: with the old resident row revoked and the new one not started, nobody joins a served queue', async () => {
+      const repo = 'fixture/join-only-n1'; await serve('gapholder', 'gapci', repo);
+      const later = await claim('gapholder');
+      // The handover core lands only on a node it has heard (20261114120000): gapci2 is a registered node that just reported.
+      const project = uuid(), jwk = () => ({ kty: 'EC', crv: 'P-256', x: crypto.randomBytes(32).toString('base64url'), y: crypto.randomBytes(32).toString('base64url') });
+      await admin.query('begin');
+      await admin.query(`insert into public.clued_projects(id,user_id,name,normalized_name,context_key,project_schema_version,project_recognized_v2)
+        values($1,$2,$3,$3,$4,2,true)`, [project, users.gap, 'join-only-' + project, 'project:' + project]);
+      await admin.query(`insert into clued_private.project_lifecycle_v2_dispositions(project_id,user_id,disposition,disposition_reason,
+        recognition_confidence,recognition_source,basis,disposition_hash)
+        values($1,$2,'recognized_project','Synthetic isolated database fixture',1,'v2_explicit_create','{}',$3)`, [project, users.gap, hash()]);
+      await admin.query('commit');
+      await admin.query(`insert into clued_private.ci_nodes_v1(user_id,project_id,binding_id,name,profile,profile_sha256,
+        identity_public_jwk,encryption_public_jwk,identity_fingerprint,encryption_fingerprint,registration_digest,idempotency_key)
+        values($1,$2,$3,'GAPCI2','{}'::jsonb,$4,$5,$6,$7,$8,$9,$10)`, [users.gap, project, ids.gapci2, hash(), jwk(), jwk(), hash(), hash(), hash(), uuid()]);
+      const beat = (await anon.query('select public.clued_work_verify_v1($1,$2) v', [tokens.gapci2, { scope: 'global', action: 'ci_node_heartbeat', state: 'NORMAL',
+        mode: 'STANDBY', probe: 'not-held', ci_source_manifest_sha256: hash(), service_running: true, snapshot_age_seconds: 5 }])).rows[0].v;
+      assert.equal(beat.status, 'ok', JSON.stringify(beat));
+      // What the watchdog and the one-click handover both run: the old row is revoked now, the new one starts in five minutes.
+      await admin.query("select clued_private.binding_role_handover_core_v1($1,$2,$3,null,'{}'::jsonb)", [users.gap, ids.gapci, ids.gapci2]);
+      const a = await claim('gapholder', { trigger_refs: [ref(repo)] });
+      assert.equal(a.claim.merge_queue, null, 'issued in the gap: ' + JSON.stringify(a.claim.merge_queue));
+      await assertOut(users.gap, repo, a, 'A, issued in the gap');
+      const renewed = await renew(later, { trigger_refs: [ref(repo)] });
+      assert.equal(renewed.merge_queue, null, 'a renewal in the gap: ' + JSON.stringify(renewed.merge_queue));
+      await assertOut(users.gap, repo, later, 'the renewal in the gap');
+      // Time passes: the new row has started.
+      await admin.query(`update clued_private.binding_roles_v1 set granted_at=now()-interval '10 minutes',effective_at=now()-interval '5 minutes'
+        where binding_id=$1 and role='ci-admission' and revoked_at is null`, [ids.gapci2]);
+      const b = await claim('gapholder'), headB = 'a1'.repeat(20);
+      await admitted('gapci2', b, repo, 1, headB); await joined('gapci2', repo, 1, headB);
+      const q = await queue(users.gap, repo);
+      assert.equal(q.head?.claim_id, b.claim.claim_id, 'B is head at once: ' + JSON.stringify(q));
+      assert.equal(entry(q, a), undefined);
+      await finish(a, later, b);
+    });
+
+    // The Owner revokes every resident row and marks a new one later: with no row the account is open (binding_role_admits_v1).
+    await t.test('N6 the door sweeps even when it refuses the head', async () => {
+      // gapci2 is the resident on duty (N1 moved the role to it; its row has started, whatever N1 reached).
+      await admin.query(`update clued_private.binding_roles_v1 set granted_at=now()-interval '10 minutes',effective_at=now()-interval '5 minutes'
+        where binding_id=$1 and role='ci-admission' and revoked_at is null`, [ids.gapci2]);
+      for (const repo of ['fixture/join-only-n6', 'fixture/join-only-n4', 'fixture/join-only-n5']) await serve('gapholder2', 'gapci2', repo);
+      zero.c5 = await claim('gapholder2');
+      await admitted('gapci2', zero.c5, 'fixture/join-only-n5', 50, 'c5'.repeat(20)); await joined('gapci2', 'fixture/join-only-n5', 50, 'c5'.repeat(20));
+      const revoke = (await admin.query(`insert into public.clued_audit_receipts(user_id,context_key,operation,object_type,object_id,version,metadata,status)
+        values($1,'global','fixture_role','binding',$2,1,'{}','committed') returning id`, [users.gap, ids.gapci2])).rows[0].id;
+      await admin.query(`update clued_private.binding_roles_v1 set revoked_at=now(),revoked_receipt_id=$2
+        where user_id=$1 and role='ci-admission' and revoked_at is null`, [users.gap, revoke]);
+      zero.a6 = await claim('gapholder2', { trigger_refs: [ref('fixture/join-only-n6')] });
+      zero.a4 = await claim('gapholder2', { trigger_refs: [ref('fixture/join-only-n4')] });
+      zero.a5 = await claim('gapholder2', { trigger_refs: [ref('fixture/join-only-n5')] });
+      assert.equal((await queue(users.gap, 'fixture/join-only-n6')).head?.claim_id, zero.a6.claim.claim_id, 'no resident row: open');
+      assert.equal((await queue(users.gap, 'fixture/join-only-n4')).head?.claim_id, zero.a4.claim.claim_id);
+      assert.equal(entry(await queue(users.gap, 'fixture/join-only-n5'), zero.a5).state, 'waiting');
+      zero.c5before = { w: await row(zero.c5), marks: await marks(zero.c5) };
+      await admin.query(`insert into clued_private.binding_roles_v1(user_id,binding_id,role,granted_at,granted_receipt_id,purpose)
+        values($1,$2,'ci-admission',now(),$3,'resident-node')`, [users.gap, ids.gapci, revoke]);
+      const repo = 'fixture/join-only-n6', u = await claim('gapholder2'), head = 'a6'.repeat(20);
+      await bound('gapci', u, repo, 6, head);
+      const j = await join('gapci', repo, 6, head);
+      assert.deepEqual([j.joined, j.reason], [false, 'head_not_admitted'], JSON.stringify(j));
+      await assertOut(users.gap, repo, zero.a6, 'A after a refused join');
+      assert.equal((await receipts('work_claim_merge_queue_unadmitted_leave', zero.a6)).length, 1);
+      await finish(u, zero.a6);
+    });
+
+    await t.test('N4 a resident marked again after none: the entry that joined in between leaves at the next join of the CI', async () => {
+      const repo = 'fixture/join-only-n4', b = await claim('gapholder2'), head = 'a4'.repeat(20);
+      await admitted('gapci', b, repo, 4, head); await joined('gapci', repo, 4, head);
+      const q = await queue(users.gap, repo);
+      assert.equal(q.head?.claim_id, b.claim.claim_id, 'B is head at once: ' + JSON.stringify(q));
+      await assertOut(users.gap, repo, zero.a4, 'A');
+      assert.deepEqual((await receipts('work_claim_merge_queue_unadmitted_leave', zero.a4)).map(x => [x.metadata.merge_ref, x.binding_id]), [[ref(repo), ids.gapci]]);
+      await finish(b, zero.a4);
+    });
+
+    await t.test('N5 the sweep leaves a claim the CI joined as it was', async () => {
+      const repo = 'fixture/join-only-n5', d = await claim('gapholder2'), head = 'd5'.repeat(20);
+      await admitted('gapci', d, repo, 5, head); await joined('gapci', repo, 5, head);
+      const w = await row(zero.c5);
+      assert.deepEqual([w.merge_queued_at, w.merge_slot_at, w.trigger_refs, w.lease_version], [zero.c5before.w.merge_queued_at, zero.c5before.w.merge_slot_at,
+        zero.c5before.w.trigger_refs, zero.c5before.w.lease_version], 'C keeps its join time, slot and refs');
+      assert.deepEqual(await marks(zero.c5), zero.c5before.marks);
+      assert.equal((await queue(users.gap, repo)).head?.claim_id, zero.c5.claim.claim_id, 'C is still head');
+      await finish(d, zero.a5, zero.c5);
     });
 
     // --- Design 3.4: two behaviours left as they are; these record them and judge nothing. ---
