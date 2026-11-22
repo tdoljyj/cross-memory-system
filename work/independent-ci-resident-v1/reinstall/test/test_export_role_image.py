@@ -1,6 +1,6 @@
 """reinstall/tools/export-role-image.ps1 (the fleet's one-time export of the local role image, run by the agent on DESK with one UAC):
-its pure functions in Windows PowerShell 5.1 on archives made here (classic and OCI docker save layouts, a changed config, a truncated
-archive, no manifest), the root script's text (read-only towards docker), and that its machinery is the launcher's own (the template
+its pure functions in Windows PowerShell 5.1 on archives made here (OCI docker save layouts held to the containerd store's ID, a classic
+save and a config-digest ID refused, a changed config, a truncated archive), the root script's text (read-only towards docker), and that its machinery is the launcher's own (the template
 generate.py pins, root-run by the companion registrar). Nothing is elevated, no docker, no WSL, nothing outside a temporary directory."""
 import gzip
 import hashlib
@@ -117,35 +117,39 @@ class ExportRoleImage(unittest.TestCase):
                     self.assertFalse(self.check([(n, d) for n, d in entries if n != name], iid)['ok'])
         self.assertFalse(self.check(entries, '0' * 64)['ok'])
 
-    def test_the_archive_is_held_to_the_image_id_by_its_own_config(self):
+    def test_an_archive_named_by_its_config_digest_is_refused(self):
+        # One meaning of the image ID (Fable ruling 0e418483, r7 phase B, 2.1): the containerd image store's .Id, the OCI index target.
+        # An ID that is the config digest (the classic store's) is refused by name, whatever layout carries it.
+        for indexed in (False, True):
+            for compatibility in (False, True):
+                with self.subTest(indexed=indexed, compatibility=compatibility):
+                    entries, iid, config = oci_archive(indexed=indexed, compatibility=compatibility)
+                    self.assertTrue(self.check(entries, iid)['ok'])
+                    self.assertEqual(self.check(entries, config)['code'], 'ROLE_IMAGE_ID_NOT_A_CONTAINERD_STORE_ID')
+
+    def test_a_classic_store_save_is_refused_whatever_its_id(self):
+        # the classic `docker save` layout (manifest.json and <config>.json, no OCI layout) has no index target: never a containerd ID
         layer = layer_tar(b'layer' * 14000)   # hashed, never retained as JSON
         layer_id = hashlib.sha256(layer).hexdigest()
         config = json.dumps({'architecture': 'amd64', 'rootfs': {'type': 'layers', 'diff_ids': ['sha256:' + layer_id]}}).encode()
         iid = hashlib.sha256(config).hexdigest()
         classic = [(iid + '.json', config), ('abc/layer.tar', layer), ('manifest.json', json.dumps([{'Config': iid + '.json', 'RepoTags': None, 'Layers': ['abc/layer.tar']}]).encode())]
-        r = self.check(classic, iid)
-        self.assertEqual((r['ok'], r['config'], r['entries']), (True, iid + '.json', 3))
-        oci = [('blobs/sha256/' + iid, config), ('blobs/sha256/' + layer_id, layer), ('manifest.json', json.dumps([{'Config': 'blobs/sha256/' + iid, 'Layers': ['blobs/sha256/' + layer_id]}]).encode())]
-        self.assertTrue(self.check(oci, iid)['ok'])
-        # another config under the image's name, another image, no manifest, two images, a truncated archive: refused by name
-        self.assertEqual(self.check([(iid + '.json', config + b' '), classic[2]], iid)['code'], 'CONFIG_NOT_THE_IMAGE_ID')
-        self.assertEqual(self.check(classic, '3' * 64)['code'], 'CONFIG_NOT_THE_IMAGE_ID')
-        self.assertEqual(self.check(classic[:2], iid)['code'], 'MANIFEST_MISSING')
-        two = json.dumps([{'Config': iid + '.json'}, {'Config': iid + '.json'}]).encode()
-        self.assertEqual(self.check(classic[:2] + [('manifest.json', two)], iid)['code'], 'MANIFEST_NOT_ONE_IMAGE')
+        oci_blobs = [('blobs/sha256/' + iid, config), ('blobs/sha256/' + layer_id, layer), ('manifest.json', json.dumps([{'Config': 'blobs/sha256/' + iid, 'Layers': ['blobs/sha256/' + layer_id]}]).encode())]
+        for name, entries, image_id in (('classic', classic, iid), ('classic-other-id', classic, '3' * 64), ('blobs-without-layout', oci_blobs, iid),
+                                        ('no-manifest', classic[:2], iid)):
+            with self.subTest(case=name):
+                self.assertEqual(self.check(entries, image_id)['code'], 'ROLE_IMAGE_ID_NOT_A_CONTAINERD_STORE_ID')
         self.assertEqual(self.check(classic, iid, truncate=True)['code'], 'TAR_TRUNCATED')
-        self.assertEqual(self.check([(n, d + b'!' if n == 'abc/layer.tar' else d) for n, d in classic], iid)['code'], 'LAYER_DIFF_ID_MISMATCH')
-        self.assertEqual(self.check([classic[0], classic[2]], iid)['code'], 'LAYER_MISSING')
 
     def test_oci_compatibility_manifest_cannot_redirect_the_verified_image(self):
         entries, iid, _ = oci_archive()
         compatibility = json.loads(entries[-1][1]); compatibility[0]['Layers'] = []
         self.assertEqual(self.check(entries[:-1] + [('manifest.json', json.dumps(compatibility).encode())], iid)['code'], 'DOCKER_OCI_MANIFEST_MISMATCH')
 
-    def test_gzip_layers_and_classic_config_id_in_an_oci_layout(self):
+    def test_gzip_layers_and_a_config_id_in_an_oci_layout(self):
         entries, iid, config = oci_archive(compressed=True)
         self.assertTrue(self.check(entries, iid)['ok'])
-        self.assertTrue(self.check(entries, config)['ok'])
+        self.assertEqual(self.check(entries, config)['code'], 'ROLE_IMAGE_ID_NOT_A_CONTAINERD_STORE_ID')
         # All blob hashes and descriptor sizes match, but the config lies about
         # the uncompressed layer. Neither target-ID nor config-ID may accept it.
         entries, iid, config = oci_archive(compressed=True, wrong_diff=True)

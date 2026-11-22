@@ -13,19 +13,6 @@ on:
       - 'scripts/ci/self-hosted/README.md'
       - 'scripts/ci/check_active_doc_links.py'
       - '.github/workflows/active-doc-links.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'README.md'
-      - 'AGENTS.md'
-      - 'docs/README.md'
-      - 'skills/README.md'
-      - 'apps/clued-cloud/README.md'
-      - 'apps/clued-cloud/AGENTS.md'
-      - 'protocol/continuity/v1/README.md'
-      - 'scripts/ci/self-hosted/README.md'
-      - 'scripts/ci/check_active_doc_links.py'
-      - '.github/workflows/active-doc-links.yml'
 
 permissions:
   contents: read

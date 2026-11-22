@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -29,7 +29,7 @@ test('formal target clock: current full chain, complete atomic publisher install
   const publisher=await fs.readFile(path.join(repo,'.github/workflows/clued-cloud-production-release.yml'),'utf8');assert.match(publisher,/execute s;/);
   const parent=await fs.realpath(os.tmpdir()),directory=await fs.mkdtemp(path.join(parent,'clued-clock-target-'));
   const server=new EmbeddedPostgres({databaseDir:directory,user:'postgres',password:crypto.randomBytes(32).toString('hex'),port:await port(),
-    persistent:true,postgresFlags:['-c','io_method=sync'],onLog(){},onError(){}}),clients=[];
+    persistent:true,initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags:[...EPHEMERAL_POSTGRES_FLAGS],onLog(){},onError(){}}),clients=[];
   let db;
   try{
     await server.initialise();await server.start();db=server.getPgClient();clients.push(db);await db.connect();

@@ -1,4 +1,4 @@
-import { stopCluster } from './cluster-cleanup.mjs';
+import { stopCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -45,7 +45,7 @@ test('work claims: the merge slot is held by one claim, lapses after 45 minutes 
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-work-claims-merge-slot-'));
   const server = new EmbeddedPostgres({
     databaseDir: directory, user: 'postgres', password: hash(), port: await freePort(),
-    persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); },
   });
   const clients = [];

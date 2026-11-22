@@ -10,9 +10,11 @@
   manifest's pins, passed in: -RegistrarSha256, -HeadlessSha256), the out directory is made by the launcher's Set-FleetLinuxDirectories.
     1. the root script (Get-RoleImageExportScript): the image is there with exactly this ID; `docker save sha256:<id> | gzip -n` into
        the out directory; its sha256. It changes nothing in docker or on the node.
-    2. elevated, the archive is copied (no link followed) into -Destination (a new directory) and checked by its content: the image's
-       target index/manifest (containerd) or config (classic) hashes to the ID (Test-RoleImageArchive). Every descriptor's size and
-       digest, config and layer are checked; classic layers are held to the config's diff_ids. Linux B checks the exact loaded ID.
+    2. elevated, the archive is copied (no link followed) into -Destination (a new directory) and checked by its content: its OCI
+       index target hashes to the ID (Test-RoleImageArchive). An image ID means the containerd image store's .Id (the classic store is
+       not supported, Fable ruling 0e418483, r7 phase B, 2.1): an archive whose ID is its config digest, or a classic save without an
+       OCI layout, is refused ROLE_IMAGE_ID_NOT_A_CONTAINERD_STORE_ID. Every descriptor's size and digest, config and layer are
+       checked. Linux B checks the exact loaded ID.
     3. one JSON line: status ROLE_IMAGE_EXPORTED, the asset's name, sha256 and size (publish.mjs prepare uploads it with the kit).
   The out, in and staging directories are removed at the end, whatever the outcome; the registrar build too.
 
@@ -239,48 +241,35 @@ function Test-RoleImageArchive([string]$file, [string]$id) {
     $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
     $js = New-Object Web.Script.Serialization.JavaScriptSerializer; $js.MaxJsonLength = 4194304
     $images = @{}
-    if ($files.ContainsKey('index.json') -or $files.ContainsKey('oci-layout')) {
-      $layout = Read-RoleImageJson $files 'oci-layout' $js
-      if ($layout['imageLayoutVersion'] -cne '1.0.0') { throw 'OCI_LAYOUT_REFUSED' }
-      $index = Read-RoleImageJson $files 'index.json' $js
-      if ($index['schemaVersion'] -ne 2 -or -not ($index['manifests'] -is [Array]) -or $index['manifests'].Count -ne 1) { throw 'OCI_NOT_ONE_TARGET' }
-      $target = $index['manifests'][0]
-      if ($target['mediaType'] -cnotin @('application/vnd.oci.image.index.v1+json', 'application/vnd.oci.image.manifest.v1+json',
-          'application/vnd.docker.distribution.manifest.list.v2+json', 'application/vnd.docker.distribution.manifest.v2+json')) { throw 'OCI_TARGET_MEDIA_TYPE_REFUSED' }
-      Test-RoleImageDescriptor $target $files $js @{} $images 0
-      if ($images.Count -eq 0) { throw 'OCI_NO_IMAGE' }
-      # Classic Docker may also save an OCI layout, while keeping a config ID.
-      # That alternative is unambiguous only for a single verified image.
-      if ($target['digest'] -cne ('sha256:' + $id) -and
-          -not ($images.Count -eq 1 -and @($images.Values)[0].config -ceq ('blobs/sha256/' + $id))) { throw 'OCI_TARGET_NOT_THE_IMAGE_ID' }
-      $r.config = @($images.Values)[0].config
-      if ($files.ContainsKey('manifest.json')) {
-        $m = Read-RoleImageJson $files 'manifest.json' $js
-        if (-not ($m -is [Array]) -or $m.Count -eq 0) { throw 'MANIFEST_NOT_ONE_IMAGE' }
-        foreach ($row in $m) {
-          $match = $false
-          foreach ($image in $images.Values) {
-            if ($row['Config'] -ceq $image.config -and ($row['Layers'] -is [Array]) -and $row['Layers'].Count -eq $image.layers.Count) {
-              $same = $true; for ($j = 0; $j -lt $image.layers.Count; $j++) { if ($row['Layers'][$j] -cne $image.layers[$j]) { $same = $false } }
-              if ($same) { $match = $true }
-            }
-          }
-          if (-not $match) { throw 'DOCKER_OCI_MANIFEST_MISMATCH' }
-        }
-      }
-    } else {
-      if (-not $files.ContainsKey('manifest.json')) { throw 'MANIFEST_MISSING' }
+    # One meaning of the image ID: the containerd store's, the OCI index target. A classic save (no OCI layout) has none.
+    if (-not ($files.ContainsKey('index.json') -or $files.ContainsKey('oci-layout'))) { throw 'ROLE_IMAGE_ID_NOT_A_CONTAINERD_STORE_ID' }
+    $layout = Read-RoleImageJson $files 'oci-layout' $js
+    if ($layout['imageLayoutVersion'] -cne '1.0.0') { throw 'OCI_LAYOUT_REFUSED' }
+    $index = Read-RoleImageJson $files 'index.json' $js
+    if ($index['schemaVersion'] -ne 2 -or -not ($index['manifests'] -is [Array]) -or $index['manifests'].Count -ne 1) { throw 'OCI_NOT_ONE_TARGET' }
+    $target = $index['manifests'][0]
+    if ($target['mediaType'] -cnotin @('application/vnd.oci.image.index.v1+json', 'application/vnd.oci.image.manifest.v1+json',
+        'application/vnd.docker.distribution.manifest.list.v2+json', 'application/vnd.docker.distribution.manifest.v2+json')) { throw 'OCI_TARGET_MEDIA_TYPE_REFUSED' }
+    Test-RoleImageDescriptor $target $files $js @{} $images 0
+    if ($images.Count -eq 0) { throw 'OCI_NO_IMAGE' }
+    # Classic Docker may also save an OCI layout while keeping a config ID: that ID is not one, refused by name.
+    if ($target['digest'] -cne ('sha256:' + $id)) {
+      if (@($images.Values | Where-Object { $_.config -ceq ('blobs/sha256/' + $id) }).Count -gt 0) { throw 'ROLE_IMAGE_ID_NOT_A_CONTAINERD_STORE_ID' }
+      throw 'OCI_TARGET_NOT_THE_IMAGE_ID'
+    }
+    $r.config = @($images.Values)[0].config
+    if ($files.ContainsKey('manifest.json')) {
       $m = Read-RoleImageJson $files 'manifest.json' $js
-      if (-not ($m -is [Array]) -or $m.Count -ne 1 -or -not ($m[0] -is [Collections.IDictionary]) -or -not $m[0].ContainsKey('Config')) { throw 'MANIFEST_NOT_ONE_IMAGE' }
-      $config = [string]$m[0]['Config']; $r.config = $config
-      if (-not $files.ContainsKey($config)) { throw 'CONFIG_MISSING' }
-      if ($files[$config].sha -cne $id) { throw 'CONFIG_NOT_THE_IMAGE_ID' }
-      $c = Read-RoleImageJson $files $config $js; Test-RoleImageConfig $c
-      if (-not ($m[0]['Layers'] -is [Array]) -or $m[0]['Layers'].Count -ne $c['rootfs']['diff_ids'].Count) { throw 'LAYER_COUNT_MISMATCH' }
-      for ($j = 0; $j -lt $m[0]['Layers'].Count; $j++) {
-        $layer = [string]$m[0]['Layers'][$j]
-        if (-not $files.ContainsKey($layer)) { throw 'LAYER_MISSING' }
-        if (('sha256:' + $files[$layer].diff) -cne $c['rootfs']['diff_ids'][$j]) { throw 'LAYER_DIFF_ID_MISMATCH' }
+      if (-not ($m -is [Array]) -or $m.Count -eq 0) { throw 'MANIFEST_NOT_ONE_IMAGE' }
+      foreach ($row in $m) {
+        $match = $false
+        foreach ($image in $images.Values) {
+          if ($row['Config'] -ceq $image.config -and ($row['Layers'] -is [Array]) -and $row['Layers'].Count -eq $image.layers.Count) {
+            $same = $true; for ($j = 0; $j -lt $image.layers.Count; $j++) { if ($row['Layers'][$j] -cne $image.layers[$j]) { $same = $false } }
+            if ($same) { $match = $true }
+          }
+        }
+        if (-not $match) { throw 'DOCKER_OCI_MANIFEST_MISMATCH' }
       }
     }
     $r.ok = $true

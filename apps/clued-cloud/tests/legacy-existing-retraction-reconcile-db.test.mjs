@@ -1,4 +1,4 @@
-import { stopCluster, removeTestDirectory } from './cluster-cleanup.mjs';
+import { stopCluster, removeTestDirectory, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -22,7 +22,7 @@ async function port() {
 
 test('existing explicit retraction reconciliation is exact, private and does not duplicate business Events', { timeout: 180000 }, async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-existing-retraction-'));
-  const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await port(), persistent: false, postgresFlags: ['-c', 'io_method=sync'], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
+  const server = new EmbeddedPostgres({ databaseDir: dir, user: 'postgres', password: hash(), port: await port(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS], onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   try {
     await server.initialise();
     await server.start();

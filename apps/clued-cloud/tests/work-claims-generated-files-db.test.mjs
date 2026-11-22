@@ -1,4 +1,4 @@
-import { stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { stopCluster, waitForPidExit, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_FLAGS } from './cluster-cleanup.mjs';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -34,7 +34,7 @@ test('mechanical files do not serialize independent source claims or widen sourc
   { timeout: 300000 }, async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-mech-'));
   const server = new EmbeddedPostgres({ databaseDir: directory, user: 'postgres', password: hash(),
-    port: await freePort(), persistent: false, postgresFlags: ['-c', 'io_method=sync'],
+    port: await freePort(), persistent: false, initdbFlags: [...EPHEMERAL_INITDB_FLAGS], postgresFlags: [...EPHEMERAL_POSTGRES_FLAGS],
     onLog() {}, onError(message) { process.stderr.write(`${message}\n`); } });
   const clients = [];
   try {
@@ -220,10 +220,12 @@ test('mechanical files do not serialize independent source claims or widen sourc
         const knownUnknown = await call(tokens.verifier, 'clued_work_verify_v1', {
           action: 'resolve_pr_claim', scope, ...subject, read_only: true,
         });
-        assert.deepEqual([knownUnknown.binding_status, knownUnknown.reason, knownUnknown.task_id, knownUnknown.claim,
-          knownUnknown.auto_bound, knownUnknown.receipt_id],
-          ['no_live_claim', 'pr_task_binding_unknown', a.claim.task_id, null, false, null],
-          'holder authorization associates the Task but does not itself prove an open PR');
+        // Since 20261122090000 an unknown relation reads as open: the read-only lookup reports the authorization,
+        // and still neither binds nor activates (the discovery below is the only write).
+        assert.deepEqual([knownUnknown.binding_status, knownUnknown.reason, knownUnknown.task_id, knownUnknown.claim?.claim_id,
+          knownUnknown.head_authorization_id, knownUnknown.auto_bound, knownUnknown.receipt_id],
+          ['bound', null, a.claim.task_id, a.claim.claim_id, authorization.authorization_id, false, null],
+          'a read-only lookup reports the holder authorization without binding');
         // This qualified-CI fixture now observes the actual exact open subject,
         // like Source admission does before invoking the full mechanical gate.
         // The read-only lookup above must never perform this lifecycle write.

@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { check, exactKeys, HEX64, parseBoundedJson, sha256 } from './canonical.mjs';
+import { powershellArgv } from './powershell-argv.mjs';
 
 export const MACHINE_WSL_EXE = 'C:\\Program Files\\WSL\\wsl.exe';
 export const LEGACY_WSL_EXE = 'C:\\Windows\\System32\\wsl.exe';
@@ -82,7 +83,7 @@ export function machineWslValidationArgv(helper) {
     + `try { . '${helper}'; Get-CluedMachineWslClient | ConvertTo-Json -Compress } catch { `
     + "$c=[string]$_.Exception.Message; if($c -cnotmatch '^WSL_MACHINE_CLIENT_[A-Z_]{1,60}$'){$c='WSL_MACHINE_CLIENT_UNREADABLE'}; "
     + "[ordered]@{status='REFUSED';code=$c}|ConvertTo-Json -Compress; exit 3 }";
-  return [POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(code, 'utf16le').toString('base64')];
+  return powershellArgv(POWERSHELL, '-EncodedCommand', Buffer.from(code, 'utf16le').toString('base64'));
 }
 
 export async function resolveCompanionWslClient({ root, declaredWslExe, run, residentDirectory = RESIDENT_DIRECTORY, fsImpl = fs }) {

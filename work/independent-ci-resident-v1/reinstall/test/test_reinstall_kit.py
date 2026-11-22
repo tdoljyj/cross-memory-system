@@ -145,7 +145,11 @@ class SignFromInstalled(unittest.TestCase):
         self.assertEqual(self.node('sign-installed', self.build(image))['code'], 'INSTALLED_V2_QUALIFICATION_FACTS_REFUSED')
 
 
-def build_prep(d):
+# the real verdict line of verify-resident-linux.sh (prep.py reads the success word from it), appended to the fixture's stub of that script
+VERDICT_LINE = next(l for l in rd(RE, '..', 'linux', 'verify-resident-linux.sh').splitlines(keepends=True) if l.startswith(b'status=$('))
+
+
+def build_prep(d, verified_word=None):
     """Inputs of linux/prep.py on fixtures: a git repository and its extracted tree, a package, the assembled in-dir, the installed facts."""
     w = os.path.join(d, 'work'); repo = os.path.join(d, 'repo')
     lin = ('work', 'independent-ci-resident-v1', 'linux')
@@ -153,7 +157,7 @@ def build_prep(d):
         os.makedirs(os.path.join(base, *lin))
         for n in ('install-resident-linux.sh', 'verify-resident-linux.sh', 'uninstall-resident-linux.sh'):
             with open(os.path.join(base, *lin, n), 'wb') as f:
-                f.write(b'#!/bin/bash\necho ' + n.encode() + b'\n')
+                f.write(b'#!/bin/bash\necho ' + n.encode() + b'\n' + ((VERDICT_LINE.replace(b'RESIDENT_LINUX_VERIFIED', verified_word.encode()) if verified_word else VERDICT_LINE) if n == 'verify-resident-linux.sh' else b''))
     git = lambda *a: subprocess.run(['git', '-C', repo, '-c', 'core.autocrlf=false', '-c', 'user.name=t', '-c', 'user.email=t@e'] + list(a), check=True, capture_output=True)
     git('init', '-q'); git('add', '.'); git('commit', '-qm', 'c')
     commit = git('rev-parse', 'HEAD').stdout.decode().strip()

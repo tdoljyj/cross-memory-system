@@ -568,7 +568,11 @@ function Get-SecretFingerprint([string]$kind, [byte[]]$secret) {
     $psi.WorkingDirectory = 'C:\Windows\System32'
     # A cleared, fixed environment (no NODE_OPTIONS or other variable of the Owner's session), as verify-resident.ps1 runs node.
     $psi.EnvironmentVariables.Clear(); foreach ($kv in @(@('SystemRoot', 'C:\Windows'), @('WINDIR', 'C:\Windows'), @('PATH', 'C:\Windows\System32'))) { $psi.EnvironmentVariables[$kv[0]] = $kv[1] }
-    $p = [Diagnostics.Process]::Start($psi)
+    # No BOM before the secret on a UTF-8 console: the guard every start with a redirected stdin carries (see Invoke-NativeChild, test/native-child.test.mjs).
+    $cie = if ($psi.RedirectStandardInput) { [Console].GetField('_inputEncoding', [Reflection.BindingFlags]'NonPublic, Static') } else { $null }
+    $was = if ($null -ne $cie) { $cie.GetValue($null) } else { $null }
+    if ($null -ne $cie) { $cie.SetValue($null, (New-Object Text.UTF8Encoding($false))) }
+    try { $p = [Diagnostics.Process]::Start($psi) } finally { if ($null -ne $cie) { $cie.SetValue($null, $was) } }
     try {
       try { $p.StandardInput.BaseStream.Write($secret, 0, $secret.Length); $p.StandardInput.Close() } catch { }   # a refusing tool may have exited already
       $out = $p.StandardOutput.ReadToEndAsync(); $err = $p.StandardError.ReadToEndAsync()
@@ -907,6 +911,17 @@ function Get-AceKeys([string]$sddl) {
   $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
   @(foreach ($a in $raw.DiscretionaryAcl) { if ($a -is [Security.AccessControl.CommonAce]) { $a.SecurityIdentifier.Value + '|' + [string]$a.AccessMask + '|' + [int]$a.AceFlags + '|' + [string]$a.AceQualifier } else { 'other|' + $a.GetType().Name } })
 }
+# The DACL's shape, what the two compare-before-write checks compare (Fable ruling 0e418483): the protected bit and the set of every ACE
+# in its binary form (type, flags, mask, SID, all of it), sorted ordinally. Not the SDDL text: Windows writes a DACL back with AI set, its
+# ACEs reordered and its masks spelled its own way (FA or 0x1f01ff), none of which changes what the DACL grants. A null DACL is refused.
+function Get-DaclShape([string]$sddl) {
+  $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+  if ($null -eq $raw.DiscretionaryAcl) { throw 'DACL_SHAPE_NULL_DACL' }
+  $aces = New-Object 'Collections.Generic.List[string]'
+  foreach ($a in $raw.DiscretionaryAcl) { $b = New-Object byte[] $a.BinaryLength; $a.GetBinaryForm($b, 0); $aces.Add([BitConverter]::ToString($b).Replace('-', '')) }
+  $aces.Sort([StringComparer]::Ordinal)
+  $(if (($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) { 'P' } else { '-' }) + '|' + ($aces -join '|')
+}
 # The state of the folder for the service SID: refuses a missing or linked folder, a DACL that is not protected, and any ACE of the
 # service SID that is not exactly the planned one. present: that ACE is already there (an earlier install or the Owner's own icacls).
 function Get-ParentAclState([string]$path, [string]$res) {
@@ -931,7 +946,7 @@ function Get-ParentAclState([string]$path, [string]$res) {
 function Add-ParentAce($p) {
   if ($p.present -eq $true) { return $false }
   $now = (Get-Acl -LiteralPath $p.path).Sddl
-  if ((Get-DaclPart $now) -cne $p.before) { throw 'PARENT_ACL_CHANGED_SINCE_PLAN' }
+  if ((Get-DaclShape $now) -cne (Get-DaclShape $p.before)) { throw 'PARENT_ACL_CHANGED_SINCE_PLAN' }
   $oldKeys = @(Get-AceKeys $now)
   $acl = New-Object Security.AccessControl.DirectorySecurity
   $acl.SetSecurityDescriptorSddlForm($now + $p.ace, [Security.AccessControl.AccessControlSections]::Access)
@@ -945,7 +960,7 @@ function Add-ParentAce($p) {
 # The existing service append stays unchanged; this wrapper binds the companion's stricter rule and the complete expected DACL.
 function Assert-CompanionRelayParentPlan($p) {
   $now = Get-ParentAclState $p.path $p.sid
-  if ($now.before -cne $p.before -or (Get-RelayParentAclPresence ((Get-Acl -LiteralPath $p.path).Sddl) $p.sid) -ceq 'refused') { throw 'COMPANION_RELAY_PARENT_CHANGED_SINCE_PLAN' }
+  if ((Get-DaclShape $now.before) -cne (Get-DaclShape $p.before) -or (Get-RelayParentAclPresence ((Get-Acl -LiteralPath $p.path).Sddl) $p.sid) -ceq 'refused') { throw 'COMPANION_RELAY_PARENT_CHANGED_SINCE_PLAN' }
 }
 function Add-CompanionRelayParentAce($p) {
   Assert-CompanionRelayParentPlan $p
@@ -1423,8 +1438,13 @@ Step 'resident-firewall' {
 Step 'source-v2-acl' {
   $tool = Join-Path $Root ('source\' + $plan.ciSourceManifestSha256 + '\work\actions-hosted-migration\independent-ci-v1\src\resident-v2\migrate-acl.ps1')
   if (-not (Test-Path -LiteralPath $tool)) { throw 'SOURCE_V2_REQUIRED' }
-  $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $(if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }) -ControllerSid $ControllerSid | Out-String
-  if ($LASTEXITCODE -ne 0) { throw 'SOURCE_V2_ACL_MIGRATION_REFUSED' }
+  # its own -ExecutionPolicy Bypass (r5, Fable 11-21 section 1.2): never the policy of whoever started the install (a new machine's is Restricted)
+  $out = & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tool -Apply -ResidentSid $plan.residentSid -OwnerSid $(if ((Test-Path variable:OperatorSid) -and $OperatorSid) { $OperatorSid } else { $OwnerSid }) -ControllerSid $ControllerSid | Out-String
+  # X3 (Fable 11-21 r5 section 2.5): a refusal carries migrate-acl.ps1's own code (its one JSON line), after the unchanged prefix
+  if ($LASTEXITCODE -ne 0) {
+    $refused = try { [string]((@(($out -split "`r?`n") | Where-Object { $_.Trim() }) | Select-Object -Last 1) | ConvertFrom-Json).code } catch { '' }
+    throw ('SOURCE_V2_ACL_MIGRATION_REFUSED' + $(if ($refused -cmatch '^[A-Z][A-Z0-9_]{1,79}$') { ':' + $refused } else { '' }))
+  }
   $script:receipt.sourceV2Acl = ($out | ConvertFrom-Json)
 }
 # 5a. M5-b (ADR 0023): the record of who is who (install\companion-account.json: rearm-resident.ps1, request-upgrade.ps1 and

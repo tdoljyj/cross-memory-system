@@ -252,8 +252,8 @@ test('notifications: HALT, a stopped status, a head waiting over an hour; each k
   assert.deepEqual(events({ status: null, statusError: true, now, startedAt: now }).map(x => x.key), [], 'not right after the companion starts');
   // the toast: a fixed script, the texts only as Base64
   const argv = toastArgv('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'T\'"<x>', 'B; Remove-Item C:\\');
-  assert.deepEqual(argv.slice(0, 6), ['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand']);
-  const script = Buffer.from(argv[6], 'base64').toString('utf16le');
+  assert.deepEqual(argv.slice(0, 8), ['C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand']);
+  const script = Buffer.from(argv[8], 'base64').toString('utf16le');
   assert.ok(!script.includes('Remove-Item') && !script.includes('<x>'), 'no text is spliced into the script');
   assert.ok(script.includes(Buffer.from('B; Remove-Item C:\\', 'utf8').toString('base64')));
 });
