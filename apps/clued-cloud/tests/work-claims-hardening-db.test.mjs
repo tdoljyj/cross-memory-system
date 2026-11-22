@@ -262,6 +262,63 @@ test('work claims hardening: glob/glob overlap and pull request binding',
     const profile = (await admin.query('select clued_private.work_claim_profile_v1() p')).rows[0].p;
     assert.deepEqual([profile.max_active_per_session, profile.max_active_per_binding], [3, 10]);
 
+    // --- The session cap counts only claims in hand (Task e642d087): a claim
+    // whose Task has a PR the CI admission has seen open ('active') waits on
+    // the CI, not on the Agent. A relation only the holder's authorize_head
+    // wrote ('unknown') still counts; the Binding cap still counts every live
+    // claim. All through the real doors, on Binding B. ---
+    const handClaim = async (session, label) => committed(await claim(tokens.B, {
+      task_id: await createTask(`hand ${label}`), write_set: [`hand/${label}`], holder_session_ref: session })).claim;
+    const authorizeHead = async (c, prRef, head) => {
+      const { token, lease_key } = holders.get(c.claim_id);
+      const now = (await admin.query('select fence,lease_version from clued_private.work_claims_v1 where claim_id=$1', [c.claim_id])).rows[0];
+      committed(await call(token, 'clued_work_renew_v1', { scope: 'global', action: 'authorize_head', claim_id: c.claim_id,
+        fence: Number(now.fence), lease_version: Number(now.lease_version), lease_key, repository: prRef.split('#')[0],
+        head_sha: head, target_branch: 'main', pr_number: Number(prRef.split('#')[1]), idempotency_key: uuid() }));
+    };
+    const prStatus = async (c) => (await admin.query(`select array_agg(status order by pr_number) s
+      from clued_private.work_claim_pr_task_bindings_v1 where task_id=$1`, [c.task_id])).rows[0].s;
+    const hand = [];
+    // Three claims of session d1, each Task's PR seen open by the CI.
+    for (let i = 0; i < 3; i += 1) {
+      const c = await handClaim('d1', `d1-${i}`);
+      const prRef = `o/r#${901 + i}`;
+      const head = (0xd100 + i).toString(16).padStart(40, '0');
+      await authorizeHead(c, prRef, head);
+      const seen = await verify({ action: 'resolve_pr_claim', pr_ref: prRef, head_sha: head, base_sha: base,
+        target_branch: 'main', scope: undefined });
+      assert.equal(seen.binding_status, 'bound', JSON.stringify(seen));
+      assert.deepEqual(await prStatus(c), ['active']);
+      hand.push(c);
+    }
+    // A fourth claim of d1 is admitted: none of the three is in hand.
+    hand.push(await handClaim('d1', 'd1-3'));
+    // Three claims of session u1 whose PRs only the holder named: still in hand.
+    for (let i = 0; i < 3; i += 1) {
+      const c = await handClaim('u1', `u1-${i}`);
+      await authorizeHead(c, `o/r#${911 + i}`, (0xe100 + i).toString(16).padStart(40, '0'));
+      assert.deepEqual(await prStatus(c), ['unknown']);
+      hand.push(c);
+    }
+    over = await call(tokens.B, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(),
+      task_id: await createTask('hand u1-over'), write_set: ['hand/u1-over'], holder_session_ref: 'u1' });
+    assert.equal(over.error_code, 'work_claim_budget_exhausted', JSON.stringify(over));
+    assert.deepEqual([over.limit, over.active, over.delivered, over.active_binding], ['max_active_per_session', 3, 0, 7]);
+    // d1 fills its three hands; the next is refused and the refusal says
+    // how many of the session's live claims are delivered.
+    hand.push(await handClaim('d1', 'd1-4'), await handClaim('d1', 'd1-5'));
+    over = await call(tokens.B, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(),
+      task_id: await createTask('hand d1-over'), write_set: ['hand/d1-over'], holder_session_ref: 'd1' });
+    assert.equal(over.error_code, 'work_claim_budget_exhausted', JSON.stringify(over));
+    assert.deepEqual([over.limit, over.active, over.delivered, over.active_binding], ['max_active_per_session', 3, 3, 9]);
+    // The Binding cap counts delivered claims too: the tenth is the last.
+    hand.push(await handClaim('x1', 'x1-0'));
+    over = await call(tokens.B, 'clued_work_claim_v1', { scope: 'global', idempotency_key: uuid(),
+      task_id: await createTask('hand x2-over'), write_set: ['hand/x2-over'], holder_session_ref: 'x2' });
+    assert.equal(over.error_code, 'work_claim_budget_exhausted', JSON.stringify(over));
+    assert.deepEqual([over.limit, over.active, over.active_session], ['max_active_per_binding', 10, 0]);
+    for (const c of hand) committed(await release(tokens.B, c));
+
     // --- MINOR fixes (migration 20261002072000, Task 27b4f5e8). ---
     // Trigger refs: case-insensitive, and a short SHA matches its full SHA.
     const full = 'f7ba6ff312aa0e90095db1e28f5937920f30de3a';
