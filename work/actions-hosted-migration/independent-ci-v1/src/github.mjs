@@ -238,13 +238,13 @@ export function createGitHubChecksPort({ repository, repositoryId, appId, instal
     if (actual.status === expected.status && actual.conclusion === expected.conclusion && actual.output.title === expected.output.title) return 'completed';
     fail('staged_scan_readback_unconfirmed');
   }
-  // base.sha: the batch base T for every job that tests the head (v1 jobs have no testSha); a v2 train front batch
-  // (S != H) accepts what GitHub reads (job-v2.mjs#prBaseAcceptedV2, inlined: the v1 one-shot closure never loads
-  // job-v2.mjs), and both reads of one call must agree.
+  // base.sha: the batch base T for every v1 job (v1 jobs have no testSha); a v2 job accepts what GitHub reads
+  // (job-v2.mjs#prBaseAcceptedV2, inlined: the v1 one-shot closure never loads job-v2.mjs; bc982192: an S = H batch with push
+  // landing runs on the merge base of head and main, which stage 1 proves), and both reads of one call must agree.
   function exactPr(pr, job) {
-    const front = typeof job.testSha === 'string' && /^[0-9a-f]{40}$/.test(job.testSha) && job.testSha !== job.headSha;
+    const v2 = typeof job.testSha === 'string' && /^[0-9a-f]{40}$/.test(job.testSha);
     return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha
-      && /^[0-9a-f]{40}$/.test(pr.base?.sha ?? '') && (front || pr.base.sha === job.baseSha) && pr.base?.ref === 'main'
+      && /^[0-9a-f]{40}$/.test(pr.base?.sha ?? '') && (v2 || pr.base.sha === job.baseSha) && pr.base?.ref === 'main'
       && pr.head?.repo?.full_name === repository && pr.base?.repo?.full_name === repository
       && Number.isSafeInteger(pr.changed_files) && pr.changed_files > 0 && pr.changed_files <= 3000;
   }

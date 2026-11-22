@@ -16,9 +16,9 @@ import { digest } from './proof.mjs';
 import { networkFault } from './read-retry.mjs';
 import { verificationUnavailable } from './withdrawal-text.mjs';
 import { freshStamp, serverAnswerCurrent, retainServerAnswerForFacts } from './clock-skew.mjs';
-import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2 } from './job-v2.mjs';
+import { validateJobV2, claimGeneration, sameClaimGeneration, prBaseAcceptedV2, isTrainFrontJobV2 } from './job-v2.mjs';
 import { isCurrentMergeQueueHeadV2 } from './independent-control-checks-v2/queue-facts.mjs';
-import { evaluate, githubJson, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { evaluate, githubJson, mergeSlotState, VERIFY_RPC } from '../../../../scripts/ci/clued-work-admission.mjs';
 import { normalizePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
 
 import { FULL_ADMISSION_CONTRACT_V2, FULL_ADMISSION_CONTRACT_V3, effectiveGuard, supportedNativeExecution, ownerKind, reasonCodes, sanitizeAdmissionDiagnosticV2, sanitizeSchedulingV2, schedulingFactsV2, verdict } from './admission-facts-v2.mjs';
@@ -68,6 +68,22 @@ function packetValid(job, packet) {
 }
 // The PR's base.sha: the batch base for a batch that tests the head; for a train front batch (S != H) the commit GitHub
 // reads, which every read of one admission must report alike (`base`: the first read's; design v0.5 §5.7).
+// bc982192: GitHub's compare of base...x is 'ahead' or 'identical' exactly when x contains base.
+async function baseOnMain(readFetch, env, job) {
+  for (const to of [job.headSha, 'main']) {
+    const c = await githubJson(readFetch, env, `/repos/${REPO}/compare/${job.baseSha}...${to}`);
+    if (!['ahead', 'identical'].includes(c?.status)) return false;
+  }
+  return true;
+}
+// bc982192 (push landing): a train front batch tests S = merge(T, H...), which contains main's tip T even when H does not; the
+// evaluator judged H (not_needed). On exactly that tip, outside the protected layer (whose head must still contain the tip:
+// MergeAdmission v0.2 §2.4, the evaluator rejects it), the slot is the claim's own, by the evaluator's same rule (mergeSlotState).
+function frontSlot(job, outcome, native) {
+  const slot = outcome.merge_slot;
+  if (!isTrainFrontJobV2(job) || slot?.state !== 'not_needed' || slot.tip !== job.baseSha || outcome.admission_mode?.layer === 'protected') return structuredClone(slot);
+  return mergeSlotState({ repository: REPO, branch: 'main', tip: job.baseSha, upToDate: true, claim: native?.claim ?? null, verifiedAt: native?.verified_at ?? null });
+}
 function samePr(pr, job, base = null) {
   return pr?.number === job.pr && pr.state === 'open' && pr.head?.sha === job.headSha && prBaseAcceptedV2(job, pr.base?.sha)
     && (base === null || pr.base.sha === base)
@@ -181,6 +197,11 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
         const pr = prResult.value;
         if (!samePr(pr, job)) return blocked('full_admission_subject_changed');
         const prBase = pr.base.sha;
+        // bc982192 (push landing): an S = H batch whose base is not the PR's base.sha runs on the merge base of the head and main; it
+        // counts only while GitHub shows it an ancestor of the head and of main's tip (or that tip). Equal to base.sha: as before.
+        phase = 'base';
+        if (!isTrainFrontJobV2(job) && prBase !== job.baseSha && !(await baseOnMain(readFetch, env, job))) return blocked('full_admission_subject_changed');
+        phase = 'pull_request';
         // The evaluator resolves Native's current PR -> Task -> claim. Source
         // does not repeat that RPC or trust an advisory body/commit trailer.
         // The age of Native's answer is measured on this host's monotonic clock from the send of its verify call
@@ -249,7 +270,7 @@ export function createFullAdmissionPortV2({ protectedConfig, tokenProvider, mode
           ...(active ? { publicationRequired: true, headAuthorizationId: guarded ? native.head_authorization_id : null } : {}),
           mergeQueueHead: isCurrentMergeQueueHeadV2(claim, observedClaim, job, finished),
           mode: { state: outcome.admission_mode.state, layer: outcome.admission_mode.layer, policyVersion: outcome.admission_mode.policy_version },
-          mergeSlot: structuredClone(outcome.merge_slot), ownerReview: outcome.owner_review ? {
+          mergeSlot: frontSlot(job, outcome, native), ownerReview: outcome.owner_review ? {
             kind: outcome.owner_review.kind, grantId: outcome.owner_review.grant_id, carriedFrom: outcome.owner_review.carried_from ?? null } : null,
           workflowGateFindings: [...(outcome.workflow_gate_findings ?? [])], observedAt: new Date(finished).toISOString(),
           claimExpiresAt: claim.expires_at, modeProofRef: mode.proofRef, observationRef: observation.observationRef,

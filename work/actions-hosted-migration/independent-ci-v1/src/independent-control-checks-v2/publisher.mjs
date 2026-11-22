@@ -526,7 +526,9 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         if (!TRAIN_WAITED.includes(train.reason)) { await extendOnce(); return { ready: false, reason: train.reason, polls, scheduling }; }
         lastTrain = train.reason;
       }
-      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
+      // bc982192: with push landing an S = H batch runs on the merge base of its head and main, never main's tip; main moving past it
+      // ends nothing (the train front batch on the tip lands it). A front batch, and github-merge, still need the tip.
+      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha && !(push && !isTrainFrontJobV2(slotJob))) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
       if (observed && claimAssist) {
         await extendOnce();
         if (!joinAsked && scheduling?.mergeQueue?.entered === false) {

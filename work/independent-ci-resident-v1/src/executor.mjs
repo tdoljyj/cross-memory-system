@@ -1807,6 +1807,9 @@ export class ResidentExecutor {
     try { this.reportLimits(await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null, budgetTimes: true }), now); } catch { /* a view: the next tick tries again */ }
   }
 
+  // bc982192: push landing in force for this service (the train on, its installed landing push): S = H batches run on a merge base.
+  pushLanding() { return this.policy.train.enabled === 'on' && trainLandingMode(this.policy.train) === 'push'; }
+
   // The status board's `train` (status.mjs): the mode and the newest summary as in step 3c-1; the sweep, the revoke-head request,
   // onSince and NOT_ON_DUTY only when they have a value.
   trainStatus() {
@@ -3673,8 +3676,9 @@ export class ResidentExecutor {
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
       if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
-      // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase).
-      if (s?.code === RESIDENT_BASE_MOVED && s.kind === 'ignored') this.queue.stopBase(subject.baseSha, RESIDENT_BASE_MOVED, now);
+      // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase). bc982192: with
+      // push landing the other rows on that base run on the merge base of their head and main, which main moving never ends.
+      if (s?.code === RESIDENT_BASE_MOVED && s.kind === 'ignored' && !this.pushLanding()) this.queue.stopBase(subject.baseSha, RESIDENT_BASE_MOVED, now);
       if (settled === 'stopped') {
         const capCode = network && networkReleases24h >= this.networkPolicy()?.releasesPerHeadPer24h ? 'NETWORK_RELEASE_CAP_REACHED'
           : counted && releases24h >= this.policy.limits.releasesPerHeadPer24h ? 'RELEASE_CAP_REACHED' : null;

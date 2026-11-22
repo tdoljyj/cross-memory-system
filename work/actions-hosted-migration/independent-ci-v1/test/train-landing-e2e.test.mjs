@@ -28,6 +28,10 @@ import { validateTrainFacts, REQUIRED_CHECKS_MAX_WAIT_MS } from '../src/independ
 import { parseLandingArg } from '../src/resident-v2/invoke-stage.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
+import { mergeSlotState } from '../../../../scripts/ci/clued-work-admission.mjs';
+import { Poller, MAIN_REF_ROUTE, PULLS_ROUTE } from '../../../independent-ci-resident-v1/src/poller.mjs';
 import { WindowsEngine, DESCRIPTOR_CHAIN_CONTRACT, DESCRIPTOR_CONTRACT } from '../../../independent-ci-resident-v1/src/engine-windows.mjs';
 import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident-v1/src/train.mjs';
 import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from '../../../independent-ci-resident-v1/src/admission-rerun.mjs';
@@ -62,7 +66,7 @@ const rulesetsOf = kind => new Map(kind === 'push'
   ? [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'always' }], [FF_RS, { id: FF_RS, currentUserCanBypass: 'never' }]]
   : [[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never' }]]);
 
-async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push' }) {
+async function world(t, { prs, bad = () => false, sharedClaim = false, rules = 'push', behind = 0 }) {
   const e = await setup(t, { strict: true, fullDone: false, native: healthy, tick: 1 });
   e.claimFor = sharedClaim ? () => claimOf(prs[0]) : claimOf;
   e.native.bindings = new Map(prs.map(pr => [pr, { claimId: e.claimFor(pr), scope: SCOPE, headAuthorizationId: claimOf(pr) }]));
@@ -76,7 +80,10 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   let mergesMade = 0;
   W.merge = merge; W.ancestor = ancestor;
   const T0 = commit(h('T0'), [], []);
-  W.refs.set('heads/main', T0);
+  // behind: main has moved that many commits past T0, the commit every PR head is on (nobody merged main into them).
+  let tip = T0;
+  for (let i = 1; i <= behind; i++) tip = commit(h(`M${i}`), [tip], Array.from({ length: i }, (_, k) => `m${k + 1}`));
+  W.refs.set('heads/main', tip); W.T0 = T0;
   // GitHub Actions: the four required checks of the main ruleset, by their own names
   const actions = sha => {
     for (const name of FOUR) {
@@ -205,7 +212,7 @@ async function stage8(t, e, b, { trainLanding = { landing: 'push', batchMax: 4, 
   e.journal ??= await EffectJournal.open(path.join(await tempDir(t), 'effects'));
   const publisher = createFixtureControlPublisherV2({ github: e.gh, journal: e.journal, trainMode: 'on', batchClaim: claimGeneration(claim(b.pr)), slotNative: e.native.port,
     sweepStore: e.store, greenLedger: e.ledger, pullsUpdatedSince: cursor => e.gh.readPullsUpdatedSince(cursor),
-    admission: { async evaluatePr(job, packet, options) {
+    admission: e.admission ?? { async evaluatePr(job, packet, options) {
       const front = e.queue[0] === job.pr;
       options?.scheduling?.({ mergeQueue: { entered: e.queue.includes(job.pr), state: front ? 'head' : 'waiting', position: e.queue.indexOf(job.pr) + 1 }, claimExpiresAt: iso(e.now + 3_600_000) });
       const { observationSha256, ...base } = admittedFacts(job, claim(job.pr), packet, { domain: 'fixture', mergeQueueHead: front, batchClaim: options?.batchClaim, observedAt: e.now, slotUntil: e.now + 600_000 });
@@ -1506,4 +1513,184 @@ test('D6 §8.4 (b): the same refused state beside a landing batch of this node -
   }
   assert.deepEqual(e.W.pushes, []);
   assert.equal(e.main(), T);
+});
+
+// ---- bc982192 (replan §3.3, cause 甲): push landing admits a head behind main on its merge base ----
+// The real resident poller, the real Source v2 full admission (fixture domain; its evaluator answers the merge slot with the real
+// scripts/ci mergeSlotState: not_needed for a head that does not contain main's tip), the real stage 8 and stage 10.
+const reach = (W, sha) => { const seen = new Set(), todo = [sha]; while (todo.length) { const x = todo.pop(); if (seen.has(x)) continue; seen.add(x); todo.push(...(W.commits.get(x)?.parents ?? [])); } return seen; };
+function mergeBaseOf(W, a, b) {
+  const inB = reach(W, b);
+  const common = [...reach(W, a)].filter(x => inB.has(x));
+  return common.find(x => common.every(y => y === x || !W.ancestor(x, y))) ?? null;
+}
+// gh as the poller calls it: the main ref and the open pulls with --include, compare with its --jq projection.
+function pollerRun(e) {
+  return async argv => {
+    const route = argv.find(a => a.startsWith('repos/')) ?? '';
+    const included = v => ({ code: 0, stdout: `HTTP/1.1 200 OK\n\n${JSON.stringify(v)}` });
+    if (route === MAIN_REF_ROUTE(REPO)) return included({ object: { sha: e.main() } });
+    if (route === PULLS_ROUTE(REPO)) return included([...e.W.pulls.values()].filter(p => p.state === 'open').map(p => ({ number: p.number,
+      head: { sha: p.head }, base: { sha: e.W.T0 }, draft: false, updated_at: p.updated }))); // GitHub's base.sha: where main was at the last push
+    const m = /compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})/.exec(route);
+    if (m) {
+      const inHead = reach(e.W, m[2]);
+      const behindBy = [...reach(e.W, m[1])].filter(x => !inHead.has(x)).length;
+      return { code: 0, stdout: JSON.stringify({ behind_by: behindBy, base: m[1], merge_base: mergeBaseOf(e.W, m[1], m[2]) }) };
+    }
+    return { code: 9, stdout: '' };
+  };
+}
+const BINDING_ID = '0b1d0000-2222-4333-8444-555555555555';
+const taskOf = pr => `${String(pr).padStart(8, '0')}-3333-4333-8444-555555555555`;
+// The full admission port of stage 1 and stage 8, over the world: GitHub reads from it, Native's verify from its queue.
+function realAdmission(e) {
+  const W = e.W, ref = `merge:${REPO}:main`, policyText = '{"policy":"fixture"}';
+  const config = { domain: 'fixture', repository: REPO, scope: SCOPE, workspace: os.tmpdir(), sourceManifestSha256: SOURCE, evaluatorSha256: digest('EVALUATOR'),
+    policyText, policySha256: digest(policyText), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref',
+    publishableKey: 'sb_publishable_fixture', supabaseUrl: 'https://fixture.supabase.co' };
+  const answer = v => ({ ok: true, status: 200, json: async () => structuredClone(v) });
+  const fetchImpl = async url => {
+    const p = new URL(url).pathname;
+    let m = /\/pulls\/(\d+)$/.exec(p);
+    if (m) return answer(await e.gh.readPullRequest(Number(m[1])));
+    m = /\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40}|main)$/.exec(p);
+    if (m) { const c = await e.gh.readCompare(m[1], m[2] === 'main' ? e.main() : m[2]); return answer({ status: c.status, ahead_by: c.aheadBy, behind_by: c.behindBy }); }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const evaluateImpl = async ({ event, observation_recorder }) => {
+    const pr = event.pull_request, n = pr.number, head = pr.head.sha, main = e.main(), prRef = `${REPO}#${n}`, claimId = e.claimFor(n);
+    const at = e.queue.indexOf(n), until = iso(e.now + 600_000), paths = [...W.pulls.get(n).paths];
+    const claim = { claim_id: claimId, task_id: taskOf(n), fence: 3, execution_epoch: 1, context_key: SCOPE, status: 'ACTIVE', bound_pr: prRef,
+      expires_at: iso(e.now + 3_600_000), lease_key_required: false, execution_handover_pending: false, merge_slot_until: until, trigger_refs: [ref],
+      merge_queue: at < 0 ? [] : [{ ref, state: at === 0 ? 'head' : 'waiting', position: at + 1, ahead: at === 0 ? [] : e.queue.slice(0, at).map(x => ({ claim_id: e.claimFor(x) })),
+        head: { claim_id: e.claimFor(e.queue[0]), bound_pr: `${REPO}#${e.queue[0]}`, since: iso(e.now - 1000), until } }] };
+    const native = { status: 'ok', verdict: 'ADMITTED', execution_authorized: true, execution_policy: 'staged', current_fence: 3, execution_epoch: 1,
+      bound_pr: prRef, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha, verified_at: iso(e.now), paths_outside_write_set: [], claim };
+    observation_recorder.record('claim_verification', { result: { payload: native } });
+    const upToDate = W.ancestor(main, head), layer = (e.layerOfPaths ?? (() => 'code'))(paths);
+    // evaluate()'s check_and_strict of the protected layer (clued-work-admission.mjs, protected_change_not_up_to_date): unchanged here
+    const rejected = layer === 'protected' && !upToDate;
+    return { admitted: !rejected, verdict: rejected ? 'REJECTED' : 'ADMITTED', reasons: rejected ? [`protected_change_not_up_to_date:${main}`] : [],
+      head_sha: head, base_sha: pr.base.sha, pr_ref: prRef, claim_id: claimId, task_id: taskOf(n), scope: SCOPE, changed_paths: paths,
+      claim_binding: { status: 'ok', binding_status: 'bound', reason: null, repository: REPO, pr_number: n, pr_ref: prRef, head_sha: head, base_sha: pr.base.sha,
+        target_branch: 'main', scope: SCOPE, task_id: taskOf(n), claim: { claim_id: claimId, task_id: taskOf(n), context_key: SCOPE, fence: 3, execution_epoch: 1,
+          lease_version: 1, expires_at: claim.expires_at, status: 'ACTIVE', execution_handover_pending: false }, head_authorization_id: null, auto_bound: false, receipt_id: null },
+      admission_mode: { state: 'normal', layer, policy_version: 1 },
+      merge_slot: mergeSlotState({ repository: REPO, branch: 'main', tip: main, upToDate, claim, verifiedAt: native.verified_at }),
+      owner_review: null, workflow_gate_findings: [] };
+  };
+  return createFullAdmissionPortV2({ protectedConfig: config, clock: () => e.now, monotonic: () => e.now, fetchImpl,
+    tokenProvider: async () => ({ githubToken: 'gh-fixture', ciAdmissionToken: ['clued', 'bnd', 'fixture123'].join('_'), ciPrincipalBindingId: BINDING_ID, ciPrincipalQualificationRef: 'qualification-ref' }),
+    modeProvider: async () => ({ complete: true, repository: REPO, variable: 'CLUED_MERGE_ADMISSION_STATE', source: 'github-repository-variables', exists: false, observedAt: iso(e.now), proofRef: 'mode-proof' }),
+    recorderProvider: async () => ({ kind: 'independent-controller', domain: 'fixture', observedAt: iso(e.now), observationRef: 'obs', recorder: { newId: () => h(`id:${e.now}:${Math.random()}`), record() {} } }),
+    fixtureHooks: { evaluatorReader: () => 'EVALUATOR', evaluateImpl } });
+}
+// Stage 1 (S = H) of every trigger the poller wrote: the real full admission; then that batch's stage 8 (it parks: not the train front).
+async function stageOneAll(t, e, triggers) {
+  const out = [];
+  for (const g of triggers) {
+    const job = batchJobsV2({ repo: REPO, pr: g.pr, headSha: g.headSha, baseSha: g.baseSha, testSha: g.headSha, sourceManifestSha256: SOURCE, createdAt: iso(e.now), attempt: 1 })['control-admission'];
+    const facts = await e.admission.evaluatePr(job, await e.gh.readChangedPaths(job));
+    const p8 = facts.status === 'ADMITTED' ? await stage8(t, e, { pr: g.pr, headSha: g.headSha, baseSha: g.baseSha, testSha: g.headSha, attempt: 1 }) : null;
+    out.push({ pr: g.pr, status: facts.status, reason: facts.reason ?? null, slot: facts.mergeSlot?.state ?? null, stage8: p8 ? [p8.status, p8.reason ?? null] : null });
+  }
+  return out;
+}
+const pollOnce = async (e, landing) => {
+  const triggers = [];
+  const poller = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => e.now, writeTrigger: async v => { triggers.push(v); }, landing: async () => landing });
+  await poller.pass();
+  return { triggers, pulls: poller.lastPass?.pulls ?? null };
+};
+
+test('push C3 (cause 甲): three PRs each two commits behind main, nobody merges main -> admitted on their merge base -> one batch of three lands within 30 minutes', async t => {
+  const prs = [1301, 1302, 1303];
+  const e = await world(t, { prs, behind: 2 });
+  e.admission = realAdmission(e);
+  const start = e.now, T0 = e.W.T0, M2 = e.main(), heads = prs.map(e.head);
+  assert.ok(prs.every(pr => !e.W.ancestor(M2, e.head(pr))), 'every head is behind main');
+  // ring 1: the poller proposes each head on its merge base with main (T0), not main's tip
+  const { triggers, pulls } = await pollOnce(e, 'push');
+  assert.deepEqual(triggers.map(g => [g.pr, g.headSha, g.baseSha]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, e.head(pr), T0]), JSON.stringify(pulls));
+  // ring 2: stage 1's full admission admits S = H on T0 (the head does not contain main: merge slot not_needed); ring 3: its stage 8 never
+  // ends the base because main is past it
+  const one = await stageOneAll(t, e, triggers);
+  for (const r of one) {
+    assert.equal(r.status, 'ADMITTED', JSON.stringify(r));
+    assert.equal(r.slot, 'not_needed', JSON.stringify(r));
+    assert.notEqual(r.stage8?.[1], 'RESIDENT_BASE_MOVED', JSON.stringify(r));
+  }
+  // ring 4: stage 10 composes merge(M2, H...) and stage 8 (the real admission: the front's tested S contains main) pushes it
+  let batch = null;
+  const log = await drive(t, e, { until: () => prs.every(pr => e.W.pulls.get(pr).merged), opened: async (r, b) => { batch ??= b; } });
+  assert.ok(prs.every(pr => e.W.pulls.get(pr).merged), JSON.stringify(log));
+  assert.equal(e.W.pushes.length, 1, JSON.stringify(log));
+  assert.equal(new Set(prs.map(pr => e.W.pulls.get(pr).mergeSha)).size, 1, 'one batch');
+  assert.equal(batch.baseSha, M2);
+  assert.ok(e.W.ancestor(M2, e.main()), 'main only fast-forwarded');
+  assert.deepEqual(prs.map(e.head), heads, 'no head was changed: nobody merged main into a PR');
+  assert.ok(e.now - start <= 30 * 60_000, `landed after ${(e.now - start) / 60_000} minutes`);
+});
+
+test('C3 regression, github-merge: a head behind main is still told merge-main and proposed to no stage (also without a landing port, or when it cannot be read)', async t => {
+  const e = await world(t, { prs: [1331], behind: 2, rules: 'today' });
+  for (const landing of ['github-merge', undefined, 'unknown']) {
+    const { triggers, pulls } = await pollOnce(e, landing);
+    assert.deepEqual(triggers, [], String(landing));
+    assert.deepEqual(pulls.map(p => [p.pr, p.eligible, p.hint, p.behindBy]), [[1331, false, 'merge-main', 2]], String(landing));
+  }
+  // a broken landing port is github-merge too
+  const triggers = [];
+  const poller = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => e.now, writeTrigger: async v => { triggers.push(v); }, landing: async () => { throw new Error('status unreadable'); } });
+  await poller.pass();
+  assert.deepEqual(triggers, []);
+  assert.equal(poller.lastPass.pulls[0].hint, 'merge-main');
+  // a head that contains main's tip: proposed on main's tip, exactly as before
+  const up = await world(t, { prs: [1332] });
+  const r = await pollOnce(up, 'github-merge');
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]), [[1332, up.main()]]);
+});
+
+test('C3 regression, protected layer: a protected head behind main is still refused at stage 1 (it must contain main\'s tip) and never opens a batch', async t => {
+  const e = await world(t, { prs: [1311], behind: 2 });
+  e.layerOfPaths = LAYER;
+  e.W.pulls.get(1311).paths = ['scripts/ci/x.mjs'];
+  e.admission = realAdmission(e);
+  const { triggers } = await pollOnce(e, 'push');
+  assert.equal(triggers.length, 1, 'the poller does not judge layers');
+  const [one] = await stageOneAll(t, e, triggers);
+  assert.deepEqual([one.status, one.reason], ['BLOCKED', 'full_admission_rejected'], JSON.stringify(one));
+  const decisions = [];
+  for (let i = 0; i < 4; i++) { const r = await stage10(e); decisions.push(r.facts.decision); assert.equal(r.facts.openFrontBatch ?? null, null, JSON.stringify(decisions)); }
+  assert.deepEqual(e.W.pushes, []);
+  assert.equal(e.W.pulls.get(1311).merged, false);
+});
+
+test('C3 rider rule: a PR whose head has a failed required check never rides; the batch lands the others in one push', async t => {
+  const prs = [1321, 1322, 1323];
+  const e = await world(t, { prs, bad: content => content.has('1322') });
+  assert.deepEqual(await firstBatchMembers(e), [1321, 1323]);
+  const log = await drive(t, e, { until: () => e.W.pulls.get(1321).merged && e.W.pulls.get(1323).merged });
+  assert.ok(e.W.pulls.get(1321).merged && e.W.pulls.get(1323).merged, JSON.stringify(log));
+  assert.equal(e.W.pulls.get(1321).mergeSha, e.W.pulls.get(1323).mergeSha, 'one batch');
+  assert.equal(e.W.pulls.get(1322).merged, false);
+});
+
+test('C3 descriptor: the resident writes baseRule on-main only for an S = H batch while the train is on with push landing', async t => {
+  const describe = async (engine, root, subject) => {
+    const batch = await engine.derive(subject, createHash('sha256').update(JSON.stringify(subject)).digest('hex'));
+    return JSON.parse(await fs.readFile(path.join(root, 'outbox', batch.batchId, 'descriptor.json'), 'utf8'));
+  };
+  const head = h('c3-head'), base = h('c3-merge-base'), S = h('c3-S');
+  const sh = { repo: REPO, pr: 1340, headSha: head, baseSha: base, sourceManifestSha256: CI_SOURCE, attempt: 1 };
+  const { engine, root } = await residentEngine(t);
+  engine.trainMode = 'on';
+  assert.equal((await describe(engine, root, sh)).baseRule, 'on-main');
+  assert.equal((await describe(engine, root, { ...sh, testSha: head })).baseRule, 'on-main');
+  assert.equal(Object.hasOwn(await describe(engine, root, { ...sh, testSha: S }), 'baseRule'), false, 'a front batch runs on main\'s tip');
+  engine.trainMode = 'shadow';
+  assert.equal(Object.hasOwn(await describe(engine, root, sh), 'baseRule'), false);
+  engine.trainMode = 'on'; engine.trainLanding = { landing: 'github-merge', batchMax: 1 };
+  assert.equal(Object.hasOwn(await describe(engine, root, sh), 'baseRule'), false, 'github-merge: main must be the base');
 });

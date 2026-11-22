@@ -115,6 +115,18 @@ def is_chain(d):
     return d.get('contract') == DESCRIPTOR_CHAIN_CONTRACT
 
 
+# bc982192: the descriptor's optional baseRule 'on-main' (push landing, S = H; the twin of build-bundle.ps1#Read-Descriptor): baseSha is
+# an ancestor of the head and of main's tip, or that tip (base_on_main). Absent: main's tip must be baseSha, as before.
+def on_main(d):
+    return d.get('baseRule') == 'on-main'
+
+
+# Pure over a reader: count(a, b) is `git rev-list --count a..b` (commits of b that a lacks). base is an ancestor of head and of main,
+# or main itself, exactly when neither lacks a commit of base.
+def base_on_main(count, base, head, main):
+    return all(str(count(x, base)).strip() == '0' for x in (head, main))
+
+
 def chain_ok(parents_line, d):
     """Descriptor /4 (pure over a reader): parents_line(sha) is `git rev-list --parents -n 1 <sha>`. From S back along first parents,
     step k (N..1) must be exactly '<S_k> <S_(k-1)> <H_k>', and S_0 must be T. Any other shape (a parent missing, a third parent, another
@@ -141,6 +153,7 @@ def validate_descriptor(d, batch_id):
         need(chain_members_ok(d), 'BATCH_CHAIN_DESCRIPTOR_REFUSED')
     else:
         need('members' not in d and 'testTree' not in d, 'DESCRIPTOR_REFUSED')
+    need('baseRule' not in d or (on_main(d) and not is_chain(d) and d['testSha'] == d['headSha']), 'DESCRIPTOR_REFUSED')
     ids = d.get('linuxJobIds')
     need(isinstance(ids, list) and len(ids) == 3 and all(isinstance(j, str) and HEX64.fullmatch(j) for j in ids), 'DESCRIPTOR_REFUSED')
     for role, jid in zip(LINUX_ROLES, ids):
@@ -422,7 +435,7 @@ def prepare(batch_id):
     with open(sealed, 'rb') as f:
         header = f.read(8 << 20)
     formal, reviewed, test = parse_bundle_header(header)
-    need(formal.get('refs/heads/main') == d['baseSha'], 'REMOTE_MAIN_BASE_CHANGED')
+    need(formal.get('refs/heads/main') == d['baseSha'] or (on_main(d) and HEX40.fullmatch(formal.get('refs/heads/main') or '')), 'REMOTE_MAIN_BASE_CHANGED')
     need(ref_list_sha(formal) == receipt['refListSha256'] and ref_list_sha(reviewed) == receipt['reviewedRefListSha256']
          and ref_list_sha(test) == receipt['testRefListSha256'], 'BUNDLE_REFS_DIFFER_FROM_RECEIPT')
     need(test == expected_test_refs(d), 'EXACT_TEST_REF_REQUIRED')
@@ -458,6 +471,8 @@ def prepare(batch_id):
             need(refs == {**formal, **reviewed, **test}, 'STORE_REFS_DIFFER_FROM_BUNDLE')
             for c in (d['headSha'], d['baseSha']):
                 need(git(['--git-dir', gd, 'cat-file', '-t', c]).strip() == 'commit', 'HEAD_BASE_COMMIT_MISSING')
+            need(not on_main(d) or base_on_main(lambda a, b: git(['--git-dir', gd, 'rev-list', '--count', f'{a}..{b}']),
+                                                d['baseSha'], d['headSha'], formal['refs/heads/main']), 'REMOTE_MAIN_BASE_CHANGED')
             if test:
                 # S must be GitHub's merge of exactly [T, H] (design v0.5 §5.2), or for /4 the members' cumulative merge on T (ADR 0019):
                 # checked on the objects themselves.

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { COMPANION_CONFIG_CONTRACT, Companion, validateCompanionConfig } from '../src/companion.mjs';
 import { describe } from '../src/pr-status.mjs';
 import { TEST_NODE, TEST_NODE_SHA, executorFixture, fakeEngine, triggerBytes } from './helpers.mjs';
+import { ResidentExecutor } from '../src/executor.mjs';
 
 const MIN = 60_000;
 const H = n => String(n).repeat(40).slice(0, 40);
@@ -93,4 +94,22 @@ test('a real environment fault of the bundle still counts: three of them open th
   for (const n of [1, 2, 3]) assert.deepEqual((await f.exec.tick()).failureCode, 'BUNDLE_UNAVAILABLE', `PR ${n}`);
   assert.equal(f.queue.breaker.state, 'open');
   assert.equal((await f.exec.tick()).reason, 'BREAKER_OPEN');
+});
+
+// bc982192: with push landing an S = H row runs on the merge base of its head and main, which main moving never ends: one subject that
+// found its base gone (a front on the old tip) stops alone, the rows on that base keep their place.
+test('push landing: a subject answered RESIDENT_BASE_MOVED stops alone; the other rows on its base are not stopped', async t => {
+  const moved = { ok: false, code: 'RESIDENT_BASE_MOVED' };
+  const f = await fixture(t, { 1: moved });
+  f.exec.pushLanding = () => true;
+  for (const n of [1, 2, 3]) await f.drop(triggerBytes({ pr: n, headSha: H(n) }));
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_EXECUTED', 'RESIDENT_BASE_MOVED']);
+  assert.equal(f.queue.row(1).state, 'STOPPED');
+  for (const n of [2, 3]) assert.equal(f.queue.row(n).state, 'QUEUED', `PR ${n}`);
+  assert.equal((await f.exec.tick()).state, 'COMPLETED', 'PR 2 runs next on the same base');
+  // in force only with the train on and push landing installed
+  const on = train => ResidentExecutor.prototype.pushLanding.call({ policy: { train } });
+  assert.deepEqual([on({ enabled: 'on', landing: 'push' }), on({ enabled: 'on', landing: 'github-merge' }), on({ enabled: 'shadow', landing: 'push' }), on({ enabled: 'on' })],
+    [true, false, false, false]);
 });

@@ -245,6 +245,9 @@ export async function main(args = process.argv.slice(2)) {
   const poller = new Poller({
     repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => advisory.run(a, o), clock: Date.now,
     writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
+    // bc982192: push landing (the service's status board: the train on and its installed landing push) proposes a head behind main on
+    // its merge base; any other answer, or a status it cannot read, is github-merge.
+    landing: async () => { const s = await readStatus(values.root); return s?.train?.enabled === 'on' && s.train.landing === 'push' ? 'push' : 'github-merge'; },
   });
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
   // resident's directories.

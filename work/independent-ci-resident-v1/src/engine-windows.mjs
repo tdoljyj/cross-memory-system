@@ -50,6 +50,9 @@ export const DESCRIPTOR_CONTRACT = 'clued.independent-ci.resident-batch-descript
 // Written only for a batch whose stage 10 named members, and stage 10 names members only when this engine told it the installed
 // components take /4 (batchChainSupported).
 export const DESCRIPTOR_CHAIN_CONTRACT = 'clued.independent-ci.resident-batch-descriptor/4';
+// bc982192: the descriptor's optional baseRule. 'on-main': baseSha is an ancestor of the head and of main's tip, or that tip (push
+// landing, S = H); absent: main's tip is baseSha (build-bundle.ps1 and prepare-workspaces.py read it; neither accepts another value).
+export const DESCRIPTOR_BASE_RULE_ON_MAIN = 'on-main';
 // The literals batchChainSupported looks for in the installed Source v2 (resident-v2/): the bundle and the workspace preparation take
 // /4, and the invoker takes the stage-10 argument ':chain' (Source v2 invoke-stage.mjs#parseLandingArg).
 export const BATCH_CHAIN_SOURCE_MARKERS = Object.freeze([
@@ -502,8 +505,12 @@ export class WindowsEngine {
     check(chain === null || c !== null, 'RESIDENT_DERIVATION_REFUSED');
     const dir = path.join(this.paths.outboxRoot, batchId);
     await ensureDir(dir);
+    // bc982192: with push landing an S = H batch runs on the merge base of its head and main; the bundle scripts then require only that
+    // baseSha be an ancestor of the head and of main's tip (or that tip). Without baseRule (github-merge, a front batch, an older
+    // script that ignores it): main's tip must be baseSha exactly, as before.
+    const onMain = this.trainMode === 'on' && this.trainLanding?.landing === 'push' && v.testSha === subject.headSha;
     await writeNew(path.join(dir, 'descriptor.json'), { contract: c ? DESCRIPTOR_CHAIN_CONTRACT : DESCRIPTOR_CONTRACT, batchId, batchKey: key, repo: subject.repo, pr: subject.pr,
-      headSha: subject.headSha, baseSha: subject.baseSha, testSha: v.testSha, ...(c ? { testTree: c.testTree, members: c.members } : {}), attempt: subject.attempt,
+      headSha: subject.headSha, baseSha: subject.baseSha, ...(onMain ? { baseRule: DESCRIPTOR_BASE_RULE_ON_MAIN } : {}), testSha: v.testSha, ...(c ? { testTree: c.testTree, members: c.members } : {}), attempt: subject.attempt,
       ciSourceManifestSha256: v.ciSourceManifestSha256, sourceCommit: v.sourceCommit, gitleaksTomlSha256: v.gitleaksTomlSha256, linuxJobIds, createdAt: v2.createdAt });
     return { batchId, key, dir: out, packageSha256: v.packageSha256, stages: v.stages, ciSourceManifestSha256: v.ciSourceManifestSha256 };
   }
