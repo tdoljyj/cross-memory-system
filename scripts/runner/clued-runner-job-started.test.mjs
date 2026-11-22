@@ -22,7 +22,7 @@ const env = (overrides = {}) => ({
 });
 // A real pull request event names both repositories; a same-repository pull request by default (04f9b91b 题 1).
 const prEvent = (base = "main", headRepo = { full_name: "o/r" }) => JSON.stringify({ pull_request: { number: 9,
-  base: { ref: base, repo: { full_name: "o/r" } }, head: { sha: HEAD, ...(headRepo === undefined ? {} : { repo: headRepo }) } } });
+  base: { ref: base, repo: { full_name: "o/r" } }, head: { sha: HEAD, ...(headRepo === "absent" ? {} : { repo: headRepo }) } } });
 
 test('bors staging: only the required-tests workflow pushed by App 5368905 may be considered off main', async () => {
   const staging = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/clued-train/staging',
@@ -501,7 +501,7 @@ test("runner hook (04f9b91b, 3): a fork's pull_request_target into main is refus
 });
 test("runner hook (04f9b91b, 4): no readable head or base repository (a deleted fork) refuses on both events", async () => {
   let result, calls;
-  for (const headRepo of [null, undefined, {}, { full_name: "" }]) {
+  for (const headRepo of [null, "absent", {}, { full_name: "" }]) {
     ({ result } = await run({}, { [COMPARE]: files() }, prEvent("main", headRepo)));
     assert.deepEqual([result.allow, result.reason],
       [false, "pull request #9 comes from an unreadable head repository (a deleted fork?), not o/r; a fork's head never runs on this runner"],
@@ -627,7 +627,7 @@ test("runner hook: exit codes, enforcement and failures", async () => {
     assert.match(lines.at(-1), /ALLOW push on main/);
   } finally { console.log = log; }
   // Each line names the hook's version, so the Owner can check every runner's copy.
-  assert.equal(HOOK_VERSION, "required-tests-dispatch-v1");
+  assert.equal(HOOK_VERSION, "fork-refusal-v1");
   assert.ok(lines.length >= 5);
   const observations = lines.filter((line) => line.startsWith("clued-r9-pre-job: "));
   const diagnostics = lines.filter((line) => !line.startsWith("clued-r9-pre-job: "));

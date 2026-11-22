@@ -18,6 +18,14 @@ Task `869d2db7`, Owner Decision `b0c53143`. Every self-hosted runner that serves
 
 ## What it allows
 
+### fork 来源一律拒（04f9b91b 题 1）
+
+`fork-refusal-v1` 只增加一条：`pull_request` 与 `pull_request_target` 两个分支里，
+PR 的 head.repo 或 base.repo 不是本仓库（比较不分大小写），或读不到（fork 已删时
+head.repo 为 null），即拒，不读 head、不查准入。其余规则不变。合入即发布（loader
+从 main 读）；fork PR 被批准后各门作业在 “Set up runner” 显示
+`REFUSE pull request #N comes from fork … [hook fork-refusal-v1]`。
+
 ### 必需运行缺失补发后继（G3，Task 7067280f）
 
 `required-tests-dispatch-v1` / component `1.0.5` 只增加
