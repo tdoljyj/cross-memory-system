@@ -42,6 +42,8 @@
 // same entry with CLUED_FRONT_MERGE_PHASE=scaffold. It acts only while the hosted scaffold ruleset is the one in force on main
 // (scaffoldInForce below: main requires hosted- checks pinned to GitHub Actions and none of the independent CI App 5368905, so
 // #292 is disabled and the train does not land). Before that, and from the trial switch on (#292 enabled again), it changes nothing.
+// The two copies are exclusive on that one fact (FABLE-scaffold-s5-pre §1): the self-hosted workflow (no phase) changes nothing
+// while the scaffold ruleset is in force, named or not, so exactly one of them brings fronts up in each state of the rules.
 // Until migration 6b809301 is on the nodes (Decision 85effa31) the admission does not carry the authorization to the merge
 // commit: the copy says "新 head <sha>，待补授权" on the run summary and on the pull request, and DESK authorizes that head.
 // It takes no authorization step itself; it holds no Clued credential.
@@ -163,17 +165,19 @@ export async function scaffoldInForce({ env, fetchImpl }) {
   return { inForce: true, reason: `${main} requires ${hosted.length} hosted- check(s) of GitHub Actions and none of the independent CI: the hosted scaffold ruleset is in force` };
 }
 
-// The hosted copy's phase, read again at the start of every run: null to go on, or what it changes (nothing) and why.
+// Which copy acts, read again at the start of every run: null to go on, or what it changes (nothing) and why. The hosted copy
+// (phase scaffold) acts only while the scaffold ruleset is in force; the self-hosted workflow (no phase) only while it is not.
 async function phaseGate(env, fetchImpl) {
   const phase = env.CLUED_FRONT_MERGE_PHASE ?? '';
-  if (phase === '') return null;
-  if (phase !== SCAFFOLD_PHASE) return { result: 'refused', reason: `unknown CLUED_FRONT_MERGE_PHASE ${JSON.stringify(phase).slice(0, 40)}: nothing is changed` };
+  if (phase !== '' && phase !== SCAFFOLD_PHASE) return { result: 'refused', reason: `unknown CLUED_FRONT_MERGE_PHASE ${JSON.stringify(phase).slice(0, 40)}: nothing is changed` };
+  let inForce, reason;
   try {
-    const { inForce, reason } = await scaffoldInForce({ env, fetchImpl });
-    return inForce ? null : { result: 'none', reason };
+    ({ inForce, reason } = await scaffoldInForce({ env, fetchImpl }));
   } catch (error) {
     return { result: 'skipped', reason: `the rules in force could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again` };
   }
+  if (phase === SCAFFOLD_PHASE) return inForce ? null : { result: 'none', reason };
+  return inForce ? { result: 'none', reason: `脚手架规则集在用，由托管副本带车头 (${reason})` } : null;
 }
 
 // The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
@@ -266,8 +270,12 @@ async function runFrontChoice(ports) {
 
 export async function runFrontMainMerge({ env, fetchImpl, workspace, input, readPolicyFile = fs.readFileSync, now = () => Date.now(),
   sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  // Half an input and frozen are read from the event and the checkout, before anything of GitHub: then nothing is read either.
+  const named = { pr: Number(input?.pr) || null, head_sha: String(input?.head ?? '').trim() || null };
+  if (!WITHOUT_INPUT(input) && !NAMED_INPUT(input)) return { result: 'refused', reason: BAD_INPUT, pr: named.pr, head_sha: input?.head ?? null };
+  if (resolveMode({ env, workspace, readFile: readPolicyFile }).state === 'frozen') return { result: 'none', reason: 'merge admission is frozen: nothing is changed', ...named };
   const off = await phaseGate(env, fetchImpl);
-  if (off) return { ...off, pr: Number(input?.pr) || null, head_sha: String(input?.head ?? '').trim() || null };
+  if (off) return { ...off, ...named };
   const result = await bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep });
   return env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? notePendingAuthorization({ env, fetchImpl, result, now }) : result;
 }
@@ -283,11 +291,15 @@ async function notePendingAuthorization({ env, fetchImpl, result, now }) {
   return { ...result, pending_authorization: true, comment: posted.status === 201 ? 'posted' : `not posted (HTTP ${posted.status})` };
 }
 
+const WITHOUT_INPUT = input => !String(input?.pr ?? '').trim() && !String(input?.head ?? '').trim();
+const NAMED_INPUT = input => /^[1-9][0-9]{0,9}$/.test(String(input?.pr ?? '')) && SHA.test(String(input?.head ?? ''));
+const BAD_INPUT = 'input needs pr (number) and head (full SHA)';
+
 async function bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep }) {
-  if (!String(input?.pr ?? '').trim() && !String(input?.head ?? '').trim()) return runFrontChoice({ env, fetchImpl, workspace, readPolicyFile, now, sleep });
+  if (WITHOUT_INPUT(input)) return runFrontChoice({ env, fetchImpl, workspace, readPolicyFile, now, sleep });
   const repository = env.GITHUB_REPOSITORY;
   const done = (result, reason, extra = {}) => ({ result, reason, pr: Number(input?.pr) || null, head_sha: input?.head ?? null, ...extra });
-  if (!/^[1-9][0-9]{0,9}$/.test(String(input?.pr ?? '')) || !SHA.test(String(input?.head ?? ''))) return done('refused', 'input needs pr (number) and head (full SHA)');
+  if (!NAMED_INPUT(input)) return done('refused', BAD_INPUT);
   const number = Number(input.pr), head = input.head;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   if (mode.state === 'frozen') return done('none', 'merge admission is frozen: nothing is changed');
