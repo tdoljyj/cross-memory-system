@@ -131,12 +131,18 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
         refs: after.trigger_refs, slotAt: after.merge_slot_at, receipt: result.binding_receipt_id ?? null,
         endReceipts: await endReceipts(), inbox: (await inbox(r)).length,
       }, { binding: 'active', claim: 'ACTIVE', releasedBy: null, refs: [], slotAt: null, receipt: null, endReceipts: [], inbox: 0 });
-      const renewed = committed(await call('holder', 'clued_work_renew_v1', {
+      // 仓库已受常驻服务：重新入队只有常驻门一条路，持有者自己续期带 merge ref 不生效（也不报错）。
+      const own = committed(await call('holder', 'clued_work_renew_v1', {
         scope: 'global', claim_id: r.claim.claim_id, fence: r.claim.fence, lease_version: after.lease_version,
         lease_key: r.lease_key, trigger_refs: [slot], progress_ref: 'fixture:' + uuid(),
       }));
-      assert.equal(renewed.claim.claim_id, r.claim.claim_id);
-      assert.ok(renewed.claim.merge_slot_until);
+      assert.equal(own.claim.claim_id, r.claim.claim_id);
+      assert.equal(own.claim.merge_slot_until ?? null, null);
+      const rejoin = await call('ci', 'clued_work_verify_v1', { action: 'merge_queue_join', scope: 'global', pr_ref: repo + '#1166', head_sha: head });
+      assert.equal(rejoin.joined, true, JSON.stringify(rejoin));
+      const requeued = await releaseInfo(r);
+      assert.deepEqual(requeued.trigger_refs, [slot]);
+      assert.ok(requeued.merge_slot_at);
       assert.equal((await verify('ci', r, 1166, head)).verdict, 'ADMITTED');
       const event = await gateway.query('select public.clued_work_pr_merged_event_v1($1) as result',
         [{ repository: repo, pr_number: 1166, merge_sha: mergeSha }]);
@@ -146,9 +152,11 @@ test('a PR end releases its claim; terminal admission is gone', { timeout: 30000
         ['merged', 'RELEASED', 'pr_end', repo + '#1166@' + mergeSha]);
     });
     await t.test('#1151 同 Task 另有打开的 PR 时保留槽和两个绑定', async () => {
-      const r = await claim(await task(), uuid(), 'global', [slot]);
+      const r = await claim(await task());
       await admitted(r, 1151, '1'.repeat(40));
       await admitted(r, 1152, '2'.repeat(40));
+      const queued = await call('ci', 'clued_work_verify_v1', { action: 'merge_queue_join', scope: 'global', pr_ref: repo + '#1151', head_sha: '1'.repeat(40) });
+      assert.equal(queued.joined, true, JSON.stringify(queued));
       const result = await giveBack(1151);
       assert.equal(result.returned, false);
       assert.deepEqual(result.merge_slot_returned, []);
