@@ -1779,3 +1779,49 @@ test('parked-front T3b: a new S named during the batch\'s own stage-8 try never 
   assert.notEqual((await f.ledger.state(entry.key)).terminal?.facts?.failureCode, 'TRAIN_FRONT_TAKES_OVER');
   assert.deepEqual((await f.receipts.latest(['train-front-takes-over'], 10)).map(r => r.value.body), []);
 });
+
+// ---- bc982192 parked-front v2 rework (D:/w/tmp/FABLE-parked-front-attempt2-number-20261123.md §4 N6, N8) ----
+// N6 (防误杀; green before the fix, red without §2.2 B): front number 1 of S ended clean at stage 8 and was reported ended (frontFailed
+// false; F1). Stage 10 opens its number 2 of the same S and the executor takes it; the report of number 1 is dropped there (and a
+// restart does not bring it back: it is older than the head's newest train-front-enqueued). So while number 2 is in, no stage 10 is told
+// S ended: it says TRAIN_FRONT_BATCH_RUNNING. Stage 10 knows its batch by S alone now: an old report of S would end number 2.
+// Number 2's row is held here (it stays queued), so the rounds see it in flight.
+for (const restart of [false, true]) test(`parked-front N6 (${restart ? 'a restart after the enqueue' : 'one process'}): the report of front number 1 never ends number 2 of the same S`, async t => {
+  const scene = await problemA(t, { push: true });
+  const { engine } = scene;
+  assert.equal(scene.ended(), 1, await why(scene));
+  newTenure(scene);
+  const hold = exec => {
+    const runRow = exec.runRow.bind(exec);
+    exec.runRow = async (c, usage) => (Object.hasOwn(c, 'testSha') && c.frontAttempt === 2 ? { state: 'DEFERRED', key: null, reason: 'N6_HELD' } : runRow(c, usage));
+  };
+  const old = scene.f.exec, enqueue = old.enqueueFront.bind(old);
+  let in2 = false;
+  old.enqueueFront = async front => { const k = await enqueue(front); if (k && front.attempt === 2) in2 = true; return k; };
+  hold(old);
+  for (let i = 0; i <= 30 && !in2; i++) { await old.tick(); if (!in2) scene.f.advance(MIN); }
+  assert.ok(in2, `front number 2 never enqueued: ${await why(scene)}`);
+  let f = scene.f;
+  if (restart) {
+    f = await executorFixture(t, { policy: permanentPolicy(), engine, root: scene.f.root, now: scene.f.clock() });
+    Object.assign(scene.at, { clock: f.clock, advance: f.advance });
+    Object.assign(scene, { f });
+    hold(f.exec);
+    await f.exec.trainRecover();
+  }
+  const runsBefore = engine.trainRuns.length;
+  for (let i = 0; i <= 30 && engine.trainRuns.length < runsBefore + 2; i++) { await f.exec.tick(); f.advance(MIN); }
+  const later = engine.trainRuns.slice(runsBefore).map(r => r.decision);
+  const carried = engine.trainInputs.slice(runsBefore).map(x => [x.frontTestSha === S, x.frontAttempt, x.frontCode]);
+  assert.ok(later.length >= 2, await why(scene));
+  assert.deepEqual(later, later.map(() => 'TRAIN_FRONT_BATCH_RUNNING'), `carried ${JSON.stringify(carried)}; ${await why(scene)}`);
+});
+
+// N8 (review follow-up 3): the take-over report is not urgent (the stage 10 that named (H, S2) already knows the old batch ended).
+test('parked-front N8: the TRAIN_FRONT_TAKES_OVER report makes no early stage 10', async t => {
+  const { f, next } = await parkedFront(t);
+  f.exec.trainUrgent = false;
+  assert.notEqual(await f.exec.enqueueFront(next), null);
+  assert.deepEqual((await f.receipts.latest(['train-front-ended'], 5)).map(r => r.value.body.frontOutcome.code), ['TRAIN_FRONT_TAKES_OVER']);
+  assert.equal(f.exec.trainUrgent, false, 'not urgent');
+});
