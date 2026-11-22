@@ -823,14 +823,16 @@ test('touch failed only from frontOutcome, while this claim is the front and the
 // does not keep the plan at TRAIN_FRONT_BATCH_RUNNING: the batch is finished, the head's next front batch opens (attempt 2). frontFailed true:
 // as today (the test above).
 test('R3 batch 2 F2: frontOutcome with frontFailed false ends the running front batch: no touch failed, not TRAIN_FRONT_BATCH_RUNNING', async t => {
-  const e = await setup(t);
+  // A short batch budget, so the slot's hard cap leaves room for a second batch in the same tenure (otherwise turn_short, §2.2).
+  const e = await setup(t, { job: { frontBatchBudgetMs: 600_000 } });
   const first = await e.run();
   assert.deepEqual([first.facts.decision, first.facts.openFrontBatch?.attempt], ['OPEN_FRONT_BATCH', 1]);
   e.native.calls.length = 0;
   const running = await e.run();
   assert.equal(running.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', 'without a frontOutcome the batch is running');
   e.native.calls.length = 0;
-  const ended = await e.run(jobOf({ frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 1, frontCode: 'TRAIN_BATCH_CHANGED', frontFailed: false }));
+  e.now += 5 * 60_000; // the batch ended a few minutes later: a new touch running moves the clock on
+  const ended = await e.run(jobOf({ frontBatchBudgetMs: 600_000, frontPr: 910, frontHeadSha: H, frontTestSha: S, frontAttempt: 1, frontCode: 'TRAIN_BATCH_CHANGED', frontFailed: false }));
   validateTrainFacts(ended.facts);
   assert.notEqual(ended.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(ended.facts));
   assert.notEqual(ended.facts.decision, 'FRONT_FAILED_REPORTED');

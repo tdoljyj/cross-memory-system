@@ -21,7 +21,7 @@ test('train run /3: contract, fields in order, id over every field but contract,
   assert.deepEqual(TRAIN_RUN_FIELDS, ['contract', 'id', 'repo', 'runId', 'mode', 'sourceManifestSha256', 'createdAt', 'slotHardCapMinutes', 'frontBatchBudgetMs', 'sweepFreshMs',
     'fullSweepMaxMs', 'onSince', 'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'frontFailed', 'revokeHeadRequestId', 'sweep']);
   assert.equal(job.id, createHash('sha256').update(JSON.stringify([TRAIN_RUN_CONTRACT, REPO, job.runId, 'shadow', 'e'.repeat(64), 120, 3600000, 900000, 21600000,
-    null, null, null, null, null, null, null, 'gate'])).digest('hex'));
+    null, null, null, null, null, null, null, null, 'gate'])).digest('hex'));
   assert.equal(trainRunJobId(job), job.id);
   assert.deepEqual(TRAIN_RUN_MODES, ['shadow', 'on', 'revoke-only']);
   // createdAt is not part of the id; every identity field is
