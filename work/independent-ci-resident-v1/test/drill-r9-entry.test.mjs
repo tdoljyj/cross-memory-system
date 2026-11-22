@@ -229,3 +229,45 @@ test('T1: the phases before the host stage are timed by name into stage-timings.
   assert.deepEqual(order, [...order].sort((a, b) => a - b));
   assert.ok(body.lastIndexOf("Enter-EntryPhase $measurements $phase ''") > body.lastIndexOf('} finally {'), 'the open phase is closed in the finally block');
 });
+
+// Planning ruling FABLE-r9-lineB-points R3: the two launch-directory entries of the list are inferred, never seen in a guest. An entry
+// that is absent says where the walk stopped and what is there instead, so one run is enough to put the list right.
+const absentOf = (name, arrange) => {
+  const g = guest(name, { extra: ({ work, ci }) => { fs.rmSync(path.join(work, 'prepare'), { recursive: true, force: true }); arrange({ work, ci }); } });
+  ps(stoppedEntry(g));
+  return snapshotOf(g);
+};
+
+test('R3: an absent entry names the segment the walk stopped at and what the directory holds instead, never a secrets directory', opts, () => {
+  const s = absentOf('r3-siblings', ({ work }) => {
+    write(path.join(work, 'prepare', 'run-20261121', 'progress', '001-output.json'), '{}');
+    write(path.join(work, 'prepare', 'install-plan.json'), '{}');
+    write(path.join(work, 'prepare', 'secrets', 'x.json'), '{"token":"NEVER-READ-TOKEN"}');
+    write(path.join(work, 'prepare', 'Credentials', 'y.json'), '{}');
+  });
+  const progress = s.files.filter(f => f.pattern === 'prepare\\launch-*\\progress\\*.json');
+  assert.equal(progress.length, 1);
+  assert.deepEqual(progress[0], { root: 'work', pattern: 'prepare\\launch-*\\progress\\*.json', state: 'absent', stoppedAt: 'launch-*', siblings: ['install-plan.json', 'run-20261121'] });
+  // a file that is simply not there: the directory is right, and its other files say so
+  const paused = s.files.find(f => f.pattern === 'resident\\state\\PAUSED.json');
+  assert.deepEqual([paused.state, paused.stoppedAt, paused.siblings], ['absent', 'PAUSED.json', ['HALT.json', 'status.json']]);
+  assert.doesNotMatch(JSON.stringify(s), /NEVER-READ-TOKEN/);
+});
+
+test('R3: at most 50 names of 120 characters; a root that is not there has none', opts, () => {
+  const long = 'n'.repeat(150);
+  const s = absentOf('r3-many', ({ work }) => {
+    for (let i = 0; i < 60; i++) fs.mkdirSync(path.join(work, 'prepare', 'd-' + String(i).padStart(2, '0')), { recursive: true });
+    fs.mkdirSync(path.join(work, 'prepare', 'a-' + long), { recursive: true });
+  });
+  const progress = s.files.find(f => f.pattern === 'prepare\\launch-*\\progress\\*.json');
+  assert.equal(progress.siblings.length, 50);
+  assert.equal(progress.siblings[0], ('a-' + long).slice(0, 120));
+  assert.deepEqual(progress.siblings.slice(1, 3), ['d-00', 'd-01']);
+  assert.ok(fs.statSync(path.join(tmp, 'r3-many', 'out', 'resident-failure-snapshot.json')).size <= 1048576);
+
+  const none = absentOf('r3-no-root', ({ work }) => fs.rmSync(work, { recursive: true, force: true }));
+  const gone = none.files.find(f => f.pattern === 'prepare\\launch-*\\verify.stdout.json');
+  assert.deepEqual([gone.state, gone.stoppedAt, gone.siblings], ['absent', 'prepare', []]);
+});
+
