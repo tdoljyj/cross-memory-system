@@ -673,7 +673,7 @@ test('独立审查的 Broker 行为回归', {skip:process.platform !== 'win32'},
     for(const code of ['RENEW_REPLACEMENT_UNUSABLE','RENEW_PROOF_REFUSED','RENEW_INTERNAL_RETRY'])
       run('intent-evidence',code,'false','keep',code==='RENEW_INTERNAL_RETRY'?'503':'409',code==='RENEW_INTERNAL_RETRY'?'RENEW_GATEWAY_UNAVAILABLE':code);
   });
-  for (const name of ['pin','clear','readback','without-replay','extra-self','terminal','changed-local','wire','files','swap','interrupt'])
+  for (const name of ['pin','clear','readback','without-replay','extra-self','terminal','changed-local','wire','files','sid-projection','swap','interrupt'])
     await t.test(name, () => run(name,path.dirname(exe)));
 });
 

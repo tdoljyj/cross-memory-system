@@ -66,12 +66,17 @@ async function aclWorld(t) {
   const helper = path.join(dir, 'protected-job-bridge-v4');
   await fs.mkdir(helper);
   await fs.writeFile(script, aclTestCopy(await fs.readFile(new URL('formal-spool-acl.ps1', BRIDGE), 'utf8')));
-  for (const d of ['outgoing', 'incoming']) await fs.mkdir(path.join(spool, d), { recursive: true });
+  const me = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'], { encoding: 'utf8' }).trim();
+  // The spool gets its own protected DACL (this user, SYSTEM, Administrators), as the production spool has one, so it
+  // inherits nothing from TEMP: an inherited create-only grant above it (Users may append on the GitHub-hosted runner's
+  // TEMP, task 04f9b91b) is no replace right of an ancestor, but it is a write right on the spool and was refused there.
+  await fs.mkdir(spool);
+  execFileSync('icacls', [spool, '/inheritance:r', '/grant:r', ...[me, 'S-1-5-18', 'S-1-5-32-544'].map(sid => `*${sid}:(OI)(CI)F`)], { stdio: 'pipe' });
+  for (const d of ['outgoing', 'incoming']) await fs.mkdir(path.join(spool, d));
   for (const f of ['outgoing/response-01.json', 'outgoing/response-01.ready.json', 'outgoing/issue.json', 'outgoing/notaleaf.json', 'incoming/result.json'])
     await fs.writeFile(path.join(spool, f), '{}');
   execFileSync('icacls', [path.join(spool, 'outgoing', 'issue.json'), '/grant', '*S-1-1-0:(W)'], { stdio: 'pipe' }); // anyone may write: refused
   execFileSync('cmd.exe', ['/d', '/c', 'mklink', '/J', path.join(spool, 'outgoing', 'blocked.json'), path.join(spool, 'incoming')], { stdio: 'pipe' }); // a junction: refused
-  const me = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Security.Principal.WindowsIdentity]::GetCurrent().User.Value'], { encoding: 'utf8' }).trim();
   // The temp directory's own ancestors (the user profile) carry grants the production chain does not have (the user, app
   // container capabilities): their owners and every SID with a replace right there count as administrators in the test
   // copy. Nothing inside the spool is affected: a grant there to anyone else (Everyone below) is still refused.
