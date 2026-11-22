@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { ADMISSION_APP_ID, MAIN_MERGE_CHECK, evaluate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
+import { ADMISSION_APP_ID, APP_CHECK_NAME, MAIN_MERGE_CHECK, OWNER_REVIEW_RPC, evaluate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
 import { runFrontMainMerge } from './clued-front-main-merge.mjs';
 import { ciWorkflows } from './clued-merge-slot-ci.mjs';
 import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlWorkflowSource, parseNonPrControlCatalogue } from './clued-non-pr-control-source.mjs';
@@ -17,16 +17,18 @@ import { parseWorkflowProfiles, roleDefinitionDigest, workflowBlob } from './clu
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RPC_URL = `${resolvePublicSupabaseConfig({}, ROOT).url}/rest/v1/rpc/clued_work_verify_v1`;
+const DOOR_URL = `${resolvePublicSupabaseConfig({}, ROOT).url}/rest/v1/rpc/${OWNER_REVIEW_RPC}`;
 const API = 'https://api.test';
+const PROTECTED = 'scripts/ci/x.mjs';
 const PR = 1125, H = 'a'.repeat(40), T = '7'.repeat(40), X = 'e'.repeat(40), BASE = 'b'.repeat(40);
 const CLAIM = '0f3d9c6a-1b2e-4c5d-8e7f-9a0b1c2d3e4f', TASK = '00000000-0000-4000-8000-000000000452';
 const AUTH = '00000000-0000-4000-8000-000000000453', CARRIED = '00000000-0000-4000-8000-000000000454';
 // One GitHub repository and one Native, as their HTTP answers. world.pr is the PR; world.commits the commits GitHub knows.
-function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file = 'docs/front.md' } = {}) {
+function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file = 'docs/front.md', mainTouches = ['docs/other.md'] } = {}) {
   const w = {
     pr: { number: PR, state: 'open', draft: false, body: 'Body', changed_files: 1, head: { sha: H, ref: 'claude/x', repo: { full_name: 'o/r' } },
       base: { sha: BASE, ref: 'main', repo: { full_name: 'o/r', default_branch: 'main' } } },
-    tip: T, checks: [], authorized: new Set([H]), carries: [], updates: [], calls: [],
+    tip: T, mainTouches, checks: [], authorized: new Set([H]), granted: new Set([H]), asked: [], carries: [], updates: [], calls: [],
     commits: new Map([[H, { sha: H, parents: [{ sha: BASE }] }]]),
   };
   const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null },
@@ -34,6 +36,13 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
   w.fetchImpl = async (url, init = {}) => {
     const method = init.method ?? 'GET', u = String(url), body = init.body ? JSON.parse(init.body) : null;
     w.calls.push({ method, url: u, body });
+    if (u === DOOR_URL) {
+      // The Owner review door: an Owner Grant exists only for the heads in w.granted; any other head is asked about and stays pending.
+      const head = body.p_input.resources[0].split('/').pop();
+      w.asked.push(head);
+      return w.granted.has(head) ? reply({ status: 'ok', admitted: true, grant: { grant_id: `grant-${head.slice(0, 4)}` } })
+        : reply({ status: 'ok', admitted: false, owner_request: { request_id: 'r1', status: 'pending', confirm_path: '/confirm/r1' } });
+    }
     if (u === RPC_URL) {
       const input = body.p_input;
       if (input.action === 'resolve_pr_claim') {
@@ -63,13 +72,15 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
     if (method === 'GET' && route.startsWith('/repos/o/r/compare/')) {
       const [from, to] = route.slice('/repos/o/r/compare/'.length).split('?')[0].split('...');
-      if (from === w.tip && to === H) return reply({ status: 'diverged', behind_by: behind, ahead_by: 1, files: [{ filename: 'docs/front.md' }] });
-      if (from === w.tip && to === X) return reply({ status: 'ahead', behind_by: 0, ahead_by: 2, files: [{ filename: 'docs/front.md' }] });
+      if (from === w.tip && to === H) return reply({ status: 'diverged', behind_by: behind, ahead_by: 1, merge_base_commit: { sha: BASE }, files: [{ filename: file }] });
+      if (from === w.tip && to === X) return reply({ status: 'ahead', behind_by: 0, ahead_by: 2, files: [{ filename: file }] });
       if (from === to) return reply({ status: 'identical', behind_by: 0, files: [] });
+      // What main changed since this branch forked (also what the merge brought into the head).
+      if ((from === BASE && to === w.tip) || (from === H && to === X)) return reply({ status: 'ahead', behind_by: 0, files: w.mainTouches.map(filename => ({ filename })) });
       return reply({ status: 'ahead', behind_by: 0, files: [] });
     }
     const checkList = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})\/check-runs/.exec(route);
-    if (method === 'GET' && checkList) return reply({ check_runs: w.checks.filter(c => c.head_sha === checkList[1] && route.includes(`check_name=${c.name}`)) });
+    if (method === 'GET' && checkList) return reply({ check_runs: w.checks.filter(c => c.head_sha === checkList[1] && (!route.includes('check_name=') || route.includes(`check_name=${c.name}`))) });
     const commit = /^\/repos\/o\/r\/commits\/([0-9a-f]{40})$/.exec(route);
     if (method === 'GET' && commit) return w.commits.has(commit[1]) ? reply(w.commits.get(commit[1])) : reply({ message: 'Not Found' }, 404);
     if (method === 'GET' && route === '/repos/o/r/installation') return reply({ id: 42 });
@@ -111,7 +122,7 @@ test('a train front behind main is merged with main by the App and its merge com
   assert.equal(result.result, 'merged', JSON.stringify(result));
   assert.deepEqual(w.updates, [{ expected_head_sha: H }], 'one update-branch, bound to the authorized head');
   assert.equal(w.pr.head.sha, X);
-  const [check] = w.checks;
+  const check = w.checks.find(c => c.name === MAIN_MERGE_CHECK);
   assert.equal(check.name, MAIN_MERGE_CHECK); assert.equal(check.head_sha, X); assert.equal(check.conclusion, 'success');
   assert.deepEqual(parseMainMergeExternalId(check.external_id), { pr: PR, from: H, main: T });
   // The node on duty admits the merge commit: Native carries the authorization of H, nobody authorized X.
@@ -157,13 +168,12 @@ test('the workflow changes nothing that is no longer true', async () => {
     ['up to date', world({ behind: 0 }), undefined, {}, 'none'],
     ['conflict', world({ updateStatus: 422 }), undefined, {}, 'refused'],
     ['bad input', world(), { pr: 'x', head: H }, {}, 'refused'],
-    ['protected layer (78a3052f item 2)', world({ file: '.github/workflows/x.yml' }), undefined, {}, 'none'],
+    ['frozen, protected layer', world({ file: PROTECTED }), undefined, { CLUED_MERGE_ADMISSION_STATE: 'frozen' }, 'none'],
   ]) {
     const r = await merge(w, input, extra);
     assert.equal(r.result, want, `${name}: ${JSON.stringify(r)}`);
     assert.equal(w.checks.length, 0, name);
     if (want === 'none' || name === 'bad input') assert.equal(w.updates.length, 0, name);
-    if (name.startsWith('protected')) assert.match(r.reason, /78a3052f/);
   }
   const draft = world(); draft.pr.draft = true;
   assert.equal((await merge(draft)).result, 'none'); assert.equal(draft.updates.length, 0);
@@ -171,6 +181,40 @@ test('the workflow changes nothing that is no longer true', async () => {
   const other = world({ updateMakes: 'someone' });
   const r = await merge(other);
   assert.equal(r.result, 'unattested'); assert.equal(other.checks.length, 0);
+});
+
+// Owner 11-22 (replaces 78a3052f item 2, "protected-layer PRs are not updated yet"): the protected layer is brought up to main too.
+// Its admission needs an Owner Grant of the head; the grant of the earlier head carries over (Decision a0d93cd0) only while main
+// did not touch the protected files this PR changes.
+test('a protected-layer front behind main is merged with main; its Owner Grant carries when main left the protected files of the PR alone', async () => {
+  const w = world({ file: PROTECTED, mainTouches: ['scripts/ci/other.mjs', 'docs/other.md'] });
+  const admittedBefore = () => w.checks.push({ id: 900, name: APP_CHECK_NAME, head_sha: H, status: 'completed', conclusion: 'success', app: { id: ADMISSION_APP_ID } });
+  // H was admitted and granted while it contained main's older tip; main moved on since (so H alone is no longer admissible).
+  admittedBefore();
+  const result = await merge(w);
+  assert.equal(result.result, 'merged', JSON.stringify(result));
+  assert.deepEqual(w.updates, [{ expected_head_sha: H }]);
+  assert.equal(w.pr.head.sha, X);
+  assert.equal(w.checks.find(c => c.name === MAIN_MERGE_CHECK)?.head_sha, X);
+  w.asked.length = 0;
+  const after = await admit(w, X);
+  assert.equal(after.verdict, 'ADMITTED', JSON.stringify({ reasons: after.reasons, notices: after.notices }));
+  assert.equal(after.owner_review.carried_from, H);
+  assert.deepEqual(w.asked, [H], 'only the earlier head is asked at the door; the merge commit gets no new request');
+});
+
+test('a protected-layer front whose PR-changed protected file main also touched needs a new Grant for the merge commit', async () => {
+  const w = world({ file: PROTECTED, mainTouches: [PROTECTED] });
+  const admittedBefore = () => w.checks.push({ id: 900, name: APP_CHECK_NAME, head_sha: H, status: 'completed', conclusion: 'success', app: { id: ADMISSION_APP_ID } });
+  // H was admitted and granted while it contained main's older tip; main moved on since (so H alone is no longer admissible).
+  admittedBefore();
+  assert.equal((await merge(w)).result, 'merged');
+  w.asked.length = 0;
+  const after = await admit(w, X);
+  assert.equal(after.verdict, 'REJECTED', JSON.stringify(after.notices));
+  assert.ok(after.reasons.some(r => r.startsWith('owner_review_pending') || r.startsWith('owner_review')), after.reasons.join());
+  assert.equal(after.owner_review.carried_from, undefined, 'the old Grant is not carried');
+  assert.deepEqual(w.asked, [X], 'the Owner is asked about the new head');
 });
 
 // The workflow has no pull_request trigger, so it can never be a registered PR CI Source (compileRegisteredWorkflow
