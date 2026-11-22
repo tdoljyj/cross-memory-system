@@ -16,7 +16,7 @@
 //   - landMain: the one write to main, with its read-backs.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { REQUIRED_CHECK_NAMES } from './train-rules.mjs';
+import { sixPinned } from './train-rules.mjs';
 
 export const LANDING_MODES = Object.freeze(['github-merge', 'push']);
 export const LANDING_DEFAULT = 'github-merge';
@@ -153,7 +153,8 @@ export async function readBatchChain({ readGitCommit, baseSha, heads, testSha, s
 // prerequisite of the Owner saving C (ADR 0018 §8 item 7).
 // Who else is on a bypass list is not read here: an administrator checks it when the Owner saves the rules.
 // missing names what push still lacks (or what could not be read), in a fixed order: independent ruleset, kooyumi-train-landed, main.
-// The main ruleset is the one ruleset whose required checks hold the six this App publishes (train-rules.mjs#REQUIRED_CHECK_NAMES).
+// The main ruleset is the one ruleset whose required checks hold the six (train-rules.mjs#REQUIRED_CHECK_NAMES), each pinned as
+// train-rules.mjs#sixPinned allows: to this App, a scan also to GitHub Actions (then S must carry its Actions run, externalChecksDecision).
 // rulesets: id -> { currentUserCanBypass } (github.mjs#readRuleset: current_user_can_bypass, this caller's own bypass of that ruleset:
 // always, pull_requests_only, never or exempt; anything else is unreadable), or null when they were not read (stage 10 reads them only
 // when kooyumi-train-landed is there: not_read).
@@ -177,7 +178,9 @@ export function landingRoute({ rules, rulesets, appId }) {
   for (const r of rules) byId.set(r.rulesetId, [...(byId.get(r.rulesetId) ?? []), r]);
   if (byId.size > MAX_RULESETS) return rulesUnreadable;
   const pinned = (list, context, app) => checksOf(list).some(c => c.context === context && c.integration_id === app);
-  const mains = [...byId].filter(([, list]) => REQUIRED_CHECK_NAMES.every(n => pinned(list, n, appId)));
+  // The main ruleset: the one whose six required checks are pinned by the same rule stages 8 and 10 read (train-rules.mjs#sixPinned; R3 open
+  // item 2: the scans may be pinned to GitHub Actions, and push then waits for them on S as external checks, externalRequiredChecks).
+  const mains = [...byId].filter(([, list]) => sixPinned(checksOf(list), appId));
   if (mains.length !== 1) return { ...rulesUnreadable, missing: ['main_ruleset_unidentified'] };
   const [mainId, mainRules] = mains[0];
   const canOf = id => {

@@ -46,7 +46,12 @@ function fakeGithub(o = {}) {
       if (!state.commits[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' });
       return structuredClone(state.commits[sha]);
     },
-    async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
+    // headScans (stage8 below sets it): this App's three scans passed on H before stage 8 (review of R3, problem A: no green without
+    // them), read with the checks but not among them (the tests count the checks stage 8 writes); only a name no check on H has already.
+    async readChecks(head) { return { complete: true, checks: [...(state.headScans !== true || head !== HEAD ? [] : SCAN_CHECK_NAMES
+      .filter(name => !checks.some(c => c.head_sha === HEAD && c.name === name)).map((name, i) => ({ id: 50_000 + i,
+      app: { id: 5368905 }, name, head_sha: HEAD, status: 'completed', conclusion: 'success', output: { title: name, summary: '' } }))),
+      ...checks.filter(c => c.head_sha === head).map(c => structuredClone(c))] }; },
     // compare T...H: counted (rule 41ab823a, R3: stage 1 never reads it for the reuse); H contains T unless the state says otherwise.
     async readCompare(base, head) {
       state.compares = (state.compares ?? 0) + 1;
@@ -88,6 +93,7 @@ const ports = (w, { touch = null } = {}) => {
 async function stage8(t, { trainMode = 'on', trainModeUnreadable = false, testSha = S, github = fakeGithub(), edit = () => {}, ledger = null, touch = null, answer = null } = {}) {
   const jobs = jobsFor(testSha), c = { claimId: randomUUID(), fence: 3, epoch: 1, expiresAt: iso(Date.now() + 3600_000) };
   const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  github.state.headScans ??= true;
   let time = Date.now();
   const w = proven(time, c.claimId); edit(w);
   const p = ports(w, { touch }), greenLedger = ledger ?? listLedger(), logs = [], pullReads = [];
@@ -249,6 +255,25 @@ test('stage 8, train on: no green the proof does not cover, at once and with zer
   const head = await stage8(t, { testSha: HEAD, github: headGithub({ rules: trainRules() }) });
   assert.deepEqual([head.r.reason, head.github.checks.length], [TRAIN_SINGLE_GREEN_NOT_PROVEN, 0]);
   assert.ok(STAGE8_NOT_READY_REASONS.includes(TRAIN_SINGLE_GREEN_NOT_PROVEN), 'the batch parks and waits for the next stage 10');
+});
+
+// Rereview of R3 (修复前必红: the green-time check off, this goes green): main's rules require the three scans from this App, H has none of
+// this App's that passed (or the newest gitleaks failed): stage 8 writes no green, touches nothing and ends the batch (TRAIN_BATCH_CHANGED).
+// The same with the scans pinned to GitHub Actions is a green: the rules read now decide what is required.
+test('R3 problem A, stage 8: no green while a scan main\'s rules require from this App has not passed on H', async t => {
+  const none = fakeGithub(); none.state.headScans = false;
+  const failed = fakeGithub(); failed.checks.push({ id: 60_000, app: { id: 5368905 }, name: 'gitleaks', head_sha: HEAD, status: 'completed', conclusion: 'failure', output: { title: 'gitleaks', summary: '' } });
+  for (const [name, github] of [['no scan on H', none], ['the newest gitleaks failed', failed]]) {
+    const x = await stage8(t, { github });
+    assert.deepEqual([x.r.status, x.r.reason, x.r.sideEffects, x.greenLedger.records.length, x.touches.length], ['BLOCKED', 'TRAIN_BATCH_CHANGED', 0, 0, 0], `${name}: ${JSON.stringify(x.r)}`);
+    assert.equal(x.github.checks.filter(c => c.name === 'kooyumi-merge-slot' || c.name === 'kooyumi-admission-verified').length, 0, name);
+    assert.ok(x.logs.some(([k, d]) => k === 'native_train_app_scans_missing' && d.missing.includes('gitleaks')), name);
+    assert.equal(code8(x.r), 'TRAIN_BATCH_CHANGED', name);
+  }
+  const actions = fakeGithub({ rules: trainRules().map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+    required_status_checks: r.parameters.required_status_checks.map(c => (SCAN_CHECK_NAMES.includes(c.context) ? { ...c, integration_id: 15368 } : c)) } })) });
+  actions.state.headScans = false;
+  assert.equal((await stage8(t, { github: actions })).r.status, 'SETTLED', 'scans pinned to Actions: nothing required from this App');
 });
 
 test('stage 8: S != H only with the train on; strict off without the train is still refused (off and shadow)', async t => {

@@ -21,8 +21,10 @@
 # Host boundary: writes only under D:\clued-drill\; touches only the VM whose name AND notes are ours; never touches the
 # host services, scheduled tasks, switches, or any process by name. Read the public host status and installed generation pointer.
 # In the WSL distribution this host's Linux Actions runners live in (scripts/ci/self-hosted/node-profiles.json), and only while it is
-# already running: a read-only process listing, and, before a boot with no job on either side, a release of its file cache
-# (Decision 21db5a9c; Get-DrillWslRunnerState, Invoke-DrillWslCacheRelease). No other WSL distribution is touched. The installed Owner request CLI is the sole production request path. No elevation: the account
+# already running: a read-only process listing and memory reading, and a release of its file cache -- before a boot only while idle (no
+# job on either side), and from the running guard while the drill VM is on and the host is below 10 GB free, a job there or not
+# (Decision f572ac5b; its "the earlier permission while idle stands" is 21db5a9c's; Get-DrillWslRunnerState, Get-DrillWslMemory,
+# Invoke-DrillWslCacheRelease). No other WSL distribution is touched. The installed Owner request CLI is the sole production request path. No elevation: the account
 # must be in Hyper-V Administrators. Every wait is bounded; nothing is retried; a failed drill still restores the checkpoint.
 # Host duty, CI activity and memory are checked before start and independently every 30 seconds while running.
 [CmdletBinding()]
@@ -43,12 +45,18 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 $script:DrillScriptPath = $PSCommandPath
 $script:HostGuard = $null
-# The cache release (Decision 21db5a9c; Fable renew-key ruling, supplements "WSL gate race" item 1 and "branch one, round four" item 2):
-# one fixed command, run by sh in the runner distribution as root. It asks the probe's question -- pgrep -ix with WslJobPattern, by its exit
-# alone -- and releases only on "none": exit 3 a job (skipped), 4 the lookup failed, 5 the release failed, 0 released (the page cache
-# only: 1, not dentries and inodes). Nothing is read from its output. A single-quoted string with no double quote or backslash: PowerShell
-# puts nothing into it and the Windows command line passes it whole (Assert-DrillWslReleaseCommandLiteral).
-$script:DrillWslReleaseCommand = 'pgrep -ix ''Runner[.]Worker'' >/dev/null; found=$?; if [ $found -eq 0 ]; then exit 3; fi; if [ $found -ne 1 ]; then exit 4; fi; sync || exit 5; echo 1 > /proc/sys/vm/drop_caches || exit 5; exit 0'
+# The cache release: two fixed commands, run by sh in the runner distribution as root, through the one function
+# (Invoke-DrillWslCacheRelease). Each a single-quoted string with no double quote or backslash: PowerShell puts nothing into it and the
+# Windows command line passes it whole (Assert-DrillWslReleaseCommandLiteral, which also holds the idle one to be the running one behind
+# the job question). Nothing is read from their output.
+# - The running guard's (Decision f572ac5b; Fable ruling 0e418483 "drill memory root" 2.3): the drill VM on and the host below 10 GB
+#   free, a job there or not, so no job question: sync first (dirty pages written), then the page cache only (1, not dentries and inodes):
+#   exit 5 the sync or the release failed, 0 released.
+# - Before a boot, only while idle (Decision 21db5a9c, which f572ac5b keeps: "the earlier permission while idle stands"; Fable renew-key
+#   ruling, supplements "WSL gate race" item 1 and "branch one, round four" item 2): it asks the probe's question first -- pgrep -ix with
+#   WslJobPattern, by its exit alone -- and releases only on "none": exit 3 a job (skipped), 4 the lookup failed, then as above.
+$script:DrillWslReleaseCommand = 'sync || exit 5; echo 1 > /proc/sys/vm/drop_caches || exit 5; exit 0'
+$script:DrillWslIdleReleaseCommand = 'pgrep -ix ''Runner[.]Worker'' >/dev/null; found=$?; if [ $found -eq 0 ]; then exit 3; fi; if [ $found -ne 1 ]; then exit 4; fi; sync || exit 5; echo 1 > /proc/sys/vm/drop_caches || exit 5; exit 0'
 # The three stages before a boot, each with its own sample (Invoke-DrillPreBootRelease, Start-DrillGuardedVm), for the receipt.
 $script:DrillPreBoot = $null
 # The guest password an interactive run set (Wait-DrillInteractive), for the evidence collection after it.
@@ -92,12 +100,21 @@ $script:Drill = [ordered]@{
   RunnerJobGrowth = [ordered]@{ receipt = 'D:\clued-drill\runs\20261121T010455Z-2026.11.21-b7d92a1a-4b3f5ee5\receipt.json'
     afterBootFreeGB = 19.3; minRunningFreeGB = 8.9 }
   HostGuardSeconds = 30
+  # The running guard's cache release (Fable ruling 0e418483 "drill memory root" 2.3, G1): below production's own resume line on a
+  # workstation host (docs/maintenance/runner-configuration-and-operations.md 2.2: resume at >= 10 GiB free; its pause line, < 6 GiB, is
+  # ProductionReserveBytes, the running gate's abort, which this does not change) the armed guard releases the runner distribution's file
+  # cache (Invoke-DrillWslCacheRelease): at most once every CacheReleaseEverySeconds, each release bounded by CacheReleaseSeconds -- less
+  # than one HostGuardSeconds tick, so the 6 GiB check is never held up. A release that fails or times out is only recorded.
+  CacheReleaseBelowBytes = 10GB
+  CacheReleaseEverySeconds = 120
+  CacheReleaseSeconds = 20
   # Which WSL distribution this host's Linux Actions runners live in: the host's entry (by host name) in the self-hosted node registry of
   # this checkout. Not the installed node profile's wslDistribution: that is the resident's own distribution, registered for its
   # companion account, while the runners' jobs run in the operator's distribution (Fable renew-key ruling, supplement "WSL runner jobs").
   NodeProfiles = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\scripts\ci\self-hosted\node-profiles.json'))
   WslTimeoutSeconds = 30
-  # The one pattern pgrep looks for, in the probe and in the release command (which carries it verbatim: Assert-DrillWslReleaseCommandLiteral):
+  # The one pattern pgrep looks for, in the probe, in the idle release command (which carries it verbatim:
+  # Assert-DrillWslReleaseCommandLiteral) and in the Runner.Worker count of wslMemory (Get-DrillWslMemory):
   # an extended regular expression matched whole (-x) in any case (-i), its dot a literal dot (Codex review of addf1ffa5, low 1).
   WslJobPattern = 'Runner[.]Worker'
   HostStatusStaleSeconds = 300 # resident src/status.mjs: STATUS_STALE_MS
@@ -324,11 +341,14 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
       }
     }
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
-  return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; runnerJob = $(if ($Running) { $null } else { Get-DrillRunnerJobState $busyWith });
-    mode = $mode; holdSince = $since; holdUntil = $until;
+  $out = @{ ok = ($null -eq $code); code = $code; mode = $mode; holdSince = $since; holdUntil = $until;
     freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes; requiredBasis = $memory.requiredBasis;
     executorObservation = $executorObservation; observedAt = $Now.ToUniversalTime().ToString('o');
     action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
+  # the running gate reads no runner job: no job reading at all, rather than one that says "none" (Fable ruling 0e418483 "drill memory
+  # root" 2.4, G2: r11's abort record said runnerJob null, wslJobs [])
+  if (-not $Running) { $out.busyWith = $busyWith; $out.runnerJob = Get-DrillRunnerJobState $busyWith }
+  return $out
 }
 
 # What to do with the VM named ours. $Vm: $null or @{ notes; state; checkpoints = @(names) }.
@@ -1318,6 +1338,9 @@ function Get-DrillVmInfo {
 }
 
 function Get-DrillTime { [DateTimeOffset]::UtcNow }
+# Seconds on a monotonic clock (no wall clock step moves it), for spacing (Step-DrillCacheRelease), never for a time of day: the one
+# other clock, read only here, as Get-DrillTime is the one wall clock.
+function Get-DrillMonotonicSeconds { [Diagnostics.Stopwatch]::GetTimestamp() / [double][Diagnostics.Stopwatch]::Frequency }
 
 function Read-DrillHostStatus {
   try { Get-Content -LiteralPath $script:Drill.HostStatus -Raw -Encoding UTF8 -ErrorAction Stop } catch { $null }
@@ -1328,7 +1351,8 @@ function Read-DrillHostStatus {
 function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly, [switch]$JobsOnly) {
   $json = Read-DrillHostStatus
   $duty = Test-DrillHostSafety $json ([long]::MaxValue) -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
-  if (-not $duty.ok -or $StatusOnly) { $duty.freeGB = $null; $duty.requiredFreeBytes = $null; $duty.busyWith = $null; $duty.runnerJob = $null; return $duty }   # no memory and no job was read
+  if (-not $duty.ok -or $StatusOnly) {   # no memory and no job was read
+    $duty.freeGB = $null; $duty.requiredFreeBytes = $null; if (-not $Running) { $duty.busyWith = $null; $duty.runnerJob = $null }; return $duty }
   try {
     $free = [long]::MaxValue
     $target = $script:Drill.MemoryBytes
@@ -1357,11 +1381,13 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     if (@($wsl.jobs).Count -gt 0) { $wslJob = $true } elseif ($wsl.ok) { $wslJob = $false }   # a confirmed job stays one beside an unread distribution
     $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes -WslJob $wslJob
     if ($JobsOnly) { $safety.freeGB = $null; $safety.requiredFreeBytes = $null; $safety.requiredBasis = $null }   # nothing was read
-    $safety.wslRunnerDistributions = $wsl.running
-    $safety.wslJobs = $wsl.jobs
-    $safety.wslUnreadable = $wsl.reason
-    $safety.wslListCall = Get-Prop $wsl 'listCall'   # a state without it (a stand-in) has none
-    $safety.windowsUnreadable = $windowsUnreadable
+    if (-not $Running) {   # running, neither side's jobs were read (G2): no reading of them
+      $safety.wslRunnerDistributions = $wsl.running
+      $safety.wslJobs = $wsl.jobs
+      $safety.wslUnreadable = $wsl.reason
+      $safety.wslListCall = Get-Prop $wsl 'listCall'   # a state without it (a stand-in) has none
+      $safety.windowsUnreadable = $windowsUnreadable
+    }
   } catch {
     $c = Get-DrillCode $_
     $safety = @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
@@ -1395,14 +1421,15 @@ function ConvertTo-DrillGateTrace($Safety) {
 # itself -- the early sample (here: the duty and the hold refuse; the jobs are sampled, never refused on), the release (here, only when
 # neither side has a job or an unread side), the boot gate (Start-DrillGuardedVm: both sides again, the memory tier they select, memory
 # once, the boot). Each is kept in $script:DrillPreBoot for the receipt. A release skipped for a job is no failure: the boot gate's high
-# tier judges what is free.
+# tier judges what is free. Only while idle (Decision 21db5a9c): Decision f572ac5b's "a job there or not" is the running guard's alone,
+# with the drill VM on -- before the boot it is off, and "the earlier permission while idle stands" (independent review of a643c4b42, block 1).
 function Invoke-DrillPreBootRelease([DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue) {
   $script:DrillPreBoot = [ordered]@{ early = $null; release = $null; bootGate = $null }
   $early = Get-DrillHostSafety -HoldUntil $HoldUntil -JobsOnly
   $script:DrillPreBoot.early = ConvertTo-DrillGateTrace $early
   if (-not $early.ok) { throw (New-DrillError $early.code $early) }
-  # the release only when neither side has a job (Decision 21db5a9c: while idle); with one -- or a side that could not be read -- the
-  # boot gate's high tier decides alone
+  # the release only when neither side has a job (while idle); with one -- or a side that could not be read -- the boot gate's high tier
+  # decides alone
   $earlyJob = Get-Prop $early 'busyWith'
   if ($null -ne $earlyJob) {
     $script:DrillPreBoot.release = [ordered]@{ at = (Get-DrillTime).ToString('o'); distributions = @(); results = @(); released = @()
@@ -1446,16 +1473,16 @@ function Get-DrillRunnerDistributions([string]$HostName = $env:COMPUTERNAME) {
 
 # The one way the drill reaches WSL: wsl.exe with fixed literals and a validated distribution name, bounded (on a time out only the client
 # this call started is ended, by its handle). Like the intake request: under a test marker (NODE_TEST_CONTEXT or CLUED_UNDER_TEST) wsl.exe
-# is never executed, only an injected runner ($script:DrillWslRunner: { param($Arguments) ... returns @{ exit; stdout; stderr } });
-# without a marker an injected runner is refused.
+# is never executed, only an injected runner ($script:DrillWslRunner: { param($Arguments, $TimeoutSeconds) ... returns @{ exit; stdout;
+# stderr } }); without a marker an injected runner is refused.
 $script:DrillWslRunner = $null
-function Invoke-DrillWsl([string[]]$Arguments) {
+function Invoke-DrillWsl([string[]]$Arguments, [int]$TimeoutSeconds = $script:Drill.WslTimeoutSeconds) {
   $marked = [bool]($env:NODE_TEST_CONTEXT -or $env:CLUED_UNDER_TEST)
   if ($marked -and $null -eq $script:DrillWslRunner) { throw (New-DrillError 'DRILL_HOST_ACCESS_UNDER_TEST' "wsl $($Arguments -join ' ')") }
   if (-not $marked -and $null -ne $script:DrillWslRunner) { throw (New-DrillError 'DRILL_WSL_RUNNER_WITHOUT_TEST_MARKER') }
-  if ($marked) { return & $script:DrillWslRunner $Arguments }
+  if ($marked) { return & $script:DrillWslRunner $Arguments $TimeoutSeconds }
   # WSL_UTF8: wsl.exe's own output (the distribution list) in UTF-8 rather than UTF-16.
-  return Invoke-DrillProcess (Join-Path $env:SystemRoot 'System32\wsl.exe') $Arguments $script:Drill.WslTimeoutSeconds @{ WSL_UTF8 = '1' }
+  return Invoke-DrillProcess (Join-Path $env:SystemRoot 'System32\wsl.exe') $Arguments $TimeoutSeconds @{ WSL_UTF8 = '1' }
 }
 
 # The distributions registered for this (the operator's) account: the DistributionName of each key under HKCU\...\Lxss, read only.
@@ -1535,47 +1562,102 @@ function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
   return $state
 }
 
-# The release command is the single-quoted string this file assigns, unchanged, with nothing the Windows command line could split or
-# escape: read back from the file's own syntax tree, never from anything given at run time.
+# Fable ruling 0e418483 "drill memory root" 2.4 (G2) and its supplement "three questions after the implementation" 1: what each runner
+# distribution holds, for the boot gate's sample and when the guard aborted for memory (one reader, one shape) -- MemTotal,
+# MemFree, Cached and AnonPages from its /proc/meminfo, in GB, and how many Runner.Worker processes ran in it (pgrep -c with
+# WslJobPattern: exit 0 or 1, the count on stdout). Read-only, like the probe: only a distribution already running is asked (a command
+# would start it), every call sharing one budget (CacheReleaseSeconds, on the drill's clock). Anything not read whole throws, and the
+# caller records nothing; nothing is returned when no runner distribution runs.
+function Get-DrillWslMemory([string]$HostName = $env:COMPUTERNAME, [int]$WithinSeconds = $script:Drill.CacheReleaseSeconds) {
+  $until = (Get-DrillTime).AddSeconds($WithinSeconds)
+  $left = { $s = [int][Math]::Floor(($until - (Get-DrillTime)).TotalSeconds); if ($s -lt 1) { throw (New-DrillError 'DRILL_WSL_MEMORY_TIMEOUT') }; $s }
+  $clean = { param($r) $e = Get-DrillField $r 'exit'; $err = Get-DrillField $r 'stderr'; ($e -is [int]) -and ($null -eq $err -or ([string]$err).Length -eq 0) }
+  $distributions = @(Get-DrillRunnerDistributions $HostName)
+  if ($distributions.Count -eq 0) { return }
+  $registered = Get-DrillWslRegisteredRunners $distributions
+  $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet') (& $left)) $registered)
+  foreach ($d in @($distributions | Where-Object { Test-DrillNameIn $_ $runningNow })) {
+    $mi = Invoke-DrillWsl @('--distribution', $d, '--exec', 'cat', '/proc/meminfo') (& $left)
+    if (-not (& $clean $mi) -or (Get-DrillField $mi 'exit') -ne 0) { throw (New-DrillError 'WSL_MEMINFO_UNREADABLE' $d) }
+    $kb = @{}
+    foreach ($line in @(([string](Get-DrillField $mi 'stdout')) -split "`r?`n")) {
+      if ($line -cmatch '^(MemTotal|MemFree|Cached|AnonPages):\s+(\d+) kB$') {
+        if ($kb.ContainsKey($Matches[1])) { throw (New-DrillError 'WSL_MEMINFO_UNREADABLE' $d) }
+        $kb[$Matches[1]] = [long]$Matches[2]
+      }
+    }
+    if ($kb.Count -ne 4) { throw (New-DrillError 'WSL_MEMINFO_UNREADABLE' $d) }
+    $pc = Invoke-DrillWsl @('--distribution', $d, '--exec', 'pgrep', '-cix', $script:Drill.WslJobPattern) (& $left)
+    $workers = $null
+    if ((& $clean $pc) -and (Get-DrillField $pc 'exit') -in @(0, 1) -and [string](Get-DrillField $pc 'stdout') -cmatch '\A(\d+)\r?\n?\z') { $workers = [int]$Matches[1] }
+    if ($null -eq $workers) { throw (New-DrillError 'WSL_PROCESS_QUERY_FAILED' $d) }
+    $gb = { param([long]$k) [Math]::Round($k * 1KB / 1GB, 2) }
+    [ordered]@{ distribution = $d; memTotalGB = (& $gb $kb['MemTotal']); memFreeGB = (& $gb $kb['MemFree']); cachedGB = (& $gb $kb['Cached'])
+      anonPagesGB = (& $gb $kb['AnonPages']); runnerWorkers = $workers }
+  }
+}
+
+# Each release command is the single-quoted string this file assigns, unchanged, with nothing the Windows command line could split or
+# escape: read back from the file's own syntax tree, never from anything given at run time. Both are held at every release, whichever is
+# sent; the idle one is the probe's pgrep question, then exactly the running one.
 function Assert-DrillWslReleaseCommandLiteral {
   $ast = [Management.Automation.Language.Parser]::ParseFile($script:DrillScriptPath, [ref]$null, [ref]$null)
-  $assignments = @($ast.FindAll({ param($a) $a -is [Management.Automation.Language.AssignmentStatementAst] -and
-    $a.Left.Extent.Text -ceq '$script:DrillWslReleaseCommand' }, $false))
-  $value = if ($assignments.Count -eq 1) { $assignments[0].Right.Expression } else { $null }
-  if ($value -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
-      $value.StringConstantType -ne [Management.Automation.Language.StringConstantType]::SingleQuoted -or
-      -not [string]::Equals($value.Value, [string]$script:DrillWslReleaseCommand, [StringComparison]::Ordinal) -or $value.Value -match '["\\\r\n]' -or
-      -not $value.Value.StartsWith("pgrep -ix '$($script:Drill.WslJobPattern)' >/dev/null;", [StringComparison]::Ordinal)) {
+  $read = { param([string]$name, $now)
+    $assignments = @($ast.FindAll({ param($a) $a -is [Management.Automation.Language.AssignmentStatementAst] -and
+      $a.Left.Extent.Text -ceq ('$script:' + $name) }, $false))
+    $value = if ($assignments.Count -eq 1) { $assignments[0].Right.Expression } else { $null }
+    if ($value -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+        $value.StringConstantType -ne [Management.Automation.Language.StringConstantType]::SingleQuoted -or
+        -not [string]::Equals($value.Value, [string]$now, [StringComparison]::Ordinal) -or $value.Value -match '["\\\r\n]') {
+      throw (New-DrillError 'DRILL_WSL_RELEASE_COMMAND_NOT_LITERAL')
+    }
+    $value.Value
+  }
+  $running = & $read 'DrillWslReleaseCommand' $script:DrillWslReleaseCommand
+  $idle = & $read 'DrillWslIdleReleaseCommand' $script:DrillWslIdleReleaseCommand
+  if (-not $idle.StartsWith("pgrep -ix '$($script:Drill.WslJobPattern)' >/dev/null;", [StringComparison]::Ordinal) -or
+      -not $idle.EndsWith("; $running", [StringComparison]::Ordinal) -or $running.Contains('pgrep')) {
     throw (New-DrillError 'DRILL_WSL_RELEASE_COMMAND_NOT_LITERAL')
   }
 }
 
-# Decision 21db5a9c (Fable renew-key ruling, supplements "WSL runner jobs" item 3, "WSL gate race" item 1 and "branch one, round four"
-# item 2): after the early refusal, for each of this host's runner distributions, right before it and taken from no earlier sample: the
-# running list read again (a distribution that is not running gets no command: it would start it), then the Windows side read again (a
-# job there stops the release), then the release command (DrillWslReleaseCommand), which decides inside the distribution. Its exit alone:
-# 0 released; 3 a job, skipped -- not a failure, the boot gate takes the high tier on the same job; anything else a failed release, recorded, which
-# does not stop the drill (the boot gate judges what is free). Under a test marker without an injected runner nothing is executed
-# (Invoke-DrillWsl refuses), which is recorded as a failed release.
-function Invoke-DrillWslCacheRelease([string]$HostName = $env:COMPUTERNAME) {
+# The one release function, for each of this host's runner distributions, right before it and taken from no earlier sample: the running
+# list read again (a distribution that is not running gets no command: it would start it), then:
+# - before a boot, the default, only while idle (Decision 21db5a9c, kept by f572ac5b; the renew-key ruling, supplements "WSL runner jobs"
+#   item 3, "WSL gate race" item 1 and "branch one, round four" item 2), after the early refusal: the Windows side read again (a job there
+#   stops the release), then DrillWslIdleReleaseCommand, which decides inside the distribution. Its exit alone: 0 released; 3 a job,
+#   skipped -- not a failure, the boot gate takes the high tier on the same job; anything else a failed release.
+# - -WhileRunning, the running guard's (Decision f572ac5b; Fable ruling 0e418483 "drill memory root" 2.3): the drill VM on and the host
+#   below 10 GB free, a job on either side or not: the Windows side is not read, DrillWslReleaseCommand is sent. Its exit alone: 0 released;
+#   anything else, 3 included, a failed release.
+# A failed release is recorded and does not stop the drill (the boot gate, or the running gate, judges what is free). Under a test marker
+# without an injected runner nothing is executed (Invoke-DrillWsl refuses), which is recorded as a failed release. -WithinSeconds (the
+# running guard: CacheReleaseSeconds): every WSL call of this release shares that one budget, and one that would start with less than a
+# second of it left fails the release instead. Its timeout ends wsl.exe on the Windows side only: the sync and the write inside the
+# distribution may still finish, so a failed row does not prove nothing was released (independent review of a643c4b42, suggestion 3).
+function Invoke-DrillWslCacheRelease([string]$HostName = $env:COMPUTERNAME, [int]$WithinSeconds = 0, [switch]$WhileRunning) {
   $out = [ordered]@{ at = [DateTimeOffset]::UtcNow.ToString('o'); distributions = @(); results = @(); released = @(); skipped = $null; failed = $null }
+  $until = if ($WithinSeconds -gt 0) { (Get-DrillTime).AddSeconds($WithinSeconds) } else { $null }
+  $left = { if ($null -eq $until) { return $script:Drill.WslTimeoutSeconds }
+    $s = [int][Math]::Floor(($until - (Get-DrillTime)).TotalSeconds); if ($s -lt 1) { throw (New-DrillError 'DRILL_WSL_CACHE_RELEASE_TIMEOUT') }; $s }
   try {
     Assert-DrillWslReleaseCommandLiteral
     $out.distributions = @(Get-DrillRunnerDistributions $HostName)
     $registered = @()
     if ($out.distributions.Count -gt 0) { $registered = Get-DrillWslRegisteredRunners $out.distributions }
     foreach ($d in $out.distributions) {
-      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet')) $registered)
+      $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet') (& $left)) $registered)
       if (-not (Test-DrillNameIn $d $runningNow)) { $out.results += [ordered]@{ distribution = $d; running = $false; exit = $null }; continue }
-      # the Windows side last, right before the call: the running list may have taken its time (Codex review of f734afe7e, medium 2)
-      if (Test-DrillHostRunnerJob @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName })) {
+      # before a boot, the Windows side last, right before the call: the running list may have taken its time (Codex review of f734afe7e,
+      # medium 2)
+      if (-not $WhileRunning -and (Test-DrillHostRunnerJob @(Get-Process -ErrorAction Stop | ForEach-Object { [string]$_.ProcessName }))) {
         $out.skipped = [ordered]@{ where = 'windows'; reason = 'ACTIONS_RUNNER_JOB' }
         break
       }
-      $exit = Get-DrillField (Invoke-DrillWsl @('--distribution', $d, '--user', 'root', '--exec', 'sh', '-c', $script:DrillWslReleaseCommand)) 'exit'
+      $exit = Get-DrillField (Invoke-DrillWsl @('--distribution', $d, '--user', 'root', '--exec', 'sh', '-c', $(if ($WhileRunning) { $script:DrillWslReleaseCommand } else { $script:DrillWslIdleReleaseCommand })) (& $left)) 'exit'
       $out.results += [ordered]@{ distribution = $d; running = $true; exit = $exit }
       if ($exit -is [int] -and $exit -eq 0) { $out.released += $d }
-      elseif ($exit -is [int] -and $exit -eq 3) { $out.skipped = [ordered]@{ where = $d; reason = 'WSL_ACTIONS_RUNNER_JOB' }; break }
+      elseif (-not $WhileRunning -and $exit -is [int] -and $exit -eq 3) { $out.skipped = [ordered]@{ where = $d; reason = 'WSL_ACTIONS_RUNNER_JOB' }; break }
       else { throw (New-DrillError 'DRILL_WSL_CACHE_RELEASE_FAILED' @{ distribution = $d; exit = $exit }) }
     }
   } catch {
@@ -1816,6 +1898,45 @@ function Get-DrillTopProcesses([int]$Count = 10) {
   })
 }
 
+# Fable ruling 0e418483 "drill memory root" 2.3 (G1): the armed guard's cache release. Below CacheReleaseBelowBytes free, on a tick the
+# running gate passed (below 6 GiB it aborts instead), at most once every CacheReleaseEverySeconds on the monotonic clock (Decision
+# f572ac5b's "at most every 2 minutes": a wall clock step cannot shorten it; independent review of a643c4b42, suggestion 2) -- a release
+# that failed counts too: no retry before the next window -- the one release function in its running use (-WhileRunning: a job there or
+# not), bounded by CacheReleaseSeconds. Each release is a row of
+# cacheReleases -- at, freeBeforeGB, exit (the release command's, per distribution it reached: one, a list, or null when none was
+# reached), freeAfterGB (the next tick's reading, null if that tick read none), failed (the release's failure, or null) -- written to
+# host-guard.json as it happens and again when the next tick fills freeAfterGB, in a run that ends well too; an abort record carries them.
+# Nothing here aborts: a release that fails, times out or cannot be written is only recorded, or left out.
+function Get-DrillCacheReleases($State) { @(if ($null -ne $State['cacheReleases']) { $State['cacheReleases'] }) }
+function Write-DrillCacheReleases($State, [string]$RunDir) {
+  try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') ([ordered]@{ cacheReleases = @(Get-DrillCacheReleases $State) }) } catch { }
+}
+function Complete-DrillCacheRelease($State, $Safety) {
+  $row = $State['releasePending']
+  if ($null -eq $row) { return $false }
+  $row.freeAfterGB = Get-Prop $Safety 'freeGB'; $State['releasePending'] = $null
+  return $true
+}
+function Step-DrillCacheRelease($State, $Safety, [string]$RunDir) {
+  $free = Get-Prop $Safety 'freeGB'
+  if (-not $State.armed -or $State.stop -or (Get-Prop $Safety 'ok') -ne $true -or $null -eq $free -or
+      [double]$free * 1GB -ge $script:Drill.CacheReleaseBelowBytes) { return }
+  $since = Get-DrillMonotonicSeconds; $last = $State['lastReleaseSeconds']
+  if ($null -ne $last -and $since - [double]$last -lt $script:Drill.CacheReleaseEverySeconds) { return }
+  $State['lastReleaseSeconds'] = $since
+  $row = [ordered]@{ at = (Get-DrillTime).ToUniversalTime().ToString('o'); freeBeforeGB = $free; exit = $null; freeAfterGB = $null; failed = $null }
+  try {
+    $out = Invoke-DrillWslCacheRelease -WhileRunning -WithinSeconds $script:Drill.CacheReleaseSeconds
+    $exits = [Collections.ArrayList]::new()
+    foreach ($r in @($out.results)) { if ((Get-Prop $r 'running') -eq $true) { [void]$exits.Add((Get-Prop $r 'exit')) } }
+    $row.exit = if ($exits.Count -eq 1) { $exits[0] } elseif ($exits.Count -gt 1) { @($exits) } else { $null }
+    $row.failed = $out.failed
+  } catch { $c = Get-DrillCode $_; $row.failed = [ordered]@{ code = $c.code; detail = $c.detail } }
+  if ($null -eq $State['cacheReleases']) { $State['cacheReleases'] = [Collections.ArrayList]::new() }
+  [void]$State['cacheReleases'].Add($row); $State['releasePending'] = $row
+  Write-DrillCacheReleases $State $RunDir
+}
+
 # A separate runspace owns this loop: guest jobs, Copy-Item, Read-Host and long waits cannot delay host protection.
 # The start and abort share a lock, so an abort can never be followed by a late Start-VM.
 function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreCheckpoint) {
@@ -1828,11 +1949,15 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
         try {
           if ($State.stop) { return }
           $safety = Get-DrillGuardSafety $State
-          if ($State.armed) { Add-DrillExecutorObservation $State $safety; Add-DrillRunningMemory $State $safety }
+          $completed = $false
+          if ($State.armed) { Add-DrillExecutorObservation $State $safety; Add-DrillRunningMemory $State $safety; $completed = Complete-DrillCacheRelease $State $safety }
           if (-not $safety.ok) { $State.failure = @{ code = $safety.code; detail = $safety } }
+          elseif ($completed) { Write-DrillCacheReleases $State $RunDir }   # an abort writes its own record, with them
           $State.ready = $true
         } finally { [Threading.Monitor]::Exit($State.SyncRoot) }
         if ($State.failure) { break }
+        # outside the lock: a release (up to CacheReleaseSeconds) never holds up the foreground's start or stop
+        Step-DrillCacheRelease $State $safety $RunDir
       }
       Start-Sleep -Milliseconds 200
     }
@@ -1843,16 +1968,23 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
     try {
       if ($State.failure -and $State.armed) {
         $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
-          hostExecutorStates = @($State.executorStates.Values);
+          hostExecutorStates = @($State.executorStates.Values); cacheReleases = @(Get-DrillCacheReleases $State);
           abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null; cleanupDone = $false }
-        # short of memory: who held it, read before the shutdown changes the picture; a list that cannot be read is left out
-        if ([string]$State.failure.code -ceq 'DRILL_HOST_MEMORY_SHORT') { try { $top = @(Get-DrillTopProcesses); if ($top.Count) { $receipt['topProcesses'] = $top } } catch { } }
+        # short of memory: who held it, read before the shutdown changes the picture -- the host's largest processes; one that cannot be
+        # read is left out. What the runner distribution holds (G2) is read after the shutdown (below)
+        $short = [string]$State.failure.code -ceq 'DRILL_HOST_MEMORY_SHORT'
+        if ($short) {
+          try { $top = @(Get-DrillTopProcesses); if ($top.Count) { $receipt['topProcesses'] = $top } } catch { }
+        }
         # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
         try {
           $receipt.stopped = Stop-DrillOwnedVm -RestoreCheckpoint:$RestoreCheckpoint
           $receipt.restoredToCheckpoint = $RestoreCheckpoint -and $receipt.stopped
         } catch { $receipt.cleanupFailure = Get-DrillCode $_ }
+        # the runner distribution's memory (G2), after the shutdown: the guest's stop changes nothing in WSL's meminfo, and a slow WSL
+        # (up to CacheReleaseSeconds) never holds up the stop of a host already short (independent review of a643c4b42, suggestion 1)
+        if ($short) { try { $wm = @(Get-DrillWslMemory); if ($wm.Count) { $receipt['wslMemory'] = $wm } } catch { } }
         # the record says the cleanup ran (Get-DrillGuardOutcome): one left from before it says "not known", never "restored"
         $receipt.cleanupDone = $true
         $State.cleanup = $receipt
@@ -1877,6 +2009,7 @@ function Get-DrillGuardSafety($State, [switch]$BootGate) {
 
 function Start-DrillHostGuard([string]$RunDir, [switch]$RestoreCheckpoint, $Window) {
   $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $false; failure = $null; cleanup = $null; afterBootFreeGB = $null; minRunningFreeGB = $null;
+    cacheReleases = [Collections.ArrayList]::new(); releasePending = $null; lastReleaseSeconds = $null;
     executorStates = [Collections.Specialized.OrderedDictionary]::new([StringComparer]::Ordinal);
     deadline = (Get-Prop $Window 'deadline'); holdUntil = (Get-Prop $Window 'holdUntil') })
   $worker = [PowerShell]::Create()
@@ -1908,12 +2041,20 @@ function Assert-DrillGuard {
 function Start-DrillGuardedVm($Watchdog) {
   if (-not $script:HostGuard) { throw (New-DrillError 'DRILL_HOST_GUARD_FAILED') }
   $state = $script:HostGuard.state
+  # the boot gate's sample carries what the runner distribution holds (Fable ruling 0e418483 supplement "three questions after the
+  # implementation" 1): the abort's reader and shape, read right before the gate and outside the lock (the guard is not held up), so a
+  # refusal has it too. Evidence only: one not read is left out, and the gate judges as it would without it.
+  $wslMemory = @()
+  if ($script:DrillPreBoot) { try { $wslMemory = @(Get-DrillWslMemory) } catch { $wslMemory = @() } }
   [Threading.Monitor]::Enter($state.SyncRoot)
   try {
     Assert-DrillGuard
     # the boot gate: both sides' runner jobs again, then memory, judged here once
     $safety = Get-DrillGuardSafety $state -BootGate
-    if ($script:DrillPreBoot) { $script:DrillPreBoot.bootGate = ConvertTo-DrillGateTrace $safety }
+    if ($script:DrillPreBoot) {
+      $script:DrillPreBoot.bootGate = ConvertTo-DrillGateTrace $safety
+      if ($wslMemory.Count) { $script:DrillPreBoot.bootGate['wslMemory'] = $wslMemory }
+    }
     if (-not $safety.ok) { throw (New-DrillError $safety.code $safety) }
     if ($Watchdog) {
       [IO.File]::WriteAllText("$(Get-Prop $Watchdog 'signal').starting", 'starting')

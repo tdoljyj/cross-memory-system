@@ -72,6 +72,9 @@ MEMORY_CLEAR_GB = LOW_MEMORY_GB + 0.5
 # CI stall (resident_stall): the resident's DUTY_WINDOW_MS, and the word its node on duty starts each status with.
 STALL_AFTER = timedelta(minutes=30)
 DUTY_WORD = "当班"
+# The per-PR hint the resident writes on a behind head (pr-status.mjs describe): pending while the robot
+# (clued-front-main-merge) has yet to take main in, failure in older packages; never a batch result nor a stall.
+BEHIND_HINT = "落后 main"
 
 # Duplicate-run alert (Task e435e658, rule 41ab823a: one commit's one check really runs once).
 DUP_LOOKBACK = timedelta(days=3)       # PRs updated, and runs started, within this window
@@ -550,7 +553,8 @@ def resident_stall(client: GitHub, pulls: list[dict], combined: list[tuple[int, 
     """The open PRs whose resident work nobody moves (board row 26, gap 2): CI is stalled.
 
     A head waits on the residents when its newest resident row is pending or error (success and failure are
-    results, such as 已完成 or 落后 main). It is stalled when no node has been on duty for it for STALL_AFTER:
+    results, such as 已完成). A 落后 main hint (BEHIND_HINT, pending since Task 484bddac) waits on the robot that
+    takes main in, not on the residents, so it is never a stall (Task bc982192). It is stalled when no node has been on duty for it for STALL_AFTER:
     a node on duty rewrites 当班 on every queued commit at least every 14 minutes (the resident's
     DUTY_REFRESH_MS), so STALL_AFTER is its DUTY_WINDOW_MS. An error row (HALT, or a status no longer updated)
     is a stall at once: a HALT never hands over (Decision 199cf3de) and waits for the Owner. Only a head whose
@@ -562,6 +566,8 @@ def resident_stall(client: GitHub, pulls: list[dict], combined: list[tuple[int, 
         rows = resident_rows(status)
         if number in drafts or not rows or rows[0].get("state") not in ("pending", "error"):
             continue
+        if str(rows[0].get("description", "")).startswith(BEHIND_HINT):
+            continue  # behind main: waits for the robot's merge of main, the residents have nothing to do
         since = row_time(next((row for row in rows if is_duty(row)), None))
         if since is not None and now - since < STALL_AFTER:
             continue  # a node is on duty for it and alive
@@ -591,8 +597,8 @@ def batch_failures(pulls: list[dict], combined: list[tuple[int, dict]]) -> dict[
     for number, status in combined:
         for row in status.get("statuses") or []:
             match = RESIDENT_CONTEXT.match(str(row.get("context", "")))
-            # "落后 main" is a per-PR hint written for stale branches, not a batch result.
-            if match and row.get("state") == "failure" and not str(row.get("description", "")).startswith("落后 main"):
+            # A behind-main hint (BEHIND_HINT) is a per-PR hint written for stale branches, not a batch result.
+            if match and row.get("state") == "failure" and not str(row.get("description", "")).startswith(BEHIND_HINT):
                 key = f"failed:{number}:{str(status.get('sha', ''))[:12]}:{match.group(1)}"
                 events[key] = (f"PR #{number}（{cell(titles.get(number))}）在 {match.group(1)} 上检查失败："
                                f"{cell(row.get('description'))}")

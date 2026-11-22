@@ -84,6 +84,10 @@ public static class FakeWsl {
   return fixturePromise;
 }
 
+// The program writes its diagnostic only into a file the current user owns (windows/CompanionTaskRegistrar.cs, exit 7
+// otherwise); an elevated administrator's new files are owned by Administrators. So every test that reads the diagnostic
+// needs a standard user, says so in its name, and does not run on a host that cannot give one (CLUED_CI_HOST_LACKS;
+// task 04f9b91b: all eight exited 7 on the elevated GitHub-hosted Windows runner).
 async function execute(t, { importExit = 9, probeExit = 7, registered = true, wrongBase = false,
   extendedBase = false, utf16 = false, gbk = false, hang = false, stale = false, weakOldAcl = false, clientRefusal = false } = {}) {
   const tools = await fixture(), dir = await fs.mkdtemp(path.join(tools.dir, 'run-'));
@@ -143,7 +147,7 @@ if (@($raw.DiscretionaryAcl | Where-Object { $_.SecurityIdentifier.Value -eq 'S-
   return { result, diagnostic: JSON.parse(bytes.toString('utf8')), uidFile, output };
 }
 
-test('M5-b import failure records bounded separate exit/output and exact subject', { skip: !windows }, async t => {
+test('M5-b import failure records bounded separate exit/output and exact subject [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, diagnostic: d, uidFile } = await execute(t);
   assert.equal(result.status, 3);
   assert.equal(d.contract, 'clued.independent-ci.companion-wsl-import-result/1');
@@ -157,7 +161,7 @@ test('M5-b import failure records bounded separate exit/output and exact subject
   assert.equal(await fs.stat(uidFile).then(() => true, () => false), false, 'failed imports do not rewrite DefaultUid');
 });
 
-test('M5-b already-registered retry succeeds only after the real runnable probe and matching registration', { skip: !windows }, async t => {
+test('M5-b already-registered retry succeeds only after the real runnable probe and matching registration [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, diagnostic: d, uidFile } = await execute(t, { probeExit: 0, extendedBase: true });
   assert.equal(result.status, 0); assert.equal(d.exitCode, 0);
   assert.equal(d.commands.find(c => c.phase === 'import').exitCode, 9);
@@ -166,7 +170,7 @@ test('M5-b already-registered retry succeeds only after the real runnable probe 
   assert.equal(await fs.readFile(uidFile, 'utf8'), '1000');
 });
 
-test('M5-b diagnostic capture decodes UTF16 WSL output and replaces a stale success result', { skip: !windows }, async t => {
+test('M5-b diagnostic capture decodes UTF16 WSL output and replaces a stale success result [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, diagnostic: d } = await execute(t, { utf16: true, stale: true });
   assert.equal(result.status, 3); assert.notEqual(d.runId, 'stale');
   assert.match(d.commands.find(c => c.phase === 'version').stdout, /版本测试/);
@@ -174,7 +178,7 @@ test('M5-b diagnostic capture decodes UTF16 WSL output and replaces a stale succ
   assert.ok(!JSON.stringify(d).includes('\\u0000'));
 });
 
-test('M5-b a stuck own WSL command is bounded and leaves a diagnostic timeout', { skip: !windows }, async t => {
+test('M5-b a stuck own WSL command is bounded and leaves a diagnostic timeout [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, diagnostic: d, uidFile } = await execute(t, { hang: true });
   assert.equal(result.status, 3);
   const probe = d.commands.find(c => c.phase === 'probe');
@@ -182,7 +186,7 @@ test('M5-b a stuck own WSL command is bounded and leaves a diagnostic timeout', 
   assert.equal(await fs.stat(uidFile).then(() => true, () => false), false);
 });
 
-test('M5-b diagnostic file has explicit protected reader ACL after replacing a weak old result', { skip: !windows }, async t => {
+test('M5-b diagnostic file has explicit protected reader ACL after replacing a weak old result [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, output } = await execute(t, { stale: true, weakOldAcl: true });
   assert.equal(result.status, 3);
   const inspect = `
@@ -206,7 +210,7 @@ $raw = New-Object Security.AccessControl.RawSecurityDescriptor($acl.GetSecurityD
   ], 'only SYSTEM/Administrators read and the current account modify; no inherited Everyone or Users');
 });
 
-test('M5-b import success still requires a runnable distribution; missing or wrong-path registration is refused', { skip: !windows }, async t => {
+test('M5-b import success still requires a runnable distribution; missing or wrong-path registration is refused [needs:non-elevated]', { skip: !windows }, async t => {
   const badProbe = await execute(t, { importExit: 0, probeExit: 7 });
   assert.equal(badProbe.result.status, 3);
   for (const patch of [{ registered: false }, { wrongBase: true }]) {
@@ -216,7 +220,7 @@ test('M5-b import success still requires a runnable distribution; missing or wro
   }
 });
 
-test('M5-b invalid machine client leaves a protected refusal and runs no WSL command', { skip: !windows }, async t => {
+test('M5-b invalid machine client leaves a protected refusal and runs no WSL command [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, diagnostic: d, uidFile } = await execute(t, { clientRefusal: true });
   assert.equal(result.status, 8); assert.equal(d.exitCode, 8);
   assert.equal(d.refusal, 'WSL_MACHINE_CLIENT_SIGNATURE_INVALID');
@@ -224,7 +228,7 @@ test('M5-b invalid machine client leaves a protected refusal and runs no WSL com
   assert.equal(await fs.stat(uidFile).then(() => true, () => false), false);
 });
 
-test('M5-b diagnostic capture decodes explicit non-ASCII GBK bytes independent of OS code page', { skip: !windows }, async t => {
+test('M5-b diagnostic capture decodes explicit non-ASCII GBK bytes independent of OS code page [needs:non-elevated]', { skip: !windows }, async t => {
   const { result, diagnostic: d } = await execute(t, { gbk: true });
   assert.equal(result.status, 3);
   assert.match(d.commands[0].stdout, /\u7248\u672c\u6d4b\u8bd5/);

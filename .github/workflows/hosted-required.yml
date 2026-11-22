@@ -337,6 +337,9 @@ jobs:
           CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
           CLUED_UNDER_TEST: "1"
+          # This runner's job process is an elevated administrator: the tests marked [needs:non-elevated] run on the
+          # nodes' ci-suites-windows only (ci-required-selection.mjs HOST_CAPABILITIES; only this workflow may set it).
+          CLUED_CI_HOST_LACKS: non-elevated
         run: |
           $ErrorActionPreference = 'Stop'
           & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate
@@ -412,7 +415,25 @@ jobs:
           chmod -R a+rX "$repo" && chmod 0444 "$control/git-safe.config"
       - name: Validate exact historical exceptions and detection regressions
         run: |
-          python3 -I -B scripts/ci/reviewed_gitleaks.py \
+          set -eu
+          # The helper's git commands go through the argv adapter of the Native self-test shim this worker runs
+          # (formal-gitleaks-v4 selftest-shim.mjs safeGitArguments), not a copy of its rules: its command allow-list and
+          # core.abbrev=8 for the two pinned historical patch digests. Without it git abbreviates a complete history
+          # to 9+ characters and the helper fails "Reviewed-finding verification failed" (Task 04f9b91b).
+          shim="$RUNNER_TEMP/clued-gitleaks/self-test"
+          mkdir -m 0700 "$shim" "$shim/bin" "$shim/templates"
+          cat > "$shim/git.mjs" <<'EOF'
+          import { spawnSync } from 'node:child_process';
+          import { pathToFileURL } from 'node:url';
+          const [git, module, templates, ...args] = process.argv.slice(2);
+          const { safeGitArguments } = await import(pathToFileURL(module).href);
+          process.exitCode = spawnSync(git, safeGitArguments(args, { templates }), { stdio: 'inherit' }).status ?? 1;
+          EOF
+          printf '#!/bin/sh\nexec %s %s %s %s %s "$@"\n' "$(command -v node)" "$shim/git.mjs" "$(command -v git)" \
+            "$PWD/work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/selftest-shim.mjs" \
+            "$shim/templates" > "$shim/bin/git"
+          chmod 0500 "$shim/bin/git"
+          PATH="$shim/bin:$PATH" python3 -I -B scripts/ci/reviewed_gitleaks.py \
             --config "$RUNNER_TEMP/clued-gitleaks/repo/.gitleaks.toml" \
             --output "$RUNNER_TEMP/clued-gitleaks/control/reviewed.ignore" \
             --self-test
