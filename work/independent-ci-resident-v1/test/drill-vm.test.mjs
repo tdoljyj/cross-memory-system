@@ -672,6 +672,66 @@ test('G1: six ticks at 9 GB: two releases, 120 seconds apart', opts, () => {
   assert.deepEqual(r.guard.cacheReleases.map(releaseRow), [{ at: at(0), freeBeforeGB: 9, exit: 0, freeAfterGB: 9 }, { at: at(120), freeBeforeGB: 9, exit: 0, freeAfterGB: 9 }]);
 });
 
+// Fable ruling 0e418483 "drill memory root" 2.4 (G2): the running gate reads no runner job, so its sample carries no job reading (r11's
+// host-guard.json said runnerJob null, wslJobs [] -- "not read" written as "none"); and an abort for memory reads the runner
+// distribution's /proc/meminfo (MemTotal, MemFree, Cached, AnonPages) and its Runner.Worker count into wslMemory, read-only, only from
+// a distribution already running. Not read whole: no wslMemory, and the abort and its restore as before. The real Get-DrillHostSafety
+// under the real guard loop: 5 GB free with the guest fully assigned.
+const MEMINFO = ['MemTotal:       29360128 kB', 'MemFree:         6815744 kB', 'MemAvailable:   22020096 kB', 'Buffers:          131072 kB',
+  'Cached:         16777216 kB', 'SwapCached:            0 kB', 'Active:          9437184 kB', 'AnonPages:       5242880 kB', 'Shmem:             65536 kB', ''].join('\n');
+function memoryAbort(name, answers) {
+  const dir = fs.mkdtempSync(path.join(tmp, `g2-${name}-`));
+  return ps(`
+    function Read-DrillHostStatus { ${q(idleHostStatus())} }
+    function Get-CimInstance { param($ClassName, $OperationTimeoutSec, $ErrorAction) @{ FreePhysicalMemory = 5GB / 1KB } }
+    function Get-VM { param($ErrorAction) [pscustomobject]@{ Name = $script:Drill.VmName; Notes = $script:Drill.Marker; MemoryStartup = 8GB; MemoryAssigned = 8GB } }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $script:calls.Add('stop'); $true }
+    function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillWslRegisteredNames { 'Fixture-CI' }
+    $meminfo = ${q(MEMINFO)}
+    $script:calls = [Collections.Generic.List[string]]::new()
+    $script:DrillWslRunner = { param($a, $t)
+      $j = $a -join ' '; $script:calls.Add($j)
+      $answer = @{ list = @{ exit = 0; stdout = "Fixture-CI\`r\`n"; stderr = '' }; meminfo = @{ exit = 0; stdout = $meminfo; stderr = '' }; workers = @{ exit = 0; stdout = "3\`n"; stderr = '' } }
+      ${answers}
+      if ($j -ceq '--list --running --quiet') { return $answer.list }
+      if ($j -ceq '--distribution Fixture-CI --exec cat /proc/meminfo') { return $answer.meminfo }
+      if ($j -ceq '--distribution Fixture-CI --exec pgrep -cix Runner[.]Worker') { return $answer.workers }
+      @{ exit = 1; stdout = ''; stderr = 'unexpected' } }
+    $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $true; failure = $null; cleanup = $null; executorStates = [ordered]@{} })
+    Invoke-DrillHostGuardLoop $state ${q(dir)} -RestoreCheckpoint
+    @{ calls = @($script:calls); guard = (Get-Content -LiteralPath (Join-Path ${q(dir)} 'host-guard.json') -Raw | ConvertFrom-Json) }`);
+}
+
+test('G2: an abort for memory records the runner distribution\'s memory (wslMemory); the running sample carries no job reading', opts, () => {
+  const r = memoryAbort('read', '');
+  assert.deepEqual([r.guard.code, r.guard.stopped, r.guard.restoredToCheckpoint, r.guard.cleanupDone], ['DRILL_HOST_MEMORY_SHORT', true, true, true]);
+  assert.deepEqual(r.guard.wslMemory, [{ distribution: 'Fixture-CI', memTotalGB: 28, memFreeGB: 6.5, cachedGB: 16, anonPagesGB: 5, runnerWorkers: 3 }]);
+  assert.deepEqual(r.calls, ['--list --running --quiet', '--distribution Fixture-CI --exec cat /proc/meminfo',
+    '--distribution Fixture-CI --exec pgrep -cix Runner[.]Worker', 'stop'], 'read-only, before the shutdown; no release below 6 GB');
+  assert.equal(r.guard.detail.freeGB, 5);
+  for (const k of ['runnerJob', 'busyWith', 'wslJobs', 'wslRunnerDistributions', 'wslUnreadable', 'wslListCall', 'windowsUnreadable']) {
+    assert.equal(k in r.guard.detail, false, `the running sample has no ${k}: ${JSON.stringify(r.guard.detail)}`);
+  }
+  // no Runner.Worker: pgrep -c says 0 and exits 1
+  assert.equal(memoryAbort('none', "$answer.workers = @{ exit = 1; stdout = \"0`n\"; stderr = '' }").guard.wslMemory[0].runnerWorkers, 0);
+  // not read whole: nothing recorded, the abort and the restore as before
+  const unread = {
+    list: "$answer.list = @{ exit = 1; stdout = ''; stderr = '' }",
+    notRunning: "$answer.list = @{ exit = 0; stdout = ''; stderr = '' }",
+    meminfoShort: "$answer.meminfo = @{ exit = 0; stdout = $meminfo.Replace('AnonPages:', 'Anon:'); stderr = '' }",
+    meminfoStderr: "$answer.meminfo = @{ exit = 0; stdout = $meminfo; stderr = 'x' }",
+    workersGarbled: "$answer.workers = @{ exit = 0; stdout = 'three'; stderr = '' }",
+    timeout: "if ($a[-1] -ceq '/proc/meminfo') { throw 'wsl.exe timed out' }",
+  };
+  for (const [name, answer] of Object.entries(unread)) {
+    const u = memoryAbort(name, answer);
+    assert.deepEqual([u.guard.code, u.guard.stopped, u.guard.restoredToCheckpoint, 'wslMemory' in u.guard], ['DRILL_HOST_MEMORY_SHORT', true, true, false], name);
+    assert.equal(u.calls.at(-1), 'stop', name);
+  }
+  assert.ok(!memoryAbort('notRunning2', unread.notRunning).calls.some(c => c.includes('--distribution')), 'a distribution not running is asked nothing');
+});
+
 test('the real background guard aborts while the foreground is blocked, without any VM access', opts, () => {
   const fixture = path.join(tmp, 'guard-fixture.ps1');
   const marker = path.join(tmp, 'guard-stopped.txt');
