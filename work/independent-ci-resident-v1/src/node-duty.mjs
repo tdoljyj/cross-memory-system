@@ -4,7 +4,8 @@
 // GitHub read-back (C4) are what keep two nodes from publishing, never this.
 //
 // Each node writes its own commit status, context `resident-queue/<node> (info only)`, and only on the commits it queued
-// or ran (its status.json current, pending and recent). The description starts with a fixed word:
+// or ran (its status.json current, pending and recent); while HALTed, the node on duty also writes the HALT text (no duty word) on
+// every other eligible open PR head (want). The description starts with a fixed word:
 //   - 当班 (on duty): the node is ACTIVE, its status is fresh (STATUS_STALE_MS), the executor is neither STOPPED nor
 //     STARTING, there is no HALT, PAUSE, intake pause (C6) or open breaker, and the commit is queued or running;
 //   - 双活停机 (dual-active stop): the node holds the dual-active lock (below); it blocks a take-over like 当班;
@@ -460,6 +461,11 @@ export class NodeDuty {
       return base ? { state: base.state, description: `${WORD.ON}：${base.description}`, kind: 'duty', ...(base.weak ? { weak: true } : {}) } : null;
     }
     if (ownAny(status, pull) && base && !base.weak) return { ...base, kind: 'result' };
+    // Field defect 2026-11-23: a HALT is executor-wide, so the node says it on every eligible open PR head, also one it never queued
+    // (the PRs that ended the HALT are merged; without this the open ones carried nothing and the panel read the node as idle). The
+    // text is pr-status.mjs#describe's own (执行器已停机（码），等 Owner 复位): no duty word, so no other node reads it as on duty, it
+    // is owed no 已交班 and is not refreshed. A stale status is not a HALT known now: nothing, as before.
+    if (status.halt && now - status.writtenAt <= this.staleMs && base?.state === 'error') return { ...base, kind: 'halted' };
     return null;
   }
 
