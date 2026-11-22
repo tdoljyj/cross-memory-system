@@ -19,6 +19,7 @@ const leasePin = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v5
 const prEndRelease = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v58-v59-map.json', import.meta.url), 'utf8'));
 const holderPreflight = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v59-v60-map.json', import.meta.url), 'utf8'));
 const servedTarget = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v60-v61-map.json', import.meta.url), 'utf8'));
+const sessionCapInHand = JSON.parse(await readFile(new URL('./fixtures/agent-contract-v61-v62-map.json', import.meta.url), 'utf8'));
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 // Keep the v46→v47 movement proof unchanged. The v48 successor declares its
@@ -29,10 +30,32 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // PR/Task identity successor, the v57 holder-edit/terminal successor, then the v58 lease pin by authorize_head, and the v59 PR-end release that
 // replaces holder readiness and terminal admission. The v60 successor corrects
 // only the existing A.4 holder preflight and its retired readiness wording. The v61 successor lets a pull-request
-// authorize_head omit the target branch the service decides (Task 0ca0479d).
+// authorize_head omit the target branch the service decides (Task 0ca0479d). The v62 successor says the session
+// cap counts only claims in hand (Task e642d087).
 // Undo only these declared
 // successors before checking all 24 original normative blocks against the unchanged frozen proof.
+function v61Source() {
+  assert.equal(sessionCapInHand.schema,'clued.agent-contract-session-cap-in-hand-successor/1');
+  assert.equal(sessionCapInHand.source_version,61);assert.equal(sessionCapInHand.target_version,62);
+  assert.deepEqual(sessionCapInHand.edits.map(row=>row.id),['version','session-cap-in-hand']);
+  assert.deepEqual(sessionCapInHand.edits[0],{id:'version',before:'Contract version: 61',after:'Contract version: 62'});
+  assert.equal(sha256(source),sessionCapInHand.target_document_normalized_sha256);
+  const edit=sessionCapInHand.edits[1];
+  for(const text of [edit.before,edit.after]) {
+    assert.ok(text.startsWith('| `work_claim_budget_exhausted` |'));
+    assert.equal(/(?:^|\n)(?:### |<a id=)/.test(text),false,'the edit cannot consume another section');
+  }
+  assert.ok(edit.after.includes('claims in hand per session')&&edit.after.includes('confirmed open does not count'));
+  let restored=source;
+  for(const {id,before,after} of [...sessionCapInHand.edits].reverse()) {
+    assert.equal(restored.split(after).length-1,1,`${id}: exact session-cap successor text`);
+    restored=restored.replace(after,before);
+  }
+  assert.equal(sha256(restored),sessionCapInHand.source_document_normalized_sha256);
+  return restored;
+}
 function v60Source() {
+  const source=v61Source();
   assert.equal(servedTarget.schema,'clued.agent-contract-served-target-successor/1');
   assert.equal(servedTarget.source_version,60);assert.equal(servedTarget.target_version,61);
   assert.deepEqual(servedTarget.edits.map(row=>row.id),['version','served-target']);
@@ -309,7 +332,7 @@ test('the mandatory work-claim core remains within 500 words', () => {
   assert.ok(words > 0 && words <= 500, `§1.7 has ${words} words`);
 });
 
-test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v61 successor edits', () => {
+test('all 24 v46 blocks remain in the frozen v47 base after only declared v48-v62 successor edits', () => {
   assert.equal(map.schema, 'clued.agent-contract-claim-move/1');
   assert.equal(map.blocks.length, 24);
   assert.equal(map.blocks.reduce((count, row) => count + row.reference_edits.length, 0), 9);
