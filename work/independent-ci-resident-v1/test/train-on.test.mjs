@@ -333,8 +333,8 @@ test('executor, on: a front batch that finally failed for the PR itself is the n
   const e = withInput({ inputs: [], engine: fakeEngine({ train: mode => answer(mode, {}, 0) }) });
   const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
   await f.exec.tick();
-  const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
-  f.exec.frontKeys.set('k'.repeat(64), 2);
+  // its front number is the subject's own (bc982192 parked-front v2 §2.2 D): front batch 2 here
+  const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 2, testSha: S };
   await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'STAGE_CHILD_REFUSED', true);
   await f.exec.noteFrontOutcome({ ...subject, testSha: undefined }, 'x'.repeat(64), 'STAGE_CHILD_REFUSED', true); // not a front batch: nothing
   f.advance(MIN);
@@ -361,7 +361,6 @@ test('R3 batch 2 1b: an ended front batch is a train-front-ended receipt, not a 
   const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
   await f.exec.tick();
   const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
-  f.exec.frontKeys.set('k'.repeat(64), 1);
   await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'TRAIN_BATCH_CHANGED', false);
   assert.deepEqual(await f.receipts.latest(['train-front-outcome'], 1), [], 'what an older resident reads as failed is not written');
   assert.deepEqual((await f.receipts.latest(['train-front-ended'], 1)).map(r => [r.value.body.frontOutcome.code, r.value.body.frontOutcome.failed]), [['TRAIN_BATCH_CHANGED', false]]);
@@ -372,7 +371,6 @@ test('R3 batch 2 1b: an ended front batch is a train-front-ended receipt, not a 
   await g.exec.tick();
   assert.deepEqual([ge.inputs.at(-1)?.input.frontPr, ge.inputs.at(-1)?.input.frontCode, ge.inputs.at(-1)?.input.frontFailed], [884, 'TRAIN_BATCH_CHANGED', false]);
   // a failure of the PR itself is a train-front-outcome as before, and the newest of the two is the one a restart carries
-  f.exec.frontKeys.set('m'.repeat(64), 2);
   await f.exec.noteFrontOutcome({ ...subject, attempt: 2 }, 'm'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
   assert.deepEqual((await f.receipts.latest(['train-front-outcome'], 1)).map(r => [r.value.body.frontOutcome.attempt, r.value.body.frontOutcome.failed]), [[2, true]]);
   const h = await executorFixture(t, { policy: policyV8(), root: f.root });
@@ -594,7 +592,7 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   const r = await f.exec.tick();
   assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], 'a transient stage-2 failure: attempt 2');
   assert.deepEqual(f.exec.frontBatches.get(`884:${HEAD}`).map(x => x.attempt), [1, 2]);
-  assert.equal(f.exec.frontKeys.get(r.attempt2), 2);
+  assert.deepEqual((await f.ledger.pendingAttempts2()).map(a => a.subject.attempt), [2], 'attempt 2 is front batch 2: its subject says so');
   assert.deepEqual((await ofType(f.receipts, 'train-front-enqueued')).map(b => [b.attempt, b.auto === true]), [[1, false], [2, true]]);
   // stage 10 cannot open a third front batch of this head
   assert.equal(await f.exec.enqueueFront({ ...FRONT1, testSha: '9'.repeat(40), attempt: 2 }), null);
@@ -616,7 +614,6 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   // no attempt 2 when the head's two front batches are used up (the second one failing transiently)
   const h = await executorFixture(t, { policy: policyV8() });
   h.exec.frontBatches.set(`884:${HEAD}`, [{ testSha: S, attempt: 1 }, { testSha: '8'.repeat(40), attempt: 2 }]);
-  h.exec.frontKeys.set('b'.repeat(64), 2);
   const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: h.ports.policy.sourceManifestSha256, attempt: 1, testSha: '8'.repeat(40) };
   assert.equal(await h.exec.attempt2IfEligible('b'.repeat(64), subject, { code: 'BRIDGE_TRANSPORT_TIMEOUT', stageNumber: 2 }), null);
 });
@@ -813,7 +810,6 @@ test('review R3 MINOR 3: the front outcome is carried again until stage 10 repor
   const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
   await f.exec.tick();
   const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
-  f.exec.frontKeys.set('k'.repeat(64), 1);
   await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
   f.advance(MIN);
   await f.exec.tick();
@@ -1260,7 +1256,7 @@ test('parked-front R1: a batch of several dropped before stage 1 (TRAIN_BATCH_ME
 });
 
 // R2 (3b): a front batch an earlier boot left open before stage 1 is closed at the restart (DESIGN §71, restartedUnpublished), before
-// trainRecover. The front book (frontKeys, frontBatches) is read first, so the batch keeps its front attempt: the head's second front
+// trainRecover. The front book (frontBatches) is read first and the batch's subject keeps its front attempt: the head's second front
 // batch gets no attempt 2 (never a third), and its end reaches the first on-mode stage 10 of the new process (frontFailed false).
 const HANG = () => new Promise(() => {});
 test('parked-front R2: the head\'s second front batch interrupted by a reboot closes without attempt 2, its end reported to the new process\'s stage 10', async t => {

@@ -1745,9 +1745,11 @@ async function parkedFront(t) {
 }
 
 // T3: stage 10 names a new S for the same head while the old front batch rests at B. The old batch ends at once as TRAIN_FRONT_TAKES_OVER
-// (stage 10 is the only one that opens front batches: its naming is the fact), the row takes (H, S2), and the next train run reports
-// the old batch's end with frontFailed false. Before the fix the offer was refused as busy and S could never pass stage 8 again.
-test('parked-front T3: a front batch resting at B gives way to a new S of the same head; its end is reported with frontFailed false', async t => {
+// (stage 10 is the only one that opens front batches: its naming is the fact), the row takes (H, S2), and the old batch's end is
+// receipted with frontFailed false. It is not carried: the stage 10 that named S2 knows S ended, and a report that a batch of this head
+// only ended is dropped once the head's next front batch is taken (bc982192 parked-front v2 §2.2 B). Before the fix the offer was
+// refused as busy and S could never pass stage 8 again.
+test('parked-front T3: a front batch resting at B gives way to a new S of the same head; its end is receipted with frontFailed false', async t => {
   const { f, entry, next, S2, inputs, parked } = await parkedFront(t);
   const key = await f.exec.enqueueFront(next);
   assert.notEqual(key, null, JSON.stringify((await f.receipts.latest(['train-front-refused'], 5)).map(r => r.value.body)));
@@ -1755,12 +1757,12 @@ test('parked-front T3: a front batch resting at B gives way to a new S of the sa
   assert.equal((await f.ledger.state(entry.key)).terminal?.facts?.failureCode, 'TRAIN_FRONT_TAKES_OVER');
   assert.equal(f.queue.row(910).current.testSha, S2);
   assert.deepEqual((await f.receipts.latest(['train-front-ended'], 5)).map(r => [r.value.body.frontOutcome.testSha, r.value.body.frontOutcome.code]), [[S, 'TRAIN_FRONT_TAKES_OVER']]);
+  assert.equal(f.exec.trainFrontOutcome, null, 'dropped once (H, S2) is taken');
   const before = inputs.length;
   f.exec.trainUrgent = true;
-  for (let i = 0; i < 5 && !inputs.slice(before).some(x => x.frontPr !== null); i++) { await f.exec.tick(); f.advance(MIN); }
-  const reported = inputs.slice(before).find(x => x.frontPr !== null);
-  assert.ok(reported, 'a train run carried the outcome');
-  assert.deepEqual([reported.frontPr, reported.frontHeadSha, reported.frontTestSha, reported.frontCode, reported.frontFailed], [910, H, S, 'TRAIN_FRONT_TAKES_OVER', false]);
+  for (let i = 0; i < 5 && inputs.length === before; i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(inputs.length > before, 'a train run ran');
+  assert.deepEqual(inputs.slice(before).filter(x => x.frontTestSha === S), [], 'no stage 10 is told S ended (it would name S2 had S2 the same S)');
 });
 
 // T3b (a guard, green before and after): the urgent stage 10 that stage8Try runs before a try of this very batch (frontProofShort)
