@@ -35,13 +35,16 @@
 //                 App brought up that the independent CI never admitted.
 // With a front it does nothing. Without one it brings the candidate whose
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
-// does, one per run. A red or idle front, a lost event or a failed run need no
+// does, one per run, unless BROUGHT_UNADMITTED_LIMIT heads on the train are ones
+// the App brought up and the admission has not passed: then it holds (below). A red or idle front, a lost event or a failed run need no
 // memory: the next run reads the same records again.
 //
 // The hosted copy (.github/workflows/clued-front-main-merge-hosted.yml; framework v1 §2.3, hosted scaffold report §1.4) runs this
 // same entry with CLUED_FRONT_MERGE_PHASE=scaffold. It acts only while the hosted scaffold ruleset is the one in force on main
 // (scaffoldInForce below: main requires hosted- checks pinned to GitHub Actions and none of the independent CI App 5368905, so
 // #292 is disabled and the train does not land). Before that, and from the trial switch on (#292 enabled again), it changes nothing.
+// The two copies are exclusive on that one fact (FABLE-scaffold-s5-pre §1): the self-hosted workflow (no phase) changes nothing
+// while the scaffold ruleset is in force, named or not, so exactly one of them brings fronts up in each state of the rules.
 // Until migration 6b809301 is on the nodes (Decision 85effa31) the admission does not carry the authorization to the merge
 // commit: the copy says "新 head <sha>，待补授权" on the run summary and on the pull request, and DESK authorizes that head.
 // It takes no authorization step itself; it holds no Clued credential.
@@ -53,6 +56,10 @@ import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
 
 export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_requests: 'write', checks: 'write' });
+// update-branch with a main that changed a workflow file needs workflows: write (FABLE-scaffold-s5-pre §3). It is asked for only
+// when the installation holds it, read from the installation on every run: granted or withdrawn by the Owner, the token follows.
+export const WORKFLOWS_PERMISSION = Object.freeze({ workflows: 'write' });
+export const WORKFLOWS_REFUSED = 'main 改了工作流文件且 App 无 workflows 权限';
 // update-branch answers 202 and merges asynchronously; the new head is read this often, at most this many times.
 export const HEAD_READ_EVERY_MS = 3_000;
 export const HEAD_READS = 20;
@@ -65,6 +72,11 @@ export const pendingAuthorizationLine = merged => `新 head ${merged}，待补�
 // A head that contains main is idle once it is this old with nothing queued, running or pending on it and its required
 // checks not all green (the rule of the hooks' wait-pr exit 5): nothing will finish it, so it is not the front.
 export const IDLE_AFTER_MS = 15 * 60_000;
+// A head the App brought up that the admission does not pass (a failure or no answer) is not the front, so the next one is
+// brought. A systemic cause (the authorization not carried, Clued unreachable, the admission workflow disabled) would spend the
+// whole train one pull request per run. With this many such heads on the train at once nobody else is brought up; below it the
+// train goes on by itself (FABLE-scaffold-s5-pre §2). 2, not 1: one protected-layer head waiting for a new Owner Grant holds nobody.
+export const BROUGHT_UNADMITTED_LIMIT = 2;
 // A list (open pull requests, branch rules) is read 100 a page, at most this many pages; one that goes on is not known in full.
 const PAGES = 10;
 const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required']);
@@ -75,17 +87,20 @@ const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repositor
   + 'pullRequests(states:OPEN,first:100,after:$after){pageInfo{hasNextPage endCursor} '
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
 
-// An installation token of the clued-admission App with exactly these permissions, or the reason there is none.
+// An installation token of the clued-admission App with exactly these permissions (and workflows: write when the installation
+// holds it), or the reason there is none.
 export async function frontMergeToken({ env, fetchImpl, now = () => Date.now() }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? '').trim(), key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? '').trim();
   if (!appId || !key) return { token: null, reason: 'the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)' };
   const jwt = appJwt(appId, key, Math.floor(now() / 1000));
   const installation = await appRequest(fetchImpl, env, 'GET', `/repos/${env.GITHUB_REPOSITORY}/installation`, jwt);
   if (installation.status !== 200 || !installation.body?.id) return { token: null, reason: `GET installation returned ${installation.status}` };
+  const workflows = installation.body.permissions?.workflows === 'write';
+  const permissions = workflows ? { ...FRONT_MERGE_PERMISSIONS, ...WORKFLOWS_PERMISSION } : FRONT_MERGE_PERMISSIONS;
   const minted = await appRequest(fetchImpl, env, 'POST', `/app/installations/${installation.body.id}/access_tokens`, jwt,
-    { repositories: [env.GITHUB_REPOSITORY.split('/')[1]], permissions: FRONT_MERGE_PERMISSIONS });
-  if (minted.status === 201 && minted.body?.token) return { token: minted.body.token, reason: null };
-  return { token: null, reason: `the clued-admission App token with ${Object.entries(FRONT_MERGE_PERMISSIONS).map(([k, v]) => `${k}: ${v}`).join(', ')} was refused (HTTP ${minted.status})` };
+    { repositories: [env.GITHUB_REPOSITORY.split('/')[1]], permissions });
+  if (minted.status === 201 && minted.body?.token) return { token: minted.body.token, reason: null, workflows };
+  return { token: null, reason: `the clued-admission App token with ${Object.entries(permissions).map(([k, v]) => `${k}: ${v}`).join(', ')} was refused (HTTP ${minted.status})` };
 }
 
 // One list of a head (body[key], 100 a page) read to the end: GitHub says how many there are (total_count). A list that
@@ -156,17 +171,19 @@ export async function scaffoldInForce({ env, fetchImpl }) {
   return { inForce: true, reason: `${main} requires ${hosted.length} hosted- check(s) of GitHub Actions and none of the independent CI: the hosted scaffold ruleset is in force` };
 }
 
-// The hosted copy's phase, read again at the start of every run: null to go on, or what it changes (nothing) and why.
+// Which copy acts, read again at the start of every run: null to go on, or what it changes (nothing) and why. The hosted copy
+// (phase scaffold) acts only while the scaffold ruleset is in force; the self-hosted workflow (no phase) only while it is not.
 async function phaseGate(env, fetchImpl) {
   const phase = env.CLUED_FRONT_MERGE_PHASE ?? '';
-  if (phase === '') return null;
-  if (phase !== SCAFFOLD_PHASE) return { result: 'refused', reason: `unknown CLUED_FRONT_MERGE_PHASE ${JSON.stringify(phase).slice(0, 40)}: nothing is changed` };
+  if (phase !== '' && phase !== SCAFFOLD_PHASE) return { result: 'refused', reason: `unknown CLUED_FRONT_MERGE_PHASE ${JSON.stringify(phase).slice(0, 40)}: nothing is changed` };
+  let inForce, reason;
   try {
-    const { inForce, reason } = await scaffoldInForce({ env, fetchImpl });
-    return inForce ? null : { result: 'none', reason };
+    ({ inForce, reason } = await scaffoldInForce({ env, fetchImpl }));
   } catch (error) {
     return { result: 'skipped', reason: `the rules in force could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again` };
   }
+  if (phase === SCAFFOLD_PHASE) return inForce ? null : { result: 'none', reason };
+  return inForce ? { result: 'none', reason: `脚手架规则集在用，由托管副本带车头 (${reason})` } : null;
 }
 
 // The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
@@ -207,7 +224,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     member.behind = compare.behind_by;
   }
   for (const member of train.filter(member => member.behind === 0)) {
-    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
+    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
     const running = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
     member.state = 'front';
@@ -219,15 +236,19 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     if (now() - appeared >= IDLE_AFTER_MS) member.state = 'idle';
   }
   const candidates = [];
-  if (!train.some(member => member.state === 'front')) for (const member of train.filter(member => member.behind > 0)) {
-    if (member.mergeable === 'CONFLICTING') { member.state = 'conflict'; continue; }
-    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    if (records.failed.length) member.state = `red (${records.failed.join(', ')})`;
+  const nofront = !train.some(member => member.state === 'front');
+  // Without a front every member's head is read, a conflict's too: each one the App brought up and not admitted counts.
+  if (nofront) for (const member of train.filter(member => member.behind > 0)) {
+    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
+    if (member.mergeable === 'CONFLICTING') member.state = 'conflict';
+    else if (records.failed.length) member.state = `red (${records.failed.join(', ')})`;
     else if (records.brought && !records.admitted) member.state = 'brought up before and not admitted';
     else { member.state = 'candidate'; candidates.push(member); }
   }
   for (const member of train) member.state ??= 'behind';
-  return { main, tip, train, candidates };
+  const stranded = nofront ? train.filter(member => member.records?.brought && !member.records.admitted) : [];
+  if (stranded.length >= BROUGHT_UNADMITTED_LIMIT) { for (const member of candidates) member.state = 'candidate, held'; candidates.length = 0; }
+  return { main, tip, train, candidates, stranded };
 }
 
 // A run without inputs: with no front, the first candidate that GitHub lets it update.
@@ -244,6 +265,9 @@ async function runFrontChoice(ports) {
   const train = { main: chosen.tip, members: chosen.train.map(({ pr, head, behind, state }) => ({ pr, head, behind, state })) };
   const front = chosen.train.find(member => member.state === 'front');
   if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
+  if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT)
+    return done('held', `${chosen.stranded.map(m => `#${m.pr}`).join(', ')}: brought up to ${chosen.main} and not admitted; nobody else is brought up `
+      + `while ${BROUGHT_UNADMITTED_LIMIT} are, until one of them is admitted, gets a new head, or leaves the train (auto-merge off or closed)`, train);
   if (!chosen.candidates.length)
     return done('none', chosen.train.length ? 'no pull request on the train can be brought up now' : 'no open pull request has auto-merge on', train);
   for (const candidate of chosen.candidates) {
@@ -259,8 +283,12 @@ async function runFrontChoice(ports) {
 
 export async function runFrontMainMerge({ env, fetchImpl, workspace, input, readPolicyFile = fs.readFileSync, now = () => Date.now(),
   sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  // Half an input and frozen are read from the event and the checkout, before anything of GitHub: then nothing is read either.
+  const named = { pr: Number(input?.pr) || null, head_sha: String(input?.head ?? '').trim() || null };
+  if (!WITHOUT_INPUT(input) && !NAMED_INPUT(input)) return { result: 'refused', reason: BAD_INPUT, pr: named.pr, head_sha: input?.head ?? null };
+  if (resolveMode({ env, workspace, readFile: readPolicyFile }).state === 'frozen') return { result: 'none', reason: 'merge admission is frozen: nothing is changed', ...named };
   const off = await phaseGate(env, fetchImpl);
-  if (off) return { ...off, pr: Number(input?.pr) || null, head_sha: String(input?.head ?? '').trim() || null };
+  if (off) return { ...off, ...named };
   const result = await bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep });
   return env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? notePendingAuthorization({ env, fetchImpl, result, now }) : result;
 }
@@ -285,11 +313,15 @@ async function notePendingAuthorization({ env, fetchImpl, result, now }) {
   return { ...result, pending_authorization: true, comment };
 }
 
+const WITHOUT_INPUT = input => !String(input?.pr ?? '').trim() && !String(input?.head ?? '').trim();
+const NAMED_INPUT = input => /^[1-9][0-9]{0,9}$/.test(String(input?.pr ?? '')) && SHA.test(String(input?.head ?? ''));
+const BAD_INPUT = 'input needs pr (number) and head (full SHA)';
+
 async function bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep }) {
-  if (!String(input?.pr ?? '').trim() && !String(input?.head ?? '').trim()) return runFrontChoice({ env, fetchImpl, workspace, readPolicyFile, now, sleep });
+  if (WITHOUT_INPUT(input)) return runFrontChoice({ env, fetchImpl, workspace, readPolicyFile, now, sleep });
   const repository = env.GITHUB_REPOSITORY;
   const done = (result, reason, extra = {}) => ({ result, reason, pr: Number(input?.pr) || null, head_sha: input?.head ?? null, ...extra });
-  if (!/^[1-9][0-9]{0,9}$/.test(String(input?.pr ?? '')) || !SHA.test(String(input?.head ?? ''))) return done('refused', 'input needs pr (number) and head (full SHA)');
+  if (!NAMED_INPUT(input)) return done('refused', BAD_INPUT);
   const number = Number(input.pr), head = input.head;
   const mode = resolveMode({ env, workspace, readFile: readPolicyFile });
   if (mode.state === 'frozen') return done('none', 'merge admission is frozen: nothing is changed');
@@ -302,11 +334,13 @@ async function bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, 
   if (!SHA.test(tip ?? '')) return done('error', `the tip of ${main} could not be read`);
   const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${head}`);
   if (!(Number(compare?.behind_by) > 0)) return done('none', `the head already contains ${main}`);
-  const { token, reason } = await frontMergeToken({ env, fetchImpl, now });
+  const { token, reason, workflows } = await frontMergeToken({ env, fetchImpl, now });
   if (!token) return done('skipped', reason);
   const update = await appRequest(fetchImpl, env, 'PUT', `/repos/${repository}/pulls/${number}/update-branch`, token, { expected_head_sha: head });
-  // 422: a conflict (the holder resolves it by hand) or the head moved; 403: e.g. main changed a workflow file and the App has no workflows permission.
-  if (update.status !== 202) return done('refused', `update-branch answered HTTP ${update.status}: ${String(update.body?.message ?? '').slice(0, 300)}`);
+  // 422: a conflict (the holder resolves it by hand) or the head moved; 403 with a token without workflows: write: main changed a
+  // workflow file and the App's installation has no workflows permission (the Owner grants it once, §3; the token follows).
+  if (update.status !== 202) return done('refused', `update-branch answered HTTP ${update.status}: ${String(update.body?.message ?? '').slice(0, 300)}`
+    + (update.status === 403 && !workflows ? `（可能是${WORKFLOWS_REFUSED}）` : ''));
   let merged = null;
   for (let read = 0; read < HEAD_READS && !merged; read++) {
     await sleep(HEAD_READ_EVERY_MS);

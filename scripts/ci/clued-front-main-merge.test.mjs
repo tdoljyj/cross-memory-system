@@ -67,6 +67,10 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
           expires_at: '2099-01-01T00:00:00Z', base_commit: BASE, write_set: ['docs/**'] } });
     }
     const route = u.slice(API.length);
+    // main's rules as today (#292 in force): every run reads them first (FABLE-scaffold-s5-pre §1).
+    if (method === 'GET' && route === '/repos/o/r') return reply({ full_name: 'o/r', default_branch: 'main' });
+    if (method === 'GET' && route.startsWith('/repos/o/r/rules/branches/main')) return reply([{ type: 'required_status_checks',
+      parameters: { required_status_checks: [{ context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }] } }]);
     if (method === 'GET' && route === `/repos/o/r/pulls/${PR}`) return reply(structuredClone(w.pr));
     if (method === 'GET' && route.startsWith(`/repos/o/r/pulls/${PR}/files`)) return reply([{ filename: file, status: 'modified' }]);
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
@@ -508,6 +512,8 @@ test('a run with pr and head handles only the named pull request, as before', as
     pr: 1225, head_sha: sha(0x1225), merged_head_sha: w.headOf(1225), main_sha: T });
   assert.deepEqual(w.brought(), [1225]);
   assert.deepEqual(w.calls.map(c => `${c.method} ${c.route}`), [
+    // which copy brings the front (FABLE-scaffold-s5-pre §1): the rules in force, read first
+    'GET /repos/o/r', 'GET /repos/o/r/rules/branches/main?per_page=100&page=1',
     'GET /repos/o/r/pulls/1225', 'GET /repos/o/r/branches/main', `GET /repos/o/r/compare/${T}...${sha(0x1225)}`,
     'GET /repos/o/r/installation', 'POST /app/installations/42/access_tokens', 'PUT /repos/o/r/pulls/1225/update-branch',
     'GET /repos/o/r/pulls/1225', `GET /repos/o/r/commits/${w.headOf(1225)}`, 'GET /repos/o/r/branches/main', 'POST /repos/o/r/check-runs']);
@@ -804,4 +810,143 @@ test('hosted copy: the workflow runs the same entry on a hosted machine, only fr
   assert.equal((jobs.match(/\n          ref: \$\{\{ github\.event\.repository\.default_branch \|\| 'main' \}\}\n          persist-credentials: false\n/g) ?? []).length, 2);
   const code = text.split('\n').filter(line => !/^\s*#/.test(line)).join('\n');
   assert.doesNotMatch(code, /: write\b|git push|rebase|--force|CLUED_ADMISSION_CLUED_TOKEN|CLUED_CONTEXT_READ_TOKEN/);
+});
+
+// FABLE-scaffold-s5-pre §3: the clued-admission App 5164952 had no workflows permission, so update-branch answered 403 for every
+// candidate once main changed a workflow file and nobody was brought up. The token asks for workflows: write exactly when the
+// installation has it (read from the installation, so the code may land before or after the Owner grants it).
+const WORKFLOW_403 = 'refusing to allow a GitHub App to create or update workflow `.github/workflows/x.yml` without `workflows` permission';
+function mainChangedAWorkflow(w, installed) {
+  const fetch = w.fetchImpl;
+  w.minted = [];
+  w.fetchImpl = async (url, init = {}) => {
+    const method = init.method ?? 'GET', route = String(url).slice(API.length), body = init.body ? JSON.parse(init.body) : null;
+    const reply = (b, status) => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => b, text: async () => JSON.stringify(b) });
+    if (method === 'GET' && route === '/repos/o/r/installation') { w.calls.push({ method, route, body }); return reply({ id: 42, permissions: installed }, 200); }
+    if (method === 'POST' && route === '/app/installations/42/access_tokens') w.minted.push(body.permissions);
+    // main changed a workflow file: GitHub merges it into the branch only with a token that holds workflows: write.
+    if (method === 'PUT' && /\/update-branch$/.test(route) && w.minted.at(-1)?.workflows !== 'write') { w.calls.push({ method, route, body }); return reply({ message: WORKFLOW_403 }, 403); }
+    return fetch(url, init);
+  };
+  return w;
+}
+const BASE_PERMISSIONS = { checks: 'write', contents: 'write', pull_requests: 'write', metadata: 'read' };
+
+test('§3: with workflows in the installation the token asks for it, and a main that changed a workflow file is still brought in', async () => {
+  const w = mainChangedAWorkflow(scene0823(), { ...BASE_PERMISSIONS, workflows: 'write' });
+  const r = await w.run();
+  assert.deepEqual(w.minted, [{ contents: 'write', pull_requests: 'write', checks: 'write', workflows: 'write' }]);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, 1156); assert.deepEqual(w.brought(), [1156]);
+});
+
+test('§3: without workflows in the installation the token asks for the three as before; the 403 says why', async () => {
+  const w = mainChangedAWorkflow(scene0823(), BASE_PERMISSIONS);
+  const r = await w.run({ pr: '1156', head: sha(0x1156) });
+  assert.deepEqual(w.minted, [{ contents: 'write', pull_requests: 'write', checks: 'write' }]);
+  assert.equal(r.result, 'refused', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.match(r.reason, /HTTP 403/); assert.match(r.reason, /main 改了工作流文件且 App 无 workflows 权限/);
+  // An installation record without permissions at all (as the fakes above answer) mints the three, never fails.
+  const bare = scene0823();
+  assert.equal((await bare.run()).result, 'merged');
+  assert.deepEqual(bare.calls.filter(c => c.route.endsWith('/access_tokens')).map(c => c.body.permissions), [{ contents: 'write', pull_requests: 'write', checks: 'write' }]);
+});
+
+// FABLE-scaffold-s5-pre §1: the self-hosted workflow (no CLUED_FRONT_MERGE_PHASE) and the hosted copy both brought fronts up while
+// the scaffold ruleset was in force, and only the hosted one said "待补授权". The two are exclusive on the same fact (scaffoldInForce):
+// the hosted copy while the scaffold ruleset is in force, the self-hosted one otherwise.
+test('§1: without the phase (the self-hosted workflow) nothing is changed while the scaffold ruleset is in force, named or not', async () => {
+  for (const input of [{}, { pr: '1156', head: sha(0x1156) }]) {
+    const w = rulesOf(scene0823(), 'scaffold');
+    const r = await w.run(input);
+    assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /脚手架规则集在用，由托管副本带车头/);
+    assert.equal(w.calls.filter(c => c.method === 'PUT').length, 0, 'no update-branch');
+    assert.equal(w.calls.filter(c => c.method === 'POST' && c.route === '/repos/o/r/check-runs').length, 0, 'no check');
+    assert.deepEqual(w.comments, []); assert.equal(minted(w), 0, 'no App token');
+  }
+  // The rules cannot be read: nothing is changed, the next run looks again (as the hosted copy).
+  const w = rulesOf(scene0823(), 'scaffold'); w.failing = '/rules/branches/main';
+  for (const input of [{}, { pr: '1156', head: sha(0x1156) }]) {
+    const r = await w.run(input);
+    assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []); assert.equal(minted(w), 0);
+  }
+});
+
+test('§1: in each state of the rules exactly one of the two copies brings the front up', async () => {
+  for (const rules of ['framework', 'scaffold', 'both']) {
+    const bringers = [];
+    for (const [copy, extra] of [['self-hosted', {}], ['hosted', SCAFFOLD]]) {
+      const w = rulesOf(scene0823(), rules);
+      const r = await w.run({}, extra);
+      if (r.result === 'merged') { assert.deepEqual(w.brought(), [1156], `${rules} ${copy}`); bringers.push(copy); }
+      else { assert.equal(r.result, 'none', `${rules} ${copy}: ${JSON.stringify(r)}`); assert.deepEqual(w.brought(), [], `${rules} ${copy}`); }
+    }
+    assert.deepEqual(bringers, [rules === 'scaffold' ? 'hosted' : 'self-hosted'], rules);
+  }
+});
+
+// FABLE-scaffold-s5-pre §2: a head the App brought up to main that the admission does not pass (a failure, or nothing at all) is not
+// the front, so the next one was brought, and the next: a systemic cause (the authorization not carried, Clued unreachable, the
+// admission workflow disabled) spent the whole train one pull request per run. With 2 such heads on the train at once nobody else is
+// brought up; below 2 it goes on by itself. Nothing is kept between runs: both facts are on the heads.
+const [A, B, C, D] = [2001, 2002, 2003, 2004];
+function fourBehind(rules) {
+  const w = rulesOf(train(), rules);
+  [A, B, C, D].forEach((number, i) => w.open(number, { head: sha(number), auto: `2026-11-22T00:0${i}:00Z` }));
+  return w;
+}
+// Runs without inputs, the clock on by `every` after each; whatever was brought up gets `onBrought` (what the admission did on it).
+async function runs(w, count, extra, every, onBrought) {
+  const results = [];
+  for (let i = 0; i < count; i++) {
+    const seen = w.updates.length;
+    results.push(await w.run({}, extra));
+    for (const u of w.updates.slice(seen)) onBrought(u.to);
+    w.now += every;
+  }
+  return results;
+}
+const failsAdmission = (w, app) => head => w.check(head, INDEPENDENT_ADMISSION_CHECK, 'failure', app);
+const hostedGreen = w => head => { for (const name of HOSTED) w.check(head, name); };
+
+test('§2: brought-up heads the admission fails hold the train at 2; the others keep their heads', async () => {
+  for (const [rules, extra, app] of [['scaffold', SCAFFOLD, ADMISSION_APP_ID], ['framework', {}, INDEPENDENT_ADMISSION_APP_ID]]) {
+    const w = fourBehind(rules);
+    const results = await runs(w, 4, extra, 10 * MIN, failsAdmission(w, app));
+    assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], `${rules}: ${JSON.stringify(results.at(-1))}`);
+    assert.deepEqual(w.brought(), [A, B], rules);
+    for (const r of results.slice(2)) { assert.match(r.reason, /#2001\b/); assert.match(r.reason, /#2002\b/); assert.equal(r.pr, null); }
+    assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+    assert.match(renderSummary(results[3]), /nobody brought up: \*\*held\*\*/);
+  }
+});
+
+test('§2: brought-up heads the admission never answers hold the train at 2 as well', async () => {
+  const w = fourBehind('scaffold');
+  const results = await runs(w, 4, SCAFFOLD, 16 * MIN, hostedGreen(w));
+  assert.deepEqual(results.map(r => r.result), ['merged', 'merged', 'held', 'held'], JSON.stringify(results.at(-1)));
+  assert.deepEqual(w.brought(), [A, B]);
+  assert.equal(w.headOf(C), sha(C)); assert.equal(w.headOf(D), sha(D));
+});
+
+test('§2: the hold lifts by itself: one of the two admitted is the front; once it merged, the next is brought', async () => {
+  const w = fourBehind('scaffold');
+  await runs(w, 3, SCAFFOLD, 10 * MIN, failsAdmission(w, ADMISSION_APP_ID));
+  assert.deepEqual(w.brought(), [A, B]);
+  // A's head is admitted after all (DESK authorized it; later the admission carries it) and its checks are green.
+  w.check(w.headOf(A), INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID); hostedGreen(w)(w.headOf(A));
+  let r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2001 contains main and is under way/); assert.deepEqual(w.brought(), [A, B]);
+  // GitHub merges A and main moves: only B is brought and not admitted, below the limit: C is brought.
+  w.merged(A); w.now += 10 * MIN;
+  r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, C); assert.deepEqual(w.brought(), [A, B, C]);
+});
+
+test('§2: one head the admission fails does not hold the train; the next one admitted is the front', async () => {
+  const w = fourBehind('scaffold');
+  await runs(w, 1, SCAFFOLD, 10 * MIN, failsAdmission(w, ADMISSION_APP_ID));
+  await runs(w, 1, SCAFFOLD, 10 * MIN, head => { w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', ADMISSION_APP_ID); hostedGreen(w)(head); });
+  assert.deepEqual(w.brought(), [A, B]);
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#2002 contains main and is under way/); assert.deepEqual(w.brought(), [A, B]);
 });
