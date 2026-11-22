@@ -15,8 +15,9 @@
 -- database does not know a PR's present head, and the 'active' relation is
 -- the CI's fact already. The Binding cap (max_active_per_binding, 10) still
 -- counts every live claim, so delivered claims stay bounded per Binding.
--- Nothing else changes: the same two counts at issue (work_claim_issue), the
--- same limits, the same order. The session refusal also says how many of the session's live claims
+-- Nothing else changes: the same two counts at issue (work_claim_issue) and
+-- at accepting a handover (work_claim_free_handover_v1), the same limits, the same
+-- order. The session refusal also says how many of the session's live claims
 -- are delivered.
 
 create function clued_private.work_claim_in_hand_v1(p_user uuid,p_task uuid)
@@ -55,7 +56,11 @@ begin
     into v_active,v_active_session,v_delivered_session from clued_private.work_claims_v1 w$r$),
     (3,'clued_private.work_claim_issue(public.clued_agent_bindings,jsonb,public.clued_memories,clued_private.work_claims_v1,text)'::regprocedure,
      $a$'active',v_active_session,'active_binding',v_active,'holder_session_ref',v_session));$a$,
-     $r$'active',v_active_session,'delivered',v_delivered_session,'active_binding',v_active,'holder_session_ref',v_session));$r$)
+     $r$'active',v_active_session,'delivered',v_delivered_session,'active_binding',v_active,'holder_session_ref',v_session));$r$),
+    (4,'clued_private.work_claim_free_handover_v1(text,jsonb)'::regprocedure,
+     $a$count(*) filter(where holder_session_ref is not distinct from r.receiver_session_ref)::integer$a$,
+     $r$count(*) filter(where holder_session_ref is not distinct from r.receiver_session_ref
+      and clued_private.work_claim_in_hand_v1(work_claims_v1.user_id,work_claims_v1.task_id))::integer$r$)
   ) p(step,target,anchor,replacement) order by step loop
     select pg_catalog.pg_get_functiondef(p.oid) into definition from pg_catalog.pg_proc p
       where p.oid=patch.target and p.prosecdef and p.proconfig=array['search_path=""'];
@@ -68,8 +73,9 @@ begin
     execute replace(definition,patch.anchor,patch.replacement);
   end loop;
   if (select count(*) from pg_catalog.pg_proc p
-      where p.oid in ('clued_private.work_claim_issue(public.clued_agent_bindings,jsonb,public.clued_memories,clued_private.work_claims_v1,text)'::regprocedure)
-        and position('clued_private.work_claim_in_hand_v1(' in p.prosrc)>0)<>1 then
+      where p.oid in ('clued_private.work_claim_issue(public.clued_agent_bindings,jsonb,public.clued_memories,clued_private.work_claims_v1,text)'::regprocedure,
+                      'clued_private.work_claim_free_handover_v1(text,jsonb)'::regprocedure)
+        and position('clued_private.work_claim_in_hand_v1(' in p.prosrc)>0)<>2 then
     raise exception 'work_claim_session_cap_in_hand_not_applied' using errcode='22023';
   end if;
 end $session_cap_in_hand$;
