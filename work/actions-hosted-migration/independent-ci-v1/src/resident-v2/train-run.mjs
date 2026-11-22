@@ -13,7 +13,9 @@
 //   gate   the take-over full sweep gates every batch and the full-sweep proof can cover a green with strict off (§41, §60-§62);
 //   audit  strict stays on for good: no full sweep gates anything; a full round is a background audit at most once a day;
 //   off    the same without the audit rounds.
-// R3 batch 2 (task 04f9b91b): the frontOutcome has one more flat field, frontFailed (boolean). The executor reports every final
+// Contract /4 (R3 batch 2, task 04f9b91b): /3 plus frontFailed after frontCode; /3 is no longer produced or accepted (one field
+// table per contract number; a stage-10 job is made and run within one call, so there is no job of /3 in flight). The frontOutcome
+// has one more flat field, frontFailed (boolean). The executor reports every final
 // end of a front batch that has no automatic attempt 2, so stage 10 never waits on a clock to learn the batch ended;
 // frontFailed is true only for a failure of the PR itself (failure table `deterministic-pr`), and only then does stage 10
 // touch failed, bisect a batch of several or skip opening (train-maintenance.mjs). The resident and the Source change together.
@@ -21,7 +23,7 @@
 import { createHash } from 'node:crypto';
 import { digest } from '../proof.mjs';
 
-export const TRAIN_RUN_CONTRACT = 'clued.independent-ci.train-run/3';
+export const TRAIN_RUN_CONTRACT = 'clued.independent-ci.train-run/4';
 export const TRAIN_RUN_KEY_CONTRACT = 'clued.independent-ci.train-run-key/1';
 export const TRAIN_RUN_ROLE = 'train-run';
 export const TRAIN_RUN_FIELDS = Object.freeze(['contract', 'id', 'repo', 'runId', 'mode', 'sourceManifestSha256', 'createdAt', 'slotHardCapMinutes', 'frontBatchBudgetMs',

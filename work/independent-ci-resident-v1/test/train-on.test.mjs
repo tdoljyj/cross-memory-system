@@ -55,7 +55,7 @@ test('policy /8: on, the four train settings and their bounds; /7 refuses on exa
 
 // DESIGN §65 (strict-permanent mode, Owner decision 9e2511fe): train.sweep is optional in /8 and later; without it the Owner's default
 // 'audit'; the policy digest of an installed policy without it is unchanged; the train-run input carries it next to the clocks.
-test('policy train.sweep: optional gate | audit | off, default audit; carried by the train-run input and the job /3', () => {
+test('policy train.sweep: optional gate | audit | off, default audit; carried by the train-run input and the job /4', () => {
   assert.equal(TRAIN_SWEEP_DEFAULT, 'audit');
   const { sweep, ...without } = onTrain(); void sweep;
   const p = validatePolicy(rawPolicy({ contract: POLICY_CONTRACT_V8, train: without }));

@@ -195,7 +195,7 @@ export function providerBudgetOf(v, now = null) {
   return Object.freeze({ ...v, rest: v.rest ? Object.freeze({ ...v.rest }) : null, graphql: v.graphql ? Object.freeze({ ...v.graphql }) : null });
 }
 
-// The resident's part of the train-run job /3 (INTERFACES §2; /2 plus sweep, DESIGN §65): every field the derivation does not take from the install
+// The resident's part of the train-run job /4 (INTERFACES §2; /2 plus sweep, DESIGN §65; /4 plus frontFailed, R3 batch 2): every field the derivation does not take from the install
 // record (contract, id, repo, runId, sourceManifestSha256 and createdAt are the derivation's), in the job's order. settings:
 // policy.mjs#trainSettings; onSince: ms or null (null in shadow); frontOutcome: { pr, headSha, testSha, attempt, code, failed } or null
 // (mode on only; failed: frontFailed, true only for a failure of the PR itself, R3 batch 2); revokeHeadRequestId: uuid or null (on and revoke-only); sweep: policy.mjs#trainSweepMode (train-run /3, DESIGN §65).
@@ -212,7 +212,7 @@ export function trainRunInput({ mode, settings, onSince = null, frontOutcome = n
     revokeHeadRequestId: acting ? revokeHeadRequestId : null, sweep };
   return validateTrainRunInput(input);
 }
-// The same rules as the job /3 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
+// The same rules as the job /4 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
 export function validateTrainRunInput(v) {
   const flat = [v?.frontPr, v?.frontHeadSha, v?.frontTestSha, v?.frontAttempt, v?.frontCode, v?.frontFailed];
   const int = (x, lo, hi) => Number.isSafeInteger(x) && x >= lo && x <= hi;
