@@ -31,7 +31,8 @@
 // Push mode (resident ADR 0018; the stage file train-landing.json, train-landing.mjs): with train.landing 'push' and the landing
 // port, mode on also (a) adopts every member of each batch of this node whose S main now contains (riders first, the front last;
 // a member whose PR moved to another head is not adopted), (b) turns the executor's frontOutcome of a batch of several members into
-// bisection instead of touch failed, and (c) opens the front batch on the batch it composes: the front, then riders (open PRs into
+// bisection instead of touch failed (a frontOutcome names its batch by PR, head and S: train-maintenance.mjs#liveFrontBatch), and (c)
+// opens the front batch on the batch it composes: the front, then riders (open PRs into
 // main with this install's Native Task binding and App 5368905's kooyumi-work-admission success on their head, by PR number, up to the
 // effective batch size), S = GitHub's test merge for one member or the cumulative merge on clued-train/staging.tmp for several,
 // clued-train/staging pointed at S (the CI trigger) and a landing-batch record. A strict head that does not contain main's tip is no
@@ -429,6 +430,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const lastBatchMs = previousBatches?.[0] ? Date.parse(previousBatches[0].writtenAt) : -Infinity;
   const judgedBefore = lastProof?.mode === 'on' && lastProof.pr === holder?.pr && lastProof.headSha === front?.headSha && lastProof.claimId === holder?.claimId
     && lastProof.mainSha === mainSha && Date.parse(lastProof.writtenAt) > lastBatchMs;
+  // The forecast reads no landing state yet, so it passes no handled (frontBatchPlan): a batch stage 10 bisected counts running here and
+  // ended in openFront. That only picks which name this round skips the sweep segments under (refresh or open), never whether a batch opens.
   const frontPlan = Array.isArray(previousBatches) && !(job.frontFailed === true && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha)
     && decideShadow({ onDuty: true, holders: duty.holders, holder, front, rules, mainSha }) === 'OPEN_FRONT_BATCH'
     ? frontBatchPlan({ job, holder, front, mainSha, previous: previousBatches, keptAlive: [], clock }).refusal : 'NONE';
@@ -990,9 +993,13 @@ async function roundsSinceSegment({ sweepStore, mode, lastFull }) {
 // out. It never compares S with GitHub's test merge of the front alone: a batch of several members never equals it, so every round
 // opened a new S. Whether the batch's content still holds is stage 8's to find (a member changed: TRAIN_BATCH_CHANGED; S gone:
 // TRAIN_TEST_COMMIT_GONE); that ends the batch, and the executor reports the end.
+// A report names the batch by PR, head and S only (FABLE-parked-front-attempt2-number-20261123 §2.2 A): never by its front number. The
+// executor's own attempt 2 of this batch reports number 2 where stage 10 recorded 1, so comparing numbers counted it running until the
+// running clock. An S opened twice (stage 10's number 2 of the same S) is told apart by the executor: it drops a report that a batch of
+// this head only ended once it takes the head's next front batch (executor.mjs#enqueueFront), so a report of S never ends a later batch.
 function liveFrontBatch({ job, holder, front, last, clock, handled = null }) {
   if (!last || !holder || !front) return false;
-  const reported = job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt === last.attempt;
+  const reported = job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha;
   return !reported && !(handled ?? []).includes(last.testSha) && last.claimId === holder.claimId
     && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock();
 }
@@ -1019,7 +1026,7 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 }
 
 // §41.4 hard cap: open the front batch only with time for it, after touch running and a read-back of the moved clock.
-// The batch this node already opened for (claim, T, S) that is still running (the holder's CI clock runs on H; its attempt
+// The batch this node already opened for (claim, T, S) that is still running (the holder's CI clock runs on H; its S
 // not reported finished by the executor's frontOutcome) is not opened again (review R2 M1): this run refreshed the proof for
 // its stage 8, no attempt is counted and no second openFrontBatch reaches the executor (liveFrontBatch, the one definition). Since
 // R3 batch 2 the executor reports every final end of an attempt that has no automatic attempt 2 (frontFailed says whether the PR
