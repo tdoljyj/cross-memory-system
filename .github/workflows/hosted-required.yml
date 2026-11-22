@@ -337,6 +337,9 @@ jobs:
           CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           PYTHONDONTWRITEBYTECODE: "1"
           CLUED_UNDER_TEST: "1"
+          # This runner's job process is an elevated administrator: the tests marked [needs:non-elevated] run on the
+          # nodes' ci-suites-windows only (ci-required-selection.mjs HOST_CAPABILITIES; only this workflow may set it).
+          CLUED_CI_HOST_LACKS: non-elevated
         run: |
           $ErrorActionPreference = 'Stop'
           & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate
