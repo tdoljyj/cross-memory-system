@@ -95,6 +95,17 @@ export function requiredCheckFailure(rules, inventory, headSha, appId) {
   return [...new Set(failed)].sort();
 }
 
+// The one pin rule of the six required checks (R3 open item 2: rulesetFacts, train-landing.mjs#landingRoute's main ruleset; the resident's
+// ruleset-backstop.mjs#rulesFacts is another package and is held to the same rule by its own test): a check pinned to this App, or a scan
+// pinned to GitHub Actions. A required check without an integration accepts any App: never a pin.
+export const pinAllowed = (context, integrationId, appId) => integrationId === appId || (RULE_SCAN_NAMES.includes(context) && integrationId === ACTIONS_INTEGRATION_ID);
+// checks: required_status_checks entries ({ context, integration_id }). Every one of the six is there, and each entry of it is pinned
+// as pinAllowed allows.
+export const sixPinned = (checks, appId) => Array.isArray(checks) && REQUIRED_CHECK_NAMES.every(n => {
+  const of = checks.filter(c => plain(c) && c.context === n);
+  return of.length > 0 && of.every(c => pinAllowed(n, c.integration_id, appId));
+});
+
 // The rules GitHub applies to main, reduced to the facts stages 8 and 10 need. Anything that is not exactly understood is
 // unreadable: no required_status_checks rule (the ruleset disabled), one of the six checks missing or pinned to another
 // integration (a disaster-recovery switch; a scan may be pinned to this App or to GitHub Actions, R3), a malformed rule.
@@ -108,8 +119,7 @@ export function rulesetFacts(rules, appId) {
   for (const r of required) for (const c of r.parameters.required_status_checks) {
     check(plain(c) && typeof c.context === 'string', RULESET_UNREADABLE);
     if (!REQUIRED_CHECK_NAMES.includes(c.context)) continue;
-    // A required check without an integration accepts any App: never this check's pin.
-    check(c.integration_id === appId || (RULE_SCAN_NAMES.includes(c.context) && c.integration_id === ACTIONS_INTEGRATION_ID), RULESET_UNREADABLE);
+    check(pinAllowed(c.context, c.integration_id, appId), RULESET_UNREADABLE);
     pins.set(c.context, new Set([...(pins.get(c.context) ?? []), c.integration_id]));
   }
   check(REQUIRED_CHECK_NAMES.every(n => pins.has(n)), RULESET_UNREADABLE);

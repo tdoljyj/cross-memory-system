@@ -12,6 +12,7 @@ import { APP_ID as SOURCE_APP } from '../../actions-hosted-migration/independent
 // Namespace imports: the R3 constants are read as properties, so this file still loads (and goes red, not unloadable) before R3.
 import * as BACKSTOP from '../src/ruleset-backstop.mjs';
 import * as SOURCE_RULES from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
+import { landingRoute } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-landing.mjs';
 
 const rules = ({ strict = true, pinned = APP_ID, names = REQUIRED_CHECK_NAMES } = {}) => [{ type: 'deletion' },
   { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict, required_status_checks: names.map(context => ({ context, integration_id: pinned })) } }];
@@ -60,9 +61,13 @@ test('R3: scans pinned to GitHub Actions are pinned (no RULESET_NOT_PINNED); adm
   const now = Date.parse('2026-11-22T00:00:00Z');
   const good = [pins(true, [admission, ...scans(15368), ...pair]), pins(true, [admission, ['gitleaks', 15368], ...scans(APP_ID).slice(1), ...pair]),
     [...pins(true, [admission, ...scans(15368), ...pair]), ...pins(true, [['trivy', APP_ID]])]];
+  // R3 open item 2 (修复前必红 for the Actions rows): push's main ruleset (train-landing.mjs#landingRoute) is found by the same pin rule,
+  // every rule of the table in one ruleset: identified exactly when the other two call the six pinned.
+  const mainFound = r => !landingRoute({ rules: r.map(x => ({ ...x, rulesetId: 24182890 })), rulesets: null, appId: APP_ID }).missing.includes('main_ruleset_unidentified');
   for (const r of good) {
     assert.deepEqual(rulesFacts(r), { strict: true, pinned: true }, JSON.stringify(r));
     assert.equal(SOURCE_RULES.rulesetFacts(r, APP_ID).requiredPinned, true);
+    assert.equal(mainFound(r), true, `landingRoute: ${JSON.stringify(r)}`);
     for (const trainMode of ['off', 'shadow', 'on']) for (const sweepMode of ['audit', 'off', 'gate'])
       assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode, sweep: null, duty: { onDuty: true, onSince: now - 60_000 }, now, sweepMode }), { pause: false, notify: null });
   }
@@ -71,6 +76,7 @@ test('R3: scans pinned to GitHub Actions are pinned (no RULESET_NOT_PINNED); adm
   for (const r of bad) {
     assert.equal(rulesFacts(r).pinned, false, JSON.stringify(r));
     assert.throws(() => SOURCE_RULES.rulesetFacts(r, APP_ID), JSON.stringify(r));
+    assert.equal(mainFound(r), false, `landingRoute: ${JSON.stringify(r)}`);
     assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode: 'on', sweepMode: 'audit', now }), { pause: false, notify: 'RULESET_NOT_PINNED' });
   }
   // strict off stays a stop in strict-permanent mode with the scans on Actions too (ADR 0007 item 4, unchanged by R3 lean)

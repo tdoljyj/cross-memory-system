@@ -800,6 +800,41 @@ test('R3 problem A, push: scans pinned back from Actions to this App between lan
   untouched(e, T);
 });
 
+// R3 open item 2 (修复前必红): the three scans pinned to GitHub Actions with push's rules set up. Before the fix push's main ruleset was the
+// one with all six pinned to this App: none, so stage 10 read park and stage 8 TRAIN_LANDING_RULES_MISSING, never landing. Now the main
+// ruleset is found by the same pin rule as stages 8 and 10: stage 10 reads push with no scan required from this App, and stage 8 pushes S
+// once its Actions scans passed on S (external checks); while gitleaks still runs on S it waits, a failed one fails the batch.
+const SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+function scansFromActions(e) {
+  e.W.rules = e.W.rules.map(r => (r.type !== 'required_status_checks' ? r : { ...r, parameters: { ...r.parameters,
+    required_status_checks: r.parameters.required_status_checks.map(c => (SCANS.includes(c.context) ? { ...c, integration_id: ACTIONS } : c)) } }));
+}
+const actionsScanOn = (e, sha, name, o = {}) => { const id = e.W.nextCheck++; e.W.checks.set(id, { id, app: { id: ACTIONS }, name, head_sha: sha, status: 'completed', conclusion: 'success', completed_at: iso(e.now - 10 * 60_000), ...o }); return id; };
+test('R3 open item 2: scans from GitHub Actions with push rules -> stage 10 reads push, stage 8 lands S once its Actions scans passed on S', async t => {
+  for (const scan of ['passed', 'running', 'failed']) await t.test(scan, async t => {
+    const e = await world(t, { prs: [910] });
+    scansFromActions(e);
+    const r = await stage10(e);
+    assert.equal(r.facts.decision, 'OPEN_FRONT_BATCH', JSON.stringify(r.facts));
+    assert.deepEqual([r.facts.landing?.route, r.facts.landing?.missing, r.facts.rules?.appScans], ['push', [], []], JSON.stringify([r.facts.landing, r.facts.rules]));
+    const b = r.facts.openFrontBatch, T = e.main();
+    for (const name of SCANS) actionsScanOn(e, b.testSha, name, name !== 'gitleaks' || scan === 'passed' ? {}
+      : scan === 'running' ? { status: 'in_progress', conclusion: null, completed_at: null } : { conclusion: 'failure' });
+    // the front ran no scan (none is required from this App): its stage 8 has none on H
+    const p = await stage8(t, e, b, { trainLanding: PUSH1, scans: false });
+    if (scan === 'passed') {
+      assert.equal(p.status, 'SETTLED', JSON.stringify(p));
+      assert.deepEqual(e.W.pushes, [b.testSha]);
+      assert.equal(e.main(), b.testSha);
+      assert.equal(greens(e, b.headSha).length, 0, 'push writes no merge-slot green');
+    } else {
+      assert.deepEqual([p.status, p.reason, p.sideEffects], ['BLOCKED', scan === 'running' ? 'TRAIN_LANDING_CHECKS_PENDING' : 'TRAIN_LANDING_CHECK_FAILED', 0], JSON.stringify(p));
+      assert.deepEqual(e.W.pushes, []);
+      untouched(e, T);
+    }
+  });
+});
+
 // Fable 11-21 应修 1: a merge-slot green counts only on the current path. #1192's shape on today's rules (the front alone in the queue, its
 // head without ci-suites-windows): stage 8 wrote the current path's pair on H and GitHub cannot merge it. Then the Owner saves C. Before the
 // fix stage 10 read the leftover green as "green, wait for merge" (no rules given on route push, so the merge slot alone was green) and
