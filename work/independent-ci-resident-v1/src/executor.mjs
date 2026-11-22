@@ -4095,11 +4095,17 @@ export class ResidentExecutor {
     const front = Object.hasOwn(subject, 'testSha');
     // Rule 41ab823a (DESIGN §75): a scan whose check H already carries on GitHub (read by this batch's stage 1) is not run again on the front.
     const reused = front ? this.frontScansReused(key, subject) : [];
-    const roles = front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES];
+    // R3 lean (DESIGN §82 item 1): a scan main's rules no longer require from App 5368905 (they require it from GitHub Actions, where it
+    // runs beside the tests) is not run here at all: stage 8 never waits for it. The rules as the newest stage 10 read them (rulesetFacts
+    // appScans); not read (no summary yet, a failed read, a Source before R3): every scan runs, as before.
+    const appScans = this.trainLast?.appScans ?? null;
+    const notRequired = appScans ? HEAVY_ROLES.filter(r => !appScans.includes(r)) : [];
+    const roles = (front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES]).filter(r => !notRequired.includes(r));
     const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';
     const reasons = Object.fromEntries(roles.map(r => [r, reason]));
     await this.ledger.writePlanIntent(key, { candidates: [], local: roles, reasons, reason, waitedMs: Math.max(0, this.clock() - t0), hintSha256: null, hintRefused: false, ...(reused.length ? { reused } : {}) });
     if (reused.length) await this.receipt('train-front-scans-reused', { key, pr: subject.pr, headSha: subject.headSha, baseSha: subject.baseSha, testSha: subject.testSha, reused });
+    if (notRequired.length) await this.receipt('scans-not-app-required', { key, pr: subject.pr, headSha: subject.headSha, roles: notRequired });
     await this.receipt('relay-plan-intent', { key, candidates: [], reason, waitedMs: Math.max(0, this.clock() - t0), hintRefused: false });
     const plan = { candidates: [], relayed: [], local: roles.map(role => ({ role, reason, receipt: 'relay-local-fallback', source: 'resident' })), ...(reused.length ? { reused } : {}) };
     await this.ledger.writePlan(key, plan);

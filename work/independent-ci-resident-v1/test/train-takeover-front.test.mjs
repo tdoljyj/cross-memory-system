@@ -101,7 +101,12 @@ async function world(t, { quick = false } = {}) {
 // the staged external id and the line "tested <H>" in its summary (staged-check-publisher-v2.mjs), and a front batch's stage 1 reports the scans H carries exactly as the Source does (the read-back's inventory
 // through published-on-github-v2.mjs#headScansOf, then stage-inputs.mjs#writeOutcome, stage-fact.mjs#outcomeFacts and the engine's
 // parseStageOutcome). engine.beforeFrontStage1 (optional): runs right before a front batch's stage 1 (a scene change, e.g. an archive).
-function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, scans = false } = {}) {
+// A front batch's publication stage (3, 5, 7) publishes its scan check on H as the front job's own (its staged external id carries the front
+// job's id), as staged-check-publisher-v2.mjs does; stage 8 reads them (review of R3, problem A: the scans main's rules still require
+// from this App are done for the front subject).
+// landing (optional): the push-landing port; stage 8 then runs with train-landing push (ADR 0018). passReason: stage 8's own not-ready or
+// final reason reaches the executor (otherwise every stage-8 refusal is TRAIN_SINGLE_GREEN_NOT_PROVEN, as before).
+function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, scans = false, landing = null, passReason = false } = {}) {
   const subjects = new Map(), stages = [];
   let run = 0;
   const engine = fakeEngine(script);
@@ -145,6 +150,14 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
         external_id: scanExternalIdV2(jobOf(role)), output: { title: `${role}: success`, summary: `Independent CI job x.\ntested ${subject.headSha}` } });
       return ok;
     }
+    if (subject.testSha && [3, 5, 7].includes(stage.number)) {
+      const role = { 3: 'gitleaks', 5: 'trivy', 7: 'contract-placement' }[stage.number];
+      const id = Math.max(500, ...e.gh.world.checks.keys()) + 1;
+      e.gh.world.checks.set(id, { id, app: { id: 5368905 }, name: role, head_sha: subject.headSha, status: 'completed', conclusion: 'success',
+        external_id: scanExternalIdV2(jobOf(role)), output: { title: `${role}: success`, summary: `Independent CI job x.
+tested ${subject.testSha}` } });
+      return ok;
+    }
     if (scans && subject.testSha && stage.number === 1) {
       await engine.beforeFrontStage1?.(subject);
       const job = jobOf('work-admission');
@@ -180,12 +193,15 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
       admission: { async evaluatePr(job, packet, options) { const { observationSha256, ...facts } = admittedFacts(job, claim, packet,
         { domain: 'fixture', mergeQueueHead: true, batchClaim: options?.batchClaim, observedAt: e.now, slotUntil: e.now + 600_000 });
         return { ...facts, observationSha256: digest(facts) }; } },
-      assertLive() {}, record() {}, authority: {}, clock: e.clock, sleep: e.sleep });
+      assertLive() {}, record() {}, authority: {}, clock: e.clock, sleep: e.sleep,
+      ...(landing ? { trainLanding: { landing: 'push', batchMax: 1, unreadable: false }, landing } : {}) });
     const published = await publisher.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: e.now + 90_000 });
     at.advance(e.now - at.clock());
     engine.published = published;
-    return published.status === 'SETTLED' ? ok : { ok: false, code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', proof: PROOF,
-      outcome: { status: 'BLOCKED', reason: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', sideEffects: 0, mayHavePublished: false } };
+    (engine.publishedAll ??= []).push({ testSha: subject.testSha, attempt: subject.attempt, status: published.status, reason: published.reason ?? null });
+    const reason = passReason && published.status === 'BLOCKED' && published.sideEffects === 0 && typeof published.reason === 'string' ? published.reason : 'TRAIN_SINGLE_GREEN_NOT_PROVEN';
+    return published.status === 'SETTLED' ? ok : { ok: false, code: reason, proof: PROOF,
+      outcome: { status: 'BLOCKED', reason, sideEffects: 0, mayHavePublished: false } };
   };
   return engine;
 }
@@ -967,11 +983,20 @@ test('a settled front-open debt does not repeatedly preempt busy ticks, includin
 const permanentPolicy = (extra = {}) => rawPolicy({ contract: POLICY_CONTRACT_V8, ...extra,
   train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * MIN, maintenanceMaxPerDay: 200, ...TRAIN_DEFAULTS, ...(extra.train ?? {}) } });
 
-async function permanentArrival(t, { strict = true, restart = false, sweep } = {}) {
+// R3 lean (DESIGN §82 item 1): main's rules with the three scans required from GitHub Actions (15368), the rest from this App.
+const ACTIONS_SCAN_RULES = Object.freeze([['kooyumi-work-admission', 5368905], ['gitleaks', 15368], ['trivy', 15368], ['contract-placement', 15368],
+  ['kooyumi-admission-verified', 5368905], ['kooyumi-merge-slot', 5368905]].map(([context, integration_id]) => Object.freeze({ context, integration_id })));
+
+// ruleChecks: main's required checks as [{ context, integration_id }] (actionsScans: ACTIONS_SCAN_RULES); prepare(e, engine): before the
+// executor starts (a rules or port change of the scene); engineOptions: engineFor's options.
+async function permanentArrival(t, { strict = true, restart = false, sweep, actionsScans = false, ruleChecks = null, engineOptions = {}, prepare = null } = {}) {
   const e = await world(t);
   e.gh.world.strict = strict;
+  if (actionsScans) e.gh.world.ruleChecks = ACTIONS_SCAN_RULES.map(c => ({ ...c }));
+  if (ruleChecks) e.gh.world.ruleChecks = ruleChecks.map(c => ({ ...c }));
   const at = { t };
-  const engine = engineFor(e, at);
+  const engine = engineFor(e, at, {}, engineOptions);
+  await prepare?.(e, engine);
   const pol = permanentPolicy(sweep ? { train: { sweep } } : {});
   let f = await executorFixture(t, { policy: pol, engine, now: NOW });
   Object.assign(at, { clock: f.clock, advance: f.advance });
@@ -1024,6 +1049,107 @@ for (const restart of [false, true]) test(`strict-permanent (DESIGN §65): train
   // The PR that is not the queue head is no longer held for the sweep: it runs, and its stage 8 rests at B (only a front batch greens).
   assert.ok(engine.stages.some(s => s.pr === 911 && s.stage === 8), JSON.stringify(engine.stages));
   assert.equal(slotGreen(e, sha(0x7777)), undefined);
+  // R3 lean regression: every scan pinned to this App: stage 10 says so and the resident runs every scan, as before.
+  assert.deepEqual(engine.lastFacts.rules.appScans, ['gitleaks', 'trivy', 'contract-placement'], JSON.stringify(engine.lastFacts.rules));
+  assert.equal((await f.receipts.latest(['scans-not-app-required'], 10)).length, 0);
+});
+
+// R3 lean (DESIGN §82 item 1): the scans main requires from GitHub Actions (integration 15368), not from this App: the resident runs none of
+// them. With strict on, the front batch runs stages 1 and 8 only and still gets the merge-slot green; no batch runs stages 2-7.
+test('R3: scans required from Actions, strict on -> no batch runs its own scans; the front batch runs stages 1 and 8 and gets the merge-slot green', async t => {
+  const { e, f, engine } = await permanentArrival(t, { actionsScans: true });
+  const green = await untilGreen(f, e);
+  assert.ok(green, `no green; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo} rules ${JSON.stringify(engine.lastFacts?.rules)}; stages ${JSON.stringify(engine.stages)}`);
+  assert.deepEqual(engine.lastFacts.rules.appScans, [], JSON.stringify(engine.lastFacts.rules));
+  assert.deepEqual(f.exec.trainLast.appScans, []);
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 8]);
+  assert.ok(!engine.stages.some(s => s.stage >= 2 && s.stage <= 7), `no scan stage runs: ${JSON.stringify(engine.stages)}`);
+  const skipped = (await f.receipts.latest(['scans-not-app-required'], 10)).map(r => r.value.body.roles);
+  assert.ok(skipped.length > 0 && skipped.every(r => JSON.stringify(r) === JSON.stringify(['gitleaks', 'trivy', 'contract-placement'])), JSON.stringify(skipped));
+  assert.deepEqual((await f.receipts.latest(['paused'], 10)).map(r => r.value.body.reason), []);
+});
+
+// R3 lean, a part of the scans (review of R3, gap b): only gitleaks is required from GitHub Actions. The front batch runs no gitleaks
+// stages (2, 3) but runs trivy and contract-placement (4-7) and still gets the merge-slot green (stage 8 finds both on H, its own).
+test('R3: only gitleaks required from Actions -> the front batch skips gitleaks alone, runs the other two scans and gets the merge-slot green', async t => {
+  const ruleChecks = ACTIONS_SCAN_RULES.map(c => ({ ...c, integration_id: c.context === 'gitleaks' ? 15368 : 5368905 }));
+  const { e, f, engine } = await permanentArrival(t, { ruleChecks });
+  const green = await untilGreen(f, e);
+  assert.ok(green, `no green; stage 10 said ${engine.lastFacts?.decision}/${engine.lastFacts?.wouldDo}; stages ${JSON.stringify(engine.stages)}`);
+  assert.deepEqual(engine.lastFacts.rules.appScans, ['trivy', 'contract-placement']);
+  assert.deepEqual(f.exec.trainLast.appScans, ['trivy', 'contract-placement']);
+  assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 4, 5, 6, 7, 8]);
+  const skipped = (await f.receipts.latest(['scans-not-app-required'], 10)).map(r => r.value.body.roles);
+  assert.ok(skipped.length > 0 && skipped.every(r => JSON.stringify(r) === JSON.stringify(['gitleaks'])), JSON.stringify(skipped));
+});
+
+// R3 lean, an unusable appScans (review of R3, gap c): stage 10 answers rules.appScans the resident cannot read (an unknown scan, one twice,
+// not a list, too many): train.mjs#appScansOf drops it, so the summary carries none and the front batch runs every scan, as before R3.
+for (const bad of [['gitleaks', 'nope'], ['trivy', 'trivy'], 'gitleaks', ['gitleaks', 'trivy', 'contract-placement', 'gitleaks']])
+  test(`R3: stage 10's rules.appScans ${JSON.stringify(bad)} cannot be read -> every scan runs`, async t => {
+    const { e, f, engine } = await permanentArrival(t, { actionsScans: true, prepare: (e, engine) => {
+      const run = engine.runTrainStage;
+      engine.runTrainStage = async (...a) => { const r = await run(...a); if (r.train?.rules) r.train.rules = { ...r.train.rules, appScans: bad }; return r; };
+    } });
+    const green = await untilGreen(f, e);
+    assert.ok(green, `no green; stages ${JSON.stringify(engine.stages)}`);
+    assert.equal(Object.hasOwn(f.exec.trainLast, 'appScans'), false, JSON.stringify(f.exec.trainLast));
+    assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === S).map(s => s.stage), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.equal((await f.receipts.latest(['scans-not-app-required'], 10)).length, 0);
+  });
+
+// Review of R3, problem A (修复前必红): stage 10 read the three scans pinned to GitHub Actions (appScans []); then main's rules went back to
+// this App with push landing set up (switch A rolled back while push is on). The front batch planned on that older read skips every scan
+// (executor.mjs#localPlan); before the fix its stage 8 pushed S to main with no scan of this App on it, past the rules that require them.
+// Now stage 8 checks, against the rules it reads itself, that every scan they require from this App is done for this front subject: not
+// done, it lands nothing and writes no green, the batch ends (TRAIN_BATCH_CHANGED).
+test('R3 problem A: scans read as pinned to Actions, rules back to this App with push landing -> S never lands without its scans', async t => {
+  const MAIN_RS = 24182890, FF_RS = 27500001;
+  const APP_RULES = ACTIONS_SCAN_RULES.map(c => ({ ...c, integration_id: 5368905 }));
+  let kind = 'actions', e = null;
+  const pushes = [];
+  const ownScans = s => {
+    const ids = frontJobIdsV2(makeJobV2({ repo: REPO, pr: 910, headSha: H, baseSha: T, testSha: s, role: 'work-admission', sourceManifestSha256: CI_SOURCE, createdAt: iso(NOW), attempt: 1 }));
+    return [...new Set([...e.gh.world.checks.values()].filter(c => c.head_sha === H && c.app.id === 5368905 && SCAN_CHECK_NAMES.includes(c.name)
+      && c.status === 'completed' && c.conclusion === 'success' && onGithub.ofJobIds(c, ids)).map(c => c.name))].sort();
+  };
+  const landing = { async fastForwardMain(s) { pushes.push({ sha: s, scans: ownScans(s), kind }); e.gh.world.main = s; return { status: 200, sha: s }; } };
+  const { f, engine } = await permanentArrival(t, { engineOptions: { landing, passReason: true }, prepare: (world, engine) => {
+    e = world;
+    e.gh.readBranchRules = async () => ({ complete: true, branch: 'main', rules: [
+      { type: 'pull_request', rulesetId: MAIN_RS, parameters: { allowed_merge_methods: ['merge'] } },
+      { type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }, { type: 'deletion', rulesetId: FF_RS, parameters: null },
+      { type: 'required_status_checks', rulesetId: MAIN_RS, parameters: { strict_required_status_checks_policy: true, required_status_checks: [
+        ...(kind === 'actions' ? ACTIONS_SCAN_RULES : APP_RULES), { context: 'kooyumi-train-landed', integration_id: 5368905 }].map(c => ({ ...c })) } }] });
+    // GET /rulesets/{id}: this App always bypasses the main ruleset and never the fast-forward-only one (ADR 0018 push)
+    e.gh.readRuleset = async id => ({ id, currentUserCanBypass: id === MAIN_RS ? 'always' : 'never' });
+    // The rules go back to this App right after the front batch's stage 1, so its plan holds stage 10's older read.
+    const run = engine.runStage;
+    engine.runStage = async (batch, stage, ...rest) => {
+      const subject = engine.subjects.get(batch.key);
+      const r = await run(batch, stage, ...rest);
+      if (subject.testSha && stage.number === 1 && kind === 'actions') kind = 'app';
+      return r;
+    };
+  } });
+  const ended = () => (engine.publishedAll ?? []).some(p => p.reason === 'TRAIN_BATCH_CHANGED');
+  for (let i = 0; i <= 60 && pushes.length === 0 && !ended(); i++) { await f.exec.tick(); if (pushes.length === 0 && !ended()) f.advance(MIN); }
+  assert.equal(kind, 'app', `the front batch never ran its stage 1: stages ${JSON.stringify(engine.stages)}`);
+  // The older read was used: the first front batch skipped all three scans.
+  const skipped = (await f.receipts.latest(['scans-not-app-required'], 10)).map(r => r.value.body.roles);
+  assert.ok(skipped.some(r => JSON.stringify(r) === JSON.stringify(['gitleaks', 'trivy', 'contract-placement'])), JSON.stringify(skipped));
+  // Nothing landed on main without this App's three scans of the front subject.
+  for (const p of pushes) assert.deepEqual(p.scans, ['contract-placement', 'gitleaks', 'trivy'], `S pushed without its scans: ${JSON.stringify(pushes)}; stage 8 ${JSON.stringify(engine.publishedAll)}`);
+  assert.equal(slotGreen(e, H), undefined, 'push writes no merge-slot green');
+  assert.ok(ended(), JSON.stringify(engine.publishedAll));
+  assert.equal(pushes.length, 0);
+  // The batch ended with TRAIN_BATCH_CHANGED (clean-final, as any other changed front batch: the head burns). Later turns of the claim
+  // never land S without its scans either. Whether this head comes back without a new commit is open (result file, 未决): stage 10's
+  // second front batch of the same S has the burned batch's key (executor.mjs#enqueueFront), so this test pins only the safe direction.
+  e.native.holder = holderOf({ takenAt: iso(f.clock()), mergeSlotUntil: iso(f.clock() + 45 * MIN) });
+  for (let i = 0; i <= 60 && pushes.length === 0; i++) { await f.exec.tick(); if (pushes.length === 0) f.advance(MIN); }
+  for (const p of pushes) assert.deepEqual(p.scans, ['contract-placement', 'gitleaks', 'trivy'], `S pushed without its scans: ${JSON.stringify(pushes)}`);
+  assert.equal(slotGreen(e, H), undefined, 'push writes no merge-slot green');
 });
 
 // Gate mode retains an unbound PR that has no exact holder authorization: body prose or a claim label cannot discover it.
@@ -1037,9 +1163,9 @@ test('strict-permanent (DESIGN §65): train.sweep gate still holds an unbound PR
 });
 
 // Strict read off in strict-permanent mode: stage 10 decides TRAIN_STRICT_OFF, opens no front batch and asks for PAUSE; the executor
-// latches PAUSE (receipt 'paused') and tells the Owner; no merge-slot green.
-test('strict-permanent (DESIGN §65): strict off -> no green, TRAIN_STRICT_OFF, PAUSE latched and an Owner notice', async t => {
-  const { e, f, engine } = await permanentArrival(t, { strict: false });
+// latches PAUSE (receipt 'paused') and tells the Owner; no merge-slot green. R3 lean regression: the same with the scans pinned to Actions.
+for (const actionsScans of [false, true]) test(`strict-permanent (DESIGN §65): strict off${actionsScans ? ', scans from Actions' : ''} -> no green, TRAIN_STRICT_OFF, PAUSE latched and an Owner notice`, async t => {
+  const { e, f, engine } = await permanentArrival(t, { strict: false, actionsScans });
   assert.equal(await untilGreen(f, e), null);
   const paused = (await f.receipts.latest(['paused'], 10)).map(r => r.value.body.reason);
   assert.ok(paused.includes('train-maintenance: TRAIN_STRICT_OFF'), JSON.stringify(paused));

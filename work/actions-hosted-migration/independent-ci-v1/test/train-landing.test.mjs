@@ -160,7 +160,7 @@ const route = (o, input = ruleState(o)) => { const r = L.landingRoute(input); re
 test('T5: the rules after C x the stage 8/10 rule readers: kooyumi-train-landed, never published, is never a failure of the landing gate', () => {
   const { rules } = ruleState();
   assert.ok(rules.some(r => r.type === 'required_status_checks' && r.parameters.required_status_checks.some(c => c.context === L.TRAIN_ONLY_CHECK)));
-  assert.deepEqual(rulesetFacts(rules, APP), { requiredPinned: true, strict: true, mergeOnly: true }, 'rulesetFacts reads the rules after C');
+  assert.deepEqual(rulesetFacts(rules, APP), { requiredPinned: true, strict: true, mergeOnly: true, appScans: ['gitleaks', 'trivy', 'contract-placement'] }, 'rulesetFacts reads the rules after C');
   let id = 0;
   const on = (name, app, extra = {}) => ({ id: ++id, name, head_sha: H1, app: { id: app }, status: 'completed', conclusion: 'success', ...extra });
   const green = [...REQUIRED_CHECK_NAMES.map(n => on(n, APP)), ...FOUR.map(n => on(n, ACTIONS))];

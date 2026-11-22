@@ -9,6 +9,9 @@ import { PAUSE_CONTRACT as EXECUTOR_PAUSE } from '../src/executor.mjs';
 import { Inbox } from '../src/inbox.mjs';
 import { REQUIRED_CHECK_NAMES as SOURCE_CHECKS } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
 import { APP_ID as SOURCE_APP } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/publisher.mjs';
+// Namespace imports: the R3 constants are read as properties, so this file still loads (and goes red, not unloadable) before R3.
+import * as BACKSTOP from '../src/ruleset-backstop.mjs';
+import * as SOURCE_RULES from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-rules.mjs';
 
 const rules = ({ strict = true, pinned = APP_ID, names = REQUIRED_CHECK_NAMES } = {}) => [{ type: 'deletion' },
   { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict, required_status_checks: names.map(context => ({ context, integration_id: pinned })) } }];
@@ -41,6 +44,39 @@ test('strict off without the train pauses and notifies; an unpinned or disabled 
   for (const r of [rules({ pinned: 5164952 }), rules({ names: REQUIRED_CHECK_NAMES.slice(1) }), [{ type: 'deletion' }]])
     assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode: 'off' }), { pause: false, notify: 'RULESET_NOT_PINNED' });
   for (const bad of [null, {}, 'x', [1]]) assert.deepEqual(backstopDecision({ facts: rulesFacts(bad), trainMode: 'off' }), { pause: false, notify: null });
+});
+
+// R3 lean (DESIGN §82 item 1): the three scans may be required from GitHub Actions (15368). Without it the R4 rules (scans from Actions)
+// would raise RULESET_NOT_PINNED every day. Admission and the control pair stay pinned to App 5368905; all six stay required.
+// The rule is the one of Source v2 train-rules.mjs#rulesetFacts: both read every case below the same way.
+test('R3: scans pinned to GitHub Actions are pinned (no RULESET_NOT_PINNED); admission and the control pair stay App-only; same rule as Source v2', () => {
+  assert.equal(BACKSTOP.ACTIONS_INTEGRATION_ID, 15368);
+  assert.equal(BACKSTOP.ACTIONS_INTEGRATION_ID, SOURCE_RULES.ACTIONS_INTEGRATION_ID);
+  assert.deepEqual([...(BACKSTOP.RULE_SCAN_NAMES ?? [])], [...(SOURCE_RULES.RULE_SCAN_NAMES ?? ['missing'])]);
+  const pins = (strict, list) => [{ type: 'required_status_checks', parameters: { strict_required_status_checks_policy: strict,
+    required_status_checks: list.map(([context, integration_id]) => ({ context, integration_id })) } }];
+  const admission = ['kooyumi-work-admission', APP_ID], pair = [['kooyumi-admission-verified', APP_ID], ['kooyumi-merge-slot', APP_ID]];
+  const scans = id => ['gitleaks', 'trivy', 'contract-placement'].map(n => [n, id]);
+  const now = Date.parse('2026-11-22T00:00:00Z');
+  const good = [pins(true, [admission, ...scans(15368), ...pair]), pins(true, [admission, ['gitleaks', 15368], ...scans(APP_ID).slice(1), ...pair]),
+    [...pins(true, [admission, ...scans(15368), ...pair]), ...pins(true, [['trivy', APP_ID]])]];
+  for (const r of good) {
+    assert.deepEqual(rulesFacts(r), { strict: true, pinned: true }, JSON.stringify(r));
+    assert.equal(SOURCE_RULES.rulesetFacts(r, APP_ID).requiredPinned, true);
+    for (const trainMode of ['off', 'shadow', 'on']) for (const sweepMode of ['audit', 'off', 'gate'])
+      assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode, sweep: null, duty: { onDuty: true, onSince: now - 60_000 }, now, sweepMode }), { pause: false, notify: null });
+  }
+  const bad = [pins(true, [['kooyumi-work-admission', 15368], ...scans(15368), ...pair]), pins(true, [admission, ...scans(15368), pair[0], ['kooyumi-merge-slot', 15368]]),
+    pins(false, [admission, ...scans(15368)]), pins(true, [admission, ...scans(15368).slice(1), ...pair]), pins(true, [admission, ['gitleaks', 5164952], ...scans(15368).slice(1), ...pair])];
+  for (const r of bad) {
+    assert.equal(rulesFacts(r).pinned, false, JSON.stringify(r));
+    assert.throws(() => SOURCE_RULES.rulesetFacts(r, APP_ID), JSON.stringify(r));
+    assert.deepEqual(backstopDecision({ facts: rulesFacts(r), trainMode: 'on', sweepMode: 'audit', now }), { pause: false, notify: 'RULESET_NOT_PINNED' });
+  }
+  // strict off stays a stop in strict-permanent mode with the scans on Actions too (ADR 0007 item 4, unchanged by R3 lean)
+  for (const sweepMode of ['audit', 'off'])
+    assert.deepEqual(backstopDecision({ facts: rulesFacts(pins(false, [admission, ...scans(15368), ...pair])), trainMode: 'on', sweep: { fullSinceOn: true },
+      duty: { onDuty: true, onSince: now - 2 * SWEEP_GRACE_MS }, now, sweepMode }), { pause: true, notify: 'STRICT_OFF_STRICT_PERMANENT' }, sweepMode);
 });
 
 // DESIGN §65 (strict-permanent mode, Owner decision 9e2511fe): strict off is never a state to work in. With the policy's train.sweep 'audit'
