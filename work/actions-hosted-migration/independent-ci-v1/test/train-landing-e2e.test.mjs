@@ -194,7 +194,8 @@ async function stage10(e, outcome = null) {
   e.now += 60_000;
   const runId = `${(++runN).toString(16).padStart(16, '0')}-0123456789ab`;
   const job = jobOf({ createdAt: iso(e.now), runId, sweep: 'audit', onSince: iso(NOW - 3_600_000),
-    ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code } : {}) });
+    ...(outcome ? { frontPr: outcome.pr, frontHeadSha: outcome.headSha, frontTestSha: outcome.testSha, frontAttempt: outcome.attempt, frontCode: outcome.code,
+      ...(Object.hasOwn(outcome, 'frontFailed') ? { frontFailed: outcome.frontFailed } : {}) } : {}) });
   return runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
     claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN4 });
 }
@@ -230,7 +231,7 @@ async function drive(t, e, { until, steps = 40, opened = null }) {
     const members = typeof e.store.landingBatchByTest === 'function' ? (await e.store.landingBatchByTest(b.testSha))?.members.map(m => m.pr) ?? null : null;
     const p = await stage8(t, e, b);
     log.push(['8', p.status, p.reason ?? null, members]);
-    if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason };
+    if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason, frontFailed: true };
   }
   return log;
 }
@@ -328,6 +329,30 @@ test('push: the middle PR breaks the combination -> bisection -> the other two l
   assert.deepEqual(e.adopted.map(a => a[0]).sort(), [910, 912]);
   // every commit main ever pointed at was a tested S of a batch this node recorded
   for (const s of e.W.pushes.filter(s => e.W.ancestor(s, e.main()))) assert.ok(await e.store.landingBatchByTest?.(s), s);
+});
+
+// FABLE-r3-batch2-gate F2, F3 (修复前必红: before the fix the job refuses the field): frontOutcome carries frontFailed. false (the batch
+// ended clean, say TRAIN_BATCH_CHANGED at stage 8, or its row was ignored): stage 10 learns only that the batch ended: no bisection, no new
+// bad member, no touch failed, and its plan is no longer TRAIN_FRONT_BATCH_RUNNING. true (a final deterministic-pr failure): as today.
+for (const frontFailed of [false, true]) test(`R3 batch 2 ${frontFailed ? 'F3' : 'F2'}: a batch of three ended (frontFailed ${frontFailed}) -> ${frontFailed ? 'bisection as today' : 'no bisection, no bad, no touch failed'}`, async t => {
+  const e = await world(t, { prs: [910, 911, 912] });
+  let b = null;
+  for (let i = 0; i < 6 && !b; i++) b = (await stage10(e)).facts.openFrontBatch;
+  assert.ok(b, 'a batch opened');
+  assert.deepEqual((await e.store.landingBatchByTest(b.testSha)).members.map(m => m.pr), [910, 911, 912]);
+  const before = await e.store.readLandingState();
+  const code = frontFailed ? 'TRAIN_LANDING_CHECK_FAILED' : 'TRAIN_BATCH_CHANGED';
+  const r = await stage10(e, { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code, frontFailed });
+  const after = await e.store.readLandingState();
+  assert.deepEqual(e.failed, [], 'no touch failed for a batch of several');
+  if (frontFailed) {
+    assert.deepEqual(r.facts.landing?.bisect?.failed, [910, 911, 912], JSON.stringify(r.facts.landing));
+    assert.ok(after.handled.includes(b.testSha));
+  } else {
+    assert.notEqual(r.facts.decision, 'TRAIN_FRONT_BATCH_RUNNING', JSON.stringify(r.facts));
+    assert.equal(r.facts.landing?.bisect, undefined, JSON.stringify(r.facts.landing));
+    assert.deepEqual([after.bad, after.suspect, after.handled], [before.bad, before.suspect, before.handled], 'the landing state is unchanged');
+  }
 });
 
 test('push: main moved by someone else between the check and the write -> the fast-forward is refused -> retested on the new main -> lands', async t => {
@@ -933,7 +958,7 @@ async function untilLanded(t, e, { batch = null, rounds = 30 } = {}) {
       const { b } = parked; parked = null;
       const p = await stage8(t, e, b);
       log.push(['8', p.status, p.reason ?? null]);
-      if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason };
+      if (p.status === 'BLOCKED' && p.reason === 'TRAIN_LANDING_CHECK_FAILED') outcome = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: p.reason, frontFailed: true };
       else if (p.status === 'BLOCKED' && p.sideEffects === 0) parked = { b, at: e.now + 10 * MIN };
       continue;
     }

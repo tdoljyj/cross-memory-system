@@ -98,14 +98,16 @@ test('train-run /2: the resident part is exactly the job\'s params plus the mode
   const shadow = trainRunInput({ mode: 'shadow', settings, onSince: T0 });
   assert.equal(shadow.onSince, null, 'never an onSince in shadow');
   assert.equal(job(shadow).mode, 'shadow');
-  const front = { pr: 910, headSha: HEAD, testSha: S, attempt: 1, code: 'STAGE_CHILD_REFUSED' };
+  const front = { pr: 910, headSha: HEAD, testSha: S, attempt: 1, code: 'STAGE_CHILD_REFUSED', failed: true };
   const on = trainRunInput({ mode: 'on', settings, onSince: T0, frontOutcome: front, revokeHeadRequestId: CLAIM });
   assert.deepEqual([on.onSince, on.frontPr, on.frontAttempt, on.revokeHeadRequestId], [new Date(T0).toISOString(), 910, 1, CLAIM]);
-  assert.equal(job(on).frontCode, 'STAGE_CHILD_REFUSED');
+  assert.deepEqual([job(on).frontCode, job(on).frontFailed], ['STAGE_CHILD_REFUSED', true]);
+  const ended = trainRunInput({ mode: 'on', settings, onSince: T0, frontOutcome: { ...front, code: 'TRAIN_BATCH_CHANGED', failed: false }, revokeHeadRequestId: null });
+  assert.deepEqual([job(ended).frontCode, job(ended).frontFailed], ['TRAIN_BATCH_CHANGED', false], 'R3 batch 2: an ended front batch that did not fail for the PR');
   const revokeOnly = trainRunInput({ mode: 'revoke-only', settings, onSince: T0, frontOutcome: front, revokeHeadRequestId: CLAIM });
   assert.deepEqual([revokeOnly.frontPr, revokeOnly.revokeHeadRequestId], [null, CLAIM], 'no failed report under PAUSE');
   assert.equal(job(revokeOnly).mode, 'revoke-only');
-  for (const bad of [{ ...on, onSince: null }, { ...shadow, revokeHeadRequestId: CLAIM }, { ...on, frontTestSha: HEAD }, { ...on, frontCode: null }, { ...on, extra: 1 }])
+  for (const bad of [{ ...on, onSince: null }, { ...shadow, revokeHeadRequestId: CLAIM }, { ...on, frontTestSha: HEAD }, { ...on, frontCode: null }, { ...on, frontFailed: null }, { ...on, frontFailed: 'true' }, { ...shadow, frontFailed: false }, { ...on, extra: 1 }])
     assert.throws(() => validateTrainRunInput(bad), { code: 'TRAIN_RUN_INPUT_INVALID' });
 });
 
@@ -332,12 +334,12 @@ test('executor, on: a front batch that finally failed for the PR itself is the n
   await f.exec.tick();
   const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
   f.exec.frontKeys.set('k'.repeat(64), 2);
-  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'STAGE_CHILD_REFUSED');
-  await f.exec.noteFrontOutcome({ ...subject, testSha: undefined }, 'x'.repeat(64), 'STAGE_CHILD_REFUSED'); // not a front batch: nothing
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'STAGE_CHILD_REFUSED', true);
+  await f.exec.noteFrontOutcome({ ...subject, testSha: undefined }, 'x'.repeat(64), 'STAGE_CHILD_REFUSED', true); // not a front batch: nothing
   f.advance(MIN);
   await f.exec.tick();
   const carried = e.inputs.at(-1).input;
-  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode], [884, HEAD, S, 2, 'STAGE_CHILD_REFUSED']);
+  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed], [884, HEAD, S, 2, 'STAGE_CHILD_REFUSED', true]);
   assert.equal((await ofType(f.receipts, 'train-run')).at(-1).frontOutcomeSeq, (await f.receipts.latest(['train-front-outcome'], 1))[0].seq);
   f.advance(10 * MIN);
   await f.exec.tick();
@@ -347,6 +349,7 @@ test('executor, on: a front batch that finally failed for the PR itself is the n
   await g.receipts.append('train-front-outcome', { key: 'k'.repeat(64), frontOutcome: { pr: 884, headSha: HEAD, testSha: S, attempt: 1, code: 'STAGE_CHILD_REFUSED' } });
   assert.equal(await g.exec.trainRecover(), null);
   assert.equal(g.exec.trainFrontOutcome.pr, 884);
+  assert.equal(g.exec.trainFrontOutcome.failed, true, 'R3 batch 2: a receipt from before frontFailed was a failed report');
 });
 
 test('requests\\: the probe request only marks the probe urgent; the revoke-head request goes to stage 10 and its result to the status', async t => {
@@ -574,7 +577,7 @@ test('review R3 M5: attempt 2 of a front batch is the head\'s second front batch
   const r2 = await f.exec.tick();
   assert.deepEqual([r2.state, r2.failureCode], ['FAILED_CLEAN', 'PR_NOT_OPEN_OR_CHANGED']);
   const fo = (await ofType(f.receipts, 'train-front-outcome')).at(-1);
-  assert.deepEqual([fo.frontOutcome.attempt, fo.frontOutcome.testSha, fo.frontOutcome.code], [2, S, 'PR_NOT_OPEN_OR_CHANGED']);
+  assert.deepEqual([fo.frontOutcome.attempt, fo.frontOutcome.testSha, fo.frontOutcome.code, fo.frontOutcome.failed], [2, S, 'PR_NOT_OPEN_OR_CHANGED', true]);
   f.advance(10 * MIN);
   await f.exec.tick();
   assert.deepEqual([e.inputs.at(-1).input.frontPr, e.inputs.at(-1).input.frontAttempt], [884, 2]);
@@ -732,7 +735,7 @@ test('review R3 MINOR 3: the front outcome is carried again until stage 10 repor
   await f.exec.tick();
   const subject = { repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: f.ports.policy.sourceManifestSha256, attempt: 1, testSha: S };
   f.exec.frontKeys.set('k'.repeat(64), 1);
-  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED');
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
   f.advance(MIN);
   await f.exec.tick();
   assert.deepEqual([e.inputs.at(-1).input.frontPr, (await ofType(f.receipts, 'train-run')).at(-1).frontOutcomeCleared], [884, false]);
@@ -751,7 +754,7 @@ test('review R3 MINOR 3: the front outcome is carried again until stage 10 repor
   assert.equal(e.inputs.at(-1).input.frontPr, null, 'reported: cleared');
   // moot: the front is another head now
   failed = false;
-  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED');
+  await f.exec.noteFrontOutcome(subject, 'k'.repeat(64), 'PR_NOT_OPEN_OR_CHANGED', true);
   front = { pr: 884, headSha: '9'.repeat(40) };
   f.advance(MIN);
   await f.exec.tick();
