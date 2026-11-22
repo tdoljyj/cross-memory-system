@@ -75,11 +75,23 @@ export async function frontMergeToken({ env, fetchImpl, now = () => Date.now() }
   return { token: null, reason: `the clued-admission App token with ${Object.entries(FRONT_MERGE_PERMISSIONS).map(([k, v]) => `${k}: ${v}`).join(', ')} was refused (HTTP ${minted.status})` };
 }
 
+// One list of a head (body[key], 100 a page) read to the end: GitHub says how many there are (total_count). A list that
+// goes on past PAGES pages, or stops short of its count, is not known in full: what is still under way may be in the rest.
+async function listedInFull(fetchImpl, env, route, key, what) {
+  const items = [];
+  for (let page = 1; ; page++) {
+    const body = await githubJson(fetchImpl, env, `${route}${route.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
+    if (!Array.isArray(body?.[key])) throw new Error(`${what} could not be read`);
+    items.push(...body[key]);
+    if (!(Number(body.total_count) > items.length)) return items;
+    if (body[key].length === 0 || page === PAGES) throw new Error(`${what}: ${items.length} of ${body.total_count} read, not known in full`);
+  }
+}
+
 // What ran on one head, as the ruleset reads it: the newest check run of each name and the newest status of each context.
 async function headRecords({ env, fetchImpl, repository, head, required }) {
   const runs = await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${head}/check-runs`, 'check_runs');
-  const statuses = (await githubJson(fetchImpl, env, `/repos/${repository}/commits/${head}/status?per_page=100`))?.statuses;
-  if (!Array.isArray(statuses)) throw new Error(`the statuses of ${head} could not be read`);
+  const statuses = await listedInFull(fetchImpl, env, `/repos/${repository}/commits/${head}/status`, 'statuses', `the statuses of ${head}`);
   const checks = new Map(), contexts = new Map();
   const newer = (a, b) => String(a.started_at ?? '') > String(b.started_at ?? '') || (a.started_at === b.started_at && Number(a.id) > Number(b.id));
   for (const run of runs) if (!checks.has(run.name) || newer(run, checks.get(run.name))) checks.set(run.name, run);
@@ -142,8 +154,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   }
   for (const member of train.filter(member => member.behind === 0)) {
     const records = await headRecords({ env, fetchImpl, repository, head: member.head, required });
-    const running = (await githubJson(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}&per_page=100`))?.workflow_runs;
-    if (!Array.isArray(running)) throw new Error(`the workflow runs of ${member.head} could not be read`);
+    const running = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
     member.state = 'front';
     if (records.green || records.unfinished + running.filter(run => run.status !== 'completed').length > 0) continue;
