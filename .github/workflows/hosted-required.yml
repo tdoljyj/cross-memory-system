@@ -59,6 +59,11 @@ jobs:
         id: train-base
         working-directory: candidate
         env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
           STAGING_SHA: ${{ github.sha }}
           PUSH_REF: ${{ github.ref }}
           EVENT_NAME: ${{ github.event_name }}
@@ -124,6 +129,11 @@ jobs:
         id: train-base
         working-directory: candidate
         env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
           STAGING_SHA: ${{ github.sha }}
           PUSH_REF: ${{ github.ref }}
           EVENT_NAME: ${{ github.event_name }}
@@ -211,6 +221,11 @@ jobs:
         id: train-base
         working-directory: candidate
         env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
           STAGING_SHA: ${{ github.sha }}
           PUSH_REF: ${{ github.ref }}
           EVENT_NAME: ${{ github.event_name }}
@@ -282,6 +297,11 @@ jobs:
         id: train-base
         working-directory: candidate
         env:
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
           STAGING_SHA: ${{ github.sha }}
           PUSH_REF: ${{ github.ref }}
           EVENT_NAME: ${{ github.event_name }}
