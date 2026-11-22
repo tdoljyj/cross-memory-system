@@ -332,11 +332,14 @@ function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Ru
       }
     }
   } catch { $code = 'DRILL_HOST_STATUS_UNREADABLE' }
-  return @{ ok = ($null -eq $code); code = $code; busyWith = $busyWith; runnerJob = $(if ($Running) { $null } else { Get-DrillRunnerJobState $busyWith });
-    mode = $mode; holdSince = $since; holdUntil = $until;
+  $out = @{ ok = ($null -eq $code); code = $code; mode = $mode; holdSince = $since; holdUntil = $until;
     freeGB = $memory.freeGB; requiredFreeBytes = $memory.requiredFreeBytes; requiredBasis = $memory.requiredBasis;
     executorObservation = $executorObservation; observedAt = $Now.ToUniversalTime().ToString('o');
     action = $(if ($code) { if ($Running) { 'abort' } else { 'refuse' } } else { if ($Running) { 'continue' } else { 'start' } }) }
+  # the running gate reads no runner job: no job reading at all, rather than one that says "none" (Fable ruling 0e418483 "drill memory
+  # root" 2.4, G2: r11's abort record said runnerJob null, wslJobs [])
+  if (-not $Running) { $out.busyWith = $busyWith; $out.runnerJob = Get-DrillRunnerJobState $busyWith }
+  return $out
 }
 
 # What to do with the VM named ours. $Vm: $null or @{ notes; state; checkpoints = @(names) }.
@@ -1336,7 +1339,8 @@ function Read-DrillHostStatus {
 function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly, [switch]$JobsOnly) {
   $json = Read-DrillHostStatus
   $duty = Test-DrillHostSafety $json ([long]::MaxValue) -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
-  if (-not $duty.ok -or $StatusOnly) { $duty.freeGB = $null; $duty.requiredFreeBytes = $null; $duty.busyWith = $null; $duty.runnerJob = $null; return $duty }   # no memory and no job was read
+  if (-not $duty.ok -or $StatusOnly) {   # no memory and no job was read
+    $duty.freeGB = $null; $duty.requiredFreeBytes = $null; if (-not $Running) { $duty.busyWith = $null; $duty.runnerJob = $null }; return $duty }
   try {
     $free = [long]::MaxValue
     $target = $script:Drill.MemoryBytes
@@ -1365,11 +1369,13 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     if (@($wsl.jobs).Count -gt 0) { $wslJob = $true } elseif ($wsl.ok) { $wslJob = $false }   # a confirmed job stays one beside an unread distribution
     $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes -WslJob $wslJob
     if ($JobsOnly) { $safety.freeGB = $null; $safety.requiredFreeBytes = $null; $safety.requiredBasis = $null }   # nothing was read
-    $safety.wslRunnerDistributions = $wsl.running
-    $safety.wslJobs = $wsl.jobs
-    $safety.wslUnreadable = $wsl.reason
-    $safety.wslListCall = Get-Prop $wsl 'listCall'   # a state without it (a stand-in) has none
-    $safety.windowsUnreadable = $windowsUnreadable
+    if (-not $Running) {   # running, neither side's jobs were read (G2): no reading of them
+      $safety.wslRunnerDistributions = $wsl.running
+      $safety.wslJobs = $wsl.jobs
+      $safety.wslUnreadable = $wsl.reason
+      $safety.wslListCall = Get-Prop $wsl 'listCall'   # a state without it (a stand-in) has none
+      $safety.windowsUnreadable = $windowsUnreadable
+    }
   } catch {
     $c = Get-DrillCode $_
     $safety = @{ ok = $false; code = $(if ($c.code -eq 'DRILL_VM_NAME_TAKEN_NOT_OURS') { $c.code } else { 'DRILL_HOST_RESOURCE_UNREADABLE' }); action = $(if ($Running) { 'abort' } else { 'refuse' }) }
@@ -1541,6 +1547,40 @@ function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
     if ($c.code -ne 'DRILL_UNEXPECTED') { $state.reason = $c.code }
   }
   return $state
+}
+
+# Fable ruling 0e418483 "drill memory root" 2.4 (G2): what each runner distribution held when the guard aborted for memory -- MemTotal,
+# MemFree, Cached and AnonPages from its /proc/meminfo, in GB, and how many Runner.Worker processes ran in it (pgrep -c with
+# WslJobPattern: exit 0 or 1, the count on stdout). Read-only, like the probe: only a distribution already running is asked (a command
+# would start it), every call sharing one budget (CacheReleaseSeconds, on the drill's clock). Anything not read whole throws, and the
+# caller records nothing; nothing is returned when no runner distribution runs.
+function Get-DrillWslMemory([string]$HostName = $env:COMPUTERNAME, [int]$WithinSeconds = $script:Drill.CacheReleaseSeconds) {
+  $until = (Get-DrillTime).AddSeconds($WithinSeconds)
+  $left = { $s = [int][Math]::Floor(($until - (Get-DrillTime)).TotalSeconds); if ($s -lt 1) { throw (New-DrillError 'DRILL_WSL_MEMORY_TIMEOUT') }; $s }
+  $clean = { param($r) $e = Get-DrillField $r 'exit'; $err = Get-DrillField $r 'stderr'; ($e -is [int]) -and ($null -eq $err -or ([string]$err).Length -eq 0) }
+  $distributions = @(Get-DrillRunnerDistributions $HostName)
+  if ($distributions.Count -eq 0) { return }
+  $registered = Get-DrillWslRegisteredRunners $distributions
+  $runningNow = @(ConvertFrom-DrillWslRunningList (Invoke-DrillWsl @('--list', '--running', '--quiet') (& $left)) $registered)
+  foreach ($d in @($distributions | Where-Object { Test-DrillNameIn $_ $runningNow })) {
+    $mi = Invoke-DrillWsl @('--distribution', $d, '--exec', 'cat', '/proc/meminfo') (& $left)
+    if (-not (& $clean $mi) -or (Get-DrillField $mi 'exit') -ne 0) { throw (New-DrillError 'WSL_MEMINFO_UNREADABLE' $d) }
+    $kb = @{}
+    foreach ($line in @(([string](Get-DrillField $mi 'stdout')) -split "`r?`n")) {
+      if ($line -cmatch '^(MemTotal|MemFree|Cached|AnonPages):\s+(\d+) kB$') {
+        if ($kb.ContainsKey($Matches[1])) { throw (New-DrillError 'WSL_MEMINFO_UNREADABLE' $d) }
+        $kb[$Matches[1]] = [long]$Matches[2]
+      }
+    }
+    if ($kb.Count -ne 4) { throw (New-DrillError 'WSL_MEMINFO_UNREADABLE' $d) }
+    $pc = Invoke-DrillWsl @('--distribution', $d, '--exec', 'pgrep', '-cix', $script:Drill.WslJobPattern) (& $left)
+    $workers = $null
+    if ((& $clean $pc) -and (Get-DrillField $pc 'exit') -in @(0, 1) -and [string](Get-DrillField $pc 'stdout') -cmatch '\A(\d+)\r?\n?\z') { $workers = [int]$Matches[1] }
+    if ($null -eq $workers) { throw (New-DrillError 'WSL_PROCESS_QUERY_FAILED' $d) }
+    $gb = { param([long]$k) [Math]::Round($k * 1KB / 1GB, 2) }
+    [ordered]@{ distribution = $d; memTotalGB = (& $gb $kb['MemTotal']); memFreeGB = (& $gb $kb['MemFree']); cachedGB = (& $gb $kb['Cached'])
+      anonPagesGB = (& $gb $kb['AnonPages']); runnerWorkers = $workers }
+  }
 }
 
 # The release command is the single-quoted string this file assigns, unchanged, with nothing the Windows command line could split or
@@ -1898,8 +1938,12 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
         $receipt = [ordered]@{ status = 'DRILL_ABORTED'; code = $State.failure.code; detail = $State.failure.detail;
           hostExecutorStates = @($State.executorStates.Values); cacheReleases = @(Get-DrillCacheReleases $State);
           abortedAt = [DateTimeOffset]::UtcNow.ToString('o'); restoredToCheckpoint = $false; stopped = $false; cleanupFailure = $null; cleanupDone = $false }
-        # short of memory: who held it, read before the shutdown changes the picture; a list that cannot be read is left out
-        if ([string]$State.failure.code -ceq 'DRILL_HOST_MEMORY_SHORT') { try { $top = @(Get-DrillTopProcesses); if ($top.Count) { $receipt['topProcesses'] = $top } } catch { } }
+        # short of memory: who held it, read before the shutdown changes the picture -- the host's largest processes, and what the runner
+        # distribution holds (G2); one that cannot be read is left out
+        if ([string]$State.failure.code -ceq 'DRILL_HOST_MEMORY_SHORT') {
+          try { $top = @(Get-DrillTopProcesses); if ($top.Count) { $receipt['topProcesses'] = $top } } catch { }
+          try { $wm = @(Get-DrillWslMemory); if ($wm.Count) { $receipt['wslMemory'] = $wm } } catch { }
+        }
         # Persist the reason before cleanup, then its outcome. A receipt write failure must never prevent shutdown.
         try { Write-DrillJson (Join-Path $RunDir 'host-guard.json') $receipt } catch { }
         try {
