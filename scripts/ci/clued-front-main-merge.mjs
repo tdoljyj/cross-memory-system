@@ -36,8 +36,11 @@
 // With a front it does nothing. Without one it brings the candidate whose
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
 // does, one per run, unless BROUGHT_UNADMITTED_LIMIT heads on the train are ones
-// the App brought up and the admission has not passed: then it holds (below). A red or idle front, a lost event or a failed run need no
+// the App brought up and the admission has not passed: then it holds (below). A named run goes through the same hold: it reads the
+// train once first and, held, changes nothing (FABLE-scaffold-open-qs 问题 2). A red or idle front, a lost event or a failed run need no
 // memory: the next run reads the same records again.
+// A required check pinned to an App is read only from that App (open-qs 改法 4): with the legacy admission workflow enabled again,
+// App 5164952 and App 5368905 both post kooyumi-admission-verified and kooyumi-merge-slot on one head.
 //
 // The hosted copy (.github/workflows/clued-front-main-merge-hosted.yml; framework v1 §2.3, hosted scaffold report §1.4) runs this
 // same entry with CLUED_FRONT_MERGE_PHASE=scaffold. It acts only while the hosted scaffold ruleset is the one in force on main
@@ -50,8 +53,8 @@
 // It takes no authorization step itself; it holds no Clued credential.
 
 import fs from 'node:fs';
-import { ADMISSION_APP_ID, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, appJwt, githubJson, githubPaged,
-  mainMergeExternalId } from './clued-work-admission.mjs';
+import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, appJwt, githubJson,
+  githubPaged, mainMergeExternalId } from './clued-work-admission.mjs';
 import { appRequest } from './clued-managed-auto-merge.mjs';
 import { resolveMode } from './merge-admission-policy.mjs';
 
@@ -77,6 +80,11 @@ export const IDLE_AFTER_MS = 15 * 60_000;
 // whole train one pull request per run. With this many such heads on the train at once nobody else is brought up; below it the
 // train goes on by itself (FABLE-scaffold-s5-pre §2). 2, not 1: one protected-layer head waiting for a new Owner Grant holds nobody.
 export const BROUGHT_UNADMITTED_LIMIT = 2;
+// The admission check of the rules in force, by the name and App they pin (open-qs 改法 3): #292 pins the independent CI's
+// kooyumi-work-admission (App 5368905); the hosted scaffold ruleset pins the clued-admission App's kooyumi-admission-verified
+// (App 5164952, which never posts a check named kooyumi-work-admission: that is the job name of its workflow, a GitHub Actions
+// check). The first name pinned to an App decides; with neither pinned, the independent CI's admission.
+export const ADMISSION_CHECK_NAMES = Object.freeze([INDEPENDENT_ADMISSION_CHECK, APP_CHECK_NAME]);
 // A list (open pull requests, branch rules) is read 100 a page, at most this many pages; one that goes on is not known in full.
 const PAGES = 10;
 const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required']);
@@ -116,27 +124,30 @@ async function listedInFull(fetchImpl, env, route, key, what) {
   }
 }
 
-// What ran on one head, as the ruleset reads it: the newest check run of each name and the newest status of each context.
+// What ran on one head, as the ruleset reads it: for each required check (context, integration_id) the newest check run of that
+// name from the App it is pinned to (any App when unpinned), and the newest status of each context.
 async function headRecords({ env, fetchImpl, repository, head, required, admitters }) {
   const runs = await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${head}/check-runs`, 'check_runs');
   const statuses = await listedInFull(fetchImpl, env, `/repos/${repository}/commits/${head}/status`, 'statuses', `the statuses of ${head}`);
-  const checks = new Map(), contexts = new Map();
+  const contexts = new Map();
   const newer = (a, b) => String(a.started_at ?? '') > String(b.started_at ?? '') || (a.started_at === b.started_at && Number(a.id) > Number(b.id));
-  for (const run of runs) if (!checks.has(run.name) || newer(run, checks.get(run.name))) checks.set(run.name, run);
+  const newest = ({ context, integration_id }) => runs.filter(run => run.name === context
+    && (integration_id === null || Number(run.app?.id) === integration_id)).reduce((best, run) => (!best || newer(run, best) ? run : best), null);
   for (const status of statuses) if (!contexts.has(status.context)) contexts.set(status.context, status);
   const withdrawn = run => String(run.output?.title ?? '').startsWith(WITHDRAWN);
-  const failed = required.filter(name => {
-    const run = checks.get(name), state = contexts.get(name)?.state;
+  const failed = [...new Set(required.filter(check => {
+    const run = newest(check), state = contexts.get(check.context)?.state;
     return (run && FAILED.has(run.conclusion) && !withdrawn(run)) || state === 'failure' || state === 'error';
-  });
-  const green = required.every(name => {
-    const run = checks.get(name);
-    return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || contexts.get(name)?.state === 'success';
+  }).map(check => check.context))];
+  const green = required.every(check => {
+    const run = newest(check);
+    return (run?.status === 'completed' && GREEN.has(run.conclusion) && !withdrawn(run)) || contexts.get(check.context)?.state === 'success';
   });
   const unfinished = runs.filter(run => run.status !== 'completed').length
     + statuses.filter(status => status.state === 'pending' && !String(status.description ?? '').includes(STOPPED)).length;
   const by = (name, app) => runs.some(run => run.name === name && Number(run.app?.id) === app && run.status === 'completed' && run.conclusion === 'success');
-  return { failed, green, unfinished, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID), admitted: admitters.every(app => by(INDEPENDENT_ADMISSION_CHECK, app)) };
+  return { failed, green, unfinished, brought: by(MAIN_MERGE_CHECK, ADMISSION_APP_ID),
+    admitted: admitters.every(({ context, integration_id }) => by(context, integration_id)) };
 }
 
 // The rules in force on a branch (every enabled ruleset), 100 a page, read to the end or not at all.
@@ -207,12 +218,15 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   // Which checks are required decides who is red, green or idle. Read without them (none named, a page not read) every
   // optional failure would make the front red and one more pull request would be brought up each run: then nothing is decided.
   const pinned = requiredChecks(await branchRules({ env, fetchImpl, repository, branch: main }));
-  const required = [...new Set(pinned.map(check => check.context))];
+  const required = [...new Map(pinned.map(check => [`${check.context}@${check.integration_id}`, check])).values()];
   if (!required.length) throw new Error(`the rules of ${main} name no required check`);
-  // The admission that counts is the one the rules in force pin (#292: App 5368905; the hosted scaffold: App 5164952).
-  const admitters = [...new Set(pinned.filter(check => check.context === INDEPENDENT_ADMISSION_CHECK && check.integration_id !== null)
-    .map(check => check.integration_id))];
-  if (!admitters.length) admitters.push(INDEPENDENT_ADMISSION_APP_ID);
+  // The admission that counts is the one the rules in force pin, by its name and App (#292: kooyumi-work-admission of App 5368905;
+  // the hosted scaffold: kooyumi-admission-verified of App 5164952), see ADMISSION_CHECK_NAMES.
+  const admission = ADMISSION_CHECK_NAMES.find(name => pinned.some(check => check.context === name && check.integration_id !== null));
+  const admitters = admission
+    ? [...new Set(pinned.filter(check => check.context === admission && check.integration_id !== null).map(check => check.integration_id))]
+      .map(integration_id => ({ context: admission, integration_id }))
+    : [{ context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }];
   const train = open.filter(pr => pr?.autoMergeRequest && pr.isDraft === false && pr.baseRefName === main
     && pr.headRepository?.nameWithOwner === repository && SHA.test(pr.headRefOid ?? ''))
     .map(pr => ({ pr: pr.number, head: pr.headRefOid, enabled: String(pr.autoMergeRequest.enabledAt ?? ''), mergeable: pr.mergeable,
@@ -251,6 +265,11 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   return { main, tip, train, candidates, stranded };
 }
 
+const unreadable = error => `GitHub could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again`;
+const heldReason = chosen => `${chosen.stranded.map(m => `#${m.pr}`).join(', ')}: brought up to ${chosen.main} and not admitted; nobody else is brought up `
+  + `while ${BROUGHT_UNADMITTED_LIMIT} are, until one of them is admitted, gets a new head, or leaves the train (auto-merge off or closed)`;
+const trainOf = chosen => ({ main: chosen.tip, members: chosen.train.map(({ pr, head, behind, state }) => ({ pr, head, behind, state })) });
+
 // A run without inputs: with no front, the first candidate that GitHub lets it update.
 async function runFrontChoice(ports) {
   const { env, fetchImpl, workspace, readPolicyFile, now } = ports;
@@ -260,14 +279,12 @@ async function runFrontChoice(ports) {
   try {
     chosen = await chooseFront({ env, fetchImpl, now });
   } catch (error) {
-    return done('skipped', `GitHub could not be read (${error instanceof Error ? error.message : String(error)}); nothing is changed, the next run looks again`);
+    return done('skipped', unreadable(error));
   }
-  const train = { main: chosen.tip, members: chosen.train.map(({ pr, head, behind, state }) => ({ pr, head, behind, state })) };
+  const train = trainOf(chosen);
   const front = chosen.train.find(member => member.state === 'front');
   if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
-  if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT)
-    return done('held', `${chosen.stranded.map(m => `#${m.pr}`).join(', ')}: brought up to ${chosen.main} and not admitted; nobody else is brought up `
-      + `while ${BROUGHT_UNADMITTED_LIMIT} are, until one of them is admitted, gets a new head, or leaves the train (auto-merge off or closed)`, train);
+  if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT) return done('held', heldReason(chosen), train);
   if (!chosen.candidates.length)
     return done('none', chosen.train.length ? 'no pull request on the train can be brought up now' : 'no open pull request has auto-merge on', train);
   for (const candidate of chosen.candidates) {
@@ -289,6 +306,18 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
   if (resolveMode({ env, workspace, readFile: readPolicyFile }).state === 'frozen') return { result: 'none', reason: 'merge admission is frozen: nothing is changed', ...named };
   const off = await phaseGate(env, fetchImpl);
   if (off) return { ...off, ...named };
+  // A named run (the companion's dispatch or a person) goes through the same hold as a run without inputs (FABLE-scaffold-open-qs
+  // 问题 2): the promise "at most BROUGHT_UNADMITTED_LIMIT brought up and spent" holds for every entry. The train is read once; with
+  // a front under way nobody is held (stranded counts only without one).
+  if (NAMED_INPUT(input)) {
+    let chosen;
+    try {
+      chosen = await chooseFront({ env, fetchImpl, now });
+    } catch (error) {
+      return { result: 'skipped', reason: unreadable(error), ...named };
+    }
+    if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT) return { result: 'held', reason: heldReason(chosen), ...named, train: trainOf(chosen) };
+  }
   const result = await bringUp({ env, fetchImpl, workspace, input, readPolicyFile, now, sleep });
   return env.CLUED_FRONT_MERGE_PHASE === SCAFFOLD_PHASE ? notePendingAuthorization({ env, fetchImpl, result, now }) : result;
 }

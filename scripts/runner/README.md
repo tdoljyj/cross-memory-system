@@ -26,6 +26,14 @@ head.repo 为 null），即拒，不读 head、不查准入。其余规则不变
 从 main 读）；fork PR 被批准后各门作业在 “Set up runner” 显示
 `REFUSE pull request #N comes from fork … [hook fork-refusal-v1]`。
 
+### 准入只认 Native（FABLE-scaffold-open-qs 问题 1 改法 1）
+
+`native-only-admission-v1`：改了工作流的 PR，钩子只认 App `5368905` 在本 head 上的
+Native `kooyumi-work-admission`（绑定、时效、当前 head 与重跑规则不变）。不再读
+`clued-work-admission.yml` 的工作流状态，也不再拿它的 `pull_request_target` 运行顶替：
+那个工作流重新启用与否，自托管 runner 凭的都是同一份准入。每个作业少一次 GitHub 读取。
+下面 1.0.1 一节“`active` 保留旧规则”的说法由此作废。合入即发布（loader 从 main 读）。
+
 ### 必需运行缺失补发后继（G3，Task 7067280f）
 
 `required-tests-dispatch-v1` / component `1.0.5` 只增加
@@ -85,7 +93,7 @@ three attempts per call with 2 and 5 seconds between them. Only reads are tried
 again: GET requests, and the two POSTs their callers mark as reads (the hook
 App's installation-token mint and the read-only `execution_current`
 observation). A 401, 403, 404, 429 or a malformed answer is final at once, as
-before. While the hook waits for the Native check, the legacy admission run or
+before. While the hook waits for the Native check or
 a re-run's `admission-gate` job, a poll that still fails transiently counts as
 "not settled yet" until `CLUED_RUNNER_HOOK_WAIT_SECONDS` ends by the clock;
 then the last failure refuses. A Native check is judged at the time its pages
@@ -134,13 +142,10 @@ A job starts only when its run is one of the following:
 
 - **On `main`:** a push, a schedule, `workflow_run`, `pull_request_target`, or a manual dispatch. A `pull_request_target` run counts only for a pull request into `main` (re-review 7, m1): it runs on `main`'s ref whatever the pull request's base, and a workflow may check out that base, which is the Agent's to edit when it is another branch.
 - **A pull request into `main` that changes no file under `.github/workflows/`.** Each workflow keeps its `admission-gate` job, which waits for the KooYomi admission of the pull request.
-- **A pull request into `main` that changes a workflow,** once `main`'s admission run of the same event as the job's run has succeeded.
-  - That admission run is the newest `pull_request_target` run of `clued-work-admission.yml` on the head created no earlier than 15 seconds before the job's run. GitHub creates the runs of one event together. Skipped runs are left out: the admission job skips pull requests into other branches.
-  - While that admission run is still going, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`, default 480). The same setting also bounds, separately, the wait for a re-run's `admission-gate` job (see Re-runs), so a heavy job of a re-run of a pull request that changes a workflow can wait up to twice that, plus at most two minutes of reads (component 1.0.2).
-  - An older success on the same head does not count: for example after a force-push back to an admitted commit, or a pull request closed and reopened (even within seconds).
-  - Only `main`'s code decides. `pull_request_target` runs the default branch's copy of the workflow whatever the pull request's base, and that copy checks out `main` and runs only for pull requests into `main` (re-review 6, B1). A branch's edited copy never runs on `pull_request_target`.
-  - The run succeeds only when its admission step does. That is the same condition on which it posts the `clued-admission-verified` App check.
-  - The check itself is not read: a fine-grained token cannot read the Checks API (Task `b979d5a2`). Unlike the check, a run does not name its pull request. Another pull request into `main` with the same head, whose event came within 15 seconds, can therefore stand in. Its admission run judged the same commit and the same workflow changes.
+- **A pull request into `main` that changes a workflow,** once the Native admission of the same event as the job's run has succeeded (`native-only-admission-v1`).
+  - That admission is the newest `kooyumi-work-admission` check of App `5368905` on the exact head, with its Native external id, a summary naming this pull request only, started no earlier than 15 seconds before the job's run, and the pull request still open into `main` at that head. The legacy `clued-work-admission.yml` is not read, whether it is enabled or not.
+  - While that check has not completed, the job waits for it (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`, default 480). The same setting also bounds, separately, the wait for a re-run's `admission-gate` job (see Re-runs), so a heavy job of a re-run of a pull request that changes a workflow can wait up to twice that, plus at most two minutes of reads (component 1.0.2).
+  - An older success on the same head does not count: for example after a force-push back to an admitted commit, or a pull request closed and reopened (even within seconds). A newer refusal or pending check cannot be hidden by an older success.
 - **A manual dispatch on another branch of `clued-connection-authorization.yml`, `clued-g4-database.yml`, `information-flow-e2e.yml`, `clued-handover-external-qualification.yml` or `clued-handover-disposable-idle.yml`,** when the branch's `.github/workflows` directory is exactly `main`'s (same files, same object ids).
   - A branch behind `main` must merge `main` first.
   - These workflows keep their dispatch gate, which needs a KooYomi admission run for the dispatched commit.
@@ -159,9 +164,9 @@ MergeAdmission v0.1 §8, Owner Decisions `77216370` and `1b93760d`. A re-run is 
 - **A pull request run** may be re-run only while the pull request is open, still into `main`, and its head is still the run's head (the hook reads the pull request from GitHub; any error refuses). Then:
   - The **`admission-gate` job** starts. The gate decides whether this attempt is within the policy's re-runs per head (the `reruns <n>` in the `clued-admission-verified` check's title).
   - **`gitleaks.yml` and `trivy.yml`** (required checks without a gate) may be re-run once: attempt 2 only.
-  - **A workflow without an `admission-gate` job** (the short checks, such as `node-profile-policy`) may be re-run once (attempt 2) on the current head, like `gitleaks` and `trivy`, when its file at the head is `main`'s, byte for byte, and `main`'s copy has no `admission-gate` job (Task `26cced7e`, Owner Decision `661f8c36`). A pull request that changes a workflow has every job of its first run refused until its admission run succeeds; this lets its short checks run once more on the same head. A copy the pull request changed is not re-run.
+  - **A workflow without an `admission-gate` job** (the short checks, such as `node-profile-policy`) may be re-run once (attempt 2) on the current head, like `gitleaks` and `trivy`, when its file at the head is `main`'s, byte for byte, and `main`'s copy has no `admission-gate` job (Task `26cced7e`, Owner Decision `661f8c36`). A pull request that changes a workflow has every job of its first run refused until its Native admission succeeds; this lets its short checks run once more on the same head. A copy the pull request changed is not re-run.
   - **Every other job** starts only when this attempt's `admission-gate` job ran again and succeeded. "Re-run all jobs" does that. "Re-run failed jobs" and re-running a single job do not run a successful gate again: GitHub lists the earlier gate job in the new attempt, successful, but with the earlier attempt's start time. The hook therefore requires exactly one job of the attempt named `admission-gate`, carrying the `self-hosted` label (every gate job runs on a self-hosted runner), completed with success, that started no earlier than the attempt did (the run's `run_started_at`). A second job with that name, or a gate job without the label, refuses. A gate job of this attempt that has not started yet or not completed is waited for (up to `CLUED_RUNNER_HOOK_WAIT_SECONDS`) and refused if it still has not at the end. A job list that GitHub does not return complete, or a time it cannot read, refuses.
-  - A pull request that changes a workflow still needs a successful admission run of its event, on every attempt, exactly as for the first one. The newest admission run on the head decides, so after an Owner grant the run of the pull request body edit counts.
+  - A pull request that changes a workflow still needs its successful Native admission on every attempt; a later attempt starts only when every job of every earlier attempt ran nothing (the late-admission rule above).
   - The run attempt the runner reports (`GITHUB_RUN_ATTEMPT`) and the one GitHub reports for the run must agree; otherwise the job is refused.
 - **A refused re-run still uses up its attempt number.** The next re-run of the same run is one attempt later.
 - **Never re-run an old head's run.** It is refused anyway, and its concurrency group can cancel the current head's run before any job starts.

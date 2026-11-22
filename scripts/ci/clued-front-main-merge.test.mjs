@@ -71,6 +71,8 @@ function world({ updateMakes = 'web-flow', updateStatus = 202, behind = 3, file 
     if (method === 'GET' && route === '/repos/o/r') return reply({ full_name: 'o/r', default_branch: 'main' });
     if (method === 'GET' && route.startsWith('/repos/o/r/rules/branches/main')) return reply([{ type: 'required_status_checks',
       parameters: { required_status_checks: [{ context: INDEPENDENT_ADMISSION_CHECK, integration_id: INDEPENDENT_ADMISSION_APP_ID }] } }]);
+    // The train a named run reads first (open-qs 2): nobody brought up and stranded, so the named run goes on.
+    if (method === 'POST' && route === '/graphql') return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } });
     if (method === 'GET' && route === `/repos/o/r/pulls/${PR}`) return reply(structuredClone(w.pr));
     if (method === 'GET' && route.startsWith(`/repos/o/r/pulls/${PR}/files`)) return reply([{ filename: file, status: 'modified' }]);
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });

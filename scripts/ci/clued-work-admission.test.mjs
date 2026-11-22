@@ -3885,11 +3885,12 @@ test("independent gate repair re-run: an attempt that ended in a GitHub API outa
   }
 });
 
-test("independent gate: under the Owner's disaster-recovery switch the clued-admission App check of this event still decides", async () => {
-  const { outcome } = await independentGate([appCheckRun()]);
-  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", undefined]);
-  const failed = (await independentGate([appCheckRun({ conclusion: "failure" })])).outcome;
-  assert.deepEqual([failed.admitted, failed.verdict], [false, "REJECTED"]);
+test("independent gate: the clued-admission App check of this event never decides, even with its workflow running again", async () => {
+  // Before FABLE-scaffold-open-qs 问题 1 改法 2 the legacy check decided when it settled first (the Owner's disaster-recovery switch).
+  const { outcome } = await independentGate([appCheckRun()], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  const failed = (await independentGate([appCheckRun({ conclusion: "failure" }), nativeCheck()])).outcome;
+  assert.deepEqual([failed.admitted, failed.verdict], [true, "ADMITTED"]);
 });
 
 test("independent gate: the Source v2 native-work-admission id admits; malformed or foreign v2 ids refuse", async () => {
@@ -4095,7 +4096,7 @@ test('Legacy proof remains valid with Native source configured during disaster r
  const f=legacyFixture();assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
  delete f.env.CLUED_ADMISSION_GATE_SOURCE;assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
 });
-test('Native-source gate preserves actual settled legacy disaster-recovery branch',async()=>{
+test('Native-source gate does not take a settled legacy check (scaffold open-qs 1.2): without Native it waits, and admits nothing',async()=>{
  const f=legacyFixture(),read=f.read;
  f.legacyOrigin.created_at='2026-11-17T07:01:00Z';
  f.read=async route=>{
@@ -4103,7 +4104,7 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
   if(route.includes('/actions/workflows/clued-work-admission.yml/runs'))return {workflow_runs:[f.legacyOrigin]};
   return read(route);
  };
- const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.automation_self_hosted],[true,true],JSON.stringify(r));assert.equal(f.epochReads,2);
+ const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[false,'ADMISSION_PENDING',false],JSON.stringify(r));assert.equal(f.epochReads,0);
 });
 
 

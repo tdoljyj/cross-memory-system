@@ -13,13 +13,14 @@ import { ghReader } from './retrigger-counter.mjs';
 const REPO = 'tdoljyj/cross-memory-system';
 // main write policy（#292）：框架侧每项检查由哪个来源发，从规则集本身读（它改钉，这里跟着变）。
 export const MAIN_RULESET_ID = 24182890;
-// 托管侧来源按脚手架规则集的设计：七项 hosted- 钉 GitHub Actions，准入同名钉 clued-admission。
+// 托管侧来源按脚手架规则集的设计：七项 hosted- 钉 GitHub Actions，准入 kooyumi-admission-verified 钉 clued-admission
+// （App 5164952 只发这个名字；kooyumi-work-admission 是它工作流的作业名。FABLE-scaffold-open-qs 改法 3）。
 const ACTIONS_APP_ID = 15368;
 const HOSTED_ADMISSION_APP_ID = 5164952;
 export const PAIRS = Object.freeze([
   ...['ci-suites', 'clued-cloud-tests', 'migration-verify', 'ci-suites-windows', 'gitleaks', 'trivy', 'contract-placement']
     .map(check => ({ check, hosted: { name: `hosted-${check}`, app: ACTIONS_APP_ID } })),
-  { check: 'kooyumi-work-admission', hosted: { name: 'kooyumi-work-admission', app: HOSTED_ADMISSION_APP_ID } },
+  { check: 'kooyumi-admission-verified', hosted: { name: 'kooyumi-admission-verified', app: HOSTED_ADMISSION_APP_ID } },
 ]);
 // 与 train-rules 一致：success、neutral、skipped 算过。cancelled、stale 等不是结论。
 const PASS = new Set(['success', 'neutral', 'skipped']);
