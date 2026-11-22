@@ -597,6 +597,81 @@ test('guard latches the reason and shuts down/restores independently of guest wa
   assert.equal(r.receipt.restoredToCheckpoint, true);
 });
 
+// Fable ruling 0e418483 "drill memory root" 2.3 (G1): the armed guard releases the runner distribution's file cache while the host is
+// below production's resume line (10 GiB) and above its pause line (6 GiB, the abort, unchanged), at most once every 120 seconds, each
+// release bounded by 20 seconds (less than one 30-second tick); a release that fails or times out is only recorded. Every release goes
+// into host-guard.json's cacheReleases with the next tick's reading. The guard is driven tick by tick here: free memory in GB per tick,
+// one tick every 30 seconds of the drill's clock (Get-DrillTime), the guest fully assigned (the running gate is 6 GB).
+function releaseLoop(name, frees, { release = null } = {}) {
+  const dir = fs.mkdtempSync(path.join(tmp, `release-loop-${name}-`));
+  const r = ps(`
+    $script:Drill.HostGuardSeconds = 0
+    $script:tick = -1; $script:frees = @(${frees.join(', ')}); $script:events = [Collections.Generic.List[string]]::new()
+    function Get-DrillTime { ([DateTimeOffset]${q(T0)}).AddSeconds(30 * [Math]::Max(0, $script:tick)) }
+    $state = [hashtable]::Synchronized(@{ stop = $false; ready = $false; armed = $true; failure = $null; cleanup = $null; executorStates = [ordered]@{} })
+    function Get-DrillHostSafety { param([switch]$Running, $HoldUntil)
+      $script:tick++; $free = $script:frees[$script:tick]; $script:events.Add("tick $free")
+      if ($script:tick -ge $script:frees.Count - 1) { $state.stop = $true }
+      Test-DrillHostSafety ${q(idleHostStatus())} ([long]($free * 1GB)) -Running:$Running -MemoryAssigned 8GB -Now (Get-DrillTime) }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $script:events.Add('stop'); $true }
+    ${release ?? `function Invoke-DrillWslCacheRelease { param($HostName, $WithinSeconds) $script:events.Add("release $WithinSeconds")
+      [ordered]@{ at = (Get-DrillTime).ToString('o'); distributions = @('Fixture-CI'); results = @([ordered]@{ distribution = 'Fixture-CI'; running = $true; exit = 0 }); released = @('Fixture-CI'); failed = $null } }`}
+    Invoke-DrillHostGuardLoop $state ${q(dir)} -RestoreCheckpoint
+    $file = Join-Path ${q(dir)} 'host-guard.json'
+    @{ events = @($script:events); failure = $state.failure; guard = $(if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | ConvertFrom-Json } else { $null }) }`);
+  return r;
+}
+const at = s => new Date(Date.parse(T0) + s * 1000).toISOString();
+const releaseRow = x => ({ at: new Date(x.at).toISOString(), freeBeforeGB: x.freeBeforeGB, exit: x.exit, freeAfterGB: x.freeAfterGB });
+
+test('G1: 17 -> 9 -> 14 GB: one release at the 9 GB tick, no abort, cacheReleases keeps it with the next tick\'s 14 GB', opts, () => {
+  const r = releaseLoop('one', [17, 9, 14]);
+  assert.equal(r.failure, null, JSON.stringify(r.failure));
+  assert.deepEqual(r.events, ['tick 17', 'tick 9', 'release 20', 'tick 14']);
+  assert.deepEqual(r.guard.cacheReleases.map(releaseRow), [{ at: at(30), freeBeforeGB: 9, exit: 0, freeAfterGB: 14 }]);
+  const c = ps('@{ below = $script:Drill.CacheReleaseBelowBytes; every = $script:Drill.CacheReleaseEverySeconds; within = $script:Drill.CacheReleaseSeconds; tick = $script:Drill.HostGuardSeconds; reserve = $script:Drill.ProductionReserveBytes }');
+  assert.deepEqual([c.below / 2 ** 30, c.every, c.within, c.reserve / 2 ** 30], [10, 120, 20, 6]);
+  assert.ok(c.within < c.tick, 'a release never holds up the next tick');
+});
+
+test('G1: 9 -> 5 GB: the release first, then the 5 GB tick aborts DRILL_HOST_MEMORY_SHORT and restores, as before', opts, () => {
+  const r = releaseLoop('abort', [9, 5]);
+  assert.deepEqual(r.events, ['tick 9', 'release 20', 'tick 5', 'stop']);
+  assert.equal(r.failure.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.deepEqual([r.guard.status, r.guard.code, r.guard.stopped, r.guard.restoredToCheckpoint, r.guard.cleanupDone], ['DRILL_ABORTED', 'DRILL_HOST_MEMORY_SHORT', true, true, true]);
+  assert.deepEqual(r.guard.cacheReleases.map(releaseRow), [{ at: at(0), freeBeforeGB: 9, exit: 0, freeAfterGB: 5 }]);
+});
+
+test('G1: a release that exits 5 or times out is only recorded: no abort, the drill goes on, no second try within 120 seconds', opts, () => {
+  const world = answer => `
+    function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
+    function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillWslRegisteredNames { 'Fixture-CI' }
+    $script:DrillWslRunner = { param($a, $t)
+      if ($a[0] -ceq '--list') { return @{ exit = 0; stdout = "Fixture-CI\`r\`n"; stderr = '' } }
+      $script:events.Add("wsl $t $($a[-2])"); ${answer} }`;
+  for (const [name, answer, exit] of [['exit5', "@{ exit = 5; stdout = ''; stderr = '' }", 5], ['timeout', "throw 'wsl.exe timed out'", null]]) {
+    const r = releaseLoop(name, [9, 9, 9, 14], { release: world(answer) });
+    assert.equal(r.failure, null, `${name}: ${JSON.stringify(r.failure)}`);
+    assert.deepEqual(r.events.filter(e => e.startsWith('tick')), ['tick 9', 'tick 9', 'tick 9', 'tick 14'], `${name}: every tick ran`);
+    const calls = r.events.filter(e => e.startsWith('wsl'));
+    assert.equal(calls.length, 1, `${name}: ${r.events.join(',')}`);
+    const t = Number(calls[0].split(' ')[1]);
+    assert.ok(t >= 1 && t <= 20, `${name}: the release call is bounded by 20 seconds, given ${calls[0]}`);
+    assert.equal(r.guard.cacheReleases.length, 1, name);
+    assert.deepEqual(releaseRow(r.guard.cacheReleases[0]), { at: at(0), freeBeforeGB: 9, exit, freeAfterGB: 9 }, name);
+    assert.ok(r.guard.cacheReleases[0].failed?.code, `${name}: the failure is recorded`);
+    assert.equal(r.guard.status, undefined, `${name}: no abort record`);
+  }
+});
+
+test('G1: six ticks at 9 GB: two releases, 120 seconds apart', opts, () => {
+  const r = releaseLoop('throttle', [9, 9, 9, 9, 9, 9]);
+  assert.equal(r.failure, null);
+  assert.deepEqual(r.events.filter(e => e.startsWith('release')), ['release 20', 'release 20']);
+  assert.deepEqual(r.guard.cacheReleases.map(releaseRow), [{ at: at(0), freeBeforeGB: 9, exit: 0, freeAfterGB: 9 }, { at: at(120), freeBeforeGB: 9, exit: 0, freeAfterGB: 9 }]);
+});
+
 test('the real background guard aborts while the foreground is blocked, without any VM access', opts, () => {
   const fixture = path.join(tmp, 'guard-fixture.ps1');
   const marker = path.join(tmp, 'guard-stopped.txt');
