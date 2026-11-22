@@ -2080,3 +2080,95 @@ test('four local runs started together hold at most two slots; the other two que
   await delay(1_000);
   assert.equal(ready().length, 3, 'one freed slot starts exactly one waiting run');
 });
+
+// Task 04f9b91b (FABLE-hosted-windows-suites §2.3): a host says what it lacks (CLUED_CI_HOST_LACKS, set by the hosted
+// workflow only), a test says what it needs in its own name ([needs:<capability>]); the entry adds Node's skip pattern for
+// those names to every node --test command, so neither side lists the other. A run of the real Node test runner on a
+// fixture pins the behaviour: a marked test and every subtest under it, and a marked subtest of an unmarked parent, do not
+// run; everything else does. Without the variable the commands are unchanged; an unknown capability runs nothing.
+const HOST_LACKS_FIXTURE = `import test from 'node:test';
+import { appendFileSync } from 'node:fs';
+const ran = (name) => appendFileSync(process.env.HOST_LACKS_RAN, name + '\\n');
+test('marked parent [needs:non-elevated]', async (t) => { ran('marked parent'); await t.test('child of the marked parent', () => ran('child of the marked parent')); });
+test('unmarked parent', async (t) => {
+  ran('unmarked parent');
+  await t.test('marked child [needs:non-elevated]', () => ran('marked child'));
+  await t.test('unmarked child', () => ran('unmarked child'));
+});
+test('needs non-elevated in words only, no marker', () => ran('words only'));
+`;
+
+function hostLacksArgv(env, id = 'retrigger-counter') {
+  const calls = [];
+  const lines = [];
+  const status = executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: 'b', ...env }, log: (line) => lines.push(String(line)),
+    spawn: (command, args) => { calls.push([command, ...args]); return { status: 0 }; } });
+  return { status, calls, lines };
+}
+
+function testsThatRan(t, switches) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-host-lacks-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'host-lacks-fixture.test.mjs');
+  const ranFile = path.join(dir, 'ran.txt');
+  writeFileSync(file, HOST_LACKS_FIXTURE);
+  writeFileSync(ranFile, '');
+  const env = { ...process.env, HOST_LACKS_RAN: ranFile };
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, ['--test', ...switches, file], { cwd: dir, env, encoding: 'utf8' });
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  return readFileSync(ranFile, 'utf8').split('\n').filter(Boolean).sort();
+}
+
+test('CLUED_CI_HOST_LACKS=non-elevated: the [needs:non-elevated] tests and their subtests do not run; the others do', (t) => {
+  const plain = hostLacksArgv({});
+  assert.equal(plain.status, 0);
+  const lacking = hostLacksArgv({ CLUED_CI_HOST_LACKS: 'non-elevated' });
+  assert.equal(lacking.status, 0, lacking.lines.join('\n'));
+  assert.equal(lacking.calls.length, plain.calls.length);
+  const [argv] = lacking.calls;
+  const testAt = argv.indexOf('--test');
+  assert.ok(testAt > 0, argv.join(' '));
+  const switches = argv.filter((arg) => arg.startsWith('--test-skip-pattern'));
+  assert.equal(switches.length, 1, `one skip pattern after --test: ${argv.join(' ')}`);
+  assert.equal(argv[testAt + 1], switches[0], 'the skip pattern follows --test (before any test file)');
+  assert.deepEqual(argv.filter((arg) => !switches.includes(arg)), plain.calls[0], 'nothing else changes');
+  assert.ok(lacking.lines.some((line) => line.includes('non-elevated') && line.includes('[needs:non-elevated]')),
+    `the log says what does not run here:\n${lacking.lines.join('\n')}`);
+  // The real Node test runner, with the switch the entry gave: a marked test is not run, nor anything under it.
+  assert.deepEqual(testsThatRan(t, switches), ['unmarked child', 'unmarked parent', 'words only']);
+  // The same fixture without it runs everything: the marker alone skips nothing.
+  assert.deepEqual(testsThatRan(t, []), ['child of the marked parent', 'marked child', 'marked parent', 'unmarked child', 'unmarked parent', 'words only']);
+});
+
+test('CLUED_CI_HOST_LACKS reaches every node --test command of a suite, the resident one included; unset or empty changes none', () => {
+  const plain = hostLacksArgv({}, 'resident-node');
+  const empty = hostLacksArgv({ CLUED_CI_HOST_LACKS: '' }, 'resident-node');
+  assert.deepEqual(empty.calls, plain.calls, 'an empty value is no capability missing');
+  assert.ok(plain.calls.length > 0 && plain.calls.every((argv) => !argv.some((arg) => arg.startsWith('--test-skip-pattern'))));
+  const lacking = hostLacksArgv({ CLUED_CI_HOST_LACKS: 'non-elevated' }, 'resident-node');
+  assert.equal(lacking.calls.length, plain.calls.length);
+  for (const argv of lacking.calls) assert.equal(argv.filter((arg) => arg.startsWith('--test-skip-pattern')).length, 1, argv.slice(0, 4).join(' '));
+});
+
+test('a CLUED_CI_HOST_LACKS value the entry does not know runs nothing (exit 2) and names the known ones', async () => {
+  for (const value of ['tpm', 'non-elevated,tpm', 'Non-Elevated']) {
+    const { status, calls, lines } = hostLacksArgv({ CLUED_CI_HOST_LACKS: value });
+    assert.equal(status, 2, `${value}: ${lines.join('\n')}`);
+    assert.deepEqual(calls, [], `${value}: no command starts`);
+    assert.ok(lines.some((line) => line.includes('CLUED_CI_HOST_LACKS') && line.includes('non-elevated')), lines.join('\n'));
+  }
+  // The job step (--run-selected) refuses before any suite, and says so in the step summary.
+  const ran = [];
+  const summary = [];
+  const status = await runSelected(['retrigger-counter'], { root: ROOT, env: { CLUED_CI_HOST_LACKS: 'tpm' }, log,
+    run: async (id) => { ran.push(id); return 0; }, summary: (text) => summary.push(text) });
+  assert.equal(status, 2);
+  assert.deepEqual(ran, []);
+  assert.match(summary.join(''), /CLUED_CI_HOST_LACKS/);
+  // A known value: the summary says what does not run on this host, and the suites run.
+  const okSummary = [];
+  assert.equal(await runSelected(['retrigger-counter'], { root: ROOT, env: { CLUED_CI_HOST_LACKS: 'non-elevated' }, log,
+    run: async () => 0, summary: (text) => okSummary.push(text) }), 0);
+  assert.match(okSummary.join(''), /\[needs:non-elevated\]/);
+});
