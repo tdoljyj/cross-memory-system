@@ -5,6 +5,7 @@
 // says which run it is (the suite environment drops variables, so the count cannot come from one).
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -84,17 +85,14 @@ const FLAKY = `${DIR}/flaky.test.mjs`;
 const STEADY = `${DIR}/steady.test.mjs`;
 const suite = (flaky, steady = { 'steady one': [] }) => ({ [FLAKY]: testFile(flaky), [STEADY]: testFile(steady) });
 
-test('A: a test that fails once and passes alone twice passes the command, with a flaky warning; only its file runs again', (t) => {
+test('A: a test that fails once and passes when the command runs again in full passes the command, with a flaky warning', (t) => {
   const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [1], 'flaky two': [] }));
   const { status, lines, calls, out } = run(root, base);
   assert.equal(status, 0, out);
-  assert.equal(calls.length, 3, 'the suite run and two runs of the file alone');
-  for (const args of calls.slice(1)) {
-    assert.ok(args.some((arg) => arg.endsWith('flaky.test.mjs')), args.join(' '));
-    assert.ok(!args.some((arg) => arg.endsWith('steady.test.mjs')), args.join(' '));
-  }
-  assert.equal(runsOf(FLAKY), 3);
-  assert.equal(runsOf(STEADY), 1);
+  assert.equal(calls.length, 2, 'the suite run and one run of the same command');
+  assert.ok(calls[1].some((arg) => arg.endsWith('flaky.test.mjs')) && calls[1].some((arg) => arg.endsWith('steady.test.mjs')), calls[1].join(' '));
+  assert.equal(runsOf(FLAKY), 2);
+  assert.equal(runsOf(STEADY), 2, 'the other file runs again too');
   const warnings = lines.filter((line) => line.startsWith(`::warning title=${SUITE} flaky::`));
   assert.equal(warnings.length, 1, out);
   assert.match(warnings[0], new RegExp(`::${FLAKY.replaceAll('.', '\\.')} :: flaky one fingerprint=[0-9a-f]{16}$`));
@@ -128,12 +126,13 @@ test('D: four failing tests are not run again', (t) => {
   assert.equal(runsOf(FLAKY), 1);
 });
 
-test('E: a test that passes the first run alone and fails the second stays red', (t) => {
-  const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [1, 3] }));
+test('E: when the run again passes the failed test but another test of the same command fails, the command stays red', (t) => {
+  const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [1] }, { 'steady one': [2] }));
   const { status, calls, out } = run(root, base);
   assert.equal(status, 1, out);
-  assert.equal(calls.length, 3, out);
-  assert.equal(runsOf(FLAKY), 3);
+  assert.equal(calls.length, 2, out);
+  assert.equal(runsOf(FLAKY), 2);
+  assert.equal(runsOf(STEADY), 2);
   assert.doesNotMatch(out, /flaky::/);
 });
 
@@ -202,4 +201,68 @@ test('K: under --run-files a failure is returned as it is and nothing is run aga
   assert.equal(calls.length, 1, out);
   assert.doesNotMatch(out, /run alone again/);
   assert.equal(runsOf(FLAKY), 1);
+});
+
+// L (FABLE-flaky-fingerprint-20261122 §7.1): a failure another file of the same run makes every time, which the file alone
+// never shows. The first file marks; the second fails when it sees the mark (it waits for it, so the order of the two in the
+// run does not matter) and removes it. Alone it waits in vain and passes.
+const MARKS = `${DIR}/a-marks.test.mjs`;
+const SEES_MARK = `${DIR}/b-sees-mark.test.mjs`;
+test('L: a test another file of the same command makes fail every time stays red, though it passes alone', (t) => {
+  const { root, base } = checkout(t, {
+    [MARKS]: `import test from 'node:test';
+import { writeFileSync } from 'node:fs';
+writeFileSync(new URL('./l.mark', import.meta.url), 'a');
+test('marks', () => {});
+`,
+    [SEES_MARK]: `import test from 'node:test';
+import { existsSync, rmSync } from 'node:fs';
+const mark = new URL('./l.mark', import.meta.url);
+test('sees no mark', async () => {
+  const until = Date.now() + 20_000;
+  while (!existsSync(mark) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+  if (existsSync(mark)) {
+    rmSync(mark);
+    throw new Error('another file of the run marked it');
+  }
+});
+`,
+  });
+  const { status, calls, out } = run(root, base);
+  assert.equal(status, 1, out);
+  assert.equal(calls.length, 2, out);
+  assert.match(out, /整条再跑仍失败/);
+  assert.doesNotMatch(out, /flaky::/);
+});
+
+test('M: a command whose run took longer than the limit is not run again', (t) => {
+  const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [1] }));
+  const { status, calls, out } = run(root, base, { rerunMaxElapsedMs: 0 });
+  assert.equal(status, 1, out);
+  assert.equal(calls.length, 1, out);
+  assert.match(out, /not run again in full: the run took \d+ ms \(more than 0 ms\)/);
+  assert.equal(runsOf(FLAKY), 1);
+});
+
+test('N: what the first run left in its temporary directory does not make the run again pass', (t) => {
+  const left = `ci-flaky-n-${randomUUID()}`;
+  t.after(() => rmSync(path.join(os.tmpdir(), left), { force: true }));
+  const { root, base, runsOf } = checkout(t, suite({ 'needs what the first run left': `import os from 'node:os';
+import path from 'node:path';
+import { writeFileSync as write } from 'node:fs';
+test('needs what the first run left', () => {
+  const file = path.join(os.tmpdir(), ${JSON.stringify(left)});
+  if (run === 1) {
+    write(file, '');
+    throw new Error('the first run fails');
+  }
+  if (!existsSync(file)) throw new Error('nothing left behind');
+});
+` }));
+  const { status, calls, out } = run(root, base);
+  assert.equal(status, 1, out);
+  assert.equal(calls.length, 2, out);
+  assert.equal(runsOf(FLAKY), 2);
+  assert.match(out, /整条再跑仍失败/);
+  assert.doesNotMatch(out, /flaky::/);
 });
