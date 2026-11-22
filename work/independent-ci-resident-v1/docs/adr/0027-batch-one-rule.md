@@ -3,7 +3,7 @@
 - 状态：已实现（分支 `claude/batch-one-rule`，未安装）
 - 日期：2026-11-13
 - Owner Decision：统领原则（最终系统极简、低耗、高效；Decision `42d5bf8d`：约束最终形态，不限制工程投入）；“节点只有通用升级或通用包重装两条路，无任何按台、手工步骤”。
-- 代码：`src/executor.mjs`（`standing`、`liveReadDue`、`endIfNotStanding`、`endParkedIfNotStanding`、`endNotStanding`、`supersededEnd`、`runAttempt2`、`endSupersededForFront`）；`reinstall/rehearse.py`；`reinstall/launcher/template.ps1`（与 `generate.py` 的钉值）；`windows/uninstall-resident.ps1`
+- 代码：`src/executor.mjs`（`standing`、`liveReadDue`、`endIfNotStanding`、`endParkedIfNotStanding`、`endNotStanding`、`supersededEnd`、`runAttempt2`、`endRestingForFront`）；`reinstall/rehearse.py`；`reinstall/launcher/template.ps1`（与 `generate.py` 的钉值）；`windows/uninstall-resident.ps1`
 - 测试：`test/batch-one-rule.test.mjs`；随之更新 `test/node-mode.test.mjs`、`test/scheduler.test.mjs`、`reinstall/test/test_rehearse.py`
 - 档案：DESIGN §72
 
