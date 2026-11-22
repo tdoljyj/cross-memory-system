@@ -217,11 +217,30 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
   // inventory is read again, at most WITHDRAWN_REREAD_DELAYS_MS.length + 1 times (the list can lag the PATCH), and the withdrawal
   // stands when this effect's one check is there completed/failure. Never throws; a read that fails or still shows another
   // conclusion is "not confirmed", and so is a lost lease (no wait and no read past it). Asked only once the PATCH was sent.
+  // What counts (readback): the inventory is complete, exactly ONE check on the head carries this effect's identity (App, name, head,
+  // this effect key's external_id), it is the check id that was patched, and it is completed/failure; a second check of this effect
+  // key (a success beside it) or another id is "not confirmed".
   async function withdrawn(job, externalId, id) {
     for (const delay of [0, ...WITHDRAWN_REREAD_DELAYS_MS]) {
       try { assertLive(); if (delay) await sleep(delay); await readback(job, externalId, id, 'failure'); return true; } catch { /* next read */ }
     }
     return false;
+  }
+  // The answer for an effect the journal already holds unfinished. A journal at sent / uncertain may only be BEHIND GitHub: a
+  // withdrawal confirmed there whose local record could not be written (revoke's fallback), or one the code before that fallback
+  // left uncertain although its PATCH had landed (PR #1238, #1239). This stage only ever creates its check as success, so this
+  // effect's one check completed/failure in a complete inventory IS the withdrawal: the journal is brought forward (best effort)
+  // and the answer is REVOKED, nothing written on GitHub. Anything else keeps RECONCILIATION_REQUIRED, also a read that fails.
+  async function earlier(job, key, externalId, previous) {
+    let revoked = previous.state === 'revoked';
+    if (!revoked && ['sent', 'uncertain'].includes(previous.state)) {
+      try {
+        const m = await inventory(job, externalId), id = previous.details?.checkRunId;
+        revoked = m.length === 1 && m[0].status === 'completed' && m[0].conclusion === 'failure' && (id === undefined || id === null || id === m[0].id);
+        if (revoked) await transition(key, previous.state, 'revoked', { checkRunId: m[0].id, externalId, reason: 'withdrawal_confirmed_on_github' });
+      } catch { revoked = false; }
+    }
+    return { status: revoked ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
   }
   async function revoke({ job, key, externalId, known, phase, cause, sideEffects, admissionDiagnostic }) {
     const revKey = digest({ action: 'native-work-admission-revoke/2', effectKey: key, checkRunId: known.id }); let revPhase = 'intent', logged = false, patching = false, said = false;
@@ -273,7 +292,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (claimed) {
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
-        if (previous && !['settled', 'not_sent'].includes(previous.state)) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        if (previous && !['settled', 'not_sent'].includes(previous.state)) return earlier(job, key, externalId, previous);
       } else {
         // C4: GitHub is the shared record of what was published on this head, by any node or install.
         step = 'published-on-github';
@@ -320,7 +339,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         check(claimed && sameClaimGeneration(claimed, current.facts.observedClaim), 'BATCH_CLAIM_CHANGED');
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
-        if (previous) return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        if (previous) return earlier(job, key, externalId, previous);
         // Re-run the complete boundary against the replacement, never reuse the
         // unbound observation as publication authority.
         evaluated = await evaluate(job, claimed, facts => { scheduling = facts; });
@@ -339,7 +358,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         claimed = claimGeneration(before.facts.observedClaim);
         key = admissionEffectKeyV2(ACTION, job, claimed, DEFINITION); externalId = admissionExternalIdV2(PREFIX, job, claimed);
         previous = await journal.read(key);
-        if (previous && previous.state !== 'settled') return { status: previous.state === 'revoked' ? 'REVOKED' : 'RECONCILIATION_REQUIRED', effectKey: key, sideEffects: 0, productionAuthorized: false };
+        if (previous && previous.state !== 'settled') return earlier(job, key, externalId, previous);
       }
       if (previous) { await reverified(job, () => readback(job, externalId, previous.details.checkRunId, 'success')); return settled({ status: 'SETTLED', effectKey: key, checkRunId: previous.details.checkRunId, sideEffects: 0, productionAuthorized: production, scheduling }); }
     } catch (e) {
