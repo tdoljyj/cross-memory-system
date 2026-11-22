@@ -12,7 +12,7 @@ import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/c
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
 import { installedTrainMode } from '../src/engine-windows.mjs';
 import { StatusBoard, parseStatus } from '../src/status.mjs';
-import { executorFixture, fakeCompanion, fakeEngine, rawPolicy, triggerBytes, HEAD, BASE } from './helpers.mjs';
+import { executorFixture, fakeCompanion, fakeEngine, notAdmitted, rawPolicy, triggerBytes, HEAD, BASE, SAFE_REFUSAL } from './helpers.mjs';
 import { breakerOf } from '../src/breaker.mjs';
 import { makeTrainRun, TRAIN_RUN_PARAMS } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/train-run.mjs';
 import { DECISIONS as SOURCE_DECISIONS, NO_ACTIONS, NO_SWEEP, trainFacts } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-facts.mjs';
@@ -632,6 +632,57 @@ test('R3 batch 2 R6: a batch of several PRs that fails transiently still gets it
   assert.deepEqual(reserved.map(b => [b.subject.attempt, b.origin]), [[1, 'queued'], [2, 'attempt2']], JSON.stringify(reserved));
   const derives = f.engine.calls.filter(c => c[0] === 'derive');
   assert.ok(derives.length === 2 && derives.every(c => JSON.stringify(c[2]?.members) === JSON.stringify(members)), JSON.stringify(derives));
+});
+
+// FABLE-r3-batch2-gate §3 A1 (修复前必红): a front batch fails transiently, its automatic attempt 2 is scheduled, and stage 1 of attempt 2
+// releases it for the node role. The same attempt 2 is given back: an `attempt2-reopened` receipt whose attempt1 is the front batch's key
+// (the subject with S), and the intent is pending again. Before the fix reopenAttempt2 built key1 from this.current, which has no S: the
+// ledger refused it and attempt 2 stayed spent.
+const NO_ROLE_HERE = { ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes: ['admission_binding_required'] } };
+test('R3 batch 2 A1: a front batch\'s automatic attempt 2 released for the node role at stage 1 is given back (key1 with S)', async t => {
+  const stages = { 2: { ok: false, code: 'BRIDGE_TRANSPORT_TIMEOUT', proof } };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: FRONT1 }, 1), m => answer(m, DONE, 0)];
+  const e = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens the front batch
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, typeof r.attempt2], ['FAILED_CLEAN', 'string'], 'a transient stage-2 failure: attempt 2');
+  const key1 = (await ofType(f.receipts, 'batch-reserved')).find(b => b.key === r.key);
+  assert.equal(key1.subject.testSha, S, 'attempt 1 is the front batch, its subject names S');
+  stages[1] = notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE_HERE);
+  f.advance(11 * MIN);
+  const second = await f.exec.tick();
+  assert.deepEqual([second.state, second.key, second.failureCode], ['NOT_ADMITTED', r.attempt2, 'NODE_ROLE_NOT_HELD'], JSON.stringify(second));
+  assert.deepEqual((await ofType(f.receipts, 'attempt2-reopened')).map(b => [b.key, b.attempt1]), [[r.attempt2, r.key]]);
+  assert.deepEqual((await f.ledger.pendingAttempts2()).map(a => a.key2), [r.attempt2], 'the same attempt 2 is pending again');
+});
+
+// A2 (防回归): stage 10's front number 2 is a queue row (origin not 'attempt2'), not an attempt-2 intent. Released for the node role at
+// stage 1, it gives nothing back (no `attempt2-reopened`); the row stays queued and runs again.
+test('R3 batch 2 A2: stage 10\'s front number 2 released for the node role at stage 1 gives back no attempt 2; its row stays and retries', async t => {
+  const stages = { 1: notAdmitted('NODE_ROLE_NOT_HELD', NO_ROLE_HERE) };
+  let i = 0;
+  const list = [m => answer(m, { ...DONE, decision: 'OPEN_FRONT_BATCH', openFrontBatch: { ...FRONT1, attempt: 2 } }, 1), m => answer(m, DONE, 0)];
+  const e = withInput({ inputs: [], engine: fakeEngine({ stages, train: m => list[Math.min(i++, list.length - 1)](m) }) });
+  const f = await executorFixture(t, { policy: policyV8(), engine: e.engine });
+  await f.exec.tick(); // opens front number 2
+  assert.deepEqual([f.queue.row(884)?.current?.testSha, f.queue.row(884)?.current?.frontAttempt], [S, 2]);
+  f.advance(MIN);
+  const r = await f.exec.tick();
+  assert.deepEqual([r.state, r.failureCode], ['NOT_ADMITTED', 'NODE_ROLE_NOT_HELD'], JSON.stringify(r));
+  const reserved = (await ofType(f.receipts, 'batch-reserved')).find(b => b.key === r.key);
+  assert.deepEqual([reserved.subject.attempt, reserved.subject.testSha, reserved.origin === 'attempt2'], [2, S, false]);
+  assert.deepEqual(await ofType(f.receipts, 'attempt2-reopened'), []);
+  assert.deepEqual(await f.ledger.pendingAttempts2(), []);
+  const row = f.queue.row(884);
+  assert.deepEqual([row?.current?.testSha, row?.current?.frontAttempt], [S, 2], 'the row is still queued');
+  delete stages[1];
+  const ranBefore = e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length;
+  for (let k = 0; k < 10 && e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length === ranBefore; k++) { f.advance(11 * MIN); await f.exec.tick(); }
+  assert.ok(e.engine.calls.filter(c => c[0] === 'stage' && c[1] === 1).length > ranBefore, 'the row runs again');
+  assert.equal((await ofType(f.receipts, 'batch-reserved')).at(-1).key, r.key, 'with the same key');
 });
 
 test('ADR 0019 review blocker 1: batches of several PRs never use up the front\'s two attempts (bisection reaches the front alone); attempt 2 keeps /4', async t => {
