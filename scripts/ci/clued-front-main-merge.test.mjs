@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, OWNER_REVIEW_RPC, evaluate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
+import { ADMISSION_APP_ID, APP_CHECK_NAME, INDEPENDENT_ADMISSION_APP_ID, INDEPENDENT_ADMISSION_CHECK, MAIN_MERGE_CHECK, OWNER_REVIEW_RPC, evaluate, gate, mainMergeExternalId, parseMainMergeExternalId, resolvePublicSupabaseConfig } from './clued-work-admission.mjs';
 import { main as frontMergeMain, renderSummary, runFrontMainMerge } from './clued-front-main-merge.mjs';
 import { ciWorkflows } from './clued-merge-slot-ci.mjs';
 import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlWorkflowSource, parseNonPrControlCatalogue } from './clued-non-pr-control-source.mjs';
@@ -256,7 +256,7 @@ const sha = n => n.toString(16).padStart(40, '0');
 const iso = ms => new Date(ms).toISOString();
 // One repository with several pull requests, as GitHub's HTTP answers. w.now is the clock; w.tip is main.
 function train() {
-  const w = { now: NOW, tip: T, prs: new Map(), heads: new Map(), updates: [], calls: [], required: REQUIRED, failing: null, made: 0 };
+  const w = { now: NOW, tip: T, prs: new Map(), heads: new Map(), updates: [], calls: [], required: REQUIRED, failing: null, made: 0, ruleFiller: 0, endless: false };
   // A commit GitHub knows: which main tip it contains, when it appeared, and what ran on it.
   w.head = (id, { contains = BASE, at = w.now - 600 * MIN, checks = [], statuses = [], runs = [], parents = [BASE] } = {}) => {
     w.heads.set(id, { sha: id, contains, at, checks, statuses, runs, parents }); return id; };
@@ -273,12 +273,18 @@ function train() {
     const method = init.method ?? 'GET', route = String(url).slice(API.length), body = init.body ? JSON.parse(init.body) : null;
     w.calls.push({ method, route, body });
     if (w.failing && route.includes(w.failing)) return reply({ message: 'Server Error' }, 502);
-    if (method === 'POST' && route === '/graphql') return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false, endCursor: null },
+    if (method === 'POST' && route === '/graphql') return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: w.endless, endCursor: w.endless ? 'more' : null },
       nodes: [...w.prs.values()].map(p => ({ number: p.number, isDraft: p.draft, baseRefName: p.base, headRefOid: p.head, mergeable: p.mergeable,
         updatedAt: iso(p.updatedAt), autoMergeRequest: p.auto === null ? null : { enabledAt: p.auto },
         headRepository: { nameWithOwner: p.fork ? 'someone/r' : 'o/r' } })) } } } });
-    if (method === 'GET' && route === '/repos/o/r/rules/branches/main')
-      return reply([{ type: 'deletion' }, { type: 'required_status_checks', parameters: { required_status_checks: w.required.map(context => ({ context })) } }]);
+    // The branch's rules, 100 a page: w.ruleFiller full pages of other rules come before the page with the required checks.
+    const rules = /^\/repos\/o\/r\/rules\/branches\/main(?:\?(?:.*&)?page=([0-9]+))?/.exec(route);
+    if (method === 'GET' && rules) {
+      const page = Number(rules[1] ?? 1);
+      if (page <= w.ruleFiller) return reply(Array.from({ length: 100 }, () => ({ type: 'deletion' })));
+      return reply(page > w.ruleFiller + 1 ? [] : [{ type: 'deletion' },
+        ...(w.required.length ? [{ type: 'required_status_checks', parameters: { required_status_checks: w.required.map(context => ({ context })) } }] : [])]);
+    }
     if (method === 'GET' && route === '/repos/o/r/branches/main') return reply({ name: 'main', commit: { sha: w.tip } });
     const pull = /^\/repos\/o\/r\/pulls\/([0-9]+)$/.exec(route), p = pull && w.prs.get(Number(pull[1]));
     if (method === 'GET' && pull) return p ? reply({ number: p.number, state: 'open', draft: p.draft, updated_at: iso(p.updatedAt),
@@ -527,4 +533,58 @@ test('push to main, the schedule and a dispatch without inputs all reach the cho
   assert.doesNotMatch(on, /required: true|pull_request/);
   // The job with the App key runs for the three triggers, on main only (the environment's deployment branches say the same).
   assert.match(text, /\n    if: needs\.admission-gate\.outputs\.admitted == 'true' && \(github\.ref == 'refs\/heads\/main'\)\n/);
+});
+
+// Independent review of e37e3a33: with a required list read as empty every failure counted as red. The resident's info-only
+// status is a failure on every head for good, so the front under way was passed over and one more pull request was brought
+// up every 10 minutes: two under way at once. An empty or incomplete reading decides nothing.
+test('a run without inputs decides nothing when the required checks or the train cannot be read in full', async () => {
+  // The front under way, with the resident's info-only status failed as it is on every head.
+  const front = () => {
+    const w = scene0823();
+    w.heads.get(sha(0x1225)).contains = T; w.check(sha(0x1225), 'ci-suites', null);
+    w.heads.get(sha(0x1225)).statuses.unshift({ context: 'resident-queue/turing (info only)', state: 'failure', description: 'info only' });
+    return w;
+  };
+  let w = front();
+  assert.equal((await w.run()).result, 'none', 'with the required list read, an optional failure leaves the front as it is'); assert.deepEqual(w.brought(), []);
+  // The rules name no required check (or the token does not see them).
+  w = front(); w.required = [];
+  let r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.match(r.reason, /required/); assert.deepEqual(w.brought(), []);
+  // No front at all and no required list: nobody is brought up either.
+  w = scene0823(); w.required = [];
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.equal(w.calls.some(c => c.method === 'PUT' || c.route.includes('/access_tokens')), false);
+  // The required checks are on the second page of the rules: read.
+  w = front(); w.ruleFiller = 1;
+  assert.equal((await w.run()).result, 'none'); assert.deepEqual(w.brought(), []);
+  w = scene0823(); w.ruleFiller = 9;
+  assert.equal((await w.run()).pr, 1156, 'ten pages are read');
+  // More rules than ten pages: the list is not known to be complete.
+  w = front(); w.ruleFiller = 10;
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.match(r.reason, /rules/); assert.deepEqual(w.brought(), []);
+  w = scene0823(); w.ruleFiller = 10;
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  // More open pull requests than ten pages: the train is not known in full.
+  w = scene0823(); w.endless = true;
+  r = await w.run();
+  assert.equal(r.result, 'skipped', JSON.stringify(r)); assert.match(r.reason, /pull requests/); assert.deepEqual(w.brought(), []);
+});
+
+// The first link (design step 0): merge-main needs the gate's admitted=true. The gate admits these events without reading anything.
+test('the admission gate admits this workflow on a push to main, on the schedule and on a dispatch without inputs', async () => {
+  for (const [eventName, event] of [['push', { ref: 'refs/heads/main', after: T }], ['schedule', { schedule: '*/10 * * * *' }],
+    ['workflow_dispatch', { inputs: null }], ['workflow_dispatch', { inputs: { pr: '', head: '' } }], ['workflow_dispatch', { inputs: { pr: '1225', head: H } }]]) {
+    const calls = [];
+    const outcome = await gate({ env: env({ GITHUB_EVENT_NAME: eventName, GITHUB_REF: 'refs/heads/main', GITHUB_REF_NAME: 'main', GITHUB_SHA: T, GITHUB_RUN_ATTEMPT: '1',
+      GITHUB_WORKFLOW_REF: 'o/r/.github/workflows/clued-front-main-merge.yml@refs/heads/main', CLUED_ADMISSION_GATE_SOURCE: 'independent-ci-native-work-admission' }),
+      event, eventName, fetchImpl: async url => { calls.push(String(url)); throw new Error('the gate reads nothing for this event'); }, sleep: async () => {} });
+    assert.equal(outcome.admitted, true, `${eventName}: ${JSON.stringify(outcome.reasons)}`);
+    assert.equal(outcome.verdict, 'NOT_APPLICABLE', eventName);
+    assert.deepEqual(calls, [], eventName);
+  }
 });
