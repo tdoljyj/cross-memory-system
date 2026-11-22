@@ -35,7 +35,8 @@
 //                 App brought up that the independent CI never admitted.
 // With a front it does nothing. Without one it brings the candidate whose
 // auto-merge was enabled first (ties: the lower number) exactly as a named run
-// does, one per run. A red or idle front, a lost event or a failed run need no
+// does, one per run, unless BROUGHT_UNADMITTED_LIMIT heads on the train are ones
+// the App brought up and the admission has not passed: then it holds (below). A red or idle front, a lost event or a failed run need no
 // memory: the next run reads the same records again.
 //
 // The hosted copy (.github/workflows/clued-front-main-merge-hosted.yml; framework v1 §2.3, hosted scaffold report §1.4) runs this
@@ -71,6 +72,11 @@ export const pendingAuthorizationLine = merged => `新 head ${merged}，待补�
 // A head that contains main is idle once it is this old with nothing queued, running or pending on it and its required
 // checks not all green (the rule of the hooks' wait-pr exit 5): nothing will finish it, so it is not the front.
 export const IDLE_AFTER_MS = 15 * 60_000;
+// A head the App brought up that the admission does not pass (a failure or no answer) is not the front, so the next one is
+// brought. A systemic cause (the authorization not carried, Clued unreachable, the admission workflow disabled) would spend the
+// whole train one pull request per run. With this many such heads on the train at once nobody else is brought up; below it the
+// train goes on by itself (FABLE-scaffold-s5-pre §2). 2, not 1: one protected-layer head waiting for a new Owner Grant holds nobody.
+export const BROUGHT_UNADMITTED_LIMIT = 2;
 // A list (open pull requests, branch rules) is read 100 a page, at most this many pages; one that goes on is not known in full.
 const PAGES = 10;
 const FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required']);
@@ -218,7 +224,7 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     member.behind = compare.behind_by;
   }
   for (const member of train.filter(member => member.behind === 0)) {
-    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
+    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
     const running = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
     if (records.failed.length) { member.state = `red (${records.failed.join(', ')})`; continue; }
     member.state = 'front';
@@ -230,15 +236,19 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
     if (now() - appeared >= IDLE_AFTER_MS) member.state = 'idle';
   }
   const candidates = [];
-  if (!train.some(member => member.state === 'front')) for (const member of train.filter(member => member.behind > 0)) {
-    if (member.mergeable === 'CONFLICTING') { member.state = 'conflict'; continue; }
-    const records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    if (records.failed.length) member.state = `red (${records.failed.join(', ')})`;
+  const nofront = !train.some(member => member.state === 'front');
+  // Without a front every member's head is read, a conflict's too: each one the App brought up and not admitted counts.
+  if (nofront) for (const member of train.filter(member => member.behind > 0)) {
+    const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
+    if (member.mergeable === 'CONFLICTING') member.state = 'conflict';
+    else if (records.failed.length) member.state = `red (${records.failed.join(', ')})`;
     else if (records.brought && !records.admitted) member.state = 'brought up before and not admitted';
     else { member.state = 'candidate'; candidates.push(member); }
   }
   for (const member of train) member.state ??= 'behind';
-  return { main, tip, train, candidates };
+  const stranded = nofront ? train.filter(member => member.records?.brought && !member.records.admitted) : [];
+  if (stranded.length >= BROUGHT_UNADMITTED_LIMIT) { for (const member of candidates) member.state = 'candidate, held'; candidates.length = 0; }
+  return { main, tip, train, candidates, stranded };
 }
 
 // A run without inputs: with no front, the first candidate that GitHub lets it update.
@@ -255,6 +265,9 @@ async function runFrontChoice(ports) {
   const train = { main: chosen.tip, members: chosen.train.map(({ pr, head, behind, state }) => ({ pr, head, behind, state })) };
   const front = chosen.train.find(member => member.state === 'front');
   if (front) return done('none', `#${front.pr} contains ${chosen.main} and is under way`, train);
+  if (chosen.stranded.length >= BROUGHT_UNADMITTED_LIMIT)
+    return done('held', `${chosen.stranded.map(m => `#${m.pr}`).join(', ')}: brought up to ${chosen.main} and not admitted; nobody else is brought up `
+      + `while ${BROUGHT_UNADMITTED_LIMIT} are, until one of them is admitted, gets a new head, or leaves the train (auto-merge off or closed)`, train);
   if (!chosen.candidates.length)
     return done('none', chosen.train.length ? 'no pull request on the train can be brought up now' : 'no open pull request has auto-merge on', train);
   for (const candidate of chosen.candidates) {
