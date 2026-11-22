@@ -8,14 +8,6 @@ on:
       - ".github/workflows/node-profile-policy.yml"
       - ".github/workflows/clued-ci-health.yml"
       - ".github/workflows/clued-ci-runner-heartbeat.yml"
-  push:
-    branches: [main]
-    paths:
-      - "scripts/ci/self-hosted/**"
-      - "tests/test_ci_health.py"
-      - ".github/workflows/node-profile-policy.yml"
-      - ".github/workflows/clued-ci-health.yml"
-      - ".github/workflows/clued-ci-runner-heartbeat.yml"
 
 permissions:
   contents: read

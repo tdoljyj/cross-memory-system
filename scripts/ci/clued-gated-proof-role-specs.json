@@ -33,6 +33,16 @@
             "job_id": "untrusted-hosted",
             "definition_sha256": "dbebc120b727c1fb8692f5853318a728e8ea8a2d03f5f9ec37c367cde0556831"
           }
+        ],
+        "a07a290c763654a7aaa749a1c2088d484afc4eed": [
+          {
+            "job_id": "trusted-self-hosted",
+            "definition_sha256": "6eeb3fdc96a9bb8d585021abcefd59f30ad1c95f2ea2c11413aacb310d3e9925"
+          },
+          {
+            "job_id": "untrusted-hosted",
+            "definition_sha256": "dbebc120b727c1fb8692f5853318a728e8ea8a2d03f5f9ec37c367cde0556831"
+          }
         ]
       }
     },
@@ -425,6 +435,16 @@
                 }
               ]
             }
+          }
+        ],
+        "0d5575fdabf9f2e811b893d6a09eb4b36d2e7600": [
+          {
+            "job_id": "design-refs-trusted-self-hosted",
+            "definition_sha256": "5ecc628ffdfd0ff03a02a25e3bf1895f15f73e6bbb806deec548109813c0524f"
+          },
+          {
+            "job_id": "design-refs-untrusted-hosted",
+            "definition_sha256": "7b6618632196ea0b9e89a001a8ff126b8248ffb7c6d03920546c0f002ebfcc09"
           }
         ]
       }
@@ -1098,6 +1118,16 @@
     ".github/workflows/model-program-m2-scoped-consumer.yml": {
       "sources": {
         "bb50a418de6c064584a2e13431e2f39ac20cb955": [
+          {
+            "job_id": "trusted-windows",
+            "definition_sha256": "7f6c5f8d933ebfea52bc765c4867c2b1ad461c5a715c8da0046bf182158437a8"
+          },
+          {
+            "job_id": "untrusted-linux",
+            "definition_sha256": "64d577a93366bfde9622d48c8c4f59171181dd8770dc3be93c27a890afbae2e6"
+          }
+        ],
+        "da6c77d5758f8f3e7a124fc3ab667fceebe235f8": [
           {
             "job_id": "trusted-windows",
             "definition_sha256": "7f6c5f8d933ebfea52bc765c4867c2b1ad461c5a715c8da0046bf182158437a8"

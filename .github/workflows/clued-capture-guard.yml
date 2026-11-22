@@ -14,15 +14,6 @@ on:
       - 'protocol/agent/**'
       - 'tests/test_clued_capture_guard.py'
       - 'tests/test_clued_work_claim_guard.py'
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/clued-capture-guard.yml'
-      - '.claude/settings.json'
-      - 'scripts/hooks/**'
-      - 'protocol/agent/**'
-      - 'tests/test_clued_capture_guard.py'
-      - 'tests/test_clued_work_claim_guard.py'
 
 permissions:
   contents: read

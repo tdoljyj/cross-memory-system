@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Brings main into the merge train's front (Owner Decisions 9e2511fe item 3 and
-// 78a3052f item 2; resident DESIGN §80). strict lets GitHub merge only a head
+// Brings main into the merge train's front (Owner Decision 9e2511fe item 3 (and, until
+// 11-22, 78a3052f item 2); resident DESIGN §80). strict lets GitHub merge only a head
 // that contains main's tip; a front that fell behind used to wait for a person
 // to merge main, authorize the merge commit and push it.
 //
@@ -9,9 +9,9 @@
 // when stage 10 says FRONT_NEEDS_MAIN_MERGE (resident front-merge-dispatch.mjs),
 // or by a person. It does one thing, as the clued-admission App, and only when
 // it is still true: the PR is open, not a draft, into main, from this
-// repository, still at that head, behind main and not of the protected layer
-// (78a3052f item 2: those stay with their holder); merge admission is not
-// frozen. Then:
+// repository, still at that head, behind main, of any layer (Owner 11-22:
+// the protected layer too, replacing 78a3052f item 2; its Owner Grant carries over only while main left the protected
+// files the PR changes alone, see carriedApprovalSource, Decision a0d93cd0); merge admission is not frozen. Then:
 //   1. PUT update-branch with expected_head_sha = that head (GitHub merges main
 //      in itself and refuses a conflict or a moved head);
 //   2. reads the new head: a GitHub-made (web-flow, verified) merge commit whose
@@ -24,9 +24,9 @@
 // No retries here: the dispatcher asks again while stage 10 still says so.
 
 import fs from 'node:fs';
-import { ADMISSION_APP_ID, MAIN_MERGE_CHECK, appJwt, changedPathsOfPullRequest, githubJson, mainMergeExternalId } from './clued-work-admission.mjs';
+import { ADMISSION_APP_ID, MAIN_MERGE_CHECK, appJwt, githubJson, mainMergeExternalId } from './clued-work-admission.mjs';
 import { appRequest } from './clued-managed-auto-merge.mjs';
-import { layerOf, resolveMode } from './merge-admission-policy.mjs';
+import { resolveMode } from './merge-admission-policy.mjs';
 
 export const FRONT_MERGE_PERMISSIONS = Object.freeze({ contents: 'write', pull_requests: 'write', checks: 'write' });
 // update-branch answers 202 and merges asynchronously; the new head is read this often, at most this many times.
@@ -64,10 +64,6 @@ export async function runFrontMainMerge({ env, fetchImpl, workspace, input, read
   if (!SHA.test(tip ?? '')) return done('error', `the tip of ${main} could not be read`);
   const compare = await githubJson(fetchImpl, env, `/repos/${repository}/compare/${tip}...${head}`);
   if (!(Number(compare?.behind_by) > 0)) return done('none', `the head already contains ${main}`);
-  // 78a3052f item 2: a protected-layer pull request (by its own changes; an incomplete file list counts as protected) stays with its holder.
-  const own = await changedPathsOfPullRequest(fetchImpl, env, repository, number);
-  const layer = layerOf(own.paths, mode.policy, { unknown: Number.isInteger(pr.changed_files) && own.file_count < pr.changed_files });
-  if (layer === 'protected') return done('none', 'a protected-layer pull request: its holder merges main (Owner Decision 78a3052f item 2)');
   const { token, reason } = await frontMergeToken({ env, fetchImpl, now });
   if (!token) return done('skipped', reason);
   const update = await appRequest(fetchImpl, env, 'PUT', `/repos/${repository}/pulls/${number}/update-branch`, token, { expected_head_sha: head });

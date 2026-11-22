@@ -77,13 +77,13 @@ CONCURRENCY_EXEMPTIONS = {
 LEGACY_HOSTED_DEBT_SOURCE = "062543d943b65be1a88baed653f7999f25649668"
 LEGACY_HOSTED_DEBT = {
     "active-doc-links.yml": {
-        "control_sha256": "093a0a6f554c2d4aa18dbb97e3626fdf0551bc540972255172ad89d6ddef1317",
+        "control_sha256": "7634659bcf105f4af2477f7027cfe851c421457b5ccd425826bb75271ed554fc",
         "jobs": {
             "links-untrusted-hosted": "9243db8b4e05e66f46d25626efc278147b8fcaa78b3e268d4ea72f2f05dbd70d"
         }
     },
     "clued-capture-guard.yml": {
-        "control_sha256": "af42acacfdf4ee20d1a16fa40432278888358df8eede47755464df0fb61cd55c",
+        "control_sha256": "4e84387189a85632fb502f38eb19a881c6b293750bf32ad9e57a0dd69345fc2a",
         "jobs": {
             "untrusted-hosted": "657a38474657ab293f1eacc160473fa97351453690c422d60585fda6ce0d9ed6"
         }
@@ -101,7 +101,7 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "clued-cloud-node22-install.yml": {
-        "control_sha256": "82824a3fbea39f142556ab30007e927f4e67e16bc3fb337dfd92b264cd232910",
+        "control_sha256": "020729aefbd20d07fb1f9fd469a42e0c08c5fdd76c5673eeadcfc69654a6cc01",
         "jobs": {
             "untrusted-hosted": "f9c084c82de1ab02bcfff451680b9f562385dba67ea4b53bd1b1b3645029a978"
         }
@@ -197,7 +197,7 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "design-refs.yml": {
-        "control_sha256": "6327e8203db425c4bf5c2ae87d1c4e58a235307ce616fdc5f4a7db93c0b2b6c8",
+        "control_sha256": "0791693c1c18971f9b2fc536cabce28d8d69fb6654130946648b3c82bdcaab2c",
         "jobs": {
             "design-refs-untrusted-hosted": "5639d9ad5c5f6181caa118e9c55c6f370b55f442447f9e0685976870eb8ac8d2"
         }
@@ -215,43 +215,43 @@ LEGACY_HOSTED_DEBT = {
         }
     },
     "model-program-m0.yml": {
-        "control_sha256": "0eefb33d740f4f61e4c7e31b37d902eccaf2e935aeaec0181bef5778b8c7e6fc",
+        "control_sha256": "db60f42f44c269aeb91702694f3a11ae2e49a92c6c8739e55887028ea842341a",
         "jobs": {
             "validate-untrusted-hosted": "772a3eb010a62b889d18be7da42b7977415ab9f12d7799199e1700384fc711bc"
         }
     },
     "model-program-m1-entry.yml": {
-        "control_sha256": "8b6c80241e609eb13820d40be7ac87cfa1cb92aa375931a13cdf9c1c2acb7022",
+        "control_sha256": "ff9bfc2d5d6f17c24c43df171cbdb2d4f1a670eabffc434ba0e71b02b25baf0d",
         "jobs": {
             "validate-untrusted-hosted": "1e35ba7c3040ca729c2e4612cc9eab04c3bc6027af92dd322a848b6077b48394"
         }
     },
     "model-program-m1-harness.yml": {
-        "control_sha256": "4f13bdff24ca46b990d16d3dfb999c43304204ee02e3c69eda7bbc76cfe65985",
+        "control_sha256": "0048735a8017e345c755fcb18dbb469d4224063c049062bcf473bb4e1ba56bc4",
         "jobs": {
             "validate-untrusted-hosted": "49e277ffb578d1d662a5e240dbb56e22189cee7e4f9c4d9de763dde672d03dc7"
         }
     },
     "model-program-m1-package.yml": {
-        "control_sha256": "5f2f64757a1152a2299659f90f107b0383e6265743b39f89da53617b42b2de93",
+        "control_sha256": "4669434ea23dca2c32c456496dd8cbb33caf7e8402117b217e24b4f14fd9b31b",
         "jobs": {
             "validate-untrusted-hosted": "306e9ad3c4d0f9a5c337c2463af26cdd211ba92f36dc128805bc2317236c7431"
         }
     },
     "model-program-m2-scoped-consumer.yml": {
-        "control_sha256": "cd093d7a7aafc5eeec576fdd2f3b9fa4ff9d50cfbf40c141fc6c79d674c376e4",
+        "control_sha256": "44b1a8e6de7369071ffa95349f2347bd0fe704334664c947dff58169b5f3613c",
         "jobs": {
             "untrusted-linux": "55c967ce7b401611df6e2673dbf78a4ff883d0d377a52c9e1cb9bc6edc1603fd"
         }
     },
     "multitrack-governance-projection.yml": {
-        "control_sha256": "94c0dfc24e1313bd12d9a009d24387bb9fd7301e28e30df263644a8bbad400da",
+        "control_sha256": "d100a704d9d1545c0e1e8c78e46997ed0da992c344efa41c2a3afe1d13626f6a",
         "jobs": {
             "validate-untrusted-hosted": "be5115297f448fc75299797d3d94e1e82786980a37f6cbc218283baf8736a868"
         }
     },
     "node-profile-policy.yml": {
-        "control_sha256": "335ae03fbfc515cfa1502e48342c80804719d9f226a20a2949e8219796baeec1",
+        "control_sha256": "0ca920fd6f73e76ef6b1b17c21e18d12f2ad6ac78b3fb4c629b58944af461808",
         "jobs": {
             "untrusted-hosted": "e6b8787973d2f48fcb4435b55bb136bfd8a627602acc575dcce25d680bd43452"
         }
