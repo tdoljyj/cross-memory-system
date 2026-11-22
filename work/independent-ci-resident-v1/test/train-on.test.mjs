@@ -1318,9 +1318,13 @@ test('parked-front 3c: a front batch refused because the queue is full (QUEUE_DE
   assert.equal(f.queue.offer({ pr: 990, headSha: '2'.repeat(40), baseSha: BASE }, f.clock(), { depth: 1, cooldownMs: 0 }).action, 'new', 'the queue is full now');
   assert.equal(await f.exec.enqueueFront(FRONT1), null);
   assert.equal((await ofType(f.receipts, 'train-front-refused')).at(-1).failureCode, 'QUEUE_DEPTH_EXCEEDED');
-  f.advance(10 * MIN);
-  await f.exec.tick();
-  const carried = e.inputs.at(-1).input;
-  assert.deepEqual([carried.frontPr, carried.frontHeadSha, carried.frontTestSha, carried.frontAttempt, carried.frontCode, carried.frontFailed],
-    [884, HEAD, S, 1, 'QUEUE_DEPTH_EXCEEDED', false], JSON.stringify(carried));
+  // PR 990's batch may take a tick first; the report is held until a stage 10 carries it (and cleared after): the run that carried it
+  let carried = null;
+  for (let i = 0; i < 4 && !carried; i++) {
+    f.advance(10 * MIN);
+    await f.exec.tick();
+    carried = e.inputs.map(x => x.input).find(x => x.frontPr !== null) ?? null;
+  }
+  assert.deepEqual([carried?.frontPr, carried?.frontHeadSha, carried?.frontTestSha, carried?.frontAttempt, carried?.frontCode, carried?.frontFailed],
+    [884, HEAD, S, 1, 'QUEUE_DEPTH_EXCEEDED', false], JSON.stringify({ carried, runs: e.inputs.map(x => [x.mode, x.input.frontPr]), outcome: f.exec.trainFrontOutcome ?? null }));
 });
