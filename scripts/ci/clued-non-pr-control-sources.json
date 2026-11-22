@@ -408,9 +408,16 @@
             "group": "clued-front-main-merge"
           },
           "environment": "clued-admission",
-          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+          "if": "needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
           "name": "clued-front-main-merge",
           "needs": "admission-gate",
+          "permissions": {
+            "actions": "read",
+            "checks": "read",
+            "contents": "read",
+            "pull-requests": "read",
+            "statuses": "read"
+          },
           "runs-on": [
             "self-hosted",
             "Linux",
@@ -450,7 +457,7 @@
           ],
           "timeout-minutes": 5
         },
-        "definition_sha256": "0b93443b5f9ebfbaa14134ef74e33eede99446b4683a90105489415569f492df",
+        "definition_sha256": "8761344f2484918e9b1aa2504824f9bdc1cf38ae4a040dcb8d0799e41c0f59a8",
         "job_id": "merge-main"
       }
     ],
@@ -1256,7 +1263,7 @@
     },
     ".github/workflows/clued-front-main-merge.yml": {
       "family": "front_main_merge_dispatch",
-      "source_sha256": "86cd1f4481defe3303ad627ff5808d16b5fc493b274b845c542e1d7abcd4a840",
+      "source_sha256": "108d5382120c6eb5fc1a7cbd3a9f21152bf727cf5ff8ef527b86208ea49029ca",
       "source_yaml_lines": [
         "name: clued-front-main-merge",
         "",
@@ -1271,21 +1278,33 @@
         "# on the new merge commit, by which the admission keeps the holder's head",
         "# authorization (migration 20261116090000). It holds no Clued credential.",
         "#",
-        "# Only workflow_dispatch: this file and the script run from the default",
+        "# Without pr and head it chooses the pull request itself (Task ea22e734): the",
+        "# train is the open pull requests with auto-merge on; when none of them contains",
+        "# main and is under way, the one whose auto-merge was enabled first is brought",
+        "# up, one per run. It runs so on every push to main (the event that leaves the",
+        "# train without a front), every 10 minutes (a lost event, a front gone red or",
+        "# idle, a newly enabled auto-merge) and on a dispatch without inputs. It reads",
+        "# GitHub's records of that moment and keeps nothing between runs.",
+        "#",
+        "# Never a pull request event: this file and the script run from the default",
         "# branch, with the clued-admission environment's App key (deployment branches",
         "# limited to main); the inputs are only a request, every fact is read again.",
         "",
         "on:",
+        "  push:",
+        "    branches: [main]",
+        "  schedule:",
+        "    - cron: \"*/10 * * * *\"",
         "  workflow_dispatch:",
         "    inputs:",
         "      pr:",
-        "        description: Pull request number of the train front",
+        "        description: Pull request number of the train front (empty with head - the workflow chooses)",
         "        type: string",
-        "        required: true",
+        "        required: false",
         "      head:",
         "        description: Its head SHA as the train saw it",
         "        type: string",
-        "        required: true",
+        "        required: false",
         "",
         "permissions:",
         "  contents: read",
@@ -1328,12 +1347,19 @@
         "",
         "  merge-main:",
         "    needs: admission-gate",
-        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+        "    if: needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
         "    name: clued-front-main-merge",
         "    # The self-hosted pool, as clued-native617-admission-dispatch.yml with the same environment (new hosted execution is prohibited).",
         "    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal]",
         "    timeout-minutes: 5",
         "    environment: clued-admission",
+        "    # The choice reads what ran on each head of the train: workflow runs (actions) and commit statuses besides the checks.",
+        "    permissions:",
+        "      actions: read",
+        "      checks: read",
+        "      contents: read",
+        "      pull-requests: read",
+        "      statuses: read",
         "    # One at a time; a second request for the same front reads the state the first one left.",
         "    concurrency:",
         "      group: clued-front-main-merge",
@@ -1357,7 +1383,7 @@
         "        run: node scripts/ci/clued-front-main-merge.mjs",
         ""
       ],
-      "workflow_blob": "74a96c7ab1de73c64259f78f8072deee06ec8686",
+      "workflow_blob": "eab092359b4d5d839251b67ecff557387fac604d",
       "workflow_definition": {
         "jobs": {
           "admission-gate": {
@@ -1418,9 +1444,16 @@
               "group": "clued-front-main-merge"
             },
             "environment": "clued-admission",
-            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+            "if": "needs.admission-gate.outputs.admitted == 'true' && (github.ref == 'refs/heads/main')",
             "name": "clued-front-main-merge",
             "needs": "admission-gate",
+            "permissions": {
+              "actions": "read",
+              "checks": "read",
+              "contents": "read",
+              "pull-requests": "read",
+              "statuses": "read"
+            },
             "runs-on": [
               "self-hosted",
               "Linux",
@@ -1463,16 +1496,26 @@
         },
         "name": "clued-front-main-merge",
         "on": {
+          "push": {
+            "branches": [
+              "main"
+            ]
+          },
+          "schedule": [
+            {
+              "cron": "*/10 * * * *"
+            }
+          ],
           "workflow_dispatch": {
             "inputs": {
               "head": {
                 "description": "Its head SHA as the train saw it",
-                "required": true,
+                "required": false,
                 "type": "string"
               },
               "pr": {
-                "description": "Pull request number of the train front",
-                "required": true,
+                "description": "Pull request number of the train front (empty with head - the workflow chooses)",
+                "required": false,
                 "type": "string"
               }
             }
@@ -1484,7 +1527,7 @@
           "pull-requests": "read"
         }
       },
-      "workflow_definition_sha256": "8579bf1b7f0fece985d2c09ae70a37ec7286e8bfdeb2296ff1eb7b9cfe09c6d3"
+      "workflow_definition_sha256": "9823eed4cd50ff7863f86b8d5f54f88a7f9f923afa990352726d53a46a5db287"
     },
     ".github/workflows/clued-native617-admission-dispatch.yml": {
       "family": "disabled_native617_dispatch",

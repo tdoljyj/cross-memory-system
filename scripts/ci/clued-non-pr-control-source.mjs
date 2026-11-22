@@ -33,15 +33,17 @@ export const NON_PR_CONTROL_FILES=freeze({
   },
   ".github/workflows/clued-front-main-merge.yml": {
     "family": "front_main_merge_dispatch",
-    "workflow_blob": "74a96c7ab1de73c64259f78f8072deee06ec8686",
-    "source_sha256": "86cd1f4481defe3303ad627ff5808d16b5fc493b274b845c542e1d7abcd4a840",
-    "workflow_definition_sha256": "8579bf1b7f0fece985d2c09ae70a37ec7286e8bfdeb2296ff1eb7b9cfe09c6d3",
+    "workflow_blob": "eab092359b4d5d839251b67ecff557387fac604d",
+    "source_sha256": "108d5382120c6eb5fc1a7cbd3a9f21152bf727cf5ff8ef527b86208ea49029ca",
+    "workflow_definition_sha256": "9823eed4cd50ff7863f86b8d5f54f88a7f9f923afa990352726d53a46a5db287",
     "triggers": [
+      "push",
+      "schedule",
       "workflow_dispatch"
     ],
     "roles": {
       "admission-gate": "2b609bfa2f0df5218d4f2db824737fb6066b54f132626a1470a49bc606743348",
-      "merge-main": "0b93443b5f9ebfbaa14134ef74e33eede99446b4683a90105489415569f492df"
+      "merge-main": "8761344f2484918e9b1aa2504824f9bdc1cf38ae4a040dcb8d0799e41c0f59a8"
     }
   },
   ".github/workflows/clued-native617-admission-dispatch.yml": {
