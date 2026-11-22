@@ -39,7 +39,7 @@ import { chainOfFront, openFrontBatchOf } from '../../../independent-ci-resident
 import { AdmissionRerunner, AdmissionRerunState, decide, HEAD_RECHECK_MS } from '../../../independent-ci-resident-v1/src/admission-rerun.mjs';
 import { parseStatus, pollerLandingOf, StatusBoard } from '../../../independent-ci-resident-v1/src/status.mjs';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../../../independent-ci-resident-v1/src/policy.mjs';
-import { CLEAN_PROOF, executorFixture, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
+import { CLEAN_PROOF, executorFixture, fakeCompanion, fakeEngine, rawPolicy, TEST_NODE, TEST_NODE_SHA } from '../../../independent-ci-resident-v1/test/helpers.mjs';
 
 const APP = 5368905, ACTIONS = 15368, SCOPE = 'project:00000000-0000-4000-8000-000000000000';
 const h = s => createHash('sha1').update(s).digest('hex');
@@ -1807,11 +1807,24 @@ async function stageRoute(t, real, number, batch, tamper = null) {
   await tamper?.(number, dir);
   return readStageBatchRoute(dir);
 }
-async function residentOver(t, e, { tamper = null, facts = null } = {}) {
+// The bundle (B1/B2 replan §6): judged by the descriptor exactly as build-bundle.ps1 judges it: without baseRule GitHub's main must be the
+// batch base (REMOTE_MAIN_BASE_CHANGED, which the companion answers as RESIDENT_BASE_MOVED); with baseRule on-main the base must be an
+// ancestor of the head and of main's tip (Base-On-Main).
+// Stage 2 (refs v2, protected-controller-ports-v2/refs.mjs:73): main must be the job's base, else REFS_MAIN_BASE_CHANGED.
+async function residentOver(t, e, { tamper = null, facts = null, queueFacts = false } = {}) {
   const { engine: real, root } = await residentEngine(t);
   const engine = fakeEngine();
   const subjects = new Map();
-  Object.assign(engine, { stages: [], stage1: [], stage8: [], routes: [], descriptors: new Map(), trainRuns: [], subjects });
+  Object.assign(engine, { stages: [], stage1: [], stage8: [], routes: [], descriptors: new Map(), trainRuns: [], trainAt: [], subjects, bundles: [], refused: [] });
+  const companion = fakeCompanion({}, () => f.clock());
+  companion.buildBundle = async batch => {
+    companion.calls.push(['bundle']);
+    const s = subjects.get(batch.key), d = engine.descriptors.get(batch.key), main = e.main();
+    const onMain = d?.baseRule === 'on-main';
+    const ok = onMain ? e.W.ancestor(s.baseSha, main) && e.W.ancestor(s.baseSha, s.headSha) : s.baseSha === main;
+    engine.bundles.push({ pr: s.pr, front: Object.hasOwn(s, 'testSha') && s.testSha !== s.headSha, baseRule: d?.baseRule ?? null, ok, at: f.clock() });
+    return ok ? { ok: true } : { ok: false, code: 'RESIDENT_BASE_MOVED' };
+  };
   let f = null, run = 0;
   const sync = () => { e.now = f.clock(); };
   const back = () => { if (e.now > f.clock()) f.advance(e.now - f.clock()); };
@@ -1827,10 +1840,12 @@ async function residentOver(t, e, { tamper = null, facts = null } = {}) {
     sync();
     const { mode: m, ...params } = input;
     const job = makeTrainRun({ repo: REPO, runId: `${(++run).toString(16).padStart(16, '0')}-0123456789ab`, mode: m, sourceManifestSha256: SOURCE, createdAt: iso(e.now), ...params });
+    e.inTen = true; // flakyRules 'ten': only stage 10's reads fail
     const r = await runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep,
-      claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN3 });
+      claimScope: SCOPE, layerOfPaths: e.layerOfPaths ?? (() => 'code'), landing: e.port, trainLanding: e.trainLanding ?? CHAIN3 }).finally(() => { e.inTen = false; });
     const train = facts ? facts(r.facts) : r.facts;
     engine.trainRuns.push(train);
+    engine.trainAt.push(f.clock());
     back();
     return { ok: true, runId: job.runId, proof: PROOF, train,
       outcome: { status: 'TRAIN_FACTS', reason: null, sideEffects: r.sideEffects, mayHavePublished: r.sideEffects > 0, diagnostic: null, scheduling: null, safeToRerun: false } };
@@ -1857,6 +1872,11 @@ async function residentOver(t, e, { tamper = null, facts = null } = {}) {
       return { ...ok, outcome: { status: 'SETTLED', reason: null, sideEffects: 1, mayHavePublished: true, diagnostic: null, safeToRerun: false,
         scheduling: { ciRetryAfter: null, claimExpiresAt: null, mergeQueue: at < 0 ? { entered: false, state: null, position: null } : { entered: true, state: at === 0 ? 'head' : 'waiting', position: at + 1 } } } };
     }
+    if (stage.number === 2 && subject.baseSha !== e.main()) {
+      engine.refused.push({ pr: n, front, stage: 2, code: 'REFS_MAIN_BASE_CHANGED', baseSha: subject.baseSha, main: e.main() });
+      return { ok: false, code: 'REFS_MAIN_BASE_CHANGED', proof: PROOF,
+        outcome: { status: 'BLOCKED', reason: 'REFS_MAIN_BASE_CHANGED', sideEffects: 0, mayHavePublished: false, diagnostic: null, scheduling: null, safeToRerun: false } };
+    }
     if (stage.number !== 8) return ok;
     const batchRoute = await stageRoute(t, real, 8, batch, tamper);
     engine.routes.push({ pr: n, front, stage: 8, stamped: batch.batchRoute ?? null, read: batchRoute });
@@ -1865,22 +1885,35 @@ async function residentOver(t, e, { tamper = null, facts = null } = {}) {
     const p = await stage8(t, e, b, { trainLanding: CHAIN3, scans: false, batchRoute, claimAssist, admission: realAdmission(e, { batchRoute }) });
     engine.stage8.push({ pr: n, front, status: p.status, reason: p.reason ?? null });
     back();
+    // queueFacts: the stage's scheduling facts as the real stage 8 reports them (publisher.mjs: the claim's place in the merge queue), so a
+    // claim first in the queue owes stage 10 at once (frontOpenOwed; E9). Off for E1-E8 as they were written.
     return p.status === 'SETTLED' ? ok : { ok: false, code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', proof: PROOF,
-      outcome: { status: 'BLOCKED', reason: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', sideEffects: 0, mayHavePublished: false } };
+      outcome: { status: 'BLOCKED', reason: 'TRAIN_SINGLE_GREEN_NOT_PROVEN', sideEffects: 0, mayHavePublished: false, ...(queueFacts && p.scheduling ? { scheduling: p.scheduling } : {}) } };
   };
   const policy = rawPolicy({ contract: POLICY_CONTRACT_V8, train: { enabled: 'on', nonFrontRuns: true, maintenanceEveryMs: 10 * 60_000, maintenanceMaxPerDay: 200,
     ...TRAIN_DEFAULTS, sweep: 'audit', landing: 'push', batchMax: 3 } });
   const board = new StatusBoard({ clock: () => e.now });
-  f = await executorFixture(t, { now: e.now, engine, status: board, policy });
+  f = await executorFixture(t, { now: e.now, engine, companion, status: board, policy });
   f.exec.trainTakeoverDone = true;
   await f.exec.trainRecover();
-  // companion-main.mjs: the poller's landing port reads the status file the executor writes
+  // companion-main.mjs: the poller's landing port reads the status file the executor writes (out.sees: the status as the poller read it
+  // earlier, when that reading is not the board of now; E10b). Every trigger it writes is counted (out.triggers).
   const status = () => parseStatus(Buffer.from(JSON.stringify(board.snapshot())));
-  const poller = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => f.clock(), writeTrigger: async v => { await f.drop(Buffer.from(JSON.stringify(v))); },
-    landing: async () => pollerLandingOf(status()) });
+  const out = { engine, real, board, status, sees: null, triggers: [] };
+  const poller = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => f.clock(),
+    writeTrigger: async v => { out.triggers.push(v); await f.drop(Buffer.from(JSON.stringify(v))); },
+    landing: async () => pollerLandingOf(out.sees ?? status()) });
   // origin/main's poller (no landing port) over the same world, for comparison
   const plain = new Poller({ repo: REPO, ghExe: 'gh', run: pollerRun(e), clock: () => f.clock(), writeTrigger: async () => { throw new Error('origin/main proposes nothing here'); } });
-  return { f, engine, real, board, status, poller, plain };
+  // A restart of the service (E10a): a new executor over the same state directory (ledger, queue, inbox, receipts from disk); nothing of the
+  // old process's memory (its trainLast) survives. The status file stays as the old process left it until the new one writes.
+  const restart = async () => {
+    f = await executorFixture(t, { now: f.clock(), engine, companion, status: board, policy, root: f.root });
+    f.exec.trainTakeoverDone = true;
+    await f.exec.trainRecover();
+    out.f = f;
+  };
+  return Object.assign(out, { f, poller, plain, restart });
 }
 const rowsOf = f => [...f.queue.data.rows].map(r => ({ pr: r.pr, state: r.state, headSha: r.current?.headSha ?? null, baseSha: r.current?.baseSha ?? null, batchRoute: r.current?.batchRoute ?? null }));
 const passOf = p => p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]);
@@ -2047,4 +2080,162 @@ test('bc982192 E8: stamped push at birth, then the route turns github-merge -> s
   assert.ok(prs.every(pr => !e.W.pulls.get(pr).merged));
   assert.ok(engine.trainRuns.slice(-5).every(x => !x.openFrontBatch), diag);
   assert.deepEqual(passOf(r.poller), prs.map(pr => [pr, false, 'merge-main', 2]));
+});
+
+// ---- bc982192 C3 rework 2 (FABLE-c3-b1b2-20261122): what a batch does when a reading is missing ----
+// The rules read (GET /rules/branches/main) fails while e.rulesFail is set (a 502, as the network gives it): true, every read (stage 10
+// and stage 8); 'ten', stage 10's reads only.
+function flakyRules(e) {
+  const read = e.gh.readBranchRules;
+  e.rulesFail = false;
+  e.gh.readBranchRules = async (...a) => { if (e.rulesFail === true || (e.rulesFail === 'ten' && e.inTen)) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return read(...a); };
+}
+const restampedOf = async f => (await f.receipts.latest(['batch-route-restamped'], 50)).map(x => x.value.body);
+const terminalCodes = async f => (await f.receipts.latest(['stage-terminal'], 500)).map(x => x.value.body?.failureCode).filter(Boolean);
+const diagOf = async r => JSON.stringify({ rows: rowsOf(r.f), stages: r.engine.stages.filter(s => s.stage !== 10), bundles: r.engine.bundles, refused: r.engine.refused,
+  stage1: r.engine.stage1, stage8: r.engine.stage8, triggers: r.triggers.map(g => [g.pr, g.baseSha]), restamped: (await restampedOf(r.f)).length,
+  ten: r.engine.trainRuns.map((x, i) => [r.engine.trainAt[i], x.decision, x.landing?.route ?? null, x.rules?.appScans ?? null, x.openFrontBatch?.pr ?? null]) });
+
+// E9 (B1): the batches are stamped push at birth; after the first one landed, one stage 10 cannot read main's rules (the real
+// runTrain: its summary carries no appScans), and the later stamped batches plan before stage 10 reads them again. Their scan plan comes
+// from the stamp, never from that reading: no stage 2-7, no REFS_MAIN_BASE_CHANGED; once the rules are read again all three land.
+test('bc982192 E9 (B1): stamped push, one stage 10 reads no rules before the later batches plan -> still no scan stage, never REFS_MAIN_BASE_CHANGED, all three land', async t => {
+  const prs = [1441, 1442, 1443];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  flakyRules(e);
+  const r = await residentOver(t, e, { queueFacts: true });
+  const { engine } = r;
+  const start = r.f.clock(), heads = prs.map(e.head);
+  const landed = () => prs.every(pr => e.W.pulls.get(pr).merged);
+  let failedAt = null, mark = null;
+  const ticks = [];
+  for (let i = 0; i < 60 && !landed(); i++) {
+    await r.poller.pass();
+    const x = await r.f.exec.tick();
+    ticks.push([(r.f.clock() - start) / 60_000, x?.state ?? null, x?.reason ?? x?.failureCode ?? null]);
+    // the first batch landed: the next stage 10 (the one that adopts the next front) reads no rules, and the next batch plans in that tick
+    if (mark === null && engine.stage8.some(x => x.front && x.status === 'SETTLED')) { e.rulesFail = 'ten'; mark = engine.trainRuns.length; }
+    else if (e.rulesFail && engine.trainRuns.length > mark) { e.rulesFail = false; failedAt = engine.trainAt[mark]; }
+    r.f.advance(60_000);
+  }
+  const diag = `${await diagOf(r)} ticks ${JSON.stringify(ticks)}`;
+  // the scene happened: a stage 10 that read no rules (no appScans), and a stamped batch planned after it, before the next stage 10
+  assert.ok(failedAt !== null, diag);
+  assert.equal(engine.trainRuns[mark].rules?.appScans ?? null, null, diag);
+  const next = engine.trainAt[mark + 1] ?? Infinity;
+  assert.ok(engine.stages.some(s => s.stage === 1 && !s.front && s.at >= failedAt && s.at < next), `a stamped batch planned on the summary without appScans: ${diag}`);
+  // B1: the plan came from the stamp
+  assert.deepEqual(engine.stages.filter(s => s.stage >= 2 && s.stage <= 7), [], diag);
+  assert.deepEqual(engine.refused, [], diag);
+  assert.ok(!(await terminalCodes(r.f)).includes('REFS_MAIN_BASE_CHANGED'), diag);
+  const notRequired = (await r.f.receipts.latest(['scans-not-app-required'], 50)).map(x => x.value.body?.pr);
+  assert.ok(prs.every(pr => notRequired.includes(pr)), diag);
+  // and the target scene still holds: all three land, nobody merged main into a PR, no new commit
+  assert.ok(landed(), diag);
+  assert.deepEqual(prs.map(e.head), heads);
+  assert.ok(r.f.clock() - start <= 60 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// E10a (B2, a restart): the status file says train.batchRoute push (the old process); the new executor has no stage 10 reading yet. The
+// poller proposes each head on its merge base from that file; the new executor's first intake stamps nothing, the bundle stops the rows
+// (RESIDENT_BASE_MOVED, zero side effects). Once stage 10 reads push the executor stamps them itself and queues them again (one receipt
+// each); they land. The poller wrote one trigger per head; no head changed.
+test('bc982192 E10a (B2, restart): status push, new executor without a reading -> no stamp, bundle stops the rows -> stage 10 reads push -> restamped once each -> land within 30 minutes', async t => {
+  const prs = [1451, 1452];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  const r = await residentOver(t, e);
+  for (let i = 0; i < 4 && r.f.exec.batchRoute() !== 'push'; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  assert.equal(pollerLandingOf(r.status()), 'push', 'the old process wrote push');
+  await r.restart();
+  assert.equal(r.f.exec.batchRoute(), null, 'the new process has no stage 10 reading');
+  const start = r.f.clock(), T0 = e.W.T0, heads = prs.map(e.head);
+  await r.poller.pass();
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, T0]), 'proposed on the merge base from the old status');
+  await r.f.exec.tick();
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.batchRoute]), prs.map(pr => [pr, 'STOPPED', null]), await diagOf(r));
+  assert.ok(prs.every(pr => r.f.queue.row(pr).reason === 'RESIDENT_BASE_MOVED'));
+  assert.deepEqual(r.engine.stages.filter(s => s.stage !== 10), [], 'nothing ran past the bundle');
+  const landed = () => prs.every(pr => e.W.pulls.get(pr).merged);
+  for (let i = 0; i < 40 && !landed(); i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.ok(landed(), diag);
+  const restamped = await restampedOf(r.f);
+  assert.deepEqual(restamped.map(x => [x.pr, x.headSha, x.baseSha]).sort((a, b) => a[0] - b[0]), prs.map(pr => [pr, e.head(pr), T0]), diag);
+  assert.equal(r.triggers.length, prs.length, `one trigger per head: ${diag}`);
+  assert.deepEqual(prs.map(e.head), heads, 'nobody merged main into a PR');
+  assert.equal(e.W.pushes.length, 1, diag);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// E10b (B2, a jitter): the executor is push and the poller read that; then one stage 10 cannot read main's rules (route park) before the
+// triggers are taken in; the next stage 10 reads push again. As E10a: one restamp receipt per row, landed, one trigger per head.
+test('bc982192 E10b (B2, jitter): the poller read push, one stage 10 reads no rules before the intake -> no stamp, stopped -> restamped once -> lands', async t => {
+  const prs = [1461];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  flakyRules(e);
+  const r = await residentOver(t, e);
+  for (let i = 0; i < 4 && r.f.exec.batchRoute() !== 'push'; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  assert.equal(r.f.exec.batchRoute(), 'push');
+  r.sees = r.status(); // what the poller read
+  e.rulesFail = true;
+  const runs = r.engine.trainRuns.length;
+  for (let i = 0; i < 15 && r.engine.trainRuns.length === runs; i++) { r.f.advance(60_000); await r.f.exec.tick(); }
+  e.rulesFail = false;
+  assert.equal(r.engine.trainRuns.length, runs + 1, 'one stage 10 that read no rules');
+  assert.equal(r.f.exec.batchRoute(), null);
+  await r.poller.pass();
+  r.sees = null;
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]), [[1461, e.W.T0]]);
+  const start = r.f.clock();
+  await r.f.exec.tick();
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.batchRoute]), [[1461, 'STOPPED', null]], await diagOf(r));
+  const landed = () => e.W.pulls.get(1461).merged;
+  for (let i = 0; i < 40 && !landed(); i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.ok(landed(), diag);
+  assert.equal((await restampedOf(r.f)).length, 1, diag);
+  assert.equal(r.triggers.length, 1, diag);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
+});
+
+// E11 (the switch day) and E12 ①: a head up to date under route github-merge is proposed on main's tip; main moves; the bundle stops its row.
+// While the route stays github-merge nothing brings it back (E12 ①: GitHub's way, the author or the bot merges main). Then main's rules turn
+// push with no scan from this App: the poller's key (pr, head, merge base) is the one it already sent, so it sends nothing; the executor
+// restamps the row and it lands.
+async function switchDay(t) {
+  const e = await world(t, { prs: [1471], rules: 'today', queued: false, admitted: false, appScans: [] });
+  const r = await residentOver(t, e);
+  for (let i = 0; i < 4 && !r.engine.trainRuns.length; i++) { await r.f.exec.tick(); r.f.advance(60_000); }
+  assert.equal(r.engine.trainRuns.at(-1).landing?.route, 'github-merge');
+  const M = e.main();
+  await r.poller.pass();
+  assert.deepEqual(r.triggers.map(g => [g.pr, g.baseSha]), [[1471, M]]);
+  const moved = h('E11-other');
+  e.W.commits.set(moved, { sha: moved, tree: h('tree:E11-other'), parents: [M] }); e.W.content.set(moved, new Set([...e.W.content.get(M), 'other']));
+  e.W.refs.set('heads/main', moved);
+  await r.f.exec.tick();
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.baseSha, x.batchRoute]), [[1471, 'STOPPED', M, null]], await diagOf(r));
+  assert.equal(r.f.queue.row(1471).reason, 'RESIDENT_BASE_MOVED');
+  return { e, r, M };
+}
+test('bc982192 E12 ①: route github-merge, a row the bundle stopped (main moved) -> never restamped, stays STOPPED', async t => {
+  const { e, r } = await switchDay(t);
+  for (let i = 0; i < 25; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.equal(r.f.exec.batchRoute(), null);
+  assert.deepEqual(rowsOf(r.f).map(x => [x.pr, x.state, x.batchRoute]), [[1471, 'STOPPED', null]], diag);
+  assert.deepEqual(await restampedOf(r.f), [], diag);
+  assert.equal(e.W.pulls.get(1471).merged, false);
+});
+test('bc982192 E11 (switch day): stopped under github-merge, then the rules turn push with no scan from this App -> restamped, lands; the poller sends nothing again', async t => {
+  const { e, r, M } = await switchDay(t);
+  e.W.setRules('push');
+  const start = r.f.clock(), head = e.head(1471);
+  for (let i = 0; i < 40 && !e.W.pulls.get(1471).merged; i++) { await r.poller.pass(); await r.f.exec.tick(); r.f.advance(60_000); }
+  const diag = await diagOf(r);
+  assert.ok(e.W.pulls.get(1471).merged, diag);
+  assert.deepEqual((await restampedOf(r.f)).map(x => [x.pr, x.headSha, x.baseSha]), [[1471, head, M]], diag);
+  assert.equal(r.triggers.length, 1, `the poller did not send again: ${diag}`);
+  assert.equal(e.head(1471), head);
+  assert.ok(r.f.clock() - start <= 30 * 60_000, `landed after ${(r.f.clock() - start) / 60_000} minutes`);
 });

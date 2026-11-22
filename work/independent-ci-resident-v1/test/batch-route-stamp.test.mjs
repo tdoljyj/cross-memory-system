@@ -11,6 +11,7 @@ import { RunQueue, validateQueue } from '../src/queue.mjs';
 import { ResidentExecutor } from '../src/executor.mjs';
 import { StatusBoard, parseStatus, pollerLandingOf } from '../src/status.mjs';
 import { WindowsEngine } from '../src/engine-windows.mjs';
+import { HEAVY_ROLES } from '../src/policy.mjs';
 import { executorFixture, fakeEngine, triggerBytes, tempRoot, TEST_NODE, TEST_NODE_SHA } from './helpers.mjs';
 
 const H = n => String(n).repeat(40).slice(0, 40);
@@ -195,4 +196,116 @@ test('engine: the descriptor\'s baseRule and the invoker\'s --batch-route come f
     }
     for (const s of [2, 3, 4, 5, 6, 7]) assert.equal((await engine.stageArgs(s, stamped.batch)).includes('--batch-route'), false, `stage ${s}`);
   }
+});
+
+// E9u (B1, FABLE-c3-b1b2 §2): a batch stamped push plans its scans from the stamp (the stamp was given only while stage 10 found no scan
+// required from this App), never from what the newest stage 10 read: no summary (a restart), a summary without appScans (a failed read),
+// or one naming every scan (the Owner pinned them back). A batch without the stamp plans exactly as before.
+test('E9u (B1): localPlan of a batch stamped push runs no scan whatever stage 10 read last; a batch without the stamp plans as before', async () => {
+  const plan = async (subject, trainLast) => {
+    const receipts = [];
+    const self = { trainLast, clock: () => NOW, frontScansReused: () => [], ledger: { async writePlanIntent() {}, async writePlan() {} },
+      async receipt(type, body) { receipts.push([type, body]); } };
+    const p = await ResidentExecutor.prototype.localPlan.call(self, 'a'.repeat(64), subject, NOW);
+    return { local: p.local.map(l => l.role), receipts: receipts.map(([type]) => type) };
+  };
+  const sh = { pr: 50, headSha: H(1), baseSha: B };
+  const front = { ...sh, testSha: H(2) };
+  const lasts = [['no summary (a restart)', null], ['a summary without appScans (a failed read)', Object.freeze({ landing: { route: 'park' } })],
+    ['every scan from this App', Object.freeze({ landing: { route: 'push' }, appScans: [...HEAVY_ROLES] })], ['gitleaks from this App', Object.freeze({ landing: { route: 'push' }, appScans: ['gitleaks'] })]];
+  for (const [why, last] of lasts) {
+    for (const s of [sh, front]) {
+      const stamped = await plan({ ...s, batchRoute: 'push' }, last);
+      assert.deepEqual(stamped.local, [], `stamped ${s.testSha ? 'front' : 'S = H'}: ${why}`);
+      assert.ok(stamped.receipts.includes('scans-not-app-required'), why);
+    }
+    // without the stamp: as on origin/main (not read: every scan; read: the scans still required from this App)
+    const expected = last?.appScans ? HEAVY_ROLES.filter(r => last.appScans.includes(r)) : [...HEAVY_ROLES];
+    assert.deepEqual((await plan(sh, last)).local, expected, `no stamp: ${why}`);
+    assert.deepEqual((await plan(front, last)).local, expected, `no stamp, front: ${why}`);
+  }
+  assert.deepEqual((await plan(sh, Object.freeze({ landing: { route: 'push' }, appScans: [] }))).local, [], 'no stamp, nothing required: as before');
+});
+
+// E12 (B2, FABLE-c3-b1b2 §3): restampStopped gives the stamp to exactly the rows that stopped with zero side effects on a moved base before
+// the push route could stamp them: STOPPED for RESIDENT_BASE_MOVED, stopped as superseded (the bundle's ignored ending, executor#fail, or
+// stopBase; a head that started ends on the failure table's class, queue or unknown), S = H, not stamped. Each goes to the tail QUEUED,
+// stamped push, its stop cleared. Never a stamped row (no loop: at most once per head), a front row, a started head, a running row or
+// another stop; never past the queue's depth (a later call takes it once there is room).
+test('E12 queue restampStopped: only an unstamped S = H row stopped as superseded on a moved base; once; within the depth', async t => {
+  const RBM = 'RESIDENT_BASE_MOVED', key = n => String(n).repeat(64).slice(0, 64);
+  const q = await RunQueue.open(path.join(await tempRoot(t), 'q'), () => NOW);
+  const ran = (pr, outcome, stamp = null) => {
+    q.offer({ pr, headSha: H(pr), baseSha: B }, NOW, { ...opts, batchRoute: stamp });
+    q.begin(pr, H(pr), key(pr), 'queued', NOW);
+    q.settle(pr, H(pr), outcome, NOW);
+  };
+  // restamped: its own bundle stopped it (executor.mjs#fail: ignored, superseded), and one stopBase stopped with it
+  ran(1, { kind: 'ignored', code: RBM, klass: 'superseded' });
+  q.offer({ pr: 2, headSha: H(2), baseSha: B }, NOW, opts);
+  // ③ a front row stopBase stopped
+  q.offerFront({ pr: 3, headSha: H(3), baseSha: B, testSha: H(4), attempt: 1 }, NOW, { depth: 20 });
+  assert.equal(q.stopBase(B, RBM, NOW), 2);
+  // ② a stamped row that stopped on RESIDENT_BASE_MOVED all the same (its bundle found the base off main)
+  ran(5, { kind: 'ignored', code: RBM, klass: 'superseded' }, 'push');
+  // ④ a head that started: stage 8's RESIDENT_BASE_MOVED burns it on the failure table's class (queue), or unknown
+  ran(6, { kind: 'burned', code: RBM, klass: 'queue' });
+  ran(7, { kind: 'burned', code: RBM, klass: 'unknown' });
+  // other stops: a superseded release cap, another code
+  ran(8, { kind: 'ignored', code: 'TRAIN_BATCH_MEMBER_MOVED', klass: 'superseded' });
+  q.offer({ pr: 9, headSha: H(9).replace(/^9/, 'c'), baseSha: B }, NOW, opts);
+  q.stopAtCap(9, H(9).replace(/^9/, 'c'), RBM, NOW, 'superseded');
+  const before = JSON.stringify(q.data.rows.filter(r => ![1, 2].includes(r.pr)));
+  const maxOrder = Math.max(...q.data.rows.map(r => r.order));
+  assert.deepEqual([1, 2, 3, 5, 6, 7, 8].map(n => q.row(n).state), Array(7).fill('STOPPED'));
+  const out = q.restampStopped(RBM, NOW + 5, { depth: 20 });
+  assert.deepEqual(out.map(x => [x.pr, x.headSha, x.baseSha]), [[1, H(1), B], [2, H(2), B]]);
+  for (const n of [1, 2]) {
+    const r = q.row(n);
+    assert.deepEqual([r.state, r.reason, r.stopKind, r.stopClass, r.current.batchRoute, r.current.headSha, r.current.baseSha, r.running],
+      ['QUEUED', null, null, null, 'push', H(n), B, null], String(n));
+    assert.ok(r.order > maxOrder, 'to the tail');
+  }
+  assert.equal(JSON.stringify(q.data.rows.filter(r => ![1, 2].includes(r.pr))), before, 'no other row changed');
+  validateQueue(structuredClone(q.data));
+  // once: a restamped row that stops again on RESIDENT_BASE_MOVED is not given back
+  q.begin(1, H(1), key(1), 'queued', NOW + 6);
+  q.settle(1, H(1), { kind: 'ignored', code: RBM, klass: 'superseded' }, NOW + 6);
+  assert.deepEqual(q.restampStopped(RBM, NOW + 7, { depth: 20 }), []);
+  assert.equal(q.row(1).state, 'STOPPED');
+  // ⑤ the queue full: none this time; once there is room, the next call takes it
+  const full = await RunQueue.open(path.join(await tempRoot(t), 'full'), () => NOW);
+  full.offer({ pr: 11, headSha: H(1), baseSha: B }, NOW, opts);
+  full.stopBase(B, RBM, NOW);
+  full.offer({ pr: 12, headSha: H(2), baseSha: H(3) }, NOW, opts);
+  full.offer({ pr: 13, headSha: H(4), baseSha: H(3) }, NOW, opts);
+  assert.deepEqual(full.restampStopped(RBM, NOW + 1, { depth: 2 }), []);
+  assert.equal(full.row(11).state, 'STOPPED');
+  full.closePr(13, NOW + 2);
+  assert.deepEqual(full.restampStopped(RBM, NOW + 3, { depth: 2 }).map(x => x.pr), [11]);
+  assert.deepEqual([full.row(11).state, full.row(11).current.batchRoute], ['QUEUED', 'push']);
+});
+
+// E12 at the executor: the tick calls it only while batchRoute() is push, after the intake; each restamped row is on disk and receipted once.
+test('E12 executor: the tick restamps only while the route is push, saves the queue and writes one batch-route-restamped per row', async t => {
+  const f = await executorFixture(t);
+  f.queue.offer({ pr: 21, headSha: H(2), baseSha: B }, f.clock(), opts);
+  f.queue.stopBase(B, 'RESIDENT_BASE_MOVED', f.clock());
+  await f.queue.save();
+  const restamped = async () => (await f.receipts.latest(['batch-route-restamped'], 10)).map(x => x.value.body);
+  // route not push (the fixture's train is off): nothing
+  f.exec.trainLast = Object.freeze({ landing: { route: 'push' }, appScans: [] });
+  assert.equal(f.exec.batchRoute(), null);
+  await f.exec.restampStopped();
+  assert.equal(f.queue.row(21).state, 'STOPPED');
+  assert.deepEqual(await restamped(), []);
+  f.exec.policy = { ...f.exec.policy, train: { ...f.exec.policy.train, enabled: 'on', landing: 'push' } };
+  assert.equal(f.exec.batchRoute(), 'push');
+  await f.exec.restampStopped();
+  assert.deepEqual([f.queue.row(21).state, f.queue.row(21).current.batchRoute], ['QUEUED', 'push']);
+  assert.deepEqual((await restamped()).map(x => [x.pr, x.headSha, x.baseSha]), [[21, H(2), B]]);
+  const disk = await RunQueue.open(path.join(f.root, 'state', 'queue'), f.clock);
+  assert.equal(disk.row(21).current.batchRoute, 'push', 'on disk');
+  await f.exec.restampStopped();
+  assert.equal((await restamped()).length, 1, 'once');
 });

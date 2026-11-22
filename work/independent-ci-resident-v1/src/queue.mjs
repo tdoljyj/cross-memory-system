@@ -115,8 +115,9 @@ const time = v => Number.isSafeInteger(v) && v > 0;
 // A train front commit (step 3c-2b, DESIGN §41.4; offerFront) also names its tested commit S and its front attempt (1 or 2).
 const frontOf = c => (Object.hasOwn(c, 'testSha') ? { testSha: c.testSha, frontAttempt: c.frontAttempt } : {});
 // bc982192 (C3, plan 戊): the batch route, stamped once when the commit becomes current (offer, offerFront, readmit; the executor's
-// batchRoute(): the train on, stage 10's effective route push and no scan required from this App), never changed afterwards. Only
-// 'push' is ever stored; absent is main's tip as the batch base (github-merge, as on origin/main).
+// batchRoute(): the train on, stage 10's effective route push and no scan required from this App). Changed afterwards only by
+// restampStopped (B2): a head stopped for lack of the stamp is stamped once. Only 'push' is ever stored; absent is main's tip as the
+// batch base (github-merge, as on origin/main).
 const routeOf = c => (c?.batchRoute === 'push' ? { batchRoute: 'push' } : {});
 const commitOf = c => ({ headSha: c.headSha, baseSha: c.baseSha, seq: c.seq, firstAt: c.firstAt ?? null, ...frontOf(c), ...routeOf(c) });
 
@@ -365,6 +366,25 @@ export class RunQueue {
       n += 1;
     }
     return n;
+  }
+
+  // bc982192 (B2, FABLE-c3-b1b2 §3): while the batch route is push, a row whose current head stopped with code (RESIDENT_BASE_MOVED)
+  // as superseded before any side effect (the bundle or stopBase) because it carried no stamp, and tests its head (S = H), gets the
+  // stamp and is queued again at the tail, first come first served, as long as the queue has room (depth). A stamped row never
+  // qualifies again: once per head. A burned row (stage 8 after start: stopClass queue or unknown), a front row, another code or a
+  // release cap is left as it is. Returns the rows [{ pr, headSha, baseSha }].
+  restampStopped(code, now, { depth }) {
+    const out = [];
+    for (const r of [...this.data.rows].sort((a, b) => a.order - b.order)) {
+      if (r.running || r.state !== 'STOPPED' || r.reason !== code || r.stopKind !== 'burned' || r.stopClass !== 'superseded' || !r.current) continue;
+      if (Object.hasOwn(r.current, 'testSha') || r.current.batchRoute === 'push') continue;
+      if (this.live().length >= depth) break;
+      r.current = { ...r.current, batchRoute: 'push' };
+      Object.assign(r, { order: this.seq(), level: 0, levelKind: null, nextAt: null, poke: null, stopKind: null, stopClass: null, origin: 'queued', deferred: null, deferUntil: null });
+      this.setState(r, 'QUEUED', null, now);
+      out.push({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha });
+    }
+    return out;
   }
 
   // The rows that may be tried now, in the order the executor tries them (design v0.5 §4.3 steps 5 and 6; v0.6 §7

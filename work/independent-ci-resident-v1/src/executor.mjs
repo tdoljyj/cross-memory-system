@@ -1818,6 +1818,23 @@ export class ResidentExecutor {
     return this.policy.train.enabled === 'on' && last?.landing?.route === 'push' && Array.isArray(last.appScans) && last.appScans.length === 0 ? 'push' : null;
   }
 
+  // bc982192 (B2, FABLE-c3-b1b2 §3): a head born while this process had no push reading yet (a restart: trainLast lives in memory; a
+  // stage 10 that could not read the rules) carries no stamp, so its bundle wanted main as its base and stopped it with
+  // RESIDENT_BASE_MOVED, superseded, before any side effect (or stopBase did). The poller and the queue never offer that same head
+  // again (poller.mjs: pr:head:base seen; queue.offer: row.seen), so it would stay stopped until a new commit. While the route is push,
+  // such a row is stamped and queued again, once per head (a stamped row never qualifies again), within the queue depth. The ledger
+  // released it unexecuted (SUPERSEDED), so it runs. One receipt per row. Returns the rows [{ pr, headSha, baseSha }].
+  async restampStopped() {
+    if (this.batchRoute() !== 'push') return [];
+    const rows = this.queue.restampStopped(RESIDENT_BASE_MOVED, this.clock(), { depth: this.policy.limits.queueDepth });
+    if (!rows.length) return rows;
+    await this.persistQueue();
+    for (const r of rows) {
+      try { await this.receipt('batch-route-restamped', r); } catch { /* a view: the row is queued and saved */ }
+    }
+    return rows;
+  }
+
   // The status board's `train` (status.mjs): the mode and the newest summary as in step 3c-1; the sweep, the revoke-head request,
   // onSince and NOT_ON_DUTY only when they have a value.
   trainStatus() {
@@ -2014,6 +2031,8 @@ export class ResidentExecutor {
     // Triggers go into the run queue first (phase 2, step 1); the queue then follows the ledger for any row a crash left
     // marked running.
     await this.intake();
+    // bc982192 (B2, FABLE-c3-b1b2 §3): a head the bundle stopped only because it was born without the stamp is stamped and queued again.
+    if (this.batchRoute() === 'push') await this.restampStopped();
     // DESIGN §72: the rule first, with this tick's triggers: a resting batch that no longer stands ends before anything tries it.
     const ended = await this.endNotStanding();
     if (ended) return ended;
@@ -4110,7 +4129,10 @@ export class ResidentExecutor {
     // R3 lean (DESIGN §82 item 1): a scan main's rules no longer require from App 5368905 (they require it from GitHub Actions, where it
     // runs beside the tests) is not run here at all: stage 8 never waits for it. The rules as the newest stage 10 read them (rulesetFacts
     // appScans); not read (no summary yet, a failed read, a Source before R3): every scan runs, as before.
-    const appScans = this.trainLast?.appScans ?? null;
+    // bc982192 (B1, FABLE-c3-b1b2 §2): a batch stamped push was born on a reading that found no scan required from this App
+    // (batchRoute()), and its base is the merge base, which stages 2-7 refuse (refs: main must be the base). Its plan comes from the
+    // stamp, never from a later stage 10 that could not read the rules: no scan, whatever trainLast holds now.
+    const appScans = subject.batchRoute === 'push' ? [] : this.trainLast?.appScans ?? null;
     const notRequired = appScans ? HEAVY_ROLES.filter(r => !appScans.includes(r)) : [];
     const roles = (front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES]).filter(r => !notRequired.includes(r));
     const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';
