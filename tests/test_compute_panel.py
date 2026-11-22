@@ -130,7 +130,7 @@ class ResidentTests(unittest.TestCase):
         self.assertEqual((summary["batches"], summary["failure_rate"]), (1, 0.0))
 
     def test_a_hint_that_never_ran_is_not_a_batch(self) -> None:
-        rows = [status(10, "failure", "落后 main 3 个提交：请合入最新 main 并推送")]
+        rows = [status(10, "pending", "落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]
         self.assertEqual(panel.resident_batches(rows), {})
 
     def test_burned_head_and_failure_rate(self) -> None:
@@ -142,7 +142,7 @@ class ResidentTests(unittest.TestCase):
 
     def test_error_row_wins_as_halt(self) -> None:
         combined = [
-            (1, {"statuses": [status(1, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
+            (1, {"statuses": [status(1, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),
             (2, {"statuses": [status(3, "error", "执行器已停机（X），等 Owner 复位")]}),
         ]
         row = panel.resident_latest(combined)["turing"]
@@ -158,7 +158,7 @@ class ResidentTests(unittest.TestCase):
         self.assertEqual((row["halted"], row["activity"]), (False, "running"))
 
     def test_queue_wait_ignores_hints_before_the_queue(self) -> None:
-        rows = [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送"),
+        rows = [status(90, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）"),
                 status(30, "pending", "排队第 2 位"),
                 status(20, "pending", "当班：运行中：第 0 段（准备）"),
                 status(10, "success", "已完成")]
@@ -171,7 +171,7 @@ class ResidentTests(unittest.TestCase):
 
     def test_running_row_beats_a_newer_hint(self) -> None:
         combined = [
-            (1, {"statuses": [status(1, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
+            (1, {"statuses": [status(1, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),
             (2, {"statuses": [status(4, "pending", "当班：运行中：第 4 段（trivy 扫描）")]}),
         ]
         self.assertEqual(panel.resident_latest(combined)["turing"]["activity"], "running")
@@ -332,11 +332,22 @@ class StallTests(unittest.TestCase):
 
     def test_finished_hinted_and_draft_heads_are_no_work(self) -> None:
         combined = [(1, {"sha": "1" * 40, "statuses": [status(90, "success", "已完成：常驻执行器跑完八段，检查已发布")]}),
-                    (2, {"sha": "2" * 40, "statuses": [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
+                    (2, {"sha": "2" * 40, "statuses": [status(90, "pending", "落后 main 1 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）")]}),
+                    # A node on an older package still writes the hint as failure.
+                    (9, {"sha": "9" * 40, "statuses": [status(90, "failure", "落后 main 1 个提交：请合入最新 main 并推送")]}),
                     (3, {"sha": "3" * 40, "statuses": [status(90, "error", "执行器停机（X），等 Owner 复位")]}),
                     (4, {"sha": "4" * 40, "statuses": [{"context": "gitleaks", "state": "pending", "created_at": at(90)}]})]
-        pulls = [{"number": 1}, {"number": 2}, {"number": 3, "draft": True}, {"number": 4}]
+        pulls = [{"number": 1}, {"number": 2}, {"number": 3, "draft": True}, {"number": 4}, {"number": 9}]
         self.assertEqual(self.stall(combined, pulls), [])
+
+    def test_a_behind_head_waiting_for_the_robot_is_no_stall(self) -> None:
+        # Task bc982192: a behind head is pending now, "落后 main …" with no 当班 prefix, until the robot
+        # (clued-front-main-merge) takes main in; waiting past the duty window for its turn is not a stall.
+        line = "落后 main 3 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）"
+        behind = [(8, {"sha": "8" * 40, "statuses": [status(90, "pending", line)]})]
+        client = self.History([status(90, "pending", line), status(120, "pending", "当班：排队第 1 位")])
+        self.assertEqual(self.stall(behind, client=client), [])
+        self.assertEqual(client.paths, [])
 
     def test_a_silent_node_is_a_stall_after_the_duty_window(self) -> None:
         # The node stopped writing (machine off, companion gone): its last 当班 ages past the window.
