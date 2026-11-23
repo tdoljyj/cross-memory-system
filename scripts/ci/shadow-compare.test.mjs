@@ -17,15 +17,10 @@ const checksRoute = (sha, page = 1) => `/commits/${sha}/check-runs?filter=all&pe
 const sha = n => n.toString(16).padStart(40, '0');
 
 let nextId = 1000;
-// 每条 check-run 带 check_suite.id（GitHub 列表实况）。所在 suite 的结论默认跟这条一致（一次运行只有这一项）；
-// suiteConclusion 指定时就是“检查红、运行被取消”这类形状。api() 按这张表回答 /check-suites/<id>。
-const SUITES = new Map();
-function run(name, app, conclusion = 'success', { status = 'completed', started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', title = null, id,
-  suite, suiteConclusion } = {}) {
-  const runId = id ?? nextId++, suiteId = suite ?? 900_000_000 + runId;
-  if (suiteConclusion !== undefined || !SUITES.has(suiteId)) SUITES.set(suiteId, suiteConclusion !== undefined ? suiteConclusion : status === 'completed' ? conclusion : null);
-  return { id: runId, name, app: { id: app }, status, conclusion: status === 'completed' ? conclusion : null,
-    started_at: started, completed_at: status === 'completed' ? completed : null, output: { title }, check_suite: { id: suiteId } };
+// suite：所在的 check suite（同一次运行）；不给就不带 check_suite。
+function run(name, app, conclusion = 'success', { status = 'completed', started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', title = null, id, suite } = {}) {
+  return { id: id ?? nextId++, name, app: { id: app }, status, conclusion: status === 'completed' ? conclusion : null,
+    started_at: started, completed_at: status === 'completed' ? completed : null, output: { title }, ...(suite ? { check_suite: { id: suite } } : {}) };
 }
 // 一个 head 上两边七项全绿，另带无关检查（含两边的准入，它们不在比对里）；override(name, side) 返回 undefined 表示缺这一条，返回数组表示替换。
 function greenRuns({ started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', hostedCompleted = '2026-11-23T01:12:00Z', override = () => null } = {}) {
@@ -49,8 +44,6 @@ function api(routes) {
   const calls = [];
   return { calls, async get(route) {
     calls.push(route);
-    const suite = /^\/check-suites\/(\d+)$/.exec(route);
-    if (suite && !Object.hasOwn(routes, route) && SUITES.has(Number(suite[1]))) return { id: Number(suite[1]), conclusion: SUITES.get(Number(suite[1])) };
     assert.ok(Object.hasOwn(routes, route), `未录制 API 请求：${route}`);
     if (routes[route]?.error) throw new Error(routes[route].error);
     return structuredClone(routes[route]);
@@ -393,107 +386,101 @@ test('U11 同一 sha 在 PR A 里被取代、在 PR B 里是当前：按当前�
   assert.equal(pairOf(head, 'trivy').verdict, '在跑');
 });
 
-// 托管运行被取消（FABLE-shadow-superseded-head-20261124 方案甲）：块 4 起汇总作业 if: always()，运行被并发取消后它照样执行，
-// 读到 needs 是 cancelled 就退出 1，hosted-ci-suites-windows 成了 failure；但它所在的 check suite（那次运行）结论是 cancelled。
-// 样本取自现场 PR #1252 的被取代 head cfec87b：框架 ci-suites-windows 14:33 绿（suite 122102242861），
-// 托管两条 hosted-ci-suites-windows 同在 suite 122102242675，15:10 被取消。块 4 前这两条检查本身是 cancelled；这里换成块 4 后的 failure。
-const CFEC = 'cfec87bdf26614d5b639b49e04a42ffc737cb60d';
-const CFEC_HOSTED_SUITE = 122102242675, CFEC_FRAMEWORK_SUITE = 122102242861;
-const suiteRoute = id => `/check-suites/${id}`;
-const cancelledWindows = ({ t, framework = 'success', suiteConclusion = 'cancelled', suite = CFEC_HOSTED_SUITE, frameworkSuite } = {}) => (check, side) => {
-  if (check !== 'ci-suites-windows') return null;
-  if (side === 'framework') return [run('ci-suites-windows', 15368, framework, { started: t, completed: t, suite: frameworkSuite })];
-  return [1, 2].map(() => run('hosted-ci-suites-windows', 15368, 'failure', { started: t, completed: t, suite, suiteConclusion }));
-};
-const suiteCalls = calls => calls.filter(c => c.startsWith('/check-suites/'));
+// 同一运行里先有取消、红检查之后才开始：这一侧无结论（FABLE-shadow-superseded-head-20261124 §R2）。
+// 现场夹具是 gh api GET /commits/<sha>/check-runs?filter=all 原样抓下的（2026-11-24 04:34 北京时间），同一次运行的检查共用一个 suite。
+// 抓取时 #292 把七项都钉在 15368（Actions），回放按这个钉。
+const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')).check_runs;
+const LIVE_PINS = { ...FRAMEWORK_PINS, gitleaks: 15368, trivy: 15368, 'contract-placement': 15368 };
+const H68 = '68a6c5ea27c4a513be02edd5b28e52a9dd7b00f2', H148 = '148bd3019e4cda3fceacf0d4226b735557957340';
+const H68_SECOND_RUN = 122140218620; // 68a6c5e 第二次托管运行：gitleaks 16:05:51 真失败，16:10:57 起其余被取消
+const FAIL_CONCLUSION = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
+const bothRed = head => head.pairs.filter(p => p.verdict === '一致' && FAIL_CONCLUSION.has(p.framework?.conclusion) && FAIL_CONCLUSION.has(p.hosted?.conclusion)).map(p => p.check);
+// 被取代 head 回放：同一 PR 里后面再跟一个没有检查的提交，让它成为被取代的 head。
+async function superseded(number, s, runs, pins = LIVE_PINS) {
+  const tail = sha(number);
+  const report = await compare({ prs: { from: number, to: number },
+    api: api(prRoutes([{ number, state: 'open', commits: [{ sha: s }, { sha: tail }] }], { [s]: runs, [tail]: [] }, ruleset(pins))), now: NOW });
+  assert.equal(report.heads.length, 1);
+  assert.equal(report.heads[0].role, 'superseded');
+  return report.heads[0];
+}
+// 块 4 的形状：68a6c5e 第二次托管运行里 Windows 四片 16:10:57 被取消，汇总 hosted-ci-suites-windows 16:11:05 开始、读到 cancelled 失败。
+function block4Shape(frameworkWindows = 'success') {
+  const runs = fixture('shadow-head-68a6c5e.json').filter(r => !(r.name === 'hosted-ci-suites-windows' && r.check_suite.id === H68_SECOND_RUN));
+  const base = { app: { id: 15368 }, status: 'completed', output: { title: null }, check_suite: { id: H68_SECOND_RUN } };
+  for (const i of [1, 2, 3, 4]) runs.push({ ...base, id: 137561774600 + i, name: `hosted-ci-suites-windows-shard-${i}`, conclusion: 'cancelled',
+    started_at: '2026-11-23T08:05:31Z', completed_at: '2026-11-23T08:10:57Z' });
+  runs.push({ ...base, id: 137563990000, name: 'hosted-ci-suites-windows', conclusion: 'failure', started_at: '2026-11-23T08:11:05Z', completed_at: '2026-11-23T08:11:10Z' });
+  return runs.map(r => r.name === 'ci-suites-windows' && r.app.id === 15368 ? { ...r, conclusion: frameworkWindows } : r);
+}
 
-test('S1 被取代 head 托管 failure、所在运行被取消、框架绿（cfec87b 形状）：判跳过，不打断连续计数', async () => {
-  const [a, z] = [sha(401), sha(402)];
-  const t = '2026-11-23T07:10:03Z';
-  const routes = prRoutes([{ number: 1252, state: 'open', commits: [{ sha: a }, { sha: CFEC }, { sha: z }] }],
-    { [a]: runsAt(at(23, 5)), [CFEC]: runsAt(t, cancelledWindows({ t, frameworkSuite: CFEC_FRAMEWORK_SUITE })), [z]: runsAt(at(23, 9)) });
-  const stub = api(routes);
-  const report = await compare({ prs: { from: 1252, to: 1252 }, api: stub, now: NOW });
-  assert.deepEqual(verdicts(report), ['一致', '跳过', '一致']);
-  const pair = pairOf(report.heads[1], 'ci-suites-windows');
-  assert.equal(pair.verdict, '跳过');
-  assert.equal(pair.reason, `托管运行已取消（suite ${CFEC_HOSTED_SUITE}），已被取代`);
-  // 跳过不计入也不打断：前后两个一致 head 连成 2（修复前这一 head 判不一致，计数只剩 1）。
-  assert.equal(report.summary.streak.heads, 2);
-  // 只为托管红的这一项读一次 suite；框架侧绿、其余各项托管绿，都不读。
-  assert.deepEqual(suiteCalls(stub.calls), [suiteRoute(CFEC_HOSTED_SUITE)]);
+test('C1 现场回归：取消之前已真失败的托管检查照常比较（68a6c5e gitleaks、148bd30 ci-suites 与 clued-cloud-tests 两边同红）', async () => {
+  const h68 = await superseded(1253, H68, fixture('shadow-head-68a6c5e.json'));
+  // 结论与修复前全量回放（shadow-superseded-review/old-all.json）逐项相同。
+  assert.deepEqual(h68.pairs.map(p => [p.check, p.verdict]), [['ci-suites', '跳过'], ['clued-cloud-tests', '跳过'], ['migration-verify', '一致'],
+    ['ci-suites-windows', '跳过'], ['gitleaks', '一致'], ['trivy', '不一致'], ['contract-placement', '一致']]);
+  assert.deepEqual(bothRed(h68), ['gitleaks']);
+  assert.equal(pairOf(h68, 'ci-suites').reason, '托管无结论（cancelled），已被取代');
+  const h148 = await superseded(1251, H148, fixture('shadow-head-148bd30.json'));
+  assert.deepEqual(h148.pairs.map(p => [p.check, p.verdict]), [['ci-suites', '一致'], ['clued-cloud-tests', '一致'], ['migration-verify', '一致'],
+    ['ci-suites-windows', '跳过'], ['gitleaks', '一致'], ['trivy', '不一致'], ['contract-placement', '一致']]);
+  assert.deepEqual(bothRed(h148), ['ci-suites', 'clued-cloud-tests']);
 });
 
-test('S2 同 S1 但框架也红、其余六项一致：判跳过，不虚记两边同红', async () => {
-  const [a, x] = [sha(411), sha(412)];
-  const t = at(23, 6);
-  const routes = prRoutes([{ number: 1710, state: 'open', commits: [{ sha: a }, { sha: x }] }],
-    { [a]: runsAt(t, cancelledWindows({ t, framework: 'failure', suite: 122100000001 })), [x]: runsAt(at(23, 7)) });
-  const report = await compare({ prs: { from: 1710, to: 1710 }, api: api(routes), now: NOW });
-  assert.deepEqual(verdicts(report), ['跳过', '一致']);
-  assert.equal(pairOf(report.heads[0], 'ci-suites-windows').verdict, '跳过');
-  assert.equal(report.summary.streak.bothRedHeads, 0);
+test('C2 块 4 形状：运行取消后才开始的汇总红判跳过；同一运行里取消前已真失败的 gitleaks 仍判一致', async () => {
+  const head = await superseded(1253, H68, block4Shape());
+  const windows = pairOf(head, 'ci-suites-windows');
+  assert.equal(windows.verdict, '跳过');
+  assert.equal(windows.reason, '托管无结论（同一运行中先有取消，本检查之后才开始），已被取代');
+  assert.equal(pairOf(head, 'gitleaks').verdict, '一致');
+  // 这一 head 仍因现场 trivy（框架红、托管绿）判不一致；Windows 这一对不在不一致里。
+  assert.deepEqual(head.pairs.filter(p => p.verdict === '不一致').map(p => p.check), ['trivy']);
 });
 
-test('S3 最终 head 托管 failure、所在运行被取消：判未知，写明运行已取消', async () => {
-  const s = sha(421);
-  const t = at(23, 8);
-  const head = await finalHead(s, runsAt(t, cancelledWindows({ t, suite: 122100000002 })));
-  assert.equal(head.role, 'final');
-  assert.equal(head.verdict, '未知');
+test('C3 块 4 形状、框架 Windows 也红：不虚记两边同红，同红只来自 gitleaks', async () => {
+  const head = await superseded(1253, H68, block4Shape('failure'));
+  assert.equal(pairOf(head, 'ci-suites-windows').verdict, '跳过');
+  assert.deepEqual(bothRed(head), ['gitleaks']);
+});
+
+test('C4 先真失败、后被取消：作业级取消发生在托管 trivy 跑的途中，trivy 之后才红，照常比较判不一致', async () => {
+  const suite = 7001;
+  const runs = greenRuns({ override: (check, side) => check === 'trivy' && side === 'hosted' ? [
+    run('hosted-ci-suites-windows-shard-2', 15368, 'cancelled', { started: '2026-11-23T08:05:31Z', completed: '2026-11-23T08:07:00Z', suite }),
+    run('hosted-trivy', 15368, 'failure', { started: '2026-11-23T08:05:32Z', completed: '2026-11-23T08:08:00Z', suite, title: 'CVE found' })] : null });
+  const head = await superseded(1750, sha(461), runs, FRAMEWORK_PINS);
+  assert.equal(pairOf(head, 'trivy').verdict, '不一致');
+  assert.equal(pairOf(head, 'trivy').direction, '托管红、框架绿');
+  assert.equal(head.verdict, '不一致');
+});
+
+test('C5 重跑：同名旧分片 cancelled、新分片 success，汇总之后才红：cancelled 只认同名最新，照常比较', async () => {
+  const suite = 7002;
+  const runs = greenRuns({ override: (check, side) => check === 'ci-suites-windows' && side === 'hosted' ? [
+    run('hosted-ci-suites-windows-shard-1', 15368, 'cancelled', { id: 100, started: '2026-11-23T08:05:31Z', completed: '2026-11-23T08:10:57Z', suite }),
+    run('hosted-ci-suites-windows-shard-1', 15368, 'success', { id: 200, started: '2026-11-23T08:20:00Z', completed: '2026-11-23T08:30:00Z', suite }),
+    run('hosted-ci-suites-windows', 15368, 'failure', { id: 300, started: '2026-11-23T08:31:00Z', completed: '2026-11-23T08:31:10Z', suite })] : null });
+  const head = await superseded(1760, sha(471), runs, FRAMEWORK_PINS);
+  assert.equal(pairOf(head, 'ci-suites-windows').verdict, '不一致');
+  assert.equal(pairOf(head, 'ci-suites-windows').direction, '托管红、框架绿');
+});
+
+test('C6 不读 /check-suites：判据只用已读到的 check-runs', async () => {
+  const source = readFileSync(new URL('./shadow-compare.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /check-suites/);
+  const stub = api(prRoutes([{ number: 1253, state: 'open', commits: [{ sha: H68 }, { sha: sha(1253) }] }], { [H68]: block4Shape(), [sha(1253)]: [] }, ruleset(LIVE_PINS)));
+  await compare({ prs: { from: 1253, to: 1253 }, api: stub, now: NOW });
+  assert.deepEqual(stub.calls.filter(c => !c.startsWith('/commits/') && !c.startsWith('/pulls') && c !== RULESET_ROUTE), []);
+});
+
+test('C7 两侧对称：框架侧取消后才开始的红在最终 head 判未知，写明原因', async () => {
+  const suite = 7003;
+  const runs = greenRuns({ override: (check, side) => check === 'ci-suites-windows' && side === 'framework' ? [
+    run('ci-suites-windows-shard-1', 15368, 'cancelled', { started: '2026-11-23T08:05:31Z', completed: '2026-11-23T08:10:57Z', suite }),
+    run('ci-suites-windows', 15368, 'failure', { started: '2026-11-23T08:11:05Z', completed: '2026-11-23T08:11:10Z', suite })] : null });
+  const head = await finalHead(sha(481), runs);
   assert.equal(pairOf(head, 'ci-suites-windows').verdict, '未知');
-  assert.equal(pairOf(head, 'ci-suites-windows').reason, '托管运行已取消（suite 122100000002）');
-});
-
-test('S3b 当前 head 托管 failure、所在运行被取消：判未知，不判在跑', async () => {
-  const s = sha(422);
-  const t = at(23, 8);
-  const [head] = (await compare({ heads: [s], api: api(headRoutes([[s, runsAt(t, cancelledWindows({ t, suite: 122100000003 }))]])), now: NOW })).heads;
-  assert.equal(head.verdict, '未知');
-  assert.equal(pairOf(head, 'ci-suites-windows').reason, '托管运行已取消（suite 122100000003）');
-});
-
-test('S4 被取代 head 托管真失败（suite 也是 failure）、框架绿：照样判不一致', async () => {
-  const [x, y] = [sha(431), sha(432)];
-  const t = at(23, 9);
-  const routes = prRoutes([{ number: 1720, state: 'open', commits: [{ sha: x }, { sha: y }] }],
-    { [x]: runsAt(t, cancelledWindows({ t, suiteConclusion: 'failure', suite: 122100000004 })), [y]: runsAt(at(23, 10)) });
-  const report = await compare({ prs: { from: 1720, to: 1720 }, api: api(routes), now: NOW });
-  assert.deepEqual(verdicts(report), ['不一致', '一致']);
-  assert.equal(pairOf(report.heads[0], 'ci-suites-windows').direction, '托管红、框架绿');
-  assert.equal(report.summary.streak.heads, 1);
-});
-
-test('S5 suite 读不到：判未知，不判一致、不判跳过（被取代 head、两边都红）', async () => {
-  const [x, y] = [sha(441), sha(442)];
-  const t = at(23, 11);
-  const routes = prRoutes([{ number: 1730, state: 'open', commits: [{ sha: x }, { sha: y }] }],
-    { [x]: runsAt(t, cancelledWindows({ t, framework: 'failure', suite: 122100000005 })), [y]: runsAt(at(23, 12)) });
-  routes[suiteRoute(122100000005)] = { error: 'gh GET 失败（退出码 1）' };
-  const report = await compare({ prs: { from: 1730, to: 1730 }, api: api(routes), now: NOW });
-  assert.deepEqual(verdicts(report), ['未知', '一致']);
-  assert.equal(pairOf(report.heads[0], 'ci-suites-windows').verdict, '未知');
-  assert.match(pairOf(report.heads[0], 'ci-suites-windows').reason, /^托管运行读取失败/);
-  assert.equal(report.summary.streak.bothRedHeads, 0);
-});
-
-test('S5b 托管红的检查不带 check_suite.id：判未知', async () => {
-  const s = sha(443);
-  const runs = greenRuns({ override: (check, side) => check === 'trivy' && side === 'hosted'
-    ? [(({ check_suite, ...r }) => r)(run('hosted-trivy', 15368, 'failure'))] : null });
-  const head = await finalHead(s, runs);
-  assert.equal(pairOf(head, 'trivy').verdict, '未知');
-  assert.match(pairOf(head, 'trivy').reason, /^托管运行读取失败/);
-});
-
-test('S6 托管绿的 head 不读 suite（框架红托管绿照常判不一致）', async () => {
-  const [x, y] = [sha(451), sha(452)];
-  const routes = prRoutes([{ number: 1740, state: 'open', commits: [{ sha: x }, { sha: y }] }],
-    { [x]: runsAt(at(23, 13), frameworkRed('gitleaks', at(23, 13))), [y]: runsAt(at(23, 14)) });
-  const stub = api(routes);
-  const report = await compare({ prs: { from: 1740, to: 1740 }, api: stub, now: NOW });
-  assert.deepEqual(verdicts(report), ['不一致', '一致']);
-  assert.deepEqual(suiteCalls(stub.calls), []);
+  assert.equal(pairOf(head, 'ci-suites-windows').reason, '框架无结论（同一运行中先有取消，本检查之后才开始）');
 });
 
 // 连续一致的计数（判据全文见下方 S6 用例）。
