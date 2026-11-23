@@ -182,13 +182,17 @@ $script:Drill = [ordered]@{
   # - host: 392-1467 s over 10 runs (1467 s in 20261121T061228Z-...-998ab86a-39d3d3b3); r13's largest gap between two steps 137 s:
   #   stalled 10 minutes, or 30 minutes in the stage.
   # - prepare: 112-130 s over 8 runs: 6 minutes in the stage.
-  # - launcher: none until plan block B (the drill's first-train wait is silent for 1500 s by design); only the run's deadline.
+  # - launcher (task 87d330d0 PR-2, plan FABLE-drill-role-probe-20261124 section 4.2): stalled 10 minutes, or 25 minutes in the stage. Both
+  #   hold for a launcher that writes no step-start line: the longest silent step seen is linux-B, 221.75 s (20261123T193713Z-...-ad98eac7
+  #   and 20261123T201433Z-...-74bc5ef0-52d496e7), the companion account step at most 8 minutes, the stage after the fix about 17 minutes
+  #   (8.6 before first-train, 0.5 first-train, 0.2 verify and pause, 8 companion). Before, none: generation 16's first-train wait was
+  #   silent for 1505 s and the run ended on its 70-minute deadline; now a launcher that waits silently stops within ten minutes.
   # A gate never fires past the foreground's stop: the deadline is judged first, so a short run (-RunTimeoutMinutes 10) ends on it.
   EntryHostLogMinutes = 15
   ProgressGates = [ordered]@{
     host = @{ stallMinutes = 10; maxMinutes = 30 }
     prepare = @{ stallMinutes = $null; maxMinutes = 6 }
-    launcher = @{ stallMinutes = $null; maxMinutes = $null }
+    launcher = @{ stallMinutes = 10; maxMinutes = 25 }
   }
   # After the entry returned: read-after-install, A7 and A8 within this many minutes (13.1-13.8 observed in r13 and
   # 20261122T002532Z-...-ed827708-a456e0cf), or DRILL_AFTER_ENTRY_TIMEOUT; never past the foreground's stop.
@@ -3708,6 +3712,9 @@ function Get-DrillStageTimeline([string]$RunDir) {
 #                                                 -> twice its limit, at most the run's own ceiling (the intake budget less the wait
 #                                                    and the margin: Invoke-DrillWithHostHold refuses more)
 #   any other end (a guard abort, a step's own timeout ...) -> the same limit again, never longer
+# except that a run already at the ceiling which ran out of its time (DRILL_RUN_TIMEOUT, either clock) is not run again: the next rung
+# would be the same limit and the same end (generation 16, 2026.11.24-74bc5ef0: 70 minutes, out of time in the launcher, and the next
+# rung 70 minutes again) -> refused: DRILL_LADDER_CEILING_EXHAUSTED, the stage it stopped in (task 87d330d0 PR-2, plan section 4.2)
 # The same limit again is held to the ceiling as well. The newest run directory of this version decides: a receipt.json there that cannot
 # be read, or has no version or kit, refuses (DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE, its path; review medium 4) -- never an older one.
 # The limit, the receipt it was derived from and how far that run got are written into this run's receipt (ladder).
@@ -3756,6 +3763,13 @@ function Get-DrillLadderStep([string]$RunsDir, [string]$Version, [string]$KitSha
   }
   $failed = @($stages | Where-Object { [string](Get-DrillField $_ 'result') -ceq 'failed' }) | Select-Object -First 1
   if ($failed) { throw (New-DrillError 'DRILL_LADDER_PREVIOUS_STAGE_FAILED' ([ordered]@{ stage = (Get-DrillField $failed 'stage'); code = (Get-DrillField $failed 'code'); receipt = $found.path })) }
+  # out of time at the ceiling (an earlier limit given past it by hand included): the next rung could only be the same run again
+  if ($code -ceq 'DRILL_RUN_TIMEOUT' -and $previous -ge $ceiling) {
+    $stoppedIn = [string](Get-DrillField $timeline 'abortedIn')
+    if (-not $stoppedIn -and $reached) { $stoppedIn = [string]$reached.stage }
+    throw (New-DrillError 'DRILL_LADDER_CEILING_EXHAUSTED' ([ordered]@{ stage = $(if ($stoppedIn) { $stoppedIn } else { $null }); reached = $reached
+      previousMinutes = $previous; ceiling = $ceiling; receipt = $found.path }))
+  }
   # out of time, by either clock (the guard's failure replaces the foreground's: Invoke-DrillOnCheckpoint), nothing failed, nothing unknown
   $known = @($stages | Where-Object { $script:DrillLadderKnownResults -cnotcontains [string](Get-DrillField $_ 'result') }).Count -eq 0
   if ($code -ceq 'DRILL_RUN_TIMEOUT' -and $known) {
