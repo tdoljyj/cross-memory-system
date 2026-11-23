@@ -3085,16 +3085,17 @@ ids=$(docker image ls -aq --no-trunc | sort -u); [ -z "$ids" ] || docker image i
   # first, with its own 120-second bound (plan 87d330d0 1.3): the instance's boot as read without systemctl -- the compact block (uptime,
   # systemd's private socket, PID 1's state, available memory, pressure), the last boots, then the journal of the previous boot and of this
   # one. Taken by boot, never --since a time: the guest's wall clock jumps across a suspend, its monotonic clock does not. Each journal
-  # reading is bounded apart, so one that fails or hangs leaves the next its turn.
+  # reading is bounded apart, so one that fails or hangs leaves the next its turn, and killed when it ignores TERM (-k). Together, kill
+  # grace included, they end by 89 s: the 120-second wsl bound throws away all the command printed, so it must never be the one to cut.
   $bootScript = (@'
 echo "uptime=$(cat /proc/uptime)"
 if [ -S /run/systemd/private ]; then echo private=socket; elif [ -e /run/systemd/private ]; then echo private=not-socket; else echo private=absent; fi
 echo "pid1=$(sed -n 's/^State:[[:space:]]*//p' /proc/1/status)"
 echo "mem=$(free -m | awk '/^Mem:/{print $7}')"
 p=; for r in cpu memory io; do p="$p $r=$(sed -n 's/^some .*avg10=\([0-9.]*\).*/\1/p' /proc/pressure/$r)"; done; echo "psi=${p# }"
-echo '--- list-boots'; timeout 20s journalctl --list-boots --no-pager | tail -n 3; s=${PIPESTATUS[0]}; [ "$s" = 0 ] || echo "(list-boots: exit $s)"
-echo '--- boot -1'; timeout 45s journalctl -b -1 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot -1: exit $s)"
-echo '--- boot 0'; timeout 45s journalctl -b 0 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot 0: exit $s)"
+echo '--- list-boots'; timeout -k 3s 10s journalctl --list-boots --no-pager | tail -n 3; s=${PIPESTATUS[0]}; [ "$s" = 0 ] || echo "(list-boots: exit $s)"
+echo '--- boot -1'; timeout -k 3s 35s journalctl -b -1 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot -1: exit $s)"
+echo '--- boot 0'; timeout -k 3s 35s journalctl -b 0 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot 0: exit $s)"
 '@.Trim() -split '\r?\n') -join '; '
   # every docker command last: a docker.service stuck in activating holds each docker call to its bound, and must not take the readings
   # that do not need docker with it (r8 fixup review F2)

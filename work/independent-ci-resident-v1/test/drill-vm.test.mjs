@@ -3921,8 +3921,26 @@ test('guest-boot takes the journal by boot with monotonic stamps, never --since,
   for (const k of ['uptime=', 'private=', 'pid1=', 'mem=', 'psi=']) assert.ok(s.includes(k), k);
   assert.doesNotMatch(s, /systemctl|docker/, 'nothing that waits on systemd or docker');
   // each journal reading bounded apart and its failure only noted, so the next still runs
-  assert.equal((s.match(/timeout \d+s journalctl/g) || []).length, 3);
+  assert.equal((s.match(/\btimeout [-\w ]*journalctl/g) || []).length, 3);
   assert.doesNotMatch(s, /&&|set -e/);
+});
+
+// Review of 28896055d (M1, M2): the wsl.exe bound (120 s) throws away everything the command printed, the compact block with it. So the
+// guest's own bounds, kill grace included, end well before it (<= 90 s: room for a cold WSL start), and each one kills what ignores TERM.
+const bootBounds = () => [...ps(`(Get-DrillProbeCommands)[0].script`).matchAll(/\btimeout ([^;|]*?)journalctl/g)].map(m => m[1].trim());
+const secondsOf = (v) => Number(/^(\d+)s$/.exec(v)?.[1] ?? NaN);
+test('every guest-boot reading kills what ignores its TERM (timeout -k)', opts, () => {
+  const b = bootBounds();
+  assert.equal(b.length, 3);
+  for (const x of b) assert.match(x, /^-k \d+s \d+s$/, x);
+});
+
+test('guest-boot\'s own bounds, kill grace included, end by 90 s, well inside its 120-second wsl bound', opts, () => {
+  const b = bootBounds();
+  assert.equal(b.length, 3);
+  const total = b.reduce((sum, x) => sum + x.split(/\s+/).filter(t => t !== '-k').map(secondsOf).reduce((a, n) => a + n, 0), 0);
+  assert.ok(Number.isFinite(total) && total <= 90, `inner bounds add up to ${total} s`);
+  assert.ok(ps(`(Get-DrillProbeCommands)[0].seconds`) - total >= 30, 'at least 30 s left for the cold start and the /proc readings');
 });
 
 const probeNative = `$native = { param($exe, $argv, $secs, $enc)
