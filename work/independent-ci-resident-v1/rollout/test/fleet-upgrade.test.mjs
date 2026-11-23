@@ -301,3 +301,81 @@ test('fleet upgrade fetch: a rollback to a package whose acceptance has no kit f
   // this package's own rule (what the unpacked upgrade.mjs does with the same file): no kit, no upgrade
   await assert.rejects(upgradeNode({ artifactPath: w.tar, artifactSha256: sha256, acceptance: old, root: w.a.root, workDir: path.join(dir, 'w2') }), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
 });
+
+// Task 87d330d0 (FABLE-drill-memory-short-20261124.md section 3.3 item 4): the command's write set is its work directory, the inbox
+// file (the installed request tool's; a stand-in here) and the Owner's .wslconfig with its backup (rollout/fleet/wsl-capacity.mjs).
+// Any other file it adds, changes or removes in the node's root or the Owner's home is red: the set cannot widen unnoticed.
+test('fleet upgrade: writes nothing but its work directory and the Owner\'s .wslconfig (memory= from the capacity profile, a backup first)', { timeout: 900_000 }, async t => {
+  const w = await getWorld();
+  const n = await nodeSite(t, 'w', w.fleet);
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetupg-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const wslconfig = path.join(home, '.wslconfig');
+  await fs.writeFile(wslconfig, '[wsl2]\r\nmemory=28GB\r\nprocessors=16\r\n\r\n[experimental]\r\nsparseVhd=true\r\n');
+  await fs.writeFile(path.join(home, 'other.txt'), 'the Owner\'s own file\n');
+  const snapshot = async dir => {
+    const out = new Map();
+    for (const e of await fs.readdir(dir, { recursive: true, withFileTypes: true })) {
+      if (!e.isFile()) continue;
+      const f = path.join(e.parentPath, e.name);
+      out.set(f, sha(await fs.readFile(f)));
+    }
+    return out;
+  };
+  const before = new Map([...await snapshot(n.dir), ...await snapshot(home)]);
+  const workDir = path.join(n.dir, 'scope-work');
+  const q = requester();
+  const r = await upgrade(w, n, { request: q.request, workDir, wslConfigPath: wslconfig, hostname: () => 'DESK-W-591' });
+  assert.equal(r.status, 'FLEET_NODE_UPGRADE_REQUESTED', JSON.stringify(r).slice(0, 2000));
+  assert.deepEqual([r.wslCapacity?.status, r.wslCapacity?.from, r.wslCapacity?.to], ['written', '28GB', '17GB'], JSON.stringify(r.wslCapacity));
+  const after = new Map([...await snapshot(n.dir), ...await snapshot(home)]);
+  const touched = [...new Set([...before.keys(), ...after.keys()])].filter(f => before.get(f) !== after.get(f));
+  const allowed = f => f.startsWith(workDir + path.sep) || f === wslconfig || (path.dirname(f) === home && path.basename(f).startsWith('.wslconfig.clued-backup-'));
+  assert.deepEqual(touched.filter(f => !allowed(f)), [], 'written outside the work directory and the .wslconfig');
+  assert.ok(touched.includes(wslconfig) && touched.includes(r.wslCapacity.backup));
+  assert.equal(await fs.readFile(wslconfig, 'utf8'), '[wsl2]\r\nmemory=17GB\r\nprocessors=16\r\n\r\n[experimental]\r\nsparseVhd=true\r\n');
+});
+
+// Review of Task 87d330d0 (REVIEW-drill-memgate-b-20261124.md, medium 1 and 2): the .wslconfig is written only by a run that requests this
+// package's upgrade (or finds the node already at it), so a write is always in the answer. --no-request (the drill: assemble and
+// precheck only), an open operation, a refusal and a reinstall answer write nothing; the answers that are not refusals say why.
+test('fleet upgrade: --no-request, an open operation, a refusal and a reinstall answer leave the Owner\'s .wslconfig as it was', { timeout: 900_000 }, async t => {
+  const w = await getWorld();
+  const n = await nodeSite(t, 'v', w.fleet);
+  const q = requester();
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetupg-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const wslconfig = path.join(home, '.wslconfig');
+  const OLD = '[wsl2]\r\nmemory=28GB\r\n';
+  await fs.writeFile(wslconfig, OLD);
+  const desk = { wslConfigPath: wslconfig, hostname: () => 'DESK-W-591' };
+  const untouched = async what => {
+    assert.equal(await fs.readFile(wslconfig, 'utf8'), OLD, `${what}: .wslconfig written`);
+    assert.deepEqual(await fs.readdir(home), ['.wslconfig'], `${what}: a backup or temporary file`);
+  };
+
+  const dry = await upgrade(w, n, { request: q.request, noRequest: true, ...desk });
+  assert.equal(dry.status, 'FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED', JSON.stringify(dry).slice(0, 1500));
+  assert.deepEqual([dry.wslCapacity?.status, dry.wslCapacity?.reason, dry.wslCapacity?.to, dry.wslCapacity?.backup], ['skipped', 'NOT_REQUESTED', '17GB', null], JSON.stringify(dry.wslCapacity));
+  await untouched('--no-request');
+
+  const statusFile = path.join(n.root, 'upgrade', 'status.json');
+  await fs.writeFile(statusFile, JSON.stringify({ contract: 'clued.independent-ci.resident-upgrade-status/1', writtenAt: new Date().toISOString(),
+    op: { opId: randomUUID(), state: 'WAITING_GRANT', phase: 'grant', code: null, grant: { confirmUrl: null } } }));
+  const busy = await upgrade(w, n, { request: q.request, ...desk });
+  assert.deepEqual([busy.status, busy.wslCapacity?.status, busy.wslCapacity?.reason], ['FLEET_NODE_UPGRADE_IN_PROGRESS', 'skipped', 'NOT_REQUESTED']);
+  await untouched('an open operation');
+  await fs.rm(statusFile);
+
+  const file = path.join(n.dir, 'acceptance-moved.json');
+  await fs.writeFile(file, JSON.stringify(await acceptanceOf(w, { sourceAcceptanceRef: randomUUID() })));
+  const moved = await main(['--artifact', w.tar, '--artifact-sha', w.release.source.archive_sha256, '--acceptance', file, '--work', path.join(n.dir, 'upgrade-moved')],
+    { root: n.root, request: q.request, ...desk });
+  assert.deepEqual([moved.status, moved.code], ['FLEET_NODE_UPGRADE_NEEDS_REINSTALL', 'FLEET_SOURCE_REFS_CHANGED_NEEDS_REINSTALL'], JSON.stringify(moved).slice(0, 1500));
+  await untouched('a reinstall answer');
+
+  await fs.rm(path.join(n.root, 'upgrade', 'current.json'));
+  await assert.rejects(upgrade(w, n, { request: q.request, ...desk }), { code: 'NODE_HAS_NO_INSTALL_FIRST_INSTALL_PATH' });
+  await untouched('a refusal');
+  assert.equal(q.calls.length, 0);
+});
