@@ -1760,10 +1760,10 @@ function Step-CarryTokens {
 # The installed public binaries' locks, observed ELEVATED (reinstall/tools/file-locks.ps1, pinned): the companion account's processes
 # and its task are readable only from here, so the rehearsal leaves this check to the launcher on a companion node. Read-only.
 function Step-FileLocks {
-  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   # A first install has no installed binary to hold a lock. Its slot (after the tokens are carried, before Linux A) runs the first
   # install's Windows preflight instead: Linux B cannot be undone, so whatever the Windows side would refuse is refused before it.
   if ($FleetFirstInstall) { Step-FirstInstallWindowsPreflight; return $null }
+  if (Test-Path -LiteralPath 'function:Write-StepStart') { Write-StepStart }
   $b = [IO.File]::ReadAllBytes($FleetFileLocks)
   if ((Sha256Bytes $b) -cne $FleetFileLocksSha256) { Stop-Launch 'FILE_LOCKS_TOOL_CHANGED' $null }
   $tool = Join-Path $Stage 'file-locks.ps1'; Write-New $tool $b
