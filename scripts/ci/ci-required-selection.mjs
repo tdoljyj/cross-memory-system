@@ -14,6 +14,15 @@
 // candidate's own changes to the selection (this file, the workflow) select
 // every suite.
 //
+// So a pull request that fixes the trusted side (this file, test-env.mjs, the
+// suite commands) runs under main's trusted side, not its own fix (Task
+// 3435f8bf). Its must-fail test exercises the candidate's code itself (call
+// executeSuite and assert the child's environment, red on main's code, green
+// on the candidate's); it never asserts the job's real environment, which is
+// main's until it merges. The end-to-end check is the first run after merge;
+// a timing guard is added then. The hosted suite jobs' timeout-minutes is a
+// hang backstop, not a speed gate (hosted-required.test.mjs: at least 90).
+//
 //   node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>]
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
 //     API (GITHUB_TOKEN, pull-requests: read); a push, a listing it cannot

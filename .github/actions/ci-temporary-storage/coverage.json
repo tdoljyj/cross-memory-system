@@ -931,13 +931,20 @@
         "gitleaks": {
           "mode": "job-temp",
           "purpose": "application or repository control",
-          "action": "./.github/actions/ci-temporary-storage",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
           "checkout_sources": [
             {
               "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
               "if": "true",
-              "path": "",
-              "ref": "${{ github.event.pull_request.base.sha || github.sha }}",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
               "repository": null
             }
           ],
