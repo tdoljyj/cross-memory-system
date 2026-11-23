@@ -301,3 +301,37 @@ test('fleet upgrade fetch: a rollback to a package whose acceptance has no kit f
   // this package's own rule (what the unpacked upgrade.mjs does with the same file): no kit, no upgrade
   await assert.rejects(upgradeNode({ artifactPath: w.tar, artifactSha256: sha256, acceptance: old, root: w.a.root, workDir: path.join(dir, 'w2') }), { code: 'FLEET_ACCEPTANCE_HAS_NO_FIRST_INSTALL_KIT' });
 });
+
+// Task 87d330d0 (FABLE-drill-memory-short-20261124.md section 3.3 item 4): the command's write set is its work directory, the inbox
+// file (the installed request tool's; a stand-in here) and the Owner's .wslconfig with its backup (rollout/fleet/wsl-capacity.mjs).
+// Any other file it adds, changes or removes in the node's root or the Owner's home is red: the set cannot widen unnoticed.
+test('fleet upgrade: writes nothing but its work directory and the Owner\'s .wslconfig (memory= from the capacity profile, a backup first)', { timeout: 900_000 }, async t => {
+  const w = await getWorld();
+  const n = await nodeSite(t, 'w', w.fleet);
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'fleetupg-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const wslconfig = path.join(home, '.wslconfig');
+  await fs.writeFile(wslconfig, '[wsl2]\r\nmemory=28GB\r\nprocessors=16\r\n\r\n[experimental]\r\nsparseVhd=true\r\n');
+  await fs.writeFile(path.join(home, 'other.txt'), 'the Owner\'s own file\n');
+  const snapshot = async dir => {
+    const out = new Map();
+    for (const e of await fs.readdir(dir, { recursive: true, withFileTypes: true })) {
+      if (!e.isFile()) continue;
+      const f = path.join(e.parentPath, e.name);
+      out.set(f, sha(await fs.readFile(f)));
+    }
+    return out;
+  };
+  const before = new Map([...await snapshot(n.dir), ...await snapshot(home)]);
+  const workDir = path.join(n.dir, 'scope-work');
+  const q = requester();
+  const r = await upgrade(w, n, { request: q.request, workDir, wslConfigPath: wslconfig, hostname: () => 'DESK-W-591' });
+  assert.equal(r.status, 'FLEET_NODE_UPGRADE_REQUESTED', JSON.stringify(r).slice(0, 2000));
+  assert.deepEqual([r.wslCapacity?.status, r.wslCapacity?.from, r.wslCapacity?.to], ['written', '28GB', '17GB'], JSON.stringify(r.wslCapacity));
+  const after = new Map([...await snapshot(n.dir), ...await snapshot(home)]);
+  const touched = [...new Set([...before.keys(), ...after.keys()])].filter(f => before.get(f) !== after.get(f));
+  const allowed = f => f.startsWith(workDir + path.sep) || f === wslconfig || (path.dirname(f) === home && path.basename(f).startsWith('.wslconfig.clued-backup-'));
+  assert.deepEqual(touched.filter(f => !allowed(f)), [], 'written outside the work directory and the .wslconfig');
+  assert.ok(touched.includes(wslconfig) && touched.includes(r.wslCapacity.backup));
+  assert.equal(await fs.readFile(wslconfig, 'utf8'), '[wsl2]\r\nmemory=17GB\r\nprocessors=16\r\n\r\n[experimental]\r\nsparseVhd=true\r\n');
+});

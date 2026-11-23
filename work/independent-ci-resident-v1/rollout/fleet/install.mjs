@@ -2,7 +2,9 @@
 // the Owner's acceptance file, and from nothing but what is installed on this node, the node's fresh-install /4 package, the Linux A/B
 // inputs, the Linux root scripts and the elevated launcher. No per-node configuration file: every node value is read from the installed
 // record and state (read-only); every value that must be equal on every node (fleetRefs) comes from the acceptance file.
-// NON-elevated, Owner session; writes only under a new work directory; no WSL, no network.
+// NON-elevated, Owner session; writes only under a new work directory and the Owner's %USERPROFILE%\.wslconfig (only the [wsl2]
+// memory= value, from the node's capacity profile in the package, after a backup next to it: wsl-capacity.mjs; ADR 0030 revision 1;
+// its outcome is the answer's wslCapacity); no WSL, no network.
 //
 //   node <unpacked>/tree/work/independent-ci-resident-v1/rollout/fleet/install.mjs prepare
 //        --artifact <fleet-node-<v>.tar> --artifact-sha <hex> --acceptance <fleet-node-<v>.acceptance.json>
@@ -59,6 +61,7 @@ import { PIN_FILES, RECORD_FILES, Refused, TRUSTED_SOURCE, companionCopy, nodeIn
 import { pyCanonical, pyDumps, pyEqual, pyLoads } from './pyjson.mjs';
 import { extractTar, readTar } from './tar.mjs';
 import { BUNDLE_NAME, MANIFEST_NAME, UNIVERSAL_CONTRACT, VERSION, bundleHeads } from './universal.mjs';
+import { defaultWslConfigPath, wslCapacityOfArchive } from './wsl-capacity.mjs';
 
 export const ACCEPTANCE_CONTRACT = 'clued.independent-ci.fleet-node-acceptance/1';
 export const PLAN_CONTRACT = 'clued.independent-ci.fleet-node-install-plan/1';
@@ -71,7 +74,7 @@ export const FLEET_REF_KEYS = Object.freeze(['sourceAcceptanceRef', 'hostQualifi
   'ownerPackageAcceptanceRef', 'installationReceiptRef', 'ownerDecisionRef', 'ownerReceiptRef']);
 export const FORMAL_ROLES = Object.freeze(['gitleaks', 'trivy', 'contract-placement']);
 // The modules of this directory that run before the archive is extracted: they must be the archive's bytes.
-export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'fetch.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs']);
+export const OWN_MODULES = Object.freeze(['install.mjs', 'facts.mjs', 'fetch.mjs', 'ports.mjs', 'pyjson.mjs', 'tar.mjs', 'universal.mjs', 'wsl-capacity.mjs']);
 export const LINUX_TIMEOUT_SECONDS = Object.freeze({ A: 1800, B: 7200 });
 export const LINUX_SCRIPTS = Object.freeze({ A: 'A.sh', B: 'B.sh', BResume: 'B-resume.sh' });
 const TOOLCHAIN_NODE = '/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node';
@@ -500,7 +503,7 @@ export function runCommandOf(launcher, launcherSha256) {
 export async function prepareInstall({ artifactPath, artifactSha256, acceptance, root = DEFAULT_ROOT, workDir, now = Date.now(),
   node: nodeBin = process.execPath, python = defaultPython, scm = defaultScm, selfDir = HERE,
   from = null, ciRoot = CI_ROOT, serviceState = defaultServiceState, hostname = defaultHostname, controllerNode = process.execPath, ciRootSddl = defaultCiRootSddl,
-  listDir = undefined }) {
+  listDir = undefined, wslConfigPath = defaultWslConfigPath() }) {
   validateAcceptance(acceptance, now);
   need(typeof workDir === 'string' && WIN_PATH.test(path.resolve(workDir)), 'WORK_DIR_PATH_REFUSED');
   const bytes = await fs.readFile(artifactPath);
@@ -511,6 +514,8 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
     const want = byPath.get(`tree/${RESIDENT}/rollout/fleet/${n}`);
     need(want && want.equals(await fs.readFile(path.join(selfDir, n))), 'FLEET_INSTALLER_NOT_THE_ARCHIVES', n);
   }
+  // the Owner's WSL memory limit from this package's capacity profile (wsl-capacity.mjs, as upgrade.mjs): a file write only, never a refusal
+  const wslCapacity = wslCapacityOfArchive(byPath, { hostname: hostname(), configPath: wslConfigPath, now });
   const fresh = (await readOrNull(path.join(root, 'install', 'install-receipt.json'))) === null;
   const node = fresh ? await readFreshNode({ root, ciRoot, from, acceptance, controllerNode, serviceState, hostname, ciRootSddl, listDir }) : await readNode({ root, now });
   // The Linux side is already this package's and the Windows side is not: this package's own launch stopped between the two. Its
@@ -599,8 +604,8 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   await fs.mkdir(linuxIn);
   await assembleLinuxIn({ pkg: packageDir, residentTree: R, bundle, commit: universal.commit, out: linuxIn, scratch: x });
   if (fresh) {
-    return prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256: first.packageManifestSha256, m,
-      ciSourceManifestSha256, now, python, scm, secrets });
+    return { ...await prepareFirstInstallTail({ node, acceptance, universal, work, inputs, R, packageDir, linuxIn, linuxOut, pkgSha256: first.packageManifestSha256, m,
+      ciSourceManifestSha256, now, python, scm, secrets }), wslCapacity };
   }
 
   // the synthesized reinstall configuration and the installed copies it names (section 7.1)
@@ -683,7 +688,7 @@ export async function prepareInstall({ artifactPath, artifactSha256, acceptance,
   plan.launcher = { path: launcherFile, sha256: sha(lb) };
   await writePlan(planFile, plan);
   return { status: 'FLEET_NODE_INSTALL_PREPARED', node: plan.node, version: plan.version, workDir: work, installPlan: planFile,
-    launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256) };
+    launcher: plan.launcher, runCommand: runCommandOf(launcherFile, plan.launcher.sha256), wslCapacity };
 }
 
 // ---------------------------------------------------------------- first install (no install receipt)

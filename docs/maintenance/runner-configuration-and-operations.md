@@ -56,7 +56,7 @@ Owner 决定容量、受保护变更及停机范围；执行者只在授权机�
 
 | 设置 | 家里 compact-v1 | 公司 workstation-v1 |
 | --- | ---: | ---: |
-| WSL 内存 / CPU / swap | 6 GB / 3 / 2 GB | 28 GB / 16 / 8 GB |
+| WSL 内存 / CPU / swap | 6 GB / 3 / 2 GB | 17 GB / 16 / 8 GB |
 | 暂停条件 | 空闲内存 < 1.5 GiB **或** runner 盘红线 | < 6 GiB **或** runner 盘红线 |
 | 恢复条件 | 空闲内存 ≥ 2.5 GiB **且** runner 盘恢复 | ≥ 10 GiB **且** runner 盘恢复 |
 
@@ -185,7 +185,7 @@ C 盘可用空间、VHDX 在宿主的占用和 Linux `df`/`du` 的使用量是�
 
 - **升级**：排空并暂停监督 → 保存非秘密配置与可回退包 → 核验当前受审包及散列 → 管理员更换 → 恢复同等 ACL/immutable 标志、drop-in/服务 Environment、PATH 和 enforce → 隔离路由真实作业与 cleanup 验收 → 恢复生产调度。禁用自动更新后升级由人负责，不能无限冻结旧版本。更改共享 runner_package.version 时，清单与 Windows/Linux 两套 bootstrap 的版本 pin 都必须同步受审；只改某个 OS 的散列时更新清单该散列及对应 bootstrap 散列。
 - **账号迁移**：账号、服务身份、工作区读写、Docker 权限、Windows 全机运行时与钩子只读访问一并验证；只改变 StartName 不是完整迁移。维护后不得恢复个人账号 launcher。
-- **资源调整**：先说明范围与容量依据，经批准改 capacity_profile。用 [apply-wsl-capacity-profile.ps1](../../scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1)保留无关设置并备份 .wslconfig；默认不带 -RestartWsl。等同一用户的所有受影响 WSL 作业/其他负载排空、监督停止后，才在授权窗口应用重启并恢复监督。[WSL 配置说明](https://learn.microsoft.com/windows/wsl/wsl-config)
+- **资源调整**：先说明范围与容量依据，经批准后改 `node-profiles.json` 里的 capacity_profile。WSL 内存上限不再手工应用：通用包的节点命令（`upgrade.mjs`、`install.mjs prepare`）每次运行都用 `rollout/fleet/wsl-capacity.mjs` 把 Owner `.wslconfig` 中 `[wsl2]` 的 `memory=` 写成档位值，保留其余设置，写前先备份；结果记在命令回执的 `wslCapacity` 里（独立 CI 常驻 ADR 0030 修订 1）。这一步只写文件、不重启，新值在 Owner 的 WSL VM 下次启动时生效。要提前生效，就得 `wsl --shutdown` 关掉 Owner 整台 VM（连带 Owner 自己的发行版），这只能在授权窗口里，等同一用户所有受影响的 WSL 作业和其他负载排空、监督停止之后再做。processors、swap 仍由 [apply-wsl-capacity-profile.ps1](../../scripts/ci/self-hosted/apply-wsl-capacity-profile.ps1) 写，默认不带 -RestartWsl。[WSL 配置说明](https://learn.microsoft.com/windows/wsl/wsl-config)
 - **同机增减**：数量变化通常不自动扩大 WSL 预算；修改并行度、端口锁或 workflow timeout 也属于受审变更，不能用“加一个槽位”绕过。
 - **安全事故**：先隔离调度并保存证据，检查撤销/轮换所需范围；不要因怀疑泄露先传播凭据或抹掉工作区。确认失陷时不把原机器原地恢复等同干净资格。
 

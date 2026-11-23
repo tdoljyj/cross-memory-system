@@ -152,7 +152,9 @@ test('install: one archive and one acceptance, two nodes: one Source, two packag
       const work = path.join(n.dir, 'install');
       const r = await prepare(w, n, work, { python: py.fn });
       // the result line
-      assert.deepEqual(Object.keys(r).sort(), ['installPlan', 'launcher', 'node', 'runCommand', 'status', 'version', 'workDir']);
+      assert.deepEqual(Object.keys(r).sort(), ['installPlan', 'launcher', 'node', 'runCommand', 'status', 'version', 'workDir', 'wslCapacity']);
+      // the WSL memory step (wsl-capacity.mjs): under the test marker it never writes outside the temporary directory
+      assert.equal(r.wslCapacity.status, 'skipped', JSON.stringify(r.wslCapacity));
       assert.equal(r.status, 'FLEET_NODE_INSTALL_PREPARED');
       assert.equal(r.node, n.profile.nodeName);
       assert.equal(r.launcher.sha256, sha(await fs.readFile(path.join(work, 'launcher.ps1'))));
