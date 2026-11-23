@@ -595,6 +595,31 @@ jobs:
             .github
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      # Scan containers once ran as uid 65532 and left files in $RUNNER_TEMP the runner account cannot delete; the
+      # runner's own cleanup of _temp stops at the first directory it cannot delete, so fixed-name directories
+      # survived into later jobs ("File exists", task 79a20873). (a) Transitional: a 65532 container makes its own
+      # leftovers deletable (only an owner can change a mode); delete (a) once every cap-docker-linux runner has
+      # logged "none". (b) This job's fixed-name directories start fresh; one that cannot be deleted fails here.
+      - name: Reclaim the scan directories
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(find "$RUNNER_TEMP" -mindepth 1 -user 65532 -print -quit 2>/dev/null)" ]; then
+            if { docker image inspect "$TRIVY_IMAGE" > /dev/null 2>&1 || docker pull --quiet "$TRIVY_IMAGE" > /dev/null; } &&
+              docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+              --cap-drop=ALL --security-opt=no-new-privileges:true \
+              --mount "type=bind,src=$RUNNER_TEMP,dst=/t,bind-propagation=rprivate" \
+              --entrypoint find "$TRIVY_IMAGE" /t -user 65532 -exec chmod a+rwX {} +; then
+              echo "clued-scan-reclaim: reclaimed"
+            else
+              echo "::warning title=clued-scan-reclaim::the uid 65532 container did not finish; deleting what it opened"
+            fi
+          else
+            echo "clued-scan-reclaim: none"
+          fi
+          rm -rf --one-file-system -- "$RUNNER_TEMP"/clued-gitleaks "$RUNNER_TEMP"/clued-trivy-*
       # The change: a pull request's head against its base (the run's commit is GitHub's merge of the two), a push
       # against the baseline resolved above (main: the first parent; staging: the root T of its member chain), a
       # dispatch against its merge base with main.
@@ -640,9 +665,6 @@ jobs:
           test "$(git -C "$repo" rev-parse refs/heads/head)" = "$HEAD"
           install -m 0444 trusted/.gitleaks.toml "$repo/.gitleaks.toml"
           printf '[safe]\n\tdirectory = /repo\n' > "$scan/git-safe.config"
-          chmod -R a+rX "$scan"
-          # --remerge-diff writes its automatic merges to a temporary object directory inside the objects directory.
-          chmod a+w "$repo/.git/objects"
       - name: Scan the changed range with Gitleaks 8.30.1
         env:
           BASE: ${{ steps.range.outputs.base }}
@@ -654,10 +676,10 @@ jobs:
           image=ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
           docker image inspect "$image" > /dev/null 2>&1 || docker pull --quiet "$image" > /dev/null
           bash trusted/scripts/ci/gitleaks-range.sh "$scan/repo" "$BASE" "$HEAD" -- \
-            docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+            docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
             --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
             --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=HOME=/scratch --env=TMPDIR=/scratch \
-            --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
+            --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
             --mount "type=bind,src=$scan/repo,dst=/repo,bind-propagation=rprivate" \
             --mount "type=bind,src=$scan/git-safe.config,dst=/etc/gitconfig,readonly,bind-propagation=rprivate" \
             --workdir=/repo --entrypoint /usr/bin/gitleaks "$image" \
@@ -756,6 +778,31 @@ jobs:
             .github
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      # Scan containers once ran as uid 65532 and left files in $RUNNER_TEMP the runner account cannot delete; the
+      # runner's own cleanup of _temp stops at the first directory it cannot delete, so fixed-name directories
+      # survived into later jobs ("File exists", task 79a20873). (a) Transitional: a 65532 container makes its own
+      # leftovers deletable (only an owner can change a mode); delete (a) once every cap-docker-linux runner has
+      # logged "none". (b) This job's fixed-name directories start fresh; one that cannot be deleted fails here.
+      - name: Reclaim the scan directories
+        env:
+          TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(find "$RUNNER_TEMP" -mindepth 1 -user 65532 -print -quit 2>/dev/null)" ]; then
+            if { docker image inspect "$TRIVY_IMAGE" > /dev/null 2>&1 || docker pull --quiet "$TRIVY_IMAGE" > /dev/null; } &&
+              docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+              --cap-drop=ALL --security-opt=no-new-privileges:true \
+              --mount "type=bind,src=$RUNNER_TEMP,dst=/t,bind-propagation=rprivate" \
+              --entrypoint find "$TRIVY_IMAGE" /t -user 65532 -exec chmod a+rwX {} +; then
+              echo "clued-scan-reclaim: reclaimed"
+            else
+              echo "::warning title=clued-scan-reclaim::the uid 65532 container did not finish; deleting what it opened"
+            fi
+          else
+            echo "clued-scan-reclaim: none"
+          fi
+          rm -rf --one-file-system -- "$RUNNER_TEMP"/clued-gitleaks "$RUNNER_TEMP"/clued-trivy-*
       # The local role's input refusals: only regular blobs (prepare-workspaces.py tree_modes_regular),
       # no path with a backslash, colon or control character, at most 100000 paths (formal-trivy-v4
       # snapshotTree), and no Java archive, which needs a Java DB the local role does not prepare
@@ -787,7 +834,6 @@ jobs:
           snap="$RUNNER_TEMP/clued-trivy-snapshot"
           mkdir "$snap"
           git ls-files -z | tar --null --no-recursion -T - -cf - | tar -xf - -C "$snap"
-          chmod -R a+rX "$snap"
       # Cache preparation exactly as the local role (required-trivy-v3/plans.mjs databasePreparationPlan
       # and checksPreparationPlan, formal-trivy-v3/docker.mjs cacheCreateArguments): the only networked
       # containers, each with one fresh cache-only mount and nothing of the checkout. The vulnerability
@@ -803,14 +849,14 @@ jobs:
           set -eu
           docker pull --quiet "$TRIVY_IMAGE" > /dev/null
           cache_run() {
-            docker run --rm --pull=never --network=host --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+            docker run --rm --pull=never --network=host --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
               --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
               --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
               --env=TMPDIR=/scratch --env=GODEBUG=http2client=0 \
-              --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 "$@"
+              --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" "$@"
           }
           read_back() {
-            docker run --rm --pull=never --network=none --user=65532:65532 --read-only --cap-drop=ALL \
+            docker run --rm --pull=never --network=none --user="$(id -u):$(id -g)" --read-only --cap-drop=ALL \
               --security-opt=no-new-privileges:true --mount "type=bind,src=$1,dst=/cache,readonly" --entrypoint "$2" "$TRIVY_IMAGE" "$3"
           }
           db=""
@@ -818,7 +864,7 @@ jobs:
           for repository in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do
             for attempt in 1 2; do
               n=$((n + 1)); stage="$RUNNER_TEMP/clued-trivy-db-$n"
-              mkdir -m 0777 "$stage"
+              mkdir "$stage"
               if cache_run --mount "type=bind,src=$stage,dst=/cache,bind-propagation=rprivate" --workdir=/scratch \
                 --entrypoint /usr/local/bin/trivy "$TRIVY_IMAGE" \
                 fs --download-db-only --timeout 5m --cache-dir /cache --db-repository "$repository"; then
@@ -829,7 +875,7 @@ jobs:
           test -n "$db"
           read_back "$db" /bin/cat /cache/db/metadata.json | python3 -I -B -c 'import json,sys,time; m=json.load(sys.stdin); now=time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()); u, n = m["UpdatedAt"], m["NextUpdate"]; sys.exit(0 if m.get("Version") == 2 and u.endswith("Z") and n.endswith("Z") and u[:19] <= now < n[:19] else 1)'
           checks="$RUNNER_TEMP/clued-trivy-checks"; empty="$RUNNER_TEMP/clued-trivy-empty"
-          mkdir -m 0777 "$checks"
+          mkdir "$checks"
           mkdir "$empty"
           cache_run --mount "type=bind,src=$checks,dst=/cache,bind-propagation=rprivate" \
             --mount "type=bind,src=$empty,dst=/empty,readonly,bind-propagation=rprivate" --workdir=/scratch \
@@ -841,16 +887,18 @@ jobs:
           echo "CLUED_TRIVY_DB=$db/db" >> "$GITHUB_ENV"
           echo "CLUED_TRIVY_POLICY=$checks/policy" >> "$GITHUB_ENV"
       # The three scanners exactly as the local role (required-trivy-v3/plans.mjs requiredTrivyPlans,
-      # verify-worker.mjs createArguments): no network, read-only root and mounts, uid 65532, cwd
-      # /scratch, the prepared DB and checks only, no update of either, five minutes each.
+      # verify-worker.mjs createArguments): no network, read-only root and mounts, cwd /scratch, the prepared
+      # DB and checks only, no update of either, five minutes each. Every scan container runs as the job account,
+      # not the local role's uid 65532: that role runs as root and chowns and deletes what 65532 wrote, which a
+      # runner account cannot (task 79a20873).
       - name: Vulnerabilities (HIGH/CRITICAL)
         timeout-minutes: 5
         run: |
           set -eu
-          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
             --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
             --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
-            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
             --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
             --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
             --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
@@ -862,10 +910,10 @@ jobs:
         timeout-minutes: 5
         run: |
           set -eu
-          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
             --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
             --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
-            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
             --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
             --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
             --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
@@ -877,10 +925,10 @@ jobs:
         timeout-minutes: 5
         run: |
           set -eu
-          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user=65532:65532 --read-only \
+          docker run --rm --pull=never --network=none --ipc=private --cgroupns=private --user="$(id -u):$(id -g)" --read-only \
             --cap-drop=ALL --security-opt=no-new-privileges:true --pids-limit=128 --cpus=2 --memory=2147483648 \
             --memory-swap=2147483648 --ulimit=nofile=1024:1024 --env=NODE_OPTIONS= --env=NODE_PATH= --env=HOME=/scratch \
-            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid=65532,gid=65532 \
+            --env=TMPDIR=/scratch --tmpfs=/scratch:rw,nosuid,nodev,noexec,size=536870912,mode=0700,uid="$(id -u)",gid="$(id -g)" \
             --mount "type=bind,src=$RUNNER_TEMP/clued-trivy-snapshot,dst=/repo,readonly,bind-propagation=rprivate" \
             --mount "type=bind,src=$CLUED_TRIVY_DB,dst=/scratch/db,readonly,bind-propagation=rprivate" \
             --mount "type=bind,src=$CLUED_TRIVY_POLICY,dst=/scratch/policy,readonly,bind-propagation=rprivate" \
