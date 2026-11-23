@@ -2360,21 +2360,23 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
   const command = { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: [] };
   const argv = ['node', 'scripts/run-tests.mjs', '--test', '--test-concurrency=2', 'tests/a.test.mjs', 'tests/b.test.mjs', 'tests/c.test.mjs'];
   const only = (file) => ['node', 'scripts/run-tests.mjs', '--test', '--test-concurrency=2', file];
+  const listed = new Set(['apps/clued-cloud/tests/a.test.mjs', 'apps/clued-cloud/tests/b.test.mjs', 'apps/clued-cloud/tests/c.test.mjs']);
   assert.deepEqual(selection.shardCommand(command, argv, { index: 2, total: 2 }, 0),
-    { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']) });
+    { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']), listed });
   assert.deepEqual(selection.shardCommand(command, argv, { index: 1, total: 4 }, 3),
-    { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']) });
+    { argv: only('tests/b.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/b.test.mjs']), listed });
   assert.deepEqual(selection.shardCommand(command, argv, { index: 2, total: 4 }, 3),
-    { argv: only('tests/c.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/c.test.mjs']) });
-  assert.deepEqual(selection.shardCommand(command, argv, { index: 3, total: 4 }, 3), { argv: null, units: 3, files: null });
+    { argv: only('tests/c.test.mjs'), units: 3, files: new Set(['apps/clued-cloud/tests/c.test.mjs']), listed });
+  assert.deepEqual(selection.shardCommand(command, argv, { index: 3, total: 4 }, 3), { argv: null, units: 3, files: null, listed: null });
   // Not a list of test files: the command is one unit.
   const discover = ['python', '-m', 'unittest', 'discover', '-s', 'test', '-p', 'test_*.py'];
-  assert.deepEqual(selection.shardCommand({ cwd: '.' }, discover, { index: 2, total: 3 }, 4), { argv: discover, units: 1, files: null });
+  assert.deepEqual(selection.shardCommand({ cwd: '.' }, discover, { index: 2, total: 3 }, 4), { argv: discover, units: 1, files: null, listed: null });
   assert.deepEqual(selection.shardCommand({ cwd: '.' }, ['node', 'scripts/ci/check-cron-budget.mjs'], { index: 1, total: 3 }, 4),
-    { argv: null, units: 1, files: null });
+    { argv: null, units: 1, files: null, listed: null });
 
-  // admission-self-tests lists its files: with 2 shards from 0, the first file is shard 1's, the second shard 2's.
+  // admission-self-tests lists its files: of 2 shards, the one its number (shardOffset) gives has the first file, the other the second.
   const [first, second] = SUITE_COMMANDS['admission-self-tests'][0].argv.slice(2);
+  const firstShard = (selection.shardOffset('admission-self-tests') % 2) + 1;
   const known = { 'admission-self-tests': [{ file: first, path: ['a'], fingerprint: 'a'.repeat(16), reason: 'r' },
     { file: second, path: ['b'], fingerprint: 'b'.repeat(16), reason: 'r' }] };
   const summary = { type: 'summary', counts: {}, success: false };
@@ -2382,16 +2384,16 @@ test('--shard: a listing command runs its shard\'s files with its own switches; 
     const lines = [];
     let ran;
     const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, known, log: (line) => lines.push(line),
-      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2, offset: 0 },
+      spawn: (command, args) => { ran = args; return { status }; }, shard: { index, total: 2 },
       readReportFile: () => [...events, summary].map((event) => JSON.stringify(event)).join('\n') });
     return { code, lines: lines.join('\n'), ran };
   };
-  const one = shardOf(1, [], 0);
+  const one = shardOf(firstShard, [], 0);
   assert.equal(one.code, 0);
   assert.ok(one.ran.includes(first) && !one.ran.includes(second));
   assert.match(one.lines, new RegExp(`known failure no longer runs::${first} :: a`));
   assert.doesNotMatch(one.lines, new RegExp(second), 'the other shard\'s known failure is not this shard\'s');
-  const two = shardOf(2, [{ type: 'fail', file: path.join(ROOT, second), path: ['b'], fingerprint: 'b'.repeat(16) }], 1);
+  const two = shardOf(3 - firstShard, [{ type: 'fail', file: path.join(ROOT, second), path: ['b'], fingerprint: 'b'.repeat(16) }], 1);
   assert.equal(two.code, 0);
   assert.ok(two.ran.includes(second) && !two.ran.includes(first));
   assert.match(two.lines, new RegExp(`known failure::${second} :: b`));
@@ -2405,7 +2407,7 @@ test('--shard takes i/n with 1 <= i <= n, splits --run-selected only and runs on
     assert.throws(() => selection.parseShard(bad), /--shard takes i\/n/, String(bad));
   }
   const lines = [];
-  const shard = { index: 1, total: 2, offset: 0 };
+  const shard = { index: 1, total: 2 };
   assert.equal(await selection.runSuite('retrigger-counter', { root: ROOT, env: {}, log: (line) => lines.push(line), shard }), 2);
   assert.match(lines.join('\n'), /--shard runs only in a CI job/);
   assert.throws(() => executeSuite('retrigger-counter', { root: ROOT, env: {}, log, files: ['scripts/ci/retrigger-counter.test.mjs'], shard }),
@@ -2418,5 +2420,180 @@ test('--shard takes i/n with 1 <= i <= n, splits --run-selected only and runs on
     const result = cli(...args);
     assert.equal(result.status, 2, `${args.join(' ')}: ${result.stdout}${result.stderr}`);
     assert.match(result.stderr, message);
+  }
+});
+
+// Review of f574bab16 (REVIEW-hosted-speed-b3-20261124). Each shard selects on its own: one whose list of changed files
+// cannot be read runs every suite, the others the real selection. A suite's units go to the same shards whatever else a
+// shard selected, so each unit of the real selection still runs exactly once (H1: 39 of 157 files left out, 39 twice).
+async function shardRunById(suites, shard, env, { fail = () => false, summary = () => {} } = {}) {
+  const calls = [];
+  const run = (id, options) => executeSuite(id, { ...options, platform: 'linux', known: {},
+    spawn: (command, args, opts) => {
+      const call = { id, cwd: path.relative(ROOT, opts.cwd).replaceAll('\\', '/'),
+        argv: [command, ...args].filter((arg) => !arg.startsWith('--test-reporter')) };
+      calls.push(call);
+      return { status: fail(call) ? 1 : 0 };
+    },
+    readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
+  const status = await runSelected(suites, { root: ROOT, env, log, run, summary, ...(shard ? { shard } : {}) });
+  return { status, calls };
+}
+const unitsOf = (calls) => shardUnits(calls.map(({ cwd, argv }) => ({ cwd, argv })));
+
+test('--shard: shards that select differently (one runs every suite) still run each unit of the real selection once', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const all = Object.keys(SUITE_COMMANDS);
+  for (const real of [['resident-node'], ['selection', 'offline-drill', 'source-v2-node']]) {
+    const plan = unitsOf((await shardRunById(real, null, env)).calls);
+    for (const total of [2, 4]) {
+      for (let fallback = 1; fallback <= total; fallback += 1) {
+        const ran = [];
+        for (let index = 1; index <= total; index += 1) {
+          const { status, calls } = await shardRunById(index === fallback ? all : real, { index, total }, env);
+          assert.equal(status, 0);
+          ran.push(...calls.filter((call) => real.includes(call.id)));
+        }
+        assert.deepEqual(unitsOf(ran).sort(), [...plan].sort(),
+          `${real.join(' ')}, ${total} shards, shard ${fallback} runs every suite: each unit of the selection once`);
+      }
+    }
+  }
+});
+
+test('--shard: a python -m unittest command with an operand that is not a file runs whole, in one shard', () => {
+  const argv = ['python', '-m', 'unittest', 'tests/test_a.py', 'tests'];
+  for (const total of [2, 3]) {
+    const parts = [];
+    for (let index = 1; index <= total; index += 1) parts.push(selection.shardCommand({ cwd: '.' }, argv, { index, total }, 0));
+    const runs = parts.filter((part) => part.argv);
+    assert.equal(runs.length, 1, `one of ${total} shards runs it`);
+    assert.deepEqual(runs[0].argv, argv, 'the package operand is not dropped');
+    assert.ok(parts.every((part) => part.units === 1));
+  }
+  // Every operand a file: split by file as before.
+  const files = ['python', '-m', 'unittest', 'tests/test_a.py', 'tests.test_b'];
+  assert.deepEqual(selection.shardCommand({ cwd: '.' }, files, { index: 2, total: 2 }, 0).argv, ['python', '-m', 'unittest', 'tests.test_b']);
+});
+
+test('--shard: the summary tells a suite this shard ran no unit of from one it ran and passed', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const texts = [];
+  for (let index = 1; index <= 2; index += 1) {
+    const lines = [];
+    const { status, calls } = await shardRunById(['retrigger-counter'], { index, total: 2 }, env, { summary: (text) => lines.push(text) });
+    assert.equal(status, 0);
+    texts.push({ ran: calls.length, text: lines.join('') });
+  }
+  const idle = texts.find((part) => part.ran === 0);
+  const busy = texts.find((part) => part.ran === 1);
+  assert.ok(idle && busy, 'retrigger-counter is one unit: one shard runs it');
+  assert.doesNotMatch(idle.text, /retrigger-counter`: passed/);
+  assert.match(idle.text, /retrigger-counter`: not run in this shard \(0 of 1 units?\b/);
+  assert.match(busy.text, /retrigger-counter`: passed \(1 of 1 units? in this shard\)/);
+});
+
+test('--shard: a known failure of a file no longer in its command is reported by exactly one shard, as without --shard', () => {
+  const [first] = SUITE_COMMANDS['admission-self-tests'][0].argv.slice(2);
+  const gone = 'scripts/ci/gone-from-the-command.test.mjs';
+  const known = { 'admission-self-tests': [{ file: gone, path: ['g'], fingerprint: 'c'.repeat(16), reason: 'r' },
+    { file: first, path: ['a'], fingerprint: 'a'.repeat(16), reason: 'r' }] };
+  const warned = (shard) => {
+    const lines = [];
+    const code = executeSuite('admission-self-tests', { root: ROOT, env: { RUNNER_TEMP: os.tmpdir() }, known, log: (line) => lines.push(line),
+      spawn: () => ({ status: 0 }), ...(shard ? { shard } : {}),
+      readReportFile: () => JSON.stringify({ type: 'summary', counts: {}, success: true }) });
+    assert.equal(code, 0);
+    return lines.filter((line) => line.includes(`known failure no longer runs::${gone}`)).length;
+  };
+  assert.equal(warned(null), 1);
+  for (const total of [1, 2, 3]) {
+    let count = 0;
+    for (let index = 1; index <= total; index += 1) count += warned({ index, total });
+    assert.equal(count, 1, `${total} shards: one warning`);
+  }
+});
+
+test('--shard is written --shard i/n, once: --shard=i/n and a second --shard exit 2', () => {
+  const cli = (...args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), ...args],
+    { encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '', GITHUB_EVENT_NAME: '', GITHUB_OUTPUT: '', GITHUB_STEP_SUMMARY: '' } });
+  for (const [args, message] of [[['--check', 'ci-suites', '--shard=1/2'], /--shard takes i\/n as its own argument/],
+    [['--check', 'ci-suites', '--shard', '1/2', '--shard', '2/2'], /--shard is given once/],
+    [['--run-selected', 'ci-suites', '--shard', '1/2', '--shard', '2/2'], /--shard is given once/]]) {
+    const result = cli(...args);
+    assert.equal(result.status, 2, `${args.join(' ')}: ${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, message);
+  }
+});
+
+test('--shard: the changed files are those of the event\'s head; any doubt runs every suite (null)', async () => {
+  const event = { pull_request: { number: 7, head: { sha: 'b'.repeat(40) } } };
+  const env = { GITHUB_TOKEN: 't', GITHUB_REPOSITORY: 'o/r' };
+  const reply = (status, body) => ({ ok: status === 200, status, json: async () => body });
+  const fetcher = (head, { files = 200 } = {}) => async (url) => {
+    if (/\/pulls\/7\/files/.test(url)) return files === 'throw' ? Promise.reject(new Error('reset')) : reply(files, [{ filename: 'a.mjs' }]);
+    if (/\/pulls\/7$/.test(url)) return head === 'throw' ? Promise.reject(new Error('reset')) : reply(head ? 200 : 502, { head: { sha: head } });
+    throw new Error(url);
+  };
+  assert.deepEqual(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('b'.repeat(40)) }), ['a.mjs']);
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('c'.repeat(40)) }), null, 'a newer push');
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher(null) }), null, 'the head cannot be read');
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('throw') }), null);
+  assert.equal(await selection.shardChangedFiles({ event, env, fetchImpl: fetcher('b'.repeat(40), { files: 502 }) }), null);
+  assert.equal(await selection.shardChangedFiles({ event: { pull_request: { number: 7 } }, env, fetchImpl: fetcher('b'.repeat(40)) }), null);
+});
+
+// L5: a shard that stops early, and a command the pull request adds.
+test('--shard: a shard that stops at a failure stops only that suite there; every other assignment is unchanged', async (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-shard-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: temp };
+  const suites = ['components', 'retrigger-counter', 'selection'];
+  const total = 3;
+  const clean = [];
+  for (let index = 1; index <= total; index += 1) clean.push((await shardRunById(suites, { index, total }, env)).calls);
+  const stopping = clean.findIndex((calls) => calls.filter((call) => call.id === 'components').length >= 2);
+  assert.ok(stopping >= 0, 'a shard runs two components commands');
+  const target = JSON.stringify(clean[stopping].find((call) => call.id === 'components'));
+  for (let index = 1; index <= total; index += 1) {
+    const { status, calls } = await shardRunById(suites, { index, total }, env, { fail: (call) => JSON.stringify(call) === target });
+    if (index - 1 !== stopping) {
+      assert.equal(status, 0);
+      assert.deepEqual(calls, clean[index - 1]);
+      continue;
+    }
+    assert.equal(status, 1, 'the stopped shard fails');
+    assert.deepEqual(calls.filter((call) => call.id === 'components').map((call) => JSON.stringify(call)), [target]);
+    assert.deepEqual(calls.filter((call) => call.id !== 'components'), clean[index - 1].filter((call) => call.id !== 'components'),
+      'the next suites run their own units as before');
+  }
+});
+
+test('--shard: the test files and the command a pull request adds to a suite are split as the trusted ones are', async (t) => {
+  const { root, change } = candidateSelector(t);
+  const baseline = SUITE_COMMANDS['retrigger-counter'];
+  change('retrigger-counter', [{ cwd: '.', argv: [...baseline[0].argv, 'scripts/ci/extra-a.test.mjs', 'scripts/ci/extra-b.test.mjs',
+    'scripts/ci/extra-c.test.mjs'] }, { cwd: 'scripts/ci', argv: ['node', '-e', 'process.exit(0)'] }]);
+  const commands = [...selection.requiredCommands('retrigger-counter', root)];
+  assert.ok(commands.some((command) => command.files) && commands.some((command) => command.expanded), 'both kinds of addition');
+  const env = { CI_BASE_SHA: 'a'.repeat(40), RUNNER_TEMP: root };
+  const record = (calls) => (command, args, opts) => {
+    calls.push({ cwd: path.relative(root, opts.cwd).replaceAll('\\', '/'), argv: [command, ...args].filter((arg) => !arg.startsWith('--test-reporter')) });
+    return { status: 0 };
+  };
+  const plan = [];
+  assert.equal(executeSuite('retrigger-counter', { root, env, log, spawn: record(plan), platform: 'linux', known: {} }), 0);
+  assert.equal(plan.length, 3);
+  for (const total of [1, 2, 3, 4]) {
+    const ran = [];
+    for (let index = 1; index <= total; index += 1) {
+      assert.equal(executeSuite('retrigger-counter', { root, env, log, spawn: record(ran), platform: 'linux', known: {}, shard: { index, total } }), 0);
+    }
+    if (total === 1) assert.deepEqual(ran, plan);
+    assert.deepEqual(shardUnits(ran).sort(), shardUnits(plan).sort(), `${total} shards`);
   }
 });
