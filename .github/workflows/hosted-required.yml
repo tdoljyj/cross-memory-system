@@ -345,11 +345,13 @@ jobs:
       # The image warms Windows PowerShell's module analysis cache only at the machine-level PSModuleAnalysisCachePath. A
       # PowerShell a test starts with its own minimal environment (the service's three variables) does not get that variable
       # and uses the default cache under LocalApplicationData, which is cold: 45-56 s per process re-analysing the image's
-      # modules (task 3435f8bf block 1; V1 in ps-execution-policy.test.mjs). Copy the warmed file there. Auxiliary: when
-      # the file is missing or the copy fails it says so and does nothing (hosted-required.test.mjs).
+      # modules (task 3435f8bf block 1; whether the job is fast is judged by hosted-ci-suites-windows-duration). Copy the
+      # warmed file there. Auxiliary: when the file is missing or the copy fails it says so and does nothing
+      # (hosted-required.test.mjs).
       - name: Warm the default PowerShell module analysis cache
         shell: powershell
         continue-on-error: true
+        timeout-minutes: 2
         run: |
           $ErrorActionPreference = 'Stop'
           $source = [Environment]::GetEnvironmentVariable('PSModuleAnalysisCachePath', 'Machine')

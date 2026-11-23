@@ -113,8 +113,8 @@ test(`跑 ci-required-selection --run/--run-selected 套件的托管作业 timeo
   assert.deepEqual(checked.sort(), ['ci-suites', 'ci-suites-windows-shard', 'clued-cloud-tests']);
 });
 
-// 任务 3435f8bf 块 1：托管 Windows 作业在跑套件前把镜像预热好的模块分析缓存复制到默认位置（快不快由
-// ps-execution-policy.test.mjs 的 V1 计时用例在托管上验）。它是辅助步骤，出错只能“不做”，不能让作业红。S8 删托管工作流时本条一起删。
+// 任务 3435f8bf 块 1：托管 Windows 作业在跑套件前把镜像预热好的模块分析缓存复制到默认位置（快不快由非必需的
+// hosted-ci-suites-windows-duration 判）。它是辅助步骤，出错只能“不做”，不能让作业红，也不能拖住作业：步级上限 ≤ 2 分钟。S8 删托管工作流时本条一起删。
 test('托管 Windows 作业在跑套件前预热默认分析缓存，且这一步失败不让作业红', () => {
   const steps = (jobs(text).get('ci-suites-windows-shard') ?? '').split(/\n {6}- /);
   const at = name => steps.findIndex(s => s.startsWith(`name: ${name}\n`));
@@ -122,6 +122,8 @@ test('托管 Windows 作业在跑套件前预热默认分析缓存，且这一�
   assert.ok(warm > at('Configure job temporary storage') && at('Configure job temporary storage') > 0, '预热在配置临时存储之后');
   assert.ok(warm < at('Select and run the suites declared for Windows'), '预热在跑套件之前');
   assert.match(steps[warm], /\n {8}continue-on-error: true\n/, '辅助步骤失败不挡作业');
+  const limit = /\n {8}timeout-minutes:\s*(\d+)\s*\n/.exec(steps[warm]);
+  assert.ok(limit && Number(limit[1]) <= 2, `辅助步骤有步级 timeout-minutes 且 ≤ 2：${limit?.[1] ?? '没有'}`);
   assert.match(steps[warm], /GetEnvironmentVariable\('PSModuleAnalysisCachePath', 'Machine'\)/);
   assert.match(steps[warm], /GetFolderPath\('LocalApplicationData'\)\) 'Microsoft\\Windows\\PowerShell\\ModuleAnalysisCache'/);
 });
