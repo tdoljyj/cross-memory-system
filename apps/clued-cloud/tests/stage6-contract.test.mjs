@@ -106,10 +106,14 @@ test("current-state answers are sourced from BeamingFace on every injected surfa
   // Merge slot (Owner Decision 0edf7889): one session at a time brings main in, runs CI and merges.
   assert.match(contract, /The slot is the trigger ref `merge:<owner>\/<name>:<branch>`/);
   // Merge Admission step 4 (Owner Decision 661f8c36, Task 38e0c90d): the slot is a queue; a merge ref never conflicts.
-  assert.match(contract, /A merge ref never conflicts: the renewal succeeds, and the claim's `merge_queue` shows your `state`/);
-  assert.match(contract, /bring the default branch in and push first, then renew its claim/);
+  // v63: in a repository the resident CI serves only the CI joins; a merge ref the holder sends never puts it into the queue.
+  assert.match(contract, /a merge ref you send in a claim or renewal never puts you into that queue and is not an error\./);
+  assert.match(contract, /you do not join it yourself: once the resident CI has tested the pull request's current head through, it puts the claim into the queue/);
+  assert.match(contract, /A merge ref never conflicts, and the claim's `merge_queue` shows your `state`/);
+  assert.doesNotMatch(contract, /bring the default branch in and push first, then renew its claim/);
   assert.match(contract, /While you wait, do nothing for the merge/);
-  assert.match(contract, /Renew about once an hour to keep your lease \(2 hours\) without spending the claim's 12 renewals/);
+  assert.match(contract, /Read `merge_queue` for your place; you need not renew to keep it\./);
+  assert.doesNotMatch(contract, /Renew about once an hour/);
   assert.match(contract, /a renewal that keeps the ref joins again at the back/);
   assert.match(contract, /Merge dependent pull requests one at a time/);
   // Owner Decision 2ea795e4: the slot lapses on its own clock and a required App check enforces it.

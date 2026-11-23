@@ -154,9 +154,13 @@ test('the install plan carries the CI root entry, the verify checks it from the 
   assert.ok(at("Step 'directories'") < at("Step 'parent-acl'") && at("Step 'parent-acl'") < at("Step 'package-copy'"));
   assert.match(install, /Step 'parent-acl' \{\s*\$wrote = Add-ParentAce \$plan\.parentAcl/);
   // The one ACE appended to an existing folder: the code only ever calls SetAccessControl for it, and writes no owner/group/SACL section.
-  const appendFn = install.slice(install.indexOf('function Add-ParentAce'), install.indexOf('# ---- Carry-forward'));
+  const appendFn = install.slice(install.indexOf('function Add-ParentAce'), install.indexOf('# ---- <CiRoot>\\state'));
   assert.match(appendFn, /SetSecurityDescriptorSddlForm\(\$now \+ \$p\.ace, \[Security\.AccessControl\.AccessControlSections\]::Access\)/);
-  assert.equal([...install.matchAll(/SetAccessControl\(\$p\.path/g)].length, 1);
+  assert.equal([...appendFn.matchAll(/SetAccessControl\(\$p\.path/g)].length, 1);
+  // r13 (0e418483): the second and last writer is state-parent-acl, the Access section of <CiRoot>\state only (first-install-state-parent.test.mjs)
+  const stateFn = install.slice(install.indexOf('function Invoke-StateParentAcl'), install.indexOf('# ---- Carry-forward'));
+  assert.equal([...stateFn.matchAll(/SetAccessControl\(\$p\.path/g)].length, 1);
+  assert.equal([...install.matchAll(/SetAccessControl\(\$p\.path/g)].length, 2);
   assert.doesNotMatch(code(install), /icacls|takeown|Set-Acl\b/i, 'no other way of changing an ACL was added');
   // verify: live ACL of the CI root for the service SID, and the companion scripts
   assert.match(verify, /Record 'ci-root-resident-read-control' \$\(if \(\[string\]::IsNullOrEmpty\(\$ciRootSddl\)\) \{ 'unreadable' \} else \{ try \{ Test-ParentAclRule \$ciRootSddl \(Get-ServiceSid 'CluedCIResident'\) \} catch \{ \$false \} \}\)/);
