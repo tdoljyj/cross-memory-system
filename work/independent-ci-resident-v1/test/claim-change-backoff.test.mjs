@@ -301,7 +301,9 @@ test('G4: a protected claim change wakes immediately even when the waiting budge
 // code for scheduling; the stage fact's reasonCodes ride the real chain (executor -> queue row -> status board -> status.json -> the PR
 // page and the notifications) and the page says which one it is and what to do. Without a known reason the text is what it was.
 const NOT_AUTHORIZED_TEXT = '当前提交未授权：认领持有人对这个提交做 authorize_head 后自动继续';
-const OLD_WAIT_TEXT = /^等待中（CLAIM_NOT_CURRENT）：约 \d\d:\d\dZ 自动重试，批准或修正后编辑 PR 可提前$/;
+// The text without a known reason. Task 30643342 (§2 step 4): a claim wait says what wakes it early (an authorization, never an edit;
+// queue.mjs#earlyWakeOf), the whole text still pinned.
+const OLD_WAIT_TEXT = /^等待中（CLAIM_NOT_CURRENT）：约 \d\d:\d\dZ 自动重试；认领持有人授权此提交后，约 10 分钟内自动重试（编辑 PR 不会提前）$/;
 const refusalWith = (reasonCodes, extra = {}) => ({ ...SAFE_REFUSAL, diagnostic: { ...SAFE_REFUSAL.diagnostic, reasonCodes, ...extra } });
 async function boardField(t, refusal) {
   let now = () => 0;
