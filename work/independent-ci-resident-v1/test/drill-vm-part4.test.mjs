@@ -996,20 +996,30 @@ test('fix1: first-install-entry.ps1 is ASCII and parses in Windows PowerShell 5.
 // Review low 5, the real path: a PowerShell job (a PSRemotingJob, as Invoke-Command -AsJob gives) has no StopJobAsync; Stop-DrillJob stops
 // it on a runspace of its own and returns at once, and a later call removes it once it has stopped.
 test('fix1 low 5: a running PSRemotingJob is stopped without waiting and removed once it has stopped', opts, () => {
-  // No wall-clock bound (a slow hosted machine broke a 2000 ms one): the job sits in an uninterruptible 30 s sleep, so a blocking Stop-Job
-  // would hold until it ended (measured 17 s of 20 s); a Stop-DrillJob that does not wait returns with the job not yet in a final state.
+  // No wall-clock bound (a slow hosted machine broke a 2000 ms one): the job blocks in an uninterruptible wait on a named event the test
+  // sets only after Stop-DrillJob returned, so a blocking Stop-Job would hold until the wait gave up at 60 s; a Stop-DrillJob that does not
+  // wait returns with the job not yet in a final state (review of #1266, suggestion A). Once the event is set the job idles in short
+  // interruptible sleeps (about 120 s at most), so the stop on its way ends it within moments, and it never completes on its own first.
+  // Whether the job still runs is decided by the event, not by how fast the machine is. The test holds its handle to the end, and sets
+  // it in a finally too, so an early failure leaves no job waiting out its 60 s.
   const out = ps(`$mark = Join-Path ([IO.Path]::GetTempPath()) ('lowfive-' + [guid]::NewGuid().ToString('N'))
-    $j = Start-Job { param($m) Set-Content -LiteralPath $m 'in'; [Threading.Thread]::Sleep(30000) } -ArgumentList $mark
-    $type = $j.GetType().Name
-    $armed = [Environment]::TickCount + 120000; while (-not (Test-Path -LiteralPath $mark) -and [Environment]::TickCount -lt $armed) { Start-Sleep -Milliseconds 50 }
-    Stop-DrillJob $j $false; $atReturn = [string]$j.State
-    Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue
-    $until = [Environment]::TickCount + 60000; while ($j.State -notin @('Stopped', 'Completed', 'Failed') -and [Environment]::TickCount -lt $until) { Start-Sleep -Milliseconds 100 }
-    $state = [string]$j.State
+    $name = 'CluedDrillTest-lowfive-' + [guid]::NewGuid().ToString('N')
+    $release = [Threading.EventWaitHandle]::new($false, 'ManualReset', $name)
+    try {
+      $j = Start-Job { param($m, $n) $e = [Threading.EventWaitHandle]::new($false, 'ManualReset', $n); Set-Content -LiteralPath $m 'in'; [void]$e.WaitOne(60000)
+        for ($i = 0; $i -lt 2400; $i++) { Start-Sleep -Milliseconds 50 } } -ArgumentList $mark, $name
+      $type = $j.GetType().Name
+      $armed = [Environment]::TickCount + 120000; while (-not (Test-Path -LiteralPath $mark) -and [Environment]::TickCount -lt $armed) { Start-Sleep -Milliseconds 50 }
+      Stop-DrillJob $j $false; $atReturn = [string]$j.State
+      [void]$release.Set()
+      $until = [Environment]::TickCount + 60000; while ($j.State -notin @('Stopped', 'Completed', 'Failed') -and [Environment]::TickCount -lt $until) { Start-Sleep -Milliseconds 100 }
+      $state = [string]$j.State
+    } finally { [void]$release.Set(); Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 300
     $k = Start-Job { 1 }; [void](Wait-Job -Job $k -Timeout 60); Stop-DrillJob $k $true   # an ended job: removed, and the sweep runs
     $left = $script:DrillStoppingJobs.Count
     $gone = $null -eq (Get-Job -Id $j.Id -ErrorAction SilentlyContinue)
+    $release.Dispose()
     [ordered]@{ type = $type; atReturn = $atReturn; state = $state; left = $left; gone = $gone }`);
   assert.equal(out.type, 'PSRemotingJob');
   assert.ok(['Running', 'Stopping'].includes(out.atReturn), `Stop-DrillJob waited: the job was ${out.atReturn} when it returned`);
