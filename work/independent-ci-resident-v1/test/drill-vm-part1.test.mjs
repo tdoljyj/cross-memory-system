@@ -590,13 +590,15 @@ test('G2: an abort for memory records the runner distribution\'s memory (wslMemo
   }
   // no Runner.Worker: pgrep -c says 0 and exits 1
   assert.equal(memoryAbort('none', "$answer.workers = @{ exit = 1; stdout = \"0`n\"; stderr = '' }").guard.wslMemory[0].runnerWorkers, 0);
+  // the count not read (evidence only; independent review of 29ed7255c, medium C): the sample is kept, runnerWorkers null
+  assert.deepEqual(memoryAbort('workersGarbled', "$answer.workers = @{ exit = 0; stdout = 'three'; stderr = '' }").guard.wslMemory,
+    [{ distribution: 'Fixture-CI', memTotalGB: 28, memFreeGB: 6.5, cachedGB: 16, anonPagesGB: 5, runnerWorkers: null }]);
   // not read whole: nothing recorded, the abort and the restore as before
   const unread = {
     list: "$answer.list = @{ exit = 1; stdout = ''; stderr = '' }",
     notRunning: "$answer.list = @{ exit = 0; stdout = ''; stderr = '' }",
     meminfoShort: "$answer.meminfo = @{ exit = 0; stdout = $meminfo.Replace('AnonPages:', 'Anon:'); stderr = '' }",
     meminfoStderr: "$answer.meminfo = @{ exit = 0; stdout = $meminfo; stderr = 'x' }",
-    workersGarbled: "$answer.workers = @{ exit = 0; stdout = 'three'; stderr = '' }",
     timeout: "if ($a[-1] -ceq '/proc/meminfo') { throw 'wsl.exe timed out' }",
   };
   for (const [name, answer] of Object.entries(unread)) {
@@ -865,7 +867,8 @@ test('host reader uses only the pinned status file and accounts for an existing 
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
     function Get-DrillRunnerDistributions { param($HostName) }
     $script:freeBytes = 20GB + $script:Drill.BootMarginBytes; $script:assignedBytes = 0
-    $safety = Get-DrillHostSafety
+    # -WslMemory @(): no runner distribution runs, as Start-DrillGuardedVm would hand it (Fable plan 87d330d0)
+    $safety = Get-DrillHostSafety -WslMemory @()
     $script:freeBytes = 10GB; $script:assignedBytes = 10GB
     $running = Get-DrillHostSafety -Running
     @{ pinned = $pinned; path = $script:readPath; safety = $safety; running = $running; margin = $script:Drill.BootMarginBytes }
@@ -1009,6 +1012,7 @@ test('an EndInvoke exception leaves a failed receipt after the owned VM is stopp
     function Assert-DrillHost { @{ freeGB = 16 } }
     # the wait for memory before the hold reads the host's real memory: answered here, as the gates are
     function Read-DrillHostMemory { @{ free = 64GB; target = 8GB; assigned = 0L } }
+    function Get-DrillWslMemory { param([switch]$IdleCap) }
     function Invoke-DrillBaseline { @{ action = 'ready' } }
     function Read-DrillHostStatus { ${q(idleHostStatus())} }
     function Get-DrillHostSafety { @{ ok = $true } }
