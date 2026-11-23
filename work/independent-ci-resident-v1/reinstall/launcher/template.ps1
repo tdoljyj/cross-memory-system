@@ -723,8 +723,9 @@ function Test-CurrentRootCarryShape {
 # runner service on the helper binary, so verify-resident.ps1 must never run while either is in progress.
 #   phase 1: up to $FirstTrainWaitSeconds for a finished train (status.json train.last set) or a HALT;
 #            a fresh, matching standby observation with no live work makes only this wait inapplicable;
-#            the same view, UNCERTAIN, with the service's refusal of this node's token since the step started, ends it as a failure
-#            (role unauthorized; FABLE-drill-role-probe-20261124 3.2). The step's role: unauthorized, not-held, held, else unconfirmed;
+#            the same view, UNCERTAIN, a probe answered since the step started and the service's refusal of this node's token in the
+#            current run of probe failures (not before probe.failingSince), ends it as a failure (role unauthorized;
+#            FABLE-drill-role-probe-20261124 3.2, PLAN-launcher-role-review-m1m2-20261124 1). The step's role: unauthorized, not-held, held, else unconfirmed;
 #            a first install with a role other than held or not-held is not done (bootstrap.ps1 Get-LauncherVerdict);
 #   phase 2, ALWAYS (also after a phase-1 timeout): up to $RunnerQuietWaitSeconds for the runner on its original binary AND
 #            stopped AND the executor not RUNNING, seen on two consecutive polls 5 s apart.
@@ -787,24 +788,33 @@ function Test-FirstTrainNotApplicable($status, [DateTimeOffset]$notBefore = [Dat
     ($probe['failures'] -is [int]) -and ($probe['failures'] -eq 0) -and (Test-FirstTrainTime $probe['at'] 900)
 }
 # FABLE-drill-role-probe-20261124 3.2 (task 87d330d0): the service refused this node's token. The executor reports it once per run of
-# failures as a role-probe-connection notice (role-probe.mjs observe: ROLE_PROBE_CONNECTION_UNAUTHORIZED; executor.mjs puts it in status's
-# notices). The notice of this step's time (not before it started), or $null.
-function Get-FirstTrainRefusalNotice($status, [DateTimeOffset]$notBefore) {
+# failures as a role-probe-connection notice, at the run's first refusal (role-probe.mjs observe: ROLE_PROBE_CONNECTION_UNAUTHORIZED;
+# executor.mjs puts it in status's notices). The notice of the current run of failures, or $null: at most 15 minutes old and not before the
+# same status's probe.failingSince (the run's first failure; a held or not-held answer clears it), which must be a valid time. The run may have
+# begun before this step did (PLAN-launcher-role-review-m1m2-20261124 1: the launcher's clock does not say which run a notice belongs to).
+function Get-FirstTrainRefusalNotice($status) {
   if ($status -isnot [Collections.IDictionary] -or $status.Keys -cnotcontains 'notices' -or $status['notices'] -isnot [Array]) { return $null }
+  if ($status.Keys -cnotcontains 'node' -or $status['node'] -isnot [Collections.IDictionary] -or $status['node'].Keys -cnotcontains 'probe') { return $null }
+  $probe = $status['node']['probe']
+  if ($probe -isnot [Collections.IDictionary] -or $probe.Keys -cnotcontains 'failingSince') { return $null }
+  $since = $probe['failingSince']; $sinceAt = [DateTimeOffset]::MinValue
+  if (-not (Test-FirstTrainTime $since ([int]::MaxValue)) -or
+      -not [DateTimeOffset]::TryParse($since, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$sinceAt)) { return $null }
   foreach ($n in $status['notices']) {
     if ($n -is [Collections.IDictionary] -and $n['kind'] -is [string] -and $n['kind'] -ceq 'role-probe-connection' -and
-        $n['code'] -is [string] -and $n['code'] -ceq 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' -and (Test-FirstTrainTime $n['at'] 900 $notBefore)) { return $n }
+        $n['code'] -is [string] -and $n['code'] -ceq 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' -and (Test-FirstTrainTime $n['at'] 900 $sinceAt)) { return $n }
   }
   return $null
 }
 # The refused token ends phase 1 (it is a definite answer: no train can start, ACTIVE comes only from held, executor.mjs, and the next probe
 # is at least a minute away and cannot answer held with this token). A plain uncertain answer (network, 5xx) never does: a minute later it may
-# be held and start a train, which is what the wait is for (review M1). The probe answered uncertain since the step started.
+# be held and start a train, which is what the wait is for (review M1). The probe answered uncertain since the step started (the launcher
+# saw a new uncertain answer within the step); the refusal is of the current run of failures (Get-FirstTrainRefusalNotice).
 function Test-FirstTrainRoleUnauthorized($status, [DateTimeOffset]$notBefore) {
   if (-not (Test-FirstTrainStatusFrame $status $notBefore)) { return $false }
   $node = $status['node']; $probe = $node['probe']
   return ($node['mode'] -ceq 'UNCERTAIN') -and ($probe['result'] -is [string]) -and ($probe['result'] -ceq 'uncertain') -and
-    (Test-FirstTrainTime $probe['at'] 900 $notBefore) -and ($null -ne (Get-FirstTrainRefusalNotice $status $notBefore))
+    (Test-FirstTrainTime $probe['at'] 900 $notBefore) -and ($null -ne (Get-FirstTrainRefusalNotice $status))
 }
 # The role a status shows (held: ACTIVE and held; not-held: STANDBY and not-held), from this node's and this Source's status written since
 # the step started (the new process starts UNCERTAIN: a mode other than that is its own probe's) and a probe at most 15 minutes old, as the
@@ -853,7 +863,7 @@ function Step-WaitFirstTrain {
       $script:FirstTrainRole = try { Get-FirstTrainRole $s $t0 } catch { $null }   # the role this poll shows (the last poll's is the step's)
       if ($null -ne $script:FirstTrainSeen.halt -or [string]$script:FirstTrainSeen.state -ceq 'HALTED') { return $true }
       if (Test-FirstTrainRoleUnauthorized $s $t0) {
-        $n = $s['node']; $p = $n['probe']; $refusal = Get-FirstTrainRefusalNotice $s $t0
+        $n = $s['node']; $p = $n['probe']; $refusal = Get-FirstTrainRefusalNotice $s
         $r.roleUnauthorized = $true
         $r.roleUnauthorizedObservation = [ordered]@{ writtenAt = $s['writtenAt']; nodeName = $n['name']; source = $n['source']; mode = $n['mode']
           probeAt = $p['at']; probeResult = $p['result']; noticeAt = $refusal['at']; noticeCode = $refusal['code'] }
