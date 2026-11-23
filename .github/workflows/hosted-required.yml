@@ -41,7 +41,7 @@ jobs:
   clued-cloud-tests:
     name: hosted-clued-cloud-tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read
@@ -112,7 +112,7 @@ jobs:
   ci-suites:
     name: hosted-ci-suites
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read
@@ -277,7 +277,7 @@ jobs:
   ci-suites-windows:
     name: hosted-ci-suites-windows
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: read

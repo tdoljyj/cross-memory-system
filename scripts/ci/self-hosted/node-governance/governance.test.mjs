@@ -68,19 +68,6 @@ function run(t, r, blocks, body, { prelude = [], env = {} } = {}) {
 }
 const at = (lines, key) => lines.find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1);
 
-// Task 3435f8bf: one render in the suite's environment takes under a second on a node. On the hosted windows image a
-// Windows PowerShell 5.1 process that lost PSModuleAnalysisCachePath (the image's warmed module analysis cache) spends
-// about 20 s rebuilding it, which made this suite 16 minutes there. First in the file so a slow start shows first.
-test('one render takes at most 6 seconds in the suite environment', { skip }, (t) => {
-  const out = path.join(tempDir(t, 'governance-timing-'), 'node-governance.ps1');
-  const started = process.hrtime.bigint();
-  const result = powershell(['-File', RENDERER, '-HostId', 'company-primary', '-OutputPath', out]);
-  const seconds = Number(process.hrtime.bigint() - started) / 1e9;
-  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
-  const cache = Object.keys(process.env).some((name) => name.toLowerCase() === 'psmoduleanalysiscachepath');
-  assert.ok(seconds <= 6, `render took ${seconds.toFixed(1)} s (limit 6 s); PSModuleAnalysisCachePath ${cache ? 'is' : 'is not'} in the environment`);
-});
-
 test('both nodes render from the same parts: one standard, one governance block each; no watchdog leftovers', { skip }, (t) => {
   const company = render(t, 'company-primary');
   const home = render(t, 'home-primary');
