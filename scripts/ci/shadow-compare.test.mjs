@@ -17,9 +17,15 @@ const checksRoute = (sha, page = 1) => `/commits/${sha}/check-runs?filter=all&pe
 const sha = n => n.toString(16).padStart(40, '0');
 
 let nextId = 1000;
-function run(name, app, conclusion = 'success', { status = 'completed', started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', title = null, id } = {}) {
-  return { id: id ?? nextId++, name, app: { id: app }, status, conclusion: status === 'completed' ? conclusion : null,
-    started_at: started, completed_at: status === 'completed' ? completed : null, output: { title } };
+// 每条 check-run 带 check_suite.id（GitHub 列表实况）。所在 suite 的结论默认跟这条一致（一次运行只有这一项）；
+// suiteConclusion 指定时就是“检查红、运行被取消”这类形状。api() 按这张表回答 /check-suites/<id>。
+const SUITES = new Map();
+function run(name, app, conclusion = 'success', { status = 'completed', started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', title = null, id,
+  suite, suiteConclusion } = {}) {
+  const runId = id ?? nextId++, suiteId = suite ?? 900_000_000 + runId;
+  if (suiteConclusion !== undefined || !SUITES.has(suiteId)) SUITES.set(suiteId, suiteConclusion !== undefined ? suiteConclusion : status === 'completed' ? conclusion : null);
+  return { id: runId, name, app: { id: app }, status, conclusion: status === 'completed' ? conclusion : null,
+    started_at: started, completed_at: status === 'completed' ? completed : null, output: { title }, check_suite: { id: suiteId } };
 }
 // 一个 head 上两边七项全绿，另带无关检查（含两边的准入，它们不在比对里）；override(name, side) 返回 undefined 表示缺这一条，返回数组表示替换。
 function greenRuns({ started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', hostedCompleted = '2026-11-23T01:12:00Z', override = () => null } = {}) {
@@ -43,6 +49,8 @@ function api(routes) {
   const calls = [];
   return { calls, async get(route) {
     calls.push(route);
+    const suite = /^\/check-suites\/(\d+)$/.exec(route);
+    if (suite && !Object.hasOwn(routes, route) && SUITES.has(Number(suite[1]))) return { id: Number(suite[1]), conclusion: SUITES.get(Number(suite[1])) };
     assert.ok(Object.hasOwn(routes, route), `未录制 API 请求：${route}`);
     if (routes[route]?.error) throw new Error(routes[route].error);
     return structuredClone(routes[route]);
@@ -383,6 +391,109 @@ test('U11 同一 sha 在 PR A 里被取代、在 PR B 里是当前：按当前�
   assert.deepEqual(head.prs, [1700, 1701]);
   assert.equal(head.verdict, '在跑');
   assert.equal(pairOf(head, 'trivy').verdict, '在跑');
+});
+
+// 托管运行被取消（FABLE-shadow-superseded-head-20261124 方案甲）：块 4 起汇总作业 if: always()，运行被并发取消后它照样执行，
+// 读到 needs 是 cancelled 就退出 1，hosted-ci-suites-windows 成了 failure；但它所在的 check suite（那次运行）结论是 cancelled。
+// 样本取自现场 PR #1252 的被取代 head cfec87b：框架 ci-suites-windows 14:33 绿（suite 122102242861），
+// 托管两条 hosted-ci-suites-windows 同在 suite 122102242675，15:10 被取消。块 4 前这两条检查本身是 cancelled；这里换成块 4 后的 failure。
+const CFEC = 'cfec87bdf26614d5b639b49e04a42ffc737cb60d';
+const CFEC_HOSTED_SUITE = 122102242675, CFEC_FRAMEWORK_SUITE = 122102242861;
+const suiteRoute = id => `/check-suites/${id}`;
+const cancelledWindows = ({ t, framework = 'success', suiteConclusion = 'cancelled', suite = CFEC_HOSTED_SUITE, frameworkSuite } = {}) => (check, side) => {
+  if (check !== 'ci-suites-windows') return null;
+  if (side === 'framework') return [run('ci-suites-windows', 15368, framework, { started: t, completed: t, suite: frameworkSuite })];
+  return [1, 2].map(() => run('hosted-ci-suites-windows', 15368, 'failure', { started: t, completed: t, suite, suiteConclusion }));
+};
+const suiteCalls = calls => calls.filter(c => c.startsWith('/check-suites/'));
+
+test('S1 被取代 head 托管 failure、所在运行被取消、框架绿（cfec87b 形状）：判跳过，不打断连续计数', async () => {
+  const [a, z] = [sha(401), sha(402)];
+  const t = '2026-11-23T07:10:03Z';
+  const routes = prRoutes([{ number: 1252, state: 'open', commits: [{ sha: a }, { sha: CFEC }, { sha: z }] }],
+    { [a]: runsAt(at(23, 5)), [CFEC]: runsAt(t, cancelledWindows({ t, frameworkSuite: CFEC_FRAMEWORK_SUITE })), [z]: runsAt(at(23, 9)) });
+  const stub = api(routes);
+  const report = await compare({ prs: { from: 1252, to: 1252 }, api: stub, now: NOW });
+  assert.deepEqual(verdicts(report), ['一致', '跳过', '一致']);
+  const pair = pairOf(report.heads[1], 'ci-suites-windows');
+  assert.equal(pair.verdict, '跳过');
+  assert.equal(pair.reason, `托管运行已取消（suite ${CFEC_HOSTED_SUITE}），已被取代`);
+  // 跳过不计入也不打断：前后两个一致 head 连成 2（修复前这一 head 判不一致，计数只剩 1）。
+  assert.equal(report.summary.streak.heads, 2);
+  // 只为托管红的这一项读一次 suite；框架侧绿、其余各项托管绿，都不读。
+  assert.deepEqual(suiteCalls(stub.calls), [suiteRoute(CFEC_HOSTED_SUITE)]);
+});
+
+test('S2 同 S1 但框架也红、其余六项一致：判跳过，不虚记两边同红', async () => {
+  const [a, x] = [sha(411), sha(412)];
+  const t = at(23, 6);
+  const routes = prRoutes([{ number: 1710, state: 'open', commits: [{ sha: a }, { sha: x }] }],
+    { [a]: runsAt(t, cancelledWindows({ t, framework: 'failure', suite: 122100000001 })), [x]: runsAt(at(23, 7)) });
+  const report = await compare({ prs: { from: 1710, to: 1710 }, api: api(routes), now: NOW });
+  assert.deepEqual(verdicts(report), ['跳过', '一致']);
+  assert.equal(pairOf(report.heads[0], 'ci-suites-windows').verdict, '跳过');
+  assert.equal(report.summary.streak.bothRedHeads, 0);
+});
+
+test('S3 最终 head 托管 failure、所在运行被取消：判未知，写明运行已取消', async () => {
+  const s = sha(421);
+  const t = at(23, 8);
+  const head = await finalHead(s, runsAt(t, cancelledWindows({ t, suite: 122100000002 })));
+  assert.equal(head.role, 'final');
+  assert.equal(head.verdict, '未知');
+  assert.equal(pairOf(head, 'ci-suites-windows').verdict, '未知');
+  assert.equal(pairOf(head, 'ci-suites-windows').reason, '托管运行已取消（suite 122100000002）');
+});
+
+test('S3b 当前 head 托管 failure、所在运行被取消：判未知，不判在跑', async () => {
+  const s = sha(422);
+  const t = at(23, 8);
+  const [head] = (await compare({ heads: [s], api: api(headRoutes([[s, runsAt(t, cancelledWindows({ t, suite: 122100000003 }))]])), now: NOW })).heads;
+  assert.equal(head.verdict, '未知');
+  assert.equal(pairOf(head, 'ci-suites-windows').reason, '托管运行已取消（suite 122100000003）');
+});
+
+test('S4 被取代 head 托管真失败（suite 也是 failure）、框架绿：照样判不一致', async () => {
+  const [x, y] = [sha(431), sha(432)];
+  const t = at(23, 9);
+  const routes = prRoutes([{ number: 1720, state: 'open', commits: [{ sha: x }, { sha: y }] }],
+    { [x]: runsAt(t, cancelledWindows({ t, suiteConclusion: 'failure', suite: 122100000004 })), [y]: runsAt(at(23, 10)) });
+  const report = await compare({ prs: { from: 1720, to: 1720 }, api: api(routes), now: NOW });
+  assert.deepEqual(verdicts(report), ['不一致', '一致']);
+  assert.equal(pairOf(report.heads[0], 'ci-suites-windows').direction, '托管红、框架绿');
+  assert.equal(report.summary.streak.heads, 1);
+});
+
+test('S5 suite 读不到：判未知，不判一致、不判跳过（被取代 head、两边都红）', async () => {
+  const [x, y] = [sha(441), sha(442)];
+  const t = at(23, 11);
+  const routes = prRoutes([{ number: 1730, state: 'open', commits: [{ sha: x }, { sha: y }] }],
+    { [x]: runsAt(t, cancelledWindows({ t, framework: 'failure', suite: 122100000005 })), [y]: runsAt(at(23, 12)) });
+  routes[suiteRoute(122100000005)] = { error: 'gh GET 失败（退出码 1）' };
+  const report = await compare({ prs: { from: 1730, to: 1730 }, api: api(routes), now: NOW });
+  assert.deepEqual(verdicts(report), ['未知', '一致']);
+  assert.equal(pairOf(report.heads[0], 'ci-suites-windows').verdict, '未知');
+  assert.match(pairOf(report.heads[0], 'ci-suites-windows').reason, /^托管运行读取失败/);
+  assert.equal(report.summary.streak.bothRedHeads, 0);
+});
+
+test('S5b 托管红的检查不带 check_suite.id：判未知', async () => {
+  const s = sha(443);
+  const runs = greenRuns({ override: (check, side) => check === 'trivy' && side === 'hosted'
+    ? [(({ check_suite, ...r }) => r)(run('hosted-trivy', 15368, 'failure'))] : null });
+  const head = await finalHead(s, runs);
+  assert.equal(pairOf(head, 'trivy').verdict, '未知');
+  assert.match(pairOf(head, 'trivy').reason, /^托管运行读取失败/);
+});
+
+test('S6 托管绿的 head 不读 suite（框架红托管绿照常判不一致）', async () => {
+  const [x, y] = [sha(451), sha(452)];
+  const routes = prRoutes([{ number: 1740, state: 'open', commits: [{ sha: x }, { sha: y }] }],
+    { [x]: runsAt(at(23, 13), frameworkRed('gitleaks', at(23, 13))), [y]: runsAt(at(23, 14)) });
+  const stub = api(routes);
+  const report = await compare({ prs: { from: 1740, to: 1740 }, api: stub, now: NOW });
+  assert.deepEqual(verdicts(report), ['不一致', '一致']);
+  assert.deepEqual(suiteCalls(stub.calls), []);
 });
 
 // 连续一致的计数（判据全文见下方 S6 用例）。

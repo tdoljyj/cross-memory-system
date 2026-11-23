@@ -5,6 +5,8 @@
 // head 的角色从 PR 字段定（FABLE-shadow-superseded-20261122，丙）：当前（open PR 的 head）缺检查或未完成判“在跑”；
 // 最终（已合入 PR 的 head）严格口径；被取代（PR 的其他提交、关闭未合入 PR 的 head）两侧都有红/绿终态才比，
 // 比不了判“跳过”。“在跑”“跳过”都不计入、不打断连续一致。读取失败、#292 读不到或没钉住不分角色判未知。
+// 托管运行被取消即托管无结论（FABLE-shadow-superseded-head-20261124 方案甲）：托管侧为红时读它所在的 check suite，
+// 运行被取消就按无结论交给上面的角色规则（被取代跳过、当前与最终未知）；读不到判未知。托管绿不多读。
 //
 //   node scripts/ci/shadow-compare.mjs --prs <起>-[<止>]      PR 范围内每个 PR 的每个被测 head
 //   node scripts/ci/shadow-compare.mjs --head <sha> [--head <sha>]...
@@ -21,6 +23,10 @@ export const PAIRS = Object.freeze(['ci-suites', 'clued-cloud-tests', 'migration
 // 与 train-rules 一致：success、neutral、skipped 算过。cancelled、stale 等不是结论。
 const PASS = new Set(['success', 'neutral', 'skipped']);
 const FAIL = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
+// 托管检查红了，是不是因为它所在的运行被取消：hosted-required.yml 的汇总作业 if: always()，运行被并发取消后照样执行、
+// 读到 needs 是 cancelled 就失败，检查本身成了 failure，只有 check suite（那次运行）的结论还是 cancelled。
+// 前提“取消后汇总作业失败时 suite 结论仍是 cancelled”只在这一处判断；前提不成立时只改这里。
+const runCancelled = suite => suite.conclusion === 'cancelled';
 // S6 退出判据（FABLE-s6-exit-shorten-20261122 §3 与补答；Decision 67cea8f4 起不再要求首尾相隔 72 小时，只看计数与三项覆盖）：连续 30 个 head、逐项一致，
 // 其间出自不少于 10 个已合入 PR、至少 1 个非 Owner 推送的 head、至少 1 个 head 上同一项两边都红。
 export const STREAK = Object.freeze({ heads: 30, mergedPrs: 10, nonOwnerPushedHeads: 1, bothRedHeads: 1 });
@@ -86,14 +92,15 @@ function side(runs, name, app) {
   const latest = mine.at(-1);
   if (!latest) return null;
   return { name, app, runs: mine.length, status: latest.status, conclusion: latest.conclusion ?? null,
-    completedAt: beijing(latest.completed_at), title: latest.output?.title ?? null, completedMs: Date.parse(latest.completed_at ?? '') };
+    completedAt: beijing(latest.completed_at), title: latest.output?.title ?? null, completedMs: Date.parse(latest.completed_at ?? ''),
+    suiteId: latest.check_suite?.id };
 }
-const shown = s => s && (({ completedMs, ...rest }) => rest)(s);
+const shown = s => s && (({ completedMs, suiteId, ...rest }) => rest)(s);
 
 // head 的角色：当前 > 最终 > 被取代（同一提交在几个 PR 里取最严的一个）。
 export const ROLES = Object.freeze({ current: 3, final: 2, superseded: 1 });
 
-function judge(pair, runs, pins, role) {
+async function judge(pair, runs, pins, role, suiteOf) {
   const base = { check: pair.check };
   if (pins === null) return { ...base, verdict: '未知', reason: '#292 读不到，框架侧来源不明' };
   const app = pins.get(pair.check);
@@ -111,6 +118,15 @@ function judge(pair, runs, pins, role) {
   const cls = s => PASS.has(s.conclusion) ? '绿' : FAIL.has(s.conclusion) ? '红' : null;
   for (const [label, s] of [['框架', framework], ['托管', hosted]]) {
     if (cls(s) === null) return unjudgeable(`${label}无结论（${s.conclusion}）`, { pending: false });
+  }
+  if (cls(hosted) === '红') {
+    let suite;
+    try {
+      suite = await suiteOf(hosted.suiteId);
+    } catch (error) {
+      return { ...out, verdict: '未知', reason: `托管运行读取失败：${error.message}` };
+    }
+    if (runCancelled(suite)) return unjudgeable(`托管运行已取消（suite ${hosted.suiteId}）`, { pending: false });
   }
   out.completionDeltaSeconds = Number.isFinite(framework.completedMs) && Number.isFinite(hosted.completedMs)
     ? Math.round((hosted.completedMs - framework.completedMs) / 1000) : null;
@@ -137,7 +153,18 @@ async function judgeHead(get, pins, { sha, prs, role, committedAt }) {
   const ours = runs.filter(r => NAMES.has(r?.name));
   const starts = (ours.length ? ours : runs).map(r => Date.parse(r?.started_at ?? '')).filter(Number.isFinite);
   const atMs = starts.length ? Math.min(...starts) : Date.parse(committedAt ?? '');
-  const pairs = PAIRS.map(p => judge(p, runs, pins, role));
+  // 托管红的检查所在的运行（check suite），同一 head 内按 id 只读一次。
+  const suites = new Map();
+  const suiteOf = id => {
+    if (!Number.isSafeInteger(id)) return Promise.reject(new Error('检查缺 check_suite.id'));
+    if (!suites.has(id)) suites.set(id, (async () => {
+      const body = await get(`/check-suites/${id}`);
+      return plain(body) && body.id === id ? body : fail(`check suite ${id} 返回无效`);
+    })());
+    return suites.get(id);
+  };
+  const pairs = [];
+  for (const p of PAIRS) pairs.push(await judge(p, runs, pins, role, suiteOf));
   const has = v => pairs.some(p => p.verdict === v);
   // 不一致 > 未知 > 在跑 > 跳过 > 一致：七项都比了且都一致才是一致 head。
   const verdict = has('不一致') ? '不一致' : has('未知') ? '未知' : has('在跑') ? '在跑' : has('跳过') ? '跳过' : '一致';
