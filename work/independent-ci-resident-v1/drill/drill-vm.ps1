@@ -1641,9 +1641,10 @@ function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
 # WslJobPattern: exit 0 or 1, the count on stdout). Read-only, like the probe: only a distribution already running is asked (a command
 # would start it), every call sharing one budget (CacheReleaseSeconds, on the drill's clock). The count is evidence only (the boot gate
 # needs MemFree; independent review of 29ed7255c, medium C): any other answer leaves it out (runnerWorkers null), nothing thrown. A
-# meminfo not read whole, or the budget run out, throws, and the caller records nothing; nothing is returned when no runner distribution runs. -IdleCap (the boot gate's two entries, Fable plan 87d330d0
-# 4.1): also one record per runner distribution of this host that is not running -- distribution, running $false, and capGB, the cap of
-# the Owner's WSL VM (Read-DrillWslConfigMemory, rounded up to two places; null when not read), which it can take once started.
+# meminfo not read whole, or the budget run out, throws, and the caller records nothing; nothing is returned when no runner
+# distribution runs. -IdleCap (the boot gate's two entries, Fable plan 87d330d0 4.1): also one record per runner distribution of this
+# host that is not running -- distribution, running $false, and capGB, the cap of the Owner's WSL VM (Read-DrillWslConfigMemory, rounded
+# up to two places; null when not read), which it can take once started.
 function Get-DrillWslMemory([string]$HostName = $env:COMPUTERNAME, [int]$WithinSeconds = $script:Drill.CacheReleaseSeconds, [switch]$IdleCap) {
   $until = (Get-DrillTime).AddSeconds($WithinSeconds)
   $left = { $s = [int][Math]::Floor(($until - (Get-DrillTime)).TotalSeconds); if ($s -lt 1) { throw (New-DrillError 'DRILL_WSL_MEMORY_TIMEOUT') }; $s }
@@ -1922,7 +1923,8 @@ function Wait-DrillBootMemory {
     if ($gate.ok) { $wait.ok = $true; return $wait }
     $left = $limit - ((Get-DrillMonotonicSeconds) - $start)
     if ($left -le 0) {
-      throw (New-DrillError $(if ($null -ne $wslCode) { 'DRILL_HOST_RESOURCE_UNREADABLE' } else { 'DRILL_HOST_MEMORY_SHORT' }) ([ordered]@{ wait = $wait }))
+      $code = if ($null -ne $wslCode) { 'DRILL_HOST_RESOURCE_UNREADABLE' } else { 'DRILL_HOST_MEMORY_SHORT' }
+      throw (New-DrillError $code ([ordered]@{ wait = $wait }))
     }
     Start-Sleep -Seconds ([int][Math]::Ceiling([Math]::Min([double]$script:Drill.BootWaitPollSeconds, $left)))
   }
