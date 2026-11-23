@@ -15,6 +15,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
+import { POLICY_CONTRACT_V8 } from '../../src/policy.mjs';
 import { sourceHashOf } from '../fleet/install.mjs';
 import { main, upgradeNode } from '../fleet/upgrade.mjs';
 import { buildUniversal } from '../fleet/universal.mjs';
@@ -220,6 +221,33 @@ test('fleet upgrade: safe to run again, and the nodes it cannot take in place go
   assert.notEqual(r.packageDir, dry.packageDir);
   assert.equal(path.relative(sameWork, r.packageDir).split(path.sep).length, 2, 'under the same --work');
   assert.deepEqual(await fs.readFile(path.join(dry.packageDir, 'package-manifest.json')), dryManifest, "the earlier run's package is untouched");
+});
+
+// Task 0b1516c0 (field 2026-11-23, TURING): the node on duty, a target with the train on, a fresh nodes list (5 minutes old) in which the
+// other node still runs an older Source. "The other node has been upgraded since, the list is behind" and "it really is older" are the same
+// input here, so the precheck compares no Source across nodes: it passes on this node's own checks. The order (standby first) is step 8's
+// hand-over gate; one Source across the fleet is stage 10's TRAIN_SOURCE_MISMATCH at run time (source v2 train-sweep.test.mjs).
+test('fleet upgrade: the node on duty is not refused on a nodes list that shows the other node on an older Source; the hand-over gate still holds', { timeout: 900_000 }, async t => {
+  const w = await getWorld();
+  const n = await nodeSite(t, 'd', w.fleet, { policyContract: POLICY_CONTRACT_V8 });
+  const q = requester();
+  const current = await readJson(path.join(n.root, 'upgrade', 'current.json'));
+  const older = 'c'.repeat(64), now = Date.now(), ago = ms => new Date(now - ms).toISOString();
+  assert.notEqual(older, w.acceptance.ciSourceManifestSha256);
+  await fs.mkdir(path.join(n.root, 'state'), { recursive: true });
+  await fs.writeFile(path.join(n.root, 'state', 'status.json'), JSON.stringify({ node: { mode: 'ACTIVE', name: n.profile.nodeName }, train: { nodes: {
+    at: ago(5 * 60_000), sourceManifestSha256: current.ciSourceManifestSha256, dropped: 0, nodes: [
+      { node: n.profile.nodeName, sourceManifestSha256: current.ciSourceManifestSha256, state: 'ACTIVE', lastHeartbeatAt: ago(60_000) },
+      { node: 'desk', sourceManifestSha256: older, state: 'STANDBY', lastHeartbeatAt: ago(60_000) }] } } }));
+  const r = await upgrade(w, n, { request: q.request, allowActiveUpgrade: true, noRequest: true });
+  assert.equal((await readJson(path.join(r.packageDir, 'config', 'policy.json'))).train.enabled, 'on', 'the target turns the train on');
+  assert.deepEqual([r.status, r.code ?? null, r.ciPause, q.calls.length], ['FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED', null, true, 0],
+    JSON.stringify({ status: r.status, code: r.code, precheck: r.precheck }).slice(0, 3000));
+  assert.match(r.precheck.status, /^PRECHECK_PASS/);
+  assert.equal('fleetSourceReadiness' in r.precheck, false, 'no cross-node Source comparison in the precheck');
+  // the same scene without the Owner's acceptance of the CI pause: the order gate answers, nothing requested
+  const duty = await upgrade(w, n, { request: q.request });
+  assert.deepEqual([duty.status, q.calls.length], ['FLEET_NODE_UPGRADE_HAND_OVER_FIRST', 0], JSON.stringify(duty).slice(0, 2000));
 });
 
 test('fleet upgrade fetch: one command takes the tar from the second source, checks its sha256, unpacks it and runs the UNPACKED upgrade.mjs; a wrong tar is never unpacked', { timeout: 900_000 }, async t => {

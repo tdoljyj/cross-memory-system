@@ -2595,7 +2595,7 @@ export class ResidentExecutor {
     const effects = acting && r?.ok === true && o?.status === 'TRAIN_FACTS' && Number.isSafeInteger(o.sideEffects) && o.sideEffects >= 0;
     const facts = r?.ok === true && (quiet || effects) ? trainSummary(r.train) : null;
     const summary = facts && facts.mode === mode ? facts : null;
-    // A view for the upgrade precheck only (defect 15894c2a); a run that read no nodes keeps the older list, whose `at` ages.
+    // A view for the fleet-lag alert and the landing precheck only (defect 15894c2a); a run that read no nodes keeps the older list, whose `at` ages.
     const nodesView = summary ? trainNodesView(r.train, this.policy.ciSourceManifestSha256) : null;
     if (nodesView) this.trainNodes = nodesView;
     this.report(s => s.noteTrain?.({ startedAt: trainFrom, endedAt: this.clock(), mode, sweep: summary?.sweep ?? null }));
