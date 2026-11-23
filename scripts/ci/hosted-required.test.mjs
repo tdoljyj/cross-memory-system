@@ -97,6 +97,22 @@ test('只有 hosted-required.yml 的 Windows 套件步骤声明 CLUED_CI_HOST_LA
   for (const [id, block] of jobs(text)) if (id !== 'ci-suites-windows') assert.doesNotMatch(block, /CLUED_CI_HOST_LACKS/, id);
 });
 
+// 任务 3435f8bf：作业级上限只兜底挂死，不当速度门。修可信侧的 PR 跑的是 main 的可信侧（选择、命令、test-env），
+// 自己的修复用不上，改动又喂所有套件，于是“最慢的环境跑最多套件”；45 分钟贴着实测 44–45 分钟，修慢的 PR 被慢卡死。
+// 跑套件的托管作业上限不低于 90（约实测最长正常耗时 2 倍）。migration-verify 只跑 production-schema 一个套件，自有 30 分钟预算，不在此列。
+const SUITE_TIMEOUT_FLOOR = 90;
+test(`跑 ci-required-selection --run/--run-selected 套件的托管作业 timeout-minutes 不低于 ${SUITE_TIMEOUT_FLOOR}`, () => {
+  const checked = [];
+  for (const [id, block] of jobs(text)) {
+    if (id === 'migration-verify' || !/ci-required-selection\.mjs --run(?:-selected)? /.test(block)) continue;
+    const m = /^    timeout-minutes:\s*(\d+)\s*$/m.exec(block);
+    assert.ok(m, `${id} 没有作业级 timeout-minutes`);
+    assert.ok(Number(m[1]) >= SUITE_TIMEOUT_FLOOR, `${id} 的 timeout-minutes 是 ${m[1]}，低于 ${SUITE_TIMEOUT_FLOOR}`);
+    checked.push(id);
+  }
+  assert.deepEqual(checked.sort(), ['ci-suites', 'ci-suites-windows', 'clued-cloud-tests']);
+});
+
 // ---- hosted-gitleaks = 自托管 R1 的区间扫描（PLAN-hosted-stale-base-20261123 第 2、3 节） ----
 // 旧定义抄自已停用 gitleaks.yml 的全历史扫描，断言“现场 main 尖端 == 事件负载 base.sha”。负载 base.sha 是 PR 记录上的
 // 快照：reopened、手工重跑、运行期间 main 前进都会让它和现场 main 不等，红与 PR 无关。新定义只扫 base..head，不取现场 main。
