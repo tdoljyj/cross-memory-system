@@ -86,22 +86,21 @@ test('the continuation after the install: a first install does not start the com
 // waited for. The real Step-WaitFirstTrain and the progress handler of the template, over a status file in a scratch root.
 import fs from 'node:fs';
 import os from 'node:os';
-test('the first-train wait prints its start, end and the role probe and train it observed', { skip, timeout: 300_000 }, (t) => {
+function waitFirstTrain(t, status, waitSeconds) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'first-train-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'state'));
-  const status = { contract: 'clued.independent-ci.resident-status/8', writtenAt: new Date().toISOString(), executor: { state: 'IDLE', reason: null },
-    train: { enabled: 'on', last: null }, halt: null, node: { name: 'clued-drill', source: 'abcdefabcdef', mode: 'UNCERTAIN', probe: { at: new Date().toISOString(), result: 'uncertain', failures: 1, failingSince: null } },
-    queue: { generation: 'abcdefabcdef', live: 0 }, current: null, pending: [] };
   fs.writeFileSync(path.join(root, 'state', 'status.json'), JSON.stringify(status));
   const command = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 2
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(TPL)}, [ref]$tokens, [ref]$errors)
-foreach ($name in @('Get-Key', 'Parse-Json', 'Wait-Until', 'Test-FirstTrainNotApplicable', 'Step-WaitFirstTrain')) {
-  . ([scriptblock]::Create(@($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))[0].Extent.Text))
+foreach ($f in @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    ($n.Name -cin @('Get-Key', 'Parse-Json', 'Wait-Until', 'Write-StepStart', 'Step-WaitFirstTrain') -or $n.Name -cmatch '^(Test|Get)-FirstTrain') }, $false))) {
+  . ([scriptblock]::Create($f.Extent.Text))
 }
 $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
 $Js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
-$ResidentRoot = ${psLiteral(root)}; $FirstTrainWaitSeconds = 3; $RunnerQuietWaitSeconds = 30; $NodeName = 'clued-drill'; $CiSourceManifestSha256 = ('a' * 64)
+$LaunchClock = [Diagnostics.Stopwatch]::StartNew()
+$ResidentRoot = ${psLiteral(root)}; $FirstTrainWaitSeconds = ${waitSeconds}; $RunnerQuietWaitSeconds = 30; $NodeName = 'clued-drill'; $CiSourceManifestSha256 = ('a' * 64)
 function Get-RunnerState { [ordered]@{ flags = [ordered]@{ originalBinary = $true; stoppedPid0 = $true } } }
 function Write-Json([string]$name, $obj) { }
 $Progress = @{ out = $null; elevated = $null; count = 0; pins = $null }
@@ -113,7 +112,19 @@ $null = Step-WaitFirstTrain`;
     { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
   assert.ifError(r.error);
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  const line = JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1));
+  const lines = String(r.stdout).trim().split(/\r?\n/);
+  return { line: JSON.parse(lines.at(-1)), lines, stdout: r.stdout };
+}
+const fixtureStatus = (patch = {}) => {
+  const now = new Date().toISOString();
+  return { contract: 'clued.independent-ci.resident-status/8', writtenAt: now, executor: { state: 'IDLE', reason: null },
+    train: { enabled: 'on', last: null }, halt: null, node: { name: 'clued-drill', source: 'abcdefabcdef', mode: 'UNCERTAIN', probe: { at: now, result: 'uncertain', failures: 1, failingSince: null } },
+    queue: { generation: 'abcdefabcdef', live: 0 }, current: null, pending: [], notices: [], ...patch };
+};
+test('the first-train wait prints its start, end and the role probe and train it observed', { skip, timeout: 300_000 }, (t) => {
+  const status = fixtureStatus();
+  const { line, stdout } = waitFirstTrain(t, status, 3);
+  const r = { stdout };
   assert.deepEqual([line.name, line.result, line.rejectCode], ['first-train-not-observed', 'ok', null], r.stdout);
   const d = line.detail;
   assert.ok(d && /Z$/.test(d.startedAt) && /Z$/.test(d.endedAt) && /Z$/.test(d.phase1EndedAt) && d.startedAt <= d.phase1EndedAt && d.phase1EndedAt <= d.endedAt, r.stdout);
@@ -121,4 +132,91 @@ $null = Step-WaitFirstTrain`;
   assert.equal(d.observations.length, 1, 'an unchanged status is one observation');
   assert.deepEqual({ ...d.observations[0], at: undefined }, { at: undefined, state: 'IDLE', reason: null, trainEnabled: 'on', trainLast: null, halt: false, mode: 'UNCERTAIN',
     probeAt: status.node.probe.at, probeResult: 'uncertain', probeFailures: 1, live: 0 }, r.stdout);
+  // FABLE-drill-role-probe-20261124 3.2: a plain uncertain answer at the end of the wait is no confirmed role
+  assert.equal(d.role, 'unconfirmed', r.stdout);
+});
+
+// FABLE-drill-role-probe-20261124 3.2 / PR-1: the service refused this node's token (the role-probe-connection notice, executor.mjs
+// report). Before the fix the wait ran its whole phase 1 for it (the drill of 20261123T201433Z: 1505 s) and ended first-train-not-observed,
+// ok. Now the poll that sees the refusal ends phase 1, and the step line says failed with the refusal's code. 3.3: the step's start is a line
+// of its own before it. The notice and the probe are placed 20 s ahead so that they are not older than the step's own start.
+test('a refused token ends the first-train wait at once, as a failed step that names the refusal', { skip, timeout: 300_000 }, (t) => {
+  const ahead = new Date(Date.now() + 20_000).toISOString();
+  const status = fixtureStatus({ writtenAt: ahead, notices: [{ key: `role-probe-connection:${Date.parse(ahead)}`, kind: 'role-probe-connection', pr: null, headSha: null,
+    code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', at: ahead, until: null }] });
+  status.node.probe.at = ahead; status.node.probe.failingSince = ahead;
+  const { line, lines, stdout } = waitFirstTrain(t, status, 60);
+  assert.deepEqual([line.name, line.result, line.rejectCode], ['first-train-role-unauthorized', 'failed', 'ROLE_PROBE_CONNECTION_UNAUTHORIZED'], stdout);
+  const d = line.detail;
+  assert.equal(d.role, 'unauthorized', stdout);
+  assert.ok(Date.parse(d.phase1EndedAt) - Date.parse(d.startedAt) < 20_000, `phase 1 ended on the first poll, not after its 60 s: ${stdout}`);
+  assert.equal(d.runnerQuiet, true, 'the runner-quiet phase still ran');
+  const started = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(o => o && o.started === 'Step-WaitFirstTrain');
+  assert.equal(started.length, 1, stdout);
+  assert.ok(/Z$|[+-]\d\d:\d\d$/.test(started[0].at) && Number.isInteger(started[0].ms), stdout);
+  assert.ok(!('name' in started[0]) && !('result' in started[0]), 'a start line is no step line (the drill counts name+result lines as steps)');
+});
+
+// PR-1, the place that decides FIRST_INSTALL_DONE (rollout/fleet/bootstrap.ps1 Get-LauncherVerdict, which the drill's entry turns into
+// FIRST_INSTALL_DONE or its stop code): a first install whose launcher did not confirm the node's role (held or not-held) is not done.
+// Before the fix every verified, paused and switched first install was BOOTSTRAP_DONE whatever the role.
+const BOOTSTRAP = path.join(RES, 'rollout', 'fleet', 'bootstrap.ps1');
+const ENTRY = path.join(RES, 'drill', 'first-install-entry.ps1');
+test('a first install is done only with a confirmed role; a refused or unconfirmed one stops with its own code', { skip, timeout: 300_000 }, () => {
+  const command = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 2
+$load = { param($file, [string[]]$names)
+  $tokens = $null; $errors = $null; $a = [Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors)
+  foreach ($name in $names) { . ([scriptblock]::Create(@($a.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))[0].Extent.Text)) }
+  foreach ($name in $names) { Set-Item -Path ('function:global:' + $name) -Value (Get-Item -LiteralPath ('function:' + $name)).ScriptBlock } }
+& $load ${psLiteral(BOOTSTRAP)} @('Get-Key', 'Get-LauncherVerdict')
+& $load ${psLiteral(ENTRY)} @('Get-EntryProperty', 'ConvertTo-FirstInstallEntryResult')
+$out = @()
+foreach ($c in @(@($true, 'unauthorized'), @($true, 'unconfirmed'), @($true, $null), @($true, 'not-held'), @($true, 'held'), @($false, 'unauthorized'), @($false, $null))) {
+  $term = [ordered]@{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED'; companionHeadless = [ordered]@{ ran = $true; status = 'COMPANION_HEADLESS_QUALIFIED' } }
+  if ($null -ne $c[1]) { $term['role'] = $c[1] }
+  $v = Get-LauncherVerdict $c[0] $term
+  $e = ConvertTo-FirstInstallEntryResult $v $(if ($v.status -ceq 'BOOTSTRAP_DONE') { 0 } else { 1 }) 'C:\t' 'C:\n.exe'
+  $out += ,([ordered]@{ first = $c[0]; role = $c[1]; status = $v.status; code = (Get-Key $v 'code'); entry = $e.status; stopCode = $e.stopCode })
+}
+ConvertTo-Json -InputObject $out -Compress`;
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+    { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+  assert.ifError(r.error);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  const got = JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1)).map(x => [x.first, x.role, x.status, x.code, x.entry, x.stopCode]);
+  assert.deepEqual(got, [
+    [true, 'unauthorized', 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED'],
+    [true, 'unconfirmed', 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED'],
+    [true, null, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED'],
+    [true, 'not-held', 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
+    [true, 'held', 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
+    // a reinstall's verdict is as before
+    [false, 'unauthorized', 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
+    [false, null, 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
+  ], r.stdout);
+});
+
+// PR-1: the launcher's terminal carries the first-train wait's role (unauthorized, unconfirmed, not-held, held), the template's own
+// terminal assignment evaluated with the step results in place.
+test('the launcher terminal carries the role the first-train wait found', { skip, timeout: 300_000 }, () => {
+  const command = `$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(TPL)}, [ref]$tokens, [ref]$errors)
+$nodes = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq '$terminal' })
+if ($nodes.Count -ne 1) { throw ('TERMINAL_ASSIGNMENT_NOT_ONE:' + $nodes.Count) }
+$Done = @('install'); $verify = [ordered]@{ status = 'RESIDENT_VERIFIED' }; $pause = [ordered]@{ confirmed = $true }
+$out = @()
+foreach ($role in @('unauthorized', 'unconfirmed', 'not-held', 'held')) {
+  $train = [ordered]@{ role = $role }
+  . ([scriptblock]::Create($nodes[0].Extent.Text))
+  $out += ,([ordered]@{ status = $terminal.status; role = $terminal['role'] })
+}
+ConvertTo-Json -InputObject $out -Compress`;
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+    { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+  assert.ifError(r.error);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.deepEqual(JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1)), ['unauthorized', 'unconfirmed', 'not-held', 'held'].map(role => ({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', role })), r.stdout);
 });

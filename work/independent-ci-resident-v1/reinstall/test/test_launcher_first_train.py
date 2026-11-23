@@ -21,7 +21,10 @@ $null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Cul
 $Js = New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $c = $Js.DeserializeObject([IO.File]::ReadAllText($Case))
 $t = [IO.File]::ReadAllText($Template)
-foreach ($name in @('Get-Key', 'Parse-Json', 'Test-FirstTrainNotApplicable', 'Step-WaitFirstTrain')) {
+# The helpers Step-WaitFirstTrain uses: these by name, and every other Test-FirstTrain*/Get-FirstTrain* the template has.
+$names = @('Get-Key', 'Parse-Json', 'Test-FirstTrainNotApplicable', 'Step-WaitFirstTrain')
+foreach ($m in [regex]::Matches($t, '(?m)^function ((?:Test|Get)-FirstTrain[A-Za-z]*)\b')) { if ($names -cnotcontains $m.Groups[1].Value) { $names += $m.Groups[1].Value } }
+foreach ($name in $names) {
   $m = [regex]::Match($t, '(?ms)^function ' + [regex]::Escape($name) + '\b.*?^\}')
   if (-not $m.Success) { throw ('FUNCTION_MISSING:' + $name) }
   . ([scriptblock]::Create($m.Value))
@@ -31,6 +34,7 @@ $ResidentRoot = $Directory
 $NodeName = 'node-a'; $CiSourceManifestSha256 = ('8860531ae1c4' + ('0' * 52))
 $FirstTrainWaitSeconds = 1500; $RunnerQuietWaitSeconds = 900
 $Done = New-Object 'Collections.Generic.List[string]'
+$Progress = @{ detail = $null; rejectCode = $null }   # what the step leaves for its own line (the launcher's progress handler reads it)
 $script:waits = New-Object 'Collections.Generic.List[int]'
 $script:sleeps = New-Object 'Collections.Generic.List[int]'
 $script:firstIterations = 0; $script:runnerReads = 0; $script:written = $null
@@ -41,6 +45,12 @@ function Write-FixtureStatus($value) {
     $preserve = $value.ContainsKey('_preserveWrittenAt') -and $value['_preserveWrittenAt']
     [void]$value.Remove('_preserveWrittenAt')
     if (-not $preserve -and $value.ContainsKey('writtenAt')) { $value['writtenAt'] = [DateTimeOffset]::UtcNow.ToString('o') }
+  }
+  # '@now' / '@now-600': a time relative to this write (after the step started), so a case can place a time before or after it
+  $resolve = { param($v) if ($v -is [string] -and $v -cmatch '^@now([+-][0-9]+)?$') { [DateTimeOffset]::UtcNow.AddSeconds($(if ($matches[1]) { [int]$matches[1] } else { 0 })).ToString('o') } else { $v } }
+  if ($value -is [Collections.IDictionary]) {
+    $n = $value['node']; if ($n -is [Collections.IDictionary] -and $n['probe'] -is [Collections.IDictionary]) { foreach ($k in @('at', 'failingSince')) { if ($n['probe'][$k] -is [string]) { $n['probe'][$k] = & $resolve $n['probe'][$k] } } }
+    foreach ($x in @($value['notices'])) { if ($x -is [Collections.IDictionary] -and $x['at'] -is [string]) { $x['at'] = & $resolve $x['at'] } }
   }
   [IO.File]::WriteAllText((Join-Path $ResidentRoot 'state\status.json'), $Js.Serialize($value))
 }
@@ -68,7 +78,8 @@ function Write-Json($name, $value) {
 }
 $r = Step-WaitFirstTrain
 [ordered]@{ report = $r; done = @($Done); waits = @($script:waits); sleeps = @($script:sleeps)
-  firstIterations = $script:firstIterations; runnerReads = $script:runnerReads; recorded = $script:written } | ConvertTo-Json -Depth 12 -Compress
+  firstIterations = $script:firstIterations; runnerReads = $script:runnerReads; recorded = $script:written
+  lineRejectCode = $Progress['rejectCode']; lineDetail = $Progress['detail'] } | ConvertTo-Json -Depth 12 -Compress
 '''
 
 
@@ -84,6 +95,29 @@ def standby():
             'queue': {'depth': 100, 'generation': 'c3f0886bd193', 'hold': None, 'live': 0, 'parkingFull': False},
             'train': {'enabled': 'on', 'last': None, 'notOnDuty': True, 'fullPending': True,
                       'backgroundAllPending': False, 'frontReadyMode': 'blocked', 'sweepMode': 'audit'}, 'halt': None}
+
+
+def iso_at(delta=datetime.timedelta(0)):
+    """A time relative to when the driver writes the snapshot, which is after the step started (Write-FixtureStatus resolves it)."""
+    seconds = int(delta.total_seconds())
+    return '@now' if seconds == 0 else f'@now{seconds:+d}'
+
+
+def uncertain(notice_at=None, notice_kind='role-probe-connection', probe_at=None):
+    """The new resident whose role probe the service refused (merge-slot-native.mjs: 401/403 binding_not_authorized ->
+    ROLE_PROBE_CONNECTION_UNAUTHORIZED, an uncertain answer): UNCERTAIN, and, with notice_at, the role-probe-connection notice the
+    executor puts in status (role-probe.mjs observe, executor.mjs report). Without notice_at: a plain uncertain answer (network, 5xx)."""
+    s = standby()
+    at = probe_at or iso_at()
+    s['node']['mode'] = 'UNCERTAIN'
+    s['node']['probe'] = {'at': at, 'result': 'uncertain', 'failures': 1, 'failingSince': at}
+    s['notices'] = []
+    if notice_at is not None:
+        ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+        s['notices'] = [{'key': f'{notice_kind}:{ms}', 'kind': notice_kind, 'pr': None, 'headSha': None,
+                         'code': 'ROLE_PROBE_CONNECTION_UNAUTHORIZED' if notice_kind == 'role-probe-connection' else 'ROLE_PROBE_UNCERTAIN',
+                         'at': notice_at, 'until': None}]
+    return s
 
 
 @unittest.skipUnless(PS.is_file(), 'Windows PowerShell 5.1 required')
@@ -117,6 +151,7 @@ class FirstTrain(unittest.TestCase):
         self.assertEqual(r['waits'], [1500, 900])
         self.assertEqual(r['sleeps'], [5], 'both runner-quiet polls remain, five seconds apart')
         self.assertEqual(r['runnerReads'], 3)  # two quiet polls and final observation
+        self.assertEqual(r['report']['role'], 'not-held')
 
     def test_active_role_and_existing_train_keep_the_original_observation_path(self):
         s = standby(); s['node']['mode'] = 'ACTIVE'; s['node']['probe']['result'] = 'held'
@@ -124,6 +159,7 @@ class FirstTrain(unittest.TestCase):
         self.assertFalse(r['report']['notApplicable'])
         self.assertFalse(r['report']['observed'])
         self.assertEqual(r['done'], ['first-train-not-observed'])
+        self.assertEqual(r['report']['role'], 'held', 'a fresh ACTIVE/held answer is a confirmed role, train or not')
         s['train']['last'] = {'outcome': 'DONE'}
         r = self.run_case([s])
         self.assertFalse(r['report']['notApplicable'])
@@ -256,6 +292,63 @@ class FirstTrain(unittest.TestCase):
                 self.assertFalse(r['report']['runnerQuiet'])
                 self.assertEqual(r['done'], ['runner-not-quiet-verify-skipped'])
                 self.assertEqual(r['waits'], [1500, 900])
+
+    # FABLE-drill-role-probe-20261124 section 3.2 / PR-1: the service refused this node's token. Before the fix phase 1 waited the whole
+    # 1500 s for it (drill 20261123T201433Z-2026.11.24-74bc5ef0-52d496e7: 1505 s) and the install counted as done.
+    def test_refused_token_ends_the_wait_on_the_first_poll_as_a_definite_failure(self):
+        s = uncertain(notice_at=iso_at())
+        r = self.run_case([s, copy.deepcopy(s), copy.deepcopy(s)])
+        self.assertEqual(r['firstIterations'], 1, 'ended on the poll that saw the refusal')
+        self.assertEqual(r['done'], ['first-train-role-unauthorized'])
+        self.assertEqual(r['lineRejectCode'], 'ROLE_PROBE_CONNECTION_UNAUTHORIZED')
+        self.assertEqual(r['report']['role'], 'unauthorized')
+        self.assertTrue(r['report']['roleUnauthorized'])
+        self.assertFalse(r['report']['notApplicable'])
+        self.assertFalse(r['report']['observed'], 'a refusal is not a witnessed train')
+        self.assertEqual(r['report']['roleUnauthorizedObservation']['noticeCode'], 'ROLE_PROBE_CONNECTION_UNAUTHORIZED')
+        self.assertEqual(r['lineDetail']['role'], 'unauthorized')
+        self.assertEqual(r['recorded'], r['report'])
+        # the runner-quiet phase still guards verify (review M1)
+        self.assertTrue(r['report']['runnerQuiet'])
+        self.assertEqual(r['waits'], [1500, 900])
+        self.assertEqual(r['sleeps'], [5])
+
+    def test_plain_uncertain_waits_the_whole_phase_and_ends_unconfirmed(self):
+        s = uncertain()
+        r = self.run_case([s, copy.deepcopy(s), copy.deepcopy(s)])
+        self.assertEqual(r['firstIterations'], 3, 'a plain uncertain answer never ends phase 1 early (review M1)')
+        self.assertEqual(r['done'], ['first-train-not-observed'])
+        self.assertEqual(r['report']['role'], 'unconfirmed')
+        self.assertFalse(r['report']['roleUnauthorized'])
+        self.assertEqual(r['lineDetail']['role'], 'unconfirmed')
+        self.assertTrue(r['report']['runnerQuiet'])
+
+    def test_a_refusal_older_than_this_step_or_not_this_nodes_never_ends_the_wait(self):
+        cases = {
+            'notice-before-step': uncertain(notice_at=iso_at(-datetime.timedelta(minutes=10))),
+            'probe-before-step': uncertain(notice_at=iso_at(), probe_at=iso_at(-datetime.timedelta(minutes=10))),
+            'another-notice-kind': uncertain(notice_at=iso_at(), notice_kind='role-probe-uncertain'),
+        }
+        s = uncertain(notice_at=iso_at()); s['node']['mode'] = 'STANDBY'; cases['mode-not-uncertain'] = s
+        s = uncertain(notice_at=iso_at()); s['node']['probe']['result'] = 'not-held'; cases['probe-not-uncertain'] = s
+        s = uncertain(notice_at=iso_at()); s['node']['name'] = 'node-b'; cases['another-node'] = s
+        s = uncertain(notice_at=iso_at()); s['node']['source'] = '0' * 12; cases['another-source'] = s
+        s = uncertain(notice_at=iso_at()); s['executor'] = {'state': 'RUNNING', 'reason': None}; cases['executor-running'] = s
+        s = uncertain(notice_at=iso_at()); s['queue']['live'] = 1; cases['live-queue'] = s
+        s = uncertain(notice_at=iso_at()); s['notices'][0]['code'] = 'ROLE_PROBE_UNCERTAIN'; cases['another-code'] = s
+        s = uncertain(notice_at=iso_at()); s['notices'][0]['at'] = 'bad'; cases['notice-time-malformed'] = s
+        s = uncertain(notice_at=iso_at()); s['notices'] = s['notices'][0]; cases['notices-not-a-list'] = s
+        s = uncertain(notice_at=iso_at()); s['contract'] = 'unknown'; cases['unknown-contract'] = s
+        s = uncertain(notice_at=iso_at()); s['writtenAt'] = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)).isoformat()
+        s['_preserveWrittenAt'] = True
+        cases['stale-status'] = s
+        for name, s in cases.items():
+            with self.subTest(case=name):
+                r = self.run_case([s, copy.deepcopy(s)])
+                self.assertEqual(r['firstIterations'], 2, 'kept waiting')
+                self.assertFalse(r['report']['roleUnauthorized'])
+                self.assertNotEqual(r['done'], ['first-train-role-unauthorized'])
+                self.assertIn(r['report']['role'], ('unconfirmed', 'not-held'))
 
 
 if __name__ == '__main__':
