@@ -97,7 +97,8 @@ $script:Drill = [ordered]@{
   # Actions runners, which no boot gate can foresee (below).
   BootMarginBytes = 1GB
   # The boot gate is memory only (Fable plan 0e418483 "drill boot gate: memory only", 2026-11-23): guest + BootMarginBytes +
-  # ProductionReserveBytes, 15 GB, whatever runs on the host. A runner job at boot -- on either side, or a side that could not be read --
+  # ProductionReserveBytes, 15 GB, whatever runs on the host, plus what the runner distribution still has free, which the production WSL
+  # can take after the boot (Fable plan 87d330d0: Test-DrillHostMemory). A runner job at boot -- on either side, or a side that could not be read --
   # is recorded (busyWith, runnerJob, wslJobs), never judged: what took the host short in the receipts was usage that came after the
   # boot, with or without a job at boot, which no boot gate sees; the running gate (ProductionReserveBytes abort, CacheReleaseBelowBytes
   # release) covers it. The job tier this replaces (10.4 GB more, from one receipt) only made the boot wait for an idle moment.
@@ -234,20 +235,37 @@ function Get-Prop($Object, [string]$Path) {
 
 # Memory only, before boot and while running: no runner job enters it (BootWaitMinutes' note). requiredBasis: what requiredFreeBytes is
 # made of, in GB.
-function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0) {
+# Before boot the production WSL's headroom is counted as taken (Fable plan 87d330d0, FABLE-drill-memory-short-20261124 2.1, PR-A): what
+# its runner distribution still has free (/proc/meminfo MemFree, read by Get-DrillWslMemory; the highest when several run) it can take
+# after the boot, as it did in every DRILL_HOST_MEMORY_SHORT receipt. $WslMemory: Get-DrillWslMemory's readings (none: no runner
+# distribution runs, nothing to count); $null, or a reading without MemFree: not read -- no boot (DRILL_HOST_RESOURCE_UNREADABLE), as
+# for any host reading the boot gate rests on. Running, it is not counted: the running gate (ProductionReserveBytes) is unchanged.
+function Test-DrillHostMemory([long]$FreeBytes, [long]$VmMemoryBytes = $script:Drill.MemoryBytes, [switch]$Running, [long]$MemoryAssigned = 0,
+  $WslMemory = @()) {
   $target = [Math]::Max($script:Drill.MemoryBytes, $VmMemoryBytes)
-  $guest = $margin = 0L
+  $guest = $margin = $headroom = 0L; $unread = $false
   if ($Running) {
     # Hyper-V's assigned memory has already been deducted from the host's free memory.
     $guest = [Math]::Max(0L, $target - $MemoryAssigned)
   } else {
     $guest = [Math]::Max($target, $MemoryAssigned); $margin = $script:Drill.BootMarginBytes
+    if ($null -eq $WslMemory) { $unread = $true }
+    else {
+      foreach ($w in @($WslMemory)) {
+        $f = Get-Prop $w 'memFreeGB'
+        if ($null -eq $f) { $unread = $true; break }
+        # rounded up: the reading is in GB to two places, and the gate errs against the boot
+        $b = [long][Math]::Ceiling([double]$f * 1GB); if ($b -gt $headroom) { $headroom = $b }
+      }
+    }
   }
-  $required = $guest + $margin + $script:Drill.ProductionReserveBytes
+  $required = $guest + $margin + $script:Drill.ProductionReserveBytes + $headroom
   $gb = { param([long]$b) [Math]::Round($b / 1GB, 1) }
-  return @{ ok = ($FreeBytes -ge $required); code = $(if ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null });
+  $code = if ($unread) { 'DRILL_HOST_RESOURCE_UNREADABLE' } elseif ($FreeBytes -lt $required) { 'DRILL_HOST_MEMORY_SHORT' } else { $null }
+  return @{ ok = ($null -eq $code); code = $code;
     freeGB = (& $gb $FreeBytes); requiredFreeBytes = $required
-    requiredBasis = [ordered]@{ guestGB = (& $gb $guest); bootMarginGB = (& $gb $margin); productionReserveGB = (& $gb $script:Drill.ProductionReserveBytes) } }
+    requiredBasis = [ordered]@{ guestGB = (& $gb $guest); bootMarginGB = (& $gb $margin); productionReserveGB = (& $gb $script:Drill.ProductionReserveBytes)
+      wslHeadroomGB = $(if ($unread) { $null } else { [Math]::Round($headroom / 1GB, 2) }) } }
 }
 
 # An Actions self-hosted runner executes each job in a Runner.Worker process (its Runner.Listener only waits for work). Judged from the
@@ -298,12 +316,12 @@ function Test-DrillHostStatusFresh($WrittenAt, [DateTimeOffset]$Now) {
 # A drill hold leaves the parked stage-8 tries and revoke-only train maintenance on the Windows side.
 function Test-DrillHostSafety([string]$StatusJson, [long]$FreeBytes, [switch]$Running, [long]$VmMemoryBytes = $script:Drill.MemoryBytes,
   [long]$MemoryAssigned = 0, [DateTimeOffset]$Now = (Get-DrillTime),
-  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, $ProcessNames = @(), $WslJob = $false) {
+  [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, $ProcessNames = @(), $WslJob = $false, $WslMemory = @()) {
   # Before boot only: a runner job on either side (or a side that could not be read) is recorded and judged by nothing -- neither a
   # refusal nor a higher memory gate (Fable plan 0e418483 "drill boot gate: memory only"). A job picked up after the boot is left to the
   # running memory gate, as before.
   $busyWith = if ($Running) { $null } else { Get-DrillRunnerJob $ProcessNames $WslJob }
-  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned
+  $memory = Test-DrillHostMemory $FreeBytes $VmMemoryBytes -Running:$Running -MemoryAssigned $MemoryAssigned -WslMemory $WslMemory
   $code = 'DRILL_HOST_STATUS_UNREADABLE'
   $mode = $null; $since = $null; $until = $null
   $executorObservation = $null
@@ -1396,7 +1414,10 @@ function Read-DrillHostMemory {
 
 # -JobsOnly: the duty, hold and runner-job checks without any memory reading: the early refusal before the WSL cache release (memory is
 # judged once, by the boot gate after the release: Fable renew-key ruling, supplement "WSL gate race" item 3).
-function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly, [switch]$JobsOnly) {
+# $WslMemory: the runner distribution's memory the boot gate counts (Get-DrillWslMemory, read by Start-DrillGuardedVm); not given, it was
+# not read, and a boot gate refuses (Test-DrillHostMemory). Not used running or with -JobsOnly: no boot gate is judged there.
+function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValue, [switch]$StatusOnly, [switch]$JobsOnly,
+  $WslMemory = $null) {
   $json = Read-DrillHostStatus
   $duty = Test-DrillHostSafety $json ([long]::MaxValue) -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil
   if (-not $duty.ok -or $StatusOnly) {   # no memory and no job was read
@@ -1417,7 +1438,8 @@ function Get-DrillHostSafety([switch]$Running, [DateTimeOffset]$HoldUntil = [Dat
     if (-not $JobsOnly) { $m = Read-DrillHostMemory; $free = $m.free; $target = $m.target; $assigned = $m.assigned }
     $wslJob = $null
     if (@($wsl.jobs).Count -gt 0) { $wslJob = $true } elseif ($wsl.ok) { $wslJob = $false }   # a confirmed job stays one beside an unread distribution
-    $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes -WslJob $wslJob
+    $gateWsl = $WslMemory; if ($Running -or $JobsOnly) { $gateWsl = @() }
+    $safety = Test-DrillHostSafety $json $free -VmMemoryBytes $target -MemoryAssigned $assigned -Running:$Running -Now (Get-DrillTime) -HoldUntil $HoldUntil -ProcessNames $processes -WslJob $wslJob -WslMemory $gateWsl
     if ($JobsOnly) { $safety.freeGB = $null; $safety.requiredFreeBytes = $null; $safety.requiredBasis = $null }   # nothing was read
     if (-not $Running) {   # running, neither side's jobs were read (G2): no reading of them
       $safety.wslRunnerDistributions = $wsl.running
@@ -1601,7 +1623,8 @@ function Get-DrillWslRunnerState([string]$HostName = $env:COMPUTERNAME) {
 }
 
 # Fable ruling 0e418483 "drill memory root" 2.4 (G2) and its supplement "three questions after the implementation" 1: what each runner
-# distribution holds, for the boot gate's sample and when the guard aborted for memory (one reader, one shape) -- MemTotal,
+# distribution holds, for the boot gate (its sample, and its MemFree counted as taken: Test-DrillHostMemory) and when the guard aborted
+# for memory (one reader, one shape) -- MemTotal,
 # MemFree, Cached and AnonPages from its /proc/meminfo, in GB, and how many Runner.Worker processes ran in it (pgrep -c with
 # WslJobPattern: exit 0 or 1, the count on stdout). Read-only, like the probe: only a distribution already running is asked (a command
 # would start it), every call sharing one budget (CacheReleaseSeconds, on the drill's clock). Anything not read whole throws, and the
@@ -1822,10 +1845,11 @@ function Request-DrillIntake($Tool, [ValidateSet('pause', 'resume')][string]$Ver
   } catch { throw (New-DrillError "DRILL_HOST_INTAKE_$($Verb.ToUpperInvariant())_FAILED") }
 }
 # The wait for memory before the host hold (Fable plan 0e418483 "drill boot gate: memory only", section 2.2; BootWaitMinutes' note):
-# nothing is requested or started yet. Reads free memory (Read-DrillHostMemory) against the boot gate's memory (Test-DrillHostMemory,
-# which Start-DrillGuardedVm judges again) every BootWaitPollSeconds on the monotonic clock; returns once it is there; past
-# BootWaitMinutes stops with DRILL_HOST_MEMORY_SHORT and the record. A reading that fails ends the wait and goes on: the wait only
-# delays, and the boot gate reads again and refuses on its own. Every reading is counted in $script:DrillBootWait (hostPreBoot.wait).
+# nothing is requested or started yet. Reads free memory (Read-DrillHostMemory) and the runner distribution's (Get-DrillWslMemory) against
+# the boot gate's memory (Test-DrillHostMemory, which Start-DrillGuardedVm judges again) every BootWaitPollSeconds on the monotonic
+# clock; returns once it is there; past BootWaitMinutes stops with DRILL_HOST_MEMORY_SHORT and the record. A reading that fails ends
+# the wait and goes on: the wait only delays, and the boot gate reads again and refuses on its own. Every reading is counted in
+# $script:DrillBootWait (hostPreBoot.wait).
 function Wait-DrillBootMemory {
   $wait = [ordered]@{ samples = 0; firstAt = $null; lastAt = $null; firstFreeGB = $null; lastFreeGB = $null; requiredFreeGB = $null
     ok = $false; unreadable = $null }
@@ -1833,7 +1857,7 @@ function Wait-DrillBootMemory {
   $limit = [double]$script:Drill.BootWaitMinutes * 60
   $start = Get-DrillMonotonicSeconds
   while ($true) {
-    try { $m = Read-DrillHostMemory; $gate = Test-DrillHostMemory $m.free $m.target -MemoryAssigned $m.assigned }
+    try { $m = Read-DrillHostMemory; $wm = @(Get-DrillWslMemory); $gate = Test-DrillHostMemory $m.free $m.target -MemoryAssigned $m.assigned -WslMemory $wm }
     catch { $wait.unreadable = (Get-DrillCode $_).code; return $wait }
     $at = (Get-DrillTime).ToUniversalTime().ToString('o')
     $wait.samples++
@@ -2063,7 +2087,7 @@ function Invoke-DrillHostGuardLoop($State, [string]$RunDir, [switch]$RestoreChec
 
 # Before the boot (not armed) the guard watches the duty and the hold only: runner jobs and memory are the boot gate's, judged once, in
 # Start-DrillGuardedVm (-BootGate). Armed, it is the running gate. (Codex review of 74e7a65e7, high 2.)
-function Get-DrillGuardSafety($State, [switch]$BootGate) {
+function Get-DrillGuardSafety($State, [switch]$BootGate, $WslMemory = $null) {
   $deadline = Get-Prop $State 'deadline'
   if ($deadline -and $deadline -ne [DateTimeOffset]::MinValue -and (Get-DrillTime) -ge $deadline) {
     return @{ ok = $false; code = 'DRILL_RUN_TIMEOUT'; deadline = $deadline }
@@ -2071,7 +2095,7 @@ function Get-DrillGuardSafety($State, [switch]$BootGate) {
   $holdUntil = Get-Prop $State 'holdUntil'
   if ($null -eq $holdUntil) { $holdUntil = [DateTimeOffset]::MinValue }
   if (-not $State.armed -and -not $BootGate) { return Get-DrillHostSafety -HoldUntil $holdUntil -StatusOnly }
-  return Get-DrillHostSafety -Running:$State.armed -HoldUntil $holdUntil
+  return Get-DrillHostSafety -Running:$State.armed -HoldUntil $holdUntil -WslMemory $WslMemory
 }
 
 function Start-DrillHostGuard([string]$RunDir, [switch]$RestoreCheckpoint, $Window) {
@@ -2110,17 +2134,18 @@ function Start-DrillGuardedVm($Watchdog) {
   $state = $script:HostGuard.state
   # the boot gate's sample carries what the runner distribution holds (Fable ruling 0e418483 supplement "three questions after the
   # implementation" 1): the abort's reader and shape, read right before the gate and outside the lock (the guard is not held up), so a
-  # refusal has it too. Evidence only: one not read is left out, and the gate judges as it would without it.
-  $wslMemory = @()
-  if ($script:DrillPreBoot) { try { $wslMemory = @(Get-DrillWslMemory) } catch { $wslMemory = @() } }
+  # refusal has it too. The gate counts its MemFree as taken (Test-DrillHostMemory; Fable plan 87d330d0): one not read is left out of
+  # the sample and refuses the boot.
+  $wslMemory = $null
+  try { $wslMemory = @(Get-DrillWslMemory) } catch { $wslMemory = $null }
   [Threading.Monitor]::Enter($state.SyncRoot)
   try {
     Assert-DrillGuard
     # the boot gate: both sides' runner jobs again, then memory, judged here once
-    $safety = Get-DrillGuardSafety $state -BootGate
+    $safety = Get-DrillGuardSafety $state -BootGate -WslMemory $wslMemory
     if ($script:DrillPreBoot) {
       $script:DrillPreBoot.bootGate = ConvertTo-DrillGateTrace $safety
-      if ($wslMemory.Count) { $script:DrillPreBoot.bootGate['wslMemory'] = $wslMemory }
+      if ($null -ne $wslMemory -and $wslMemory.Count) { $script:DrillPreBoot.bootGate['wslMemory'] = $wslMemory }
     }
     if (-not $safety.ok) { throw (New-DrillError $safety.code $safety) }
     if ($Watchdog) {

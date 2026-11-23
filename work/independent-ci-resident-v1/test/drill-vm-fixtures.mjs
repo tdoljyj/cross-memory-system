@@ -145,6 +145,8 @@ export const releaseRow = x => ({ at: new Date(x.at).toISOString(), freeBeforeGB
 // under the real guard loop: 5 GB free with the guest fully assigned.
 export const MEMINFO = ['MemTotal:       29360128 kB', 'MemFree:         6815744 kB', 'MemAvailable:   22020096 kB', 'Buffers:          131072 kB',
   'Cached:         16777216 kB', 'SwapCached:            0 kB', 'Active:          9437184 kB', 'AnonPages:       5242880 kB', 'Shmem:             65536 kB', ''].join('\n');
+// The fixture's /proc/meminfo with another MemFree (GB): the runner distribution's headroom the boot gate counts as taken.
+export const meminfoWithFree = (gb) => MEMINFO.replace(/^MemFree:\s+\d+ kB$/m, `MemFree:       ${Math.round(gb * 1024 * 1024)} kB`);
 export function memoryAbort(name, answers) {
   const dir = fs.mkdtempSync(path.join(tmp, `g2-${name}-`));
   return ps(`
@@ -372,7 +374,7 @@ export const commandIn = (world, command) => world.prefix + command.split('/proc
 // Fable renew-key ruling, supplements "WSL runner jobs" item 3 and "WSL gate race" item 3 (the order unchanged by round four): early
 // refusal (hold, resident idle, no job on either side; no memory) -> the release -> the boot gate (both sides again, then memory, judged
 // once, then the boot), from the real entry on, with the real host guard; the release command run by Git's sh.
-export function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64 } = {}) {
+export function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, meminfo = MEMINFO } = {}) {
   const quiet = shWorld('preboot-quiet', { pgrep: 1 });
   const job = shWorld('preboot-job', { pgrep: 0 });
   const status = path.join(fs.mkdtempSync(path.join(tmp, 'preboot-status-')), 'status.json');
@@ -401,7 +403,7 @@ export function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64 } =
       $job = $script:jobAfter -ge 0 -and @($script:events | Where-Object { $_ -ceq 'wsl-probe' }).Count -ge $script:jobAfter
       if ($j -ceq '--distribution Fixture-CI --exec pgrep -ix Runner[.]Worker') { $script:events.Add('wsl-probe'); return @{ exit = $(if ($job) { 0 } else { 1 }); stdout = ''; stderr = '' } }
       if ($j -ceq '--distribution Fixture-CI --exec cat /proc/meminfo') { $script:events.Add('wsl-meminfo')
-        if ($script:wslMemoryFails) { return @{ exit = 1; stdout = ''; stderr = 'cat: /proc/meminfo: Input/output error' } }; return @{ exit = 0; stdout = ${q(MEMINFO)}; stderr = '' } }
+        if ($script:wslMemoryFails) { return @{ exit = 1; stdout = ''; stderr = 'cat: /proc/meminfo: Input/output error' } }; return @{ exit = 0; stdout = ${q(meminfo)}; stderr = '' } }
       if ($j -ceq '--distribution Fixture-CI --exec pgrep -cix Runner[.]Worker') { $script:events.Add('wsl-count'); return @{ exit = $(if ($job) { 0 } else { 1 }); stdout = "$(if ($job) { 1 } else { 0 })\`n"; stderr = '' } }
       if ($a.Count -eq 8 -and ($a[0..6] -join ' ') -ceq '--distribution Fixture-CI --user root --exec sh -c' -and
           ($a[7] -ceq $script:DrillWslReleaseCommand -or $a[7] -ceq (Get-Variable -Name DrillWslIdleReleaseCommand -Scope Script -ValueOnly -ErrorAction SilentlyContinue))) {

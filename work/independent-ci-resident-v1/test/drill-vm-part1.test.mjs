@@ -865,7 +865,8 @@ test('host reader uses only the pinned status file and accounts for an existing 
     function Get-Process { param($ErrorAction) [pscustomobject]@{ ProcessName = 'Runner.Listener' } }
     function Get-DrillRunnerDistributions { param($HostName) }
     $script:freeBytes = 20GB + $script:Drill.BootMarginBytes; $script:assignedBytes = 0
-    $safety = Get-DrillHostSafety
+    # -WslMemory @(): no runner distribution runs, as Start-DrillGuardedVm would hand it (Fable plan 87d330d0)
+    $safety = Get-DrillHostSafety -WslMemory @()
     $script:freeBytes = 10GB; $script:assignedBytes = 10GB
     $running = Get-DrillHostSafety -Running
     @{ pinned = $pinned; path = $script:readPath; safety = $safety; running = $running; margin = $script:Drill.BootMarginBytes }
