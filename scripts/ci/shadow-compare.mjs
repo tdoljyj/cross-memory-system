@@ -5,6 +5,7 @@
 // head 的角色从 PR 字段定（FABLE-shadow-superseded-20261122，丙）：当前（open PR 的 head）缺检查或未完成判“在跑”；
 // 最终（已合入 PR 的 head）严格口径；被取代（PR 的其他提交、关闭未合入 PR 的 head）两侧都有红/绿终态才比，
 // 比不了判“跳过”。“在跑”“跳过”都不计入、不打断连续一致。读取失败、#292 读不到或没钉住不分角色判未知。
+// 同一次运行里先有检查被取消、这条红检查之后才开始的，这一侧无结论（FABLE-shadow-superseded-head-20261124 §R2）。
 //
 //   node scripts/ci/shadow-compare.mjs --prs <起>-[<止>]      PR 范围内每个 PR 的每个被测 head
 //   node scripts/ci/shadow-compare.mjs --head <sha> [--head <sha>]...
@@ -81,14 +82,27 @@ async function readPins(get) {
   }
 }
 
+// 这条检查开始时，它所在的运行（check suite）里是否已有检查被取消（§R2）。块 4 起汇总作业 if: always()，运行被并发取消后
+// 它照样在 needs 结束之后才开始、读到 cancelled 就失败；GitHub 取消运行时正在跑的作业记 cancelled 不记 failure，
+// 所以取消之前就开始的红是它自己跑出来的，照常比较。按开始时间比（不按完成时间）；cancelled 只认同名检查里最新的一条
+// （重跑时 suite 不变，旧尝试的 cancelled 不算）。只用已读到的 check-runs，缺 suite 或开始时间就不算。
+function startedAfterCancel(runs, latest) {
+  const suite = latest.check_suite?.id, started = Date.parse(latest.started_at ?? '');
+  if (!Number.isSafeInteger(suite) || !Number.isFinite(started)) return false;
+  const newest = new Map();
+  for (const r of runs) if (r?.check_suite?.id === suite && !(newest.get(r.name)?.id > r.id)) newest.set(r.name, r);
+  return [...newest.values()].some(r => r.conclusion === 'cancelled' && Date.parse(r.completed_at ?? '') <= started);
+}
+
 function side(runs, name, app) {
   const mine = runs.filter(r => r?.name === name && r?.app?.id === app).sort((a, b) => a.id - b.id);
   const latest = mine.at(-1);
   if (!latest) return null;
   return { name, app, runs: mine.length, status: latest.status, conclusion: latest.conclusion ?? null,
-    completedAt: beijing(latest.completed_at), title: latest.output?.title ?? null, completedMs: Date.parse(latest.completed_at ?? '') };
+    completedAt: beijing(latest.completed_at), title: latest.output?.title ?? null, completedMs: Date.parse(latest.completed_at ?? ''),
+    afterCancel: startedAfterCancel(runs, latest) };
 }
-const shown = s => s && (({ completedMs, ...rest }) => rest)(s);
+const shown = s => s && (({ completedMs, afterCancel, ...rest }) => rest)(s);
 
 // head 的角色：当前 > 最终 > 被取代（同一提交在几个 PR 里取最严的一个）。
 export const ROLES = Object.freeze({ current: 3, final: 2, superseded: 1 });
@@ -111,6 +125,9 @@ function judge(pair, runs, pins, role) {
   const cls = s => PASS.has(s.conclusion) ? '绿' : FAIL.has(s.conclusion) ? '红' : null;
   for (const [label, s] of [['框架', framework], ['托管', hosted]]) {
     if (cls(s) === null) return unjudgeable(`${label}无结论（${s.conclusion}）`, { pending: false });
+  }
+  for (const [label, s] of [['框架', framework], ['托管', hosted]]) {
+    if (cls(s) === '红' && s.afterCancel) return unjudgeable(`${label}无结论（同一运行中先有取消，本检查之后才开始）`, { pending: false });
   }
   out.completionDeltaSeconds = Number.isFinite(framework.completedMs) && Number.isFinite(hosted.completedMs)
     ? Math.round((hosted.completedMs - framework.completedMs) / 1000) : null;
