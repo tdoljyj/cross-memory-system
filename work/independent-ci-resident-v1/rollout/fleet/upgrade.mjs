@@ -24,7 +24,9 @@
 // same three files (the node has two ways only, Decision b5d041d2).
 //
 //   1. the acceptance and the archive (install.mjs readArchive); this file and the modules it imports are the archive's bytes.
-//      Then the Owner's WSL memory limit (wsl-capacity.mjs): written, unchanged or skipped, in every answer's wslCapacity; it never refuses.
+//      The Owner's WSL memory limit (wsl-capacity.mjs) is written only by a run that requests the upgrade (after the request) or finds
+//      the node already at this package; every other answer (--no-request, an open operation, a reinstall, a hand-over) writes nothing
+//      and says skipped NOT_REQUESTED; a refusal writes nothing. So a write is always in the answer's wslCapacity; it never refuses.
 //   2. the upgrader's status (an open operation ends here), current.json and the Linux facts (already this package ends here).
 //   3. the node (install.mjs readNode); the two sides must be one Source.
 //   4. the channel: the archive's upgrader manifest is the receipt's, its Linux upgrade tool the facts', the installed Source-entering
@@ -55,7 +57,7 @@ import { pyCanonical, pyDumps } from './pyjson.mjs';
 import { DEFAULT_REPO, fetchPackage } from './fetch.mjs';
 import { extractTar } from './tar.mjs';
 import { BUNDLE_NAME, bundleHeads } from './universal.mjs';
-import { defaultWslConfigPath, wslCapacityOfArchive } from './wsl-capacity.mjs';
+import { defaultWslConfigPath, wslCapacityNotApplied, wslCapacityOfArchive } from './wsl-capacity.mjs';
 
 export const UPGRADE_CONTRACT = 'clued.independent-ci.fleet-node-upgrade/1';
 // upgrade\status.json op states in which the upgrader still owns an operation (rollout/precheck.mjs OP_MOVING)
@@ -120,10 +122,12 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   const at = (...p) => path.join(root, ...p);
   const accepted = acceptance.ciSourceManifestSha256;
   // the Owner's WSL memory limit from this package's capacity profile: a file write only (no WSL, no restart; the limit takes effect when
-  // the Owner's WSL VM next starts), on every run, whatever the upgrade answers; a host it cannot place is skipped, never refused
-  const wslCapacity = wslCapacityOfArchive(byPath, { hostname: hostname(), configPath: wslConfigPath, now });
+  // the Owner's WSL VM next starts), by a run that goes on (requested, or already at this package) and nothing before it can refuse;
+  // a host it cannot place is skipped, never refused. Every other answer: not written (a drill's --no-request writes nothing).
+  const host = hostname();
+  const applyWslCapacity = () => wslCapacityOfArchive(byPath, { hostname: host, configPath: wslConfigPath, now });
   const base = { contract: UPGRADE_CONTRACT, version: universal.version, commit: universal.commit, ciSourceManifestSha256: accepted, statusFile: at('upgrade', 'status.json'),
-    wslCapacity };
+    wslCapacity: wslCapacityNotApplied(byPath, { hostname: host, reason: 'NOT_REQUESTED' }) };
 
   // 2. safe to run again: an operation the upgrader still owns, or both sides already this package
   let op = null;
@@ -138,7 +142,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   try { liveFacts = jsonOf(await fs.readFile(at('upgrade', 'mailbox', 'responses', 'version-facts.json'))); } catch { liveFacts = null; }
   if (cur.ciSourceManifestSha256 === accepted && cur.residentManifestSha256 === universal.facts.residentManifestSha256
     && cur.linux?.ciSourceManifestSha256 === accepted && liveFacts?.ciSourceManifestSha256 === accepted && liveFacts.staged === null) {
-    return { ...base, status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', generation: cur.generation, packageManifestSha256: cur.packageManifestSha256 };
+    return { ...base, status: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', generation: cur.generation, packageManifestSha256: cur.packageManifestSha256, wslCapacity: applyWslCapacity() };
   }
 
   // 3. the node, as a reinstall reads it; an upgrade also needs its two sides to be one Source
@@ -245,7 +249,7 @@ export async function upgradeNode({ artifactPath, artifactSha256, acceptance, ro
   // 9. the request, by the installed tool
   const script = at('resident', node.current.residentManifestSha256, 'windows', 'request-upgrade.ps1');
   const answer = await request({ script, packageDir, packageManifestSha256: first.packageManifestSha256, decisionRef });
-  return { ...result, status: 'FLEET_NODE_UPGRADE_REQUESTED', request: { requestId: answer.requestId ?? null, requestFile: answer.requestFile ?? null },
+  return { ...result, status: 'FLEET_NODE_UPGRADE_REQUESTED', request: { requestId: answer.requestId ?? null, requestFile: answer.requestFile ?? null }, wslCapacity: applyWslCapacity(),
     ownerNextStep: 'Nothing while the Owner\'s automatic approval is on. Otherwise statusFile shows op.grant.confirmUrl at WAITING_GRANT: approve once there. Run this command again to see where the node is.' };
 }
 

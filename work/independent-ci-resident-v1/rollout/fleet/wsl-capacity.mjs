@@ -109,6 +109,12 @@ export function applyWslCapacity({ profilesBytes, hostname, configPath = default
   }
 }
 
+// The step not taken: a run that requests nothing (a drill's --no-request, an open operation, a reinstall answer) reads and writes no
+// .wslconfig, so that a write is always in the answer of a run that goes on; `to` is the profile's value, for a drill to compare.
+export function wslCapacityNotApplied(byPath, { hostname, reason }) {
+  return { ...skipped(reason), to: capacityMemoryFor(byPath.get(`tree/${NODE_PROFILES}`) ?? null, hostname).memory ?? null };
+}
+
 // The step on a package: node-profiles.json from the archive's verified bytes (entries by path, as install.mjs readArchive gives them).
 export function wslCapacityOfArchive(byPath, { hostname, configPath = defaultWslConfigPath(), now = Date.now(), env = process.env } = {}) {
   return applyWslCapacity({ profilesBytes: byPath.get(`tree/${NODE_PROFILES}`) ?? null, hostname, configPath, now, env });

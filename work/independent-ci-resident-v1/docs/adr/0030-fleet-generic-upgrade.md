@@ -131,10 +131,10 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 
 依据：FABLE-drill-memory-short-20261124.md §3（PR-B 重定）。生产 WSL 的上限以前是按 runbook 手工跑 `apply-wsl-capacity-profile.ps1` 写进去的，没有任何组件在管。这次改由通用包来写，数值只取自一处：`scripts/ci/self-hosted/node-profiles.json` 里本机容量档位的 `wsl_memory_gb`。
 
-- **写什么**：`upgrade.mjs` 和 `install.mjs prepare` 每次运行，都会调用一次 `rollout/fleet/wsl-capacity.mjs`。这一步只把 Owner 的 `%USERPROFILE%\.wslconfig` 里 `[wsl2]` 节的 `memory=` 写成档位值，其余字节一律不动，包括其他键、其他节、注释、行尾和 BOM。写之前先在旁边生成备份 `<文件>.clued-backup-<UTC>`（只新建、不覆盖），新内容先写临时文件再 rename 过去。值已经相同（不区分大小写）时什么都不写。
+- **写什么**：`upgrade.mjs` 和 `install.mjs prepare` 在不会再拒绝的那一步调用一次 `rollout/fleet/wsl-capacity.mjs`：升级是投出请求之后（或者答“已是这个包”时），重装准备是答 PREPARED 之前的最后一步。`--no-request` 演练、已有进行中的操作、转重装、要先交班的答复都不写，回执里是 `skipped`、`reason: NOT_REQUESTED`，`to` 照填档位值供演练核对；任何拒绝也都不写。所以只要写了，就一定出现在回执里。这一步只把 Owner 的 `%USERPROFILE%\.wslconfig` 里 `[wsl2]` 节的 `memory=` 写成档位值，其余字节一律不动，包括其他键、其他节、注释、行尾和 BOM。写之前先在旁边生成备份 `<文件>.clued-backup-<UTC>`（只新建、不覆盖），新内容先写临时文件再 rename 过去。值已经相同（不区分大小写）时什么都不写。
 - **为什么不进 WSL**：这一步只写文件，不调用 wsl.exe，不重启 VM，也不终止任何发行版。新上限在 Owner 的 WSL VM 下次启动时生效。`.wslconfig` 是按 Owner 整台 VM 生效的，只终止 CluedCI-Linux 不会让新值生效；而关掉整台 VM 会连带 Owner 自己的发行版，所以不由通用包来做。生效之前，演练开机门会照实拒绝开机，生效之后自动放行；中间不需要任何组件去等、去盯。
 - **节点怎么映射**：用主机名（`COMPUTERNAME`，与 `install.mjs` 的 `defaultHostname`、演练脚本相同）去匹配 `hosts[].hostname`，不区分大小写，必须恰好命中一条。找不到主机、档位或数值不合法、文件读不出来或不是 UTF-8、写失败时，结果是 `skipped` 加原因，文件保持原样，升级和重装都**不受影响**（辅助功能出错只能“不做”）。
 - **进包**：`node-profiles.json` 按它在仓库里的原路径放进 `TREE_FILES`，不在 `work/` 下另存一份副本；`wsl-capacity.mjs` 加进 `OWN_MODULES`，必须与包里的字节相同。通用值（`facts.mjs`）不变。
-- **回执**：两个命令输出的那一行 JSON 都带 `wslCapacity: { status: written | unchanged | skipped, from, to, backup[, reason] }`。
+- **回执**：两个命令所有非拒绝的答复都带 `wslCapacity: { status: written | unchanged | skipped, from, to, backup[, reason] }`；拒绝的答复不带，因为拒绝时什么都没写。
 - **测试**：`test/fleet-wsl-capacity.test.mjs` 覆盖改写语义、跳过的各种情形、`node-profiles.json` 在包里；`rollout/test/fleet-upgrade.test.mjs` 末条锁住写入范围：除了 work 目录、`.wslconfig` 和它的备份，节点根目录或 Owner 家目录里任何别的文件被新增、改动或删除，测试就红。在测试标记下，临时目录以外一律不写（`src/production-root-guard.mjs`），所以测试碰不到本机真实的 `.wslconfig`。
 - **不变**：冻结通道（`upgrader/src`、`upgrade-apply.ps1`）、服务端、Grant、2.2 里的其余步骤都不变。

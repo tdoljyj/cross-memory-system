@@ -483,8 +483,13 @@ test('install refuses: archive sha, acceptance, tampered entry, climbing path, a
     await assert.rejects(run({ selfDir: other }), { code: 'FLEET_INSTALLER_NOT_THE_ARCHIVES' });
     // nothing is written before the node checks out: stale facts, no installed package, a missing token file
     const sw = path.join(d, `early${k++}`);
-    await assert.rejects(prepare(w, w.a, sw, { now: Date.now() + 2 * 3_600_000 }), { code: 'LINUX_VERSION_FACTS_NOT_FRESH' });
+    // a refusal writes nothing, the Owner's .wslconfig neither (review of Task 87d330d0, medium 1: a write is always in the answer)
+    const home = path.join(d, 'stale-home');
+    await fs.mkdir(home);
+    await fs.writeFile(path.join(home, '.wslconfig'), '[wsl2]\r\nmemory=28GB\r\n');
+    await assert.rejects(prepare(w, w.a, sw, { now: Date.now() + 2 * 3_600_000, wslConfigPath: path.join(home, '.wslconfig'), hostname: () => 'DESK-W-591' }), { code: 'LINUX_VERSION_FACTS_NOT_FRESH' });
     await assert.rejects(fs.access(sw));
+    assert.deepEqual([await fs.readFile(path.join(home, '.wslconfig'), 'utf8'), await fs.readdir(home)], ['[wsl2]\r\nmemory=28GB\r\n', ['.wslconfig']]);
     // a root without an install receipt is not a node to reinstall; it is not a first install either while the root is there (residue)
     const empty = path.join(d, 'empty-root');
     await fs.mkdir(empty);
