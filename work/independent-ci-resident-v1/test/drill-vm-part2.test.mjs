@@ -807,6 +807,64 @@ test('the boot gate sample carries wslMemory like the abort; one not read leaves
   assert.deepEqual(verdict(refusedUnread), ['DRILL_PREREQ_FAILED', 'DRILL_HOST_RESOURCE_UNREADABLE', false, 'DRILL_HOST_RESOURCE_UNREADABLE', 10, 15, false]);
 });
 
+// Independent review of 29ed7255c, medium A: the runner distribution's reading in the wait for memory (three wsl.exe calls every
+// BootWaitPollSeconds, under production load) failing once is that sample not passing, not the end of the wait: the wait goes on, counts
+// it (wslUnreadSamples, the last code in wslUnreadable), and refuses for it only when BootWaitMinutes runs out with it still unread
+// (DRILL_HOST_RESOURCE_UNREADABLE, as the boot gate would). The host's own reading failing still ends the wait (unreadable), as before.
+const failFirstMeminfo = n => `
+    $script:innerWsl = $script:DrillWslRunner; $script:meminfoFailsLeft = ${n}
+    $script:DrillWslRunner = { param($a)
+      if (($a -join ' ') -ceq '--distribution Fixture-CI --exec cat /proc/meminfo' -and $script:meminfoFailsLeft -gt 0) {
+        $script:meminfoFailsLeft--; $script:events.Add('wsl-meminfo'); return @{ exit = 1; stdout = ''; stderr = 'cat: /proc/meminfo: Input/output error' } }
+      & $script:innerWsl $a }`;
+test('wait A1: the WSL reading fails on the first sample, 14, 14, then 22 GB free: the wait goes on and boots at 22, the failure counted', shOpts, () => {
+  const r = ps(`${bootWaitWorld([14, 14, 22])}${failFirstMeminfo(1)}
+    $out = Invoke-DrillMain
+    @{ out = $out; events = @($script:events); slept = @($script:slept) }`);
+  assert.equal(r.out.status, 'DRILL_PREREQ_READY', JSON.stringify(r.out));
+  assert.ok(r.events.includes('boot'), r.events.join(','));
+  assert.deepEqual(r.slept, [120, 120], 'waited on after the failed reading');
+  const w = r.out.hostPreBoot.wait;
+  assert.deepEqual([w.samples, w.firstFreeGB, w.lastFreeGB, w.requiredFreeGB, w.ok, w.unreadable, w.wslUnreadSamples, w.wslUnreadable],
+    [3, 14, 22, 21.5, true, null, 1, 'WSL_MEMINFO_UNREADABLE'], JSON.stringify(w));
+});
+test('wait A2: the WSL never read at 64 GB free: the wait runs BootWaitMinutes out, then DRILL_HOST_RESOURCE_UNREADABLE, no hold, no boot', shOpts, () => {
+  const r = ps(`${bootWaitWorld([64])}
+    $script:wslMemoryFails = $true
+    $failed = try { Invoke-DrillMain | Out-Null; $null } catch { Get-DrillCode $_ }
+    @{ failed = $failed; events = @($script:events); slept = @($script:slept); intake = @($script:intake) }`);
+  assert.equal(r.failed?.code, 'DRILL_HOST_RESOURCE_UNREADABLE', JSON.stringify(r.failed));
+  assert.equal(r.slept.reduce((a, b) => a + b, 0), 60 * 60, 'refused only when the wait ran out');
+  assert.deepEqual(r.intake, []);
+  for (const e of ['boot', 'restore', 'status']) assert.ok(!r.events.includes(e), `${e}: ${r.events.join(',')}`);
+  const w = r.failed.detail.wait;
+  assert.deepEqual([w.samples, w.firstFreeGB, w.lastFreeGB, w.requiredFreeGB, w.ok, w.unreadable, w.wslUnreadSamples, w.wslUnreadable],
+    [31, 64, 64, null, false, null, 31, 'WSL_MEMINFO_UNREADABLE'], JSON.stringify(w));
+});
+
+// Independent review of 29ed7255c, medium C: the Runner.Worker count (pgrep -cix) is evidence only -- the gate needs MemFree -- so a
+// count not read is left out (runnerWorkers null) and never refuses the boot; and a refusal because the runner distribution's memory was
+// not read says why (bootGate.wslMemoryUnreadable: the reader's code).
+test('C1: the Runner.Worker count not read (pgrep -cix exit 2) at 64 GB free: boots, runnerWorkers null', shOpts, () => {
+  const r = ps(`${preBootWorld({ freeBeforeRelease: 64, freeAfterRelease: 64 })}
+    $script:innerWsl = $script:DrillWslRunner
+    $script:DrillWslRunner = { param($a)
+      if (($a -join ' ') -ceq '--distribution Fixture-CI --exec pgrep -cix Runner[.]Worker') { $script:events.Add('wsl-count'); return @{ exit = 2; stdout = ''; stderr = '' } }
+      & $script:innerWsl $a }
+    Invoke-Entry`);
+  const g = r.out.hostPreBoot.bootGate;
+  assert.deepEqual([r.out.status, g.ok, g.code, g.requiredFreeGB, r.events.includes('boot')], ['DRILL_PREREQ_READY', true, null, 21.5, true], JSON.stringify(g));
+  assert.deepEqual(g.wslMemory, [{ ...WSL_MEMORY, runnerWorkers: null }]);
+  assert.equal(Object.hasOwn(g, 'wslMemoryUnreadable'), false);
+});
+test('C2: a refusal because the runner distribution\'s memory was not read carries the reason code', shOpts, () => {
+  const r = ps(`${preBootWorld({ freeBeforeRelease: 64, freeAfterRelease: 64 })}
+    $script:wslMemoryFails = $true
+    Invoke-Entry`);
+  const g = r.out.hostPreBoot.bootGate;
+  assert.deepEqual([r.out.code, g.code, g.wslMemoryUnreadable, r.events.includes('boot')], ['DRILL_HOST_RESOURCE_UNREADABLE', 'DRILL_HOST_RESOURCE_UNREADABLE', 'WSL_MEMINFO_UNREADABLE', false], JSON.stringify(g));
+});
+
 // r6 conditions from the real entry (a runner job at boot, 24 GB free): the boot gate is memory only (Fable plan 0e418483), so it boots,
 // and its record carries the figure the script computed and what it is made of -- the guest, the boot margin, the production reserve,
 // the runner distribution's MemFree (Fable plan 87d330d0); no runner job growth any more. No figure from outside.
