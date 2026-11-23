@@ -26,7 +26,7 @@ powershell -NoProfile -File rollout\build-upgrade.ps1 -Config ... -Commit ... -I
 ## 3. 预检：`precheck.mjs`
 
 ```
-node rollout\precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --package <包目录> --package-sha <hex> --acceptance <uuid> --installed-package <现装包目录> [--allow-fleet-source-mismatch]
+node rollout\precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --package <包目录> --package-sha <hex> --acceptance <uuid> --installed-package <现装包目录>
 ```
 
 - 包里带的升级代理副本与已装的不同：`PRECHECK_REFUSED` / `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`，与现装包逐文件比较，列出变化（`changedFrozenFiles`）。冻结的 Linux 升级工具、签名器和工具清单与现装包不同，或工具不是 version facts 里的 `upgradeToolSha256`，同样是通道变更。
