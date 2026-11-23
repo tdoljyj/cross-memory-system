@@ -322,3 +322,21 @@ test('Q: with CLUED_CI_HOST_LACKS, the run again in full carries the same skip p
   assert.match(out, /flaky::.*flaky one/);
   assert.match(out, /run again in full \(timeout \d+ s\): .*--test-skip-pattern/, 'the log shows the run again as it runs');
 });
+
+// --shard (REVIEW-hosted-speed-b3-20261124 L5): a shard runs again only its own part of the command, and passes it as above.
+test('--shard: the run again in full is the shard\'s narrower command', (t) => {
+  const { root, base, runsOf } = checkout(t, suite({ 'flaky one': [1] }));
+  const runs = [];
+  for (let index = 1; index <= 2; index += 1) runs.push(run(root, base, { shard: { index, total: 2 } }));
+  const mine = runs.find(({ calls }) => calls.some((args) => args.some((arg) => arg.endsWith('flaky.test.mjs'))));
+  const other = runs.find((part) => part !== mine);
+  assert.ok(mine && other);
+  assert.equal(mine.status, 0, mine.out);
+  assert.equal(mine.calls.length, 2, 'the shard\'s run and one run again');
+  for (const args of mine.calls) assert.ok(!args.some((arg) => arg.endsWith('steady.test.mjs')), args.join(' '));
+  assert.match(mine.out, /flaky::.*flaky one/);
+  assert.equal(other.status, 0, other.out);
+  assert.equal(other.calls.length, 1);
+  assert.equal(runsOf(FLAKY), 2);
+  assert.equal(runsOf(STEADY), 1, 'the other shard\'s file runs once');
+});
