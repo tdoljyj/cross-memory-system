@@ -158,7 +158,7 @@ test('E4: nothing installed -- no reboot, no wait; A7 fails with why, and read-a
   assert.deepEqual(r.rebootFile, { skipped: true, reason: 'DRILL_A7_BLOCKED_NOTHING_INSTALLED' });
 });
 
-// Fable plan 87d330d0 2.2 (A4): a first install that did not end done now blocks A7 (drill-vm.test.mjs "block A 4"), so the reboot is
+// Fable plan 87d330d0 2.2 (A4): a first install that did not end done now blocks A7 (drill-vm-part4.test.mjs "block A 4"), so the reboot is
 // drilled here after an entry that ended done; nothing installed still comes first (the test above, a stopped entry).
 const entryDone = { line: JSON.stringify({ status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe' }), exit: 0 };
 test('E4: something installed (even half) -- the reboot and its wait run as before', opts, () => {
