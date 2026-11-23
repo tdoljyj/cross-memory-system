@@ -7,13 +7,6 @@ on:
       - "development/projections/multitrack/**"
       - "scripts/governance/validate_multitrack_projection.py"
       - ".github/workflows/multitrack-governance-projection.yml"
-  push:
-    branches: [main]
-    paths:
-      - "development/contracts/multitrack/**"
-      - "development/projections/multitrack/**"
-      - "scripts/governance/validate_multitrack_projection.py"
-      - ".github/workflows/multitrack-governance-projection.yml"
 
 permissions:
   contents: read

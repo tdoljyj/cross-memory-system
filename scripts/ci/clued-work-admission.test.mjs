@@ -2645,9 +2645,10 @@ test("owner review: the workflows on main that hold an environment are exactly t
     assert.deepEqual(ownerReviewFindings(text, text).filter((f) => f !== "environment_workflow_changed"), [], file);
   }
   // MergeAdmission §12.1 (Owner Decision 00b71629): the usage report reads the measurement App's key from clued-admission.
-  // DESIGN §80: the train front's main merge reads the clued-admission App key (update-branch and its attestation check).
+  // DESIGN §80: the train front's main merge reads the clued-admission App key (update-branch and its attestation check);
+  // its hosted copy for the scaffold (framework v1 §2.3) the same key in the same environment.
   assert.deepEqual(holders, ["clued-ci-usage-report.yml", "clued-cloud-production-release.yml", "clued-currentness-post-deploy-attestation.yml",
-    "clued-front-main-merge.yml", "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
+    "clued-front-main-merge-hosted.yml", "clued-front-main-merge.yml", "clued-handover-disposable-idle.yml", "clued-handover-external-qualification.yml", "clued-integration-runtime-config.yml", "clued-merge-executor.yml", "clued-merge-reconcile.yml", "clued-merge-slot-ci.yml", "clued-native617-admission-dispatch.yml", "clued-release-tags.yml", "clued-storage-executor-window.yml", "clued-storage-read-config.yml", "clued-work-admission-dispatch.yml",
     "clued-work-admission-reverify.yml", "clued-work-admission.yml"]);
 });
 
@@ -3884,11 +3885,12 @@ test("independent gate repair re-run: an attempt that ended in a GitHub API outa
   }
 });
 
-test("independent gate: under the Owner's disaster-recovery switch the clued-admission App check of this event still decides", async () => {
-  const { outcome } = await independentGate([appCheckRun()]);
-  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", undefined]);
-  const failed = (await independentGate([appCheckRun({ conclusion: "failure" })])).outcome;
-  assert.deepEqual([failed.admitted, failed.verdict], [false, "REJECTED"]);
+test("independent gate: the clued-admission App check of this event never decides, even with its workflow running again", async () => {
+  // Before FABLE-scaffold-open-qs 问题 1 改法 2 the legacy check decided when it settled first (the Owner's disaster-recovery switch).
+  const { outcome } = await independentGate([appCheckRun()], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  const failed = (await independentGate([appCheckRun({ conclusion: "failure" }), nativeCheck()])).outcome;
+  assert.deepEqual([failed.admitted, failed.verdict], [true, "ADMITTED"]);
 });
 
 test("independent gate: the Source v2 native-work-admission id admits; malformed or foreign v2 ids refuse", async () => {
@@ -4067,8 +4069,7 @@ const denials=[
  ['moved main',f=>f.mainTip=previous],['missing signature',f=>f.commit.commit.verification.verified=false],
  ['different signed tree',f=>f.commit.commit.verification.payload='tree wrong'],['wrong parent',f=>f.commit.parents[1].sha=previous],
  ['wrong platform committer',f=>f.commit.committer.id=1],['wrong native-run head',f=>f.run.head_sha=previous],
- ['missing prior proof',f=>f.priorChecks=[]],['late prior proof',f=>f.prior.completed_at='2026-11-17T07:02:00Z'],
- ['prior proof wrong App',f=>f.prior.app.id=1],['missing attestation',f=>f.attestations=[]],
+ ['missing attestation',f=>f.attestations=[]],
  ['attestation wrong App',f=>f.attestation.app.id=5368905],['attestation wrong PR',f=>f.attestation.external_id=mainMergeExternalId({pr:453,from:previous,main:base})],
  ['newer attestation failure',f=>f.attestations.push({...f.attestation,id:61,conclusion:'failure'})],
  ['newer malformed current proof',f=>f.currentChecks.push({...f.current,id:51,external_id:'wrong'})],
@@ -4094,7 +4095,7 @@ test('Legacy proof remains valid with Native source configured during disaster r
  const f=legacyFixture();assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
  delete f.env.CLUED_ADMISSION_GATE_SOURCE;assert.equal((await qualifyTrustedAutomationRoute(f)).qualified,true);
 });
-test('Native-source gate preserves actual settled legacy disaster-recovery branch',async()=>{
+test('Native-source gate does not take a settled legacy check (scaffold open-qs 1.2): without Native it waits, and admits nothing',async()=>{
  const f=legacyFixture(),read=f.read;
  f.legacyOrigin.created_at='2026-11-17T07:01:00Z';
  f.read=async route=>{
@@ -4102,7 +4103,87 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
   if(route.includes('/actions/workflows/clued-work-admission.yml/runs'))return {workflow_runs:[f.legacyOrigin]};
   return read(route);
  };
- const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.automation_self_hosted],[true,true],JSON.stringify(r));assert.equal(f.epochReads,2);
+ const r=await gate({...f,eventName:'pull_request'});assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[false,'ADMISSION_PENDING',false],JSON.stringify(r));assert.equal(f.epochReads,0);
+});
+// FABLE-scaffold-shadow-fix-20261122 §2 A, §4: under Native the current head's exact admission and the main-only
+// kooyumi-main-merge attestation (from = parent 1, main = parent 2) decide; the earlier head's admission is not
+// required. A behind protected head can never be admitted (protected_change_not_up_to_date), so requiring it
+// refused every bot refresh of such a head. The legacy branch keeps requiring it.
+test('Native refresh no longer needs an earlier-head admission; prior proof shape is not consulted',async()=>{
+ for(const change of [f=>f.priorChecks=[],f=>f.prior.completed_at='2026-11-17T07:02:00Z',f=>f.prior.app.id=1]){
+  const f=fixture();change(f);const r=await qualifyTrustedAutomationRoute(f);
+  assert.deepEqual([r.qualified,r.reason,r.prior_check_id,r.previous_head_sha],[true,'admitted_owner_pr_signed_main_refresh',null,previous],JSON.stringify(r));
+ }
+});
+const legacyDenials=[
+ ['missing prior proof',f=>f.priorChecks=[],'prior_pr_admission_missing'],
+ ['late prior proof',f=>f.prior.completed_at='2026-11-17T07:02:00Z','prior_pr_admission_missing'],
+ ['prior proof wrong App',f=>f.prior.app.id=1,'prior_pr_admission_missing'],
+ ['prior proof from another workflow',f=>f.legacyOrigin.path='.github/workflows/other.yml','prior_admission_origin'],
+];
+for(const [label,change,reason]of legacyDenials)test(`Legacy automation still refuses ${label}`,async()=>{
+ const f=legacyFixture();change(f);assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason});
+});
+// #1235 b8f6f5d1: real GitHub replies (scripts/ci/fixtures/automation-route-1235-b8f6f5d1.json). The bot merged
+// main c7c16f37 into 8d19f2e8, whose head never got a kooyumi-work-admission; the gate refused the refreshed head
+// with trusted_automation_route:prior_pr_admission_missing although its own Native admission had succeeded.
+const R1235=JSON.parse(fs.readFileSync(path.join(ROOT,'scripts/ci/fixtures/automation-route-1235-b8f6f5d1.json'),'utf8'));
+function replay1235(){
+ const x=structuredClone(R1235),repository=x.repository.full_name,pr=x.pull_request,run=x.run,commit=x.commit;
+ const [from,main]=commit.parents.map(p=>p.sha),current=x.current_admission.check_runs[0];
+ const env={GITHUB_REPOSITORY:repository,GITHUB_REPOSITORY_OWNER:x.repository.owner.login,GITHUB_EVENT_NAME:'pull_request',GITHUB_ACTOR:run.actor.login,GITHUB_TRIGGERING_ACTOR:run.triggering_actor.login,GITHUB_RUN_ID:String(run.id),GITHUB_RUN_ATTEMPT:String(run.run_attempt),GITHUB_REF:`refs/pull/${pr.number}/merge`,GITHUB_HEAD_REF:pr.head.ref,GITHUB_BASE_REF:'main',CLUED_ADMISSION_GATE_SOURCE:INDEPENDENT_GATE_SOURCE,CLUED_ADMISSION_GATE_WAIT_SECONDS:'0',GITHUB_API_URL:'https://api.test',GITHUB_TOKEN:'fixture',GITHUB_WORKSPACE:ROOT};
+ const f={x,env,event:{action:'synchronize',pull_request:pr},run,pr,commit,from,main,currentAdmission:current,epochReads:0};
+ f.read=async route=>{
+  if(route===`/repos/${repository}`)return x.repository;
+  if(route===`/repos/${repository}/pulls/${pr.number}`)return pr;
+  if(route===`/repos/${repository}/branches/main`)return {name:'main',commit:{sha:main}};
+  if(route===`/repos/${repository}/commits/${pr.head.sha}`)return commit;
+  if(route.includes('check_name=kooyumi-main-merge'))return x.main_merge_attestation;
+  if(route.includes(`/commits/${from}/check-runs`))return x.prior_head_admission;
+  if(route.includes(`/commits/${pr.head.sha}/check-runs`))return x.current_admission;
+  if(route===`/repos/${repository}/actions/runs/${run.id}`)return run;
+  if(route.includes('/actions/workflows/clued-work-admission.yml/runs'))return {workflow_runs:[]};
+  throw new Error(`unscripted ${route}`);
+ };
+ f.fetchImpl=async(url,init={})=>{
+  let body;
+  if(init.method==='POST'){f.epochReads++;body={status:'ok',guard_required:true,epoch_current:true};}
+  else body=await f.read(String(url).replace('https://api.test',''));
+  return {ok:true,status:200,headers:{get:()=>null},json:async()=>body,text:async()=>JSON.stringify(body)};
+ };
+ return f;
+}
+test('#1235 b8f6f5d1 replay: bot refresh of a never-admitted head is admitted on its own Native admission and attestation',async()=>{
+ const f=replay1235();
+ assert.equal(f.x.prior_head_admission.total_count,0);
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.verdict,r.automation_self_hosted],[true,'ADMITTED',true],JSON.stringify(r.reasons));
+ assert.deepEqual([r.automation_route.previous_head_sha,r.automation_route.main_sha,r.automation_route.prior_check_id,r.automation_route.current_check_id],
+  [f.from,f.main,null,f.currentAdmission.id]);
+ assert.equal(f.epochReads,2);
+});
+const replayDenials=[
+ ['no kooyumi-main-merge attestation',f=>{f.x.main_merge_attestation={total_count:0,check_runs:[]};},'main_refresh_attestation_missing'],
+ ['an attestation whose from is not parent 1',f=>{const a=f.x.main_merge_attestation.check_runs[0];a.external_id=mainMergeExternalId({pr:f.pr.number,from:'0'.repeat(40),main:f.main});},'main_refresh_attestation_missing'],
+ ['an attestation whose main is not parent 2',f=>{const a=f.x.main_merge_attestation.check_runs[0];a.external_id=mainMergeExternalId({pr:f.pr.number,from:f.from,main:'0'.repeat(40)});},'main_refresh_attestation_missing'],
+ ['a moved main tip',f=>{const read=f.read;f.read=async route=>route.endsWith('/branches/main')?{name:'main',commit:{sha:f.from}}:read(route);},'main_tip_changed'],
+ ['a one-parent head',f=>{f.commit.parents=[{sha:f.from}];},'refresh_parents'],
+ ['an unsigned refresh',f=>{f.commit.commit.verification.verified=false;},'refresh_signature'],
+];
+for(const [label,change,reason]of replayDenials)test(`#1235 replay still refuses ${label}`,async()=>{
+ const f=replay1235();change(f);
+ assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason});
+ const r=await gate({...f,eventName:'pull_request'});
+ assert.deepEqual([r.admitted,r.automation_self_hosted],[false,false]);assert.ok(r.reasons.includes(`trusted_automation_route:${reason}`),JSON.stringify(r.reasons));
+});
+test('#1235 replay without the Native source stays refused for the missing earlier-head admission',async()=>{
+ // Non-Native source: the same head and current check read through the legacy branch must still prove the prior head.
+ const f=replay1235();
+ for(const c of f.x.current_admission.check_runs)Object.assign(c,{name:'kooyumi-admission-verified',app:{id:5164952,slug:'clued-admission'},external_id:`pr:${f.pr.number}:run:77`});
+ f.x.prior_head_admission={total_count:0,check_runs:[]};
+ delete f.env.CLUED_ADMISSION_GATE_SOURCE;
+ const read=f.read;f.read=async route=>route.includes('check_name=kooyumi-admission-verified')&&route.includes(`/commits/${f.from}/`)?f.x.prior_head_admission:read(route);
+ assert.deepEqual(await qualifyTrustedAutomationRoute(f),{qualified:false,reason:'prior_pr_admission_missing'});
 });
 
 
@@ -4112,9 +4193,20 @@ test('Native-source gate preserves actual settled legacy disaster-recovery branc
 // head's tree, with main's old tip an ancestor of that head, reuses the head's passing required-test run.
 // The fixture is #1178's real GitHub replies (scripts/ci/fixtures/main-push-tree-reuse-1178.json).
 const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1178.json'), 'utf8'));
-function treeReuseCase(workflow, mutate = () => {}) {
-  const f = structuredClone(TREE_REUSE);
+// #1202's real GitHub replies: its head is the executor bot's merge of main, so the bot triggered the head's runs.
+const TREE_REUSE_1202 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1202.json'), 'utf8'));
+// Both recordings predate R1 (the three scans joined clued-required-tests.yml afterwards): the head's run carries them
+// here as a run does now, each a passing job of that run and attempt; the run as recorded is refused (test below).
+const R1_SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+function withScans(jobs) {
+  const model = jobs.jobs.find((job) => job.name === 'clued-cloud-tests');
+  jobs.jobs.push(...R1_SCANS.map((name, i) => ({ ...model, id: model.id + 1000 + i, name })));
+  jobs.total_count += R1_SCANS.length;
+}
+function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE, { scans = true } = {}) {
+  const f = structuredClone(fixture);
   const w = f.workflows[workflow];
+  if (scans && workflow === 'clued-required-tests.yml') withScans(w.jobs);
   const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.merge.sha, GITHUB_RUN_ATTEMPT: '1',
     GITHUB_RUN_ID: String(w.push_run.id), GITHUB_ACTOR: w.push_run.actor.login, GITHUB_REPOSITORY_OWNER: f.owner,
     GITHUB_REPOSITORY: f.repository, GITHUB_TOKEN: 'test-only-placeholder',
@@ -4164,6 +4256,14 @@ for (const [label, workflow] of [['T1 Linux', 'clued-required-tests.yml'], ['T1w
   });
 }
 
+test('T1 Linux: a head run from before the scans joined the required workflow is not reused; the heavy jobs run', async () => {
+  for (const fixture of [TREE_REUSE, TREE_REUSE_1202]) {
+    const outcome = await treeReuseGate(treeReuseCase('clued-required-tests.yml', undefined, fixture, { scans: false }));
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.ok(outcome.notices.includes('main push tree reuse: required_jobs_not_passed; the heavy jobs run'), JSON.stringify(outcome));
+  }
+});
+
 test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
   const ctx = treeReuseCase('clued-required-tests.yml');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
@@ -4179,13 +4279,165 @@ test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the h
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('T2: every required job of both required-test workflows is in the reuse table, and so is every Actions-bound required check', async () => {
+// R1 (FABLE-tree-reuse-close-out §1): a head run the executor bot triggered is same-tree evidence for the two
+// required-test workflows. The heavy jobs carry their real names only after the gate proved the bot's signed merge
+// of main, and the reuse requires those names, so no trust is added.
+for (const [label, workflow, sourceRun] of [['R1 Linux', 'clued-required-tests.yml', 44757766226],
+  ['R1w Windows', 'clued-required-tests-windows.yml', 44757766314]]) {
+  test(`${label}: #1202's main push is not run again; the head's run that the executor bot triggered decides`, async () => {
+    const ctx = treeReuseCase(workflow, undefined, TREE_REUSE_1202);
+    assert.deepEqual(ctx.w.runs.workflow_runs[0].actor, { login: 'clued-admission[bot]', id: 337003645, type: 'Bot' });
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_ALREADY_TESTED'], JSON.stringify(outcome));
+    const why = outcome.reasons.join(' ');
+    assert.match(why, new RegExp(`run ${sourceRun} attempt 1`));
+    assert.match(why, /PR #1202/);
+    assert.match(why, /tree a92406746d0a/);
+    assert.equal(outcome.tree_reuse.qualification, 'PR_EVIDENCE_ONLY');
+  });
+}
+
+test('R1: the gate step of #1202 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
+  const ctx = treeReuseCase('clued-required-tests.yml', undefined, TREE_REUSE_1202);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tree-reuse-'));
+  try {
+    const eventPath = path.join(dir, 'event.json');
+    fs.writeFileSync(eventPath, JSON.stringify(ctx.event));
+    const code = await mainWith(['--mode', 'gate'], { ...ctx.env, GITHUB_EVENT_PATH: eventPath,
+      GITHUB_OUTPUT: path.join(dir, 'out'), GITHUB_STEP_SUMMARY: path.join(dir, 'summary') }, ctx.fetchImpl);
+    assert.equal(code, 0);
+    const out = fs.readFileSync(path.join(dir, 'out'), 'utf8');
+    assert.match(out, /^admitted=false$/m);
+    assert.match(out, /^verdict=TREE_ALREADY_TESTED$/m);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// R1 guards: green before and after the fix. Only the exact executor identity counts, and only a run whose heavy
+// jobs carry their real names (a bot run the gate did not prove gets "-skipped" names).
+for (const [label, mutate] of [
+  ['another bot id', (c) => { c.w.runs.workflow_runs[0].actor.id = 337003646; }],
+  ['the executor login on a User account', (c) => { c.w.runs.workflow_runs[0].actor.type = 'User'; }],
+  ['another bot login', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone[bot]'; }],
+  ['a heavy job under its "-skipped" name', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
+  ['a heavy job under its "-skipped" name that reports success', (c) => { c.w.jobs.jobs.at(-1).name += '-skipped'; }],
+]) {
+  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+    test(`R1 guard (${workflow}, #1202): ${label} -> the heavy jobs run`, async () => {
+      const outcome = await treeReuseGate(treeReuseCase(workflow, mutate, TREE_REUSE_1202));
+      assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    });
+  }
+}
+
+// R2 (FABLE-tree-reuse-close-out §2, §12.1): no workflow runs once on the PR and again on the main push of its merge
+// unless the reuse table covers it. Read off the trigger block of every workflow file; no list of names.
+function workflowTriggers(text) {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^(on|'on'|"on"):/.test(line));
+  assert.ok(start >= 0, 'the workflow has an on: block');
+  // A spelling this reading does not know is refused, never read as "no push": R2 is the only stop.
+  const unread = (why) => assert.fail(`cannot read the trigger block (${why}): write it as block YAML with two-space keys, or teach workflowTriggers this spelling`);
+  const inline = lines[start].replace(/^[^:]+:/, '').replace(/\s+#.*$/, '').trim();
+  if (inline.includes('{')) unread('flow mapping after on:');
+  // `on: push` or `on: [push, pull_request]`: no filter, so a push trigger hits main.
+  if (inline) {
+    const names = inline.replace(/[[\]'"]/g, '').split(',').map((name) => name.trim());
+    if (!names.length || names.some((name) => !/^[A-Za-z_]+$/.test(name))) unread(`on: ${inline}`);
+    return { names, pushHitsMain: names.includes('push') };
+  }
+  let end = start + 1;
+  while (end < lines.length && (/^\s/.test(lines[end]) || lines[end] === '' || /^#/.test(lines[end]))) end += 1;
+  const block = lines.slice(start + 1, end);
+  for (const line of block) {
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    // Every trigger key sits at exactly two spaces and is a bare name; nothing under on: is a flow mapping.
+    if (/^ {0,2}\S/.test(line) && !/^  [A-Za-z_]+:/.test(line)) unread(`trigger key ${JSON.stringify(line)}`);
+    if (/^\s*[^\s#][^#]*:\s*\{/.test(line)) unread(`flow mapping ${JSON.stringify(line)}`);
+  }
+  const names = block.filter((line) => /^  [A-Za-z_]+:/.test(line)).map((line) => line.trim().replace(/:.*/, ''));
+  if (!names.length) unread('no trigger name');
+  const at = block.findIndex((line) => /^  push:/.test(line));
+  if (at < 0) return { names, pushHitsMain: false };
+  let stop = at + 1;
+  while (stop < block.length && !/^  [A-Za-z_]+:/.test(block[stop])) stop += 1;
+  const push = block.slice(at + 1, stop);
+  const listOf = (key) => {
+    const index = push.findIndex((line) => new RegExp(`^    ${key}:`).test(line));
+    if (index < 0) return null;
+    const rest = push[index].replace(/^[^:]+:/, '').trim();
+    if (rest) return rest.replace(/[[\]'"]/g, '').split(',').map((item) => item.trim());
+    const items = [];
+    for (let i = index + 1; i < push.length && /^      - /.test(push[i]); i += 1) items.push(push[i].replace(/^      - /, '').replace(/['"]/g, '').trim());
+    return items;
+  };
+  const branches = listOf('branches');
+  // Tags only: no branch push triggers it. Otherwise it hits main unless every branch pattern plainly cannot.
+  const pushHitsMain = branches === null ? listOf('tags') === null && listOf('tags-ignore') === null
+    : branches.some((branch) => branch === 'main' || branch.includes('*'));
+  return { names, pushHitsMain };
+}
+
+test('R2: a workflow with a PR trigger and a main push trigger is in the reuse table; only Sources the gate holds byte-frozen are exempt, and never more of them', async () => {
+  const { TARGETS } = await import('./clued-tree-reuse.mjs');
+  const dir = path.join(ROOT, '.github/workflows');
+  const both = fs.readdirSync(dir).filter((file) => /\.ya?ml$/.test(file)).sort().filter((file) => {
+    const { names, pushHitsMain } = workflowTriggers(fs.readFileSync(path.join(dir, file), 'utf8'));
+    return pushHitsMain && (names.includes('pull_request') || names.includes('pull_request_target'));
+  });
+  // The reading finds every workflow of the table, so it is not blind.
+  for (const workflow of Object.keys(TARGETS)) assert.ok(both.includes(workflow), `${workflow} has both triggers`);
+  const outside = both.filter((file) => !Object.hasOwn(TARGETS, file));
+  // The only exemption is the gate's own word that the file's bytes are frozen (changing it takes a registered
+  // successor on trusted main first): its bootstrap ordinary Sources and its placement Source. No file name here.
+  const frozen = (file) => admissionModule.bootstrapOrdinaryKnownFile(`.github/workflows/${file}`) ||
+    `.github/workflows/${file}` === admissionModule.PLACEMENT_WORKFLOW;
+  assert.deepEqual(outside.filter((file) => !frozen(file)), [],
+    'these run on the PR and again on the main push of its merge: drop `push: main` or enter the reuse table');
+  // 5 on 2026-11-21 (two scans, placement, two public MCP), each waiting for its registered successor. This number
+  // only goes down, and the test holds that: it is an equality, so each one done lowers it here in the same change
+  // (and one more is red at once). Delete the exemption at 0.
+  assert.equal(outside.filter(frozen).length, 5, `byte-frozen workflows still running on main push: ${outside.filter(frozen).join(', ')}`);
+});
+
+test('R2: the trigger reading refuses a spelling it cannot read instead of reading no push out of it', () => {
+  // R2 is the only stop, so an unread trigger block must be red, never "no push here".
+  for (const [name, text] of [
+    ['flow mapping', 'name: x\non: {push: {branches: [main]}, pull_request: {}}\njobs:\n'],
+    ['flow mapping under a trigger', 'name: x\non:\n  pull_request:\n  push: {branches: [main]}\njobs:\n'],
+    ['four-space indent', 'name: x\non:\n    pull_request:\n    push:\n        branches: [main]\njobs:\n'],
+    ['quoted trigger name', 'name: x\non:\n  pull_request:\n  "push":\n    branches: [main]\njobs:\n'],
+    ['empty block', 'name: x\non:\njobs:\n'],
+  ]) assert.throws(() => workflowTriggers(text), /cannot read the trigger block/, name);
+  // What it does read stays read.
+  assert.deepEqual(workflowTriggers('on:\n  pull_request:\n  push:\n    branches: [main]\njobs:\n'), { names: ['pull_request', 'push'], pushHitsMain: true });
+  assert.deepEqual(workflowTriggers('on: [push, pull_request]\njobs:\n'), { names: ['push', 'pull_request'], pushHitsMain: true });
+});
+
+// R2b (FABLE-tree-reuse-registry B): a counted CI workflow whose bytes at this head are not a registered Source makes
+// the merge slot and the merge executor wait for ever on every head that carries it. The set is the merge slot's own
+// (ciWorkflows); no list of names. The YAML-parsing check of the entries stays in ci-proof-profiles.test.mjs.
+test('R2b: every counted CI workflow is a registered Source at this head', async () => {
+  const { ciWorkflows } = await import('./clued-merge-slot-ci.mjs');
+  const { recognizeCatalogueWorkflow } = await import('./clued-source-only-workflow.mjs');
+  const registry = parseWorkflowProfiles(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-profiles.json'), 'utf8'));
+  const roleSpecs = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/clued-gated-proof-role-specs.json'), 'utf8'));
+  const counted = [...ciWorkflows(ROOT)];
+  assert.ok(counted.length > 0, 'the merge slot counts at least one workflow');
+  const unknown = counted.filter(([file, blob]) => recognizeCatalogueWorkflow({ registry, roleSpecs, file, blob }).source_identified !== true)
+    .map(([file, blob]) => `${file} (${blob})`);
+  assert.deepEqual(unknown, [],
+    'the bytes of these counted workflows are not a registered Source: register the new Source and its roles in ' +
+    'clued-gated-proof-profiles.json and clued-gated-proof-role-specs.json, then run merge-admission-r9-reregister.mjs --write');
+});
+
+test('T2: every required job of every gate-decided workflow of the reuse table is in the table, and so is every Actions-bound required check', async () => {
   const { TARGETS } = await import('./clued-tree-reuse.mjs');
   const covered = new Set();
-  for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
+  // Every 'ancestry' entry, not two names: a workflow entered in the table without the gate's job names is red here.
+  const ancestry = Object.keys(TARGETS).filter((workflow) => TARGETS[workflow].proof === 'ancestry');
+  assert.ok(ancestry.includes('clued-required-tests.yml') && ancestry.includes('clued-required-tests-windows.yml'));
+  for (const workflow of ancestry) {
     const target = TARGETS[workflow];
-    assert.ok(target, `${workflow} is in the reuse table`);
-    assert.equal(target.proof, 'ancestry');
     const text = fs.readFileSync(path.join(ROOT, '.github/workflows', workflow), 'utf8');
     const jobs = workflowJobs(text).map((job) => job.name).filter((name) => name !== 'admission-gate');
     assert.deepEqual([...target.jobs].sort(), [...jobs].sort(), `${workflow}: jobs and table agree`);
@@ -4199,51 +4451,151 @@ test('T2: every required job of both required-test workflows is in the reuse tab
   for (const check of actionsBound) assert.ok(covered.has(check), `required check ${check} is covered`);
 });
 
-// Guards: green before and after the fix. Each one must still run the heavy jobs.
+// Guards: each one must still run the heavy jobs.
+// R3a (FABLE-tree-reuse-close-out §3): and the gate's notice says why, with exactly the code in the third column.
+const reuseNotice = (code) => `main push tree reuse: ${code}; the heavy jobs run`;
+const reuseNotices = (outcome) => outcome.notices.filter((notice) => notice.startsWith('main push tree reuse:'));
 const STILL_RUNS = [
-  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }],
-  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }],
-  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }],
-  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }],
-  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }],
-  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }],
-  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }],
-  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }],
-  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }],
-  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }],
-  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }],
+  ['the merge tree differs from the head tree', (c) => { c.f.source.commit.tree.sha = 'f'.repeat(40); }, 'merged_tree_differs'],
+  ['main\'s old tip is not an ancestor of the head', (c) => { Object.assign(c.f.compare, { status: 'diverged', behind_by: 1 }); }, 'base_not_ancestor'],
+  ['the compare names another base', (c) => { c.f.compare.base_commit.sha = 'e'.repeat(40); }, 'base_not_ancestor'],
+  ['a required job is missing', (c) => { c.w.jobs.jobs.pop(); c.w.jobs.total_count -= 1; }, 'required_jobs_not_passed'],
+  ['a required job failed', (c) => { c.w.jobs.jobs.at(-1).conclusion = 'failure'; }, 'required_jobs_not_passed'],
+  ['a required job was skipped', (c) => { const job = c.w.jobs.jobs.at(-1); job.name += '-skipped'; job.conclusion = 'skipped'; }, 'required_jobs_not_passed'],
+  ['the gate job did not pass', (c) => { c.w.jobs.jobs[0].conclusion = 'skipped'; }, 'required_jobs_not_passed'],
+  ['the run has a job the table does not know', (c) => { c.w.jobs.jobs.push({ ...c.w.jobs.jobs.at(-1), id: 1, name: 'new-required-job' }); c.w.jobs.total_count += 1; }, 'required_jobs_not_passed'],
+  ['the latest run is still running', (c) => { Object.assign(c.w.runs.workflow_runs[0], { status: 'in_progress', conclusion: null }); }, 'pr_run_not_passed'],
+  ['the latest run failed', (c) => { c.w.runs.workflow_runs[0].conclusion = 'failure'; }, 'pr_run_not_passed'],
+  ['a newer run of the head exists', (c) => { c.w.runs.workflow_runs.push({ ...c.w.runs.workflow_runs[0], id: 1, run_number: 99999, conclusion: 'failure' }); c.w.runs.total_count += 1; }, 'pr_run_not_passed'],
   ['the run changed while the proof was read', (c) => { let reads = 0; const runs = c.w.runs;
-    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }],
-  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }],
-  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }],
-  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }],
-  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }],
-  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }],
-  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }],
-  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }],
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, workflow_runs: [{ ...runs.workflow_runs[0], run_attempt: 2, status: 'in_progress', conclusion: null }] }); }, 'latest_attempt_changed'],
+  ['the PR author is not the owner', (c) => { c.f.pr.user.login = 'someone'; }, 'merged_pr_identity'],
+  ['the run was triggered by someone else', (c) => { c.w.runs.workflow_runs[0].actor.login = 'someone'; }, 'pr_run_actor'],
+  ['the pusher is not the owner or the executor', (c) => { c.env.GITHUB_ACTOR = 'someone'; }, 'push_context_not_eligible'],
+  ['a direct push has no merged PR', (c) => { c.f.pulls = []; }, 'merged_pr_missing'],
+  ['the PR came from a fork', (c) => { c.f.pr.head.repo.full_name = 'someone/fork'; }, 'merged_pr_identity'],
+  ['the run listing is at its limit', (c) => { c.w.runs.total_count = 100; }, 'run_listing_incomplete'],
+  ['the job listing is at its limit', (c) => { c.w.jobs.total_count = 100; }, 'job_listing_incomplete'],
+  ['the merge reply names another commit', (c) => { c.f.merge.sha = 'd'.repeat(40); }, 'merge_identity'],
+  ['the PR listing of the merge is at its limit', (c) => { c.f.pulls = Array.from({ length: 100 }, () => c.f.pulls[0]); }, 'pr_listing_incomplete'],
+  ['the head run is another workflow\'s', (c) => { c.w.runs.workflow_runs[0].path = '.github/workflows/other.yml'; }, 'pr_run_identity'],
+  ['the head run is not a pull_request run', (c) => { c.w.runs.workflow_runs[0].event = 'push'; }, 'pr_run_identity'],
+  ['the run listing is at its limit when read again', (c) => { let reads = 0; const runs = c.w.runs;
+    c.routes[c.runsRoute] = () => (++reads === 1 ? runs : { ...runs, total_count: 100 }); }, 'latest_run_listing_incomplete'],
 ];
-for (const [label, mutate] of STILL_RUNS) {
+for (const [label, mutate, code] of STILL_RUNS) {
   for (const workflow of ['clued-required-tests.yml', 'clued-required-tests-windows.yml']) {
-    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run`, async () => {
+    test(`tree reuse guard (${workflow}): ${label} -> the heavy jobs run, reason ${code}`, async () => {
       const outcome = await treeReuseGate(treeReuseCase(workflow, mutate));
       assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code)]);
     });
   }
 }
 
-test('tree reuse guard: every failed or thrown GitHub read runs the heavy jobs', async () => {
+// R3b: a read that failed or threw names its step (and the HTTP status), never the error text.
+const READ_STEPS = ['merge', 'pulls', 'pr', 'source', 'runs', 'jobs', 'compare'];
+const READ_FAILURES = [
+  [() => ({ status: 500 }), (step) => `github_request_failed@${step}:500`],
+  [() => ({ status: 404 }), (step) => `github_request_failed@${step}:404`],
+  [() => new Error('offline https://api.github.com/x?token=must-not-leak'), (step) => `github_request_threw@${step}`],
+];
+test('R3b: every failed or thrown GitHub read runs the heavy jobs and names its step and status', async () => {
   const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
-  assert.equal(keys.length, 7);
-  for (const key of keys) {
-    for (const failure of [{ status: 500 }, { status: 404 }, new Error('offline')]) {
+  assert.equal(keys.length, READ_STEPS.length);
+  for (const [index, key] of keys.entries()) {
+    for (const [failure, code] of READ_FAILURES) {
       const ctx = treeReuseCase('clued-required-tests.yml');
-      ctx.routes[key] = failure;
+      ctx.routes[key] = failure();
       const outcome = await treeReuseGate(ctx);
       assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], `${key}: ${JSON.stringify(outcome)}`);
+      assert.deepEqual(reuseNotices(outcome), [reuseNotice(code(READ_STEPS[index]))], key);
     }
   }
 });
 
+test('R3b: the second read of the run listing is its own step (runs_again)', async () => {
+  for (const [failure, code] of READ_FAILURES) {
+    const ctx = treeReuseCase('clued-required-tests.yml');
+    const runs = ctx.w.runs;
+    let reads = 0;
+    ctx.routes[ctx.runsRoute] = () => (++reads === 1 ? runs : failure());
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice(code('runs_again'))]);
+  }
+});
+
+test('R3d: a malformed reply body is unexpected_error at its step, not a bare exception and not an empty code', async () => {
+  const keys = Object.keys(treeReuseCase('clued-required-tests.yml').routes);
+  for (const step of ['merge', 'pr', 'source', 'jobs', 'compare']) {
+    const ctx = treeReuseCase('clued-required-tests.yml');
+    ctx.routes[keys[READ_STEPS.indexOf(step)]] = null;
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.deepEqual(reuseNotices(outcome), [reuseNotice(`unexpected_error@${step}`)]);
+  }
+  // A reply of the right kind but the wrong shape: the PR has no head.
+  const ctx = treeReuseCase('clued-required-tests.yml', (c) => { delete c.f.pr.head; });
+  assert.deepEqual(reuseNotices(await treeReuseGate(ctx)), [reuseNotice('unexpected_error@pr')]);
+});
+
+// The codes the gate cannot reach (it calls only for an 'ancestry' target on a push): asked of the module directly.
+// The tree-report proof's own reads go under the step name "report".
+function reportCase() {
+  const ctx = treeReuseCase('clued-required-tests.yml');
+  const g4 = 'clued-g4-database.yml';
+  ctx.routes[ctx.runsRoute.replace('clued-required-tests.yml', g4)] = () => ctx.w.runs;
+  ctx.env.REUSE_WORKFLOW = g4;
+  return ctx;
+}
+const DIRECT_REASONS = [
+  ['pr_and_dispatch_always_run', (reuse, c) => reuse.evaluatePush({ ...c.env, GITHUB_EVENT_NAME: 'pull_request' }, c.fetchImpl)],
+  ['tree_report_proof_unavailable', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl)],
+  ['proof_kind', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: ({ evidence }) => reuse.validateAncestryEvidence({ ...evidence, compare: c.f.compare }) })],
+  ['request_budget', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: async ({ get }) => { for (let i = 0; i < 9; i += 1) await get(`/commits/${c.f.merge.sha}`); } })],
+  ['artifact_too_large', (reuse, c) => reuse.evaluatePush(c.env, async (url, init) => (String(url).endsWith('/zip')
+    ? { ok: true, status: 200, body: (async function* body() { yield Buffer.alloc(reuse.MAX_BYTES + 1); })() }
+    : c.fetchImpl(url, init)), { reportProof: ({ get }) => get('/zip', true) })],
+  ['github_request_failed@report:404', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl, { reportProof: ({ get }) => get('/missing') })],
+  ['unexpected_error@report', (reuse, c) => reuse.evaluatePush(c.env, c.fetchImpl,
+    { reportProof: () => { throw new Error('must-not-leak'); } })],
+];
+for (const [code, ask] of DIRECT_REASONS) {
+  test(`R3 reason ${code}: the heavy jobs run and the reason is exactly this code`, async () => {
+    const reuse = await import('./clued-tree-reuse.mjs');
+    assert.deepEqual(await ask(reuse, reportCase()), { run_heavy: true, reason: code, current_sha_pass: false });
+  });
+}
+
+test('R3c: the reason vocabulary is closed - every code is in REASONS, and every code of clued-tree-reuse.mjs has a guard', async () => {
+  const reuse = await import('./clued-tree-reuse.mjs');
+  assert.ok(Array.isArray(reuse.REASONS) && Object.isFrozen(reuse.REASONS), 'REASONS is a frozen array');
+  assert.equal(new Set(reuse.REASONS).size, reuse.REASONS.length);
+  const literals = (name) => {
+    const text = fs.readFileSync(path.join(ROOT, 'scripts/ci', name), 'utf8');
+    const refusals = [...text.matchAll(/\brequireProof\((?:(?!requireProof\()[\s\S])*?'([a-z_]+)'\);/g)].map((m) => m[1]);
+    // Every requireProof call ends in a literal code: a computed code would escape this scan.
+    assert.equal(refusals.length, [...text.matchAll(/\brequireProof\(/g)].length, `${name}: every requireProof names a literal code`);
+    const fallbacks = [...text.matchAll(/\bfallback\('([a-z_]+)'\)/g)].map((m) => m[1]);
+    const families = [...text.matchAll(/`([a-z_]+)@\$\{/g)].map((m) => m[1]);
+    return [...new Set([...refusals, ...fallbacks, ...families])];
+  };
+  const own = literals('clued-tree-reuse.mjs');
+  const report = literals('clued-push-reuse.mjs');
+  for (const code of [...own, ...report]) assert.ok(reuse.REASONS.includes(code), `${code} is in REASONS`);
+  for (const code of reuse.REASONS) assert.ok(own.includes(code) || report.includes(code), `${code} is still produced`);
+  const guarded = new Set([...STILL_RUNS.map((row) => row[2]), ...DIRECT_REASONS.map((row) => row[0].split('@')[0]),
+    'github_request_failed', 'github_request_threw', 'unexpected_error']);
+  for (const code of own) assert.ok(guarded.has(code), `${code} has a guard that expects it`);
+  for (const family of ['github_request_failed', 'github_request_threw', 'unexpected_error']) assert.ok(own.includes(family), family);
+  assert.ok(!reuse.REASONS.includes('proof_unavailable_or_not_applicable'), 'the catch-all word is gone');
+});
+
+// This pins the scope of reuse to a first-attempt push to main (FABLE-tree-reuse-close-out §4).
+// 扩范围前先让 admission-rerun 按门的 verdict 判 final。
 test('tree reuse guard: a re-run, staging, another branch or a workflow outside the table reads nothing and runs', async () => {
   for (const [label, mutate] of [
     ['attempt 2 (Re-run all jobs is the manual way to force a real run)', (c) => { c.env.GITHUB_RUN_ATTEMPT = '2'; }],
@@ -4341,4 +4693,22 @@ test("independent gate repair re-run: the budget is per run; another run's attem
   assert.match(fourth.outcome.reasons.join("; "), /three attempts/);
   const dispatched = await requiredDispatch({ others: [skippedDispatchRun({ run_attempt: 3 })], jobs: { 8001: skippedDispatchJobs(), '8001:2': skippedDispatchJobs(), '8001:3': skippedDispatchJobs() } });
   assert.equal(dispatched.outcome.admitted, true, `a re-dispatched run's first attempt is admitted: ${JSON.stringify(dispatched.outcome.reasons)}`);
+});
+
+// FABLE-scaffold-open-qs 问题 1 改法 2: a gate with the independent source admits on Native only. Enabling the legacy
+// clued-work-admission.yml again must not let its event-bound App check decide first (it settles in a minute or two, Native's
+// p90 is ten), so every pull request would be judged by the legacy workflow again.
+test("independent gate, Native only (scaffold open-qs 1.2): a legacy failure that settles first does not decide; Native's later success admits", async () => {
+  let nativeReads = 0;
+  const { outcome, calls } = await independentGate((call) => {
+    const native = call.url.includes("check_name=kooyumi-work-admission") && ++nativeReads > 1;
+    return { body: { check_runs: [appCheckRun({ conclusion: "failure" }), ...(native ? [nativeCheck()] : [])] } };
+  });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [true, "ADMITTED", INDEPENDENT_GATE_SOURCE], JSON.stringify(outcome.reasons));
+  assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false, "the legacy run is not read");
+});
+test("independent gate, Native only (scaffold open-qs 1.2): a legacy success without Native in time is ADMISSION_PENDING, not ADMITTED", async () => {
+  const { outcome, calls } = await independentGate([appCheckRun()], { envOverrides: { CLUED_ADMISSION_GATE_WAIT_SECONDS: "0" } });
+  assert.deepEqual([outcome.admitted, outcome.verdict, outcome.admission_source], [false, "ADMISSION_PENDING", INDEPENDENT_GATE_SOURCE]);
+  assert.equal(calls.some((call) => call.url.includes("/actions/workflows/clued-work-admission.yml/runs")), false);
 });

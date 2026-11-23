@@ -32,6 +32,10 @@
 //   - A row backing off after a claim refusal (CLAIM_REASONS) is due at once, without the cool-down, when a fresh protected
 //     observation of the same (PR, head, base) says bound under an authorization id the row has not woken for yet (claimChanged,
 //     wokeAuth; Task 30643342, PR #1220). An ordinary edit never hurries it (earlyWakeOf: the queue and the PR page read that one rule).
+//   - A PR a live read showed as a draft (pr-candidate.mjs#prCandidate, PLAN-resident-draft-batch-20261123 §2 item 4) is held: the row
+//     keeps `hold` and nothing of that PR is scheduled (its row, its attempt-2 intent, its flow continuation) or read again. The
+//     intent and the continuation are kept. The PR's next trigger (a new commit, or a newer prUpdatedAt: GitHub moves updated_at when
+//     the PR is marked ready, and the poller proposes it again) lifts the hold; the next live read decides again.
 //   - Depth: at most policy.limits.queueDepth live rows (QUEUED, RUNNING, WAITING, BACKOFF); rows DONE or STOPPED for
 //     24 hours are compacted away.
 import fs from 'node:fs/promises';
@@ -40,6 +44,7 @@ import { HEX40, ResidentError, UUID, canonicalJson, check, isoNow, parseBoundedJ
 import { ensureDir, exists, nonce, readBounded } from './store.mjs';
 import { POSITIONS } from './breaker.mjs';
 import { claimBindingFingerprint } from './train.mjs';
+import { PR_DRAFT_HELD } from './pr-candidate.mjs';
 
 export const QUEUE_CONTRACT = 'clued.independent-ci.resident-queue/1';
 export const QUEUE_FILE = 'queue.json';
@@ -119,14 +124,20 @@ const rebuiltBreaker = now => ({ state: 'half-open', failures: [], streak: 0, st
 const time = v => Number.isSafeInteger(v) && v > 0;
 // A train front commit (step 3c-2b, DESIGN §41.4; offerFront) also names its tested commit S and its front attempt (1 or 2).
 const frontOf = c => (Object.hasOwn(c, 'testSha') ? { testSha: c.testSha, frontAttempt: c.frontAttempt } : {});
-const commitOf = c => ({ headSha: c.headSha, baseSha: c.baseSha, seq: c.seq, firstAt: c.firstAt ?? null, ...frontOf(c) });
+// bc982192 (C3, plan 戊): the batch route, stamped once when the commit becomes current (offer, offerFront, readmit; the executor's
+// batchRoute(): the train on, stage 10's effective route push and no scan required from this App). Changed afterwards only by
+// restampStopped (B2): a head stopped for lack of the stamp is stamped once. Only 'push' is ever stored; absent is main's tip as the
+// batch base (github-merge, as on origin/main).
+const routeOf = c => (c?.batchRoute === 'push' ? { batchRoute: 'push' } : {});
+const commitOf = c => ({ headSha: c.headSha, baseSha: c.baseSha, seq: c.seq, firstAt: c.firstAt ?? null, ...frontOf(c), ...routeOf(c) });
 
 export function emptyQueue(clock, generation = nonce()) {
   return { contract: QUEUE_CONTRACT, generation, createdAt: clock(), nextSeq: 1, rows: [], breaker: null, notices: [] };
 }
 
 const commitOk = c => !!c && HEX40.test(c.headSha ?? '') && HEX40.test(c.baseSha ?? '') && Number.isSafeInteger(c.seq) && c.seq > 0
-  && (!Object.hasOwn(c, 'testSha') || (HEX40.test(c.testSha ?? '') && c.testSha !== c.headSha && [1, 2].includes(c.frontAttempt)));
+  && (!Object.hasOwn(c, 'testSha') || (HEX40.test(c.testSha ?? '') && c.testSha !== c.headSha && [1, 2].includes(c.frontAttempt)))
+  && (!Object.hasOwn(c, 'batchRoute') || c.batchRoute === 'push');
 // The stored shape, checked on every load (a file that does not validate is unreadable: renamed aside, start over).
 export function validateQueue(q) {
   check(q && q.contract === QUEUE_CONTRACT && /^[0-9a-f]{12}$/.test(q.generation ?? '') && Number.isSafeInteger(q.nextSeq) && q.nextSeq > 0
@@ -141,7 +152,8 @@ export function validateQueue(q) {
       && Number.isSafeInteger(r.order) && Number.isSafeInteger(r.level) && r.level >= 0 && (r.stopKind === null || STOP_KINDS.includes(r.stopKind))
       && (r.origin === null || ORIGINS.includes(r.origin)) && (r.evalClaims === undefined || r.evalClaims === null || claimsOk(r.evalClaims))
       && (r.evalBinding == null || (typeof r.evalBinding === 'string' && r.evalBinding.length <= 512))
-      && (r.evalBindingHead == null || HEX40.test(r.evalBindingHead)) && (r.wokeAuth == null || UUID.test(r.wokeAuth)), 'QUEUE_FILE_INVALID', r?.pr);
+      && (r.evalBindingHead == null || HEX40.test(r.evalBindingHead)) && (r.wokeAuth == null || UUID.test(r.wokeAuth))
+      && (r.hold == null || (typeof r.hold === 'object' && r.hold.reason === PR_DRAFT_HELD && HEX40.test(r.hold.headSha ?? '') && time(r.hold.at))), 'QUEUE_FILE_INVALID', r?.pr);
     prs.add(r.pr);
   }
   return q;
@@ -207,11 +219,13 @@ export class RunQueue {
     if (r && ['QUEUED', 'WAITING', 'BACKOFF'].includes(r.state)) return true;
     if (this.live().length >= depth) return false;
     if (!r) {
-      if (this.offer(subject, now, { depth, cooldownMs }).action === 'refused') return false;
+      // bc982192: the subject's own stamp from its birth, never the route of now.
+      if (this.offer(subject, now, { depth, cooldownMs, batchRoute: subject.batchRoute ?? null }).action === 'refused') return false;
       r = this.row(subject.pr);
     }
-    r.current ??= { headSha: subject.headSha, baseSha: subject.baseSha, seq: this.seq(), firstAt: now };
-    if (Object.hasOwn(subject, 'testSha')) r.current = { ...r.current, testSha: subject.testSha, frontAttempt: 1 };
+    r.current ??= { headSha: subject.headSha, baseSha: subject.baseSha, seq: this.seq(), firstAt: now, ...routeOf(subject) };
+    // A front flow keeps its front number (its attempt: executor.mjs#rowSubject), so runRow goes on with exactly that flow.
+    if (Object.hasOwn(subject, 'testSha')) r.current = { ...r.current, testSha: subject.testSha, frontAttempt: subject.attempt };
     Object.assign(r, { nextAt: null, stopKind: null, stopClass: null, poke: null, deferred: null, deferUntil: null, order: this.seq() });
     this.setState(r, 'QUEUED', 'SAFE_POINT_READMISSION', now);
     return true;
@@ -233,8 +247,9 @@ export class RunQueue {
 
   // One trigger (trigger.mjs#parseTrigger) read now. Returns { action }: new (a new commit of an idle or new row),
   // superseded (it replaced a waiting current commit), pending (the PR's running batch got a newer commit), new-trigger
-  // (it poked a row that waits), seen (nothing changed) or refused (the queue is full).
-  offer(t, now, { depth, cooldownMs }) {
+  // (it poked a row that waits), seen (nothing changed) or refused (the queue is full). batchRoute (bc982192): the executor's
+  // batchRoute() at this reading, stamped on a commit that becomes current here (never from the trigger itself).
+  offer(t, now, { depth, cooldownMs, batchRoute = null }) {
     let row = this.row(t.pr);
     if (!row) {
       if (this.live().length >= depth) return { action: 'refused', code: 'QUEUE_DEPTH_EXCEEDED' };
@@ -247,13 +262,16 @@ export class RunQueue {
     const updatedAt = typeof t.prUpdatedAt === 'string' ? Math.min(Date.parse(t.prUpdatedAt), now) : null;
     const newer = updatedAt !== null && (row.prUpdatedAt === null || updatedAt > row.prUpdatedAt);
     if (newer) row.prUpdatedAt = updatedAt;
+    // A held (draft) PR's next trigger lifts the hold: a new commit, or one that is new by prUpdatedAt. A re-read of an older one does not.
+    const unheld = !!row.hold && (updatedAt === null || newer || !row.seen.includes(t.headSha));
+    if (unheld) { delete row.hold; row.updatedAt = now; }
     if (row.seen.includes(t.headSha)) {
-      if (row.current?.headSha !== t.headSha || row.running?.headSha === t.headSha) return { action: 'seen' };
+      if (row.current?.headSha !== t.headSha || row.running?.headSha === t.headSha) return { action: unheld ? 'unheld' : 'seen' };
       // The current commit asked again: a new trigger pokes a row that waits for its next try.
       // A closed PR that is open again (the poller proposes it): its head is tried again; the ledger decides.
       if (row.state === 'DONE' && row.reason === 'PR_CLOSED') { this.setState(row, 'QUEUED', null, now); row.order = this.seq(); row.origin = 'queued'; return { action: 'reopened' }; }
       const waits = ['WAITING', 'BACKOFF'].includes(row.state);
-      if (!waits || !(updatedAt === null || newer)) return { action: 'seen' };
+      if (!waits || !(updatedAt === null || newer)) return { action: unheld ? 'unheld' : 'seen' };
       row.poke = { at: now, dueAt: Math.max(now, (row.lastEvalAt ?? 0) + cooldownMs) };
       // A row backing off after a claim refusal whose evaluation saw the PR's claims: the executor reads the PR once before its next
       // scheduling pass and makes the poke due now when the PR names other claims (claimChanged; field defect 2026-11-08, PR #1039).
@@ -274,7 +292,7 @@ export class RunQueue {
       action = 'superseded';
     }
     row.seen = [t.headSha, ...row.seen].slice(0, SEEN_MAX);
-    row.current = { headSha: t.headSha, baseSha: t.baseSha, seq: this.seq(), firstAt: now };
+    row.current = { headSha: t.headSha, baseSha: t.baseSha, seq: this.seq(), firstAt: now, ...routeOf({ batchRoute }) };
     Object.assign(row, { order: row.current.seq, level: 0, levelKind: null, nextAt: null, poke: null, stopKind: null, stopClass: null, origin: 'queued', deferred: null, deferUntil: null });
     // A running or parked batch keeps going (the row stays as it is and shows the newer commit as the next one).
     this.setState(row, row.running ? (row.state === 'PARKED' ? 'PARKED' : 'RUNNING') : 'QUEUED', row.running && row.state === 'PARKED' ? row.reason : null, now);
@@ -317,7 +335,7 @@ export class RunQueue {
   // A train front batch (step 3c-2b, DESIGN §41.4): the executor's only producer of a subject with S is on-mode stage 10's
   // openFrontBatch. The PR's current commit becomes H with S and the front attempt, queued before every other row. Never while
   // the PR's batch runs or rests at a parking point (busy: stage 10 opens it again later); a commit that waits is superseded.
-  offerFront({ pr, headSha, baseSha, testSha, attempt }, now, { depth }) {
+  offerFront({ pr, headSha, baseSha, testSha, attempt }, now, { depth, batchRoute = null }) {
     check(Number.isSafeInteger(pr) && pr > 0 && HEX40.test(headSha ?? '') && HEX40.test(baseSha ?? '') && HEX40.test(testSha ?? '') && testSha !== headSha && [1, 2].includes(attempt),
       'QUEUE_FRONT_INVALID');
     let row = this.row(pr);
@@ -333,7 +351,7 @@ export class RunQueue {
       row.superseded = [commitOf(row.current), ...row.superseded.filter(c => c.headSha !== row.current.headSha)].slice(0, SUPERSEDED_MAX);
     }
     row.seen = [headSha, ...row.seen.filter(h => h !== headSha)].slice(0, SEEN_MAX);
-    row.current = { headSha, baseSha, seq: this.seq(), firstAt: now, testSha, frontAttempt: attempt };
+    row.current = { headSha, baseSha, seq: this.seq(), firstAt: now, testSha, frontAttempt: attempt, ...routeOf({ batchRoute }) };
     Object.assign(row, { order: row.current.seq, level: 0, levelKind: null, nextAt: null, poke: null, stopKind: null, stopClass: null, origin: 'queued', deferred: null, deferUntil: null });
     this.setState(row, 'QUEUED', null, now);
     return { action: 'front', seq: row.current.seq };
@@ -356,15 +374,37 @@ export class RunQueue {
 
   // A bundle found that main is no longer baseSha (RESIDENT_BASE_MOVED): every other waiting row on that same base can never pass
   // either, so it stops now with the same code, without a bundle of its own (only a new commit runs that PR again). Returns how many.
+  // bc982192 (L1): a row stamped push that tests its head (S = H) runs on the merge base of its head and main, which main moving never
+  // ends: it is not stopped. Every other row on that base (a front row, a row without the stamp) stops, as on origin/main.
   stopBase(baseSha, code, now) {
     let n = 0;
     for (const r of this.data.rows) {
       if (r.running || r.current?.baseSha !== baseSha || !['QUEUED', 'WAITING', 'BACKOFF'].includes(r.state)) continue;
+      if (r.current.batchRoute === 'push' && !Object.hasOwn(r.current, 'testSha')) continue;
       Object.assign(r, { stopKind: 'burned', stopClass: 'superseded', nextAt: null, poke: null, deferred: null, deferUntil: null });
       this.setState(r, 'STOPPED', code, now);
       n += 1;
     }
     return n;
+  }
+
+  // bc982192 (B2, FABLE-c3-b1b2 §3): while the batch route is push, a row whose current head stopped with code (RESIDENT_BASE_MOVED)
+  // as superseded before any side effect (the bundle or stopBase) because it carried no stamp, and tests its head (S = H), gets the
+  // stamp and is queued again at the tail, first come first served, as long as the queue has room (depth). A stamped row never
+  // qualifies again: once per head. A burned row (stage 8 after start: stopClass queue or unknown), a front row, another code or a
+  // release cap is left as it is. Returns the rows [{ pr, headSha, baseSha }].
+  restampStopped(code, now, { depth }) {
+    const out = [];
+    for (const r of [...this.data.rows].sort((a, b) => a.order - b.order)) {
+      if (r.running || r.state !== 'STOPPED' || r.reason !== code || r.stopKind !== 'burned' || r.stopClass !== 'superseded' || !r.current) continue;
+      if (Object.hasOwn(r.current, 'testSha') || r.current.batchRoute === 'push') continue;
+      if (this.live().length >= depth) break;
+      r.current = { ...r.current, batchRoute: 'push' };
+      Object.assign(r, { order: this.seq(), level: 0, levelKind: null, nextAt: null, poke: null, stopKind: null, stopClass: null, origin: 'queued', deferred: null, deferUntil: null });
+      this.setState(r, 'QUEUED', null, now);
+      out.push({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha });
+    }
+    return out;
   }
 
   // The rows that may be tried now, in the order the executor tries them (design v0.5 §4.3 steps 5 and 6; v0.6 §7
@@ -373,7 +413,7 @@ export class RunQueue {
   candidates(now) {
     const first = [], rest = [];
     for (const r of this.data.rows) {
-      if (!r.current || r.running || (time(r.deferUntil) && r.deferUntil > now)) continue;
+      if (!r.current || r.running || r.hold || (time(r.deferUntil) && r.deferUntil > now)) continue;
       const poked = !!r.poke && r.poke.dueAt <= now;
       if (earlyWakeOf(r) === 'authorization') {
         // Ordinary edits do not change Native authority and cannot bypass the
@@ -392,7 +432,7 @@ export class RunQueue {
     rest.sort((a, b) => a.r.order - b.r.order);
     // claimChanged: a poke whose PR names another claim than the refused evaluation saw (claimChanged): the precheck skips the cool-down.
     return [...first, ...rest].map(({ r, origin, poked }) => ({ pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, origin, poked: poked === true,
-      ...(origin === 'new-trigger' && r.poke?.claimChanged === true ? { claimChanged: true } : {}), ...frontOf(r.current) }));
+      ...(origin === 'new-trigger' && r.poke?.claimChanged === true ? { claimChanged: true } : {}), ...frontOf(r.current), ...routeOf(r.current) }));
   }
 
   // A candidate the executor did not start (a per-row defer: the cool-down, the PR's daily batches, the waiting budget,
@@ -555,6 +595,24 @@ export class RunQueue {
     return true;
   }
 
+  // A live read showed the PR as a draft (pr-candidate.mjs, basis pr-draft): nothing of it is scheduled or read until its next trigger
+  // (offer). A PR without a row (an attempt 2 whose row was compacted) gets a row that only carries the hold. true when it was not held.
+  hold(pr, headSha, now) {
+    let r = this.row(pr);
+    if (!r) {
+      r = { pr, current: null, running: null, superseded: [], seen: [], state: 'DONE', reason: null, since: now, nextAt: null, level: 0, levelKind: null,
+        order: 0, poke: null, prUpdatedAt: null, lastEvalAt: null, stopKind: null, stopClass: null, origin: null, deferred: null, deferUntil: null, updatedAt: now };
+      this.data.rows.push(r);
+      this.data.rows.sort((a, b) => a.pr - b.pr);
+    }
+    if (r.hold) return false;
+    r.hold = { reason: PR_DRAFT_HELD, headSha, at: now };
+    r.poke = null;
+    r.updatedAt = now;
+    return true;
+  }
+  held(pr) { return !!this.row(pr)?.hold; }
+
   // The PR is closed (a live read): nothing of it runs any more.
   closePr(pr, now) {
     const r = this.row(pr);
@@ -637,7 +695,7 @@ export class RunQueue {
       pr: r.pr, headSha: r.current.headSha, baseSha: r.current.baseSha, state: r.state === 'PARKED' && !parkedHere(r) ? 'RUNNING' : r.state,
       // The companion can begin checking the staging run while the executor is still running stages 1-7.
       ...(testSha(r) ? { testSha: testSha(r) } : {}),
-      reason: r.state === 'PARKED' && !parkedHere(r) ? null : own(r) ? (r.reason ?? null) : r.state === 'QUEUED' ? queuedReason(r) : (r.deferred ?? r.reason ?? null),
+      reason: r.hold ? PR_DRAFT_HELD : r.state === 'PARKED' && !parkedHere(r) ? null : own(r) ? (r.reason ?? null) : r.state === 'QUEUED' ? queuedReason(r) : (r.deferred ?? r.reason ?? null),
       heldBy: held(r), since: r.since ?? null,
       ...(reasonCodes(r).length > 0 ? { reasonCodes: reasonCodes(r) } : {}),
       nextAt: parkedHere(r) ? (r.parked?.nextAt ?? null) : r.state === 'PARKED' ? null : time(r.nextAt) ? r.nextAt : (r.poke ? r.poke.dueAt : null), level: r.level, origin: r.origin ?? null, stopKind: r.stopKind ?? null,

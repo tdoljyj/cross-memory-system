@@ -14,8 +14,9 @@ import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
 import { createStagedCheckPublisherV2 } from '../src/staged-check-publisher-v2.mjs';
 import { protectedFactsFromVerify } from '../runtime/one-shot-v2.mjs';
 import { validateRecordV2 } from '../src/resident-v2/record.mjs';
-import { HEAD, BASE, tempDir, fixtureRecord, signResult } from './resident-v2-fixtures.mjs';
+import { HEAD, BASE, tempDir, fixtureRecord, signResult, FAR_FUTURE } from './resident-v2-fixtures.mjs';
 import { requiredCheckFailure } from '../src/independent-control-checks-v2/train-rules.mjs';
+import { s7Rules, scaffoldRules } from './s7-rules-fixture.mjs';
 import { createFullAdmissionPortV2 } from '../src/full-admission-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
@@ -35,12 +36,22 @@ test('required failures use exact head, pinned App and latest rerun across suppo
   assert.deepEqual(run([check(1, { app: { id: 999 } }), check(2, { name: 'optional' })]), []);
   assert.throws(() => run([check(1, { head_sha: BASE })]), /REQUIRED_CHECKS_UNREADABLE/);
   assert.throws(() => requiredCheckFailure(rules, { complete: false, checks: [] }, HEAD, 5368905), /REQUIRED_CHECKS_UNREADABLE/);
-  for (const integration_id of [null, -1, 999]) {
+  for (const integration_id of [null, -1]) {
     rules[2].parameters.required_status_checks.push({ context: 'unknown-or-legacy-ci', integration_id });
-    assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/, 'an unsupported required provider must never be assumed clear');
+    assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/, 'an unpinned required provider must never be assumed clear');
     assert.deepEqual(run([check(1)]), ['ci-suites'], 'known failures take priority over unrelated unsupported contexts');
     rules[2].parameters.required_status_checks.pop();
   }
+  // task 04f9b91b: pinned to any other App it is read from that App's runs (absent is no failure: GitHub keeps it required)
+  rules[2].parameters.required_status_checks.push({ context: 'other-app-ci', integration_id: 999 });
+  assert.deepEqual(run([]), []);
+  assert.deepEqual(run([check(1, { name: 'other-app-ci', app: { id: 999 } })]), ['other-app-ci']);
+  assert.deepEqual(run([check(1, { name: 'other-app-ci', app: { id: 15368 } })]), [], 'another App\'s run of the name is not that App\'s');
+  rules[2].parameters.required_status_checks.pop();
+  // a name this App does not publish, pinned to this App, stays unknown
+  rules[2].parameters.required_status_checks.push({ context: 'not-published-here', integration_id: 5368905 });
+  assert.throws(() => run([]), /REQUIRED_CHECKS_UNREADABLE/);
+  rules[2].parameters.required_status_checks.pop();
 });
 
 test('failed required checks neither join nor extend, and an already queued claim returns its slot', async t => {
@@ -109,7 +120,7 @@ test('#1176: a stage-8 required check failure gives back only the merge slot; th
 });
 
 // A complete admitted v2 observation for `job` under `observed` (shape of full-admission-v2 facts).
-const SLOT_UNTIL = Date.now() + 3600_000; // Native's merge-slot deadline does not move between observations
+const SLOT_UNTIL = FAR_FUTURE; // Native's merge-slot deadline does not move between observations
 function admitted(job, observed, packet, { mergeQueueHead = false, slotUntil = SLOT_UNTIL, batchClaim = null, observedAt = Date.now() } = {}) {
   const facts = { contract: 'clued.independent-ci.full-admission/2', status: 'ADMITTED', admitted: true, completeAdmission: true, evaluator: 'scripts/ci/clued-work-admission.mjs#evaluate',
     domain: 'fixture', repository: REPO, scope: 'project:x', prRef: `${REPO}#${job.pr}`, headSha: job.headSha, baseSha: job.baseSha, jobId: job.id, role: job.role, attempt: job.attempt,
@@ -139,7 +150,7 @@ function fakeGithub(o = {}) {
       if (state.pull.state !== 'open') throw Object.assign(new Error('pr_subject_changed'), { code: 'pr_subject_changed' });
       return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] };
     },
-    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: HEAD, repo: { full_name: REPO } }, base: { sha: state.prBase ?? BASE, ref: 'main', repo: { full_name: REPO } } }; },
+    async readPullRequest(n) { return { number: n, ...structuredClone(state.pull), head: { sha: state.prHead ?? HEAD, repo: { full_name: REPO } }, base: { sha: state.prBase ?? BASE, ref: 'main', repo: { full_name: REPO } } }; },
     async readBranchRules(branch) { if (state.rulesError) throw Object.assign(new Error(state.rulesError), { code: state.rulesError }); return { complete: true, branch, rules: structuredClone(state.rules) }; },
     async readGitCommit(sha) { if (!state.commits[sha]) throw Object.assign(new Error('github_http_404'), { code: 'github_http_404' }); return structuredClone(state.commits[sha]); },
     async readChecks(head) { return { complete: true, checks: checks.filter(c => c.head_sha === head).map(c => structuredClone(c)) }; },
@@ -205,6 +216,173 @@ test('work admission v2: a settled check whose batch claim generation moved is r
   assert.equal(r.status, 'REVOKED');
   assert.equal(github.checks[0].conclusion, 'failure');
   assert.equal(github.checks.length, 1);
+});
+
+// Field defect 2026-11-23 (PR #1238, #1239; FABLE-resident-halt-merge-race-20261123 A): stage 1's success was the PR's last required
+// check, GitHub's auto-merge merged it 4-5 s later, the verification after the write failed (the PR is no longer open to Native) and
+// the withdrawal of a merged PR's check ended UNCERTAIN: both residents HALTed. A PR merged at exactly this head on this batch's base
+// is the legitimate ending the green was for: SETTLED (settledMerged), never withdrawn. Anything else is withdrawn as before.
+// GitHub's auto-merge, a moment after the work-admission green: `pull` is what the PR reads then, `landed` the commit it names.
+const mergeOnAdmission = (github, { landed = { sha: LANDED, tree: TREE, parents: [BASE, HEAD] }, pull = { state: 'closed', merged: true, mergeable: null, merge_commit_sha: LANDED }, prHead = null } = {}) => {
+  github.revokes = 0;
+  const revoke = github.revokeCheck.bind(github);
+  github.revokeCheck = async (...a) => { github.revokes++; return revoke(...a); };
+  github.state.onCreate = c => { if (c.name !== 'kooyumi-work-admission') return; github.state.pull = pull; if (landed) github.state.commits[landed.sha] = landed; if (prHead) github.state.prHead = prHead; };
+  return github;
+};
+// One stage-1 publication with that GitHub; Native admits the open PR and rejects it once it is not open any more (the field's
+// full_admission_rejected). nativeSeesClose false: the changed-paths read is what refuses first (pr_subject_changed).
+async function admissionRun(t, github, { nativeSeesClose = true, tamper = null, record = () => {} } = {}) {
+  const jobs = jobsFor(), c = claim(), bc = await batchClaimsAt(t);
+  const journal = await EffectJournal.open(path.join(await tempDir(t), 'effects'));
+  if (nativeSeesClose) {
+    const paths = github.readChangedPaths.bind(github);
+    github.readChangedPaths = async job => { const now = github.state.pull; github.state.pull = { ...now, state: 'open' }; try { return await paths(job); } finally { github.state.pull = now; } };
+  }
+  const admission = fakeAdmission((job, packet) => github.state.pull.state === 'open' ? admitted(job, c, packet) : blocked('full_admission_rejected'));
+  tamper?.(github, journal);
+  const pub = createFixtureWorkAdmissionPublisherV2({ github, journal, admission, assertLive() {}, record, authority: {}, batchClaims: bc, sleep: async () => {} });
+  const r = await pub.publish(jobs['work-admission']);
+  return { r, github, journal, pub, job: jobs['work-admission'], effect: r.effectKey ? await journal.read(r.effectKey) : null };
+}
+
+test('work admission v2 (#1239 replay): a PR GitHub merged at this head right after the green is SETTLED (settledMerged), never withdrawn', async t => {
+  for (const nativeSeesClose of [true, false]) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub()), { nativeSeesClose });
+    assert.deepEqual([m.r.status, m.r.settledMerged, m.r.sideEffects, m.r.reason], ['SETTLED', true, 1, undefined], JSON.stringify(m.r));
+    assert.deepEqual(m.github.checks.map(x => [x.name, x.conclusion]), [['kooyumi-work-admission', 'success']]);
+    assert.equal(m.github.revokes, 0, 'no withdrawal is ever sent');
+    assert.deepEqual([m.effect.state, m.effect.details.settledMerged, m.effect.details.checkRunId], ['settled', LANDED, m.github.checks[0].id]);
+  }
+});
+
+test('work admission v2: a PR that is not merged at this head on this base still loses the green after the write', async t => {
+  const OTHER = '8'.repeat(40);
+  const cases = {
+    'closed, not merged': { landed: null, pull: { state: 'closed', merged: false, mergeable: null, merge_commit_sha: null } },
+    'merged at another head': { prHead: OTHER, landed: { sha: LANDED, tree: TREE, parents: [BASE, OTHER] } },
+    'merged on another first parent (not this batch\'s base)': { landed: { sha: LANDED, tree: TREE, parents: ['9'.repeat(40), HEAD] } },
+    'squashed (one parent)': { landed: { sha: LANDED, tree: TREE, parents: [BASE] } },
+    'the merge commit cannot be read': { landed: null },
+  };
+  for (const [name, how] of Object.entries(cases)) for (const nativeSeesClose of [true, false]) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), how), { nativeSeesClose });
+    assert.deepEqual([m.r.status, m.r.settledMerged, m.github.checks[0].conclusion, m.github.revokes], ['REVOKED', undefined, 'failure', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, 'revoked', name);
+  }
+  // merged at this head, but the green cannot be read back as the one success (a second check of the same identity): never settled
+  // on an unconfirmed check
+  const unread = mergeOnAdmission(fakeGithub());
+  const merge = unread.state.onCreate;
+  unread.state.onCreate = c => { merge(c); if (c.name === 'kooyumi-work-admission') unread.checks.push({ ...structuredClone(c), id: c.id + 50 }); };
+  const z = await admissionRun(t, unread);
+  assert.notEqual(z.r.status, 'SETTLED', JSON.stringify(z.r));
+  assert.equal(z.r.settledMerged, undefined);
+});
+
+// Field evidence 2026-11-23 (TURING, PR #1238; FABLE-resident-halt-merge-race-20261123 B): the negative PATCH answered 200 at
+// 15:57:18.884 and 0.6 s later the effect was recorded uncertain / NEGATIVE_COMPENSATION_UNCONFIRMED; GitHub shows the check
+// completed/failure. The withdrawal landed and a step after it (the answer's comparison, the read-back, a journal or log write) said
+// "unconfirmed": the resident HALTed. A withdrawal GitHub itself confirms (a bounded re-read finds the one check completed/failure) is
+// REVOKED whatever local step failed after the PATCH; one that GitHub does not confirm stays UNCERTAIN.
+const CLOSED = { landed: null, pull: { state: 'closed', merged: false, mergeable: null, merge_commit_sha: null } };
+test('work admission v2 (#1238 evidence): a withdrawal that landed is REVOKED even when a step after the PATCH fails', async t => {
+  const boom = () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }); };
+  const after = {
+    'the read-back right after the PATCH still lists the old conclusion (list lag)': { tamper: github => {
+      const read = github.readChecks.bind(github), patch = github.revokeCheck; let stale = 0;
+      github.revokeCheck = async (...a) => { const c = await patch(...a); stale = 1; return c; };
+      github.readChecks = async head => { const list = await read(head); if (stale-- > 0) for (const c of list.checks) c.conclusion = 'success'; return list; };
+    } },
+    'the PATCH landed, its answer was lost': { tamper: github => {
+      const patch = github.revokeCheck; github.revokeCheck = async (...a) => { await patch(...a); throw Object.assign(new Error('github_timeout'), { code: 'github_timeout' }); };
+    } },
+    'the answer is not the check (another shape)': { tamper: github => {
+      const patch = github.revokeCheck; github.revokeCheck = async (...a) => { await patch(...a); return {}; };
+    } },
+    'the withdrawal record cannot be settled in the journal': { tamper: (github, journal) => {
+      const move = journal.transition.bind(journal); journal.transition = async (key, from, to, details) => (from === 'sent' && to === 'settled' ? boom() : move(key, from, to, details));
+    } },
+    'the effect cannot be marked revoked in the journal': { tamper: (github, journal) => {
+      const move = journal.transition.bind(journal); journal.transition = async (key, from, to, details) => (to === 'revoked' ? boom() : move(key, from, to, details));
+    } },
+    'the log of the withdrawal throws': { record: event => { if (event === 'native_check_revoked') boom(); } },
+  };
+  for (const [name, how] of Object.entries(after)) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), how);
+    assert.deepEqual([m.r.status, m.r.reason, m.github.checks[0].conclusion, m.github.revokes], ['REVOKED', 'full_admission_rejected', 'failure', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.github.checks.length, 1, name);
+  }
+});
+
+test('work admission v2: a withdrawal GitHub does not confirm stays UNCERTAIN', async t => {
+  const none = {
+    'the PATCH did not land': { tamper: github => { github.revokeCheck = async () => { github.revokes++; throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; } },
+    'the PATCH did not land and the checks cannot be read any more': { tamper: github => {
+      const read = github.readChecks.bind(github); let dead = false;
+      github.revokeCheck = async () => { github.revokes++; dead = true; throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); };
+      github.readChecks = async head => { if (dead) throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); return read(head); };
+    } },
+  };
+  for (const [name, how] of Object.entries(none)) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), how);
+    assert.deepEqual([m.r.status, m.r.reason, m.github.checks[0].conclusion, m.github.revokes], ['UNCERTAIN', 'NEGATIVE_COMPENSATION_UNCONFIRMED', 'success', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, 'uncertain', name);
+  }
+});
+
+// Follow-up (FABLE-resident-halt-merge-race-followup-20261123 §3): what the re-read may take as "withdrawn" is this effect's one check
+// only (its check id and identity), in a complete inventory, with no success of this effect key beside it on the head.
+test("work admission v2: the re-read confirms only this effect's one check in a complete inventory", async t => {
+  const lost = github => { const patch = github.revokeCheck; let done = false;
+    github.revokeCheck = async (...a) => { await patch(...a); done = true; throw Object.assign(new Error('github_timeout'), { code: 'github_timeout' }); };
+    return () => done; };
+  const cases = {
+    'the inventory after the PATCH is not complete': github => { const done = lost(github), read = github.readChecks.bind(github);
+      github.readChecks = async head => { const list = await read(head); return done() ? { ...list, complete: false } : list; }; },
+    'a second check of this effect key says success beside the withdrawn one': github => { const done = lost(github), read = github.readChecks.bind(github);
+      github.readChecks = async head => { const list = await read(head); if (done()) list.checks.push({ ...structuredClone(list.checks[0]), id: list.checks[0].id + 1, conclusion: 'success' }); return list; }; },
+    'the withdrawn check is another check id of this effect key': github => { const done = lost(github), read = github.readChecks.bind(github);
+      github.readChecks = async head => { const list = await read(head); if (done()) list.checks[0].id += 1; return list; }; },
+  };
+  for (const [name, tamper] of Object.entries(cases)) {
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), { tamper });
+    assert.deepEqual([m.r.status, m.r.reason, m.github.revokes], ['UNCERTAIN', 'NEGATIVE_COMPENSATION_UNCONFIRMED', 1], `${name}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, 'uncertain', name);
+  }
+});
+
+// A withdrawal confirmed on GitHub whose journal could not be brought to "revoked" leaves the effect at sent / uncertain. The same
+// job asked again must not end RECONCILIATION_REQUIRED (a HALT-class ending) for a journal that is merely behind GitHub: GitHub is
+// read, this effect's one check is completed/failure, the journal is brought forward and the answer is REVOKED, nothing written.
+test('work admission v2: REVOKED with the journal left behind, then the same job again: REVOKED, never RECONCILIATION_REQUIRED', async t => {
+  const boom = () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }); };
+  for (const left of ['sent', 'uncertain']) {
+    let broken = true, move = null;
+    const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), { tamper: (github, journal) => {
+      move = journal.transition.bind(journal);
+      journal.transition = async (key, from, to, details) => (broken && (to === 'revoked' || to === 'uncertain' || (from === 'sent' && to === 'settled')) ? boom() : move(key, from, to, details));
+    } });
+    // 'uncertain' is the record both field nodes hold today (written by the code before the fix), GitHub showing the check failure.
+    if (left === 'uncertain') await move(m.r.effectKey, 'sent', 'uncertain', { checkRunId: m.github.checks[0].id, reason: 'NEGATIVE_COMPENSATION_UNCONFIRMED' });
+    m.effect = await m.journal.read(m.r.effectKey);
+    assert.deepEqual([m.r.status, m.github.checks[0].conclusion], ['REVOKED', 'failure'], `${left}: ${JSON.stringify(m.r)}`);
+    assert.equal(m.effect.state, left, `${left}: the journal is behind GitHub`);
+    broken = false;
+    const again = await m.pub.publish(m.job);
+    assert.deepEqual([again.status, again.sideEffects, m.github.revokes, m.github.checks.length], ['REVOKED', 0, 1, 1], `${left}: ${JSON.stringify(again)}`);
+    assert.equal((await m.journal.read(m.r.effectKey)).state, 'revoked', left);
+    // and once more, from the journal alone
+    assert.equal((await m.pub.publish(m.job)).status, 'REVOKED', left);
+  }
+});
+
+// The journal behind a check GitHub does NOT show withdrawn keeps its ending.
+test('work admission v2: an unconfirmed withdrawal asked again stays RECONCILIATION_REQUIRED', async t => {
+  const m = await admissionRun(t, mergeOnAdmission(fakeGithub(), CLOSED), { tamper: github => { github.revokeCheck = async () => { github.revokes++; throw Object.assign(new Error('github_http_502'), { code: 'github_http_502' }); }; } });
+  assert.deepEqual([m.r.status, m.effect.state, m.github.checks[0].conclusion], ['UNCERTAIN', 'uncertain', 'success']);
+  const again = await m.pub.publish(m.job);
+  assert.deepEqual([again.status, again.sideEffects, m.github.checks[0].conclusion], ['RECONCILIATION_REQUIRED', 0, 'success'], JSON.stringify(again));
 });
 
 test('control pair v2 (S8): read-only queue wait, then exactly two publications', async t => {
@@ -533,6 +711,17 @@ test('control pair v2 (step 3a): live branch rules decide before anything is wri
   const ok = await pairRun(t);
   assert.equal(ok.r.status, 'SETTLED');
   assert.deepEqual(ok.github.checks.map(x => [x.name, x.conclusion]), [['kooyumi-admission-verified', 'success'], ['kooyumi-merge-slot', 'success']]);
+});
+
+// Task 04f9b91b: in S7 #292 is enabled again next to the scaffold ruleset, which pins kooyumi-admission-verified to App 5164952 as
+// well. One more requirement, not another pin of this App's check: stage 8 writes the pair (must-red 4). The scaffold alone still
+// parks (S5, S6: no green, as designed).
+test('control pair v2: S7 rules (#292 and the scaffold ruleset) write the pair; the scaffold alone parks', async t => {
+  const s7 = await pairRun(t, { github: fakeGithub({ rules: s7Rules() }) });
+  assert.equal(s7.r.status, 'SETTLED', s7.r.reason);
+  assert.deepEqual(s7.github.checks.map(x => [x.name, x.conclusion]), [['kooyumi-admission-verified', 'success'], ['kooyumi-merge-slot', 'success']]);
+  const s5 = await pairRun(t, { github: fakeGithub({ rules: scaffoldRules() }) });
+  assert.deepEqual([s5.r.status, s5.r.reason, s5.r.sideEffects, s5.github.checks.length], ['BLOCKED', 'RULESET_UNREADABLE', 0, 0]);
 });
 
 test('control pair v2 (step 3a): the test merge must be exactly [T, H] with the tested tree', async t => {

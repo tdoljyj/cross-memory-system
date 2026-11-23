@@ -16,6 +16,7 @@
 // revoke-only a run with side effects is a normal ending. A run is due at once (urgent) when the node just became eligible
 // for on-mode duty (the take-over sweep comes before any batch).
 import { fail } from './canonical.mjs';
+import { HEAVY_ROLES } from './policy.mjs';
 
 export const TRAIN_FACTS_CONTRACT = 'clued.independent-ci.train-facts/1';
 export const TRAIN_FACTS_CONTRACT_V2 = 'clued.independent-ci.train-facts/2';
@@ -194,12 +195,12 @@ export function providerBudgetOf(v, now = null) {
   return Object.freeze({ ...v, rest: v.rest ? Object.freeze({ ...v.rest }) : null, graphql: v.graphql ? Object.freeze({ ...v.graphql }) : null });
 }
 
-// The resident's part of the train-run job /3 (INTERFACES §2; /2 plus sweep, DESIGN §65): every field the derivation does not take from the install
+// The resident's part of the train-run job /4 (INTERFACES §2; /2 plus sweep, DESIGN §65; /4 plus frontFailed, R3 batch 2): every field the derivation does not take from the install
 // record (contract, id, repo, runId, sourceManifestSha256 and createdAt are the derivation's), in the job's order. settings:
-// policy.mjs#trainSettings; onSince: ms or null (null in shadow); frontOutcome: { pr, headSha, testSha, attempt, code } or null
-// (mode on only); revokeHeadRequestId: uuid or null (on and revoke-only); sweep: policy.mjs#trainSweepMode (train-run /3, DESIGN §65).
+// policy.mjs#trainSettings; onSince: ms or null (null in shadow); frontOutcome: { pr, headSha, testSha, attempt, code, failed } or null
+// (mode on only; failed: frontFailed, true only for a failure of the PR itself, R3 batch 2); revokeHeadRequestId: uuid or null (on and revoke-only); sweep: policy.mjs#trainSweepMode (train-run /3, DESIGN §65).
 export const TRAIN_RUN_INPUT_FIELDS = Object.freeze(['mode', 'slotHardCapMinutes', 'frontBatchBudgetMs', 'sweepFreshMs', 'fullSweepMaxMs', 'onSince',
-  'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'revokeHeadRequestId', 'sweep']);
+  'frontPr', 'frontHeadSha', 'frontTestSha', 'frontAttempt', 'frontCode', 'frontFailed', 'revokeHeadRequestId', 'sweep']);
 const FRONT_CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
 export function trainRunInput({ mode, settings, onSince = null, frontOutcome = null, revokeHeadRequestId = null, sweep = 'gate' }) {
   const on = mode === 'on', acting = mode !== 'shadow';
@@ -207,18 +208,19 @@ export function trainRunInput({ mode, settings, onSince = null, frontOutcome = n
   const input = { mode, slotHardCapMinutes: settings.slotHardCapMinutes, frontBatchBudgetMs: settings.frontBatchBudgetMs, sweepFreshMs: settings.sweepFreshMs,
     fullSweepMaxMs: settings.fullSweepMaxMs, onSince: acting && Number.isSafeInteger(onSince) ? new Date(onSince).toISOString() : null,
     frontPr: f?.pr ?? null, frontHeadSha: f?.headSha ?? null, frontTestSha: f?.testSha ?? null, frontAttempt: f?.attempt ?? null, frontCode: f?.code ?? null,
+    frontFailed: f?.failed ?? null,
     revokeHeadRequestId: acting ? revokeHeadRequestId : null, sweep };
   return validateTrainRunInput(input);
 }
-// The same rules as the job /3 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
+// The same rules as the job /4 (train-run.mjs#validateTrainRun, C# ValidateTrainRun) for the resident's part of it.
 export function validateTrainRunInput(v) {
-  const flat = [v?.frontPr, v?.frontHeadSha, v?.frontTestSha, v?.frontAttempt, v?.frontCode];
+  const flat = [v?.frontPr, v?.frontHeadSha, v?.frontTestSha, v?.frontAttempt, v?.frontCode, v?.frontFailed];
   const int = (x, lo, hi) => Number.isSafeInteger(x) && x >= lo && x <= hi;
   const ok = plain(v) && Object.keys(v).length === TRAIN_RUN_INPUT_FIELDS.length && TRAIN_RUN_INPUT_FIELDS.every(k => Object.hasOwn(v, k)) && RUN_MODES.includes(v.mode)
     && int(v.slotHardCapMinutes, 60, 180) && int(v.frontBatchBudgetMs, 60_000, 10_800_000) && int(v.sweepFreshMs, 60_000, 3_600_000) && int(v.fullSweepMaxMs, 600_000, 86_400_000)
     && (v.onSince === null ? v.mode === 'shadow' : isoOrNull(v.onSince) !== null && v.mode !== 'shadow')
     && (flat.every(x => x === null) || (v.mode === 'on' && Number.isSafeInteger(v.frontPr) && v.frontPr > 0 && SHA.test(v.frontHeadSha ?? '') && SHA.test(v.frontTestSha ?? '')
-      && v.frontTestSha !== v.frontHeadSha && [1, 2].includes(v.frontAttempt) && FRONT_CODE.test(v.frontCode ?? '')))
+      && v.frontTestSha !== v.frontHeadSha && [1, 2].includes(v.frontAttempt) && FRONT_CODE.test(v.frontCode ?? '') && typeof v.frontFailed === 'boolean'))
     && (v.revokeHeadRequestId === null || (v.mode !== 'shadow' && UUID.test(v.revokeHeadRequestId))) && TRAIN_RUN_SWEEPS.includes(v.sweep);
   if (!ok) fail('TRAIN_RUN_INPUT_INVALID');
   return Object.freeze({ ...v });
@@ -293,11 +295,17 @@ const LANDING_ROUTES = Object.freeze(['push', 'github-merge', 'park']);
 const BYPASS_STATE = /^[a-z_]{1,32}$/;
 const bypassOf = b => (plain(b) && Object.keys(b).sort().join('|') === 'independent|main' && typeof b.main === 'string' && BYPASS_STATE.test(b.main)
   && typeof b.independent === 'string' && BYPASS_STATE.test(b.independent) ? Object.freeze({ main: b.main, independent: b.independent }) : null);
+// Task 04f9b91b (Fable s7-landing-gaps 11-22): and missing, what push still lacks as stage 10 read it that round, which P3 --before reads
+// (exactly what the save of C adds); the shape only, as Source v2's train-landing.mjs#validLandingMissing: at most 16 distinct items, each
+// a lower-case word with an optional :suffix. Another shape drops the list, the rest stays.
+const MISSING_ITEM = /^[a-z][a-z_]{1,59}(?::[A-Za-z0-9_.-]{1,40})?$/;
+const missingOf = m => (Array.isArray(m) && m.length <= 16 && m.every(x => typeof x === 'string' && MISSING_ITEM.test(x)) && new Set(m).size === m.length
+  ? Object.freeze([...m]) : null);
 const landingOf = l => {
   if (!plain(l)) return null;
-  const bypass = bypassOf(l.bypass);
+  const bypass = bypassOf(l.bypass), missing = missingOf(l.missing);
   const out = { ...(typeof l.error === 'string' && SWEEP_CODE.test(l.error) ? { error: l.error } : {}), ...(LANDING_ROUTES.includes(l.route) ? { route: l.route } : {}),
-    ...(bypass ? { bypass } : {}) };
+    ...(missing ? { missing } : {}), ...(bypass ? { bypass } : {}) };
   return Object.keys(out).length ? Object.freeze(out) : null;
 };
 const actionsOf = a => (plain(a) ? Object.freeze({ touchedRunning: a.touchedRunning === true, adopted: a.adopted === true, returned: a.returned === true, failedReported: a.failedReported === true,
@@ -321,7 +329,9 @@ export function trainSummary(f) {
     ...frontChecksOf({ ...f.front.required, checksUnreadable: f.front.checksUnreadable }) } : null;
   const base = { at: f.at, mode: f.mode, wouldDo: f.wouldDo, onDuty: f.onDuty === true, front, mainSha: SHA.test(f.mainSha ?? '') ? f.mainSha : null,
     ...(f.claimBindings === undefined ? {} : { claimBindings }),
-    strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0 };
+    strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0,
+    // R3 lean: the scans main's rules still require from App 5368905 (absent: not read, or a Source before R3: every scan runs).
+    ...(summaryAppScans(f) ? { appScans: summaryAppScans(f) } : {}) };
   if (!v2) return Object.freeze(base);
   const decision = DECISIONS.includes(f.decision) ? f.decision : null;
   const acting = f.mode !== 'shadow';
@@ -336,6 +346,22 @@ export function trainSummary(f) {
   const landing = f.mode === 'on' ? landingOf(f.landing) : null;
   return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch,
     ...(frontBind ? { frontBind } : {}), ...(landing ? { landing } : {}) });
+}
+
+// Task 04f9b91b (admission p90): stage 10's top-level appScans (any rule's scans pinned to this App, read also when the six are not: the
+// scaffold ruleset alone gives []) first; a Source without it, rules.appScans. Both given and not the same (one read gives both): neither,
+// every scan runs.
+function summaryAppScans(f) {
+  const inRules = f.rules?.appScans === undefined ? undefined : appScansOf(f.rules.appScans);
+  if (f.appScans === undefined) return inRules ?? null;
+  const top = appScansOf(f.appScans);
+  return top && (inRules === undefined || (inRules && inRules.join() === top.join())) ? top : null;
+}
+
+// R3 lean: Source v2 train-rules.mjs#RULE_SCAN_NAMES (= policy.mjs HEAVY_ROLES), in that order, each once; anything else is unknown (null).
+export function appScansOf(v) {
+  if (!Array.isArray(v) || v.length > HEAVY_ROLES.length || v.some(n => !HEAVY_ROLES.includes(n)) || new Set(v).size !== v.length) return null;
+  return Object.freeze(HEAVY_ROLES.filter(n => v.includes(n)));
 }
 
 function frontBindOf(b, front) {

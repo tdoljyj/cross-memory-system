@@ -317,6 +317,7 @@ public static class RenewalTests {
                 Renewal.Str(result,"code")=="RENEW_INTERRUPTED","wrong interruption response"); return;
         }
         if(args[0]=="files") { FileFixture(args[1]); return; }
+        if(args[0]=="sid-projection") { SidProjection(); return; }
         if(args[0]=="gateway-scenario") { GlobalInstallation(args[2],true,null,false,null,args[1]); return; }
         if(args[0]=="changed-in-flight") {
             var f=new Fixture{ChangedInFlight=true,WireReply=Renewal.Json(new {status="rejected",error_code="RENEW_GRANT_REVOKED",renewed=false})};
@@ -470,23 +471,72 @@ public static class RenewalTests {
         Check(commits==1 && restarted.Read("intent")==null && Renewal.Digest(restarted.Read("token"))==proof &&
             Renewal.Str(Renewal.Object(restarted.Read("record")),"bindingId")==Next,"disk restart failed at "+point);
     }
+    // On a refusal from the shared ACL rules (PROFILE_*), say who the fixture ran as, how SDDL writes that SID, and the last
+    // descriptor the fixture mapped, so a run on another host shows the refused SID and its rights (task 04f9b91b: on the
+    // GitHub-hosted runner this case failed with PROFILE_UNTRUSTED_MUTATION_RIGHT_REFUSED and nothing else).
     static void FileFixture(string dir) {
+        string sid=WindowsIdentity.GetCurrent().User.Value, lastMapped="(none yet)";
+        try { FileFixture(dir,sid,mapped=>lastMapped=mapped); }
+        catch(InvalidOperationException e) {
+            if(!e.Message.StartsWith("PROFILE_")) throw;
+            var probe=new FileSecurity();
+            probe.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;"+sid+")");
+            string frame=(new StringReader(e.StackTrace??"").ReadLine()??"").Trim();
+            throw new Exception(e.Message+" (fixture: current user "+sid+" reads back in SDDL as "+
+                probe.GetSecurityDescriptorSddlForm(AccessControlSections.Access)+"; last mapped descriptor "+lastMapped+"; "+frame+")");
+        }
+    }
+    // Map one account to another in a descriptor's DACL by SID, never by SDDL text: SDDL writes some SIDs as an alias
+    // (the built-in Administrator -500, the GitHub-hosted runner's account, as LA; SYSTEM as SY) and others in full, so a
+    // text replacement misses whichever spelling it did not name (task 04f9b91b: LA kept FA and the rules refused it).
+    static RawSecurityDescriptor ProjectSid(string sddl,SecurityIdentifier from,SecurityIdentifier to) {
+        var descriptor=new RawSecurityDescriptor(sddl);
+        var acl=descriptor.DiscretionaryAcl;
+        for(int i=0;acl!=null && i<acl.Count;i++) {
+            var ace=acl[i] as KnownAce;
+            if(ace!=null && ace.SecurityIdentifier==from) { ace.SecurityIdentifier=to; acl[i]=ace; }
+        }
+        return descriptor;
+    }
+    // Every spelling of the mapped SID is mapped: LA and the full -500 SID to SYSTEM, SY and S-1-5-18 to a user.
+    static void SidProjection() {
+        var system=new SecurityIdentifier(WellKnownSidType.LocalSystemSid,null);
+        var la=((KnownAce)new RawSecurityDescriptor("D:(A;;FA;;;LA)").DiscretionaryAcl[0]).SecurityIdentifier;
+        Check(la.Value.StartsWith("S-1-5-21-") && la.Value.EndsWith("-500"),"LA is the built-in Administrator: "+la.Value);
+        string controller="(A;;FR;;;S-1-5-21-1-2-3-1111)", want="O:SYG:SYD:P(A;;FA;;;BA)(A;;FA;;;SY)"+controller;
+        foreach(string user in new[]{"LA",la.Value}) {
+            var got=ProjectSid("O:SYG:SYD:P(A;;FA;;;BA)(A;;FA;;;"+user+")"+controller,la,system).GetSddlForm(AccessControlSections.All);
+            Check(got==want,"the user written "+user+" was not mapped to SYSTEM: "+got);
+        }
+        var plain=new SecurityIdentifier("S-1-5-21-1-2-3-1000");
+        foreach(string sy in new[]{"SY","S-1-5-18"}) {
+            var got=ProjectSid("D:P(A;;FA;;;"+sy+")(A;;FR;;;AU)",system,plain).GetSddlForm(AccessControlSections.All);
+            Check(got=="D:P(A;;FA;;;S-1-5-21-1-2-3-1000)(A;;FR;;;AU)","SYSTEM written "+sy+" was not mapped to the user: "+got);
+        }
+    }
+    static void FileFixture(string dir,string sid,Action<string> mappedSeen) {
         string baseDir=Path.Combine(dir,"disk"), root=Path.Combine(baseDir,"resident");
         Directory.CreateDirectory(Path.Combine(baseDir,"secrets"));
         Directory.CreateDirectory(Path.Combine(root,"secrets"));
         Directory.CreateDirectory(Path.Combine(root,"install"));
-        string sid=WindowsIdentity.GetCurrent().User.Value, controller="S-1-5-21-1-2-3-1111";
+        string controller="S-1-5-21-1-2-3-1111";
         Action<string> parents=file=>Check(Path.GetFullPath(file).StartsWith(baseDir+Path.DirectorySeparatorChar),"escaped fixture");
+        var user=new SecurityIdentifier(sid);
+        var system=new SecurityIdentifier(WellKnownSidType.LocalSystemSid,null);
         Func<string,FileSecurity> create=sddl=>{
             var security=new FileSecurity();
-            // A newly created fixture file belongs to this user. Project SYSTEM to this SID only in the fixture.
-            security.SetSecurityDescriptorSddlForm(sddl.Replace("O:SYG:SY","").Replace(";;;SY)",";;;"+sid+")"));
+            // A newly created fixture file belongs to this user. Project SYSTEM to this SID only in the fixture; an owner
+            // and group of SYSTEM are left out, so the file gets its creator's defaults.
+            var projected=ProjectSid(sddl,system,user);
+            if(system.Equals(projected.Owner) && system.Equals(projected.Group)) { projected.Owner=null; projected.Group=null; }
+            security.SetSecurityDescriptorSddlForm(projected.GetSddlForm(AccessControlSections.All));
             return security;
         };
         Func<FileSecurity,byte[]> descriptor=security=>{
             var dacl=security.GetSecurityDescriptorSddlForm(AccessControlSections.Access);
             Check(security.AreAccessRulesProtected,"staging inherited rights");
-            var mapped=new RawSecurityDescriptor("O:SYG:SY"+dacl.Replace(";;;"+sid+")",";;;SY)"));
+            var mapped=ProjectSid("O:SYG:SY"+dacl,user,system);
+            mappedSeen(mapped.GetSddlForm(AccessControlSections.All));
             var bytes=new byte[mapped.BinaryLength]; mapped.GetBinaryForm(bytes,0); return bytes;
         };
         foreach(string kind in new[]{"ci","upgrade"}) {

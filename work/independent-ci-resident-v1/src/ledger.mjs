@@ -193,7 +193,7 @@ export class Ledger {
     try {
       if (batchKey(s.reserved.subject) !== s.reserved.key || s.terminal.key !== s.reserved.key || s.selfAbort.key !== s.reserved.key) return false;
     } catch { return false; }
-    const safePoint = f?.failureCode === 'SUPERSEDED_AT_SAFE_POINT' && f.class === 'clean-final' && ['upgrade-drain', 'park-max-age'].includes(f.basis);
+    const safePoint = f?.failureCode === 'SUPERSEDED_AT_SAFE_POINT' && f.class === 'clean-final' && ['upgrade-drain', 'park-max-age', 'pr-draft'].includes(f.basis);
     const capacity = f?.failureCode === 'PARKED_OVER_CAPACITY' && f.class === 'queue' && f.basis === 'park-over-capacity'
       && f.safePoint === 'parked' && s.tries?.at(-1)?.ended?.ending === 'PARKED_OVER_CAPACITY';
     return s?.state === 'TERMINAL' && s.outcome === 'FAILED_CLEAN' && !s.abort && s.started && s.wait

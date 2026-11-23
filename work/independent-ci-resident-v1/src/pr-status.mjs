@@ -39,7 +39,7 @@ import { ghPort } from './admission-rerun.mjs';
 import { CLAIM_REASONS, CLAIM_WHY, earlyWakeOf } from './queue.mjs';
 import { RULES_UNREADABLE_REPORT_AFTER_MS, RulesShapeError, readMainRequiredChecks } from './main-required-checks.mjs';
 export { RULES_UNREADABLE_REPORT_AFTER_MS };
-import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, TRAIN_PAGE_MAX_AGE_MS, withTrainLine } from './train.mjs';
+import { FRONT_CHECKS_DECISIONS, MAIN_REWRITTEN_TEXT, withTrainLine } from './train.mjs';
 import { CAPACITY_ALERT_TEXT } from './host-capacity.mjs';
 import { DUTY_REFRESH_MS, NODE_NAME, NodeDuty, REFRESH_MAX_POSTS, freshMemory, nodeContext, pruneMemory, standbyContext, validMemory } from './node-duty.mjs';
 
@@ -118,10 +118,12 @@ const KEEP_MS = 14 * 86_400_000;
 
 export const STAGE_NAMES = Object.freeze({ 0: '准备', 1: '准入', 2: 'gitleaks 扫描', 3: 'gitleaks 发布', 4: 'trivy 扫描', 5: 'trivy 发布', 6: 'contract-placement 扫描',
   7: 'contract-placement 发布', 8: '准入复核与合并位', 9: '托管转发' });
+// A draft PR is held, not ended (pr-candidate.mjs; DESIGN §72.11): what its head says on the PR page once, and its held queue row.
+export const DRAFT_HELD_TEXT = '草稿：已搁置，转为可评审后自动继续';
 const DEFERRED_TEXT = Object.freeze({ DAILY_BATCH_LIMIT: '今日执行批次额度已满，明天继续', DAILY_EVALUATION_LIMIT: '今日评估额度已满', UNEXECUTED_COOLDOWN: '冷却中（10 分钟）',
   COMPANION_NOT_READY: '等 companion 就绪', PR_DAILY_BATCH_LIMIT: '本 PR 今日批次已满', WAITING_BUDGET_EXHAUSTED: '今日等待重试额度已满，明天继续',
   REEVALUATION_CAP: '本提交今日重新评估次数已满', BREAKER_OPEN: '执行器熔断中', TRAIN_NON_FRONT_RUNS_OFF: '合并列车只跑车头批次，成为车头后再跑',
-  TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑' });
+  TRAIN_FRONT_BOUND_HEAD: '合并列车：此提交已为队首认领绑定，车头批次在试合并提交上跑', PR_DRAFT: DRAFT_HELD_TEXT });
 // The global deferrals of a scheduling pass (executor.mjs#precheck, #trainGate; SCHEDULE_HOLDS) that the status keeps as queue.hold
 // until a pass gets past it: no row runs while one holds (review rounds 24 and 25). The daily budgets come from status.limits (quotaFull).
 const GLOBAL_DEFER_TEXT = Object.freeze({ COMPANION_NOT_READY: '等 companion 就绪', VERSION_SKEW: '两端版本不一致，等升级处理完',
@@ -277,21 +279,16 @@ export function timingText(status, now, room) {
   return table ? `${out}；${table}`.slice(0, room) : out;
 }
 
-// A train run of the last TRAIN_PAGE_MAX_AGE_MS named a front, and it is another PR. Unknown or stale: false.
-const notTheFront = (last, pr, now) => Number.isFinite(last?.at) && now - last.at <= TRAIN_PAGE_MAX_AGE_MS
-  && Number.isSafeInteger(last?.front?.pr) && last.front.pr !== pr;
-
 // Pure: what the PR page should say for one open PR head, or null (write nothing). weak: a generic text that never
 // replaces what was already written for that head.
 export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
   if (!pull || !HEX40.test(pull.headSha ?? '')) return null;
   if (!pull.eligible) {
-    // Defect C: under strict only the PR about to merge has to contain main. A behind PR that a recent train run did not
-    // see at the front waits instead (each merge used to ask every queued PR for a merge-only head: O(N^2) heads).
-    if (pull.hint === 'merge-main' && notTheFront(status?.train?.last, pull.pr, now)) {
-      return { state: 'pending', description: clip(`落后 main ${pull.behindBy} 个提交：排队中，不必现在合 main（轮到它合入时再合一次）`) };
-    }
-    if (pull.hint === 'merge-main') return { state: 'failure', description: clip(`落后 main ${pull.behindBy} 个提交：请合入最新 main 并推送`) };
+    if (pull.draft === true) return { state: 'pending', description: DRAFT_HELD_TEXT };
+    // Task 484bddac (FABLE-front-merge-stale-summary §2.3): a behind head is never asked to merge main by hand; the robot
+    // (clued-front-main-merge) takes main in when its turn comes. One line, whatever the train summary says (stale, no front, another
+    // PR or this one): the summary-based branch told every PR to merge main whenever it was stale or empty (34 hand merges).
+    if (pull.hint === 'merge-main') return { state: 'pending', description: clip(`落后 main ${pull.behindBy} 个提交：轮到时机器人合入 main，不用手工合（没开自动合入的先开）`) };
     if (pull.hint === 'push-any-commit') return { state: 'failure', description: '已包含 main，但 PR 的基准还是旧的：推一个任意提交即可' };
     return null;
   }
@@ -384,7 +381,10 @@ export function describe({ pull, status, now, staleMs = STATUS_STALE_MS }) {
     if (gate && (DEFERRED_TEXT[gate] || GLOBAL_DEFER_TEXT[gate])) return { state: 'pending', description: clip(`${place}：${DEFERRED_TEXT[gate] ?? globalDeferText(gate, status)}`) };
     if (row.deferred === 'SAFE_POINT_READMISSION') return { state: 'pending', description: `${place}：流程在安全点结束，条件恢复后自动接着跑，不用推新提交` };
     const why = row.deferred ? `：${DEFERRED_TEXT[row.deferred] ?? row.deferred}` : '';
-    return { state: 'pending', description: clip(`${place}${why}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
+    // Another PR's batch runs now (#1254: the PR waited behind it with no word why): say whose and at which stage.
+    const other = status.current && status.current.pr !== pull.pr && Number.isInteger(status.current.stage) ? status.current : null;
+    const behind = !row.deferred && other ? `：前面 #${other.pr} 的批次在跑（第 ${other.stage} 段）` : '';
+    return { state: 'pending', description: clip(`${place}${why}${behind}${row.eta && !row.deferred ? `，预计 ${hhmm(row.eta)} 开始` : ''}`) };
   }
   // Generation 10 (DESIGN 53.3): the network cap is an environment stop, lifted by itself when the outside answers again.
   if (row && row.state === 'STOPPED' && row.stopKind === 'release-cap' && row.deferred === 'NETWORK_RELEASE_CAP_REACHED') {
@@ -720,7 +720,8 @@ export class PrStatusReporter {
   // One pass: the status notifications (local, never behind a slow GitHub), the node's duty (the take-over check and the
   // dual-active lock) and its notifications, then the PR page status of every open PR head the poller looked at, then
   // the duty's own writes (已交班, a restart, the end of a reminder written before ADR 0028).
-  async pass({ pulls = [], status = null, statusError = false }) {
+  // drafts: the open draft PR heads the poller skipped ([{ pr, headSha }]); a head this node wrote on is told once that it is held.
+  async pass({ pulls = [], drafts = [], status = null, statusError = false }) {
     const now = this.clock();
     this.passStartedAt = now;
     this.stalled = false;
@@ -732,7 +733,7 @@ export class PrStatusReporter {
     let prep = null;
     if (!this.stalled) { try { prep = await this.duty.prepare({ status, pulls, now, posted: this.store.data.posted }); } catch { prep = null; } }
     if (prep) toasts = await this.showAll(prep.events, now, toasts);
-    if (prep && this.prStatus !== false && pulls.length > 0 && !this.stalled) {
+    if (prep && this.prStatus !== false && (pulls.length > 0 || drafts.length > 0) && !this.stalled) {
       const context = prep.context;
       const requiredRules = await this.requiredChecks();
       const required = requiredRules ? [...new Set(requiredRules.map(c => c.context))] : null;
@@ -781,8 +782,21 @@ export class PrStatusReporter {
           if (await write(pull.headSha, want, context, pull.headSha)) remember(pull.headSha, want);
           if (this.stalled) break;
         }
+        // A draft (PLAN-resident-draft-batch-20261123, observation): a head this node wrote on, and only that, is rewritten once to say it
+        // is held (#1253 kept its last running text). A STANDBY writes none (node-duty.mjs#want: an ineligible head is a hint).
+        for (const d of rulesUnreadable ? [] : drafts) {
+          if (posted >= MAX_POSTS_PER_PASS || !this.inBudget() || this.stalled) break;
+          if (!HEX40.test(d?.headSha ?? '') || described.has(d.headSha)) continue;
+          const last = this.store.data.posted[d.headSha];
+          if (!last || last.context !== context) continue;
+          const pull = { pr: d.pr, headSha: d.headSha, eligible: false, draft: true };
+          const want = this.duty.want(pull, status, now, describe({ pull, status, now }));
+          if (!want || (last.state === want.state && last.description === clip(want.description))) continue;
+          described.add(d.headSha);
+          if (await write(d.headSha, want, context, d.headSha)) remember(d.headSha, want);
+        }
         let extra = [];
-        if (!this.stalled && !rulesUnreadable) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now }); } catch { extra = []; } }
+        if (!this.stalled && !rulesUnreadable && pulls.length > 0) { try { extra = await this.duty.extra({ posted: this.store.data.posted, described, pulls, now, status }); } catch { extra = []; } }
         for (const x of extra) {
           const ok = !this.stalled && await write(x.headSha, x.want, x.context, `${x.context}|${x.headSha}`);
           if (!ok) continue;

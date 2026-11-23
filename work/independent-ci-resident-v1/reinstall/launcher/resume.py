@@ -52,7 +52,9 @@ def q(value):
 
 
 def windows_path(value):
-    require(re.fullmatch(r'C:\\[A-Za-z0-9 ._\\-]+', value or '') is not None
+    # A local path: a drive letter, its root and plain parts. Any drive, as the reinstall configuration names its paths
+    # (tools/rconfig.py WIN_PATH): the work directory, and a test's temporary one, may be on D:.
+    require(re.fullmatch(r'[A-Za-z]:\\[A-Za-z0-9 ._\\-]+', value or '') is not None
             and not any(part in ('.', '..', '') for part in value[3:].split('\\')), 'RESUME_LOCAL_PATH_REQUIRED')
     return value
 
@@ -61,8 +63,10 @@ def output_path(value, work_directory):
     path = Path(value).absolute()
     work = windows_path(str(Path(work_directory).absolute()))
     windows_path(str(path))
-    # both are C:\ paths (windows_path): compared as Windows paths (ntpath), whatever host os.path is
-    require(ntpath.normcase(ntpath.commonpath([work, str(path)])) == ntpath.normcase(work)
+    # both are local paths (windows_path): compared as Windows paths (ntpath), whatever host os.path is; on another drive
+    # the output is outside (and ntpath.commonpath would refuse the pair)
+    require(ntpath.normcase(ntpath.splitdrive(work)[0]) == ntpath.normcase(ntpath.splitdrive(str(path))[0])
+            and ntpath.normcase(ntpath.commonpath([work, str(path)])) == ntpath.normcase(work)
             and ntpath.normcase(str(path)) != ntpath.normcase(work), 'RESUME_OUTPUT_OUTSIDE_WORKDIR')
     require(not os.path.lexists(path), 'RESUME_OUTPUT_MUST_BE_NEW')
     for parent in path.parents:

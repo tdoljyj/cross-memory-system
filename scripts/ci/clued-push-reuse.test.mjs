@@ -135,6 +135,15 @@ test('archive parser rejects multiple entries, wrong names, truncated and inflat
   assert.throws(() => readReportZip(zip({ value: 'a'.repeat(70000) }, REPORT_NAME, 8)));
 });
 
+// R3b (FABLE-tree-reuse-close-out 12.2 #1): the reads of the tested-tree proof are the step "report".
+test('a failed read of the tested-tree proof names the step report and the HTTP status', async () => {
+  for (const [index, status] of [[6, 503], [7, 404]]) {
+    const fake = api();
+    let count = 0;
+    const result = await evaluatePush(env, async (url) => (count++ === index ? { ok: false, status } : fake.fetch(url)));
+    assert.deepEqual(result, { run_heavy: true, reason: `github_request_failed@report:${status}`, current_sha_pass: false });
+  }
+});
 test('API failure, pagination, stale retry and archive digest mismatch fall back to actual work', async () => {
   for (const override of [{ 0: new Error('offline') }, { 1: Array(100).fill(proof().pr) },
     { 4: { total_count: 100, workflow_runs: [] } },

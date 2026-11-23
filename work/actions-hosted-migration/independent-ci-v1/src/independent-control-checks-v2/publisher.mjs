@@ -74,7 +74,7 @@ import { admittedFactsMatchJobV2, fullAdmissionFailureV2 } from '../full-admissi
 import { TRAIN_MODES, TRAIN_MODE_DEFAULT, RULESET_UNREADABLE, STRICT_OFF_WITHOUT_TRAIN, MERGE_METHODS_NOT_MERGE_ONLY, TRAIN_TEST_MERGE_NOT_READY,
   TRAIN_TEST_MERGE_TREE_DIFFERS, TRAIN_FRONT_JOB_WITHOUT_TRAIN, TRAIN_SINGLE_GREEN_NOT_PROVEN, TRAIN_TEST_COMMIT_GONE, TRAIN_MODE_UNREADABLE, trainFrontRefused, trainFrontRefusal,
   trainHeadDecision, strictFrontHeadDecision, rulesetFacts, rulesetDecision, testMergeDecision, mergedAsTested,
-  requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES, projectedHolderForJob } from './train-rules.mjs';
+  requiredCheckFailure, REQUIRED_CHECK_FAILED, REQUIRED_CHECKS_UNREADABLE, REQUIRED_CHECK_NAMES, projectedHolderForJob, appScansNotDone } from './train-rules.mjs';
 import { GREEN_LEDGER_UNAVAILABLE } from './green-ledger.mjs';
 import { ROLE_ALREADY_ON_GITHUB, publishedNames, ofJobIds } from '../published-on-github-v2.mjs';
 import { withdrawalTitle, withdrawalNote } from '../withdrawal-text.mjs';
@@ -171,7 +171,7 @@ function sourceBinding(job, packet, facts, authority) {
 // (github.mjs readPullsUpdatedSince). Any of them missing is "not proven", never a green.
 function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false,
   slotNative = null, sweepStore = null, pullsUpdatedSince = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), claimAssist = null,
-  trainLanding = null, landing = null }, production) {
+  trainLanding = null, landing = null, batchRoute = null }, production) {
   const domain = production ? 'production' : 'fixture';
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
@@ -219,6 +219,18 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       return { reason: TRAIN_TEST_COMMIT_GONE, ruleset: rules };
     const reason = testMergeDecision({ pull, mergeCommit, job, testTree: tested.tree });
     return { reason, ruleset: rules, testTree: tested.tree, testMergeSha: reason ? null : pull.merge_commit_sha, batch };
+  }
+  // Review of R3, problem A (train-rules.mjs#appScansNotDone): the scans main's rules, as this run's trainFacts read them, still require
+  // from this App, not done; checks: H's complete inventory. own (push, S lands): done by this front subject's own jobs, or reused (read
+  // only when a scan is missing: H's tree); otherwise (the green GitHub merges H on) by any job of this App on H.
+  async function frontScansNotDone(job, train, checks, { own = false } = {}) {
+    const args = { appScans: train.ruleset?.appScans, checks, jobIds: own ? frontJobIdsV2(job) : null, headSha: job.headSha, appId: APP_ID };
+    const missing = appScansNotDone(args);
+    if (!own) return missing;
+    if (missing.length === 0 || (train.batch?.members?.length ?? 1) !== 1) return missing;
+    let headTree = null;
+    try { headTree = (await github.readGitCommit(job.headSha))?.tree ?? null; } catch { /* not reusable */ }
+    return SHA.test(headTree ?? '') && headTree === train.testTree ? appScansNotDone({ ...args, reuse: true }) : missing;
   }
   // After the write: GitHub's own answer for the PR now. 'merged' when it merged exactly [T, H] with the tested tree;
   // 'mismatch' when it merged any other way (squash, rebase, other parents or tree: review M3), or when the PR is open and
@@ -465,7 +477,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (x) scheduling = { ...scheduling, claimExpiresAt: leaseAfter(scheduling.claimExpiresAt, x) };
     };
     for (let polls = 1; ; polls++) {
-      let observed = null, answered = null;
+      let observed = null, answered = null, headChecks = null;
       try { const { packet, facts } = await observe(slotJob, tell); answered = facts; factsValid(slotJob, packet, facts, domain, clock(), batchClaim, { requireQueueHead: false }); observed = facts; last = facts; }
       catch (e) {
         if (QUEUE_WAIT_FINAL_REASONS.includes(e.code)) {
@@ -485,6 +497,7 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
           try { rules = await github.readBranchRules('main'); } catch { throw Object.assign(new Error(RULESET_UNREADABLE), { code: RULESET_UNREADABLE }); }
           check(rules?.complete === true, RULESET_UNREADABLE);
           const inventory = await github.readChecks(slotJob.headSha);
+          headChecks = Array.isArray(inventory?.checks) ? [...inventory.checks] : null;
           // A train front (H,S) has its own Native six-check identity. Project
           // CI checks still apply to H regardless of their publishing App.
           const ids = frontJobIdsV2(slotJob);
@@ -511,6 +524,12 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       if (observed && queueHeadReady(slotJob, observed, clock() + PAIR_PUBLICATION_RESERVE_MS)) {
         // Step 3a: the queue head may write only under live rules that still hold main, on a test merge of exactly [T, H].
         const train = await trainFacts(slotJob);
+        // Review of R3, problem A: no green while a scan main's rules (read just now) require from this App is not done on H; push checks
+        // the front's own scans again right before it lands S (landOne). Final for the batch (TRAIN_BATCH_CHANGED), zero side effects.
+        if (!train.reason && trainOn && isTrainFrontJobV2(slotJob)) {
+          const missing = await frontScansNotDone(slotJob, train, headChecks);
+          if (missing.length) { record('native_train_app_scans_missing', { jobId: slotJob.id, missing }); return { ready: false, reason: TRAIN_BATCH_CHANGED, polls, scheduling }; }
+        }
         // §41.2: with the train on, only a green the single-green proof covers; not waited out (the next stage 10 decides).
         if (!train.reason && trainOn) {
           const proven = await trainHead(slotJob, train, observed.observedClaim, observed.mode?.state);
@@ -526,7 +545,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         if (!TRAIN_WAITED.includes(train.reason)) { await extendOnce(); return { ready: false, reason: train.reason, polls, scheduling }; }
         lastTrain = train.reason;
       }
-      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
+      // bc982192: an S = H batch stamped push (its stage file batch-route.json, batch-route.mjs) runs on the merge base of its head and
+      // main, never main's tip; main moving past it ends nothing (the train front batch on the tip lands it). A front batch, and every
+      // batch without the stamp (github-merge, a missing or broken channel), still needs the tip, as on origin/main.
+      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha && !(batchRoute === 'push' && !isTrainFrontJobV2(slotJob))) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
       if (observed && claimAssist) {
         await extendOnce();
         if (!joinAsked && scheduling?.mergeQueue?.entered === false) {
@@ -601,6 +623,11 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
       check(reply?.complete === true, RULESET_UNREADABLE);
       const route = await readLandingRoute({ github, appId: APP_ID, rules: reply.rules });
       if (route.route !== 'push') return blocked(TRAIN_LANDING_RULES_MISSING, { missing: route.missing });
+      // Review of R3, problem A: this App's own scans of the front subject, right before the write, under the rules just read (reply.rules,
+      // the ones the route was read from; liveTrain's read is older: the scans may have been pinned back to this App since, rereview 1).
+      const scansMissing = await frontScansNotDone(job, { ...liveTrain, ruleset: rulesetFacts(reply.rules, APP_ID) },
+        (await github.readChecks(job.headSha))?.checks, { own: true });
+      if (scansMissing.length) return blocked(TRAIN_BATCH_CHANGED, { missing: scansMissing });
       // every member: open, its head, into main; every rider: its own complete admission (never frozen, never a guarded publication),
       // the claim the batch recorded, in the merge queue
       for (const [i, m] of members.entries()) {

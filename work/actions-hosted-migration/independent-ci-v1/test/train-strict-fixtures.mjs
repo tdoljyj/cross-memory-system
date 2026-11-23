@@ -7,6 +7,7 @@ import { GreenLedger } from '../src/independent-control-checks-v2/green-ledger.m
 import { TRAIN_RUN_SHADOW_DEFAULTS, makeTrainRun } from '../src/resident-v2/train-run.mjs';
 import { tempDir } from './resident-v2-fixtures.mjs';
 import { resolvePRTaskBinding } from '../../../../scripts/ci/clued-pr-task-binding.mjs';
+import { scanExternalIdV2 } from '../src/job-v2.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system', APP = 5368905, SLOT = 'kooyumi-merge-slot';
 const sha = n => n.toString(16).padStart(40, '0');
@@ -31,8 +32,10 @@ function fakeGithub(e, w) {
     async readChangedPaths(job) { return { complete: true, pr: job.pr, headSha: job.headSha, baseSha: job.baseSha, paths: ['a.txt'] }; },
     async createCheck(body) { const id = Math.max(100, ...world.checks.keys()) + 1; const c = { id, app: { id: APP }, ...structuredClone(body) }; world.checks.set(id, c); world.hooks.create?.(c); return structuredClone(c); },
     async readBranchHead(name) { call('branch'); return { name, sha: world.main }; },
-    async readBranchRules() { call('rules'); return { complete: true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
-      { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: world.strict === true, required_status_checks: ['kooyumi-work-admission', 'gitleaks', 'trivy',
+    // world.rules: the whole rules reply's list as given (the scaffold ruleset, task 04f9b91b); world.rulesIncomplete: GitHub did not give it whole.
+    async readBranchRules() { call('rules'); if (world.rules) return { complete: world.rulesIncomplete !== true, branch: 'main', rules: structuredClone(world.rules) };
+      return { complete: world.rulesIncomplete !== true, branch: 'main', rules: [{ type: 'pull_request', parameters: { allowed_merge_methods: ['merge'] } },
+      { type: 'required_status_checks', parameters: { strict_required_status_checks_policy: world.strict === true, required_status_checks: world.ruleChecks ?? ['kooyumi-work-admission', 'gitleaks', 'trivy',
         'contract-placement', 'kooyumi-admission-verified', SLOT].map(context => ({ context, integration_id: APP })) } }] }; },
     async readPullRequest(n) { call('pull'); const p = world.pulls.get(n); return { number: n, state: p.state, draft: false, merged: !!p.merged, mergeable: true,
       merge_commit_sha: p.mergeCommitSha ?? null, head: { sha: p.head }, base: { ref: p.base ?? 'main', sha: world.main } }; },
@@ -80,6 +83,15 @@ function fakeGithub(e, w) {
   };
   gh.green = (id, head, o = {}) => world.checks.set(id, { id, app: { id: o.app ?? APP }, name: o.name ?? SLOT, head_sha: head, status: 'completed', conclusion: o.conclusion ?? 'success',
     output: { title: 'Complete Native control', summary: o.summary ?? summaryOf(world.main) } });
+  // A front batch's stages 2-7 passed (review of R3, problem A): this App's successful scans on H under the batch's own job ids
+  // (jobs: batchJobsV2 of the front subject), each once; stage 8 lands S only with them.
+  gh.frontScans = jobs => { for (const role of ['gitleaks', 'trivy', 'contract-placement']) {
+    const job = jobs[role], external_id = scanExternalIdV2(job);
+    if ([...world.checks.values()].some(c => c.external_id === external_id)) continue;
+    const id = Math.max(900000, ...world.checks.keys()) + 1;
+    world.checks.set(id, { id, app: { id: APP }, name: role, head_sha: job.headSha, status: 'completed', conclusion: 'success', external_id,
+      output: { title: role, summary: `tested ${job.testSha}` } });
+  } };
   gh.pull = (number, o = {}) => world.pulls.set(number, { number, state: 'open', updated: iso(NOW - 3_600_000), head: sha(0x8000 + number), ...o });
   return gh;
 }

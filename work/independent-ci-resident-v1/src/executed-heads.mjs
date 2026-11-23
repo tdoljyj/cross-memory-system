@@ -18,6 +18,9 @@
 // admitted again, under any Source (executor.mjs#precheck, HEAD_ALREADY_PUBLISHED_NO_RETRY); a new commit is needed.
 // Heads that ended before any publication stage (stage 1 or 2, the workspace, a bundle) stay out of it, so a new Source
 // may still run them, exactly as before. A train front batch (subject with S) is kept per (repo, head, S) (executedHeadKey).
+// The narrow exceptions are the executor's (precheck): a safe-point continuation (onlyRecordsOf its flow chain), attempt 2 after an
+// attempt 1 whose one record is its "before stage R" one (onlyRelayRecordOf), and stage 10's front number 2 of the same (H, S) when
+// every record is front number 1's own (onlyRecordsOf [its key]) and front number 1's ledger says it ended FAILED_CLEAN at stage 8.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HEX40, HEX64, REPO, ResidentError, check, digest, isoNow, parseBoundedJson, sha256 } from './canonical.mjs';

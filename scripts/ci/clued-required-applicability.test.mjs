@@ -43,7 +43,7 @@ function fixture(files=[{filename:'scripts/ci/safe-change.mjs',status:'modified'
       if(route===prRoute)return copy(pr);
       if(route===runRoute)return copy(run);
       if(route.includes('/compare/'))return copy(compare);
-      if(route===runRoute+'/attempts/2/jobs?per_page=100&page=1')return {total_count:4,jobs:copy(nativeJobs)};
+      if(route===runRoute+'/attempts/2/jobs?per_page=100&page=1')return {total_count:nativeJobs.length,jobs:copy(nativeJobs)};
       if(route==='/repos/'+repository+'/contents/'+REQUIRED_SELECTOR_SOURCE.path+'?ref='+B)return content(REQUIRED_SELECTOR_SOURCE.path,selector);
       if(route==='/repos/'+repository+'/contents/scripts/ci/clued-work-admission.mjs?ref='+B)return content('scripts/ci/clued-work-admission.mjs',gateScript);
       throw Error('UNEXPECTED_FIXED_TEST_ROUTE');
@@ -64,6 +64,25 @@ test('live issuer independently closes native diff, actual gate base and exact b
   assert.ok(f.calls.includes('/repos/o/r/contents/'+REQUIRED_SELECTOR_SOURCE.path+'?ref='+B));
   assert.equal(f.calls.some(route=>route.includes('candidate')||route.includes('?ref='+H)),false);
   assert.equal(qualifyPrimary(profile,jobs(),REQUIRED_TESTS_SOURCE.file,{requiredDiffContext:{token,expected:f.expected}}).passed,true);
+});
+
+// R1: the scans follow migration-verify among the primaries; its not-applicable evidence stands in for it alone, so a
+// failed or unexecuted scan still decides the proof.
+test('migration-verify not applicable does not excuse a failed or unexecuted scan after it',async()=>{
+  assert.deepEqual(REQUIRED_TESTS_SOURCE.primary_ids.slice(3),['gitleaks','trivy','contract-placement']);
+  for(const [name,edit,state] of [
+    ['gitleaks',job=>{job.conclusion='failure';},'failed'],
+    ['trivy',job=>{job.steps.pop();},'unknown'],
+    ['contract-placement',job=>{job.steps.at(-1).conclusion='failure';},'failed'],
+  ]){
+    // The evidence of an all-green attempt, then the proof over the same jobs with one scan broken.
+    const f=fixture(),token=await readRequiredApplicability(f.options());assert.ok(token,name);
+    const context={requiredDiffContext:{token,expected:f.expected}};
+    assert.equal(qualifyPrimary(profile,copy(f.nativeJobs),REQUIRED_TESTS_SOURCE.file,context).passed,true,name);
+    const broken=copy(f.nativeJobs);edit(broken.find(job=>job.name===name));
+    const r=qualifyPrimary(profile,broken,REQUIRED_TESTS_SOURCE.file,context);
+    assert.equal(r.passed,false,name);assert.equal(r.state,state,name);
+  }
 });
 
 test('opaque context cannot be forged, serialized, replayed to another request or crossed to another subject/attempt',async()=>{
@@ -162,20 +181,21 @@ test('outer CI preserves actual execution versus not-applicable children and kee
   const f=fixture(),tokenCall=async args=>readRequiredApplicability({...f.options(),requestKey:args.requestKey});
   let callbacks=0;
   const read=async route=>route.includes('/actions/runs?')?{total_count:1,workflow_runs:[copy(f.run)]}:
-    route.includes('/attempts/')?{total_count:4,jobs:copy(f.nativeJobs)}:route.endsWith('/777')?copy(f.run):null;
+    route.includes('/attempts/')?{total_count:f.nativeJobs.length,jobs:copy(f.nativeJobs)}:route.endsWith('/777')?copy(f.run):null;
   const options={read,repository,head:H,base:B,prNumber,profiles:{workflows:{[REQUIRED_TESTS_SOURCE.file]:profile}},
     workflows:new Map([[REQUIRED_TESTS_SOURCE.file,REQUIRED_TESTS_SOURCE.workflow_blob]]),authorizeSource:async()=>true,
     revalidateSources:async()=>true,qualifyRequiredApplicability:async args=>{callbacks++;return tokenCall(args);}};
   const r=await qualifiedCI(options);assert.equal(r.passed,true);assert.equal(callbacks,1);
   assert.equal(r.scope,'required_workflow_requirements_satisfied');
   assert.deepEqual(r.scopes[0].primary_scopes.map(x=>[x.job_id,x.scope]),[
-    ['clued-cloud-tests','actual_full'],['ci-suites','declared_selected_command'],['migration-verify','not_applicable']]);
+    ['clued-cloud-tests','actual_full'],['ci-suites','declared_selected_command'],['migration-verify','not_applicable'],
+    ['gitleaks','actual_full'],['trivy','actual_full'],['contract-placement','actual_full']]);
   assert.equal(r.scopes[0].primary_scopes[2].evidence.execution_authority,false);
   for(const patch of [{qualifyRequiredApplicability:undefined},{qualifyRequiredApplicability:async()=>true},
     {qualifyRequiredApplicability:async()=>({passed:true})},{revalidateSources:async()=>false},{base:M}])
     assert.equal((await qualifiedCI({...options,...patch})).passed,false);
   callbacks=0;assert.equal((await qualifiedCI({...options,authorizeSource:async()=>false})).passed,false);assert.equal(callbacks,0);
   const wrong=copy(f.nativeJobs);wrong[3].steps.find(x=>x.name==='Not affected').conclusion='skipped';
-  const wrongRead=async route=>route.includes('/attempts/')?{total_count:4,jobs:wrong}:read(route);
+  const wrongRead=async route=>route.includes('/attempts/')?{total_count:wrong.length,jobs:wrong}:read(route);
   callbacks=0;assert.equal((await qualifiedCI({...options,read:wrongRead})).passed,false);assert.equal(callbacks,0);
 });

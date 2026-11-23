@@ -834,6 +834,157 @@
         }
       }
     },
+    "hosted-required.yml": {
+      "jobs": {
+        "clued-cloud-tests": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "ci-suites": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "migration-verify": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "ci-suites-windows": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "gitleaks": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trivy": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "contract-placement": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": null,
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        }
+      }
+    },
     "information-flow-e2e.yml": {
       "jobs": {
         "admission-gate": {
@@ -1544,6 +1695,75 @@
           ],
           "retained_artifacts": [],
           "persistent_action_caches": []
+        },
+        "gitleaks": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "trivy": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "contract-placement": {
+          "mode": "job-temp",
+          "purpose": "application or repository control",
+          "action": "./trusted/.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "candidate",
+              "ref": null,
+              "repository": null
+            },
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "trusted",
+              "ref": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || (github.event_name == 'workflow_dispatch' && github.event.repository.default_branch) || github.sha }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
         }
       }
     },
@@ -1678,6 +1898,42 @@
           ],
           "persistent_action_caches": [],
           "pre_bootstrap_lifecycle": "native617-read-guard-v1"
+        }
+      }
+    },
+    "clued-front-main-merge-hosted.yml": {
+      "jobs": {
+        "scaffold-phase": {
+          "mode": "job-temp",
+          "purpose": "hosted scaffold front main merge phase (reads main's rules in force); default-branch code only",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
+        },
+        "merge-main": {
+          "mode": "job-temp",
+          "purpose": "hosted scaffold front main merge (update-branch, one attestation check, one comment); default-branch code only",
+          "action": "./.github/actions/ci-temporary-storage",
+          "checkout_sources": [
+            {
+              "uses": "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+              "if": "true",
+              "path": "",
+              "ref": "${{ github.event.repository.default_branch || 'main' }}",
+              "repository": null
+            }
+          ],
+          "retained_artifacts": [],
+          "persistent_action_caches": []
         }
       }
     },

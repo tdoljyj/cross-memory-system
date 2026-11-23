@@ -236,6 +236,6 @@ Write-StepLine 'launcher' 'failed' 'INSTALL_NOT_COMPLETED' ([ordered]@{ exit = 1
     { name: 'launcher', result: 'failed', rejectCode: 'INSTALL_NOT_COMPLETED', detail: { exit: 1 } }], launcher.out);
   assert.equal(launcher.lines.at(-1), 'returned: the function value', 'a step line never becomes part of a function\'s value');
   const tpl = fs.readFileSync(TPL, 'utf8');
-  assert.match(tpl, /\$Done\.add_CollectionChanged\(\{[\s\S]{0,600}name = \[string\]\$step; result = 'ok'; rejectCode = \$null; detail = \$lineDetail/, 'every completed launcher step prints its line');
+  assert.match(tpl, /\$Done\.add_CollectionChanged\(\{[\s\S]{0,1200}name = \[string\]\$step; result = \$lineResult; rejectCode = \$lineReject; detail = \$lineDetail/, 'every completed launcher step prints its line (failed with its reject code when the step left one: test/launcher-verify-not-passed.test.mjs)');
   assert.match(tpl, /function Stop-Launch\(\[string\]\$code, \$detail\) \{\r?\n  if \(Test-Path -LiteralPath 'function:Write-StepLine'\) \{ Write-StepLine 'launcher' 'failed' \$code \$null \}/, 'a stop prints its line first (its detail is the terminal\'s)');
 });
