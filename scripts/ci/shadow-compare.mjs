@@ -21,9 +21,9 @@ export const PAIRS = Object.freeze(['ci-suites', 'clued-cloud-tests', 'migration
 // 与 train-rules 一致：success、neutral、skipped 算过。cancelled、stale 等不是结论。
 const PASS = new Set(['success', 'neutral', 'skipped']);
 const FAIL = new Set(['failure', 'timed_out', 'action_required', 'startup_failure']);
-// S6 退出判据（FABLE-s6-exit-shorten-20261122 §3 与补答，Decision efe2cee6）：连续 30 个 head、首尾相隔不少于 72 小时、逐项一致，
+// S6 退出判据（FABLE-s6-exit-shorten-20261122 §3 与补答；Decision 67cea8f4 起不再要求首尾相隔 72 小时，只看计数与三项覆盖）：连续 30 个 head、逐项一致，
 // 其间出自不少于 10 个已合入 PR、至少 1 个非 Owner 推送的 head、至少 1 个 head 上同一项两边都红。
-export const STREAK = Object.freeze({ heads: 30, hours: 72, mergedPrs: 10, nonOwnerPushedHeads: 1, bothRedHeads: 1 });
+export const STREAK = Object.freeze({ heads: 30, mergedPrs: 10, nonOwnerPushedHeads: 1, bothRedHeads: 1 });
 const LAST = 20;
 const SHA = /^[0-9a-f]{40}$/;
 const PAGE = 100;
@@ -210,13 +210,12 @@ function summarize(heads, nowMs, owner) {
   const bothRedHeads = run.filter(h => h.pairs.some(p => p.verdict === '一致' && FAIL.has(p.framework?.conclusion) && FAIL.has(p.hosted?.conclusion))).length;
   const unmet = [
     n < STREAK.heads && `连续一致不足 ${STREAK.heads} 个 head`,
-    spanMs < STREAK.hours * 3600_000 && `首尾相隔不足 ${STREAK.hours} 小时`,
     mergedPrs < STREAK.mergedPrs && `已合入 PR 不足 ${STREAK.mergedPrs} 个`,
     nonOwnerPushedHeads < STREAK.nonOwnerPushedHeads && '没有非 Owner 推送的 head',
     bothRedHeads < STREAK.bothRedHeads && '没有两边同红的 head',
   ].filter(Boolean);
   const hours = Math.round(spanMs / 360_000) / 10, days = Math.round(spanMs / 8640_000) / 10;
-  const rule = `连续 ${STREAK.heads} 个 head、首尾相隔不少于 ${STREAK.hours} 小时，七项逐项一致；出自不少于 ${STREAK.mergedPrs} 个已合入 PR，`
+  const rule = `连续 ${STREAK.heads} 个 head、七项逐项一致；出自不少于 ${STREAK.mergedPrs} 个已合入 PR，`
     + `含至少 ${STREAK.nonOwnerPushedHeads} 个非 Owner 推送的 head、至少 ${STREAK.bothRedHeads} 个两边同红的 head`;
   const streak = { heads: n, hours, days, from: run[0]?.at ?? null, to: run.at(-1)?.at ?? null, mergedPrs, nonOwnerPushedHeads, bothRedHeads,
     met: unmet.length === 0, unmet, rule };

@@ -1970,7 +1970,7 @@ const rowsOf = f => [...f.queue.data.rows].map(r => ({ pr: r.pr, state: r.state,
 const passOf = p => p.lastPass.pulls.map(x => [x.pr, x.eligible, x.hint, x.behindBy]);
 
 // E1 (H2) and E2: installed landing push; stage 10's own reading is not push, nothing was read, the status cannot be read, or a scan is still
-// required from this App (or appScans not read: a Source before R3): no stamp anywhere, the poller proposes nothing and says merge-main for
+// required from this App (or appScans not read: a Source before R3, neither the top-level appScans of §82 item 5 nor rules.appScans): no stamp anywhere, the poller proposes nothing and says merge-main for
 // every head behind main, exactly as origin/main's poller (no landing port) on the same world; no row, no batch, only stage 10 runs.
 for (const scene of [
   { name: 'E1 route github-merge (today\'s rules)', rules: 'today' },
@@ -1979,7 +1979,7 @@ for (const scene of [
   { name: 'E1 the status cannot be read', rules: 'push', appScans: [], unreadable: true },
   { name: 'E2 route push, all three scans from this App', rules: 'push' },
   { name: 'E2 route push, gitleaks still from this App', rules: 'push', appScans: ['gitleaks'] },
-  { name: 'E2 route push, appScans not read (a Source before R3)', rules: 'push', appScans: [], facts: x => (x.rules ? { ...x, rules: Object.fromEntries(Object.entries(x.rules).filter(([k]) => k !== 'appScans')) } : x) },
+  { name: 'E2 route push, appScans not read (a Source before R3)', rules: 'push', appScans: [], facts: ({ appScans: _top, ...x }) => (x.rules ? { ...x, rules: Object.fromEntries(Object.entries(x.rules).filter(([k]) => k !== 'appScans')) } : x) },
 ]) test(`bc982192 ${scene.name}: installed push -> no stamp, no proposal, merge-main, as origin/main`, async t => {
   const prs = [1401, 1402, 1403];
   const e = await world(t, { prs, behind: 2, rules: scene.rules, queued: false, admitted: false, ...(scene.appScans ? { appScans: scene.appScans } : {}) });
