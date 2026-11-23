@@ -33,7 +33,7 @@ import { parseBudget } from './budget-alert.mjs';
 // only when it has a value, so a reader before 3c-2b and the train shapes of today stay as they were. A notice kind `train-owner`
 // carries stage 10's decisions the Owner must hear of (a PAUSE for a landed tree that differs, another node's Source).
 // Defect 15894c2a (still /8: only `train` grows, written only when it has a value): `train.nodes`, the nodes the newest on-mode run
-// compared in its §41.6 Source check (train.mjs#trainNodesView), for the NON-elevated upgrade precheck (rollout/precheck.mjs).
+// compared in its §41.6 Source check (train.mjs#trainNodesView), for the fleet-lag alert and the landing precheck (rollout/landing-precheck.mjs).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { CODE, HEX40, HEX64, canonicalJson, check, exactKeys, parseBoundedJson } from './canonical.mjs';
@@ -312,7 +312,7 @@ function trainOf(t) {
   const out = { enabled: ['off', 'shadow', 'on'].includes(t?.enabled) ? t.enabled : null, last: parseTrainLast(t?.last) };
   const sweep = parseTrainSweep(t?.sweep), revokeHead = parseRevokeHead(t?.revokeHead), onSince = ms(t?.onSince);
   if (sweep) out.sweep = sweep;
-  // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView); read by the upgrade precheck.
+  // Defect 15894c2a: the nodes the newest on-mode run compared (train.mjs#trainNodesView); read by the fleet-lag alert and the landing precheck.
   const nodes = parseTrainNodes(t?.nodes);
   if (nodes) out.nodes = nodes;
   if (revokeHead) out.revokeHead = revokeHead;

@@ -499,8 +499,8 @@ export function parseRevokeHead(v) {
 }
 
 // Defect 15894c2a: the nodes stage 10 compared in its §41.6 Source check (ci_nodes_status, train-maintenance.mjs; facts /2 `nodes`),
-// kept as the status snapshot's `train.nodes` so that the upgrade precheck (rollout/precheck.mjs, NON-elevated: it cannot call Native
-// with this node's ci-admission token) reads the very list the runtime guard reads. A view only: nothing in the executor decides on it.
+// kept as the status snapshot's `train.nodes` for the readers that cannot call Native with this node's ci-admission token: the fleet-lag
+// alert (fleet-lag-alert.mjs) and the landing precheck (rollout/landing-precheck.mjs). A view only: nothing in the executor decides on it.
 // Only an on-mode run on duty reads the nodes (every other run says nothing: nodes null), so `at` tells the reader how old the list is.
 // { at, sourceManifestSha256 (this node's Source at that run), nodes: [{ node, sourceManifestSha256, state, lastHeartbeatAt }], dropped }
 export const TRAIN_NODES_MAX = 64;
@@ -522,6 +522,36 @@ export function trainNodesView(f, sourceManifestSha256) {
 }
 // The status reader's copy of train.nodes, or null.
 export function parseTrainNodes(v) { return plain(v) ? nodesOf(v.nodes, v.dropped, v.at, v.sourceManifestSha256) : null; }
+
+// Moved from rollout/precheck.mjs (task 0b1516c0: the upgrade precheck compares no Source across nodes any more); read by the landing
+// precheck (rollout/landing-precheck.mjs). Stage 10's §41.6 Source check (train-maintenance.mjs SOURCE_HEARTBEAT_WINDOW_MS): every node
+// heard within 24 hours must run the Source the on-duty node runs, or the train stops (TRAIN_SOURCE_MISMATCH).
+export const FLEET_HEARTBEAT_WINDOW_MS = 24 * 3_600_000;
+// A list older than this says too little about now (stage 10 on duty reads it every maintenanceEveryMs, 10 minutes by default).
+export const FLEET_VIEW_FRESH_MS = 60 * 60_000;
+// Pure: does the list (parseTrainNodes of a status.json; null: none) show every node heard within 24 hours on `target`? selfNames: this
+// node's names (its own entry is never compared).
+//   PASS        every other node heard within 24 hours runs `target` (or reports no Source: §41.6 "no record");
+//   MISMATCH    some do not (upgradeFirst, mismatchedNodes);
+//   UNVERIFIED  no usable list (none, older than FLEET_VIEW_FRESH_MS, or this node is not in it), or this node not on duty now (onDuty
+//               false): only the holder's list says what stage 10 compares now; then mismatchedNodes is what the older list showed.
+// A node not heard within 24 hours is not compared (as stage 10) and is named in staleNodesIgnored.
+export function fleetSourceCheck({ view, target, selfNames = [], now, onDuty = false }) {
+  const base = { targetCiSourceManifestSha256: target, viewAt: view?.at ?? null };
+  const row = n => ({ node: n.node, sourceManifestSha256: n.sourceManifestSha256, lastHeartbeatAt: n.lastHeartbeatAt });
+  if (!view) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_ABSENT' };
+  if (!(Math.abs(now - Date.parse(view.at)) <= FLEET_VIEW_FRESH_MS)) return { ...base, status: 'UNVERIFIED', reason: 'NODES_VIEW_STALE' };
+  const names = new Set(selfNames.filter(s => typeof s === 'string' && s.length > 0).map(s => s.toLowerCase()));
+  const isSelf = n => typeof n.node === 'string' && names.has(n.node.toLowerCase());
+  if (!view.nodes.some(isSelf)) return { ...base, status: 'UNVERIFIED', reason: 'SELF_NOT_IN_NODES_VIEW', nodes: view.nodes.map(row) };
+  const differ = view.nodes.filter(n => !isSelf(n) && n.sourceManifestSha256 !== null && n.sourceManifestSha256 !== target);
+  const heard = n => n.lastHeartbeatAt !== null && now - Date.parse(n.lastHeartbeatAt) <= FLEET_HEARTBEAT_WINDOW_MS;
+  const blocking = differ.filter(heard), stale = differ.filter(n => !heard(n));
+  const extra = { staleNodesIgnored: stale.map(row), ...(view.dropped > 0 ? { droppedEntries: view.dropped } : {}) };
+  if (onDuty !== true) return { ...base, status: 'UNVERIFIED', reason: 'NOT_ON_DUTY', mismatchedNodes: blocking.map(row), ...extra };
+  if (blocking.length) return { ...base, status: 'MISMATCH', upgradeFirst: blocking.map(n => n.node), mismatchedNodes: blocking.map(row), ...extra };
+  return { ...base, status: 'PASS', ...extra };
+}
 
 // The PR page (pr-status.mjs): the front PR's own description, with the shadow line appended when the newest run (at most
 // TRAIN_PAGE_MAX_AGE_MS old) saw this very head at the front. Never on a failure or an error, never instead of the

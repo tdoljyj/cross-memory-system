@@ -32,16 +32,8 @@ node rollout\precheck.mjs --root C:\ProgramData\CluedIndependentCI\resident --pa
 - 包里带的升级代理副本与已装的不同：`PRECHECK_REFUSED` / `UPGRADE_CHANNEL_CHANGE_NEEDS_REINSTALL`，与现装包逐文件比较，列出变化（`changedFrozenFiles`）。冻结的 Linux 升级工具、签名器和工具清单与现装包不同，或工具不是 version facts 里的 `upgradeToolSha256`，同样是通道变更。
 - 都相同：先逐文件核对副本，再用**本检出**的 `canonical.mjs` 算出副本清单的哈希，必须等于已装的；之后才从包里的副本（与节点上冻结的那份逐字节相同）import `readPackageOnce`、`buildPlan`，对节点现场跑一遍 ACCEPT。非提权读不到的槽列在 `unreadableSlots`，结论为 `PRECHECK_PASS_EXCEPT_UNREADABLE_SLOTS`。
 - `warnings`：进行中的 op、HALT、两侧不一致、Linux 有暂存代、本节点当班（要先移交）。这些会变，只提醒。
-- 跨节点 Source（缺陷 15894c2a）：目标包的策略（取自完整性已核验的候选包，不取已装策略）`train.enabled` 为 `on` 时，预检按第 10 段的 §41.6 规则拿**目标** Source 去比其余节点：数据是本节点 `state\status.json` 的 `train.nodes`，即第 10 段（当班、on 模式）上一次从 Native `ci_nodes_status` 读到并比对过的节点表（`train.mjs#trainNodesView`；预检非提权，拿不到 ci-admission 令牌，不能自己调 Native）。结果写在 `fleetSourceReadiness`：
-  - 24 小时内有心跳的其他节点都已是目标 Source（或没报 Source）：`PASS`，结论照本机检查；
-  - 有一台不是：`PRECHECK_REFUSED` / `FLEET_SOURCE_MISMATCH`，`detail.upgradeFirst` 和 `advice` 写明先升哪台（待命节点先升、当班节点最后升）；否则本机升级后列车以 `TRAIN_SOURCE_MISMATCH` 停车，直到它们也装上同一个 Source；
-  - 只有**此刻当班**的节点（`status.json` 的 `node.mode` 为 `ACTIVE`）按节点表拒绝。交接班后 1 小时内两台的表都还新鲜，但只有当班那台的表代表第 10 段此刻比对的内容；不当班的一台一律 `UNVERIFIED`（`reason: NOT_ON_DUTY`），`mismatchedNodes` 只列出它上次看到的，作提醒，不拒绝；
-  - 紧急放行：对端 24 小时内有过心跳但已永久离线（拒绝无法靠先升它解决）时，Owner 可给 `build-upgrade.ps1 -AllowFleetSourceMismatch`（预检参数 `--allow-fleet-source-mismatch`）。结论为 `PRECHECK_PASS_FLEET_SOURCE_MISMATCH_ALLOWED`，警告 `FLEET_SOURCE_MISMATCH_ALLOWED`，`fleetSourceReadiness.allowed: true`，构建汇总记下 `fleetSourceMismatchAllowed: true`。**后果**：放行只跳过预检，不改运行时检查；本机升级后合并列车照样以 `TRAIN_SOURCE_MISMATCH` 停车，直到那台的最后心跳满 24 小时（之后不再比较）或它装上目标 Source。不要用它跳过“先升另一台”；
-  - 不一致但那台 24 小时内没有心跳：不比（与第 10 段相同），照常通过，列在 `staleNodesIgnored`，警告 `FLEET_STALE_NODES_IGNORED`；
-  - 没有可用的节点表（待命节点没有：只有当班节点的第 10 段读 Native；表超过 1 小时；表里找不到本节点；本节点不当班；目标模式缺失或不可识别）：`PRECHECK_PASS_LOCAL_ONLY` + `FLEET_SOURCE_UNVERIFIED`，`localChecks` 保留本机结论，`advice` 按原因写明该怎么核对，`ownerStatusUrl` 指向 `/bindings/failover` 供 Owner 只读核对。这不表示各节点一致。
-  - 目标为 `shadow`/`off`：`NOT_REQUIRED`，不比（shadow 回退不会被挡）。
-  - **首代空窗**：`train.nodes` 由本修复写进 `status.json`，要等节点装上含本修复的一代、且当班节点跑过一次 on 模式第 10 段（默认 10 分钟内）才出现。在此之前（包括装这一代本身的那次升级）预检一律 `PRECHECK_PASS_LOCAL_ONLY`（`reason: NODES_VIEW_ABSENT`），跨节点一致仍要 Owner 在 `/bindings/failover` 手动核对。执行器重启后表也要等下一次 on 模式第 10 段。预检不能保证核对之后各节点状态不变，运行时的 24 小时 Source 检查保持不变。
-- 构建汇总带出 `precheckWarnings`、`precheckLocalChecks`、`fleetSourceReadiness`、`precheckAdvice` 和 `fleetSourceMismatchAllowed`。
+- 跨节点 Source（任务 0b1516c0）：预检不比对其他节点的 Source。它非提权，拿不到 ci-admission 令牌，读不到对端现况，只能读本节点 `state\status.json` 的 `train.nodes`（第 10 段上一次读到的缓存表）；这张表分不清“对端已升好、表还旧”和“对端确实还旧”，按缓存比对只会误拒。升级顺序（待命节点先升、当班节点最后升）由 `rollout/fleet/upgrade.mjs` 第 8 步保证：当班节点不带 `--allow-active-upgrade` 一律 `FLEET_NODE_UPGRADE_HAND_OVER_FIRST`。各节点 Source 一致由运行期保证：第 10 段现读 Native，24 小时内有心跳的节点 Source 不同时列车以 `TRAIN_SOURCE_MISMATCH` 停车；服务端也不会把 ci-admission 交给 Source 不同的节点。轮升窗口里停车是预期的，另一台升完即恢复。`train.nodes` 仍由 fleet-lag 告警和落地预检读取。
+- 构建汇总带出 `precheckWarnings` 和 `precheckAdvice`。
 
 ## 4. 滚动升级：`rollout.mjs`
 

@@ -66,7 +66,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 | `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无 |
 | `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 把该版资产放进一个目录，走第 5 节唯一入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>` |
 | `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 这台现在当班，没有发请求 | 其他节点都升好后加 `--allow-active-upgrade` 再跑（CI 暂停几分钟）；不能移交给已升级的节点（Source 不同，服务端拒绝） |
-| `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装（例如 `FLEET_SOURCE_MISMATCH`：先升另一台） | 按 `precheck.advice` |
+| `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装 | 按 `precheck.advice` |
 | `FLEET_NODE_UPGRADE_REFUSED` | 输入不对（包、接受文件、节点记录） | 按 `code` 改正 |
 
 命令可以重复运行：在途时不发第二个请求，做完后只报告做完。

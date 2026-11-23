@@ -6,8 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS, TRAIN_SWEEP_DEFAULT, trainSettings, trainSweepMode, trainLandingMode, trainBatchMax, installedTrainLanding, validatePolicy } from '../src/policy.mjs';
 import { DECISIONS, trainDue, TRAIN_RUN_INPUT_FIELDS, chainOfFront, openFrontBatchOf, trainRunInput, trainRunMode, trainSummary, trainSweepView, parseTrainSweep, validateTrainRunInput,
-  trainNodesView, parseTrainNodes } from '../src/train.mjs';
-import { fleetSourceCheck } from '../rollout/precheck.mjs';
+  trainNodesView, parseTrainNodes, fleetSourceCheck } from '../src/train.mjs';
 import { RELAY_TRAIN_FRONT_LOCAL, TRAIN_CLEAN_CODES, failureRow } from '../src/classify.mjs';
 import { PROBE_REQUEST_CONTRACT, REVOKE_HEAD_REQUEST_CONTRACT, probeRequest, revokeHeadRequest, validateResidentRequest } from '../src/resident-requests.mjs';
 import { installedTrainMode } from '../src/engine-windows.mjs';
@@ -1126,9 +1125,10 @@ test('push codes (ADR 0018): every stage-8 landing code is in the resident table
 });
 
 // Defect 15894c2a (end to end, resident side): the nodes an on-mode stage 10 compared in its §41.6 Source check reach the status snapshot
-// (train.nodes) the NON-elevated upgrade precheck reads; there the precheck's comparison against a target refuses while another node heard
-// within 24 hours runs another Source, and passes once it runs the target. A run that read no nodes (shadow, not on duty) keeps the list.
-test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; the precheck compares the target against it', async t => {
+// (train.nodes) the NON-elevated readers read (the landing precheck, the fleet-lag alert); there fleetSourceCheck against a target says
+// MISMATCH while another node heard within 24 hours runs another Source, and PASS once it runs the target. A run that read no nodes
+// (shadow, not on duty) keeps the list.
+test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; fleetSourceCheck compares a target against it', async t => {
   const status = new StatusBoard({ clock: () => T0, pid: 1 });
   const target = 'd'.repeat(64), heard = new Date(T0 - 5 * MIN).toISOString();
   let peerSource = null, mode = 'on';
@@ -1152,6 +1152,28 @@ test('defect 15894c2a: stage 10\'s nodes list reaches status.json train.nodes; t
   await f.exec.tick();
   assert.equal(check().status, 'PASS');
   assert.equal(parseTrainNodes(onDisk()).at, new Date(T0).toISOString(), 'facts carry the run time the fixture gave');
+});
+
+// fleetSourceCheck, pure (moved with it from rollout/precheck.mjs, task 0b1516c0; the landing precheck reads it): which nodes are
+// compared, which are not, and when there is no list to compare on.
+test('fleetSourceCheck: own entry never compared (any letter case); no Source is not compared; over 24 hours not compared; no usable list is UNVERIFIED', () => {
+  const target = 'd'.repeat(64), other = 'c'.repeat(64), HOUR = 60 * MIN;
+  const peer = (node, source, heardAgo) => ({ node, sourceManifestSha256: source, state: 'NORMAL', lastHeartbeatAt: heardAgo === null ? null : new Date(T0 - heardAgo).toISOString() });
+  const view = (nodes, at = T0, dropped = 0) => parseTrainNodes({ at: new Date(at).toISOString(), sourceManifestSha256: other, nodes, dropped });
+  const check = (v, onDuty = true) => fleetSourceCheck({ view: v, target, selfNames: ['desk', null, ''], now: T0, onDuty });
+  const pass = check(view([peer('DESK', other, MIN), peer('node-b', target, 5 * MIN), peer('fresh', null, MIN)]));
+  assert.deepEqual([pass.status, pass.staleNodesIgnored, pass.viewAt, pass.targetCiSourceManifestSha256], ['PASS', [], new Date(T0).toISOString(), target]);
+  const m = check(view([peer('desk', other, MIN), peer('node-b', other, 23 * HOUR), peer('fresh', null, MIN)], T0, 3));
+  assert.deepEqual([m.status, m.upgradeFirst, m.mismatchedNodes, m.droppedEntries],
+    ['MISMATCH', ['node-b'], [{ node: 'node-b', sourceManifestSha256: other, lastHeartbeatAt: new Date(T0 - 23 * HOUR).toISOString() }], 3]);
+  const old = check(view([peer('desk', other, MIN), peer('node-b', other, 25 * HOUR), peer('never', other, null)]));
+  assert.deepEqual([old.status, old.staleNodesIgnored.map(n => n.node)], ['PASS', ['node-b', 'never']]);
+  assert.deepEqual([check(null).status, check(null).reason], ['UNVERIFIED', 'NODES_VIEW_ABSENT']);
+  assert.equal(check(view([peer('desk', other, MIN)], T0 - 2 * HOUR)).reason, 'NODES_VIEW_STALE');
+  const notSelf = check(view([peer('someone-else', other, MIN), peer('node-b', other, MIN)]));
+  assert.deepEqual([notSelf.reason, notSelf.nodes.map(n => n.node)], ['SELF_NOT_IN_NODES_VIEW', ['someone-else', 'node-b']]);
+  const off = check(view([peer('desk', other, MIN), peer('node-b', other, MIN)], T0 - 20 * MIN), false);
+  assert.deepEqual([off.status, off.reason, off.mismatchedNodes.map(n => n.node)], ['UNVERIFIED', 'NOT_ON_DUTY', ['node-b']]);
 });
 
 test('defect 15894c2a: trainNodesView takes on-mode facts /2 with a nodes list only; a malformed list is none', () => {
