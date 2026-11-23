@@ -1206,3 +1206,85 @@ test('fix1 item 7: an older host preparation: the cut-off host stage says its la
   assert.equal(h.result, 'aborted-in-progress');
   assert.deepEqual(h.lastStepLine, { name: 'node-key-check', result: 'ok', at: '2026-11-23T13:13:00.0000000+00:00' });
 });
+
+// ---------------------------------------------------------------- PR-2 of 87d330d0: the drill's time gates
+// (plan D:/w/tmp/FABLE-drill-role-probe-20261124.md §4.2 and §5 PR-2; cause D:/w/tmp/DIAG-drill-launcher-70min-20261124.md)
+// Generation 16 (2026.11.24-74bc5ef0) ran its fourth rung at the ceiling, 70 minutes, and ran out of time in the launcher
+// (DRILL_RUN_TIMEOUT, by the foreground). The next rung was 70 minutes again ('doubled-at-ceiling'): the same run, the same end. Now a run
+// that ran out of time at the ceiling refuses the next one, DRILL_LADDER_CEILING_EXHAUSTED, with the stage it stopped in.
+const GEN16_DIR = '20261123T201433Z-2026.11.24-74bc5ef0-52d496e7';
+const GEN16_VERSION = '2026.11.24-74bc5ef0';
+const GEN16_KIT = 'ddb7cd15a31dab917b5d195d48c5e201b1d55fe628ba4be1f714c0952241ec9a';
+test('PR-2 ceiling: the generation 16 receipt (70 minutes, out of time in the launcher) refuses the next rung, with where it stopped', opts, () => {
+  const runs = fs.mkdtempSync(path.join(tmp, 'ladder-gen16-'));
+  fs.mkdirSync(path.join(runs, GEN16_DIR));
+  fs.copyFileSync(fileURLToPath(new URL('./fixtures/drill-74bc5ef0-gen16-receipt.json', import.meta.url)), path.join(runs, GEN16_DIR, 'receipt.json'));
+  const out = ps(`try { Get-DrillLadderStep ${q(runs)} ${q(GEN16_VERSION)} ${q(GEN16_KIT)} } catch { $c = Get-DrillCode $_; [ordered]@{ code = $c.code; detail = $c.detail } }`);
+  assert.equal(out.code, 'DRILL_LADDER_CEILING_EXHAUSTED', JSON.stringify(out));
+  assert.equal(out.detail.stage, 'launcher', JSON.stringify(out.detail));
+  assert.deepEqual(out.detail.reached, { n: 10, stage: 'launcher', result: 'aborted-in-progress' });
+  assert.equal(out.detail.previousMinutes, 70);
+  assert.equal(out.detail.ceiling, 70);
+  assert.equal(out.detail.receipt, path.join(runs, GEN16_DIR, 'receipt.json'));
+});
+
+test('PR-2 ceiling: refused before the host hold; below the ceiling the same end still doubles; a pass at the ceiling runs again', opts, () => {
+  const order = ['assets', 'prereq', 'unpack', 'check', 'host-inputs', 'host', 'prepare', 'wsl-cold-start', 'launcher'];
+  const cut = (minutes, failure = foregroundStop(minutes)) => ladderReceipt({ minutes, failure, stages: [...order.slice(0, 8).map(s => [s, 'ok']), ['launcher', 'aborted-in-progress']] });
+  const { root, out } = ladderMain('ceiling-exhausted', [['20261123T201433Z-1.2.3-kkkkkkkk', cut(70)]]);
+  assert.equal(out.code, 'DRILL_LADDER_CEILING_EXHAUSTED', JSON.stringify(out));
+  assert.equal(out.holdMinutes, undefined, 'no hold asked for');
+  assert.equal(out.detail.stage, 'launcher');
+  assert.equal(out.detail.receipt, path.join(root, '20261123T201433Z-1.2.3-kkkkkkkk', 'receipt.json'));
+  // the guard's own report of the deadline is the same end; a stage in a state no timeline is written with does not run it again either
+  const guard = { code: 'DRILL_RUN_TIMEOUT', detail: { deadline: '2026-11-23T03:00:00Z' } };
+  assert.equal(ladderMain('ceiling-guard', [['20261123T201433Z-1.2.3-llllllll', cut(70, guard)]]).out.code, 'DRILL_LADDER_CEILING_EXHAUSTED');
+  const unclean = ladderReceipt({ minutes: 70, failure: foregroundStop(70), stages: [['assets', 'ok'], ['prereq', 'running']] });
+  assert.equal(ladderMain('ceiling-unclean', [['20261123T201433Z-1.2.3-mmmmmmmm', unclean]]).out.code, 'DRILL_LADDER_CEILING_EXHAUSTED');
+  // below the ceiling: 40 -> 70, as before
+  const below = ladderMain('ceiling-below', [['20261123T201433Z-1.2.3-nnnnnnnn', cut(40)]]).out;
+  assert.equal(below.holdMinutes, 70, JSON.stringify(below));
+  assert.equal(below.ladder.rule, 'doubled-at-ceiling');
+  // a run at the ceiling that passed, or ended another way, runs again at the ceiling
+  const passed = ladderReceipt({ minutes: 70, conclusion: 'PASS_A_FULL', stages: order.map(s => [s, 'ok']) });
+  assert.equal(ladderMain('ceiling-passed', [['20261123T201433Z-1.2.3-oooooooo', passed]]).out.holdMinutes, 70);
+  const aborted = cut(70, { code: 'DRILL_HOST_MEMORY_SHORT', detail: null });
+  assert.equal(ladderMain('ceiling-other', [['20261123T201433Z-1.2.3-pppppppp', aborted]]).out.holdMinutes, 70);
+});
+
+// ProgressGates.launcher had no gate ("the drill's first-train wait is silent for 1500 s by design"): generation 16's launcher log grew
+// last at install (516 s into the stage), then nothing for 1505 s, and the run ended on its 70-minute deadline. Now the launcher stage
+// stops after 10 minutes without a new line, or 25 minutes in the stage. Both hold for a launcher that writes no step-start line (plan
+// §5 PR-2): the longest silent step seen is linux-B, 221.75 s (20261123T193713Z-...-ad98eac7 and generation 16); the companion account
+// step is at most 8 minutes (plan §4.1); the whole stage after the fix about 17 minutes (8.6 + 0.5 + 0.2 + 8).
+test('PR-2 launcher gate: 11 minutes without a new launcher line stops; 9 minutes does not; 25 minutes in the stage stops', opts, () => {
+  const out = ps(`
+    $silent = [ordered]@{ stage = 'launcher'; stageMono = 0.0; growthMono = 0.0; lastGrowthAt = '2026-11-23T20:51:09Z'; failedPulls = 0 }
+    $growing = [ordered]@{ stage = 'launcher'; stageMono = 0.0; growthMono = 1440.0; lastGrowthAt = '2026-11-23T21:06:39Z'; failedPulls = 0 }
+    [ordered]@{ at9 = (Get-DrillProgressStop $silent 540); at11 = (Get-DrillProgressStop $silent 660)
+      growing24 = (Get-DrillProgressStop $growing 1490); growing25 = (Get-DrillProgressStop $growing 1500) }`);
+  assert.equal(out.at9, null, JSON.stringify(out.at9));
+  assert.equal(out.at11?.stage, 'launcher', JSON.stringify(out));
+  assert.equal(out.at11.reason, 'stalled');
+  assert.equal(out.at11.limitMinutes, 10);
+  assert.equal(out.at11.sinceGrowthSeconds, 660);
+  assert.equal(out.growing24, null, JSON.stringify(out.growing24));
+  assert.equal(out.growing25?.reason, 'stage-over-limit', JSON.stringify(out));
+  assert.equal(out.growing25.limitMinutes, 25);
+});
+
+test('PR-2 launcher gate: generation 16\'s launcher log replayed stops 10 minutes after install with DRILL_GUEST_NO_PROGRESS, not on the 70-minute deadline', opts, () => {
+  const line = (name, s) => JSON.stringify({ name, result: 'ok', rejectCode: null, detail: null, at: new Date(Date.parse(T0) + s * 1000).toISOString() });
+  const grow = [[153, 'linux-A'], [373, 'linux-B'], [374, 'linux-output-checked'], [516, 'install'], [2022, 'first-train-not-observed'], [2029, 'verify'], [2033, 'pause']]
+    .map(([s, name]) => [s, 'launcher.stdout.log', line(name, s)]);
+  const { r, runDir } = earlyStopRun('launcher-silent', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n',
+    'prepare.stdout.log': line('prepare', 0) + '\r\n', 'launcher.stdout.log': line('output', 0) + '\r\n' }, grow, fireAt: 4200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 4200 });
+  assert.equal(r.failure?.code, 'DRILL_GUEST_NO_PROGRESS', `stopped at ${r.now}s: ${JSON.stringify(r.failure)}`);
+  assert.equal(r.failure.detail.stage, 'launcher');
+  assert.equal(r.failure.detail.reason, 'stalled');
+  assert.ok(r.now >= 516 + 600 && r.now <= 516 + 600 + 2 * 30, `stopped within one tick of 10 minutes after install: ${r.now}s`);
+  assert.equal(r.guard, null, 'no emergency restore');
+  const progress = JSON.parse(fs.readFileSync(path.join(runDir, 'guest-progress.json'), 'utf8'));
+  assert.equal(progress.stop.stage, 'launcher');
+  assert.deepEqual(progress.gates.stages.launcher, { stallMinutes: 10, maxMinutes: 25 });
+});

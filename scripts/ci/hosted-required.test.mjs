@@ -89,12 +89,12 @@ test('只有 hosted-required.yml 的 Windows 套件步骤声明 CLUED_CI_HOST_LA
     .map(file => path.relative(root, file).replaceAll('\\', '/'));
   assert.deepEqual(elsewhere, [], '只有托管工作流可以声明主机缺的能力');
   assert.equal(text.split('CLUED_CI_HOST_LACKS').length, 2, 'hosted-required.yml 只声明一处');
-  const windows = jobs(text).get('ci-suites-windows') ?? '';
+  const windows = jobs(text).get('ci-suites-windows-shard') ?? '';
   const at = windows.indexOf('- name: Select and run the suites declared for Windows');
   assert.ok(at >= 0, 'Windows 套件步骤还在');
   const step = windows.slice(at).split(/\n {6}- /)[0];
   assert.match(step, /\n {10}CLUED_CI_HOST_LACKS: non-elevated\n/, '声明在 Windows 套件那一步的 env 里');
-  for (const [id, block] of jobs(text)) if (id !== 'ci-suites-windows') assert.doesNotMatch(block, /CLUED_CI_HOST_LACKS/, id);
+  for (const [id, block] of jobs(text)) if (id !== 'ci-suites-windows-shard') assert.doesNotMatch(block, /CLUED_CI_HOST_LACKS/, id);
 });
 
 // 任务 3435f8bf：作业级上限只兜底挂死，不当速度门。修可信侧的 PR 跑的是 main 的可信侧（选择、命令、test-env），
@@ -110,13 +110,13 @@ test(`跑 ci-required-selection --run/--run-selected 套件的托管作业 timeo
     assert.ok(Number(m[1]) >= SUITE_TIMEOUT_FLOOR, `${id} 的 timeout-minutes 是 ${m[1]}，低于 ${SUITE_TIMEOUT_FLOOR}`);
     checked.push(id);
   }
-  assert.deepEqual(checked.sort(), ['ci-suites', 'ci-suites-windows', 'clued-cloud-tests']);
+  assert.deepEqual(checked.sort(), ['ci-suites', 'ci-suites-windows-shard', 'clued-cloud-tests']);
 });
 
 // 任务 3435f8bf 块 1：托管 Windows 作业在跑套件前把镜像预热好的模块分析缓存复制到默认位置（快不快由
 // ps-execution-policy.test.mjs 的 V1 计时用例在托管上验）。它是辅助步骤，出错只能“不做”，不能让作业红。S8 删托管工作流时本条一起删。
 test('托管 Windows 作业在跑套件前预热默认分析缓存，且这一步失败不让作业红', () => {
-  const steps = (jobs(text).get('ci-suites-windows') ?? '').split(/\n {6}- /);
+  const steps = (jobs(text).get('ci-suites-windows-shard') ?? '').split(/\n {6}- /);
   const at = name => steps.findIndex(s => s.startsWith(`name: ${name}\n`));
   const warm = at('Warm the default PowerShell module analysis cache');
   assert.ok(warm > at('Configure job temporary storage') && at('Configure job temporary storage') > 0, '预热在配置临时存储之后');
@@ -124,6 +124,69 @@ test('托管 Windows 作业在跑套件前预热默认分析缓存，且这一�
   assert.match(steps[warm], /\n {8}continue-on-error: true\n/, '辅助步骤失败不挡作业');
   assert.match(steps[warm], /GetEnvironmentVariable\('PSModuleAnalysisCachePath', 'Machine'\)/);
   assert.match(steps[warm], /GetFolderPath\('LocalApplicationData'\)\) 'Microsoft\\Windows\\PowerShell\\ModuleAnalysisCache'/);
+});
+
+// ---- 任务 3435f8bf 块 4：Windows 套件分片（PLAN-hosted-windows-speed-20261123 §3.2、§4 V5；裁定 FABLE-hosted-b3-L2-ruling-20261124） ----
+// 分片作业跑同一份 --run-selected 计划的第 i/n 片；n 取 strategy.job-total，只在矩阵列表写一处。列表必须正好是 1..n：
+// 少写一个号（如 [1, 2, 4]）那一片就没人跑，汇总照样绿。S8 删托管工作流时这几条一起删。
+test('块 4：Windows 套件分片跑同一份 --run-selected 计划，片号正好 1..n，片数只写在矩阵列表', () => {
+  const shard = jobs(text).get('ci-suites-windows-shard') ?? '';
+  assert.match(shard, /^    name: \$\{\{ format\('hosted-ci-suites-windows-shard-\{0\}', matrix\.shard\) \}\}$/m);
+  assert.match(shard, /^    runs-on: windows-2025$/m);
+  assert.match(shard, /^    timeout-minutes: 90$/m);
+  const matrix = /\n    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[([0-9, ]+)\]\n/.exec(shard);
+  assert.ok(matrix, '矩阵是 strategy.fail-fast: false 加 matrix.shard 列表');
+  const shards = matrix[1].split(',').map(n => Number(n.trim()));
+  assert.deepEqual(shards, shards.map((_, i) => i + 1), `片号应为 1..n：${matrix[1]}`);
+  assert.equal(shards.length, 4);
+  const at = shard.indexOf('- name: Select and run the suites declared for Windows');
+  assert.ok(at >= 0, 'Windows 套件步骤还在');
+  const step = shard.slice(at).split(/\n {6}- /)[0];
+  assert.match(step, /\n {10}& node trusted\/scripts\/ci\/ci-required-selection\.mjs --run-selected ci-suites --root candidate --shard \$\{\{ matrix\.shard \}\}\/\$\{\{ strategy\.job-total \}\}\n {10}exit \$LASTEXITCODE\n/);
+  assert.equal(text.split('--shard ').length, 2, '整个工作流只有这一处 --shard');
+});
+
+// 必需检查 hosted-ci-suites-windows 是汇总作业：一个判断，别的都没有（裁定“块 4 汇总作业的要求”）。逐字钉住整个作业：
+// 多一步、多一个条件、换成读产物或调 API、把 always() 改掉（跳过的必需检查会被当成通过），都红。
+const SUMMARY_JOB = [
+  '    name: hosted-ci-suites-windows',
+  '    needs: ci-suites-windows-shard',
+  '    if: always()',
+  '    runs-on: ubuntu-24.04',
+  '    timeout-minutes: 5',
+  '    permissions: {}',
+  '    steps:',
+  '      - name: Every Windows suite shard succeeded',
+  '        env:',
+  '          RESULT: ${{ needs.ci-suites-windows-shard.result }}',
+  '          TMPDIR: ${{ runner.temp }}',
+  '          TMP: ${{ runner.temp }}',
+  '          TEMP: ${{ runner.temp }}',
+  '          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache',
+  '          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs',
+  '        run: |',
+  '          echo "hosted-ci-suites-windows-shard-*: $RESULT"',
+  '          test "$RESULT" = success',
+].join('\n');
+test('块 4：hosted-ci-suites-windows 是汇总作业，只有一步，只判分片作业的 result 是不是 success', () => {
+  const lines = (jobs(text).get('ci-suites-windows') ?? '').split('\n');
+  // 作业块末尾的空行和注释属于下一个作业的说明。
+  while (lines.length && (lines.at(-1).trim() === '' || lines.at(-1).trimStart().startsWith('#'))) lines.pop();
+  assert.equal(lines.join('\n'), SUMMARY_JOB);
+});
+
+// 时长作业只显红、不挡合入：名字不是任何必需检查（规则集要的是 hosted-ci-suites-windows，影子比对按名字配对七项）。
+test('块 4：时长作业非必需，不在影子比对的七项里，只读 actions，跑 hosted-windows-duration.mjs', async () => {
+  const block = jobs(text).get('ci-suites-windows-duration') ?? '';
+  assert.match(block, /^    name: hosted-ci-suites-windows-duration$/m);
+  assert.match(block, /^    needs: ci-suites-windows-shard$/m);
+  assert.match(block, /^    if: always\(\)$/m);
+  assert.match(block, /\n    permissions:\n      actions: read\n      contents: read\n    steps:\n/);
+  assert.match(block, /\n {8}run: node candidate\/scripts\/ci\/hosted-windows-duration\.mjs(?:\n|$)/);
+  const { PAIRS } = await import('./shadow-compare.mjs');
+  const paired = PAIRS.map(pair => pair.hosted.name);
+  assert.ok(paired.includes('hosted-ci-suites-windows'));
+  for (const name of ['hosted-ci-suites-windows-duration', 'hosted-ci-suites-windows-shard-1']) assert.ok(!paired.includes(name), name);
 });
 
 // ---- hosted-gitleaks = 自托管 R1 的区间扫描（PLAN-hosted-stale-base-20261123 第 2、3 节） ----
@@ -303,4 +366,13 @@ test('hosted-gitleaks 在旧 base 下 PR 带假密钥则红', { skip: noBash }, 
   const r = staleBaseRun({ 'src/h.js': LEAK });
   assert.notEqual(r.code, 0, r.out);
   assert.match(r.out, /gitleaks exited 1/);
+});
+
+// 块 4：汇总作业那一步原文真跑（与 GitHub 的 bash 同参数）：分片作业的 result 只有 success 退出 0；失败、取消、跳过、空值都红。
+test('块 4：汇总作业的判断真跑，只有分片作业 result 为 success 才退出 0', { skip: noBash }, () => {
+  const { run } = stepOf(jobs(text).get('ci-suites-windows'), 'Every Windows suite shard succeeded');
+  for (const [result, code] of [['success', 0], ['failure', 1], ['cancelled', 1], ['skipped', 1], ['', 1]]) {
+    const r = spawnSync(BASH, ['--noprofile', '--norc', '-eo', 'pipefail', '-c', run], { encoding: 'utf8', env: { ...process.env, RESULT: result } });
+    assert.equal(r.status, code, `${result || '(空)'}: ${r.stdout}${r.stderr}`);
+  }
 });

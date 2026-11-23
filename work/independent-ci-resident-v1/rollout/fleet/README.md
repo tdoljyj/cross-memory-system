@@ -63,7 +63,7 @@ node <解包目录>\tree\work\independent-ci-resident-v1\rollout\fleet\upgrade.m
 | `FLEET_NODE_UPGRADE_REQUESTED` | 已组装、预检通过、请求已投 | 等；再跑同一条命令看进度 |
 | `FLEET_NODE_UPGRADE_IN_PROGRESS` | 升级代理有操作在途（`op.state`、`op.confirmUrl`） | 等；`WAITING_GRANT` 且没开自动审批时 Owner 批一次 |
 | `FLEET_NODE_ALREADY_AT_THIS_PACKAGE` | 两侧都已是这个包 | 这台做完了 |
-| `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无 |
+| `FLEET_NODE_UPGRADE_PREPARED_NOT_REQUESTED` | `--no-request` | 无（演练：也不写 `.wslconfig`，`wslCapacity` 为 `skipped NOT_REQUESTED`） |
 | `FLEET_NODE_UPGRADE_NEEDS_REINSTALL` | 这台不能原地升（`code` 写明：通道变了、Source 引用变了、两侧不是同一个包、Linux 现场与记录不符） | 把该版资产放进一个目录，走第 5 节唯一入口 `fleet-node-<v>.bootstrap.ps1 -From <目录>` |
 | `FLEET_NODE_UPGRADE_HAND_OVER_FIRST` | 这台现在当班，没有发请求 | 其他节点都升好后加 `--allow-active-upgrade` 再跑（CI 暂停几分钟）；不能移交给已升级的节点（Source 不同，服务端拒绝） |
 | `FLEET_NODE_UPGRADE_PRECHECK_REFUSED` | 预检拒绝但不用重装 | 按 `precheck.advice` |
