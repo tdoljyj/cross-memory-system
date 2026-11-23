@@ -3898,6 +3898,63 @@ test('GuestInspect runs the commands of a plan that crossed the remote serializa
   assert.deepEqual(r.exits, [0, 0]);
 });
 
+// Plan 87d330d0 1.3 (PR-2): after a phase-A failure the probe's first command may be the one that wakes the instance; it reads the boot
+// without systemctl, bounded at 120 seconds of its own, and takes the journal by boot, never by a wall-clock time (S0b: it jumps across a
+// suspend, the monotonic clock does not).
+const PROBE_FILES = `-ImageIds @('sha256:${'a'.repeat(64)}') -Files @('/usr/bin/python3.12')`;
+test('the probe plan opens with guest-boot, bounded at 120 seconds of its own', opts, () => {
+  const r = ps(`$c = @(Get-DrillProbeCommands ${PROBE_FILES})
+    $plan = New-DrillProbePlan $c
+    [ordered]@{ first = $plan.commands[0].id; seconds = $plan.commands[0].seconds; others = @($plan.commands | Select-Object -Skip 1 | Where-Object { $null -ne $_['seconds'] } | ForEach-Object { $_.id }); each = $plan.commandSeconds }`);
+  assert.equal(r.first, 'guest-boot');
+  assert.equal(r.seconds, 120);
+  assert.deepEqual(r.others, [], 'every other command keeps the plan-wide bound');
+  assert.equal(r.each, 30);
+});
+
+test('guest-boot takes the journal by boot with monotonic stamps, never --since, and reads the scene without systemctl', opts, () => {
+  const s = ps(`(Get-DrillProbeCommands)[0].script`);
+  assert.doesNotMatch(s, /--since|--until/, 'a wall-clock time would jump across a suspend');
+  assert.match(s, /journalctl -b -1 -o short-monotonic\b/);
+  assert.match(s, /journalctl -b 0 -o short-monotonic\b/);
+  assert.match(s, /journalctl --list-boots/);
+  for (const k of ['uptime=', 'private=', 'pid1=', 'mem=', 'psi=']) assert.ok(s.includes(k), k);
+  assert.doesNotMatch(s, /systemctl|docker/, 'nothing that waits on systemd or docker');
+  // each journal reading bounded apart and its failure only noted, so the next still runs
+  assert.equal((s.match(/timeout \d+s journalctl/g) || []).length, 3);
+  assert.doesNotMatch(s, /&&|set -e/);
+});
+
+const probeNative = `$native = { param($exe, $argv, $secs, $enc)
+    $s = [string]$argv[[array]::IndexOf([string[]]$argv, '-c') + 1]
+    [IO.File]::AppendAllText($env:PROBE_SECS, [string]$secs + "\`n")
+    if ($env:PROBE_HANG -and $s -match $env:PROBE_HANG) { throw ('COMMAND_TIMEOUT_NOTHING_KILLED: wsl.exe') }
+    [pscustomobject]@{ exit = 0; stdout = 'ok'; stderr = '' } }`;
+test('GuestInspect hands each command its own bound: 120 for guest-boot, the plan-wide one for the rest', opts, () => {
+  const secs = path.join(tmp, 'probe-secs.txt');
+  const r = ps(`$env:PROBE_SECS = ${q(secs)}; ${probeNative}
+    $plan = New-DrillProbePlan @(Get-DrillProbeCommands ${PROBE_FILES}) 'C:\\nowhere\\wsl.exe'
+    $back = [Management.Automation.PSSerializer]::Deserialize([Management.Automation.PSSerializer]::Serialize($plan, 4))
+    $got = & $script:GuestInspect $back $native.ToString()
+    [ordered]@{ n = @($got.commands).Count; first = @($got.commands)[0].id; exits = @($got.commands | ForEach-Object { $_.exit } | Sort-Object -Unique) }`);
+  const got = fs.readFileSync(secs, 'utf8').trim().split('\n').map(Number);
+  assert.equal(got.length, r.n);
+  assert.equal(r.first, 'guest-boot');
+  assert.deepEqual(got, [120, ...Array(r.n - 1).fill(30)], 'after the remote round trip too');
+  assert.deepEqual(r.exits, [0]);
+});
+
+test('a guest-boot that times out counts toward maxTimeouts; the next timeout stops the rest', opts, () => {
+  const secs = path.join(tmp, 'probe-secs-hang.txt');
+  const r = ps(`$env:PROBE_SECS = ${q(secs)}; $env:PROBE_HANG = 'uptime=|sha256sum'; ${probeNative}
+    $plan = New-DrillProbePlan @(Get-DrillProbeCommands ${PROBE_FILES}) 'C:\\nowhere\\wsl.exe'
+    $got = & $script:GuestInspect $plan $native.ToString()
+    @($got.commands | ForEach-Object { if ($_.error -like 'COMMAND_TIMEOUT*') { 'timeout' } elseif ($_.error) { $_.error } else { 'ok' } })`);
+  assert.deepEqual(r.slice(0, 2), ['timeout', 'timeout'], 'guest-boot, then the file reading, run into their bounds');
+  assert.ok(r.length > 3 && r.slice(2).every(x => x === 'PROBE_STOPPED_AFTER_TIMEOUTS'), 'no command is started after the second');
+  assert.equal(fs.readFileSync(secs, 'utf8').trim().split('\n').length, 2);
+});
+
 const startedAt = '2026-11-16T02:00:00Z';
 const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bindings_created: 0, drill_liveness: 0, live_sources: [S] };
 const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });
