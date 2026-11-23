@@ -30,7 +30,7 @@ const windows = process.platform === 'win32';
 const PREFIX = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'];
 
 // What ResidentServiceHost.cs gives the node it starts, and so what node gives a child that passes nothing on: three variables.
-const serviceEnv = () => ({ SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR ?? process.env.SystemRoot, PATH: process.env.PATH, PSModuleAnalysisCachePath: path.join(process.env.TEMP ?? process.env.TMP, `clued-cold-analysis-cache-${process.pid}`) }); // TEMPORARY (3435f8bf head 1): a missing analysis cache file, so these PowerShells start cold
+const serviceEnv = () => ({ SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR ?? process.env.SystemRoot, PATH: process.env.PATH });
 function spawnLikeService(argv) {
   const r = spawnSync(argv[0], argv.slice(1), { env: serviceEnv(), encoding: 'utf8', windowsHide: true, timeout: 90_000 });
   return { code: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
