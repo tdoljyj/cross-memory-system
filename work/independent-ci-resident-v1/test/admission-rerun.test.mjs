@@ -28,6 +28,10 @@ const hostedWorkflow = { id: HOSTED_WORKFLOW, path: '.github/workflows/gitleaks.
 const extraSource = 'jobs:\n  admission-gate:\n  extra:\n    needs: admission-gate\n    name: additional-check\n';
 const readWorkflow = file => fs.readFile(new URL(`../../../${file}`, import.meta.url), 'utf8');
 const CHECK_NAMES = HEAVY.map(name => name.replace(/-skipped$/, ''));
+// R1 (FABLE-cicd-framework-v1 :87): the three scans are gated jobs of clued-required-tests.yml too, so the Linux workflow's
+// required set is the heavy three plus the scans (L3 pins it against the real workflow).
+const SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+const LINUX_REQUIRED = [...CHECK_NAMES, ...SCANS];
 const actionCheck = (name, o = {}) => ({ name, head_sha: HEAD, app: { id: 15368 }, ...o });
 const requiredRule = (...names) => ({ type: 'required_status_checks', parameters: {
   required_status_checks: names.map(context => ({ context, integration_id: 15368 })),
@@ -281,11 +285,12 @@ test('6be83331 L1: a settled staging run does not wait for workflows absent from
 test('6be83331 L3: the real workflows use the required-check naming convention', async () => {
   const { gatedCheckNames } = await import('../src/admission-rerun.mjs');
   const sources = await Promise.all(WORKFLOWS.map(w => readWorkflow(w.path)));
-  const required = [...CHECK_NAMES, 'ci-suites-windows'].sort();
+  const required = [...LINUX_REQUIRED, 'ci-suites-windows'].sort();
   for (const ending of ['\n', '\r\n']) {
     assert.deepEqual(sources.flatMap(source => gatedCheckNames(source.replace(/\r?\n/g, ending))).sort(), required);
   }
-  for (const file of ['gitleaks', 'trivy', 'contract-placement']) {
+  // The standalone scan workflows only post *-hosted-executor, never a name of the required set.
+  for (const file of SCANS) {
     const checks = gatedCheckNames(await readWorkflow(`.github/workflows/${file}.yml`));
     assert.ok(checks.length);
     assert.deepEqual(checks.filter(name => required.includes(name)), []);
