@@ -9,6 +9,7 @@ import { STATE_V2, stageByNumber } from '../resident-v2/layout.mjs';
 import { STAGE8_CHECK_MS, createProductionControlPublisherV2, queueWindow } from './publisher.mjs';
 import { GreenLedger } from './green-ledger.mjs';
 import { readStageTrainModeFact, trainPortsV2 } from './train-mode.mjs';
+import { readStageBatchRoute } from './batch-route.mjs';
 import { createClaimAssistNative } from './claim-assist-native.mjs';
 import { readStageTrainLandingFact } from './train-landing.mjs';
 import { createLandingPort } from './train-landing-port.mjs';
@@ -21,7 +22,9 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const batchClaim = await readBatchClaim(STATE_V2.batchClaims, jobs[0]);
     const { appKey, nativeToken, bindingId } = await controllerPrincipal(inputs.record);
     const log = observationLog(STATE_V2.effectsControl, jobs[0].id);
-    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log });
+    // bc982192: the batch's own route stamp from this stage directory (batch-route.mjs; none: main's tip is the batch base).
+    const batchRoute = await readStageBatchRoute(inputs.dir);
+    const ports = controllerPorts({ record: inputs.record, appKey, nativeToken, bindingId, policyText: held.policyText, sourceRoot, live, log, batchRoute });
     const { admission } = ports;
     const journal = await EffectJournal.open(STATE_V2.effectsControl);
     const github = publicationControllerGithub({ ports, jobs: inputs.jobs, journal, args, record: inputs.record, plan: inputs.plan });
@@ -39,7 +42,7 @@ export async function main(argv = process.argv.slice(2), output = process.stdout
     const landing = trainMode === 'on' && trainLanding.landing === 'push' && !trainLanding.unreadable ? createLandingPort({ repository: inputs.record.config.repository,
       repositoryId: FIXED_APP.repositoryId, appId: FIXED_APP.appId, installationId: FIXED_APP.installationId, privateKeyProvider: async () => appKey, fetchImpl: ports.fetchImpl }) : null;
     const publisher = createProductionControlPublisherV2({ github, journal, admission, assertLive: live, record: log, authority: authorityOf(inputs.record.accepted), batchClaim, greenLedger,
-      trainMode, trainModeUnreadable, ...train, trainLanding, landing,
+      trainMode, trainModeUnreadable, ...train, trainLanding, landing, batchRoute,
       // Generation 12 (resident DESIGN 56.4): join the merge queue and extend the lease with the CI identity (claim-assist-native.mjs).
       claimAssist: createClaimAssistNative({ config: inputs.record.config, fetchImpl: ports.fetchImpl, nativeToken }) });
     // The claim lease bound is read from the first live observation inside the wait; the outer bound is

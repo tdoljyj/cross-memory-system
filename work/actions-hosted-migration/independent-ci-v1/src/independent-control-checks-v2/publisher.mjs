@@ -171,7 +171,7 @@ function sourceBinding(job, packet, facts, authority) {
 // (github.mjs readPullsUpdatedSince). Any of them missing is "not proven", never a green.
 function engine({ github, journal, admission, assertLive, record, authority, batchClaim, greenLedger = null, trainMode = TRAIN_MODE_DEFAULT, trainModeUnreadable = false,
   slotNative = null, sweepStore = null, pullsUpdatedSince = null, clock = Date.now, sleep = ms => new Promise(r => setTimeout(r, ms)), claimAssist = null,
-  trainLanding = null, landing = null }, production) {
+  trainLanding = null, landing = null, batchRoute = null }, production) {
   const domain = production ? 'production' : 'fixture';
   // The green ledger is required where a green is written (publishPair), not here: the merge-gate consumer only reads (review M1).
   check(TRAIN_MODES.includes(trainMode) && (greenLedger === null || typeof greenLedger?.append === 'function'), 'CONTROL_PUBLISHER_CONFIGURATION_REFUSED');
@@ -545,7 +545,10 @@ function engine({ github, journal, admission, assertLive, record, authority, bat
         if (!TRAIN_WAITED.includes(train.reason)) { await extendOnce(); return { ready: false, reason: train.reason, polls, scheduling }; }
         lastTrain = train.reason;
       }
-      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
+      // bc982192: an S = H batch stamped push (its stage file batch-route.json, batch-route.mjs) runs on the merge base of its head and
+      // main, never main's tip; main moving past it ends nothing (the train front batch on the tip lands it). A front batch, and every
+      // batch without the stamp (github-merge, a missing or broken channel), still needs the tip, as on origin/main.
+      if (observed && typeof observed.mergeSlot?.tip === 'string' && observed.mergeSlot.tip !== slotJob.baseSha && !(batchRoute === 'push' && !isTrainFrontJobV2(slotJob))) return { ready: false, reason: 'RESIDENT_BASE_MOVED', polls, scheduling };
       if (observed && claimAssist) {
         await extendOnce();
         if (!joinAsked && scheduling?.mergeQueue?.entered === false) {
