@@ -455,7 +455,7 @@ function ConvertTo-JsonLine($value, [switch]$Progress) {
 # detail}. Enter-Step names the step that runs now: a refusal, a restart or an exception is printed as that step failed, before the
 # verdict. A step line never throws and never ends P1.
 # This stage's lines also carry at, the UTC time the step ended (Fable ruling 0e418483 section 4; ISO 8601, +00:00): two neighbouring lines
-# give a step's duration. bootstrap.ps1's and the launcher's lines do not carry it.
+# give a step's duration. bootstrap.ps1's lines do not carry it; the launcher's carry it and ms, its own monotonic milliseconds (task 87d330d0).
 function Get-StepLine([string]$name, [string]$result, $rejectCode, $detail) {
   $at = try { [DateTimeOffset]::UtcNow.ToString('o') } catch { $null }
   try { ConvertTo-JsonLine ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail; at = $at }) -Progress }

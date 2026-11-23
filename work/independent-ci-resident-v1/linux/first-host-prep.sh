@@ -45,6 +45,8 @@ DEBS=$1; LIST=$2; NODE_TGZ=$3; NODE_SHA=$4
 export DEBIAN_FRONTEND=noninteractive
 NODE=/var/lib/clued-independent-ci/toolchain-build-legacy-v1/node
 DAEMON=/etc/docker/daemon.json
+# the boot clock step 4 waits on
+UPTIME=/proc/uptime
 LOG=$(mktemp /root/clued-first-host-prep-XXXX.log)
 
 # 1. systemd as PID 1 (the WSL boot setting; a change needs a restart of this distribution only)
@@ -87,7 +89,44 @@ if [ "$missing" = 1 ]; then
 fi
 [ -x /usr/bin/python3.12 ] && [ -x /usr/bin/git ] && [ -x /usr/bin/docker ] || refuse EXECUTABLES_MISSING
 
-# 4. docker: the containerd image store, then enabled and active
+# 4. docker: systemd's manager answering first, then the containerd image store, then enabled and active
+#    On a cold boot of this distribution systemd may not answer yet (its bus not up), and every systemctl below would fail on that
+#    alone (task 87d330d0, 1.1 item 3). So first, read only: the manager's Version, once a second, for at most 180 seconds on the boot
+#    clock (UPTIME above; bash's SECONDS is the wall clock, which a suspended guest steps), whatever made a query fail (its message
+#    is never read). Then SYSTEMCTL_FAILED, the scene on stderr first as docker_ready writes it (reinstall/linux/first-install.py):
+#    the long parts first, the last query's own message and a short block after them, and the code last.
+sd_limit=180 sd_mark=0 sd_marked=$SECONDS sd_now=0 sd_t0=0 sd_rem=0
+sd_clock() { local s; if { IFS=. read -r s _ <"$UPTIME"; } 2>/dev/null && [[ $s =~ ^[0-9]+$ ]]; then sd_now=$s sd_mark=$s sd_marked=$SECONDS; else sd_now=$((sd_mark + SECONDS - sd_marked)); fi; }
+sd_clock; sd_t0=$sd_now
+while :; do
+  sd_clock; sd_rem=$((sd_limit - (sd_now - sd_t0)))
+  if [ "$sd_rem" -le 0 ]; then
+    {
+      echo "systemd_wait: SYSTEMCTL_FAILED; the scene:"
+      echo "-- journalctl -b 0, its last 40 lines:"
+      { timeout --signal=KILL 10s journalctl -b 0 -o short-monotonic --no-pager || echo "(journalctl: exit $?)"; } | tail -n 40
+      echo "-- ps, its first 25 lines:"
+      { timeout --signal=KILL 10s ps -eo pid,ppid,etimes,stat,comm --sort=start_time || echo "(ps: exit $?)"; } | head -n 25
+      echo "-- dmesg, its last 15 lines:"
+      { timeout --signal=KILL 10s dmesg || echo "(dmesg: exit $?)"; } | tail -n 15
+      timeout --signal=KILL 10s systemctl show -p ActiveState,SubState,Result,Job docker.service || echo "(systemctl show: exit $?)"
+      { timeout --signal=KILL 10s systemctl list-jobs --no-legend || echo "(systemctl list-jobs: exit $?)"; } | head -n 20
+      timeout --signal=KILL 10s systemctl is-system-running || echo "(systemctl is-system-running: exit $?)"
+      echo "-- the last query's stderr:"; tail -n 3 "$LOG" 2>/dev/null || :
+      echo "uptime=$(timeout --signal=KILL 10s cat "$UPTIME" 2>&1 || echo "(cat: exit $?)")"
+      if [ -S /run/systemd/private ]; then echo private=socket; elif [ -e /run/systemd/private ]; then echo private=not-a-socket; else echo private=absent; fi
+      echo "pid1=$(timeout --signal=KILL 10s sed -n 's/^State:[[:space:]]*//p' /proc/1/status 2>&1 || echo "(sed: exit $?)")"
+      sd_v=$(timeout --signal=KILL 10s free -m 2>&1) && sd_v=$(printf '%s\n' "$sd_v" | awk '/^Mem:/ { print $7 }') || sd_v="(free: exit $?)"
+      echo "mem=$sd_v"
+      sd_p=; for sd_k in cpu memory io; do sd_v=$(timeout --signal=KILL 10s sed -n 's/^some avg10=\([0-9.]*\).*/\1/p' "/proc/pressure/$sd_k" 2>/dev/null) && [ -n "$sd_v" ] || sd_v='?'; sd_p="$sd_p${sd_p:+ }$sd_k:$sd_v"; done
+      echo "psi=$sd_p"
+      echo "systemd_wait: SYSTEMCTL_FAILED after $((sd_now - sd_t0))s"
+    } >&2 || :
+    refuse SYSTEMCTL_FAILED
+  fi
+  timeout --signal=KILL "${sd_rem}s" systemctl show --property=Version >/dev/null 2>"$LOG" && break
+  sleep 1 || :
+done
 want_daemon='{"features":{"containerd-snapshotter":true}}'
 if [ -e "$DAEMON" ]; then
   /usr/bin/python3.12 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("features",{}).get("containerd-snapshotter") is True else 1)' "$DAEMON" \
