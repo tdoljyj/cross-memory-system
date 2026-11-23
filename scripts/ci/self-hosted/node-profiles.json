@@ -68,7 +68,7 @@
     "workstation-v1": {
       "description": "64 GB-class workstation; allow heavier parallel CI while preserving host headroom.",
       "minimum_host_memory_gb": 48,
-      "wsl_memory_gb": 28,
+      "wsl_memory_gb": 17,
       "wsl_processors": 16,
       "wsl_swap_gb": 8,
       "suspend_free_memory_gb": 6.0,
