@@ -299,7 +299,7 @@ function Read-EntryHelperEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]
       [pscustomobject]@{ TimeCreated = $_.TimeCreated; Id = $_.Id; LevelDisplayName = $(if ([string]$_.LevelDisplayName) { [string]$_.LevelDisplayName } else { (@{ 1 = 'Critical'; 2 = 'Error'; 3 = 'Warning'; 4 = 'Information' })[[int]$_.Level] }); Message = ([string]$_.ProviderName + ': ' + (@($_.Properties | ForEach-Object { [string]$_.Value }) -join ' ')) } })
   } catch {
     if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() }
-    else { , [pscustomobject]@{ TimeCreated = [datetime]::UtcNow; Id = 0; LevelDisplayName = 'Error'; Message = ('Application log unreadable: ' + $_.Exception.Message) } }
+    else { [pscustomobject]@{ TimeCreated = [datetime]::UtcNow; Id = 0; LevelDisplayName = 'Error'; Message = ('Application log unreadable: ' + $_.Exception.Message) } }
   }
 }
 
