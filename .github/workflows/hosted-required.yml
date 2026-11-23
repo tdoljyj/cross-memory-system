@@ -106,6 +106,7 @@ jobs:
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
           CLUED_UNDER_TEST: "1"
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
         run: node trusted/scripts/ci/ci-required-selection.mjs --run clued-cloud --root candidate
 
   ci-suites:
@@ -267,6 +268,7 @@ jobs:
         if: steps.select.outputs.run_production_schema == 'true'
         env:
           CLUED_UNDER_TEST: "1"
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
         run: node trusted/scripts/ci/ci-required-selection.mjs --run production-schema --root candidate
       - name: Not affected
         if: steps.select.outputs.run_production_schema != 'true'
