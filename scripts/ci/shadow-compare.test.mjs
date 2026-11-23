@@ -413,7 +413,7 @@ test('中间一个不一致：连续计数从它之后重新算', async () => {
   assert.equal(streak.met, false);
 });
 
-// S6 新退出判据（FABLE-s6-exit-shorten-20261122 §3 与补答，Decision efe2cee6）：连续 30 个 head、首尾相隔 ≥72 小时、逐项一致；
+// S6 新退出判据（FABLE-s6-exit-shorten-20261122 §3 与补答，Decision efe2cee6）：连续 30 个 head、逐项一致（Decision 67cea8f4 起不再要求首尾相隔 72 小时）；
 // 出自 ≥10 个已合入 PR；≥1 个非 Owner 推送的 head（pull_request 运行的 actor.login）；≥1 个 head 上同一项两边都红。
 // 同一组 head 序列，每次只拿掉一条。默认：30 个 head 按时间平均铺开，每 3 个一个 PR（1800…1809，最后一个是已合入 PR 的最终 head），
 // 第 16 个 head 由合 main 机器人推送，其余由 tdoljyj 推送（另带一次机器人的 workflow_dispatch，不算推送）；第 8 个 head 的 gitleaks 两边都红。
@@ -460,11 +460,27 @@ test('S6-a 30 个一致、跨满 72 小时、10 个已合入 PR、含一个机�
   assert.equal(streak.met, true);
 });
 
-test('S6-b 同一序列跨 71 小时：不算达成（天数按小时比，不四舍五入成 3 天）', async () => {
-  const streak = await exitStreak({ spanHours: 71 });
+test('S6-b 同一序列只跨 10 小时：照样达成（Decision 67cea8f4 去掉 72 小时下限；hours 只作信息）', async () => {
+  const streak = await exitStreak({ spanHours: 10 });
   assert.equal(streak.heads, 30);
+  assert.equal(streak.hours, 10);
+  assert.deepEqual(streak.unmet, []);
+  assert.equal(streak.met, true);
+  assert.ok(!streak.rule.includes('小时'));
+});
+
+test('S6-j 只跨 10 小时、只有 29 个 head：不算达成，未达项只有 head 数，不含小时字样', async () => {
+  const streak = await exitStreak({ heads: 29, spanHours: 10 });
   assert.equal(streak.met, false);
-  assert.deepEqual(streak.unmet, ['首尾相隔不足 72 小时']);
+  assert.deepEqual(streak.unmet, ['连续一致不足 30 个 head']);
+  assert.ok(!streak.unmet.join('').includes('小时'));
+});
+
+test('S6-k 只跨 10 小时、没有两边同红的 head：不算达成，未达项只有同红，不含小时字样', async () => {
+  const streak = await exitStreak({ spanHours: 10, bothRed: false });
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['没有两边同红的 head']);
+  assert.ok(!streak.unmet.join('').includes('小时'));
 });
 
 test('S6-c 只有 29 个 head、跨 8 天：不算达成', async () => {
@@ -518,7 +534,8 @@ test('S6-g 天数从第一个一致 head 起算：前面 5 小时的不一致 he
   assert.equal(streak.heads, 30);
   assert.equal(streak.hours, 71);
   assert.equal(streak.from, '2026-11-23T08:00:00+08:00');
-  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, []);
+  assert.equal(streak.met, true);
 });
 
 test('命令行：参数错退出 2；正常一行 JSON 退出 0；读不到 PR 列表输出 error 退出 1', async () => {
