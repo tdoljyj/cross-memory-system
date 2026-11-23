@@ -4537,11 +4537,38 @@ test('the drill takes wsl-cold-start.json into stage-evidence.json', opts, () =>
 // is deadlineSeconds / 60, the guard's deadline deadlineSeconds after the boot.
 const EARLY_ENTRY_LOG = '{"name":"assets","result":"ok","rejectCode":null,"detail":null}\r\n{"name":"prereq","result":"ok","rejectCode":null,"detail":null}\r\n';
 const earlyHostLine = (n) => JSON.stringify({ name: `host-step-${n}`, result: 'ok', rejectCode: null, detail: null, at: new Date(Date.parse(T0) + n * 1000).toISOString() });
-function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlineSeconds }) {
-  const runDir = fs.mkdtempSync(path.join(tmp, `early-stop-${name}-`));
+// Options past the first five (all off by default, as before):
+//   pullFail      a PowerShell condition over $script:now: the progress pull at that time does not answer (its job never completes)
+//   removeBlocks  Remove-Job on a job still running costs 300 s and is recorded (remove-running-job): a synchronous StopJob on a
+//                 PowerShell Direct job of a busy guest
+//   entryDoneAt   the entry returns at this second with FIRST_INSTALL_DONE (else it never returns)
+//   read          what the read after the install returns (an object)
+//   rebootNeverBack  after A7's reboot the guest does not come back: the wait takes the clock to this second and fails
+//   slowReadsAfter   from this second on, the evidence reads do not answer (the guard's deadline overtakes them)
+//   receipt       the run goes through the real Invoke-DrillPreparedRun into a runs directory (receipt.json), and the next run's
+//                 ladder step is derived from that receipt by the real Get-DrillLadderStep
+function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlineSeconds, pullFail = '$false', removeBlocks = false, entryDoneAt = null,
+    read = null, rebootNeverBack = null, slowReadsAfter = null, receipt = false }) {
+  const runsRoot = receipt ? fs.mkdtempSync(path.join(tmp, `early-stop-${name}-runs-`)) : null;
+  const runDir = receipt ? '' : fs.mkdtempSync(path.join(tmp, `early-stop-${name}-`));
   const guestDir = guestWorkDir(`early-stop-${name}-guest`, guest);
   const signal = path.join(tmp, `early-stop-${name}-signal`);
   const growPs = grow.map(([at, file, line]) => `@{ at = ${at}; file = ${q(file)}; line = ${q(line)}; done = $false }`).join(', ');
+  const doneLine = JSON.stringify({ status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe' });
+  const tail = receipt ? `
+    $Version = '1.2.3'; $script:Drill.Runs = ${q(runsRoot)}
+    function Invoke-DrillBaseline { @{ action = 'reuse' } }
+    $done = Invoke-DrillPreparedRun $window $package $earlyKit @{ sha256 = 'pin' }
+    $receipt = Read-DrillJson $done.receipt
+    $ladderStep = try { Get-DrillLadderStep ${q(runsRoot)} '1.2.3' 'kit-ladder' } catch { $c = Get-DrillCode $_; [ordered]@{ code = $c.code; detail = $c.detail } }
+    @{ failure = $receipt.failure; now = $script:now; events = @($script:events); timeline = $receipt.evidence.stageTimeline; ladder = $ladderStep; receipt = $done.receipt
+       runDir = (Split-Path -Parent $done.receipt) }` : `
+    $out = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun ${q(runDir)} $package $earlyKit $null $cred $window.deadline } ${q(runDir)} $window
+    $sf = Join-Path ${q(runDir)} 'stage-files.json'; $ge = Join-Path ${q(runDir)} 'guest-evidence.json'
+    @{ failure = $out.failure; restored = $out.restored; now = $script:now; events = @($script:events); guard = (Get-DrillGuardOutcome ${q(runDir)})
+       stageFiles = $(if (Test-Path -LiteralPath $sf) { Read-DrillJson $sf } else { $null }); guestEvidence = $(if (Test-Path -LiteralPath $ge) { Read-DrillJson $ge } else { $null })
+       files = @(Get-ChildItem -LiteralPath ${q(runDir)} -File | ForEach-Object { $_.Name })
+       timeline = $(if (Get-Command Get-DrillStageTimeline -ErrorAction SilentlyContinue) { Get-DrillStageTimeline ${q(runDir)} } else { $null }) }`;
   const r = ps(`
     $script:now = 0.0; $script:events = [Collections.Generic.List[string]]::new()
     $RunTimeoutMinutes = ${deadlineSeconds / 60}
@@ -4549,10 +4576,15 @@ function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlineSecond
     function Get-DrillMonotonicSeconds { [double]$script:now }
     $script:grow = @(${growPs})
     $script:fireAt = ${fireAt}; $script:fireCode = ${q(fireCode)}
+    $script:pullFail = { ${pullFail} }; $script:removeBlocks = ${removeBlocks ? '$true' : '$false'}
+    $script:entryDoneAt = ${entryDoneAt ?? '$null'}; $script:rebootNeverBack = ${rebootNeverBack ?? '$null'}; $script:slowReadsAfter = ${slowReadsAfter ?? '$null'}
+    $script:read = ${read ? `(${q(JSON.stringify(read))} | ConvertFrom-Json)` : '$null'}
+    $script:entryOut = [ordered]@{ lines = @(${q(doneLine)}); stderr = ''; exit = 0 }
+    $script:fakeRunDir = ${q(runDir)}
     function Update-FakeGuest { foreach ($g in $script:grow) { if (-not $g.done -and $g.at -le $script:now) { [IO.File]::AppendAllText((Join-Path ${q(guestDir)} $g.file), $g.line + [Environment]::NewLine); $g.done = $true } } }
     function Invoke-FakeGuard {
       $script:HostGuard.state.failure = @{ code = $script:fireCode; detail = 'fixture guard' }
-      Write-DrillJson (Join-Path ${q(runDir)} 'host-guard.json') ([ordered]@{ status = 'DRILL_ABORTED'; code = $script:fireCode; restoredToCheckpoint = $true; stopped = $true; cleanupDone = $true })
+      Write-DrillJson (Join-Path $script:fakeRunDir 'host-guard.json') ([ordered]@{ status = 'DRILL_ABORTED'; code = $script:fireCode; restoredToCheckpoint = $true; stopped = $true; cleanupDone = $true })
       $script:events.Add('guard-restore')
     }
     function Invoke-DrillPreBootRelease { param($HoldUntil) }
@@ -4561,6 +4593,7 @@ function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlineSecond
     function Assert-DrillHost { }
     function Get-DrillCredential { }
     function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint, $Window)
+      $script:fakeRunDir = $RunDir
       $script:HostGuard = @{ state = [hashtable]::Synchronized(@{ ready = $true; armed = $true; stop = $false; failure = $null; executorStates = [ordered]@{}; deadline = $Window.deadline }); pending = @{ IsCompleted = $false } }
       return $script:HostGuard
     }
@@ -4568,7 +4601,9 @@ function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlineSecond
     function Start-DrillBootWatchdog { @{ signal = ${q(signal)}; process = $null } }
     function Start-DrillGuardedVm { param($Watchdog) }
     function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $script:events.Add("restore:$RestoreCheckpoint"); $true }
-    function Wait-DrillGuest { param($Credential, $Minutes, $After) Assert-DrillGuard; [DateTimeOffset]${q(T0)} }
+    function Wait-DrillGuest { param($Credential, $Minutes, $After) Assert-DrillGuard
+      if ($null -ne $After -and $null -ne $script:rebootNeverBack) { $script:now = [double]$script:rebootNeverBack; $script:events.Add('reboot-not-back'); throw 'the guest did not come back (fixture)' }
+      [DateTimeOffset]${q(T0)} }
     function New-PSSession { param($VMName, $Credential) 'session' }
     function Remove-PSSession { param($Session) }
     function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
@@ -4579,33 +4614,39 @@ function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlineSecond
         $script:events.Add('vm-command'); return
       }
       $entry = [object]::ReferenceEquals($ScriptBlock, $script:GuestEntry)
-      $job = [pscustomobject]@{ entry = $entry; done = (-not $entry); failed = $false; result = $null }
-      if ([object]::ReferenceEquals($ScriptBlock, $script:GuestStageFiles)) { $script:events.Add('read:' + (@($ArgumentList[1]) -join ',')); $job.result = & $ScriptBlock ${q(guestDir)} $ArgumentList[1] }
+      $job = [pscustomobject]@{ entry = $entry; done = (-not $entry); failed = $false; result = $null; kind = 'step' }
+      $job | Add-Member -MemberType ScriptMethod -Name StopJobAsync -Value { $script:events.Add('stop-async:' + $this.kind) }
+      if ([object]::ReferenceEquals($ScriptBlock, $script:GuestStageFiles)) {
+        $names = @($ArgumentList[1])
+        $isPull = $names.Count -eq 5 -and $names -contains 'stage-progress.jsonl'
+        $job.kind = $(if ($isPull) { 'pull' } else { 'read' })
+        if ($isPull -and (& $script:pullFail)) { $job.done = $false; $script:events.Add('pull-no-answer'); return $job }
+        if (-not $isPull -and $null -ne $script:slowReadsAfter -and $script:now -ge $script:slowReadsAfter) { $job.done = $false; $script:events.Add('read-no-answer'); return $job }
+        $script:events.Add('read:' + ($names -join ',')); $job.result = & $ScriptBlock ${q(guestDir)} $ArgumentList[1] }
       elseif ([object]::ReferenceEquals($ScriptBlock, $script:GuestShutdownTimer)) { $job.result = $true }
-      elseif ($entry) { $script:events.Add('entry') }
+      elseif ([object]::ReferenceEquals($ScriptBlock, $script:GuestRead)) { $job.result = $script:read }
+      elseif ($entry) { $job.kind = 'entry'; $script:events.Add('entry') }
       return $job
     }
     function Wait-Job { param($Job, $Timeout)
       if ($Job.done) { return $Job }
       $step = [double]$Timeout
       if ($null -ne $script:fireAt) { $step = [Math]::Min($step, [Math]::Max(0, $script:fireAt - $script:now)) }
+      if ($Job.entry -and $null -ne $script:entryDoneAt) { $step = [Math]::Min($step, [Math]::Max(0, $script:entryDoneAt - $script:now)) }
       $script:now += $step; Update-FakeGuest
       if ($null -ne $script:fireAt -and $script:now -ge $script:fireAt -and -not $script:HostGuard.state.failure) { Invoke-FakeGuard; $Job.failed = $true; $Job.done = $true; return $Job }
+      if ($Job.entry -and $null -ne $script:entryDoneAt -and $script:now -ge $script:entryDoneAt) { $Job.done = $true; $Job.result = $script:entryOut; $script:events.Add('entry-done'); return $Job }
       return $null
     }
     function Receive-Job { param($Job, $ErrorAction) if ($Job.failed) { throw 'The virtual machine is not running (fixture)' }; $Job.result }
-    function Remove-Job { param($Job, [switch]$Force, $ErrorAction) }
+    function Remove-Job { param($Job, [switch]$Force, $ErrorAction)
+      if ($script:removeBlocks -and -not $Job.done) { $script:events.Add('remove-running-job:' + $Job.kind); $script:now += 300 } }
     $script:Interactive = $false; $script:SkipReinstall = $true
-    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab' }
-    $earlyKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 240; prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
+    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; ciSourceManifestSha256 = ('5' * 64); firstInstallKitSha256 = ('7' * 64); candidate = $false }
+    $earlyKit = [pscustomobject]@{ sha256 = 'kit-ladder'; dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 240; prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
     $window = @{ safeToResume = $true; deadline = ([DateTimeOffset]${q(T0)}).AddSeconds(${deadlineSeconds}); holdUntil = [DateTimeOffset]::MinValue }
-    $out = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun ${q(runDir)} $package $earlyKit $null $cred $window.deadline } ${q(runDir)} $window
-    $sf = Join-Path ${q(runDir)} 'stage-files.json'; $ge = Join-Path ${q(runDir)} 'guest-evidence.json'
-    @{ failure = $out.failure; restored = $out.restored; now = $script:now; events = @($script:events); guard = (Get-DrillGuardOutcome ${q(runDir)})
-       stageFiles = $(if (Test-Path -LiteralPath $sf) { Read-DrillJson $sf } else { $null }); guestEvidence = $(if (Test-Path -LiteralPath $ge) { Read-DrillJson $ge } else { $null })
-       files = @(Get-ChildItem -LiteralPath ${q(runDir)} -File | ForEach-Object { $_.Name })
-       timeline = $(if (Get-Command Get-DrillStageTimeline -ErrorAction SilentlyContinue) { Get-DrillStageTimeline ${q(runDir)} } else { $null }) }`);
-  return { r, runDir, guestDir };
+    ${tail}`);
+  return { r, runDir: runDir || r.runDir, guestDir };
 }
 
 // Block A test 1: the entry never returns and its logs stop growing. Before: the run waited for the guard's deadline (70 minutes) and every
@@ -4750,14 +4791,13 @@ test('block A 5: a 10-minute run ends on the foreground deadline, evidence first
 test('block A 6: a stage aborted half-way: the timeline has a conclusion for every finished stage and marks the current one cut off in progress', opts, () => {
   const entryOut = fs.mkdtempSync(path.join(tmp, 'stage-progress-entry-'));
   fs.writeFileSync(path.join(entryOut, 'host.stdout.log'), earlyHostLine(1) + '\r\n');
-  entryPs(`$script:EntryStageOutput = ${q(entryOut)}; $m = New-EntryMeasurements; $c = New-EntryPhaseClock
-    foreach ($n in @('assets', 'prereq', 'unpack', 'check')) { Enter-EntryPhase $m $c $n }
-    Enter-EntryPhase $m $c ''
+  entryPs(`$script:EntryStageOutput = ${q(entryOut)}
+    foreach ($n in @('assets', 'prereq', 'unpack', 'check', 'host-inputs')) { Start-EntryStage $n }
     Start-EntryStage 'host' (Join-Path ${q(entryOut)} 'host.stdout.log'); $true`);
   const record = fs.readFileSync(path.join(entryOut, 'stage-progress.jsonl'), 'utf8');
   const lines = record.trim().split('\n').map(l => JSON.parse(l));
   assert.deepEqual(lines.map(l => `${l.stage}:${l.event}:${l.result}`), ['assets:start:running', 'assets:end:ok', 'prereq:start:running', 'prereq:end:ok',
-    'unpack:start:running', 'unpack:end:ok', 'check:start:running', 'check:end:ok', 'host:start:running']);
+    'unpack:start:running', 'unpack:end:ok', 'check:start:running', 'check:end:ok', 'host-inputs:start:running', 'host-inputs:end:ok', 'host:start:running']);
   for (const l of lines) for (const k of ['stage', 'startedAt', 'endedAt', 'result', 'code', 'tail']) assert.ok(k in l, `${k} in ${JSON.stringify(l)}`);
 
   const grow = Array.from({ length: 10 }, (_, i) => [(i + 1) * 60, 'host.stdout.log', earlyHostLine(100 + (i + 1) * 60)]);
@@ -4766,9 +4806,10 @@ test('block A 6: a stage aborted half-way: the timeline has a conclusion for eve
   assert.equal(r.failure.code, 'DRILL_HOST_MEMORY_SHORT');
   assert.equal(r.timeline.source, 'stage-progress');
   assert.equal(r.timeline.abortedIn, 'host');
-  assert.deepEqual(r.timeline.stages.map(s => `${s.n}:${s.stage}:${s.result}`), ['1:assets:ok', '2:prereq:ok', '3:unpack:ok', '4:check:ok', '5:host:aborted-in-progress']);
-  assert.equal(r.timeline.stages[4].label, '进行中被中止');
-  for (const s of r.timeline.stages.slice(0, 4)) assert.ok(s.startedAt && s.endedAt, JSON.stringify(s));
+  // the host's own stage before the entry (copy-in) comes first; the entry's stages follow
+  assert.deepEqual(r.timeline.stages.map(s => `${s.n}:${s.stage}:${s.result}`), ['1:copy-in:ok', '2:assets:ok', '3:prereq:ok', '4:unpack:ok', '5:check:ok', '6:host-inputs:ok', '7:host:aborted-in-progress']);
+  assert.equal(r.timeline.stages[6].label, '进行中被中止');
+  for (const s of r.timeline.stages.slice(0, 6)) assert.ok(s.startedAt && s.endedAt, JSON.stringify(s));
 
   // a stage that ended on a stop: its conclusion and code, then A1's own result
   entryPs(`$script:EntryStageOutput = ${q(entryOut)}; $script:EntryStageOpen = @{ stage = 'host'; startedAt = '2026-11-21T03:00:00Z'; log = (Join-Path ${q(entryOut)} 'host.stdout.log') }
@@ -4778,9 +4819,9 @@ test('block A 6: a stage aborted half-way: the timeline has a conclusion for eve
   fs.writeFileSync(path.join(runDir, 'entry-result.json'), JSON.stringify({ exitCode: 1, status: 'FIRST_INSTALL_STOPPED', stopCode: 'HOST_PREPARATION_NOT_DONE', tree: '', node: '', parsed: true }));
   const t = ps(`Get-DrillStageTimeline ${q(runDir)}`);
   assert.equal(t.abortedIn, null);
-  assert.deepEqual(t.stages.map(s => `${s.stage}:${s.result}:${s.code ?? ''}`), ['assets:ok:', 'prereq:ok:', 'unpack:ok:', 'check:ok:',
+  assert.deepEqual(t.stages.map(s => `${s.stage}:${s.result}:${s.code ?? ''}`), ['assets:ok:', 'prereq:ok:', 'unpack:ok:', 'check:ok:', 'host-inputs:ok:',
     'host:failed:HOST_PREPARATION_NOT_DONE', 'A1-entry-result:failed:HOST_PREPARATION_NOT_DONE']);
-  assert.deepEqual(t.stages[4].tail, [earlyHostLine(1)]);
+  assert.deepEqual(t.stages[5].tail, [earlyHostLine(1)]);
 });
 
 // Ladder mode (coordinator, Owner 11-23: "先把每段结论传回来，再慢慢梯度测试，把黑盒逐步切成明盒；梯度时限要做进代码，不能靠人记").
@@ -4858,7 +4899,7 @@ test('ladder 3: stopped on the foreground deadline with the last stage cut off a
   assert.equal(top.holdMinutes, 70, JSON.stringify(top));
   assert.equal(top.ladder.rule, 'doubled-at-ceiling');
   assert.equal(top.ladder.ceiling, 70);
-  // an earlier stage that did not end ok: not lengthened
+  // a stage in a state no timeline is written with ('running' is always closed as cut off): not lengthened
   const unclean = ladderReceipt({ minutes: 20, failure: foregroundStop(20), stages: [['assets', 'ok'], ['prereq', 'running'], ['unpack', 'aborted-in-progress']] });
   assert.equal(ladderMain('double-unclean', [['20261123T020000Z-1.2.3-hhhhhhhh', unclean]]).out.holdMinutes, 20);
   // this run's receipt carries its limit and the step it came from
@@ -4886,4 +4927,348 @@ test('ladder 5: the earlier run stopped on a no-progress gate: refused, with the
   assert.equal(out.detail.stage, 'host');
   assert.equal(out.detail.reason, 'stalled');
   assert.equal(out.detail.receipt, path.join(root, '20261123T050000Z-1.2.3-jjjjjjjj', 'receipt.json'));
+});
+
+// ---------------------------------------------------------------- fix round 1 of 87d330d0 (D:/w/tmp/REVIEW-drill-early-stop-20261123.md)
+// The real Invoke-FirstInstallAccepted of first-install-entry.ps1, over a release whose bootstrap is a stand-in: the bootstrap's helpers
+// answer as told (the check's exit, whether an input is local), the injected prerequisites are real files hashed for real, and the tar
+// is a command that exits 0. snapAt: 'gap' (the first local copy after the check's verdict) or a tool name (its expansion) -- there the
+// stage record as it stands is copied aside (what a pull at that moment brings back); snapStop: the entry stops right after.
+function entryAccepted(name, { checkExit = 0, underDir = true, snapAt = '', snapStop = false } = {}) {
+  const root = fs.mkdtempSync(path.join(tmp, `entry-accepted-${name}-`));
+  const [assets, payload, fake, out, work, cred] = ['assets', 'payload', 'fake', 'out', 'work', 'cred'].map(d => { const p = path.join(root, d); fs.mkdirSync(p); return p; });
+  const tar = path.join(root, 'tar.cmd'); fs.writeFileSync(tar, '@exit /b 0\r\n');
+  const snap = path.join(root, 'snapshot.jsonl');
+  const file = (n, text) => { fs.writeFileSync(path.join(payload, n), text); return { sha256: sha(Buffer.from(text)), bytes: Buffer.byteLength(text) }; };
+  const items = [['wsl', 'wsl.msi', 'w'.repeat(40)], ['node', 'node.zip', 'n'.repeat(50)], ['python', 'python.zip', 'p'.repeat(60)], ['git', 'git.zip', 'g'.repeat(70)]]
+    .map(([n, f, text]) => ({ name: n, fileName: f, maxEntryPathLength: 10, ...file(f, text) }));
+  const debs = [{ fileName: 'a.deb', ...file('a.deb', 'd'.repeat(30)) }];
+  fs.writeFileSync(path.join(assets, 'fleet-node-1.2.3.prereq-manifest.json'), JSON.stringify({ items, debs }));
+  for (const n of ['SHA256SUMS', 'fleet-node-1.2.3.first-install.SHA256SUMS', 'fleet-node-1.2.3.tar']) fs.writeFileSync(path.join(assets, n), '');
+  fs.writeFileSync(path.join(assets, 'fleet-node-1.2.3.bootstrap.ps1'), `param([string]$From)
+$ReceiptFile = ${q(path.join(root, 'no-install-receipt.json'))}
+$WorkParent = ${q(work)}
+$TarExe = ${q(tar)}
+$CredentialDirectory = ${q(cred)}
+$PowerShellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+$HostLimitSeconds = 60; $LauncherLimitSeconds = 60
+function Save-FixtureSnapshot([string]$At) {
+  if ($global:SnapAt -cne $At -or $global:SnapTaken) { return }
+  [IO.File]::Copy(${q(path.join(out, 'stage-progress.jsonl'))}, ${q(snap)}, $true); $global:SnapTaken = $true
+  if ($global:SnapStop) { throw 'FIXTURE_STOPPED_AFTER_SNAPSHOT' }
+}
+function Get-ReleaseVersion($Names) { '1.2.3' }
+function Read-Sha256Sums([string]$Text) { @{} }
+function Test-AssetSet { @() }
+function Test-PrereqManifest { @() }
+function Get-NeededPrereqs { @() }
+function Sha256File([string]$P) { (Get-FileHash -LiteralPath $P -Algorithm SHA256).Hash.ToLowerInvariant() }
+function Get-Key($O, [string]$K) { if ($O.ContainsKey($K)) { $O[$K] } else { $null } }
+function Get-Prereq($Item, [string]$Dest) { throw 'FIXTURE_NOT_INJECTED' }
+function Expand-Cached([string]$Zip, [string]$Name, [string]$Sha256, $Max) {
+  Save-FixtureSnapshot $Name
+  $exe = @{ node = 'node.exe'; python = 'python.exe'; git = 'cmd\\git.exe' }[$Name]
+  $dir = Join-Path ${q(work)} ('tools-' + $Name); $f = Join-Path $dir $exe
+  [void][IO.Directory]::CreateDirectory((Split-Path -Parent $f)); [IO.File]::WriteAllText($f, 'x'); $dir
+}
+function Invoke-NonElevated($Exe, $Arguments, $EnvAdd) { @{ exit = $global:CheckExit; last = @{ kitSha256 = 'k'; toolchainNodeSha256 = 't'; registrarSha256 = 'r' } } }
+function Test-FirstInstallCheck { ,@() }
+function Copy-ToWork([string]$Source, [string]$Dir, [string]$Sha256) { Save-FixtureSnapshot 'gap'; Join-Path $Dir (Split-Path -Leaf $Source) }
+function Test-UnderDirectory($P, $Root) { $global:UnderDir }
+function Clear-CredentialDirectory([string]$Dir) { @{ cleared = $true } }
+`);
+  const thrown = entryPs(`$global:CheckExit = ${checkExit}; $global:UnderDir = ${underDir ? '$true' : '$false'}; $global:SnapAt = ${q(snapAt)}; $global:SnapStop = ${snapStop ? '$true' : '$false'}; $global:SnapTaken = $false
+    try { [void](Invoke-FirstInstallAccepted ${q(assets)} ${q(payload)} ${q(fake)} ${q(out)} '1.2.3'); 'RETURNED' } catch { [string]$_.Exception.Message }`);
+  const read = f => fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null;
+  return { thrown, record: read(path.join(out, 'stage-progress.jsonl')), snapshot: read(snap), items, debs };
+}
+// The receipt's stage timeline over a run directory holding the entry's record (and its result, when it gave one).
+function timelineOf(name, record, entryResult = null) {
+  const runDir = fs.mkdtempSync(path.join(tmp, `timeline-${name}-`));
+  fs.writeFileSync(path.join(runDir, 'stage-progress.jsonl'), record);
+  if (entryResult) fs.writeFileSync(path.join(runDir, 'entry-result.json'), JSON.stringify(entryResult));
+  return ps(`Get-DrillStageTimeline ${q(runDir)}`);
+}
+const stoppedResult = code => ({ exitCode: 1, status: 'FIRST_INSTALL_STOPPED', stopCode: code, tree: '', node: '', parsed: true });
+const rows = t => t.stages.map(s => `${s.stage}:${s.result}${s.code ? ':' + s.code : ''}`);
+
+// Review medium 2: the check stage was ended ok before its own verdict (and the second extraction before its own), and the time between
+// check and host belonged to no stage, so a stop there (ELEVATED_INPUT_NOT_LOCAL, DRILL_CREDENTIAL_INPUT_ACL_REFUSED, ...) reached no
+// stage at all. Now a stage ends after its verdict, the next stage's start is the only other end, and the inputs for the host stage are
+// a stage of their own (host-inputs): the entry's stop code is on exactly the stage it stopped in.
+test('fix1 medium 2: a check that fails ends the check stage failed with its code; a stop between check and host is on host-inputs', opts, () => {
+  const check = entryAccepted('check-fails', { checkExit: 1 });
+  assert.equal(check.thrown, 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED');
+  const t = timelineOf('check-fails', check.record, stoppedResult(check.thrown));
+  const entryStages = t.stages.filter(s => s.stage !== 'A1-entry-result');
+  assert.deepEqual(entryStages.filter(s => s.result === 'failed').map(s => `${s.stage}:${s.code}`), ['check:FIRST_INSTALL_INPUTS_NOT_ACCEPTED'], JSON.stringify(rows(t)));
+  assert.ok(!rows(t).includes('check:ok'), 'check is not ok: ' + JSON.stringify(rows(t)));
+
+  const gap = entryAccepted('gap-stop', { underDir: false });
+  assert.equal(gap.thrown, 'ELEVATED_INPUT_NOT_LOCAL');
+  const g = timelineOf('gap-stop', gap.record, stoppedResult(gap.thrown));
+  assert.deepEqual(g.stages.filter(s => s.stage !== 'A1-entry-result' && s.result === 'failed').map(s => `${s.stage}:${s.code}`), ['host-inputs:ELEVATED_INPUT_NOT_LOCAL'], JSON.stringify(rows(g)));
+  assert.ok(rows(g).includes('check:ok'), 'the check passed: ' + JSON.stringify(rows(g)));
+  // every stage the entry entered was ended, in order, each start right after the end before it (no time between stages)
+  const lines = gap.record.trim().split('\n').map(l => JSON.parse(l)).filter(l => l.event === 'start' || l.event === 'end');
+  assert.deepEqual(lines.map(l => l.event), lines.map((_, i) => i % 2 ? 'end' : 'start'), 'start, end, start, end ...: ' + JSON.stringify(lines.map(l => `${l.stage}:${l.event}`)));
+  for (let i = 1; i < lines.length; i += 2) assert.equal(lines[i].stage, lines[i - 1].stage);
+});
+
+// Review high 1 / coordinator's fourth case: the ladder stuck at one rung. Each case is a real run (Invoke-DrillPreparedRun, its
+// receipt.json in a runs directory) and the next run's step comes from that receipt (Get-DrillLadderStep): the time ran out with no stage
+// failed and no gate fired, so the limit doubles -- wherever the time ran out.
+test('fix1 high 1 (coordinator): the two real ladder receipts of 2026.11.23-d5da6825 (the guard reported the timeout) double', opts, () => {
+  const fixture = n => fileURLToPath(new URL(`./fixtures/drill-d5da6825-ladder-r${n}-receipt.json`, import.meta.url));
+  const runs = fs.mkdtempSync(path.join(tmp, 'ladder-real-'));
+  const put = (dir, n) => { fs.mkdirSync(path.join(runs, dir)); fs.copyFileSync(fixture(n), path.join(runs, dir, 'receipt.json')); };
+  put('20261123T123642Z-2026.11.23-d5da6825-68345a7d', 1);
+  const kit = '30a13f165c92cf6725e9ef006dd6e36c850aca9909998ce6fb2fd30280e096d4';
+  const step = () => ps(`try { Get-DrillLadderStep ${q(runs)} '2026.11.23-d5da6825' ${q(kit)} } catch { $c = Get-DrillCode $_; [ordered]@{ code = $c.code; detail = $c.detail } }`);
+  const first = step();
+  assert.equal(first.rule, 'doubled', JSON.stringify(first));
+  assert.equal(first.minutes, 20);
+  assert.deepEqual(first.reached, { n: 2, stage: 'prereq', result: 'aborted-in-progress' });
+  put('20261123T124737Z-2026.11.23-d5da6825-b48d6dab', 2);
+  const second = step();
+  assert.equal(second.rule, 'doubled', JSON.stringify(second));
+  assert.equal(second.minutes, 20);
+  assert.equal(second.basis, path.join(runs, '20261123T124737Z-2026.11.23-d5da6825-b48d6dab', 'receipt.json'));
+});
+
+test('fix1 high 1 (a): the time runs out between check and host (the entry preparing the host inputs): doubled', opts, () => {
+  const e = entryAccepted('gap-snapshot', { snapAt: 'gap', snapStop: true });
+  assert.equal(e.thrown, 'FIXTURE_STOPPED_AFTER_SNAPSHOT');
+  const { r } = earlyStopRun('ladder-gap', { guest: { 'first-install.stdout.log': '', 'stage-progress.jsonl': e.snapshot },
+    fireAt: 600 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 600, receipt: true });
+  assert.equal(r.failure.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(r.failure));
+  assert.equal(r.ladder.rule, 'doubled', `timeline ${JSON.stringify(rows(r.timeline))}; step ${JSON.stringify(r.ladder)}`);
+  assert.equal(r.ladder.minutes, 20);
+  assert.equal(r.timeline.abortedIn, 'host-inputs', JSON.stringify(rows(r.timeline)));
+});
+
+test('fix1 high 1 (b): the first install ended done and the time runs out in A7 (the guest not back from its reboot): doubled', opts, () => {
+  const record = fs.mkdtempSync(path.join(tmp, 'done-record-'));
+  entryPs(`$script:EntryStageOutput = ${q(record)}
+    foreach ($n in @('assets', 'prereq', 'unpack', 'check', 'host-inputs', 'host', 'prepare', 'wsl-cold-start', 'launcher')) { Start-EntryStage $n }
+    Stop-EntryStage 'ok'; $true`);
+  const read = { status: { writtenAt: T0, node: { mode: 'ACTIVE' } }, current: { version: '1.2.3' }, facts: null, pause: null, verify: { status: 'PASSED' }, readAt: T0 };
+  const { r } = earlyStopRun('ladder-a7', { guest: { 'first-install.stdout.log': '', 'stage-progress.jsonl': fs.readFileSync(path.join(record, 'stage-progress.jsonl'), 'utf8') },
+    entryDoneAt: 120, read, rebootNeverBack: 430, fireAt: 600 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 600, receipt: true });
+  assert.equal(r.failure.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(r.failure));
+  assert.ok(r.events.includes('reboot-not-back'), JSON.stringify(r.events));
+  assert.ok(rows(r.timeline).includes('A1-entry-result:ok:FIRST_INSTALL_DONE'), JSON.stringify(rows(r.timeline)));
+  assert.equal(r.ladder.rule, 'doubled', `timeline ${JSON.stringify(rows(r.timeline))}; step ${JSON.stringify(r.ladder)}`);
+  assert.equal(r.ladder.minutes, 20);
+  assert.equal(r.timeline.abortedIn, 'A7-reboot', JSON.stringify(rows(r.timeline)));
+});
+
+test('fix1 high 1 (c): a kit whose entry writes no stage record (stage logs only), cut off in the host stage: doubled', opts, () => {
+  const grow = Array.from({ length: 30 }, (_, i) => [(i + 1) * 60, 'host.stdout.log', earlyHostLine(100 + (i + 1) * 60)]);
+  const { r } = earlyStopRun('ladder-old-kit', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n' },
+    grow, fireAt: 1200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 1200, receipt: true });
+  assert.equal(r.failure.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(r.failure));
+  assert.equal(r.timeline.source, 'stage-logs');
+  assert.equal(r.ladder.rule, 'doubled', `timeline ${JSON.stringify(rows(r.timeline))}; step ${JSON.stringify(r.ladder)}`);
+  assert.equal(r.ladder.minutes, 40);
+  assert.equal(r.timeline.abortedIn, 'host');
+});
+
+test('fix1 high 1 (d): the evidence reads outlast the window and the guard reports the timeout (the real rounds): doubled', opts, () => {
+  const record = fs.mkdtempSync(path.join(tmp, 'prereq-record-'));
+  entryPs(`$script:EntryStageOutput = ${q(record)}; Start-EntryStage 'assets'; Start-EntryStage 'prereq'; $true`);
+  const { r } = earlyStopRun('ladder-guard', { guest: { 'first-install.stdout.log': '', 'stage-progress.jsonl': fs.readFileSync(path.join(record, 'stage-progress.jsonl'), 'utf8') },
+    slowReadsAfter: 400, fireAt: 600 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 600, receipt: true });
+  assert.equal(r.failure.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(r.failure));
+  assert.notEqual(r.failure.detail?.by, 'foreground', 'the guard reported it: ' + JSON.stringify(r.failure));
+  assert.equal(r.ladder.rule, 'doubled', `timeline ${JSON.stringify(rows(r.timeline))}; step ${JSON.stringify(r.ladder)}`);
+  assert.equal(r.ladder.minutes, 20);
+});
+
+// Review medium 3: a pull that did not answer counted as "no growth". Now the gate is judged only on a tick whose pull answered;
+// pulls that fail are counted on their own (consecutiveFailedPulls, failedPulls) and never stop the run by themselves.
+test('fix1 medium 3: pulls that never answer do not stop the run as no progress; it ends on its own deadline', opts, () => {
+  const { r, runDir } = earlyStopRun('pull-fails', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n' },
+    pullFail: '$true', fireAt: 4200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 4200 });
+  assert.equal(r.failure?.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(r.failure));
+  assert.equal(r.failure.detail.by, 'foreground');
+  const p = JSON.parse(fs.readFileSync(path.join(runDir, 'guest-progress.json'), 'utf8'));
+  assert.equal(p.stop, null);
+  assert.ok(p.consecutiveFailedPulls > 10 && p.failedPulls === p.consecutiveFailedPulls, JSON.stringify(p));
+  assert.ok(p.pullFailingSince, 'since when the pulls fail');
+});
+
+test('fix1 medium 3: pulls that stop answering in the host stage do not count as a stall; a pull that answers again judges it', opts, () => {
+  const guest = { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n' };
+  const lost = earlyStopRun('pull-lost', { guest, pullFail: '$script:now -ge 120', fireAt: 4200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 4200 });
+  assert.equal(lost.r.failure?.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(lost.r.failure));
+  // the pulls come back at 900 s and the host log has not grown since the start: a real stall, judged on that tick
+  const back = earlyStopRun('pull-back', { guest, pullFail: '$script:now -ge 120 -and $script:now -lt 900', fireAt: 4200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 4200 });
+  assert.equal(back.r.failure?.code, 'DRILL_GUEST_NO_PROGRESS', JSON.stringify(back.r.failure));
+  assert.equal(back.r.failure.detail.reason, 'stalled');
+  assert.ok(back.r.now >= 900, `judged only once a pull answered: ${back.r.now}s`);
+  assert.ok(back.r.failure.detail.failedPulls > 0, JSON.stringify(back.r.failure.detail));
+});
+
+// Review medium 4: the newest receipt of this version could not be read and an older one was used (doubled instead of refused). Now the
+// newest run directory of this version (its name carries the version) decides: a receipt.json there that cannot be read, or that has no
+// version or kit, refuses with its path. A directory without receipt.json (a run that stopped before it had one) is passed over.
+test('fix1 medium 4: the newest receipt of this version unreadable or without its kit: refused with its path, never an older one', opts, () => {
+  const clean = ladderReceipt({ minutes: 10, failure: foregroundStop(10), stages: [['assets', 'ok'], ['prereq', 'aborted-in-progress']] });
+  const root = fs.mkdtempSync(path.join(tmp, 'ladder-unreadable-'));
+  const put = (dir, text) => { fs.mkdirSync(path.join(root, dir)); if (text !== null) fs.writeFileSync(path.join(root, dir, 'receipt.json'), text); };
+  put('20261123T010000Z-1.2.3-aaaaaaaa', JSON.stringify(clean));
+  put('20261123T020000Z-1.2.3-bbbbbbbb', '{"contract":"clued.independent-ci.drill-receipt/fixture","version":"1.2.3","kitSha256":"kit-la');
+  put('20261123T030000Z-1.2.3-cccccccc', null);                     // no receipt: passed over
+  put('20261123T040000Z-9.9.9-dddddddd', '{ broken');                // another version: not this package's
+  const step = () => ps(`${ladderStubs}
+    $script:Drill.Runs = ${q(root)}
+    try { Invoke-DrillMain } catch { Get-DrillCode $_ }`);
+  const out = step();
+  assert.equal(out.code, 'DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE', JSON.stringify(out));
+  assert.equal(out.detail.receipt, path.join(root, '20261123T020000Z-1.2.3-bbbbbbbb', 'receipt.json'));
+  fs.writeFileSync(path.join(root, '20261123T020000Z-1.2.3-bbbbbbbb', 'receipt.json'), JSON.stringify({ ...clean, kitSha256: undefined }));
+  const noKit = step();
+  assert.equal(noKit.code, 'DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE', JSON.stringify(noKit));
+  // readable and of another kit: passed over, the older one of this kit decides
+  fs.writeFileSync(path.join(root, '20261123T020000Z-1.2.3-bbbbbbbb', 'receipt.json'), JSON.stringify({ ...clean, kitSha256: 'another-kit' }));
+  assert.equal(step().holdMinutes, 20);
+});
+
+// Review low 7: a step that is not longer never goes past the ceiling (an earlier run given more by hand).
+test('fix1 low 7: the same limit again is held to the ceiling', opts, () => {
+  const passed = ladderReceipt({ minutes: 90, conclusion: 'PASS_A_FULL', stages: [['assets', 'ok'], ['A1-entry-result', 'ok']] });
+  const { out } = ladderMain('ceiling', [['20261123T040000Z-1.2.3-eeeeeeee', passed]]);
+  assert.equal(out.holdMinutes, 70, JSON.stringify(out));
+});
+
+// Review low 5: a pull that timed out was removed with Remove-Job -Force, a synchronous StopJob that a busy guest can hold for minutes
+// (the main step's job, cut off by the deadline, the same). Now a job still running is stopped without waiting (StopJobAsync) and
+// removed once it has ended; the foreground is never held by it.
+test('fix1 low 5: a timed-out pull and the cut-off entry job are stopped without waiting; the foreground stops on time', opts, () => {
+  const { r } = earlyStopRun('no-sync-remove', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n' },
+    pullFail: '$script:now -ge 60', removeBlocks: true, fireAt: 1200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 1200 });
+  assert.deepEqual(r.events.filter(e => e.startsWith('remove-running-job')), [], JSON.stringify(r.events));
+  assert.equal(r.failure.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(r.failure));
+  assert.equal(r.failure.detail.by, 'foreground');
+  assert.ok(r.now <= 1200 - 5 * 60 + 60, `stopped at ${r.now}s`);
+  assert.ok(r.events.includes('stop-async:pull') && r.events.includes('stop-async:entry'), JSON.stringify(r.events));
+});
+
+// Item 6 (coordinator, the first ladder round: prereq ran over 5 minutes with nothing finer): the prereq stage writes a line as each item
+// step starts and ends -- item, step (sha, copy, get, expand; the tools found last), bytes, start, end -- and the timeline shows the step
+// a cut-off prereq stage was in.
+test('fix1 item 6: the prereq stage records each item and step; a cut-off prereq says which item and which step', opts, () => {
+  const e = entryAccepted('prereq-steps', { checkExit: 1, snapAt: 'python' });
+  assert.equal(e.thrown, 'FIRST_INSTALL_INPUTS_NOT_ACCEPTED');
+  const full = timelineOf('prereq-full', e.record);
+  const prereq = full.stages.find(s => s.stage === 'prereq');
+  assert.equal(prereq.result, 'ok');
+  assert.deepEqual(prereq.steps.map(s => `${s.item}:${s.step}:${s.result}`), ['wsl:sha:ok', 'wsl:copy:ok', 'node:sha:ok', 'node:copy:ok', 'node:expand:ok',
+    'python:sha:ok', 'python:copy:ok', 'python:expand:ok', 'git:sha:ok', 'git:copy:ok', 'git:expand:ok', 'a.deb:sha:ok', 'a.deb:copy:ok', 'tools:find:ok']);
+  const bytes = Object.fromEntries([...e.items, ...e.debs].map(i => [i.fileName === 'a.deb' ? 'a.deb' : i.name, i.bytes]));
+  for (const s of prereq.steps) {
+    assert.ok(s.startedAt && s.endedAt, JSON.stringify(s));
+    if (s.item !== 'tools') assert.equal(s.bytes, bytes[s.item], JSON.stringify(s));
+  }
+  const cut = timelineOf('prereq-cut', e.snapshot);
+  assert.equal(cut.abortedIn, 'prereq');
+  const p = cut.stages.find(s => s.stage === 'prereq');
+  assert.equal(p.result, 'aborted-in-progress');
+  assert.deepEqual({ item: p.inProgressStep.item, step: p.inProgressStep.step, bytes: p.inProgressStep.bytes }, { item: 'python', step: 'expand', bytes: bytes.python });
+  assert.ok(p.inProgressStep.startedAt);
+  assert.deepEqual(p.steps.at(-1).result, 'aborted-in-progress');
+});
+
+// The entry stays plain ASCII and parses in Windows PowerShell 5.1 without errors.
+test('fix1: first-install-entry.ps1 is ASCII and parses in Windows PowerShell 5.1', opts, () => {
+  const bytes = fs.readFileSync(entryScript);
+  assert.ok(bytes.every(b => b < 0x80), 'a non-ASCII byte in the entry');
+  const errors = ps(`$e = $null; [void][Management.Automation.Language.Parser]::ParseFile(${q(entryScript)}, [ref]$null, [ref]$e); @($e).Count`);
+  assert.equal(errors, 0);
+});
+
+// Review low 5, the real path: a PowerShell job (a PSRemotingJob, as Invoke-Command -AsJob gives) has no StopJobAsync; Stop-DrillJob stops
+// it on a runspace of its own and returns at once, and a later call removes it once it has stopped.
+test('fix1 low 5: a running PSRemotingJob is stopped without waiting and removed once it has stopped', opts, () => {
+  const out = ps(`$j = Start-Job { Start-Sleep 120 }
+    $type = $j.GetType().Name
+    $t0 = [Environment]::TickCount; Stop-DrillJob $j $false; $returned = [Environment]::TickCount - $t0
+    $until = [Environment]::TickCount + 60000; while ($j.State -notin @('Stopped', 'Completed', 'Failed') -and [Environment]::TickCount -lt $until) { Start-Sleep -Milliseconds 100 }
+    $state = [string]$j.State
+    Start-Sleep -Milliseconds 300
+    $k = Start-Job { 1 }; [void](Wait-Job -Job $k -Timeout 60); Stop-DrillJob $k $true   # an ended job: removed, and the sweep runs
+    $left = $script:DrillStoppingJobs.Count
+    $gone = $null -eq (Get-Job -Id $j.Id -ErrorAction SilentlyContinue)
+    [ordered]@{ type = $type; returned = $returned; state = $state; left = $left; gone = $gone }`);
+  assert.equal(out.type, 'PSRemotingJob');
+  assert.ok(out.returned < 2000, `returned after ${out.returned} ms`);
+  assert.equal(out.state, 'Stopped');
+  assert.equal(out.gone, true, JSON.stringify(out));
+  assert.equal(out.left, 0, JSON.stringify(out));
+});
+
+// Review medium 2, the rest: a stop with no stage open (before the first one, or after the last) is written on its own as between-stages,
+// never lost; the timeline lists it failed with its code.
+test('fix1 medium 2: a stop with no stage open is recorded as between-stages with its code', opts, () => {
+  const record = fs.mkdtempSync(path.join(tmp, 'between-stages-'));
+  entryPs(`$script:EntryStageOutput = ${q(record)}; $script:EntryStageOpen = $null
+    Start-EntryStage 'assets'; Stop-EntryStage 'ok'
+    Stop-EntryStage 'failed' 'DRILL_CREDENTIAL_CLEANUP_FAILED'; Stop-EntryStage 'ok'; $true`);
+  const t = timelineOf('between-stages', fs.readFileSync(path.join(record, 'stage-progress.jsonl'), 'utf8'));
+  assert.deepEqual(rows(t), ['assets:ok', 'between-stages:failed:DRILL_CREDENTIAL_CLEANUP_FAILED']);
+});
+
+// Item 7 (coordinator; the 20-minute round 20261123T125817Z-2026.11.23-d5da6825-edb6ba9b): the host stage was cut off 5 minutes after its
+// last step line (node-key-check ok), and nothing said which step it was in -- a step line is printed only as a step ends. The host
+// preparation (windows/first-install-host.ps1, under Windows PowerShell 5.1 as in the guest) now also writes each step's start and end
+// into the entry's stage record when it is given -StepProgress; its stdout is unchanged. The timeline's host stage says the step in progress
+// and since when.
+const hostScript = fileURLToPath(new URL('../windows/first-install-host.ps1', import.meta.url));
+test('fix1 item 7: the host preparation writes each step as it starts into the stage record; a cut-off host stage says which step', opts, () => {
+  const out = fs.mkdtempSync(path.join(tmp, 'host-steps-'));
+  const record = path.join(out, 'stage-progress.jsonl');
+  entryPs(`$script:EntryStageOutput = ${q(out)}; foreach ($n in @('assets', 'prereq', 'unpack', 'check', 'host-inputs')) { Start-EntryStage $n }
+    Start-EntryStage 'host' (Join-Path ${q(out)} 'host.stdout.log'); $true`);
+  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+    `$ErrorActionPreference = 'Stop'; . ${q(hostScript)}; $StepProgress = ${q(record)}
+     Enter-Step 'v1-base'; Step 'v1-base' 'present'; Enter-Step 'node-key-check'; Step 'node-key-check' 'none'; Enter-Step 'wsl'`], { encoding: 'utf8', timeout: 120000 });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  // stdout: the two step lines as before, nothing for a step that started
+  assert.deepEqual(r.stdout.split(/\r?\n/).filter(l => l.trim()).map(l => { const o = JSON.parse(l); return `${o.name}:${o.result}`; }), ['v1-base:ok', 'node-key-check:ok']);
+  const t = timelineOf('host-steps', fs.readFileSync(record, 'utf8'));
+  const h = t.stages.find(s => s.stage === 'host');
+  assert.equal(h.result, 'aborted-in-progress');
+  assert.deepEqual(h.steps.map(s => `${s.step}:${s.result}`), ['v1-base:ok', 'node-key-check:ok', 'wsl:aborted-in-progress']);
+  assert.equal(h.inProgressStep.step, 'wsl');
+  assert.ok(h.inProgressStep.startedAt, JSON.stringify(h.inProgressStep));
+  // a refusal: the step ends failed with its code in the record as well
+  const r2 = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+    `. ${q(hostScript)}; $StepProgress = ${q(record)}; Get-FailedStepLine 'WSL_MSI_FAILED' | Out-Null`], { encoding: 'utf8', timeout: 120000 });
+  assert.equal(r2.status, 0, r2.stdout + r2.stderr);
+  const last = JSON.parse(fs.readFileSync(record, 'utf8').trim().split('\n').at(-1));
+  assert.deepEqual([last.stage, last.event, last.result, last.code], ['host', 'step-end', 'failed', 'WSL_MSI_FAILED']);
+  // without -StepProgress (bootstrap.ps1's call): nothing written anywhere
+  const r3 = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+    `. ${q(hostScript)}; Enter-Step 'wsl'; Step 'wsl' 'x' | Out-Null; 'done'`], { encoding: 'utf8', timeout: 120000 });
+  assert.equal(r3.stdout.trim(), 'done', r3.stdout + r3.stderr);
+  // the entry gives it to a host preparation that takes it (this package's), and the record is the entry's own
+  assert.equal(entryPs(`Test-EntryHostTakesStepProgress ${q(hostScript)}`), true);
+  assert.match(fs.readFileSync(entryScript, 'utf8'), /if \(Test-EntryHostTakesStepProgress \$hostScript\) \{ \$kitArgs \+= @\('-StepProgress', \(Join-Path \$Output 'stage-progress\.jsonl'\)\) \}/);
+});
+
+// Item 7 for a package whose host preparation does not take -StepProgress (the candidate 2026.11.23-d5da6825): the cut-off host stage
+// says the last step line its log printed, and when.
+test('fix1 item 7: an older host preparation: the cut-off host stage says its last printed step and when', opts, () => {
+  const runDir = fs.mkdtempSync(path.join(tmp, 'host-last-step-'));
+  const out = fs.mkdtempSync(path.join(tmp, 'host-last-step-entry-'));
+  entryPs(`$script:EntryStageOutput = ${q(out)}; foreach ($n in @('assets', 'prereq', 'unpack', 'check', 'host-inputs')) { Start-EntryStage $n }
+    Start-EntryStage 'host' (Join-Path ${q(out)} 'host.stdout.log'); $true`);
+  fs.copyFileSync(path.join(out, 'stage-progress.jsonl'), path.join(runDir, 'stage-progress.jsonl'));
+  fs.writeFileSync(path.join(runDir, 'host.stdout.log'), [JSON.stringify({ name: 'v1-base', result: 'ok', rejectCode: null, detail: 'present', at: '2026-11-23T13:10:00.0000000+00:00' }),
+    'free text a tool printed', JSON.stringify({ name: 'node-key-check', result: 'ok', rejectCode: null, detail: null, at: '2026-11-23T13:13:00.0000000+00:00' }), ''].join('\r\n'));
+  const t = ps(`Get-DrillStageTimeline ${q(runDir)}`);
+  const h = t.stages.find(s => s.stage === 'host');
+  assert.equal(h.result, 'aborted-in-progress');
+  assert.deepEqual(h.lastStepLine, { name: 'node-key-check', result: 'ok', at: '2026-11-23T13:13:00.0000000+00:00' });
 });

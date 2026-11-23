@@ -115,16 +115,16 @@ Owner 批准后，DESK 在可用 Hyper-V 与 pwsh 的宿主机运行 A 档：
 pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Version $v -From $from -Kit $kit -Ladder
 ```
 
-**梯度模式是演练的默认跑法**（`-Ladder`，协调方 Owner 11-23：“先把每段结论传回来，再慢慢梯度测试，把黑盒逐步切成明盒”）。整轮限时由代码推出，不靠人记：脚本在 `D:\clued-drill\runs` 下找同一 `version`、同一 kit sha256 最近一次的回执，读它的 `evidence.stageTimeline` 定本轮限时（`Get-DrillLadderStep`）：
+**梯度模式是演练的默认跑法**（`-Ladder`，协调方 Owner 11-23：“先把每段结论传回来，再慢慢梯度测试，把黑盒逐步切成明盒”）。整轮限时由代码推出，不靠人记：脚本在 `D:\clued-drill\runs` 下按目录名（`<UTC 开始>-<version>-<id>`）只看本 version 的运行目录，取同一 kit sha256 最近一次的回执，读它的 `evidence.stageTimeline` 定本轮限时（`Get-DrillLadderStep`）。没有 `receipt.json` 的目录跳过；本 version 的 `receipt.json` 读不出或缺 `version`/`kitSha256` 时拒绝开跑（`DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE`，带路径），不越过它去用更早的回执：
 
 | 上一轮 | 本轮 |
 | --- | --- |
 | 没有 | 10 分钟（`LadderFirstMinutes`） |
-| 通过（无 failure，结论不是 FAIL） | 与上轮相同，不加长 |
+| 通过（无 failure，结论不是 FAIL） | 与上轮相同，不加长（不超过整轮上限） |
 | 停在无进展门槛（`DRILL_GUEST_NO_PROGRESS`） | 拒绝开跑：`DRILL_LADDER_PREVIOUS_NO_PROGRESS`，带卡住的阶段与原因 |
 | 时间线里有阶段失败 | 拒绝开跑：`DRILL_LADDER_PREVIOUS_STAGE_FAILED`，带阶段名与码，先修再跑 |
-| 停在前台期限，最后一段进行中被中止且之前各段全 ok | 翻倍（10→20→40→70），封顶为整轮上限 70 分钟（保持预算 120 − 等待 40 − 余量 10） |
-| 其他结局（守护中止、某步自身超时等） | 与上轮相同，不加长 |
+| 整轮超时（`DRILL_RUN_TIMEOUT`，前台自停或宿主看门狗报出都算），时间线无失败段、各段结论都是已知值 | 翻倍（10→20→40→70），封顶为整轮上限 70 分钟（保持预算 120 − 等待 40 − 余量 10）；超时落在段内、段间、首装完成后的 A7/A8，或旧 kit 只有阶段日志，都翻倍 |
+| 其他结局（守护因内存等中止、某步自身超时等） | 与上轮相同，不加长（不超过整轮上限） |
 
 拒绝发生在申请暂停接新和开机之前。本轮回执写 `runTimeoutMinutes`，以及 `ladder`：`minutes`、`rule`、`basis`（依据的那份回执路径）、`previousMinutes`、`reached`（上一轮走到的那段及其结论）、`ceiling`。显式给 `-RunTimeoutMinutes` 时不推导，`ladder` 为空。
 
@@ -136,11 +136,11 @@ pwsh -NoProfile -File work/independent-ci-resident-v1/drill/drill-vm.ps1 -Versio
 **早停与取证（Fable 规划 87d330d0 甲，`D:/w/tmp/PLAN-drill-loop-root-20261123.md` §2.2、§2.4）**：
 
 - 前台期限：前台在守护期限之前留出取证窗口就停（`DRILL_RUN_TIMEOUT`，`detail.by = foreground`，带 `deadline` 与 `evidenceWindowMinutes`）。窗口为整轮限时的 30%，最多 5 分钟，最少 1 分钟（`Get-DrillEvidenceWindowMinutes`）；10 分钟一轮的窗口是 3 分钟，前台在开机后第 7 分钟停。停下后照常先取证，再由本轮自己的收尾还原，守护不会抢先还原。
-- 分拍等待：客机长步骤每 30 秒一拍（`GuestTickSeconds`），每拍先问守护、再判期限。首装每拍把 `first-install.stdout.log`（存为 `first-install.log`）、`stage-progress.jsonl`、`host.stdout.log`、`prepare.stdout.log`、`launcher.stdout.log` 拉回运行目录，只在长度变化时写入；单次拉取限时 20 秒，拉不到只计数。这样守护在任何时刻中止，运行目录里都留着最后一拍的副本。每拍的阶段与门槛状态写在 `guest-progress.json`，回执带在 `evidence.guestProgress`。
+- 分拍等待：客机长步骤每 30 秒一拍（`GuestTickSeconds`），每拍先问守护、再判期限。首装每拍把 `first-install.stdout.log`（存为 `first-install.log`）、`stage-progress.jsonl`、`host.stdout.log`、`prepare.stdout.log`、`launcher.stdout.log` 拉回运行目录，只在长度变化时写入；单次拉取限时 20 秒，拉不到只计数（`failedPulls`、`consecutiveFailedPulls`、`pullFailingSince`），不算“无增长”：门槛只在拉取有回应的那一拍判；拉取超时的作业不同步等待，异步停止后再移除。这样守护在任何时刻中止，运行目录里都留着最后一拍的副本。每拍的阶段与门槛状态写在 `guest-progress.json`，回执带在 `evidence.guestProgress`。
 - 无进展门槛（`ProgressGates`）：当前阶段取最新一个已出现日志的阶段，顺序为入口、host、prepare、launcher。入口段 15 分钟内未出现 `host.stdout.log` 就停（`host-log-not-started`）；host 段日志 10 分钟不增长（`stalled`）或在该段满 30 分钟（`stage-over-limit`）就停；prepare 段满 6 分钟就停；launcher 段不设门槛。门槛触发统一报 `DRILL_GUEST_NO_PROGRESS`，`detail` 带 `stage`、`reason`、`limitMinutes`、`stageSeconds`、`sinceGrowthSeconds`、`lastGrowthAt`。前台期限先于门槛判定，所以短时限一轮不会被门槛误判。
 - 首装之后的上限：读状态、A7 重启与 A8 共用一个上限，取“首装结束后 20 分钟”（`AfterEntryMaxMinutes`）与前台期限中较早的一个，超出报 `DRILL_AFTER_ENTRY_TIMEOUT`。取证、晚探针与 M5 不受此上限约束。
 - A1 阻断：首装没有以 `FIRST_INSTALL_DONE` 结束（退出码非 0、带停止码、或结果读不出）时，不重启、不跑 A8、不读 M5。三者分别记为 `DRILL_A7_BLOCKED_BY_A1`（若什么都没装上，仍记 `DRILL_A7_BLOCKED_NOTHING_INSTALLED`）、`upgradeStatus = DRILL_A8_BLOCKED_BY_A1`、`DRILL_M5_BLOCKED_BY_A1`。装后读取与两次探针照跑。
-- 明盒：入口每进入、每结束一个阶段，就当场往来宾工作目录的 `stage-progress.jsonl` 追加一行（`stage`、`event`、`startedAt`、`endedAt`、`result`、`code`、`tail`，其中 `tail` 为该段日志最后 5 行）。阶段依次为 assets、prereq、unpack、check、host、prepare、wsl-cold-start、launcher；写不进就跳过，不影响首装。宿主每拍拉回这个文件，取证时再取一次。无论结局如何，回执的 `evidence.stageTimeline` 都列出走到第几段和每段结论：`ok`、`failed` 带码，或 `aborted-in-progress`（进行中被中止）。之后接 A1 结果、装后读取、A7、A8 各自的记录。kit 的入口若不写这个文件，就按运行目录里已有的阶段日志列出，此时 `source` 为 `stage-logs`。
+- 明盒：入口每进入、每结束一个阶段，就当场往来宾工作目录的 `stage-progress.jsonl` 追加一行（`stage`、`event`、`startedAt`、`endedAt`、`result`、`code`、`tail`，其中 `tail` 为该段日志最后 5 行）。阶段依次为 assets、prereq、unpack、check、host-inputs（check 判定后到 host 之前的本地拷贝、凭据目录与第二次解包）、host、prepare、wsl-cold-start、launcher；每段在自己的判定之后才记结束，停止码记在停下的那一段，万一没有打开的段则单记一行 `between-stages`。prereq 段内每个 item/deb 的每一步（`sha`、`copy`、`get`、`expand`，最后 `tools:find`）各记开始、结束两行（`event` 为 `step-start`/`step-end`，带 `item`、`step`、`bytes`），时间线在该段下列 `steps`，段被中止时 `inProgressStep` 指出卡在哪个 item 的哪一步。写不进就跳过，不影响首装。host 段：包里的 `first-install-host.ps1` 带 `-StepProgress` 参数时（入口探测到才传，bootstrap.ps1 不传），每个 `Enter-Step` 开始、每步结束也往同一个 `stage-progress.jsonl` 各写一行，时间线 host 段列 `steps`，被中止时 `inProgressStep` 给出进行中的子步骤名和开始时刻；旧包的 host 没有这个参数，被中止的 host/prepare/launcher 段给 `lastStepLine`（运行目录里该段日志最后一条步骤行的名字、结论和时刻）。宿主自己的步骤（入口前的 copy-in，入口后的 read-after-install、A7-reboot、A8-reinstall）开始、结束写在运行目录的 `host-steps.jsonl`，开始了没写出结果的记为进行中被中止。宿主每拍拉回这个文件，取证时再取一次。无论结局如何，回执的 `evidence.stageTimeline` 都列出走到第几段和每段结论：`ok`、`failed` 带码，或 `aborted-in-progress`（进行中被中止）。之后接 A1 结果、装后读取、A7、A8 各自的记录。kit 的入口若不写这个文件，就按运行目录里已有的阶段日志列出，此时 `source` 为 `stage-logs`。
 
 M5 对每个包都收集、都判定（Fable 11-19 裁定 §2.2：没有“不评估也算数”的出口）。完成 A 档步骤后，`m5/` 保存来宾已生成的公开观测，宿主的 `test/renewal-drill.mjs` 核验齐备的七份文件（六份公开观测，加来宾管理员对连接记录在不在的实读 `record.json`）。
 回执记录 `m5.result`：核验通过为 `PASS`，观测缺失（包里没有续期组件也是这一种）、核验器缺失或核验失败为 `FAIL`；`NOT_EVALUATED` 只出现在中途已失败的回执里。

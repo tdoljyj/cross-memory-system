@@ -2266,28 +2266,60 @@ $script:DrillProgressFiles = [ordered]@{ 'first-install.stdout.log' = 'first-ins
 # 2.4: the stage the first install is in is the latest one whose log has appeared, in this order (entry: none yet)
 $script:DrillProgressStageLogs = [ordered]@{ host = 'host.stdout.log'; prepare = 'prepare.stdout.log'; launcher = 'launcher.stdout.log' }
 
+# Review low 5 (fix round 1 of 87d330d0): Remove-Job -Force on a PowerShell Direct job still running is a synchronous StopJob, which a busy
+# guest can hold for minutes -- the foreground stalled past its own stop. A job that ended is removed; one still running is stopped without
+# waiting (its own StopJobAsync, else StopJob on a runspace of its own) and removed by a later call once it has ended.
+$script:DrillStoppingJobs = New-Object Collections.Generic.List[object]
+function Stop-DrillJob($Job, [bool]$Ended) {
+  if ($null -eq $Job) { return }
+  if ($Ended) { Remove-Job -Job $Job -Force -ErrorAction SilentlyContinue }
+  else {
+    $stopper = $null
+    try {
+      if ($null -ne $Job.PSObject.Methods['StopJobAsync']) { $Job.StopJobAsync() }
+      else {
+        $stopper = [PowerShell]::Create()
+        [void]$stopper.AddScript('param($j) try { $j.StopJob() } catch { }').AddArgument($Job)
+        $stopper = @{ ps = $stopper; handle = $stopper.BeginInvoke() }
+      }
+    } catch { }
+    $script:DrillStoppingJobs.Add(@{ job = $Job; stopper = $stopper })
+  }
+  # the ones stopped earlier that have ended since: removed now (never waited on)
+  foreach ($s in @($script:DrillStoppingJobs.ToArray())) {
+    $state = [string](Get-DrillField $s.job 'State')
+    if (@('Completed', 'Failed', 'Stopped') -cnotcontains $state) { continue }
+    if ($null -ne $s.stopper -and -not $s.stopper.handle.IsCompleted) { continue }
+    Remove-Job -Job $s.job -Force -ErrorAction SilentlyContinue
+    if ($null -ne $s.stopper) { try { $s.stopper.ps.Dispose() } catch { } }
+    [void]$script:DrillStoppingJobs.Remove($s)
+  }
+}
+
 # One pull, bounded (GuestPullSeconds), never through Invoke-DrillGuest (no readiness wait of its own); $null when it did not answer.
 function Read-DrillGuestProgressFiles([pscredential]$Credential) {
   Assert-DrillGuard
-  $job = $null
+  $job = $null; $ended = $false
   try {
     $job = Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ScriptBlock $script:GuestStageFiles -ArgumentList @(($script:Drill.GuestWork + '\work'), [string[]]@($script:DrillProgressFiles.Keys)) -AsJob
     if (-not (Wait-Job -Job $job -Timeout $script:Drill.GuestPullSeconds)) { return $null }
+    $ended = $true
     return Receive-Job -Job $job -ErrorAction Stop
   } catch { return $null }
-  finally { if ($null -ne $job) { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue } }
+  finally { Stop-DrillJob $job $ended }
 }
 
 function New-DrillGuestProgress([string]$RunDir) {
   $now = Get-DrillTime; $t = Get-DrillMonotonicSeconds
-  return [ordered]@{ runDir = $RunDir; startedAt = $now.ToString('o'); startMono = $t; at = $null; ticks = 0; failedPulls = 0
-    stage = 'entry'; stageSince = $now.ToString('o'); stageMono = $t; lastGrowthAt = $now.ToString('o'); growthMono = $t; files = [ordered]@{}; stop = $null }
+  return [ordered]@{ runDir = $RunDir; startedAt = $now.ToString('o'); startMono = $t; at = $null; ticks = 0; failedPulls = 0; consecutiveFailedPulls = 0
+    pullFailingSince = $null; stage = 'entry'; stageSince = $now.ToString('o'); stageMono = $t; lastGrowthAt = $now.ToString('o'); growthMono = $t; files = [ordered]@{}; stop = $null }
 }
 
 # 2.4: the no-progress gate of the stage the first install is in; $null while it is within it.
 function Get-DrillProgressStop($P, [double]$Now) {
   $stageSeconds = [Math]::Round($Now - $P.stageMono); $sinceGrowth = [Math]::Round($Now - $P.growthMono)
-  $at = { param($reason, $limit) [ordered]@{ stage = $P.stage; reason = $reason; limitMinutes = $limit; stageSeconds = $stageSeconds; sinceGrowthSeconds = $sinceGrowth; lastGrowthAt = $P.lastGrowthAt; progress = 'guest-progress.json' } }
+  $at = { param($reason, $limit) [ordered]@{ stage = $P.stage; reason = $reason; limitMinutes = $limit; stageSeconds = $stageSeconds; sinceGrowthSeconds = $sinceGrowth; lastGrowthAt = $P.lastGrowthAt
+    failedPulls = $P.failedPulls; progress = 'guest-progress.json' } }
   if ($P.stage -ceq 'entry') {
     if ($stageSeconds -ge $script:Drill.EntryHostLogMinutes * 60) { return (& $at 'host-log-not-started' $script:Drill.EntryHostLogMinutes) }
     return $null
@@ -2301,12 +2333,18 @@ function Get-DrillProgressStop($P, [double]$Now) {
 
 # One tick of the first install's progress: pull, write what grew, find the stage, judge its gate, record guest-progress.json; a gate
 # reached stops the step with DRILL_GUEST_NO_PROGRESS (the run then takes the evidence and restores, as on any end of the first install).
+# Review medium 3: a pull that did not answer says nothing about the guest, so it is never "no growth": the gate is judged only on a tick
+# whose pull answered. Failed pulls are counted on their own (failedPulls, consecutiveFailedPulls, pullFailingSince) and never stop the
+# run by themselves -- the progress pull is an aid; the run's own deadline bounds a guest that does not answer.
 function Step-DrillGuestProgress([Collections.IDictionary]$P, [pscredential]$Credential) {
   $got = Read-DrillGuestProgressFiles $Credential
   $now = Get-DrillTime; $t = Get-DrillMonotonicSeconds
   $P.ticks = [int]$P.ticks + 1; $P.at = $now.ToString('o')
-  if ($null -eq $got) { $P.failedPulls = [int]$P.failedPulls + 1 }
-  else {
+  if ($null -eq $got) {
+    $P.failedPulls = [int]$P.failedPulls + 1; $P.consecutiveFailedPulls = [int]$P.consecutiveFailedPulls + 1
+    if ($null -eq $P.pullFailingSince) { $P.pullFailingSince = $now.ToString('o') }
+  } else {
+    $P.consecutiveFailedPulls = 0; $P.pullFailingSince = $null
     foreach ($name in @($script:DrillProgressFiles.Keys)) {
       $f = Get-DrillField $got $name
       if ((Get-DrillField $f 'present') -ne $true -or (Get-DrillField $f 'error')) { continue }
@@ -2325,9 +2363,9 @@ function Step-DrillGuestProgress([Collections.IDictionary]$P, [pscredential]$Cre
     $log = $P.files[$script:DrillProgressStageLogs[$stage]]
     $P.growthMono = $log.changedMono; $P.lastGrowthAt = $log.changedAt
   }
-  $P.stop = Get-DrillProgressStop $P $t
+  if ($null -ne $got) { $P.stop = Get-DrillProgressStop $P $t }
   $record = [ordered]@{}
-  foreach ($k in @('startedAt', 'at', 'ticks', 'failedPulls', 'stage', 'stageSince', 'lastGrowthAt')) { $record[$k] = $P[$k] }
+  foreach ($k in @('startedAt', 'at', 'ticks', 'failedPulls', 'consecutiveFailedPulls', 'pullFailingSince', 'stage', 'stageSince', 'lastGrowthAt')) { $record[$k] = $P[$k] }
   $record.files = [ordered]@{}
   foreach ($k in @($P.files.Keys)) { $record.files[$k] = [ordered]@{ bytes = $P.files[$k].bytes; changedAt = $P.files[$k].changedAt; saved = $P.files[$k].saved } }
   $record.gates = [ordered]@{ entryHostLogMinutes = $script:Drill.EntryHostLogMinutes; stages = $script:Drill.ProgressGates }
@@ -2346,6 +2384,7 @@ function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [obj
     if ($null -eq $probe) { [void](Wait-DrillGuest $Credential 20); $probe = Get-DrillGuestProbe $Credential }
     $before = if ($probe) { [string]$probe.boot } else { '' }
     $job = Invoke-Command -VMName $script:Drill.VmName -Credential $Credential -ScriptBlock $Script -ArgumentList $ArgumentList -AsJob
+    $ended = $false
     try {
       $limit = $TimeoutMinutes * 60; $started = Get-DrillMonotonicSeconds
       while ($true) {
@@ -2355,7 +2394,7 @@ function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [obj
         if ($left -le 0) { throw (New-DrillError $Code @{ step = $Step; minutes = $TimeoutMinutes }) }
         $tick = [Math]::Min($left, [double]$script:Drill.GuestTickSeconds)
         if ($null -ne $Until) { $tick = [Math]::Min($tick, ($Until.at - (Get-DrillTime)).TotalSeconds) }
-        if (Wait-Job -Job $job -Timeout ([int][Math]::Max(1, [Math]::Ceiling($tick)))) { break }
+        if (Wait-Job -Job $job -Timeout ([int][Math]::Max(1, [Math]::Ceiling($tick)))) { $ended = $true; break }
         if ($null -ne $Progress) { Step-DrillGuestProgress $Progress $Credential }
       }
       return Receive-Job -Job $job -ErrorAction Stop
@@ -2368,7 +2407,7 @@ function Invoke-DrillGuest([pscredential]$Credential, [scriptblock]$Script, [obj
       if ($kind -eq 'restarted' -and $Restartable -and $restarts -lt 2) { continue }
       $codeOut = @{ restarted = 'DRILL_GUEST_RESTARTED_DURING_STEP'; unreachable = 'DRILL_GUEST_NOT_READY_IN_TIME'; failed = 'DRILL_GUEST_STEP_FAILED' }[$kind]
       throw (New-DrillError $codeOut @{ step = $Step; message = $c.detail; bootBefore = $before; bootAfter = $after })
-    } finally { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+    } finally { Stop-DrillJob $job $ended }   # cut off (deadline, guard, its own limit): stopped without waiting
   }
 }
 
@@ -3302,6 +3341,16 @@ function Test-DrillEntryDone($Entry) {
 # $Deadline: the guard's deadline for the run (Invoke-DrillPreparedRun gives $Window.deadline). 甲2: the foreground stops
 # Get-DrillEvidenceWindowMinutes before it (DRILL_RUN_TIMEOUT, by = foreground), so the evidence is taken and the run's own cleanup
 # restores before the guard would; without a deadline (MinValue) there is no foreground limit.
+# The host's own steps of a run, around the entry's stages (fix round 1 of 87d330d0, review high 1): copy-in before the entry, the read
+# after it, A7's reboot and A8 -- one line in host-steps.jsonl as each starts and one as it ends, so the receipt's stage timeline says
+# where a run that was cut off was, outside the entry as well (Get-DrillStageTimeline). An aid: a line that cannot be written is not.
+function Write-DrillHostStep([string]$RunDir, [string]$Stage, [string]$Event, [string]$Result = 'running', $Code = $null) {
+  try {
+    $line = [ordered]@{ stage = $Stage; event = $Event; at = (Get-DrillTime).ToString('o'); result = $Result; code = $Code }
+    [IO.File]::AppendAllText((Join-Path $RunDir 'host-steps.jsonl'), (ConvertTo-Json -InputObject $line -Compress) + "`n", (New-Object Text.UTF8Encoding($false)))
+  } catch { }
+}
+
 function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscredential]$Cred, [DateTimeOffset]$Deadline = [DateTimeOffset]::MinValue) {
   $g = $script:Drill.GuestWork
   $foreground = $null
@@ -3312,6 +3361,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   }
   $prereqFacts = if ($Interactive -or $KitInfo.prerequisiteMode -ceq 'first-install-host') { @{ mode = 'first-install-host'; preparedByEntry = (-not $Interactive) } } else { Invoke-DrillPrereqInGuest $RunDir $Prereq $Cred }
   $paths = @{ from = "$g\from"; kit = "$g\kit"; fake = "$g\fake"; work = "$g\work"; version = $Package.version }
+  Write-DrillHostStep $RunDir 'copy-in' 'start'
+  try {
   $session = New-PSSession -VMName $script:Drill.VmName -Credential $Cred
   try {
     Invoke-Command -Session $session -ScriptBlock { param($p) foreach ($d in @($p.from, $p.kit, $p.work)) { New-Item -ItemType Directory -Force -Path $d | Out-Null } } -ArgumentList $paths
@@ -3323,6 +3374,8 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake, ([string[]]@((Get-DrillCredentialPlan $KitInfo).fake))
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
+  } catch { Write-DrillHostStep $RunDir 'copy-in' 'end' 'failed' (Get-DrillCode $_).code; throw }
+  Write-DrillHostStep $RunDir 'copy-in' 'end' 'ok'
 
   # the kit's image references for the guest probe, which runs on every end of the first install (Save-DrillGuestEvidence, last)
   $script:DrillProbeImageIds = @(try { Get-DrillKitImageIds @($Package.files) } catch { })
@@ -3362,6 +3415,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     detail = [ordered]@{ minutes = $script:Drill.AfterEntryMaxMinutes; since = (Get-DrillTime).ToString('o') } }
   $entryDone = Test-DrillEntryDone $entry
 
+  Write-DrillHostStep $RunDir 'read-after-install' 'start'
   $first = Invoke-DrillGuest $Cred $script:GuestRead -ArgumentList @($script:Drill.GuestRoot, $script:DrillNativeText) -TimeoutMinutes 15 -Step 'read-after-install' -Restartable -Until $afterEntry
   Write-DrillJson (Join-Path $RunDir 'read-after-install.json') $first
 
@@ -3372,6 +3426,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
   elseif (-not $entryDone) { $reboot = [ordered]@{ skipped = $true; reason = 'DRILL_A7_BLOCKED_BY_A1' } }
   else {
     Assert-DrillUntil $afterEntry
+    Write-DrillHostStep $RunDir 'A7-reboot' 'start'
     $beforeReboot = [DateTimeOffset]::UtcNow
     try { Invoke-Command -VMName $script:Drill.VmName -Credential $Cred -ScriptBlock { Restart-Computer -Force } -ErrorAction Stop } catch { }
     $left = [int][Math]::Ceiling(($afterEntry.at - (Get-DrillTime)).TotalMinutes)
@@ -3389,6 +3444,7 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $reinstall = @{ skipped = $false; upgradeStatus = 'DRILL_A8_BLOCKED_BY_A1'; prepareStatus = $null; reverifyPassed = $false; prepareAgainStatus = $null }
   } elseif (-not $SkipReinstall -and $entry.tree -and $entry.node) {
     # the upgrade first, on its own; its raw result is on the host before the prepare starts (Codex narrow review of 4190b0f8e, medium)
+    Write-DrillHostStep $RunDir 'A8-reinstall' 'start'
     $upRun = Invoke-DrillGuest $Cred $script:GuestReinstallUpgrade -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, $script:DrillNativeText) -TimeoutMinutes 65 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall-upgrade' -Until $afterEntry
     Write-DrillJson (Join-Path $RunDir 'reinstall-upgrade.json') (ConvertTo-DrillReinstallUpgradeRecord $upRun)
     $reinstall = Invoke-DrillGuest $Cred $script:GuestReinstall -ArgumentList @($entry.node, $entry.tree, $paths.from, $paths.work, $Package.version, [IO.Path]::GetFileName($Package.tar), [IO.Path]::GetFileName($Package.acceptance), $Package.tarSha256, $script:DrillNativeText, $upRun) -TimeoutMinutes 180 -Code 'DRILL_REINSTALL_TIMEOUT' -Step 'reinstall' -Until $afterEntry
@@ -3501,6 +3557,52 @@ function Save-DrillGuestEvidence([string]$RunDir, [pscredential]$Cred, $EntryOut
 # pulled each tick and taken again with the evidence), else -- a kit whose entry does not write it -- the stage logs that reached the run
 # directory. A stage that started and never ended is 'aborted-in-progress' (进行中被中止); the host's own steps after the first install
 # follow, from the records they wrote.
+# A step line inside a stage (the entry's prereq: item, step, bytes): on the stage of that name still running, else the last of that name.
+function Add-DrillTimelineStep($Stages, [string]$Name, $E) {
+  $owner = $null
+  for ($i = $Stages.Count - 1; $i -ge 0; $i--) { if ($Stages[$i].stage -ceq $Name -and $Stages[$i].result -ceq 'running') { $owner = $Stages[$i]; break } }
+  if ($null -eq $owner) { for ($i = $Stages.Count - 1; $i -ge 0; $i--) { if ($Stages[$i].stage -ceq $Name) { $owner = $Stages[$i]; break } } }
+  if ($null -eq $owner) { return }
+  if (-not $owner.Contains('steps')) { $owner.steps = New-Object Collections.Generic.List[object] }
+  $item = [string](Get-DrillField $E 'item'); $stepName = [string](Get-DrillField $E 'step')
+  $st = $null
+  for ($i = $owner.steps.Count - 1; $i -ge 0; $i--) { if ($owner.steps[$i].item -ceq $item -and $owner.steps[$i].step -ceq $stepName -and $owner.steps[$i].result -ceq 'running') { $st = $owner.steps[$i]; break } }
+  if ([string](Get-DrillField $E 'event') -ceq 'step-start' -or $null -eq $st) {
+    $st = [ordered]@{ item = $item; step = $stepName; bytes = (Get-DrillField $E 'bytes'); startedAt = (Get-DrillField $E 'startedAt'); endedAt = $null; result = 'running'; code = $null }
+    $owner.steps.Add($st)
+  }
+  if ([string](Get-DrillField $E 'event') -ceq 'step-end') { $st.endedAt = Get-DrillField $E 'endedAt'; $st.result = [string](Get-DrillField $E 'result'); $st.code = Get-DrillField $E 'code' }
+}
+# The last step line ({name, result, at}) of a stage log in the run directory; $null when it has none.
+function Get-DrillLastStepLine([string]$File) {
+  if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return $null }
+  $lines = @(try { [IO.File]::ReadAllLines($File) } catch { @() })
+  for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+    $t = $lines[$i].Trim()
+    if (-not $t.StartsWith('{')) { continue }
+    $o = $null; try { $o = $t | ConvertFrom-Json } catch { continue }
+    $name = Get-DrillField $o 'name'; $result = Get-DrillField $o 'result'
+    if ($name -and $result) { return [ordered]@{ name = [string]$name; result = [string]$result; at = (Get-DrillField $o 'at') } }
+  }
+  return $null
+}
+# The host's own steps of a run (host-steps.jsonl, Write-DrillHostStep) by name: startedAt, endedAt, result (running until it ended), code.
+function Read-DrillHostSteps([string]$RunDir) {
+  $steps = [ordered]@{}
+  $file = Join-Path $RunDir 'host-steps.jsonl'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $steps }
+  foreach ($line in @([IO.File]::ReadAllLines($file))) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    $e = $null; try { $e = $line | ConvertFrom-Json } catch { continue }
+    $name = [string](Get-DrillField $e 'stage'); if (-not $name) { continue }
+    if ([string](Get-DrillField $e 'event') -ceq 'start' -or -not $steps.Contains($name)) {
+      $steps[$name] = [ordered]@{ stage = $name; startedAt = (Get-DrillField $e 'at'); endedAt = $null; result = 'running'; code = $null; tail = $null }
+    }
+    if ([string](Get-DrillField $e 'event') -ceq 'end') { $steps[$name].endedAt = Get-DrillField $e 'at'; $steps[$name].result = [string](Get-DrillField $e 'result'); $steps[$name].code = Get-DrillField $e 'code' }
+  }
+  return $steps
+}
+
 function Get-DrillStageTimeline([string]$RunDir) {
   $stages = New-Object Collections.Generic.List[object]
   $source = $null
@@ -3511,6 +3613,8 @@ function Get-DrillStageTimeline([string]$RunDir) {
       if ([string]::IsNullOrWhiteSpace($line)) { continue }
       $e = $null; try { $e = $line | ConvertFrom-Json } catch { continue }   # a line cut by the pull is not a record
       $name = [string](Get-DrillField $e 'stage'); if (-not $name) { continue }
+      $event = [string](Get-DrillField $e 'event')
+      if ($event -clike 'step-*') { Add-DrillTimelineStep $stages $name $e; continue }
       $open = $null
       for ($i = $stages.Count - 1; $i -ge 0; $i--) { if ($stages[$i].stage -ceq $name -and $stages[$i].result -ceq 'running') { $open = $stages[$i]; break } }
       if ([string](Get-DrillField $e 'event') -ceq 'start' -or $null -eq $open) {
@@ -3531,9 +3635,25 @@ function Get-DrillStageTimeline([string]$RunDir) {
     if ($stages.Count -and -not (Test-Path -LiteralPath (Join-Path $RunDir 'entry-result.json') -PathType Leaf)) { $stages[$stages.Count - 1].result = 'running' }
     elseif ($stages.Count) { $stages[$stages.Count - 1].result = 'ended' }
   }
-  # the run is over: a stage still running was cut off
-  foreach ($s in $stages) { if ($s.result -ceq 'running') { $s.result = 'aborted-in-progress'; $s.label = '进行中被中止' } }
-  # the host's steps after the first install, each from the record it wrote (absent: not reached)
+  # the host's own steps (host-steps.jsonl): copy-in before the entry's stages; the ones after it below
+  $hostSteps = Read-DrillHostSteps $RunDir
+  if ($hostSteps.Contains('copy-in')) { $stages.Insert(0, $hostSteps['copy-in']) }
+  # the run is over: a stage still running was cut off, and the step it was in (prereq: which item, which step)
+  foreach ($s in $stages) {
+    if ($s.result -ceq 'running') { $s.result = 'aborted-in-progress'; $s.label = '进行中被中止' }
+    if (-not $s.Contains('steps')) { continue }
+    foreach ($st in $s.steps) { if ($st.result -ceq 'running') { $st.result = 'aborted-in-progress'; if ($s.result -ceq 'aborted-in-progress') { $s.inProgressStep = $st } } }
+  }
+  # item 7: a cut-off stage with a log of step lines and no step in progress recorded (a host preparation that does not write its steps'
+  # starts, the candidate 2026.11.23-d5da6825's): the last step line its log printed and when -- the step after it is the one it was in
+  foreach ($s in $stages) {
+    if ($s.result -cne 'aborted-in-progress' -or $s.Contains('inProgressStep')) { continue }
+    $log = @{ host = 'host.stdout.log'; prepare = 'prepare.stdout.log'; launcher = 'launcher.stdout.log' }[[string]$s.stage]
+    if (-not $log) { continue }
+    $last = Get-DrillLastStepLine (Join-Path $RunDir $log)
+    if ($null -ne $last) { $s.lastStepLine = $last }
+  }
+  # the host's steps after the first install, each from the record it wrote; one that started and wrote none was cut off (absent: not reached)
   $entryFile = Join-Path $RunDir 'entry-result.json'
   if (Test-Path -LiteralPath $entryFile -PathType Leaf) {
     $er = try { Read-DrillJson $entryFile } catch { $null }
@@ -3541,12 +3661,16 @@ function Get-DrillStageTimeline([string]$RunDir) {
   }
   foreach ($pair in @(@('read-after-install', 'read-after-install.json'), @('A7-reboot', 'read-after-reboot.json'), @('A8-reinstall', 'reinstall.json'))) {
     $f = Join-Path $RunDir $pair[1]
-    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) {
+      $started = $hostSteps[$pair[0]]
+      if ($null -ne $started) { $stages.Add([ordered]@{ stage = $pair[0]; startedAt = $started.startedAt; result = 'aborted-in-progress'; code = $null; label = '进行中被中止' }) }
+      continue
+    }
     $doc = try { Read-DrillJson $f } catch { $null }
     $skip = if ((Get-Prop $doc 'skipped') -eq $true) { [string](Get-Prop $doc 'reason') } elseif ([string](Get-Prop $doc 'upgradeStatus') -like 'DRILL_*BLOCKED*') { [string](Get-Prop $doc 'upgradeStatus') } else { $null }
     $stages.Add([ordered]@{ stage = $pair[0]; result = $(if ($null -eq $doc) { 'unreadable' } elseif ($null -ne $skip) { 'skipped' } else { 'recorded' }); code = $skip })
   }
-  $n = 0; foreach ($s in $stages) { $n++; $s.n = $n }
+  $n = 0; foreach ($s in $stages) { $n++; $s.n = $n; if ($s.Contains('steps')) { $s.steps = $s.steps.ToArray() } }
   $abortedIn = $null
   foreach ($s in $stages) { if ($s.result -ceq 'aborted-in-progress') { $abortedIn = $s.stage } }
   return [ordered]@{ source = $source; reached = $stages.Count; abortedIn = $abortedIn; stages = $stages.ToArray() }
@@ -3560,25 +3684,37 @@ function Get-DrillStageTimeline([string]$RunDir) {
 #   it passed (conclusion not FAIL, no failure)   -> the same limit again, never longer
 #   it stopped on a no-progress gate              -> refused: DRILL_LADDER_PREVIOUS_NO_PROGRESS, the stage it was stuck in
 #   a stage in its timeline failed                -> refused: DRILL_LADDER_PREVIOUS_STAGE_FAILED, the stage and its code (fix first)
-#   it stopped on the foreground deadline, its last stage cut off in progress and every one before it ended without failing
+#   it ran out of its time (DRILL_RUN_TIMEOUT, whoever reported it: the foreground's own stop or the host guard's deadline) with no
+#   stage failed and every stage in a known state -- wherever the time ran out: in a stage, between two, after the entry (A7, A8), on a
+#   kit whose entry wrote only stage logs                                          (fix round 1 of 87d330d0, review high 1)
 #                                                 -> twice its limit, at most the run's own ceiling (the intake budget less the wait
 #                                                    and the margin: Invoke-DrillWithHostHold refuses more)
 #   any other end (a guard abort, a step's own timeout ...) -> the same limit again, never longer
+# The same limit again is held to the ceiling as well. The newest run directory of this version decides: a receipt.json there that cannot
+# be read, or has no version or kit, refuses (DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE, its path; review medium 4) -- never an older one.
 # The limit, the receipt it was derived from and how far that run got are written into this run's receipt (ladder).
 function Get-DrillLadderCeilingMinutes { [int]($script:Drill.IntakeMaxMinutes - $script:Drill.IntakeWaitMinutes - $script:Drill.IntakeMarginMinutes) }
 
-# The latest receipt of this version and kit (run directories are named by their UTC start, so newest first by name); $null when none.
+# The latest receipt of this version and kit; $null when none. Run directories are named <UTC start>-<version>-<id>
+# (Invoke-DrillPreparedRun), so newest first by name, and only this version's: a directory without receipt.json (a run that stopped before
+# it had one) is passed over; one that cannot be read, or carries no version or kit, refuses -- it may be the newest of this kit.
 function Find-DrillLadderReceipt([string]$RunsDir, [string]$Version, [string]$KitSha256) {
   if (-not (Test-Path -LiteralPath $RunsDir -PathType Container)) { return $null }
-  foreach ($dir in @(Get-ChildItem -LiteralPath $RunsDir -Directory | Sort-Object Name -Descending)) {
+  $ours = '^\d{8}T\d{6}Z-' + [regex]::Escape($Version) + '-[0-9a-z]+$'
+  foreach ($dir in @(Get-ChildItem -LiteralPath $RunsDir -Directory | Where-Object { $_.Name -cmatch $ours } | Sort-Object Name -Descending)) {
     $file = Join-Path $dir.FullName 'receipt.json'
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
-    $r = try { Read-DrillJson $file } catch { $null }
-    if ($null -eq $r) { continue }
+    $r = $null; $why = $null
+    try { $r = Read-DrillJson $file } catch { $why = [string]$_.Exception.Message }
+    if ($null -eq $r -and $null -eq $why) { $why = 'empty' }
+    if ($null -eq $why -and (-not [string](Get-DrillField $r 'version') -or -not [string](Get-DrillField $r 'kitSha256'))) { $why = 'no version or kitSha256' }
+    if ($null -ne $why) { throw (New-DrillError 'DRILL_LADDER_PREVIOUS_RECEIPT_UNREADABLE' ([ordered]@{ receipt = $file; reason = $why })) }
     if ([string](Get-DrillField $r 'version') -ceq $Version -and [string](Get-DrillField $r 'kitSha256') -ceq $KitSha256) { return @{ path = $file; receipt = $r } }
   }
   return $null
 }
+# The stage results a timeline is written with (Get-DrillStageTimeline); a receipt with any other is not lengthened from.
+$script:DrillLadderKnownResults = @('ok', 'aborted-in-progress', 'left', 'ended', 'recorded', 'skipped')
 
 function Get-DrillLadderStep([string]$RunsDir, [string]$Version, [string]$KitSha256) {
   $ceiling = Get-DrillLadderCeilingMinutes
@@ -3596,19 +3732,18 @@ function Get-DrillLadderStep([string]$RunsDir, [string]$Version, [string]$KitSha
   $step = { param($minutes, $rule) [ordered]@{ minutes = [int]$minutes; rule = $rule; basis = $found.path; previousMinutes = $previous; reached = $reached; ceiling = $ceiling } }
   $failure = Get-DrillField $r 'failure'
   $code = [string](Get-DrillField $failure 'code')
-  if ($null -eq $failure -and [string](Get-DrillField $r 'conclusion') -cne 'FAIL') { return (& $step $previous 'passed-not-longer') }
+  if ($null -eq $failure -and [string](Get-DrillField $r 'conclusion') -cne 'FAIL') { return (& $step ([Math]::Min($previous, $ceiling)) 'passed-not-longer') }
   if ($code -ceq 'DRILL_GUEST_NO_PROGRESS') {
     throw (New-DrillError 'DRILL_LADDER_PREVIOUS_NO_PROGRESS' ([ordered]@{ stage = (Get-DrillField (Get-DrillField $failure 'detail') 'stage'); reason = (Get-DrillField (Get-DrillField $failure 'detail') 'reason'); receipt = $found.path }))
   }
   $failed = @($stages | Where-Object { [string](Get-DrillField $_ 'result') -ceq 'failed' }) | Select-Object -First 1
   if ($failed) { throw (New-DrillError 'DRILL_LADDER_PREVIOUS_STAGE_FAILED' ([ordered]@{ stage = (Get-DrillField $failed 'stage'); code = (Get-DrillField $failed 'code'); receipt = $found.path })) }
-  $foreground = $code -ceq 'DRILL_RUN_TIMEOUT' -and [string](Get-DrillField (Get-DrillField $failure 'detail') 'by') -ceq 'foreground'
-  $before = if ($stages.Count -gt 1) { @($stages[0..($stages.Count - 2)]) } else { @() }
-  $cleanBefore = @($before | Where-Object { [string](Get-DrillField $_ 'result') -cne 'ok' }).Count -eq 0
-  if ($foreground -and $last -and [string](Get-DrillField $last 'result') -ceq 'aborted-in-progress' -and $cleanBefore) {
+  # out of time, by either clock (the guard's failure replaces the foreground's: Invoke-DrillOnCheckpoint), nothing failed, nothing unknown
+  $known = @($stages | Where-Object { $script:DrillLadderKnownResults -cnotcontains [string](Get-DrillField $_ 'result') }).Count -eq 0
+  if ($code -ceq 'DRILL_RUN_TIMEOUT' -and $known) {
     return (& $step ([Math]::Min($previous * 2, $ceiling)) $(if ($previous * 2 -ge $ceiling) { 'doubled-at-ceiling' } else { 'doubled' }))
   }
-  return (& $step $previous 'not-longer')
+  return (& $step ([Math]::Min($previous, $ceiling)) 'not-longer')
 }
 
 function Invoke-DrillMain {
