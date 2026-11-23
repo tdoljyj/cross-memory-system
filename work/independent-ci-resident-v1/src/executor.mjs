@@ -1811,6 +1811,34 @@ export class ResidentExecutor {
     try { this.reportLimits(await this.ledger.usage(now - DAY, { separateNetwork: this.networkPolicy() !== null, budgetTimes: true }), now); } catch { /* a view: the next tick tries again */ }
   }
 
+  // bc982192 (C3, plan 戊): the batch route a batch born now is stamped with (queue.mjs: current.batchRoute). 'push' exactly when the
+  // train is on, stage 10's own reading of the effective landing route is push (train.mjs#landingOf: trainLast.landing.route; an
+  // installed github-merge never reads one, and before the first stage 10 of this process there is none) and that same reading found no
+  // scan required from this App any more (trainLast.appScans read and empty; R3 lean), so a batch on a merge base never reaches stages
+  // 2-7. Otherwise null: main's tip is the batch base, as on origin/main. One reading for the bundle (the descriptor's baseRule), stages 1
+  // and 8 (batch-route.json), stopBase and the poller (the status board's train.batchRoute).
+  batchRoute() {
+    const last = this.trainLast;
+    return this.policy.train.enabled === 'on' && last?.landing?.route === 'push' && Array.isArray(last.appScans) && last.appScans.length === 0 ? 'push' : null;
+  }
+
+  // bc982192 (B2, FABLE-c3-b1b2 §3): a head born while this process had no push reading yet (a restart: trainLast lives in memory; a
+  // stage 10 that could not read the rules) carries no stamp, so its bundle wanted main as its base and stopped it with
+  // RESIDENT_BASE_MOVED, superseded, before any side effect (or stopBase did). The poller and the queue never offer that same head
+  // again (poller.mjs: pr:head:base seen; queue.offer: row.seen), so it would stay stopped until a new commit. While the route is push,
+  // such a row is stamped and queued again, once per head (a stamped row never qualifies again), within the queue depth. The ledger
+  // released it unexecuted (SUPERSEDED), so it runs. One receipt per row. Returns the rows [{ pr, headSha, baseSha }].
+  async restampStopped() {
+    if (this.batchRoute() !== 'push') return [];
+    const rows = this.queue.restampStopped(RESIDENT_BASE_MOVED, this.clock(), { depth: this.policy.limits.queueDepth });
+    if (!rows.length) return rows;
+    await this.persistQueue();
+    for (const r of rows) {
+      try { await this.receipt('batch-route-restamped', r); } catch { /* a view: the row is queued and saved */ }
+    }
+    return rows;
+  }
+
   // The status board's `train` (status.mjs): the mode and the newest summary as in step 3c-1; the sweep, the revoke-head request,
   // onSince and NOT_ON_DUTY only when they have a value.
   trainStatus() {
@@ -1824,6 +1852,7 @@ export class ResidentExecutor {
       // DESIGN §65: the companion's backstop reads it (strict off in strict-permanent mode: PAUSE at once, no grace).
       t.sweepMode = trainSweepMode(this.policy.train);
       t.landing = trainLandingMode(this.policy.train); // ADR 0018
+      if (this.batchRoute() === 'push') t.batchRoute = 'push'; // bc982192: what the poller proposes a head behind main by
       t.backgroundAllPending = r?.backgroundAllPending != null || this.trainSweep?.fullAllPending != null;
       t.maintenanceExtraUsed = this.trainExtraRuns.filter(at => at > this.clock() - DAY).length;
       t.maintenanceExtraLimit = Math.max(0, this.policy.train.maintenanceMaxPerDay - Math.ceil(DAY / this.policy.train.maintenanceEveryMs));
@@ -2006,6 +2035,8 @@ export class ResidentExecutor {
     // Triggers go into the run queue first (phase 2, step 1); the queue then follows the ledger for any row a crash left
     // marked running.
     await this.intake();
+    // bc982192 (B2, FABLE-c3-b1b2 §3): a head the bundle stopped only because it was born without the stamp is stamped and queued again.
+    if (this.batchRoute() === 'push') await this.restampStopped();
     // DESIGN §72: the rule first, with this tick's triggers: a resting batch that no longer stands ends before anything tries it.
     const ended = await this.endNotStanding();
     if (ended) return ended;
@@ -2411,8 +2442,9 @@ export class ResidentExecutor {
     }
     await this.endOrdinaryForFront(front);
     await this.endSupersededForFront(front);
+    // bc982192: stamped by the stage-10 facts that offer it (trainLast is that summary already).
     const offered = this.queue.offerFront({ pr: front.pr, headSha: front.headSha, baseSha: front.baseSha, testSha: front.testSha, attempt: front.attempt }, this.clock(),
-      { depth: this.policy.limits.queueDepth });
+      { depth: this.policy.limits.queueDepth, batchRoute: this.batchRoute() });
     if (offered.action !== 'front') {
       // Field defect PR #1035: stage 10 counted this front batch and touched running, so it says TRAIN_FRONT_BATCH_RUNNING from now on and
       // never offers it again. A front refused only because the row was busy is kept and offered again (trainActed) once a later stage-10
@@ -3162,7 +3194,8 @@ export class ResidentExecutor {
         continue;
       }
       const previousPrUpdate = this.queue.row(t.pr)?.prUpdatedAt;
-      const r = this.queue.offer(t, now, { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs });
+      // bc982192: the batch route of now, never the trigger's (an Agent's trigger may name any base; it cannot choose the rule).
+      const r = this.queue.offer(t, now, { depth: this.policy.limits.queueDepth, cooldownMs: this.policy.limits.unexecutedCooldownMs, batchRoute: this.batchRoute() });
       if (r.action === 'refused') {
         this.queue.notice(boundedNotice({ code: 'QUEUE_DEPTH_EXCEEDED', used: this.queue.live().length, limit: this.policy.limits.queueDepth, now }));
         done.push({ name: entry.name, disposition: 'rejected', receipt: ['trigger-refused', { failureCode: r.code, pr: t.pr, headSha: t.headSha, bytesSha256 }] });
@@ -3492,7 +3525,8 @@ export class ResidentExecutor {
 
   // One queue row: its current commit as its subject (rowSubject).
   async runRow(c, usage) {
-    const subject = this.rowSubject(c.pr, c);
+    // bc982192: the row's batch route stamp on top (not part of the batch key; ledger.mjs#batchKey).
+    const subject = { ...this.rowSubject(c.pr, c), ...(c.batchRoute === 'push' ? { batchRoute: 'push' } : {}) };
     // A flow end of this commit goes on as it was; a front's only with the same front number (attempt), never another one's.
     const flow = (await this.ledger.pendingFlowEnds()).find(s => {
       const old = s.reserved.subject;
@@ -3743,7 +3777,8 @@ export class ResidentExecutor {
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
       if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
-      // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase).
+      // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase; bc982192: but
+      // not a row stamped push that tests its head, which runs on a merge base main moving never ends).
       if (s?.code === RESIDENT_BASE_MOVED && s.kind === 'ignored') this.queue.stopBase(subject.baseSha, RESIDENT_BASE_MOVED, now);
       if (settled === 'stopped') {
         const capCode = network && networkReleases24h >= this.networkPolicy()?.releasesPerHeadPer24h ? 'NETWORK_RELEASE_CAP_REACHED'
@@ -4166,7 +4201,10 @@ export class ResidentExecutor {
     // R3 lean (DESIGN §82 item 1): a scan main's rules no longer require from App 5368905 (they require it from GitHub Actions, where it
     // runs beside the tests) is not run here at all: stage 8 never waits for it. The rules as the newest stage 10 read them (rulesetFacts
     // appScans); not read (no summary yet, a failed read, a Source before R3): every scan runs, as before.
-    const appScans = this.trainLast?.appScans ?? null;
+    // bc982192 (B1, FABLE-c3-b1b2 §2): a batch stamped push was born on a reading that found no scan required from this App
+    // (batchRoute()), and its base is the merge base, which stages 2-7 refuse (refs: main must be the base). Its plan comes from the
+    // stamp, never from a later stage 10 that could not read the rules: no scan, whatever trainLast holds now.
+    const appScans = subject.batchRoute === 'push' ? [] : this.trainLast?.appScans ?? null;
     const notRequired = appScans ? HEAVY_ROLES.filter(r => !appScans.includes(r)) : [];
     const roles = (front ? HEAVY_ROLES.filter(r => !reused.some(x => x.role === r)) : [...HEAVY_ROLES]).filter(r => !notRequired.includes(r));
     const reason = front ? RELAY_TRAIN_FRONT_LOCAL : 'RELAY_DISABLED';
