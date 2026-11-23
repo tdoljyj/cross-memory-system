@@ -5699,6 +5699,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - **判定**：`executor.mjs#standing(key, subject, batch, { hint, safePoint })`，返回 `null`（成立，或没有事实说不成立）或 `{ basis, live }`：
   - `not-on-duty`：节点模式 `STANDBY`（第 11 段探测或第 1 段的 `NODE_ROLE_NOT_HELD`），而且 companion 心跳新鲜（结束要 companion 证明 Linux 静止；不新鲜就下一拍再判，不会因此 HALT）。`UNCERTAIN` 不是答案。没有探测能力的引擎没有模式（单节点），视为当班。
   - `pr-closed` / `head-moved`：companion `pr-head` 的一次实时读（§17.5 的已有通道）说 PR 不是 open，或 head 不是批次的 head。
+  - `pr-draft`：同一次读说 PR 开着、head 未变，但是草稿。只结束停在 A、B 的批次，是流程结束（§72.11）。
 - **什么时候读 PR**（`liveReadDue`，按“批次键 + 被点名的 head”节流，`SUPERSEDE_LIVE_READ_MS` = 10 分钟，原有常量）：每个批次每 10 分钟一次；排队表里出现这个 PR 的更新提交、或第 10 段的车头指向这个 PR 的别的 head 时立即读（提示）。第 1 段的准入本身读过 PR，`markStarted` 时记作该批次的第一次读，所以刚开始的批次不多读。
 - **读不到**：不结束。读不到不是事实；结束会烧掉 head（B 上第 3、5、7 段已发布，要推新提交才能再跑），误结束比多停一会儿代价大得多；停留本身有 `park.maxMs` 兜底。只有被点名了别的 head 而读不到时才写回执 `supersede-unconfirmed`（与以前相同），平时的周期读不写，网络断一天也不会刷屏。
 - **读到 head 未变**：排队表里那个“更新的提交”被证伪，退回被替换（`keepRunning`，回执 `supersede-disproved`），与以前相同。
@@ -5782,12 +5783,23 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 `upgrade-drain` 干净结束后，原实现的三层去重把 head 永久挡住：`supersededEnd` 返回 `burned`，`RunQueue.settle` 把行停为 `STOPPED/burned`，`offer` 忽略已见过的 head；即使重新入队，`precheck` 仍拒绝账本已烧号、已用批次键和 `executed-heads` 中已发布的 head/S。PR 页因此要求推新提交。三层去重对真实失败继续生效，流程性结束通过带前序证据的续跑解决。
 
-- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
+- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）、`pr-draft`（A/B，§72.11）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
 - 账本把这类完整终态整体改名保存到 `state/ledger-flow-ends/`。原始烧号和已发布记录保留；新预留的 `flowFrom` 消耗精确前序，`flowKeys` 只允许其自身发布链通过去重。队列只是投影：每拍从未消费前序恢复同一 PR/H/base/S，重复触发、队列丢失或重启不产生第二份执行。
 - 新批次仍走节点、列车、intake hold、版本一致性、停车容量、熔断、日额度与实时 PR 校验。升级 hold 或 PAUSE 未撤不续跑；读不到 PR 不放行，已关闭或 head 改变则退役该续跑资格。预留之前崩溃可重试，预留之后崩溃仍是原恢复机制的现场，不额外开 attempt 2。
 - A 尚未扫描，重新走准入。B 的 CI Source 未变时，只重派生当前安装版本的控制包，从第 8 段继续；该 CI Source 的原批次绑定与已完成检查仍有效，原扫描不重跑。CI Source 改变时，job ID 和 sticky batch claim 随之改变，必须重新走正常准入和扫描；既有 Native 发布、scan-start 和列车守卫继续决定能否执行。安装文件 Source 与 CI Source 不混用。
 - 同一 head/S 的其他执行、不可读发布记录或空发布目录仍拒绝续跑。历史尝试仍计入日预算；B 续跑的第一次第 8 段也计重试。流程性结束保持熔断中性；续跑后的真实失败照旧烧号，不继续重排。
 - PR 页对流程结束显示 pending、自动续跑、不用推新提交。`test/safe-point-readmit.test.mjs` 覆盖结束→hold→恢复→一次完成、A/B、超时、安装/CI Source、重启和队列丢失、版本错位、发布链、额度、真实失败及状态文案。冻结升级通道不变。
+
+### 72.11 草稿是搁置，不是终局（D:/w/tmp/PLAN-resident-draft-batch-20261123.md）
+
+现场（2026-11-23 北京时间 15:23:48）：#1253 第一次尝试第 2 段 `REMOTE_REFS_CHANGED_SINCE_BUNDLE` 干净失败后转为草稿，常驻仍在 600 秒后开它的 attempt 2，#1254 排在后面，PR 页预计时刻每分钟后滚，#1253 的页面停在运行中。病根：同一事实各处各判，四处实时读只比 state 与 head，草稿只有轮询器看。
+
+- **一个判定**：`src/pr-candidate.mjs#prCandidate(live, subject)`，纯函数。读不到 → `null`（不是事实）；不 open → `pr-closed`（终局）；head 不同 → `head-moved`（终局）；`draft === true` → `pr-draft`（搁置）；否则成立。预留前（`runRow`、流程续跑）、attempt 2 前、`falsified`、`standing` 都用它；轮询器的草稿过滤用同一个 `isDraft`。实时读带上 `draft`（`companion.mjs` jq、`parsePull`、`mailbox.mjs` 可选布尔键、`service-ports.mjs` 透传）；旧回包没有该键 = 没有草稿事实。
+- **搁置**：`RunQueue.hold(pr, headSha)` 给行记 `{ reason: PR_DRAFT, headSha, at }`。被搁置的行不是候选，它的 attempt 2 意向保留但不调度、不读，流程续跑资格保留。下一次触发（转为可评审会推进 GitHub 的 `updated_at`，轮询器再提议）解除搁置，同一 head 接着跑，不要新提交。
+- **在哪里结束**：只有停在 A、B 的批次在 10 分钟那次读里以 `pr-draft` 结束：同一条 `supersededEnd`，按 §72.10 是流程结束（归还停靠名额，B 上下次从第 8 段续跑，第 2–7 段不重跑），结算时行被搁置。在途安全点（`before-relay-plan`、`before-workspace`）读到草稿不结束，批次走到停靠点再按本条结束（在途结束不是流程结束，会要新提交）；独占区内照旧不判。
+- **第一次读**：只有预留前那次读有回答时，第 1 段才记作批次的第一次实时读；没回答时第一个安全点立即读。
+- **观测**：`reportQueue` 把在跑批次的预计结束（开始 + `ETA_BATCH_MS`）交给 `queue.view`，后面的行不再每分钟后滚；排队文字写“前面 #N 的批次在跑（第 k 段）”。轮询器把跳过的草稿记在 `lastPass.drafts`，本节点在其 head 上写过状态的，改写一次为“草稿：已搁置，转为可评审后自动继续”。
+- **测试**：`test/pr-candidate-hold.test.mjs`（现场回放、转回可评审、队列行、停在 B、停在 A、无回归、结构、状态）。
 
 ## 73. 通用包重装停在半途：续装到完成（分支 `claude/installer-half-install`，[ADR 0029](docs/adr/0029-installer-half-install.md)）
 
