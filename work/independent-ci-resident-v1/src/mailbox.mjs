@@ -146,10 +146,11 @@ export function validateResponse(v, request) {
   // the body's claim trailers (sorted, unique UUIDs, at most PULL_CLAIMS_MAX: field
   // defect 2026-11-08, PR #1039), never an open-ended payload or authority to execute anything.
   check(v.pull === null || (request.kind === 'pr-head' && (exactKeys(v.pull,
-    ['number', 'state', 'headSha', ...['mergeSha', 'claims'].filter(k => v.pull && Object.hasOwn(v.pull, k))], 'MAILBOX_RESPONSE_PULL_REFUSED'),
+    ['number', 'state', 'headSha', ...['mergeSha', 'claims', 'draft'].filter(k => v.pull && Object.hasOwn(v.pull, k))], 'MAILBOX_RESPONSE_PULL_REFUSED'),
     v.pull.number === request.pr && PULL_STATES.includes(v.pull.state) && HEX40.test(v.pull.headSha ?? '') &&
     (!Object.hasOwn(v.pull, 'mergeSha') || (typeof v.pull.mergeSha === 'string' && v.pull.mergeSha.length === 40 && HEX40.test(v.pull.mergeSha))) &&
-    (!Object.hasOwn(v.pull, 'claims') || pullClaimsOk(v.pull.claims)))), 'MAILBOX_RESPONSE_PULL_REFUSED');
+    (!Object.hasOwn(v.pull, 'claims') || pullClaimsOk(v.pull.claims)) &&
+    (!Object.hasOwn(v.pull, 'draft') || typeof v.pull.draft === 'boolean'))), 'MAILBOX_RESPONSE_PULL_REFUSED');
   check(v.jobTree === null || JOB_TREES.includes(v.jobTree), 'MAILBOX_RESPONSE_JOB_TREE_REFUSED');
   check(v.memory === null || (request.kind === 'memory-ready' && (exactKeys(v.memory, ['order', 'blocks'], 'MAILBOX_RESPONSE_MEMORY_REFUSED'),
     Number.isSafeInteger(v.memory.order) && v.memory.order >= 0 && v.memory.order <= 10 && Number.isSafeInteger(v.memory.blocks) && v.memory.blocks >= 0)), 'MAILBOX_RESPONSE_MEMORY_REFUSED');
