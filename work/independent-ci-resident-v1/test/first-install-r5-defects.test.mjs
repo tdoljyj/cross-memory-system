@@ -11,89 +11,16 @@
 // windows/install-resident.ps1, the real migrate-acl.ps1 and acl-model.json of Source v2 on an offline fixture under TEMP. Windows
 // PowerShell 5.1; a parent with a Restricted process scope is how a new machine looks (nothing of the machine is changed).
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
-
-const RES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const HOST = path.join(RES, 'windows', 'first-install-host.ps1');
-const TPL = path.join(RES, 'reinstall', 'launcher', 'template.ps1');
-const INSTALL = path.join(RES, 'windows', 'install-resident.ps1');
-const RV2 = path.resolve(RES, '..', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2');
-const MIGRATE = path.join(RV2, 'migrate-acl.ps1');
-const MODEL = path.join(RV2, 'acl-model.json');
-const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const skip = process.platform === 'win32' ? false : 'Windows PowerShell 5.1 runs on Windows only';
-const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;
-const tempDir = (t, prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
-
-const SID = 'S-1-5-21-111111111-2222222222-3333333333-';
-const OPERATOR = `${SID}1000`, CONTROLLER = `${SID}1007`, COMPANION = `${SID}1008`;
-const RESIDENT = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629';
-
-// One Windows PowerShell 5.1 run of `command` (the parent's process scope: `policy`); its last stdout line is JSON.
-function ps(command, { policy = 'Bypass', raw = false } = {}) {
-  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; delete env.PSExecutionPolicyPreference;
-  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', policy, '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
-    { cwd: RES, env, encoding: raw ? 'buffer' : 'utf8', windowsHide: true, timeout: 300_000 });
-  assert.ifError(r.error);
-  if (raw) return r;
-  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  return JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1));
-}
-
-// The named functions and top-level assignments of a real file, dot-sourced into the script scope (a foreach does not open a scope).
-const load = (file, fns = [], vars = []) => `$tokens = $null; $errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(file)}, [ref]$tokens, [ref]$errors)
-if ($errors.Count) { throw ('PARSE_ERRORS:' + ${psLiteral(path.basename(file))}) }
-foreach ($name in @(${fns.map(psLiteral).join(', ') || "''"})) { if (-not $name) { continue }
-  $f = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
-  if ($f.Count -ne 1) { throw ('FUNCTION_NOT_ONE:' + $name + ':' + $f.Count) }
-  . ([scriptblock]::Create($f[0].Extent.Text))
-}
-foreach ($name in @(${vars.map(psLiteral).join(', ') || "''"})) { if (-not $name) { continue }
-  $a = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] -and $x.Left.Extent.Text -ceq ('$' + $name) }, $false))
-  if ($a.Count -ne 1) { throw ('ASSIGNMENT_NOT_ONE:' + $name + ':' + $a.Count) }
-  . ([scriptblock]::Create($a[0].Extent.Text))
-}
-`;
-const PRELUDE = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 2.0; $ProgressPreference = 'SilentlyContinue'
-[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
-$null = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
-`;
+import { COMPANION, CONTROLLER, HOST, INSTALL, MODEL, OPERATOR, PRELUDE, RESIDENT, TPL, fixture, load, ps, psLiteral, skip, tempDir } from './first-install-fixture.mjs';
 
 // ---------------------------------------------------------------- D1 + D3
-// The fixture: a CI root under TEMP holding exactly the directories the host preparation's ci-root table names (Get-CiRootDirectories, the
-// one table the step makes them from), each with the table's DACL; the owner (a test cannot set BA) and the test account's own full-control
-// entry (so it can go on and clean up) are the fixture's only differences, as migrate-acl.ps1 -OfflineFixtureRoot does for what it creates.
-const fixture = (root) => `${PRELUDE}
-${load(HOST, ['Get-CiRootDirectories', 'Get-CiRootSddl', 'Get-FirstInstallSddl', 'Get-AdminOnlySddl', 'Get-SecretDirectorySddl'], ['CiRoot', 'FirstDir', 'CredDir', 'SecretTargets'])}
-$HostCiRoot = $CiRoot
-${load(TPL, ['Get-Key', 'Sha256Bytes', 'Parse-Json', 'Parse-LastLine', 'Get-SpoolLeftovers', 'Get-SpoolRemainder', 'Get-SpoolBaseline', 'Test-AclMissingTargetAccepted'], ['ResidentRoot', 'Strict8', 'Js'])}
-${load(INSTALL, ['Get-CompanionSpoolSddl'])}
-$fx = ${psLiteral(root)}
-$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$table = Get-CiRootDirectories ${psLiteral(OPERATOR)} ${psLiteral(CONTROLLER)}
-$made = @()
-foreach ($k in @($table.Keys)) {
-  $p = [string]$table[$k][0]
-  if (-not ($p -ceq $HostCiRoot -or $p.StartsWith($HostCiRoot + '\\', [StringComparison]::OrdinalIgnoreCase))) { throw ('TABLE_PATH_OUTSIDE_CI_ROOT:' + $p) }
-  $ds = New-Object Security.AccessControl.DirectorySecurity
-  $ds.SetSecurityDescriptorSddlForm((([string]$table[$k][1]) -replace '^O:BAG:BA', '') + '(A;OICI;FA;;;' + $me + ')')
-  [void][IO.Directory]::CreateDirectory($fx + $p.Substring($HostCiRoot.Length), $ds); $made += $p.Substring($HostCiRoot.Length)
-}
-$spool = Join-Path $fx 'formal-spool'
-function Invoke-Migrate([switch]$Apply) {
-  $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ${psLiteral(MIGRATE)}, '-ResidentSid', ${psLiteral(RESIDENT)}, '-OwnerSid', ${psLiteral(OPERATOR)}, '-ControllerSid', ${psLiteral(CONTROLLER)}, '-OfflineFixtureRoot', $fx)
-  if ($Apply) { $a += '-Apply' }
-  $o = & ${psLiteral(POWERSHELL)} @a | Out-String
-  [ordered]@{ exit = $LASTEXITCODE; result = (Parse-LastLine $o) }
-}
-`;
-
+// The fixture (first-install-fixture.mjs): a CI root under TEMP made by the host preparation's own ci-root step (Get-CiRootDirectories, the
+// one table the step makes them from), each folder with the table's DACL; the owner (a test cannot set BA) and the test account's own
+// full-control entry (so it can go on and clean up) are the fixture's only differences, as migrate-acl.ps1 -OfflineFixtureRoot does for
+// what it creates.
 test('D1+D3: the host table makes the whole spool baseline; the launcher inventory, migrate-acl and the companion move all hold on it', { skip, timeout: 600_000 }, (t) => {
   const root = path.join(tempDir(t, 'r5-d1-'), 'ci');
   const r = ps(`${fixture(root)}
