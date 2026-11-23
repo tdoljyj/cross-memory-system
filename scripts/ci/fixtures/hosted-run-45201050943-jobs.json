@@ -1,0 +1,913 @@
+{
+ "total_count": 7,
+ "jobs": [
+  {
+   "id": 137784333978,
+   "run_id": 45201050943,
+   "workflow_name": "hosted-required",
+   "head_branch": "claude/drill-early-stop-evidence",
+   "run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/45201050943",
+   "run_attempt": 1,
+   "node_id": "CR_kwDOT42AV88AAAAgFJYWmg",
+   "head_sha": "21025a8a27a6eac07f2876df169ff13a29403630",
+   "url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/jobs/137784333978",
+   "html_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45201050943/job/137784333978",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-23T15:04:16Z",
+   "started_at": "2026-11-23T15:04:17Z",
+   "completed_at": "2026-11-23T15:27:22Z",
+   "name": "hosted-ci-suites-windows",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-23T15:04:18Z",
+     "completed_at": "2026-11-23T15:04:19Z"
+    },
+    {
+     "name": "Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-23T15:04:19Z",
+     "completed_at": "2026-11-23T15:04:33Z"
+    },
+    {
+     "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-23T15:04:33Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Run actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Resolve push baseline before loading trusted commands",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:44Z"
+    },
+    {
+     "name": "Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-23T15:04:44Z",
+     "completed_at": "2026-11-23T15:04:54Z"
+    },
+    {
+     "name": "Configure job temporary storage",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-23T15:04:54Z",
+     "completed_at": "2026-11-23T15:04:54Z"
+    },
+    {
+     "name": "Select and run the suites declared for Windows",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-23T15:04:54Z",
+     "completed_at": "2026-11-23T15:27:18Z"
+    },
+    {
+     "name": "Post Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 13,
+     "started_at": "2026-11-23T15:27:18Z",
+     "completed_at": "2026-11-23T15:27:19Z"
+    },
+    {
+     "name": "Post Run actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 14,
+     "started_at": "2026-11-23T15:27:19Z",
+     "completed_at": "2026-11-23T15:27:19Z"
+    },
+    {
+     "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 15,
+     "started_at": "2026-11-23T15:27:19Z",
+     "completed_at": "2026-11-23T15:27:20Z"
+    },
+    {
+     "name": "Post Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16,
+     "started_at": "2026-11-23T15:27:20Z",
+     "completed_at": "2026-11-23T15:27:21Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-23T15:27:21Z",
+     "completed_at": "2026-11-23T15:27:21Z"
+    }
+   ],
+   "check_run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/check-runs/137784333978",
+   "labels": [
+    "windows-2025"
+   ],
+   "runner_id": 1000019719,
+   "runner_name": "GitHub Actions 1000019719",
+   "runner_group_id": 0,
+   "runner_group_name": "GitHub Actions"
+  },
+  {
+   "id": 137784334297,
+   "run_id": 45201050943,
+   "workflow_name": "hosted-required",
+   "head_branch": "claude/drill-early-stop-evidence",
+   "run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/45201050943",
+   "run_attempt": 1,
+   "node_id": "CR_kwDOT42AV88AAAAgFJYX2Q",
+   "head_sha": "21025a8a27a6eac07f2876df169ff13a29403630",
+   "url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/jobs/137784334297",
+   "html_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45201050943/job/137784334297",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-23T15:04:16Z",
+   "started_at": "2026-11-23T15:04:18Z",
+   "completed_at": "2026-11-23T15:06:10Z",
+   "name": "hosted-contract-placement",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-23T15:04:19Z",
+     "completed_at": "2026-11-23T15:04:19Z"
+    },
+    {
+     "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-23T15:04:19Z",
+     "completed_at": "2026-11-23T15:04:26Z"
+    },
+    {
+     "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-23T15:04:26Z",
+     "completed_at": "2026-11-23T15:04:31Z"
+    },
+    {
+     "name": "Configure job temporary storage",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-23T15:04:31Z",
+     "completed_at": "2026-11-23T15:04:31Z"
+    },
+    {
+     "name": "Resolve push baseline",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-23T15:04:31Z",
+     "completed_at": "2026-11-23T15:04:31Z"
+    },
+    {
+     "name": "Placement and renderer fixtures",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-23T15:04:31Z",
+     "completed_at": "2026-11-23T15:04:32Z"
+    },
+    {
+     "name": "Build actual public bootstrap",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-23T15:04:32Z",
+     "completed_at": "2026-11-23T15:06:06Z"
+    },
+    {
+     "name": "Render all actual and synthetic contract parts",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-23T15:06:06Z",
+     "completed_at": "2026-11-23T15:06:06Z"
+    },
+    {
+     "name": "Enforce placement and one-time production gate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-23T15:06:06Z",
+     "completed_at": "2026-11-23T15:06:06Z"
+    },
+    {
+     "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-23T15:06:06Z",
+     "completed_at": "2026-11-23T15:06:07Z"
+    },
+    {
+     "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-23T15:06:07Z",
+     "completed_at": "2026-11-23T15:06:07Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-23T15:06:07Z",
+     "completed_at": "2026-11-23T15:06:07Z"
+    }
+   ],
+   "check_run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/check-runs/137784334297",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_id": 1000019724,
+   "runner_name": "GitHub Actions 1000019724",
+   "runner_group_id": 0,
+   "runner_group_name": "GitHub Actions"
+  },
+  {
+   "id": 137784334411,
+   "run_id": 45201050943,
+   "workflow_name": "hosted-required",
+   "head_branch": "claude/drill-early-stop-evidence",
+   "run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/45201050943",
+   "run_attempt": 1,
+   "node_id": "CR_kwDOT42AV88AAAAgFJYYSw",
+   "head_sha": "21025a8a27a6eac07f2876df169ff13a29403630",
+   "url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/jobs/137784334411",
+   "html_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45201050943/job/137784334411",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-23T15:04:16Z",
+   "started_at": "2026-11-23T15:04:19Z",
+   "completed_at": "2026-11-23T15:04:47Z",
+   "name": "hosted-migration-verify",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-23T15:04:19Z",
+     "completed_at": "2026-11-23T15:04:23Z"
+    },
+    {
+     "name": "Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-23T15:04:23Z",
+     "completed_at": "2026-11-23T15:04:32Z"
+    },
+    {
+     "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-23T15:04:32Z",
+     "completed_at": "2026-11-23T15:04:37Z"
+    },
+    {
+     "name": "Resolve push baseline before loading trusted commands",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-23T15:04:37Z",
+     "completed_at": "2026-11-23T15:04:37Z"
+    },
+    {
+     "name": "Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-23T15:04:37Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Configure job temporary storage",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Select suites",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Install the application dependencies",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 8,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Verify migrations on the production schema",
+     "status": "completed",
+     "conclusion": "skipped",
+     "number": 9,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Not affected",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 10,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Post Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Post Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 20,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 21,
+     "started_at": "2026-11-23T15:04:42Z",
+     "completed_at": "2026-11-23T15:04:42Z"
+    }
+   ],
+   "check_run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/check-runs/137784334411",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_id": 1000019721,
+   "runner_name": "GitHub Actions 1000019721",
+   "runner_group_id": 0,
+   "runner_group_name": "GitHub Actions"
+  },
+  {
+   "id": 137784334445,
+   "run_id": 45201050943,
+   "workflow_name": "hosted-required",
+   "head_branch": "claude/drill-early-stop-evidence",
+   "run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/45201050943",
+   "run_attempt": 1,
+   "node_id": "CR_kwDOT42AV88AAAAgFJYYbQ",
+   "head_sha": "21025a8a27a6eac07f2876df169ff13a29403630",
+   "url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/jobs/137784334445",
+   "html_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45201050943/job/137784334445",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-23T15:04:16Z",
+   "started_at": "2026-11-23T15:04:18Z",
+   "completed_at": "2026-11-23T15:04:46Z",
+   "name": "hosted-gitleaks",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-23T15:04:18Z",
+     "completed_at": "2026-11-23T15:04:20Z"
+    },
+    {
+     "name": "Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-23T15:04:20Z",
+     "completed_at": "2026-11-23T15:04:29Z"
+    },
+    {
+     "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-23T15:04:29Z",
+     "completed_at": "2026-11-23T15:04:32Z"
+    },
+    {
+     "name": "Resolve push baseline before loading trusted commands",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-23T15:04:32Z",
+     "completed_at": "2026-11-23T15:04:33Z"
+    },
+    {
+     "name": "Check out the trusted base (scanner script and configuration)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-23T15:04:33Z",
+     "completed_at": "2026-11-23T15:04:36Z"
+    },
+    {
+     "name": "Configure job temporary storage",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-23T15:04:36Z",
+     "completed_at": "2026-11-23T15:04:36Z"
+    },
+    {
+     "name": "Resolve the changed range",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-23T15:04:36Z",
+     "completed_at": "2026-11-23T15:04:36Z"
+    },
+    {
+     "name": "Copy the changed history into a fresh Git directory",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-23T15:04:36Z",
+     "completed_at": "2026-11-23T15:04:39Z"
+    },
+    {
+     "name": "Scan the changed range with Gitleaks 8.30.1",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-23T15:04:39Z",
+     "completed_at": "2026-11-23T15:04:44Z"
+    },
+    {
+     "name": "Post Check out the trusted base (scanner script and configuration)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16,
+     "started_at": "2026-11-23T15:04:44Z",
+     "completed_at": "2026-11-23T15:04:44Z"
+    },
+    {
+     "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-23T15:04:44Z",
+     "completed_at": "2026-11-23T15:04:44Z"
+    },
+    {
+     "name": "Post Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-23T15:04:44Z",
+     "completed_at": "2026-11-23T15:04:44Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-23T15:04:44Z",
+     "completed_at": "2026-11-23T15:04:44Z"
+    }
+   ],
+   "check_run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/check-runs/137784334445",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_id": 1000019720,
+   "runner_name": "GitHub Actions 1000019720",
+   "runner_group_id": 0,
+   "runner_group_name": "GitHub Actions"
+  },
+  {
+   "id": 137784334507,
+   "run_id": 45201050943,
+   "workflow_name": "hosted-required",
+   "head_branch": "claude/drill-early-stop-evidence",
+   "run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/45201050943",
+   "run_attempt": 1,
+   "node_id": "CR_kwDOT42AV88AAAAgFJYYqw",
+   "head_sha": "21025a8a27a6eac07f2876df169ff13a29403630",
+   "url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/jobs/137784334507",
+   "html_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45201050943/job/137784334507",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-23T15:04:16Z",
+   "started_at": "2026-11-23T15:04:18Z",
+   "completed_at": "2026-11-23T15:05:02Z",
+   "name": "hosted-trivy",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-23T15:04:19Z",
+     "completed_at": "2026-11-23T15:04:22Z"
+    },
+    {
+     "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-23T15:04:22Z",
+     "completed_at": "2026-11-23T15:04:30Z"
+    },
+    {
+     "name": "Configure job temporary storage",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-23T15:04:30Z",
+     "completed_at": "2026-11-23T15:04:32Z"
+    },
+    {
+     "name": "Refuse symlinks, submodules and other non-regular tree entries",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-23T15:04:32Z",
+     "completed_at": "2026-11-23T15:04:32Z"
+    },
+    {
+     "name": "Snapshot the tree for the scanners",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-23T15:04:32Z",
+     "completed_at": "2026-11-23T15:04:33Z"
+    },
+    {
+     "name": "Prepare the vulnerability DB and the pinned checks bundle",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-23T15:04:33Z",
+     "completed_at": "2026-11-23T15:04:48Z"
+    },
+    {
+     "name": "Vulnerabilities (HIGH/CRITICAL)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-23T15:04:48Z",
+     "completed_at": "2026-11-23T15:04:49Z"
+    },
+    {
+     "name": "Secrets",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-23T15:04:49Z",
+     "completed_at": "2026-11-23T15:04:56Z"
+    },
+    {
+     "name": "Misconfiguration (HIGH/CRITICAL)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-23T15:04:56Z",
+     "completed_at": "2026-11-23T15:05:00Z"
+    },
+    {
+     "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-23T15:05:00Z",
+     "completed_at": "2026-11-23T15:05:00Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-23T15:05:00Z",
+     "completed_at": "2026-11-23T15:05:00Z"
+    }
+   ],
+   "check_run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/check-runs/137784334507",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_id": 1000019722,
+   "runner_name": "GitHub Actions 1000019722",
+   "runner_group_id": 0,
+   "runner_group_name": "GitHub Actions"
+  },
+  {
+   "id": 137784334549,
+   "run_id": 45201050943,
+   "workflow_name": "hosted-required",
+   "head_branch": "claude/drill-early-stop-evidence",
+   "run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/45201050943",
+   "run_attempt": 1,
+   "node_id": "CR_kwDOT42AV88AAAAgFJYY1Q",
+   "head_sha": "21025a8a27a6eac07f2876df169ff13a29403630",
+   "url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/jobs/137784334549",
+   "html_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45201050943/job/137784334549",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-23T15:04:16Z",
+   "started_at": "2026-11-23T15:04:18Z",
+   "completed_at": "2026-11-23T15:11:21Z",
+   "name": "hosted-ci-suites",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-23T15:04:19Z",
+     "completed_at": "2026-11-23T15:04:22Z"
+    },
+    {
+     "name": "Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-23T15:04:22Z",
+     "completed_at": "2026-11-23T15:04:44Z"
+    },
+    {
+     "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-23T15:04:44Z",
+     "completed_at": "2026-11-23T15:04:49Z"
+    },
+    {
+     "name": "Resolve push baseline before loading trusted commands",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-23T15:04:49Z",
+     "completed_at": "2026-11-23T15:04:49Z"
+    },
+    {
+     "name": "Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-23T15:04:49Z",
+     "completed_at": "2026-11-23T15:04:53Z"
+    },
+    {
+     "name": "Configure job temporary storage",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-23T15:04:53Z",
+     "completed_at": "2026-11-23T15:04:53Z"
+    },
+    {
+     "name": "Select suites",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-23T15:04:53Z",
+     "completed_at": "2026-11-23T15:04:54Z"
+    },
+    {
+     "name": "Install the application dependencies the selected suites need",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-23T15:04:54Z",
+     "completed_at": "2026-11-23T15:04:54Z"
+    },
+    {
+     "name": "Run the selected suites",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-23T15:04:54Z",
+     "completed_at": "2026-11-23T15:11:16Z"
+    },
+    {
+     "name": "Post Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16,
+     "started_at": "2026-11-23T15:11:16Z",
+     "completed_at": "2026-11-23T15:11:16Z"
+    },
+    {
+     "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-23T15:11:16Z",
+     "completed_at": "2026-11-23T15:11:16Z"
+    },
+    {
+     "name": "Post Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-23T15:11:16Z",
+     "completed_at": "2026-11-23T15:11:17Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-23T15:11:17Z",
+     "completed_at": "2026-11-23T15:11:17Z"
+    }
+   ],
+   "check_run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/check-runs/137784334549",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_id": 1000019723,
+   "runner_name": "GitHub Actions 1000019723",
+   "runner_group_id": 0,
+   "runner_group_name": "GitHub Actions"
+  },
+  {
+   "id": 137784335135,
+   "run_id": 45201050943,
+   "workflow_name": "hosted-required",
+   "head_branch": "claude/drill-early-stop-evidence",
+   "run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/45201050943",
+   "run_attempt": 1,
+   "node_id": "CR_kwDOT42AV88AAAAgFJYbHw",
+   "head_sha": "21025a8a27a6eac07f2876df169ff13a29403630",
+   "url": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/jobs/137784335135",
+   "html_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/45201050943/job/137784335135",
+   "status": "completed",
+   "conclusion": "success",
+   "created_at": "2026-11-23T15:04:16Z",
+   "started_at": "2026-11-23T15:04:18Z",
+   "completed_at": "2026-11-23T15:11:40Z",
+   "name": "hosted-clued-cloud-tests",
+   "steps": [
+    {
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 1,
+     "started_at": "2026-11-23T15:04:19Z",
+     "completed_at": "2026-11-23T15:04:20Z"
+    },
+    {
+     "name": "Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 2,
+     "started_at": "2026-11-23T15:04:20Z",
+     "completed_at": "2026-11-23T15:04:25Z"
+    },
+    {
+     "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 3,
+     "started_at": "2026-11-23T15:04:25Z",
+     "completed_at": "2026-11-23T15:04:30Z"
+    },
+    {
+     "name": "Resolve push baseline before loading trusted commands",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 4,
+     "started_at": "2026-11-23T15:04:30Z",
+     "completed_at": "2026-11-23T15:04:30Z"
+    },
+    {
+     "name": "Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 5,
+     "started_at": "2026-11-23T15:04:30Z",
+     "completed_at": "2026-11-23T15:04:35Z"
+    },
+    {
+     "name": "Configure job temporary storage",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 6,
+     "started_at": "2026-11-23T15:04:35Z",
+     "completed_at": "2026-11-23T15:04:35Z"
+    },
+    {
+     "name": "Select suites",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 7,
+     "started_at": "2026-11-23T15:04:35Z",
+     "completed_at": "2026-11-23T15:04:36Z"
+    },
+    {
+     "name": "Install the application dependencies",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 8,
+     "started_at": "2026-11-23T15:04:36Z",
+     "completed_at": "2026-11-23T15:06:09Z"
+    },
+    {
+     "name": "Lint, ledger, typecheck, build and unit tests",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 9,
+     "started_at": "2026-11-23T15:06:09Z",
+     "completed_at": "2026-11-23T15:11:35Z"
+    },
+    {
+     "name": "Post Check out the trusted base (selection and commands)",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 16,
+     "started_at": "2026-11-23T15:11:35Z",
+     "completed_at": "2026-11-23T15:11:36Z"
+    },
+    {
+     "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 17,
+     "started_at": "2026-11-23T15:11:36Z",
+     "completed_at": "2026-11-23T15:11:36Z"
+    },
+    {
+     "name": "Post Check out the candidate",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 18,
+     "started_at": "2026-11-23T15:11:36Z",
+     "completed_at": "2026-11-23T15:11:36Z"
+    },
+    {
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success",
+     "number": 19,
+     "started_at": "2026-11-23T15:11:36Z",
+     "completed_at": "2026-11-23T15:11:36Z"
+    }
+   ],
+   "check_run_url": "https://api.github.com/repos/tdoljyj/cross-memory-system/check-runs/137784335135",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_id": 1000019725,
+   "runner_name": "GitHub Actions 1000019725",
+   "runner_group_id": 0,
+   "runner_group_name": "GitHub Actions"
+  }
+ ]
+}

@@ -275,10 +275,19 @@ jobs:
         if: steps.select.outputs.run_production_schema != 'true'
         run: echo "No migration, ledger, snapshot or drift-check file changed; nothing to verify." >> "$GITHUB_STEP_SUMMARY"
 
-  ci-suites-windows:
-    name: hosted-ci-suites-windows
+  ci-suites-windows-shard:
+    # The Windows suites in shards (task 3435f8bf block 4, PLAN-hosted-windows-speed-20261123 §3.2): one 4-core machine ran
+    # them in 23-26 minutes; each shard runs the i-th of n parts of the same --run-selected plan (ci-required-selection.mjs
+    # --shard, run from the trusted base like the rest). The number of shards is written in the matrix list only. A shard's
+    # check name is hosted-ci-suites-windows-shard-<n>, which no ruleset names: the required hosted-ci-suites-windows is the
+    # summary job below.
+    name: ${{ format('hosted-ci-suites-windows-shard-{0}', matrix.shard) }}
     runs-on: windows-2025
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       pull-requests: read
@@ -364,8 +373,60 @@ jobs:
           CLUED_CI_HOST_LACKS: non-elevated
         run: |
           $ErrorActionPreference = 'Stop'
-          & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate
+          & node trusted/scripts/ci/ci-required-selection.mjs --run-selected ci-suites --root candidate --shard ${{ matrix.shard }}/${{ strategy.job-total }}
           exit $LASTEXITCODE
+
+  # The required check hosted-ci-suites-windows: green only when every shard succeeded. A failed, cancelled or skipped
+  # shard makes it red (a skipped required check would count as passed, hence always()). One judgement and nothing else:
+  # no artifact, no API, no numbers summed across shards (FABLE-hosted-b3-L2-ruling-20261124; hosted-required.test.mjs).
+  ci-suites-windows:
+    name: hosted-ci-suites-windows
+    needs: ci-suites-windows-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every Windows suite shard succeeded
+        env:
+          RESULT: ${{ needs.ci-suites-windows-shard.result }}
+          TMPDIR: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/clued-pycache
+          WRANGLER_LOG_PATH: ${{ runner.temp }}/clued-wrangler-logs
+        run: |
+          echo "hosted-ci-suites-windows-shard-*: $RESULT"
+          test "$RESULT" = success
+
+  # Not a required check (no ruleset names it, and it is not one of shadow-compare.mjs's seven pairs): red when the shards
+  # took more than 10 minutes from the first start to the last end, with each shard's time in the step summary
+  # (scripts/ci/hosted-windows-duration.mjs, V4). It shows, it never blocks. It runs the candidate's script: nothing
+  # depends on its verdict, so a pull request may change it like any test.
+  ci-suites-windows-duration:
+    name: hosted-ci-suites-windows-duration
+    needs: ci-suites-windows-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Configure job temporary storage
+        uses: ./candidate/.github/actions/ci-temporary-storage
+      - name: Measure the Windows suite shards
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node candidate/scripts/ci/hosted-windows-duration.mjs
 
   # The scans: the executor steps of gitleaks.yml, trivy.yml and contract-placement.yml from "Configure job temporary
   # storage" on, byte for byte, without the Native permission and relay identity steps (see the header).
