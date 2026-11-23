@@ -38,7 +38,9 @@
          c. install.mjs prepare --from <dir> (not elevated);
        then the launcher ELEVATED (UAC 2): -Stage launcher copies the launcher prepare wrote into an admin-only directory, checks its
        sha256 and runs that copy with -RunApprovedInstall. A first install ends BOOTSTRAP_DONE only when the launcher verified, paused
-       and the companion switch passed (Get-LauncherVerdict; else BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE).
+       and the companion switch passed (Get-LauncherVerdict; else BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE) and its first-train
+       wait confirmed the node's role, held or not-held (else BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED with FIRST_INSTALL_ROLE_UNAUTHORIZED,
+       the service refused the node's CI token, or FIRST_INSTALL_ROLE_UNCONFIRMED).
   An elevated stage runs its child (P1, the launcher) with stdout and stderr read apart (Invoke-StageChild): a line on stderr never
   ends the stage or loses the child's verdict.
   The first install's token directory (C:\ProgramData\CluedIndependentCI\first-install\credentials) never outlives the run (L3): the
@@ -277,6 +279,16 @@ function Get-LauncherVerdict([bool]$firstInstall, $terminal) {
   if ($firstInstall -and $ch -cne 'COMPANION_HEADLESS_QUALIFIED') {
     return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE'; code = $(if ($ch) { $ch } else { $null }); companionSwitch = $ch
       next = 'installed and verified, but the distribution is still the operator''s: the companion switch (the installed rearm-resident.ps1 -CompanionAccount -WslVhdxDirectory <facts.companionWsl.vhdxDirectory>, elevated) has to pass; see companion-headless-report.json of this launch' }
+  }
+  # FABLE-drill-role-probe-20261124 3.2 (task 87d330d0): a first install whose node never confirmed its role is not done. The launcher's
+  # terminal role is its first-train wait's: unauthorized (the service refused the node's CI token), unconfirmed (no definite answer in
+  # the wait), not-held or held; a terminal without one is unconfirmed. A reinstall's verdict is as before.
+  $role = [string](Get-Key $terminal 'role')
+  if ($firstInstall -and $role -cne 'held' -and $role -cne 'not-held') {
+    $unauthorized = $role -ceq 'unauthorized'
+    return [ordered]@{ status = 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED'; code = $(if ($unauthorized) { 'FIRST_INSTALL_ROLE_UNAUTHORIZED' } else { 'FIRST_INSTALL_ROLE_UNCONFIRMED' }); companionSwitch = $ch
+      next = $(if ($unauthorized) { 'installed, verified and paused, but the service refused this node''s CI token (ROLE_PROBE_CONNECTION_UNAUTHORIZED): the token is revoked, expired or not registered; give a valid one and run the same first-install command again' }
+        else { 'installed, verified and paused, but the node''s role probe gave no definite answer within the first-train wait; run the same first-install command again; see first-train-report.json of this launch' }) }
   }
   [ordered]@{ status = 'BOOTSTRAP_DONE'; companionSwitch = $ch; next = $null }
 }

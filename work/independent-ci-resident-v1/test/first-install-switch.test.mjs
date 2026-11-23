@@ -144,6 +144,7 @@ test('a refused token ends the first-train wait at once, as a failed step that n
   const ahead = new Date(Date.now() + 20_000).toISOString();
   const status = fixtureStatus({ writtenAt: ahead, notices: [{ key: `role-probe-connection:${Date.parse(ahead)}`, kind: 'role-probe-connection', pr: null, headSha: null,
     code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', at: ahead, until: null }] });
+  status.node.source = 'a'.repeat(12);   // the harness's $CiSourceManifestSha256 (this node's Source), as the refusal is held to it
   status.node.probe.at = ahead; status.node.probe.failingSince = ahead;
   const { line, lines, stdout } = waitFirstTrain(t, status, 60);
   assert.deepEqual([line.name, line.result, line.rejectCode], ['first-train-role-unauthorized', 'failed', 'ROLE_PROBE_CONNECTION_UNAUTHORIZED'], stdout);

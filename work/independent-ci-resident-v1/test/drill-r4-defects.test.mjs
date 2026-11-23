@@ -181,7 +181,7 @@ test('E4: something installed (even half) -- the reboot and its wait run as befo
 test('E5(a): the launcher\'s own code reaches the bootstrap verdict, the entry\'s stop code and the bootstrap\'s last line', opts, () => {
   const terminal = fs.readFileSync(fixture('drill-70e8be94-launcher-terminal.json'), 'utf8');
   const code = 'SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS';
-  const done = JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', companionHeadless: { ran: true, status: 'COMPANION_HEADLESS_QUALIFIED' } });
+  const done = JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', role: 'not-held', companionHeadless: { ran: true, status: 'COMPANION_HEADLESS_QUALIFIED' } });
   const fellBack = JSON.stringify({ status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', companionHeadless: { ran: true, status: 'COMPANION_HEADLESS_FELL_BACK' } });
   const r = ps(`. ${q(bootstrap)} -From ${q(tmp)}
     $script:Work = 'C:\\w'
