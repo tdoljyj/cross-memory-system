@@ -1340,7 +1340,7 @@ const STEP_LOGS = {
 const DONE_ENTRY_OUT = `([ordered]@{ lines = @(${q(STEP_LOGS['first-install.log'].trim())}); stderr = ''; exit = 0 })`;
 // skip: the run was started with -SkipReinstall; reinstall: 'absent' leaves the run without an A8 result at all; steps: false leaves the
 // run directory without the first install's logs.
-function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, skip = false, steps = true } = {}) {
+function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'], candidate = false, version = '1.2.3', pkg = {}, reinstall = null, skip = false, steps = true, pre = '' } = {}) {
   const root = path.join(tmp, name);
   const checkerFile = path.join(root, 'test', 'renewal-drill.mjs');
   fs.mkdirSync(path.dirname(checkerFile), { recursive: true });
@@ -1357,6 +1357,7 @@ function m5DrillReceipt(name, paths, { checker = 'FAIL', missing = ['probe.json'
   if (reinstall === 'absent') delete run.reinstall;
   const receipt = ps(`
     ${skip ? '$SkipReinstall = $true' : ''}
+    ${pre}
     $script:Drill.Runs = ${q(root)}
     $script:DrillScriptPath = ${q(path.join(root, 'drill', 'drill-vm.ps1'))}
     function Assert-DrillHost { @{ freeGB = 20 } }
@@ -4524,4 +4525,365 @@ test('the drill takes wsl-cold-start.json into stage-evidence.json', opts, () =>
   const evidence = JSON.parse(fs.readFileSync(path.join(runDir, 'stage-evidence.json'), 'utf8'));
   assert.deepEqual(evidence['wsl-cold-start.json'], cold);
   assert.equal(evidence['launcher-result.json'].terminal.status, 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED');
+});
+
+// ---- Fable plan 87d330d0 section 3, block A (host early stop and evidence; D:/w/tmp/PLAN-drill-loop-root-20261123.md 2.2 A1-A4, 2.4) ----
+// The first install on a fake guest under a fake guard, on a fake clock: the run's own Invoke-DrillOnCheckpoint and Invoke-DrillRun, the
+// real Invoke-DrillGuest and the real evidence collection; only Hyper-V, PowerShell Direct and the guard's runspace are stubbed. Every guest
+// job but the entry's answers at once (the stage-file reader runs for real over the guest directory); the entry's never returns. Wait-Job
+// moves the clock by its timeout, appends the guest's log lines that are due (grow: [seconds, file, line]) and, at fireAt seconds, fires the
+// guard as the real one does at its deadline or on short memory: the failure latched, host-guard.json DRILL_ABORTED with the checkpoint
+// restored, the guest gone (the entry job fails; every later guest call stops on Assert-DrillGuard). The run's limit (-RunTimeoutMinutes)
+// is deadlineSeconds / 60, the guard's deadline deadlineSeconds after the boot.
+const EARLY_ENTRY_LOG = '{"name":"assets","result":"ok","rejectCode":null,"detail":null}\r\n{"name":"prereq","result":"ok","rejectCode":null,"detail":null}\r\n';
+const earlyHostLine = (n) => JSON.stringify({ name: `host-step-${n}`, result: 'ok', rejectCode: null, detail: null, at: new Date(Date.parse(T0) + n * 1000).toISOString() });
+function earlyStopRun(name, { guest, grow = [], fireAt, fireCode, deadlineSeconds }) {
+  const runDir = fs.mkdtempSync(path.join(tmp, `early-stop-${name}-`));
+  const guestDir = guestWorkDir(`early-stop-${name}-guest`, guest);
+  const signal = path.join(tmp, `early-stop-${name}-signal`);
+  const growPs = grow.map(([at, file, line]) => `@{ at = ${at}; file = ${q(file)}; line = ${q(line)}; done = $false }`).join(', ');
+  const r = ps(`
+    $script:now = 0.0; $script:events = [Collections.Generic.List[string]]::new()
+    $RunTimeoutMinutes = ${deadlineSeconds / 60}
+    function Get-DrillTime { ([DateTimeOffset]${q(T0)}).AddSeconds($script:now) }
+    function Get-DrillMonotonicSeconds { [double]$script:now }
+    $script:grow = @(${growPs})
+    $script:fireAt = ${fireAt}; $script:fireCode = ${q(fireCode)}
+    function Update-FakeGuest { foreach ($g in $script:grow) { if (-not $g.done -and $g.at -le $script:now) { [IO.File]::AppendAllText((Join-Path ${q(guestDir)} $g.file), $g.line + [Environment]::NewLine); $g.done = $true } } }
+    function Invoke-FakeGuard {
+      $script:HostGuard.state.failure = @{ code = $script:fireCode; detail = 'fixture guard' }
+      Write-DrillJson (Join-Path ${q(runDir)} 'host-guard.json') ([ordered]@{ status = 'DRILL_ABORTED'; code = $script:fireCode; restoredToCheckpoint = $true; stopped = $true; cleanupDone = $true })
+      $script:events.Add('guard-restore')
+    }
+    function Invoke-DrillPreBootRelease { param($HoldUntil) }
+    function Get-DrillVmInfo { @{ vm = @{ Id = [guid]::Empty }; notes = $script:Drill.Marker; state = 'Off'; checkpoints = @($script:Drill.Checkpoint) } }
+    function Restore-VMCheckpoint { param($VMName, $Name, $Confirm) }
+    function Assert-DrillHost { }
+    function Get-DrillCredential { }
+    function Start-DrillHostGuard { param($RunDir, [switch]$RestoreCheckpoint, $Window)
+      $script:HostGuard = @{ state = [hashtable]::Synchronized(@{ ready = $true; armed = $true; stop = $false; failure = $null; executorStates = [ordered]@{}; deadline = $Window.deadline }); pending = @{ IsCompleted = $false } }
+      return $script:HostGuard
+    }
+    function Stop-DrillHostGuard { param($Guard) $script:HostGuard = $null }
+    function Start-DrillBootWatchdog { @{ signal = ${q(signal)}; process = $null } }
+    function Start-DrillGuardedVm { param($Watchdog) }
+    function Stop-DrillOwnedVm { param([switch]$RestoreCheckpoint) $script:events.Add("restore:$RestoreCheckpoint"); $true }
+    function Wait-DrillGuest { param($Credential, $Minutes, $After) Assert-DrillGuard; [DateTimeOffset]${q(T0)} }
+    function New-PSSession { param($VMName, $Credential) 'session' }
+    function Remove-PSSession { param($Session) }
+    function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
+    function Invoke-Command { param($Session, $ScriptBlock, $ArgumentList, $VMName, $Credential, [switch]$AsJob, $ErrorAction)
+      if ($Session) { if ($ArgumentList -is [string]) { 'ab' }; return }
+      if (-not $AsJob) {
+        if ([object]::ReferenceEquals($ScriptBlock, $script:GuestProbe)) { return @{ boot = ${q(T0)}; imageState = 'IMAGE_STATE_COMPLETE'; oobe = 0 } }
+        $script:events.Add('vm-command'); return
+      }
+      $entry = [object]::ReferenceEquals($ScriptBlock, $script:GuestEntry)
+      $job = [pscustomobject]@{ entry = $entry; done = (-not $entry); failed = $false; result = $null }
+      if ([object]::ReferenceEquals($ScriptBlock, $script:GuestStageFiles)) { $script:events.Add('read:' + (@($ArgumentList[1]) -join ',')); $job.result = & $ScriptBlock ${q(guestDir)} $ArgumentList[1] }
+      elseif ([object]::ReferenceEquals($ScriptBlock, $script:GuestShutdownTimer)) { $job.result = $true }
+      elseif ($entry) { $script:events.Add('entry') }
+      return $job
+    }
+    function Wait-Job { param($Job, $Timeout)
+      if ($Job.done) { return $Job }
+      $step = [double]$Timeout
+      if ($null -ne $script:fireAt) { $step = [Math]::Min($step, [Math]::Max(0, $script:fireAt - $script:now)) }
+      $script:now += $step; Update-FakeGuest
+      if ($null -ne $script:fireAt -and $script:now -ge $script:fireAt -and -not $script:HostGuard.state.failure) { Invoke-FakeGuard; $Job.failed = $true; $Job.done = $true; return $Job }
+      return $null
+    }
+    function Receive-Job { param($Job, $ErrorAction) if ($Job.failed) { throw 'The virtual machine is not running (fixture)' }; $Job.result }
+    function Remove-Job { param($Job, [switch]$Force, $ErrorAction) }
+    $script:Interactive = $false; $script:SkipReinstall = $true
+    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab' }
+    $earlyKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 240; prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
+    $window = @{ safeToResume = $true; deadline = ([DateTimeOffset]${q(T0)}).AddSeconds(${deadlineSeconds}); holdUntil = [DateTimeOffset]::MinValue }
+    $out = Invoke-DrillOnCheckpoint { param($cred) Invoke-DrillRun ${q(runDir)} $package $earlyKit $null $cred $window.deadline } ${q(runDir)} $window
+    $sf = Join-Path ${q(runDir)} 'stage-files.json'; $ge = Join-Path ${q(runDir)} 'guest-evidence.json'
+    @{ failure = $out.failure; restored = $out.restored; now = $script:now; events = @($script:events); guard = (Get-DrillGuardOutcome ${q(runDir)})
+       stageFiles = $(if (Test-Path -LiteralPath $sf) { Read-DrillJson $sf } else { $null }); guestEvidence = $(if (Test-Path -LiteralPath $ge) { Read-DrillJson $ge } else { $null })
+       files = @(Get-ChildItem -LiteralPath ${q(runDir)} -File | ForEach-Object { $_.Name })
+       timeline = $(if (Get-Command Get-DrillStageTimeline -ErrorAction SilentlyContinue) { Get-DrillStageTimeline ${q(runDir)} } else { $null }) }`);
+  return { r, runDir, guestDir };
+}
+
+// Block A test 1: the entry never returns and its logs stop growing. Before: the run waited for the guard's deadline (70 minutes) and every
+// stage file was not-collected. Now: the no-progress gate of the stage it is in (host: no growth for 10 minutes) stops it with
+// DRILL_GUEST_NO_PROGRESS, the evidence is taken, and only then the checkpoint is restored.
+test('block A 1: an entry that never returns with logs that stop growing ends at the stage gate, DRILL_GUEST_NO_PROGRESS, stage files taken', opts, () => {
+  const host = [earlyHostLine(1), earlyHostLine(2)].join('\r\n') + '\r\n';
+  const { r, runDir } = earlyStopRun('stall', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': host },
+    fireAt: 4200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 4200 });
+  assert.equal(r.failure?.code, 'DRILL_GUEST_NO_PROGRESS', `stopped at ${r.now}s: ${JSON.stringify(r.failure)}; stage files ${JSON.stringify(r.stageFiles?.files)}`);
+  assert.equal(r.failure.detail.stage, 'host');
+  assert.equal(r.failure.detail.reason, 'stalled');
+  const gate = ps('$script:Drill.ProgressGates.host.stallMinutes');
+  assert.ok(r.now <= gate * 60 + 2 * 30, `stopped within one tick of the gate: ${r.now}s`);
+  assert.equal(r.guard, null, 'no emergency restore');
+  assert.ok(!r.events.includes('guard-restore'));
+  assert.equal(r.stageFiles.files['host.stdout.log'].state, 'saved');
+  assert.equal(fs.readFileSync(path.join(runDir, 'host.stdout.log'), 'utf8'), host);
+  assert.equal(r.guestEvidence.code, null);
+  assert.equal(r.events.at(-1), 'restore:True', 'restored after the evidence');
+  const progress = JSON.parse(fs.readFileSync(path.join(runDir, 'guest-progress.json'), 'utf8'));
+  assert.equal(progress.stop.reason, 'stalled');
+  assert.equal(progress.stage, 'host');
+});
+
+// Block A test 2: the run reaches its deadline. Before: the guard restored first, then every evidence read stopped on Assert-DrillGuard
+// (guardEmergencyRestore.evidence = NOT_TAKEN). Now: the foreground stops the evidence window before the guard's deadline, takes the
+// evidence, and the run's own cleanup restores; the guard never fires.
+test('block A 2: at the run deadline the foreground stops first, takes the evidence, then restores; no emergency restore', opts, () => {
+  const lines = { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n{"status":"FIRST_INSTALL_HOST_READY"}\r\n',
+    'prepare.stdout.log': '{"status":"FLEET_NODE_INSTALL_PREPARED"}\r\n', 'launcher.stdout.log': '{"step":"launcher-start","result":"ok"}\r\n' };
+  const grow = Array.from({ length: 20 }, (_, i) => [(i + 1) * 60, 'launcher.stdout.log', JSON.stringify({ step: `launcher-${i + 1}`, result: 'ok' })]);
+  const { r } = earlyStopRun('deadline', { guest: lines, grow, fireAt: 1200 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 1200 });
+  assert.equal(r.guard, null, 'emergency restore: ' + JSON.stringify(r.guard));
+  assert.equal(r.failure.code, 'DRILL_RUN_TIMEOUT');
+  assert.equal(r.failure.detail.by, 'foreground');
+  assert.equal(ps('$script:Drill.EvidenceWindowMinutes'), 5);
+  assert.equal(r.failure.detail.evidenceWindowMinutes, 5, 'a 20-minute run keeps the full window');
+  assert.ok(r.now <= 1200 - 5 * 60, `the foreground stopped at ${r.now}s, the guard's deadline is 1200s`);
+  assert.ok(!r.events.includes('guard-restore'));
+  assert.equal(r.guestEvidence.code, null, JSON.stringify(r.guestEvidence));
+  for (const n of ['host.stdout.log', 'prepare.stdout.log', 'launcher.stdout.log']) assert.equal(r.stageFiles.files[n].state, 'saved', n);
+  const lastRead = r.events.findLastIndex(e => e.startsWith('read:'));
+  const restore = r.events.indexOf('restore:True');
+  assert.ok(lastRead >= 0 && restore > lastRead, 'evidence before the restore: ' + JSON.stringify(r.events.slice(-6)));
+});
+
+// Block A test 3: the guard aborts on short memory while the entry runs. Before: the run directory held no stage log at all. Now: the
+// progress files pulled on the last tick before the abort are there, and the abort record says the evidence was partly taken.
+test('block A 3: a memory abort while the entry runs leaves the logs pulled on the last tick before it', opts, () => {
+  const grow = Array.from({ length: 40 }, (_, i) => [(i + 1) * 60, 'host.stdout.log', earlyHostLine(100 + (i + 1) * 60)]);
+  const { r, runDir } = earlyStopRun('memory', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n' },
+    grow, fireAt: 720, fireCode: 'DRILL_HOST_MEMORY_SHORT', deadlineSeconds: 4200 });
+  assert.equal(r.failure.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.ok(r.files.includes('host.stdout.log'), 'run directory: ' + JSON.stringify(r.files));
+  const host = fs.readFileSync(path.join(runDir, 'host.stdout.log'), 'utf8');
+  assert.ok(host.includes('host-step-760'), 'the line due at 660 s, pulled at the 690 s tick');
+  assert.ok(!host.includes('host-step-820'), 'the line due at the abort itself is not claimed');
+  assert.ok(r.files.includes('first-install.log'));
+  assert.equal(r.guard.evidence, 'PARTIAL');
+  assert.ok(r.guard.stageLogs.includes('host.stdout.log'));
+});
+
+// Block A test 4: the first install returns with a stop code. Before: the run still rebooted the guest (A7), ran the same-package reinstall
+// (A8) and read M5. Now: those are not run and are recorded as blocked by A1; the evidence (read after the install) and the probes still run.
+test('block A 4: a first install stopped with a code blocks A7, A8 and M5 (recorded, not run); evidence and probes still run', opts, () => {
+  const runDir = fs.mkdtempSync(path.join(tmp, 'a1-blocked-'));
+  const entryStop = JSON.stringify({ status: 'FIRST_INSTALL_STOPPED', stopCode: 'HOST_PREPARATION_NOT_DONE', tree: 'C:\\drill\\work\\tree', node: 'C:\\drill\\work\\node.exe' });
+  const guest = guestWorkDir('a1-blocked-guest', { 'first-install.stdout.log': EARLY_ENTRY_LOG + entryStop + '\r\n', 'host.stdout.log': earlyHostLine(1) + '\r\n',
+    'host-result.json': JSON.stringify({ exit: 1, terminal: { status: 'FIRST_INSTALL_HOST_STOPPED' } }), 'stage-timings.json': '{"host":1}' });
+  const read = { status: { writtenAt: T0, node: { mode: 'UNCERTAIN' } }, current: null, facts: null, pause: null, verify: { status: 'NOT_RUN' }, readAt: T0 };
+  const r = ps(`
+    $script:steps = [Collections.Generic.List[string]]::new()
+    $script:Interactive = $false; $SkipReinstall = $false
+    function New-PSSession { param($VMName, $Credential) 'session' }
+    function Remove-PSSession { param($Session) }
+    function Copy-Item { param($LiteralPath, $Path, $Destination, $ToSession, [switch]$Recurse) }
+    function Invoke-Command { param($Session, $ScriptBlock, $ArgumentList, $VMName, $Credential, [switch]$AsJob, $ErrorAction)
+      if ($VMName) { $script:steps.Add('vm-command') }
+      if ($ArgumentList -is [string]) { if ($ArgumentList -like '*.tar') { 'ab' } else { @{ contract = 'x' } } } }
+    function Wait-DrillGuest { param($Credential, $Minutes, $After) $script:steps.Add('wait-guest'); Get-DrillTime }
+    function Wait-DrillRebootRefresh { param($Cred, $Boot, $Deadline) $script:steps.Add('reboot-refresh'); [ordered]@{ ok = $false; status = $null; readAt = (Get-DrillTime).ToString('o'); boot = $Boot.ToString('o'); done = $false } }
+    function Copy-DrillM5 { param($RunDir, $Cred) $script:steps.Add('m5'); @{ directory = 'm5'; missing = @(); collectionCode = 'FIXTURE_NOT_READ' } }
+    $read = ${q(JSON.stringify(read))} | ConvertFrom-Json
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable, $Until, $Progress)
+      $script:steps.Add($Step)
+      if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(entryStop)}); exit = 1; stderr = '' } }
+      if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
+      if ($Step -ceq 'read-after-install') { return $read }
+      if ($Step -ceq 'reinstall-upgrade') { return [ordered]@{ exit = 0; stdout = '{"status":"FLEET_NODE_ALREADY_AT_THIS_PACKAGE"}'; stderr = '' } }
+      if ($Step -ceq 'reinstall') { return @{ skipped = $false; upgradeStatus = 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE'; prepareStatus = 'FLEET_NODE_INSTALL_PREPARED'; launcherExit = 1; launcherVerdict = 'X' } }
+      return $null
+    }
+    $package = @{ version = '1.2.3'; files = @(); tar = 'C:/x/p.tar'; tarSha256 = 'ab'; acceptance = 'C:/x/a.json'; ciSourceManifestSha256 = ('5' * 64) }
+    $testKit = [pscustomobject]@{ dir = 'C:/kit'; entryFile = 'first-install-entry.ps1'; arguments = @('-Work', '{work}'); timeoutMinutes = 5; perNodeSteps = @(); prerequisiteMode = 'first-install-host'; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) }
+    $run = Invoke-DrillRun ${q(runDir)} $package $testKit $null $null
+    $items = Get-DrillVerdict @{ now = [DateTimeOffset]::Parse($run.first.readAt); entry = $run.entry; launcher = $run.launcher; pause = $run.first.pause; verify = $run.first.verify; status = $run.first.status; current = $run.first.current; facts = $run.first.facts; acceptanceSource = $package.ciSourceManifestSha256; reboot = $run.reboot; reinstall = (Get-Prop $run 'reinstall'); skipReinstall = $false; kit = $testKit; candidate = $true; firstInstallSteps = (Read-DrillFirstInstallSteps ${q(runDir)}) }
+    $m5 = Get-DrillM5Verdict ${q(runDir)} $run.m5
+    @{ steps = @($script:steps); a1 = @($items | Where-Object { $_.id -eq 'A1' })[0]; a7 = @($items | Where-Object { $_.id -eq 'A7' })[0]; a8 = @($items | Where-Object { $_.id -eq 'A8' })[0]
+       m5 = @{ result = $m5.result; detail = $m5.detail }; reboot = (Read-DrillJson (Join-Path ${q(runDir)} 'read-after-reboot.json')) }`);
+  for (const s of ['vm-command', 'wait-guest', 'reboot-refresh', 'reinstall-upgrade', 'reinstall', 'm5']) assert.ok(!r.steps.includes(s), `${s} ran: ${JSON.stringify(r.steps)}`);
+  for (const s of ['first-install', 'stage-files', 'guest-evidence', 'guest-probe', 'read-after-install', 'guest-probe-late']) assert.ok(r.steps.includes(s), `${s} did not run: ${JSON.stringify(r.steps)}`);
+  assert.equal(r.a1.pass, false);
+  assert.equal(r.a7.pass, false);
+  assert.equal(r.a7.detail, 'DRILL_A7_BLOCKED_BY_A1');
+  assert.deepEqual(r.reboot, { skipped: true, reason: 'DRILL_A7_BLOCKED_BY_A1' });
+  assert.equal(r.a8.pass, false);
+  assert.match(r.a8.detail, /upgrade=DRILL_A8_BLOCKED_BY_A1/);
+  assert.deepEqual(r.m5, { result: 'FAIL', detail: 'DRILL_M5_BLOCKED_BY_A1' });
+});
+
+// Block A test 5 (the coordinator's 10-minute verification run, Owner 11-23): -RunTimeoutMinutes 10. The evidence window shrinks with the
+// run (never zero or negative, never the whole run), the no-progress gates cannot stop the run before its own deadline does (a stalled
+// host log: its 10-minute gate lies past the foreground's stop), and the deadline path takes the evidence first, then restores.
+test('block A 5: a 10-minute run ends on the foreground deadline, evidence first, then restore; no gate fires before it', opts, () => {
+  const host = earlyHostLine(1) + '\r\n';
+  const { r, runDir } = earlyStopRun('ten', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': host },
+    fireAt: 600 + 15, fireCode: 'DRILL_RUN_TIMEOUT', deadlineSeconds: 600 });
+  assert.equal(r.guard, null, 'emergency restore: ' + JSON.stringify(r.guard));
+  assert.equal(r.failure.code, 'DRILL_RUN_TIMEOUT', JSON.stringify(r.failure));
+  assert.equal(r.failure.detail.by, 'foreground');
+  const w = r.failure.detail.evidenceWindowMinutes;
+  assert.ok(w > 0 && w < 10, `window ${w} min`);
+  assert.equal(w, 3, '30% of 10 minutes');
+  assert.ok(r.now <= 600 - w * 60 && r.now > 0, `stopped at ${r.now}s`);
+  assert.ok(!r.events.includes('guard-restore'));
+  assert.equal(r.guestEvidence.code, null);
+  assert.equal(r.guestEvidence.entryLog, 'guest-log');
+  assert.equal(r.stageFiles.files['host.stdout.log'].state, 'saved');
+  assert.equal(fs.readFileSync(path.join(runDir, 'host.stdout.log'), 'utf8'), host);
+  assert.equal(r.events.at(-1), 'restore:True');
+  // the window over the whole -RunTimeoutMinutes range: 5..240
+  const windows = ps('@(5, 6, 10, 16, 17, 70, 110, 240 | ForEach-Object { Get-DrillEvidenceWindowMinutes $_ })');
+  assert.deepEqual(windows, [1.5, 1.8, 3, 4.8, 5, 5, 5, 5]);
+});
+
+// Block A test 6 (glass box, coordinator, Owner 11-23): a stage cut off half-way. The entry's own stage record -- written by the real
+// first-install-entry.ps1 functions, one line as each stage starts and one as it ends -- holds four stages ended ok and the host stage
+// started; the guard aborts on short memory while the host stage runs. The receipt's stage timeline (Get-DrillStageTimeline over the run
+// directory, from the record pulled on the last tick before the abort) gives every finished stage its conclusion and marks the host stage
+// as cut off in progress. A stage that ends on a stop keeps its code.
+test('block A 6: a stage aborted half-way: the timeline has a conclusion for every finished stage and marks the current one cut off in progress', opts, () => {
+  const entryOut = fs.mkdtempSync(path.join(tmp, 'stage-progress-entry-'));
+  fs.writeFileSync(path.join(entryOut, 'host.stdout.log'), earlyHostLine(1) + '\r\n');
+  entryPs(`$script:EntryStageOutput = ${q(entryOut)}; $m = New-EntryMeasurements; $c = New-EntryPhaseClock
+    foreach ($n in @('assets', 'prereq', 'unpack', 'check')) { Enter-EntryPhase $m $c $n }
+    Enter-EntryPhase $m $c ''
+    Start-EntryStage 'host' (Join-Path ${q(entryOut)} 'host.stdout.log'); $true`);
+  const record = fs.readFileSync(path.join(entryOut, 'stage-progress.jsonl'), 'utf8');
+  const lines = record.trim().split('\n').map(l => JSON.parse(l));
+  assert.deepEqual(lines.map(l => `${l.stage}:${l.event}:${l.result}`), ['assets:start:running', 'assets:end:ok', 'prereq:start:running', 'prereq:end:ok',
+    'unpack:start:running', 'unpack:end:ok', 'check:start:running', 'check:end:ok', 'host:start:running']);
+  for (const l of lines) for (const k of ['stage', 'startedAt', 'endedAt', 'result', 'code', 'tail']) assert.ok(k in l, `${k} in ${JSON.stringify(l)}`);
+
+  const grow = Array.from({ length: 10 }, (_, i) => [(i + 1) * 60, 'host.stdout.log', earlyHostLine(100 + (i + 1) * 60)]);
+  const { r } = earlyStopRun('cut', { guest: { 'first-install.stdout.log': EARLY_ENTRY_LOG, 'host.stdout.log': earlyHostLine(1) + '\r\n', 'stage-progress.jsonl': record },
+    grow, fireAt: 300, fireCode: 'DRILL_HOST_MEMORY_SHORT', deadlineSeconds: 4200 });
+  assert.equal(r.failure.code, 'DRILL_HOST_MEMORY_SHORT');
+  assert.equal(r.timeline.source, 'stage-progress');
+  assert.equal(r.timeline.abortedIn, 'host');
+  assert.deepEqual(r.timeline.stages.map(s => `${s.n}:${s.stage}:${s.result}`), ['1:assets:ok', '2:prereq:ok', '3:unpack:ok', '4:check:ok', '5:host:aborted-in-progress']);
+  assert.equal(r.timeline.stages[4].label, '进行中被中止');
+  for (const s of r.timeline.stages.slice(0, 4)) assert.ok(s.startedAt && s.endedAt, JSON.stringify(s));
+
+  // a stage that ended on a stop: its conclusion and code, then A1's own result
+  entryPs(`$script:EntryStageOutput = ${q(entryOut)}; $script:EntryStageOpen = @{ stage = 'host'; startedAt = '2026-11-21T03:00:00Z'; log = (Join-Path ${q(entryOut)} 'host.stdout.log') }
+    Stop-EntryStage 'failed' 'HOST_PREPARATION_NOT_DONE'; $true`);
+  const runDir = fs.mkdtempSync(path.join(tmp, 'stage-timeline-stopped-'));
+  fs.copyFileSync(path.join(entryOut, 'stage-progress.jsonl'), path.join(runDir, 'stage-progress.jsonl'));
+  fs.writeFileSync(path.join(runDir, 'entry-result.json'), JSON.stringify({ exitCode: 1, status: 'FIRST_INSTALL_STOPPED', stopCode: 'HOST_PREPARATION_NOT_DONE', tree: '', node: '', parsed: true }));
+  const t = ps(`Get-DrillStageTimeline ${q(runDir)}`);
+  assert.equal(t.abortedIn, null);
+  assert.deepEqual(t.stages.map(s => `${s.stage}:${s.result}:${s.code ?? ''}`), ['assets:ok:', 'prereq:ok:', 'unpack:ok:', 'check:ok:',
+    'host:failed:HOST_PREPARATION_NOT_DONE', 'A1-entry-result:failed:HOST_PREPARATION_NOT_DONE']);
+  assert.deepEqual(t.stages[4].tail, [earlyHostLine(1)]);
+});
+
+// Ladder mode (coordinator, Owner 11-23: "先把每段结论传回来，再慢慢梯度测试，把黑盒逐步切成明盒；梯度时限要做进代码，不能靠人记").
+// With -Ladder and no -RunTimeoutMinutes, the run's limit comes from the latest receipt of the same version and kit under the runs
+// directory (its stage timeline), never from memory. Each case runs the real Invoke-DrillMain up to the host hold, which the stub answers
+// with the minutes it was asked to hold for, the run's limit and the ladder step.
+const LADDER_VERSION = '1.2.3';
+const LADDER_KIT = 'kit-ladder';
+const ladderStubs = `${candidateStubs}
+    $Ladder = $true
+    function Read-DrillKit { @{ sha256 = ${q(LADDER_KIT)}; prereqSha256 = 'pin'; executionBlocker = $null; candidate = @{ acceptance = 'x' }; credentials = (${q(JSON.stringify(PACKAGE_CREDENTIALS))} | ConvertFrom-Json) } }
+    function Invoke-DrillWithHostHold { param([int]$Minutes, $Body)
+      [ordered]@{ holdMinutes = $Minutes; runTimeoutMinutes = $RunTimeoutMinutes; ladder = (Get-Variable DrillLadder -Scope Script -ValueOnly -ErrorAction SilentlyContinue) } }`;
+// A receipt of an earlier run: its limit, how it ended and its stage timeline ([stage, result, code]).
+function ladderReceipt({ minutes = 10, failure = null, conclusion = 'FAIL', stages = [], version = LADDER_VERSION, kit = LADDER_KIT } = {}) {
+  const rows = stages.map(([stage, result, code = null], i) => ({ n: i + 1, stage, result, code, label: result === 'aborted-in-progress' ? '进行中被中止' : null }));
+  const cut = rows.find(r => r.result === 'aborted-in-progress');
+  return { contract: 'clued.independent-ci.drill-receipt/fixture', version, kitSha256: kit, runTimeoutMinutes: minutes, failure, conclusion, restoredToCheckpoint: true,
+    evidence: { stageTimeline: { source: 'stage-progress', reached: rows.length ? rows.at(-1).stage : null, abortedIn: cut ? cut.stage : null, stages: rows } } };
+}
+const foregroundStop = minutes => ({ code: 'DRILL_RUN_TIMEOUT', detail: { by: 'foreground', deadline: '2026-11-23T03:00:00Z', evidenceWindowMinutes: Math.min(5, minutes * 0.3) } });
+// runs: [[run directory name (UTC start first, as Invoke-DrillPreparedRun names them), receipt]]
+function ladderMain(name, runs, extra = '') {
+  const root = fs.mkdtempSync(path.join(tmp, `ladder-${name}-`));
+  for (const [dir, r] of runs) { fs.mkdirSync(path.join(root, dir)); fs.writeFileSync(path.join(root, dir, 'receipt.json'), JSON.stringify(r)); }
+  const out = ps(`${ladderStubs}
+    $script:Drill.Runs = ${q(root)}
+    ${extra}
+    try { Invoke-DrillMain } catch { Get-DrillCode $_ }`);
+  return { root, out };
+}
+
+test('ladder 1: no earlier receipt of this version and kit: the first rung, 10 minutes; a given -RunTimeoutMinutes is not derived', opts, () => {
+  // a receipt of another kit and one of another version, both of which would double: neither is this package's
+  const other = ladderReceipt({ minutes: 20, failure: foregroundStop(20), stages: [['assets', 'ok'], ['prereq', 'aborted-in-progress']] });
+  const { out } = ladderMain('first', [['20261123T010000Z-1.2.3-aaaaaaaa', { ...other, kitSha256: 'another-kit' }],
+    ['20261123T020000Z-1.2.4-bbbbbbbb', { ...other, version: '1.2.4' }]]);
+  assert.equal(out.holdMinutes, 10, JSON.stringify(out));
+  assert.equal(out.runTimeoutMinutes, 10);
+  assert.equal(out.ladder.rule, 'first');
+  assert.equal(out.ladder.minutes, 10);
+  assert.equal(out.ladder.basis, null);
+  assert.equal(out.ladder.reached, null);
+  const given = ladderMain('given', [], '$script:DrillRunTimeoutGiven = $true; $RunTimeoutMinutes = 30').out;
+  assert.equal(given.holdMinutes, 30, JSON.stringify(given));
+  assert.equal(given.ladder, null);
+});
+
+test('ladder 2: the earlier run has a failed stage: refused before the host hold, with the stage and its code', opts, () => {
+  const failed = ladderReceipt({ minutes: 40, failure: { code: 'DRILL_FIRST_INSTALL_STOPPED', detail: null },
+    stages: [['assets', 'ok'], ['prereq', 'ok'], ['unpack', 'ok'], ['check', 'ok'], ['host', 'failed', 'HOST_PREPARATION_NOT_DONE'], ['A1-entry-result', 'failed', 'HOST_PREPARATION_NOT_DONE']] });
+  const { root, out } = ladderMain('failed', [['20261123T030000Z-1.2.3-cccccccc', failed]]);
+  assert.equal(out.code, 'DRILL_LADDER_PREVIOUS_STAGE_FAILED', JSON.stringify(out));
+  assert.equal(out.detail.stage, 'host');
+  assert.equal(out.detail.code, 'HOST_PREPARATION_NOT_DONE');
+  assert.equal(out.detail.receipt, path.join(root, '20261123T030000Z-1.2.3-cccccccc', 'receipt.json'));
+});
+
+test('ladder 3: stopped on the foreground deadline with the last stage cut off and every earlier one ok: twice the limit, at most the run ceiling; written into the receipt', opts, () => {
+  const order = ['assets', 'prereq', 'unpack', 'check', 'host', 'prepare', 'launcher'];
+  const cut = (minutes, upTo) => ladderReceipt({ minutes, failure: foregroundStop(minutes),
+    stages: [...order.slice(0, upTo).map(s => [s, 'ok']), [order[upTo], 'aborted-in-progress']] });
+  // the newest decides: an older failed run of the same package is behind it
+  const older = ladderReceipt({ minutes: 10, failure: { code: 'X', detail: null }, stages: [['assets', 'failed', 'ASSET_HASH_MISMATCH']] });
+  const { root, out } = ladderMain('double', [['20261123T010000Z-1.2.3-dddddddd', older], ['20261123T020000Z-1.2.3-eeeeeeee', cut(10, 1)]]);
+  assert.equal(out.holdMinutes, 20, JSON.stringify(out));
+  assert.equal(out.runTimeoutMinutes, 20);
+  assert.equal(out.ladder.rule, 'doubled');
+  assert.equal(out.ladder.previousMinutes, 10);
+  assert.equal(out.ladder.basis, path.join(root, '20261123T020000Z-1.2.3-eeeeeeee', 'receipt.json'));
+  assert.deepEqual(out.ladder.reached, { n: 2, stage: 'prereq', result: 'aborted-in-progress' });
+  assert.equal(ladderMain('double-40', [['20261123T020000Z-1.2.3-ffffffff', cut(20, 4)]]).out.holdMinutes, 40);
+  // 80 would be past the host hold's budget (Invoke-DrillWithHostHold refuses it): the ceiling
+  const top = ladderMain('double-cap', [['20261123T020000Z-1.2.3-gggggggg', cut(40, 6)]]).out;
+  assert.equal(top.holdMinutes, 70, JSON.stringify(top));
+  assert.equal(top.ladder.rule, 'doubled-at-ceiling');
+  assert.equal(top.ladder.ceiling, 70);
+  // an earlier stage that did not end ok: not lengthened
+  const unclean = ladderReceipt({ minutes: 20, failure: foregroundStop(20), stages: [['assets', 'ok'], ['prereq', 'running'], ['unpack', 'aborted-in-progress']] });
+  assert.equal(ladderMain('double-unclean', [['20261123T020000Z-1.2.3-hhhhhhhh', unclean]]).out.holdMinutes, 20);
+  // this run's receipt carries its limit and the step it came from
+  const receipt = m5DrillReceipt('ladder-receipt', [], { pre: `$script:DrillLadder = Get-DrillLadderStep ${q(root)} ${q(LADDER_VERSION)} ${q(LADDER_KIT)}; $RunTimeoutMinutes = $script:DrillLadder.minutes` });
+  assert.equal(receipt.runTimeoutMinutes, 20);
+  assert.equal(receipt.ladder.minutes, 20);
+  assert.equal(receipt.ladder.basis, path.join(root, '20261123T020000Z-1.2.3-eeeeeeee', 'receipt.json'));
+  assert.equal(receipt.ladder.reached.stage, 'prereq');
+});
+
+test('ladder 4: the earlier run passed: the same limit again, never longer', opts, () => {
+  const passed = ladderReceipt({ minutes: 40, conclusion: 'PASS_A_FULL',
+    stages: [['assets', 'ok'], ['prereq', 'ok'], ['unpack', 'ok'], ['check', 'ok'], ['host', 'ok'], ['prepare', 'ok'], ['wsl-cold-start', 'ok'], ['launcher', 'ok'], ['A1-entry-result', 'ok']] });
+  const { out } = ladderMain('passed', [['20261123T040000Z-1.2.3-iiiiiiii', passed]]);
+  assert.equal(out.holdMinutes, 40, JSON.stringify(out));
+  assert.equal(out.ladder.rule, 'passed-not-longer');
+  assert.deepEqual(out.ladder.reached, { n: 9, stage: 'A1-entry-result', result: 'ok' });
+});
+
+test('ladder 5: the earlier run stopped on a no-progress gate: refused, with the stage it was stuck in, not lengthened', opts, () => {
+  const stuck = ladderReceipt({ minutes: 40, failure: { code: 'DRILL_GUEST_NO_PROGRESS', detail: { stage: 'host', reason: 'stalled', limitMinutes: 10, stageSeconds: 900, sinceGrowthSeconds: 610 } },
+    stages: [['assets', 'ok'], ['prereq', 'ok'], ['unpack', 'ok'], ['check', 'ok'], ['host', 'aborted-in-progress']] });
+  const { root, out } = ladderMain('stuck', [['20261123T050000Z-1.2.3-jjjjjjjj', stuck]]);
+  assert.equal(out.code, 'DRILL_LADDER_PREVIOUS_NO_PROGRESS', JSON.stringify(out));
+  assert.equal(out.detail.stage, 'host');
+  assert.equal(out.detail.reason, 'stalled');
+  assert.equal(out.detail.receipt, path.join(root, '20261123T050000Z-1.2.3-jjjjjjjj', 'receipt.json'));
 });
