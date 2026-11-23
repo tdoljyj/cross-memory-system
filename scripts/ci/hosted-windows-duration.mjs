@@ -11,8 +11,6 @@
 //     读 GITHUB_API_URL、GITHUB_REPOSITORY、GITHUB_RUN_ID、GITHUB_RUN_ATTEMPT、GITHUB_TOKEN（actions: read），
 //     写 GITHUB_STEP_SUMMARY。退出 0：未超或量不了；退出 1：超过上限。
 import { appendFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export const LIMIT_MS = 10 * 60_000;
 export const WHOLE = 'hosted-ci-suites-windows';
@@ -96,6 +94,6 @@ export async function main({ env = process.env, fetchImpl = fetch, log = console
   return result.exit;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   process.exitCode = await main();
 }
