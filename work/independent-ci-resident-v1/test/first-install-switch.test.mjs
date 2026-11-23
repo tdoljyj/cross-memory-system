@@ -158,6 +158,50 @@ test('a refused token ends the first-train wait at once, as a failed step that n
   assert.ok(!('name' in started[0]) && !('result' in started[0]), 'a start line is no step line (the drill counts name+result lines as steps)');
 });
 
+// PLAN-launcher-role-review-m1m2-20261124 1 (review M-1): the notice is held to the run of failures it belongs to (the same status's
+// probe.failingSince), not to the step's start. The executor sends it once per run of failures, at the first refusal, which can come before
+// the launcher's step started (drill 16: the first probe only 12 s after it). Before the fix such a notice never counted: phase 1 waited
+// its whole length and ended first-train-not-observed, role unconfirmed. The probe must still have answered since the step started.
+test('a refusal noticed before the step started, in the current run of failures, still ends the wait at once', { skip, timeout: 300_000 }, (t) => {
+  const ahead = new Date(Date.now() + 20_000).toISOString();
+  const before = new Date(Date.now() - 30_000).toISOString();   // before the step's start (the step starts after this status is written)
+  const status = fixtureStatus({ writtenAt: ahead, notices: [{ key: `role-probe-connection:${Date.parse(before)}`, kind: 'role-probe-connection', pr: null, headSha: null,
+    code: 'ROLE_PROBE_CONNECTION_UNAUTHORIZED', at: before, until: null }] });
+  status.node.source = 'a'.repeat(12);
+  status.node.probe = { at: ahead, result: 'uncertain', failures: 2, failingSince: before };
+  const { line, stdout } = waitFirstTrain(t, status, 60);
+  assert.deepEqual([line.name, line.result, line.rejectCode], ['first-train-role-unauthorized', 'failed', 'ROLE_PROBE_CONNECTION_UNAUTHORIZED'], stdout);
+  const d = line.detail;
+  assert.equal(d.role, 'unauthorized', stdout);
+  assert.ok(Date.parse(d.phase1EndedAt) - Date.parse(d.startedAt) < 20_000, `phase 1 ended on the first poll, not after its 60 s: ${stdout}`);
+  assert.equal(d.runnerQuiet, true, 'the runner-quiet phase still ran');
+});
+
+// The counter-cases (review M1 still holds; green before and after the fix): none of them ends phase 1 early.
+test('a refusal of an earlier run of failures, a probe older than the step, no failingSince or another code keeps the wait', { skip, timeout: 300_000 }, (t) => {
+  const ahead = new Date(Date.now() + 20_000).toISOString();
+  const ago = s => new Date(Date.now() - s * 1000).toISOString();
+  const refused = (noticeAt, probe, code = 'ROLE_PROBE_CONNECTION_UNAUTHORIZED') => {
+    const status = fixtureStatus({ writtenAt: ahead, notices: [{ key: `role-probe-connection:${Date.parse(noticeAt)}`, kind: 'role-probe-connection', pr: null, headSha: null,
+      code, at: noticeAt, until: null }] });
+    status.node.source = 'a'.repeat(12);
+    status.node.probe = { at: ahead, result: 'uncertain', failures: 2, failingSince: ago(30), ...probe };
+    return status;
+  };
+  const cases = {
+    // the notice of an earlier run of failures (a held or not-held answer since cleared failingSince; this run started later)
+    'notice-before-failing-since': refused(ago(120), { failingSince: ago(30) }),
+    'probe-before-step': refused(ago(30), { at: ago(10) }),
+    'failing-since-null': refused(ago(30), { failingSince: null }),
+    'failing-since-not-a-time': refused(ago(30), { failingSince: 'yesterday' }),
+    'another-code': refused(ago(30), {}, 'ROLE_PROBE_UNCERTAIN'),
+  };
+  for (const [name, status] of Object.entries(cases)) {
+    const { line, stdout } = waitFirstTrain(t, status, 3);
+    assert.deepEqual([name, line.name, line.result, line.rejectCode, line.detail.role], [name, 'first-train-not-observed', 'ok', null, 'unconfirmed'], stdout);
+  }
+});
+
 // PR-1, the place that decides FIRST_INSTALL_DONE (rollout/fleet/bootstrap.ps1 Get-LauncherVerdict, which the drill's entry turns into
 // FIRST_INSTALL_DONE or its stop code): a first install whose launcher did not confirm the node's role (held or not-held) is not done.
 // Before the fix every verified, paused and switched first install was BOOTSTRAP_DONE whatever the role.
@@ -172,12 +216,14 @@ $load = { param($file, [string[]]$names)
 & $load ${psLiteral(BOOTSTRAP)} @('Get-Key', 'Get-LauncherVerdict')
 & $load ${psLiteral(ENTRY)} @('Get-EntryProperty', 'ConvertTo-FirstInstallEntryResult')
 $out = @()
-foreach ($c in @(@($true, 'unauthorized'), @($true, 'unconfirmed'), @($true, $null), @($true, 'not-held'), @($true, 'held'), @($false, 'unauthorized'), @($false, $null))) {
-  $term = [ordered]@{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED'; companionHeadless = [ordered]@{ ran = $true; status = 'COMPANION_HEADLESS_QUALIFIED' } }
+$Q = 'COMPANION_HEADLESS_QUALIFIED'; $F = 'COMPANION_HEADLESS_FELL_BACK'
+foreach ($c in @(@($true, 'unauthorized', $Q), @($true, 'unconfirmed', $Q), @($true, $null, $Q), @($true, 'not-held', $Q), @($true, 'held', $Q), @($false, 'unauthorized', $Q), @($false, $null, $Q),
+    @($true, 'unauthorized', $F), @($true, 'unconfirmed', $F), @($true, $null, $F), @($true, 'not-held', $F), @($false, 'unauthorized', $F))) {
+  $term = [ordered]@{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED'; companionHeadless = [ordered]@{ ran = $true; status = $c[2] } }
   if ($null -ne $c[1]) { $term['role'] = $c[1] }
   $v = Get-LauncherVerdict $c[0] $term
   $e = ConvertTo-FirstInstallEntryResult $v $(if ($v.status -ceq 'BOOTSTRAP_DONE') { 0 } else { 1 }) 'C:\t' 'C:\n.exe'
-  $out += ,([ordered]@{ first = $c[0]; role = $c[1]; status = $v.status; code = (Get-Key $v 'code'); entry = $e.status; stopCode = $e.stopCode })
+  $out += ,([ordered]@{ first = $c[0]; role = $c[1]; sw = $c[2]; status = $v.status; code = (Get-Key $v 'code'); entry = $e.status; stopCode = $e.stopCode; companionSwitch = $v.companionSwitch })
 }
 ConvertTo-Json -InputObject $out -Compress`;
   const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
@@ -185,16 +231,26 @@ ConvertTo-Json -InputObject $out -Compress`;
     { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
   assert.ifError(r.error);
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  const got = JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1)).map(x => [x.first, x.role, x.status, x.code, x.entry, x.stopCode]);
+  const got = JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1)).map(x => [x.first, x.role, x.sw, x.status, x.code, x.entry, x.stopCode, x.companionSwitch]);
+  const Q = 'COMPANION_HEADLESS_QUALIFIED', F = 'COMPANION_HEADLESS_FELL_BACK';
   assert.deepEqual(got, [
-    [true, 'unauthorized', 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED'],
-    [true, 'unconfirmed', 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED'],
-    [true, null, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED'],
-    [true, 'not-held', 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
-    [true, 'held', 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
+    [true, 'unauthorized', Q, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED', Q],
+    [true, 'unconfirmed', Q, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', Q],
+    [true, null, Q, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', Q],
+    [true, 'not-held', Q, 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null, Q],
+    [true, 'held', Q, 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null, Q],
     // a reinstall's verdict is as before
-    [false, 'unauthorized', 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
-    [false, null, 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null],
+    [false, 'unauthorized', Q, 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null, Q],
+    [false, null, Q, 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null, Q],
+    // PLAN-launcher-role-review-m1m2-20261124 2 (review M-2): the role is judged before the companion switch, so a refused or unconfirmed
+    // role is the stop code even when the switch did not pass too; the switch's status stays in companionSwitch. Before the fix these three
+    // were BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE and the refusal appeared in no verdict.
+    [true, 'unauthorized', F, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNAUTHORIZED', F],
+    [true, 'unconfirmed', F, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', F],
+    [true, null, F, 'BOOTSTRAP_FIRST_INSTALL_ROLE_NOT_CONFIRMED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', 'FIRST_INSTALL_STOPPED', 'FIRST_INSTALL_ROLE_UNCONFIRMED', F],
+    // a confirmed role with the switch not passed is the switch's, as before; a reinstall is unchanged
+    [true, 'not-held', F, 'BOOTSTRAP_FIRST_INSTALL_COMPANION_SWITCH_NOT_DONE', F, 'FIRST_INSTALL_STOPPED', F, F],
+    [false, 'unauthorized', F, 'BOOTSTRAP_DONE', null, 'FIRST_INSTALL_DONE', null, F],
   ], r.stdout);
 });
 

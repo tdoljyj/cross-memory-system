@@ -103,14 +103,14 @@ def iso_at(delta=datetime.timedelta(0)):
     return '@now' if seconds == 0 else f'@now{seconds:+d}'
 
 
-def uncertain(notice_at=None, notice_kind='role-probe-connection', probe_at=None):
+def uncertain(notice_at=None, notice_kind='role-probe-connection', probe_at=None, failing_since=None):
     """The new resident whose role probe the service refused (merge-slot-native.mjs: 401/403 binding_not_authorized ->
     ROLE_PROBE_CONNECTION_UNAUTHORIZED, an uncertain answer): UNCERTAIN, and, with notice_at, the role-probe-connection notice the
     executor puts in status (role-probe.mjs observe, executor.mjs report). Without notice_at: a plain uncertain answer (network, 5xx)."""
     s = standby()
     at = probe_at or iso_at()
     s['node']['mode'] = 'UNCERTAIN'
-    s['node']['probe'] = {'at': at, 'result': 'uncertain', 'failures': 1, 'failingSince': at}
+    s['node']['probe'] = {'at': at, 'result': 'uncertain', 'failures': 1, 'failingSince': failing_since or at}
     s['notices'] = []
     if notice_at is not None:
         ms = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
@@ -313,6 +313,17 @@ class FirstTrain(unittest.TestCase):
         self.assertEqual(r['waits'], [1500, 900])
         self.assertEqual(r['sleeps'], [5])
 
+    # PLAN-launcher-role-review-m1m2-20261124 1 (review M-1): the notice is held to the run of failures (probe.failingSince), not to the step's
+    # start; the executor sends it once per run, at the first refusal, which may come before the step started. The probe is still this step's.
+    def test_refusal_noticed_before_the_step_in_the_current_run_of_failures_ends_the_wait(self):
+        before = iso_at(-datetime.timedelta(seconds=30))
+        s = uncertain(notice_at=before, failing_since=before); s['node']['probe']['failures'] = 2
+        r = self.run_case([s, copy.deepcopy(s), copy.deepcopy(s)])
+        self.assertEqual(r['firstIterations'], 1, 'ended on the poll that saw the refusal')
+        self.assertEqual(r['done'], ['first-train-role-unauthorized'])
+        self.assertEqual(r['report']['role'], 'unauthorized')
+        self.assertTrue(r['report']['runnerQuiet'])
+
     def test_plain_uncertain_waits_the_whole_phase_and_ends_unconfirmed(self):
         s = uncertain()
         r = self.run_case([s, copy.deepcopy(s), copy.deepcopy(s)])
@@ -325,7 +336,8 @@ class FirstTrain(unittest.TestCase):
 
     def test_a_refusal_older_than_this_step_or_not_this_nodes_never_ends_the_wait(self):
         cases = {
-            'notice-before-step': uncertain(notice_at=iso_at(-datetime.timedelta(minutes=10))),
+            # the notice of an earlier run of failures (PLAN-launcher-role-review-m1m2-20261124 1): older than this run's failingSince
+            'notice-before-failing-since': uncertain(notice_at=iso_at(-datetime.timedelta(seconds=120)), failing_since=iso_at(-datetime.timedelta(seconds=60))),
             'probe-before-step': uncertain(notice_at=iso_at(), probe_at=iso_at(-datetime.timedelta(minutes=10))),
             'another-notice-kind': uncertain(notice_at=iso_at(), notice_kind='role-probe-uncertain'),
         }
