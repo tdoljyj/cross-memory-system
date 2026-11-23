@@ -49,6 +49,8 @@ MARKER = "<!-- clued-compute-panel:v1 -->"
 STATE_RE = re.compile(r"<!-- clued-compute-panel-state:([A-Za-z0-9+/=]+) -->")
 ISSUE_TITLE = "算力面板（自动更新）"
 RESIDENT_CONTEXT = re.compile(r"^resident-queue/([A-Za-z0-9._-]{1,40}) \(info only\)$")
+# The code in a resident's error row (pr-status.mjs#describe: 执行器已停机（码）; node-duty.mjs#stalledText: 停摆（码）).
+HALT_CODE = re.compile(r"（([A-Z][A-Z0-9_]{1,79})）")
 GATE_JOB = "admission-gate"
 
 ONLINE_WINDOW = timedelta(minutes=12)
@@ -1140,6 +1142,10 @@ def render(report: dict, state: dict) -> str:
               "| 常驻与控制组件 | 状态或用途 | 说明 |", "|---|---|---|"]
     for name, row in report["residents"].items():
         activity = {"halted": "停机", "running": "运行中", "idle": "空闲（无运行中批次）"}[row["activity"]]
+        # The code the resident's own row names (执行器已停机（码）, 停摆（码）): the Owner sees which HALT without opening the PR.
+        code = HALT_CODE.search(str(row.get("description") or "")) if row["activity"] == "halted" else None
+        if code:
+            activity = f"{activity}（{code.group(1)}）"
         lines.append(f"| 常驻 {name} | {activity} | 最近状态：{cell(row.get('description'))}（PR #{row.get('pr')}，{row.get('at')}） |")
     if not report["residents"]:
         lines.append("| 常驻执行器 | 未知 | 没有开放 PR 带常驻状态 |")
