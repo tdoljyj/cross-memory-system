@@ -198,7 +198,10 @@ $r = & { Write-StepLine 'install' 'ok' $null $null; 'the function value' }
 Write-StepLine 'launcher' 'failed' 'INSTALL_NOT_COMPLETED' ([ordered]@{ exit = 1 })
 'returned: ' + (@($r) -join '|')`);
   assert.equal(launcher.status, 0, launcher.out);
-  assert.deepEqual(launcher.lines.slice(0, 2).map(l => JSON.parse(l)), [{ name: 'install', result: 'ok', rejectCode: null, detail: null },
+  // the launcher's lines also carry when they were printed: at (UTC) and ms (its own clock, null without one) (task 87d330d0)
+  const stamped = launcher.lines.slice(0, 2).map(l => JSON.parse(l));
+  assert.ok(stamped.every(l => /^\d{4}-\d\d-\d\dT[\d:.]+\+00:00$/.test(l.at) && 'ms' in l), launcher.out);
+  assert.deepEqual(stamped.map(({ at, ms, ...rest }) => rest), [{ name: 'install', result: 'ok', rejectCode: null, detail: null },
     { name: 'launcher', result: 'failed', rejectCode: 'INSTALL_NOT_COMPLETED', detail: { exit: 1 } }], launcher.out);
   assert.equal(launcher.lines.at(-1), 'returned: the function value', 'a step line never becomes part of a function\'s value');
   const tpl = fs.readFileSync(TPL, 'utf8');

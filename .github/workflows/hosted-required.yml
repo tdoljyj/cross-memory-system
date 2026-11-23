@@ -333,6 +333,25 @@ jobs:
           path: trusted
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
+      # The image warms Windows PowerShell's module analysis cache only at the machine-level PSModuleAnalysisCachePath. A
+      # PowerShell a test starts with its own minimal environment (the service's three variables) does not get that variable
+      # and uses the default cache under LocalApplicationData, which is cold: 45-56 s per process re-analysing the image's
+      # modules (task 3435f8bf block 1; V1 in ps-execution-policy.test.mjs). Copy the warmed file there. Auxiliary: when
+      # the file is missing or the copy fails it says so and does nothing (hosted-required.test.mjs).
+      - name: Warm the default PowerShell module analysis cache
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = [Environment]::GetEnvironmentVariable('PSModuleAnalysisCachePath', 'Machine')
+          $target = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\Windows\PowerShell\ModuleAnalysisCache'
+          try {
+            if (-not $source -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "no warmed cache at the machine-level PSModuleAnalysisCachePath ($source)" }
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+            Copy-Item -LiteralPath $source -Destination $target -Force
+            Write-Output "warmed $target from $source ($((Get-Item -LiteralPath $target).Length) bytes)"
+          } catch { Write-Output "::notice title=PowerShell analysis cache not warmed::$($_.Exception.Message)" }
+          exit 0
       - name: Select and run the suites declared for Windows
         shell: powershell
         env:

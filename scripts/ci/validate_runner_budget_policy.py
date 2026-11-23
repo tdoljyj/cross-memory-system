@@ -341,7 +341,7 @@ HOSTED_SCAFFOLD_JOBS = {
             "clued-cloud-tests": "6cbe5548054ab7718475ae8cfb85ce095ea7761526f2b184bdf01b7696fa0bcb",
             "ci-suites": "f76d702d186df8db2a7877dcb4bac03c6202775740f16667027193c33bfcab95",
             "migration-verify": "99c0769279ea8f6c0b5a485b2d80e2ef163642e4c5f191cbb3dd493487714da1",
-            "ci-suites-windows": "e4e8bc5d70ad29b92aaacbb79e0591eec7ce971a3d278d1d4efb493b2631fe04",
+            "ci-suites-windows": "69ebd25983e5f3d0cf5d17180bed6eb873aa26d94f5b60461db5e59adda36458",
             "gitleaks": "4d532d733482aa3d94c2f83c33954b9af8e420c387cf1cd8b473e8f92aae45f6",
             "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
             "contract-placement": "a07add60bcd9ec6caee62f0e86213c48ce3d16700894dc71e38b75a9493334df"

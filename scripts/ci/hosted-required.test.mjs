@@ -113,6 +113,19 @@ test(`跑 ci-required-selection --run/--run-selected 套件的托管作业 timeo
   assert.deepEqual(checked.sort(), ['ci-suites', 'ci-suites-windows', 'clued-cloud-tests']);
 });
 
+// 任务 3435f8bf 块 1：托管 Windows 作业在跑套件前把镜像预热好的模块分析缓存复制到默认位置（快不快由
+// ps-execution-policy.test.mjs 的 V1 计时用例在托管上验）。它是辅助步骤，出错只能“不做”，不能让作业红。S8 删托管工作流时本条一起删。
+test('托管 Windows 作业在跑套件前预热默认分析缓存，且这一步失败不让作业红', () => {
+  const steps = (jobs(text).get('ci-suites-windows') ?? '').split(/\n {6}- /);
+  const at = name => steps.findIndex(s => s.startsWith(`name: ${name}\n`));
+  const warm = at('Warm the default PowerShell module analysis cache');
+  assert.ok(warm > at('Configure job temporary storage') && at('Configure job temporary storage') > 0, '预热在配置临时存储之后');
+  assert.ok(warm < at('Select and run the suites declared for Windows'), '预热在跑套件之前');
+  assert.match(steps[warm], /\n {8}continue-on-error: true\n/, '辅助步骤失败不挡作业');
+  assert.match(steps[warm], /GetEnvironmentVariable\('PSModuleAnalysisCachePath', 'Machine'\)/);
+  assert.match(steps[warm], /GetFolderPath\('LocalApplicationData'\)\) 'Microsoft\\Windows\\PowerShell\\ModuleAnalysisCache'/);
+});
+
 // ---- hosted-gitleaks = 自托管 R1 的区间扫描（PLAN-hosted-stale-base-20261123 第 2、3 节） ----
 // 旧定义抄自已停用 gitleaks.yml 的全历史扫描，断言“现场 main 尖端 == 事件负载 base.sha”。负载 base.sha 是 PR 记录上的
 // 快照：reopened、手工重跑、运行期间 main 前进都会让它和现场 main 不等，红与 PR 无关。新定义只扫 base..head，不取现场 main。

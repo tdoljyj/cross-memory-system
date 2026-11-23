@@ -312,3 +312,79 @@ test('X2: the install preflight refuses a dry run that says the controller may n
   const older = run('older', undefined);   // an installer with no preflight block says nothing about it (older installers): not refused
   assert.deepEqual({ stopped: older.stopped, codes: older.codes }, { stopped: null, codes: [] });
 });
+
+// ---------------------------------------------------------------- step lines with their time (ruling 87d330d0, 1.4)
+// Every step line carries at (UTC, to line up with the other files) and ms (the launcher's own monotonic milliseconds since it started:
+// durations come from ms only, never from at); linux-A's and linux-B's detail carry the run's seconds and the first {"dockerReady":...}
+// line its stdout printed, as printed (never parsed). The real progress handler on the real $Done and the real Write-StepLine, around
+// the real Step-LinuxRoot of a first install; the Linux runs are stand-ins, and the stop at the end prints its line as Stop-Launch does.
+function psLines(command) {
+  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; delete env.PSExecutionPolicyPreference;
+  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+    { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 300_000 });
+  assert.ifError(r.error);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  return String(r.stdout).trim().split(/\r?\n/).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
+const READY_A = '{"dockerReady":"active","waitedSeconds":7,"queryFailedSeconds":3,"bootSeconds":42}';
+const READY_B = '{"dockerReady":"active","waitedSeconds":0,"queryFailedSeconds":0,"bootSeconds":1300}';
+const STEP_LINES = (ci) => `${PRELUDE}
+${load(['Sha256Bytes', 'Write-New', 'Write-Json', 'Get-Key', 'Parse-Json', 'Parse-LastLine', 'Tail', 'Get-FileSha', 'Test-FleetLinuxOutput', 'Get-FleetOutFile',
+  'Test-FleetRun', 'Get-FleetRunReport', 'Read-FleetFileChecked', 'Test-FleetRefusedBeforeAnyChange', 'Set-FleetW1PauseKept', 'Step-LinuxRoot', 'Write-StepLine'],
+  ['U8', 'Strict8', 'Progress', 'Done'], ['Get-FirstInstallResidue', 'Test-FirstInstallResiduePresent'])}
+# the launcher's clock (when the template has one) and the progress handler on $Done, as the template's top level makes them
+foreach ($name in @('LaunchClock')) {
+  $a = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] -and $x.Left.Extent.Text -ceq ('$' + $name) }, $false))
+  if ($a.Count -eq 1) { . ([scriptblock]::Create($a[0].Extent.Text)) }
+}
+$h = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.PipelineAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] -and $x.Extent.Text.StartsWith('$Done.add_CollectionChanged(') }, $false))
+if ($h.Count -ne 1) { throw ('HANDLER_NOT_ONE:' + $h.Count) }
+. ([scriptblock]::Create($h[0].Extent.Text))
+function Stop-Launch([string]$code, $detail) { Write-StepLine 'launcher' 'failed' $code $null; $script:stopped = $code; throw ('STOP:' + $code) }
+$ci = ${psLiteral(ci)}
+$CarryParent = $ci; $ResidentRoot = Join-Path $ci 'resident'
+$Out = Join-Path $ci 'launch'; $Stage = Join-Path $ci 'stage'; $FleetOutDir = Join-Path $ci 'out'
+foreach ($d in @($Out, $Stage, $FleetOutDir)) { [void][IO.Directory]::CreateDirectory($d) }
+$FleetFirstInstall = $true; $FleetCompanionAccount = $false; $FleetDistribution = 'D'; $FleetPlanSha256 = ('d' * 64); $FleetWslOutDir = '/mnt/x/out'
+$W1Restore = [ordered]@{ armed = $false; result = $null }
+function Get-Service { param([string[]]$Name, $ErrorAction) }
+function Set-FleetLinuxDirectories { }
+function Read-FleetOutFile([string]$leaf, $run, [string]$registrar, [int]$max) { $null }
+function Remove-FleetRegistrar($build) { }
+function Invoke-FleetLinuxScript([string]$name, [string]$registrar) {
+  Start-Sleep -Milliseconds 30
+  $status = $(if ($name -ceq 'A') { 'PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED' } else { 'LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' })
+  $ready = $(if ($name -ceq 'A') { ${psLiteral(READY_A)} } else { ${psLiteral(READY_B)} })
+  $stdout = 'staged' + "\`n" + $ready + "\`n" + '{"dockerReady":"active","waitedSeconds":99,"queryFailedSeconds":0,"bootSeconds":1}' + "\`n" + '{"status":"' + $status + '"}' + "\`n"
+  [ordered]@{ name = $name; directory = ('run-' + $name); outcome = 'EXITED'; exit = 0; code = $null; captureRefused = $null; stdout = $stdout; stderrTail = $null; registrarStderr = $null; seconds = $(if ($name -ceq 'A') { 5 } else { 9 }) }
+}
+try { $null = Step-LinuxRoot } catch { if (-not $script:stopped) { throw } }
+ConvertTo-Json -Depth 6 -Compress -InputObject ([ordered]@{ final = $true; missing = $Missing; stopped = $script:stopped; done = @($Done) })`;
+
+test('the launcher\'s step lines carry at and a monotonic ms; linux-A and linux-B carry their seconds and dockerReady line', { skip, timeout: 300_000 }, (t) => {
+  const lines = psLines(STEP_LINES(path.join(tempDir(t, 'r5-steps-'), 'ci')));
+  const final = lines.find(l => l.final === true);
+  assert.ok(final, JSON.stringify(lines));
+  assert.deepEqual(final.missing, []);
+  assert.deepEqual(final.done, ['linux-A', 'linux-B']);
+  const steps = lines.filter(l => typeof l.name === 'string' && 'result' in l);
+  assert.deepEqual(steps.map(s => `${s.name}:${s.result}`), ['linux-A:ok', 'linux-B:ok', 'launcher:failed'], JSON.stringify(steps));
+  let before = -1;
+  for (const s of steps) {
+    assert.match(String(s.at), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+(Z|\+00:00)$/, `${s.name}: at, UTC: ${JSON.stringify(s)}`);
+    assert.ok(Number.isInteger(s.ms) && s.ms >= 0, `${s.name}: ms, an integer: ${JSON.stringify(s)}`);
+    assert.ok(s.ms >= before, `${s.name}: ms never goes back (${before} -> ${s.ms})`);
+    before = s.ms;
+  }
+  // the run's seconds, and its FIRST dockerReady line, exactly as it printed it
+  assert.deepEqual(steps[0].detail, { seconds: 5, dockerReady: READY_A });
+  assert.deepEqual(steps[1].detail, { seconds: 9, dockerReady: READY_B });
+  assert.equal(steps[2].rejectCode, 'LINUX_OUTPUT_PATHS_NOT_IN_THE_OUT_DIRECTORY');
+});
+
+test('the launcher starts its monotonic clock before any step can complete', { skip }, () => {
+  const text = fs.readFileSync(TPL, 'utf8');
+  const clock = text.indexOf('$LaunchClock = [Diagnostics.Stopwatch]::StartNew()');
+  assert.ok(clock > 0, 'the launcher\'s Stopwatch');
+  assert.ok(clock < text.indexOf('$Done = '), 'started before the first step can complete');
+});
