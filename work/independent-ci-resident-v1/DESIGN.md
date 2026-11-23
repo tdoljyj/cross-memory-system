@@ -5699,6 +5699,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - **判定**：`executor.mjs#standing(key, subject, batch, { hint, safePoint })`，返回 `null`（成立，或没有事实说不成立）或 `{ basis, live }`：
   - `not-on-duty`：节点模式 `STANDBY`（第 11 段探测或第 1 段的 `NODE_ROLE_NOT_HELD`），而且 companion 心跳新鲜（结束要 companion 证明 Linux 静止；不新鲜就下一拍再判，不会因此 HALT）。`UNCERTAIN` 不是答案。没有探测能力的引擎没有模式（单节点），视为当班。
   - `pr-closed` / `head-moved`：companion `pr-head` 的一次实时读（§17.5 的已有通道）说 PR 不是 open，或 head 不是批次的 head。
+  - `pr-draft`：同一次读说 PR 开着、head 未变，但是草稿。只结束停在 A、B 的批次，是流程结束（§72.11）。
 - **什么时候读 PR**（`liveReadDue`，按“批次键 + 被点名的 head”节流，`SUPERSEDE_LIVE_READ_MS` = 10 分钟，原有常量）：每个批次每 10 分钟一次；排队表里出现这个 PR 的更新提交、或第 10 段的车头指向这个 PR 的别的 head 时立即读（提示）。第 1 段的准入本身读过 PR，`markStarted` 时记作该批次的第一次读，所以刚开始的批次不多读。
 - **读不到**：不结束。读不到不是事实；结束会烧掉 head（B 上第 3、5、7 段已发布，要推新提交才能再跑），误结束比多停一会儿代价大得多；停留本身有 `park.maxMs` 兜底。只有被点名了别的 head 而读不到时才写回执 `supersede-unconfirmed`（与以前相同），平时的周期读不写，网络断一天也不会刷屏。
 - **读到 head 未变**：排队表里那个“更新的提交”被证伪，退回被替换（`keepRunning`，回执 `supersede-disproved`），与以前相同。
@@ -5782,12 +5783,23 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 `upgrade-drain` 干净结束后，原实现的三层去重把 head 永久挡住：`supersededEnd` 返回 `burned`，`RunQueue.settle` 把行停为 `STOPPED/burned`，`offer` 忽略已见过的 head；即使重新入队，`precheck` 仍拒绝账本已烧号、已用批次键和 `executed-heads` 中已发布的 head/S。PR 页因此要求推新提交。三层去重对真实失败继续生效，流程性结束通过带前序证据的续跑解决。
 
-- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
+- 资格只来自完整的 `FAILED_CLEAN SUPERSEDED_AT_SAFE_POINT`、两端归档、匹配的 `81-self-abort` 与安全点记录。`upgrade-drain`（A/B）、`pr-draft`（A/B，§72.11）以及 `park-max-age`（B）可续跑；PR 关闭、head 改变、Owner 中止、未知清理、测试失败和准入拒绝不因此取得资格。停靠超时只对列车/队列未就绪或读暂不可用的零副作用结果生效；`REQUIRED_CHECK_FAILED`、`RESIDENT_BASE_MOVED` 等仍按原失败路径结束。
 - 账本把这类完整终态整体改名保存到 `state/ledger-flow-ends/`。原始烧号和已发布记录保留；新预留的 `flowFrom` 消耗精确前序，`flowKeys` 只允许其自身发布链通过去重。队列只是投影：每拍从未消费前序恢复同一 PR/H/base/S，重复触发、队列丢失或重启不产生第二份执行。
 - 新批次仍走节点、列车、intake hold、版本一致性、停车容量、熔断、日额度与实时 PR 校验。升级 hold 或 PAUSE 未撤不续跑；读不到 PR 不放行，已关闭或 head 改变则退役该续跑资格。预留之前崩溃可重试，预留之后崩溃仍是原恢复机制的现场，不额外开 attempt 2。
 - A 尚未扫描，重新走准入。B 的 CI Source 未变时，只重派生当前安装版本的控制包，从第 8 段继续；该 CI Source 的原批次绑定与已完成检查仍有效，原扫描不重跑。CI Source 改变时，job ID 和 sticky batch claim 随之改变，必须重新走正常准入和扫描；既有 Native 发布、scan-start 和列车守卫继续决定能否执行。安装文件 Source 与 CI Source 不混用。
 - 同一 head/S 的其他执行、不可读发布记录或空发布目录仍拒绝续跑。历史尝试仍计入日预算；B 续跑的第一次第 8 段也计重试。流程性结束保持熔断中性；续跑后的真实失败照旧烧号，不继续重排。
 - PR 页对流程结束显示 pending、自动续跑、不用推新提交。`test/safe-point-readmit.test.mjs` 覆盖结束→hold→恢复→一次完成、A/B、超时、安装/CI Source、重启和队列丢失、版本错位、发布链、额度、真实失败及状态文案。冻结升级通道不变。
+
+### 72.11 草稿是搁置，不是终局（D:/w/tmp/PLAN-resident-draft-batch-20261123.md）
+
+现场（2026-11-23 北京时间 15:23:48）：#1253 第一次尝试第 2 段 `REMOTE_REFS_CHANGED_SINCE_BUNDLE` 干净失败后转为草稿，常驻仍在 600 秒后开它的 attempt 2，#1254 排在后面，PR 页预计时刻每分钟后滚，#1253 的页面停在运行中。病根：同一事实各处各判，四处实时读只比 state 与 head，草稿只有轮询器看。
+
+- **一个判定**：`src/pr-candidate.mjs#prCandidate(live, subject)`，纯函数。读不到 → `null`（不是事实）；不 open → `pr-closed`（终局）；head 不同 → `head-moved`（终局）；`draft === true` → `pr-draft`（搁置）；否则成立。预留前（`runRow`、流程续跑）、attempt 2 前、`falsified`、`standing` 都用它；轮询器的草稿过滤用同一个 `isDraft`。实时读带上 `draft`（`companion.mjs` jq、`parsePull`、`mailbox.mjs` 可选布尔键、`service-ports.mjs` 透传）；旧回包没有该键 = 没有草稿事实。
+- **搁置**：`RunQueue.hold(pr, headSha)` 给行记 `{ reason: PR_DRAFT, headSha, at }`。被搁置的行不是候选，它的 attempt 2 意向保留但不调度、不读，流程续跑资格保留。下一次触发（转为可评审会推进 GitHub 的 `updated_at`，轮询器再提议）解除搁置，同一 head 接着跑，不要新提交。
+- **在哪里结束**：只有停在 A、B 的批次在 10 分钟那次读里以 `pr-draft` 结束：同一条 `supersededEnd`，按 §72.10 是流程结束（归还停靠名额，B 上下次从第 8 段续跑，第 2–7 段不重跑），结算时行被搁置。在途安全点（`before-relay-plan`、`before-workspace`）读到草稿不结束，批次走到停靠点再按本条结束（在途结束不是流程结束，会要新提交）；独占区内照旧不判。
+- **第一次读**：只有预留前那次读有回答时，第 1 段才记作批次的第一次实时读；没回答时第一个安全点立即读。
+- **观测**：`reportQueue` 把在跑批次的预计结束（开始 + `ETA_BATCH_MS`）交给 `queue.view`，后面的行不再每分钟后滚；排队文字写“前面 #N 的批次在跑（第 k 段）”。轮询器把跳过的草稿记在 `lastPass.drafts`，本节点在其 head 上写过状态的，改写一次为“草稿：已搁置，转为可评审后自动继续”。
+- **测试**：`test/pr-candidate-hold.test.mjs`（现场回放、转回可评审、队列行、停在 B、停在 A、无回归、结构、状态）。
 
 ## 73. 通用包重装停在半途：续装到完成（分支 `claude/installer-half-install`，[ADR 0029](docs/adr/0029-installer-half-install.md)）
 
@@ -6008,6 +6020,15 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 只是结束（`frontFailed` 为 false）的车头批次记成回执 `train-front-ended`，不用 `train-front-outcome`（FABLE-r3-batch2-followup §1b）：自动回滚到上一代常驻时，它把每张 `train-front-outcome` 都当失败读，会对没失败的 PR 报 failed；重启（`executor.mjs#trainFrontRecover`）读两种里最新的一张。
    - 扫描段被放弃（第 4、6 段 `BRIDGE_ABANDONED_UNPUBLISHED`，`executor.mjs#abandonScannerStage`）也是车头批次的终局，同样上报（FABLE-r3-batch2-followup §2a）：没有 attempt 2 时，下一次第 10 段被告知批次已结束，不再判 `TRAIN_FRONT_BATCH_RUNNING` 空占合并位。
 4. **推送路由与第 8、10 段用同一条钉法**（独审 R3 问题 B，FABLE-r3-open-items-20261122 §2）：`train-landing.mjs#landingRoute` 认主规则集用 `train-rules.mjs#sixPinned`（单项钉法 `pinAllowed`，`rulesetFacts` 也调它），不再自带“六项都钉本 App”的判断。扫描钉 Actions 时推送路由可以是 push；S 上必须有 Actions 出的三项成功才会落地（`externalRequiredChecks` 把不钉本 App 的必需检查都算作 S 上的外部检查），在跑时 `TRAIN_LANDING_CHECKS_PENDING`，失败时 `TRAIN_LANDING_CHECK_FAILED`。准入、控制对仍只能钉本 App，扫描钉在未知 App 或不钉、六项分在两套规则集里，仍是 `main_ruleset_unidentified`（park）；`kooyumi-train-landed` 仍须钉本 App。常驻 `ruleset-backstop.mjs#rulesFacts` 是另一个包，由 `test/ruleset-backstop.test.mjs` 用同一张表锁住三处结论一致。
+5. **规则读不成六项时也认扫描钉在谁身上**（任务 04f9b91b 准入 p90，FABLE-admission-p90-20261122 §3 方案甲）：脚手架期 main 上生效的只有脚手架规则集（27843120：`kooyumi-work-admission` 钉本 App，三项 `hosted-*` 扫描钉 Actions），六项不齐，`rulesetFacts` 判读不出，第 10 段原先把 `rules` 记成 null，`appScans` 跟着缺失，每个批次都白跑第 2–7 段（现场 13–15 分钟），后面的 head 排在后面等准入。改法：
+   - `train-rules.mjs#appScansPinned(rules, appId)`：任一 `required_status_checks` 规则里钉到本 App 的扫描，按 `RULE_SCAN_NAMES` 顺序，和六项齐不齐无关；`rulesetFacts` 的 `appScans` 也由它算，两者在规则读得出时恒相等。读不懂（不是列表、规则形状不对、没有 `required_status_checks` 规则、某项扫描的条目没钉 App）时为 null，不当作 []；
+   - 第 10 段（`train-maintenance.mjs`）在回复完整时先算 `appScans`，再判六项；读失败或回复不完整时为 null。事实顶层带 `appScans`（`train-facts.mjs#trainFacts`，`rules` 为 null 时也带），`rules.appScans` 照旧保留给旧常驻读；
+   - 常驻 `train.mjs#trainSummary` 先读顶层 `appScans`，没有再读 `rules.appScans`；两处都有但不一致时都不认，全跑；
+   - 只钉了部分扫描（例如脚手架加一条 trivy 钉本 App）：只跑钉到的那几项；
+   - 第 8 段当场读规则核扫描（第 3 条）不变；脚手架期第 8 段本就读不出六项、不发绿，跳过扫描不丢任何东西。将来扫描钉回本 App，下一次第 10 段读到就恢复全跑；
+   - 不在岗（`duty.onDuty` 为假）的第 10 段不读规则，没有 `appScans`，照旧全跑；
+   - Source v2 与常驻同包随第 16 代发出：只有新 Source 没有新常驻时，常驻只读 `rules.appScans`（脚手架期为 null），全跑，方向安全；
+   - 测试（修复前必红）：Source `train-sweep.test.mjs` 第 10 段读脚手架规则得 `appScans` []、读不出时没有 `appScans`；`train-rules.test.mjs` 的 `appScansPinned`；常驻 `train-takeover-front.test.mjs` 脚手架规则下没有批次跑第 2–7 段，同一规则回复不完整时全跑，两处不一致时全跑。
 
 ## 83. 批次路由戳：落后 main 的 head 按合并基跑，只由批次出生时的一个事实决定（C3 返修方案“戊”，FABLE-c3-batch-rule-channel-20261122 §3，分支 `claude/push-mode-merge-base`）
 

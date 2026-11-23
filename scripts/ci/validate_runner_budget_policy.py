@@ -336,13 +336,13 @@ HOSTED_SCAFFOLD_SOURCE = "61b65d61"
 HOSTED_SCAFFOLD_PREFIX = "hosted-"
 HOSTED_SCAFFOLD_JOBS = {
     "hosted-required.yml": {
-        "control_sha256": "623f3e7945af830898e3a730d209d020c6b53f316410d401542ea1ec837155e2",
+        "control_sha256": "9a057883ee2ed3562058c81812778c539a19dda2afc1571c5cf1d50ae1c6ac76",
         "jobs": {
             "clued-cloud-tests": "6cbe5548054ab7718475ae8cfb85ce095ea7761526f2b184bdf01b7696fa0bcb",
             "ci-suites": "f76d702d186df8db2a7877dcb4bac03c6202775740f16667027193c33bfcab95",
             "migration-verify": "99c0769279ea8f6c0b5a485b2d80e2ef163642e4c5f191cbb3dd493487714da1",
             "ci-suites-windows": "e4e8bc5d70ad29b92aaacbb79e0591eec7ce971a3d278d1d4efb493b2631fe04",
-            "gitleaks": "7cc1a410d14a6bd8fc140ac5a86ce1f65365f33f23e72fa15f0aa6a0b49d0022",
+            "gitleaks": "4d532d733482aa3d94c2f83c33954b9af8e420c387cf1cd8b473e8f92aae45f6",
             "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
             "contract-placement": "a07add60bcd9ec6caee62f0e86213c48ce3d16700894dc71e38b75a9493334df"
         }

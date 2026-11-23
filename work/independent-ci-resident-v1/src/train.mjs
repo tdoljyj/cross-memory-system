@@ -331,7 +331,7 @@ export function trainSummary(f) {
     ...(f.claimBindings === undefined ? {} : { claimBindings }),
     strict: typeof f.rules?.strict === 'boolean' ? f.rules.strict : null, wouldRevokeCount: Number.isSafeInteger(f.wouldRevokeCount) ? f.wouldRevokeCount : 0,
     // R3 lean: the scans main's rules still require from App 5368905 (absent: not read, or a Source before R3: every scan runs).
-    ...(appScansOf(f.rules?.appScans) ? { appScans: appScansOf(f.rules.appScans) } : {}) };
+    ...(summaryAppScans(f) ? { appScans: summaryAppScans(f) } : {}) };
   if (!v2) return Object.freeze(base);
   const decision = DECISIONS.includes(f.decision) ? f.decision : null;
   const acting = f.mode !== 'shadow';
@@ -346,6 +346,16 @@ export function trainSummary(f) {
   const landing = f.mode === 'on' ? landingOf(f.landing) : null;
   return Object.freeze({ ...base, decision, sweep, actions: actionsOf(f.actions), requestPause: acting ? (f.requestPause ?? null) : null, openFrontBatch,
     ...(frontBind ? { frontBind } : {}), ...(landing ? { landing } : {}) });
+}
+
+// Task 04f9b91b (admission p90): stage 10's top-level appScans (any rule's scans pinned to this App, read also when the six are not: the
+// scaffold ruleset alone gives []) first; a Source without it, rules.appScans. Both given and not the same (one read gives both): neither,
+// every scan runs.
+function summaryAppScans(f) {
+  const inRules = f.rules?.appScans === undefined ? undefined : appScansOf(f.rules.appScans);
+  if (f.appScans === undefined) return inRules ?? null;
+  const top = appScansOf(f.appScans);
+  return top && (inRules === undefined || (inRules && inRules.join() === top.join())) ? top : null;
 }
 
 // R3 lean: Source v2 train-rules.mjs#RULE_SCAN_NAMES (= policy.mjs HEAVY_ROLES), in that order, each once; anything else is unknown (null).

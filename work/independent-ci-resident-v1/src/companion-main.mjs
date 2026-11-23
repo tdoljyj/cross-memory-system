@@ -396,7 +396,7 @@ export async function main(args = process.argv.slice(2)) {
           if (reportDue({ now: Date.now(), lastReport, lastSignature, signature, everyMs: REPORT_EVERY_MS })) {
             lastReport = Date.now();
             lastSignature = signature;
-            try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
+            try { await reporter.pass({ pulls: poller.lastPass?.pulls ?? [], drafts: poller.lastPass?.drafts ?? [], status, statusError }); } catch { /* advisory: the next minute tries again */ }
           }
         }
       } }),

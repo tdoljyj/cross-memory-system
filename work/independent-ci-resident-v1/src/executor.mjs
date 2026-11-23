@@ -134,6 +134,7 @@ import { PROBE_REQUEST_CONTRACT, RESIDENT_REQUEST_CONTRACTS, REQUEST_MAX_AGE_MS,
 import { ALERT_RECEIPT } from './retention.mjs';
 import { NODE_RESOURCE_HOLDER } from './host-capacity.mjs';
 import { stageHeadScans } from './head-scans.mjs';
+import { HEAD_MOVED, PR_CLOSED, PR_DRAFT, PR_DRAFT_HELD, prCandidate } from './pr-candidate.mjs';
 import { CODE, HEX40, HEX64, ResidentError, canonicalJson, check, digest, exactKeys, parseBoundedJson, sha256 } from './canonical.mjs';
 import { UPGRADE_RESUME_CONTRACT, validateUpgradeResume } from './upgrade-mailbox.mjs';
 import { ARCHIVE_LINUX_REQUEST_MS, CHECK_REFS_REQUEST_MS, PREPARE_WORKSPACES_REQUEST_MS, REBUILD_BUNDLE_REQUEST_MS } from './mailbox.mjs';
@@ -3144,7 +3145,12 @@ export class ResidentExecutor {
     this.report(s => {
       const b = breakerOf(this.queue.breaker);
       const parkedA = this.parkedA ?? new Set();
-      const now = this.clock(), view = this.queue.view(now, { etaBatchMs: ETA_BATCH_MS });
+      // The batch in flight (its row RUNNING, not resting at A or B) is due to end ETA_BATCH_MS after it began: the rows behind it start
+      // no earlier (PLAN-resident-draft-batch-20261123, observation; #1254's estimate rolled forward every minute).
+      const cur = this.current ? this.queue.row(this.current.pr) : null;
+      const began = cur?.state === 'RUNNING' && cur.running?.key === this.current.key ? (Date.parse(this.current.since ?? '') || cur.lastEvalAt) : null;
+      const runningUntil = Number.isFinite(began) ? began + ETA_BATCH_MS : null;
+      const now = this.clock(), view = this.queue.view(now, { etaBatchMs: ETA_BATCH_MS, runningUntil });
       // Leases of batches no longer live in the queue (done or stopped) and not in flight are forgotten.
       // (this.current keeps the last batch after it ended, so only the queue's own rows say what is live.)
       const live = new Set(view.filter(r => !['DONE', 'STOPPED'].includes(r.state)).map(r => `${r.pr}:${r.headSha}`));
@@ -3301,7 +3307,8 @@ export class ResidentExecutor {
     this.queue.compact(now);
     const b = breakerOf(this.queue.breaker);
     this.queue.breaker = b;
-    let attempts = (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= now);
+    // A held (draft) PR's attempt-2 intent waits for its next trigger (queue.mjs#hold): kept, neither scheduled nor read.
+    let attempts = (await this.ledger.pendingAttempts2()).filter(a => a.notBefore <= now && !this.queue.held(a.subject.pr));
     await this.recheckClaims(now);
     let rows = this.queue.candidates(now);
     this.reportQueue();
@@ -3576,16 +3583,19 @@ export class ResidentExecutor {
     }
     // A merged or closed PR leaves the queue before it is reserved (one live read), not only after a batch of it failed
     // (falsified): on 2026-11-03 merged PR 984 stayed first in the queue and breaker trials ran merged heads again
-    // (rule 41ab823a). No answer is never a fact: the row runs as before.
+    // (rule 41ab823a). No answer is never a fact: the row runs as before. A draft is held (pr-candidate.mjs): the row, and a flow
+    // continuation with it, waits for the PR's next trigger (field 2026-11-23, #1253).
     const live = await this.livePull(c.pr);
-    if (live && live.state !== 'open') {
+    const verdict = prCandidate(live, subject);
+    if (verdict?.basis === PR_CLOSED) {
       if (flow) await this.ledger.retireFlow(flow, 'pr-closed');
       if (this.queue.closePr(c.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: c.pr, state: live.state, before: 'reserve' });
       this.reportOutcome(subject, 'IGNORED', { code: 'PR_CLOSED', key });
       return { state: 'IGNORED', key, reason: 'PR_CLOSED', next: true };
     }
-    if (flow && (!live || live.headSha !== subject.headSha)) {
-      if (live) await this.ledger.retireFlow(flow, 'head-moved');
+    if (verdict?.basis === PR_DRAFT) return this.holdDraft(subject, key, 'reserve');
+    if (flow && (!verdict || verdict.basis === HEAD_MOVED)) {
+      if (verdict) await this.ledger.retireFlow(flow, 'head-moved');
       return this.deferral({ defer: 'FLOW_HEAD_UNCONFIRMED', perRow: true }, key, c.pr);
     }
 
@@ -3619,7 +3629,17 @@ export class ResidentExecutor {
       }
     }
     // t0 of the hosted wait: the row is reserved in this very tick.
-    return this.driveReserved(key, subject, this.clock(), c.origin);
+    return this.driveReserved(key, subject, this.clock(), c.origin, { liveRead: verdict !== null });
+  }
+
+  // A live read showed the PR as a draft (pr-candidate.mjs, basis pr-draft): its queue row is held (queue.mjs#hold), so neither the row
+  // nor its attempt-2 intent nor its flow continuation is scheduled or read again until the PR's next trigger. Nothing is closed or retired.
+  async holdDraft(subject, key, before) {
+    if (this.queue.hold(subject.pr, subject.headSha, this.clock())) {
+      await this.persistQueue();
+      try { await this.receipt('queue-pr-held', { pr: subject.pr, headSha: subject.headSha, reason: PR_DRAFT_HELD, before }); } catch { /* the queue row shows it */ }
+    }
+    return { state: 'DEFERRED', key, reason: PR_DRAFT_HELD, next: true };
   }
 
   // attempt 1 ended FAILED_CLEAN at stage 0, 1 or 2 (attempts.mjs#ATTEMPT2_STAGES) with a recorded plan that relayed no role.
@@ -3670,16 +3690,19 @@ export class ResidentExecutor {
     // The rule of DESIGN §72 before attempt 2 exists (rule 41ab823a, v0.6 §3): one live read after the precheck, as in runRow. A closed PR,
     // or one whose head is no longer attempt 1's, never runs attempt 2; a newer commit in the queue that the read disproves goes back to
     // superseded. No answer is never a fact: attempt 2 runs and stage 1 decides.
+    // A draft keeps its intent and is held until the PR's next trigger (pr-candidate.mjs; field 2026-11-23, #1253 at 15:23:48).
     const live = await this.livePull(subject.pr);
-    if (live && live.state !== 'open') {
+    const verdict = prCandidate(live, subject);
+    if (verdict?.basis === PR_CLOSED) {
       await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_PR_CLOSED', liveState: live.state });
       if (this.queue.closePr(subject.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: subject.pr, state: live.state, before: 'attempt2' });
       return this.attempt2Ignored('ATTEMPT2_PR_CLOSED', { key1, key2, subject });
     }
-    if (live && live.headSha !== subject.headSha) {
+    if (verdict?.basis === HEAD_MOVED) {
       await this.ledger.closeAttempt2(key1, { failureCode: 'ATTEMPT2_SUPERSEDED', liveHeadSha: live.headSha, liveState: live.state });
       return this.attempt2Ignored('ATTEMPT2_SUPERSEDED', { key1, key2, subject });
     }
+    if (verdict?.basis === PR_DRAFT) return this.holdDraft(subject, key2, 'attempt2');
     if (live && this.newerCommitQueued(subject) && this.queue.keepCurrent(subject.pr, subject.headSha, subject.baseSha, this.clock())) {
       await this.persistQueue();
       await this.receipt('supersede-disproved', { key: key2, pr: subject.pr, safePoint: 'before-attempt-2' });
@@ -3691,10 +3714,12 @@ export class ResidentExecutor {
     // The row of attempt 1's head shows attempt 2 running (when that head is still the PR's current one in the queue).
     const row = this.queue.row(subject.pr);
     if (row?.current?.headSha === subject.headSha && !row.running) { this.queue.begin(subject.pr, subject.headSha, key2, 'attempt2', this.clock(), { binding: this.currentClaimBinding(subject) }); await this.persistQueue(); }
-    return this.driveReserved(key2, subject, this.clock(), 'attempt2');
+    return this.driveReserved(key2, subject, this.clock(), 'attempt2', { liveRead: verdict !== null });
   }
 
-  async driveReserved(key, subject, t0, origin = 'queued') {
+  // liveRead: the read right before the reservation answered (the PR open at this head, not a draft); only then does stage 1 count as the
+  // batch's first live read of the rule (DESIGN §72.2). Without an answer the batch's first safe point reads at once.
+  async driveReserved(key, subject, t0, origin = 'queued', { liveRead = false } = {}) {
     let batch = null;
     let outcome;
     // A new batch learns its lease from its own stage 1 (DESIGN §56.3): an end kept from an earlier attempt of this head (a refused stage 1
@@ -3708,7 +3733,7 @@ export class ResidentExecutor {
     this.reportQueue();
     await this.flushStatus();
     try {
-      outcome = await this.drive(key, subject, t0, b => { batch = b; });
+      outcome = await this.drive(key, subject, t0, b => { batch = b; }, { liveRead });
       if (outcome instanceof StepFailure) outcome = await this.fail(key, batch, outcome);
     } catch (error) {
       // An exception in the executor itself (or a port) is never classified as clean.
@@ -3775,6 +3800,8 @@ export class ResidentExecutor {
       const settled = this.queue.settle(subject.pr, subject.headSha, s ? { kind: s.kind, code: s.code ?? null, klass: s.klass ?? null, reason: s.reason ?? null, ciRetryAfter, outcomeReason: s.outcomeReason ?? null,
         reasonCodes: s.reasonCodes ?? null, releases24h, releaseCap: this.policy.limits.releasesPerHeadPer24h, network, networkReleases24h, networkCap: this.networkPolicy()?.releasesPerHeadPer24h ?? null }
         : { kind: 'burned', code: result.failureCode ?? null, klass: 'unknown' }, now);
+      // A batch a draft ended (pr-draft, a flow end): its PR is held until its next trigger (queue.mjs#hold).
+      if (s?.hold === true) this.queue.hold(subject.pr, subject.headSha, now);
       // ADR 0019 (review 2): the S of a batch whose member moved on is never tried again (stage 10 offers the next one).
       if (s?.dropFront === true && Object.hasOwn(subject, 'testSha')) this.queue.dropFronts(s.code ?? TRAIN_BATCH_MEMBER_MOVED, now);
       // Main is no longer this base: the other rows waiting on it stop too, without a bundle each (queue.mjs#stopBase; bc982192: but
@@ -3804,12 +3831,13 @@ export class ResidentExecutor {
   // item 5: the head actually seen, not the newest one).
   async falsified(subject) {
     const live = await this.livePull(subject.pr);
-    if (!live) return;
-    if (live.state !== 'open') {
+    const verdict = prCandidate(live, subject);
+    if (!verdict) return;
+    if (verdict.basis === PR_CLOSED) {
       if (this.queue.closePr(subject.pr, this.clock())) await this.receipt('queue-pr-closed', { pr: subject.pr, state: live.state });
       return;
     }
-    if (live.headSha === subject.headSha) return;
+    if (verdict.basis !== HEAD_MOVED) return;
     const row = this.queue.row(subject.pr);
     const was = row?.superseded.find(c => c.headSha === live.headSha);
     if (!was) return;
@@ -3900,7 +3928,7 @@ export class ResidentExecutor {
     }
   }
 
-  async drive(key, subject, t0, keepBatch) {
+  async drive(key, subject, t0, keepBatch, { liveRead = false } = {}) {
     // ADR 0019: a front batch of several PRs (its binding from stage 10 names the members) is described as /4; every other batch as /3.
     const front = Object.hasOwn(subject, 'testSha') ? this.frontBindings.get(`${subject.pr}:${subject.testSha}`) : null;
     const chain = front?.members ? chainOfFront(subject, front) : null;
@@ -3967,8 +3995,9 @@ export class ResidentExecutor {
     await this.receipt('batch-started', { key });
     // Stage 1's admission just read the PR open at this head: the batch's first live read of the rule (DESIGN §72). Not when it settled
     // on a PR that merged meanwhile (the publisher's settledMerged, field 2026-11-23 #1233-#1239): the read stays due, so the next safe
-    // point reads the PR and ends the batch the one way (supersededEnd).
-    if (first.outcome?.settledMerged !== true) this.liveReadDue(key);
+    // point reads the PR and ends the batch the one way (supersededEnd). Nor when the read before the reservation had no answer
+    // (PLAN-resident-draft-batch-20261123 §2 item 7): stage 1 does not look at the draft flag, only that read said "not a draft".
+    if (first.outcome?.settledMerged !== true && liveRead) this.liveReadDue(key);
     // The wait's anchor (t0) and the derived batch, durable before the first wait evaluation: a later tick,
     // or a restarted service, continues from here without deriving or running stage 1 again.
     await this.ledger.beginWait(key, { t0, batch, claimExpiresAt: this.leaseOf(subject) });
@@ -4504,19 +4533,22 @@ export class ResidentExecutor {
     const named = HEX40.test(hint ?? '') && hint !== subject.headSha ? hint : newer;
     if (!this.liveReadDue(key, named)) return null;
     const live = await this.livePull(subject.pr, batch);
-    if (!live) {
+    const verdict = prCandidate(live, subject);
+    if (!verdict) {
       if (named) await this.receipt('supersede-unconfirmed', { key, pr: subject.pr, safePoint });
       return null;
     }
-    if (live.state === 'open' && live.headSha === subject.headSha) {
-      // The newer commit in the queue is disproved: it goes back to superseded, this batch's head is current again.
+    if (verdict.basis === null || verdict.basis === PR_DRAFT) {
+      // The PR is open at this head (a draft too): the newer commit in the queue is disproved, it goes back to superseded and this
+      // batch's head is current again.
       if (newer && this.queue.keepRunning(subject.pr, subject.headSha, this.clock())) {
         await this.persistQueue();
         await this.receipt('supersede-disproved', { key, pr: subject.pr, safePoint });
       }
-      return null;
+      if (verdict.basis === null) return null;
     }
-    return { basis: live.state !== 'open' ? 'pr-closed' : 'head-moved', live };
+    // pr-closed and head-moved end for good; pr-draft is a flow end (§72.11): the same head continues at its next trigger.
+    return { basis: verdict.basis, live };
   }
 
   // One live read per batch and named head every SUPERSEDE_LIVE_READ_MS (named null: the batch's own cadence). true: due, and taken now.
@@ -4553,6 +4585,9 @@ export class ResidentExecutor {
   async endIfNotStanding(key, subject, batch, safePoint, pos, stage = 1) {
     try { await this.intake(); } catch { /* the next tick reads it */ }
     const fact = await this.standing(key, subject, batch, { safePoint });
+    // A draft ends only a batch resting at A or B (endParkedIfNotStanding), which §72.10 continues on the same head; ended here, in
+    // flight, it would be no flow end and would wait for a new commit. It goes on to its parking point (PLAN §2 items 5 and 6).
+    if (fact?.basis === PR_DRAFT) return null;
     return fact ? this.supersededEnd(key, subject, batch, { safePoint, pos, stage, ...fact }) : null;
   }
 
@@ -4613,7 +4648,7 @@ export class ResidentExecutor {
       archiveCheck(windows && windows.verified === true && linux && linux.verified === true, 'FAILURE_ARCHIVE_UNCONFIRMED', windows);
       // stage: the last stage that ran (executed-heads.mjs#mayHavePublished): 1 before the workspace (nothing after stage 1
       // published, unless stage R relayed a role, which its plan says); 8 at parking point B (stages 3, 5 and 7 published).
-      const readmit = capacity || ['upgrade-drain', 'park-max-age'].includes(basis);
+      const readmit = capacity || ['upgrade-drain', 'park-max-age', PR_DRAFT].includes(basis);
       const retry = capacity ? 'new-trigger' : readmit ? 'safe-point' : 'new-commit';
       await this.ledger.terminal(key, 'FAILED_CLEAN', { failureCode, basis, safePoint, stage, batchId: batch?.batchId ?? null,
         windows: windows.directory, linux: linux.directory, class: klass, retry, breaker: 'neutral', liveHeadSha: live?.headSha ?? null, liveState: live?.state ?? null });
@@ -4621,7 +4656,8 @@ export class ResidentExecutor {
       this.reportOutcome(subject, 'FAILED_CLEAN', { code: failureCode, key, retry });
       // At B only Windows was touched since the parking told the breaker about stages 1-7 (review of step 2, M2).
       return { state: 'FAILED_CLEAN', key, failureCode, safePoint,
-        settle: { kind: readmit ? 'readmit' : 'burned', code: failureCode, klass, breaker: 'neutral', pos, ...(stage === 8 ? { windowsOnly: true } : {}) } };
+        settle: { kind: readmit ? 'readmit' : 'burned', code: failureCode, klass, breaker: 'neutral', pos, ...(stage === 8 ? { windowsOnly: true } : {}),
+          ...(basis === PR_DRAFT ? { hold: true } : {}) } };
     } catch (error) {
       return this.unknown(key, codeOf(error), 'superseded-end-unconfirmed', batch, { ...context, ...archiveFacts(error) });
     }

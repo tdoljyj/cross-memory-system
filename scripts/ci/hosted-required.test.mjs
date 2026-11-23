@@ -1,9 +1,11 @@
-// 托管脚手架 hosted-required.yml 的结构约束（任务 04f9b91b）。纯文本读取；gitleaks 一条另读 Native 的固定值来源。
+// 托管脚手架 hosted-required.yml 的结构约束（任务 04f9b91b）。纯文本读取；hosted-gitleaks 与自托管 R1 的区间扫描逐字一致并真跑一遍。
 // staging 会被列车强制改指：上一批没落地时 github.event.before 在检出里不存在，拿它当基线检查就报错变红。
 // 所以凡是给命令传比较基线的作业，staging 推送时一律按 stagingBaseFromCheckout 现算（与四个测试作业同一来源）。
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,7 +39,14 @@ test('传比较基线的作业都先按 stagingBaseFromCheckout 算出 staging �
     users.push(id);
     assert.match(block, /stagingBaseFromCheckout\(process\.env\.STAGING_SHA\)/, `${id} 没有 staging 基线步骤`);
     assert.match(block, /id: train-base\n/, `${id} 的基线步骤不叫 train-base`);
-    for (const value of values) assert.match(value, /^\$\{\{ steps\.train-base\.outputs\.sha \|\| /, `${id} 的基线不先取 train-base：${value}`);
+    for (const value of values) {
+      // hosted-gitleaks 用 R1 原文：基线经区间步骤取，区间步骤的推送基线取自 train-base（staging 时即 stagingBaseFromCheckout 的结果）。
+      if (value === '${{ steps.range.outputs.base }}') {
+        assert.match(block, /\n {10}PUSH_BASE: \$\{\{ steps\.train-base\.outputs\.ci_base \}\}\n/, `${id} 的区间步骤不从 train-base 取推送基线`);
+        continue;
+      }
+      assert.match(value, /^\$\{\{ steps\.train-base\.outputs\.sha \|\| /, `${id} 的基线不先取 train-base：${value}`);
+    }
   }
   assert.ok(users.includes('contract-placement'), `contract-placement 应传基线：${users.join(',')}`);
 });
@@ -66,75 +75,6 @@ test('选择套件的 --check 参数与自托管一致', () => {
   const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
   const checks = source => [...source.matchAll(/--check [^"'`;|&\n]*/g)].map(m => m[0].trim()).sort();
   assert.deepEqual(checks(text), checks(selfHosted));
-});
-
-// hosted-gitleaks 校验的固定值（三个受信文件、审核提交集、审核 ignore）只有一个来源：Native 在跑的 gitleaks worker
-// （protected-job-bridge-v4 → formal-gitleaks-v4 → required-history/prepare.mjs）。作业从受信基线读它，自己不抄值；
-// 抄来的值会过期（从已停用的 gitleaks.yml 抄的五个值与 main 不符，任务 04f9b91b 缺陷 B）。
-const NATIVE_GITLEAKS = 'work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/prepare.mjs';
-test('hosted-gitleaks 不抄固定值，从 Native 在跑的 prepare.mjs 读，读到的值与本树文件一致', async () => {
-  const block = jobs(text).get('gitleaks');
-  assert.ok(block, 'hosted-required.yml 没有 gitleaks 作业');
-  const copied = [...block.matchAll(/\b[0-9a-f]{64}\b/g)].map(m => m[0])
-    .filter(hex => !block.includes(`gitleaks:v8.30.1@sha256:${hex}`));
-  assert.deepEqual(copied, [], 'gitleaks 作业里抄了固定值');
-  assert.ok(block.includes(`await import('./${NATIVE_GITLEAKS}')`), `gitleaks 作业不读 ${NATIVE_GITLEAKS}`);
-  const read = p => readFileSync(new URL(`../../${p}`, import.meta.url), 'utf8');
-  assert.match(read('work/actions-hosted-migration/independent-ci-v1/worker/protected-job-bridge-v4/linux-worker.mjs'),
-    /from '\.\.\/formal-gitleaks-v4\/adapter\.mjs'/, 'Native bridge 换了 gitleaks worker，托管作业要跟着改路径');
-  const { createHash } = await import('node:crypto');
-  const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-  const m = await import(new URL(`../../${NATIVE_GITLEAKS}`, import.meta.url));
-  assert.deepEqual(Object.keys(m.SOURCE_PINS).sort(),
-    ['.gitleaks.toml', 'scripts/ci/reviewed_gitleaks.py', 'scripts/ci/reviewed_gitleaks_historical.py']);
-  for (const [file, pin] of Object.entries(m.SOURCE_PINS)) {
-    assert.equal(sha(readFileSync(new URL(`../../${file}`, import.meta.url))), pin, file);
-  }
-  const commits = [...new Set([...read('.gitleaks.toml').matchAll(/^# clued-reviewed-finding: \{"fingerprint":"([0-9a-f]{40}):.*$/gm)]
-    .map(x => x[1]))].sort();
-  assert.equal(sha(`${commits.join('\n')}\n`), m.REVIEWED_COMMITS.sha256, '审核提交集');
-  assert.match(m.REVIEWED_HISTORY_PROOF.reviewed_ignore_sha256, /^[0-9a-f]{64}$/);
-});
-
-// 托管第 5 步（任务 04f9b91b）：helper 校验两条历史补丁的摘要，摘要含 git 的 index 行，钉的是 8 位缩写；
-// 完整历史下 git 自动缩写到 9 位以上，helper 就报 “Reviewed-finding verification failed”。Native 的自检垫片
-// 对这两条 diff 固定 core.abbrev=8。托管作业让 helper 的 git 走同一个 safeGitArguments，不另抄规则；
-// 这里取工作流里的那段 git.mjs，真跑这两条 diff，摘要必须等于 helper 钉的值。
-test('hosted-gitleaks 自检的 git 走 Native 垫片的 safeGitArguments，两条历史补丁摘要与 helper 钉值一致', async () => {
-  const block = jobs(text).get('gitleaks');
-  const step = block.slice(block.indexOf('- name: Validate exact historical exceptions and detection regressions'));
-  const shim = 'work/actions-hosted-migration/independent-ci-v1/worker/formal-gitleaks-v4/required-history/selftest-shim.mjs';
-  assert.ok(step.includes(`$PWD/${shim}`), `自检一步不复用 ${shim}`);
-  assert.match(step, /PATH="\$shim\/bin:\$PATH" python3 -I -B scripts\/ci\/reviewed_gitleaks\.py/, 'helper 的 git 没有走垫片');
-  const source = /cat > "\$shim\/git\.mjs" <<'EOF'\n([\s\S]*?)\n\s*EOF\n/.exec(step);
-  assert.ok(source, '自检一步没有写 git.mjs');
-  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const path = await import('node:path');
-  const { spawnSync } = await import('node:child_process');
-  const { createHash } = await import('node:crypto');
-  const { fileURLToPath } = await import('node:url');
-  const root = fileURLToPath(new URL('../../', import.meta.url));
-  const historical = readFileSync(new URL('./reviewed_gitleaks_historical.py', import.meta.url), 'utf8');
-  const constant = name => new RegExp(`^${name} = '([0-9a-f]+)'$`, 'm').exec(historical)[1];
-  const pins = [[constant('H'), constant('PATCH_SHA')],
-    [constant('H2'), /H2: \{[\s\S]*?'patch_sha': '([0-9a-f]{64})'/.exec(historical)[1]]];
-  const dir = mkdtempSync(path.join(tmpdir(), 'hosted-gitleaks-shim-'));
-  try {
-    const file = path.join(dir, 'git.mjs');
-    writeFileSync(file, source[1].split('\n').map(line => line.replace(/^ {10}/, '')).join('\n') + '\n');
-    for (const [commit, pin] of pins) {
-      const args = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--diff-algorithm=myers', '--unified=0',
-        `${commit}^`, commit, '--', 'scripts/ci/clued-gated-proof-profiles.json'];
-      const run = spawnSync(process.execPath, [file, 'git', path.join(root, shim), dir, ...args], { cwd: root, maxBuffer: 16 * 1024 * 1024 });
-      assert.equal(run.status, 0, `${commit}: ${run.stderr}`);
-      assert.equal(createHash('sha256').update(run.stdout).digest('hex'), pin, `${commit} 的补丁摘要（需要完整历史）`);
-    }
-    const refused = spawnSync(process.execPath, [file, 'git', path.join(root, shim), dir, 'fetch', 'origin'], { cwd: root });
-    assert.notEqual(refused.status, 0, '垫片白名单外的 git 命令应被拒');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 // 主机缺什么只由托管工作流自己声明（FABLE-hosted-windows-suites §2.3、§2.4）：唯一入口读 CLUED_CI_HOST_LACKS，
@@ -171,4 +111,183 @@ test(`跑 ci-required-selection --run/--run-selected 套件的托管作业 timeo
     checked.push(id);
   }
   assert.deepEqual(checked.sort(), ['ci-suites', 'ci-suites-windows', 'clued-cloud-tests']);
+});
+
+// ---- hosted-gitleaks = 自托管 R1 的区间扫描（PLAN-hosted-stale-base-20261123 第 2、3 节） ----
+// 旧定义抄自已停用 gitleaks.yml 的全历史扫描，断言“现场 main 尖端 == 事件负载 base.sha”。负载 base.sha 是 PR 记录上的
+// 快照：reopened、手工重跑、运行期间 main 前进都会让它和现场 main 不等，红与 PR 无关。新定义只扫 base..head，不取现场 main。
+const SELF_HOSTED = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
+const R1_STEPS = ['Resolve the changed range', 'Copy the changed history into a fresh Git directory', 'Scan the changed range with Gitleaks 8.30.1'];
+
+// 作业文本里的一步：env（键 → 原值）与 run（去掉 10 格缩进的块文本）。纯文本，不引 YAML 依赖。
+function stepOf(block, name) {
+  const raw = block.split(/\n {6}- /).find(s => s.startsWith(`name: ${name}\n`));
+  assert.ok(raw, `没有一步叫 ${name}`);
+  const lines = raw.split('\n');
+  const env = {};
+  const envAt = lines.indexOf('        env:');
+  if (envAt >= 0) {
+    for (const line of lines.slice(envAt + 1)) {
+      const m = /^ {10}([A-Za-z_][A-Za-z0-9_]*): (.*)$/.exec(line);
+      if (!m) break;
+      env[m[1]] = m[2];
+    }
+  }
+  const runAt = lines.indexOf('        run: |');
+  assert.ok(runAt >= 0, `${name} 没有 run 块`);
+  const body = [];
+  for (const line of lines.slice(runAt + 1)) {
+    if (line !== '' && !line.startsWith('          ')) break;
+    body.push(line.slice(10));
+  }
+  while (body.length && body.at(-1) === '') body.pop();
+  return { env, run: `${body.join('\n')}\n` };
+}
+// 检出到 trusted 的那一步的 ref。
+const trustedRef = block => block.split(/\n {6}- /).map(s => /\n {10}ref: ([^\n]+)\n(?: {10}[^\n]*\n)*? {10}path: trusted(?:\n|$)/.exec(s))
+  .find(Boolean)?.[1];
+
+test('hosted-gitleaks 的三步与自托管 R1 gitleaks 作业逐字一致，受信检出 ref 与其他托管作业相同', () => {
+  const hosted = jobs(text).get('gitleaks');
+  const r1 = jobs(SELF_HOSTED).get('gitleaks');
+  assert.ok(hosted && r1, '两边都要有 gitleaks 作业');
+  for (const name of R1_STEPS) {
+    const a = stepOf(hosted, name);
+    const b = stepOf(r1, name);
+    assert.equal(a.run, b.run, `${name} 的 run 与自托管不一致`);
+    assert.deepEqual(a.env, b.env, `${name} 的 env 与自托管不一致`);
+  }
+  const want = trustedRef(jobs(text).get('clued-cloud-tests'));
+  assert.ok(want, 'clued-cloud-tests 的受信检出没有 ref');
+  for (const id of ['ci-suites', 'migration-verify']) assert.equal(trustedRef(jobs(text).get(id)), want, id);
+  assert.equal(trustedRef(hosted), want, 'hosted-gitleaks 的受信检出 ref 与其他托管作业不同');
+  assert.match(hosted, /\n {6}- name: Check out the candidate\n[\s\S]*?\n {10}fetch-depth: 0\n {10}path: candidate\n/, '候选检出要全历史');
+  assert.match(hosted, /\n {8}id: train-base\n/, '没有 train-base 步骤');
+});
+
+test('hosted-gitleaks 不读现场 main：作业里没有 refs/heads/main、github.com/$GITHUB_REPOSITORY、FETCH_TOKEN', () => {
+  const block = jobs(text).get('gitleaks');
+  assert.ok(block, 'hosted-required.yml 没有 gitleaks 作业');
+  for (const needle of ['refs/heads/main', 'github.com/$GITHUB_REPOSITORY', 'FETCH_TOKEN']) {
+    assert.ok(!block.includes(needle), `gitleaks 作业里还有 ${needle}`);
+  }
+});
+
+// 旧 base 场景：main=A，H 从 A 分出，main 前进到 B，GitHub 的合并 M=merge(B,H)，事件负载仍是 PR_BASE=A。
+// 用工作流里这三步原文真跑（docker 换成跑桩 gitleaks 的替身，与 gitleaks-range.test.mjs 同法）：区间 A..H 扫过且干净即过；
+// H 里加一条假密钥则非 0。
+function gitBash() {
+  if (process.platform !== 'win32') return 'bash';
+  const exec = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout?.trim();
+  const bash = exec && path.resolve(exec, '..', '..', '..', 'bin', 'bash.exe');
+  return bash && existsSync(bash) ? bash : null;
+}
+const BASH = gitBash();
+const noBash = BASH ? false : '找不到 Git for Windows 的 bash';
+const fwd = p => p.replace(/\\/g, '/');
+// 仓库 generic-api-key 规则命中的样子；运行时拼出，本文件自身不带命中。
+const LEAK = ['const k = { policy', "Key: 'park.stage8Retries", "Per24h' };\n"].join('');
+const STUB = `import { spawnSync } from 'node:child_process';
+const a = process.argv.slice(2);
+const src = a[a.indexOf('git') + 1];
+const opts = (a.find((x) => x.startsWith('--log-opts=')) || '--log-opts=').slice(11).split(/\\s+/).filter(Boolean);
+const r = spawnSync('git', ['-C', src, 'log', '-p', '-U0', '--no-color', ...opts], { encoding: 'utf8' });
+if (r.status !== 0) { console.log('ERR [git] ' + (r.stderr || '').trim()); process.exit(0); }
+if (/^\\+.*policyKey: '/m.test(r.stdout)) { console.log('Finding: policyKey: REDACTED'); process.exit(1); }
+console.log('INF no leaks found');
+`;
+const fakeDocker = stub => `import { spawnSync } from 'node:child_process';
+const a = process.argv.slice(2);
+if (a[0] === 'image' || a[0] === 'pull') process.exit(0);
+if (a[0] !== 'run') process.exit(9);
+for (const f of ['--network=none', '--read-only', '--pull=never', '--cap-drop=ALL']) if (!a.includes(f)) { console.error('fake docker: missing ' + f); process.exit(9); }
+const mount = a.find((x) => /dst=\\/repo,/.test(x)) || '';
+const src = /src=([^,]+)/.exec(mount)[1];
+const args = a.slice(a.indexOf('/usr/bin/gitleaks') + 2).map((x) => x === '/repo' ? src : x);
+process.exit(spawnSync(process.execPath, [${JSON.stringify(stub)}, ...args], { stdio: 'inherit' }).status ?? 1);
+`;
+
+function staleBaseRun(headFiles) {
+  const tmp = mkdtempSync(path.join(tmpdir(), 'hosted-gitleaks-stale-'));
+  try {
+    const globalConfig = path.join(tmp, 'gitconfig');
+    writeFileSync(globalConfig, '[user]\n\tname = t\n\temail = t@invalid\n[commit]\n\tgpgSign = false\n[core]\n\thooksPath =\n\tautocrlf = false\n[init]\n\tdefaultBranch = main\n');
+    const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: globalConfig, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' };
+    for (const key of Object.keys(env)) if (/^GIT_CONFIG_(COUNT|KEY_|VALUE_)/.test(key)) delete env[key];
+    const git = (cwd, ...args) => {
+      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    const commit = (dir, files, message) => {
+      for (const [file, body] of Object.entries(files)) {
+        mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+        writeFileSync(path.join(dir, file), body);
+      }
+      git(dir, 'add', '-A');
+      git(dir, 'commit', '-q', '-m', message);
+      return git(dir, 'rev-parse', 'HEAD');
+    };
+    const origin = path.join(tmp, 'origin');
+    mkdirSync(origin);
+    git(origin, 'init', '-q', '-b', 'main');
+    const A = commit(origin, { 'src/a.txt': 'a\n' }, 'A');
+    git(origin, 'checkout', '-q', '-b', 'work');
+    const H = commit(origin, headFiles, 'H');
+    git(origin, 'checkout', '-q', 'main');
+    const B = commit(origin, { 'src/main.txt': 'main moves\n' }, 'B');
+    const ws = path.join(tmp, 'ws');
+    const temp = path.join(ws, '_temp');
+    const candidate = path.join(ws, 'candidate');
+    mkdirSync(path.join(ws, 'trusted', 'scripts', 'ci'), { recursive: true });
+    mkdirSync(temp);
+    git(tmp, 'clone', '-q', '--no-local', origin, candidate);
+    // GitHub 的合并：现场 main（B）并上 head（H），H 是第二父。
+    git(candidate, 'checkout', '-q', '--detach', B);
+    git(candidate, 'merge', '-q', '--no-ff', '--no-edit', H);
+    const M = git(candidate, 'rev-parse', 'HEAD');
+    const root = fileURLToPath(new URL('../../', import.meta.url));
+    copyFileSync(path.join(root, '.gitleaks.toml'), path.join(ws, 'trusted', '.gitleaks.toml'));
+    copyFileSync(path.join(root, 'scripts', 'ci', 'gitleaks-range.sh'), path.join(ws, 'trusted', 'scripts', 'ci', 'gitleaks-range.sh'));
+    const bin = path.join(tmp, 'bin');
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, 'stub.mjs'), STUB);
+    writeFileSync(path.join(bin, 'fake-docker.mjs'), fakeDocker(fwd(path.join(bin, 'stub.mjs'))));
+    const docker = path.join(bin, 'docker');
+    writeFileSync(docker, `#!/usr/bin/env bash\nexec "${fwd(process.execPath)}" "${fwd(path.join(bin, 'fake-docker.mjs'))}" "$@"\n`);
+    chmodSync(docker, 0o755);
+    const output = path.join(temp, 'output');
+    writeFileSync(output, '');
+    // MSYS_NO_PATHCONV：Git for Windows 的 bash 会把容器路径 /repo 改写成 Windows 路径。
+    const shared = { ...env, MSYS_NO_PATHCONV: '1', GITHUB_WORKSPACE: fwd(ws), RUNNER_TEMP: fwd(temp), GITHUB_SHA: M,
+      GITHUB_OUTPUT: fwd(output), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+    const run = (script, cwd, extra) => {
+      const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...shared, ...extra }, timeout: 240000 });
+      return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
+    };
+    const block = jobs(text).get('gitleaks');
+    assert.ok(block, 'hosted-required.yml 没有 gitleaks 作业');
+    const [rangeStep, copyStep, scanStep] = R1_STEPS.map(name => stepOf(block, name));
+    let r = run(rangeStep.run, candidate, { EVENT_NAME: 'pull_request', PR_BASE: A, PR_HEAD: H, PUSH_BASE: '' });
+    assert.equal(r.code, 0, r.out);
+    const out = Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(l => l.split('=')));
+    assert.deepEqual(out, { base: A, head: H });
+    r = run(copyStep.run, ws, { BASE: A, HEAD: H });
+    assert.equal(r.code, 0, r.out);
+    return run(scanStep.run, ws, { BASE: A, HEAD: H });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test('hosted-gitleaks 在旧 base（负载 base.sha 落后现场 main）下照常扫 PR 区间：干净则过', { skip: noBash }, () => {
+  const r = staleBaseRun({ 'src/h.txt': 'h\n' });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /scanned, no finding/);
+});
+
+test('hosted-gitleaks 在旧 base 下 PR 带假密钥则红', { skip: noBash }, () => {
+  const r = staleBaseRun({ 'src/h.js': LEAK });
+  assert.notEqual(r.code, 0, r.out);
+  assert.match(r.out, /gitleaks exited 1/);
 });
