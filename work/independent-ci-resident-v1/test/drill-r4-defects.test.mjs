@@ -112,10 +112,10 @@ const STEP_LOGS = {
 const entryLine = JSON.stringify({ status: 'FIRST_INSTALL_STOPPED', stopCode: 'SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS', tree: 'C:\\t', node: 'C:\\n.exe' });
 
 // Invoke-DrillRun offline as far as A7, the guest's read after the install given; returns what was sent and the A7 item.
-function runToA7(name, read) {
+function runToA7(name, read, entry = { line: entryLine, exit: 1 }) {
   const runDir = path.join(tmp, name, 'run'); fs.mkdirSync(runDir, { recursive: true });
   const guest = path.join(tmp, name, 'guest'); fs.mkdirSync(guest, { recursive: true });
-  const files = { ...STEP_LOGS, 'first-install.stdout.log': entryLine + '\r\n', 'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
+  const files = { ...STEP_LOGS, 'first-install.stdout.log': entry.line + '\r\n', 'host-result.json': JSON.stringify({ exit: 0, terminal: { status: 'FIRST_INSTALL_HOST_READY' } }),
     'launcher-result.json': JSON.stringify({ exit: 1, terminal: { status: 'STOPPED', code: 'SECRET_CHECK_FAILED:VERIFY_SCRIPT_PARSE_ERRORS' } }), 'stage-timings.json': '{"host":1}' };
   for (const [n, text] of Object.entries(files)) fs.writeFileSync(path.join(guest, n), text);
   return ps(`
@@ -133,7 +133,7 @@ function runToA7(name, read) {
     $read = ${q(JSON.stringify(read))} | ConvertFrom-Json
     function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable)
       $script:sent.Add('guest:' + $Step)
-      if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(entryLine)}); exit = 1; stderr = '' } }
+      if ($Step -ceq 'first-install') { return [ordered]@{ lines = @(${q(entry.line)}); exit = ${entry.exit}; stderr = '' } }
       if ($Step -ceq 'stage-files' -or $Step -ceq 'guest-evidence') { return (& $Script ${q(guest)} $ArgumentList[1]) }
       if ($Step -ceq 'read-after-install') { return $read }
       throw "unexpected step $Step"
@@ -158,9 +158,12 @@ test('E4: nothing installed -- no reboot, no wait; A7 fails with why, and read-a
   assert.deepEqual(r.rebootFile, { skipped: true, reason: 'DRILL_A7_BLOCKED_NOTHING_INSTALLED' });
 });
 
+// Fable plan 87d330d0 2.2 (A4): a first install that did not end done now blocks A7 (drill-vm.test.mjs "block A 4"), so the reboot is
+// drilled here after an entry that ended done; nothing installed still comes first (the test above, a stopped entry).
+const entryDone = { line: JSON.stringify({ status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe' }), exit: 0 };
 test('E4: something installed (even half) -- the reboot and its wait run as before', opts, () => {
   for (const [name, read] of [['e4-status', { ...nothing, status: { writtenAt: '2026-11-20T11:49:00Z' } }], ['e4-current', { ...nothing, current: { generation: 1 } }]]) {
-    const r = runToA7(name, read);
+    const r = runToA7(name, read, entryDone);
     assert.equal(r.code, 'done');
     assert.ok(r.sent.some(s => s.startsWith('vm-command:') && s.includes('Restart-Computer')), name + ': reboot sent: ' + JSON.stringify(r.sent));
     assert.ok(r.sent.includes('Wait-DrillGuest') && r.sent.includes('Wait-DrillRebootRefresh'), name + ': waited: ' + JSON.stringify(r.sent));
