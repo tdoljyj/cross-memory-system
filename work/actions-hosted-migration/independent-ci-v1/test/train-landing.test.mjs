@@ -15,6 +15,7 @@ import { requiredOnHead } from '../src/independent-control-checks-v2/train-facts
 import { createGitHubChecksPort } from '../src/github.mjs';
 import { parseLandingArg, prepareStageDirectory } from '../src/resident-v2/invoke-stage.mjs';
 import { writeOutcome } from '../src/resident-v2/stage-inputs.mjs';
+import { SCAFFOLD_RULESET, mainRules, portRules, scaffoldRules } from './s7-rules-fixture.mjs';
 
 const sha = n => n.toString(16).padStart(40, '0');
 const T = sha(1), H1 = sha(2), H2 = sha(3), H3 = sha(4), S1 = sha(5), S2 = sha(6), S3 = sha(7);
@@ -170,9 +171,11 @@ test('T5: the rules after C x the stage 8/10 rule readers: kooyumi-train-landed,
   // a real failure still counts, and only it
   const failing = green.map(c => c.name === 'trivy' ? { ...c, conclusion: 'failure' } : c);
   assert.deepEqual(requiredCheckFailure(rules, { complete: true, checks: failing }, H1, APP), ['trivy']);
-  // pinned to another App it is not the train's never-published check: unknown to the gate (parks)
+  // pinned to another App it is not the train's never-published check: it is that App's required check, read from its runs
+  // (task 04f9b91b): absent is no failure (GitHub keeps it required), its failure is one
   const other = ruleState({ trainApp: 5164952 }).rules;
-  assert.throws(() => requiredCheckFailure(other, { complete: true, checks: green }, H1, APP), /REQUIRED_CHECKS_UNREADABLE/);
+  assert.deepEqual(requiredCheckFailure(other, { complete: true, checks: green }, H1, APP), []);
+  assert.deepEqual(requiredCheckFailure(other, { complete: true, checks: [...green, on(L.TRAIN_ONLY_CHECK, 5164952, { conclusion: 'failure' })] }, H1, APP), [L.TRAIN_ONLY_CHECK]);
 });
 
 test('landingRoute: no kooyumi-train-landed -> the current path whatever the bypass state; with it push only when all of push reads back true', () => {
@@ -215,6 +218,50 @@ test('landingRoute, fail closed: rules that cannot be read are never the current
   unread({ ...today, rules: today.rules.filter(r => r.type !== 'required_status_checks') }, ['main_ruleset_unidentified']);
   // the bypass lists are not read at all: a list beside the state changes nothing
   assert.equal(L.landingRoute({ ...today, rulesets: new Map([[MAIN_RS, { id: MAIN_RS, currentUserCanBypass: 'never', bypassActors: [{ actor_id: 9, actor_type: 'Team', bypass_mode: 'always' }] }]]) }).route, 'github-merge');
+});
+
+// Task 04f9b91b (Fable s7-landing-gaps 11-22, 改动 1): a push to main must pass every ruleset on main. A guard ruleset (its rules exactly
+// deletion and non_fast_forward) a fast-forward passes, and the independent bypass state is read from those only; every other ruleset
+// but the main one this App must always bypass, or push parks naming it. Order: guard, kooyumi-train-landed, main, the others by id.
+function s7State({ trainLanded = true, guard = true, mainCan = 'always', ffCan = 'never', scaffoldCan = 'always', more = [] } = {}) {
+  const rules = [...portRules(mainRules({ extra: trainLanded ? [{ context: L.TRAIN_ONLY_CHECK, integration_id: APP }] : [] })), ...portRules(scaffoldRules()),
+    ...(guard ? [{ type: 'deletion', rulesetId: FF_RS, parameters: null }, { type: 'non_fast_forward', rulesetId: FF_RS, parameters: null }] : []),
+    ...more.flatMap(([id]) => [{ type: 'pull_request', rulesetId: id, parameters: { allowed_merge_methods: ['merge'] } }])];
+  const can = [[MAIN_RS, mainCan], [SCAFFOLD_RULESET, scaffoldCan], ...(guard ? [[FF_RS, ffCan]] : []), ...more];
+  return { rules, rulesets: new Map(can.filter(([, c]) => c !== undefined).map(([id, c]) => [id, { id, currentUserCanBypass: c }])), appId: APP };
+}
+const SCAF = `ruleset_app_cannot_bypass:${SCAFFOLD_RULESET}`;
+test('S7 landingRoute (must-red): the scaffold ruleset is not the guard ruleset; push needs this App to always bypass it, else park naming it', () => {
+  // after both of the Owner's steps: push
+  assert.deepEqual(route({}, s7State()), ['push', [], { main: 'always', independent: 'never' }]);
+  // the scaffold ruleset the App cannot (or not always) bypass: park, named; never push
+  for (const scaffoldCan of ['never', 'pull_requests_only', 'exempt']) assert.deepEqual(route({}, s7State({ scaffoldCan })).slice(0, 2), ['park', [SCAF]], scaffoldCan);
+  // its bypass state not readable: park, named
+  assert.deepEqual(route({}, s7State({ scaffoldCan: null })).slice(0, 2), ['park', [`ruleset_can_bypass_unreadable:${SCAFFOLD_RULESET}`]]);
+  assert.deepEqual(route({}, s7State({ scaffoldCan: 'sometimes' })).slice(0, 2), ['park', [`ruleset_can_bypass_unreadable:${SCAFFOLD_RULESET}`]]);
+  // S7 step 1 (#292 as today, the scaffold ruleset, no guard ruleset yet): the current path, the independent ruleset absent
+  const step1 = { trainLanded: false, guard: false, mainCan: 'never' };
+  assert.deepEqual(route({}, s7State(step1)), ['github-merge', ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass'], { main: 'never', independent: 'absent' }]);
+  // the guard ruleset created: push lacks exactly what the save of C adds
+  assert.deepEqual(route({}, s7State({ ...step1, guard: true })), ['github-merge', ['train_landed_check_missing', 'main_app_cannot_bypass'], { main: 'never', independent: 'never' }]);
+  // stage 10 before reading the rulesets: no unreadable item on the current path
+  assert.deepEqual(route({}, { ...s7State(step1), rulesets: null }), ['github-merge', ['independent_ruleset_missing', 'train_landed_check_missing'], { main: 'not_read', independent: 'absent' }]);
+  // a fixed order: guard, kooyumi-train-landed, main, the other rulesets by id ascending
+  assert.deepEqual(route({}, s7State({ ...step1, scaffoldCan: 'never', more: [[SCAFFOLD_RULESET + 5, 'never'], [SCAFFOLD_RULESET - 5, undefined]] }))[1],
+    ['independent_ruleset_missing', 'train_landed_check_missing', 'main_app_cannot_bypass', `ruleset_can_bypass_unreadable:${SCAFFOLD_RULESET - 5}`, SCAF,
+      `ruleset_app_cannot_bypass:${SCAFFOLD_RULESET + 5}`]);
+  // the guard shape, one function for the landing and the precheck
+  for (const [types, guard] of [[['deletion', 'non_fast_forward'], true], [['non_fast_forward', 'deletion', 'deletion'], true], [['deletion'], false], [['non_fast_forward'], false],
+    [['deletion', 'non_fast_forward', 'pull_request'], false], [[], false], [null, false], [['deletion', null, 'non_fast_forward'], false]])
+    assert.equal(L.guardRuleset(types), guard, JSON.stringify(types));
+});
+
+// S8: the scaffold ruleset deleted, the rules are the push world's (stay green); a guard ruleset the App can bypass is still never push (stay
+// green); S7 with C saved but no guard ruleset is the independent ruleset missing, never the scaffold ruleset read as one (must-red).
+test('S7 landingRoute: without the scaffold ruleset nothing changes; a guard ruleset the App can bypass never pushes; no guard ruleset is missing', () => {
+  assert.deepEqual(L.landingRoute(ruleState()), { route: 'push', missing: [], bypass: { main: 'always', independent: 'never' } });
+  assert.deepEqual(route({}, s7State({ ffCan: 'always' })).slice(0, 2), ['park', ['independent_ruleset_app_can_bypass']]);
+  assert.deepEqual(route({}, s7State({ guard: false })).slice(0, 2), ['park', ['independent_ruleset_missing']]);
 });
 
 // R3 open item 2 (修复前必红): push's main ruleset is found by the pin rule stages 8 and 10 read (train-rules.mjs#sixPinned), no longer by
