@@ -469,6 +469,20 @@ test('S6-b 同一序列只跨 10 小时：照样达成（Decision 67cea8f4 去�
   assert.ok(!streak.rule.includes('小时'));
 });
 
+test('S6-j 只跨 10 小时、只有 29 个 head：不算达成，未达项只有 head 数，不含小时字样', async () => {
+  const streak = await exitStreak({ heads: 29, spanHours: 10 });
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['连续一致不足 30 个 head']);
+  assert.ok(!streak.unmet.join('').includes('小时'));
+});
+
+test('S6-k 只跨 10 小时、没有两边同红的 head：不算达成，未达项只有同红，不含小时字样', async () => {
+  const streak = await exitStreak({ spanHours: 10, bothRed: false });
+  assert.equal(streak.met, false);
+  assert.deepEqual(streak.unmet, ['没有两边同红的 head']);
+  assert.ok(!streak.unmet.join('').includes('小时'));
+});
+
 test('S6-c 只有 29 个 head、跨 8 天：不算达成', async () => {
   const streak = await exitStreak({ heads: 29, spanHours: 8 * 24 });
   assert.equal(streak.heads, 29);
@@ -520,6 +534,8 @@ test('S6-g 天数从第一个一致 head 起算：前面 5 小时的不一致 he
   assert.equal(streak.heads, 30);
   assert.equal(streak.hours, 71);
   assert.equal(streak.from, '2026-11-23T08:00:00+08:00');
+  assert.deepEqual(streak.unmet, []);
+  assert.equal(streak.met, true);
 });
 
 test('命令行：参数错退出 2；正常一行 JSON 退出 0；读不到 PR 列表输出 error 退出 1', async () => {
