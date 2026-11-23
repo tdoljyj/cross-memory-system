@@ -3,73 +3,23 @@
 // carried (A;OICI;0x1301bf;;;clued-control): the generic helper's Validate (FormalPublicBoundaryV2.cs:270, the Parents chain of StateV2)
 // refused it with UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED before ready, and the first role probe HALTed. The fix: install-resident.ps1's
 // rule state-parent-acl owns state's DACL (step before source-v2-acl; verify-resident.ps1 runs the same rule as SYSTEM in an upgrade).
-// End to end on an offline fixture under TEMP, real files only (the fixture of first-install-r5-defects.test.mjs:60-95): the host
-// preparation's ci-root table, the broker folders, the installer's own state-parent-acl rule, the real migrate-acl.ps1 -Apply, the
+// End to end on an offline fixture under TEMP, real files only (the shared fixture, first-install-fixture.mjs): the host
+// preparation's ci-root step, the broker folders, the installer's own state-parent-acl rule, the real migrate-acl.ps1 -Apply, the
 // installer's Set-CompanionSpoolAcl written to disk, then the real FormalPublicBoundaryV2.cs compiled (the generic helper's file list of
 // test-pure-v2.ps1:13) and its own DangerFor and WriterAllowed run on every "allow, not inherit-only" ACE of each of the six targets of
 // :270 and every folder of its chain inside the CI root (the test account's own fixture entries aside; owner BA and the two folders above
 // the CI root cannot be made by a test). Windows PowerShell 5.1, not elevated; nothing of the machine is changed.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { COMPANION, CONTROLLER, INSTALL, MIGRATE, OPERATOR, POWERSHELL, PRELUDE as BASE, RESIDENT, SIX_CHAINS, STRANGER, ciRoot, formalBoundary, load, ps, psLiteral, skip, tempDir } from './first-install-fixture.mjs';
 
-const RES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const HOST = path.join(RES, 'windows', 'first-install-host.ps1');
-const TPL = path.join(RES, 'reinstall', 'launcher', 'template.ps1');
-const INSTALL = path.join(RES, 'windows', 'install-resident.ps1');
-const RV2 = path.resolve(RES, '..', 'actions-hosted-migration', 'independent-ci-v1', 'src', 'resident-v2');
-const MIGRATE = path.join(RV2, 'migrate-acl.ps1');
-const HELPER_CS = ['FormalPublicBoundaryV2.cs', 'FormalSession0V2.cs', 'ScmPidHandshakeV2.cs', 'NodeProfileV2.cs'].map(f => path.join(RV2, 'windows', f));
-const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const skip = process.platform === 'win32' ? false : 'Windows PowerShell 5.1 runs on Windows only';
-const psLiteral = value => `'${String(value).replaceAll("'", "''")}'`;
-const tempDir = (t, prefix) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); t.after(() => fs.rmSync(d, { recursive: true, force: true })); return d; };
-
-const SID = 'S-1-5-21-111111111-2222222222-3333333333-';
-const OPERATOR = `${SID}1000`, CONTROLLER = `${SID}1007`, COMPANION = `${SID}1008`, STRANGER = `${SID}1099`;
-const RESIDENT = 'S-1-5-80-692288205-3332018704-1695520346-2980220175-3625982629';
 const STATE = 'C:\\ProgramData\\CluedIndependentCI\\state';
-
-function ps(command) {
-  const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; delete env.PSExecutionPolicyPreference;
-  const r = spawnSync(POWERSHELL, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
-    { cwd: RES, env, encoding: 'utf8', windowsHide: true, timeout: 300_000 });
-  assert.ifError(r.error);
-  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  return JSON.parse(String(r.stdout).trim().split(/\r?\n/).at(-1));
-}
-// The named functions and top-level assignments of a real file, dot-sourced into the script scope (first-install-r5-defects.test.mjs).
-const load = (file, fns = [], vars = []) => `$tokens = $null; $errors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile(${psLiteral(file)}, [ref]$tokens, [ref]$errors)
-if ($errors.Count) { throw ('PARSE_ERRORS:' + ${psLiteral(path.basename(file))}) }
-foreach ($name in @(${fns.map(psLiteral).join(', ') || "''"})) { if (-not $name) { continue }
-  $f = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
-  if ($f.Count -ne 1) { throw ('FUNCTION_NOT_ONE:' + $name + ':' + $f.Count) }
-  . ([scriptblock]::Create($f[0].Extent.Text))
-}
-foreach ($name in @(${vars.map(psLiteral).join(', ') || "''"})) { if (-not $name) { continue }
-  $a = @($ast.FindAll({ param($x) $x -is [Management.Automation.Language.AssignmentStatementAst] -and $x.Parent -is [Management.Automation.Language.NamedBlockAst] -and $x.Left.Extent.Text -ceq ('$' + $name) }, $false))
-  if ($a.Count -ne 1) { throw ('ASSIGNMENT_NOT_ONE:' + $name + ':' + $a.Count) }
-  . ([scriptblock]::Create($a[0].Extent.Text))
-}
-`;
-const PRELUDE = `$ErrorActionPreference = 'Stop'; Set-StrictMode -Version 2.0; $ProgressPreference = 'SilentlyContinue'
-[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
-$webExt = [Reflection.Assembly]::Load('System.Web.Extensions, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35')
-$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-function Set-Dacl([string]$p, [string]$sddl) { $s = New-Object Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm($sddl, [Security.AccessControl.AccessControlSections]::Access); [IO.Directory]::SetAccessControl($p, $s) }
-# READ_CONTROL only (owner rights), never the attributes Get-Acl reads first: a child of a folder this account may not list is still read
-function Dacl([string]$p) { [IO.Directory]::GetAccessControl($p, [Security.AccessControl.AccessControlSections]::Access).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) }
-# The test account owns every folder it made (owner rights: READ_CONTROL, WRITE_DAC), so it can always give itself full control back to clean up.
-function Restore-Mine([string[]]$dirs) { foreach ($d in $dirs) { if ([IO.Directory]::Exists($d)) { try { Set-Dacl $d ('D:(A;OICI;FA;;;' + $me + ')') } catch { } } } }
-# state's DACL as the fixture reads it: the fixture account's own entries taken out by SID (Windows writes the built-in Administrator as
-# LA, not as its SID), the rest compared by the installer's own Get-DaclShape (the order of the entries is not what the DACL grants, and
-# DirectorySecurity sorts them by SID when it writes the fixture's entry).
-function Get-FixtureFreeState([string]$sddl, [string]$sid, [string]$terminal) {
+// the shared prelude (first-install-fixture.mjs: $webExt, $me, Set-Dacl, Dacl, Restore-Mine) and:
+// state's DACL as the fixture reads it: the fixture account's own entries taken out by SID (Windows writes the built-in Administrator as
+// LA, not as its SID), the rest compared by the installer's own Get-DaclShape (the order of the entries is not what the DACL grants, and
+// DirectorySecurity sorts them by SID when it writes the fixture's entry).
+const PRELUDE = `${BASE}function Get-FixtureFreeState([string]$sddl, [string]$sid, [string]$terminal) {
   $raw = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
   for ($i = $raw.DiscretionaryAcl.Count - 1; $i -ge 0; $i--) { if ($raw.DiscretionaryAcl[$i].SecurityIdentifier.Value -ceq $sid) { $raw.DiscretionaryAcl.RemoveAce($i) } }
   $dacl = $raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
@@ -79,21 +29,11 @@ function Get-FixtureFreeState([string]$sddl, [string]$sid, [string]$terminal) {
 // The installer's state-parent-acl rule, by exact name (the functions verify-resident.ps1 loads too).
 const STATE_RULE = ['Get-DaclShape', 'Get-StateParentSddl', 'Get-StateParentTarget', 'Get-StateParentState', 'Invoke-StateParentAcl'];
 
-// The fixture of first-install-r5-defects.test.mjs:72-95 (the host's ci-root table, the broker folders, migrate-acl.ps1 -OfflineFixtureRoot),
+// The shared fixture (first-install-fixture.mjs: the host's ci-root step), the broker folders, migrate-acl.ps1 -OfflineFixtureRoot,
 // then the step order of install-resident.ps1: [state-parent-acl] -> source-v2-acl -> companion-account's Set-CompanionSpoolAcl.
 const firstInstall = (root, { stateStep }) => `${PRELUDE}
-${load(HOST, ['Get-CiRootDirectories', 'Get-CiRootSddl', 'Get-FirstInstallSddl', 'Get-AdminOnlySddl', 'Get-SecretDirectorySddl'], ['CiRoot', 'FirstDir', 'CredDir', 'SecretTargets'])}
-$HostCiRoot = $CiRoot
+${ciRoot(root)}
 ${load(INSTALL, ['Get-CompanionSpoolSddl', 'Set-CompanionSpoolAcl', ...(stateStep ? STATE_RULE : [])])}
-$fx = ${psLiteral(root)}
-$table = Get-CiRootDirectories ${psLiteral(OPERATOR)} ${psLiteral(CONTROLLER)}
-foreach ($k in @($table.Keys)) {
-  $p = [string]$table[$k][0]
-  if (-not ($p -ceq $HostCiRoot -or $p.StartsWith($HostCiRoot + '\\', [StringComparison]::OrdinalIgnoreCase))) { throw ('TABLE_PATH_OUTSIDE_CI_ROOT:' + $p) }
-  $ds = New-Object Security.AccessControl.DirectorySecurity
-  $ds.SetSecurityDescriptorSddlForm((([string]$table[$k][1]) -replace '^O:BAG:BA', '') + '(A;OICI;FA;;;' + $me + ')')
-  [void][IO.Directory]::CreateDirectory($fx + $p.Substring($HostCiRoot.Length), $ds)
-}
 $bds = New-Object Security.AccessControl.DirectorySecurity; $bds.SetSecurityDescriptorSddlForm('D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;' + $me + ')')
 foreach ($d in @('resident', 'resident\\broker', 'resident\\broker\\requests', 'resident\\broker\\responses')) { [void][IO.Directory]::CreateDirectory((Join-Path $fx $d), $bds) }
 $stateDir = Join-Path $fx 'state'
@@ -108,38 +48,11 @@ $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $
 $migrate = (& ${psLiteral(POWERSHELL)} @a | Out-String).Trim().Split([char]10)[-1] | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw ('MIGRATE_FAILED:' + $migrate.code) }
 foreach ($leaf in @('incoming', 'outgoing')) { Set-CompanionSpoolAcl (Join-Path $fx ('formal-spool\\' + $leaf)) ${psLiteral(OPERATOR)} ${psLiteral(COMPANION)} }
-# The generic helper's own rule: the real C#, compiled as test-pure-v2.ps1 compiles it, the node profile bound as PureTestsV2 binds it.
-Add-Type -Path @(${HELPER_CS.map(psLiteral).join(', ')}) -ReferencedAssemblies @($webExt.Location, 'System.Core')
-$node = New-Object 'Collections.Generic.Dictionary[string,object]'
-foreach ($kv in @(@('contract', 'clued.independent-ci.node-profile/1'), @('nodeName', 'state-parent-fixture'), @('hostname', 'FIXTURE01'), @('ownerSid', ${psLiteral(COMPANION)}),
-    @('ownerProfileDirectory', 'C:\\Users\\fixture'), @('controllerSid', ${psLiteral(CONTROLLER)}), @('runnerService', 'actions.runner.tdoljyj-cross-memory-system.clued-ci-fixture'),
-    @('mutationMutex', 'Global\\CluedControlControllerMutationV1-FIXTURE01-1007'), @('wslDistribution', 'Ubuntu'))) { $node[$kv[0]] = $kv[1] }
-$bind = [NodeProfileV2].GetMethod('BindForProcess', [Reflection.BindingFlags]'NonPublic, Static')
-[void]$bind.Invoke($null, @([NodeProfileV2]::FromDictionary($node), ('a' * 64)))
-if ([FormalPublicBoundaryV2]::Controller -cne ${psLiteral(CONTROLLER)} -or [FormalPublicBoundaryV2]::OwnerUser -cne ${psLiteral(COMPANION)}) { throw 'PROFILE_NOT_BOUND' }
-$B = [FormalPublicBoundaryV2]; $chain = New-Object 'Collections.Generic.List[string]'
-foreach ($target in @($B::StateV2, $B::Receipts, $B::Temp, $B::Spool, $B::Outgoing, $B::Incoming)) {
-  for ($p = $target; $p.Length -ge $B::Root.Length; $p = [IO.Path]::GetDirectoryName($p)) { if (-not $chain.Contains($p)) { $chain.Add($p) } }
-}
-$refused = @(); $checked = @()
-foreach ($real in ($chain | Sort-Object)) {
-  $local = $fx + $real.Substring($B::Root.Length)
-  if (-not [IO.Directory]::Exists($local)) { $refused += ,[ordered]@{ path = $real; code = 'MISSING' }; continue }
-  $danger = [int64]$B::DangerFor($real)
-  foreach ($r in (Get-Acl -LiteralPath $local).GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-    if ($r.AccessControlType -ne 'Allow' -or ($r.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
-    $sid = $r.IdentityReference.Value
-    if ($sid -ceq $me) { continue }   # the fixture's own entries
-    if (([int64]$r.FileSystemRights -band $danger) -ne 0 -and -not $B::WriterAllowed($real, $sid)) { $refused += ,[ordered]@{ path = $real; sid = $sid; mask = ('0x{0:x}' -f [int64]$r.FileSystemRights); inherited = $r.IsInherited } }
-  }
-  $checked += $real
-}
-$stateDacl = $(if ($stateStep) { Get-FixtureFreeState (Dacl $stateDir) $me ${psLiteral(TERMINAL_DACL)} } else { $null })
+# The generic helper's own rule on the six chains (first-install-fixture.mjs formalBoundary).
+${formalBoundary}$stateDacl = $(if ($stateStep) { Get-FixtureFreeState (Dacl $stateDir) $me ${psLiteral(TERMINAL_DACL)} } else { $null })
 Restore-Mine @($fx, $stateDir)
 ConvertTo-Json -Depth 6 -Compress -InputObject ([ordered]@{ migrate = $migrate.status; checked = $checked; refused = $refused; stateStep = $stateStep; stateDacl = $stateDacl })`;
 
-const SIX_CHAINS = ['', '\\formal-spool', '\\formal-spool\\incoming', '\\formal-spool\\outgoing', '\\state', '\\state\\v2', '\\state\\v2\\receipts', '\\state\\v2\\temp']
-  .map(s => `C:\\ProgramData\\CluedIndependentCI${s}`).sort();
 // as Windows reads it back (AI set; Get-DaclShape compares without it)
 const TERMINAL_DACL = `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICIIO;0x1301bf;;;${CONTROLLER})(A;;0x1200a9;;;${CONTROLLER})`;
 
