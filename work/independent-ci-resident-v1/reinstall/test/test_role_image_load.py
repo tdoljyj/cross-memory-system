@@ -45,6 +45,8 @@ SYSTEMCTL = r'''#!/bin/bash
 printf 'systemctl %s\n' "$*" >> "$CASE_DIR/calls"
 case "$*" in
   'show --property=ActiveState --property=Job docker.service') printf 'ActiveState=active\nJob=\n' ;;
+  'show --property=Version') printf 'Version=255
+' ;;
   'is-active docker.service') echo active ;;
   'enable docker.service'|'start docker.service'|'restart docker.service') : ;;
   'show -p ActiveState,SubState,Result,Job docker.service') printf 'ActiveState=active\nSubState=running\nResult=success\nJob=\n' ;;
@@ -57,7 +59,7 @@ HARNESS = r'''set -euo pipefail
 CASE_DIR=$(cd "$CASE_DIR" && pwd); export CASE_DIR
 export PATH="$CASE_DIR/bin:/usr/bin:/bin"
 W=$CASE_DIR; T=$CASE_DIR/run; mkdir -p "$T"
-DAEMON=$CASE_DIR/etc/docker/daemon.json; LOG=$CASE_DIR/log
+DAEMON=$CASE_DIR/etc/docker/daemon.json; LOG=$CASE_DIR/log; UPTIME=/proc/uptime
 refuse() { printf 'REFUSED:%s\n' "$1"; exit 3; }
 refuse_tail() { printf 'REFUSED:%s\n' "$1"; exit 3; }
 install() { :; }   # the host preparation's `install -d ... /etc/docker`: DAEMON's directory is made by the test
@@ -158,7 +160,7 @@ class Chain(unittest.TestCase):
             with self.subTest(daemon=daemon):
                 r, _, _ = self.run_chain(steps=('ready',), daemon=daemon)
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-                self.assertRegex(r.stdout, r'(?m)^\{"dockerReady":"active","waitedSeconds":\d+\}$')
+                self.assertRegex(r.stdout, r'(?m)^\{"dockerReady":"active","waitedSeconds":\d+,"queryFailedSeconds":\d+,"bootSeconds":(\d+|null)\}$')
 
     def test_an_id_the_store_does_not_keep_is_refused_with_the_scene(self):
         # the containerd store, an archive named by its config digest: loaded, but under its index target

@@ -39,6 +39,9 @@ Every stop writes the raw values to W\launch (terminal.json detail and the *-rep
 param([switch]$RunApprovedInstall,[switch]$CompanionMaintenance)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+# The launcher's own monotonic clock (Windows PowerShell 5.1 has no TickCount64): every step line's ms is read from it, and a
+# duration only ever from two ms (at, the wall clock, lines a step up with other files; a suspended machine steps it).
+$LaunchClock = [Diagnostics.Stopwatch]::StartNew()
 if (-not $RunApprovedInstall) { '{"status":"DISABLED"}'; return }
 $env:PSModulePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\Modules'
 
@@ -75,7 +78,8 @@ $Done.add_CollectionChanged({ param($sender, $e)
       # recorded all the same (completed, the progress record): it ran, and what it found is in its own output.
       $lineReject = $Progress['rejectCode']; $Progress['rejectCode'] = $null
       $lineResult = if ($lineReject) { 'failed' } else { 'ok' }
-      try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = [string]$step; result = $lineResult; rejectCode = $lineReject; detail = $lineDetail }) -Depth 6 -Compress)) } catch { }   # the step line (see Write-StepLine)
+      $lineMs = try { $(if ($LaunchClock) { $LaunchClock.ElapsedMilliseconds } else { $null }) } catch { $null }
+      try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = [string]$step; result = $lineResult; rejectCode = $lineReject; detail = $lineDetail; at = [DateTimeOffset]::UtcNow.ToString('o'); ms = $lineMs }) -Depth 6 -Compress)) } catch { }   # the step line (see Write-StepLine)
       $Progress.count++
       if (-not $Progress.out) { continue }   # before the launch directory exists (Step-Output): nothing of this launch has changed anything yet
       $leaf = $Progress.count.ToString('000') + '-' + ([string]$step -replace '[^A-Za-z0-9-]', '_') + '.json'
@@ -150,11 +154,14 @@ function Restore-W1Pause {
   $W1Restore.result = $r
 }
 # The step lines (an aid; the shape windows/first-install-host.ps1 and rollout/fleet/bootstrap.ps1 print): {name, result: ok|failed,
-# rejectCode, detail}, one per completed step (the progress handler above) and one for a stop, written to stdout directly ([Console]::Out,
-# never the pipeline: no step function's return value carries them). Never throws.
+# rejectCode, detail, at, ms}, one per completed step (the progress handler above) and one for a stop, written to stdout directly
+# ([Console]::Out, never the pipeline: no step function's return value carries them). at: the UTC time the line was written (ISO 8601,
+# as the host preparation's lines); ms: $LaunchClock's milliseconds then, never going back (task 87d330d0, 1.4). Never throws.
 function Write-StepLine([string]$name, [string]$result, $rejectCode, $detail) {
-  try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail }) -Depth 6 -Compress)) }
-  catch { try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = [string]$rejectCode; detail = '<not printable>' }) -Compress)) } catch { } }
+  $at = try { [DateTimeOffset]::UtcNow.ToString('o') } catch { $null }
+  $ms = try { $(if ($LaunchClock) { $LaunchClock.ElapsedMilliseconds } else { $null }) } catch { $null }
+  try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = $rejectCode; detail = $detail; at = $at; ms = $ms }) -Depth 6 -Compress)) }
+  catch { try { [Console]::Out.WriteLine((ConvertTo-Json -InputObject ([ordered]@{ name = $name; result = $result; rejectCode = [string]$rejectCode; detail = '<not printable>'; at = $at; ms = $ms }) -Compress)) } catch { } }
 }
 function Stop-Launch([string]$code, $detail) {
   if (Test-Path -LiteralPath 'function:Write-StepLine') { Write-StepLine 'launcher' 'failed' $code $null }   # a harness that runs this function alone need not define it
@@ -1781,6 +1788,10 @@ function Step-LinuxRoot {
   # B's final status: a first install's B (reinstall/linux/first-install.py --in-dir) names itself; the rules for its output are the same
   $bDone = $(if ($FleetFirstInstall) { 'LINUX_FIRST_INSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' } else { 'LINUX_REINSTALLED_RESIDENT_UPGRADE_TOOL_GENERATION_1' })
   $stop = { param([string]$code) $report.codes = @($code); Write-Json 'linux-report.json' $report; Stop-Launch $code $report }
+  # what a run leaves for its step line (task 87d330d0, 1.4): its seconds and the first {"dockerReady":...} line it printed, as printed
+  # (never parsed: a passing run's own readings of the cold boot), or null. An aid: it never stops the launch.
+  $stepDetail = { param($run) $ready = @(([string]$run.stdout) -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_.StartsWith('{"dockerReady":') })
+    [ordered]@{ seconds = $run.seconds; dockerReady = $(if ($ready.Count) { $ready[0] } else { $null }) } }
   if (Get-Variable -Name 'ResumeOriginalLauncherSha256' -ErrorAction SilentlyContinue) { & $stop 'FLEET_LAUNCH_RESUME_NOT_SUPPORTED' }
   Set-FleetLinuxDirectories
   $build = $null
@@ -1795,6 +1806,7 @@ function Step-LinuxRoot {
     if ($a.captureRefused) { & $stop 'LINUX_PHASE_A_OUTPUT_NOT_CAPTURED' }   # A ran and exited; what it printed is not readable yet (a continuation captures it)
     if ($a.outcome -ceq 'TIMEOUT') { & $stop 'LINUX_ROOT_RUN_TIMEOUT_NOTHING_KILLED' }
     if (-not (Test-FleetRun $a 'PHASE_A_DONE_NOTHING_SIGNED_NOTHING_INSTALLED')) { & $stop 'LINUX_PHASE_A_NOT_COMPLETED' }
+    try { $Progress['detail'] = & $stepDetail $a } catch { }
     $Done.Add('linux-A')
     # r5 X1: a first install's B ends in the installer, which refuses a resident root that is there; whatever made one (or a service)
     # since the preflight, B does not start over it
@@ -1817,6 +1829,7 @@ function Step-LinuxRoot {
       if ($b.captureRefused) { & $stop 'LINUX_PHASE_B_OUTPUT_NOT_CAPTURED' }
       if (-not (Test-FleetRun $b $bDone)) { & $stop 'LINUX_PHASE_B_NOT_COMPLETED' }
     }
+    try { $Progress['detail'] = & $stepDetail $b } catch { }
     $Done.Add('linux-B')
     $last = Parse-LastLine $b.stdout
     $ef = Get-FleetOutFile ([string](Get-Key $last 'evidence')) '^linux-live-manifest\.[0-9]{8}T[0-9]{6}Z\.txt$'
