@@ -3898,6 +3898,81 @@ test('GuestInspect runs the commands of a plan that crossed the remote serializa
   assert.deepEqual(r.exits, [0, 0]);
 });
 
+// Plan 87d330d0 1.3 (PR-2): after a phase-A failure the probe's first command may be the one that wakes the instance; it reads the boot
+// without systemctl, bounded at 120 seconds of its own, and takes the journal by boot, never by a wall-clock time (S0b: it jumps across a
+// suspend, the monotonic clock does not).
+const PROBE_FILES = `-ImageIds @('sha256:${'a'.repeat(64)}') -Files @('/usr/bin/python3.12')`;
+test('the probe plan opens with guest-boot, bounded at 120 seconds of its own', opts, () => {
+  const r = ps(`$c = @(Get-DrillProbeCommands ${PROBE_FILES})
+    $plan = New-DrillProbePlan $c
+    [ordered]@{ first = $plan.commands[0].id; seconds = $plan.commands[0].seconds; others = @($plan.commands | Select-Object -Skip 1 | Where-Object { $null -ne $_['seconds'] } | ForEach-Object { $_.id }); each = $plan.commandSeconds }`);
+  assert.equal(r.first, 'guest-boot');
+  assert.equal(r.seconds, 120);
+  assert.deepEqual(r.others, [], 'every other command keeps the plan-wide bound');
+  assert.equal(r.each, 30);
+});
+
+test('guest-boot takes the journal by boot with monotonic stamps, never --since, and reads the scene without systemctl', opts, () => {
+  const s = ps(`(Get-DrillProbeCommands)[0].script`);
+  assert.doesNotMatch(s, /--since|--until/, 'a wall-clock time would jump across a suspend');
+  assert.match(s, /journalctl -b -1 -o short-monotonic\b/);
+  assert.match(s, /journalctl -b 0 -o short-monotonic\b/);
+  assert.match(s, /journalctl --list-boots/);
+  for (const k of ['uptime=', 'private=', 'pid1=', 'mem=', 'psi=']) assert.ok(s.includes(k), k);
+  assert.doesNotMatch(s, /systemctl|docker/, 'nothing that waits on systemd or docker');
+  // each journal reading bounded apart and its failure only noted, so the next still runs
+  assert.equal((s.match(/\btimeout [-\w ]*journalctl/g) || []).length, 3);
+  assert.doesNotMatch(s, /&&|set -e/);
+});
+
+// Review of 28896055d (M1, M2): the wsl.exe bound (120 s) throws away everything the command printed, the compact block with it. So the
+// guest's own bounds, kill grace included, end well before it (<= 90 s: room for a cold WSL start), and each one kills what ignores TERM.
+const bootBounds = () => [...ps(`(Get-DrillProbeCommands)[0].script`).matchAll(/\btimeout ([^;|]*?)journalctl/g)].map(m => m[1].trim());
+const secondsOf = (v) => Number(/^(\d+)s$/.exec(v)?.[1] ?? NaN);
+test('every guest-boot reading kills what ignores its TERM (timeout -k)', opts, () => {
+  const b = bootBounds();
+  assert.equal(b.length, 3);
+  for (const x of b) assert.match(x, /^-k \d+s \d+s$/, x);
+});
+
+test('guest-boot\'s own bounds, kill grace included, end by 90 s, well inside its 120-second wsl bound', opts, () => {
+  const b = bootBounds();
+  assert.equal(b.length, 3);
+  const total = b.reduce((sum, x) => sum + x.split(/\s+/).filter(t => t !== '-k').map(secondsOf).reduce((a, n) => a + n, 0), 0);
+  assert.ok(Number.isFinite(total) && total <= 90, `inner bounds add up to ${total} s`);
+  assert.ok(ps(`(Get-DrillProbeCommands)[0].seconds`) - total >= 30, 'at least 30 s left for the cold start and the /proc readings');
+});
+
+const probeNative = `$native = { param($exe, $argv, $secs, $enc)
+    $s = [string]$argv[[array]::IndexOf([string[]]$argv, '-c') + 1]
+    [IO.File]::AppendAllText($env:PROBE_SECS, [string]$secs + "\`n")
+    if ($env:PROBE_HANG -and $s -match $env:PROBE_HANG) { throw ('COMMAND_TIMEOUT_NOTHING_KILLED: wsl.exe') }
+    [pscustomobject]@{ exit = 0; stdout = 'ok'; stderr = '' } }`;
+test('GuestInspect hands each command its own bound: 120 for guest-boot, the plan-wide one for the rest', opts, () => {
+  const secs = path.join(tmp, 'probe-secs.txt');
+  const r = ps(`$env:PROBE_SECS = ${q(secs)}; ${probeNative}
+    $plan = New-DrillProbePlan @(Get-DrillProbeCommands ${PROBE_FILES}) 'C:\\nowhere\\wsl.exe'
+    $back = [Management.Automation.PSSerializer]::Deserialize([Management.Automation.PSSerializer]::Serialize($plan, 4))
+    $got = & $script:GuestInspect $back $native.ToString()
+    [ordered]@{ n = @($got.commands).Count; first = @($got.commands)[0].id; exits = @($got.commands | ForEach-Object { $_.exit } | Sort-Object -Unique) }`);
+  const got = fs.readFileSync(secs, 'utf8').trim().split('\n').map(Number);
+  assert.equal(got.length, r.n);
+  assert.equal(r.first, 'guest-boot');
+  assert.deepEqual(got, [120, ...Array(r.n - 1).fill(30)], 'after the remote round trip too');
+  assert.deepEqual(r.exits, [0]);
+});
+
+test('a guest-boot that times out counts toward maxTimeouts; the next timeout stops the rest', opts, () => {
+  const secs = path.join(tmp, 'probe-secs-hang.txt');
+  const r = ps(`$env:PROBE_SECS = ${q(secs)}; $env:PROBE_HANG = 'uptime=|sha256sum'; ${probeNative}
+    $plan = New-DrillProbePlan @(Get-DrillProbeCommands ${PROBE_FILES}) 'C:\\nowhere\\wsl.exe'
+    $got = & $script:GuestInspect $plan $native.ToString()
+    @($got.commands | ForEach-Object { if ($_.error -like 'COMMAND_TIMEOUT*') { 'timeout' } elseif ($_.error) { $_.error } else { 'ok' } })`);
+  assert.deepEqual(r.slice(0, 2), ['timeout', 'timeout'], 'guest-boot, then the file reading, run into their bounds');
+  assert.ok(r.length > 3 && r.slice(2).every(x => x === 'PROBE_STOPPED_AFTER_TIMEOUTS'), 'no command is started after the second');
+  assert.equal(fs.readFileSync(secs, 'utf8').trim().split('\n').length, 2);
+});
+
 const startedAt = '2026-11-16T02:00:00Z';
 const readbackRow = { nodes_changed: 0, failover_marked: 0, roles_changed: 0, bindings_created: 0, drill_liveness: 0, live_sources: [S] };
 const readbackFor = (row = readbackRow, start = startedAt) => ({ contract: 'clued.drill.production-readback/1', startedAt: start, row });
@@ -5191,18 +5266,23 @@ test('fix1: first-install-entry.ps1 is ASCII and parses in Windows PowerShell 5.
 // Review low 5, the real path: a PowerShell job (a PSRemotingJob, as Invoke-Command -AsJob gives) has no StopJobAsync; Stop-DrillJob stops
 // it on a runspace of its own and returns at once, and a later call removes it once it has stopped.
 test('fix1 low 5: a running PSRemotingJob is stopped without waiting and removed once it has stopped', opts, () => {
-  const out = ps(`$j = Start-Job { Start-Sleep 120 }
+  // No wall-clock bound (a slow hosted machine broke a 2000 ms one): the job sits in an uninterruptible 30 s sleep, so a blocking Stop-Job
+  // would hold until it ended (measured 17 s of 20 s); a Stop-DrillJob that does not wait returns with the job not yet in a final state.
+  const out = ps(`$mark = Join-Path ([IO.Path]::GetTempPath()) ('lowfive-' + [guid]::NewGuid().ToString('N'))
+    $j = Start-Job { param($m) Set-Content -LiteralPath $m 'in'; [Threading.Thread]::Sleep(30000) } -ArgumentList $mark
     $type = $j.GetType().Name
-    $t0 = [Environment]::TickCount; Stop-DrillJob $j $false; $returned = [Environment]::TickCount - $t0
+    $armed = [Environment]::TickCount + 120000; while (-not (Test-Path -LiteralPath $mark) -and [Environment]::TickCount -lt $armed) { Start-Sleep -Milliseconds 50 }
+    Stop-DrillJob $j $false; $atReturn = [string]$j.State
+    Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue
     $until = [Environment]::TickCount + 60000; while ($j.State -notin @('Stopped', 'Completed', 'Failed') -and [Environment]::TickCount -lt $until) { Start-Sleep -Milliseconds 100 }
     $state = [string]$j.State
     Start-Sleep -Milliseconds 300
     $k = Start-Job { 1 }; [void](Wait-Job -Job $k -Timeout 60); Stop-DrillJob $k $true   # an ended job: removed, and the sweep runs
     $left = $script:DrillStoppingJobs.Count
     $gone = $null -eq (Get-Job -Id $j.Id -ErrorAction SilentlyContinue)
-    [ordered]@{ type = $type; returned = $returned; state = $state; left = $left; gone = $gone }`);
+    [ordered]@{ type = $type; atReturn = $atReturn; state = $state; left = $left; gone = $gone }`);
   assert.equal(out.type, 'PSRemotingJob');
-  assert.ok(out.returned < 2000, `returned after ${out.returned} ms`);
+  assert.ok(['Running', 'Stopping'].includes(out.atReturn), `Stop-DrillJob waited: the job was ${out.atReturn} when it returned`);
   assert.equal(out.state, 'Stopped');
   assert.equal(out.gone, true, JSON.stringify(out));
   assert.equal(out.left, 0, JSON.stringify(out));

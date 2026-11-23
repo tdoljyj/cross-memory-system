@@ -139,7 +139,7 @@ test('the guest side runs every command apart, as root, with a clean environment
   const SYSTEM = ['systemd-failed', 'systemd-is-system-running', 'systemd-version', 'runner-service-enabled', 'guest-nproc', 'guest-meminfo', 'guest-uname',
     'systemd-verify:clued-ci-worker@.service', 'systemd-verify:clued-ci-wsprep@.service', 'systemd-verify:clued-ci-archive@.service'];
   // the readings a docker stuck in activating cannot hold up come first; every docker command last (review F2)
-  assert.deepEqual(ids, ['file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', ...SYSTEM, ...DOCKER, `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`]);
+  assert.deepEqual(ids, ['guest-boot', 'file:/usr/bin/python3.12', 'file:/usr/bin/gitleaks', ...SYSTEM, ...DOCKER, `image:sha256:${HEX_A}`, `image:sha256:${HEX_B}`]);
   assert.ok(r.commands.every(x => x.exit === 0 && x.error === null && typeof x.stdout === 'string' && x.stdout.startsWith('ANSWER')));
   const calls = w.calls();
   assert.equal(calls.length, ids.length);
