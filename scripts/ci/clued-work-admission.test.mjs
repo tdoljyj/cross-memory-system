@@ -4195,9 +4195,18 @@ test('#1235 replay without the Native source stays refused for the missing earli
 const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1178.json'), 'utf8'));
 // #1202's real GitHub replies: its head is the executor bot's merge of main, so the bot triggered the head's runs.
 const TREE_REUSE_1202 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1202.json'), 'utf8'));
-function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE) {
+// Both recordings predate R1 (the three scans joined clued-required-tests.yml afterwards): the head's run carries them
+// here as a run does now, each a passing job of that run and attempt; the run as recorded is refused (test below).
+const R1_SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+function withScans(jobs) {
+  const model = jobs.jobs.find((job) => job.name === 'clued-cloud-tests');
+  jobs.jobs.push(...R1_SCANS.map((name, i) => ({ ...model, id: model.id + 1000 + i, name })));
+  jobs.total_count += R1_SCANS.length;
+}
+function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE, { scans = true } = {}) {
   const f = structuredClone(fixture);
   const w = f.workflows[workflow];
+  if (scans && workflow === 'clued-required-tests.yml') withScans(w.jobs);
   const env = { GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.merge.sha, GITHUB_RUN_ATTEMPT: '1',
     GITHUB_RUN_ID: String(w.push_run.id), GITHUB_ACTOR: w.push_run.actor.login, GITHUB_REPOSITORY_OWNER: f.owner,
     GITHUB_REPOSITORY: f.repository, GITHUB_TOKEN: 'test-only-placeholder',
@@ -4246,6 +4255,14 @@ for (const [label, workflow] of [['T1 Linux', 'clued-required-tests.yml'], ['T1w
     assert.equal(outcome.tree_reuse.current_sha_pass, false);
   });
 }
+
+test('T1 Linux: a head run from before the scans joined the required workflow is not reused; the heavy jobs run', async () => {
+  for (const fixture of [TREE_REUSE, TREE_REUSE_1202]) {
+    const outcome = await treeReuseGate(treeReuseCase('clued-required-tests.yml', undefined, fixture, { scans: false }));
+    assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
+    assert.ok(outcome.notices.includes('main push tree reuse: required_jobs_not_passed; the heavy jobs run'), JSON.stringify(outcome));
+  }
+});
 
 test('T1: the gate step of #1178 main push exits 0 with admitted=false, so the heavy jobs are skipped', async () => {
   const ctx = treeReuseCase('clued-required-tests.yml');

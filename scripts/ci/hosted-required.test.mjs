@@ -42,6 +42,25 @@ test('传比较基线的作业都先按 stagingBaseFromCheckout 算出 staging �
   assert.ok(users.includes('contract-placement'), `contract-placement 应传基线：${users.join(',')}`);
 });
 
+// 任务 df4bdf98：托管跑套件的步骤不设 CI_BASE_SHA 时，ci-required-selection 判“CI_BASE_SHA is not a commit”，
+// 不做失败后整条命令重跑的偶发容错，必需项遇 1–3 条偶发失败就判红。取值与自托管（steps.train-base.outputs.sha || PR base || ci_base）逐字一致。
+test('托管每个跑 ci-required-selection --run* 的步骤都设 CI_BASE_SHA，取值与自托管一致', () => {
+  const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
+  const want = [...selfHosted.matchAll(/^\s+CI_BASE_SHA:\s*(.+)$/gm)].map(m => m[1].trim());
+  assert.ok(want.length > 0 && new Set(want).size === 1, `自托管取值应唯一：${want.join(' | ')}`);
+  let steps = 0;
+  for (const [id, block] of jobs(text)) {
+    for (const step of block.split(/\n      - /)) {
+      if (!/ci-required-selection\.mjs --run/.test(step)) continue;
+      steps += 1;
+      const m = /^\s+CI_BASE_SHA:\s*(.+)$/m.exec(step);
+      assert.ok(m, `${id} 的步骤没设 CI_BASE_SHA：${step.split('\n')[0]}`);
+      assert.equal(m[1].trim(), want[0], `${id} 的 CI_BASE_SHA 与自托管不一致`);
+    }
+  }
+  assert.ok(steps >= 4, `应至少覆盖 4 个跑套件步骤：${steps}`);
+});
+
 // 影子对比要比的是同一选择：托管的 --check 与自托管 clued-required-tests.yml 逐字同参数（--check 带 --root 会多选候选自加的套件）。
 test('选择套件的 --check 参数与自托管一致', () => {
   const selfHosted = readFileSync(new URL('../../.github/workflows/clued-required-tests.yml', import.meta.url), 'utf8');
