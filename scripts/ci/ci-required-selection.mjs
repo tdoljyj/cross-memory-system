@@ -259,7 +259,8 @@ export function appDependencyGap(root, needs, env = process.env) {
 // resolve paths from the root, so they run there. {tests:<dir>} expands to the
 // sorted *.test.mjs files directly in <dir> (relative to cwd), {unit-tests}
 // to the application's unit test files (scripts/select-tests.mjs),
-// {ci-script-tests} to the CI-script tests (ciScriptTests), {base} to
+// {ci-script-tests} to the CI-script tests (ciScriptTests), {db-concurrency} and
+// {unit-concurrency} to a --test-concurrency (testConcurrency), {base} to
 // the base commit (CI_BASE_SHA), {report} to a file under RUNNER_TEMP. A
 // command with `known` runs Node's test runner with ci-test-failures-reporter.mjs
 // and passes only when every failure is an entry of ci-known-failures.json
@@ -331,7 +332,7 @@ export const SUITE_COMMANDS = {
     // test_check_design_refs.py is red on its first run (ci-uncovered-tests.json), and the components and runner budget
     // suites run their own two.
     { cwd: '.', argv: [PYTHON, '-B', '-m', 'unittest', 'scripts/ci/test_check_contract_placement.py', 'scripts/ci/test_clued_docs_only.py'] },
-    { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-tests}', '{ci-script-tests}'] },
+    { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-concurrency}', '{unit-tests}', '{ci-script-tests}'] },
   ],
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/ci-connection-renew-db.test.mjs'] },
@@ -466,7 +467,17 @@ export function outputLines(check, selection) {
   ];
 }
 
-export function expandArgv(argv, { cwd, root, base, report, listUnit = () => unitTestFiles(cwd) }) {
+// The test files a Node test process runs at once (FABLE-ci-10min-20261119 7.3): the database tests always, the unit tests
+// in a hosted job (GITHUB_ACTIONS), max(2, min(4, floor(cores / 4))); a local run keeps the unit tests at 2, as the local
+// limits (two suites at once) assume.
+export function testConcurrency(cores = os.availableParallelism()) {
+  return Math.max(2, Math.min(4, Math.floor(cores / 4)));
+}
+
+// hosted: a CI job's expansion. The trusted side passes it and its core count to the candidate's (readCandidate), whose
+// environment has no GITHUB_ACTIONS (test-env.mjs keep), so both sides expand the same command alike.
+export function expandArgv(argv, { cwd, root, base, report, listUnit = () => unitTestFiles(cwd),
+  hosted = process.env.GITHUB_ACTIONS === 'true', cores = os.availableParallelism() }) {
   let unit = null;
   const units = () => (unit ??= listUnit());
   return argv.flatMap((arg) => {
@@ -480,10 +491,8 @@ export function expandArgv(argv, { cwd, root, base, report, listUnit = () => uni
       if (files.length === 0) throw new Error('no unit test files');
       return files;
     }
-    if (arg === '{db-concurrency}') {
-      const concurrency = Math.max(2, Math.min(4, Math.floor(os.availableParallelism() / 4)));
-      return [`--test-concurrency=${concurrency}`];
-    }
+    if (arg === '{db-concurrency}') return [`--test-concurrency=${testConcurrency(cores)}`];
+    if (arg === '{unit-concurrency}') return [`--test-concurrency=${hosted ? testConcurrency(cores) : 2}`];
     const tests = /^\{tests:(.+)\}$/.exec(arg);
     if (tests) {
       const files = readdirSync(path.join(cwd, tests[1])).filter((name) => name.endsWith('.test.mjs')).sort()
@@ -740,7 +749,7 @@ export function commandArgv(command, options) {
 // test files it adds. The candidate's process reads the whole checkout and may start the unit-test listing, with the
 // environment a suite command gets. A suite only the candidate has (no trusted commands) runs the candidate's commands
 // whole. Equal expanded commands add nothing.
-const CANDIDATE_EXPORT = `const [url, mode, name, root, base, report] = process.argv.slice(1);
+const CANDIDATE_EXPORT = `const [url, mode, name, root, base, report, hosted, cores] = process.argv.slice(1);
 const path = await import('node:path');
 const m = await import(url);
 const plain = (c) => typeof c?.cwd === 'string' && Array.isArray(c.argv) && c.argv.every((a) => typeof a === 'string');
@@ -749,7 +758,7 @@ if (mode === 'commands') {
   if (m.SUITE_COMMANDS && Object.hasOwn(m.SUITE_COMMANDS, name)) {
     const list = m.SUITE_COMMANDS[name];
     out = !Array.isArray(list) ? list : list.map((c) => (plain(c) && typeof m.expandArgv === 'function'
-      ? { cwd: c.cwd, argv: m.expandArgv(c.argv, { cwd: path.join(root, c.cwd), root, base: base || undefined, report }) } : c));
+      ? { cwd: c.cwd, argv: m.expandArgv(c.argv, { cwd: path.join(root, c.cwd), root, base: base || undefined, report, hosted: hosted === 'true', cores: Number(cores) }) } : c));
   }
 } else {
   out = Object.keys(m.SUITES?.[name] ?? {}).map((id) => ({ id,
@@ -774,7 +783,7 @@ function readCandidate(candidate, root, mode, name, { base, report, env }, what)
   // Only expanding commands may start a process (the unit-test listing); reading the suite tables does not.
   const spawns = mode === 'commands' ? ['--allow-child-process'] : [];
   const read = spawnSync(process.execPath, ['--permission', ...reads, ...spawns, '--input-type=module', '-e', CANDIDATE_EXPORT,
-    pathToFileURL(candidate).href, mode, name, root, base ?? '', report], {
+    pathToFileURL(candidate).href, mode, name, root, base ?? '', report, String(env.GITHUB_ACTIONS === 'true'), String(os.availableParallelism())], {
     cwd: root, env: testEnv(env), encoding: 'utf8', timeout: 60_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
   if (read.status !== 0) throw new Error(`cannot read ${what}: ${read.error?.message ?? read.stderr}`);
   return JSON.parse(read.stdout);
@@ -799,7 +808,7 @@ export function* requiredCommands(id, root, { baseline = SUITE_COMMANDS[id], tru
   const key = ({ cwd, argv }) => JSON.stringify([cwd, argv]);
   // The trusted commands as they ran: expanded by this file's rules, with the same base commit and report file.
   const expanded = own.map((command) => ({ cwd: command.cwd,
-    argv: expandArgv(command.argv, { cwd: path.join(root, command.cwd), root, base, report }) }));
+    argv: expandArgv(command.argv, { cwd: path.join(root, command.cwd), root, base, report, hosted: env.GITHUB_ACTIONS === 'true' }) }));
   const seen = new Set(expanded.map(key));
   for (const command of commands ?? []) {
     const { cwd, argv } = command ?? {};
@@ -1114,7 +1123,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    const given = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report });
+    const given = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report, hosted: env.GITHUB_ACTIONS === 'true' });
     // What this host lacks is part of the command itself: the first run and the run again in full (passesAgain) both skip it.
     const plain = skipSwitches.length > 0 && given[0] === 'node' && given[1] === '--test'
       ? [given[0], given[1], ...skipSwitches, ...given.slice(2)] : given;

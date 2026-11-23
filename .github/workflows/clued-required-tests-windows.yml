@@ -151,6 +151,10 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || github.sha }}
           path: trusted
+          sparse-checkout: |
+            scripts/ci
+            config
+            .github
       - name: Configure job temporary storage
         uses: ./trusted/.github/actions/ci-temporary-storage
       - name: Select and run the suites declared for Windows

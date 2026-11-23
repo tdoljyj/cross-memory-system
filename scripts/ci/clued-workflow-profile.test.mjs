@@ -68,14 +68,14 @@ test('unsupported triggers, routes, reuse, matrix and empty execution never regi
   }
 });
 
-test('only the exact required-tests Source and its three complete independent roles compile compound mode',()=>{
+test('only the exact required-tests Source and its six complete independent roles compile compound mode',()=>{
   const require=createRequire(new URL('../../apps/clued-cloud/package.json',import.meta.url)),yaml=require('yaml');
   const raw=fs.readFileSync(new URL('../../'+REQUIRED_TESTS_SOURCE.file,import.meta.url),'utf8'),value=yaml.parse(raw);
   const primary_ids=[...REQUIRED_TESTS_SOURCE.primary_ids],roles=primary_ids.map(job_id=>({job_id,
     definition_sha256:roleDefinitionDigest(value.jobs[job_id]),definition:value.jobs[job_id]}));
   const options={primary_ids,parseYaml:yaml.parse,accepted_roles:roles},compiled=compileRegisteredWorkflow(raw,options);
   assert.equal(isExactAllRequiredPrimariesProfile(compiled,REQUIRED_TESTS_SOURCE.file),true);
-  assert.equal(compiled.execution_mode,'all_required_primaries');assert.equal(compiled.routes.length,3);
+  assert.equal(compiled.execution_mode,'all_required_primaries');assert.equal(compiled.routes.length,primary_ids.length);assert.equal(primary_ids.length,6);
   assert.equal(compiled.routes.every(route=>route.self_hosted),true);
   assert.equal(compiled.routes[2].required_steps['Not affected'],undefined);
   assert.equal(compiled.routes[2].command_digests['Not affected'].length,1,'the auxiliary command is not removed from Source');
@@ -128,6 +128,7 @@ test('the earlier exact compound Source still decodes from its catalogue and com
     {commit:'f45ef3e02bf8c3ef9c4e64ad5a549ce9ad0496ac',blob:'e600d8b2223e897008a2e07020b6c4d7731f2285'},
     {commit:'912c7aba9eff96e0957be311443c3d6339d310d2',blob:'2e14516b6813ce3024d42ab5ffde63fb399fb20b'},
     {commit:'709e474e83bae54f5985ad24b04ecc90bd6c11d5',blob:'00a9b5d1b1a0eaed1cc0d82d05753bfe984743ae'},
+    {commit:'304f48f466bac8d15d4289358f617699179b27de',blob:'d05ee2b2e7779cb2b8dda780b9203ad9a9e4e789'},
   ],file=REQUIRED_TESTS_SOURCE.file;
   assert.deepEqual(previous.map(pin=>pin.workflow_blob),generations.map(generation=>generation.blob));
   for(const {commit,blob} of generations){
