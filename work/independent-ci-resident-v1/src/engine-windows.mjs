@@ -179,6 +179,9 @@ export function parseStageOutcome(o) {
     ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
     // Rule 41ab823a (DESIGN §75): only on a settled stage 1 of a front batch (executor.mjs#frontScansReused reads it).
     ...(o.status === 'SETTLED' && stageHeadScans(o.headScans) ? { headScans: stageHeadScans(o.headScans) } : {}),
+    // Stage 1 settled on a PR that merged meanwhile (Source publisher settledMerged): only the boolean, only on SETTLED
+    // (executor.mjs reads it after stage 1: that stage was no live read of an open PR).
+    ...(o.status === 'SETTLED' && o.settledMerged === true ? { settledMerged: true } : {}),
   };
 }
 
