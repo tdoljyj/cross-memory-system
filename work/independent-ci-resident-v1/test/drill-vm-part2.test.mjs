@@ -819,7 +819,7 @@ test('from the real entry: r6 conditions at 24 GB boot, with the computed figure
   const gate = r.out.hostPreBoot.bootGate;
   assert.deepEqual([gate.runnerJob, gate.freeGB, gate.requiredFreeGB], ['yes', 24, 21.5]);
   const b = gate.requiredBasis;
-  assert.deepEqual(b, { guestGB: 8, bootMarginGB: 1, productionReserveGB: 6, wslHeadroomGB: 6.5 }, JSON.stringify(b));
+  assert.deepEqual(b, { guestGB: 8, bootMarginGB: 1, productionReserveGB: 6, wslHeadroomGB: 6.5, wslHeadroomSource: 'memfree' }, JSON.stringify(b));
   assert.equal(Math.round((b.guestGB + b.bootMarginGB + b.productionReserveGB + b.wslHeadroomGB) * 10) / 10, gate.requiredFreeGB);
 });
 
@@ -844,7 +844,87 @@ test('headroom 3: 26 GB free with WSL MemFree 3 (a capped WSL) boots: the gate d
   const r = headroomRun(26, 3);
   assert.equal(r.out.status, 'DRILL_PREREQ_READY', JSON.stringify(r.out));
   assert.deepEqual(headroomGate(r), [null, true, null, 26, 18, 3, true]);
-  assert.deepEqual(r.out.hostPreBoot.bootGate.requiredBasis, { guestGB: 8, bootMarginGB: 1, productionReserveGB: 6, wslHeadroomGB: 3 });
+  assert.deepEqual(r.out.hostPreBoot.bootGate.requiredBasis, { guestGB: 8, bootMarginGB: 1, productionReserveGB: 6, wslHeadroomGB: 3, wslHeadroomSource: 'memfree' });
+});
+
+// Fable plan 87d330d0 §4.1 (PR-A, supplement): a runner distribution registered for this host but not running can be started (the
+// production one keeps itself alive) and then take its whole cap, so the boot gate counts the cap of the Owner's WSL VM -- [wsl2] memory=
+// in %USERPROFILE%\.wslconfig, what the VM gets when it next starts -- as taken. No cap read (no file, no key, anything else): no boot,
+// DRILL_HOST_RESOURCE_UNREADABLE, WSL's own default never guessed. A host with no runner distribution at all counts nothing.
+// requiredBasis.wslHeadroomSource says which: memfree, wslconfig-cap or none.
+const capGate = x => { const g = x.out.hostPreBoot.bootGate; return [x.out.code ?? null, g.ok, g.code, g.freeGB, g.requiredFreeGB, g.requiredBasis?.wslHeadroomGB, g.requiredBasis?.wslHeadroomSource, x.events.includes('boot')]; };
+test('cap 1: the runner distribution registered, not running, .wslconfig memory=28GB, 30 GB free: 8 + 1 + 6 + 28 = 43 GB required, refused', shOpts, () => {
+  const r = ps(`${preBootWorld({ freeBeforeRelease: 30, freeAfterRelease: 30, running: false, wslConfig: '[wsl2]\r\nmemory=28GB\r\nprocessors=8\r\n' })}
+    Invoke-Entry`);
+  assert.deepEqual(capGate(r), ['DRILL_HOST_MEMORY_SHORT', false, 'DRILL_HOST_MEMORY_SHORT', 30, 43, 28, 'wslconfig-cap', false], JSON.stringify(r.out.hostPreBoot.bootGate));
+  assert.deepEqual(r.out.hostPreBoot.bootGate.wslMemory, [{ distribution: 'Fixture-CI', running: false, capGB: 28 }], 'the sample says what was counted');
+});
+test('cap 2: not running and no memory= in .wslconfig, or no .wslconfig: not read, no boot (DRILL_HOST_RESOURCE_UNREADABLE) at 64 GB free', shOpts, () => {
+  for (const wslConfig of ['[wsl2]\nprocessors=8\n', null]) {
+    const r = ps(`${preBootWorld({ freeBeforeRelease: 64, freeAfterRelease: 64, running: false, wslConfig })}
+      Invoke-Entry`);
+    assert.deepEqual(capGate(r), ['DRILL_HOST_RESOURCE_UNREADABLE', false, 'DRILL_HOST_RESOURCE_UNREADABLE', 64, 15, null, null, false], `${wslConfig}: ${JSON.stringify(r.out.hostPreBoot.bootGate)}`);
+    assert.deepEqual(r.out.hostPreBoot.bootGate.wslMemory, [{ distribution: 'Fixture-CI', running: false, capGB: null }]);
+  }
+});
+test('cap 3: a host with no runner distribution counts nothing: 16 GB free boots at 15 GB, source none', shOpts, () => {
+  const r = ps(`${preBootWorld({ freeBeforeRelease: 16, freeAfterRelease: 16, runners: false })}
+    Invoke-Entry`);
+  assert.equal(r.out.status, 'DRILL_PREREQ_READY', JSON.stringify(r.out));
+  assert.deepEqual(capGate(r), [null, true, null, 16, 15, 0, 'none', true]);
+  assert.equal(Object.hasOwn(r.out.hostPreBoot.bootGate, 'wslMemory'), false, 'nothing read: no key');
+});
+
+// The cap's one reading rule (Fable plan 87d330d0 §4.1): in the [wsl2] section only, memory=<number>GB or <number>MB, rounded up to
+// the byte; anything else -- no file, no key, the key twice, another section, no unit or another unit, anything after the value -- is
+// not read ($null).
+test('the .wslconfig cap: [wsl2] memory=<n>GB or <n>MB only, rounded up; anything else is not read', opts, () => {
+  const G = 2 ** 30, M = 2 ** 20;
+  const cases = { gb: ['[wsl2]\r\nmemory=28GB\r\n', 28 * G], mb: ['[wsl2]\nmemory=17408MB\n', 17 * G], spaced: ['# note\n[wsl2]\nprocessors=8\nmemory = 17GB\n', 17 * G],
+    lower: ['[WSL2]\nmemory=28gb\n', 28 * G], fraction: ['[wsl2]\nmemory=1.5GB\n', 1.5 * G], roundedUp: ['[wsl2]\nmemory=0.3MB\n', Math.ceil(0.3 * M)],
+    afterOther: ['[experimental]\nautoMemoryReclaim=gradual\n[wsl2]\nmemory=17GB\n', 17 * G],
+    noKey: ['[wsl2]\nprocessors=8\n', null], otherSection: ['[experimental]\nmemory=28GB\n', null], twice: ['[wsl2]\nmemory=28GB\nmemory=17GB\n', null],
+    noUnit: ['[wsl2]\nmemory=28\n', null], gib: ['[wsl2]\nmemory=28GiB\n', null], trailing: ['[wsl2]\nmemory=28GB # cap\n', null],
+    beforeSection: ['memory=28GB\n[wsl2]\n', null], empty: ['', null], negative: ['[wsl2]\nmemory=-1GB\n', null] };
+  const dir = fs.mkdtempSync(path.join(tmp, 'wslconfig-'));
+  for (const [name, [text]] of Object.entries(cases)) fs.writeFileSync(path.join(dir, name), text);
+  const r = ps(`$out = [ordered]@{}
+    foreach ($n in ${q(Object.keys(cases).join(','))}.Split(',')) { $out[$n] = Read-DrillWslConfigMemory (Join-Path ${q(dir)} $n) }
+    $out['missing'] = Read-DrillWslConfigMemory (Join-Path ${q(dir)} 'no-such-file')
+    $out`);
+  for (const [name, [, bytes]] of Object.entries(cases)) assert.equal(r[name], bytes, name);
+  assert.equal(r.missing, null);
+});
+
+// Fable plan 87d330d0 §4.2: the pure gate (Test-DrillHostMemory) defaults to "no WSL to count" for the tests that call it directly; a boot
+// is judged only through the two entries that read the WSL first -- Get-DrillHostSafety (the boot gate in Start-DrillGuardedVm) and
+// Wait-DrillBootMemory. Read from the script's own syntax tree, so a new caller is stopped here.
+test('a boot is judged only through Get-DrillHostSafety and Wait-DrillBootMemory, each with the WSL reading', opts, () => {
+  const r = ps(`
+    $ast = [Management.Automation.Language.Parser]::ParseFile(${q(script)}, [ref]$null, [ref]$null)
+    $names = @('Test-DrillHostMemory', 'Test-DrillHostSafety', 'Get-DrillHostSafety', 'Get-DrillGuardSafety', 'Get-DrillWslMemory')
+    $calls = @($ast.FindAll({ param($a) $a -is [Management.Automation.Language.CommandAst] -and $a.GetCommandName() -cin $names }, $true))
+    ,@($calls | ForEach-Object {
+      $f = $_.Parent; while ($f -and $f -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $f = $f.Parent }
+      [ordered]@{ command = $_.GetCommandName(); in = $(if ($f) { $f.Name } else { $null }); text = $_.Extent.Text } })`);
+  const of = c => r.filter(x => x.command === c);
+  const memory = of('Test-DrillHostMemory');
+  assert.deepEqual(memory.map(x => x.in).sort(), ['Test-DrillHostSafety', 'Wait-DrillBootMemory'], JSON.stringify(memory));
+  for (const x of memory) assert.match(x.text, /-WslMemory \$\w+/, x.text);
+  // Test-DrillHostSafety judges memory only in Get-DrillHostSafety, with the WSL reading; everywhere else it gets no reading at all
+  for (const x of of('Test-DrillHostSafety')) {
+    assert.ok(['Get-DrillHostSafety', 'Invoke-DrillWithHostHold'].includes(x.in), x.in);
+    assert.ok(/\(\[long\]::MaxValue\)/.test(x.text) || (x.in === 'Get-DrillHostSafety' && /-WslMemory \$gateWsl/.test(x.text)), x.text);
+  }
+  // Get-DrillHostSafety reaches the boot gate (no -Running, -StatusOnly or -JobsOnly) only from Get-DrillGuardSafety, which hands it the reading
+  const gate = of('Get-DrillHostSafety').filter(x => !/-StatusOnly|-JobsOnly/.test(x.text));
+  assert.deepEqual(gate.map(x => x.in), ['Get-DrillGuardSafety'], JSON.stringify(gate));
+  assert.match(gate[0].text, /-WslMemory \$WslMemory/);
+  const boot = of('Get-DrillGuardSafety').filter(x => /-BootGate/.test(x.text));
+  assert.deepEqual(boot.map(x => [x.in, /-WslMemory \$wslMemory/.test(x.text)]), [['Start-DrillGuardedVm', true]]);
+  // both read the WSL with the cap of a runner distribution that is not running
+  const reads = of('Get-DrillWslMemory').filter(x => /-IdleCap/.test(x.text)).map(x => x.in).sort();
+  assert.deepEqual(reads, ['Start-DrillGuardedVm', 'Wait-DrillBootMemory']);
 });
 
 // Decision f572ac5b as DESK read its text (independent review of a643c4b42, block 1): with the drill VM on and the host under 10 GB free,

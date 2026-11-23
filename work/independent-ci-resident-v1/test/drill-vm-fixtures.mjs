@@ -374,13 +374,19 @@ export const commandIn = (world, command) => world.prefix + command.split('/proc
 // Fable renew-key ruling, supplements "WSL runner jobs" item 3 and "WSL gate race" item 3 (the order unchanged by round four): early
 // refusal (hold, resident idle, no job on either side; no memory) -> the release -> the boot gate (both sides again, then memory, judged
 // once, then the boot), from the real entry on, with the real host guard; the release command run by Git's sh.
-export function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, meminfo = MEMINFO } = {}) {
+// running: the runner distribution is in `wsl --list --running` (false: registered, not running); runners: this host has one at all
+// (false: Get-DrillRunnerDistributions finds none); wslConfig: the text of the Owner's .wslconfig the boot gate reads for a runner
+// distribution that is not running (null: no file there).
+export function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, meminfo = MEMINFO, running = true, runners = true, wslConfig = null } = {}) {
   const quiet = shWorld('preboot-quiet', { pgrep: 1 });
   const job = shWorld('preboot-job', { pgrep: 0 });
   const status = path.join(fs.mkdtempSync(path.join(tmp, 'preboot-status-')), 'status.json');
   // Written at T0 and read by the host guard too, in its own runspace, by the clock of the run that started it (ps(): T0).
   fs.writeFileSync(status, idleHostStatus());
+  const wslConfigPath = path.join(fs.mkdtempSync(path.join(tmp, 'preboot-wslconfig-')), '.wslconfig');
+  if (wslConfig !== null) fs.writeFileSync(wslConfigPath, wslConfig);
   return `
+    $script:Drill.WslConfig = ${q(wslConfigPath)}
     $script:events = [Collections.Generic.List[string]]::new()
     $script:released = $false
     $script:Drill.Runs = ${q(fs.mkdtempSync(path.join(tmp, 'preboot-')))}
@@ -391,7 +397,7 @@ export function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, me
       $script:events.Add('memory'); @{ FreePhysicalMemory = $(if ($script:released) { ${freeAfterRelease}GB } else { ${freeBeforeRelease}GB }) / 1KB } }
     function Get-VM { param($ErrorAction) }
     function Get-Process { param($ErrorAction) $script:events.Add('windows-processes'); $n = @('Runner.Listener'); if ($script:windowsJobAfter -ge 0 -and @($script:events | Where-Object { $_ -ceq 'wsl-probe' }).Count -ge $script:windowsJobAfter) { $n += 'Runner.Worker' }; $n | ForEach-Object { [pscustomobject]@{ ProcessName = $_ } } }
-    function Get-DrillRunnerDistributions { param($HostName) 'Fixture-CI' }
+    function Get-DrillRunnerDistributions { param($HostName) ${runners ? "'Fixture-CI'" : ''} }
     function Get-DrillWslRegisteredNames { 'Fixture-CI' }
     $script:jobAfter = -1; $script:windowsJobAfter = -1; $script:wslMemoryFails = $false
     $script:releaseSent = [Collections.Generic.List[string]]::new()
@@ -399,7 +405,7 @@ export function preBootWorld({ freeBeforeRelease = 10, freeAfterRelease = 64, me
     $script:DrillWslRunner = { param($a)
       $j = $a -join ' '
       if ($a -contains '--terminate' -or $a -contains '-t' -or $a -contains '--shutdown' -or $a -contains '--unregister') { $script:events.Add('STOP ' + $j); return @{ exit = 0; stdout = ''; stderr = '' } }
-      if ($j -ceq '--list --running --quiet') { $script:events.Add('wsl-running'); return @{ exit = 0; stdout = "Fixture-CI\`r\`n"; stderr = '' } }
+      if ($j -ceq '--list --running --quiet') { $script:events.Add('wsl-running'); return @{ exit = 0; stdout = ${running ? '"Fixture-CI\`r\`n"' : "''"}; stderr = '' } }
       $job = $script:jobAfter -ge 0 -and @($script:events | Where-Object { $_ -ceq 'wsl-probe' }).Count -ge $script:jobAfter
       if ($j -ceq '--distribution Fixture-CI --exec pgrep -ix Runner[.]Worker') { $script:events.Add('wsl-probe'); return @{ exit = $(if ($job) { 0 } else { 1 }); stdout = ''; stderr = '' } }
       if ($j -ceq '--distribution Fixture-CI --exec cat /proc/meminfo') { $script:events.Add('wsl-meminfo')
