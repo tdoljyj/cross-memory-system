@@ -5191,18 +5191,23 @@ test('fix1: first-install-entry.ps1 is ASCII and parses in Windows PowerShell 5.
 // Review low 5, the real path: a PowerShell job (a PSRemotingJob, as Invoke-Command -AsJob gives) has no StopJobAsync; Stop-DrillJob stops
 // it on a runspace of its own and returns at once, and a later call removes it once it has stopped.
 test('fix1 low 5: a running PSRemotingJob is stopped without waiting and removed once it has stopped', opts, () => {
-  const out = ps(`$j = Start-Job { Start-Sleep 120 }
+  // No wall-clock bound (a slow hosted machine broke a 2000 ms one): the job sits in an uninterruptible 30 s sleep, so a blocking Stop-Job
+  // would hold until it ended (measured 17 s of 20 s); a Stop-DrillJob that does not wait returns with the job not yet in a final state.
+  const out = ps(`$mark = Join-Path ([IO.Path]::GetTempPath()) ('lowfive-' + [guid]::NewGuid().ToString('N'))
+    $j = Start-Job { param($m) Set-Content -LiteralPath $m 'in'; [Threading.Thread]::Sleep(30000) } -ArgumentList $mark
     $type = $j.GetType().Name
-    $t0 = [Environment]::TickCount; Stop-DrillJob $j $false; $returned = [Environment]::TickCount - $t0
+    $armed = [Environment]::TickCount + 120000; while (-not (Test-Path -LiteralPath $mark) -and [Environment]::TickCount -lt $armed) { Start-Sleep -Milliseconds 50 }
+    Stop-DrillJob $j $false; $atReturn = [string]$j.State
+    Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue
     $until = [Environment]::TickCount + 60000; while ($j.State -notin @('Stopped', 'Completed', 'Failed') -and [Environment]::TickCount -lt $until) { Start-Sleep -Milliseconds 100 }
     $state = [string]$j.State
     Start-Sleep -Milliseconds 300
     $k = Start-Job { 1 }; [void](Wait-Job -Job $k -Timeout 60); Stop-DrillJob $k $true   # an ended job: removed, and the sweep runs
     $left = $script:DrillStoppingJobs.Count
     $gone = $null -eq (Get-Job -Id $j.Id -ErrorAction SilentlyContinue)
-    [ordered]@{ type = $type; returned = $returned; state = $state; left = $left; gone = $gone }`);
+    [ordered]@{ type = $type; atReturn = $atReturn; state = $state; left = $left; gone = $gone }`);
   assert.equal(out.type, 'PSRemotingJob');
-  assert.ok(out.returned < 2000, `returned after ${out.returned} ms`);
+  assert.ok(['Running', 'Stopping'].includes(out.atReturn), `Stop-DrillJob waited: the job was ${out.atReturn} when it returned`);
   assert.equal(out.state, 'Stopped');
   assert.equal(out.gone, true, JSON.stringify(out));
   assert.equal(out.left, 0, JSON.stringify(out));
