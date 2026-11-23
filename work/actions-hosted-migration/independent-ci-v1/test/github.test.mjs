@@ -404,6 +404,22 @@ test('readChangedPaths: base.sha is a fact for a train front batch only, and bot
   }
 });
 
+// bc982192 (C3, plan 戊): a port built for a stage of a batch stamped push (batch-route.json) also takes GitHub's base.sha as a fact for an
+// S = H job of the v2 contract (the batch runs on the merge base of its head and main; stage 1 proves it on main); both reads must still
+// agree. A v1 job, and every port without the stamp (stages 2-7, github-merge, a broken channel), stay exactly as above.
+test('readChangedPaths (bc982192): the batch route push also makes base.sha a fact for an S = H v2 job; no route: exact', async () => {
+  const MOVED = '9'.repeat(40);
+  const moved = sha => reply({ ...pr, base: { ...pr.base, sha } });
+  const sh = { ...job, testSha: HEAD };
+  const ok = await github({ faults: { [prKey]: [moved(MOVED), moved(MOVED)] } }).port({ batchRoute: 'push' }).readChangedPaths(sh);
+  assert.deepEqual([ok.baseSha, ok.paths], [BASE, ['a.txt']]);
+  await assert.rejects(github({ faults: { [prKey]: [moved(MOVED), moved('8'.repeat(40))] } }).port({ batchRoute: 'push' }).readChangedPaths(sh), { code: 'pr_subject_changed' });
+  await assert.rejects(github({ faults: { [prKey]: [moved('X'.repeat(40))] } }).port({ batchRoute: 'push' }).readChangedPaths(sh), { code: 'pr_subject_changed' });
+  for (const exact of [job, { ...job, testSha: null }]) await assert.rejects(github({ faults: { [prKey]: [moved(MOVED)] } }).port({ batchRoute: 'push' }).readChangedPaths(exact), { code: 'pr_subject_changed' });
+  for (const batchRoute of [null, undefined, 'github-merge', 'PUSH', true])
+    await assert.rejects(github({ faults: { [prKey]: [moved(MOVED)] } }).port({ batchRoute }).readChangedPaths(sh), { code: 'pr_subject_changed' }, String(batchRoute));
+});
+
 // ---- Generation 11 (resident DESIGN 55): a 5xx answer to a write is read back, never sent again ----
 
 test('a 502 to the check POST after GitHub stored the run: the read-back returns that copy, nothing is sent twice', async () => {
