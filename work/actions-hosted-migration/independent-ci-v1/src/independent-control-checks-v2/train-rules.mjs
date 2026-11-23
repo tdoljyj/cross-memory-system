@@ -300,10 +300,17 @@ export function strictFrontHeadDecision({ job, holders, frontProof, proof, fullS
   } catch { return no; }
 }
 
+// GitHub merged the PR at exactly this job's head on this job's base: the PR is merged and closed, its head is H, it targets
+// main, and its merge commit is exactly [T, H]. The one statement of "merged at this head" (field defect 2026-11-23, PR #1238 and
+// #1239): stage 1 (formal-work-admission-check-v2/publisher.mjs) settles its green on it, and mergedAsTested below adds the tree.
+export function mergedAtHead({ pull, mergeCommit, job }) {
+  return plain(job) && plain(pull) && pull.number === job.pr && pull.merged === true && pull.state === 'closed'
+    && pull.head?.sha === job.headSha && pull.base?.ref === 'main' && SHA.test(pull.merge_commit_sha ?? '')
+    && plain(mergeCommit) && mergeCommit.sha === pull.merge_commit_sha && sameParents(mergeCommit, job.baseSha, job.headSha);
+}
+
 // Rule 7 of §5.3, after the write: the PR was merged (auto-merge merges within seconds of the green), and the merge
 // commit is exactly [T, H] with the tested tree. Then the green did what it was for: success, never revoked.
 export function mergedAsTested({ pull, mergeCommit, job, testTree }) {
-  return plain(job) && SHA.test(testTree ?? '') && plain(pull) && pull.number === job.pr && pull.merged === true && pull.state === 'closed'
-    && pull.head?.sha === job.headSha && pull.base?.ref === 'main' && SHA.test(pull.merge_commit_sha ?? '')
-    && plain(mergeCommit) && mergeCommit.sha === pull.merge_commit_sha && sameParents(mergeCommit, job.baseSha, job.headSha) && mergeCommit.tree === testTree;
+  return SHA.test(testTree ?? '') && mergedAtHead({ pull, mergeCommit, job }) && mergeCommit.tree === testTree;
 }

@@ -65,8 +65,13 @@ export function upToDate({ mainSha, baseSha, behindBy }) {
   return { eligible: false, hint: behindBy === 0 ? 'push-any-commit' : 'merge-main' };
 }
 
+// Push landing (bc982192, replan §3.3): the train lands merge(main, H...) itself, so a head need not contain main's tip; its batch
+// runs on the merge base of the head and main (an ancestor of both, recorded as the trigger's baseSha). Only the exact answer 'push'
+// of the landing port counts; anything else, or no port, is github-merge (upToDate above, unchanged).
+export const pushEligible = ({ behindBy, mergeBase }) => Number.isSafeInteger(behindBy) && behindBy >= 0 && HEX40.test(mergeBase ?? '');
+
 export class Poller {
-  // ports: { repo, ghExe, run(argv,{timeoutMs}), writeTrigger(object), clock }
+  // ports: { repo, ghExe, run(argv,{timeoutMs}), writeTrigger(object), clock, landing?() -> 'push' | other }
   constructor(ports) {
     Object.assign(this, ports);
     this.sent = new Map(); this.compares = new Map(); this.slow = new Map(); this.lastPass = null;
@@ -163,10 +168,21 @@ export class Poller {
   // behind_by of main...head (commits of main the head does not contain), or null when GitHub did not answer. Two
   // fixed commits always compare the same way, so an answer is cached per (main, head).
   async behindBy(mainSha, headSha) {
+    return (await this.compare(mainSha, headSha))?.behindBy ?? null;
+  }
+
+  // The landing mode this pass reads: 'push' only when the port answers exactly that (a failed read is github-merge).
+  async landingMode() {
+    if (typeof this.landing !== 'function') return 'github-merge';
+    try { return (await this.landing()) === 'push' ? 'push' : 'github-merge'; } catch { return 'github-merge'; }
+  }
+
+  // { behindBy, mergeBase } of main...head (mergeBase: GitHub's merge_base_commit, null when it named none), or null.
+  async compare(mainSha, headSha) {
     const id = `${mainSha}...${headSha}`;
     if (this.compares.has(id)) return this.compares.get(id);
     if (this.compareBudget <= 0 || this.stalled || (this.slow.get(id) ?? 0) > this.clock() || (this.retryAt.get(id) ?? 0) > this.clock()) return null;
-    const r = await this.run([this.ghExe, 'api', '--method', 'GET', `repos/${this.repo}/compare/${mainSha}...${headSha}?per_page=1`, '--jq', '{behind_by: .behind_by, base: .base_commit.sha}'], { timeoutMs: COMPARE_TIMEOUT_MS });
+    const r = await this.run([this.ghExe, 'api', '--method', 'GET', `repos/${this.repo}/compare/${mainSha}...${headSha}?per_page=1`, '--jq', '{behind_by: .behind_by, base: .base_commit.sha, merge_base: .merge_base_commit.sha}'], { timeoutMs: COMPARE_TIMEOUT_MS });
     if (stalledCall(r)) {
       this.stalled = true;
       if (r.timedOut) { this.slow.set(id, this.clock() + SLOW_COMPARE_SKIP_MS); if (this.slow.size > COMPARE_CACHE_MAX) this.slow.delete(this.slow.keys().next().value); }
@@ -179,9 +195,10 @@ export class Poller {
       if (this.retryAt.size > COMPARE_CACHE_MAX) this.retryAt.delete(this.retryAt.keys().next().value);
       return null;
     }
-    this.compares.set(id, v.behind_by);
+    const answer = { behindBy: v.behind_by, mergeBase: HEX40.test(v.merge_base ?? '') ? v.merge_base : null };
+    this.compares.set(id, answer);
     if (this.compares.size > COMPARE_CACHE_MAX) this.compares.delete(this.compares.keys().next().value);
-    return v.behind_by;
+    return answer;
   }
 
   // Propose each ready, up-to-date PR head once per (head, base, PR edit time). An edit of the PR body is the
@@ -195,19 +212,22 @@ export class Poller {
       this.generation = generation;
     }
     const base = await this.mainTip();
+    const landing = await this.landingMode();
     let proposed = 0;
     const pulls = [];
     for (const p of await this.openPulls()) {
       if (p.isDraft || !Number.isSafeInteger(p.number) || !HEX40.test(p.headRefOid ?? '')) continue;
       const prBase = HEX40.test(p.baseRefOid ?? '') ? p.baseRefOid : null;
-      const behind = await this.behindBy(base, p.headRefOid);
-      const verdict = upToDate({ mainSha: base, baseSha: prBase, behindBy: behind });
+      const cmp = await this.compare(base, p.headRefOid), behind = cmp?.behindBy ?? null;
+      const pushed = landing === 'push' && pushEligible({ behindBy: behind, mergeBase: cmp?.mergeBase });
+      const verdict = pushed ? { eligible: true, hint: null } : upToDate({ mainSha: base, baseSha: prBase, behindBy: behind });
       pulls.push({ pr: p.number, headSha: p.headRefOid, baseSha: prBase, mainSha: base, behindBy: behind, ...verdict });
       if (!verdict.eligible) continue;
-      const id = `${p.number}:${p.headRefOid}:${base}`;
+      const batchBase = pushed ? cmp.mergeBase : base;
+      const id = `${p.number}:${p.headRefOid}:${batchBase}`;
       if (this.sent.get(id) === p.updatedAt) continue;
       const prUpdatedAt = typeof p.updatedAt === 'string' && Number.isFinite(Date.parse(p.updatedAt)) ? new Date(Date.parse(p.updatedAt)).toISOString() : null;
-      await this.writeTrigger({ contract: TRIGGER_CONTRACT_V2, repo: this.repo, pr: p.number, headSha: p.headRefOid, baseSha: base, ...(prUpdatedAt ? { prUpdatedAt } : {}) });
+      await this.writeTrigger({ contract: TRIGGER_CONTRACT_V2, repo: this.repo, pr: p.number, headSha: p.headRefOid, baseSha: batchBase, ...(prUpdatedAt ? { prUpdatedAt } : {}) });
       this.sent.set(id, p.updatedAt);
       proposed += 1;
     }

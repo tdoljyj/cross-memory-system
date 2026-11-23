@@ -2901,13 +2901,19 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     const mergedAt = timestamp(commit.commit?.committer?.date), createdAt = timestamp(run.created_at);
     requireProof(mergedAt !== null && createdAt !== null && mergedAt <= createdAt, 'refresh_time');
     const checksPath = head => `/repos/${repository}/commits/${head}/check-runs?check_name=${admissionName}&filter=all&per_page=100`;
-    const prior = boundedChecks(await read(checksPath(parents[0]))).filter(check => {
+    // FABLE-scaffold-shadow-fix-20261122 §2 A: under Native the earlier head's
+    // admission is not read. The current head's exact Native admission (claim,
+    // authorization, write_set, Grant of this head) and the main-only
+    // attestation below decide, as for a head the author refreshed and pushed;
+    // a behind protected head is never admitted, so requiring it refused every
+    // bot refresh of one. The legacy branch keeps the earlier-head proof.
+    const prior = native ? null : boundedChecks(await read(checksPath(parents[0]))).filter(check => {
       const finished = timestamp(check.completed_at);
       return validCheck(check, parents[0], pr.number) && successful(check) && finished !== null && finished <= mergedAt;
     }).sort((a, b) => b.id - a.id)[0];
     // This earlier successful check proves provenance only. It cannot replace
     // the current head's live admission, epoch or rerun authorization.
-    requireProof(prior, 'prior_pr_admission_missing');
+    if (!native) requireProof(prior, 'prior_pr_admission_missing');
     let priorRunId = null;
     if (native) {
       // The existing main-only App attests the exact two-parent refresh. A
@@ -2935,7 +2941,7 @@ export async function qualifyTrustedAutomationRoute({ env, event, run, currentAd
     requireProof(samePR(await read(`/repos/${repository}/pulls/${pr.number}`), context), 'live_pr_changed');
     return { qualified: true, reason: 'admitted_owner_pr_signed_main_refresh', run_id: run.id, run_attempt: attempt,
       pr_number: pr.number, head_sha: pr.head.sha, previous_head_sha: parents[0], main_sha: parents[1],
-      actor_id: AUTOMATION_BOT.id, prior_check_id: prior.id, prior_admission_run_id: priorRunId,
+      actor_id: AUTOMATION_BOT.id, prior_check_id: prior?.id ?? null, prior_admission_run_id: priorRunId,
       current_check_id: currentAdmission.id };
   } catch (error) {
     if (error instanceof RouteRefusal) reason = error.message;

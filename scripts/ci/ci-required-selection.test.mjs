@@ -346,6 +346,82 @@ test('G3 required-tests exposes pr/head dispatch and keeps all three self-hosted
   }
 });
 
+// S1b (ported from the Codex draft of 11-18, D:/w/tmp/speed-s1b): the trusted checkouts are sparse.
+// Its own import keeps this block apart from the import list other selector changes edit.
+import { KNOWN_FAILURES_PATH } from './ci-required-selection.mjs';
+
+const requiredWorkflowJobs = () => ['clued-required-tests.yml', 'clued-required-tests-windows.yml']
+  .flatMap((file) => [...readFileSync(path.join(ROOT, '.github/workflows', file), 'utf8')
+    .replaceAll('\r\n', '\n').matchAll(/^  ([a-z][a-z-]+):\n((?:.*\n)*?)(?=^  [a-z][a-z-]+:\n|(?![\s\S]))/gm)]
+    .filter(([, id]) => ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'ci-suites-windows'].includes(id)));
+
+test('all four trusted checkouts use the same sparse directories and cover their runtime files', () => {
+  const jobs = requiredWorkflowJobs();
+  assert.equal(jobs.length, 4);
+  for (const [, id, job] of jobs) {
+    const trusted = /\n      - name: Check out the trusted base[^\n]*\n([\s\S]*?)(?=\n      - )/.exec(job);
+    assert.ok(trusted, `${id}: trusted checkout step`);
+    const checkout = trusted[1];
+    const sparse = /^ {10}sparse-checkout: \|\n((?: {12}[^\n]+(?:\n|$))+)/m.exec(checkout);
+    assert.ok(sparse, `${id}: trusted checkout must declare sparse-checkout`);
+    assert.equal(sparse[1].trimEnd(), '            scripts/ci\n            config\n            .github', `${id}: sparse directory list`);
+    const directories = sparse[1].trim().split(/\s+/);
+    const action = /uses: \.\/trusted\/([^\s]+)/.exec(job);
+    assert.ok(action, `${id}: temporary storage action must come from the trusted tree`);
+    const actionFile = `${action[1]}/action.yml`;
+    const actionSource = readFileSync(path.join(ROOT, actionFile), 'utf8');
+    const actionScripts = [...actionSource.matchAll(/\$(?:env:)?GITHUB_ACTION_PATH\/([\w./-]+)/g)]
+      .map(([, file]) => `${action[1]}/${file}`);
+    const files = [
+      ...closure([path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), REPORTER_PATH]),
+      path.relative(ROOT, KNOWN_FAILURES_PATH).split(path.sep).join('/'),
+      'config/clued-mechanical-files.json', actionFile, ...actionScripts,
+    ];
+    for (const file of files) {
+      assert.ok(existsSync(path.join(ROOT, file)), `${id}: runtime file ${file} exists`);
+      assert.ok(directories.some((directory) => file.startsWith(`${directory}/`)), `${id}: sparse checkout includes ${file}`);
+    }
+  }
+});
+
+test('Linux required jobs fail before invoking the selector when the trusted copy is missing', () => {
+  for (const [, id, job] of requiredWorkflowJobs().filter(([, id]) => id !== 'ci-suites-windows')) {
+    assert.doesNotMatch(job, /candidate\/scripts\/ci\/ci-required-selection\.mjs/, id);
+    assert.match(job, /selector=trusted\/scripts\/ci\/ci-required-selection\.mjs\n +if \[ ! -f "\$selector" \]; then\n(?: +[^\n]+\n)*? +exit 1\n +fi\n/, id);
+  }
+});
+
+test('the migration candidate checkout only fetches full history for lost-run dispatches and staging pushes', () => {
+  const migration = requiredWorkflowJobs().find(([, id]) => id === 'migration-verify');
+  assert.ok(migration);
+  assert.match(migration[2], /\n      - name: Check out the candidate\n(?:(?!      - )[^\n]*\n)*? {10}fetch-depth: \$\{\{ \(github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/clued-train\/staging'\)\) && '0' \|\| '2' \}\}\n/);
+});
+
+// A lost-run dispatch (git merge-base origin/main <head>) and a staging push (the chain root T) both walk main's history in
+// train-base, so the candidate checkout must hold it; a depth-2 clone has no origin/main and the step fails. Only the
+// other events may stay shallow. The expression is evaluated, not matched, so any job that adds train-base is covered.
+test('every Linux required job with train-base checks the candidate out with full history for a dispatch and a staging push', () => {
+  const text = readFileSync(path.join(ROOT, '.github/workflows/clued-required-tests.yml'), 'utf8').replaceAll('\r\n', '\n');
+  const jobs = [...text.matchAll(/^  ([a-z][a-z-]+):\n((?:.*\n)*?)(?=^  [a-z][a-z-]+:\n|(?![\s\S]))/gm)]
+    .filter(([, , job]) => job.includes('        id: train-base\n'));
+  assert.deepEqual(jobs.map(([, id]) => id), ['clued-cloud-tests', 'ci-suites', 'migration-verify', 'gitleaks', 'trivy', 'contract-placement']);
+  const depthFor = (value, eventName, ref) => {
+    const expression = /^\$\{\{ (.+) \}\}$/.exec(value);
+    if (!expression) return value;
+    const js = expression[1].replaceAll('github.event_name', JSON.stringify(eventName)).replaceAll('github.ref', JSON.stringify(ref));
+    assert.match(js, /^[\s"'a-z0-9_/.=&|()-]+$/i, value);
+    return String(Function(`return (${js});`)());
+  };
+  for (const [, id, job] of jobs) {
+    const checkout = /\n      - name: Check out the candidate\n((?:(?!      - )[^\n]*\n)*)/.exec(job);
+    assert.ok(checkout, `${id}: candidate checkout step`);
+    const depth = /^ {10}fetch-depth: (.+)$/m.exec(checkout[1]);
+    assert.ok(depth, `${id}: candidate checkout declares fetch-depth`);
+    assert.equal(depthFor(depth[1], 'workflow_dispatch', 'refs/heads/claude/some-branch'), '0', `${id}: lost-run dispatch`);
+    assert.equal(depthFor(depth[1], 'push', 'refs/heads/clued-train/staging'), '0', `${id}: staging push`);
+  }
+});
+
 test('glob patterns match across and within segments', () => {
   assert.ok(globToRegExp('work/independent-ci-resident-v1/**').test('work/independent-ci-resident-v1/src/executor.mjs'));
   assert.ok(globToRegExp('apps/clued-cloud/scripts/production-schema-*.mjs').test('apps/clued-cloud/scripts/production-schema-drift.mjs'));
@@ -619,6 +695,30 @@ for (const [cpus, concurrency] of [[16, 4], [4, 2], [64, 4], [15, 3]]) {
       [[`--test-concurrency=${concurrency}`], [`--test-concurrency=${concurrency}`]]);
   });
 }
+
+// FABLE-ci-10min-20261119 7.3: the unit tests run at the database tests' concurrency in a hosted job (GITHUB_ACTIONS) and at
+// run-tests.mjs's default 2 elsewhere, as the local limits assume.
+for (const [actions, cpus, concurrency] of [[true, 16, 4], [false, 16, 2], [true, 4, 2]]) {
+  test(`clued-cloud runs its unit tests at concurrency ${concurrency} with ${cpus} CPUs ${actions ? 'in a hosted job' : 'outside Actions'}`, (t) => {
+    t.mock.method(os, 'availableParallelism', () => cpus);
+    const unit = SUITE_COMMANDS['clued-cloud'].find((command) => command.known === 'clued-cloud');
+    assert.deepEqual(unit.argv.slice(0, 3), ['node', 'scripts/run-tests.mjs', '--test']);
+    const argv = selection.commandArgv(unit, { cwd: path.join(ROOT, unit.cwd), root: ROOT, hosted: actions,
+      listUnit: () => ['tests/u.test.mjs'] });
+    assert.deepEqual(argv.filter((arg) => arg.startsWith('--test-concurrency')), [`--test-concurrency=${concurrency}`]);
+    assert.equal(selection.testConcurrency(cpus), Math.max(2, Math.min(4, Math.floor(cpus / 4))));
+  });
+}
+test('the candidate expands {unit-concurrency} as the trusted side does in a hosted job: the command adds nothing', (t) => {
+  // The candidate's child has no GITHUB_ACTIONS (test-env.mjs): the trusted side passes the job's kind and core count.
+  t.mock.method(os, 'availableParallelism', () => 16);
+  const { root, dir, change } = candidateSelector(t);
+  writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), '');
+  const command = { cwd: '.', argv: ['node', '--test', '{unit-concurrency}', 'scripts/ci/retrigger-counter.test.mjs'] };
+  change('retrigger-counter', [command]);
+  assert.deepEqual([...selection.requiredCommands('retrigger-counter', root, { baseline: [command], env: { GITHUB_ACTIONS: 'true' } })], [command]);
+  assert.deepEqual(expandArgv(command.argv, { cwd: root, hosted: true }).slice(2, 3), ['--test-concurrency=4']);
+});
 
 test('outputs name every suite of the check', () => {
   const lines = outputLines('ci-suites', { suites: ['offline-drill'] });
@@ -1701,6 +1801,7 @@ test('bors staging, Windows side: T is resolved on main before the trusted selec
 // change's runner hook (the step's walk is the hook's, read from main).
 const LINUX_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'clued-required-tests.yml');
 const BASELINE_JOBS = [[LINUX_WORKFLOW, 'clued-cloud-tests'], [LINUX_WORKFLOW, 'ci-suites'], [LINUX_WORKFLOW, 'migration-verify'],
+  [LINUX_WORKFLOW, 'gitleaks'], [LINUX_WORKFLOW, 'trivy'], [LINUX_WORKFLOW, 'contract-placement'],
   [WINDOWS_WORKFLOW, 'ci-suites-windows']];
 function baselineStep(file, id) {
   const text = readFileSync(file, 'utf8');

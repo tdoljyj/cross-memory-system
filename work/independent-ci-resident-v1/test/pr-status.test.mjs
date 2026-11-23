@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { COMPARE_RETRY_MS, COMPARE_TIMEOUT_MS, MAX_COMPARES_PER_PASS, Poller, SLOW_COMPARE_SKIP_MS, upToDate } from '../src/poller.mjs';
 import { ADVISORY_TIMEOUT_MS, LocalStore, PASS_BUDGET_MS, POST_RETRY_MS, PrStatusReporter, contextFree, contextShapeSafe, describe, events, toastArgv, validateStatusConfig } from '../src/pr-status.mjs';
-import { nodeContext, standbyContext } from '../src/node-duty.mjs';
+import { nodeContext, parseDutyStatus, standbyContext } from '../src/node-duty.mjs';
 // Task 9cac75be A3: no default node; these reporters are the node named node-b (node: 'node-b').
 const PR_STATUS_CONTEXT = nodeContext('node-b');
 
@@ -631,5 +631,89 @@ test('484bddac: a behind PR gets the same pending line under every train summary
     const d = describe({ pull: behind(8), status: s, now });
     assert.deepEqual(d, { state: 'pending', description: LINE }, name);
     assert.equal(JSON.stringify(d).includes('请合入'), false, name);
+  }
+});
+
+// Field defect 2026-11-23 (FABLE-resident-halt-merge-race-20261123 C): both residents were HALTed (PUBLICATION_UNCERTAIN) and the
+// compute panel showed them idle: a node wrote only on the commits it had queued or run, the PRs that ended the HALT were merged, and
+// the open PRs it never queued carried nothing. While HALTed, the node on duty says so on every eligible open PR head.
+test('HALT: the node on duty writes 执行器已停机（码） on every eligible open PR head, also one it never queued; a STANDBY writes none', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-11-23T00:30:00Z');
+  const calls = [];
+  const run = async argv => {
+    calls.push(argv);
+    if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+    if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+    if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+    return { code: 0, stdout: '{}' };
+  };
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const field = (a, k) => a.find(x => x.startsWith(`${k}=`))?.slice(k.length + 1);
+  const written = () => calls.filter(a => a.includes('POST')).map(a => [a.find(x => x.includes('/statuses/')).split('/').at(-1), field(a, 'state'), field(a, 'context'), field(a, 'description')]);
+  const nodeAs = mode => ({ name: 'node-b', mode, probe: { at: new Date(now - 30_000).toISOString(), result: mode === 'ACTIVE' ? 'held' : 'not-held', failures: 0, failingSince: null } });
+  const halted = mode => boardStatus(b => { b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: nodeAs(mode), halt: { code: 'PUBLICATION_UNCERTAIN', at: '2026-11-23T00:21:05Z' } }); }, now);
+  // Neither head was ever queued or run by this node (status.json names no row for them).
+  const pulls = [{ pr: 1240, headSha: H(4), eligible: true, hint: null, behindBy: 0 }, { pr: 1241, headSha: H(5), eligible: true, hint: null, behindBy: 0 }];
+  const TEXT = '执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位';
+  const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 's.json'), () => now), notifications: false, writeRequest: async () => {} });
+  await reporter.pass({ pulls, status: halted('ACTIVE') });
+  assert.deepEqual(written(), [[H(4), 'error', PR_STATUS_CONTEXT, TEXT], [H(5), 'error', PR_STATUS_CONTEXT, TEXT]]);
+  // It is no duty word: another node never reads it as on duty, and it is not written again while unchanged.
+  assert.equal(parseDutyStatus({ context: PR_STATUS_CONTEXT, description: TEXT, created_at: new Date(now).toISOString(), login: 'tdoljyj' }, 'tdoljyj').word, null);
+  now += 20 * 60_000;
+  await reporter.pass({ pulls, status: halted('ACTIVE') });
+  assert.equal(written().length, 2, 'not refreshed');
+  // A STANDBY (the watchdog handed its role over) writes nothing under its queue context, HALTed or not.
+  const before = written().length;
+  const standby = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, 'b.json'), () => now), notifications: false, writeRequest: async () => {} });
+  await standby.pass({ pulls, status: halted('STANDBY') });
+  assert.equal(written().length, before);
+});
+
+// FABLE-resident-halt-merge-race-followup-20261123 §2: the HALT rows are executor-wide and owed their end. Once the Owner's reset is
+// seen (a fresh status without a halt), every HALT row this node left on a still-open head that it does not describe again in the
+// pass is rewritten as a non-error row without a duty word, whatever the node's mode now (still on duty but the PR was never queued
+// here; or STANDBY after the role moved). Otherwise the panel kept reading the node as HALTed and the PR as stalled until it closed.
+test('HALT rows end after the reset: rewritten non-error on every still-open head, on duty or STANDBY; not while HALTed or stale', async t => {
+  const root = await tempRoot(t);
+  let now = Date.parse('2026-11-23T00:30:00Z');
+  const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const field = (a, k) => a.find(x => x.startsWith(`${k}=`))?.slice(k.length + 1);
+  const nodeAs = mode => ({ name: 'node-b', mode, probe: { at: new Date(now - 30_000).toISOString(), result: mode === 'ACTIVE' ? 'held' : 'not-held', failures: 0, failingSince: null } });
+  const board = (mode, halt) => boardStatus(b => { if (!halt) b.setState('IDLE'); b.update({ backfill: { complete: true, published: 0, unreadable: 0 }, node: nodeAs(mode), ...(halt ? { halt: { code: 'PUBLICATION_UNCERTAIN', at: '2026-11-23T00:21:05Z' } } : {}) }); }, now);
+  const TEXT = '执行器已停机（PUBLICATION_UNCERTAIN），等 Owner 复位';
+  for (const after of ['ACTIVE', 'STANDBY']) {
+    const calls = [];
+    const run = async argv => {
+      calls.push(argv);
+      if (argv.some(a => a.includes('/rules/branches/main'))) return rulesReply(REQUIRED);
+      if (argv[4] === 'user') return { code: 0, stdout: 'tdoljyj\n' };
+      if (argv[4]?.includes('/statuses?')) return { code: 0, stdout: '[]' };
+      return { code: 0, stdout: '{}' };
+    };
+    const written = () => calls.filter(a => a.includes('POST')).map(a => [a.find(x => x.includes('/statuses/')).split('/').at(-1), field(a, 'state'), field(a, 'context'), field(a, 'description')]);
+    const pulls = [{ pr: 1240, headSha: H(4), eligible: true, hint: null, behindBy: 0 }, { pr: 1241, headSha: H(5), eligible: true, hint: null, behindBy: 0 }];
+    const reporter = new PrStatusReporter({ node: 'node-b', repo: REPO, ghExe: 'C:\\gh.exe', powershellExe: PS, run, clock: () => now, store: await LocalStore.open(path.join(root, `${after}.json`), () => now), notifications: false, writeRequest: async () => {} });
+    await reporter.pass({ pulls, status: board('ACTIVE', true) });
+    assert.deepEqual(written(), [[H(4), 'error', PR_STATUS_CONTEXT, TEXT], [H(5), 'error', PR_STATUS_CONTEXT, TEXT]], after);
+    // Still HALTed, also as a STANDBY: the rows stay. A status that is not fresh is no reset either.
+    now += 60_000;
+    await reporter.pass({ pulls, status: board(after, true) });
+    const stale = board(after, false);
+    now += 60 * 60_000;
+    await reporter.pass({ pulls, status: stale });
+    assert.equal(written().length, 2, `${after}: nothing while HALTed or on a stale status`);
+    // PR 1241 closed meanwhile: forgotten, never written. PR 1240 is still open: its HALT row ends.
+    const open = pulls.slice(0, 1);
+    await reporter.pass({ pulls: open, status: board(after, false) });
+    const rows = written().slice(2);
+    assert.equal(rows.length, 1, `${after}: ${JSON.stringify(rows)}`);
+    assert.deepEqual(rows[0].slice(0, 3), [H(4), 'success', PR_STATUS_CONTEXT], after);
+    assert.equal(parseDutyStatus({ context: PR_STATUS_CONTEXT, description: rows[0][3], created_at: new Date(now).toISOString(), login: 'tdoljyj' }, 'tdoljyj').word, null, 'no duty word');
+    assert.doesNotMatch(rows[0][3], /运行中|排队|已完成|停机|停摆/, 'not read by the panel as progress, HALT or stall');
+    now += 20 * 60_000;
+    await reporter.pass({ pulls: open, status: board(after, false) });
+    assert.equal(written().length, 3, `${after}: once`);
   }
 });

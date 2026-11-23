@@ -814,7 +814,7 @@ v0.6 时没有做的（不在 S1–S14 内，或需要中继步骤一起定）�
 - runner 服务**完全不修改**：安装和卸载都要求它的 SDDL 与安装时记录的一字不差。
 - 真机首装补的两条（2026-10-21，TURING）：
   - `resident\` 根目录给 clued-control 一条只针对本目录的 `0x120080`（READ_CONTROL、SYNCHRONIZE、读属性），不继承。通用助手打开每个输入之前，会先以 READ_CONTROL 打开它的每一级父目录（`FormalPublicBoundaryV2.Parents`），之前根目录不给 clued-control 任何权限，助手在预检里以服务退出码 20 退出。安装计划已包含这一条（`Get-AclPlan ''`）。
-  - v1 的 `C:\ProgramData\CluedIndependentCI\state` 原来给 clued-control 一条 `(A;OICI;0x1301bf;;;clued-control)`，作用于目录本身。v2 助手只允许 clued-control 在 `state\v2` 以下有写权限（v1 允许整个 `state`），它打开 `state\v2` 的父目录 `state` 时，以 `UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED` 拒绝。真机上这条 ACE 已改为仅继承（`OICIIO`，子目录权限不变），另加一条只针对本目录的读和列目录（`0x1200a9`）。改之前，在提权环境下用真实的 `FormalPublicBoundaryV2` 对真实路径跑过一遍，唯一的拒绝就是这一条；改之后通过。代价是 v1 一次性工具不能再在 `state` 本身下新建条目，v1 的角色策略也在 2026-10-21 18:45Z 到期。新主机安装前要满足这条前提：clued-control 在 `state` 本身没有写、删除和改权限的权利。`migrate-acl.ps1` 和 `acl-model.json` 属于 Source 闭包，本次不改。
+  - v1 的 `C:\ProgramData\CluedIndependentCI\state` 原来给 clued-control 一条 `(A;OICI;0x1301bf;;;clued-control)`，作用于目录本身。v2 助手只允许 clued-control 在 `state\v2` 以下有写权限（v1 允许整个 `state`），它打开 `state\v2` 的父目录 `state` 时，以 `UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED` 拒绝。真机上这条 ACE 已改为仅继承（`OICIIO`，子目录权限不变），另加一条只针对本目录的读和列目录（`0x1200a9`）。改之前，在提权环境下用真实的 `FormalPublicBoundaryV2` 对真实路径跑过一遍，唯一的拒绝就是这一条；改之后通过。代价是 v1 一次性工具不能再在 `state` 本身下新建条目，v1 的角色策略也在 2026-10-21 18:45Z 到期。这条由 `install-resident.ps1` 的规则 `state-parent-acl` 保证（r13，Fable 裁定 0e418483）：首装/重装在 `source-v2-acl` 之前跑这一步（`state` 不存在就按上面的终态新建；只有 clued-control 在 `state` 本身能写，就把它那几条改成仅继承并补本目录只读；别的账户能写就以 `STATE_PARENT_ACL_REFUSED` 拒绝），升级时 `verify-resident.ps1` 以 SYSTEM 用同一份规则先收敛再检查（检查项 `state-parent-acl`），手工跑只查不写。`migrate-acl.ps1` 和 `acl-model.json` 属于 Source 闭包，不改：它进场时 `state` 已在，只建 `state\v2` 以下。
   - companion 以 Owner 身份（不提权）运行桥的转交（`relay-public.ps1`，以及 `formal-spool-acl.ps1 -RelayReadOutgoing`）。转交前它要以 READ_CONTROL 打开 spool 的每一级父目录，但 Owner 原来对 `C:\ProgramData\CluedIndependentCI` 和 `formal-spool` 没有任何权限（v1 的转交在每批 UAC 里提权运行）。第一次真实的第 2 段因此以 `RELAY_REFUSED_NO_RETRY`（`PUBLIC_TRANSFER_UNCONFIRMED`）结束。真机上已给这两个目录各加一条 Owner 的 `(A;;0x120080;;;Owner)`，只针对本目录，不继承，不读内容，也没有写权限。之后用 Owner 不提权实测：三处的 `formal-spool-acl.ps1` 转交检查都通过，每一级父目录都能 hold 住。新主机安装前要满足这条前提。
 
 ### 8.4 companion 计划任务
@@ -2692,7 +2692,7 @@ Task `088ab175`；设计 v0.4 §7.1–§7.4、§9 C7、§10 P3。
 ### 30.8 公司节点安装清单里的其他项
 
 - **WSL 主机调优**（Task `f995d832`：P1 sysctl 和 P1b 内存保护）：`linux/host-tuning/README.md`。在公司节点的 Linux root 步骤旁做，不属于 Windows 安装脚本。
-- 新节点的基础目录是前提，本安装不建：`C:\ProgramData\CluedControl`（controller 安装，含载体 runner 的原二进制）和 `C:\ProgramData\CluedIndependentCI\{formal-spool,state}`（`migrate-acl.ps1` 要求已存在）。这些由设计 §10 P2 的节点准备步骤负责，C8 手册要写明。
+- 新节点的基础目录是前提，本安装不建：`C:\ProgramData\CluedControl`（controller 安装，含载体 runner 的原二进制）和 `C:\ProgramData\CluedIndependentCI\formal-spool`（`migrate-acl.ps1` 要求已存在；`state` 不是前提，由本安装的 `state-parent-acl` 建立和收敛）。这些由设计 §10 P2 的节点准备步骤负责，C8 手册要写明。
 - **controller 账户必须有「以服务身份登录」**（`SeServiceLogonRight`，本地安全策略「用户权限分配」）。载体 runner 服务以 `.\clued-control`（档案的 `controllerSid`）运行，交换代理每一段都要启动它；没有这项权限，SCM 拒绝启动（事件 7041），第一次角色探测就 HALT（`ROLE_PROBE_CLEANUP_OR_FACT_UNCONFIRMED`）。DESK-W-591 在 2026-10-30 就是这样停下的。
   - 节点准备时直接授予该账户（例如 `secpol.msc` →「本地策略」→「用户权限分配」→「作为服务登录」）。
   - `install-resident.ps1 -Apply` 在写任何东西之前只读核对：缺这项权限拒绝（`CONTROLLER_SERVICE_LOGON_RIGHT_MISSING`），读不到用户权限也拒绝（`USER_RIGHTS_UNREADABLE`）。
@@ -6017,3 +6017,17 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 不在岗（`duty.onDuty` 为假）的第 10 段不读规则，没有 `appScans`，照旧全跑；
    - Source v2 与常驻同包随第 16 代发出：只有新 Source 没有新常驻时，常驻只读 `rules.appScans`（脚手架期为 null），全跑，方向安全；
    - 测试（修复前必红）：Source `train-sweep.test.mjs` 第 10 段读脚手架规则得 `appScans` []、读不出时没有 `appScans`；`train-rules.test.mjs` 的 `appScansPinned`；常驻 `train-takeover-front.test.mjs` 脚手架规则下没有批次跑第 2–7 段，同一规则回复不完整时全跑，两处不一致时全跑。
+
+## 83. 批次路由戳：落后 main 的 head 按合并基跑，只由批次出生时的一个事实决定（C3 返修方案“戊”，FABLE-c3-batch-rule-channel-20261122 §3，分支 `claude/push-mode-merge-base`）
+
+1. **来源只有一处。** 执行器入队时（`intake` 的 `queue.offer`、`enqueueFront` 的 `queue.offerFront`、`readmit`）调 `executor.mjs#batchRoute()`：列车开着、第 10 段自己现读的生效路由 `trainLast.landing.route` 为 push、且读到的 `trainLast.appScans` 是空数组（三项扫描都已不由本 App 出，§82），才返回 `'push'`，否则 null。结果写进队列行 `current.batchRoute`（只存 `'push'`，没有就是没有），之后不再改；`candidates`、`begin`、批次 subject、`attempt2Subject` 都从行上带出。安装值 `train.landing`、触发器内容都决定不了它。状态板 `train.batchRoute` 只在 `batchRoute()` 为 push 时写，轮询器（`companion-main.mjs` → `status.mjs#pollerLandingOf`）只认这个键；读不到状态即 github-merge。
+2. **读戳的地方。** 引擎 `derive`：subject 带戳且 S = H 才写描述符 `baseRule: 'on-main'`，并把 `batchRoute` 带到返回的批次上；`stageArgs(1|8, batch)` 对带戳批次加 `--batch-route push`，调用器写只建不改的 `batch-route.json`（契约 `clued.independent-ci.stage-batch-route/1`，`batch-route.mjs`），第 1、8 段 `startup.mjs` 读它传给端口：第 1 段 S = H 不要求 `pr.base.sha === job.baseSha` 而必须过 `baseOnMain`，`frontSlot` 只在带戳时转换，`readChangedPaths` 带戳 S = H 接受任意 base；第 8 段带戳且非车头时 main 前进不报 `RESIDENT_BASE_MOVED`。第 2–7 段不读。文件缺失、超长、值不认识、不是精确字节都读成 null，即 origin/main 的尖端规则。
+3. **stopBase。** 执行器恢复无条件调用；`queue.mjs#stopBase` 只跳过“带戳且 S = H”的行，同一旧尖端上的车头行和不带戳的行照旧停（L1）。
+4. **失败去向（B1/B2 返修，FABLE-c3-b1b2-20261122 §2、§3、§5）。** 原则：批次怎么走只由戳决定；出生时不确定就不盖戳、按尖端规则跑；尖端规则下零副作用的停不是终局。
+   - 出生时没盖上戳（重启后本进程还没有第 10 段读数：trainLast 只在内存；某次第 10 段读不到规则；状态板旧了；路由由 github-merge 切到 push 的那一天）：行按尖端规则走，打包阶段或 `stopBase` 以 `RESIDENT_BASE_MOVED` 零副作用停下（stopKind `burned`、stopClass `superseded`）。轮询器（`pr:head:base` 去重）与队列（`row.seen`）都不会再送同一个 head，两道去重不动；改由执行器每轮 `intake()` 之后、路由为 push 时调 `restampStopped`：只挑 S = H、无戳、零副作用停下的行，补盖 `batchRoute: 'push'`、清停止字段、排到队尾 `QUEUED`，队列满就留到下一轮；落盘，每行一条回执 `batch-route-restamped`（pr、headSha、baseSha）。复活后的行带戳，不再满足条件，所以每个 head 至多一次；账本把打包停下的 head 记为未执行释放（SUPERSEDED），照常可跑。升级暂停分支不调。
+   - 不撞第 8 段的结束：停靠批次第 8 段报 `RESIDENT_BASE_MOVED` 时 head 已 started，按失败表（failure-table.json：class `queue`、disposition `burn`）烧掉，行上 stopClass 是 `queue`（不是 CLEAN 时为 `unknown`），不是 `superseded`，不会被复活；不加标记。
+   - 戳的不变量：一个提交上的戳只会从“无”变成 push 一次，且只发生在这个提交零副作用停下、重新排队时（等于重新出生）；push 永不改回。
+   - 出生后路由变回 github-merge：戳不变，第 1 段照过；第 10 段开批与第 8 段落地都读现场路由，落后 head 不落地。
+   - 带戳批次的扫描计划从戳推出（B1）：`localPlan` 对带戳批次（含车头）取 appScans = `[]`，不读 trainLast，所以第 2–7 段到不了，也不会以 `REFS_MAIN_BASE_CHANGED` 结束；回执 `scans-not-app-required` 照写。不带戳的批次不变（读不到就三项全跑）。出生后 Owner 把扫描改回本 App：带戳批次仍不进第 2 段，之后第 8 段与第 10 段按现场规则判；这条路径没实测，不为它加机制。
+   - 待查、不在本次：切换日里 head 已 started、之后因 main 前进被第 8 段 `RESIDENT_BASE_MOVED` 结束的 PR（账本一次性规则不让重跑），属 C5 切换步骤与 C7 验收，由 DESK 登记缺陷行。
+5. **主规则集的认法。** 见 §82 第 4 条：`landingRoute` 与 `rulesetFacts` 共用 `sixPinned`/`pinAllowed`，扫描钉 Actions 时第 10 段读到 push、`appScans` 为空，第 1 条的条件在现场成立；端到端 `train-landing-e2e.test.mjs` 的 E3、E8、E1（读不到状态）锁住。
