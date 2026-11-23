@@ -2177,6 +2177,44 @@ test('run-files 12: a refused file names the suite that runs it or why none does
   assert.match(check.stdout + check.stderr, /migration-verify is a required check, not a suite; its suites: production-schema/);
 });
 
+// 11-22, 11-24 (task 0d2fb345): the entry, named a file clued-cloud refuses, printed nothing and exited 13 ("unsettled
+// top-level await"). The refusal loads check-tests-covered.mjs, which imports this module, while the entry awaited main at
+// top level: each waited for the other. run-files 12 calls runSuite in this process and never saw it; here the entry runs
+// as a process. The refused file a running test imports (main-entry-realpath.test.mjs, imported by local-dev-tools.test.mjs,
+// which clued-cloud runs) was also said to run in no suite.
+test('run-files 13: the entry refuses with its reason and exit 2 a file no suite runs and one only a running test imports', () => {
+  const quote = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const { tests } = JSON.parse(readFileSync(path.join(ROOT, 'scripts/ci/ci-uncovered-tests.json'), 'utf8'));
+  const uncovered = tests.find((entry) => !entry.path.includes('*') && entry.path.endsWith('.test.mjs') && existsSync(path.join(ROOT, entry.path))).path;
+  const imported = 'scripts/ci/main-entry-realpath.test.mjs';
+  const importer = 'apps/clued-cloud/tests/local-dev-tools.test.mjs';
+  assert.match(readFileSync(path.join(ROOT, importer), 'utf8'), /import '\.\.\/\.\.\/\.\.\/scripts\/ci\/main-entry-realpath\.test\.mjs';/);
+  const run = spawnSync(process.execPath, ['scripts/ci/ci-required-selection.mjs', '--run-files', 'clued-cloud', uncovered, imported],
+    { cwd: ROOT, encoding: 'utf8', input: '', timeout: 120_000, env: { ...process.env, GITHUB_ACTIONS: '' } });
+  const output = run.stdout + run.stderr;
+  assert.equal(run.status, 2, output);
+  assert.doesNotMatch(output, /unsettled top-level await/);
+  assert.match(output, new RegExp(`^run-files clued-cloud: suite clued-cloud does not run: ${quote(uncovered)}, ${quote(imported)}$`, 'm'));
+  assert.match(output, new RegExp(`^${quote(uncovered)}: no required suite runs it \\(scripts/ci/ci-uncovered-tests\\.json: `, 'm'));
+  assert.match(output, new RegExp(`^${quote(imported)} runs in clued-cloud imported by ${quote(importer)}: --run-files clued-cloud ${quote(importer)}$`, 'm'));
+});
+
+// What the entry awaits may never settle (a module cycle, a promise nothing resolves): Node then ends the process with the
+// event loop empty. The entry says so and exits 1, not 13 or 0 with nothing said; a result or an error still decides the exit.
+test('the entry reports an exit before its run settled, and exits with the run\'s result or error otherwise', () => {
+  const entry = pathToFileURL(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')).href;
+  const run = (body) => spawnSync(process.execPath, ['--input-type=module', '-e', `import { runEntry } from ${JSON.stringify(entry)};\n${body}`],
+    { encoding: 'utf8', input: '', timeout: 60_000, env: { ...process.env, GITHUB_ACTIONS: '' } });
+  const hung = run('runEntry(() => new Promise(() => {}));');
+  assert.equal(hung.status, 1, hung.stdout + hung.stderr);
+  assert.match(hung.stderr, /^ci-required-selection: ended before the run finished: a step it awaited never settled/m);
+  const refused = run('runEntry(async () => 2);');
+  assert.deepEqual([refused.status, refused.stderr], [2, '']);
+  const failed = run("runEntry(async () => { throw new Error('no such checkout'); });");
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /^ci-required-selection: no such checkout$/m);
+});
+
 // 11-21 17:03: four suite entries on the machine at once (a clued-cloud run, then three resident-node runs within a
 // minute) were read as four running suites. Their logs show two holders and two queued. Entries that start together
 // hold at most two slots; the others wait and say so, and one starts per freed slot.
