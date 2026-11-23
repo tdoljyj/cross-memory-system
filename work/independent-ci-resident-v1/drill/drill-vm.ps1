@@ -3082,9 +3082,25 @@ docker image inspect --format '{{.Id}} {{json .RepoDigests}}' "$1"
 ids=$(docker image ls -aq --no-trunc | sort -u); [ -z "$ids" ] || docker image inspect --format '{{.Id}} {{json .RepoDigests}} os={{.Os}} env={{json .Config.Env}} volumes={{json .Config.Volumes}}' $ids
 '@.Trim()
   $verifyScript = 'systemd-analyze verify "$1"; echo "verify-exit=$?"'
+  # first, with its own 120-second bound (plan 87d330d0 1.3): the instance's boot as read without systemctl -- the compact block (uptime,
+  # systemd's private socket, PID 1's state, available memory, pressure), the last boots, then the journal of the previous boot and of this
+  # one. Taken by boot, never --since a time: the guest's wall clock jumps across a suspend, its monotonic clock does not. Each journal
+  # reading is bounded apart, so one that fails or hangs leaves the next its turn, and killed when it ignores TERM (-k). Together, kill
+  # grace included, they end by 89 s: the 120-second wsl bound throws away all the command printed, so it must never be the one to cut.
+  $bootScript = (@'
+echo "uptime=$(cat /proc/uptime)"
+if [ -S /run/systemd/private ]; then echo private=socket; elif [ -e /run/systemd/private ]; then echo private=not-socket; else echo private=absent; fi
+echo "pid1=$(sed -n 's/^State:[[:space:]]*//p' /proc/1/status)"
+echo "mem=$(free -m | awk '/^Mem:/{print $7}')"
+p=; for r in cpu memory io; do p="$p $r=$(sed -n 's/^some .*avg10=\([0-9.]*\).*/\1/p' /proc/pressure/$r)"; done; echo "psi=${p# }"
+echo '--- list-boots'; timeout -k 3s 10s journalctl --list-boots --no-pager | tail -n 3; s=${PIPESTATUS[0]}; [ "$s" = 0 ] || echo "(list-boots: exit $s)"
+echo '--- boot -1'; timeout -k 3s 35s journalctl -b -1 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot -1: exit $s)"
+echo '--- boot 0'; timeout -k 3s 35s journalctl -b 0 -o short-monotonic --no-pager -n 300; s=$?; [ "$s" = 0 ] || echo "(boot 0: exit $s)"
+'@.Trim() -split '\r?\n') -join '; '
   # every docker command last: a docker.service stuck in activating holds each docker call to its bound, and must not take the readings
   # that do not need docker with it (r8 fixup review F2)
   $c = New-Object Collections.Generic.List[object]
+  $boot = & $one 'guest-boot' $bootScript; $boot['seconds'] = 120; $c.Add($boot)
   foreach ($p in @($Files)) { $c.Add((& $one "file:$p" $fileScript @($p))) }
   $c.Add((& $one 'systemd-failed' 'systemctl --failed --no-pager --plain'))
   $c.Add((& $one 'systemd-is-system-running' 'systemctl is-system-running'))
@@ -3116,7 +3132,8 @@ n="$1"; d=/var/lib/clued-independent-ci-trivy-cache; stat -c '%U:%G:%a:%F' -- "$
   return @([ordered]@{ id = 'trivy-cache-by-rejected-worker'; script = $s; args = [string[]]@($script:ProbeLateInstance) })
 }
 
-# The bounds (r8 fixup review F2), without reading a clock in the guest: one command at most CommandSeconds; once MaxTimeouts commands
+# The bounds (r8 fixup review F2), without reading a clock in the guest: one command at most its own seconds when it names them (guest-boot,
+# 120), else CommandSeconds; once MaxTimeouts commands
 # have run into that bound (a docker stuck in activating, say), no further command is started, so the guest answers well inside
 # Invoke-DrillGuestProbe's 5-minute outer bound with what it read. Spool: the guest file each command's result is appended to as it
 # completes (one JSON line each), read back by the host when the outer bound cuts the probe all the same.
@@ -3148,7 +3165,8 @@ $script:GuestInspect = {
     else {
       try {
         $argv = @('-d', [string]$Plan['distribution'], '-u', 'root', '--exec', '/usr/bin/env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', 'LC_ALL=C', '/bin/bash', '-c', $r.script, '_') + @($r.args)
-        $n = & $native $wslExe $argv $each 'utf-8'
+        $secs = if ([int]$c['seconds'] -gt 0) { [int]$c['seconds'] } else { $each }
+        $n = & $native $wslExe $argv $secs 'utf-8'
         $out = [string]$n.stdout
         $r.exit = [int]$n.exit; $r.stdout = $(if ($out.Length -gt 200000) { $out.Substring(0, 200000) } else { $out }); $r.stderr = [string]$n.stderr
       } catch { $r.error = [string]$_.Exception.Message; if ($r.error -like 'COMMAND_TIMEOUT*') { $timeouts++ } }
