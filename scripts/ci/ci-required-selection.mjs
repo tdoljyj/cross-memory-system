@@ -767,6 +767,9 @@ export function commandArgv(command, options) {
 // suites a shard runs or stops at their first failure (REVIEW-hosted-speed-b3-20261124 H1). A listing command runs only its
 // shard's files, with its own switches, and runs again in full (passesAgain) as that narrower command; its known failures
 // are those of its shard's files, and the shard with its first file also has those of files the command no longer lists.
+// The whole-run-again thresholds (failures, files, time) count that narrower command, never summed across shards
+// (FABLE-hosted-b3-L2-ruling-20261124): what keeps a real failure red -- the run again passes in full, each test that
+// failed passes, the test files match base -- is the same per shard; the summary job reads only each shard's result.
 export function parseShard(text) {
   const match = /^([1-9]\d*)\/([1-9]\d*)$/.exec(String(text ?? ''));
   if (!match || Number(match[1]) > Number(match[2])) throw new Error(`--shard takes i/n with 1 <= i <= n: ${text}`);
