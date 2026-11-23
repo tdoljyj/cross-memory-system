@@ -1164,7 +1164,7 @@ function Test-DrillSelfcheck([string]$Id, $Status, [DateTimeOffset]$Now) {
 
 # Overall: FAIL if any required item is missing or a core item failed, or M5 (the renewal observations) is not PASS; PASS_A when
 # A1-A9 hold and M5 passed; PENDING_PRODUCTION_READBACK while the read-back (-Finalize) has not been judged. The three PASS values are the
-# set publish.mjs seal --drill-receipt takes (test/drill-vm.test.mjs holds them equal); a candidate is shown to the Owner only after its
+# set publish.mjs seal --drill-receipt takes (test/drill-vm-part1.test.mjs holds them equal); a candidate is shown to the Owner only after its
 # -Finalize (Fable renew-key ruling section 4.3: drill -> -Finalize -> accept -> seal). M5 has no "not evaluated" exit (section 2.2): a package
 # without the renewal leaves its observations missing and fails here; NOT_EVALUATED only marks a run that stopped before M5 was read.
 # A candidate (its receipt is what the Owner's acceptance and seal rest on): each of A1-A7 must be true, and A8 true unless the run chose
