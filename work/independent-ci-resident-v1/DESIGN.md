@@ -6008,6 +6008,15 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
    - 只是结束（`frontFailed` 为 false）的车头批次记成回执 `train-front-ended`，不用 `train-front-outcome`（FABLE-r3-batch2-followup §1b）：自动回滚到上一代常驻时，它把每张 `train-front-outcome` 都当失败读，会对没失败的 PR 报 failed；重启（`executor.mjs#trainFrontRecover`）读两种里最新的一张。
    - 扫描段被放弃（第 4、6 段 `BRIDGE_ABANDONED_UNPUBLISHED`，`executor.mjs#abandonScannerStage`）也是车头批次的终局，同样上报（FABLE-r3-batch2-followup §2a）：没有 attempt 2 时，下一次第 10 段被告知批次已结束，不再判 `TRAIN_FRONT_BATCH_RUNNING` 空占合并位。
 4. **推送路由与第 8、10 段用同一条钉法**（独审 R3 问题 B，FABLE-r3-open-items-20261122 §2）：`train-landing.mjs#landingRoute` 认主规则集用 `train-rules.mjs#sixPinned`（单项钉法 `pinAllowed`，`rulesetFacts` 也调它），不再自带“六项都钉本 App”的判断。扫描钉 Actions 时推送路由可以是 push；S 上必须有 Actions 出的三项成功才会落地（`externalRequiredChecks` 把不钉本 App 的必需检查都算作 S 上的外部检查），在跑时 `TRAIN_LANDING_CHECKS_PENDING`，失败时 `TRAIN_LANDING_CHECK_FAILED`。准入、控制对仍只能钉本 App，扫描钉在未知 App 或不钉、六项分在两套规则集里，仍是 `main_ruleset_unidentified`（park）；`kooyumi-train-landed` 仍须钉本 App。常驻 `ruleset-backstop.mjs#rulesFacts` 是另一个包，由 `test/ruleset-backstop.test.mjs` 用同一张表锁住三处结论一致。
+5. **规则读不成六项时也认扫描钉在谁身上**（任务 04f9b91b 准入 p90，FABLE-admission-p90-20261122 §3 方案甲）：脚手架期 main 上生效的只有脚手架规则集（27843120：`kooyumi-work-admission` 钉本 App，三项 `hosted-*` 扫描钉 Actions），六项不齐，`rulesetFacts` 判读不出，第 10 段原先把 `rules` 记成 null，`appScans` 跟着缺失，每个批次都白跑第 2–7 段（现场 13–15 分钟），后面的 head 排在后面等准入。改法：
+   - `train-rules.mjs#appScansPinned(rules, appId)`：任一 `required_status_checks` 规则里钉到本 App 的扫描，按 `RULE_SCAN_NAMES` 顺序，和六项齐不齐无关；`rulesetFacts` 的 `appScans` 也由它算，两者在规则读得出时恒相等。读不懂（不是列表、规则形状不对、没有 `required_status_checks` 规则、某项扫描的条目没钉 App）时为 null，不当作 []；
+   - 第 10 段（`train-maintenance.mjs`）在回复完整时先算 `appScans`，再判六项；读失败或回复不完整时为 null。事实顶层带 `appScans`（`train-facts.mjs#trainFacts`，`rules` 为 null 时也带），`rules.appScans` 照旧保留给旧常驻读；
+   - 常驻 `train.mjs#trainSummary` 先读顶层 `appScans`，没有再读 `rules.appScans`；两处都有但不一致时都不认，全跑；
+   - 只钉了部分扫描（例如脚手架加一条 trivy 钉本 App）：只跑钉到的那几项；
+   - 第 8 段当场读规则核扫描（第 3 条）不变；脚手架期第 8 段本就读不出六项、不发绿，跳过扫描不丢任何东西。将来扫描钉回本 App，下一次第 10 段读到就恢复全跑；
+   - 不在岗（`duty.onDuty` 为假）的第 10 段不读规则，没有 `appScans`，照旧全跑；
+   - Source v2 与常驻同包随第 16 代发出：只有新 Source 没有新常驻时，常驻只读 `rules.appScans`（脚手架期为 null），全跑，方向安全；
+   - 测试（修复前必红）：Source `train-sweep.test.mjs` 第 10 段读脚手架规则得 `appScans` []、读不出时没有 `appScans`；`train-rules.test.mjs` 的 `appScansPinned`；常驻 `train-takeover-front.test.mjs` 脚手架规则下没有批次跑第 2–7 段，同一规则回复不完整时全跑，两处不一致时全跑。
 
 ## 83. 批次路由戳：落后 main 的 head 按合并基跑，只由批次出生时的一个事实决定（C3 返修方案“戊”，FABLE-c3-batch-rule-channel-20261122 §3，分支 `claude/push-mode-merge-base`）
 
