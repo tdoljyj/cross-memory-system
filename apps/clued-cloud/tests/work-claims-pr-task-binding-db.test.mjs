@@ -124,15 +124,17 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
 
     await t.test('historical closed PR imports identity as unknown and cannot keep a new PR queue slot', async () => {
       const read = await resolve('reader', 90, historicalHead);
-      assert.equal(read.binding_status, 'no_live_claim'); assert.equal(read.reason, 'pr_task_binding_unknown');
-      assert.equal(read.task_id, historical.claim.task_id); assert.equal(read.scope, 'global'); assert.equal(read.claim, null);
+      // 'unknown' counts as open: the read-only answer reports the holder's exact head grant, without binding or activating.
+      assert.equal(read.binding_status, 'bound'); assert.equal(read.auto_bound, false);
+      assert.equal(read.task_id, historical.claim.task_id); assert.equal(read.scope, 'global');
+      assert.equal(read.claim.claim_id, historical.claim.claim_id);
       const before = await counts();
       const observing = await resolve('ci', 90, historicalHead, { read_only: true });
-      assert.equal(observing.reason, 'pr_task_binding_unknown'); assert.equal(observing.auto_bound, false);
+      assert.equal(observing.binding_status, 'bound'); assert.equal(observing.auto_bound, false); assert.equal(observing.receipt_id, null);
       assert.deepEqual(await counts(), before);
       committed(await authorize(historical, historicalHead, 90));
-      assert.equal((await resolve('reader', 90, historicalHead)).reason, 'pr_task_binding_unknown',
-        'holder head authorization alone does not prove a historical PR is open');
+      assert.equal((await resolve('reader', 90, historicalHead)).binding_status, 'bound',
+        'read-only answer reports the authorization; only the CI write resolve activates the relation');
       const currentHead = 'd'.repeat(40);
       committed(await authorize(historical, currentHead, 91));
       assert.equal((await resolve('ci', 91, currentHead)).binding_status, 'bound');
@@ -186,10 +188,10 @@ test('PR binding is stable Task identity, derived current claims and holder-auth
       assert.deepEqual(await counts(), beforeInvalid, 'invalid holder proof cannot create a relation or meter a head');
       committed(await authorize(r, head, 2)); committed(await authorize(r, head, 3));
       const knownUnknown = await resolve('reader', 2, head);
-      assert.equal(knownUnknown.reason, 'pr_task_binding_unknown'); assert.equal(knownUnknown.task_id, r.claim.task_id);
-      assert.equal(knownUnknown.claim, null, 'atomic Task identity is not a holder assertion that the PR is open');
+      assert.equal(knownUnknown.binding_status, 'bound'); assert.equal(knownUnknown.task_id, r.claim.task_id);
+      assert.equal(knownUnknown.claim.claim_id, r.claim.claim_id, 'unknown counts as open: the live claim is reported');
       const knownObserve = await resolve('ci', 2, head, { read_only: true });
-      assert.equal(knownObserve.reason, 'pr_task_binding_unknown'); assert.equal(knownObserve.auto_bound, false);
+      assert.equal(knownObserve.binding_status, 'bound'); assert.equal(knownObserve.auto_bound, false);
       const knownOpen = await resolve('ci', 2, head);
       assert.equal(knownOpen.binding_status, 'bound'); assert.equal(knownOpen.auto_bound, true); assert.ok(knownOpen.receipt_id);
       assert.equal((await resolve('ci', 3, head)).binding_status, 'bound');

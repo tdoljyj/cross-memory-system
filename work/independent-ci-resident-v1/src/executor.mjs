@@ -349,6 +349,11 @@ export const BATCH_SUPERSEDED = 'BATCH_SUPERSEDED';
 // The code of a new-trigger notice whose protected observation found changed claim/authorization conditions after a refusal (recheckClaims; field defect
 // 2026-11-08, PR #1039): the PR page says the head is evaluated again now, not after the cool-down.
 export const CLAIM_CHANGED = 'CLAIM_CHANGED';
+// Task 30643342: a stage-10 run's binding observations are used while the run ended at most this long ago; an observation counts as
+// one of that run when it was stamped no earlier than the run's start less this margin (the stage's clock may lag the executor's a
+// little) and no later than the run's end.
+export const CLAIM_OBSERVATION_FRESH_MS = 30_000;
+export const CLAIM_OBSERVATION_SKEW_MS = 30_000;
 // What one batch usually takes (design v0.5 §1: 17.5 to 24 minutes): only the status board's estimate.
 export const ETA_BATCH_MS = 22 * 60_000;
 // Queue rows looked at in one tick (an ignored or deferred row does not end the tick; this bounds the work).
@@ -2582,6 +2587,7 @@ export class ResidentExecutor {
     let r;
     const trainFrom = this.clock();
     try { r = await this.engine.runTrainStage(mode, input); } catch (error) { r = { ok: false, code: codeOf(error), proof: null }; }
+    const trainEnd = this.clock();
     const proven = r?.proof?.windowsTreeZero === true && r?.proof?.serviceOriginalStopped === true;
     const o = r?.outcome ?? null;
     const quiet = o === null || (o.sideEffects === 0 && o.mayHavePublished === false);
@@ -2589,7 +2595,7 @@ export class ResidentExecutor {
     const effects = acting && r?.ok === true && o?.status === 'TRAIN_FACTS' && Number.isSafeInteger(o.sideEffects) && o.sideEffects >= 0;
     const facts = r?.ok === true && (quiet || effects) ? trainSummary(r.train) : null;
     const summary = facts && facts.mode === mode ? facts : null;
-    // A view for the upgrade precheck only (defect 15894c2a); a run that read no nodes keeps the older list, whose `at` ages.
+    // A view for the fleet-lag alert and the landing precheck only (defect 15894c2a); a run that read no nodes keeps the older list, whose `at` ages.
     const nodesView = summary ? trainNodesView(r.train, this.policy.ciSourceManifestSha256) : null;
     if (nodesView) this.trainNodes = nodesView;
     this.report(s => s.noteTrain?.({ startedAt: trainFrom, endedAt: this.clock(), mode, sweep: summary?.sweep ?? null }));
@@ -2597,7 +2603,7 @@ export class ResidentExecutor {
     const clean = proven && ((quiet && (r?.ok === true || failureCode === 'TRAIN_STAGE_REFUSED' || (o !== null && ['BLOCKED', 'TRAIN_FACTS'].includes(o.status))
       || classifyFailure(failureCode, { ...r.proof, ...TRAIN_LINUX_PROOF }, TRAIN_STAGE).klass === 'CLEAN')) || (effects && summary !== null));
     const haltCode = !proven ? 'TRAIN_STAGE_CLEANUP_UNCONFIRMED' : 'TRAIN_STAGE_OUTCOME_UNCONFIRMED';
-    if (!clean || !summary) this.claimBindingObservations = new Map();
+    if (!clean || !summary) { this.claimBindingObservations = new Map(); this.claimBindingRunEnd = null; }
     if (!clean) await this.haltWith(haltCode, { phase: 'train-maintenance', intentSeq: intent.seq, failureCode, sideEffects: o?.sideEffects ?? null });
     const base = { intentSeq: intent.seq, runId: TRAIN_RUN_ID.test(r?.runId ?? '') ? r.runId : null, mode: train.enabled, ok: summary !== null, failureCode,
       wouldDo: summary?.wouldDo ?? null, frontPr: summary?.front?.pr ?? null, mainSha: summary?.mainSha ?? null, wouldRevokeCount: summary?.wouldRevokeCount ?? null };
@@ -2611,11 +2617,15 @@ export class ResidentExecutor {
       revokeHeadRequestId: input.revokeHeadRequestId } : base);
     if (summary) {
       if (clean) {
+        // Task 30643342 (§1.5-3, decided by T3c): every observation is of this very run, so it is fresh when it was made while the run
+        // ran, measured against this run's end, never against each observation's own age: the observation loop alone may take
+        // 30 seconds, and the PR observed first (the one updated last, the likeliest to wait) used to be dropped as too old.
         this.claimBindingObservations = new Map();
+        this.claimBindingRunEnd = trainEnd;
         for (const candidate of summary.claimBindings ?? []) {
           const b = claimBindingObservationOf(candidate), at = Date.parse(b?.observedAt ?? '');
           if (b && b.repository === this.policy.repo && b.targetBranch === this.policy.baseBranch
-            && b.sourceManifestSha256 === this.policy.ciSourceManifestSha256 && at <= this.clock() && this.clock() - at <= 30_000)
+            && b.sourceManifestSha256 === this.policy.ciSourceManifestSha256 && at <= trainEnd && at >= trainFrom - CLAIM_OBSERVATION_SKEW_MS)
             this.claimBindingObservations.set(`${b.pr}:${b.headSha}:${b.baseSha}`, b);
         }
         await this.recheckClaims(this.clock());
@@ -3415,10 +3425,12 @@ export class ResidentExecutor {
     }
   }
 
+  // The observations of the last clean stage-10 run, while that run ended at most CLAIM_OBSERVATION_FRESH_MS ago (Task 30643342: the
+  // run's end, not each observation's own age, is what ages).
   currentClaimBinding(subject) {
     const b = this.claimBindingObservations?.get(`${subject.pr}:${subject.headSha}:${subject.baseSha}`);
-    const at = Date.parse(b?.observedAt ?? '');
-    return b && at <= this.clock() && this.clock() - at <= 30_000 ? b : null;
+    const end = this.claimBindingRunEnd ?? null;
+    return b && Number.isFinite(end) && end <= this.clock() && this.clock() - end <= CLAIM_OBSERVATION_FRESH_MS ? b : null;
   }
 
   // Pre-checks that need no secret and no network. Anything that fails here leaves the ledger untouched.

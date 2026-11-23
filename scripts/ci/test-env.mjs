@@ -33,6 +33,10 @@ export const TEST_ENV_RULES = Object.freeze({
     // CI's job storage (ci-temporary-storage) and toolchain settings, and the run's base commit.
     'PYTHONDONTWRITEBYTECODE', 'PYTHONPYCACHEPREFIX', 'PYTHONUTF8', 'PYTHONIOENCODING', 'WRANGLER_LOG_PATH', 'PROMPTFOO_CONFIG_DIR',
     'CLUED_CI_NPM_CACHE', 'CI_BASE_SHA',
+    // Windows PowerShell's module analysis cache location: the hosted windows image keeps a warmed cache there (runner-images
+    // Configure-PowerShell.ps1); without it every 5.1 process spends about 20 s analysing the modules again. A path, not a
+    // credential.
+    'PSModuleAnalysisCachePath',
     // The job installed the application dependencies a selected suite declares (ci-required-selection APP_DEPS_MARKER): a
     // test that needs them fails rather than skips when this is set and they are missing. A marker, not a credential.
     'CLUED_CI_APP_DEPS',

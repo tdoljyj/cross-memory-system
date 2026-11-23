@@ -1056,6 +1056,20 @@ test("under Actions a suite child gets the fake token, not the job's, and keeps 
   assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
 });
 
+// Task 3435f8bf: the hosted windows image points PSModuleAnalysisCachePath at a warmed Windows PowerShell module analysis
+// cache; a suite child without it rebuilds the cache, about 20 s more for every powershell.exe. It is passed as given, in any
+// case of its name.
+test('a suite child keeps the PowerShell module analysis cache path, in any case of its name', () => {
+  const cache = 'C:\PSModuleAnalysisCachePath\ModuleAnalysisCache';
+  for (const name of ['PSModuleAnalysisCachePath', 'psmoduleanalysiscachepath', 'PSMODULEANALYSISCACHEPATH']) {
+    const seen = [];
+    const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+    assert.equal(executeSuite('retrigger-counter', { root: ROOT, env: { [name]: cache, CI_BASE_SHA: 'b', PATH: '/bin' }, spawn, log }), 0);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0][name], cache, `${name} reaches the suite child unchanged`);
+  }
+});
+
 // Codex review of 2ee162c2, medium 5: a proxy URL may carry a user name and password; such a variable is not passed.
 test('a proxy variable whose URL carries a user name or password is not passed; one without is', () => {
   const kept = selection.keptVariables({ HTTPS_PROXY: 'http://user:secret@proxy:8080', http_proxy: 'http://proxy:3128',
