@@ -31,10 +31,11 @@
 //     run_<suite>=true|false to GITHUB_OUTPUT. Only
 //     the suites declared for the host's platform (SUITE_PLATFORMS) are listed. With --root, the suites the
 //     checkout's own selector adds to the check follow, by its own platform table (selectWithCandidate).
-//   node scripts/ci/ci-required-selection.mjs --run-selected <check> [--root <checkout>]
+//   node scripts/ci/ci-required-selection.mjs --run-selected <check> [--root <checkout>] [--shard <i>/<n>]
 //     selects as --check does, then runs every selected suite in turn and fails
 //     when any of them fails: one job step, the same on Linux and on Windows
-//     (the ci-suites-windows job; resident ADR 0032).
+//     (the ci-suites-windows job; resident ADR 0032). With --shard, only the
+//     i-th of n parts of that plan (parseShard); only in a CI job.
 //   node scripts/ci/ci-required-selection.mjs --run <suite> [--root <checkout>]
 //     runs one suite's commands (SUITE_COMMANDS) in the checkout at --root.
 //   node scripts/ci/ci-required-selection.mjs --write-known <suite> [--keep] [--root <checkout>]
@@ -736,6 +737,38 @@ export function commandArgv(command, options) {
   return only;
 }
 
+// --shard i/n (PLAN-hosted-windows-speed-20261123 block 3): n jobs split one --run-selected between them. The plan is cut into
+// units: each test file operand of a command that lists its test files (node --test, python -m unittest <files>), as
+// --run-files recognises one (filterCommand), and every other command whole (unittest discover, drills, check scripts, npm).
+// A unit's global number is the suite's place in the selection plus the unit's place in the suite's plan; shard i runs the
+// units whose number mod n is i - 1, so the shards together run every unit once and n = 1 runs today's plan command for
+// command. The place in the selection, not a running count across suites, keeps the shards agreeing when one stops a suite
+// at its first failure. A listing command runs only its shard's files, with its own switches, and runs again in full
+// (passesAgain) as that narrower command; its known failures are those of its shard's files.
+export function parseShard(text) {
+  const match = /^([1-9]\d*)\/([1-9]\d*)$/.exec(String(text ?? ''));
+  if (!match || Number(match[1]) > Number(match[2])) throw new Error(`--shard takes i/n with 1 <= i <= n: ${text}`);
+  return { index: Number(match[1]), total: Number(match[2]) };
+}
+
+// The part of one expanded command a shard runs: argv null when none; units, the units the command counts for; files, the
+// repository paths of the shard's test files (null for a command that runs whole).
+export function shardCommand(command, argv, { index, total }, position) {
+  const mine = (unit) => (position + unit) % total === index - 1;
+  const testAt = argv.indexOf('--test');
+  const unittestAt = argv.findIndex((arg, i) => arg === 'unittest' && argv[i - 1] === '-m');
+  const listing = testAt >= 0 || (unittestAt >= 0 && argv[unittestAt + 1] !== 'discover');
+  const { accepts } = listing ? filterCommand(command, argv, new Set()) : { accepts: [] };
+  if (accepts.length > 0 && new Set(accepts).size === accepts.length) {
+    const files = accepts.filter((file, unit) => mine(unit));
+    if (files.length === 0) return { argv: null, units: accepts.length, files: null };
+    const { runs, matched } = filterCommand(command, argv, new Set(files));
+    if (runs.length !== 1 || matched.length !== files.length) throw new Error(`cannot shard (${command.cwd}) ${argv.join(' ')}`);
+    return { argv: runs[0], units: accepts.length, files: new Set(files) };
+  }
+  return { argv: mine(0) ? argv : null, units: 1, files: null };
+}
+
 // Gap A (FABLE r8 B2): the trusted list first, in its order and with its policy, even if the PR removes or replaces a
 // command; then the commands the candidate's selector adds to the suite. Reading the candidate is lazy: only after the
 // baseline commands have run, and always when the candidate's selector is another file: its bytes say nothing about the
@@ -919,7 +952,7 @@ async function whereFilesRun(files, root) {
   }
 }
 
-export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null } = {}) {
+export async function runSuite(id, { root, env = process.env, log = console.log, captureKnown = false, keep = false, files = null, shard = null } = {}) {
   // A suite this file does not have may be one the candidate adds (requiredCommands reads it); not in this file's own checkout.
   if (!Object.hasOwn(SUITE_COMMANDS, id) && (files || captureKnown || !candidateSelectorOf(root, fileURLToPath(import.meta.url), id))) {
     throw new Error(`unknown suite: ${id}`);
@@ -940,7 +973,12 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
   if (captureKnown && !SUITE_COMMANDS[id].some((command) => command.known)) {
     throw new Error(`suite ${id} has no known-failure command`);
   }
-  if (env.GITHUB_ACTIONS === 'true') return executeSuite(id, { root, env, log, captureKnown, keep });
+  if (env.GITHUB_ACTIONS === 'true') return executeSuite(id, { root, env, log, captureKnown, keep, ...(shard ? { shard } : {}) });
+  // The local suite slot runs the suite whole: a shard of it would pass having run a part.
+  if (shard) {
+    log(`${id}: --shard runs only in a CI job (GITHUB_ACTIONS=true); run locally with --run or --run-files`);
+    return 2;
+  }
   // The application's dependencies the CI job installs: a local run in a checkout without them (a fresh worktree) links
   // local-verify's store first, outside the slot (R2 review 11-21: a targeted database test failed on its first import).
   // Loaded only for a checkout that has the application and lacks its dependencies: every other run keeps its startup.
@@ -1105,13 +1143,17 @@ function reportFlaky(id, failures, { env, log }) {
 // The CI process or the already guarded worker executes the suite here.
 export function executeSuite(id, { root, env = process.env, spawn = spawnSync, log = console.log, platform = process.platform,
   captureKnown = false, keep = false, files = null, known = null, readReportFile = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : ''),
-  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS } = {}) {
+  rerunMaxElapsedMs = RERUN_MAX_ELAPSED_MS, rerunMinTimeoutMs = RERUN_MIN_TIMEOUT_MS, shard = null } = {}) {
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${id}::${host.error}`);
     return 2;
   }
+  if (shard && (files || captureKnown)) throw new Error('--shard splits a suite run, not --run-files or --write-known');
   if (captureKnown) return writeKnown(id, root, env, keep);
+  // The global number of this suite's next unit (parseShard).
+  let position = shard ? shard.offset : 0;
+  if (shard) log(`${id}: shard ${shard.index}/${shard.total}, units numbered from ${position}`);
   const skipSwitches = hostLacksSwitches(host.lacks);
   if (skipSwitches.length > 0) log(`${id}: ${hostLacksNote(host.lacks)}`);
   const report = path.join(env.RUNNER_TEMP || os.tmpdir(), `${id}-report.json`);
@@ -1132,7 +1174,15 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
   }
   for (const { command, argv: planned } of steps) {
     const cwd = path.join(root, command.cwd);
-    const given = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report, hosted: env.GITHUB_ACTIONS === 'true' });
+    const full = planned ?? commandArgv(command, { cwd, root, base: env.CI_BASE_SHA, report, hosted: env.GITHUB_ACTIONS === 'true' });
+    let given = full;
+    let shardFiles = null;
+    if (shard) {
+      const part = shardCommand(command, full, shard, position);
+      position += part.units;
+      if (!part.argv) continue;
+      ({ argv: given, files: shardFiles } = part);
+    }
     // What this host lacks is part of the command itself: the first run and the run again in full (passesAgain) both skip it.
     const plain = skipSwitches.length > 0 && given[0] === 'node' && given[1] === '--test'
       ? [given[0], given[1], ...skipSwitches, ...given.slice(2)] : given;
@@ -1183,7 +1233,8 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
       }
     };
     if (command.known) {
-      const list = ((known ?? readKnownFailures())[command.known] ?? []).filter((entry) => !named || named.has(entry.file));
+      const list = ((known ?? readKnownFailures())[command.known] ?? [])
+        .filter((entry) => (!named || named.has(entry.file)) && (!shardFiles || shardFiles.has(entry.file)));
       const text = readReportFile(path.join(reportDir, 'failures.jsonl'));
       rmSync(reportDir, { recursive: true, force: true });
       const status = result.signal ? 128 : result.status;
@@ -1235,7 +1286,7 @@ export function executeSuite(id, { root, env = process.env, spawn = spawnSync, l
 // one fails (so the summary names each); any failure fails the step, and with
 // it the check. Nothing selected is a pass: the change touches no suite of
 // this platform.
-export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {} } = {}) {
+export async function runSelected(suites, { root, env = process.env, run = runSuite, log = console.log, summary = () => {}, shard = null } = {}) {
   const host = hostLacks(env);
   if (host.error) {
     log(`::error title=${HOST_LACKS_VARIABLE}::${host.error}`);
@@ -1248,10 +1299,11 @@ export async function runSelected(suites, { root, env = process.env, run = runSu
   }
   const failed = [];
   let timedOut = false;
-  for (const id of suites) {
+  if (shard) summary(`- shard ${shard.index}/${shard.total}\n`);
+  for (const [offset, id] of suites.entries()) {
     let status = 1;
     try {
-      status = await run(id, { root, env, log });
+      status = await run(id, shard ? { root, env, log, shard: { index: shard.index, total: shard.total, offset } } : { root, env, log });
     } catch (error) {
       // e.g. a candidate selector whose command list cannot be read: this suite fails, the next ones still run
       log(`::error title=${id}::${error.message}`);
@@ -1309,7 +1361,7 @@ function writeKnown(id, root, env, keep = false) {
   return unexplained ? 1 : 0;
 }
 
-const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>]';
+const USAGE = 'usage: node scripts/ci/ci-required-selection.mjs --check <ci-suites|clued-cloud-tests|migration-verify> [--root <checkout>] | --run-selected <check> [--root <checkout>] [--shard <i>/<n>] | --run <suite> [--root <checkout>] | --run-files <suite> <file> [<file>...] [--root <checkout>]';
 export const LOCAL_TIMEOUT_EXIT = 75;
 
 async function main(argv, env = process.env) {
@@ -1324,6 +1376,24 @@ async function main(argv, env = process.env) {
     console.log(`Exit codes: 1 for a suite failure; ${LOCAL_TIMEOUT_EXIT} for a local suite slot timeout (waiting or holding).`);
     console.log('--run-files runs only the named test files (repository paths) with the suite command CI runs, takes a local slot, and is refused under GITHUB_ACTIONS (exit 2): its result is not a suite verdict.');
     return 0;
+  }
+  const shardIndex = argv.indexOf('--shard');
+  let shard = null;
+  if (shardIndex >= 0) {
+    try {
+      shard = parseShard(argv[shardIndex + 1]);
+    } catch (error) {
+      console.error(`${error.message}\n${USAGE}`);
+      return 2;
+    }
+    if (!argv.includes('--run-selected')) {
+      console.error(`--shard goes with --run-selected only\n${USAGE}`);
+      return 2;
+    }
+    if (env.GITHUB_ACTIONS !== 'true') {
+      console.error('--shard runs only in a CI job (GITHUB_ACTIONS=true); run locally with --run or --run-files');
+      return 2;
+    }
   }
   const filesIndex = argv.indexOf('--run-files');
   if (filesIndex >= 0) {
@@ -1384,7 +1454,7 @@ async function main(argv, env = process.env) {
   const summary = (text) => { if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, text); };
   summary(`### ${check}\n\n${selection.reason}.\n\nSuites (${platform}): ${selection.suites.map((id) => `\`${id}\``).join(', ') || 'none (not affected)'}\n`);
   if (selectedIndex < 0) return error ? 1 : 0;
-  const status = await runSelected(selection.suites, { root, env, summary });
+  const status = await runSelected(selection.suites, { root, env, summary, ...(shard ? { shard } : {}) });
   return status !== 0 ? status : error ? 1 : 0;
 }
 
