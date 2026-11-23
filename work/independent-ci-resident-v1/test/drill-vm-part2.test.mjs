@@ -16,6 +16,26 @@ import {
   guestWorkDir, evidence, verdictOf, pass, finalize
 } from './drill-vm-fixtures.mjs';
 
+test('seal takes the candidate receipt drill-vm.ps1 finalized and refuses the one not read back', opts, async t => {
+  const w = await sealWorld(t);
+  const pkg = { tarSha256: w.request.archive_sha256, firstInstallKitSha256: w.request.firstInstallKitSha256 };
+  assert.equal(w.request.ciSourceManifestSha256, S);
+  const cand = m5DrillReceipt('seal-cand', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], candidate: true, version: w.version, pkg });
+  const pending = path.join(w.d, 'receipt-pending.json'); fs.writeFileSync(pending, JSON.stringify(cand));
+  const before = fs.readFileSync(w.index);
+  await assert.rejects(w.sealIt(pending), { code: 'SEAL_DRILL_RECEIPT_NOT_PASS' });
+  assert.deepEqual(fs.readFileSync(w.index), before, 'refused before anything is written');
+  // an accepted version's re-drill (not a candidate), read back and PASS, is not a candidate's receipt
+  const reDrill = finalize('seal-redrill-finalize', m5DrillReceipt('seal-redrill', RENEWAL_3BC571A6, { checker: 'PASS', missing: [], version: w.version, pkg }));
+  assert.equal(reDrill.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  await assert.rejects(w.sealIt(reDrill.receiptFile), { code: 'SEAL_DRILL_RECEIPT_NOT_A_CANDIDATE' });
+  const done = finalize('seal-cand-finalize', cand, notTheDrillsSource());
+  assert.equal(done.output.conclusion, 'PASS_A_PER_NODE_STEPS_REMAIN');
+  const r = await w.sealIt(done.receiptFile);
+  assert.equal(r.status, 'FLEET_ACCEPTANCE_SEALED');
+  assert.equal(r.drill, `PASS_A_PER_NODE_STEPS_REMAIN receipt ${sha(fs.readFileSync(done.receiptFile))}`);
+});
+
 // Integration of branch one (seal's main-ancestor gate) and branch two (three PASS conclusions): each PASS receipt is still stopped by the
 // gate while the candidate's commit is not on main -- the index untouched -- and seals with its value as it is once the commit is on main.
 test('each of the three PASS drill receipts is refused off main and seals on main (merged gate and conclusions)', opts, async t => {

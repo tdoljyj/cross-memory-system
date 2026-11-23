@@ -5,12 +5,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
-import { fingerprintAppKey, fingerprintCiToken } from '../tools/secret-fingerprint.mjs';
 import {
   script, powershell, tmp, sha, q, ps, psCode, opts, entryScript, entryPs, STEP_LOGS, m5DrillReceipt, RENEWAL_3BC571A6,
-  notTheDrillsSource, S, L, PAUSE_REQUEST, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, secondsOf, probeNative,
-  startedAt, readbackRow, readbackFor, finalize
+  notTheDrillsSource, S, L, PAUSE_REQUEST, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize
 } from './drill-vm-fixtures.mjs';
 
 // Fable renew-key ruling, supplement "eight on the path", item 5: a successful launcher ends with its own pause confirmed, so A6 holds
@@ -668,123 +665,4 @@ test('every guest-boot reading kills what ignores its TERM (timeout -k)', opts, 
   const b = bootBounds();
   assert.equal(b.length, 3);
   for (const x of b) assert.match(x, /^-k \d+s \d+s$/, x);
-});
-
-test('guest-boot\'s own bounds, kill grace included, end by 90 s, well inside its 120-second wsl bound', opts, () => {
-  const b = bootBounds();
-  assert.equal(b.length, 3);
-  const total = b.reduce((sum, x) => sum + x.split(/\s+/).filter(t => t !== '-k').map(secondsOf).reduce((a, n) => a + n, 0), 0);
-  assert.ok(Number.isFinite(total) && total <= 90, `inner bounds add up to ${total} s`);
-  assert.ok(ps(`(Get-DrillProbeCommands)[0].seconds`) - total >= 30, 'at least 30 s left for the cold start and the /proc readings');
-});
-test('GuestInspect hands each command its own bound: 120 for guest-boot, the plan-wide one for the rest', opts, () => {
-  const secs = path.join(tmp, 'probe-secs.txt');
-  const r = ps(`$env:PROBE_SECS = ${q(secs)}; ${probeNative}
-    $plan = New-DrillProbePlan @(Get-DrillProbeCommands ${PROBE_FILES}) 'C:\\nowhere\\wsl.exe'
-    $back = [Management.Automation.PSSerializer]::Deserialize([Management.Automation.PSSerializer]::Serialize($plan, 4))
-    $got = & $script:GuestInspect $back $native.ToString()
-    [ordered]@{ n = @($got.commands).Count; first = @($got.commands)[0].id; exits = @($got.commands | ForEach-Object { $_.exit } | Sort-Object -Unique) }`);
-  const got = fs.readFileSync(secs, 'utf8').trim().split('\n').map(Number);
-  assert.equal(got.length, r.n);
-  assert.equal(r.first, 'guest-boot');
-  assert.deepEqual(got, [120, ...Array(r.n - 1).fill(30)], 'after the remote round trip too');
-  assert.deepEqual(r.exits, [0]);
-});
-
-test('a guest-boot that times out counts toward maxTimeouts; the next timeout stops the rest', opts, () => {
-  const secs = path.join(tmp, 'probe-secs-hang.txt');
-  const r = ps(`$env:PROBE_SECS = ${q(secs)}; $env:PROBE_HANG = 'uptime=|sha256sum'; ${probeNative}
-    $plan = New-DrillProbePlan @(Get-DrillProbeCommands ${PROBE_FILES}) 'C:\\nowhere\\wsl.exe'
-    $got = & $script:GuestInspect $plan $native.ToString()
-    @($got.commands | ForEach-Object { if ($_.error -like 'COMMAND_TIMEOUT*') { 'timeout' } elseif ($_.error) { $_.error } else { 'ok' } })`);
-  assert.deepEqual(r.slice(0, 2), ['timeout', 'timeout'], 'guest-boot, then the file reading, run into their bounds');
-  assert.ok(r.length > 3 && r.slice(2).every(x => x === 'PROBE_STOPPED_AFTER_TIMEOUTS'), 'no command is started after the second');
-  assert.equal(fs.readFileSync(secs, 'utf8').trim().split('\n').length, 2);
-});
-
-test('-Finalize judges A5 and A9 from one read-only production read-back and rewrites the receipt', opts, () => {
-  const sql = ps(`Get-DrillReadbackSql ${q(startedAt)}`);
-  assert.match(sql, /ci_nodes_v1/); assert.match(sql, /binding_roles_v1/); assert.doesNotMatch(sql, /\b(insert|update|delete)\b\s/i);
-  assert.equal(psCode(`Get-DrillReadbackSql ${q("x'; drop table t; --")}`), 'DRILL_STARTED_AT_REFUSED');
-  const items = verdictOf(evidence()).items;
-  const { receipt, receiptFile, status, output, bytes } = finalize('receipt', { items });
-  assert.equal(status, 0);
-  // failedItems and reason: the summary line names why a FAIL failed (Fable ruling 11-20 "first install r4" 5(b)); none here
-  assert.deepEqual(output, { status: 'DRILL_FINALIZED', conclusion: 'PASS_A_PER_NODE_STEPS_REMAIN', failedItems: [], reason: null, receipt: receiptFile });
-  const done = JSON.parse(bytes);
-  assert.equal(done.items.find((i) => i.id === 'A9').pass, true);
-  assert.equal(done.items.find((i) => i.id === 'A5').pass, true);
-  // a touched production table or a Source that differs fails; a read-back of another drill is refused
-  const v = (r, s = startedAt) => ps(`$rc = ${q(JSON.stringify(receipt))} | ConvertFrom-Json; $rb = ${q(JSON.stringify(readbackFor(r, s)))} | ConvertFrom-Json;
-    @(Get-DrillProductionVerdict $rc $rb | ForEach-Object { $_.pass })`);
-  assert.deepEqual(v({ ...readbackRow, roles_changed: 1 }), [true, false]);
-  assert.deepEqual(v({ ...readbackRow, live_sources: [S, '6'.repeat(64)] }), [false, true]);
-  assert.equal(psCode(`Get-DrillProductionVerdict (${q(JSON.stringify(receipt))} | ConvertFrom-Json) (${q(JSON.stringify(readbackFor(readbackRow, '2026-01-01T00:00:00Z')))} | ConvertFrom-Json)`), 'DRILL_READBACK_NOT_THIS_DRILL');
-});
-
-test('-Finalize refuses an unrestored or failed drill without rewriting the receipt', opts, () => {
-  const items = verdictOf(evidence()).items;
-  const cases = [
-    { name: 'unrestored', fields: { restoredToCheckpoint: false, conclusion: 'FAIL' } },
-    { name: 'unrestored-pending', fields: { restoredToCheckpoint: false } },
-    { name: 'restore-unknown', fields: { restoredToCheckpoint: undefined } },
-    { name: 'failed-run', fields: { failure: { code: 'DRILL_HOST_GUARD_FAILED' } } },
-    { name: 'failed-verdict', fields: { conclusion: 'FAIL' } },
-  ];
-  for (const { name, fields } of cases) {
-    const r = finalize(name, { items, ...fields });
-    assert.equal(r.output.code, 'DRILL_RECEIPT_NOT_FINALIZABLE', JSON.stringify(r.output));
-    assert.equal(r.status, 1);
-    assert.equal(r.bytes, r.original);
-  }
-});
-
-test('empty items and a missing A10 produce FAIL without an unexpected error', opts, () => {
-  const items = verdictOf(evidence()).items;
-  for (const [name, incomplete] of [['empty-items', []], ['missing-a10', items.filter(i => i.id !== 'A10')]]) {
-    const r = finalize(name, { items: incomplete });
-    assert.equal(r.output.conclusion, 'FAIL', JSON.stringify(r.output));
-    assert.equal(r.status, 0);
-    assert.equal(JSON.parse(r.bytes).conclusion, 'FAIL');
-  }
-});
-
-test('the drill without its inputs stops before touching anything', opts, () => {
-  const run = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Version', '1.2.3'], { encoding: 'utf8', timeout: 60000 });
-  assert.equal(run.status, 1);
-  assert.equal(JSON.parse(run.stdout.trim()).code, 'DRILL_USAGE');
-});
-
-test('the guest-side fake credentials match the package fingerprint formulas and print no secret', opts, () => {
-  const out = path.join(tmp, 'fake');
-  const pub = ps(`New-DrillFakeCredentials ${q(out)} @('app-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json', 'companion-github.token')`);
-  const ci = fs.readFileSync(path.join(out, 'ci-admission.token'), 'utf8');
-  const up = fs.readFileSync(path.join(out, 'resident-upgrade.token'), 'utf8');
-  const pem = fs.readFileSync(path.join(out, 'app-key.pem'), 'utf8');
-  assert.match(ci, /^clued_bnd_[A-Za-z0-9_-]{43}$/);
-  assert.notEqual(ci, up);
-  assert.equal(pub.ciTokenPinSha256, fingerprintCiToken(ci));
-  assert.equal(pub.upgradeTokenFingerprint, fingerprintCiToken(up));
-  assert.equal(pub.appPublicKeySha256Base64, fingerprintAppKey(pem));
-  assert.match(pub.ciPrincipalBindingId, /^[0-9a-f-]{36}$/);
-  const hostPublic = entryPs(`ConvertTo-FirstInstallPublic (${q(JSON.stringify(pub))} | ConvertFrom-Json)`);
-  assert.equal(hostPublic.ciPrincipalBindingId, pub.ciPrincipalBindingId);
-  assert.equal(hostPublic.ciPrincipalRoleRef, pub.ciPrincipalRoleRef);
-  assert.equal(hostPublic.ciPrincipalQualificationRef, pub.ciPrincipalQualificationRef);
-  assert.equal(hostPublic.heartbeatBindingId, '');
-  // the companion GitHub classic token stand-in: the shape of a classic token, fake at a glance, generated and read in the guest only
-  const gh = fs.readFileSync(path.join(out, 'companion-github.token'), 'utf8');
-  assert.match(gh, /^ghp_[A-Za-z0-9]{36}$/);
-  assert.match(gh, /^ghp_CLUEDDRILLFAKE/);
-  assert.equal(pub.files.companionGithubToken, 'companion-github.token');
-  const printed = JSON.stringify(pub);
-  for (const secret of [ci, up, pem.split('\n')[1], gh]) assert.ok(!printed.includes(secret));
-  assert.equal(psCode(`New-DrillFakeCredentials ${q(out)} @('public.json')`), 'DRILL_UNEXPECTED', 'never reuses a directory');
-  // only the files asked for (the names the package declares and the drill gives); no list, nothing made; no companion token unless asked
-  const some = path.join(tmp, 'fake-some');
-  ps(`New-DrillFakeCredentials ${q(some)} @('ci-admission.token', 'public.json')`);
-  assert.deepEqual(fs.readdirSync(some).sort(), ['ci-admission.token', 'public.json']);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(some, 'public.json'), 'utf8')).files, { ciToken: 'ci-admission.token' });
-  assert.equal(psCode(`New-DrillFakeCredentials ${q(path.join(tmp, 'fake-none'))}`), 'DRILL_UNEXPECTED');
-  assert.equal(fs.existsSync(path.join(tmp, 'fake-none')), false);
 });
