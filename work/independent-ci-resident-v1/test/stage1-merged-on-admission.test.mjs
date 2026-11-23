@@ -6,11 +6,10 @@
 // publisher, its outcome through the real stage-fact mapping, into the real resident executor.
 //   - A PR merged at exactly this head on this batch's base is the ending the green was for: stage 1 is SETTLED, nothing is withdrawn.
 //   - No HALT; the next PR opens its batch as usual.
-//   - How the merged PR's own batch ends is the second test, a TODO: the design expects FAILED_CLEAN / SUPERSEDED_AT_SAFE_POINT at
-//     before-relay-plan with no change to the resident, but the executor counts stage 1 as the batch's first live read
-//     (executor.mjs, "Stage 1's admission just read the PR open at this head"), so no live read is due there for
-//     SUPERSEDE_LIVE_READ_MS and the batch goes on to its next stages. Planning decided (follow-up 2026-11-23 section 1): the executor
-//     safe-point change is its own PR and turns this TODO into a real case; nothing on this branch changes the executor.
+//   - The merged PR's own batch ends FAILED_CLEAN / SUPERSEDED_AT_SAFE_POINT at before-relay-plan with no change to the resident,
+//     nothing after stage 1 runs (FABLE-resident-halt-merge-race-followup-20261123 section 1, PR #1245): the publisher's settledMerged
+//     rides the real outcome hops (stage-inputs.mjs#writeOutcome, stage-fact.mjs#outcomeFacts, engine-windows.mjs#parseStageOutcome)
+//     and the executor then does not count stage 1 as the batch's first live read. Before #1245 the batch went on to COMPLETED.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -19,7 +18,9 @@ import { batchJobsV2 } from '../../actions-hosted-migration/independent-ci-v1/sr
 import { EffectJournal } from '../../actions-hosted-migration/independent-ci-v1/src/effect-journal.mjs';
 import { recordBatchClaim, readBatchClaim } from '../../actions-hosted-migration/independent-ci-v1/src/batch-claim-v2.mjs';
 import { createFixtureWorkAdmissionPublisherV2 } from '../../actions-hosted-migration/independent-ci-v1/src/formal-work-admission-check-v2/publisher.mjs';
-import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
+import { outcomeFacts, outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
+import { writeOutcome } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-inputs.mjs';
+import { parseStageOutcome } from '../src/engine-windows.mjs';
 import { admittedFacts, tempDir } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 import { BASE, HEAD, WINDOWS_CLEAN, executorFixture, fakeCompanion, fakeEngine, triggerBytes } from './helpers.mjs';
 
@@ -70,7 +71,11 @@ async function node(t, gh) {
     const jobs = batchJobsV2({ repo: s.repo, pr: s.pr, headSha: s.headSha, baseSha: s.baseSha, testSha: s.headSha, sourceManifestSha256: s.sourceManifestSha256, createdAt: iso(Date.now() - MIN), attempt: s.attempt });
     const r = await pub.publish(jobs['work-admission']);
     results.push(r);
-    if (r.status === 'SETTLED') return { ok: true, factsSha256: 'd'.repeat(64), outcome: { status: 'SETTLED', reason: null, sideEffects: r.sideEffects, mayHavePublished: true } };
+    // A settled stage 1 reaches the resident through the real outcome record, stage fact and engine parse (settledMerged included).
+    if (r.status === 'SETTLED') {
+      const written = await writeOutcome({ receiptsRoot: await tempDir(t), nonce: randomUUID().replace(/-/g, ''), plan: { stage: 1, entryRole: 'work-admission' }, jobIds: [], result: r });
+      return { ok: true, factsSha256: 'd'.repeat(64), outcome: parseStageOutcome(outcomeFacts(written)) };
+    }
     // stage-inputs.mjs#writeOutcome: anything but a clean BLOCKED with zero side effects may have published.
     const outcome = { status: r.status, reason: r.reason ?? null, sideEffects: r.sideEffects, mayHavePublished: !(r.status === 'BLOCKED' && r.sideEffects === 0), safeToRerun: r.safeToRerun === true, diagnostic: null, scheduling: null };
     return { ok: false, code: outcomeFailureCode(outcome, 1), proof: WINDOWS_CLEAN, outcome, brokerNoLaunch: false };
@@ -103,9 +108,8 @@ test("#1238/#1239: stage 1's green merges the PR: SETTLED, nothing withdrawn, no
   assert.equal(await n.f.ledger.halted(), null);
 });
 
-test("design A item 2: the merged PR's batch ends SUPERSEDED_AT_SAFE_POINT at before-relay-plan, nothing after stage 1 runs",
-  { todo: 'fixed by the executor safe-point change (its own PR, FABLE-resident-halt-merge-race-followup-20261123 section 1): the executor counts stage 1 as the first live read, so no read is due at before-relay-plan' }, async t => {
-    const { n, r } = await mergedRun(t);
-    assert.deepEqual([r.state, r.failureCode, r.safePoint], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT', 'before-relay-plan'], JSON.stringify(r));
-    assert.deepEqual(n.stages(), [1], 'nothing after stage 1 ran for the merged PR');
-  });
+test("design A item 2: the merged PR's batch ends SUPERSEDED_AT_SAFE_POINT at before-relay-plan, nothing after stage 1 runs", async t => {
+  const { n, r } = await mergedRun(t);
+  assert.deepEqual([r.state, r.failureCode, r.safePoint], ['FAILED_CLEAN', 'SUPERSEDED_AT_SAFE_POINT', 'before-relay-plan'], JSON.stringify(r));
+  assert.deepEqual(n.stages(), [1], 'nothing after stage 1 ran for the merged PR');
+});
