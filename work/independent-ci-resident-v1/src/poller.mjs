@@ -20,6 +20,7 @@
 // and the headers (--include), so the status line decides, never the exit code. No webhook.
 import { HEX40, check, digest } from './canonical.mjs';
 import { TRIGGER_CONTRACT_V2 } from './trigger.mjs';
+import { isDraft } from './pr-candidate.mjs';
 
 const json = text => { try { return JSON.parse(text); } catch { return null; } };
 export const UP_TO_DATE_HINTS = Object.freeze(['merge-main', 'push-any-commit', 'compare-unavailable']);
@@ -214,9 +215,12 @@ export class Poller {
     const base = await this.mainTip();
     const landing = await this.landingMode();
     let proposed = 0;
-    const pulls = [];
+    const pulls = [], drafts = [];
     for (const p of await this.openPulls()) {
-      if (p.isDraft || !Number.isSafeInteger(p.number) || !HEX40.test(p.headRefOid ?? '')) continue;
+      if (!Number.isSafeInteger(p.number) || !HEX40.test(p.headRefOid ?? '')) continue;
+      // A draft is no candidate (pr-candidate.mjs, the executor's one judgement): never proposed; the PR page's status on its head says
+      // it is held (pr-status.mjs). Ready for review moves updatedAt, so the next pass proposes it again.
+      if (isDraft({ draft: p.isDraft })) { drafts.push({ pr: p.number, headSha: p.headRefOid }); continue; }
       const prBase = HEX40.test(p.baseRefOid ?? '') ? p.baseRefOid : null;
       const cmp = await this.compare(base, p.headRefOid), behind = cmp?.behindBy ?? null;
       const pushed = landing === 'push' && pushEligible({ behindBy: behind, mergeBase: cmp?.mergeBase });
@@ -232,7 +236,7 @@ export class Poller {
       proposed += 1;
     }
     // What the PR page status shows for the PRs this pass looked at (pr-status.mjs).
-    this.lastPass = { at: this.clock(), mainSha: base, pulls, reads: { ...this.reads } };
+    this.lastPass = { at: this.clock(), mainSha: base, pulls, drafts, reads: { ...this.reads } };
     return proposed;
   }
 }
