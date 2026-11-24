@@ -104,6 +104,7 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     const first = await run({ applied: earlier, rebuild: true, meta: meta('101') });
     assert.equal(first.state, 'in-sync', JSON.stringify(first.error ?? first.at ?? null));
     assert.equal(first.applied.length, earlier.length);
+    assert.deepEqual(first.fixtures, { users: 1, seeded: 1 }, 'every account present gets its parking spot in the same run');
     assert.deepEqual(identity(await readTestHistory(admin)), identity(earlier));
     assert.deepEqual(await receipt(), { contract: 'clued.drill-test-sync-receipt.v1', state: 'in-sync',
       production_last: { version: earlier.at(-1).version, name: earlier.at(-1).name }, production_rows: earlier.length,
@@ -123,7 +124,12 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     await admin.query('update supabase_migrations.schema_migrations set statements=$2 where version=$1', [middle.version, original]);
 
     // --- A prefix: exactly the missing rows are applied, in production's order. ---
-    const caught = await run({ applied: production, meta: meta('103') });
+    // While rows are applied the receipt does not exist: the drill host reads "no-receipt", never a stale "in-sync".
+    const during = [];
+    const caught = await run({ applied: production, meta: meta('103'), log: async () => {
+      during.push((await admin.query(`select to_regprocedure('public.clued_drill_sync_receipt_v1()') is null as absent`)).rows[0].absent);
+    } });
+    assert.deepEqual(during, [true, true, true]);
     assert.equal(caught.state, 'in-sync', JSON.stringify(caught.error ?? caught.at ?? null));
     assert.deepEqual(caught.applied, production.slice(-3).map((r) => `${r.version}_${r.name}`));
     assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
@@ -137,6 +143,14 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     assert.equal((await receipt()).run_id, '104');
 
     // --- The drill Binding and the parking spot (§1.4, §4.1; pending question 2). ---
+    // An account that signs up between two syncs has no parking spot yet.
+    const owner = user;
+    {
+      const user = crypto.randomUUID();
+      await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'drill-late@example.invalid',now())`, [user]);
+      await lateAccount(user);
+    }
+    async function lateAccount(user) {
     const human = async (name, input) => {
       await admin.query('begin');
       try {
@@ -173,10 +187,10 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     const open = await holders(drill.token, 'global');
     assert.deepEqual([open.status, open.holders, open.reason], ['ok', [], undefined], JSON.stringify(open));
     // The fixture: one parking spot per account, through the product's own functions.
-    assert.deepEqual(await seedFixtures(admin), { users: 1, seeded: 1 });
+    assert.deepEqual(await seedFixtures(admin), { users: 2, seeded: 1 });
     assert.equal(await parkingRows(), 1);
     assert.deepEqual(await holders(drill.token, 'global'), { status: 'ok', holders: [], reason: 'admission_binding_required' });
-    assert.deepEqual(await seedFixtures(admin), { users: 1, seeded: 0 }, 'a second run adds nothing');
+    assert.deepEqual(await seedFixtures(admin), { users: 2, seeded: 0 }, 'a second run adds nothing');
     assert.equal(await parkingRows(), 1);
     // The parking Binding's token was never returned to this process and admits nobody.
     const parking = (await admin.query(`select b.id,b.vendor,b.agent_name,b.scopes,b.context_keys from clued_private.binding_roles_v1 r
@@ -189,13 +203,16 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     const rebuilt = await run({ applied: production, rebuild: true, meta: meta('106') });
     assert.equal(rebuilt.state, 'in-sync', JSON.stringify(rebuilt.error ?? rebuilt.at ?? null));
     assert.equal(rebuilt.applied.length, production.length);
-    assert.deepEqual(rebuilt.fixtures, { users: 1, seeded: 1 });
+    assert.deepEqual(rebuilt.fixtures, { users: 2, seeded: 2 });
     assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
-    assert.equal((await admin.query('select count(*)::int n from auth.users')).rows[0].n, 1);
+    assert.equal((await admin.query('select count(*)::int n from auth.users')).rows[0].n, 2);
     assert.equal(await parkingRows(), 1);
     assert.equal((await admin.query('select count(*)::int n from public.clued_agent_bindings where user_id=$1', [user])).rows[0].n, 1,
       'the drill Binding issued before the rebuild is gone; only the parking Binding exists');
     await assert.rejects(() => holders(drill.token, 'global'), /binding_not_authorized|authorization_revoked_or_expired/);
     assert.equal((await receipt()).run_id, '106');
+    assert.equal((await admin.query(`select count(*)::int n from clued_private.binding_roles_v1
+      where user_id=$1 and role='ci-admission' and purpose='parking' and revoked_at is null`, [owner])).rows[0].n, 1);
+    }
   });
 });
