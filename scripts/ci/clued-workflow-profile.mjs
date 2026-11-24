@@ -195,18 +195,18 @@ export async function completeLargeWorkflowProfile({read,repository,commit,conte
 export const ALL_REQUIRED_PRIMARIES_MODE='all_required_primaries';
 export const REQUIRED_TESTS_SOURCE=Object.freeze({
   file:'.github/workflows/clued-required-tests.yml',
-  workflow_blob:'cb67b91ac699384f6fa51a1673c245914bace1b6',
-  source_sha256:'832ffce8a1ece35839fc7aed864907e10c9d351a7d422e966dcd86045095e95f',
-  workflow_definition_sha256:'2813cde22ba630258248a18f2e41253fcd4702deeae7e46f74f4705da664f2e5',
-  profile_sha256:'dcd79ee34b4ac7c70ccb6bdfd1efed2d4b39124e5168d448a07f6c555fc89328',
+  workflow_blob:'9066264ff4b0f07274ee67f07e16ca86a6db60f6',
+  source_sha256:'5b70008aee3ea9715dd364b0dfdf775681111e49f599d8830626aef844054b0c',
+  workflow_definition_sha256:'9bb187e5d8dc70b648b8afeb27f4f6a2cc3a623704c1d449a5f8e5fda07c0da4',
+  profile_sha256:'f7c35633a023bdec827e64ac575502cb2140c2c5f96c024a21d54f10de5304ad',
   primary_ids:Object.freeze(['clued-cloud-tests','ci-suites','migration-verify','gitleaks','trivy','contract-placement']),
   role_sha256:Object.freeze({
-    'clued-cloud-tests':'1bac0e3c60ce1e90dbbec35e594abb312ea45bc95979b4518480d4e8e96ebd12',
-    'ci-suites':'480820a7b22a8bbbccf35e7ac3aff0dc963ecc0553e011ac7035d1416d39af56',
-    'migration-verify':'d397ece28509d42d2d9ad4a626a2f3f87934635b66e0ff3059595591ff89c0fd',
-    'gitleaks':'d8334648ceceb2e91aa6dd39959d04aef792293d5f3efaf0960f162042f6dbeb',
-    'trivy':'a7b25bdeb9180e25c0067ff815803f386d5c11bd0e58fc5cc1392577af13f77c',
-    'contract-placement':'8e260c7eafaef15ec60f9fa020d656f9e6c519a055dcdc842c8bcd083c4b7993',
+    'clued-cloud-tests':'44925327ac3a3771b7c41bb548a265bf1020e3fcaecfb47fa7056241a4332c6d',
+    'ci-suites':'4cc5da241cb6a501790ed2a865367831c741ed3f6195454449c8c7a14a2438d0',
+    'migration-verify':'817a962d0bda284cc42c124926182558e2f34fa14be094fa33329e6bf0502e4f',
+    'gitleaks':'8d16964d9257e512a88bf4baa617c87f5c184e2ea039b81351cc002814a28270',
+    'trivy':'3928538bd2214e658804adde40c33c5697db7d67776c51b13b099ee99fef052a',
+    'contract-placement':'9c0dd24d80b5d317259689fc709fc61a52ab73a11e1a321f9a1f9c4421e6022d',
   }),
 });
 // Earlier exact bytes of the same compound Source, oldest first. Catalogues kept as
@@ -343,7 +343,7 @@ export const REQUIRED_TESTS_PREVIOUS_SOURCES=Object.freeze([
       'contract-placement':'8e260c7eafaef15ec60f9fa020d656f9e6c519a055dcdc842c8bcd083c4b7993',
     }),
   }),
-  // Before the clued-cloud-tests and migration-verify suite steps set CI_BASE_SHA (task 700f2b68; main 606931952 and earlier).
+  // Before every train-base step resolved CI_BASE_SHA through scripts/ci/ci-base.mjs (task 6cd46765; main b404f735).
   Object.freeze({
     file:'.github/workflows/clued-required-tests.yml',
     workflow_blob:'a39bec437446a92a670fb3ef09f1a31f7f785e7b',

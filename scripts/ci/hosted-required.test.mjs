@@ -1,6 +1,6 @@
 // 托管脚手架 hosted-required.yml 的结构约束（任务 04f9b91b）。纯文本读取；hosted-gitleaks 与自托管 R1 的区间扫描逐字一致并真跑一遍。
 // staging 会被列车强制改指：上一批没落地时 github.event.before 在检出里不存在，拿它当基线检查就报错变红。
-// 所以凡是给命令传比较基线的作业，staging 推送时一律按 stagingBaseFromCheckout 现算（与四个测试作业同一来源）。
+// 所以凡是给命令传比较基线的作业，一律由 train-base 按 scripts/ci/ci-base.mjs 现算（staging 时即 stagingBaseFromCheckout；与自托管同一来源）。
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -29,30 +29,47 @@ test('托管工作流不拿 github.event.before 当基线（staging 强制改指
   assert.doesNotMatch(text, /github\.event\.before/);
 });
 
-test('传比较基线的作业都先按 stagingBaseFromCheckout 算出 staging 基线，并从这一步取值', () => {
+// CI_BASE_SHA 只有一处规则（scripts/ci/ci-base.mjs，任务 6cd46765）：每个要比较基线的作业在 train-base 步骤里从 main 读它，
+// 写进 GITHUB_ENV；没有哪一步自己设 CI_BASE_SHA 或 BASE（步骤 env 会盖过 GITHUB_ENV，#1292 就是步骤里取了 PR 旧合并基）。
+// 规则逐事件的取值与端到端（#1292 形状、dispatch 空基线）在 ci-base.test.mjs。
+const LOADS_CI_BASE = "git('show', 'origin/main:scripts/ci/ci-base.mjs')";
+test('传比较基线的作业都先跑 train-base（ci-base.mjs），不在步骤里自设基线', () => {
   const all = jobs(text);
   assert.ok(all.has('contract-placement') && all.has('ci-suites'), [...all.keys()].join(','));
   const users = [];
   for (const [id, block] of all) {
     const values = [...block.matchAll(BASE_ENV)].map(m => m[2]);
-    if (values.length === 0) continue;
+    const usesBase = values.length > 0 || /\$CI_BASE_SHA|ci-required-selection\.mjs --run/.test(block);
+    if (!usesBase) continue;
     users.push(id);
-    assert.match(block, /stagingBaseFromCheckout\(process\.env\.STAGING_SHA\)/, `${id} 没有 staging 基线步骤`);
-    assert.match(block, /id: train-base\n/, `${id} 的基线步骤不叫 train-base`);
+    assert.match(block, /id: train-base\n/, `${id} 没有 train-base 步骤`);
+    assert.ok(block.includes(LOADS_CI_BASE), `${id} 的 train-base 不从 main 读 ci-base.mjs`);
     for (const value of values) {
-      // hosted-gitleaks 用 R1 原文：基线经区间步骤取，区间步骤的推送基线取自 train-base（staging 时即 stagingBaseFromCheckout 的结果）。
-      if (value === '${{ steps.range.outputs.base }}') {
-        assert.match(block, /\n {10}PUSH_BASE: \$\{\{ steps\.train-base\.outputs\.ci_base \}\}\n/, `${id} 的区间步骤不从 train-base 取推送基线`);
-        continue;
-      }
-      assert.match(value, /^\$\{\{ steps\.train-base\.outputs\.sha \|\| /, `${id} 的基线不先取 train-base：${value}`);
+      // hosted-gitleaks 用 R1 原文：基线经区间步骤取，区间步骤的推送基线取自 train-base。
+      assert.equal(value, '${{ steps.range.outputs.base }}', `${id} 在步骤里自设基线：${value}`);
+      assert.match(block, /\n {10}PUSH_BASE: \$\{\{ steps\.train-base\.outputs\.ci_base \}\}\n/, `${id} 的区间步骤不从 train-base 取推送基线`);
     }
   }
+  assert.match(all.get('contract-placement'), /--base "\$CI_BASE_SHA"/, 'contract-placement 用 CI_BASE_SHA 比较');
   assert.ok(users.includes('contract-placement'), `contract-placement 应传基线：${users.join(',')}`);
 });
 
-// 任务 df4bdf98 那条“托管跑套件的步骤都设 CI_BASE_SHA”已并入 ci-required-selection.test.mjs 的
-// “every step of the required workflows that runs the selector sets CI_BASE_SHA”：三份必需工作流一处核（任务 700f2b68）。
+// 任务 df4bdf98：托管跑套件的步骤拿不到 CI_BASE_SHA 时，ci-required-selection 判“CI_BASE_SHA is not a commit”，
+// 不做失败后整条命令重跑的偶发容错。现在它来自同作业 train-base 写的 GITHUB_ENV，与自托管同一规则。
+test('托管每个跑 ci-required-selection --run* 的步骤都在 train-base 之后，且不自设 CI_BASE_SHA', () => {
+  let steps = 0;
+  for (const [id, block] of jobs(text)) {
+    const parts = block.split(/\n      - /);
+    const at = parts.findIndex(step => /\n {8}id: train-base\n/.test(`\n${step}\n`));
+    parts.forEach((step, i) => {
+      if (!/ci-required-selection\.mjs --run/.test(step)) return;
+      steps += 1;
+      assert.ok(at >= 0 && at < i, `${id} 跑套件前没有 train-base：${step.split('\n')[0]}`);
+      assert.doesNotMatch(step, /^\s+CI_BASE_SHA:/m, `${id} 的步骤自设 CI_BASE_SHA，盖过 train-base 写的值`);
+    });
+  }
+  assert.ok(steps >= 4, `应至少覆盖 4 个跑套件步骤：${steps}`);
+});
 
 // 影子对比要比的是同一选择：托管的 --check 与自托管 clued-required-tests.yml 逐字同参数（--check 带 --root 会多选候选自加的套件）。
 test('选择套件的 --check 参数与自托管一致', () => {
