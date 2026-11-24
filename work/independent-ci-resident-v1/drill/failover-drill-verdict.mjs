@@ -23,7 +23,7 @@
 //     pages,                   各次快照的 page（每个带 observed_at＝服务器时刻）
 //     receipts,                各次快照 receipts 的并集，按 id 去重 [{ id, created_at, operation, metadata }]
 //     dutyAnswers,             各次快照 duty_answers 的并集 [{ binding_id, at }]
-//     exclusions,              每个快照一条 { at: server_time, exclusion: TURING 的排除原因, steadySince: TURING 的 steady_since }
+//     exclusions,              每个快照一条 { at: server_time, exclusion: TURING 的排除原因（null＝已恢复，undefined＝快照里没这个字段）, steadySince: TURING 的 steady_since }
 //     statusTuring, statusDesk } 演练后两台 status.json
 export const RULES = Object.freeze({
   freshSeconds: 120,                 // A0：快照与两台 status.json 距跑门不超过 2 分钟；现读结束距跑门也不超过 2 分钟
@@ -36,7 +36,8 @@ export const RULES = Object.freeze({
   standbyMinutes: 10,                // B6：steady_since 不晚于复网 + 10 分钟
   noTakeBackMinutes: 45,             // B7：到 T0+45 分钟没有第 2 条自动交接
   excludedBeforeMinutes: 29,         // B8：steady_since + 29 分钟以前仍 auto_handed_out
-  rejoinedMinutes: Object.freeze([31, 40]), // B9：steady_since + 31–40 分钟已恢复（null）
+  rejoinedMinutes: Object.freeze([31, 40]), // B9：steady_since + 31–40 分钟已恢复（null；字段缺失判未判定）
+  cutSeconds: 540,                   // B10：断网实际时长（restoredAt − t0）不少于 540 秒
   runEvents: Object.freeze(['pull_request', 'pull_request_target', 'push']), // I1：只数这几种触发的运行
 });
 const AUTO = 'CI_ADMISSION_AUTO_HANDOVER';
@@ -328,17 +329,21 @@ export function drillVerdict(input) {
     const [lo, hi] = RULES.rejoinedMinutes;
     const e = exclusions().filter(v => ms(v.at) >= steady + lo * 60_000 && ms(v.at) <= steady + hi * 60_000);
     if (!e.length) return unknown(`steady_since + ${lo}–${hi} 分钟没有快照`);
-    return e.every(v => v.exclusion === null) ? pass(`steady_since + ${lo}–${hi} 分钟 TURING 资格已自动恢复`)
-      : fail(`steady_since + ${lo}–${hi} 分钟排除原因仍是 ${JSON.stringify(e.map(v => v.exclusion))}`);
+    const still = e.filter(v => v.exclusion !== null && v.exclusion !== undefined);
+    if (still.length) return fail(`steady_since + ${lo}–${hi} 分钟排除原因仍是 ${JSON.stringify(still.map(v => v.exclusion))}`);
+    const missing = e.filter(v => v.exclusion === undefined);
+    if (missing.length) return unknown(`steady_since + ${lo}–${hi} 分钟有 ${missing.length} 个快照没有 exclusion 字段（${missing.map(v => v.at).join('、')}）`);
+    return pass(`steady_since + ${lo}–${hi} 分钟 TURING 资格已自动恢复`);
   });
   checks.B10 = judge(() => {
     const c = need(cut, '结果文件'), bad = [];
     if (c.outcome !== 'CUT_DONE') bad.push(`outcome=${c.outcome}`);
     if (ms(c.t0) === null || ms(c.restoredAt) === null) bad.push('T0 或复网时刻没记');
+    else if (ms(c.restoredAt) - ms(c.t0) < RULES.cutSeconds * 1000) bad.push(`断网只有 ${Math.round((ms(c.restoredAt) - ms(c.t0)) / 1000)} 秒（应不少于 ${RULES.cutSeconds} 秒）`);
     if (!Array.isArray(c.enableFailed) || c.enableFailed.length) bad.push(`没启用成的网卡 ${JSON.stringify(c.enableFailed)}`);
     if (c.connected !== true) bad.push('复网后不通');
     if (c.backstopRemoved !== true) bad.push('兜底任务没删');
-    return bad.length ? fail(bad.join('；')) : pass('网卡全部读回已启用、连通、兜底任务已删');
+    return bad.length ? fail(bad.join('；')) : pass(`断网 ${Math.round((ms(c.restoredAt) - ms(c.t0)) / 1000)} 秒，网卡全部读回已启用、连通、兜底任务已删`);
   });
   checks.B11 = judge(() => {
     const a = selfcheckOf(need(obj(d.statusTuring), 'TURING status.json')), b = selfcheckOf(need(obj(d.statusDesk), 'DESK status.json'));

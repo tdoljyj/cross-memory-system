@@ -110,7 +110,9 @@ export function drillInputFrom({ snapshots = [], cut, statusTuring, statusDesk, 
   }
   return { turing, desk, cut, statusTuring, statusDesk, receipts, dutyAnswers,
     pages: list.map(s => s.page).filter(Boolean),
-    exclusions: list.map(s => ({ at: s.server_time, exclusion: s.exclusion ?? null, steadySince: s.turing_liveness?.steady_since ?? null })) };
+    // exclusion 字段缺失记 undefined（没读到），与 null（读到了、已恢复）分开（复审 B9）
+    exclusions: list.map(s => ({ at: s.server_time, exclusion: Object.hasOwn(s, 'exclusion') ? s.exclusion : undefined,
+      steadySince: s.turing_liveness?.steady_since ?? null })) };
 }
 
 // ---------------------------------------------------------------------------
