@@ -1,5 +1,6 @@
 // 第 18 代故障转移演练的断网脚本（任务 04f9b91b；方案 D:/w/tmp/PLAN-failover-drill-gen18-20261124.md 第 1、7 节，
-// 定案 D:/w/tmp/PLAN-failover-drill-gen18-addendum-20261124.md 第 1 节第 3、5 条，独立复核 D:/w/tmp/claude-review-failover-drill-gen18-fable.md M1、M2、S1）。
+// 定案 D:/w/tmp/PLAN-failover-drill-gen18-addendum-20261124.md 第 1 节第 3、5 条，独立复核 D:/w/tmp/claude-review-failover-drill-gen18-fable.md M1、M2、S1，
+// 补充二第 2 条：S2、S4、S8）。
 // 脚本在 Windows PowerShell 5.1 里 dot-source（只定义函数，不执行），真正动系统的动作（列网卡、禁用、启用、注册或删除兜底任务）
 // 和等待、连通探测都换成桩；不提权、不碰本机网卡和计划任务。放行文件由等待的桩在待命期间写（和 DESK 门过后写一样）。
 //   C1 兜底任务没注册成（或读回不对）→ 不禁用
@@ -11,6 +12,9 @@
 //   M1 兜底任务只有读回网卡不再是 Disabled 才删自己，到点触发每 2 分钟重复；启用读回仍 Disabled 的算没启用成
 //   M2 待命前就在的放行文件不算放行（删掉；删不掉不待命）；用过即删
 //   S1 放行文件所在目录写不进就不待命，直接退出
+//   S2 在用的物理网卡里有一块不是有线就不断网（第 1 步不注册；第 4 步并集后再核，有就删兜底任务）
+//   S4 status.json 缺键算不满足；writtenAt 超过 120 秒（或解析不了）算不新鲜
+//   S8 禁用到一半抛异常仍全部启用；共享目录写不进时本机结果照写、结论不变
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -34,9 +38,11 @@ function ps(expr) {
   return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
 }
 
-// 当班节点空闲时的 status.json：形状取自 11-24 DESK 本机那份（test/fixtures/failover-drill-gen18-readings.json），改成 ACTIVE、无在途
+// 当班节点空闲时的 status.json：形状取自 11-24 DESK 本机那份（test/fixtures/failover-drill-gen18-readings.json），改成 ACTIVE、无在途，
+// writtenAt 改成桩时钟的起点（桩时钟只随等待前进，待命上限 60 秒，核的时候总在 120 秒内）
 const SAMPLE = JSON.parse(fs.readFileSync(new URL('./fixtures/failover-drill-gen18-readings.json', import.meta.url), 'utf8')).statusDesk;
-const ACTIVE_IDLE = { ...structuredClone(SAMPLE), node: { ...SAMPLE.node, mode: 'ACTIVE', probe: { ...SAMPLE.node.probe, result: 'held' } }, current: null };
+const T_START = '2026-11-25T03:00:00.000Z';
+const ACTIVE_IDLE = { ...structuredClone(SAMPLE), node: { ...SAMPLE.node, mode: 'ACTIVE', probe: { ...SAMPLE.node.probe, result: 'held' } }, current: null, writtenAt: T_START };
 let n = 0;
 function caseDirs({ status = ACTIVE_IDLE, preexisting = null } = {}) {
   const root = path.join(tmp, `c${++n}`), work = path.join(root, 'work'), shared = path.join(root, 'shared');
@@ -51,17 +57,22 @@ function caseDirs({ status = ACTIVE_IDLE, preexisting = null } = {}) {
 // The stubs: every system action appends to $script:calls; the clock advances by what Wait-DrillSeconds is asked for.
 // `onWait` runs inside each wait (after the count goes up); by default the release is written during the first standby wait.
 const writeRelease = (content = 'gen18-t') => `[IO.File]::WriteAllText($script:rel, ${q(content)})`;
-const stubs = (d, { register = '$true', wait = '$null', adapters = "@('Ethernet', 'Wi-Fi')", enable = '@()',
-  onWait = `if ($script:waitCount -eq 1) { ${writeRelease()} }`, pre = '' } = {}) => `
+// `nonWired` is what Get-DrillNonWiredUp returns ($script:nonWiredCount counts the calls); `realDisable` keeps the script's
+// Disable-DrillAdapters and stubs Disable-NetAdapter instead, which logs `disable1:<name>` and throws for the names in `disableThrows`.
+const stubs = (d, { register = '$true', wait = '$null', adapters = "@('Ethernet', 'Wi-Fi')", enable = '@()', nonWired = '@()',
+  onWait = `if ($script:waitCount -eq 1) { ${writeRelease()} }`, pre = '', realDisable = false, disableThrows = [] } = {}) => `
   $script:calls = New-Object System.Collections.ArrayList
   $script:rel = ${q(d.releaseFile)}; $script:statusPath = ${q(d.statusFile)}
-  $script:waitCount = 0; $script:listCount = 0
-  $script:fakeNow = [datetime]'2026-11-25T03:00:00Z'
+  $script:waitCount = 0; $script:listCount = 0; $script:nonWiredCount = 0
+  $script:fakeNow = [datetime]${q(T_START)}
   $script:PollSeconds = 15; $script:StandbyLimitSeconds = 60; $script:CutSeconds = 540; $script:ReconnectSeconds = 120
   function Get-DrillNow { $script:fakeNow.ToUniversalTime() }
   function Wait-DrillSeconds([int]$Seconds) { $script:waitCount++; [void]$script:calls.Add("wait:$Seconds"); ${onWait}; ${wait}; $script:fakeNow = $script:fakeNow.AddSeconds($Seconds) }
   function Get-DrillUpAdapters { $script:listCount++; [void]$script:calls.Add('list'); ${adapters} }
-  function Disable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('disable:' + ($Names -join ',')) }
+  ${realDisable
+    ? `function Disable-NetAdapter { [CmdletBinding(SupportsShouldProcess)] param([string]$Name) [void]$script:calls.Add("disable1:$Name"); if (@(${disableThrows.map(q).join(',')}) -contains $Name) { throw "cannot disable $Name" } }`
+    : `function Disable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('disable:' + ($Names -join ',')) }`}
+  function Get-DrillNonWiredUp { $script:nonWiredCount++; ${nonWired} }
   function Enable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('enable:' + ($Names -join ',')); ${enable} }
   function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$At) { [void]$script:calls.Add('register:' + ($Names -join ',')); ${register} }
   function Remove-DrillBackstop([string]$TaskName) { [void]$script:calls.Add('remove'); $true }
@@ -208,6 +219,72 @@ test('M1: an adapter that did not come back keeps the backstop task', opts, () =
   assert.deepEqual(r.result.enableFailed, ['Wi-Fi']);
   assert.equal(r.result.backstopRemoved, false);
   assert.ok(!systemCalls(r.calls).slice(systemCalls(r.calls).findIndex(c => c.startsWith('enable'))).includes('remove'), r.calls.join(' '));
+});
+
+test('S2: a non-wired adapter in use at the start means no backstop, no standby, no cut', opts, () => {
+  const d = caseDirs();
+  const r = run(d, { nonWired: "@('Wi-Fi')" });
+  assert.equal(r.result.outcome, 'NON_WIRED_ADAPTER', JSON.stringify(r.result));
+  assert.match(String(r.result.detail), /Wi-Fi/);
+  assert.deepEqual(systemCalls(r.calls), ['list']);
+  assert.ok(!r.calls.some(c => c.startsWith('wait:')), r.calls.join(' '));
+});
+
+test('S2: a non-wired adapter that came up during standby means no cut, and the backstop task is removed', opts, () => {
+  const d = caseDirs();
+  const r = run(d, { adapters: "if ($script:listCount -eq 1) { @('Ethernet') } else { @('Wi-Fi 2', 'Ethernet') }",
+    nonWired: "if ($script:nonWiredCount -eq 1) { @() } else { @('Wi-Fi 2') }" });
+  assert.equal(r.result.outcome, 'NON_WIRED_ADAPTER', JSON.stringify(r.result));
+  assert.match(String(r.result.detail), /Wi-Fi 2/);
+  assert.deepEqual(systemCalls(r.calls), ['list', 'register:Ethernet', 'list', 'remove']);
+  assert.equal(r.result.backstopRemoved, true);
+  assert.equal(fs.existsSync(d.releaseFile), false);
+});
+
+const without = (o, dotted) => { const c = structuredClone(o); const [a, b] = dotted.split('.'); if (b) delete c[a][b]; else delete c[a]; return c; };
+const S4_CASES = [
+  [without(ACTIVE_IDLE, 'current'), '缺 current'],
+  [without(ACTIVE_IDLE, 'executor.state'), '缺 executor.state'],
+  [without(ACTIVE_IDLE, 'writtenAt'), '缺 writtenAt'],
+  [{ ...ACTIVE_IDLE, writtenAt: '2026-11-25T02:55:00.000Z' }, 'status.json 不新鲜'],
+  [{ ...ACTIVE_IDLE, writtenAt: 'yesterday' }, 'status.json 不新鲜'],
+];
+
+test('S4: a missing key or a status.json older than 120 s is not ready → no cut, release removed, still standing by', opts, () => {
+  for (const [status, problem] of S4_CASES) {
+    const d = caseDirs({ status });
+    const onWait = `if ($script:waitCount -eq 1) { ${writeRelease()} }
+      if ($script:waitCount -eq 3) {
+        if (-not (Test-Path -LiteralPath $script:rel)) { [void]$script:calls.Add('release-gone') }
+        [IO.File]::WriteAllText($script:statusPath, ${q(JSON.stringify(ACTIVE_IDLE))}); ${writeRelease()} }`;
+    const r = run(d, { onWait });
+    assert.equal(r.result.releasesRefused, 1, `${problem}: ${JSON.stringify(r.result)}`);
+    assert.ok(r.result.localProblems.includes(problem), `${problem}: ${JSON.stringify(r.result.localProblems)}`);
+    assert.ok(r.calls.includes('release-gone'), `${problem}: ${r.calls.join(' ')}`);
+    assert.ok(r.calls.indexOf('release-gone') < r.calls.findIndex(c => c.startsWith('disable')), r.calls.join(' '));
+    assert.equal(r.result.outcome, 'CUT_DONE', problem);
+  }
+});
+
+test('S8: a throw while disabling the second adapter still enables every adapter', opts, () => {
+  const r = run(caseDirs(), { realDisable: true, disableThrows: ['Wi-Fi'] });
+  const order = systemCalls(r.calls);
+  assert.deepEqual(order.slice(order.indexOf('disable1:Ethernet')), ['disable1:Ethernet', 'disable1:Wi-Fi', 'enable:Ethernet,Wi-Fi', 'remove']);
+  assert.ok(!r.calls.includes('wait:540'), r.calls.join(' '));
+  assert.equal(r.result.outcome, 'CUT_INTERRUPTED', JSON.stringify(r.result));
+  assert.match(String(r.result.error), /cannot disable Wi-Fi/);
+  assert.ok(r.result.t0 && r.result.restoredAt);
+});
+
+test('S8: a shared directory that cannot be written still leaves the local result, outcome unchanged', opts, () => {
+  const d = caseDirs();
+  d.shared = path.join(d.statusFile, 'shared');      // its parent is a file
+  const r = run(d);
+  assert.equal(r.result.outcome, 'CUT_DONE', JSON.stringify(r.result));
+  assert.equal(r.result.sharedWritten, false);
+  const local = JSON.parse(fs.readFileSync(path.join(d.work, 'failover-drill-gen18-t.result.json'), 'utf8').replace(/^﻿/, ''));
+  assert.equal(local.outcome, 'CUT_DONE');
+  assert.equal(local.sharedWritten, false);
 });
 
 // Stand-ins for the NetAdapter and ScheduledTasks cmdlets (functions win over cmdlets); nothing on this machine is touched.
