@@ -272,3 +272,27 @@ test('R3: at most 50 names of 120 characters; a root that is not there has none'
   assert.deepEqual([gone.state, gone.stoppedAt, gone.siblings], ['absent', 'prepare', []]);
 });
 
+
+// r13 PR-2 (FABLE-r13-state-acl-fix section 3): the generic helper writes a refusal before ready to the Application log under its service
+// name (actions.runner.tdoljyj-cross-memory-system.clued-ci-<node>, an unregistered source). The snapshot's events carry those first, then
+// the Service Control Manager's, within the same 50. The message is the event's own text (its insertion string), named by its source.
+test('S6: the helper\'s refusal events from the Application log come first in the snapshot\'s events, by their own text', opts, () => {
+  const got = ps(`$script:asked = $null
+    $query = { param($xpath) $script:asked = $xpath
+      [pscustomobject]@{ TimeCreated = [datetime]'2026-11-21T08:52:36Z'; Id = 20; LevelDisplayName = 'Error'; ProviderName = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-drill-a'; Message = $null
+        Properties = @([pscustomobject]@{ Value = 'formal helper refused before ready: code=UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED path=C:\ProgramData\CluedIndependentCI\state stage=11' }) }
+      [pscustomobject]@{ TimeCreated = [datetime]'2026-11-21T08:52:37Z'; Id = 1000; LevelDisplayName = 'Error'; ProviderName = 'Application Error'; Message = 'another program'; Properties = @() } }
+    $helper = @(Read-EntryHelperEvents ([DateTimeOffset]'2026-11-21T08:44:32Z') 50 $query)
+    $none = @(Read-EntryHelperEvents ([DateTimeOffset]'2026-11-21T08:44:32Z') 50 { param($xpath) throw (New-Object Management.Automation.ErrorRecord((New-Object Exception 'none'), 'NoMatchingEventsFound,Microsoft.PowerShell.Commands.GetWinEventCommand', 'ObjectNotFound', $null)) })
+    $denied = @(Read-EntryHelperEvents ([DateTimeOffset]'2026-11-21T08:44:32Z') 50 { param($xpath) throw (New-Object UnauthorizedAccessException 'denied') })
+    function Read-EntryScmEvents([DateTimeOffset]$Since, [int]$Max) { 1..60 | ForEach-Object { [pscustomobject]@{ TimeCreated = [datetime]'2026-11-21T08:52:35Z'; Id = 7000 + $_; LevelDisplayName = 'Error'; Message = "scm $_" } } }
+    function Read-EntryHelperEvents([DateTimeOffset]$Since, [int]$Max) { [pscustomobject]@{ TimeCreated = [datetime]'2026-11-21T08:52:36Z'; Id = 20; LevelDisplayName = 'Error'; Message = 'helper' } }
+    $both = @(& $script:EntryFailureEventReader ([DateTimeOffset]'2026-11-21T08:44:32Z') 50)
+    [ordered]@{ asked = $script:asked; helper = @($helper | ForEach-Object { [ordered]@{ id = $_.Id; level = $_.LevelDisplayName; message = $_.Message } }); both = @($both | ForEach-Object { $_.Message }); none = $none.Count; denied = @($denied | ForEach-Object { $_.Message }) }`);
+  assert.equal(got.asked, "*[System[TimeCreated[@SystemTime>='2026-11-21T08:44:32.000Z']]]");
+  assert.deepEqual(got.helper, [{ id: 20, level: 'Error', message: 'actions.runner.tdoljyj-cross-memory-system.clued-ci-drill-a: formal helper refused before ready: code=UNTRUSTED_PUBLIC_MUTATION_RIGHT_REFUSED path=C:\ProgramData\CluedIndependentCI\state stage=11' }]);
+  assert.equal(got.both.length, 50);
+  assert.deepEqual(got.both.slice(0, 2), ['helper', 'scm 1']);
+  assert.equal(got.none, 0, 'no helper event since the entry started: none in the snapshot');
+  assert.deepEqual(got.denied, ['Application log unreadable: denied'], 'an Application log that cannot be read is named, in place of its events');
+});
