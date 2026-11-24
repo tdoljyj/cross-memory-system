@@ -31,7 +31,8 @@
 // Push mode (resident ADR 0018; the stage file train-landing.json, train-landing.mjs): with train.landing 'push' and the landing
 // port, mode on also (a) adopts every member of each batch of this node whose S main now contains (riders first, the front last;
 // a member whose PR moved to another head is not adopted), (b) turns the executor's frontOutcome of a batch of several members into
-// bisection instead of touch failed, and (c) opens the front batch on the batch it composes: the front, then riders (open PRs into
+// bisection instead of touch failed (a frontOutcome names its batch by PR, head and S: train-maintenance.mjs#liveFrontBatch), and (c)
+// opens the front batch on the batch it composes: the front, then riders (open PRs into
 // main with this install's Native Task binding and App 5368905's kooyumi-work-admission success on their head, by PR number, up to the
 // effective batch size), S = GitHub's test merge for one member or the cumulative merge on clued-train/staging.tmp for several,
 // clued-train/staging pointed at S (the CI trigger) and a landing-batch record. A strict head that does not contain main's tip is no
@@ -432,6 +433,8 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   const lastBatchMs = previousBatches?.[0] ? Date.parse(previousBatches[0].writtenAt) : -Infinity;
   const judgedBefore = lastProof?.mode === 'on' && lastProof.pr === holder?.pr && lastProof.headSha === front?.headSha && lastProof.claimId === holder?.claimId
     && lastProof.mainSha === mainSha && Date.parse(lastProof.writtenAt) > lastBatchMs;
+  // The forecast reads no landing state yet, so it passes no handled (frontBatchPlan): a batch stage 10 bisected counts running here and
+  // ended in openFront. That only picks which name this round skips the sweep segments under (refresh or open), never whether a batch opens.
   const frontPlan = Array.isArray(previousBatches) && !(job.frontFailed === true && job.frontPr !== null && job.frontPr === holder.pr && front.headSha === job.frontHeadSha)
     && decideShadow({ onDuty: true, holders: duty.holders, holder, front, rules, mainSha }) === 'OPEN_FRONT_BATCH'
     ? frontBatchPlan({ job, holder, front, mainSha, previous: previousBatches, keptAlive: [], clock }).refusal : 'NONE';
@@ -736,7 +739,7 @@ async function runTrainCounted({ job, github: plainGithub, native, ledger, sweep
   // running or parked, is renewed with touch running when less than SLOT_RENEW_BELOW_MS of it is left; at most one slot write a round.
   // Not after an adoption or a return in this round (push mode adopts a landed front before GitHub marks its PR merged).
   if (job.mode === 'on' && !lostDuty && !requestPause && !fx.slotTouched && !actions.adopted && !actions.returned) {
-    const r = await renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx });
+    const r = await renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx, handled: landingState?.handled ?? null });
     if (r === 'NOT_ON_DUTY') { lostDuty = true; decision = 'NOT_ON_DUTY'; } else if (r === 'TOUCHED') actions.touchedRunning = true;
   }
 
@@ -986,15 +989,29 @@ async function roundsSinceSegment({ sweepStore, mode, lastFull }) {
   } catch { return Infinity; }
 }
 
+// bc982192 parked-front (FABLE-parked-front-vs-frontfailed-20261123 §1 item 1): the one definition of "this head's front batch is still
+// running", stage 10's view of what the resident holds (frontBatchPlan and renewFrontSlot both read it): this node's newest front batch of
+// this head (last), not reported ended by the executor (the job's frontOutcome names it, whatever its frontFailed) nor bisected by stage
+// 10 (the landing state's handled names its S), of this claim, while Native's CI clock runs on this head and the merge slot has not run
+// out. It never compares S with GitHub's test merge of the front alone: a batch of several members never equals it, so every round
+// opened a new S. Whether the batch's content still holds is stage 8's to find (a member changed: TRAIN_BATCH_CHANGED; S gone:
+// TRAIN_TEST_COMMIT_GONE); that ends the batch, and the executor reports the end.
+// A report names the batch by PR, head and S only (FABLE-parked-front-attempt2-number-20261123 §2.2 A): never by its front number. The
+// executor's own attempt 2 of this batch reports number 2 where stage 10 recorded 1, so comparing numbers counted it running until the
+// running clock. An S opened twice (stage 10's number 2 of the same S) is told apart by the executor: it drops a report that a batch of
+// this head only ended once it takes the head's next front batch (executor.mjs#enqueueFront), so a report of S never ends a later batch.
+function liveFrontBatch({ job, holder, front, last, clock, handled = null }) {
+  if (!last || !holder || !front) return false;
+  const reported = job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha;
+  return !reported && !(handled ?? []).includes(last.testSha) && last.claimId === holder.claimId
+    && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock();
+}
+
 // openFront's checks before any write (pure; also stage 10's forecast before the sweeps, task e30b5a36): the refusal, or null.
-// `finished` (also renewFrontSlot's): the executor's frontOutcome names this node's newest front batch of (H, S), or a later front number
-// of it (task 04f9b91b, FABLE-r3-batch2-followup §2b): the executor's own automatic attempt 2 is front number 2 of the same S, which stage
-// 10 never opened, so its newest record is still number 1; number 2 exists only once number 1 ended for good, so its end ends both.
-function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used = previous.length }) {
+// handled: the landing state's bisected batches (null before it is read: the forecast).
+function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used = previous.length, handled = null }) {
   const last = previous[0] ?? null;
-  const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt >= last.attempt;
-  if (last && !finished && last.claimId === holder.claimId && last.baseSha === mainSha && (last.testSha === front.testMerge.sha || last.testTree === front.testMerge.tree)
-    && holder.ciState === 'running' && holder.ciHeadSha === front.headSha && Date.parse(holder.mergeSlotUntil) > clock()) return { refusal: 'TRAIN_FRONT_BATCH_RUNNING', running: last };
+  if (liveFrontBatch({ job, holder, front, last, clock, handled }) && last.baseSha === mainSha) return { refusal: 'TRAIN_FRONT_BATCH_RUNNING', running: last };
   if (used >= MAX_FRONT_BATCHES_PER_HEAD) return { refusal: 'TRAIN_FRONT_ATTEMPTS_USED' };
   // Without the claim's kept-alive lease (keepalive failed or did not name it; review R2 minor 3) the lease bound is the
   // read-back after touch running (openFront): a merge-slot clock never runs past the claim lease (§41.4 "现状").
@@ -1012,12 +1029,12 @@ function frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, cloc
 }
 
 // §41.4 hard cap: open the front batch only with time for it, after touch running and a read-back of the moved clock.
-// The batch this node already opened for (claim, T, S) that is still running (the holder's CI clock runs on H; its attempt
+// The batch this node already opened for (claim, T, S) that is still running (the holder's CI clock runs on H; its S
 // not reported finished by the executor's frontOutcome) is not opened again (review R2 M1): this run refreshed the proof for
-// its stage 8, no attempt is counted and no second openFrontBatch reaches the executor. A regenerated test merge with the
-// same parents and tree is the same S for this purpose. Since R3 batch 2 the executor reports every final end of an attempt
-// that has no automatic attempt 2 (frontFailed says whether the PR itself failed). Residual: an end it never got to report
-// counts as running until the holder's running clock or slot ends.
+// its stage 8, no attempt is counted and no second openFrontBatch reaches the executor (liveFrontBatch, the one definition). Since
+// R3 batch 2 the executor reports every final end of an attempt that has no automatic attempt 2 (frontFailed says whether the PR
+// itself failed; bc982192 parked-front: also an S dropped from the run queue, a restart close, a refusal). Residual: an end it never
+// got to report (a HALT) counts as running until the holder's running clock or slot ends.
 async function openFront({ job, github, native, claimScope, until, sweepStore, holder, front, mainSha, keptAlive, clock, actions, fx, pushing = null, compare = null }) {
   const no = decision => ({ decision, openFrontBatch: null });
   let previous, used;
@@ -1028,7 +1045,7 @@ async function openFront({ job, github, native, claimScope, until, sweepStore, h
     used = previous.length;
     if (pushing) { used = 0; for (const r of previous) { const b = await sweepStore.landingBatchByTest(r.testSha); if (!b || b.members.length === 1) used++; } }
   } catch { return no('TRAIN_SWEEP_INCOMPLETE'); }
-  const { refusal, need, running, turnShort = false } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used });
+  const { refusal, need, running, turnShort = false } = frontBatchPlan({ job, holder, front, mainSha, previous, keptAlive, clock, used, handled: pushing?.state?.handled ?? null });
   if (running && normal(running.since) !== normal(holder.takenAt)) {
     // #1144: Native may reset takenAt after the certificate was written. The current round has freshly
     // proved this holder; reanchor the original tested S, never substitute a regenerated S with the same tree.
@@ -1262,7 +1279,7 @@ async function resetLandingState({ sweepStore, job, clock }) {
 // A front that is idle (draft, closed, conflicting, not containing main, green) is never renewed: it gives way when its time is up.
 // -> 'TOUCHED', 'NOT_TOUCHED', 'NOT_ON_DUTY' or null (not applicable). A reply that cannot be read counts as a write (the next
 // round reads the outcome).
-async function renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx }) {
+async function renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo, clock, fx, handled = null }) {
   if (!holder?.pr || !front || front.state !== 'open' || front.merged || !front.headSha || front.green) return null;
   if (holder.ciState === 'green' && holder.ciHeadSha === front.headSha) return null;
   const now = clock(), until = Date.parse(holder.mergeSlotUntil ?? '');
@@ -1270,13 +1287,12 @@ async function renewFrontSlot({ job, native, sweepStore, holder, front, wouldDo,
   const since = Date.parse(normal(holder.since ?? holder.takenAt) ?? '');
   const capUntil = Number.isFinite(since) ? since + job.slotHardCapMinutes * 60_000 : Infinity;
   if (!(capUntil > until)) return null;
-  // A front batch of this head and claim that is not reported finished while Native's CI clock runs on this head: running or parked.
+  // A front batch of this head and claim that is still running or parked (liveFrontBatch, the one definition).
   let batchLive = false;
   if (holder.ciState === 'running' && holder.ciHeadSha === front.headSha) {
     let last = null;
     try { last = (await sweepStore?.frontBatches({ pr: holder.pr, headSha: front.headSha }))?.[0] ?? null; } catch { last = null; }
-    const finished = last && job.frontPr === last.pr && job.frontHeadSha === last.headSha && job.frontTestSha === last.testSha && job.frontAttempt >= last.attempt;
-    batchLive = !!last && !finished && last.claimId === holder.claimId;
+    batchLive = liveFrontBatch({ job, holder, front, last, clock, handled });
   }
   // Waiting for the front batch counts only while the hard cap still leaves the batch its budget (frontBatchPlan's need): a front that
   // can no longer be opened under the cap (TRAIN_FRONT_BUDGET_SHORT for good) gives way instead of holding the slot to the cap.
