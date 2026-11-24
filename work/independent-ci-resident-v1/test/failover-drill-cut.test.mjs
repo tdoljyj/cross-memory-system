@@ -10,7 +10,8 @@
 //   C5 正常路径：注册 → 重列网卡取并集 → 注册 → 禁用 → 启用 → 删任务，结果文件本机与共享目录各一份
 //   C6 参数块在 5.1 Parser 下无错；含非 ASCII 字符时带 UTF-8 BOM
 //   M1 兜底任务只有读回网卡不再是 Disabled 才删自己，到点触发每 2 分钟重复；启用读回仍 Disabled 的算没启用成
-//   M2 待命前就在的放行文件不算放行（删掉；删不掉不待命）；用过即删
+//   M2 待命前就在的放行文件不算放行（删掉；删不掉不待命）；用过即删。清在注册成功之后、进入待命之前（补充三定案），
+//      所以注册重试期间写下的也不算
 //   S1 放行文件所在目录写不进就不待命，直接退出
 //   S2 在用的物理网卡里有一块不是有线就不断网（第 1 步不注册；第 4 步并集后再核，有就删兜底任务）
 //   S4 status.json 缺键算不满足；writtenAt 超过 120 秒（或解析不了）算不新鲜
@@ -124,12 +125,14 @@ test('M2: a release file that was there before standby is not a release; it is r
   assert.equal(fs.existsSync(d.releaseFile), false);
 });
 
-test('M2: a stale release file that cannot be removed means no standby and no cut', opts, () => {
+test('M2: a stale release file that cannot be removed means no standby and no cut; the backstop task just registered is removed', opts, () => {
   const d = caseDirs({ preexisting: 'gen18-t' });
   const r = run(d, { onWait: '$null', pre: `$script:lock = [IO.File]::Open($script:rel, 'Open', 'Read', 'Read')` });
   assert.equal(r.result.outcome, 'RELEASE_PREEXISTS', JSON.stringify(r.result));
   noCut(r);
-  assert.ok(!r.calls.some(c => c.startsWith('register')), r.calls.join(' '));
+  assert.deepEqual(systemCalls(r.calls), ['list', 'register:Ethernet,Wi-Fi', 'remove']);
+  assert.ok(!r.calls.includes('wait:15'), r.calls.join(' '));
+  assert.equal(r.result.backstopRemoved, true);
 });
 
 test('M2: the release file is used once — gone after the cut', opts, () => {
@@ -309,6 +312,16 @@ test('补充三: the second registration never succeeding → no cut, standby un
   const order = systemCalls(r.calls);
   assert.equal(order.indexOf('remove'), order.length - 1, order.join(' '));
   assert.equal(r.result.backstopRetries, 1);
+});
+
+test('补充三定案: a release file written while the first registration is being retried is not a release', opts, () => {
+  const d = caseDirs();
+  const r = run(d, { register: 'if ($script:registerCount -eq 1) { $false } else { $true }', onWait: `if ($script:waitCount -eq 1) { ${writeRelease()} }` });
+  assert.equal(r.calls[2], 'wait:5', r.calls.join(' '));
+  assert.equal(r.result.outcome, 'STANDBY_TIMEOUT', JSON.stringify(r.result));
+  noCut(r);
+  assert.equal(r.result.staleReleaseRemoved, true);
+  assert.equal(fs.existsSync(d.releaseFile), false);
 });
 
 test('补充三: the first registration is retried in place, 3 tries 5 s apart', opts, () => {
