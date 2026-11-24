@@ -163,7 +163,9 @@ export function scannerAbandonEligible({ stage, phase = 'stage', code, bridge = 
 // at stage 1 (it had not started) or 2 (it had, and no publication stage had begun) and takes the same one attempt 2.
 export const EXECUTOR_RESTARTED_UNPUBLISHED = 'EXECUTOR_RESTARTED_UNPUBLISHED';
 export const ATTEMPT2_RESIDENT_CODES = Object.freeze({ [BRIDGE_ABANDONED_UNPUBLISHED]: Object.freeze([2]), [LINUX_MEMORY_NOT_READY]: Object.freeze([2]),
-  [EXECUTOR_RESTARTED_UNPUBLISHED]: Object.freeze([1, 2]), REFS_GATE_UNCONFIRMED: Object.freeze([2]), UPGRADE_VERSION_SKEW: Object.freeze([2]) });
+  [EXECUTOR_RESTARTED_UNPUBLISHED]: Object.freeze([1, 2]), REFS_GATE_UNCONFIRMED: Object.freeze([2]), UPGRADE_VERSION_SKEW: Object.freeze([2]),
+  // Task f79929d9: the bundle is built after stage 1 (stage 0, phase workspace); nothing of the batch reached Linux when it fails.
+  BUNDLE_UNAVAILABLE: Object.freeze([0]) });
 const residentAttempt2 = (code, stages) => Object.hasOwn(ATTEMPT2_RESIDENT_CODES, code) && Array.isArray(stages) && stages.every(s => ATTEMPT2_RESIDENT_CODES[code].includes(s));
 
 // The archive reason segment is derived from the stable code, never taken from untrusted text.
