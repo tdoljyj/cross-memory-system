@@ -108,15 +108,15 @@ const TRAIN_QUERY = 'query($owner:String!,$name:String!,$after:String){repositor
   + 'nodes{number isDraft baseRefName headRefOid mergeable updatedAt autoMergeRequest{enabledAt} headRepository{nameWithOwner}}}}}';
 
 // An installation token of the clued-admission App with exactly these permissions (and workflows: write when the installation
-// holds it), or the reason there is none.
-export async function frontMergeToken({ env, fetchImpl, now = () => Date.now() }) {
+// holds it), or the reason there is none. With only, exactly those and nothing more (a comment needs pull_requests: write alone).
+export async function frontMergeToken({ env, fetchImpl, now = () => Date.now(), only = null }) {
   const appId = (env.CLUED_ADMISSION_APP_ID ?? '').trim(), key = (env.CLUED_ADMISSION_APP_PRIVATE_KEY ?? '').trim();
   if (!appId || !key) return { token: null, reason: 'the clued-admission App is not configured (CLUED_ADMISSION_APP_ID / CLUED_ADMISSION_APP_PRIVATE_KEY)' };
   const jwt = appJwt(appId, key, Math.floor(now() / 1000));
   const installation = await appRequest(fetchImpl, env, 'GET', `/repos/${env.GITHUB_REPOSITORY}/installation`, jwt);
   if (installation.status !== 200 || !installation.body?.id) return { token: null, reason: `GET installation returned ${installation.status}` };
-  const workflows = installation.body.permissions?.workflows === 'write';
-  const permissions = workflows ? { ...FRONT_MERGE_PERMISSIONS, ...WORKFLOWS_PERMISSION } : FRONT_MERGE_PERMISSIONS;
+  const workflows = !only && installation.body.permissions?.workflows === 'write';
+  const permissions = only ?? (workflows ? { ...FRONT_MERGE_PERMISSIONS, ...WORKFLOWS_PERMISSION } : FRONT_MERGE_PERMISSIONS);
   const minted = await appRequest(fetchImpl, env, 'POST', `/app/installations/${installation.body.id}/access_tokens`, jwt,
     { repositories: [env.GITHUB_REPOSITORY.split('/')[1]], permissions });
   if (minted.status === 201 && minted.body?.token) return { token: minted.body.token, reason: null, workflows };
@@ -226,6 +226,17 @@ async function phaseGate(env, fetchImpl) {
   return inForce ? { result: 'none', reason: `脚手架规则集在用，由托管副本带车头 (${reason})` } : null;
 }
 
+// What the train does with a head behind main, one rule for choosing the front and for naming the stalled: a candidate is brought
+// up to main once there is no front; anything else stays where it is. §3.1: red on a head the App brought is a true red, and a
+// failed admission is not something main changes; a head the App brought that is not admitted is not brought again.
+function behindVerdict(member, records, admitters) {
+  if (member.mergeable === 'CONFLICTING') return { state: 'conflict', candidate: false };
+  if (records.failed.length && (records.brought || records.failed.some(context => admitters.some(row => row.context === context))))
+    return { state: `red (${records.failed.join(', ')})`, candidate: false };
+  if (records.brought && !records.admitted) return { state: 'brought up before and not admitted', candidate: false };
+  return { state: records.failed.length ? `candidate, red (${records.failed.join(', ')}): main is merged in once` : 'candidate', candidate: true };
+}
+
 // The train of this moment (see the head of this file): every pull request on it with what it is, and the candidates in
 // order. Reads only; throws when GitHub cannot be read (then nothing is decided).
 export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
@@ -277,15 +288,9 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   // Without a front every member's head is read, a conflict's too: each one the App brought up and not admitted counts.
   if (nofront) for (const member of train.filter(member => member.behind > 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    if (member.mergeable === 'CONFLICTING') member.state = 'conflict';
-    // §3.1: red on a head the App brought is a true red; a failed admission is not something main changes.
-    else if (records.failed.length && (records.brought || records.failed.some(context => admitters.some(row => row.context === context))))
-      member.state = `red (${records.failed.join(', ')})`;
-    else if (records.brought && !records.admitted) member.state = 'brought up before and not admitted';
-    else {
-      member.state = records.failed.length ? `candidate, red (${records.failed.join(', ')}): main is merged in once` : 'candidate';
-      candidates.push(member);
-    }
+    const { state, candidate } = behindVerdict(member, records, admitters);
+    member.state = state;
+    if (candidate) candidates.push(member);
   }
   for (const member of train) member.state ??= 'behind';
   const stranded = nofront ? train.filter(member => member.records?.brought && !member.records.admitted) : [];
@@ -303,10 +308,13 @@ async function appearedAt({ env, fetchImpl, repository, member }) {
 
 // FABLE-defect-remediation-plan-20261124 §3.11 item 3: a pull request on the train that nothing will move. Its head has no required
 // check failed (a red one is seen on the PR and by wait-pr) and not all of them green, is not reported as a conflict, and nothing has
-// been queued, running or pending on it for STALLED_AFTER_MS: the rule of wait-pr's exit 5, the length a parameter. Such a head is
+// been queued, running or pending on it for STALLED_AFTER_MS: the rule of wait-pr's exit 5, the length a parameter. A head behind
+// main is one of these only when the train will not bring it up (behindVerdict: the App brought it and it is not admitted); a
+// candidate waits for the front and is brought up, naming it would send someone to merge main by hand. Such a head is
 // named on its pull request, once: which required checks are missing and how each last ended. Nothing is kept between runs: the
 // comment carries the head, and a comment that already names it (stalledMark) means it was named. A helper: whatever it cannot read
 // or post it only reports, per pull request; it never changes what the run decided.
+export const COMMENT_PERMISSIONS = Object.freeze({ pull_requests: 'write' });
 export const STALLED_AFTER_MS = 30 * 60_000;
 export const STALLED_MARK = 'clued-front-main-merge: stalled';
 export const stalledMark = head => `<!-- ${STALLED_MARK} ${head} -->`;
@@ -335,6 +343,8 @@ export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), no
     try {
       const records = member.records ??= await headRecords({ env, fetchImpl, repository, head: member.head, required: chosen.required, admitters: chosen.admitters });
       if (records.failed.length || records.green || records.unfinished > 0) continue;
+      // Behind main and a candidate: the train brings it up once there is no front, so something will move it (review 2fb32dc7 §5).
+      if (member.behind > 0 && behindVerdict(member, records, chosen.admitters).candidate) continue;
       const runs = await listedInFull(fetchImpl, env, `/repos/${repository}/actions/runs?head_sha=${member.head}`, 'workflow_runs', `the workflow runs of ${member.head}`);
       if (runs.some(run => run.status !== 'completed')) continue;
       const ran = runs.map(run => Date.parse(run.updated_at ?? '')).filter(Number.isFinite);
@@ -342,7 +352,7 @@ export async function nameStalled({ env, fetchImpl, chosen, skip = new Set(), no
       if (now() - quiet < STALLED_AFTER_MS) continue;
       missing = records.missing;
       if (await commentsName({ env, fetchImpl, repository, pr: member.pr, head: member.head })) continue;
-      if (!token && !refused) ({ token, reason: refused } = await frontMergeToken({ env, fetchImpl, now }));
+      if (!token && !refused) ({ token, reason: refused } = await frontMergeToken({ env, fetchImpl, now, only: COMMENT_PERMISSIONS }));
       if (!token) { named.push({ pr: member.pr, head: member.head, missing, comment: `not posted (${refused})` }); continue; }
       const posted = await appRequest(fetchImpl, env, 'POST', `/repos/${repository}/issues/${member.pr}/comments`, token, { body: stalledComment(member.head, missing) });
       named.push({ pr: member.pr, head: member.head, missing, comment: posted.status === 201 ? 'posted' : `not posted (HTTP ${posted.status})` });
