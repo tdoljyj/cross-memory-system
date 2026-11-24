@@ -99,9 +99,8 @@ test('every https host the archive names is cut off or registered as not Clued\'
   const file = path.join(h.f.out, 'kit.json'), lost = structuredClone(h.kit);
   lost.server.blackholeHosts = lost.server.blackholeHosts.filter(x => x !== PRODUCTION_GATEWAY); fs.writeFileSync(file, JSON.stringify(lost));
   assert.throws(() => kitModule.verifyKitServer({ kit: h.f.out, from: h.f.from, version: h.f.version }), e => e.message === `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${PRODUCTION_GATEWAY}`);
-  const moved = structuredClone(h.kit); moved.server.blackholeHosts = lost.server.blackholeHosts; moved.server.allowedHosts = [...moved.server.allowedHosts, PRODUCTION_GATEWAY];
-  fs.writeFileSync(file, JSON.stringify(moved));
-  assert.throws(() => kitModule.verifyKitServer({ kit: h.f.out, from: h.f.from, version: h.f.version }), e => e.message === `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${PRODUCTION_GATEWAY}`);
+  const both = structuredClone(h.kit); both.server.allowedHosts = [...both.server.allowedHosts, PRODUCTION_GATEWAY]; fs.writeFileSync(file, JSON.stringify(both));
+  assert.throws(() => kitModule.verifyKitServer({ kit: h.f.out, from: h.f.from, version: h.f.version }), e => e.message === 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
 });
 
 test('a drill kit whose first-install kit differs from the Release\'s in one more field is refused, and so is a production address', async () => {

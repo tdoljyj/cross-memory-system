@@ -51,9 +51,11 @@ kit 的接受文件给角色钉的每个主机工具（`fleetRefs.formalRoles.<�
 - **演练绑定**：Owner 在测试项目建一条不带 ci-admission 角色的绑定，交一次：`pwsh -NoProfile -File drill-vm.ps1 -BindingCredential` 弹出 Windows 凭据窗口，
   用户名填连接 id，密码贴 `clued_bnd_` 令牌；存到 `D:\clued-drill\drill-binding.clixml`（DPAPI，仅本 Windows 用户），与来宾管理员凭据同一处、同一个读取函数（`Get-DrillCredential`）。
   每轮经 PowerShell Direct 会话交给来宾写成 `ci-admission.token`，随检查点恢复消失；`public.json` 的绑定 id 与令牌指纹就是这条绑定的。升级令牌与 App 私钥仍在来宾里现造。
-- **来宾里断开生产**：入口在装之前核 `-From` 里的首装 kit 指的就是演练服务端（否则 `DRILL_ENTRY_SERVER_IS_PRODUCTION`），把 kit 列出的生产域名写进 hosts
-  （`0.0.0.0` 与 `::`），再解析一遍，解析到别的地址即停（`DRILL_ENTRY_PRODUCTION_NOT_CUT_OFF`）。hosts 管到 Windows 进程与按默认设置生成 hosts 的 WSL；容器内的解析不经它，
-  那里靠的是来宾里没有任何一份配置写着生产地址。
+- **来宾里断开生产**：包自己的代码里写死着生产地址（`windows/SwapBroker.cs` 的 `Route`：服务每次启动都向生产网关发续期探测，不读 record），换 record 管不到。
+  所以建 kit 时把 tar 里出现的每个 `https://` 主机逐个判定：在 `drill-server.json` 的 `blackholeHosts`（加上 Release record 的数据库主机）里就断开，在 `allowedHosts`（不是 Clued 的主机）里就放行，
+  两边都不在即不出 kit（`DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:<主机>`）；开机前 `--server-of` 按同一规则再核一遍。入口在装之前核 `-From` 里的首装 kit 指的就是演练服务端
+  （否则 `DRILL_ENTRY_SERVER_IS_PRODUCTION`），把 kit 的 `blackholeHosts` 写进 hosts（`0.0.0.0` 与 `::`），再解析一遍，解析到别的地址即停（`DRILL_ENTRY_PRODUCTION_NOT_CUT_OFF`）。
+  hosts 管到 Windows 进程与按默认设置生成 hosts 的 WSL；容器内的解析不经它，运行时拼出来的地址也不在扫描之内，这两处没有机制兜住。
 - **A6**：绑定没有角色，launcher 的角色探测答 `not-held`、首班车 `first-train-not-applicable`、节点 STANDBY；UNCERTAIN（探测被拒或没答上）不算过。
 
 ## 两种 kit

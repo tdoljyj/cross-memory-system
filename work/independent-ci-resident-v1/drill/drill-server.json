@@ -2,5 +2,24 @@
   "contract": "clued.drill.server/1",
   "project": "clued-auth-test",
   "supabaseUrl": "https://uscrdifznmlvczcekqpw.supabase.co",
-  "publishableKey": null
+  "publishableKey": null,
+  "blackholeHosts": [
+    "clued.pixelgrav.com",
+    "kooyumi.pixelgrav.com"
+  ],
+  "allowedHosts": [
+    "api.github.com",
+    "archive.ubuntu.com",
+    "fixture.supabase.co",
+    "github.com",
+    "in-toto.io",
+    "invalid.example",
+    "learn.microsoft.com",
+    "nodejs.org",
+    "pypi.org",
+    "releases.ubuntu.com",
+    "slsa.dev",
+    "token.actions.githubusercontent.com",
+    "www.python.org"
+  ]
 }

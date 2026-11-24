@@ -138,13 +138,31 @@ export const SERVER_STAND_IN_CONTRACT = 'clued.drill.server-stand-in/1';
 export const SERVER_FIELDS = Object.freeze(['record.publishableKey', 'record.supabaseUrl']);
 const SERVER_URL = /^https:\/\/[a-z0-9]+\.supabase\.co$/, SERVER_KEY = /^sb_publishable_[A-Za-z0-9_-]+$/;
 const hostOf = url => new URL(url).hostname;
+const hostList = v => Array.isArray(v) && v.every(h => typeof h === 'string' && /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/.test(h)) && new Set(v).size === v.length;
 function checkedServer(s, { allowUnset = false } = {}) {
-  check(s !== null && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).sort().join() === 'contract,project,publishableKey,supabaseUrl' &&
+  check(s !== null && typeof s === 'object' && !Array.isArray(s) && Object.keys(s).sort().join() === 'allowedHosts,blackholeHosts,contract,project,publishableKey,supabaseUrl' &&
     s.contract === SERVER_CONTRACT && typeof s.project === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$/.test(s.project) &&
-    typeof s.supabaseUrl === 'string' && SERVER_URL.test(s.supabaseUrl), 'DRILL_SERVER_REFUSED');
+    typeof s.supabaseUrl === 'string' && SERVER_URL.test(s.supabaseUrl) && hostList(s.blackholeHosts) && hostList(s.allowedHosts) &&
+    // a host is cut off or let through, never both; the drill's own server is never cut off
+    !s.blackholeHosts.some(h => s.allowedHosts.includes(h)) && !s.blackholeHosts.includes(hostOf(s.supabaseUrl)), 'DRILL_SERVER_REFUSED');
   check(s.publishableKey !== null || allowUnset, 'DRILL_SERVER_PUBLISHABLE_KEY_NOT_SET');
   check(s.publishableKey === null || (typeof s.publishableKey === 'string' && SERVER_KEY.test(s.publishableKey)), 'DRILL_SERVER_REFUSED');
-  return { contract: s.contract, project: s.project, supabaseUrl: s.supabaseUrl, publishableKey: s.publishableKey };
+  return { contract: s.contract, project: s.project, supabaseUrl: s.supabaseUrl, publishableKey: s.publishableKey,
+    blackholeHosts: [...s.blackholeHosts], allowedHosts: [...s.allowedHosts] };
+}
+// Every host the package's archive names after "https://", in any entry (code, lists, comments alike; lower case, a port or a path is
+// not part of it). What the package's own code reaches is what it names, whatever the record says: the node's service posts its renew
+// probe to a constant, windows/SwapBroker.cs Route (review M1 of PR-3). An address put together at run time is not seen here.
+export function hostsOfTar(tarBytes) {
+  const hosts = new Set();
+  for (const e of readTar(tarBytes)) for (const m of e.data.toString('latin1').matchAll(/https:\/\/([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)/gi)) hosts.add(m[1].toLowerCase());
+  return [...hosts].sort();
+}
+// Each of them is cut off in the guest (blackholeHosts) or registered as not Clued's (allowedHosts; the drill's own server is the
+// drill's), or there is no kit and no boot: a host nobody decided on is taken for production.
+function assertTarHostsDecided(tarBytes, { blackholeHosts, allowedHosts, supabaseUrl }) {
+  const undecided = hostsOfTar(tarBytes).filter(h => !blackholeHosts.includes(h) && !allowedHosts.includes(h) && h !== hostOf(supabaseUrl));
+  check(undecided.length === 0, `DRILL_SERVER_PRODUCTION_HOST_NOT_CUT_OFF:${undecided.join(',')}`);
 }
 // allowUnset: read the file while its key is still to be filled in (its own test); a kit is never made from such a reading.
 export function readDrillServer({ file = fileURLToPath(new URL('./drill-server.json', import.meta.url)), allowUnset = false } = {}) {
@@ -199,21 +217,26 @@ function serverStandIn({ from, version, server, accepted }) {
     firstInstallKitSha256: drillSha };
   check(namesDrillReserved(acceptance), 'DRILL_ACCEPTANCE_STAND_IN_REFUSED');
   const release = recordOf(releaseKit, 'DRILL_SERVER_RELEASE_KIT_NAMES_NO_SERVER');
+  // cut off in the guest: the Release record's database, and the service's other hosts (drill-server.json blackholeHosts)
+  const blackholeHosts = [...new Set([hostOf(release.supabaseUrl), ...server.blackholeHosts])].sort(), allowedHosts = [...server.allowedHosts].sort();
+  check(!allowedHosts.includes(hostOf(release.supabaseUrl)), 'DRILL_SERVER_REFUSED');
+  assertTarHostsDecided(read(from, `${tag}.tar`), { blackholeHosts, allowedHosts, supabaseUrl: server.supabaseUrl });
   return { acceptance,
     payloads: { [names.firstInstallKit]: drillKit, [names.firstInstallSums]: sumsBytes, [names.acceptance]: Buffer.from(JSON.stringify(acceptance, null, 2) + '\n') },
     record: { contract: SERVER_STAND_IN_CONTRACT, project: server.project, supabaseUrl: server.supabaseUrl, replaced: [...SERVER_FIELDS],
-      releaseFirstInstallKitSha256: releaseSha, firstInstallKitSha256: drillSha, files: names, blackholeHosts: [hostOf(release.supabaseUrl)] } };
+      releaseFirstInstallKitSha256: releaseSha, firstInstallKitSha256: drillSha, files: names, blackholeHosts, allowedHosts } };
 }
 // A made kit's server stand-in against the Release directory it is run with, for drill-vm.ps1's gate before any boot
 // (Assert-DrillServerReady; the kit's own files are already held to kit.json's hashes by Read-DrillKit): the Release's first-install kit
 // is the one the stand-in was made from, the drill's differs from it in the two server fields only and names the kit's server, the
-// production host is in the list the guest cuts off, the sums differ in the kit's line only, the acceptance names the drill's kit.
+// production host is in the list the guest cuts off, every host the archive names is in that list or the registered one, the sums differ in the kit's line only, the acceptance names the drill's kit.
 export function verifyKitServer({ kit, from, version }) {
   const s = JSON.parse(fs.readFileSync(path.join(kit, 'kit.json'), 'utf8')).server;
   check(s !== null && typeof s === 'object' && s.contract === SERVER_STAND_IN_CONTRACT, 'DRILL_KIT_SERVER_STAND_IN_MISSING');
   const tag = `fleet-node-${version}`;
   check(JSON.stringify(s.files) === JSON.stringify({ firstInstallKit: `${tag}.first-install-kit.json`, firstInstallSums: `${tag}.first-install.SHA256SUMS`, acceptance: `${tag}.acceptance.json` }) &&
-    JSON.stringify(s.replaced) === JSON.stringify(SERVER_FIELDS) && Array.isArray(s.blackholeHosts), 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
+    JSON.stringify(s.replaced) === JSON.stringify(SERVER_FIELDS) && hostList(s.blackholeHosts) && hostList(s.allowedHosts) &&
+    !s.blackholeHosts.some(h => s.allowedHosts.includes(h)), 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
   const releaseKit = read(from, s.files.firstInstallKit), drillKit = read(kit, s.files.firstInstallKit);
   check(sha256(releaseKit) === s.releaseFirstInstallKitSha256, 'DRILL_KIT_SERVER_NOT_THIS_RELEASE');
   check(sha256(drillKit) === s.firstInstallKitSha256, 'DRILL_KIT_SERVER_STAND_IN_REFUSED');
@@ -221,6 +244,8 @@ export function verifyKitServer({ kit, from, version }) {
   const release = recordOf(releaseKit, 'DRILL_SERVER_RELEASE_KIT_NAMES_NO_SERVER'), drill = recordOf(drillKit, 'DRILL_SERVER_STAND_IN_REFUSED');
   check(drill.supabaseUrl === s.supabaseUrl && s.blackholeHosts.includes(hostOf(release.supabaseUrl)) && !s.blackholeHosts.includes(hostOf(drill.supabaseUrl)),
     'DRILL_KIT_SERVER_STAND_IN_REFUSED');
+  // the archive this run installs names no host but the kit's cut-off and registered ones (the rule the kit was made under, held again)
+  assertTarHostsDecided(read(from, `${tag}.tar`), s);
   const others = text => readSums(text).map(f => (f.name === s.files.firstInstallKit ? { ...f, sha256: '' } : f));
   const releaseSums = read(from, s.files.firstInstallSums).toString(), drillSums = read(kit, s.files.firstInstallSums).toString();
   check(JSON.stringify(others(releaseSums)) === JSON.stringify(others(drillSums)) &&
