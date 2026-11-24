@@ -1404,7 +1404,8 @@ test('the capacity gate runs only in migrate mode, before the backup, with the s
   assert.ok(gate < index('Create and verify encrypted pre-migration backup'));
   const step = steps[gate];
   assert.match(step, /\n {8}if: \$\{\{ inputs\.mode == 'migrate' \}\}\n/);
-  assert.match(step, /\n {8}timeout-minutes: 2\n/);
+  // Five minutes: the first pull of the psql image counts against it (§12).
+  assert.match(step, /\n {8}timeout-minutes: 5\n/);
   assert.match(step, /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
   assert.match(step, /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
   // The size is read once with ON_ERROR_STOP; a failed read fails the step.
@@ -1412,10 +1413,12 @@ test('the capacity gate runs only in migrate mode, before the backup, with the s
   assert.match(step, /size_bytes=\$\(psql_read 'select pg_database_size\(current_database\(\)\)'\) \\\n\s+\|\| \{ echo "::error::[^"]+"; exit 1; \}/);
   const calls = [...step.matchAll(/node scripts\/migration-size-gate\.mjs([^\n]*)/g)].map((match) => match[1].trim());
   assert.deepEqual(calls, ['--size-bytes "$size_bytes" --files "$files"']);
-  // The sweep reminder never decides the step: its read may fail and it only warns.
-  assert.match(step, /clued-retention-sweep/);
+  // The sweep reminder never decides the step: its read may fail and it only warns, and only for a registered job that
+  // has not succeeded in 48 hours (§12): a database without the job reads 'absent', which is not 0.
   assert.match(step, /\|\| sweep=''/);
-  assert.match(step, /::warning::/);
+  assert.match(step, /case when not exists \(select 1 from cron\.job where jobname = 'clued-retention-sweep'\) then 'absent'/);
+  assert.match(step, /jobname = 'clued-retention-sweep' and d\.status = 'succeeded' and d\.end_time > now\(\) - interval '48 hours'/);
+  assert.match(step, /\n {10}if \[ "\$sweep" = 0 \]; then\n {12}echo "::warning::[^"\n]+"\n {10}fi\n/);
   assert.ok(step.indexOf("|| sweep=''") < step.indexOf('node scripts/migration-size-gate.mjs'));
 
   for (const mode of ['preflight', 'backup', 'deploy', 'release', 'source-capture']) {

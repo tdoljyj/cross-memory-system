@@ -131,8 +131,10 @@ test('a declared shrink migration may add indexes only, and only a declaration b
   const index = 'create index if not exists clued_audit_receipts_created_idx on public.clued_audit_receipts(created_at);\n';
   assert.equal(verdict(AT, `${shrink}${index}`).status, 0);
   assert.equal(verdict(AT, `${shrink}do $$ begin execute 'create index i on public.t(a)'; end $$;\n`).status, 0);
+  // An index a DO body builds from a literal is still an index (§12: the literal is judged as the statement it holds).
+  assert.equal(verdict(AT, `${shrink}do $$ begin execute format('create index %I on public.t(a)', 'i'); end $$;\n`).status, 0);
   for (const added of ['create table public.t(a int);\n', 'alter table public.t add column a int;\n',
-    'alter table public.t add constraint t_u unique (a);\n', "do $$ begin execute format('create index %I on public.t(a)', 'i'); end $$;\n"]) {
+    'alter table public.t add constraint t_u unique (a);\n', "do $$ begin execute format('create table %I (a int)', 'x'); end $$;\n"]) {
     const result = verdict(AT, `${shrink}${index}${added}`);
     assert.equal(result.status, 1, added);
     assert.match(result.stderr, /shrink/);
@@ -171,7 +173,33 @@ test('a missing or malformed size and a missing file fail the step', () => {
   });
 });
 
-test('every committed migration is read by the tokenizer, and the run-history cleanup counts as an addition', async () => {
+// FABLE-prod-db-shrink-v2-20261124 §12: a DO body's EXECUTE of anything but one literal is judged by every string literal
+// of that body (constants, format and replace arguments): one that holds an adding statement at its start, or after a
+// semicolon, refuses the file with that literal's line; none passes. The repository's function patch idiom
+// (execute replace(definition, ...)) and the run-history cleanup (execute cleanup) add nothing.
+test('a DO body that executes a built statement is judged by the literals of that body', () => {
+  for (const sql of [
+    `do $$\ndeclare r record;\nbegin\n  for r in select pg_get_functiondef(p.oid) as definition from pg_proc p where p.proname = 'f' loop\n    execute replace(r.definition, 'a', 'b');\n  end loop;\nend $$;`,
+    `do $$\ndeclare cleanup constant text := $sql$ delete from cron.job_run_details where end_time < now() - interval '1 day' $sql$;\nbegin\n  execute cleanup;\nend $$;`,
+    `do $$\ndeclare ddl text := 'create temp table scratch(a int)';\nbegin\n  execute ddl;\nend $$;`,
+    `do $$\ndeclare r record;\nbegin\n  for r in select pg_get_functiondef(p.oid) as d from pg_proc p where p.proname = 'g' loop\n    execute replace(r.d, 'raise notice ''skip create table here''', 'perform 1');\n  end loop;\nend $$;`,
+    `do $$\nbegin\n  execute 'select 1' || ' -- create index later';\n  execute replace('perform 1', 'perform', 'comment: create index x on t(a)');\nend $$;`,
+  ]) {
+    const result = verdict(AT, `${sql}\n`);
+    assert.equal(result.status, 0, `${sql}\n${result.stdout}${result.stderr}`);
+  }
+  const format = verdict(AT, `do $$\ndeclare name text := 't_f';\nbegin\n  execute format('create index %I on public.t(a)', name);\nend $$;\n`);
+  assert.equal(format.status, 1, format.stdout + format.stderr);
+  assert.match(format.stderr, /_fixture_0\.sql:4: create index/);
+  const constant = verdict(AT, `do $$\ndeclare ddl text;\nbegin\n  ddl := 'create table public.made_at_run(a int)';\n  execute ddl;\nend $$;\n`);
+  assert.equal(constant.status, 1, constant.stdout + constant.stderr);
+  assert.match(constant.stderr, /_fixture_0\.sql:4: create table public\.made_at_run/);
+  const later = verdict(AT, `do $$\nbegin\n  execute 'select 1; create unique index u on public.t(a)' || '';\nend $$;\n`);
+  assert.equal(later.status, 1, later.stdout + later.stderr);
+  assert.match(later.stderr, /_fixture_0\.sql:3: create unique index/);
+});
+
+test('every committed migration is read by the tokenizer, and the run-history cleanup passes at the threshold', async () => {
   const { judgeMigration } = await import('../scripts/migration-size-gate.mjs');
   const { readFileSync } = await import('node:fs');
   const dir = path.join(app, 'supabase/migrations');
@@ -181,7 +209,9 @@ test('every committed migration is read by the tokenizer, and the run-history cl
     const verdictOf = judgeMigration(readFileSync(path.join(dir, name), 'utf8'), name);
     assert.equal(verdictOf.error, undefined, `${name}: ${verdictOf.error}`);
   }
-  // Its DO block runs `execute cleanup` from a variable: a non-literal EXECUTE cannot be judged and counts (§8).
-  const cleanup = judgeMigration(readFileSync(path.join(dir, '20261118080000_cron_run_history_retention.sql'), 'utf8'));
-  assert.deepEqual(cleanup.additions.map((item) => item.kind), ['dynamic']);
+  // Its DO block runs `execute cleanup`, a constant that deletes (§12): a cleanup is never refused.
+  const cleanup = path.join(dir, '20261118080000_cron_run_history_retention.sql');
+  assert.deepEqual(judgeMigration(readFileSync(cleanup, 'utf8')).additions, []);
+  const result = gate(AT, [cleanup]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });
