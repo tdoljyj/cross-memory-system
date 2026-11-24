@@ -130,6 +130,7 @@ test('the earlier exact compound Source still decodes from its catalogue and com
     {commit:'709e474e83bae54f5985ad24b04ecc90bd6c11d5',blob:'00a9b5d1b1a0eaed1cc0d82d05753bfe984743ae'},
     {commit:'304f48f466bac8d15d4289358f617699179b27de',blob:'d05ee2b2e7779cb2b8dda780b9203ad9a9e4e789'},
     {commit:'777edf3a49e21ac9811a1534f4708d7b75e1b4e2',blob:'095d75173b66e6f10fd733a00edbd251a14ca819'},
+    {commit:'6069319521e687dee0f62b84edcc8f365a52002a',blob:'a39bec437446a92a670fb3ef09f1a31f7f785e7b'},
   ],file=REQUIRED_TESTS_SOURCE.file;
   assert.deepEqual(previous.map(pin=>pin.workflow_blob),generations.map(generation=>generation.blob));
   for(const {commit,blob} of generations){

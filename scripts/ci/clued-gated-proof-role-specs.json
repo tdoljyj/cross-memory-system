@@ -2087,10 +2087,10 @@
     },
     ".github/workflows/clued-required-tests.yml": {
       "sources": {
-        "a39bec437446a92a670fb3ef09f1a31f7f785e7b": [
+        "cb67b91ac699384f6fa51a1673c245914bace1b6": [
           {
             "job_id": "clued-cloud-tests",
-            "definition_sha256": "d05c0813bdcc408b1109e5c1bc6c4287089448fe5f4ed97a58557bcfe954fa42",
+            "definition_sha256": "1bac0e3c60ce1e90dbbec35e594abb312ea45bc95979b4518480d4e8e96ebd12",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped' }}",
               "needs": "admission-gate",
@@ -2177,6 +2177,7 @@
                   "if": "steps.select.outputs.run_clued_cloud == 'true'",
                   "env": {
                     "SELECTOR": "${{ steps.select.outputs.selector }}",
+                    "CI_BASE_SHA": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}",
                     "CLUED_UNDER_TEST": "1"
                   },
                   "run": "node \"$SELECTOR\" --run clued-cloud --root candidate"
@@ -2282,7 +2283,7 @@
           },
           {
             "job_id": "migration-verify",
-            "definition_sha256": "88e509c64bed8cc7461d507833e9f95d8c765720e25d015049d8b705fcf3e197",
+            "definition_sha256": "d397ece28509d42d2d9ad4a626a2f3f87934635b66e0ff3059595591ff89c0fd",
             "definition": {
               "name": "${{ needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped' }}",
               "needs": "admission-gate",
@@ -2369,6 +2370,7 @@
                   "if": "steps.select.outputs.run_production_schema == 'true'",
                   "env": {
                     "SELECTOR": "${{ steps.select.outputs.selector }}",
+                    "CI_BASE_SHA": "${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}",
                     "CLUED_UNDER_TEST": "1"
                   },
                   "run": "status=0\nnode \"$SELECTOR\" --run production-schema --root candidate || status=$?\nif [ -f \"$RUNNER_TEMP/production-schema-report.json\" ]; then\n  node -e 'const r=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\"));\n    const lines=[\"### migration-verify: \"+r.status,\"\",...r.errors.map(e=>\"- error: `\"+e+\"`\"),\n      \"- pending migrations: \"+((r.pending||[]).join(\", \")||\"none\"),\n      \"- repository-only columns and functions (tests see them, production does not): \"+((r.repository_only||[]).length)];\n    require(\"fs\").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join(\"\\n\")+\"\\n\");' \"$RUNNER_TEMP/production-schema-report.json\"\nfi\nexit $status\n"

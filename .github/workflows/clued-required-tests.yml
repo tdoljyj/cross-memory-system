@@ -215,6 +215,7 @@ jobs:
         if: steps.select.outputs.run_clued_cloud == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
           CLUED_UNDER_TEST: "1"
         run: node "$SELECTOR" --run clued-cloud --root candidate
@@ -478,6 +479,7 @@ jobs:
         if: steps.select.outputs.run_production_schema == 'true'
         env:
           SELECTOR: ${{ steps.select.outputs.selector }}
+          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}
           # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.
           CLUED_UNDER_TEST: "1"
         run: |

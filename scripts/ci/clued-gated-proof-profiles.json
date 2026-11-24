@@ -6941,7 +6941,7 @@
           "self_hosted": true
         }
       ],
-      "source_sha256": "fe0420afaa111c5b606d1580e0ad92e23af74b58155adfaa65340f1ed9ffb6db",
+      "source_sha256": "832ffce8a1ece35839fc7aed864907e10c9d351a7d422e966dcd86045095e95f",
       "source_yaml_lines": [
 "name: clued-required-tests",
 "",
@@ -7160,6 +7160,7 @@
 "        if: steps.select.outputs.run_clued_cloud == 'true'",
 "        env:",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
+"          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}",
 "          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
 "          CLUED_UNDER_TEST: \"1\"",
 "        run: node \"$SELECTOR\" --run clued-cloud --root candidate",
@@ -7423,6 +7424,7 @@
 "        if: steps.select.outputs.run_production_schema == 'true'",
 "        env:",
 "          SELECTOR: ${{ steps.select.outputs.selector }}",
+"          CI_BASE_SHA: ${{ steps.train-base.outputs.sha || github.event.pull_request.base.sha || steps.train-base.outputs.ci_base }}",
 "          # Clued Task fe8a2cbf: the test marker, set here as well, because the trusted base selector may predate it.",
 "          CLUED_UNDER_TEST: \"1\"",
 "        run: |",
@@ -8030,7 +8032,7 @@
 "        run: python3 -I -B scripts/ci/check_contract_placement.py --base \"$BASE\" --head \"$CANDIDATE\" --minimum-service-version 0.4.5 --rendered-responses \"$RUNNER_TEMP/contract-responses.json\"",
 ""
       ],
-      "workflow_blob": "a39bec437446a92a670fb3ef09f1a31f7f785e7b"
+      "workflow_blob": "cb67b91ac699384f6fa51a1673c245914bace1b6"
     },
     ".github/workflows/contract-placement.yml": {
       "accepted_sources": [
