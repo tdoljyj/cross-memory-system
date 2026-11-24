@@ -141,7 +141,7 @@ async function world(t, { prs, bad = () => false, sharedClaim = false, rules = '
   gh.readPullRequest = async n => {
     const p = W.pulls.get(n), main = W.refs.get('heads/main');
     const testMerge = p.state === 'open' ? (ancestor(p.head, main) ? null : merge(main, p.head)) : null;
-    return { number: n, state: p.state, draft: false, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
+    return { number: n, state: p.state, draft: p.draft === true, merged: p.merged, mergeable: p.state === 'open', merge_commit_sha: p.merged ? p.mergeSha : testMerge, body: p.body,
       auto_merge: p.autoMerge ? { merge_method: 'merge' } : null,
       head: { sha: p.head, ref: `topic-${n}`, repo: { full_name: REPO } }, base: { ref: 'main', sha: p.base, repo: { full_name: REPO } } };
   };
@@ -2499,6 +2499,47 @@ test('parked-front T1b: a front batch of two ended with frontFailed false is bis
   assert.deepEqual(e.failed, []);
   const again = await e.store.readLandingState();
   assert.deepEqual([again.suspect, again.bad, again.handled], [after.suspect, after.bad, after.handled]);
+});
+
+// T1c (review of §6, must-fix 1; 修复前必红): a batch of two ended (frontFailed false) and, meanwhile, its front became a PR that cannot
+// land as it stands (draft), was closed, or was merged by GitHub with S's tree. No new batch opens, so the executor carries the same
+// ended report into every round (it drops one only on failedReported, a new front or head, a new batch of that head, or its hard cap).
+// After the first round bisected it (handled), the report must not keep the multi-member branch: the next round yields the slot, gives
+// it back, or adopts the front. Before the fix every later round did nothing there and the front held the slot while others waited.
+for (const [kind, call] of [['draft', 'yield'], ['closed', 'return'], ['merged', 'adopt']]) test(`parked-front T1c: a batch of two ended (frontFailed false), the front then ${kind}, the report carried -> the next round ${call}s, the slot is not held`, async t => {
+  const e = await world(t, { prs: [910, 911] });
+  const slotCalls = [];
+  e.native.port.yieldSlot = async i => { slotCalls.push(['yield', i.pr]); return { onDuty: true, yielded: true }; };
+  e.native.port.returnSlot = async i => { slotCalls.push(['return', i.pr]); return { onDuty: true, returned: true }; };
+  const adopt = e.native.port.adopt;
+  e.native.port.adopt = async i => { slotCalls.push(['adopt', i.pr]); return adopt(i); };
+  const r1 = await stage10(e);
+  const b = r1.facts.openFrontBatch;
+  assert.ok(b && b.members?.length === 2, r1.facts.decision);
+  const p = e.W.pulls.get(910);
+  if (kind === 'draft') p.draft = true;
+  if (kind === 'closed') p.state = 'closed';
+  if (kind === 'merged') {
+    // GitHub merged H as [T, H] with S's tree (the §41.4 adopt condition), from this node's front batch record
+    const record = (await e.store.frontBatches({ pr: 910, headSha: b.headSha }))[0];
+    const m = h('github-merge-910');
+    e.W.commits.set(m, { sha: m, tree: record.testTree, parents: [record.baseSha, b.headSha] }); e.W.content.set(m, new Set(['910', '911']));
+    e.W.refs.set('heads/main', m);
+    Object.assign(p, { state: 'closed', merged: true, mergeSha: m });
+  }
+  const ended = { pr: b.pr, headSha: b.headSha, testSha: b.testSha, attempt: b.attempt, code: 'TRAIN_BATCH_CHANGED', frontFailed: false };
+  const seen = [];
+  for (let i = 0; i < 3 && !slotCalls.length; i++) {
+    const r = await stage10(e, ended);
+    seen.push([r.facts.decision, r.facts.openFrontBatch?.pr ?? null, r.facts.landing?.bisect?.suspect ?? null]);
+    if (r.facts.openFrontBatch) break; // a new batch of this head: the executor drops the report (not this case)
+  }
+  const diag = JSON.stringify({ seen, slotCalls });
+  assert.ok(!seen.some(s => s[1] !== null), `no batch opens for this front: ${diag}`);
+  assert.deepEqual(slotCalls.map(c => c[0]), [call], diag);
+  assert.equal(slotCalls[0][1], 910, diag);
+  assert.ok((await e.store.readLandingState()).handled.includes(b.testSha), diag);
+  assert.deepEqual(e.failed, [], diag);
 });
 
 // T2 (end to end, the real stage 8 answer codes): three PRs, batchMax 3; GitHub Actions takes 25 minutes on every new S before its
