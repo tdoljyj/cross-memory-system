@@ -823,16 +823,18 @@ test('R1 现场回放 #1252–#1279：9 个合入跑赢框架的最终 head 按�
   assert.equal(report.summary.frameworkByTreeHeads, 9);
 });
 
-test('R2 单 head：#1272 bca9a00 → 7e6363a，树 6a03233，七项逐项一致、都从合入提交读', async () => {
+test('R2 单 head：#1272 bca9a00 → 7e6363a，树 6a03233，七项逐项一致；head 上已有的 Windows 用 head 的，其余六项从合入提交读', async () => {
   const [head, merge] = RACED[1272];
   const { report } = await replay(1272, 1272);
   const h = report.heads.find(x => x.sha === head);
   assert.equal(h.verdict, '一致');
   assert.deepEqual(h.pairs.map(p => [p.check, p.verdict]), PAIRS.map(p => [p.check, '一致']));
-  for (const p of h.pairs) {
+  assert.equal(pairOf(h, 'ci-suites-windows').frameworkFrom, undefined);
+  for (const p of h.pairs.filter(p => p.check !== 'ci-suites-windows')) {
     assert.equal(p.frameworkFrom?.sha, merge, p.check);
     assert.match(p.frameworkFrom.tree, /^6a03233/, p.check);
   }
+  assert.equal(h.frameworkByTree.sha, merge);
 });
 
 test('R3 防掩盖：#1264 21025a8 head 上框架 Windows 红、合入提交上绿，仍判不一致，不读合入提交', async () => {
