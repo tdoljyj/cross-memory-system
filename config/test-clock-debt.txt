@@ -275,6 +275,7 @@ apps/clued-cloud/tests/task-owner-detail-db.test.mjs
 apps/clued-cloud/tests/test-runner-concurrency.test.mjs
 apps/clued-cloud/tests/test-temp-lifecycle.test.mjs
 apps/clued-cloud/tests/work-claim-exemptions-db.test.mjs
+apps/clued-cloud/tests/work-claim-race-ui.test.mjs
 apps/clued-cloud/tests/work-claims-acceptance-db.test.mjs
 apps/clued-cloud/tests/work-claims-binding-roles-db.test.mjs
 apps/clued-cloud/tests/work-claims-ci-metering-db.test.mjs
