@@ -577,9 +577,13 @@ test('a change to a file a pinned registry holds runs the pinned-registry check'
 // table's --base {base}. The coverage check runs as a command of its own in clued-cloud (the suite every change runs), the
 // schema drift check takes the base the same way; each runs once, also when a plan is split into shards.
 const COVERAGE_CHECK = ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'];
+// Task 11092b8b (PLAN-main-red-ci-base-sha-20261124 §4): the real-clock debt list only shrinks against the same base, checked
+// by a command of its own after the coverage check, last in clued-cloud.
+const CLOCK_CHECK = ['node', 'scripts/ci/test-clock-scan.mjs', '--check', '--base', '{base}'];
 const takesBase = (id) => SUITE_COMMANDS[id].filter((command) => command.argv.includes('{base}'));
-test('the coverage and schema drift checks take the base from the command table, once each, also under --shard', () => {
-  assert.deepEqual(takesBase('clued-cloud').map(({ cwd, argv }) => ({ cwd, argv })), [{ cwd: '.', argv: COVERAGE_CHECK }]);
+test('the coverage, real-clock debt and schema drift checks take the base from the command table, once each, also under --shard', () => {
+  assert.deepEqual(takesBase('clued-cloud').map(({ cwd, argv }) => ({ cwd, argv })), [{ cwd: '.', argv: COVERAGE_CHECK }, { cwd: '.', argv: CLOCK_CHECK }]);
+  assert.deepEqual(SUITE_COMMANDS['clued-cloud'].slice(-2).map(({ argv }) => argv), [COVERAGE_CHECK, CLOCK_CHECK], 'last, after the coverage check');
   const drift = takesBase('production-schema');
   assert.equal(drift.length, 1, 'one schema drift command takes the base');
   assert.deepEqual(drift[0].argv.slice(0, 5), ['node', 'scripts/production-schema-drift.mjs', 'check', '--base', '{base}']);
@@ -604,7 +608,8 @@ test('the coverage and schema drift checks take the base from the command table,
 test('the suite run hands the job base to the checks: clued-cloud and production-schema start them with --base CI_BASE_SHA', () => {
   const base = 'c'.repeat(40);
   const summary = JSON.stringify({ type: 'summary', counts: {}, success: true });
-  for (const [id, script] of [['clued-cloud', 'scripts/ci/check-tests-covered.mjs'], ['production-schema', 'scripts/production-schema-drift.mjs']]) {
+  for (const [id, script] of [['clued-cloud', 'scripts/ci/check-tests-covered.mjs'], ['clued-cloud', 'scripts/ci/test-clock-scan.mjs'],
+    ['production-schema', 'scripts/production-schema-drift.mjs']]) {
     const calls = [];
     const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
     assert.equal(executeSuite(id, { root: ROOT, env: { CI_BASE_SHA: base, RUNNER_TEMP: os.tmpdir() }, spawn, log, platform: 'linux',
@@ -1170,8 +1175,9 @@ console.log(JSON.stringify({
   global: scoped.filter(([scope]) => scope === 'global').map(([, entry]) => entry),
   system: scoped.filter(([scope]) => scope === 'system').map(([, entry]) => entry),
   command: scoped.filter(([scope]) => scope === 'command').map(([, entry]) => entry),
-  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT', 'NODE_OPTIONS'].filter((name) => name in process.env),
+  leaked: ['GITHUB_PAT_TOKEN', 'ANTHROPIC_API_KEY', 'CLUED_HOME', 'GIT_CONFIG_COUNT'].filter((name) => name in process.env),
   kept: ['CI_BASE_SHA', 'PYTHONDONTWRITEBYTECODE', 'CLUED_CI_APP_DEPS'].map((name) => process.env[name]),
+  clock: ['NODE_OPTIONS', 'CLUED_CLOCK_ROOT'].map((name) => process.env[name]), record: Boolean(process.env.CLUED_CLOCK_RECORD),
 }));`;
 test('suite children get only the listed variables and a fake identity: fake GitHub tokens, an empty gh configuration, a git global configuration with only the test identity, no system configuration', (t) => {
   // The caller's identity, as a run on the Owner's own account inherits it.
@@ -1214,6 +1220,10 @@ test('suite children get only the listed variables and a fake identity: fake Git
     assert.deepEqual(child.command, [], "no configuration from the caller's environment");
     assert.deepEqual(child.kept, ['b', '1', '1'], 'the listed ones are');
     assert.equal(child.prompt, '0');
+    // Task 11092b8b (FABLE-no-real-clock-20261122 §2.1, §7.8): the caller's NODE_OPTIONS is not passed; the one a child
+    // gets preloads the real-clock guard of this checkout, with the checkout and a record of its own.
+    assert.deepEqual(child.clock, [`--import=${pathToFileURL(path.join(ROOT, 'scripts/ci/test-clock-guard.mjs')).href}`, path.resolve(ROOT)]);
+    assert.equal(child.record, true);
   }
   assert.deepEqual(env, before, "the caller's env is not changed");
 });

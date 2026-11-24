@@ -5,7 +5,7 @@
 // what the static scan refuses are split so the scan does not find them here.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -51,6 +51,29 @@ test('a new test that reads Date.now() fails through the guard, at its line, wit
   assert.match(run.output, /a real event {2}-> until\(probe/);
   assert.deepEqual(run.record.refused.map(({ api, file, line }) => ({ api, file, line })), [{ api: 'Date.now()', file: 'test/now.test.mjs', line: 4 }]);
   assert.match(run.record.lines.join('\n'), /^fixture: 1 real-clock use in test code\n {2}test\/now\.test\.mjs:4 Date\.now\(\)$/);
+});
+
+// The checkout given through a junction (Windows) or a link: node names a module by its real path, the entry may name the
+// checkout and the test file by the linked one. Both are the same checkout: the test is test code either way (review r3 §4;
+// before, every frame fell outside the linked root and nothing was refused).
+test('a checkout reached through a junction or link is the same checkout: its tests are still refused or let through', () => {
+  const root = checkout({
+    'test/helpers.mjs': 'export const stamp = () => Date.now();\n',
+    'test/now.test.mjs': `${header}test('reads the clock', () => {\n  assert.ok(Date.now() > 0);\n});\n`,
+    'test/listed.test.mjs': `${header}import { stamp } from './helpers.mjs';\ntest('listed', () => {\n  assert.ok(stamp() > 0);\n});\n`,
+    [DEBT_FILE]: 'test/helpers.mjs\ntest/listed.test.mjs\n',
+  });
+  const holder = mkdtempSync(path.join(os.tmpdir(), 'clock-link-'));
+  made.unshift(holder);
+  const link = path.join(holder, 'checkout');
+  symlinkSync(root, link, 'junction');
+  const refused = runGuarded(link, 'test/now.test.mjs');
+  assert.notEqual(refused.status, 0, refused.output);
+  assert.deepEqual(refused.record.refused.map(({ api, file, line }) => ({ api, file, line })), [{ api: 'Date.now()', file: 'test/now.test.mjs', line: 4 }]);
+  const listed = runGuarded(link, 'test/listed.test.mjs');
+  assert.equal(listed.status, 0, listed.output);
+  assert.deepEqual(listed.record.refused, []);
+  assert.deepEqual(listed.record.debt.map(({ file, entry }) => ({ file, entry })), [{ file: 'test/helpers.mjs', entry: 'test/listed.test.mjs' }]);
 });
 
 test('a test that gives spawnSync or execSync a timeout fails through the guard (§3.4)', () => {
