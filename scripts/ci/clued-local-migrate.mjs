@@ -23,7 +23,7 @@
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { MIGRATE_MODE_SQL } from '../../apps/clued-cloud/scripts/production-schema-drift.mjs';
 import { MIGRATION_FILENAME, appDirectory, fileVersion, migrationsDirectory, readHistoricalThrough, readSqlDirectory,
 } from '../../apps/clued-cloud/scripts/migration-ledger.mjs';
@@ -121,7 +121,7 @@ export async function main({ configPath = CONFIG_PATH, directory = migrationsDir
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (import.meta.main) {
   if (process.argv.length > 2) {
     console.error(`usage: node ${path.relative(process.cwd(), fileURLToPath(import.meta.url))}`);
     process.exit(2);
