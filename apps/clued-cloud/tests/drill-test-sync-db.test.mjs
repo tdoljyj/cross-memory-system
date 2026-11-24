@@ -1,4 +1,4 @@
-// Drill test project sync (Task 87d330d0; design FABLE-drill-test-project-sync-20261124 §1, §2.2, §4.1).
+// Drill test project sync (Task 87d330d0; design FABLE-drill-test-project-sync-20261124 §1, §4.1 and the ruling at its end).
 //
 // scripts/drill-test-sync.mjs brings the hosted test project clued-auth-test to
 // production's applied migration list: the same rows, in production's order,
@@ -7,8 +7,14 @@
 // production list is the committed ledger (supabase/ledger/production-history.json).
 // Nothing here reads a credential or connects to a hosted database.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { withCluster } from '../scripts/production-schema-drift.mjs';
 import { readRepository, readSnapshot } from '../scripts/production-schema-chain.mjs';
@@ -33,7 +39,7 @@ test('the connection is built from constants: no input routes it to production',
   try {
     for (const password of passwords) {
       const config = connectionConfig({ password, host });
-      assert.deepEqual(Object.keys(config).sort(), ['database', 'host', 'password', 'port', 'ssl', 'user']);
+      assert.deepEqual(Object.keys(config).sort(), ['connectionTimeoutMillis', 'database', 'host', 'password', 'port', 'ssl', 'user']);
       const { password: kept, ...routing } = config;
       assert.equal(kept, password, 'the password is passed as it is, never parsed');
       assert.deepEqual({ host: routing.host, port: routing.port, user: routing.user, database: routing.database },
@@ -50,10 +56,10 @@ test('the connection is built from constants: no input routes it to production',
   // The host is the session pooler of some region and nothing else; the tenant is the user name's suffix.
   for (const refused of [undefined, '', `db.${PRODUCTION_REF}.supabase.co`, `db.${DRILL_TEST_REF}.supabase.co`, 'example.invalid',
     `${host}:6543`, `${host}/postgres?user=postgres.${PRODUCTION_REF}`, `${PRODUCTION_REF}.pooler.supabase.com`, `x@${host}`, ` ${host}`]) {
-    assert.throws(() => connectionConfig({ password: 'plain', host: refused }), /drill_test_pooler_host_invalid/, String(refused));
+    assert.throws(() => connectionConfig({ password: 'plain', host: refused }), { code: 'DRILL_SERVER_POOLER_HOST_NOT_SET' }, String(refused));
   }
   for (const refused of [undefined, '', 7]) {
-    assert.throws(() => connectionConfig({ password: refused, host }), /drill_test_database_password_missing/, String(refused));
+    assert.throws(() => connectionConfig({ password: refused, host }), { code: 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING' }, String(refused));
   }
 });
 
@@ -79,68 +85,147 @@ test('the plan: a prefix is caught up, anything else is diverged, an older list 
   assert.throws(() => planSync({ production: [], test: [] }), /production_applied_missing/);
 });
 
-test('sync on a database: rebuild, catch up a prefix, refuse a diverged history, parking fixture, receipt',
+test('sync on a database: rebuild, catch up a prefix, refuse a diverged history, parking and project fixtures, nothing left behind',
   { timeout: 1_500_000 }, async () => {
-  const { syncDatabase, seedFixtures, readTestHistory } = await sync();
+  const { syncDatabase, seedFixtures, readTestHistory, runSync, DRILL_TEST_REF, RESULT_CONTRACT } = await sync();
   const repository = await readRepository();
   const snapshot = await readSnapshot();
   // Production's applied list as the release workflow exports it (supabase/production-schema/applied.sql).
   const production = repository.ledger.rows.map(({ version, name, statements_md5, statements_length }) =>
     ({ version, name, statements_md5, statements_length })).sort((a, b) => a.version.localeCompare(b.version));
   const identity = (rows) => rows.map(({ version, name, statements_md5 }) => `${version} ${name} ${statements_md5}`);
-  const meta = (runId) => ({ sourceCommit: 'c'.repeat(40), runId, at: '2026-11-24T04:00:00.000Z' });
+  // The first-install kit's scope (record.scope): a project of some id. The sync is given it, it holds none.
+  const kitProject = crypto.randomUUID();
+  const kitScope = `project:${kitProject}`;
 
   await withCluster('drill-sync', async (admin) => {
-    const run = (options) => syncDatabase(admin, { repository, snapshot, platform: 'embedded', ...options });
-    const receipt = async () => {
-      await admin.query('set role anon');
-      try { return (await admin.query('select public.clued_drill_sync_receipt_v1() v')).rows[0].v; } finally { await admin.query('reset role'); }
-    };
+    const run = (options) => syncDatabase(admin, { repository, snapshot, platform: 'embedded', scope: kitScope, ...options });
+    // The sync leaves no function of its own in the database (the ruling's section 2): production's history refuses an
+    // anon-callable public.clued_* function it does not know, and the host has the result without one.
+    const leftBehind = async () => (await admin.query(`select p.oid::regprocedure::text as name from pg_catalog.pg_proc p
+      where p.pronamespace = 'public'::regnamespace and p.proname ~ 'drill'`)).rows.map((r) => r.name);
     const user = crypto.randomUUID();
     await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'drill@example.invalid',now())`, [user]);
+    const projects = async () => (await admin.query('select id, user_id, context_key from public.clued_projects order by id')).rows;
 
     // --- First run: rebuild from empty to a production list three rows short. ---
     const earlier = production.slice(0, -3);
-    const first = await run({ applied: earlier, rebuild: true, meta: meta('101') });
-    assert.equal(first.state, 'in-sync', JSON.stringify(first.error ?? first.at ?? null));
+    const first = await run({ applied: earlier, rebuild: true });
+    assert.deepEqual(Object.keys(first).sort(), ['applied', 'fixtures', 'state']);
+    assert.equal(first.state, 'in-sync');
     assert.equal(first.applied.length, earlier.length);
-    assert.deepEqual(first.fixtures, { users: 1, seeded: 1 }, 'every account present gets its parking spot in the same run');
+    assert.deepEqual(first.fixtures, { users: 1, seeded: 1, project: 'seeded' }, 'the account present gets its parking spot and the kit\'s project in the same run');
+    assert.deepEqual(await projects(), [{ id: kitProject, user_id: user, context_key: kitScope }]);
     assert.deepEqual(identity(await readTestHistory(admin)), identity(earlier));
-    assert.deepEqual(await receipt(), { contract: 'clued.drill-test-sync-receipt.v1', state: 'in-sync',
-      production_last: { version: earlier.at(-1).version, name: earlier.at(-1).name }, production_rows: earlier.length,
-      source_commit: 'c'.repeat(40), run_id: '101', at: '2026-11-24T04:00:00.000Z' });
+    assert.deepEqual(await leftBehind(), []);
 
     // --- One row in the middle differs: diverged, no file applied. ---
     const middle = earlier[Math.floor(earlier.length / 2)];
     const original = (await admin.query('select statements from supabase_migrations.schema_migrations where version=$1', [middle.version])).rows[0].statements;
     await admin.query('update supabase_migrations.schema_migrations set statements=$2 where version=$1', [middle.version, ['-- another text']]);
-    const diverged = await run({ applied: production, meta: meta('102') });
+    const diverged = await run({ applied: production });
     assert.equal(diverged.state, 'diverged');
     assert.deepEqual(diverged.applied, []);
     assert.equal(diverged.at.production.version, middle.version);
     assert.equal((await readTestHistory(admin)).length, earlier.length, 'no file was applied');
-    assert.deepEqual(await receipt(), { contract: 'clued.drill-test-sync-receipt.v1', state: 'diverged',
-      source_commit: 'c'.repeat(40), run_id: '102', at: '2026-11-24T04:00:00.000Z' });
-    await admin.query('update supabase_migrations.schema_migrations set statements=$2 where version=$1', [middle.version, original]);
+    assert.deepEqual(await leftBehind(), []);
+
+    // The host's call on this database: the list from a file, the scope from the kit, the password from standard
+    // input; its answer is a code. (The stand-in for the pooler's login is this cluster's own.)
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'drill-sync-call-'));
+    const file = async (name, value) => { const at = path.join(directory, name); await writeFile(at, JSON.stringify(value)); return at; };
+    const serverFile = await file('drill-server.json', { supabaseUrl: `https://${DRILL_TEST_REF}.supabase.co`, poolerHost: 'aws-0-ap-northeast-2.pooler.supabase.com' });
+    const kitFile = await file('first-install-kit.json', { record: { scope: kitScope, repository: 'tdoljyj/cross-memory-system' } });
+    const hostCall = async (list) => {
+      const seen = [];
+      const stand = { user: `postgres.${DRILL_TEST_REF}`, query: (...args) => admin.query(...args), end: async () => {} };
+      const result = runSync(['--applied', await file('applied.json', { contract: 'clued.production-applied.v1', applied: list }), '--kit', kitFile, '--server', serverFile],
+        { stdin: async () => 'a password', tool: async () => null, connect: async (pg, config) => { seen.push(config); return stand; } });
+      return { result, seen };
+    };
+    try {
+      const refused = await hostCall(production);
+      await assert.rejects(refused.result, (error) => error.code === 'DRILL_SERVER_DIVERGED' && error.message.includes(middle.version) && !error.message.includes('a password'));
+      assert.deepEqual(refused.seen.map((config) => [config.user, config.host, config.password]),
+        [[`postgres.${DRILL_TEST_REF}`, 'aws-0-ap-northeast-2.pooler.supabase.com', 'a password']]);
+      await admin.query('update supabase_migrations.schema_migrations set statements=$2 where version=$1', [middle.version, original]);
+      // In sync with the list it was given: nothing to apply, and the result names what the drill's receipt records.
+      assert.deepEqual(await (await hostCall(earlier)).result, { contract: RESULT_CONTRACT, state: 'in-sync',
+        production_last: { version: earlier.at(-1).version, name: earlier.at(-1).name }, production_rows: earlier.length, applied: 0,
+        fixtures: { users: 1, seeded: 0, project: 'present' } });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
 
     // --- A prefix: exactly the missing rows are applied, in production's order. ---
-    // While rows are applied the receipt does not exist: the drill host reads "no-receipt", never a stale "in-sync".
     const during = [];
-    const caught = await run({ applied: production, meta: meta('103'), log: async () => {
-      during.push((await admin.query(`select to_regprocedure('public.clued_drill_sync_receipt_v1()') is null as absent`)).rows[0].absent);
-    } });
-    assert.deepEqual(during, [true, true, true]);
-    assert.equal(caught.state, 'in-sync', JSON.stringify(caught.error ?? caught.at ?? null));
+    const caught = await run({ applied: production, log: async () => { during.push(await leftBehind()); } });
+    assert.deepEqual(during, [[], [], []]);
+    assert.equal(caught.state, 'in-sync');
     assert.deepEqual(caught.applied, production.slice(-3).map((r) => `${r.version}_${r.name}`));
     assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
-    assert.deepEqual([(await receipt()).state, (await receipt()).run_id, (await receipt()).production_rows], ['in-sync', '103', production.length]);
     // Again: nothing to do.
-    const again = await run({ applied: production, meta: meta('104') });
-    assert.deepEqual([again.state, again.applied], ['in-sync', []]);
-    // An older list arriving late changes nothing, the receipt included.
-    const late = await run({ applied: earlier, meta: meta('105') });
-    assert.deepEqual([late.state, late.applied], ['stale', []]);
-    assert.equal((await receipt()).run_id, '104');
+    const again = await run({ applied: production });
+    assert.deepEqual([again.state, again.applied, again.fixtures], ['in-sync', [], { users: 1, seeded: 0, project: 'present' }]);
+    // An older list arriving late changes nothing.
+    const late = await run({ applied: earlier });
+    assert.deepEqual(late, { state: 'stale', applied: [] });
+    assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
+
+    const sessions = (account) => {
+      const human = async (name, input) => {
+        await admin.query('begin');
+        try {
+          await admin.query('set local role authenticated');
+          await admin.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)", [account, JSON.stringify(fresh(account))]);
+          const value = (await admin.query(`select public.${name}($1) v`, [input])).rows[0].v;
+          await admin.query('commit');
+          return value;
+        } catch (error) { await admin.query('rollback'); throw error; }
+      };
+      return async (resource) => {
+        const confirmation = await human('clued_headless_binding_confirmation_issue_v1',
+          { label: 'drill', days: 90, selected: [{ resource_kind: 'scope', resource_id: resource, environment: 'canonical', actions: ['read'] }] });
+        if (confirmation.status !== 'issued') return confirmation;
+        return human('clued_headless_binding_issue_v1', { confirmation_token: confirmation.confirmation_token, view_digest: confirmation.view_digest });
+      };
+    };
+    // The request the drill's guest (and before it the host) makes: the token's hash, the kit's scope and repository.
+    const holders = async (token, scope) => {
+      await admin.query('set role anon');
+      try {
+        return (await admin.query('select public.clued_work_merge_slot_holders_v1($1,$2::jsonb) v',
+          [sha256(token), JSON.stringify({ scope, repository: 'tdoljyj/cross-memory-system' })])).rows[0].v;
+      } finally { await admin.query('reset role'); }
+    };
+    const NOT_HELD = { status: 'ok', holders: [], reason: 'admission_binding_required' };
+
+    // --- Which token the Owner issues for the drill (the ruling's section 3; the kit's scope is a project). ---
+    {
+      // An account that does not own that project (it signed up after the sync; parking seeded here, no project).
+      const stranger = crypto.randomUUID();
+      await admin.query(`insert into auth.users(id,email,email_confirmed_at) values($1,'drill-stranger@example.invalid',now())`, [stranger]);
+      assert.deepEqual(await seedFixtures(admin, { scope: kitScope }), { users: 2, seeded: 1, project: 'present' });
+      // 1. "All contexts, read only" is not enough by itself: the token is issued and answers for the personal
+      //    scope, but for the kit's project it is refused. The fixture has to hold the project.
+      const everything = await sessions(stranger)('contexts:*');
+      assert.equal(everything.status, 'committed', JSON.stringify({ ...everything, token: undefined }));
+      assert.deepEqual((await admin.query('select scopes, context_keys from public.clued_agent_bindings where id=$1', [everything.binding_id])).rows,
+        [{ scopes: ['context:read'], context_keys: ['*'] }]);
+      assert.deepEqual(await holders(everything.token, 'global'), NOT_HELD);
+      await assert.rejects(() => holders(everything.token, kitScope), /resource_action_not_authorized/);
+      // Nor can that account issue a token for the project.
+      assert.equal((await sessions(stranger)(kitScope)).error_code, 'selection_exceeds_requested_or_owned_permissions');
+      // 2. The account the fixture gave the project to: a read-only token for that project is issued and is
+      //    answered "holds no role", the answer the drill needs.
+      const drill = await sessions(user)(kitScope);
+      assert.equal(drill.status, 'committed', JSON.stringify({ ...drill, token: undefined }));
+      assert.deepEqual(await holders(drill.token, kitScope), NOT_HELD);
+      // For that account "all contexts, read only" is answered the same: either choice works once the project is there.
+      const wide = await sessions(user)('contexts:*');
+      assert.equal(wide.status, 'committed', JSON.stringify({ ...wide, token: undefined }));
+      assert.deepEqual(await holders(wide.token, kitScope), NOT_HELD);
+    }
 
     // --- The drill Binding and the parking spot (§1.4, §4.1; pending question 2). ---
     // An account that signs up between two syncs has no parking spot yet.
@@ -151,46 +236,21 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
       await lateAccount(user);
     }
     async function lateAccount(user) {
-    const human = async (name, input) => {
-      await admin.query('begin');
-      try {
-        await admin.query('set local role authenticated');
-        await admin.query("select set_config('request.jwt.claim.sub',$1,true),set_config('request.jwt.claims',$2,true)", [user, JSON.stringify(fresh(user))]);
-        const value = (await admin.query(`select public.${name}($1) v`, [input])).rows[0].v;
-        await admin.query('commit');
-        return value;
-      } catch (error) { await admin.query('rollback'); throw error; }
-    };
-    const issue = async (selected) => {
-      const confirmation = await human('clued_headless_binding_confirmation_issue_v1', { label: 'drill', days: 90, selected });
-      if (confirmation.status !== 'issued') return confirmation;
-      return human('clued_headless_binding_issue_v1', { confirmation_token: confirmation.confirmation_token, view_digest: confirmation.view_digest });
-    };
-    const holders = async (token, scope) => {
-      await admin.query('set role anon');
-      try {
-        return (await admin.query('select public.clued_work_merge_slot_holders_v1($1,$2::jsonb) v',
-          [sha256(token), JSON.stringify({ scope, repository: 'tdoljyj/cross-memory-system' })])).rows[0].v;
-      } finally { await admin.query('reset role'); }
-    };
+    const issue = sessions(user);
     const parkingRows = async () => (await admin.query(`select count(*)::int n from clued_private.binding_roles_v1
       where user_id=$1 and role='ci-admission' and purpose='parking' and revoked_at is null`, [user])).rows[0].n;
-    // Pending question 2: with nothing but its auth.users row the account can issue a read-only token for the
-    // global scope; a project scope needs a project the account owns under exactly that key.
-    const project = `project:${crypto.randomUUID()}`;
-    const refused = await issue([{ resource_kind: 'scope', resource_id: project, environment: 'canonical', actions: ['read'] }]);
-    assert.equal(refused.error_code, 'selection_exceeds_requested_or_owned_permissions', JSON.stringify(refused));
-    const drill = await issue([{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }]);
+    // With nothing but its auth.users row the account can issue a read-only token for the global scope.
+    const drill = await issue('global');
     assert.equal(drill.status, 'committed', JSON.stringify(drill));
     // The account never marked ci-admission: the server admits every Binding, so the probe reads "held".
     assert.equal(await parkingRows(), 0);
     const open = await holders(drill.token, 'global');
     assert.deepEqual([open.status, open.holders, open.reason], ['ok', [], undefined], JSON.stringify(open));
     // The fixture: one parking spot per account, through the product's own functions.
-    assert.deepEqual(await seedFixtures(admin), { users: 2, seeded: 1 });
+    assert.deepEqual(await seedFixtures(admin, { scope: 'global' }), { users: 3, seeded: 1, project: null });
     assert.equal(await parkingRows(), 1);
-    assert.deepEqual(await holders(drill.token, 'global'), { status: 'ok', holders: [], reason: 'admission_binding_required' });
-    assert.deepEqual(await seedFixtures(admin), { users: 2, seeded: 0 }, 'a second run adds nothing');
+    assert.deepEqual(await holders(drill.token, 'global'), NOT_HELD);
+    assert.deepEqual(await seedFixtures(admin, { scope: kitScope }), { users: 3, seeded: 0, project: 'present' }, 'a second run adds nothing');
     assert.equal(await parkingRows(), 1);
     // The parking Binding's token was never returned to this process and admits nobody.
     const parking = (await admin.query(`select b.id,b.vendor,b.agent_name,b.scopes,b.context_keys from clued_private.binding_roles_v1 r
@@ -199,65 +259,160 @@ test('sync on a database: rebuild, catch up a prefix, refuse a diverged history,
     assert.equal((await admin.query(`select clued_private.binding_role_admits_v1(b,'ci-admission') ok from public.clued_agent_bindings b where b.id=$1`,
       [parking.id])).rows[0].ok, false);
 
-    // --- Rebuild over a populated database: application data goes, auth stays, the fixture comes back. ---
-    const rebuilt = await run({ applied: production, rebuild: true, meta: meta('106') });
-    assert.equal(rebuilt.state, 'in-sync', JSON.stringify(rebuilt.error ?? rebuilt.at ?? null));
-    assert.equal(rebuilt.applied.length, production.length);
-    assert.deepEqual(rebuilt.fixtures, { users: 2, seeded: 2 });
+    // --- Rebuild over a populated database: application data goes, auth stays, the parking fixture comes back. ---
+    // A project's id is its primary key, so the kit's project belongs to one account. Several accounts and no such
+    // project (the rebuild dropped it): nothing says whose it is, and the sync stops after the rows are applied.
+    await assert.rejects(() => run({ applied: production, rebuild: true }), /fixture_project_owner_ambiguous/);
     assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
-    assert.equal((await admin.query('select count(*)::int n from auth.users')).rows[0].n, 2);
+    assert.deepEqual(await projects(), []);
+    const rebuilt = await run({ applied: production, rebuild: true, scope: 'global' });
+    assert.equal(rebuilt.state, 'in-sync');
+    assert.equal(rebuilt.applied.length, production.length);
+    assert.deepEqual(rebuilt.fixtures, { users: 3, seeded: 3, project: null });
+    assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
+    assert.equal((await admin.query('select count(*)::int n from auth.users')).rows[0].n, 3);
     assert.equal(await parkingRows(), 1);
     assert.equal((await admin.query('select count(*)::int n from public.clued_agent_bindings where user_id=$1', [user])).rows[0].n, 1,
       'the drill Binding issued before the rebuild is gone; only the parking Binding exists');
     await assert.rejects(() => holders(drill.token, 'global'), /binding_not_authorized|authorization_revoked_or_expired/);
-    assert.equal((await receipt()).run_id, '106');
+    assert.deepEqual(await leftBehind(), []);
     assert.equal((await admin.query(`select count(*)::int n from clued_private.binding_roles_v1
       where user_id=$1 and role='ci-admission' and purpose='parking' and revoked_at is null`, [owner])).rows[0].n, 1);
     }
   });
 });
 
-test('the sync workflow reads one secret, the test project password, and shares nothing with the release workflow', async () => {
-  const { readFile } = await import('node:fs/promises');
-  const { DRILL_TEST_REF, PRODUCTION_REF } = await sync();
-  const workflow = (name) => readFile(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf8');
-  const text = (await workflow('clued-drill-test-sync.yml')).replace(/\r\n/g, '\n');
-  const release = (await workflow('clued-cloud-production-release.yml')).replace(/\r\n/g, '\n');
-  const code = text.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
-  // Triggers: after the release workflow (by its name) and by hand; never a pull request, so the file runs from main.
-  const releaseName = /^name: (.+)$/m.exec(release)[1];
-  assert.ok(code.includes(['', 'on:', '  workflow_run:', '    workflows:', `      - ${releaseName}`, '    types: [completed]', '  workflow_dispatch:', ''].join('\n')));
-  assert.doesNotMatch(code, /pull_request|\bpush:|schedule:/);
-  assert.match(code, /github\.ref == 'refs\/heads\/main'/);
-  assert.match(code, /github\.event\.workflow_run\.conclusion == 'success'/);
-  assert.match(code, /\nconcurrency:\n  group: clued-drill-test-sync\n  cancel-in-progress: false\n/);
-  // One environment, one secret; nothing of production.
-  assert.deepEqual([...code.matchAll(/\n    environment: (\S+)\n/g)].map((m) => m[1]), ['clued-drill-test']);
-  assert.deepEqual([...code.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]), ['CLUED_DRILL_TEST_DATABASE_PASSWORD']);
-  assert.ok(!text.includes(PRODUCTION_REF) && !text.includes(DRILL_TEST_REF), 'the project is named in the script only');
-  assert.doesNotMatch(code, /ATTESTATION|MIGRATION_DATABASE|CLOUDFLARE|clued-release\b|DATABASE_URL/);
-  assert.doesNotMatch(release.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n'), /clued-drill-test|CLUED_DRILL_TEST/);
-  assert.match(code, /\npermissions:\n  contents: read\n/);
-  assert.deepEqual([...code.matchAll(/\n      (actions|checks|contents|id-token|pull-requests|statuses|deployments|packages): (\S+)/g)].map((m) => `${m[1]}:${m[2]}`),
-    ['actions:read', 'contents:read']);
-  assert.doesNotMatch(code, /: write\b/);
-  // The secret is in the environment of one step, and that step runs the sync script and nothing else.
-  const steps = code.split(/\n      - /).slice(1);
-  const holding = steps.filter((step) => step.includes('secrets.'));
-  assert.equal(holding.length, 1);
-  assert.equal(holding[0], steps.at(-1), 'no step runs after the one that holds the password');
-  const commands = holding[0].split('\n        run: |\n')[1].split('\n').map((line) => line.trim()).filter(Boolean);
-  assert.deepEqual(commands, ['set -euo pipefail', 'if [ "${REBUILD:-false}" = "true" ]; then',
-    'node scripts/drill-test-sync.mjs --applied "$CLUED_PRODUCTION_APPLIED" --rebuild', 'else',
-    'node scripts/drill-test-sync.mjs --applied "$CLUED_PRODUCTION_APPLIED"', 'fi']);
-  assert.match(holding[0], /\n          NODE_OPTIONS: ''\n/);
-  // Inputs reach the shell as environment values, never as text of the script.
-  for (const step of steps) assert.doesNotMatch(step.split('\n        run: ')[1] ?? '', /\$\{\{/);
-  // The list it follows is the artifact the release workflow publishes, of a run read again as that workflow's success on main.
+test('the host\'s call: password from standard input only, pooler host from drill-server.json, scope from the kit, an answer in codes', async () => {
+  const { runSync, readPoolerHost, readKitScope, loadPg, connected, applyStep, connectionConfig, CODES, DRILL_TEST_REF, PRODUCTION_REF, RESULT_CONTRACT } = await sync();
+  assert.deepEqual([...CODES].sort(), ['DRILL_SERVER_DATABASE_CREDENTIAL_MISSING', 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', 'DRILL_SERVER_DIVERGED',
+    'DRILL_SERVER_POOLER_HOST_NOT_SET', 'DRILL_SERVER_PRODUCTION_LIST_MISSING', 'DRILL_SERVER_SYNC_FAILED', 'DRILL_SERVER_SYNC_TOOL_MISSING', 'DRILL_SERVER_UNREACHABLE']);
+  const script = fileURLToPath(new URL('../scripts/drill-test-sync.mjs', import.meta.url));
+  const source = await readFile(script, 'utf8');
+  assert.doesNotMatch(source, /process\.env|\benv\b|CLUED_DRILL_TEST_|GITHUB_/, 'the script reads no environment variable');
+  assert.doesNotMatch(source, /drill_sync_receipt|NOT_IN_SYNC|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/, 'no receipt, no scope written down');
+  const repository = await readRepository();
+  const applied = repository.ledger.rows.map(({ version, name, statements_md5, statements_length }) => ({ version, name, statements_md5, statements_length }));
+  const host = 'aws-0-ap-northeast-2.pooler.supabase.com';
+  const url = `https://${DRILL_TEST_REF}.supabase.co`;
+  const scope = `project:${crypto.randomUUID()}`;
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'drill-sync-host-'));
+  const file = async (name, value) => { const at = path.join(directory, name); await writeFile(at, typeof value === 'string' ? value : JSON.stringify(value)); return at; };
+  try {
+    // --- drill-server.json: the pooler's host name, of this project's file, in the session pooler's shape. ---
+    const server = { contract: 'clued.drill.server/1', project: 'clued-auth-test', supabaseUrl: url, blackholeHosts: [], allowedHosts: [] };
+    assert.equal(await readPoolerHost(await file('server.json', { ...server, poolerHost: host })), host);
+    assert.equal(await readPoolerHost(await file('server-bom.json', `\uFEFF${JSON.stringify({ ...server, poolerHost: host })}`)), host);
+    for (const [label, value] of [['no field', server], ['a placeholder', { ...server, poolerHost: null }], ['empty', { ...server, poolerHost: '' }],
+      ['a placeholder text', { ...server, poolerHost: 'aws-N-REGION.pooler.supabase.com' }], ['the direct address', { ...server, poolerHost: `db.${DRILL_TEST_REF}.supabase.co` }],
+      ['production\'s direct address', { ...server, poolerHost: `db.${PRODUCTION_REF}.supabase.co` }], ['a port', { ...server, poolerHost: `${host}:6543` }],
+      ['another project\'s file', { ...server, supabaseUrl: `https://${PRODUCTION_REF}.supabase.co`, poolerHost: host }],
+      ['no address', { poolerHost: host }], ['an array', [host]], ['not JSON', '{']]) {
+      await assert.rejects(readPoolerHost(await file('refused.json', value)), { code: 'DRILL_SERVER_POOLER_HOST_NOT_SET' }, label);
+    }
+    await assert.rejects(readPoolerHost(path.join(directory, 'absent.json')), { code: 'DRILL_SERVER_POOLER_HOST_NOT_SET' });
+
+    // --- The scope: the kit's record.scope or the value given, in the shape the kit allows. ---
+    assert.equal(await readKitScope(await file('kit.json', { record: { scope, repository: 'tdoljyj/cross-memory-system' } })), scope);
+    assert.equal(await readKitScope(await file('kit-global.json', { record: { scope: 'global' } })), 'global');
+    for (const value of [{ record: {} }, { record: { scope: 'project:*' } }, { record: { scope: 'contexts:*' } }, { scope }, '{']) {
+      await assert.rejects(readKitScope(await file('kit-refused.json', value)), /drill_test_scope_invalid/);
+    }
+
+    // --- The call. Each refusal that needs no password comes before the password is read. ---
+    const appliedFile = await file('applied.json', { contract: 'clued.production-applied.v1', applied });
+    const serverFile = await file('server.json', { ...server, poolerHost: host });
+    const kitFile = await file('kit.json', { record: { scope } });
+    const base = ['--applied', appliedFile, '--kit', kitFile, '--server', serverFile];
+    const call = (argv, overrides = {}) => {
+      const seen = { stdin: 0, connect: [] };
+      const promise = runSync(argv, { stdin: async () => { seen.stdin += 1; return 'pw'; }, tool: async () => null,
+        connect: async (pg, config) => { seen.connect.push(config); throw new Error('test: no database here'); }, ...overrides });
+      return { promise, seen };
+    };
+    const refusedBeforePassword = async (argv, expected, overrides) => {
+      const { promise, seen } = call(argv, overrides);
+      await assert.rejects(promise, expected);
+      assert.deepEqual(seen, { stdin: 0, connect: [] }, JSON.stringify(expected));
+    };
+    for (const argv of [[], ['--applied', appliedFile], ['--applied', appliedFile, '--kit', kitFile, '--scope', scope], ['--kit', kitFile], ['--applied', appliedFile, '--scope']]) {
+      await refusedBeforePassword(argv, /^Error: usage: /);
+    }
+    await refusedBeforePassword(['--applied', appliedFile, '--scope', 'project:*'], /drill_test_scope_invalid/);
+    // No apps/clued-cloud/node_modules in this checkout (or none with node-postgres): the sync cannot run.
+    await refusedBeforePassword(base, { code: 'DRILL_SERVER_SYNC_TOOL_MISSING' }, { tool: () => loadPg({ exists: () => false }) });
+    await refusedBeforePassword(base, { code: 'DRILL_SERVER_SYNC_TOOL_MISSING' },
+      { tool: () => loadPg({ load: async () => { throw Object.assign(new Error('Cannot find package'), { code: 'ERR_MODULE_NOT_FOUND' }); } }) });
+    assert.equal(typeof (await loadPg()).Client, 'function', 'here they are installed');
+    await assert.rejects(loadPg({ load: async () => { throw new Error('another failure'); } }), /^Error: another failure$/);
+    // The release run exported no list (no file), or what is there is not one.
+    await refusedBeforePassword(['--applied', path.join(directory, 'absent.json'), '--kit', kitFile, '--server', serverFile], { code: 'DRILL_SERVER_PRODUCTION_LIST_MISSING' });
+    await refusedBeforePassword(['--applied', await file('empty.json', { applied: [] }), '--kit', kitFile, '--server', serverFile], { code: 'DRILL_SERVER_PRODUCTION_LIST_MISSING' });
+    await refusedBeforePassword(['--applied', appliedFile, '--kit', kitFile, '--server', await file('unset.json', server)], { code: 'DRILL_SERVER_POOLER_HOST_NOT_SET' });
+
+    // --- The password: standard input, as it is. Nothing given: no connection is tried. ---
+    const saved = { ...process.env };
+    Object.assign(process.env, { CLUED_DRILL_TEST_DATABASE_PASSWORD: 'from-the-environment', PGPASSWORD: 'from-the-environment', CLUED_DRILL_TEST_POOLER_HOST: host });
+    try {
+      const none = call(base, { stdin: async () => '' });
+      await assert.rejects(none.promise, { code: 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING' });
+      assert.deepEqual(none.seen.connect, [], 'an environment variable is not a password');
+      const given = call(base, { stdin: async () => ' p@ss word#%\t' });
+      await assert.rejects(given.promise, /test: no database here/);
+      assert.deepEqual(given.seen.connect, [connectionConfig({ password: ' p@ss word#%\t', host })]);
+      // The command itself, with nothing on standard input and a password in the environment: the code, no connection.
+      const child = spawnSync(process.execPath, [script, ...base], { input: '', encoding: 'utf8', env: process.env, timeout: 120_000 });
+      assert.equal(child.status, 1, child.stderr);
+      assert.deepEqual(JSON.parse(child.stdout.trim().split('\n').at(-1)), { contract: RESULT_CONTRACT, state: 'failed', code: 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING' });
+      assert.equal(child.stderr.trim(), 'drill-test-sync: DRILL_SERVER_DATABASE_CREDENTIAL_MISSING');
+      const wrong = spawnSync(process.execPath, [script, '--applied', appliedFile], { input: 'pw\n', encoding: 'utf8', env: process.env, timeout: 120_000 });
+      assert.deepEqual([wrong.status, wrong.stdout], [2, '']);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+
+    // --- Connecting: a refused password is final, anything else is tried three times. ---
+    const pgOf = (answers) => {
+      const made = [];
+      class Client {
+        constructor(config) { this.config = config; made.push(this); }
+        async connect() { const answer = answers[made.length - 1]; if (answer) throw Object.assign(new Error(`connect failed for ${this.config.password}`), { code: answer }); }
+        async end() {}
+      }
+      return { pg: { Client }, made };
+    };
+    const config = connectionConfig({ password: 'pw', host });
+    const quick = { pause: async () => {} };
+    const refused = pgOf(['28P01']);
+    await assert.rejects(connected(refused.pg, config, quick), (error) => error.code === 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED' && error.message === error.code);
+    assert.equal(refused.made.length, 1);
+    const down = pgOf(['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND']);
+    await assert.rejects(connected(down.pg, config, quick), (error) => error.code === 'DRILL_SERVER_UNREACHABLE' && !error.message.includes('pw'));
+    assert.equal(down.made.length, 3);
+    const flaky = pgOf(['ECONNRESET', 'ECONNRESET', null]);
+    assert.equal(await connected(flaky.pg, config, quick), flaky.made[2]);
+    const late = pgOf(['ECONNRESET', '28P01']);
+    await assert.rejects(connected(late.pg, config, quick), { code: 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED' });
+    assert.equal(late.made.length, 2);
+
+    // --- A row that fails names its file; the transaction is rolled back. ---
+    const sent = [];
+    const failing = { query: async (text) => { sent.push(text); if (text === 'select broken') throw new Error('syntax error'); return { rows: [{ md5: 'm' }] }; } };
+    await assert.rejects(applyStep(failing, { version: '20260101000000', name: 'a', file: 'migrations/20260101000000_a.sql', run: 'select broken', statements: 's', statements_md5: 'm' }),
+      (error) => error.code === 'DRILL_SERVER_SYNC_FAILED:migrations/20260101000000_a.sql' && error.detail === 'syntax error');
+    assert.deepEqual(sent, ['begin', 'select broken', 'rollback']);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('no workflow runs the sync: the drill host does, and the release workflow only exports the list it follows', async () => {
+  const workflows = new URL('../../../.github/workflows/', import.meta.url);
+  assert.equal(existsSync(new URL('clued-drill-test-sync.yml', workflows)), false, 'a hosted job is prohibited and a node must not hold the password');
+  const { readdir } = await import('node:fs/promises');
+  for (const name of await readdir(workflows)) {
+    assert.doesNotMatch(await readFile(new URL(name, workflows), 'utf8'), /drill-test-sync\.yml|clued-drill-test\b|CLUED_DRILL_TEST/, name);
+  }
+  const release = (await readFile(new URL('clued-cloud-production-release.yml', workflows), 'utf8')).replace(/\r\n/g, '\n');
   assert.match(release, /\n          name: clued-production-applied-\$\{\{ github\.run_id \}\}\n/);
-  assert.match(code, /--name "clued-production-applied-\$run_id"/);
-  assert.match(code, /"\.github\/workflows\/\$release_workflow main success"/);
-  assert.match(code, /''\|\*\[!0-9\]\*\)/);
-  // Actions pinned by commit, as everywhere.
-  for (const uses of code.matchAll(/uses: (\S+)/g)) assert.match(uses[1], /^(?:\.\/\.github\/actions\/ci-temporary-storage|actions\/[a-z-]+@[0-9a-f]{40})$/);
 });
