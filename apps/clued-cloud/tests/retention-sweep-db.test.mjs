@@ -18,6 +18,7 @@ import { MIGRATE_MODE_SQL, PLATFORM_SQL } from '../scripts/production-schema-dri
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SWEEP_MIGRATION = '20261124120000_retention_sweep_v1.sql';
+const KEEP_MIGRATION = '20261124130000_imprint_history_keep_v1.sql';
 const SWEEP_JOB = 'clued-retention-sweep';
 const OLD_JOB = 'clued-cron-run-history-retention';
 const RULES = ['retention_rule_cron_run_history_v1', 'retention_rule_memory_audit_v1', 'retention_rule_session_payload_v1'];
@@ -282,6 +283,114 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
         await admin.query('drop trigger if exists retention_slow_delete on public.clued_memory_audit');
       }
       assert.equal((await sweep(await now())).retention_rule_memory_audit_v1, 1);
+    });
+
+    // ---- B1b: imprint record history keeps the 20 newest prior versions of a record ---------------------------
+    const human = await connect();
+    await human.query("set statement_timeout='30s'; set lock_timeout='10s'; set role authenticated");
+    await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)",
+      [owner, JSON.stringify({ sub: owner, role: 'authenticated', session_id: 'retention-history',
+        amr: [{ method: 'password', timestamp: Math.floor(Date.now() / 1000) }] })]);
+    const call = async (name, input, writing = false) => (await human.query(`select public.${name}($1${writing ? ',$2' : ''}) v`,
+      writing ? [JSON.stringify(input), crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex')] : [JSON.stringify(input)])).rows[0].v;
+    const mark = n => `mark-${n}-end`;
+    // Bodies that do not compress, so a removed version is a visible part of the table's files.
+    const body = n => `${mark(n)} ${crypto.randomBytes(3900).toString('hex')}`;
+    const versions = {};
+    async function createRecord() {
+      const input = { operation: 'create', id: uuid(), record_type: 'note', record_schema_version: 1,
+        lifecycle_status: 'active', scope: 'global', idempotency_key: 'retention-create:' + uuid(), authority: 'user_explicit',
+        user_confirmed: true, confidence_reason: 'Isolated synthetic owner write', source_refs: [],
+        source_unavailable_reason: 'Isolated synthetic record',
+        mutation: { title: 'Synthetic retention history', content: body(1), type_fields: { note_kind: 'log' } } };
+      const result = await call('clued_user_record_mutate', input, true);
+      assert.equal(result.status, 'committed', JSON.stringify(result));
+      versions[input.id] = 1; return input.id;
+    }
+    async function advance(id, times) {
+      for (let i = 0; i < times; i++) {
+        const input = { operation: 'update', id, record_type: 'note', record_schema_version: 1, base_version: versions[id],
+          lifecycle_status: 'active', scope: 'global', idempotency_key: 'retention-update:' + uuid(), authority: 'user_explicit',
+          user_confirmed: true, confidence_reason: 'Isolated synthetic owner update', mutation: { content: body(versions[id] + 1) } };
+        const result = await call('clued_user_record_mutate', input, true);
+        assert.equal(result.status, 'committed', JSON.stringify(result));
+        versions[id]++;
+      }
+    }
+    const history = async id => (await admin.query(
+      'select version::int version,to_jsonb(h) v from clued_private.imprint_record_history_v1 h where record_id=$1 order by version', [id])).rows;
+    // The prior versions a record may keep: the 20 below its current version.
+    const newest20 = id => Array.from({ length: 20 }, (_, i) => versions[id] - 20 + i);
+    const historySize = async () => Number((await one("select pg_total_relation_size('clued_private.imprint_record_history_v1') n")).n);
+    // What the Native reader gets for one prior version: the stored body after its hash check, or nothing.
+    const prior = async (id, version) => (await one(`select (clued_private.imprint_history_record_v1($1,m,$3)).content
+      from public.clued_memories m where m.id=$2`, [owner, id, version])).content;
+    const search = async n => (await call('clued_imprint_read_v1', { query: mark(n), include_history: true })).records;
+
+    const long = await createRecord(), short = await createRecord(), bulk = await createRecord();
+    await advance(long, 25); await advance(short, 3);
+    const stockHistory = { long: await history(long), short: await history(short), size: await historySize() };
+    assert.deepEqual(stockHistory.long.map(row => row.version), Array.from({ length: 25 }, (_, i) => i + 1));
+    assert.equal(stockHistory.short.length, 3);
+    assert.equal((await search(3)).find(row => row.id === long).matched_revision_count, 1, 'before the migration version 3 is found');
+    const keepText = await fs.readFile(path.join(migrations, KEEP_MIGRATION), 'utf8');
+    const keepRule = async () => (await one("select to_regprocedure('clued_private.retention_rule_imprint_history_v1(timestamptz)') is not null ok")).ok;
+
+    await t.test('a held lock on the history table fails the history migration with 55P03 and leaves nothing behind', async () => {
+      await other.query('begin; lock table clued_private.imprint_record_history_v1 in access share mode');
+      const began = Date.now();
+      await assert.rejects(migrate(admin, keepText), error => error.code === '55P03');
+      assert.ok(Date.now() - began < 10000, `gave up after ${Date.now() - began} ms`);
+      await other.query('rollback');
+      assert.equal(await keepRule(), false);
+      assert.deepEqual(await history(long), stockHistory.long);
+      assert.deepEqual(await history(short), stockHistory.short);
+    });
+
+    const jobsBeforeKeep = await jobs();
+    await migrate(admin, keepText);
+
+    await t.test('history stock: the 20 newest prior versions stay readable, older ones are gone and the files shrink', async () => {
+      assert.deepEqual(await history(long), stockHistory.long.filter(row => row.version > 5), 'kept rows are unchanged');
+      assert.deepEqual(await history(short), stockHistory.short, 'a record with three prior versions is untouched');
+      const size = await historySize();
+      assert.ok(size < stockHistory.size, `table and indexes ${stockHistory.size} -> ${size} bytes`);
+      t.diagnostic(`imprint_record_history_v1: ${stockHistory.size} -> ${size} bytes`);
+      for (const version of newest20(long)) {
+        assert.ok((await prior(long, version)).startsWith(mark(version) + ' '), `version ${version} passes its hash check`);
+      }
+      for (const version of [1, 5]) assert.equal(await prior(long, version), null);
+      assert.deepEqual((await search(3)).filter(row => row.id === long), [], 'a removed version no longer matches, and the search does not fail');
+      const found = (await search(10)).filter(row => row.id === long);
+      assert.equal(found.length, 1);
+      assert.equal(found[0].matched_revision_count, 1); assert.equal(found[0].matched_revisions[0].matched_record_version, 10);
+      assert.deepEqual(await jobs(), jobsBeforeKeep, 'no pg_cron job is added or changed');
+      assert.deepEqual((await admin.query(`select r from unnest(array['anon','authenticated','service_role']) r
+        where has_function_privilege(r, 'clued_private.retention_rule_imprint_history_v1(timestamptz)', 'execute')`)).rows, []);
+    });
+
+    await t.test('daily sweep: a record back over 20 prior versions returns to 20, at most 200 rows a run', async () => {
+      await advance(long, 3);
+      assert.equal((await history(long)).length, 23);
+      assert.equal((await sweep(await now())).retention_rule_imprint_history_v1, 3);
+      assert.deepEqual((await history(long)).map(row => row.version), newest20(long));
+      assert.equal((await history(short)).length, 3);
+      assert.equal((await sweep(await now())).retention_rule_imprint_history_v1, 0);
+      // 221 prior versions written straight into the table: 201 over the limit.
+      await admin.query(`insert into clued_private.imprint_record_history_v1(user_id,record_id,version,scope,envelope,envelope_sha256)
+        select $1,$2::uuid,g,'global',jsonb_build_object('id',$2::text,'version',g),repeat('0',64) from generate_series(1001,1221) g`, [owner, bulk]);
+      assert.equal((await sweep(await now())).retention_rule_imprint_history_v1, 200);
+      assert.equal((await sweep(await now())).retention_rule_imprint_history_v1, 1);
+      assert.deepEqual((await history(bulk)).map(row => row.version), Array.from({ length: 20 }, (_, i) => 1202 + i));
+    });
+
+    await t.test('after the refill the capture trigger, the immutable trigger and the cascade still work', async () => {
+      await advance(long, 1);
+      assert.deepEqual((await history(long)).map(row => row.version), [versions[long] - 21, ...newest20(long)]);
+      await assert.rejects(admin.query('update clued_private.imprint_record_history_v1 set scope=scope where record_id=$1', [long]),
+        /imprint_history_immutable/);
+      await admin.query('delete from public.clued_memories where id=$1', [short]);
+      assert.deepEqual(await history(short), []);
     });
   } finally {
     for (const client of clients) await client.end().catch(() => {});
