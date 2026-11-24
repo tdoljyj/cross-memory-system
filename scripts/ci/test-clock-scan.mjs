@@ -23,6 +23,9 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { JS, importsDebt } from './test-clock-imports.mjs';
+
+export { importsDebt };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const GUARD_PATH = path.join(HERE, 'test-clock-guard.mjs');
@@ -34,7 +37,6 @@ export const RECORD_SHOWN = 20;
 // Test code: what the guard treats as test code (a *.test.* file or a file under a test, tests or fixtures directory), plus
 // Python and PowerShell test files.
 const TEST_DIR = /(^|\/)(tests?|fixtures|evals)\//;
-const JS = /\.(?:[cm]?js|jsx|tsx?)$/;
 export function testFileKind(file) {
   const name = file.replaceAll('\\', '/');
   if (/(^|\/)node_modules\//.test(name)) return null;
@@ -199,26 +201,6 @@ export function allowProblems(entries, scanOf) {
   return { problems, byFile };
 }
 
-// Whether `file` imports, directly or through other modules of the checkout (relative specifiers only), a listed file that
-// has a real-clock use of its own.
-const RELATIVE_IMPORT = /\b(?:from|import)\s*\(?\s*(['"])(\.\.?\/[^'"\n]+)\1/g;
-export function importsDebt(file, { read, listed, hitsOf }) {
-  const seen = new Set([file]);
-  const pending = [file];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    const text = read(current);
-    if (text === null) continue;
-    for (const match of text.matchAll(RELATIVE_IMPORT)) {
-      const target = path.posix.normalize(path.posix.join(path.posix.dirname(current), match[2]));
-      if (seen.has(target) || !JS.test(target)) continue;
-      seen.add(target);
-      if (listed.has(target) && hitsOf(target) > 0) return true;
-      pending.push(target);
-    }
-  }
-  return false;
-}
 
 // Every problem of the list, the allowlist and the static rules in the checkout at root, against the base commit's list.
 // The base comes from the caller only: not given (undefined) is a problem of its own, wherever it runs; base: null is the

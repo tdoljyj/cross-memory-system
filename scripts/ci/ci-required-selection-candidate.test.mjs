@@ -14,7 +14,7 @@ import * as selection from './ci-required-selection.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SOURCE = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
 // What the selector imports from beside it: a copy of it runs only with them (the real-clock guard since Task 11092b8b).
-const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs'];
+const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
 const childEnv = () => { const env = { ...process.env }; delete env.NODE_TEST_CONTEXT; for (const name of ['GITHUB_EVENT_PATH', 'GITHUB_EVENT_NAME', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY']) delete env[name]; return env; };
 const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
 

@@ -26,7 +26,8 @@ import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { importsDebt } from './test-clock-scan.mjs';
+// Not from test-clock-scan.mjs: the guard is preloaded into the scan's own run (--check), which must stay its entry point.
+import { importsDebt } from './test-clock-imports.mjs';
 
 const require = createRequire(import.meta.url);
 const INSTALLED = Symbol.for('clued.test-clock-guard');

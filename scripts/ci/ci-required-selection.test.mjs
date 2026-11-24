@@ -106,7 +106,7 @@ function slotFixture(t) {
     if (mode === '--write-known') {
       const tools = path.join(root, 'tools');
       mkdirSync(tools);
-      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'ci-test-failures-reporter.mjs',
+      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs', 'ci-test-failures-reporter.mjs',
         'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
         copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
       }
