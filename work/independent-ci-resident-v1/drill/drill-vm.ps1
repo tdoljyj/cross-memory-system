@@ -1304,7 +1304,8 @@ function Get-DrillVerdict($E) {
   else {
     $sc = Test-DrillSelfcheck 'A7' $r.status ([DateTimeOffset]$r.readAt)
     $scAfter = Test-DrillAfterBoot ([string](Get-Prop $r.status 'versions.selfcheck.observedAt')) ([string](Get-Prop $r 'boot'))
-    [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail)"))
+    $cab = Test-DrillCompanionAfterBoot (Get-Prop $r 'companionAfterBoot') ([string](Get-Prop $r 'boot'))   # K3: the companion up by itself
+    [void]$items.Add((New-DrillItem 'A7' ([bool]$r.ok -and $sc.pass -and $scAfter -and $cab.pass) "refreshedAfterBoot=$($r.ok) selfcheckAfterBoot=$scAfter boot=$(Get-Prop $r 'boot') $($sc.detail) $($cab.detail)"))
   }
   # A8: the operator's choice (-SkipReinstall, $E.skipReinstall) and the run's A8 result reach here apart (Codex review of 58136df61,
   # medium 2). Only the choice, with a result that says skipped, is "skipped"; no result, or a skip nobody chose, is FAIL.
@@ -3391,7 +3392,62 @@ function Get-DrillM5Verdict([string]$RunDir, $M5) {
 $script:GuestReadStatus = {
   param($Root) $p = Join-Path $Root 'state\status.json'
   $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
-  [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o'); boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o') }
+  $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+  # Task 87d330d0 K3 (FABLE-drill-companion-k3-20261124 section 4): whether the companion came up by itself after a reboot nobody logged on
+  # to -- the companion task's definition (its logon type), the interactive logon sessions (2, 10; Window Manager and Font Driver Host
+  # sessions are the system's own), the SYSTEM start task's last run and result, the companion task's state, the companion account's
+  # supervisor processes with their start. Each part read on its own: one that cannot be read is named in errors, never thrown.
+  $cab = [ordered]@{ boot = $boot; definition = $null; interactiveSessions = $null; startTask = $null; companionState = $null; supervisors = @(); errors = [ordered]@{} }
+  $folder = $null
+  try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $folder = $svc.GetFolder('\Clued') } catch { $cab.errors['scheduler'] = [string]$_.Exception.Message }
+  if ($null -ne $folder) {
+    try {
+      $t = $folder.GetTask('CluedCIResidentCompanion'); $cab.companionState = [int]$t.State; $lt = [int]$t.Definition.Principal.LogonType
+      $cab.definition = $(if ($lt -eq 1) { 'password' } elseif ($lt -eq 3) { 'interactive' } else { 'logon-type-' + $lt })
+    } catch { $cab.errors['companionTask'] = [string]$_.Exception.Message }
+    try {
+      $st = $folder.GetTask('CluedCIResidentCompanionStart'); $last = [DateTime]$st.LastRunTime
+      $cab.startTask = [ordered]@{ lastRun = $(if ($last.Year -lt 2000) { $null } else { ([DateTimeOffset]$last).ToUniversalTime().ToString('o') }); lastResult = ([int64]$st.LastTaskResult -band 0xFFFFFFFFL) }
+    } catch { $cab.errors['startTask'] = [string]$_.Exception.Message }
+  }
+  try {
+    $sessions = @(Get-CimInstance -ClassName Win32_LogonSession -ErrorAction Stop | Where-Object { @(2, 10) -contains [int]$_.LogonType } | ForEach-Object { [string]$_.LogonId })
+    $system = @(Get-CimInstance -ClassName Win32_LoggedOnUser -ErrorAction Stop | Where-Object { @('Window Manager', 'Font Driver Host') -contains [string]$_.Antecedent.Domain } | ForEach-Object { [string]$_.Dependent.LogonId })
+    $cab.interactiveSessions = @($sessions | Where-Object { $system -notcontains $_ }).Count
+  } catch { $cab.errors['sessions'] = [string]$_.Exception.Message }
+  try {
+    $cab.supervisors = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='CluedCompanionSupervisor.exe'" -ErrorAction Stop | ForEach-Object {
+      $owner = $null; try { $owner = [string](Invoke-CimMethod -InputObject $_ -MethodName GetOwner -ErrorAction Stop).User } catch { }
+      [ordered]@{ pid = [int]$_.ProcessId; owner = $owner; created = $(if ($_.CreationDate) { ([DateTimeOffset][DateTime]$_.CreationDate).ToUniversalTime().ToString('o') } else { $null }) } })
+  } catch { $cab.errors['supervisors'] = [string]$_.Exception.Message }
+  [ordered]@{ status = $s; readAt = [DateTimeOffset]::UtcNow.ToString('o'); boot = $boot; companionAfterBoot = $cab }
+}
+
+# A7's added condition (K3 section 4): under the companion's password definition the companion came up by itself after this boot, nobody
+# logged on -- all five: this boot's time; no interactive logon session; the start task ran after the boot and returned 0; the companion
+# task running (4); a supervisor of the companion account started after the boot. Any one missing: no pass, named in the detail. Under the
+# interactive definition (a person logs on; -Interactive) it adds nothing. No read, or a definition that cannot be told: no pass.
+$script:DrillCompanionAccount = 'clued-companion'
+function Test-DrillCompanionAfterBoot($Cab, [string]$Boot) {
+  if ($null -eq $Cab) { return @{ pass = $false; detail = 'companionAfterBoot=missing' } }
+  $definition = [string](Get-Prop $Cab 'definition')
+  if ($definition -ceq 'interactive') { return @{ pass = $true; detail = 'companionAfterBoot=interactive-definition' } }
+  if ($definition -cne 'password') { return @{ pass = $false; detail = "companionAfterBoot definition=$(if ($definition) { $definition } else { 'unknown' })" } }
+  $missing = New-Object Collections.Generic.List[string]
+  $bootOk = $false; try { $bootOk = [bool]$Boot -and ($null -ne [DateTimeOffset]::Parse($Boot, [Globalization.CultureInfo]::InvariantCulture)) } catch { $bootOk = $false }
+  if (-not $bootOk) { $missing.Add('boot') }
+  $sessions = Get-Prop $Cab 'interactiveSessions'
+  if ($null -eq $sessions -or [int]$sessions -ne 0) { $missing.Add("interactiveSessions=$(if ($null -eq $sessions) { 'unread' } else { $sessions })") }
+  $start = Get-Prop $Cab 'startTask'
+  if (-not (Test-DrillAfterBoot ([string](Get-Prop $start 'lastRun')) $Boot)) { $missing.Add('startTaskRanAfterBoot') }
+  $result = Get-Prop $start 'lastResult'
+  if ($null -eq $result -or [int64]$result -ne 0) { $missing.Add("startTaskResult=$(if ($null -eq $result) { 'unread' } else { $result })") }
+  $state = Get-Prop $Cab 'companionState'
+  if ($null -eq $state -or [int]$state -ne 4) { $missing.Add("companionState=$(if ($null -eq $state) { 'unread' } else { $state })") }
+  $mine = @(@(Get-Prop $Cab 'supervisors') | Where-Object { $null -ne $_ -and [string]::Equals([string](Get-Prop $_ 'owner'), $script:DrillCompanionAccount, [StringComparison]::OrdinalIgnoreCase) -and (Test-DrillAfterBoot ([string](Get-Prop $_ 'created')) $Boot) })
+  if (-not $mine.Count) { $missing.Add('supervisorAfterBoot') }
+  if ($missing.Count) { return @{ pass = $false; detail = ('companionAfterBoot missing=' + ($missing -join ',')) } }
+  @{ pass = $true; detail = 'companionAfterBoot=complete' }
 }
 
 # One A7 sample: the status rewritten after the boot it was read in, and a passing self-check observed after that same boot (never one an
@@ -3402,8 +3458,10 @@ function Get-DrillRebootSample($Sample, [DateTimeOffset]$WaitedBoot) {
   try { $b = [DateTimeOffset]::Parse($boot, [Globalization.CultureInfo]::InvariantCulture); $known = $b -ge $WaitedBoot; $changed = $b -gt $WaitedBoot } catch { $known = $false }
   $status = Get-Prop $Sample 'status'
   $ok = $known -and (Test-DrillAfterBoot ([string](Get-Prop $status 'writtenAt')) $boot)
-  $done = $ok -and [string](Get-Prop $status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $status 'versions.selfcheck.observedAt')) $boot)
-  [ordered]@{ ok = $ok; status = $status; readAt = (Get-Prop $Sample 'readAt'); boot = $(if ($known) { $boot } else { $null }); waitedBoot = $WaitedBoot.ToString('o'); bootChanged = $changed; done = $done }
+  $cab = Get-Prop $Sample 'companionAfterBoot'
+  # K3: the wait goes on until the companion is up as well (it may come after the self-check), within the same window
+  $done = $ok -and [string](Get-Prop $status 'versions.selfcheck.result') -ceq 'PASS' -and (Test-DrillAfterBoot ([string](Get-Prop $status 'versions.selfcheck.observedAt')) $boot) -and (Test-DrillCompanionAfterBoot $cab $boot).pass
+  [ordered]@{ ok = $ok; status = $status; readAt = (Get-Prop $Sample 'readAt'); boot = $(if ($known) { $boot } else { $null }); waitedBoot = $WaitedBoot.ToString('o'); bootChanged = $changed; done = $done; companionAfterBoot = $cab }
 }
 
 # Fable ruling 11-20 "first install r4" section 4 (E4): whether the first install left anything a reboot could expose, from the guest's raw

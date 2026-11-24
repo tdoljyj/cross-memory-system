@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   script, powershell, tmp, sha, q, ps, psCode, opts, entryScript, entryPs, STEP_LOGS, m5DrillReceipt, RENEWAL_3BC571A6,
-  notTheDrillsSource, S, L, PAUSE_REQUEST, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize
+  notTheDrillsSource, S, L, PAUSE_REQUEST, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize, COMPANION_AFTER_BOOT
 } from './drill-vm-fixtures.mjs';
 
 // Fable renew-key ruling, supplement "eight on the path", item 5: a successful launcher ends with its own pause confirmed, so A6 holds
@@ -55,7 +55,9 @@ test('A7 judges each sample against the boot it was read in: a PASS left between
   const boot1 = '2026-11-16T02:40:00.0000000Z', boot2 = '2026-11-16T02:50:00.0000000Z';
   const status = (writtenAt, observedAt) => ({ writtenAt, node: { mode: 'UNCERTAIN' }, versions: { selfcheck: { result: 'PASS', observedAt } } });
   const between = { status: status('2026-11-16T02:51:00Z', '2026-11-16T02:45:00Z'), readAt: '2026-11-16T02:51:30Z', boot: boot2 };
-  const fresh = { status: status('2026-11-16T02:56:00Z', '2026-11-16T02:55:00Z'), readAt: '2026-11-16T02:56:30Z', boot: boot2 };
+  // K3: the companion up by itself after the second boot (its start task and its supervisor after 02:50)
+  const up = { ...COMPANION_AFTER_BOOT, boot: boot2, startTask: { lastRun: '2026-11-16T02:50:40Z', lastResult: 0 }, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:50:41Z' }] };
+  const fresh = { status: status('2026-11-16T02:56:00Z', '2026-11-16T02:55:00Z'), readAt: '2026-11-16T02:56:30Z', boot: boot2, companionAfterBoot: up };
   const wait = samples => ps(`
     $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify(samples))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
     function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
@@ -72,6 +74,70 @@ test('A7 judges each sample against the boot it was read in: a PASS left between
   const once = wait([{ ...fresh, boot: boot1 }]);
   assert.equal(once.bootChanged, false);
   assert.equal(pass(verdictOf(evidence({ reboot: once }))).A7, true);
+});
+
+// Task 87d330d0 K3 (FABLE-drill-companion-k3-20261124 section 4, design T11): after the reboot nobody logs on to, A7 under the companion's
+// password definition also needs the companion up by itself -- all five of companionAfterBoot; any one missing fails A7 and is named.
+// Under the interactive definition it adds nothing.
+test('A7 (K3): under the password definition the companion up by itself after the boot, all five, each one missing named', opts, () => {
+  const e = JSON.parse(evidence());
+  const a7 = over => verdictOf(evidence({ reboot: { ...e.reboot, ...over } })).items.find(i => i.id === 'A7');
+  const all = a7({});
+  assert.equal(all.pass, true, all.detail);
+  assert.match(all.detail, /companionAfterBoot=complete/);
+  const cab = e.reboot.companionAfterBoot;
+  for (const [reason, value, named] of [
+    ['the supervisor started before this boot (the boot before\'s)', { ...cab, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:44:00Z' }] }, /supervisorAfterBoot/],
+    ['a supervisor of another account', { ...cab, supervisors: [{ pid: 4120, owner: 'drill', created: '2026-11-16T02:45:41Z' }] }, /supervisorAfterBoot/],
+    ['no supervisor', { ...cab, supervisors: [] }, /supervisorAfterBoot/],
+    ['the start task never ran', { ...cab, startTask: { lastRun: null, lastResult: 267011 } }, /startTaskRanAfterBoot.*startTaskResult=267011/],
+    ['the start task ran before this boot', { ...cab, startTask: { lastRun: '2026-11-16T02:30:00Z', lastResult: 0 } }, /startTaskRanAfterBoot/],
+    ['the start task failed', { ...cab, startTask: { lastRun: '2026-11-16T02:45:40Z', lastResult: 1 } }, /startTaskResult=1/],
+    ['someone logged on', { ...cab, interactiveSessions: 1 }, /interactiveSessions=1/],
+    ['the sessions could not be read', { ...cab, interactiveSessions: null }, /interactiveSessions=unread/],
+    ['the companion task not running (queued)', { ...cab, companionState: 2 }, /companionState=2/],
+    ['the definition could not be read', { ...cab, definition: null }, /companionAfterBoot definition=unknown/],
+  ]) {
+    const item = a7({ companionAfterBoot: value });
+    assert.equal(item.pass, false, reason);
+    assert.match(item.detail, named, reason + ': ' + item.detail);
+  }
+  // a reboot read without it at all is no pass
+  const { companionAfterBoot, ...without } = e.reboot;
+  const none = verdictOf(evidence({ reboot: without })).items.find(i => i.id === 'A7');
+  assert.equal(none.pass, false);
+  assert.match(none.detail, /companionAfterBoot=missing/);
+  // the interactive definition (a person logs on): nothing added, even with nothing of the five
+  const interactive = a7({ companionAfterBoot: { definition: 'interactive', interactiveSessions: 1, startTask: null, companionState: 3, supervisors: [], errors: {} } });
+  assert.equal(interactive.pass, true, interactive.detail);
+  assert.match(interactive.detail, /companionAfterBoot=interactive-definition/);
+});
+
+test('A7 (K3): the wait goes on until the companion is up too, and the guest read carries the five', opts, () => {
+  const boot = '2026-11-16T02:40:00.0000000Z';
+  const st = { writtenAt: '2026-11-16T02:42:00Z', node: { mode: 'UNCERTAIN' }, versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:41:30Z' } } };
+  const up = { ...COMPANION_AFTER_BOOT, boot, startTask: { lastRun: '2026-11-16T02:40:40Z', lastResult: 0 }, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:40:41Z' }] };
+  const notYet = { status: st, readAt: '2026-11-16T02:42:10Z', boot, companionAfterBoot: { ...up, companionState: 2, supervisors: [] } };
+  const later = { status: st, readAt: '2026-11-16T02:42:40Z', boot, companionAfterBoot: up };
+  const got = ps(`
+    $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify([notYet, later]))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
+    $script:reads = 0
+    function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) $script:reads++; if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
+    function Start-Sleep { }
+    $first = Get-DrillRebootSample (${q(JSON.stringify(notYet))} | ConvertFrom-Json) ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture))
+    $r = Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]::UtcNow.AddSeconds(30))
+    [ordered]@{ firstDone = $first.done; r = $r; reads = $script:reads }`);
+  assert.equal(got.firstDone, false, 'the self-check passed but the companion is not up: not done');
+  assert.equal(got.r.done, true);
+  assert.equal(got.r.readAt, later.readAt);
+  assert.equal(got.reads, 2);
+  assert.equal(got.r.companionAfterBoot.supervisors[0].owner, 'clued-companion');
+  assert.equal(pass(verdictOf(evidence({ reboot: got.r }))).A7, true);
+  // the guest's read: the companion's definition, the interactive sessions, the start task, the companion's state, its supervisors
+  const src = fs.readFileSync(script, 'utf8');
+  const read = src.slice(src.indexOf('$script:GuestReadStatus = {'), src.indexOf('function Test-DrillCompanionAfterBoot'));
+  for (const needle of ["GetTask('CluedCIResidentCompanion')", "GetTask('CluedCIResidentCompanionStart')", 'Definition.Principal.LogonType', 'Win32_LogonSession',
+    "Name='CluedCompanionSupervisor.exe'", 'GetOwner', 'companionAfterBoot = $cab']) assert.ok(read.includes(needle), needle);
 });
 
 test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {

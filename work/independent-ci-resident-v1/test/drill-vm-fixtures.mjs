@@ -566,6 +566,10 @@ export function guestWorkDir(name, files) {
 export const WSL_COLD_START = JSON.stringify({ at: '2026-11-21T03:00:00Z', shutdown: { exit: 0, timedOut: false, stdout: '', stderr: '' },
   runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } });
 
+// K3 (task 87d330d0): the companion up by itself after the reboot, nobody logged on -- all five, under the password definition
+export const COMPANION_AFTER_BOOT = { boot: '2026-11-16T02:45:00Z', definition: 'password', interactiveSessions: 0,
+  startTask: { lastRun: '2026-11-16T02:45:40Z', lastResult: 0 }, companionState: 4,
+  supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:45:41Z' }], errors: {} };
 export function evidence(over = {}) {
   const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'STANDBY' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,
     versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:50:00Z' } } };
@@ -575,7 +579,7 @@ export function evidence(over = {}) {
     launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', role: 'not-held', completed: ['pause-confirmed', 'first-train-not-applicable'], pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
     firstInstallSteps: { missing: false, incomplete: false, incompleteStages: [] },
     pause: { sha256: '4'.repeat(64), requestSha256: PAUSE_REQUEST },
-    reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z' }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
+    reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z', companionAfterBoot: COMPANION_AFTER_BOOT }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
       launcherExit: 0, launcherStatus: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', launcherVerdict: 'BOOTSTRAP_DONE',
       reverifyPassed: true, prepareAgainStatus: 'FLEET_NODE_INSTALL_PREPARED' }, kit: { perNodeSteps: ['8c step 2'], credentials: PACKAGE_CREDENTIALS } };
   return JSON.stringify(Object.assign(e, over));

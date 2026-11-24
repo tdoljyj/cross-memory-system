@@ -854,6 +854,86 @@ Record 'companion-task' (@('password', 'interactive') -ccontains $companionTask.
 Record 'companion-task-logon' (-not (Test-CompanionLogonFailure $companionTask.lastTaskResult)) $(if ($null -ne $companionTask.lastTaskResult) { '0x' + ('{0:X8}' -f [int64]$companionTask.lastTaskResult) } else { $null })
 $lockout = Get-LockoutPolicy
 Record 'companion-lockout-margin' $(if ($companionTask.mode -ceq 'password') { Test-LockoutMargin $lockout } else { $true }) $(if ($null -eq $lockout) { 'unreadable' } else { 'threshold=' + $lockout.threshold + ';window=' + $lockout.windowMinutes + ';mode=' + $companionTask.mode })
+# K3 (task 87d330d0, FABLE-drill-companion-k3-20261124 section 2.1): a password-definition task can stay queued under a start constraint
+# outside its XML, its own boot and time triggers included; the SYSTEM start task \Clued\CluedCIResidentCompanionStart starts it ignoring
+# the constraints (schtasks /Run /I) on boot +30 s and every 15 minutes. It is registered by the switch (companion-headless.ps1
+# Register-CompanionStartTask: no argument, idempotent, throws COMPANION_START_TASK_REGISTER_FAILED) and goes with a fall-back; the
+# interactive definition starts on log-on and needs none. A node switched before it existed gets it here: run as SYSTEM (the upgrade
+# channel's VERIFY) a missing or wrong one is registered first and read back (ok, detail ADDED:<what was wrong>); by hand only read.
+# The start task's facts (COM; nothing written): exists $false when not found, readable $false when it cannot be read (not elevated).
+function Read-CompanionStartTaskFacts {
+  $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
+  $task = try { $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanionStart') } catch {
+    # file or path not found (0x80070002, 0x80070003) anywhere in the chain (a COM error reaches here wrapped): absent; else unreadable
+    for ($e = $_.Exception; $null -ne $e; $e = $e.InnerException) { if (@(0x80070002L, 0x80070003L) -contains ([int64]$e.HResult -band 0xFFFFFFFFL)) { return [ordered]@{ exists = $false; readable = $true } } }
+    return [ordered]@{ exists = $null; readable = $false }
+  }
+  try {
+    $d = $task.Definition
+    $uid = [string]$d.Principal.UserId
+    $sid = try { if ($uid -match '^S-1-') { $uid } else { (New-Object Security.Principal.NTAccount($uid)).Translate([Security.Principal.SecurityIdentifier]).Value } } catch { $null }
+    $sd = [string]$task.GetSecurityDescriptor(4)   # DACL_SECURITY_INFORMATION
+    $i = $sd.IndexOf('D:')
+    [ordered]@{ exists = $true; readable = $true; userSid = $sid; logonType = [int]$d.Principal.LogonType; runLevel = [int]$d.Principal.RunLevel
+      enabled = [bool]$task.Enabled -and [bool]$d.Settings.Enabled
+      triggers = @(foreach ($t in $d.Triggers) { [ordered]@{ type = [int]$t.Type; delay = $(if ([int]$t.Type -eq 8) { [string]$t.Delay } else { '' })
+        interval = [string]$t.Repetition.Interval; duration = [string]$t.Repetition.Duration; enabled = [bool]$t.Enabled } })
+      startWhenAvailable = [bool]$d.Settings.StartWhenAvailable; multipleInstances = [int]$d.Settings.MultipleInstances
+      disallowOnBatteries = [bool]$d.Settings.DisallowStartIfOnBatteries; stopOnBatteries = [bool]$d.Settings.StopIfGoingOnBatteries
+      executionTimeLimit = [string]$d.Settings.ExecutionTimeLimit
+      actions = @(foreach ($a in $d.Actions) { [ordered]@{ type = [int]$a.Type; path = $(if ([int]$a.Type -eq 0) { [string]$a.Path } else { '' }); arguments = $(if ([int]$a.Type -eq 0) { [string]$a.Arguments } else { '' }) } })
+      dacl = $(if ($i -ge 0) { $sd.Substring($i) } else { $sd }) }
+  } catch { [ordered]@{ exists = $null; readable = $false } }
+}
+# Pure: what is wrong with the start task, by name (empty when it is exactly the shape the switch registers).
+function Get-CompanionStartTaskProblems($f) {
+  if (-not $f.readable) { return @('unreadable') }
+  if (-not $f.exists) { return @('absent') }
+  $p = @()
+  if ([string]$f.userSid -cne 'S-1-5-18') { $p += 'principal' }
+  if ($f.logonType -ne 5) { $p += 'logon-type' }   # TASK_LOGON_SERVICE_ACCOUNT
+  if ($f.runLevel -ne 1) { $p += 'run-level' }     # TASK_RUNLEVEL_HIGHEST
+  if (-not $f.enabled) { $p += 'disabled' }
+  $tr = @($f.triggers)
+  $boot = @($tr | Where-Object { $_.type -eq 8 }); $time = @($tr | Where-Object { $_.type -eq 1 })
+  if ($tr.Count -ne 2 -or $boot.Count -ne 1 -or $time.Count -ne 1 -or [string]$boot[0].delay -cne 'PT30S' -or [string]$time[0].interval -cne 'PT15M' -or
+    [string]$time[0].duration -cne '' -or @($tr | Where-Object { -not $_.enabled }).Count) { $p += 'triggers' }
+  if (-not $f.startWhenAvailable) { $p += 'start-when-available' }
+  if ($f.multipleInstances -ne 2) { $p += 'multiple-instances' }   # IgnoreNew: the companion already running drops the kick
+  if ($f.disallowOnBatteries -or $f.stopOnBatteries) { $p += 'batteries' }
+  if ([string]$f.executionTimeLimit -cne 'PT1M') { $p += 'time-limit' }
+  $ac = @($f.actions)
+  if ($ac.Count -ne 1 -or $ac[0].type -ne 0 -or [string]$ac[0].path -cne 'C:\Windows\System32\schtasks.exe' -or [string]$ac[0].arguments -cne '/Run /I /TN "\Clued\CluedCIResidentCompanion"') { $p += 'action' }
+  # The DACL as companion-headless.ps1 Test-CompanionTaskDacl compares the companion task's: protected, the same ACEs in binary form
+  # (the text the Task Scheduler reads back may spell the rights differently).
+  $daclOk = try {
+    $want = [Security.AccessControl.RawSecurityDescriptor]::new('D:P(A;;FA;;;SY)(A;;FA;;;BA)').DiscretionaryAcl
+    $hd = [Security.AccessControl.RawSecurityDescriptor]::new([string]$f.dacl); $have = $hd.DiscretionaryAcl
+    $same = (([int]$hd.ControlFlags -band [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -ne 0) -and $null -ne $have -and $have.Count -eq $want.Count
+    for ($i = 0; $same -and $i -lt $want.Count; $i++) {
+      $x = [byte[]]::new($want[$i].BinaryLength); $want[$i].GetBinaryForm($x, 0); $y = [byte[]]::new($have[$i].BinaryLength); $have[$i].GetBinaryForm($y, 0)
+      $same = [Convert]::ToBase64String($x) -ceq [Convert]::ToBase64String($y)
+    }
+    $same
+  } catch { $false }
+  if (-not $daclOk) { $p += 'sddl' }
+  $p
+}
+# The check: [ordered]@{ ok; detail }. Only the password definition needs the start task; $asSystem: the upgrade channel's VERIFY.
+function Test-CompanionStartTask([string]$mode, [bool]$asSystem) {
+  if ($mode -cne 'password') { return [ordered]@{ ok = $true; detail = $null } }
+  $problems = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
+  if ($problems.Count -eq 0) { return [ordered]@{ ok = $true; detail = $null } }
+  $was = $problems -join ','
+  if ($was -ceq 'unreadable') { return [ordered]@{ ok = 'unreadable'; detail = 'unreadable' } }
+  if (-not $asSystem) { return [ordered]@{ ok = $false; detail = $was } }
+  try { $null = Register-CompanionStartTask } catch { return [ordered]@{ ok = $false; detail = ('COMPANION_START_TASK_REGISTER_FAILED:' + $was + ':' + $_.Exception.Message) } }
+  $after = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
+  if ($after.Count -eq 0) { return [ordered]@{ ok = $true; detail = ('ADDED:' + $was) } }
+  [ordered]@{ ok = $false; detail = ('STILL:' + ($after -join ',')) }
+}
+$companionStart = Test-CompanionStartTask ([string]$companionTask.mode) ($verifyIdentity.User.Value -ceq 'S-1-5-18')
+Record 'companion-start-task' $companionStart.ok $companionStart.detail
 # The launch file: admin-only, no link, this generation's node, entry and configuration, the Owner's own gh login.
 $launchProblem = try {
   $lf = Join-Path $Root 'config\companion-launch.json'

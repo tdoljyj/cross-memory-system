@@ -19,7 +19,8 @@
   generations, archive and token stay inside the renamed directory.
   M5 (ADR 0022 section 4.4): the companion task's running instance is stopped first (the supervisor, and with its job object the
   companion), then both tasks are deleted (\Clued\CluedCIResidentCompanion and \Clued\CluedCIResidentNotifier); the password the Task
-  Scheduler stored for the companion task is deleted with it.
+  Scheduler stored for the companion task is deleted with it. K3: the SYSTEM start task \Clued\CluedCIResidentCompanionStart, when there
+  is one, is deleted before all of them.
 #>
 [CmdletBinding()]
 param([switch]$Apply, [ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedPlanSha256)
@@ -111,6 +112,9 @@ while (ExecutorAlive) { if ((Get-Date) -gt $deadline) { throw 'EXECUTOR_STILL_RU
 & $Sc delete CluedCIResident | Out-Null
 & $Sc delete CluedCISwapBroker | Out-Null
 if ($plan.upgraderService) { & $Sc delete CluedCIUpgrader | Out-Null }
+# K3 (task 87d330d0): the SYSTEM start task (\Clued\CluedCIResidentCompanionStart, schtasks /Run /I every 15 minutes and on boot;
+# only beside the password definition) goes first, so nothing starts the companion again while it is stopped and deleted.
+if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionStart' -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionStart' -Confirm:$false }
 # M5: end the supervisor's instance first (its job object ends the companion), then delete both tasks; the companion task's stored
 # password goes with its definition.
 try { Stop-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanion' -ErrorAction Stop } catch { }
