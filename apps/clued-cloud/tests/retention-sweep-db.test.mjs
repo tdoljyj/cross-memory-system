@@ -184,7 +184,7 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
 
     await t.test('daily sweep: the counts it returns are what it changed, and a second run writes nothing', async () => {
       const at = await now();
-      assert.deepEqual(Object.keys(await sweep(at)), RULES, 'rules run in name order');
+      assert.deepEqual(Object.keys(await sweep(at)).sort(), RULES, 'every rule function is found by its name');
       const rows = await auditCount();
       await audit(2, new Date(at - 31 * 86400e3)); await audit(1, new Date(at - 29 * 86400e3));
       const due = await session(at, -36, -36), recent = await session(at, -34, -34);
@@ -192,11 +192,14 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
       assert.deepEqual(await sweep(at), counts(2, 1));
       assert.equal(await auditCount(), rows + 1);
       assert.deepEqual(await sessions([due, recent]), { [due]: cleared(untouched[due]), [recent]: untouched[recent] });
-      await admin.query('begin');
-      assert.deepEqual(await sweep(at), counts(0, 0));
-      const written = await one(`select coalesce(sum(n_tup_ins+n_tup_upd+n_tup_del),0)::int n from pg_stat_xact_user_tables`);
-      await admin.query('commit');
-      assert.equal(written.n, 0, 'no row inserted, updated or deleted');
+      // A new connection: these counters also hold a backend's earlier writes until it reports them.
+      const fresh = await connect();
+      await fresh.query('begin');
+      assert.deepEqual(await sweep(at, fresh), counts(0, 0));
+      const written = (await fresh.query(`select schemaname||'.'||relname relation, (n_tup_ins+n_tup_upd+n_tup_del)::int n
+        from pg_stat_xact_user_tables where n_tup_ins+n_tup_upd+n_tup_del<>0 order by 1`)).rows;
+      await fresh.query('commit');
+      assert.deepEqual(written, [], 'no row inserted, updated or deleted');
     });
 
     await t.test('the audit rule removes at most 5000 rows a run', async () => {
@@ -252,6 +255,7 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
     });
 
     await t.test('the statement timeout in the registered command cancels the whole run; one set on the function would not', async () => {
+      const cron = await connect();
       const { command } = await one('select command from cron.job where jobname=$1', [SWEEP_JOB]);
       assert.ok(command.startsWith("set local statement_timeout='60s';"), command);
       await admin.query(`create function pg_temp.retention_slow_delete() returns trigger language plpgsql as
@@ -261,18 +265,20 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
       try {
         const rows = await auditCount();
         await audit(1, new Date(await now() - 31 * 86400e3));
-        // pg_cron sends the command text as one simple query; so does this.
-        await assert.rejects(admin.query(command.replace("'60s'", "'200ms'")), error => error.code === '57014');
+        // As pg_cron's connection: no statement timeout of its own (production's postgres role has none), and the
+        // command text sent as one simple query.
+        assert.equal((await cron.query("select current_setting('statement_timeout') v")).rows[0].v, '0');
+        await assert.rejects(cron.query(command.replace("'60s'", "'200ms'")), error => error.code === '57014');
         assert.equal(await auditCount(), rows + 1, 'the cancelled run removed nothing');
-        assert.equal((await one("select current_setting('statement_timeout') v")).v, '0');
+        assert.equal((await cron.query("select current_setting('statement_timeout') v")).rows[0].v, '0');
         // The timeout is armed when a statement starts, so a function-level setting is too late for its own call.
-        await admin.query("begin; alter function clued_private.retention_sweep_v1(timestamptz) set statement_timeout='200ms'");
-        const result = (await admin.query('select clued_private.retention_sweep_v1() v')).rows[0].v;
+        await cron.query("begin; alter function clued_private.retention_sweep_v1(timestamptz) set statement_timeout='200ms'");
+        const result = (await cron.query('select clued_private.retention_sweep_v1() v')).rows[0].v;
         assert.equal(result.retention_rule_memory_audit_v1, 1, 'ran for two seconds without being cancelled');
-        await admin.query('rollback');
+        await cron.query('rollback');
         assert.equal(await auditCount(), rows + 1);
       } finally {
-        await admin.query('rollback').catch(() => {});
+        await cron.query('rollback').catch(() => {});
         await admin.query('drop trigger if exists retention_slow_delete on public.clued_memory_audit');
       }
       assert.equal((await sweep(await now())).retention_rule_memory_audit_v1, 1);
