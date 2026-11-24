@@ -113,11 +113,17 @@ export function advisoryLanes({ advisory, pollRunner, poller, readStatus, renewK
   schedule = setTimeout, cancel = clearTimeout }) {
   let lastReport = 0, lastBackstop = 0, lastSignature = null, lastStatusRead = 0, lastBundlePrune = 0;
   let statusRead = null; // the poll lane's status read while it is outstanding: never a second one on top of it
+  let passStatus = null; // what this pass's status read gave (null: not read within POLL_STATUS_READ_MS, or unreadable)
+  // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
+  // the train on, stage 10's effective route push and no scan required from this App) proposes a head behind main on its merge
+  // base; no such field, or a status not read, is github-merge (status.mjs#pollerLandingOf). From the pass's own read (f79929d9
+  // round 2): poller.pass reads status.json no second time, so a stalled read holds it up at most POLL_STATUS_READ_MS.
+  poller.landing = async () => pollerLandingOf(passStatus);
   return [
     { runner: pollRunner, everyMs: POLL_EVERY_MS, work: async () => {
       // The run queue's generation (phase 2): a queue that started over gets every open PR proposed again.
       statusRead ??= Promise.resolve().then(readStatus).catch(() => null).finally(() => { statusRead = null; });
-      const status = await within(statusRead, POLL_STATUS_READ_MS, { schedule, cancel });
+      const status = passStatus = await within(statusRead, POLL_STATUS_READ_MS, { schedule, cancel });
       try {
         await poller.pass({ generation: status?.queue?.generation ?? null });
         await poller.parkedPass(status?.pending ?? []);
@@ -304,10 +310,7 @@ export async function main(args = process.argv.slice(2)) {
   const poller = new Poller({
     repo: raw.repo, ghExe: raw.ghExe, run: (a, o) => pollRunner.run(a, o), clock: Date.now,
     writeTrigger: v => Inbox.drop(inboxDir, v), // a create-only drop box: the reader waits for a file still being written (DESIGN §31.3)
-    // bc982192: the batch route the service stamps a batch born now with (its status board's train.batchRoute, executor.mjs#batchRoute:
-    // the train on, stage 10's effective route push and no scan required from this App) proposes a head behind main on its merge
-    // base; no such field, or a status it cannot read, is github-merge.
-    landing: async () => pollerLandingOf(await readStatus(values.root)),
+    // Its landing port is the poll lane's (advisoryLanes): the landing mode comes from the pass's one bounded status read.
   });
   // PR page status and Windows notifications (pr-status.mjs). Their memory lives in the Owner's own profile, never in the
   // resident's directories.
