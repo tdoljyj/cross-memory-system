@@ -307,24 +307,27 @@ async function seedParking(client, userId) {
 // project:<id> cannot be issued, and no token is answered for that scope, unless the account owns a project with
 // exactly that id (resource_action_not_authorized otherwise, an "all contexts" token included). The product's
 // functions generate a project's id, so this one row is written directly, under the product's writer guard. A
-// project's id is its primary key: it belongs to one account. With one account that is the owner; with several
-// and no such project yet, nothing here says which, and the sync stops.
+// project's id is its primary key: it belongs to one account, the one that signed up first (`users` is in that
+// order); every other account gets its parking spot and nothing else. `account` tells the host which one to sign
+// in with: the first character of its e-mail address and the domain, never the whole address.
+const masked = (email) => (typeof email === 'string' && /^[^@]+@[^@]+$/.test(email) ? `${[...email][0]}***@${email.split('@')[1]}` : null);
 async function seedProject(client, scope, users) {
-  if (!scope.startsWith('project:')) return null;
+  if (!scope.startsWith('project:')) return { project: null, project_account: null };
   const id = scope.slice('project:'.length);
-  const owner = (await client.query('select user_id from public.clued_projects where id = $1', [id])).rows[0]?.user_id ?? null;
-  if (owner !== null) {
-    if (!users.some((user) => user.id === owner)) throw new Error('fixture_project_owner_unknown');
-    return 'present';
+  const holder = (await client.query('select user_id from public.clued_projects where id = $1', [id])).rows[0]?.user_id ?? null;
+  if (holder !== null) {
+    const owner = users.find((user) => user.id === holder);
+    if (!owner) throw new Error('fixture_project_owner_unknown');
+    return { project: 'present', project_account: masked(owner.email) };
   }
-  if (users.length === 0) return null;
-  if (users.length !== 1) throw new Error('fixture_project_owner_ambiguous');
+  const [owner] = users;
+  if (!owner) return { project: null, project_account: null };
   await transaction(client, async () => {
-    await client.query('select clued_private.authorization_writer_guard_v2($1)', [users[0].id]);
+    await client.query('select clued_private.authorization_writer_guard_v2($1)', [owner.id]);
     await client.query(`insert into public.clued_projects(id, user_id, name, normalized_name, context_key)
-      values ($1, $2, 'drill', 'drill', $3)`, [id, users[0].id, scope]);
+      values ($1, $2, 'drill', 'drill', $3)`, [id, owner.id, scope]);
   });
-  return 'seeded';
+  return { project: 'seeded', project_account: masked(owner.email) };
 }
 
 // Every account of the test project keeps ci-admission marked by a parking
@@ -332,16 +335,16 @@ async function seedProject(client, scope, users) {
 // (binding_role_admits_v1) and the drill guest's probe reads "held".
 export async function seedFixtures(client, { scope }) {
   checkedScope(scope);
-  const users = (await client.query(`select u.id, exists (select 1 from clued_private.binding_roles_v1 r
+  const users = (await client.query(`select u.id, u.email, exists (select 1 from clued_private.binding_roles_v1 r
       where r.user_id = u.id and r.role = 'ci-admission' and r.purpose = 'parking' and r.revoked_at is null) as parked
-    from auth.users u where u.deleted_at is null order by u.id`)).rows;
+    from auth.users u where u.deleted_at is null order by u.created_at, u.id`)).rows;
   let seeded = 0;
   for (const user of users) {
     if (user.parked) continue;
     await seedParking(client, user.id);
     seeded += 1;
   }
-  return { users: users.length, seeded, project: await seedProject(client, scope, users) };
+  return { users: users.length, seeded, ...await seedProject(client, scope, users) };
 }
 
 export async function syncDatabase(client, { applied, repository, snapshot, scope, rebuild = false, platform = 'hosted', log = () => {} }) {
