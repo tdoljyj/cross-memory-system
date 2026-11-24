@@ -72,14 +72,15 @@ const PINS = { gitleaks: { image: 'g', hostTools: { python: { path: '/usr/bin/py
 
 // An accepted version's From directory (prepareFrom on a build/final/images layout) and its prereq.json staging `debs`.
 let n = 0;
-function assets(debs, { formalRoles = PINS } = {}) {
+// extra: more items of the package's prereq-manifest.json, ones prereq.json does not stage (node, python, ...: the host cache's)
+function assets(debs, { formalRoles = PINS, extra = [] } = {}) {
   const root = path.join(tmp, `k${n++}`); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64), image = `role-image-${id}.tar.gz`;
   const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] },
     record: { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' } }));
   const items = [{ fileName: 'wsl.msi', sha256: sha('wsl'), bytes: 3 }, { fileName: 'ubuntu.wsl', sha256: sha('rootfs'), bytes: 6 },
-    { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }];
+    { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }, ...extra];
   const archive = writeTar([
     { path: 'tree/work/independent-ci-resident-v1/rollout/fleet/bootstrap.ps1', data: Buffer.from('# accepted bootstrap\r\n') },
     { path: 'tree/work/independent-ci-resident-v1/rollout/fleet/prereq-manifest.json', data: Buffer.from(JSON.stringify({ items,
@@ -155,4 +156,41 @@ test('a pin of the wrong shape and a .deb that cannot be read are refused, by na
 test('an acceptance that pins no host tool: nothing to hold here, the .debs are not read', async () => {
   const r = await makeDrillKit(assets({ 'docker.deb': Buffer.from('deb') }, { formalRoles: { gitleaks: { image: 'g' } } }));
   assert.deepEqual(r.hostTools, []);
+});
+
+// Fable ruling 0e418483 (D:/w/tmp/FABLE-node-install-batch-20261124.md section 3.3 A): every item of the package's prereq-manifest.json is in
+// the kit, or no kit. One the host's prereq.json does not stage comes from the host cache (<prereq dir>\cache\<file name>); missing there,
+// the builder fetches it once from the manifest's own address, holds it to the manifest's sha256 and size, and only creates the cache file.
+const NODE = Buffer.from('node-v24 win-x64 zip fixture\n');
+const NODE_ITEM = { name: 'node', url: 'https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip', fileName: 'node-v24.21.0-win-x64.zip', kind: 'zip',
+  sha256: sha(NODE), bytes: NODE.length };
+const PY_DEBS = { 'py.deb': PYTHON_DEB };
+// the package names nodejs.org (its manifest's address): the drill's server registers it as not Clued's, as drill-server.json does
+const withNode = () => { const f = assets(PY_DEBS, { extra: [NODE_ITEM] }); return { ...f, server: { ...f.server, allowedHosts: ['nodejs.org'] } }; };
+
+test('P1: an item only the manifest pins (node) is fetched once from its address into the host cache and carried in the kit', async () => {
+  const f = withNode();
+  const asked = [];
+  await makeDrillKit({ ...f, fetchPrereq: async item => { asked.push(item.url); return NODE; } });
+  const kit = JSON.parse(fs.readFileSync(path.join(f.out, 'kit.json'), 'utf8'));
+  assert.deepEqual(kit.files.filter(x => x.path === NODE_ITEM.fileName), [{ path: NODE_ITEM.fileName, sha256: NODE_ITEM.sha256 }]);
+  assert.deepEqual(asked, [NODE_ITEM.url]);
+  const cached = path.join(path.dirname(f.prereq), 'cache', NODE_ITEM.fileName);
+  assert.equal(sha(fs.readFileSync(cached)), NODE_ITEM.sha256);
+  // the next kit takes it from the cache: never fetched again
+  await makeDrillKit({ ...f, out: `${f.out}-2`, fetchPrereq: async () => assert.fail('fetched again') });
+  assert.ok(fs.existsSync(path.join(`${f.out}-2`, NODE_ITEM.fileName)));
+  // the kit says the guest's own download was not drilled
+  assert.ok(kit.perNodeSteps.some(x => /前置由宿主注入/.test(x)), JSON.stringify(kit.perNodeSteps));
+});
+
+test('P1: fetched bytes that are not the manifest\'s, or a cache file changed, refuse the kit; nothing is cached', async () => {
+  const f = withNode();
+  await refused({ ...f, fetchPrereq: async () => Buffer.from('another node\n') }, 'DRILL_PREREQ_TOOLS_INCOMPLETE:node');
+  assert.ok(!fs.existsSync(path.join(path.dirname(f.prereq), 'cache', NODE_ITEM.fileName)), 'wrong bytes are never cached');
+  await refused({ ...f, fetchPrereq: async () => { throw new Error('ECONNRESET'); } }, 'DRILL_PREREQ_TOOLS_INCOMPLETE:node');
+  const g = withNode();
+  fs.mkdirSync(path.join(path.dirname(g.prereq), 'cache'));
+  fs.writeFileSync(path.join(path.dirname(g.prereq), 'cache', NODE_ITEM.fileName), 'changed');
+  await refused({ ...g, fetchPrereq: async () => assert.fail('a cache file is never replaced') }, `DRILL_PREREQ_CHANGED:${NODE_ITEM.fileName}`);
 });
