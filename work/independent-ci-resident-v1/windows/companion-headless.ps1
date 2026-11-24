@@ -444,10 +444,21 @@ function Get-ProcessTokenFacts([string]$root, [int]$processId, [string]$registra
   $out = Invoke-CompanionRegistrar $root @('token-facts', [string]$processId) $registrar
   try { $out | ConvertFrom-Json } catch { $null }
 }
+# A process as the qualification saw it (Win32_Process): its id, its parent, its session and when it started. No command line.
+function Get-CompanionProcessFacts($processes) {
+  @(foreach ($p in @($processes)) {
+    if ($null -eq $p) { continue }
+    [ordered]@{ pid = [int]$p.ProcessId; parentPid = [int]$p.ParentProcessId; sessionId = [int]$p.SessionId
+      created = $(try { ([DateTimeOffset][DateTime]$p.CreationDate).ToUniversalTime().ToString('o') } catch { $null }) }
+  })
+}
 # One look: $null when everything holds, else the first check that does not. since: when the switch began (UTC).
-function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
+# look (optional, a dictionary): filled with the supervisors and companion children this look counted (Get-CompanionProcessFacts).
+function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe'), [Collections.IDictionary]$look = $null) {
   $launch = try { Get-Content -LiteralPath (Join-Path $root 'config\companion-launch.json') -Raw | ConvertFrom-Json } catch { return 'launch-file' }
   $tree = Get-CompanionProcessTree $root
+  # evidence only: a look it cannot be taken for stays empty (counted -1), never changing the verdict (review of 36a20badc S4)
+  if ($null -ne $look) { try { $look['supervisors'] = @(Get-CompanionProcessFacts $tree.supervisors); $look['children'] = @(Get-CompanionProcessFacts $tree.children) } catch { $look.Clear() } }
   if (@($tree.supervisors).Count -ne 1) { return 'supervisor-process' }
   $child = @($tree.children | Where-Object { ([string]$_.CommandLine).Contains('--config-sha256 ' + [string]$launch.configSha256) -and ([string]$_.CommandLine).Contains([string]$launch.entry) })
   if ($child.Count -ne 1) { return 'companion-process' }
@@ -470,13 +481,54 @@ function Test-CompanionQualifiedOnce([string]$root, [string]$ownerSid, [DateTime
   if (-not (Test-Path -LiteralPath $facts -PathType Leaf) -or (Get-Item -LiteralPath $facts).LastWriteTimeUtc -lt $since.UtcDateTime) { return 'linux-facts' }
   $null
 }
+# The task as the Task Scheduler runs it (2026-11-24, drill r10: state 2, queued, for the whole 480 s, and nothing said why): its state,
+# last and next run, last result, missed runs, and each instance it holds (queued or running). Read-only; never throws.
+function Get-CompanionTaskRunFacts([scriptblock]$Service = { $s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $s }) {
+  $when = { param($d) try { $t = [DateTime]$d; if ($t.Year -lt 1900) { $null } else { ([DateTimeOffset]$t).ToUniversalTime().ToString('o') } } catch { $null } }
+  try {
+    $svc = & $Service
+    $task = $svc.GetFolder('\Clued').GetTask($CompanionTaskName)
+    $instances = @(foreach ($i in @($task.GetInstances(0))) {
+      if ($null -eq $i) { continue }
+      [ordered]@{ instanceGuid = [string]$i.InstanceGuid; state = [int]$i.State; enginePid = [int]$i.EnginePID; currentAction = [string]$i.CurrentAction }
+    })
+    [ordered]@{ state = [int]$task.State; enabled = [bool]$task.Enabled; lastRunTime = (& $when $task.LastRunTime); nextRunTime = (& $when $task.NextRunTime)
+      lastTaskResult = ([int64]$task.LastTaskResult -band 0xFFFFFFFFL); numberOfMissedRuns = [int]$task.NumberOfMissedRuns; instances = $instances }
+  } catch { [ordered]@{ error = 'TASK_RUN_FACTS_UNREADABLE:' + $_.Exception.GetType().Name } }
+}
+# The machine's memory when the qualification gave up (KiB, Win32_OperatingSystem). Read-only; never throws.
+function Get-CompanionMemoryFacts([scriptblock]$Query = { Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop }) {
+  try {
+    $os = & $Query
+    [ordered]@{ totalVisibleKb = [int64]$os.TotalVisibleMemorySize; freePhysicalKb = [int64]$os.FreePhysicalMemory; totalVirtualKb = [int64]$os.TotalVirtualMemorySize; freeVirtualKb = [int64]$os.FreeVirtualMemory }
+  } catch { [ordered]@{ error = 'MEMORY_FACTS_UNREADABLE:' + $_.Exception.GetType().Name } }
+}
+# What a switch's result carries when the qualification fails (2026-11-24, drill r10: 'supervisor-process' alone could not tell none from
+# two): the code, how many supervisors each look counted (-1: that look stopped before counting), the last look's supervisors and
+# children, the task's run facts and the memory, taken before anything is stopped or rolled back. Wait-CompanionQualified leaves it in
+# $script:CompanionQualifyEvidence ($null while it runs and when the qualification held); Get-CompanionQualifyEvidence reads it.
+$script:CompanionQualifyEvidence = $null
+function New-CompanionQualifyEvidence([string]$why, [Collections.IDictionary]$look, [int[]]$counts) {
+  # assigned, not through $(...): a subexpression would unroll an empty list to nothing (written {}) and one item to the item itself
+  $supervisors = $null; $children = $null
+  if ($null -ne $look -and $look.Contains('supervisors')) { $supervisors = @($look['supervisors']) }
+  if ($null -ne $look -and $look.Contains('children')) { $children = @($look['children']) }
+  [ordered]@{ why = $why; at = [DateTimeOffset]::UtcNow.ToString('o'); looks = @($counts).Count; supervisorCounts = (@($counts) -join ',')
+    supervisors = $supervisors; children = $children; task = (Get-CompanionTaskRunFacts); memory = (Get-CompanionMemoryFacts) }
+}
+function Get-CompanionQualifyEvidence { if (Test-Path -LiteralPath 'variable:script:CompanionQualifyEvidence') { $script:CompanionQualifyEvidence } else { $null } }
 function Wait-CompanionQualified([string]$root, [string]$ownerSid, [DateTimeOffset]$since, [int]$seconds = $CompanionQualifySeconds, [string]$registrar = (Join-Path $root 'bin\CluedCompanionTaskRegistrar.exe')) {
+  $script:CompanionQualifyEvidence = $null
   $until = [DateTime]::UtcNow.AddSeconds($seconds); $why = 'not-started'
+  $counts = New-Object 'Collections.Generic.List[int]'; $look = [ordered]@{}
   while ([DateTime]::UtcNow -lt $until) {
-    $why = Test-CompanionQualifiedOnce $root $ownerSid $since $registrar
+    $look = [ordered]@{}
+    $why = Test-CompanionQualifiedOnce $root $ownerSid $since $registrar $look
     if ($null -eq $why) { return $null }
+    $counts.Add($(if ($look.Contains('supervisors')) { @($look['supervisors']).Count } else { -1 }))
     Start-Sleep -Seconds 10
   }
+  $script:CompanionQualifyEvidence = New-CompanionQualifyEvidence $why $look $counts.ToArray()
   $why
 }
 # Ends the companion processes of this root (node children and job hosts), not the task: the supervisor starts the child again.
@@ -501,9 +553,24 @@ function Wait-CompanionTaskNotRunning {
     Start-Sleep -Milliseconds 500
   }
 }
+# The instance the last Run returned (its guid, state and engine), for Watch-CompanionTaskRun; reading it never fails the Run.
+$script:CompanionLastRun = $null
 function Start-CompanionTask {
   $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()
-  $null = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').Run($null)
+  $run = $svc.GetFolder('\Clued').GetTask('CluedCIResidentCompanion').Run($null)
+  try { if ($null -ne $run) { $script:CompanionLastRun = [ordered]@{ instanceGuid = [string]$run.InstanceGuid; state = [int]$run.State; enginePid = [int]$run.EnginePID } } } catch { }
+}
+# The qualification's Run, watched (2026-11-24, review of 36a20badc S1): the task's run facts just before and just after it and the
+# instance it returned, so whether IgnoreNew dropped this Run (an instance already queued before it, none of its own) is read without
+# the Operational log, which is off on a node. Never throws: the Run's own error is in runError, the caller decides as before.
+function Watch-CompanionTaskRun([scriptblock]$Run) {
+  $facts = { try { Get-CompanionTaskRunFacts } catch { [ordered]@{ error = 'TASK_RUN_FACTS_UNREADABLE:' + $_.Exception.GetType().Name } } }
+  $watch = [ordered]@{ before = (& $facts); returned = $null; after = $null; runError = $null }
+  $script:CompanionLastRun = $null
+  try { $null = & $Run } catch { $watch.runError = [string]$_.Exception.Message }
+  try { $watch.returned = $script:CompanionLastRun } catch { }
+  $watch.after = & $facts
+  $watch
 }
 
 # The whole switch: -CompanionHeadless (mode 'headless') and -CompanionCredential (mode 'credential') are the same steps; the
@@ -555,7 +622,8 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
     Wait-CompanionTaskNotRunning
     # Review B1: from here on; the old instance has ended, so nothing it wrote counts.
     $since = [DateTimeOffset]::UtcNow
-    try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
+    $runWatch = Watch-CompanionTaskRun { Start-CompanionTask }
+    if ($null -ne $runWatch.runError) { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $ownerSid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $ownerSid
     if ($null -eq $why -and $result.task.mode -ceq 'password') {
@@ -565,6 +633,9 @@ function Invoke-CompanionHeadless([string]$root, $node, [string]$mode) {
       return $result
     }
     $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
+    $qualifyEvidence = Get-CompanionQualifyEvidence
+    if ($null -ne $qualifyEvidence) { $result.qualification = $qualifyEvidence }
+    $result.taskRun = $runWatch
     $null = Invoke-CompanionStopAndFallback $root $ownerSid
     # The interactive task runs in the Owner's session (it is there: he started this); without a session it starts at the next log-on.
     try { Start-CompanionTask } catch { }
@@ -1212,7 +1283,8 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
       }
     }
     $since = [DateTimeOffset]::UtcNow
-    try { Start-CompanionTask } catch { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
+    $runWatch = Watch-CompanionTaskRun { Start-CompanionTask }
+    if ($null -ne $runWatch.runError) { $result.runError = 'COMPANION_TASK_RUN_FAILED' }
     $why = Wait-CompanionQualified $root $sid $since -registrar $build.registrar.exe
     $result.task = Get-CompanionTaskFacts $root $sid
     if ($null -eq $why) { $why = Get-CompanionRelayParentsProblem $sid }
@@ -1229,6 +1301,9 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
       return $result
     }
     $result.failed = 'COMPANION_HEADLESS_QUALIFICATION_FAILED:' + $(if ($why) { $why } else { 'task-' + $result.task.mode })
+    $qualifyEvidence = Get-CompanionQualifyEvidence
+    if ($null -ne $qualifyEvidence) { $result.qualification = $qualifyEvidence }
+    $result.taskRun = $runWatch
     if ($MaintenanceContextFile) { $result.manualRecovery = $true }
     else { $null = Invoke-CompanionStopAndFallback $root $sid; $result.fellBack = $true }
     $result
