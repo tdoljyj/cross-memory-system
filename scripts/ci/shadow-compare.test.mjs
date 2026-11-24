@@ -4,6 +4,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { ghReader } from './retrigger-counter.mjs';
 import { MAIN_RULESET_ID, PAIRS, compare, main } from './shadow-compare.mjs';
+import * as shadow from './shadow-compare.mjs';
 
 const FRAMEWORK_PINS = { 'ci-suites': 15368, 'clued-cloud-tests': 15368, 'migration-verify': 15368, 'ci-suites-windows': 15368,
   gitleaks: 5368905, trivy: 5368905, 'contract-placement': 5368905, 'kooyumi-work-admission': 5368905,
@@ -23,9 +24,14 @@ function run(name, app, conclusion = 'success', { status = 'completed', started 
     started_at: started, completed_at: status === 'completed' ? completed : null, output: { title }, ...(suite ? { check_suite: { id: suite } } : {}) };
 }
 // 一个 head 上两边七项全绿，另带无关检查（含两边的准入，它们不在比对里）；override(name, side) 返回 undefined 表示缺这一条，返回数组表示替换。
-function greenRuns({ started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', hostedCompleted = '2026-11-23T01:12:00Z', override = () => null } = {}) {
-  const runs = [run('admission-gate', 15368), run('kooyumi-merge-slot', 5368905), run('kooyumi-work-admission', 5368905),
-    run('kooyumi-main-merge', 5164952)];
+// 无关检查与对比检查同时开始；准入（kooyumi-work-admission）开始后 admissionMinutes 分钟完成（null：没有这条）。
+const plusMinutes = (t, minutes) => new Date(Date.parse(t) + minutes * 60_000).toISOString().replace('.000Z', 'Z');
+function greenRuns({ started = '2026-11-23T01:00:00Z', completed = '2026-11-23T01:10:00Z', hostedCompleted = '2026-11-23T01:12:00Z', admissionMinutes = 1,
+  override = () => null } = {}) {
+  const at = { started, completed: started };
+  const runs = [run('admission-gate', 15368, 'success', at), run('kooyumi-merge-slot', 5368905, 'success', at),
+    ...(admissionMinutes === null ? [] : [run('kooyumi-work-admission', 5368905, 'success', { started, completed: plusMinutes(started, admissionMinutes) })]),
+    run('kooyumi-main-merge', 5164952, 'success', at)];
   for (const check of Object.keys(HOSTED)) {
     const sides = {
       framework: [run(check, FRAMEWORK_PINS[check], 'success', { started, completed })],
@@ -251,7 +257,7 @@ test('PR 提交列表读不到：当前 head 判未知，不漏掉', async () =>
 // 被取代 head（丙，FABLE-shadow-superseded-20261122）：两侧都有红/绿终态就照常比，比不了判跳过（不计数、不打断）。
 // 当前 head 缺检查或未完成判在跑；最终 head（已合入 PR 的 head）保持严格口径。
 const at = (day, hour = 1) => `2026-11-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:00:00Z`;
-const runsAt = (t, override) => greenRuns({ started: t, completed: t, hostedCompleted: t, ...(override ? { override } : {}) });
+const runsAt = (t, override, admissionMinutes = 1) => greenRuns({ started: t, completed: t, hostedCompleted: t, admissionMinutes, ...(override ? { override } : {}) });
 const frameworkCancelled = (name, t) => (check, side) => check === name && side === 'framework'
   ? [run(name, FRAMEWORK_PINS[name], 'cancelled', { started: t, completed: t })] : null;
 const frameworkRed = (name, t) => (check, side) => check === name && side === 'framework'
@@ -524,7 +530,7 @@ const pushes = (...logins) => {
 const exitStreak = async options => (await exitReport(options)).summary.streak;
 // race：在第 15、16 个 head 之间插一个刚合入、框架结论未出的最终 head（§8 P4，addRace 在下方定义），now 随之给定。
 async function exitReport({ heads = 30, spanHours = 72, unmerged = [], dependabot = false, botCommit = false, bothRed = true, lead = null,
-  pushers = { 15: BOT }, leadPusher = 'tdoljyj', pushError = [], race = null, now = NOW } = {}) {
+  pushers = { 15: BOT }, leadPusher = 'tdoljyj', pushError = [], race = null, now = NOW, noAdmission = [] } = {}) {
   const t0 = Date.parse('2026-11-23T00:00:00Z');
   const iso = ms => new Date(ms).toISOString().replace('.000Z', 'Z');
   const prs = [], checks = {};
@@ -534,7 +540,8 @@ async function exitReport({ heads = 30, spanHours = 72, unmerged = [], dependabo
     if (!pr) prs.push(pr = { number, state: 'closed', merged: !unmerged.includes(number), user: number === 1805 && dependabot ? 'dependabot[bot]' : 'tdoljyj', commits: [] });
     pr.commits.push({ sha: s, author: botCommit && i === 13 ? 'kooyumi-app[bot]' : 'tdoljyj' });
     checks[s] = runsAt(t, bothRed && i === 7 ? (check, side) => check === 'gitleaks'
-      ? [run(side === 'framework' ? 'gitleaks' : 'hosted-gitleaks', side === 'framework' ? 5368905 : 15368, 'failure', { started: t, completed: t })] : null : undefined);
+      ? [run(side === 'framework' ? 'gitleaks' : 'hosted-gitleaks', side === 'framework' ? 5368905 : 15368, 'failure', { started: t, completed: t })] : null : undefined,
+      noAdmission.includes(i) ? null : 1);
   }
   // lead：在序列之前 leadHours 小时放一个不一致的 head（单独一个已合入 PR）。
   if (lead !== null) {
@@ -1010,4 +1017,83 @@ test('P7 自愈：框架跑完后再读按真实结果判（合入后 120 分钟
   const own = await justMerged({ minutes: 120, lead: 2, headRuns: runsAt(t) });
   assert.equal(own.head.verdict, '一致');
   assert.equal(own.report.summary.streak.heads, 3);
+});
+
+// 准入时延（PLAN-native-admission-latency-20261124 §4 PR 丙；框架 v1 §2.3“准入 p90 ≤3 分钟”）：推送 = head 全部 check-run 最早的
+// started_at；准入 = App 5368905 的 kooyumi-work-admission 最新一条的 completed_at，没有记无穷；p90 最近秩（第 ⌈0.9n⌉ 小）。
+// 判据只看连续一致段那批 head；诊断两行（与自托管 ci-suites-windows 重叠 ≥2 分钟分组、超过 3 分钟清单）不进判据。
+// 查因 26 个最终 head 的推送→准入（分钟，D:/agent-temp/s6plan/probe.txt；夹具补了它们的准入检查与最早一条检查）。
+const PROBE26 = { 1252: 9.7, 1253: 12.7, 1254: 31.5, 1255: 6.4, 1256: 63.1, 1257: 6.4, 1259: 3.9, 1261: 4.3, 1262: 23, 1263: 4.7, 1264: 8.8,
+  1265: 23.6, 1266: 20.5, 1267: 7.5, 1268: 3.2, 1269: 7.7, 1270: 7, 1271: 17.9, 1272: 6.3, 1273: 5.4, 1274: 11, 1275: 8.5, 1276: 8.5,
+  1277: 16.2, 1278: 4.2, 1279: 7 };
+
+test('A1 现场回放（修复前必红）：查因 26 个最终 head 推送→准入与 probe 逐个相同，p90 23.6 分钟判未达；重叠 17 个 p90 31.5，不重叠 9 个 p90 9.7', async () => {
+  assert.equal(typeof shadow.admissionLatency, 'function', 'shadow-compare 没有准入时延');
+  const { report } = await replay(1252, 1279);
+  const finals = report.heads.filter(h => h.role === 'final');
+  assert.deepEqual(Object.fromEntries(finals.map(h => [h.prs.at(-1), h.admission?.minutes])), PROBE26);
+  const a = shadow.admissionLatency(finals);
+  assert.equal(a.heads, 26);
+  assert.equal(a.p90Minutes, 23.6);
+  assert.equal(a.met, false);
+  // 口径是“任一台自托管 Windows runner”，check-runs 不带 runner 名：与查因只算 TURING 的 14/12（不重叠 p90 8.5）不同，
+  // 与查因 jobs.jsonl 按两台 Windows runner 重算的 17/9（p90 9.7）相同。
+  assert.deepEqual([a.overlap.heads, a.overlap.p90Minutes, a.nonOverlap.heads, a.nonOverlap.p90Minutes], [17, 31.5, 9, 9.7]);
+  assert.equal(a.over.length, 26);
+  assert.match(a.line, /准入 p90 23\.6 分钟（26 个 head，判据 ≤3 分钟：未达）/);
+});
+
+test('A2 现场回放：判据只算连续一致段那 15 个 head（#1265–#1278），p90 20.5 分钟，S6 判据写明准入未达', async () => {
+  const { report } = await replay(1252, 1279);
+  const { streak, admission } = report.summary;
+  assert.equal(streak.heads, 15);
+  assert.equal(admission.heads, 15);
+  assert.equal(admission.p90Minutes, 20.5);
+  assert.equal(admission.met, false);
+  assert.ok(streak.unmet.includes('准入 p90 20.5 分钟超过 3 分钟'), JSON.stringify(streak.unmet));
+  assert.match(report.summary.line, /准入 p90 20\.5 分钟（15 个 head，判据 ≤3 分钟：未达）；诊断（不进判据）：与 ci-suites-windows 重叠 ≥2 分钟 \d+ 个/);
+  assert.match(streak.rule, /准入 p90 ≤3 分钟/);
+});
+
+test('A3 无准入记无穷：30 个一致 head 里 3 个没有准入仍达成（第 27 小是 1 分钟），4 个就未达', async () => {
+  const three = await exitReport({ noAdmission: [3, 9, 20] });
+  assert.equal(three.summary.admission.p90Minutes, 1);
+  assert.equal(three.summary.streak.met, true);
+  assert.deepEqual(three.summary.admission.over.map(o => o.minutes), [null, null, null]);
+  const four = await exitReport({ noAdmission: [3, 9, 20, 28] });
+  assert.equal(four.summary.admission.p90Minutes, null);
+  assert.equal(four.summary.admission.unadmitted, 4);
+  assert.equal(four.summary.streak.met, false);
+  assert.deepEqual(four.summary.streak.unmet, ['准入 p90 无穷（4 个 head 没有准入）超过 3 分钟']);
+});
+
+test('A4 3 分钟整算达标、超过才算；重叠按自托管 ci-suites-windows（托管的 hosted- 不算），合计满 2 分钟才归重叠组', async () => {
+  const [h1, h2, h3] = [sha(701), sha(702), sha(703)];
+  const at = (t, minutes, override) => greenRuns({ started: t, completed: t, hostedCompleted: t, admissionMinutes: minutes, ...(override ? { override } : {}) });
+  const runs1 = at('2026-11-23T10:00:00Z', 5, (check, side) => check === 'ci-suites-windows' ? [side === 'framework'
+    ? run('ci-suites-windows', 15368, 'success', { started: '2026-11-23T10:06:00Z', completed: '2026-11-23T10:30:00Z' })
+    : run('hosted-ci-suites-windows', 15368, 'success', { started: '2026-11-23T10:06:00Z', completed: '2026-11-23T10:50:00Z' })] : null);
+  const runs2 = at('2026-11-23T10:10:00Z', 3);
+  const runs3 = at('2026-11-23T10:28:01Z', 6);
+  const report = await compare({ heads: [h1, h2, h3], api: api(headRoutes([[h1, runs1], [h2, runs2], [h3, runs3]])), now: NOW });
+  assert.deepEqual(report.heads.map(h => [h.admission.minutes, h.admission.windowsOverlapSeconds]), [[5, 0], [3, 180], [6, 119]]);
+  assert.equal(report.heads[0].admission.pushedAt, '2026-11-23T18:00:00+08:00');
+  assert.equal(report.heads[0].admission.admittedAt, '2026-11-23T18:05:00+08:00');
+  const a = report.summary.admission;
+  assert.equal(a.heads, 3);
+  assert.equal(a.p90Minutes, 6);
+  assert.deepEqual([a.overlap.heads, a.overlap.p90Minutes, a.nonOverlap.heads, a.nonOverlap.p90Minutes], [1, 3, 2, 6]);
+  assert.deepEqual(a.over.map(o => [o.sha, o.minutes]), [[h1, 5], [h3, 6]]);
+  assert.ok(report.summary.streak.unmet.includes('准入 p90 6 分钟超过 3 分钟'));
+  const fast = shadow.admissionLatency([report.heads[1]]);
+  assert.equal(fast.met, true);
+  assert.deepEqual(fast.over, []);
+});
+
+test('A5 只用已读的 check-runs：准入时延不多发任何 API 请求', async () => {
+  const s = sha(711);
+  const stub = api(headRoutes([[s, greenRuns()]]));
+  const report = await compare({ heads: [s], api: stub, now: NOW });
+  assert.equal(report.heads[0].admission.minutes, 1);
+  assert.deepEqual(stub.calls, [RULESET_ROUTE, checksRoute(s), `/actions/runs?head_sha=${s}&event=pull_request&per_page=100&page=1`]);
 });

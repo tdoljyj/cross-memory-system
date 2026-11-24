@@ -1807,3 +1807,144 @@ test('field #1037 (1b31b06b): a PR that was never the train front does not join 
   assert.deepEqual(engine.stages.filter(s => s.pr === 910 && s.testSha === null).map(s => s.stage).slice(0, 7), [1, 2, 3, 4, 5, 6, 7]);
   assert.equal((await f.receipts.latest(['train-front-yield'], 5)).length, 0);
 });
+
+// ---- bc982192 parked-front, redone on frontFailed (D:/w/tmp/FABLE-parked-front-vs-frontfailed-20261123.md §1 item 2, §3) ----
+// The front batch (H, S) of PR 910 rests at B (its stage 8 found a required check failed). parkedFront: that scene, and the next front.
+async function parkedFront(t) {
+  const e = await world(t);
+  const at = { t };
+  const engine = engineFor(e, at);
+  const S2 = sha(0x5e5e), TREE2 = sha(0x5e5f);
+  e.gh.world.commits.set(S2, { sha: S2, tree: TREE2, parents: [T, H] });
+  const f = await executorFixture(t, { policy: policy(), engine, companion: fakeCompanion({ pull: pr => ({ number: pr, state: 'open', headSha: H }) }), now: NOW });
+  Object.assign(at, { clock: f.clock, advance: f.advance });
+  const run = engine.runStage;
+  engine.runStage = async (batch, stage) => {
+    const subject = engine.subjects.get(batch.key);
+    if (stage.number === 8 && subject.testSha === S) {
+      engine.stages.push({ pr: subject.pr, headSha: subject.headSha, testSha: subject.testSha, stage: 8, at: at.clock() });
+      return { ok: false, code: 'REQUIRED_CHECK_FAILED', proof: PROOF, outcome: { status: 'BLOCKED', reason: 'REQUIRED_CHECK_FAILED', sideEffects: 0, mayHavePublished: false } };
+    }
+    return run(batch, stage);
+  };
+  const inputs = [], ten = engine.runTrainStage;
+  engine.runTrainStage = async (mode, input) => { inputs.push(input); return ten(mode, input); };
+  await f.exec.trainRecover();
+  for (let i = 0; i < 2; i++) { await f.exec.tick(); f.advance(10 * MIN); }
+  const arrival = f.clock();
+  e.native.holders = undefined;
+  e.native.holder = holderOf({ boundPrs: [], prs: [], boundPr: null, pr: null, takenAt: iso(arrival), mergeSlotUntil: iso(arrival + 45 * MIN) });
+  e.gh.pull(910, { head: H, mergeCommitSha: S, updated: iso(arrival), body: body(CLAIM), claim: CLAIM });
+  await f.drop(triggerBytes({ pr: 910, headSha: H, baseSha: T }));
+  const parked = async () => (await f.ledger.parkedEntries()).find(x => x.reserved?.subject?.testSha === S);
+  for (let i = 0; i < 30 && !(await parked()); i++) { await f.exec.tick(); f.advance(MIN); }
+  const entry = await parked();
+  assert.ok(entry, `the front batch (H, S) is not parked at B: ${JSON.stringify(engine.stages)}`);
+  const next = { pr: 910, headSha: H, baseSha: T, testSha: S2, testTree: TREE2, attempt: 2, claimId: CLAIM, since: iso(arrival) };
+  return { e, engine, f, entry, next, S2, inputs, parked };
+}
+
+// T3: stage 10 names a new S for the same head while the old front batch rests at B. The old batch ends at once as TRAIN_FRONT_TAKES_OVER
+// (stage 10 is the only one that opens front batches: its naming is the fact), the row takes (H, S2), and the old batch's end is
+// receipted with frontFailed false. It is not carried: the stage 10 that named S2 knows S ended, and a report that a batch of this head
+// only ended is dropped once the head's next front batch is taken (bc982192 parked-front v2 §2.2 B). Before the fix the offer was
+// refused as busy and S could never pass stage 8 again.
+test('parked-front T3: a front batch resting at B gives way to a new S of the same head; its end is receipted with frontFailed false', async t => {
+  const { f, entry, next, S2, inputs, parked } = await parkedFront(t);
+  const key = await f.exec.enqueueFront(next);
+  assert.notEqual(key, null, JSON.stringify((await f.receipts.latest(['train-front-refused'], 5)).map(r => r.value.body)));
+  assert.equal(await parked(), undefined, 'the old front batch no longer rests at B');
+  assert.equal((await f.ledger.state(entry.key)).terminal?.facts?.failureCode, 'TRAIN_FRONT_TAKES_OVER');
+  assert.equal(f.queue.row(910).current.testSha, S2);
+  assert.deepEqual((await f.receipts.latest(['train-front-ended'], 5)).map(r => [r.value.body.frontOutcome.testSha, r.value.body.frontOutcome.code]), [[S, 'TRAIN_FRONT_TAKES_OVER']]);
+  assert.equal(f.exec.trainFrontOutcome, null, 'dropped once (H, S2) is taken');
+  const before = inputs.length;
+  f.exec.trainUrgent = true;
+  for (let i = 0; i < 5 && inputs.length === before; i++) { await f.exec.tick(); f.advance(MIN); }
+  assert.ok(inputs.length > before, 'a train run ran');
+  assert.deepEqual(inputs.slice(before).filter(x => x.frontTestSha === S), [], 'no stage 10 is told S ended (it would name S2 had S2 the same S)');
+});
+
+// T3b (a guard, green before and after): the urgent stage 10 that stage8Try runs before a try of this very batch (frontProofShort)
+// names a new S for the same PR. That batch is being executed, not resting: it is never ended there; the offer is refused as busy and
+// the try goes on.
+test('parked-front T3b: a new S named during the batch\'s own stage-8 try never ends the batch being executed', async t => {
+  const { engine, f, entry, next } = await parkedFront(t);
+  let inTry = false, offered;
+  f.exec.frontProofShort = subject => { inTry = subject?.testSha === S && offered === undefined; return inTry; };
+  f.exec.trainMaintenance = async () => { if (!inTry) return null; inTry = false; offered = await f.exec.enqueueFront(next); return null; };
+  const tries = () => engine.stages.filter(s => s.testSha === S && s.stage === 8).length, before = tries();
+  for (let i = 0; i < 40 && offered === undefined; i++) { await f.exec.tick(); f.advance(5 * MIN); }
+  assert.notEqual(offered, undefined, 'the batch\'s stage-8 try ran stage 10');
+  assert.equal(offered, null, 'refused as busy');
+  assert.equal(tries(), before + 1, 'the try went on');
+  assert.notEqual((await f.ledger.state(entry.key)).terminal?.facts?.failureCode, 'TRAIN_FRONT_TAKES_OVER');
+  assert.deepEqual((await f.receipts.latest(['train-front-takes-over'], 10)).map(r => r.value.body), []);
+});
+
+// ---- bc982192 parked-front v2 rework (D:/w/tmp/FABLE-parked-front-attempt2-number-20261123.md §4 N6, N8) ----
+// N6 (防误杀; green before the fix, red without §2.2 B): front number 1 of S ended clean at stage 8 and was reported ended (frontFailed
+// false; F1). Stage 10 opens its number 2 of the same S and the executor takes it; the report of number 1 is dropped there (and a
+// restart does not bring it back: it is older than the head's newest train-front-enqueued). So while number 2 is in, no stage 10 is told
+// S ended: it says TRAIN_FRONT_BATCH_RUNNING. Stage 10 knows its batch by S alone now: an old report of S would end number 2.
+// Number 2's row is held here (it stays queued), so the rounds see it in flight.
+for (const restart of [false, true]) test(`parked-front N6 (${restart ? 'a restart after the enqueue' : 'one process'}): the report of front number 1 never ends number 2 of the same S`, async t => {
+  const scene = await problemA(t, { push: true });
+  const { engine } = scene;
+  assert.equal(scene.ended(), 1, await why(scene));
+  newTenure(scene);
+  const hold = exec => {
+    const runRow = exec.runRow.bind(exec);
+    exec.runRow = async (c, usage) => (Object.hasOwn(c, 'testSha') && c.frontAttempt === 2 ? { state: 'DEFERRED', key: null, reason: 'N6_HELD' } : runRow(c, usage));
+  };
+  const old = scene.f.exec, enqueue = old.enqueueFront.bind(old);
+  let in2 = false;
+  old.enqueueFront = async front => { const k = await enqueue(front); if (k && front.attempt === 2) in2 = true; return k; };
+  hold(old);
+  for (let i = 0; i <= 30 && !in2; i++) { await old.tick(); if (!in2) scene.f.advance(MIN); }
+  assert.ok(in2, `front number 2 never enqueued: ${await why(scene)}`);
+  let f = scene.f;
+  if (restart) {
+    f = await executorFixture(t, { policy: permanentPolicy(), engine, root: scene.f.root, now: scene.f.clock() });
+    Object.assign(scene.at, { clock: f.clock, advance: f.advance });
+    Object.assign(scene, { f });
+    hold(f.exec);
+    await f.exec.trainRecover();
+  }
+  const runsBefore = engine.trainRuns.length;
+  for (let i = 0; i <= 30 && engine.trainRuns.length < runsBefore + 2; i++) { await f.exec.tick(); f.advance(MIN); }
+  const later = engine.trainRuns.slice(runsBefore).map(r => r.decision);
+  const carried = engine.trainInputs.slice(runsBefore).map(x => [x.frontTestSha === S, x.frontAttempt, x.frontCode]);
+  assert.ok(later.length >= 2, await why(scene));
+  assert.deepEqual(later, later.map(() => 'TRAIN_FRONT_BATCH_RUNNING'), `carried ${JSON.stringify(carried)}; ${await why(scene)}`);
+});
+
+// N8 (review follow-up 3): the take-over report is not urgent (the stage 10 that named (H, S2) already knows the old batch ended).
+test('parked-front N8: the TRAIN_FRONT_TAKES_OVER report makes no early stage 10', async t => {
+  const { f, next } = await parkedFront(t);
+  f.exec.trainUrgent = false;
+  assert.notEqual(await f.exec.enqueueFront(next), null);
+  assert.deepEqual((await f.receipts.latest(['train-front-ended'], 5)).map(r => r.value.body.frontOutcome.code), ['TRAIN_FRONT_TAKES_OVER']);
+  assert.equal(f.exec.trainUrgent, false, 'not urgent');
+});
+
+// ---- bc982192 parked-front v2, review 2 must-fix 1: holdsFront's frontRetry branch (DESIGN §85 item 3: busy is not an end) ----
+// H1: the T3b scene. The new S2 is refused as busy while the batch (H, S) is in its own stage-8 try, so it is kept as frontRetry.
+// Nothing here ends (H, S2): it is offered again. So no end of S2 is reported: a report would make stage 10 count S2 ended (another of
+// the head's front attempts used up, or a batch of several taken over by a new S). Offered again once the try is over, it is taken; the
+// only end reported is the old batch's (TRAIN_FRONT_TAKES_OVER).
+test('parked-front H1: a front batch refused as busy is kept for frontRetry and not reported ended; taken later, one report in all', async t => {
+  const { f, next, S2 } = await parkedFront(t);
+  let inTry = false, offered;
+  f.exec.frontProofShort = subject => { inTry = subject?.testSha === S && offered === undefined; return inTry; };
+  f.exec.trainMaintenance = async () => { if (!inTry) return null; inTry = false; offered = await f.exec.enqueueFront(next); return null; };
+  for (let i = 0; i < 40 && offered === undefined; i++) { await f.exec.tick(); f.advance(5 * MIN); }
+  assert.equal(offered, null, 'refused as busy');
+  assert.equal(f.exec.frontRetry?.testSha, S2, 'kept to offer again');
+  const ended = async () => (await f.receipts.latest(['train-front-ended', 'train-front-outcome'], 10)).map(r => [r.value.body.frontOutcome.testSha, r.value.body.frontOutcome.code]);
+  assert.deepEqual(await ended(), [], 'busy is not an end');
+  assert.equal(f.exec.trainFrontOutcome?.testSha === S2, false);
+  assert.notEqual(await f.exec.enqueueFront(next), null, 'taken once the try is over');
+  assert.equal(f.queue.row(910).current.testSha, S2);
+  assert.deepEqual(await ended(), [[S, 'TRAIN_FRONT_TAKES_OVER']], 'one report in all: the old batch\'s');
+});
