@@ -610,6 +610,33 @@ test('the suite run hands the job base to the checks: clued-cloud and production
   }
 });
 
+// Task 700f2b68 (PLAN-main-red-ci-base-sha-20261124 §3.1): a suite whose trusted commands take {base} and has no base
+// stops before its first command, and says how to set one locally. Before, it ran every command up to the one that took
+// the base (clued-cloud: lint, typecheck, build and every unit test) and only then threw.
+test('a suite whose trusted commands take {base} starts no command without a base and names the local setting', () => {
+  const suites = Object.keys(SUITE_COMMANDS).filter((id) => SUITE_COMMANDS[id].some((command) => command.argv.includes('{base}')));
+  assert.ok(['clued-cloud', 'production-schema', 'components', 'pinned-registries'].every((id) => suites.includes(id)), suites.join(', '));
+  for (const id of suites) {
+    for (const env of [{}, { CI_BASE_SHA: '' }, { CI_BASE_SHA: '0'.repeat(40) }]) {
+      const calls = [];
+      const lines = [];
+      const spawn = (command, args) => { calls.push(args); return { status: 0 }; };
+      let status;
+      try {
+        status = executeSuite(id, { root: ROOT, env: { ...env, RUNNER_TEMP: os.tmpdir() }, spawn, platform: 'linux',
+          log: (line) => lines.push(String(line)) });
+      } catch (error) {
+        status = `threw ${error.message}`;
+      }
+      const what = `${id} ${JSON.stringify(env)}`;
+      assert.equal(calls.length, 0, `${what}: started ${calls.map((args) => args.join(' ')).join('; ')}`);
+      assert.equal(status, 2, what);
+      assert.match(lines.join('\n'), /CI_BASE_SHA is required for this suite/, what);
+      assert.match(lines.join('\n'), /CI_BASE_SHA=\$\(git merge-base HEAD origin\/main\)/, what);
+    }
+  }
+});
+
 test('compute panel changes select the panel tests; the retired cache maintenance suite is gone', () => {
   for (const file of ['scripts/ci/self-hosted/compute_panel.py', 'tests/test_compute_panel.py', '.github/workflows/clued-compute-panel.yml']) {
     assert.ok(selectSuites('ci-suites', [file]).suites.includes('compute-panel'), file);
@@ -2018,6 +2045,53 @@ function runBaseline(t, { shell, script }, repo, env) {
   return { status: r.status, outputs, log: r.stdout + r.stderr };
 }
 const STAGING = { EVENT_NAME: 'push', PUSH_REF: 'refs/heads/clued-train/staging' };
+// The steps of a workflow that run the selector's suites (--run, --run-selected), each with its job and its own text;
+// comment lines are not the step.
+const SELECTOR_RUN = /(?:"\$SELECTOR"|ci-required-selection\.mjs) --run(?:-selected)?\s/;
+function selectorRunSteps(file) {
+  const text = readFileSync(file, 'utf8');
+  const steps = [];
+  let job = null;
+  let step = null;
+  const close = () => {
+    if (step && SELECTOR_RUN.test(step.lines.filter((line) => !/^\s*#/.test(line)).join('\n'))) {
+      steps.push({ job: step.job, name: step.lines[0].trim(), text: `${step.lines.join('\n')}\n` });
+    }
+    step = null;
+  };
+  for (const line of text.slice(text.indexOf('\njobs:\n') + '\njobs:\n'.length).split('\n')) {
+    const head = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    if (head) { close(); job = head[1]; continue; }
+    if (/^ {6}- /.test(line)) { close(); step = { job, lines: [line] }; continue; }
+    if (step) step.lines.push(line);
+  }
+  close();
+  return steps;
+}
+// The suites each Linux required job runs that take {base}, as the job runs them: ci-suites the selected ones,
+// clued-cloud-tests and migration-verify their one suite (the coverage check and the schema drift check, task 700f2b68).
+const BASE_SUITES_OF_JOB = { 'ci-suites': ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry'],
+  'clued-cloud-tests': ['clued-cloud'], 'migration-verify': ['production-schema'] };
+// Task 700f2b68 (PLAN-main-red-ci-base-sha-20261124 §3.1): the base reaches a suite one way only, the CI_BASE_SHA of the
+// step that runs the selector, then the command table's {base}. A step without it ran the self-hosted clued-cloud-tests and
+// migration-verify against no base (the third such omission: hosted, task df4bdf98; ci-suites, task 6cd46765), so every
+// step of the three required workflows that runs the selector sets it, to one and the same expression (the train-base
+// step's, then the pull request's base). This replaces the hosted-only test of task df4bdf98 in hosted-required.test.mjs.
+const HOSTED_WORKFLOW = path.join(ROOT, '.github', 'workflows', 'hosted-required.yml');
+test('every step of the required workflows that runs the selector sets CI_BASE_SHA, to one expression', () => {
+  const values = new Set();
+  for (const [file, least] of [[LINUX_WORKFLOW, 3], [WINDOWS_WORKFLOW, 1], [HOSTED_WORKFLOW, 4]]) {
+    const steps = selectorRunSteps(file);
+    assert.ok(steps.length >= least, `${path.basename(file)}: ${steps.length} steps run the selector, at least ${least} expected`);
+    for (const { job, name, text } of steps) {
+      const found = /^ {10}CI_BASE_SHA: (.+)$/m.exec(text);
+      assert.ok(found, `${path.basename(file)} ${job} "${name}" runs the selector without CI_BASE_SHA`);
+      values.add(found[1].trim());
+    }
+  }
+  assert.equal(values.size, 1, `one expression everywhere: ${[...values].join(' | ')}`);
+  assert.match([...values][0], /^\$\{\{ steps\.train-base\.outputs\.sha \|\| /, 'the train-base step first');
+});
 for (const [file, id] of BASELINE_JOBS) {
   const label = `${path.basename(file)} ${id}`;
   const step = baselineStep(file, id);
@@ -2097,15 +2171,20 @@ for (const [file, id] of BASELINE_JOBS) {
     assert.equal(pr.status, 0, pr.log);
     assert.deepEqual(pr.outputs, {}, pr.log);
   });
-  if (id !== 'ci-suites') continue;
-  // The consumer, end to end: the step's outputs, the job's own CI_BASE_SHA expression (GitHub's ||, a missing property
-  // is null; under dispatch there is no pull_request), then the selector expanding every command of the four suites
-  // that take {base}. Before the fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
+  const baseSuites = BASE_SUITES_OF_JOB[id];
+  if (!baseSuites) continue;
+  // The consumer, end to end: the step's outputs, the CI_BASE_SHA expression of the job's own step that runs the suites
+  // (GitHub's ||, a missing property is null; under dispatch there is no pull_request), then the selector expanding every
+  // command of that job's suites that take {base}. Before the fix this threw 'CI_BASE_SHA is required for this suite', as
+  // in the run's log: ci-suites (task 6cd46765), then clued-cloud-tests and migration-verify, whose suite steps set no
+  // CI_BASE_SHA (task 700f2b68, PLAN-main-red-ci-base-sha-20261124 §3.1).
   test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
     const repo = dispatchCheckout(t);
-    const text = readFileSync(file, 'utf8');
-    const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
-    const expression = /\n {10}CI_BASE_SHA: \$\{\{ (.+?) \}\}\n/.exec(job.slice(job.indexOf('- name: Run the selected suites\n')))[1];
+    const [suiteStep] = selectorRunSteps(file).filter((one) => one.job === id);
+    assert.ok(suiteStep, `${label} has a step that runs the selector`);
+    const found = /\n {10}CI_BASE_SHA: \$\{\{ (.+?) \}\}\n/.exec(suiteStep.text);
+    assert.ok(found, `${label}: the step that runs the suites sets CI_BASE_SHA (${suiteStep.name})`);
+    const expression = found[1];
     const operands = expression.split('||').map((operand) => operand.trim());
     assert.ok(operands.every((operand) => /^[a-z_]+(\.[a-z_-]+)+$/.test(operand)), expression);
     for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
@@ -2115,7 +2194,7 @@ for (const [file, id] of BASELINE_JOBS) {
         github: { event_name: 'workflow_dispatch', event: { inputs: { pr: '9', head } } } };
       const value = (operand) => operand.split('.').reduce((at, key) => (at == null ? null : at[key] ?? null), context);
       const base = operands.map(value).find(Boolean) ?? '';
-      for (const suite of ['components', 'pinned-registries', 'mechanical-outputs', 'ci-deps-entry']) {
+      for (const suite of baseSuites) {
         let compared = 0;
         for (const command of SUITE_COMMANDS[suite]) {
           const argv = expandArgv(command.argv, { cwd: path.join(ROOT, command.cwd), root: ROOT, base, report: path.join(repo.dir, 'r.json') });
