@@ -473,6 +473,8 @@ test('rebinding a node away from a still-valid connection revokes that connectio
     assert.equal((await self(x.old.token)).node.node_id, x.node);
     const issued = await preview(x.choices);
     assert.equal(issued.status, 'issued');
+    // The Owner confirms this effect: it is part of the digested view.
+    assert.equal(issued.confirmation_view.effects.old_connection, 'revoke at commit; its token stops working wherever it is used');
     const result = f.committed(await apply(issued));
     await assert.rejects(() => probe(x.old.token), refused);
     await assert.rejects(() => self(x.old.token), refused);
