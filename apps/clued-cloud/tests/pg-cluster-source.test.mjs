@@ -129,7 +129,9 @@ test('unit: an allowed file that no longer names the package fails until its ent
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'clued-pg-cluster-source-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   await fs.mkdir(path.join(root, 'apps/clued-cloud/scripts'), { recursive: true });
-  await fs.writeFile(path.join(root, 'apps/clued-cloud/scripts/production-schema-drift.mjs'), "import { newCluster } from '../tests/pg-cluster-fixture.mjs';\n");
+  // Written as `from ${quote}` so the test selection does not read the sample as this file's own import.
+  const quote = "'";
+  await fs.writeFile(path.join(root, 'apps/clued-cloud/scripts/production-schema-drift.mjs'), `import { newCluster } from ${quote}../tests/pg-cluster-fixture.mjs${quote};\n`);
   const found = await problems(root, { packageAllowed: new Map([['apps/clued-cloud/scripts/production-schema-drift.mjs', 'to clear']]) });
   assert.equal(found.length, 1);
   assert.match(found[0], /production-schema-drift\.mjs: no longer names .*remove it from PACKAGE_ALLOWED/);
