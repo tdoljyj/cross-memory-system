@@ -4278,10 +4278,18 @@ const TREE_REUSE = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtur
 const TREE_REUSE_1202 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1202.json'), 'utf8'));
 // Both recordings predate R1 (the three scans joined clued-required-tests.yml afterwards): the head's run carries them
 // here as a run does now, each a passing job of that run and attempt; the run as recorded is refused (test below).
+// Constructed, after the real lists since R1: the three scans are copies of the list's clued-cloud-tests job with that
+// name replaced by the scan's. An admitted recording has it under its real name and gets real-named scans; a refused
+// recording (#1233, #1239: the expression name ending 'clued-cloud-tests' || 'clued-cloud-tests-skipped') gets the
+// three refused expression names, as #1287's refused run 45346386008 lists them. So a refused list counts the gate
+// and every required job, as an admitted one does, and only the names refuse it.
 const R1_SCANS = ['gitleaks', 'trivy', 'contract-placement'];
+const REFUSED_CLOUD_TESTS = "'clued-cloud-tests' || 'clued-cloud-tests-skipped'";
 function withScans(jobs) {
-  const model = jobs.jobs.find((job) => job.name === 'clued-cloud-tests');
-  jobs.jobs.push(...R1_SCANS.map((name, i) => ({ ...model, id: model.id + 1000 + i, name })));
+  const model = jobs.jobs.find((job) => job.name === 'clued-cloud-tests') ??
+    jobs.jobs.find((job) => job.name.endsWith(REFUSED_CLOUD_TESTS));
+  if (!model) assert.fail(`withScans: no clued-cloud-tests job, real-named or refused, to copy the scans from; jobs: ${JSON.stringify(jobs.jobs.map((job) => job.name))}`);
+  jobs.jobs.push(...R1_SCANS.map((name, i) => ({ ...model, id: model.id + 1000 + i, name: model.name.replaceAll('clued-cloud-tests', name) })));
   jobs.total_count += R1_SCANS.length;
 }
 function treeReuseCase(workflow, mutate = () => {}, fixture = TREE_REUSE, { scans = true } = {}) {
@@ -4411,9 +4419,12 @@ const TREE_RUN_POLL_MS = 10_000;
 const TREE_RUN_POLLS = 6;
 const pollSleeps = (ctx) => (ctx.sleeps ?? []).filter((ms) => ms === TREE_RUN_POLL_MS).length;
 const workflowOfCase = (c) => c.w.runs.workflow_runs[0].path.replace('.github/workflows/', '');
-// #1242's job list of the same workflow, verbatim but for run_id, rewritten to this case's run (the one constructed field).
+// #1242's job list of the same workflow, verbatim but for run_id, rewritten to this case's run (a constructed field);
+// #1242 predates R1, so the Linux list also gets the three scans (withScans, constructed: queued, real-named).
 const admittedJobs = (c) => {
-  const jobs = structuredClone(ADMITTED_1242.workflows[workflowOfCase(c)].jobs);
+  const workflow = workflowOfCase(c);
+  const jobs = structuredClone(ADMITTED_1242.workflows[workflow].jobs);
+  if (workflow === 'clued-required-tests.yml') withScans(jobs);
   for (const job of jobs.jobs) job.run_id = c.w.runs.workflow_runs[0].id;
   return jobs;
 };
@@ -4443,6 +4454,9 @@ for (const workflow of WORKFLOWS) {
     const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const recorded = c.w.jobs;
       c.routes[c.jobsRoute] = () => (++reads === 1 ? gateWaitingJobs(c) : recorded); }, TREE_REUSE_1239);
     assert.ok(ctx.w.jobs.jobs.slice(1).every((job) => job.conclusion === 'skipped' && job.name.endsWith("-skipped'")), 'the recorded list is a refusal');
+    // As many jobs as an admitted list (the gate and every required job), so only the names can refuse it.
+    const { TARGETS } = await import('./clued-tree-reuse.mjs');
+    assert.equal(ctx.w.jobs.jobs.length, 1 + TARGETS[workflow].jobs.length, 'the refusal lists the gate and every required job');
     const outcome = await treeReuseGate(ctx);
     assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
     assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
@@ -4498,6 +4512,8 @@ for (const workflow of WORKFLOWS) {
     let reads = 0;
     const ctx = treeReuseCase(workflow, (c) => { inFlight1239(c); const recorded = c.w.jobs;
       c.routes[c.jobsRoute] = () => (++reads === 1 ? gatePassedAloneJobs(c) : recorded); }, TREE_REUSE_1239);
+    const { TARGETS } = await import('./clued-tree-reuse.mjs');
+    assert.equal(ctx.w.jobs.jobs.length, 1 + TARGETS[workflow].jobs.length, 'the refusal lists the gate and every required job');
     const outcome = await treeReuseGate(ctx);
     assert.deepEqual([outcome.admitted, outcome.verdict], [true, 'NOT_APPLICABLE'], JSON.stringify(outcome));
     assert.deepEqual(reuseNotices(outcome), [reuseNotice('pr_run_not_admitted')]);
@@ -4548,7 +4564,7 @@ for (const workflow of WORKFLOWS) {
 }
 
 // Admitted and in flight, the order of the reads, and the absence of any pause.
-for (const [workflow, sourceRun, jobCount] of [['clued-required-tests.yml', 45028759952, 4], ['clued-required-tests-windows.yml', 45028759940, 2]]) {
+for (const [workflow, sourceRun, jobCount] of [['clued-required-tests.yml', 45028759952, 7], ['clued-required-tests-windows.yml', 45028759940, 2]]) {
   test(`甲2 (${workflow}, #1233 41c281a50): the head's same-tree PR run is in flight and its gate admitted -> TREE_RUN_IN_FLIGHT, the heavy jobs do not run`, async () => {
     const ctx = treeReuseCase(workflow, inFlight, TREE_REUSE_1233);
     const outcome = await treeReuseGate(ctx);
@@ -4568,6 +4584,36 @@ for (const [workflow, sourceRun, jobCount] of [['clued-required-tests.yml', 4502
     assert.equal(pollSleeps(ctx), 0);
   });
 }
+
+// #1284 dcfa1cdb6 (scripts/ci/fixtures/main-push-tree-reuse-1284.json): the bot's merge of main, merged 07:12:59Z
+// while both PR runs were going (gates admitted 07:06:54Z, 07:07:15Z); both main pushes ran their heavy jobs again
+// (pr_run_not_passed). The recorded replies are R1's six required Linux jobs already, so no scans are added. The
+// in-flight state is constructed from the recorded timestamps at each main push gate's start (in_flight_at_push, _source).
+const TREE_REUSE_1284 = JSON.parse(fs.readFileSync(path.join(ROOT, 'scripts/ci/fixtures/main-push-tree-reuse-1284.json'), 'utf8'));
+const inFlight1284 = (c) => { const at = c.f.workflows[workflowOfCase(c)].in_flight_at_push;
+  Object.assign(c.w.runs.workflow_runs[0], at.run_status); c.w.jobs = structuredClone(at.jobs); };
+for (const [workflow, sourceRun, jobCount] of [['clued-required-tests.yml', 45344782001, 7], ['clued-required-tests-windows.yml', 45344781867, 2]]) {
+  test(`甲2 #1284 replies, in-flight state constructed (${workflow}): merged while the head's PR run was going, its gate admitted -> TREE_RUN_IN_FLIGHT, the heavy jobs do not run`, async () => {
+    const ctx = treeReuseCase(workflow, inFlight1284, TREE_REUSE_1284, { scans: false });
+    const outcome = await treeReuseGate(ctx);
+    assert.deepEqual([outcome.admitted, outcome.verdict], [false, 'TREE_RUN_IN_FLIGHT'], JSON.stringify(outcome));
+    assert.deepEqual([outcome.tree_reuse.reason, outcome.tree_reuse.source_run_id, outcome.tree_reuse.source_pr,
+      outcome.tree_reuse.source_jobs, outcome.tree_reuse.tested_tree, outcome.tree_reuse.run_heavy, outcome.tree_reuse.current_sha_pass],
+    [IN_FLIGHT_REASON, sourceRun, 1284, jobCount, TREE_REUSE_1284.merge.commit.tree.sha, true, false]);
+    assert.equal(pollSleeps(ctx), 0);
+  });
+  test(`甲2 #1284 replies as recorded (${workflow}): the head's PR run has passed -> TREE_ALREADY_TESTED (#1217 reuse)`, async () => {
+    const outcome = await treeReuseGate(treeReuseCase(workflow, undefined, TREE_REUSE_1284, { scans: false }));
+    assert.deepEqual([outcome.admitted, outcome.verdict, outcome.tree_reuse?.source_run_id], [false, 'TREE_ALREADY_TESTED', sourceRun], JSON.stringify(outcome));
+  });
+}
+
+// withScans meets a list it cannot extend (no real-named and no refused clued-cloud-tests): it fails naming the jobs.
+test('withScans: a job list with neither a real-named nor a refused clued-cloud-tests fails with the job names', () => {
+  const jobs = { total_count: 2, jobs: [{ id: 1, name: 'admission-gate' }, { id: 2, name: 'ci-suites-skipped' }] };
+  assert.throws(() => withScans(jobs), (error) => error instanceof assert.AssertionError &&
+    error.message.includes('admission-gate') && error.message.includes('ci-suites-skipped'));
+});
 
 test('甲2 (#1178): an owner-triggered head run in flight whose gate admitted is TREE_RUN_IN_FLIGHT too', async () => {
   const outcome = await treeReuseGate(treeReuseCase('clued-required-tests.yml', inFlight));
