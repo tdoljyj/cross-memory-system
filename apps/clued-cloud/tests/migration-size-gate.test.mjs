@@ -199,6 +199,33 @@ test('a DO body that executes a built statement is judged by the literals of tha
   assert.match(later.stderr, /_fixture_0\.sql:3: create unique index/);
 });
 
+// An escape string (E'...') with a backslash is a literal like any other: it is judged after its escapes are undone, so
+// a multi-line statement written with \n is read from its first word (independent review of claude/prod-db-b2b3, 必改 1).
+test('escape string literals are judged as the statement they hold', () => {
+  for (const [sql, kind] of [
+    [String.raw`do $$ begin execute E'create table public.x (\n a int)'; end $$;`, /create table public\.x/],
+    [String.raw`do $$ declare q text := E'create table public.x (\n a int)'; begin execute q; end $$;`, /create table public\.x/],
+    [String.raw`do $$ begin execute format(E'create index %I\n on public.t(a)', 'i'); end $$;`, /create index % i on/],
+    [String.raw`do $$ begin execute E'alter table public.t\n  add column b text'; end $$;`, /alter table public\.t add column b/],
+    [String.raw`do E'begin create table public.y(a int);\n end';`, /create table public\.y/],
+    [String.raw`do $$ begin execute E'\ncreate index i on public.t(a)'; end $$;`, /create index i on/],
+    [String.raw`do $$ begin execute E'select 1;\tcreate unique index u on public.t(a) where b = \'x\''; end $$;`, /create unique index u/],
+  ]) {
+    const result = verdict(AT, `${sql}\n`);
+    assert.equal(result.status, 1, `${sql}\n${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, new RegExp(`_fixture_0\\.sql:1: ${kind.source}`), sql);
+  }
+  // Escapes that hold no adding statement pass, as the same text without escapes does.
+  for (const sql of [
+    String.raw`do $$ begin execute E'delete from public.t\n where a = 1'; end $$;`,
+    String.raw`do $$ begin execute E'create temp table s (\n a int)'; end $$;`,
+    String.raw`do $$ begin execute replace(current_setting('x'), E'\tperform 1;', E'\tperform 2; -- create index later'); end $$;`,
+  ]) {
+    const result = verdict(AT, `${sql}\n`);
+    assert.equal(result.status, 0, `${sql}\n${result.stdout}${result.stderr}`);
+  }
+});
+
 // FABLE-prod-db-shrink-v2-20261124 §13: SELECT ... INTO adds a table only in the file's top-level SQL. Text tokenized from
 // a string literal is either run by EXECUTE, where PostgreSQL refuses SELECT ... INTO (0A000,
 // migration-size-gate-db.test.mjs), or part of a function body, where it assigns variables; CREATE TABLE ... AS in a
