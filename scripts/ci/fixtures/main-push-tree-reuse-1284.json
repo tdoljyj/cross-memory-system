@@ -1,0 +1,599 @@
+{
+  "_source": [
+    "Verbatim GitHub GET replies (gh api, read-only) read 2026-11-24 16:59 Beijing (2026-11-24T08:59Z) for PR #1284: merge dcfa1cdb6 (parents [d42e02f5e main, 9430a7c31 head]), its pulls, PR, head commit 9430a7c31, the head's pull_request runs (Linux 45344782001, Windows 45344781867, both triggered by clued-admission[bot]), their attempt-1 job lists, the main push runs (45346270805, 45346270933) and their attempt-1 job lists, and compare d42e02f5e...9430a7c31. Trimmed to the fields of main-push-tree-reuse-1239.json; no value changed.",
+    "As recorded the PR runs are completed/success with every required job under its real name (R1: Linux has the gate and six required jobs). The PR merged 2026-11-24T07:12:59Z; both PR runs were still going then (Linux updated_at 07:15:18Z, Windows 07:30:15Z), so each main push gate found the PR run in flight, took pr_run_not_passed under the code before 甲2, and its heavy jobs ran for real.",
+    "constructed (named so, not a GitHub reply): in_flight_at_push gives the state the main push gate read at its own job's started_at. Two kinds of field are turned back, nothing else: a run or job whose completion is later than that moment is set not completed; a job started later than that moment is set queued. Field by field:",
+    "clued-required-tests.yml: the main push run 45346270805's gate job 138281477384 started_at 2026-11-24T07:13:18Z (the cutoff). PR run 45344782001: updated_at 2026-11-24T07:15:18Z > cutoff (the run as recorded is completed/success), so run_status is status \"in_progress\", conclusion null. Its attempt-1 jobs (none created after the cutoff, none started after it): ci-suites (138278893288) completed_at 2026-11-24T07:15:17Z > 2026-11-24T07:13:18Z: status \"in_progress\", conclusion null, completed_at null; clued-cloud-tests (138278893407) completed_at 2026-11-24T07:14:54Z > 2026-11-24T07:13:18Z: status \"in_progress\", conclusion null, completed_at null. Kept verbatim (completed at or before the cutoff): admission-gate (completed_at 2026-11-24T07:06:54Z), contract-placement (completed_at 2026-11-24T07:10:07Z), trivy (completed_at 2026-11-24T07:12:15Z), gitleaks (completed_at 2026-11-24T07:11:14Z), migration-verify (completed_at 2026-11-24T07:11:48Z).",
+    "clued-required-tests-windows.yml: the main push run 45346270933's gate job 138283528754 started_at 2026-11-24T07:22:33Z (the cutoff). PR run 45344781867: updated_at 2026-11-24T07:30:15Z > cutoff (the run as recorded is completed/success), so run_status is status \"in_progress\", conclusion null. Its attempt-1 jobs (none created after the cutoff, none started after it): ci-suites-windows (138279043054) completed_at 2026-11-24T07:30:14Z > 2026-11-24T07:22:33Z: status \"in_progress\", conclusion null, completed_at null. Kept verbatim (completed at or before the cutoff): admission-gate (completed_at 2026-11-24T07:07:15Z)."
+  ],
+  "repository": "tdoljyj/cross-memory-system",
+  "owner": "tdoljyj",
+  "merge": {
+    "sha": "dcfa1cdb6a43b5898bdbf077e1d6891380c6213f",
+    "commit": {
+      "tree": {
+        "sha": "f545333b48eab3590857a0cb8706a812dac347f3"
+      }
+    },
+    "parents": [
+      {
+        "sha": "d42e02f5e376b9dd3006d23d53ccea99ca0ebe3e"
+      },
+      {
+        "sha": "9430a7c3100bdf47920c0ae550df2bd51a1c77af"
+      }
+    ]
+  },
+  "pulls": [
+    {
+      "number": 1284,
+      "merge_commit_sha": "dcfa1cdb6a43b5898bdbf077e1d6891380c6213f",
+      "merged_at": "2026-11-24T07:12:59Z"
+    }
+  ],
+  "pr": {
+    "number": 1284,
+    "state": "closed",
+    "merged": true,
+    "merged_at": "2026-11-24T07:12:59Z",
+    "merge_commit_sha": "dcfa1cdb6a43b5898bdbf077e1d6891380c6213f",
+    "base": {
+      "ref": "main",
+      "sha": "d42e02f5e376b9dd3006d23d53ccea99ca0ebe3e",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system"
+      }
+    },
+    "head": {
+      "ref": "claude/admission-no-bundle-wait",
+      "sha": "9430a7c3100bdf47920c0ae550df2bd51a1c77af",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system"
+      }
+    },
+    "user": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    },
+    "merged_by": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    }
+  },
+  "source": {
+    "sha": "9430a7c3100bdf47920c0ae550df2bd51a1c77af",
+    "commit": {
+      "tree": {
+        "sha": "f545333b48eab3590857a0cb8706a812dac347f3"
+      }
+    },
+    "parents": [
+      {
+        "sha": "80b9382072fe50af991c0fc3e059a5e23ba2ed5e"
+      },
+      {
+        "sha": "d42e02f5e376b9dd3006d23d53ccea99ca0ebe3e"
+      }
+    ]
+  },
+  "compare": {
+    "status": "ahead",
+    "ahead_by": 7,
+    "behind_by": 0,
+    "total_commits": 7,
+    "base_commit": {
+      "sha": "d42e02f5e376b9dd3006d23d53ccea99ca0ebe3e"
+    },
+    "merge_base_commit": {
+      "sha": "d42e02f5e376b9dd3006d23d53ccea99ca0ebe3e"
+    }
+  },
+  "workflows": {
+    "clued-required-tests.yml": {
+      "runs": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:01:23Z",
+            "event": "pull_request",
+            "head_branch": "claude/admission-no-bundle-wait",
+            "head_sha": "9430a7c3100bdf47920c0ae550df2bd51a1c77af",
+            "id": 45344782001,
+            "path": ".github/workflows/clued-required-tests.yml",
+            "run_attempt": 1,
+            "run_number": 958,
+            "status": "completed",
+            "updated_at": "2026-11-24T07:15:18Z",
+            "actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "triggering_actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "head_repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "pull_requests": []
+          }
+        ]
+      },
+      "jobs": {
+        "total_count": 7,
+        "jobs": [
+          {
+            "id": 138276599775,
+            "name": "admission-gate",
+            "run_id": 45344782001,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:01:23Z",
+            "started_at": "2026-11-24T07:02:19Z",
+            "completed_at": "2026-11-24T07:06:54Z",
+            "runner_name": "clued-ci-company-linux-03"
+          },
+          {
+            "id": 138278893288,
+            "name": "ci-suites",
+            "run_id": 45344782001,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:06:54Z",
+            "started_at": "2026-11-24T07:06:57Z",
+            "completed_at": "2026-11-24T07:15:17Z",
+            "runner_name": "clued-ci-company-linux-02"
+          },
+          {
+            "id": 138278893339,
+            "name": "contract-placement",
+            "run_id": 45344782001,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:06:54Z",
+            "started_at": "2026-11-24T07:06:57Z",
+            "completed_at": "2026-11-24T07:10:07Z",
+            "runner_name": "clued-ci-company-linux-01"
+          },
+          {
+            "id": 138278893396,
+            "name": "trivy",
+            "run_id": 45344782001,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:06:54Z",
+            "started_at": "2026-11-24T07:07:19Z",
+            "completed_at": "2026-11-24T07:12:15Z",
+            "runner_name": "clued-ci-company-linux-03"
+          },
+          {
+            "id": 138278893407,
+            "name": "clued-cloud-tests",
+            "run_id": 45344782001,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:06:54Z",
+            "started_at": "2026-11-24T07:10:12Z",
+            "completed_at": "2026-11-24T07:14:54Z",
+            "runner_name": "clued-ci-company-linux-01"
+          },
+          {
+            "id": 138278893488,
+            "name": "gitleaks",
+            "run_id": 45344782001,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:06:54Z",
+            "started_at": "2026-11-24T07:07:44Z",
+            "completed_at": "2026-11-24T07:11:14Z",
+            "runner_name": "clued-ci-company-linux-04"
+          },
+          {
+            "id": 138278893588,
+            "name": "migration-verify",
+            "run_id": 45344782001,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:06:54Z",
+            "started_at": "2026-11-24T07:11:18Z",
+            "completed_at": "2026-11-24T07:11:48Z",
+            "runner_name": "clued-ci-company-linux-04"
+          }
+        ]
+      },
+      "push_run": {
+        "conclusion": "success",
+        "created_at": "2026-11-24T07:13:01Z",
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": "dcfa1cdb6a43b5898bdbf077e1d6891380c6213f",
+        "id": 45346270805,
+        "path": ".github/workflows/clued-required-tests.yml",
+        "run_attempt": 1,
+        "run_number": 959,
+        "status": "completed",
+        "updated_at": "2026-11-24T07:23:53Z",
+        "actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        },
+        "triggering_actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        },
+        "head_repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "pull_requests": []
+      },
+      "push_jobs": {
+        "total_count": 7,
+        "jobs": [
+          {
+            "id": 138281477384,
+            "name": "admission-gate",
+            "run_id": 45346270805,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:13:02Z",
+            "started_at": "2026-11-24T07:13:18Z",
+            "completed_at": "2026-11-24T07:13:41Z",
+            "runner_name": "clued-ci-company-linux-04"
+          },
+          {
+            "id": 138281754247,
+            "name": "trivy",
+            "run_id": 45346270805,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:13:41Z",
+            "started_at": "2026-11-24T07:13:44Z",
+            "completed_at": "2026-11-24T07:16:19Z",
+            "runner_name": "clued-ci-company-linux-04"
+          },
+          {
+            "id": 138281754258,
+            "name": "clued-cloud-tests",
+            "run_id": 45346270805,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:13:41Z",
+            "started_at": "2026-11-24T07:15:21Z",
+            "completed_at": "2026-11-24T07:19:59Z",
+            "runner_name": "clued-ci-company-linux-02"
+          },
+          {
+            "id": 138281754271,
+            "name": "gitleaks",
+            "run_id": 45346270805,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:13:41Z",
+            "started_at": "2026-11-24T07:20:02Z",
+            "completed_at": "2026-11-24T07:20:31Z",
+            "runner_name": "clued-ci-company-linux-02"
+          },
+          {
+            "id": 138281754307,
+            "name": "ci-suites",
+            "run_id": 45346270805,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:13:41Z",
+            "started_at": "2026-11-24T07:14:58Z",
+            "completed_at": "2026-11-24T07:22:06Z",
+            "runner_name": "clued-ci-company-linux-01"
+          },
+          {
+            "id": 138281754315,
+            "name": "migration-verify",
+            "run_id": 45346270805,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:13:41Z",
+            "started_at": "2026-11-24T07:16:22Z",
+            "completed_at": "2026-11-24T07:22:53Z",
+            "runner_name": "clued-ci-company-linux-04"
+          },
+          {
+            "id": 138281754325,
+            "name": "contract-placement",
+            "run_id": 45346270805,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:13:41Z",
+            "started_at": "2026-11-24T07:22:57Z",
+            "completed_at": "2026-11-24T07:23:52Z",
+            "runner_name": "clued-ci-company-linux-04"
+          }
+        ]
+      },
+      "in_flight_at_push": {
+        "constructed": true,
+        "gate_started_at": "2026-11-24T07:13:18Z",
+        "run_status": {
+          "status": "in_progress",
+          "conclusion": null
+        },
+        "jobs": {
+          "total_count": 7,
+          "jobs": [
+            {
+              "id": 138276599775,
+              "name": "admission-gate",
+              "run_id": 45344782001,
+              "run_attempt": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "created_at": "2026-11-24T07:01:23Z",
+              "started_at": "2026-11-24T07:02:19Z",
+              "completed_at": "2026-11-24T07:06:54Z",
+              "runner_name": "clued-ci-company-linux-03"
+            },
+            {
+              "id": 138278893288,
+              "name": "ci-suites",
+              "run_id": 45344782001,
+              "run_attempt": 1,
+              "status": "in_progress",
+              "conclusion": null,
+              "created_at": "2026-11-24T07:06:54Z",
+              "started_at": "2026-11-24T07:06:57Z",
+              "completed_at": null,
+              "runner_name": "clued-ci-company-linux-02"
+            },
+            {
+              "id": 138278893339,
+              "name": "contract-placement",
+              "run_id": 45344782001,
+              "run_attempt": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "created_at": "2026-11-24T07:06:54Z",
+              "started_at": "2026-11-24T07:06:57Z",
+              "completed_at": "2026-11-24T07:10:07Z",
+              "runner_name": "clued-ci-company-linux-01"
+            },
+            {
+              "id": 138278893396,
+              "name": "trivy",
+              "run_id": 45344782001,
+              "run_attempt": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "created_at": "2026-11-24T07:06:54Z",
+              "started_at": "2026-11-24T07:07:19Z",
+              "completed_at": "2026-11-24T07:12:15Z",
+              "runner_name": "clued-ci-company-linux-03"
+            },
+            {
+              "id": 138278893407,
+              "name": "clued-cloud-tests",
+              "run_id": 45344782001,
+              "run_attempt": 1,
+              "status": "in_progress",
+              "conclusion": null,
+              "created_at": "2026-11-24T07:06:54Z",
+              "started_at": "2026-11-24T07:10:12Z",
+              "completed_at": null,
+              "runner_name": "clued-ci-company-linux-01"
+            },
+            {
+              "id": 138278893488,
+              "name": "gitleaks",
+              "run_id": 45344782001,
+              "run_attempt": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "created_at": "2026-11-24T07:06:54Z",
+              "started_at": "2026-11-24T07:07:44Z",
+              "completed_at": "2026-11-24T07:11:14Z",
+              "runner_name": "clued-ci-company-linux-04"
+            },
+            {
+              "id": 138278893588,
+              "name": "migration-verify",
+              "run_id": 45344782001,
+              "run_attempt": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "created_at": "2026-11-24T07:06:54Z",
+              "started_at": "2026-11-24T07:11:18Z",
+              "completed_at": "2026-11-24T07:11:48Z",
+              "runner_name": "clued-ci-company-linux-04"
+            }
+          ]
+        }
+      }
+    },
+    "clued-required-tests-windows.yml": {
+      "runs": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:01:23Z",
+            "event": "pull_request",
+            "head_branch": "claude/admission-no-bundle-wait",
+            "head_sha": "9430a7c3100bdf47920c0ae550df2bd51a1c77af",
+            "id": 45344781867,
+            "path": ".github/workflows/clued-required-tests-windows.yml",
+            "run_attempt": 1,
+            "run_number": 591,
+            "status": "completed",
+            "updated_at": "2026-11-24T07:30:15Z",
+            "actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "triggering_actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "head_repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "pull_requests": []
+          }
+        ]
+      },
+      "jobs": {
+        "total_count": 2,
+        "jobs": [
+          {
+            "id": 138276598861,
+            "name": "admission-gate",
+            "run_id": 45344781867,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:01:23Z",
+            "started_at": "2026-11-24T07:02:04Z",
+            "completed_at": "2026-11-24T07:07:15Z",
+            "runner_name": "clued-ci-company-linux-04"
+          },
+          {
+            "id": 138279043054,
+            "name": "ci-suites-windows",
+            "run_id": 45344781867,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:07:15Z",
+            "started_at": "2026-11-24T07:07:18Z",
+            "completed_at": "2026-11-24T07:30:14Z",
+            "runner_name": "clued-ci-home-win-01"
+          }
+        ]
+      },
+      "push_run": {
+        "conclusion": "success",
+        "created_at": "2026-11-24T07:13:01Z",
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": "dcfa1cdb6a43b5898bdbf077e1d6891380c6213f",
+        "id": 45346270933,
+        "path": ".github/workflows/clued-required-tests-windows.yml",
+        "run_attempt": 1,
+        "run_number": 592,
+        "status": "completed",
+        "updated_at": "2026-11-24T07:34:17Z",
+        "actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        },
+        "triggering_actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        },
+        "head_repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "pull_requests": []
+      },
+      "push_jobs": {
+        "total_count": 2,
+        "jobs": [
+          {
+            "id": 138283528754,
+            "name": "admission-gate",
+            "run_id": 45346270933,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:17:50Z",
+            "started_at": "2026-11-24T07:22:33Z",
+            "completed_at": "2026-11-24T07:22:56Z",
+            "runner_name": "clued-ci-company-linux-01"
+          },
+          {
+            "id": 138285672671,
+            "name": "ci-suites-windows",
+            "run_id": 45346270933,
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-11-24T07:22:56Z",
+            "started_at": "2026-11-24T07:22:59Z",
+            "completed_at": "2026-11-24T07:34:16Z",
+            "runner_name": "clued-ci-company-win-01"
+          }
+        ]
+      },
+      "in_flight_at_push": {
+        "constructed": true,
+        "gate_started_at": "2026-11-24T07:22:33Z",
+        "run_status": {
+          "status": "in_progress",
+          "conclusion": null
+        },
+        "jobs": {
+          "total_count": 2,
+          "jobs": [
+            {
+              "id": 138276598861,
+              "name": "admission-gate",
+              "run_id": 45344781867,
+              "run_attempt": 1,
+              "status": "completed",
+              "conclusion": "success",
+              "created_at": "2026-11-24T07:01:23Z",
+              "started_at": "2026-11-24T07:02:04Z",
+              "completed_at": "2026-11-24T07:07:15Z",
+              "runner_name": "clued-ci-company-linux-04"
+            },
+            {
+              "id": 138279043054,
+              "name": "ci-suites-windows",
+              "run_id": 45344781867,
+              "run_attempt": 1,
+              "status": "in_progress",
+              "conclusion": null,
+              "created_at": "2026-11-24T07:07:15Z",
+              "started_at": "2026-11-24T07:07:18Z",
+              "completed_at": null,
+              "runner_name": "clued-ci-home-win-01"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

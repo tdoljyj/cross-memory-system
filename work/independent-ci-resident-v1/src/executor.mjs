@@ -3328,12 +3328,16 @@ export class ResidentExecutor {
     this.parkNudgedAt ??= new Map();
     this.parkNudgeBase ??= new Map();
     this.parkEvents ??= new Map();
+    // Board 266: under the push route the poller's baseSha is each PR's merge base (poller.mjs batchBase), and main moving sends no
+    // trigger at all (deduplicated by PR:head:batchBase), so a trigger says nothing about main there: main moving is stage 10's own
+    // reading (hintParkedHead). Delete `moved` with parkNudgeBase when G2 removes the github-merge landing.
+    const tipFromTriggers = this.batchRoute() !== 'push';
     for (const e of entries) {
       const s = e.reserved.subject;
       // The main tip comes from the poller (its triggers carry prUpdatedAt); an Agent's trigger may name any base. Each tip
       // nudges a batch once (re-review of step 2, m7: alternating stale bases nudged every 5 minutes).
       const nudged = this.parkNudgeBase.get(e.key) ?? [];
-      const moved = triggers.find(({ t }) => t.prUpdatedAt !== null && t.baseSha !== s.baseSha && !nudged.includes(t.baseSha));
+      const moved = tipFromTriggers && triggers.find(({ t }) => t.prUpdatedAt !== null && t.baseSha !== s.baseSha && !nudged.includes(t.baseSha));
       const edited = triggers.some(({ t, seen }) => !t.parkEvent && t.pr === s.pr && !seen);
       const event = triggers.findLast(({ t }) => t.parkEvent && t.pr === s.pr && t.headSha === s.headSha && t.baseSha === s.baseSha);
       const changed = event && event.t.parkEvent !== (this.parkEvents.get(e.key) ?? ResidentExecutor.lastTry(e)?.parkEvent);

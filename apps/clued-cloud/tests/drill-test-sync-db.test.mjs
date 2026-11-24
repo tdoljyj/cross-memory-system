@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import pg from 'pg';
+import pg from '../scripts/generated/drill-pg.mjs';
 import { withCluster } from '../scripts/production-schema-drift.mjs';
 import { readRepository, readSnapshot } from '../scripts/production-schema-chain.mjs';
 
@@ -463,9 +463,9 @@ test('hosted platform on a database: PUBLIC SELECT on the platform\'s cron seque
 });
 
 test('the host\'s call: password from standard input only, pooler host from drill-server.json, scope from the kit, an answer in codes', async () => {
-  const { runSync, readPoolerHost, readKitScope, loadPg, connected, applyStep, connectionConfig, CODES, DRILL_TEST_REF, PRODUCTION_REF, RESULT_CONTRACT } = await sync();
+  const { runSync, readPoolerHost, readKitScope, connected, applyStep, connectionConfig, CODES, DRILL_TEST_REF, PRODUCTION_REF, RESULT_CONTRACT } = await sync();
   assert.deepEqual([...CODES].sort(), ['DRILL_SERVER_DATABASE_CREDENTIAL_MISSING', 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', 'DRILL_SERVER_DIVERGED',
-    'DRILL_SERVER_POOLER_HOST_NOT_SET', 'DRILL_SERVER_PRODUCTION_LIST_MISSING', 'DRILL_SERVER_SYNC_FAILED', 'DRILL_SERVER_SYNC_TOOL_MISSING', 'DRILL_SERVER_UNREACHABLE']);
+    'DRILL_SERVER_POOLER_HOST_NOT_SET', 'DRILL_SERVER_PRODUCTION_LIST_MISSING', 'DRILL_SERVER_SYNC_FAILED', 'DRILL_SERVER_UNREACHABLE']);
   const script = fileURLToPath(new URL('../scripts/drill-test-sync.mjs', import.meta.url));
   const source = await readFile(script, 'utf8');
   assert.doesNotMatch(source, /process\.env|\benv\b|CLUED_DRILL_TEST_|GITHUB_/, 'the script reads no environment variable');
@@ -518,12 +518,10 @@ test('the host\'s call: password from standard input only, pooler host from dril
       await refusedBeforePassword(argv, /^Error: usage: /);
     }
     await refusedBeforePassword(['--applied', appliedFile, '--scope', 'project:*'], /drill_test_scope_invalid/);
-    // No apps/clued-cloud/node_modules in this checkout (or none with node-postgres): the sync cannot run.
-    await refusedBeforePassword(base, { code: 'DRILL_SERVER_SYNC_TOOL_MISSING' }, { tool: () => loadPg({ exists: () => false }) });
-    await refusedBeforePassword(base, { code: 'DRILL_SERVER_SYNC_TOOL_MISSING' },
-      { tool: () => loadPg({ load: async () => { throw Object.assign(new Error('Cannot find package'), { code: 'ERR_MODULE_NOT_FOUND' }); } }) });
-    assert.equal(typeof (await loadPg()).Client, 'function', 'here they are installed');
-    await assert.rejects(loadPg({ load: async () => { throw new Error('another failure'); } }), /^Error: another failure$/);
+    // No tool given: the client is the generated module (scripts/generated/drill-pg.mjs), the one this file connects with.
+    const handed = [];
+    await assert.rejects(runSync(base, { stdin: async () => 'pw', connect: async (client) => { handed.push(client); throw new Error('test: no database here'); } }), /test: no database here/);
+    assert.equal(handed.length, 1); assert.equal(typeof handed[0].Client, 'function'); assert.equal(handed[0], pg);
     // The release run exported no list (no file), or what is there is not one.
     await refusedBeforePassword(['--applied', path.join(directory, 'absent.json'), '--kit', kitFile, '--server', serverFile], { code: 'DRILL_SERVER_PRODUCTION_LIST_MISSING' });
     await refusedBeforePassword(['--applied', await file('empty.json', { applied: [] }), '--kit', kitFile, '--server', serverFile], { code: 'DRILL_SERVER_PRODUCTION_LIST_MISSING' });

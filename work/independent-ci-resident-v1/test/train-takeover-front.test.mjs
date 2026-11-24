@@ -11,7 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { POLICY_CONTRACT_V8, TRAIN_DEFAULTS } from '../src/policy.mjs';
 import { executorFixture, fakeCompanion, fakeEngine, holdAtA, rawPolicy, triggerBytes, SOURCE, CI_SOURCE } from './helpers.mjs';
-import { setup, holderOf, sha, iso, T, H, S, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
+import { setup, newestStamp, holderOf, sha, iso, T, H, S, CLAIM, REPO, NOW } from '../../actions-hosted-migration/independent-ci-v1/test/train-strict-fixtures.mjs';
 import { scaffoldRules } from '../../actions-hosted-migration/independent-ci-v1/test/s7-rules-fixture.mjs';
 import { tempDir, admittedFacts } from '../../actions-hosted-migration/independent-ci-v1/test/resident-v2-fixtures.mjs';
 import { runTrain } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-maintenance.mjs';
@@ -141,7 +141,9 @@ function engineFor(e, at, script = {}, { frontStageMs = 0, queueFacts = true, sc
     (engine.trainInputs ??= []).push(input);
     engine.trainRuns.push({ decision: r.facts.decision, frontBind: r.facts.frontBind ?? null, open: r.facts.openFrontBatch !== null, created: created() - before,
       ms: e.now - began, full: r.facts.sweep?.fullSweep?.state ?? null });
-    at.advance(e.now - at.clock());
+    // Board 269: the store stamps each record after the newest one, so a burst of writes in one standing millisecond lands ahead
+    // of this clock. The run ends no earlier than its last write (train-strict-fixtures.mjs#settle).
+    at.advance(Math.max(e.now, await newestStamp(e.store.directory)) - at.clock());
     engine.trainEndedAt = at.clock();
     engine.lastFacts = r.facts;
     return { ok: true, runId, proof: PROOF, train: r.facts,
@@ -224,7 +226,7 @@ tested ${subject.testSha}` } });
       assertLive() {}, record() {}, authority: {}, clock: e.clock, sleep: e.sleep,
       ...(landing ? { trainLanding: { landing: 'push', batchMax: 1, unreadable: false }, landing } : {}) });
     const published = await publisher.publishPair([jobs['control-admission'], jobs['control-merge-slot']], { waitUntil: e.now + 90_000 });
-    at.advance(e.now - at.clock());
+    at.advance(Math.max(e.now, await newestStamp(e.store.directory)) - at.clock());
     engine.published = published;
     (engine.publishedAll ??= []).push({ testSha: subject.testSha, attempt: subject.attempt, status: published.status, reason: published.reason ?? null });
     const reason = passReason && published.status === 'BLOCKED' && published.sideEffects === 0 && typeof published.reason === 'string' ? published.reason : 'TRAIN_SINGLE_GREEN_NOT_PROVEN';
