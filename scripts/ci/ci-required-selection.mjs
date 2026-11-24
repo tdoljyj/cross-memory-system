@@ -209,8 +209,8 @@ export const SUITES = {
       'apps/clued-cloud/scripts/select-tests.mjs', 'apps/clued-cloud/scripts/run-tests.mjs'],
   },
   // The application suite reads files from across the repository (workflow,
-  // contract and CI-script tests), so every change runs it. Its CI-script tests
-  // include check-tests-covered.test.mjs: every test file runs in a required
+  // contract and CI-script tests), so every change runs it. It runs
+  // check-tests-covered.mjs --base {base}: every test file runs in a required
   // suite or is listed in ci-uncovered-tests.json, checked on every change.
   'clued-cloud-tests': {
     'clued-cloud': ['**'],
@@ -360,11 +360,15 @@ export const SUITE_COMMANDS = {
     // suites run their own two.
     { cwd: '.', argv: [PYTHON, '-B', '-m', 'unittest', 'scripts/ci/test_check_contract_placement.py', 'scripts/ci/test_clued_docs_only.py'] },
     { cwd: 'apps/clued-cloud', known: 'clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{unit-concurrency}', '{unit-tests}', '{ci-script-tests}'] },
+    // Every test file runs in a required suite or is listed, and both lists only shrink against the base: a check, so it takes
+    // the job's base from here (Task 700f2b68; PLAN-main-red-real-repo-20261124 §4.3). Last, so the units before it keep their
+    // shard numbers; one command, run whole, so one shard runs it.
+    { cwd: '.', argv: ['node', 'scripts/ci/check-tests-covered.mjs', '--base', '{base}'] },
   ],
   'production-schema': [
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/ci-connection-renew-db.test.mjs'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', 'tests/production-schema-drift.test.mjs'] },
-    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--report', '{report}'] },
+    { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/production-schema-drift.mjs', 'check', '--base', '{base}', '--report', '{report}'] },
     { cwd: 'apps/clued-cloud', argv: ['node', '--test', '{db-concurrency}',
       ...MIGRATION_DB_TESTS.map((file) => file.slice('apps/clued-cloud/'.length))] },
     { cwd: 'apps/clued-cloud', argv: ['node', 'scripts/run-tests.mjs', '--test', '{db-concurrency}', '--test-force-exit',
