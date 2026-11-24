@@ -1477,3 +1477,64 @@ test('§3.11: a head the App brought up, behind main and not admitted, is named 
   r = await w.run();
   assert.match(r.reason, /#1301 contains main/); assert.equal(namings(w).length, 0, JSON.stringify(w.comments));
 });
+
+// 第二轮规划 A（任务 2fb32dc7，#1298）: a head the App brought up went red for the pipeline's own reason (a test on main that read the
+// real base, fixed on main 38 minutes later), then fell behind: passed over for good, and only a person merging main moved it. A
+// red head the App brought, admitted and red on something else than the admission, behind main, is brought up again: after every
+// candidate that is not red. Not when its first parent is one the App brought as well (two in a row, REBRING_RED_MAX).
+const REBRING = 1298, AUTHOR = sha(0x1298a), MADE = sha(0x1298b);
+function scene1298({ parentBrought = false, admission = 'success', red = ['hosted-clued-cloud-tests'] } = {}) {
+  const w = train(); w.pins = {}; w.required = SCAFFOLD_R6;
+  w.head(AUTHOR, {});
+  if (parentBrought) w.check(AUTHOR, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  w.open(REBRING, { head: MADE, auto: '2026-11-24T08:00:00Z', parents: [AUTHOR, BASE] });
+  w.check(MADE, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID);
+  w.check(MADE, INDEPENDENT_ADMISSION_CHECK, admission, INDEPENDENT_ADMISSION_APP_ID);
+  for (const name of HOSTED) w.check(MADE, name, red.includes(name) ? 'failure' : 'success', GITHUB_ACTIONS_APP_ID);
+  return w;
+}
+const redAgain = (w, head) => { w.check(head, INDEPENDENT_ADMISSION_CHECK, 'success', INDEPENDENT_ADMISSION_APP_ID);
+  for (const name of HOSTED) w.check(head, name, name === 'hosted-clued-cloud-tests' ? 'failure' : 'success', GITHUB_ACTIONS_APP_ID); };
+
+test('A1 #1298: a head the App brought, admitted, red on a required check and behind main, alone on the train, is brought up again', async () => {
+  const w = scene1298();
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.equal(r.pr, REBRING); assert.deepEqual(w.brought(), [REBRING]);
+  assert.deepEqual(w.updates.map(u => u.from), [MADE]);
+  // The second head the App made is red again and main moves on: two in a row, passed over as before.
+  const second = w.headOf(REBRING); redAgain(w, second);
+  w.tip = sha(0x7298); w.now += 40 * MIN;
+  const again = await w.run({}, SCAFFOLD);
+  assert.equal(again.result, 'none', JSON.stringify(again)); assert.deepEqual(w.brought(), [REBRING]);
+  assert.match(again.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\)$/, statesOf(again));
+});
+
+test('A2: a red head the App brought whose first parent the App brought as well is not brought again', async () => {
+  const w = scene1298({ parentBrought: true });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.match(r.train.members.find(m => m.pr === REBRING).state, /^red \(hosted-clued-cloud-tests\)$/, statesOf(r));
+});
+
+test('A3: a candidate that is not red is brought before a red head the App brought; once it merged, the red one is brought', async () => {
+  const w = scene1298();
+  w.open(1311, { head: sha(0x1311), auto: '2026-11-24T09:00:00Z' });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'merged', JSON.stringify(r)); assert.deepEqual(w.brought(), [1311]);
+  // #1311 is the front and under way: nobody else is brought.
+  w.check(w.headOf(1311), 'hosted-ci-suites', null, GITHUB_ACTIONS_APP_ID); w.now += 5 * MIN;
+  assert.equal((await w.run({}, SCAFFOLD)).result, 'none'); assert.deepEqual(w.brought(), [1311]);
+  // #1311 merged, main moved: the red head the App brought is the one candidate left.
+  w.merged(1311); w.now += 5 * MIN;
+  const last = await w.run({}, SCAFFOLD);
+  assert.equal(last.result, 'merged', JSON.stringify(last)); assert.deepEqual(w.brought(), [1311, REBRING]);
+});
+
+test('A4: a head the App brought whose admission failed is not brought again, red elsewhere or not', async () => {
+  for (const red of [[], ['hosted-clued-cloud-tests']]) {
+    const w = scene1298({ admission: 'failure', red });
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+    assert.match(r.train.members.find(m => m.pr === REBRING).state, new RegExp(`^red \(.*${INDEPENDENT_ADMISSION_CHECK}`), statesOf(r));
+  }
+});
