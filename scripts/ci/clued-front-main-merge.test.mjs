@@ -15,6 +15,7 @@ import { ciWorkflows } from './clued-merge-slot-ci.mjs';
 import { NON_PR_CONTROL_FILES, NON_PR_CONTROL_SOURCE_PATH, classifyNonPrControlWorkflowSource, parseNonPrControlCatalogue } from './clued-non-pr-control-source.mjs';
 import { recognizeCatalogueWorkflow } from './clued-source-only-workflow.mjs';
 import { parseWorkflowProfiles, roleDefinitionDigest, workflowBlob } from './clued-workflow-profile.mjs';
+import { describe as describePrStatus } from '../../work/independent-ci-resident-v1/src/pr-status.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const RPC_URL = `${resolvePublicSupabaseConfig({}, ROOT).url}/rest/v1/rpc/clued_work_verify_v1`;
@@ -1563,4 +1564,97 @@ test('A5: a rebring chain that cannot be read only keeps that head back; the can
   r = await w.run();
   assert.equal(r.pr, 1217, JSON.stringify(r)); assert.deepEqual(w.brought(), [1217]);
   assert.match(r.train.members.find(m => m.pr === 1156).state, /^red \(clued-cloud-tests\)/, JSON.stringify(r.train.members));
+});
+
+// PLAN-unadmitted-silent-20261125 §2.2 (任务 2fb32dc7): the resident writes a pending page status on every head behind main that it
+// does not propose ("落后 main N 个提交：轮到时机器人合入 main…", pr-status.mjs#describe), and writes it again each time main moves.
+// It is the resident saying it will not run that head: not something under way, and not activity. Read as under way, a head the
+// App brought up and the admission never answered was never named, and two of them held the train with nobody told.
+// The sentence is taken from what pr-status.mjs writes, so a change of the sentence changes these cases with it.
+const SILENT_B = 1401, SILENT_C = 1402, SILENT_FRONT = 1400;
+const residentSays = behindBy => describePrStatus({ pull: { headSha: sha(0x1401), eligible: false, hint: 'merge-main', behindBy }, status: null, now: NOW }).description;
+// A head behind main by 12, as the robot left it: kooyumi-main-merge of App 5164952, the seven hosted- green, no kooyumi-work-admission;
+// the resident's pending sentence rewritten 5 minutes ago, everything else last active 40 minutes ago, nothing running.
+function silentHead(w, number, { brought = true, text = residentSays(12), context = 'resident-queue/turing (info only)', auto } = {}) {
+  const head = sha(number * 16 + 1);
+  w.open(number, { head, auto, contains: BASE, at: w.now - 40 * MIN });
+  if (brought) w.check(head, MAIN_MERGE_CHECK, 'success', ADMISSION_APP_ID, { started_at: iso(w.now - 40 * MIN) });
+  for (const name of HOSTED) w.check(head, name, 'success', GITHUB_ACTIONS_APP_ID, { started_at: iso(w.now - 40 * MIN) });
+  w.heads.get(head).statuses.unshift({ context, state: 'pending', description: text, created_at: iso(w.now - 300 * MIN), updated_at: iso(w.now - 5 * MIN) });
+  return head;
+}
+function sceneSilent({ front = true } = {}) {
+  const w = train(); w.pins = {}; w.required = SCAFFOLD_R6;
+  if (front) {
+    w.open(SILENT_FRONT, { head: sha(0x14000), auto: '2026-11-24T00:00:00Z', contains: T, at: w.now - 5 * MIN });
+    w.check(sha(0x14000), 'hosted-ci-suites', null, GITHUB_ACTIONS_APP_ID);
+  }
+  return w;
+}
+
+test('U1 (修前必红): a brought-up head behind main, not admitted, with only the resident’s “落后 main” pending on it, is named once', async () => {
+  assert.match(residentSays(12), /^落后 main 12 个提交：轮到时机器人合入 main/);
+  const w = sceneSilent();
+  const head = silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z' });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#1400 contains main/); assert.deepEqual(w.brought(), []);
+  assert.deepEqual(namings(w).map(c => c.pr), [SILENT_B], JSON.stringify(r));
+  assert.match(namings(w)[0].body, new RegExp(head)); assert.match(namings(w)[0].body, new RegExp(`- ${INDEPENDENT_ADMISSION_CHECK}: missing\n`));
+});
+
+test('U2 (修前必红): with no front, two such heads hold the train and each is named once', async () => {
+  const w = sceneSilent({ front: false });
+  silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z' }); silentHead(w, SILENT_C, { auto: '2026-11-24T02:00:00Z' });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'held', JSON.stringify(r)); assert.deepEqual(w.brought(), []);
+  assert.deepEqual(namings(w).map(c => c.pr).sort(), [SILENT_B, SILENT_C], JSON.stringify(r));
+  w.now += 10 * MIN;
+  assert.equal((await w.run({}, SCAFFOLD)).result, 'held'); assert.equal(namings(w).length, 2, 'once per head');
+});
+
+test('U3: an author’s head behind main with the same sentence is a candidate: the train brings it, it is not named', async () => {
+  const w = sceneSilent();
+  silentHead(w, SILENT_B, { brought: false, auto: '2026-11-24T01:00:00Z' });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 0, JSON.stringify(w.comments)); assert.equal(r.named, undefined);
+});
+
+test('U4: a head that contains main with the resident’s pending “排队中” is under way: not named', async () => {
+  const w = sceneStalled();
+  w.heads.get(sha(0x1300)).statuses.push({ context: 'resident-queue/turing (info only)', state: 'pending', description: '排队中', updated_at: iso(w.now - 40 * MIN) });
+  const r = await w.run();
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 0, JSON.stringify(w.comments));
+});
+
+test('U5: a pending sentence it does not know, or the held sentence under another context, still counts as under way: not named', async () => {
+  for (const options of [{ text: '运行中：准入' }, { context: 'someone-else/queue' }]) {
+    const w = sceneSilent();
+    silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z', ...options });
+    const r = await w.run({}, SCAFFOLD);
+    assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 0, `${JSON.stringify(options)}: ${JSON.stringify(w.comments)}`);
+  }
+});
+
+test('U6: named once; the resident rewriting “落后 main 13” 10 minutes later does not name it again', async () => {
+  const w = sceneSilent();
+  const head = silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z' });
+  await w.run({}, SCAFFOLD);
+  assert.equal(namings(w).length, 1, JSON.stringify(w.comments));
+  w.now += 10 * MIN;
+  const status = w.heads.get(head).statuses[0];
+  Object.assign(status, { description: residentSays(13), updated_at: iso(w.now) });
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.equal(namings(w).length, 1, 'once per head');
+});
+
+test('U7: the comment refused (403) changes nothing the run decided; the summary says not posted', async () => {
+  const w = sceneSilent();
+  silentHead(w, SILENT_B, { auto: '2026-11-24T01:00:00Z' });
+  const fetch = w.fetchImpl;
+  w.fetchImpl = async (url, init = {}) => (init.method === 'POST' && String(url).endsWith(`/issues/${SILENT_B}/comments`))
+    ? { ok: false, status: 403, headers: { get: () => null }, json: async () => ({}), text: async () => '' } : fetch(url, init);
+  const r = await w.run({}, SCAFFOLD);
+  assert.equal(r.result, 'none', JSON.stringify(r)); assert.match(r.reason, /#1400 contains main/); assert.deepEqual(w.brought(), []);
+  assert.deepEqual(r.named?.map(n => [n.pr, n.comment]), [[SILENT_B, 'not posted (HTTP 403)']], JSON.stringify(r));
+  assert.match(renderSummary(r), new RegExp(`#${SILENT_B} .*${INDEPENDENT_ADMISSION_CHECK} missing; not posted \(HTTP 403\)`));
 });
