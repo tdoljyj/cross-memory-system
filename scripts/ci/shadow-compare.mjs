@@ -144,9 +144,9 @@ function judge(pair, runs, pins, role, merged = null, mergedAt = null, nowMs = N
     }
     return { ...out, verdict: '未知', reason };
   };
-  // 框架侧缺检查只在按树读前提成立（读到了 M 的检查）、托管侧在时算结论未出。
+  // 框架侧缺检查只在按树读前提成立（读到了 M 的检查）、托管侧已完成时算结论未出。
   if (!framework || !hosted) return unjudgeable(!framework && !hosted ? '两边都缺检查' : !framework ? '框架缺检查' : '托管缺检查',
-    { pending: true, frameworkPending: !framework && !!hosted && merged !== null });
+    { pending: true, frameworkPending: !framework && hosted?.status === 'completed' && merged !== null });
   for (const [label, s] of [['框架', framework], ['托管', hosted]]) {
     // 框架侧未完成（不论读自 head 还是 M）且托管侧已完成，算框架结论未出。
     if (s.status !== 'completed') return unjudgeable(`${label}未完成（${s.status}）`, { pending: true, frameworkPending: label === '框架' && hosted.status === 'completed' });
