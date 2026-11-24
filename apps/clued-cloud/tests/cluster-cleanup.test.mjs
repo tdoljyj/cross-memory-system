@@ -193,11 +193,12 @@ test('stopCluster waits for the pid of its own child and only reports one that s
   assert.match(state.logs[0], /postmaster 4242 is still running 20 ms after stop\(\)/);
 });
 
-// A stand-in for embedded-postgres: start() on a taken port logs the postmaster's FATAL line and
+// A stand-in for the library's cluster: start() on a taken port logs the postmaster's FATAL line and
 // rejects with no reason at all, as the library does when its child exits before it is ready.
-const portBoundServer = (taken, port) => {
+// It is built with a port of its own (the library's default) that startCluster must not use.
+const portBoundServer = (taken) => {
   const server = {
-    options: { port, onLog: () => {} },
+    options: { port: 5432, onLog: () => {} },
     initialised: 0,
     starts: [],
     initialise: async () => { server.initialised += 1; },
@@ -215,47 +216,59 @@ const portBoundServer = (taken, port) => {
 const portsFrom = (ports) => async () => ports.shift();
 const startLog = () => { const lines = []; return { lines, log: (line) => lines.push(line) }; };
 
-test('a postmaster that exits at start because its port was taken starts again on a newly picked port, and says so', async () => {
-  const server = portBoundServer([5001], 5001);
+test('the port is picked at start, the first time too, and a start on a free port leaves no line', async () => {
+  const server = portBoundServer([]);
+  const { lines, log } = startLog();
+  let given;
+  assert.equal(await startCluster(server, { pickPort: async (pick) => { given = pick; return 5001; }, log }), server);
+  assert.deepEqual(server.starts, [5001], 'not the port the cluster was built with');
+  assert.equal(server.options.port, 5001);
+  assert.equal(server.initialised, 1);
+  assert.equal(typeof given, 'function', 'a picker is handed the default picker, to fall back on');
+  assert.deepEqual(lines, []);
+});
+
+test('a postmaster that exits at start because its port was taken starts again on a newly picked port, and says so in one line', async () => {
+  const server = portBoundServer([5001]);
   const ownLog = server.options.onLog;
   const { lines, log } = startLog();
-  assert.equal(await startCluster(server, { pickPort: portsFrom([5002]), log }), server);
+  assert.equal(await startCluster(server, { pickPort: portsFrom([5001, 5002]), log }), server);
   assert.deepEqual(server.starts, [5001, 5002]);
   assert.equal(server.initialised, 1, 'the data directory is initialised once');
   assert.equal(server.options.port, 5002, 'clients connect to the port the postmaster holds');
   assert.equal(server.options.onLog, ownLog, 'the caller\'s log handler is back in place');
-  assert.equal(lines.length, 2);
-  assert.match(lines[0], /port 5001 \(port taken\), retrying on port 5002: FATAL: {2}could not create any TCP\/IP sockets \(port 5001\)/);
-  assert.match(lines[1], /started on port 5002 after taken port\(s\) 5001/);
+  assert.deepEqual(lines, ['端口 5001 上 postmaster 启动即退出（端口冲突），改用端口 5002：FATAL:  could not create any TCP/IP sockets (port 5001)']);
 });
 
-test('a start on a free port leaves no line', async () => {
-  const { lines, log } = startLog();
-  await startCluster(portBoundServer([], 5001), { pickPort: portsFrom([]), log });
-  assert.deepEqual(lines, []);
+test('a persistent cluster restarted with initialise: false is not initialised again', async () => {
+  const server = portBoundServer([]);
+  await startCluster(server, { initialise: false, pickPort: portsFrom([5001]), log: () => {} });
+  assert.equal(server.initialised, 0);
+  assert.deepEqual(server.starts, [5001]);
 });
 
 test('when every start finds its port taken the error names the ports and carries the postmaster\'s log, not undefined', async () => {
-  const server = portBoundServer([5001, 5002, 5003], 5001);
-  const { log } = startLog();
-  await assert.rejects(startCluster(server, { attempts: 3, pickPort: portsFrom([5002, 5003]), log }), (error) => {
+  const server = portBoundServer([5001, 5002, 5003]);
+  const { lines, log } = startLog();
+  await assert.rejects(startCluster(server, { attempts: 3, pickPort: portsFrom([5001, 5002, 5003]), log }), (error) => {
     assert.ok(error instanceof Error);
     assert.match(error.message, /ports 5001, 5002, 5003 taken/);
     assert.match(error.message, /could not create any TCP\/IP sockets \(port 5003\)/);
     return true;
   });
   assert.deepEqual(server.starts, [5001, 5002, 5003]);
+  assert.equal(lines.length, 2, 'one line per retry');
 });
 
 test('an early exit for anything but a taken port is not retried and carries the postmaster\'s log', async () => {
-  const server = portBoundServer([], 5001);
+  const server = portBoundServer([]);
   server.start = () => {
     server.starts.push(server.options.port);
     server.options.onLog('FATAL:  could not create semaphores: No space left on device\n');
     return Promise.reject();
   };
   const { lines, log } = startLog();
-  await assert.rejects(startCluster(server, { pickPort: portsFrom([5002]), log }), (error) => {
+  await assert.rejects(startCluster(server, { pickPort: portsFrom([5001, 5002]), log }), (error) => {
     assert.ok(error instanceof Error);
     assert.match(error.message, /on port 5001, not for a taken port, so not retried/);
     assert.match(error.message, /FATAL: {2}could not create semaphores: No space left on device/);
@@ -266,15 +279,20 @@ test('an early exit for anything but a taken port is not retried and carries the
 });
 
 test('an early exit with an empty log is not retried either', async () => {
-  const server = portBoundServer([], 5001);
+  const server = portBoundServer([]);
   server.start = () => { server.starts.push(server.options.port); return Promise.reject(); };
-  await assert.rejects(startCluster(server, { pickPort: portsFrom([5002]), log: () => {} }), /not retried; its log: \(empty\)/);
+  await assert.rejects(startCluster(server, { pickPort: portsFrom([5001, 5002]), log: () => {} }), /not retried; its log: \(empty\)/);
   assert.deepEqual(server.starts, [5001]);
 });
 
 test('a start error with a reason is thrown as it is and not retried', async () => {
-  const server = portBoundServer([], 5001);
+  const server = portBoundServer([]);
   server.start = async () => { server.starts.push(server.options.port); throw new Error('Postgres cannot run as a root user.'); };
-  await assert.rejects(startCluster(server, { pickPort: portsFrom([5002]), log: () => {} }), /cannot run as a root user/);
+  await assert.rejects(startCluster(server, { pickPort: portsFrom([5001, 5002]), log: () => {} }), /cannot run as a root user/);
   assert.deepEqual(server.starts, [5001]);
+});
+
+test('no test picks a port itself: the picker is not exported', async () => {
+  const cleanup = await import('./cluster-cleanup.mjs');
+  assert.equal('freePort' in cleanup, false);
 });
