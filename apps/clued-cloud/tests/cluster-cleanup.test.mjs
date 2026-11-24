@@ -296,3 +296,45 @@ test('no test picks a port itself: the picker is not exported', async () => {
   const cleanup = await import('./cluster-cleanup.mjs');
   assert.equal('freePort' in cleanup, false);
 });
+
+// mark reports each real library call, as stopCluster's mark does: initialise once, every start (retries too).
+const marks = () => { const events = []; return { events, mark: (name, event) => events.push(`${name}:${event}`) }; };
+
+test('mark reports initialise and then start, each with its start and end', async () => {
+  const { events, mark } = marks();
+  await startCluster(portBoundServer([]), { pickPort: portsFrom([5001]), log: () => {}, mark });
+  assert.deepEqual(events, ['initialise:start', 'initialise:end', 'start:start', 'start:end']);
+});
+
+test('when initialise throws, mark has its end and no start event', async () => {
+  const server = portBoundServer([]);
+  server.initialise = async () => { throw new Error('initdb failed'); };
+  const { events, mark } = marks();
+  await assert.rejects(startCluster(server, { pickPort: portsFrom([5001]), log: () => {}, mark }), /initdb failed/);
+  assert.deepEqual(events, ['initialise:start', 'initialise:end']);
+});
+
+test('when picking a port throws, no start is reported', async () => {
+  const { events, mark } = marks();
+  await assert.rejects(startCluster(portBoundServer([]), { pickPort: async () => { throw new Error('no socket'); }, log: () => {}, mark }), /no socket/);
+  assert.deepEqual(events, ['initialise:start', 'initialise:end']);
+});
+
+test('a retry on a taken port reports a second start pair', async () => {
+  const { events, mark } = marks();
+  await startCluster(portBoundServer([5001]), { pickPort: portsFrom([5001, 5002]), log: () => {}, mark });
+  assert.deepEqual(events, ['initialise:start', 'initialise:end', 'start:start', 'start:end', 'start:start', 'start:end']);
+});
+
+test('with initialise: false mark reports no initialise', async () => {
+  const { events, mark } = marks();
+  await startCluster(portBoundServer([]), { initialise: false, pickPort: portsFrom([5001]), log: () => {}, mark });
+  assert.deepEqual(events, ['start:start', 'start:end']);
+});
+
+test('a mark that throws does not change the result', async () => {
+  const server = portBoundServer([5001]);
+  assert.equal(await startCluster(server, { pickPort: portsFrom([5001, 5002]), log: () => {}, mark: () => { throw new Error('clock broke'); } }), server);
+  assert.deepEqual(server.starts, [5001, 5002]);
+  assert.equal(server.initialised, 1);
+});
