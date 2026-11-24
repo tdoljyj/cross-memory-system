@@ -8,6 +8,12 @@
 // How to read it:
 //   merged_tree_differs, base_not_ancestor, required_jobs_not_passed, pr_run_not_passed, pr_run_actor,
 //   merged_pr_missing: this tree has no evidence that counts; the real run is right.
+//   pr_run_in_flight (gate-decided workflows only): the head's run of this very tree is still going and its gate was
+//   seen to admit it (every required job listed under its real name), so it is the tree's one real run; the gate
+//   answers TREE_RUN_IN_FLIGHT and runs no heavy job (run_heavy stays true: no proof).
+//   pr_run_gate_undecided: that run's gate was still deciding after TREE_RUN_POLLS more reads, TREE_RUN_POLL_INTERVAL_MS
+//   apart; pr_run_not_admitted: its gate refused ("-skipped" names), a required job already failed, or the job list is
+//   not that of an admitted run. Either way the PR run may never test the tree, so this push is its real run.
 //   github_request_failed@<step>:<HTTP status>, github_request_threw@<step> (timeout, no network),
 //   *_listing_incomplete, latest_attempt_changed, request_budget, unexpected_error@<step>: the evidence may exist
 //   but was not read; look into it when it shows up.
@@ -48,7 +54,8 @@ export const REASONS = Object.freeze([
   'pr_and_dispatch_always_run', 'push_context_not_eligible', 'tree_report_proof_unavailable',
   // the merge, its PR and the head's run
   'merge_identity', 'merged_pr_identity', 'merged_tree_differs', 'pr_listing_incomplete', 'merged_pr_missing',
-  'run_listing_incomplete', 'pr_run_not_passed', 'pr_run_actor', 'pr_run_identity', 'job_listing_incomplete',
+  'run_listing_incomplete', 'pr_run_not_passed', 'pr_run_in_flight', 'pr_run_gate_undecided', 'pr_run_not_admitted',
+  'pr_run_actor', 'pr_run_identity', 'job_listing_incomplete',
   'latest_run_listing_incomplete', 'latest_attempt_changed', 'proof_kind', 'base_not_ancestor', 'required_jobs_not_passed',
   // reading: the last three carry "@<step>", a failed request also ":<HTTP status>"
   'request_budget', 'artifact_too_large', 'github_request_failed', 'github_request_threw', 'unexpected_error',
@@ -58,17 +65,24 @@ export const REASONS = Object.freeze([
   'tested_tree_identity', 'tested_isolation_identity', 'artifact_listing_incomplete', 'artifact_identity', 'artifact_digest',
   'report_context', 'report_checkout', 'report_run', 'report_dirty_paths', 'report_isolation_diff',
 ]);
-// The reads, in order; "report" is every read of the tested-tree artifact proof.
+// The reads, in the reuse branch's order; "report" is every read of the tested-tree artifact proof. The in-flight
+// branch (甲2) reads compare before jobs, and jobs up to 1 + TREE_RUN_POLLS times.
 export const STEPS = Object.freeze(['merge', 'pulls', 'pr', 'source', 'runs', 'jobs', 'runs_again', 'compare', 'report']);
+// 甲2: a head run whose gate is still deciding is read again this often, at most this many more times (60 s in all).
+export const TREE_RUN_POLL_INTERVAL_MS = 10_000;
+export const TREE_RUN_POLLS = 6;
+// Reads per push: the reuse and the tree-report proof stay within 9; the in-flight branch reads merge, pulls, pr,
+// source, runs, compare and then the job list up to 1 + TREE_RUN_POLLS times (13).
+const REQUEST_BUDGET = 9;
+const IN_FLIGHT_REQUEST_BUDGET = 14;
 export class ProofRefusal extends Error {
   constructor(code) { super(code); this.name = 'ProofRefusal'; this.code = code; }
 }
 const fallback = (reason) => ({ run_heavy: true, reason, current_sha_pass: false });
 export const requireProof = (condition, reason) => { if (!condition) throw new ProofRefusal(reason); };
 
-// The merge, its PR and the PR's latest run of this workflow, as both proofs require them.
-export function validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs,
-  runActorAllowed = ownerTriggered(owner) }) {
+// The merge and its PR: an owner PR into main from this repository, merged as this commit, whose tree is the head's.
+function validateMerge({ repository, owner, sha, workflow, merge, pr, sourceCommit }) {
   requireProof(TARGETS[workflow] && merge.sha === sha && SHA.test(sha), 'merge_identity');
   requireProof(pr.state === 'closed' && pr.merged === true && pr.merge_commit_sha === sha &&
     Number.isSafeInteger(pr.number) && pr.base?.ref === 'main' &&
@@ -78,7 +92,9 @@ export function validateMergedRun({ repository, owner, sha, workflow, merge, pr,
   requireProof(merge.parents?.length === 2 && merge.parents[1].sha === pr.head.sha &&
     sourceCommit.sha === pr.head.sha && SHA.test(merge.commit?.tree?.sha) &&
     merge.commit.tree.sha === sourceCommit.commit?.tree?.sha, 'merged_tree_differs');
-  requireProof(run.status === 'completed' && run.conclusion === 'success', 'pr_run_not_passed');
+}
+// The run: the head's pull_request run of this workflow in this repository, triggered by whom the caller allows.
+function validateRun({ repository, workflow, pr, run, runActorAllowed }) {
   requireProof(runActorAllowed(run.actor) === true, 'pr_run_actor');
   requireProof(run.event === 'pull_request' &&
     run.path === `.github/workflows/${workflow}` && run.head_sha === pr.head.sha &&
@@ -86,11 +102,27 @@ export function validateMergedRun({ repository, owner, sha, workflow, merge, pr,
     Number.isSafeInteger(run.id) && Number.isSafeInteger(run.run_attempt) &&
     run.run_attempt > 0 && Array.isArray(run.pull_requests) &&
     (run.pull_requests.length === 0 || run.pull_requests.some((p) => p.number === pr.number)), 'pr_run_identity');
+}
+// The merge, its PR and the PR's latest run of this workflow, as both proofs require them.
+export function validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs,
+  runActorAllowed = ownerTriggered(owner) }) {
+  validateMerge({ repository, owner, sha, workflow, merge, pr, sourceCommit });
+  requireProof(run.status === 'completed' && run.conclusion === 'success', 'pr_run_not_passed');
+  validateRun({ repository, workflow, pr, run, runActorAllowed });
   // GitHub clears pull_requests on closed-PR runs (#688 was observed empty). The tree-report proof binds the PR
   // number through its immutable report; the ancestry proof needs every required job under its real name, which
   // the workflows give only to an admitted owner PR against main from this repository.
   requireProof(Number.isSafeInteger(jobs.total_count) && jobs.total_count < 100 &&
     jobs.jobs?.length === jobs.total_count, 'job_listing_incomplete');
+}
+
+// The executor bot's run counts for the 'ancestry' workflows only (validateAncestryEvidence says why).
+const ancestryActor = (owner) => (actor) => actor?.login === owner || executorMerged(actor);
+// main's old tip (the merge's first parent) is an ancestor of the head, so every earlier PR test merge had its tree.
+function validateAncestry({ merge, compare }) {
+  const base = merge.parents[0]?.sha;
+  requireProof(SHA.test(base) && ['ahead', 'identical'].includes(compare?.status) && compare.behind_by === 0 &&
+    compare.base_commit?.sha === base && compare.merge_base_commit?.sha === base, 'base_not_ancestor');
 }
 
 // No artifact: main's old tip (the merge's first parent) must be an ancestor of the head. main only moves
@@ -104,11 +136,8 @@ export function validateAncestryEvidence({ repository, owner, sha, workflow, mer
   // their real names on a bot run only after the gate proved that merge (automation_self_hosted), and the names are
   // required below; a bot run without that proof has "-skipped" names. The tree-report workflows (G4, IFE2E) have no
   // such name proof, so clued-push-reuse.mjs passes nothing and keeps the owner only.
-  validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs,
-    runActorAllowed: (actor) => actor?.login === owner || executorMerged(actor) });
-  const base = merge.parents[0]?.sha;
-  requireProof(SHA.test(base) && ['ahead', 'identical'].includes(compare?.status) && compare.behind_by === 0 &&
-    compare.base_commit?.sha === base && compare.merge_base_commit?.sha === base, 'base_not_ancestor');
+  validateMergedRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, jobs, runActorAllowed: ancestryActor(owner) });
+  validateAncestry({ merge, compare });
   const expected = [GATE_JOB, ...target.jobs];
   requireProof(jobs.jobs.length === expected.length && expected.every((name) =>
     jobs.jobs.filter((job) => job.name === name && job.run_id === run.id && job.status === 'completed' &&
@@ -116,6 +145,40 @@ export function validateAncestryEvidence({ repository, owner, sha, workflow, mer
   return { run_heavy: false, reason: 'prior_pr_tested_identical_tree', source_run_id: run.id,
     source_attempt: run.run_attempt, source_pr: pr.number, tested_tree: merge.commit.tree.sha,
     current_sha_pass: false, qualification: 'PR_EVIDENCE_ONLY' };
+}
+
+// 甲2 (FABLE-same-tree-main-push-redesign-20261123 §3): the head's latest run of an 'ancestry' workflow is not
+// finished. Everything validateAncestryEvidence proves without the jobs is proved here the same way: this merge of this
+// owner PR, the head's tree, the head's pull_request run of this workflow by the owner or the executor bot, main's old
+// tip an ancestor of the head. evaluatePush proves this before it reads any job.
+export function validateInFlightRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, compare }) {
+  requireProof(TARGETS[workflow]?.proof === 'ancestry', 'proof_kind');
+  validateMerge({ repository, owner, sha, workflow, merge, pr, sourceCommit });
+  requireProof(run.status !== 'completed', 'pr_run_not_passed');
+  validateRun({ repository, workflow, pr, run, runActorAllowed: ancestryActor(owner) });
+  validateAncestry({ merge, compare });
+}
+// Then the run's job list must show its gate admitted: the gate job once and passed, every required job once under
+// its real name (the workflows give those names only to an admitted run) and not failed, and no other job. Only then
+// is that run sure to test this very tree, the tree's one real run, and the gate runs no heavy job of the main push.
+// The gate seen still deciding (the run's only job, not concluded otherwise than success) is pr_run_gate_undecided,
+// which evaluatePush reads again; anything else is pr_run_not_admitted. It is no evidence of a pass: run_heavy stays
+// true and current_sha_pass false, so no reader can take it for a green result; a re-run of the main push (attempt 2)
+// never comes here and runs for real.
+export function validateInFlightEvidence({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, compare, jobs }) {
+  validateInFlightRun({ repository, owner, sha, workflow, merge, pr, sourceCommit, run, compare });
+  requireProof(Number.isSafeInteger(jobs?.total_count) && jobs.total_count < 100 &&
+    jobs.jobs?.length === jobs.total_count, 'job_listing_incomplete');
+  const ofRun = (name) => jobs.jobs.filter((job) => job.name === name && job.run_id === run.id);
+  const gates = ofRun(GATE_JOB);
+  requireProof(!(jobs.jobs.length === 1 && gates.length === 1 &&
+    (gates[0].status !== 'completed' || gates[0].conclusion === 'success')), 'pr_run_gate_undecided');
+  const required = TARGETS[workflow].jobs;
+  requireProof(gates.length === 1 && gates[0].status === 'completed' && gates[0].conclusion === 'success' &&
+    jobs.jobs.length === 1 + required.length && required.every((name) => ofRun(name).length === 1 &&
+      [null, 'success'].includes(ofRun(name)[0].conclusion)), 'pr_run_not_admitted');
+  return { ...fallback('pr_run_in_flight'), source_run_id: run.id, source_attempt: run.run_attempt,
+    source_pr: pr.number, source_status: String(run.status), source_jobs: jobs.total_count, tested_tree: merge.commit.tree.sha };
 }
 
 async function limitedBody(response) {
@@ -131,7 +194,9 @@ async function limitedBody(response) {
 
 // run_heavy=false only on proof; any unavailable, stale or unqualified evidence costs a real run, never a fake PASS.
 // `reportProof` (clued-push-reuse.mjs) completes a 'tree-report' target; without it such a target always runs.
-export async function evaluatePush(env, fetchImpl = fetch, { reportProof = null } = {}) {
+// `sleep` is the pause between reads of an in-flight run's job list (the gate passes its own).
+export async function evaluatePush(env, fetchImpl = fetch, { reportProof = null,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   if (env.GITHUB_EVENT_NAME !== 'push') return fallback('pr_and_dispatch_always_run');
   if (env.GITHUB_REF !== 'refs/heads/main' ||
     ![env.GITHUB_REPOSITORY_OWNER, EXECUTOR_LOGIN].includes(env.GITHUB_ACTOR) ||
@@ -144,10 +209,11 @@ export async function evaluatePush(env, fetchImpl = fetch, { reportProof = null 
   if (target.proof === 'tree-report' && typeof reportProof !== 'function') return fallback('tree_report_proof_unavailable');
   const base = `https://api.github.com/repos/${env.GITHUB_REPOSITORY}`;
   let requests = 0;
+  let budget = REQUEST_BUDGET;
   let step = STEPS[0];
   const get = async (name, suffix, binary = false) => {
     step = name;
-    requireProof(++requests <= 9, 'request_budget');
+    requireProof(++requests <= budget, 'request_budget');
     let response;
     try {
       response = await fetchImpl(base + suffix, { headers: {
@@ -179,9 +245,28 @@ export async function evaluatePush(env, fetchImpl = fetch, { reportProof = null 
     requireProof(Number.isSafeInteger(runs.total_count) && runs.total_count > 0 && runs.total_count < 100 &&
       runs.workflow_runs?.length === runs.total_count, 'run_listing_incomplete');
     const run = [...runs.workflow_runs].sort((a, b) => b.run_number - a.run_number)[0];
+    const jobsPath = `/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`;
+    // 甲2: an unfinished latest run of a gate-decided workflow is this tree's one real run once its gate is seen to
+    // have admitted it. Identity, tree, actor and ancestry first; then its job list, read again while the gate decides.
+    if (target.proof === 'ancestry' && run.status !== 'completed') {
+      budget = IN_FLIGHT_REQUEST_BUDGET;
+      const compare = await get('compare', `/compare/${merge.parents?.[0]?.sha}...${pr.head.sha}`);
+      const evidence = { repository: env.GITHUB_REPOSITORY, owner: env.GITHUB_REPOSITORY_OWNER,
+        sha, workflow: env.REUSE_WORKFLOW, merge, pr, sourceCommit, run, compare };
+      validateInFlightRun(evidence);
+      for (let read = 0; ; read += 1) {
+        const jobs = await get('jobs', jobsPath);
+        try {
+          return validateInFlightEvidence({ ...evidence, jobs });
+        } catch (error) {
+          if (!(error instanceof ProofRefusal) || error.code !== 'pr_run_gate_undecided' || read >= TREE_RUN_POLLS) throw error;
+        }
+        await sleep(TREE_RUN_POLL_INTERVAL_MS);
+      }
+    }
     // Said here, before anything else is read about it: a latest run that is unfinished or not green is no evidence.
     requireProof(run.status === 'completed' && run.conclusion === 'success', 'pr_run_not_passed');
-    const jobs = await get('jobs', `/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`);
+    const jobs = await get('jobs', jobsPath);
     // Read again after the evidence: a retry or newer run that started meanwhile voids the earlier green proof.
     const latestUnchanged = async () => {
       const fresh = await get('runs_again', runPath);
