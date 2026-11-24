@@ -2594,6 +2594,44 @@ test('parked-front T3: a front batch ended TRAIN_BATCH_CHANGED is reported (fron
   assert.ok(f.clock() - start <= 120 * 60_000, `landed after ${(f.clock() - start) / 60_000} minutes`);
 });
 
+// Burned passenger (修复前必红; D:/w/tmp/FABLE-train-property-decisions-20261124.md §6). 1441 lands; then 1442's ordinary batch passes
+// stage 1 and its stage 8 finds its batch-route file gone (once): the real stage 8 answers full_admission_subject_changed, the resident
+// maps it PR_NOT_OPEN_OR_CHANGED and the row stops, before stage 8 ever joined 1442 to the merge queue. 1442 keeps its admission green,
+// its auto-merge and its bound claim, so stage 10 still picks it as 1443's rider, and stage 8 ends every such batch TRAIN_BATCH_CHANGED
+// (a rider not in the queue), reported frontFailed false. Before the fix stage 10 bisected only on frontFailed true: every round opened
+// the same two members under a new S until the node's daily batch budget ran out (DAILY_BATCH_LIMIT, a deferral for every PR). Now a
+// batch of several reported ended is bisected: 1443 alone next, and it lands.
+test('burned passenger: a PR burned after stage 1, before stage 8 queued it, is not 1443\'s rider forever -> 1443 lands within 20 rounds, no DAILY_BATCH_LIMIT', async t => {
+  const prs = [1441, 1442, 1443];
+  const e = await world(t, { prs, behind: 2, queued: false, admitted: false, appScans: [] });
+  let burn = false, burned = false;
+  const tamper = async (number, dir) => { if (number === 8 && burn) { burn = false; await fs.rm(path.join(dir, STAGE_BATCH_ROUTE_FILE)); } };
+  const r = await residentOver(t, e, { queueFacts: true, tamper });
+  const { f, engine } = r;
+  const stage = engine.runStage;
+  engine.runStage = async (batch, s) => {
+    const subject = engine.subjects.get(batch.key), front = Object.hasOwn(subject ?? {}, 'testSha') && subject.testSha !== subject.headSha;
+    if (s.number === 8 && !burned && !front && subject?.pr === 1442 && engine.stage8.some(x => x.front && x.status === 'SETTLED')) burn = burned = true;
+    return stage(batch, s);
+  };
+  const ticks = [];
+  for (let i = 0; i < 20 && !e.W.pulls.get(1443).merged; i++) {
+    await r.poller.pass();
+    const x = await f.exec.tick();
+    ticks.push(`${x?.state ?? null}:${x?.reason ?? x?.failureCode ?? ''}`);
+    f.advance(60_000);
+  }
+  const opens = engine.trainRuns.map(x => x.openFrontBatch).filter(Boolean).map(o => [o.pr, o.testSha.slice(0, 7), (o.members ?? []).map(m => m.pr)]);
+  const diag = `${await diagOf(r)} ticks ${JSON.stringify(ticks)} opens ${JSON.stringify(opens)}`;
+  assert.ok(burned && e.W.pulls.get(1441).merged, diag);
+  assert.ok(engine.stage8.some(x => x.pr === 1442 && !x.front && x.reason === 'full_admission_subject_changed'), `1442 burned at stage 8: ${diag}`);
+  assert.ok(engine.stage8.some(x => x.pr === 1443 && x.front && x.reason === 'TRAIN_BATCH_CHANGED'), `the batch carrying 1442 ended: ${diag}`);
+  assert.ok(!ticks.some(x => x.includes('DAILY_BATCH_LIMIT')), `the node's batch budget burned: ${diag}`);
+  assert.ok(opens.filter(o => o[0] === 1443).length <= 3, `front batches of 1443: ${diag}`);
+  assert.ok(e.W.pulls.get(1443).merged, `1443 landed: ${diag}`);
+  assert.equal(e.W.pulls.get(1442).merged, false, diag);
+});
+
 // ---- bc982192 parked-front v2 rework (D:/w/tmp/FABLE-parked-front-attempt2-number-20261123.md §4 N1, N2) ----
 // The executor reports the end of its automatic attempt 2 of a front batch with front number 2; stage 10 recorded that batch as its own
 // number (1). Stage 10 knows its batch by (PR, head, S) alone (§2.2 A): the report names the batch, whatever the number says.
