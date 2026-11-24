@@ -19,8 +19,10 @@
 //     file name, when no test file imports it and no suite runs it: rename it, or list it;
 //   - growth against the base (--base, else CI_BASE_SHA, else the newest origin/main commit HEAD contains), read from
 //     git: an entry of ci-uncovered-tests.json the base does not list, once the base's table has SHRINKING_SCHEMA; an
-//     entry of ci-known-failures.json (suite, file, test path and fingerprint) the base does not list; a base it cannot
-//     read. Both lists only shrink: a file leaves the table when a suite runs it, a failure leaves when it is fixed.
+//     entry of ci-known-failures.json (suite, file, test path and fingerprint) the base does not list; a file an archive
+//     pattern matches that the base does not have (an archive is sealed: no new test hides under it, whatever the
+//     base's schema); a base it cannot read. Both lists only shrink: a file leaves the table when a suite runs it, a
+//     failure leaves when it is fixed.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -141,7 +143,8 @@ export function resolveBase(root, explicit, env = process.env) {
   }
 }
 
-// Both lists as the base holds them, parsed; a list the base does not have is null. Throws when the base cannot be read.
+// Both lists as the base holds them, parsed (a list the base does not have is null), and the files it tracks. Throws
+// when the base cannot be read.
 export function readBaseline(root, base) {
   if (!base) throw new Error('no base: pass --base <main commit>, set CI_BASE_SHA or fetch origin/main');
   try {
@@ -157,7 +160,8 @@ export function readBaseline(root, base) {
       throw error;
     }
   };
-  return { base, table: at(TABLE_PATH), known: at(KNOWN_PATH) };
+  const files = git(root, ['ls-tree', '-r', '--name-only', '-z', base]).split(' ').filter(Boolean);
+  return { base, table: at(TABLE_PATH), known: at(KNOWN_PATH), files };
 }
 
 function readKnown(read) {
@@ -178,7 +182,8 @@ function growth(table, known, baseline) {
       }
     }
   }
-  const keyOf = (entry) => (typeof entry?.file === 'string' && Array.isArray(entry.path) ? knownKey(entry) : JSON.stringify(entry));
+  const keyOf = (entry) => (typeof entry?.file === 'string' && Array.isArray(entry.path) ? knownKey(entry)
+    : JSON.stringify([entry?.file, entry?.path, entry?.fingerprint]));
   for (const [suite, entries] of Object.entries(known ?? {})) {
     const listed = new Set((Array.isArray(baseline.known?.[suite]) ? baseline.known[suite] : []).map(keyOf));
     for (const entry of Array.isArray(entries) ? entries : []) {
@@ -207,7 +212,8 @@ const entryProblems = (entry) => {
 const PULL_REQUEST_TRIGGER = /^\s*(?:-\s*)?pull_request\s*:?\s*$|^on:.*\bpull_request\b(?!_)/m;
 
 // The whole verdict; inputs are injectable so the test can add files that do not exist.
-// baseline ({ base, table, known }: the lists at the base) defaults to readBaseline at resolveBase(root, base).
+// baseline ({ base, table, known, files }: the lists at the base and the files it tracks) defaults to readBaseline at
+// resolveBase(root, base); a baseline without files has none, so every file an archive pattern matches is new.
 export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), read = (file) => readOr(root, file),
   table = readTable(root), known = readKnown(read), base, baseline, commands = SUITE_COMMANDS, listUnit } = {}) {
   const trackedSet = new Set(tracked);
@@ -243,6 +249,7 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
     }
   }
   if (baseline) problems.push(...growth(table, known, baseline));
+  const baseFiles = baseline ? new Set(Array.isArray(baseline.files) ? baseline.files : []) : null;
   const entries = Array.isArray(table?.tests) ? table.tests : [];
   if (!Array.isArray(table?.tests)) problems.push(`${TABLE_PATH}: "tests" must be a list of entries`);
   const seen = new Set();
@@ -272,6 +279,11 @@ export function coverage({ root = DEFAULT_ROOT, tracked = trackedFiles(root), re
         if (!PULL_REQUEST_TRIGGER.test(text)) problems.push(`${entry.path}: workflow ${entry.workflow} has no pull_request trigger`);
         const names = [path.posix.basename(entry.path), entry.path.replace(/\.py$/, '').replaceAll('/', '.')];
         if (!names.some((name) => text.includes(name))) problems.push(`${entry.path}: workflow ${entry.workflow} does not name this test`);
+      }
+    }
+    if (pattern && baseFiles) {
+      for (const file of matches.filter((match) => !baseFiles.has(match))) {
+        problems.push(`${file}: the base (${baseline.base}) does not have it; the archive ${entry.path} is sealed and takes no new test: make a required suite run it`);
       }
     }
     for (const file of matches) exempt.set(file, entry);
