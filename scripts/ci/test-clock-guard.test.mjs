@@ -16,6 +16,7 @@ import {
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GUARD_URL = pathToFileURL(GUARD_PATH).href;
+const SCAN_PATH = path.join(path.dirname(GUARD_PATH), 'test-clock-scan.mjs');
 const made = [];
 after(() => {
   for (const dir of made) rmSync(dir, { recursive: true, force: true });
@@ -185,6 +186,84 @@ test('a debt-list file is recorded and let through; sleep() needs an allowlist e
   assert.deepEqual(allowed.record.refused, []);
 });
 
+test('a fake clock the test installs (Date.now = ..., mock.method) is what Date.now() answers', () => {
+  const root = checkout({ 'test/fake.test.mjs': `${header}test('assigned', () => {
+  const real = Date.now;
+  Date.now = () => 42;
+  try {
+    assert.equal(Date.now(), 42);
+  } finally {
+    Date.now = real;
+  }
+  assert.equal(Date.now, real);
+});
+test('mock.method', (t) => {
+  t.mock.method(Date, 'now', () => 7);
+  assert.equal(Date.now(), 7);
+});
+` });
+  const run = runGuarded(root, 'test/fake.test.mjs');
+  assert.equal(run.status, 0, run.output);
+  assert.deepEqual(run.record.refused, []);
+});
+
+test('a listed helper does not lend its debt: an unlisted test that waits through it fails; evals harnesses are test code', () => {
+  const waits = (from) => `${header}import { waitFor } from '${from}';\ntest('waits', async () => {\n  assert.equal(await waitFor(() => 1, 'one'), 1);\n});\n`;
+  const root = checkout({
+    [DEBT_FILE]: 'test/helpers.mjs\ntest/old.test.mjs\n',
+    'test/helpers.mjs': 'export async function waitFor(read, what, ms = 10000) {\n  const deadline = Date.now() + ms;\n  for (;;) {\n    const value = await read();\n    if (value) return value;\n    if (Date.now() >= deadline) throw new Error(what);\n  }\n}\n',
+    'test/old.test.mjs': waits('./helpers.mjs'),
+    'test/new.test.mjs': waits('./helpers.mjs'),
+    'apps/x/evals/harness.mjs': 'export const started = () => performance.now();\n',
+    'apps/x/tests/harnessed.test.mjs': `${header}import { started } from '../evals/harness.mjs';\ntest('harness', () => {\n  assert.ok(started() >= 0);\n});\n`,
+  });
+  // An unlisted test through the listed helper: refused, naming the helper's line and the test.
+  const fresh = runGuarded(root, 'test/new.test.mjs');
+  assert.notEqual(fresh.status, 0, fresh.output);
+  assert.deepEqual(fresh.record.refused.map((entry) => `${entry.file}:${entry.line} ${entry.entry}`), ['test/helpers.mjs:2 test/new.test.mjs']);
+  assert.match(fresh.record.lines.join('\n'), /test\/helpers\.mjs:2 Date\.now\(\) \(test\/new\.test\.mjs\)/);
+  rmSync(path.join(root, 'clock-record.jsonl'));
+  // A harness under evals is test code, not code under test.
+  const harnessed = runGuarded(root, 'apps/x/tests/harnessed.test.mjs');
+  assert.notEqual(harnessed.status, 0, harnessed.output);
+  assert.deepEqual(harnessed.record.refused.map((entry) => `${entry.file} ${entry.api}`), ['apps/x/evals/harness.mjs performance.now()']);
+  assert.equal(testFileKind('apps/x/evals/harness.mjs'), 'js');
+  rmSync(path.join(root, 'clock-record.jsonl'));
+  // A listed test through the listed helper: its debt, recorded and let through.
+  const old = runGuarded(root, 'test/old.test.mjs');
+  assert.equal(old.status, 0, old.output);
+  assert.deepEqual(old.record.refused, []);
+  assert.deepEqual(old.record.debt.map((entry) => `${entry.file}:${entry.line} ${entry.entry}`), ['test/helpers.mjs:2 test/old.test.mjs']);
+});
+
+test('a promisified exec or execFile with a timeout fails through the guard and the static scan', () => {
+  // The texts are split so this file does not carry them.
+  const limit = `{ time${''}out: 10000 }`;
+  const promised = `promis${''}ify`;
+  const fixture = `${header}import { exec, execFile } from 'node:child_process';
+import { ${promised} } from 'node:util';
+test('execFile', async () => {
+  await ${promised}(execFile)(process.execPath, ['-e', '0'], ${limit});
+});
+test('exec', async () => {
+  await ${promised}(exec)(JSON.stringify(process.execPath) + ' -e 0', ${limit});
+});
+test('no limit', async () => {
+  await ${promised}(execFile)(process.execPath, ['-e', '0']);
+});
+`;
+  const root = checkout({ 'test/promised.test.mjs': fixture });
+  const run = runGuarded(root, 'test/promised.test.mjs');
+  assert.notEqual(run.status, 0, run.output);
+  assert.deepEqual(run.record.refused.map((entry) => `${entry.api} ${entry.line}`), ['execFile({ timeout }) 6', 'exec({ timeout }) 9']);
+  assert.match(run.output, /pass 1/);
+  // The static scan reads the same in a test the debt list does not name (a path the run may skip on this platform).
+  const { root: repo, base } = repository({ [DEBT_FILE]: '', 'test/clean.test.mjs': `${header}test('x', () => {});\n` });
+  write(repo, 'test/promised.test.mjs', fixture);
+  assert.deepEqual(debtVerdict({ root: repo, base, ci: false }).problems,
+    ['test/promised.test.mjs:6,9: a promisified exec or execFile is given a timeout in a test; the entry bounds the whole command']);
+});
+
 // A git checkout with one commit (the base), for the debt list's comparisons.
 function repository(files) {
   const root = checkout(files);
@@ -258,11 +337,38 @@ test('the allowlist names a file, a kind and the exact count', () => {
   const sleeper = `${header}import { sleep } from '../scripts/ci/test-clock-guard.mjs';\ntest('x', async () => { await sleep(1, 'a'); await sleep(1, 'b'); });\n`;
   const entry = (count) => JSON.stringify([{ file: 'test/s.test.mjs', kind: 'sleep', count, reason: 'measures a real delay', ruling: 'FABLE x' }]);
   const { root } = repository({ [DEBT_FILE]: '', 'test/s.test.mjs': sleeper, 'scripts/ci/test-clock-allow.json': entry(2) });
-  assert.deepEqual(debtVerdict({ root }).problems, []);
+  assert.deepEqual(debtVerdict({ root, ci: false }).problems, []);
   write(root, 'scripts/ci/test-clock-allow.json', entry(1));
-  assert.match(debtVerdict({ root }).problems.join('\n'), /the entry says 1, the file has 2/);
+  assert.match(debtVerdict({ root, ci: false }).problems.join('\n'), /the entry says 1, the file has 2/);
   write(root, 'scripts/ci/test-clock-allow.json', JSON.stringify([{ file: 'test/s.test.mjs', kind: 'wallclock', count: 1, reason: 'r', ruling: 'x' }]));
-  assert.match(debtVerdict({ root }).problems.join('\n'), /an entry is \{ file, kind/);
+  assert.match(debtVerdict({ root, ci: false }).problems.join('\n'), /an entry is \{ file, kind/);
+});
+
+test('in CI the debt list is compared or the check fails: no base commit, or a base list that is not a file, is a failure', () => {
+  const clean = `${header}test('x', () => {});\n`;
+  const { root } = repository({ [DEBT_FILE]: '', 'test/clean.test.mjs': clean });
+  assert.deepEqual(debtVerdict({ root, ci: false }).problems, []);
+  assert.deepEqual(debtVerdict({ root, ci: true }).problems, ['no base commit (CI_BASE_SHA) in CI: the debt list cannot be compared; give the entry the base commit']);
+  // The command line takes CI from the environment.
+  const cli = (extra) => {
+    const env = { ...process.env, ...extra };
+    for (const name of ['CI', 'GITHUB_ACTIONS', 'CI_BASE_SHA']) if (!(name in extra)) delete env[name];
+    return spawnSync(process.execPath, [SCAN_PATH, '--check', '--root', root], { env, encoding: 'utf8' });
+  };
+  const local = cli({});
+  assert.equal(local.status, 0, local.stdout);
+  const inCi = cli({ GITHUB_ACTIONS: 'true' });
+  assert.equal(inCi.status, 1, inCi.stdout);
+  assert.match(inCi.stdout, /no base commit \(CI_BASE_SHA\) in CI/);
+  // A base without the list is the change that brings it: nothing to compare. A base whose list is not a file is a failure.
+  const first = repository({ 'test/clean.test.mjs': clean });
+  write(first.root, DEBT_FILE, 'test/x.test.mjs\n');
+  write(first.root, 'test/x.test.mjs', `${header}test('x', () => {\n  assert.ok(Date.now());\n});\n`);
+  assert.deepEqual(debtVerdict({ root: first.root, base: first.base, ci: true }).problems, []);
+  const odd = repository({ [`${DEBT_FILE}/x`]: '', 'test/clean.test.mjs': clean });
+  rmSync(path.join(odd.root, DEBT_FILE), { recursive: true });
+  write(odd.root, DEBT_FILE, '');
+  assert.match(debtVerdict({ root: odd.root, base: odd.base, ci: true }).problems.join('\n'), /base commit's config\/test-clock-debt\.txt is not a file/);
 });
 
 test('the guard environment and what counts as test code', () => {
@@ -280,7 +386,7 @@ test('the guard environment and what counts as test code', () => {
 
 test('the repository as it is: the debt list, the allowlist and the static rules hold', () => {
   // Tracked files only: what other tests of the same run write into the checkout is not the repository.
-  const { problems, debt } = debtVerdict({ root: REPO, untracked: false });
+  const { problems, debt } = debtVerdict({ root: REPO, untracked: false, ci: false });
   assert.deepEqual(problems, []);
   assert.ok(debt.length > 0);
 });
