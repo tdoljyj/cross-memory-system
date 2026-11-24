@@ -119,7 +119,8 @@ function slotFixture(t) {
     writeFileSync(path.join(scripts, 'check-pinned-registries.mjs'), 'process.exitCode = 75;\n');
     const env = { ...process.env, SLOT_FIXTURE_QUEUE: queue, SLOT_FIXTURE_WAIT: String(waitMs),
       SLOT_FIXTURE_HOLD: String(holdMs), SLOT_FIXTURE_PROBE_ERROR: String(probeErrors || ''), SLOT_FIXTURE_PROBE_AFTER: String(probeAfter) };
-    env.CI_BASE_SHA ||= 'fixture-base';
+    // A CI job always has a base commit (ciBaseRefusal); none of these commands compares with it.
+    env.CI_BASE_SHA ||= 'f'.repeat(40);
     delete env.CI;
     delete env.GITHUB_ACTIONS;
     delete env.NODE_TEST_CONTEXT;
@@ -1285,7 +1286,7 @@ test('the trusted CLI runs a command added by this PR and its failure fails the 
   const trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs');
   // As in the required check: the trusted base's selector on the candidate checkout, in Actions (no local slot).
   const run = () => spawnSync(process.execPath, [trusted, '--run', 'retrigger-counter', '--root', root],
-    { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+    { env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40) }, encoding: 'utf8' });
   writeFileSync(path.join(dir, 'retrigger-counter.test.mjs'), "console.log('baseline executed');\n");
   const unchanged = run();
   assert.equal(unchanged.status, 0, unchanged.stdout + unchanged.stderr);
@@ -1342,7 +1343,7 @@ test('candidate commands: no known-failure allowance, nothing outside the checko
 
 // As the required check runs: the trusted selector (given) on the candidate checkout, in Actions (no local slot).
 const runCandidate = (root, id = 'retrigger-counter', trusted = path.join(ROOT, 'scripts/ci/ci-required-selection.mjs')) =>
-  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true' }, encoding: 'utf8' });
+  spawnSync(process.execPath, [trusted, '--run', id, '--root', root], { env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40) }, encoding: 'utf8' });
 const groupLines = (out) => out.split(/\r?\n/).filter((line) => line.startsWith('::group::'));
 
 // Gap A review finding 1: the selector's bytes say nothing about the modules it imports, so a candidate selector at another
@@ -2104,6 +2105,56 @@ for (const [file, id] of BASELINE_JOBS) {
     }
   });
 }
+
+// T2 (Task 11092b8b, PLAN-mainpush-flaky-rerun-20261124 §3): in a CI job (GITHUB_ACTIONS=true) a step that runs suites without a base commit is wired wrong: the
+// selector starts nothing and fails, naming CI_BASE_SHA, so the change that drops the line fails in its own pull request.
+// The selector here is this one with a ci-suites table of one suite whose command only leaves a file behind.
+test('in a CI job, --run and --run-selected without a base commit start no command and name CI_BASE_SHA', (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ci-no-base-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const tools = path.join(dir, 'tools');
+  mkdirSync(tools);
+  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(tools, 'test-env.mjs'));
+  const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
+SUITES['ci-suites']['retrigger-counter'] = ['**'];
+delete SUITE_PLATFORMS['retrigger-counter'];
+SUITE_COMMANDS['retrigger-counter'] = [{ cwd: '.', argv: ['node', '-e', "require('node:fs').writeFileSync('started', '')"] }];`;
+  const selector = path.join(tools, 'ci-required-selection.mjs');
+  writeFileSync(selector, `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}\n${tail}\n`);
+  const root = path.join(dir, 'checkout');
+  mkdirSync(root);
+  const started = path.join(root, 'started');
+  const run = (args, base) => {
+    const env = { ...process.env, GITHUB_ACTIONS: 'true' };
+    for (const name of ['NODE_TEST_CONTEXT', 'CI_BASE_SHA', 'GITHUB_EVENT_NAME', 'GITHUB_EVENT_PATH', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
+      'CLUED_CI_HOST_LACKS']) delete env[name];
+    if (base !== undefined) env.CI_BASE_SHA = base;
+    return spawnSync(process.execPath, [selector, ...args, '--root', root], { env, encoding: 'utf8', timeout: 60_000 });
+  };
+  for (const args of [['--run', 'retrigger-counter'], ['--run-selected', 'ci-suites']]) {
+    // The fixture sees a command start: with a base the command runs.
+    const wired = run(args, 'a'.repeat(40));
+    assert.equal(wired.status, 0, `${args.join(' ')}: ${wired.stdout}${wired.stderr}`);
+    assert.ok(existsSync(started), `${args.join(' ')} with a base runs the command`);
+    rmSync(started);
+    for (const base of [undefined, '', '0'.repeat(40), 'unset']) {
+      const r = run(args, base);
+      const where = `${args.join(' ')}, CI_BASE_SHA=${JSON.stringify(base)}: ${r.stdout}${r.stderr}`;
+      assert.notEqual(r.status, 0, where);
+      assert.equal(existsSync(started), false, `no command starts\n${where}`);
+      assert.match(r.stdout + r.stderr, /CI_BASE_SHA/, where);
+    }
+  }
+});
+
+// T3 (same plan as T2): outside a CI job nothing changes: a local --run without a base runs its suite (and a failed command is then
+// not run again: ci-required-selection-flaky.test.mjs G).
+test('a local --run without a base commit runs its suite', async (t) => {
+  const start = slotFixture(t);
+  const run = start('local-no-base', { body: "console.log('ran without a base');\n", extraEnv: { CI_BASE_SHA: undefined } });
+  assert.deepEqual(await run.done, [0, null], run.output());
+  assert.match(run.output(), /ran without a base/);
+});
 
 // The release door flow test runs the release workflow's steps and the grant script against a database, so a change to
 // either runs it (FABLE-release-identity-autonomous-20261119 §3.1 tests 8 to 12).
