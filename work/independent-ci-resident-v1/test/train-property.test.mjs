@@ -53,7 +53,7 @@ const TWINS = Object.freeze(['proof', 'full-on', 'strict-front-proof']);
 
 const ADMISSION = "unregistered: one failed read of the admission (stage 1) burns the PR (STOPPED NATIVE_NOT_ADMITTED, no HALT, no PAUSE); the code is the fixture's, the verdict stands at the fixture boundary";
 const B163 = "board 搁163: two sweep proofs of one millisecond, the train stays TRAIN_SWEEP_INCOMPLETE for ever";
-const B162 = "board 搁162: stage 8 and 10 cannot read the rules, the PRs behind the landed front stay parked (with the stage 8 code of the fixture of 11-22)";
+const STAGE8 = "unregistered, since main 12e8a3dea (on 43e2c3baa: HALT FAILURE_CODE_INVALID): a stage 8 that cannot read its PR or its batch file stops the PR (PR_NOT_OPEN_OR_CHANGED) and the PR behind it stays QUEUED: its front batches end TRAIN_BATCH_CHANGED until DAILY_BATCH_LIMIT defers every tick; the code is the fixture's (the publisher's reason handed on as the code)";
 const TWIN_FULL = "unregistered: the class of 搁163 on another record kind: two full-sweep records of one millisecond, the train stays TRAIN_SWEEP_INCOMPLETE and the takeover waits for the sweep for ever";
 const KNOWN_RED = Object.freeze({
   "github.readChangedPaths | stage 1 | empty | after the first landing": ADMISSION,
@@ -73,7 +73,9 @@ const KNOWN_RED = Object.freeze({
   "store:proof | every stage of one round | twin | after the first landing": B163,
   "store:strict-front-proof | every stage of one round | twin | after the first landing": B163,
   "store:full-on | every stage of one round | twin | after the first landing": TWIN_FULL,
-  "github.readBranchRules | every stage of one round | error | after the first landing | stage 8 answers TRAIN_SINGLE_GREEN_NOT_PROVEN": B162,
+  "github.readPullRequest | stage 8 | empty | after the first landing": STAGE8,
+  "stage-file.batch-route | stage 8 | error | after the first landing": STAGE8,
+  "stage-file.batch-route | stage 8 | empty | after the first landing": STAGE8,
 });
 
 // The injection is armed after the first front batch landed: one PR is in main, the two behind it are on their way. The points the scene
@@ -93,7 +95,9 @@ for (const arm of ARMS) {
 }
 // 搁162 as the board recorded it on 11-22: the fixture's stage 8 then answered every unsettled publication with
 // TRAIN_SINGLE_GREEN_NOT_PROVEN (a parking code). Since 80b938207 the fixture's stage 8 answers with the publisher's own reason and
-// the same injection lands (the case of the table above, without the code). Which of the two the product's stage 8 does is open.
+// the same injection lands (the case of the table above, without the code). With the code of 11-22 this case stalled on main
+// 43e2c3baa (1 of 3 landed, the two behind PARKED for ever) and lands on main 12e8a3dea (parked front v2, #1291): it stays here as
+// the guard of that fix.
 cases.push({ point: 'github.readBranchRules', scope: 'tick', mode: 'error', arm: 'mid', stage8Code: 'TRAIN_SINGLE_GREEN_NOT_PROVEN' });
 const verdicts = new Map();
 const holds = v => v.verdict === 'landed' || v.verdict === 'terminal';
