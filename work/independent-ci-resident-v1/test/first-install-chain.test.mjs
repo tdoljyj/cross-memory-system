@@ -240,7 +240,7 @@ const listFile = (t, list) => { const f = path.join(tempDir(t, 'fi-chain-list-')
 
 // Drill 70e8be94 (launcher VERIFY_SCRIPT_PARSE_ERRORS): the launcher reads a package script as UTF8Encoding($false).GetString(bytes) and
 // parses that text (Read-VerifySecretHelpers), which keeps a BOM. Every script the package carries parses so in Windows PowerShell 5.1.
-test('static: every PowerShell script of the package parses in Windows PowerShell 5.1 as the launcher reads it', { skip, timeout: 300_000 }, async (t) => {
+test('static: every PowerShell script of the package parses in Windows PowerShell 5.1 as the launcher reads it', { skip }, async (t) => {
   const scripts = await packageScripts();
   assert.ok(scripts.length > 10, `${scripts.length} scripts`);
   const r = ps(`$ErrorActionPreference = 'Stop'; $U8 = New-Object Text.UTF8Encoding($false); $bad = @()
@@ -270,6 +270,7 @@ function Get-Fn($n) { for ($p = $n.Parent; $null -ne $p; $p = $p.Parent) { if ($
 function Get-ScopeKey($n) { $f = Get-Fn $n; if ($f) { [string]$f.Extent.StartOffset } else { 'S' } }
 function Get-VarName($v) { $v.VariablePath.UserPath.ToLowerInvariant() -replace '^(script|global|local|private):', '' }
 foreach ($rel in $files) {
+  [Console]::Error.WriteLine($rel)
   $text = $U8.GetString([IO.File]::ReadAllBytes((Join-Path $Checkout $rel))).TrimStart([char]0xFEFF)
   $tk = $null; $er = $null; $ast = [Management.Automation.Language.Parser]::ParseInput($text, [ref]$tk, [ref]$er)
   $fns = @{}; foreach ($f in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $fns[$f.Name.ToLowerInvariant()] = $f }
@@ -315,7 +316,7 @@ ConvertTo-Json -Depth 4 -Compress -InputObject $sites.ToArray()`;
 // The one start without Bypass by design: the host preparation's probe of the machine's own policy (ps-execution-policy.test.mjs PROBE).
 const PROBE = { file: 'work/independent-ci-resident-v1/windows/first-install-host.ps1', via: 'Invoke-ExecutionPolicyBaseline' };
 
-test('static: every PowerShell a package script starts carries -ExecutionPolicy Bypass', { skip, timeout: 300_000 }, async (t) => {
+test('static: every PowerShell a package script starts carries -ExecutionPolicy Bypass', { skip }, async (t) => {
   const closure = JSON.parse(fs.readFileSync(path.join(CHECKOUT, ...CLOSURE.split('/')), 'utf8')).paths;
   const scripts = (await packageScripts()).filter(p => !closure.includes(p));
   const sites = ps(`& { ${SCANNER} } ${psLiteral(CHECKOUT)} ${psLiteral(listFile(t, scripts))}`);
@@ -326,4 +327,26 @@ test('static: every PowerShell a package script starts carries -ExecutionPolicy 
   assert.ok(at('/reinstall/launcher/template.ps1', 'start-info', 'Invoke-Child'), show(sites));
   assert.ok(sites.some(s => s.file.endsWith('/windows/install-resident.ps1') && s.kind === 'invoke' && /migrate-acl|\$tool/.test(s.text)), show(sites));
   assert.equal(sites.filter(isProbe).length, 1, `the probe exception is one start: ${show(sites.filter(isProbe))}`);
+});
+
+// Task 11092b8b (run 45201050855: 300582 ms, spawnSync powershell.exe ETIMEDOUT): the shared ps() sets no wall-clock limit, and when a
+// run does fail it says what PowerShell last wrote. A spawn "slower than any finite limit": a call that sets a timeout gets ETIMEDOUT
+// at once; one without gets a normal result.
+const etimedout = (exe, args) => Object.assign(new Error(`spawnSync ${exe} ETIMEDOUT`), { code: 'ETIMEDOUT', errno: -4039, syscall: `spawnSync ${exe}`, path: exe, spawnargs: args });
+const slowerThanAnyLimit = (exe, args, options = {}) => options.timeout === undefined
+  ? { status: 0, signal: null, stdout: '{"ok":true}\n', stderr: '', error: undefined }
+  : { status: null, signal: null, stdout: '', stderr: '', error: etimedout(exe, args) };
+
+test('ps(): a PowerShell run sets no wall-clock limit (a busy machine is not a red)', () => {
+  assert.deepEqual(ps(`'{"ok":true}'`, { spawn: slowerThanAnyLimit }), { ok: true });
+});
+
+test('ps(): a failed spawn reports the last lines PowerShell wrote to stderr', () => {
+  const stderr = Array.from({ length: 25 }, (_, i) => `progress-line-${i + 1}`).join('\r\n') + '\r\n';
+  const failed = (exe, args) => ({ status: null, signal: 'SIGTERM', stdout: '', stderr, error: etimedout(exe, args) });
+  const message = (() => { try { ps(`'{}'`, { spawn: failed }); } catch (e) { return String(e.message); } return 'did not throw'; })();
+  assert.match(message, /ETIMEDOUT/);
+  assert.match(message, /progress-line-25/, message);
+  assert.match(message, /progress-line-6\b/, message);
+  assert.doesNotMatch(message, /progress-line-5\b/, 'the last 20 lines, not the whole stream');
 });

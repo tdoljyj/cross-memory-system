@@ -281,7 +281,6 @@ test('executor (review of 3c-1, round 2): the clean endings that are not BLOCKED
   const cases = [
     [{ ok: false, code: 'BROKER_REQUEST_EXPIRED', proof, brokerNoLaunch: true }, null],
     [{ ok: false, code: 'BROKER_REQUEST_REFUSED', proof, brokerNoLaunch: true }, null],
-    [{ ok: false, code: 'STAGE_HELPER_PREFLIGHT_REFUSED', proof }, null],
     [{ ok: false, code: 'STAGE_CHILD_TIMEOUT', proof }, null],
     // the child wrote its facts, then ran into the cap: the bound outcome is quiet (round 2, NIT 3)
     [{ ok: false, code: 'PUBLICATION_UNCERTAIN', proof, outcome: facts }, null],

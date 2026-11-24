@@ -12,7 +12,8 @@ import { ResidentExecutor } from '../src/executor.mjs';
 import { StatusBoard, parseStatus, pollerLandingOf } from '../src/status.mjs';
 import { WindowsEngine } from '../src/engine-windows.mjs';
 import { HEAVY_ROLES } from '../src/policy.mjs';
-import { executorFixture, fakeEngine, triggerBytes, tempRoot, TEST_NODE, TEST_NODE_SHA } from './helpers.mjs';
+import { batchKey } from '../src/ledger.mjs';
+import { BASE, HEAD, SOURCE, WINDOWS_CLEAN, executorFixture, fakeEngine, triggerBytes, tempRoot, TEST_NODE, TEST_NODE_SHA } from './helpers.mjs';
 
 const H = n => String(n).repeat(40).slice(0, 40);
 const B = H(9), NOW = Date.parse('2026-11-22T09:00:00Z');
@@ -313,4 +314,38 @@ test('E12 executor: the tick restamps only while the route is push, saves the qu
   assert.equal(disk.row(21).current.batchRoute, 'push', 'on disk');
   await f.exec.restampStopped();
   assert.equal((await restamped()).length, 1, 'once');
+});
+
+// Board 266 (FABLE-backlog-batch-design-20261124 §3): under the push route the poller's trigger carries each PR's merge base
+// (poller.mjs batchBase), not main's tip, so another PR's base is no sign that main moved; and main moving sends no trigger at all
+// (deduplicated by PR:head:batchBase). There "main moved" is stage 10's own reading (hintParkedHead); the trigger keeps only the
+// PR-edited and parkEvent nudges. Under github-merge (batchBase = main's tip) the moved nudge is unchanged (the guard, green before too).
+test('266: under the push route the merge bases of other PRs nudge no parked batch; under github-merge a new tip still does', async t => {
+  const KEY = batchKey({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1 });
+  const notReady = { ok: false, code: 'RESIDENT_MERGE_QUEUE_NOT_JOINED', proof: WINDOWS_CLEAN, brokerNoLaunch: false,
+    outcome: { status: 'BLOCKED', reason: 'RESIDENT_MERGE_QUEUE_NOT_JOINED', sideEffects: 0, mayHavePublished: false, diagnostic: null,
+      scheduling: { ciRetryAfter: null, mergeQueue: { entered: false, state: null, position: null } }, safeToRerun: false } };
+  const poller = (pr, base) => ({ t: { contract: 'clued.independent-ci.resident-trigger/2', repo: 'tdoljyj/cross-memory-system', pr, headSha: H(pr % 10),
+    baseSha: base, prUpdatedAt: '2026-11-22T09:30:00.000Z' }, seen: false });
+  for (const route of ['push', null]) {
+    const engine = fakeEngine(), run = engine.runStage;
+    let parked = false;
+    engine.runStage = async (batch, stage, o) => (stage.number === 8 && !parked ? (parked = true, engine.calls.push(['stage', 8]), notReady) : run(batch, stage, o));
+    const f = await executorFixture(t, { engine });
+    await f.drop(triggerBytes());
+    assert.equal((await f.exec.tick()).state, 'PARKED', String(route));
+    if (route === 'push') {
+      f.exec.policy = { ...f.exec.policy, train: { ...f.exec.policy.train, enabled: 'on', landing: 'push' } };
+      f.exec.trainLast = Object.freeze({ landing: { route: 'push' }, appScans: [] });
+    }
+    assert.equal(f.exec.batchRoute(), route);
+    await f.exec.nudgeParked([poller(901, H(5)), poller(902, H(6)), poller(903, H(7))], f.clock());
+    if (route === 'push') {
+      assert.equal(f.exec.parkNudges.has(KEY), false, 'push: the parked batch is not brought forward by the merge bases of other PRs');
+      assert.equal(f.exec.parkNudgeBase.get(KEY), undefined, 'push: no merge base is taken for a main tip');
+    } else {
+      assert.equal(f.exec.parkNudges.has(KEY), true, 'github-merge: a new main tip still nudges');
+      assert.deepEqual(f.exec.parkNudgeBase.get(KEY), [H(5)]);
+    }
+  }
 });
