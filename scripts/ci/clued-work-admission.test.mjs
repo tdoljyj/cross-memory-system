@@ -5140,3 +5140,20 @@ test("G-4 independent gate: an unrecognised text, an older held text under a new
     assert.ok(!outcome.reasons.some((reason) => reason.includes("准入方不提议")), `${label}: ${JSON.stringify(outcome.reasons)}`);
   }
 });
+
+test("G-5 gate side: the gate holds pr-status.mjs's held-texts block byte for byte and reads every text describe writes as its hint", async () => {
+  const source = (relative) => fs.readFileSync(new URL(relative, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const block = (text) => {
+    const begin = text.indexOf("// held-texts: begin"), end = text.indexOf("// held-texts: end");
+    assert.ok(begin >= 0 && end > begin && text.indexOf("// held-texts: begin", begin + 1) < 0, "one held-texts block");
+    return text.slice(begin, end);
+  };
+  assert.equal(block(source("./clued-work-admission.mjs")), block(source("../../work/independent-ci-resident-v1/src/pr-status.mjs")),
+    "the gate's held texts are pr-status.mjs's, byte for byte");
+  const prStatus = await import("../../work/independent-ci-resident-v1/src/pr-status.mjs");
+  const gateModule = await import("./clued-work-admission.mjs");
+  for (const [hint, behindBy] of [["merge-main", 1], ["merge-main", 119], ["push-any-commit", 0]]) {
+    const written = prStatus.describe({ pull: { pr: 1317, headSha: "d".repeat(40), eligible: false, hint, behindBy }, status: null, now: 0 });
+    assert.deepEqual(gateModule.heldPartOf(prStatus.withWatchdogLine(written, true).description), { hint, text: written.description });
+  }
+});
