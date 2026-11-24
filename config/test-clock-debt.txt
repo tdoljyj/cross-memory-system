@@ -476,10 +476,12 @@ work/independent-ci-resident-v1/test/bridge-observer.test.mjs
 work/independent-ci-resident-v1/test/clock-lock.mjs
 work/independent-ci-resident-v1/test/clock-lock.test.mjs
 work/independent-ci-resident-v1/test/companion-headless.test.mjs
+work/independent-ci-resident-v1/test/companion-qualify-evidence.test.mjs
 work/independent-ci-resident-v1/test/companion-token.test.mjs
 work/independent-ci-resident-v1/test/core.test.mjs
 work/independent-ci-resident-v1/test/dependency-cuts.test.mjs
 work/independent-ci-resident-v1/test/drill-guest-probe.test.mjs
+work/independent-ci-resident-v1/test/drill-r10-companion-evidence.test.mjs
 work/independent-ci-resident-v1/test/drill-r4-defects.test.mjs
 work/independent-ci-resident-v1/test/drill-r9-entry.test.mjs
 work/independent-ci-resident-v1/test/drill-r9-followup.test.mjs
