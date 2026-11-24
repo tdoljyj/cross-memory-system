@@ -921,6 +921,108 @@ test('changed files are unknown without a pull request, a token or a readable li
   assert.deepEqual(await changedFiles({ event: { pull_request: { number: 1 } }, env, fetchImpl: async () => page(['x']) }), ['x']);
 });
 
+// Task 3435f8bf (FABLE-ci-one-round-20261124 3.1): a pull request head behind main's live tip cannot merge under strict,
+// so hosted-required selects nothing for it. The real CLI in a child process, fetch replaced by a loader: the files listing
+// selects suites, the compare answers as BEHIND_FIXTURE_COMPARE says (behind, tip or error).
+const BEHIND_HEAD = 'a'.repeat(40);
+const STALE_BASE = 'b'.repeat(40);
+const BEHIND_LINE = 'head 落后 main 3 个提交：strict 下合不进去，不跑；合入 main 后的 head 会跑';
+
+function selectAs(t, workflow, compare) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'clued-behind-main-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const loader = path.join(dir, 'loader.mjs');
+  writeFileSync(loader, `import { appendFileSync } from 'node:fs';
+    const mode = process.env.BEHIND_FIXTURE_COMPARE;
+    globalThis.fetch = async (url) => {
+      appendFileSync(process.env.BEHIND_FIXTURE_LOG, url + '\\n');
+      if (/\\/pulls\\/1\\/files\\?/.test(url)) return { ok: true, json: async () => [{ filename: 'scripts/ci/retrigger-counter.mjs' }] };
+      if (/\\/compare\\//.test(url)) {
+        if (mode === 'error') return { ok: false, status: 500, json: async () => ({ message: 'fixture error' }) };
+        return { ok: true, json: async () => ({ status: mode === 'behind' ? 'diverged' : 'ahead', ahead_by: 2, behind_by: mode === 'behind' ? 3 : 0 }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+  `);
+  const event = path.join(dir, 'event.json');
+  writeFileSync(event, JSON.stringify({ pull_request: { number: 1, head: { sha: BEHIND_HEAD }, base: { ref: 'main', sha: STALE_BASE } } }));
+  const files = Object.fromEntries(['output', 'summary', 'requests'].map((name) => [name, path.join(dir, name)]));
+  for (const file of Object.values(files)) writeFileSync(file, '');
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(GITHUB_|CI$|NODE_TEST_CONTEXT$)/.test(key)));
+  Object.assign(env, { GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: event, GITHUB_REPOSITORY: 'fixture/repo', GITHUB_TOKEN: 'fixture',
+    GITHUB_WORKFLOW: workflow, GITHUB_OUTPUT: files.output, GITHUB_STEP_SUMMARY: files.summary,
+    BEHIND_FIXTURE_COMPARE: compare, BEHIND_FIXTURE_LOG: files.requests });
+  const run = spawnSync(process.execPath, ['--import', pathToFileURL(loader).href, path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'),
+    '--check', 'ci-suites'], { cwd: ROOT, env, encoding: 'utf8' });
+  const read = (file) => readFileSync(file, 'utf8');
+  return { status: run.status, stdout: run.stdout, stderr: run.stderr, output: read(files.output), summary: read(files.summary),
+    requests: read(files.requests).split('\n').filter(Boolean) };
+}
+
+// Today's selection, the reference the two "as before" cases are held to: a workflow the rule does not apply to (the
+// self-hosted side keeps selecting by files until the shadow comparison can tell such a skip from a run) never asks.
+function selectionBefore(t) {
+  const before = selectAs(t, 'clued-required-tests', 'behind');
+  assert.equal(before.status, 0, before.stderr);
+  assert.ok(!before.requests.some((url) => url.includes('/compare/')), `the self-hosted side asks for no compare: ${before.requests}`);
+  assert.match(before.output, /^suites=\["retrigger-counter",/m, 'the fixture listing selects suites');
+  return before;
+}
+
+test('hosted-required: a pull request head behind main selects nothing, says why in the log and the summary', (t) => {
+  const behind = selectAs(t, 'hosted-required', 'behind');
+  assert.equal(behind.status, 0, behind.stderr);
+  assert.ok(behind.stdout.includes(BEHIND_LINE), `the log names why nothing runs:\n${behind.stdout}`);
+  assert.ok(behind.summary.includes(BEHIND_LINE), `the job summary names why nothing runs:\n${behind.summary}`);
+  assert.match(behind.summary, /none \(not affected\)/);
+  assert.match(behind.output, /^suites=\[\]$/m);
+  assert.match(behind.output, /^app_deps=\[\]$/m);
+  assert.deepEqual(behind.output.split('\n').filter((line) => line.startsWith('run_') && !line.endsWith('=false')), [],
+    'every suite output is false, so each job takes its existing not-affected path');
+  const compare = behind.requests.filter((url) => url.includes('/compare/'));
+  assert.deepEqual(compare, [`https://api.github.com/repos/fixture/repo/compare/main...${BEHIND_HEAD}`],
+    "main's tip is read live (the branch), never the event's base.sha, which may be old");
+});
+
+test("hosted-required: a head that contains main's tip selects exactly as before", (t) => {
+  const before = selectionBefore(t);
+  const tip = selectAs(t, 'hosted-required', 'tip');
+  assert.equal(tip.status, 0, tip.stderr);
+  assert.ok(tip.requests.some((url) => url.includes('/compare/')), 'the hosted side asks');
+  for (const key of ['stdout', 'output', 'summary']) assert.equal(tip[key], before[key], key);
+});
+
+test('hosted-required: a compare that fails selects exactly as before', (t) => {
+  const before = selectionBefore(t);
+  const failed = selectAs(t, 'hosted-required', 'error');
+  assert.equal(failed.status, 0, failed.stderr);
+  assert.ok(failed.requests.some((url) => url.includes('/compare/')), 'the hosted side asks');
+  for (const key of ['stdout', 'output', 'summary']) assert.equal(failed[key], before[key], key);
+});
+
+test('behind main counts only a clear behind_by above 0 on a hosted-required pull request; anything unread runs as before', async () => {
+  const { behindMain } = selection;
+  const event = { pull_request: { number: 1, head: { sha: BEHIND_HEAD }, base: { ref: 'main', sha: STALE_BASE } } };
+  const env = { GITHUB_EVENT_NAME: 'pull_request', GITHUB_WORKFLOW: 'hosted-required', GITHUB_REPOSITORY: 'o/r', GITHUB_TOKEN: 't' };
+  const answer = (body) => async () => ({ ok: true, json: async () => body });
+  assert.equal(await behindMain({ event, env, fetchImpl: answer({ behind_by: 4 }) }), 4);
+  for (const [why, body] of [['not behind', { behind_by: 0 }], ['no behind_by', {}], ['a string', { behind_by: '4' }],
+    ['negative', { behind_by: -1 }], ['a fraction', { behind_by: 1.5 }], ['not an object', null]]) {
+    assert.equal(await behindMain({ event, env, fetchImpl: answer(body) }), null, why);
+  }
+  assert.equal(await behindMain({ event, env, fetchImpl: async () => ({ ok: false, status: 404 }) }), null, 'an error status');
+  assert.equal(await behindMain({ event, env, fetchImpl: async () => { throw new Error('timeout'); } }), null, 'a throw (timeout, offline)');
+  assert.equal(await behindMain({ event, env, fetchImpl: async () => ({ ok: true, json: async () => { throw new Error('not json'); } }) }), null);
+  const never = async () => { throw new Error('must not ask'); };
+  assert.equal(await behindMain({ event, env: { ...env, GITHUB_EVENT_NAME: 'push' }, fetchImpl: never }), null, 'a push runs as before');
+  assert.equal(await behindMain({ event, env: { ...env, GITHUB_WORKFLOW: 'clued-required-tests' }, fetchImpl: never }), null, 'only hosted-required');
+  assert.equal(await behindMain({ event, env: { ...env, GITHUB_TOKEN: '' }, fetchImpl: never }), null, 'no token');
+  assert.equal(await behindMain({ event: { pull_request: { ...event.pull_request, head: { sha: 'HEAD' } } }, env, fetchImpl: never }), null,
+    'a head that is not a commit id');
+  assert.equal(await behindMain({ event: { pull_request: { ...event.pull_request, base: { sha: STALE_BASE } } }, env, fetchImpl: never }), null,
+    'no base branch');
+});
+
 test('expansions refuse empty test lists and a missing or all-zero base commit', () => {
   const argv = expandArgv(['node', '--test', '{tests:test}'], { cwd: path.join(ROOT, 'work/independent-ci-resident-v1') });
   assert.ok(argv.length > 10);
