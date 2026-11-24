@@ -1,0 +1,291 @@
+{
+  "provenance": "GitHub REST replies for PR #1233 (merge 41c281a50, head 1e850a63d), recorded read-only on 2026-11-23 (Beijing) and trimmed to the fields the main-push tree reuse reads; nothing else changed. As recorded, each head run is completed and green with its heavy jobs skipped (the gate did not admit). The in-flight case of FABLE-main-push-same-tree-parallel-20261123 §4 sets the latest run to in_progress in the test.",
+  "repository": "tdoljyj/cross-memory-system",
+  "owner": "tdoljyj",
+  "merge": {
+    "commit": {
+      "tree": {
+        "sha": "ddf4686f26debf0ad8600e7b0db8b1dc6ffcd786"
+      }
+    },
+    "parents": [
+      {
+        "sha": "832f6660a8ebcce4eb51891b8f1c8dd36d770942"
+      },
+      {
+        "sha": "1e850a63dd94788eb5ba5a52dc0658291c9cab95"
+      }
+    ],
+    "sha": "41c281a50f23d807695d02220f717e34a3d39ee6"
+  },
+  "pulls": [
+    {
+      "merge_commit_sha": "41c281a50f23d807695d02220f717e34a3d39ee6",
+      "merged_at": "2026-11-22T13:51:14Z",
+      "number": 1233
+    }
+  ],
+  "pr": {
+    "base": {
+      "ref": "main",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system"
+      },
+      "sha": "832f6660a8ebcce4eb51891b8f1c8dd36d770942"
+    },
+    "head": {
+      "ref": "claude/flaky-same-fingerprint",
+      "repo": {
+        "full_name": "tdoljyj/cross-memory-system"
+      },
+      "sha": "1e850a63dd94788eb5ba5a52dc0658291c9cab95"
+    },
+    "merge_commit_sha": "41c281a50f23d807695d02220f717e34a3d39ee6",
+    "merged": true,
+    "merged_at": "2026-11-22T13:51:14Z",
+    "merged_by": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    },
+    "number": 1233,
+    "state": "closed",
+    "user": {
+      "id": 52366662,
+      "login": "tdoljyj",
+      "type": "User"
+    }
+  },
+  "source": {
+    "commit": {
+      "tree": {
+        "sha": "ddf4686f26debf0ad8600e7b0db8b1dc6ffcd786"
+      }
+    },
+    "parents": [
+      {
+        "sha": "a0536311c2e99e71087297a0fad1b7d7673bb5a6"
+      },
+      {
+        "sha": "832f6660a8ebcce4eb51891b8f1c8dd36d770942"
+      }
+    ],
+    "sha": "1e850a63dd94788eb5ba5a52dc0658291c9cab95"
+  },
+  "compare": {
+    "ahead_by": 5,
+    "base_commit": {
+      "sha": "832f6660a8ebcce4eb51891b8f1c8dd36d770942"
+    },
+    "behind_by": 0,
+    "merge_base_commit": {
+      "sha": "832f6660a8ebcce4eb51891b8f1c8dd36d770942"
+    },
+    "status": "ahead",
+    "total_commits": 5
+  },
+  "workflows": {
+    "clued-required-tests.yml": {
+      "runs": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "conclusion": "success",
+            "created_at": "2026-11-22T13:40:58Z",
+            "event": "pull_request",
+            "head_branch": "claude/flaky-same-fingerprint",
+            "head_repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "head_sha": "1e850a63dd94788eb5ba5a52dc0658291c9cab95",
+            "id": 45028759952,
+            "path": ".github/workflows/clued-required-tests.yml",
+            "pull_requests": [],
+            "repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "run_attempt": 1,
+            "run_number": 786,
+            "status": "completed",
+            "triggering_actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "updated_at": "2026-11-22T13:47:04Z"
+          }
+        ]
+      },
+      "jobs": {
+        "jobs": [
+          {
+            "completed_at": "2026-11-22T13:47:03Z",
+            "conclusion": "success",
+            "id": 137227461023,
+            "name": "admission-gate",
+            "run_attempt": 1,
+            "run_id": 45028759952,
+            "started_at": "2026-11-22T13:41:02Z",
+            "status": "completed"
+          },
+          {
+            "completed_at": "2026-11-22T13:47:03Z",
+            "conclusion": "skipped",
+            "id": 137229093142,
+            "name": "needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'migration-verify' || 'migration-verify-skipped'",
+            "run_attempt": 1,
+            "run_id": 45028759952,
+            "started_at": "2026-11-22T13:47:03Z",
+            "status": "completed"
+          },
+          {
+            "completed_at": "2026-11-22T13:47:03Z",
+            "conclusion": "skipped",
+            "id": 137229093626,
+            "name": "needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites' || 'ci-suites-skipped'",
+            "run_attempt": 1,
+            "run_id": 45028759952,
+            "started_at": "2026-11-22T13:47:04Z",
+            "status": "completed"
+          },
+          {
+            "completed_at": "2026-11-22T13:47:03Z",
+            "conclusion": "skipped",
+            "id": 137229094079,
+            "name": "needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner) ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'clued-cloud-tests' || 'clued-cloud-tests-skipped'",
+            "run_attempt": 1,
+            "run_id": 45028759952,
+            "started_at": "2026-11-22T13:47:04Z",
+            "status": "completed"
+          }
+        ],
+        "total_count": 4
+      },
+      "push_run": {
+        "actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        },
+        "conclusion": "success",
+        "created_at": "2026-11-22T13:51:20Z",
+        "event": "push",
+        "head_branch": "main",
+        "head_repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "head_sha": "41c281a50f23d807695d02220f717e34a3d39ee6",
+        "id": 45029664342,
+        "path": ".github/workflows/clued-required-tests.yml",
+        "pull_requests": [],
+        "repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "run_attempt": 1,
+        "run_number": 789,
+        "status": "completed",
+        "triggering_actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        }
+      }
+    },
+    "clued-required-tests-windows.yml": {
+      "runs": {
+        "total_count": 1,
+        "workflow_runs": [
+          {
+            "actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "conclusion": "success",
+            "created_at": "2026-11-22T13:40:58Z",
+            "event": "pull_request",
+            "head_branch": "claude/flaky-same-fingerprint",
+            "head_repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "head_sha": "1e850a63dd94788eb5ba5a52dc0658291c9cab95",
+            "id": 45028759940,
+            "path": ".github/workflows/clued-required-tests-windows.yml",
+            "pull_requests": [],
+            "repository": {
+              "full_name": "tdoljyj/cross-memory-system"
+            },
+            "run_attempt": 1,
+            "run_number": 421,
+            "status": "completed",
+            "triggering_actor": {
+              "id": 337003645,
+              "login": "clued-admission[bot]",
+              "type": "Bot"
+            },
+            "updated_at": "2026-11-22T13:47:05Z"
+          }
+        ]
+      },
+      "jobs": {
+        "jobs": [
+          {
+            "completed_at": "2026-11-22T13:47:04Z",
+            "conclusion": "success",
+            "id": 137227460746,
+            "name": "admission-gate",
+            "run_attempt": 1,
+            "run_id": 45028759940,
+            "started_at": "2026-11-22T13:41:02Z",
+            "status": "completed"
+          },
+          {
+            "completed_at": "2026-11-22T13:47:04Z",
+            "conclusion": "skipped",
+            "id": 137229099866,
+            "name": "needs.admission-gate.outputs.admitted == 'true' &&\n    ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||\n     (github.event_name == 'push' && github.ref == 'refs/heads/clued-train/staging' &&\n      github.actor == 'clued-ci-checks-turing-20261018[bot]') ||\n     (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' &&\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      (github.actor == github.repository_owner || needs.admission-gate.outputs.automation_self_hosted == 'true')))\n    && 'ci-suites-windows' || 'ci-suites-windows-skipped'",
+            "run_attempt": 1,
+            "run_id": 45028759940,
+            "started_at": "2026-11-22T13:47:05Z",
+            "status": "completed"
+          }
+        ],
+        "total_count": 2
+      },
+      "push_run": {
+        "actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        },
+        "conclusion": "success",
+        "created_at": "2026-11-22T13:51:20Z",
+        "event": "push",
+        "head_branch": "main",
+        "head_repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "head_sha": "41c281a50f23d807695d02220f717e34a3d39ee6",
+        "id": 45029664334,
+        "path": ".github/workflows/clued-required-tests-windows.yml",
+        "pull_requests": [],
+        "repository": {
+          "full_name": "tdoljyj/cross-memory-system"
+        },
+        "run_attempt": 1,
+        "run_number": 423,
+        "status": "completed",
+        "triggering_actor": {
+          "id": 52366662,
+          "login": "tdoljyj",
+          "type": "User"
+        }
+      }
+    }
+  }
+}

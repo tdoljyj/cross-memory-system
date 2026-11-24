@@ -35,9 +35,10 @@ function checkout(t, tail = '', files = {}, at = null) {
 const passing = (label) => `import test from 'node:test';\ntest('${label}', () => { console.log('${label} executed'); });\n`;
 const failing = (label) => `import test from 'node:test';\ntest('${label}', () => { console.log('${label} executed'); throw new Error('${label} red'); });\n`;
 
-// The trusted selector on the candidate checkout, in Actions (no local slot).
+// The trusted selector on the candidate checkout, in Actions (no local slot), with the base commit a CI job always has
+// (ciBaseRefusal): a fixed one, not the outer environment's, so CI and a local run take the same path.
 const cli = (selector, args, env = {}, cwd = undefined) => spawnSync(process.execPath, [selector, ...args],
-  { cwd, env: { ...childEnv(), GITHUB_ACTIONS: 'true', ...env }, encoding: 'utf8' });
+  { cwd, env: { ...childEnv(), GITHUB_ACTIONS: 'true', CI_BASE_SHA: 'f'.repeat(40), ...env }, encoding: 'utf8' });
 const NEW_SUITE = (platforms) => `SUITES['ci-suites']['brand-new'] = ['scripts/ci/brand-new/**'];
 SUITE_COMMANDS['brand-new'] = [{ cwd: '.', known: 'retrigger-counter', argv: ['node', '--test', '{tests:scripts/ci/brand-new}'] }];
 ${platforms ? `SUITE_PLATFORMS['brand-new'] = { platforms: ${JSON.stringify(platforms)}, reason: 'test' };` : ''}`;
