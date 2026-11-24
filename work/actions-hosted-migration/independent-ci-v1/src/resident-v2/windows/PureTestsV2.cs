@@ -151,6 +151,25 @@ public static class PureTestsV2 {
    // 8. child environment: fixed 8 variables, v2 provider, no proxy/NODE_OPTIONS
    string env=CluedWindowsFormalEntryV2.ChildEnvironment();Yes(env.Split(new[]{'\0'},StringSplitOptions.RemoveEmptyEntries).Length==8&&env.Contains("CLUED_EXECUTION_PROVIDER=independent-ci-resident-v2")&&!env.Contains("NODE_OPTIONS")&&env.EndsWith("\0\0"),"env");
    Yes(CluedWindowsFormalEntryV2.SafeFailure("ok code")=="ONE_SHOT_OPERATION_UNCONFIRMED"&&CluedWindowsFormalEntryV2.SafeFailure("FIXED_CHILD_TIMEOUT")=="FIXED_CHILD_TIMEOUT","safe-failure");
+   // 9. a refusal before the boundary is ready (no receipt, the SCM exit code only) also leaves one Application event: the code, the
+   //    path being opened, the stage. Best effort: a writer that fails or throws changes nothing. The writer is stood in, so no event,
+   //    and the stop comes from the boundary's own checkpoint, before its first CreateFileW, so no host path is opened.
+   var stopped=new FormalPublicBoundaryV2(()=>{throw new InvalidOperationException("PURE_STOP_BEFORE_OPEN");});
+   Refuse(()=>stopped.Validate(new string('a',32),new string('b',64)),"preflight-stopped-at-first-open");
+   Yes(stopped.LastOpenPath=="C:\\"&&stopped.Stage==0,"preflight-last-open-path-is-the-one-being-opened");
+   var seen=new List<string>();var standing=CluedWindowsFormalEntryV2.PreflightEventWriter;
+   try{
+    CluedWindowsFormalEntryV2.PreflightEventWriter=(source,text)=>{seen.Add(source+"|"+text);return true;};
+    Yes(CluedWindowsFormalEntryV2.ReportRefusedBeforeReady(false,"PURE_STOP_BEFORE_OPEN",stopped),"preflight-event-written");
+    Yes(seen.Count==1&&seen[0]==CluedWindowsFormalEntryV2.ServiceName+"|formal helper refused before ready: code=PURE_STOP_BEFORE_OPEN path=C:\\ stage=0","preflight-event-source-is-service-text-is-code-path-stage");
+    Yes(!CluedWindowsFormalEntryV2.ReportRefusedBeforeReady(true,"FIXED_NODE_EXIT_NONZERO",stopped)&&!CluedWindowsFormalEntryV2.ReportRefusedBeforeReady(false,null,stopped)&&seen.Count==1,"no-event-once-ready-or-without-refusal");
+    Yes(CluedWindowsFormalEntryV2.ReportRefusedBeforeReady(false,"EXACT_NONCE_AND_CONFIG_REQUIRED",new FormalPublicBoundaryV2(()=>{}))&&seen.Count==2&&seen[1].EndsWith("code=EXACT_NONCE_AND_CONFIG_REQUIRED path=none stage=0"),"preflight-event-before-any-open");
+    CluedWindowsFormalEntryV2.PreflightEventWriter=(source,text)=>{throw new UnauthorizedAccessException("PURE_EVENT_LOG_DENIED");};
+    Yes(!CluedWindowsFormalEntryV2.ReportRefusedBeforeReady(false,"PURE_STOP_BEFORE_OPEN",stopped),"preflight-event-writer-throws-nothing-escapes");
+    CluedWindowsFormalEntryV2.PreflightEventWriter=(source,text)=>false;
+    Yes(!CluedWindowsFormalEntryV2.ReportRefusedBeforeReady(false,"PURE_STOP_BEFORE_OPEN",stopped),"preflight-event-writer-fails-nothing-escapes");
+    Yes(!CluedWindowsFormalEntryV2.ReportRefusedBeforeReady(false,"PURE_STOP_BEFORE_OPEN",null),"preflight-event-without-boundary-nothing-escapes");
+   }finally{CluedWindowsFormalEntryV2.PreflightEventWriter=standing;stopped.Dispose();}
    Console.WriteLine("{\"status\":\"PURE_V2_PASS\",\"assertions\":"+n+"}");return 0;
   }catch(Exception e){Console.WriteLine("{\"status\":\"PURE_V2_FAIL\",\"message\":\""+e.Message.Replace("\"","'")+"\"}");return 1;}
  }

@@ -11,10 +11,13 @@
 // head 上有的（不论什么状态）不被替换，读不到或不满足维持“未知”并写明原因。该项带 frameworkFrom，汇总写按树读了几个 head。
 // 刚合入（同上 §8）：最终 head 框架侧结论未出（缺检查且按树读前提成立，或未完成；托管侧已完成）、距合入不满
 // MERGED_PENDING_MINUTES 分钟判“在跑”，满了回到“未知”；连续段内有这样的 head，判据一律“未达”。
+// 准入时延（框架 v1 §2.3 判据“准入 p90 ≤3 分钟”；PLAN-native-admission-latency-20261124 §4 PR 丙）：同一批已读的 check-runs，
+// 每个 head 带 admission，判据只算连续一致段那批 head，诊断两行不进判据（见 ADMISSION）。
 //
 //   node scripts/ci/shadow-compare.mjs --prs <起>-[<止>]      PR 范围内每个 PR 的每个被测 head
 //   node scripts/ci/shadow-compare.mjs --head <sha> [--head <sha>]...
 import { ghReader } from './retrigger-counter.mjs';
+import { p90 } from '../../work/independent-ci-resident-v1/src/stage-timing.mjs';
 
 const REPO = 'tdoljyj/cross-memory-system';
 // main write policy（#292）：框架侧每项检查由哪个来源发，从规则集本身读（它改钉，这里跟着变）。
@@ -34,6 +37,15 @@ export const STREAK = Object.freeze({ heads: 30, mergedPrs: 10, nonOwnerPushedHe
 // 门作业超时 15 分钟 + 最长作业超时 45 分钟（clued-required-tests.yml:72、244）+ 实测 M 上框架最晚开始 17 分钟 = 77，取整到 90；
 // 也是实测最慢（合入后 42.8 分钟跑完）的两倍。满了仍没结论（如 M 的推送运行排队时被顶掉）回到“未知”。
 export const MERGED_PENDING_MINUTES = 90;
+// 准入时延（口径与查因一次性脚本 D:/agent-temp/s6plan/probe.mjs 相同，基线 23.6 分钟可比）：推送 = 该 head 全部 check-run 最早的
+// started_at；准入 = App 5368905 的 kooyumi-work-admission 按 id 最新一条的 completed_at，没有或未完成记无穷；
+// p90 = 最近秩第 ⌈0.9n⌉ 小（常驻 stage-timing.mjs#p90，同一份算法）。诊断只供看、不进判据：推送→准入区间与任一台自托管
+// Windows runner 上的 ci-suites-windows（Actions 发的那条；托管的叫 hosted-）重叠合计 ≥2 分钟的一组与其余一组的 p90；
+// 超过 3 分钟的 head 清单。重叠只看本次已读到的 check-runs（各 head 与按树读的合入提交），不为它多读：没读到的提交
+// （如不需按树读的合入提交）上的作业不算；check-runs 不带 runner 名，分不出哪一台。
+export const ADMISSION = Object.freeze({ check: 'kooyumi-work-admission', app: 5368905, p90Minutes: 3, windows: 'ci-suites-windows', overlapSeconds: 120 });
+// stage-timing#p90 只收有限值；无穷用最大有限数顶位，排序与最近秩不变，取回来再还原成无穷。
+const NEVER = Number.MAX_VALUE;
 const LAST = 20;
 const SHA = /^[0-9a-f]{40}$/;
 const PAGE = 100;
@@ -208,7 +220,53 @@ async function judgeHead(get, pins, { sha, prs, role, committedAt, mergeCommit, 
   // 不一致 > 未知 > 在跑 > 跳过 > 一致：七项都比了且都一致才是一致 head。
   const verdict = has('不一致') ? '不一致' : has('未知') ? '未知' : has('在跑') ? '在跑' : has('跳过') ? '跳过' : '一致';
   return { sha, prs, role, at: beijing(atMs), atMs, verdict, pairs,
-    ...(byTree ? { frameworkByTree: byTree.runs ? { sha: byTree.sha, tree: byTree.tree } : { sha: byTree.sha, reason: byTree.reason } } : {}) };
+    ...(byTree ? { frameworkByTree: byTree.runs ? { sha: byTree.sha, tree: byTree.tree } : { sha: byTree.sha, reason: byTree.reason } } : {}),
+    admissionAt: admissionTimes(runs), windows: windowsRuns([...runs, ...(byTree?.runs ?? [])], nowMs) };
+}
+
+// 推送与准入时刻（ADMISSION）；没有准入或未完成，admittedMs 为无穷。
+function admissionTimes(runs) {
+  const starts = runs.map(r => Date.parse(r?.started_at ?? '')).filter(Number.isFinite);
+  if (starts.length === 0) return null;
+  const latest = runs.filter(r => r?.name === ADMISSION.check && r?.app?.id === ADMISSION.app).sort((a, b) => a.id - b.id).at(-1);
+  const done = Date.parse(latest?.completed_at ?? '');
+  return { pushMs: Math.min(...starts), admittedMs: latest?.status === 'completed' && Number.isFinite(done) ? done : Infinity };
+}
+
+// 自托管 Windows 上的 ci-suites-windows 作业区间；还在跑的到 now 为止。
+const windowsRuns = (runs, nowMs) => runs.filter(r => r?.name === ADMISSION.windows && r?.app?.id === ACTIONS_APP_ID && Number.isFinite(Date.parse(r.started_at ?? '')))
+  .map(r => ({ id: r.id, from: Date.parse(r.started_at), to: Number.isFinite(Date.parse(r.completed_at ?? '')) ? Date.parse(r.completed_at) : nowMs }));
+
+// 一个 head 的准入时延与它的推送→准入区间（未准入到 now 为止）被 Windows 作业占住的秒数（多条重叠只算一次）。
+function admissionOf({ pushMs, admittedMs }, windows, nowMs) {
+  const end = Math.min(admittedMs, nowMs);
+  const cuts = windows.map(w => [Math.max(w.from, pushMs), Math.min(w.to, end)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  let busy = 0, from = pushMs, to = pushMs;
+  for (const [a, b] of cuts) {
+    if (a > to) { busy += to - from; [from, to] = [a, b]; } else to = Math.max(to, b);
+  }
+  busy += to - from;
+  return { pushedAt: beijing(pushMs), admittedAt: Number.isFinite(admittedMs) ? beijing(admittedMs) : null,
+    minutes: Number.isFinite(admittedMs) ? Math.round((admittedMs - pushMs) / 6000) / 10 : null, windowsOverlapSeconds: Math.floor(busy / 1000) };
+}
+
+// 一批 head 的准入 p90（minutes 为 null 即无穷）与两行诊断。p90Minutes 为 null：没有 head，或 p90 落在没有准入的 head 上（无穷）。
+export function admissionLatency(heads) {
+  const facts = heads.map(h => ({ sha: h.sha, prs: h.prs ?? [], minutes: h.admission?.minutes ?? null,
+    overlap: (h.admission?.windowsOverlapSeconds ?? 0) >= ADMISSION.overlapSeconds }));
+  const figure = list => {
+    const v = p90(list.map(f => f.minutes ?? NEVER));
+    return { heads: list.length, p90Minutes: v === null || v === NEVER ? null : v, unadmitted: list.filter(f => f.minutes === null).length };
+  };
+  const all = figure(facts), overlap = figure(facts.filter(f => f.overlap)), nonOverlap = figure(facts.filter(f => !f.overlap));
+  const met = all.heads > 0 && all.p90Minutes !== null && all.p90Minutes <= ADMISSION.p90Minutes;
+  const over = facts.filter(f => f.minutes === null || f.minutes > ADMISSION.p90Minutes).map(({ sha, prs, minutes }) => ({ sha, prs, minutes }));
+  const text = f => f.heads === 0 ? '无' : f.p90Minutes === null ? `无穷（${f.unadmitted} 个 head 没有准入）` : `${f.p90Minutes} 分钟`;
+  const line = `准入 p90 ${text(all)}（${all.heads} 个 head，判据 ≤${ADMISSION.p90Minutes} 分钟：${met ? '已达' : '未达'}）`
+    + `；诊断（不进判据）：与 ${ADMISSION.windows} 重叠 ≥${ADMISSION.overlapSeconds / 60} 分钟 ${overlap.heads} 个、p90 ${text(overlap)}，`
+    + `不重叠 ${nonOverlap.heads} 个、p90 ${text(nonOverlap)}`
+    + `；超过 ${ADMISSION.p90Minutes} 分钟 ${over.length} 个${over.length ? `：${over.map(o => `${o.sha.slice(0, 7)}${o.prs.length ? `（#${o.prs.join('、#')}）` : ''} ${o.minutes ?? '无准入'}`).join('，')}` : ''}`;
+  return { ...all, met, overlap, nonOverlap, over, line, unmetText: met ? null : `准入 p90 ${text(all)}超过 ${ADMISSION.p90Minutes} 分钟` };
 }
 
 async function candidatesOfPrs(get, { from, to }) {
@@ -279,6 +337,8 @@ function summarize(heads, nowMs, owner) {
   const mergedPrs = new Set(run.flatMap(h => h.mergedPrs ?? [])).size;
   const nonOwnerPushedHeads = run.filter(h => (h.pushers ?? []).some(login => login !== owner)).length;
   const bothRedHeads = run.filter(h => h.pairs.some(p => p.verdict === '一致' && FAIL.has(p.framework?.conclusion) && FAIL.has(p.hosted?.conclusion))).length;
+  // 准入 p90 只算连续一致段这批 head（与计数同一批）；段为空时只报 head 数不足。
+  const admission = admissionLatency(run);
   // 连续段内（时间不早于段首；没有连续段时从最后一个已判定 head 起）框架结论未出的已合入 head（§8）：它们稍后可能变成不一致，
   // 有一个判据就不算达成。open PR 当前 head 的在跑不算。读不到时间的照算（偏严）。
   const segmentMs = n > 0 ? firstMs : decided.at(-1)?.atMs;
@@ -289,10 +349,11 @@ function summarize(heads, nowMs, owner) {
     nonOwnerPushedHeads < STREAK.nonOwnerPushedHeads && '没有非 Owner 推送的 head',
     bothRedHeads < STREAK.bothRedHeads && '没有两边同红的 head',
     pendingMergedHeads > 0 && `连续段内有 ${pendingMergedHeads} 个已合入 head 的框架结论未出`,
+    n > 0 && admission.unmetText,
   ].filter(Boolean);
   const hours = Math.round(spanMs / 360_000) / 10, days = Math.round(spanMs / 8640_000) / 10;
   const rule = `连续 ${STREAK.heads} 个 head、七项逐项一致；出自不少于 ${STREAK.mergedPrs} 个已合入 PR，`
-    + `含至少 ${STREAK.nonOwnerPushedHeads} 个非 Owner 推送的 head、至少 ${STREAK.bothRedHeads} 个两边同红的 head`;
+    + `含至少 ${STREAK.nonOwnerPushedHeads} 个非 Owner 推送的 head、至少 ${STREAK.bothRedHeads} 个两边同红的 head；准入 p90 ≤${ADMISSION.p90Minutes} 分钟`;
   const streak = { heads: n, hours, days, from: run[0]?.at ?? null, to: run.at(-1)?.at ?? null, mergedPrs, nonOwnerPushedHeads, bothRedHeads,
     met: unmet.length === 0, unmet, rule };
   const hostedGreenFrameworkRedLast20 = decided.slice(-LAST).flatMap(h => h.pairs).filter(p => p.direction === '框架红、托管绿').length;
@@ -302,8 +363,10 @@ function summarize(heads, nowMs, owner) {
   const line = `影子对比 ${beijing(nowMs)}：${heads.length} 个 head（其中框架侧按树读 ${frameworkByTreeHeads} 个 head），一致 ${counts.一致}、不一致 ${counts.不一致}、未知 ${counts.未知}、在跑 ${counts.在跑}、跳过 ${counts.跳过}；`
     + `连续一致 ${n} 个 head / ${hours} 小时，已合入 PR ${mergedPrs} 个、非 Owner 推送 ${nonOwnerPushedHeads} 个、两边同红 ${bothRedHeads} 个、已合入未出结论 ${pendingMergedHeads} 个`
     + `（判据：${streak.met ? '已达' : `未达，${unmet.join('、')}`}）`
+    + `；${admission.line}`
     + (mismatches.length ? `；不一致：${mismatches.join('；')}` : '');
-  return { counts, streak, hostedGreenFrameworkRedLast20, frameworkByTreeHeads, pendingMergedHeads, line };
+  const { line: admissionLine, unmetText, ...admissionFigures } = admission;
+  return { counts, streak, admission: { ...admissionFigures, line: admissionLine }, hostedGreenFrameworkRedLast20, frameworkByTreeHeads, pendingMergedHeads, line };
 }
 
 export async function compare({ repo = REPO, prs = null, heads = null, api = ghReader({ repo }), now = new Date().toISOString(), maxRequests = 5000 } = {}) {
@@ -324,12 +387,15 @@ export async function compare({ repo = REPO, prs = null, heads = null, api = ghR
     // 推送者只对一致 head 读（连续一致段只由它们组成）。
     judged.push({ ...head, mergedPrs: c.mergedPrs, ...(head.verdict === '一致' ? { pushers: await pushersOf(get, c.sha) } : {}) });
   }
+  // 准入时延：重叠看本次读到的全部 ci-suites-windows（同一条只算一次），不另读。
+  const windows = [...new Map(judged.flatMap(h => h.windows ?? []).map(w => [w.id, w])).values()];
+  for (const h of judged) if (h.admissionAt) h.admission = admissionOf(h.admissionAt, windows, nowMs);
   // 按时间排（读不到时间的排最后，照样打断连续一致）；直接给 head 时保持给定顺序。
   if (prs) judged.sort((a, b) => (Number.isFinite(a.atMs) ? a.atMs : Infinity) - (Number.isFinite(b.atMs) ? b.atMs : Infinity) || a.sha.localeCompare(b.sha));
   const summary = summarize(judged, nowMs, repo.split('/')[0]);
   return { status: 'ok', repo, generatedAt: beijing(now), ruleset: { id: MAIN_RULESET_ID, readable: pins !== null },
     pairs: PAIRS.map(p => ({ check: p.check, hosted: p.hosted.name, hostedApp: p.hosted.app })),
-    heads: judged.map(({ atMs, ...h }) => h), summary };
+    heads: judged.map(({ atMs, admissionAt, windows: _, ...h }) => h), summary };
 }
 
 function parse(argv) {
