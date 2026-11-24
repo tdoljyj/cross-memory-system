@@ -16,6 +16,10 @@ import {
 import * as selection from './ci-required-selection.mjs';
 import reporterStream, { failureFingerprint, normalizeFailure } from './ci-test-failures-reporter.mjs';
 
+// What a copy of the selector needs beside it: the modules it imports (test-env since Task 2ee162c2, the real-clock scan,
+// guard and their shared imports since Task 11092b8b).
+const SELECTOR_IMPORTS = ['test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs'];
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const log = () => {};
 
@@ -106,7 +110,7 @@ function slotFixture(t) {
     if (mode === '--write-known') {
       const tools = path.join(root, 'tools');
       mkdirSync(tools);
-      for (const file of ['ci-required-selection.mjs', 'test-env.mjs', 'test-clock-scan.mjs', 'test-clock-guard.mjs', 'test-clock-imports.mjs', 'ci-test-failures-reporter.mjs',
+      for (const file of ['ci-required-selection.mjs', ...SELECTOR_IMPORTS, 'ci-test-failures-reporter.mjs',
         'local-suite-slot-guard.mjs', 'local-suite-slots.mjs', 'local-suite-slot-job.ps1']) {
         copyFileSync(path.join(ROOT, 'scripts', 'ci', file), path.join(tools, file));
       }
@@ -132,6 +136,8 @@ function slotFixture(t) {
     Object.assign(env, extraEnv);
     if (mode === '--run-selected') {
       writeFileSync(path.join(scripts, 'check-cron-budget.test.mjs'), probe);
+      writeFileSync(path.join(root, 'config', 'test-clock-debt.txt'),
+        'scripts/ci/check-cron-budget.test.mjs\nscripts/ci/retrigger-counter.test.mjs\n');
       writeFileSync(path.join(scripts, 'check-cron-budget.mjs'), '');
       target = 'ci-suites';
       const event = path.join(root, 'event.json');
@@ -1356,7 +1362,7 @@ function candidateSelector(t) {
   const dir = path.join(root, 'scripts/ci');
   mkdirSync(dir, { recursive: true });
   const source = readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8');
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
   const change = (id, commands) => writeFileSync(path.join(dir, 'ci-required-selection.mjs'),
     commands === undefined ? source : `${source}\nSUITE_COMMANDS[${JSON.stringify(id)}] = ${JSON.stringify(commands)};\n`);
   change();
@@ -1437,7 +1443,7 @@ test('a command added by a module the candidate selector imports runs although t
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const dir = path.join(root, 'scripts/ci');
     mkdirSync(dir, { recursive: true });
-    copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(dir, 'test-env.mjs'));
+    for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(dir, name));
     writeFileSync(path.join(dir, 'ci-required-selection.mjs'), `${readFileSync(path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), 'utf8')}
 import { ADDED } from './suite-additions.mjs';
 SUITE_COMMANDS['retrigger-counter'].push(...ADDED);
@@ -2182,7 +2188,9 @@ for (const [file, id] of BASELINE_JOBS) {
           assert.equal(argv[at + 1], expected, `${suite}: ${argv.join(' ')}`);
           compared++;
         }
-        assert.equal(compared, 1, `${suite} compares with the base once`);
+        // clued-cloud: the coverage check and the real-clock debt check (Task 11092b8b); the others: one command each.
+        const expectedCount = suite === 'clued-cloud' ? 2 : 1;
+        assert.equal(compared, expectedCount, `${suite} compares with the base ${expectedCount} time(s)`);
       }
       assert.equal(base, expected, r.log);
       assert.ok(isAncestor(repo, base, head), 'the suites compare the head with one of its own ancestors');
@@ -2198,7 +2206,7 @@ test('in a CI job, --run and --run-selected without a base commit start no comma
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const tools = path.join(dir, 'tools');
   mkdirSync(tools);
-  copyFileSync(path.join(ROOT, 'scripts/ci/test-env.mjs'), path.join(tools, 'test-env.mjs'));
+  for (const name of SELECTOR_IMPORTS) copyFileSync(path.join(ROOT, 'scripts/ci', name), path.join(tools, name));
   const tail = `for (const key of Object.keys(SUITES['ci-suites'])) delete SUITES['ci-suites'][key];
 SUITES['ci-suites']['retrigger-counter'] = ['**'];
 delete SUITE_PLATFORMS['retrigger-counter'];
