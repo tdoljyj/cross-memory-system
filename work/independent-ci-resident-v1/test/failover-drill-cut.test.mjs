@@ -1,12 +1,16 @@
-// 第 18 代故障转移演练的断网脚本（任务 04f9b91b，D:/w/tmp/PLAN-failover-drill-gen18-20261124.md 第 1、7 节）。
+// 第 18 代故障转移演练的断网脚本（任务 04f9b91b；方案 D:/w/tmp/PLAN-failover-drill-gen18-20261124.md 第 1、7 节，
+// 定案 D:/w/tmp/PLAN-failover-drill-gen18-addendum-20261124.md 第 1 节第 3、5 条，独立复核 D:/w/tmp/claude-review-failover-drill-gen18-fable.md M1、M2、S1）。
 // 脚本在 Windows PowerShell 5.1 里 dot-source（只定义函数，不执行），真正动系统的动作（列网卡、禁用、启用、注册或删除兜底任务）
-// 和等待、连通探测都换成桩；不提权、不碰本机网卡和计划任务。
+// 和等待、连通探测都换成桩；不提权、不碰本机网卡和计划任务。放行文件由等待的桩在待命期间写（和 DESK 门过后写一样）。
 //   C1 兜底任务没注册成（或读回不对）→ 不禁用
 //   C2 睡眠中抛异常 → 仍启用
 //   C3 待命超时 → 不禁用，且删兜底任务
-//   C4 本机状态不是 ACTIVE 空闲 → 不禁用，且删兜底任务
-//   C5 正常路径：注册 → 禁用 → 启用 → 删任务，结果文件本机与共享目录各一份
+//   C4 放行时本机状态不满足 → 不断网、删掉这份放行文件、回到待命；再放行且满足 → 正常断网；删不掉才退出
+//   C5 正常路径：注册 → 重列网卡取并集 → 注册 → 禁用 → 启用 → 删任务，结果文件本机与共享目录各一份
 //   C6 参数块在 5.1 Parser 下无错；含非 ASCII 字符时带 UTF-8 BOM
+//   M1 兜底任务只有读回网卡不再是 Disabled 才删自己，到点触发每 2 分钟重复；启用读回仍 Disabled 的算没启用成
+//   M2 待命前就在的放行文件不算放行（删掉；删不掉不待命）；用过即删
+//   S1 放行文件所在目录写不进就不待命，直接退出
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -30,41 +34,50 @@ function ps(expr) {
   return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
 }
 
-const ACTIVE_IDLE = { executor: { state: 'IDLE' }, halt: null, paused: false, intakePause: null, node: { mode: 'ACTIVE' }, current: null, pending: [] };
+// 当班节点空闲时的 status.json：形状取自 11-24 DESK 本机那份（test/fixtures/failover-drill-gen18-readings.json），改成 ACTIVE、无在途
+const SAMPLE = JSON.parse(fs.readFileSync(new URL('./fixtures/failover-drill-gen18-readings.json', import.meta.url), 'utf8')).statusDesk;
+const ACTIVE_IDLE = { ...structuredClone(SAMPLE), node: { ...SAMPLE.node, mode: 'ACTIVE', probe: { ...SAMPLE.node.probe, result: 'held' } }, current: null };
 let n = 0;
-function caseDirs({ status = ACTIVE_IDLE, release = 'gen18-t' } = {}) {
+function caseDirs({ status = ACTIVE_IDLE, preexisting = null } = {}) {
   const root = path.join(tmp, `c${++n}`), work = path.join(root, 'work'), shared = path.join(root, 'shared');
   fs.mkdirSync(work, { recursive: true }); fs.mkdirSync(shared, { recursive: true });
   const statusFile = path.join(root, 'status.json');
-  fs.writeFileSync(statusFile, JSON.stringify(status));
+  fs.writeFileSync(statusFile, typeof status === 'string' ? status : JSON.stringify(status));
   const releaseFile = path.join(work, 'release-gen18-t.txt');
-  if (release !== null) fs.writeFileSync(releaseFile, release);
-  return { work, shared, statusFile, releaseFile };
+  if (preexisting !== null) fs.writeFileSync(releaseFile, preexisting);
+  return { root, work, shared, statusFile, releaseFile };
 }
 
 // The stubs: every system action appends to $script:calls; the clock advances by what Wait-DrillSeconds is asked for.
-const stubs = ({ register = '$true', wait = '$null', adapters = "@('Ethernet', 'Wi-Fi')" } = {}) => `
+// `onWait` runs inside each wait (after the count goes up); by default the release is written during the first standby wait.
+const writeRelease = (content = 'gen18-t') => `[IO.File]::WriteAllText($script:rel, ${q(content)})`;
+const stubs = (d, { register = '$true', wait = '$null', adapters = "@('Ethernet', 'Wi-Fi')", enable = '@()',
+  onWait = `if ($script:waitCount -eq 1) { ${writeRelease()} }`, pre = '' } = {}) => `
   $script:calls = New-Object System.Collections.ArrayList
+  $script:rel = ${q(d.releaseFile)}; $script:statusPath = ${q(d.statusFile)}
+  $script:waitCount = 0; $script:listCount = 0
   $script:fakeNow = [datetime]'2026-11-25T03:00:00Z'
   $script:PollSeconds = 15; $script:StandbyLimitSeconds = 60; $script:CutSeconds = 540; $script:ReconnectSeconds = 120
   function Get-DrillNow { $script:fakeNow.ToUniversalTime() }
-  function Wait-DrillSeconds([int]$Seconds) { [void]$script:calls.Add("wait:$Seconds"); ${wait}; $script:fakeNow = $script:fakeNow.AddSeconds($Seconds) }
-  function Get-DrillUpAdapters { [void]$script:calls.Add('list'); ${adapters} }
+  function Wait-DrillSeconds([int]$Seconds) { $script:waitCount++; [void]$script:calls.Add("wait:$Seconds"); ${onWait}; ${wait}; $script:fakeNow = $script:fakeNow.AddSeconds($Seconds) }
+  function Get-DrillUpAdapters { $script:listCount++; [void]$script:calls.Add('list'); ${adapters} }
   function Disable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('disable:' + ($Names -join ',')) }
-  function Enable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('enable:' + ($Names -join ',')); @() }
-  function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$At) { [void]$script:calls.Add('register'); ${register} }
+  function Enable-DrillAdapters([string[]]$Names) { [void]$script:calls.Add('enable:' + ($Names -join ',')); ${enable} }
+  function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$At) { [void]$script:calls.Add('register:' + ($Names -join ',')); ${register} }
   function Remove-DrillBackstop([string]$TaskName) { [void]$script:calls.Add('remove'); $true }
-  function Test-DrillConnectivity { [void]$script:calls.Add('probe'); $true }`;
-const run = (d, extra = '') => ps(`${stubs(extra)}
+  function Test-DrillConnectivity { [void]$script:calls.Add('probe'); $true }
+  ${pre}`;
+const run = (d, extra = {}) => ps(`${stubs(d, extra)}
   $r = Invoke-FailoverDrillCut -DrillId 'gen18-t' -WorkDir ${q(d.work)} -SharedDir ${q(d.shared)} -StatusFile ${q(d.statusFile)} -ReleaseFile ${q(d.releaseFile)}
   @{ result = $r; calls = @($script:calls) }`);
 const systemCalls = calls => calls.filter(c => !c.startsWith('wait:') && c !== 'probe');
+const noCut = r => assert.ok(!r.calls.some(c => c.startsWith('disable')), r.calls.join(' '));
 
 test('C1: a backstop task that is not registered means no cut', opts, () => {
   for (const register of ['$false', "throw 'access denied'"]) {
     const r = run(caseDirs(), { register });
     assert.equal(r.result.outcome, 'BACKSTOP_NOT_REGISTERED');
-    assert.ok(!r.calls.some(c => c.startsWith('disable')), r.calls.join(' '));
+    noCut(r);
   }
 });
 
@@ -78,40 +91,94 @@ test('C2: an exception while cut off still enables the adapters', opts, () => {
 });
 
 test('C3: no release within the standby limit means no cut, and the backstop task is removed', opts, () => {
-  const r = run(caseDirs({ release: null }));
+  const r = run(caseDirs(), { onWait: '$null' });
   assert.equal(r.result.outcome, 'STANDBY_TIMEOUT');
-  assert.ok(!r.calls.some(c => c.startsWith('disable')), r.calls.join(' '));
+  noCut(r);
   assert.equal(r.calls.at(-1), 'remove');
   assert.equal(r.result.backstopRemoved, true);
 });
 
 test('C3: a release file for another drill is not a release', opts, () => {
-  const r = run(caseDirs({ release: 'other-drill' }));
+  const r = run(caseDirs(), { onWait: `if ($script:waitCount -eq 1) { ${writeRelease('other-drill')} }` });
   assert.equal(r.result.outcome, 'STANDBY_TIMEOUT');
-  assert.ok(!r.calls.some(c => c.startsWith('disable')));
+  noCut(r);
 });
 
-test('C4: a node that is not ACTIVE and idle is not cut off, and the backstop task is removed', opts, () => {
-  const states = [{ ...ACTIVE_IDLE, node: { mode: 'STANDBY' } }, { ...ACTIVE_IDLE, current: { pr: 5, headSha: 'a'.repeat(40) } },
-    { ...ACTIVE_IDLE, paused: true }, { ...ACTIVE_IDLE, executor: { state: 'PAUSED' } }, { ...ACTIVE_IDLE, halt: { code: 'X' } },
-    { ...ACTIVE_IDLE, intakePause: { until: '2026-11-25T05:00:00Z' } }];
-  for (const status of states) {
-    const r = run(caseDirs({ status }));
-    assert.equal(r.result.outcome, 'LOCAL_STATUS_NOT_READY', JSON.stringify(status));
-    assert.ok(!r.calls.some(c => c.startsWith('disable')), r.calls.join(' '));
-    assert.equal(r.calls.at(-1), 'remove');
+test('M2: a release file that was there before standby is not a release; it is removed', opts, () => {
+  const d = caseDirs({ preexisting: 'gen18-t' });
+  const r = run(d, { onWait: '$null' });
+  assert.equal(r.result.outcome, 'STANDBY_TIMEOUT', JSON.stringify(r.result));
+  noCut(r);
+  assert.equal(fs.existsSync(d.releaseFile), false);
+});
+
+test('M2: a stale release file that cannot be removed means no standby and no cut', opts, () => {
+  const d = caseDirs({ preexisting: 'gen18-t' });
+  const r = run(d, { onWait: '$null', pre: `$script:lock = [IO.File]::Open($script:rel, 'Open', 'Read', 'Read')` });
+  assert.equal(r.result.outcome, 'RELEASE_PREEXISTS', JSON.stringify(r.result));
+  noCut(r);
+  assert.ok(!r.calls.some(c => c.startsWith('register')), r.calls.join(' '));
+});
+
+test('M2: the release file is used once — gone after the cut', opts, () => {
+  const d = caseDirs();
+  const r = run(d);
+  assert.equal(r.result.outcome, 'CUT_DONE', JSON.stringify(r.result));
+  assert.equal(fs.existsSync(d.releaseFile), false);
+});
+
+test('S1: a release directory that cannot be written means no standby', opts, () => {
+  const d = caseDirs();
+  d.releaseFile = path.join(d.statusFile, 'release-gen18-t.txt');      // its parent is a file
+  const r = run(d, { onWait: '$null' });
+  assert.equal(r.result.outcome, 'RELEASE_DIR_NOT_WRITABLE', JSON.stringify(r.result));
+  assert.deepEqual(systemCalls(r.calls), []);
+});
+
+const NOT_READY = [{ ...ACTIVE_IDLE, node: { ...ACTIVE_IDLE.node, mode: 'STANDBY' } }, { ...ACTIVE_IDLE, current: { pr: 1298, headSha: 'a'.repeat(40) } },
+  { ...ACTIVE_IDLE, paused: true }, { ...ACTIVE_IDLE, executor: { ...ACTIVE_IDLE.executor, state: 'PAUSED' } }, { ...ACTIVE_IDLE, halt: { code: 'X' } },
+  { ...ACTIVE_IDLE, intakePause: { until: '2026-11-25T05:00:00Z' } }, '{not json'];
+
+test('C4: not ready at release → no cut, that release file removed, back to standby; a new release once ready → normal cut', opts, () => {
+  for (const status of NOT_READY) {
+    const d = caseDirs({ status });
+    const onWait = `if ($script:waitCount -eq 1) { ${writeRelease()} }
+      if ($script:waitCount -eq 3) {
+        if (-not (Test-Path -LiteralPath $script:rel)) { [void]$script:calls.Add('release-gone') }
+        [IO.File]::WriteAllText($script:statusPath, ${q(JSON.stringify(ACTIVE_IDLE))}); ${writeRelease()} }`;
+    const r = run(d, { onWait });
+    const what = JSON.stringify(status).slice(0, 80);
+    assert.equal(r.result.outcome, 'CUT_DONE', `${what}: ${JSON.stringify(r.result)}`);
+    assert.ok(r.calls.includes('release-gone'), `${what}: ${r.calls.join(' ')}`);
+    assert.ok(r.calls.indexOf('release-gone') < r.calls.findIndex(c => c.startsWith('disable')), r.calls.join(' '));
+    assert.equal(r.result.releasesRefused, 1, what);
+    assert.ok(r.result.localProblems.length > 0, what);
   }
-  const d = caseDirs(); fs.writeFileSync(d.statusFile, '{not json');
-  assert.equal(run(d).result.outcome, 'LOCAL_STATUS_NOT_READY');
 });
 
-test('C5: the normal path registers, disables, enables, then removes the task, and writes both result files', opts, () => {
+test('C4: never ready → no cut until the standby limit, release removed, backstop removed', opts, () => {
+  const d = caseDirs({ status: NOT_READY[1] });
+  const r = run(d);
+  assert.equal(r.result.outcome, 'STANDBY_TIMEOUT', JSON.stringify(r.result));
+  noCut(r);
+  assert.equal(r.calls.at(-1), 'remove');
+  assert.equal(fs.existsSync(d.releaseFile), false);
+});
+
+test('C4: not ready and the release file cannot be removed → exit as before (LOCAL_STATUS_NOT_READY), no cut', opts, () => {
+  const d = caseDirs({ status: NOT_READY[0] });
+  const r = run(d, { onWait: `if ($script:waitCount -eq 1) { ${writeRelease()}; $script:lock = [IO.File]::Open($script:rel, 'Open', 'Read', 'Read') }` });
+  assert.equal(r.result.outcome, 'LOCAL_STATUS_NOT_READY', JSON.stringify(r.result));
+  noCut(r);
+  assert.equal(r.calls.at(-1), 'remove');
+});
+
+test('C5: the normal path registers, re-lists, registers, disables, enables, then removes the task, and writes both result files', opts, () => {
   const d = caseDirs();
   const r = run(d);
   assert.equal(r.result.outcome, 'CUT_DONE', JSON.stringify(r.result));
   const order = systemCalls(r.calls);
-  // registered at the start (the UAC check) and again just before the cut (its time trigger at T0 + 12 minutes)
-  assert.deepEqual(order, ['list', 'register', 'register', 'disable:Ethernet,Wi-Fi', 'enable:Ethernet,Wi-Fi', 'remove']);
+  assert.deepEqual(order, ['list', 'register:Ethernet,Wi-Fi', 'list', 'register:Ethernet,Wi-Fi', 'disable:Ethernet,Wi-Fi', 'enable:Ethernet,Wi-Fi', 'remove']);
   assert.ok(r.calls.includes('wait:540'));
   assert.equal(r.result.connected, true);
   assert.equal(r.result.backstopRemoved, true);
@@ -123,10 +190,62 @@ test('C5: the normal path registers, disables, enables, then removes the task, a
   }
 });
 
+test('C5 item 3: an adapter that came up during standby is in the union that is registered, disabled and enabled', opts, () => {
+  const r = run(caseDirs(), { adapters: "if ($script:listCount -eq 1) { @('Ethernet') } else { @('Wi-Fi 2', 'Ethernet') }" });
+  assert.equal(r.result.outcome, 'CUT_DONE', JSON.stringify(r.result));
+  assert.deepEqual(systemCalls(r.calls), ['list', 'register:Ethernet', 'list', 'register:Ethernet,Wi-Fi 2', 'disable:Ethernet,Wi-Fi 2', 'enable:Ethernet,Wi-Fi 2', 'remove']);
+  assert.deepEqual(r.result.adapters, ['Ethernet', 'Wi-Fi 2']);
+});
+
 test('C5: no adapter up means no cut', opts, () => {
   const r = run(caseDirs(), { adapters: '@()' });
   assert.equal(r.result.outcome, 'NO_ADAPTER');
-  assert.ok(!r.calls.some(c => c.startsWith('disable') || c === 'register'));
+  assert.ok(!r.calls.some(c => c.startsWith('disable') || c.startsWith('register')));
+});
+
+test('M1: an adapter that did not come back keeps the backstop task', opts, () => {
+  const r = run(caseDirs(), { enable: "@('Wi-Fi')" });
+  assert.deepEqual(r.result.enableFailed, ['Wi-Fi']);
+  assert.equal(r.result.backstopRemoved, false);
+  assert.ok(!systemCalls(r.calls).slice(systemCalls(r.calls).findIndex(c => c.startsWith('enable'))).includes('remove'), r.calls.join(' '));
+});
+
+// Stand-ins for the NetAdapter and ScheduledTasks cmdlets (functions win over cmdlets); nothing on this machine is touched.
+const netStubs = ({ enableThrows = [], disabled = [] } = {}) => `
+  $script:log = New-Object System.Collections.ArrayList
+  function Enable-NetAdapter { [CmdletBinding(SupportsShouldProcess)] param([string]$Name) [void]$script:log.Add("enable:$Name"); if (@(${[...enableThrows].map(q).join(',')}) -contains $Name) { throw "cannot enable $Name" } }
+  function Get-NetAdapter { [CmdletBinding()] param([string]$Name, [switch]$Physical) [pscustomobject]@{ Name = $Name; Status = $(if (@(${[...disabled].map(q).join(',')}) -contains $Name) { 'Disabled' } else { 'Up' }) } }
+  function Unregister-ScheduledTask { [CmdletBinding(SupportsShouldProcess)] param([string]$TaskName) [void]$script:log.Add("unregister:$TaskName") }
+  function Start-Sleep { [CmdletBinding()] param([int]$Seconds) [void]$script:log.Add("sleep:$Seconds") }`;
+
+test('M1: Enable-DrillAdapters reads the adapters back; still Disabled or a throw counts as not enabled', opts, () => {
+  const r = ps(`${netStubs({ enableThrows: ['Ethernet'], disabled: ['Ethernet', 'Wi-Fi'] })}
+    @{ failed = @(Enable-DrillAdapters @('Ethernet', 'Wi-Fi', 'LAN 3')) }`);
+  assert.deepEqual(r.failed, ['Ethernet', 'Wi-Fi']);
+});
+
+test('M1: the backstop action removes its task only once every adapter reads back not Disabled', opts, () => {
+  const action = (s) => ps(`${netStubs(s)}
+    & ([scriptblock]::Create((Get-DrillBackstopCommand -TaskName 'CluedFailoverDrillRestore-gen18-t' -Names @('Ethernet', 'Wi-Fi'))))
+    @{ log = @($script:log) }`).log;
+  const stuck = action({ disabled: ['Wi-Fi'] });
+  assert.ok(!stuck.some(l => l.startsWith('unregister')), stuck.join(' '));
+  assert.ok(stuck.filter(l => l === 'enable:Wi-Fi').length > 1, `retries inside the action: ${stuck.join(' ')}`);
+  const thrown = action({ enableThrows: ['Ethernet'], disabled: ['Ethernet'] });
+  assert.ok(!thrown.some(l => l.startsWith('unregister')), thrown.join(' '));
+  const ok = action({});
+  assert.deepEqual(ok.filter(l => l.startsWith('unregister')), ['unregister:CluedFailoverDrillRestore-gen18-t']);
+});
+
+test('M1: the backstop time trigger repeats every 2 minutes for a day, and there is a boot trigger', opts, () => {
+  const r = ps(`@(New-DrillBackstopTriggers -At ([datetime]'2026-11-25T03:12:00Z') | ForEach-Object {
+      @{ kind = $_.CimClass.CimClassName; interval = $_.Repetition.Interval; duration = $_.Repetition.Duration } })`);
+  const list = Array.isArray(r) ? r : [r];
+  const time = list.filter(t => t.kind === 'MSFT_TaskTimeTrigger');
+  assert.equal(time.length, 1, JSON.stringify(list));
+  assert.equal(time[0].interval, 'PT2M');
+  assert.equal(time[0].duration, 'P1D');
+  assert.equal(list.filter(t => t.kind === 'MSFT_TaskBootTrigger').length, 1, JSON.stringify(list));
 });
 
 test('C6: the param block parses in Windows PowerShell 5.1, and a non-ASCII script carries a BOM', opts, () => {
