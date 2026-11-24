@@ -15,7 +15,7 @@ const BACKUP_TEST = 'tests/production-backup-scope-db.test.mjs';
 
 // One run against fakes. fail: step -> exit status; images: which of BACKUP_IMAGES are present; pulls: how many pulls
 // fail before one succeeds (Infinity: all).
-async function run(t, { argv = [BACKUP_TEST], fail = {}, images = [true, false], pulls = 0, platform = 'linux', steps } = {}) {
+async function run(t, { argv = [BACKUP_TEST], fail = {}, images = [true, false], pulls = 0, platform = 'linux', steps, env = {} } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'real-database-test-'));
   const work = mkdtempSync(path.join(os.tmpdir(), 'real-database-work-'));
   t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(work, { recursive: true, force: true }); });
@@ -23,7 +23,6 @@ async function run(t, { argv = [BACKUP_TEST], fail = {}, images = [true, false],
   writeFileSync(path.join(root, CONFIG), SOURCE);
   const calls = [];
   const lines = [];
-  const summaries = [];
   let pulled = 0;
   const step = (argv) => {
     const text = argv.join(' ');
@@ -43,7 +42,6 @@ async function run(t, { argv = [BACKUP_TEST], fail = {}, images = [true, false],
     tempDir: () => work,
     runId: () => 4242,
     log: (line) => lines.push(line),
-    summary: (text) => summaries.push(text),
     openLock: (file) => { calls.push({ step: 'open', file }); return 99; },
     closeLock: (fd) => calls.push({ step: 'close', fd }),
     capture: (argv, options) => {
@@ -65,11 +63,21 @@ async function run(t, { argv = [BACKUP_TEST], fail = {}, images = [true, false],
       return { status: fail[name] ?? 0 };
     },
   };
-  const code = await realDatabase({ argv, env: { PATH: '/usr/bin', HOME: '/home/runner' }, cwd: path.join(root, 'apps/clued-cloud'),
+  const code = await realDatabase({ argv, env: { PATH: '/usr/bin', HOME: '/home/runner', ...env }, cwd: path.join(root, 'apps/clued-cloud'),
     runtime, ...(steps ? { steps } : {}) });
   const order = calls.map(({ step: name }) => name);
-  return { code, calls, order, lines, out: lines.join('\n'), summary: summaries.join(''), root, config: readFileSync(path.join(root, CONFIG), 'utf8') };
+  const annotations = (kind) => lines.filter((line) => line.startsWith(`::${kind} `));
+  return { code, calls, order, lines, out: lines.join('\n'), notices: annotations('notice'), warnings: annotations('warning'),
+    errors: annotations('error'), root, config: readFileSync(path.join(root, CONFIG), 'utf8') };
 }
+
+// The one notice every run gives (ruling 11-25 #4): each check's exit status (none: it did not run), the seconds of the
+// start, the checks, the cleanup (skipped on a GitHub-hosted runner, none when there was nothing to clean) and the run,
+// and the runner kind.
+const SECONDS = String.raw`\d+\.\d`;
+const notice = ({ lint = '0', pgtap = '0', backup = '0', start = SECONDS, checks = SECONDS, cleanup = SECONDS, runner = 'self-hosted' } = {}) =>
+  new RegExp(`^::notice title=real database::lint=${lint} pgtap=${pgtap} backup=${backup} start=${start} checks=${checks} ` +
+    `cleanup=${cleanup} total=${SECONDS} runner=${runner}$`);
 
 test('a passing run: lock, prepare, start, verify, the three checks each say they ran, cleanup; exit 0', async (t) => {
   const result = await run(t);
@@ -90,6 +98,8 @@ test('a passing run: lock, prepare, start, verify, the three checks each say the
   assert.deepEqual(backup.argv.slice(-2), ['--test', BACKUP_TEST]);
   assert.equal(result.config, SOURCE, 'the checkout config is restored');
   assert.doesNotMatch(result.out, /::(?:error|warning)/);
+  assert.equal(result.notices.length, 1, result.out);
+  assert.match(result.notices[0], notice());
 });
 
 test('the commands are the Supabase CLI 2.115.0 ones of clued-g4-database.yml, the database started alone', async (t) => {
@@ -106,18 +116,26 @@ test('a failing lint fails the run; the other checks still run and the database 
   const result = await run(t, { fail: { lint: 1 } });
   assert.equal(result.code, 1);
   assert.match(result.out, /^real-database: lint ran: exit 1/m);
-  assert.match(result.out, /^::error title=real database::real_database: lint failed \(exit 1\)$/m);
+  assert.equal(result.errors.length, 1, result.out);
+  assert.match(result.errors[0], /^::error title=real database::real_database: lint failed \(exit 1\)$/);
+  assert.equal(result.notices.length, 1, result.out);
+  assert.match(result.notices[0], notice({ lint: '1' }));
   assert.ok(result.order.includes('pgtap') && result.order.includes('backup'));
   assert.equal(result.order.at(-1), 'cleanup');
 });
 
-test('--observe: the same failure is a warning and a summary line, and the run exits 0', async (t) => {
-  const result = await run(t, { argv: ['--observe', BACKUP_TEST], fail: { lint: 1 } });
+test('--observe: the same failure is one warning beside the one notice, and the run exits 0', async (t) => {
+  const result = await run(t, { argv: ['--observe', BACKUP_TEST], fail: { lint: 1, backup: 3 } });
   assert.equal(result.code, 0);
-  assert.match(result.out, /^::warning title=real database \(observe\)::real_database: lint failed \(exit 1\)$/m);
-  assert.doesNotMatch(result.out, /::error/);
-  assert.match(result.summary, /real database \(observe\): failed/);
-  assert.match(result.summary, /- lint: ran, exit 1/);
+  // All the problems in one warning: a step shows at most 10 of each kind, this run gives 2 annotations.
+  assert.equal(result.warnings.length, 1, result.out);
+  assert.match(result.warnings[0], /^::warning title=real database \(observe\)::real_database: lint failed \(exit 1\); real_database: backup failed \(exit 3\)$/);
+  assert.equal(result.errors.length, 0, result.out);
+  assert.equal(result.notices.length, 1, result.out);
+  assert.match(result.notices[0], notice({ lint: '1', backup: '3' }));
+  // A passing observed run: the notice only.
+  const passed = await run(t, { argv: ['--observe', BACKUP_TEST] });
+  assert.deepEqual([passed.notices.length, passed.warnings.length, passed.errors.length], [1, 0, 0], passed.out);
 });
 
 test('a check that did not run fails the run, whatever else passed: nothing that did not run counts', async (t) => {
@@ -135,7 +153,9 @@ test('a check that did not run fails the run, whatever else passed: nothing that
   // Observed, the same is said as a warning.
   const observed = await run(t, { argv: ['--observe'], steps: [] });
   assert.equal(observed.code, 0);
-  assert.match(observed.out, /^::warning title=real database \(observe\)::real_database: lint did not run$/m);
+  assert.equal(observed.warnings.length, 1, observed.out);
+  assert.match(observed.warnings[0], /^::warning title=real database \(observe\)::real_database: lint did not run; real_database: pgtap did not run; real_database: backup did not run$/);
+  assert.match(observed.notices[0], notice({ lint: 'none', pgtap: 'none', backup: 'none' }));
 });
 
 test('no Docker: an infrastructure failure, nothing started, nothing to clean', async (t) => {
@@ -143,6 +163,8 @@ test('no Docker: an infrastructure failure, nothing started, nothing to clean', 
   assert.equal(result.code, 1);
   assert.match(result.out, new RegExp(`::error title=real database::${INFRASTRUCTURE} `));
   assert.deepEqual(result.order, ['docker']);
+  assert.equal(result.notices.length, 1, result.out);
+  assert.match(result.notices[0], notice({ lint: 'none', pgtap: 'none', backup: 'none', start: 'none', checks: 'none', cleanup: 'none' }));
   const windows = await run(t, { platform: 'win32' });
   assert.equal(windows.code, 1);
   assert.match(windows.out, new RegExp(INFRASTRUCTURE));
@@ -175,9 +197,9 @@ test('the backup image pulled three times without success: an infrastructure fai
   assert.equal(fallback.calls.find(({ step }) => step === 'backup').options.env.CLUED_BACKUP_TEST_IMAGE, BACKUP_IMAGES[1]);
 });
 
-test('after any failure past prepare, --cleanup still runs and the config is restored', async (t) => {
+test('on a self-hosted runner, after any failure past prepare, --cleanup still runs and the config is restored', async (t) => {
   for (const failing of ['start', 'verify', 'lint', 'pgtap', 'backup']) {
-    const result = await run(t, { fail: { [failing]: 1 } });
+    const result = await run(t, { fail: { [failing]: 1 }, env: { RUNNER_ENVIRONMENT: 'self-hosted' } });
     assert.equal(result.code, 1, failing);
     assert.equal(result.order.at(-1), 'cleanup', failing);
     assert.equal(result.config, SOURCE, failing);
@@ -204,4 +226,40 @@ test('an unknown switch is refused before anything runs', async (t) => {
   const result = await run(t, { argv: ['--obsrve'] });
   assert.equal(result.code, 2);
   assert.deepEqual(result.order, []);
+});
+
+// p90 §3.6 (ruling 11-25 B1): a GitHub-hosted runner is thrown away after the job, so its database is not cleaned up nor
+// its config restored. Only that exact value skips them: any other, or none (the selector did not pass it), cleans.
+test('on a GitHub-hosted runner the run does not clean up, and says so; the three checks still say they ran', async (t) => {
+  const hosted = { RUNNER_ENVIRONMENT: 'github-hosted' };
+  const result = await run(t, { env: hosted });
+  assert.equal(result.code, 0, result.out);
+  assert.ok(!result.order.includes('cleanup'), result.order.join(' '));
+  for (const check of CHECKS) assert.match(result.out, new RegExp(`^real-database: ${check} ran: exit 0`, 'm'), check);
+  assert.equal(result.notices.length, 1, result.out);
+  assert.match(result.notices[0], notice({ cleanup: 'skipped', runner: 'github-hosted' }));
+  assert.equal(result.config, 'project_id = "clued-g4-4242-1"\n', 'the config of a hosted runner is left as prepare wrote it');
+  // A failure on a hosted runner: still no cleanup.
+  const failed = await run(t, { env: hosted, fail: { lint: 1 } });
+  assert.equal(failed.code, 1);
+  assert.ok(!failed.order.includes('cleanup'));
+});
+
+test('without RUNNER_ENVIRONMENT, or with any other value, the run cleans up as on a self-hosted runner', async (t) => {
+  for (const env of [{}, { RUNNER_ENVIRONMENT: 'self-hosted' }, { RUNNER_ENVIRONMENT: 'GitHub-Hosted' }, { RUNNER_ENVIRONMENT: '' }]) {
+    const result = await run(t, { env });
+    assert.equal(result.code, 0, result.out);
+    assert.equal(result.order.at(-1), 'cleanup', JSON.stringify(env));
+    assert.equal(result.config, SOURCE, JSON.stringify(env));
+    assert.match(result.notices[0], notice(), JSON.stringify(env));
+  }
+});
+
+// Ruling 11-25 B2: the database started alone is a hard prerequisite. Should it not pass, the plan goes back to planning;
+// the start command is not changed to the whole local stack.
+test('the start is the database alone, and the script writes no step summary', () => {
+  assert.equal(START, 'supabase db start');
+  const source = readFileSync(new URL('./clued-real-database.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /'supabase start'/);
+  assert.doesNotMatch(source, /GITHUB_STEP_SUMMARY|summary\s*[:(]/, 'no step summary: the selector never passes its variable');
 });

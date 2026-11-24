@@ -1195,6 +1195,17 @@ test("under Actions a suite child gets the fake token, not the job's, and keeps 
   assert.equal(seen[0].GITHUB_ACTIONS, undefined, 'a test runs the same in Actions and locally');
 });
 
+// Task 4432ee9b (ruling 11-25 B1): the real database command of production-schema reads the runner's kind to skip its
+// cleanup on a GitHub-hosted runner; a suite child gets RUNNER_ENVIRONMENT as the runner gives it.
+test("a suite child keeps the runner's kind, RUNNER_ENVIRONMENT", () => {
+  const seen = [];
+  const spawn = (command, args, options) => { seen.push(options.env); return { status: 0 }; };
+  const env = { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', CI_BASE_SHA: 'b', PATH: '/bin' };
+  assert.equal(executeSuite('retrigger-counter', { root: ROOT, env, spawn, log }), 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].RUNNER_ENVIRONMENT, 'github-hosted');
+});
+
 // Task 3435f8bf: the hosted windows image points PSModuleAnalysisCachePath at a warmed Windows PowerShell module analysis
 // cache; a suite child without it rebuilds the cache, about 20 s more for every powershell.exe. It is passed as given, in any
 // case of its name.
