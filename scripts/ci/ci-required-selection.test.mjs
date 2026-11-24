@@ -2875,3 +2875,65 @@ test('the reporter counts a test\'s child process in the test\'s own file (fleet
   assert.equal(top[0].file, 'parent.test.mjs');
   assert.ok(top[0].ms >= 1100, `the child's time is the parent file's: ${top[0].ms} ms`);
 });
+
+// --run-prepush (task 3435f8bf, FABLE-ci-one-round-20261124 §3.7 ruling 1): the push entry runs these few static checks on
+// the tree the push would merge into main. One list, the runner budget suite's commands by reference, never a copy.
+test('PREPUSH_COMMANDS: every file a command names exists, and its runner budget part is the suite\'s own command objects', () => {
+  const { PREPUSH_COMMANDS } = selection;
+  assert.ok(Array.isArray(PREPUSH_COMMANDS) && PREPUSH_COMMANDS.length > 0, 'PREPUSH_COMMANDS is exported');
+  for (const command of PREPUSH_COMMANDS) {
+    for (const arg of command.argv.filter((item) => /\.(?:mjs|py)$/.test(item))) {
+      assert.ok(existsSync(path.join(ROOT, command.cwd, arg)), `${arg} (cwd ${command.cwd}) exists`);
+    }
+  }
+  assert.deepEqual(PREPUSH_COMMANDS[0], { cwd: '.', argv: ['node', '--test', 'scripts/ci/main-entry-realpath.test.mjs'] });
+  const budget = SUITE_COMMANDS['runner-budget-policy'];
+  assert.equal(PREPUSH_COMMANDS.length, 1 + budget.length);
+  budget.forEach((command, index) => assert.equal(PREPUSH_COMMANDS[1 + index], command, 'the same object, not a copy'));
+});
+
+test('runPrepush: 0 when all pass; 1 naming the failed tests of a red command; 3 for a timeout; no slot, no dependencies', (t) => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), 'clued-prepush-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const commands = [{ cwd: '.', argv: ['node', '--test', 'a.test.mjs'] }, { cwd: '.', argv: ['python', 'b.py'], quiet: true }];
+  const run = (outcome) => {
+    const calls = [];
+    const lines = [];
+    const spawn = (command, args, options) => {
+      calls.push({ command, args, options });
+      const destination = args.find((arg) => arg.startsWith('--test-reporter-destination=') && !arg.endsWith('=stdout'));
+      const result = outcome(args, destination?.slice('--test-reporter-destination='.length));
+      return { status: 0, signal: null, stdout: Buffer.from(''), ...result };
+    };
+    const status = selection.runPrepush(temp, { env: { CLUED_TEST_IDENTITY_DIR: temp }, spawn, log: (line) => lines.push(String(line)), commands });
+    return { status, calls, text: lines.join('\n') };
+  };
+  const green = run(() => ({}));
+  assert.equal(green.status, 0, green.text);
+  assert.equal(green.calls.length, 2);
+  for (const call of green.calls) assert.equal(call.options.timeout, selection.PREPUSH_TIMEOUT_MS);
+  assert.equal(selection.PREPUSH_TIMEOUT_MS, 120_000);
+
+  const red = run((args, report) => {
+    if (!report) return { status: 1 };
+    writeFileSync(report, `${JSON.stringify({ type: 'fail', file: path.join(temp, 'a.test.mjs'), path: ['entry guard', 'listed file'], fingerprint: '0123456789abcdef' })}\n`);
+    return { status: 1 };
+  });
+  assert.equal(red.status, 1, red.text);
+  assert.match(red.text, /a\.test\.mjs :: entry guard > listed file/);
+  assert.match(red.text, /python b\.py/, 'the second red command is named too');
+  assert.match(red.text, /--run-prepush --root/, 'the command that reproduces it');
+
+  const hung = run((args) => (args.includes('b.py') ? { status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync python ETIMEDOUT'), { code: 'ETIMEDOUT' }) } : {}));
+  assert.equal(hung.status, selection.PREPUSH_ERROR_EXIT, hung.text);
+  assert.equal(selection.PREPUSH_ERROR_EXIT, 3);
+});
+
+test('--run-prepush marks its environment as a test run, and needs --root', () => {
+  const env = {};
+  selection.markTestRun(['--run-prepush', '--root', '.'], env);
+  assert.equal(env.CLUED_UNDER_TEST, '1');
+  const missing = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ci/ci-required-selection.mjs'), '--run-prepush'], { encoding: 'utf8' });
+  assert.equal(missing.status, 2, `${missing.stdout}${missing.stderr}`);
+  assert.match(missing.stderr, /--run-prepush --root <tree>/);
+});
