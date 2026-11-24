@@ -336,8 +336,8 @@ test('发布门不依赖心跳，两个发布入口使用部署后状态模式',
 
 test('libpq tools get sslmode=require where the node-postgres URL says no-verify', () => {
   const scripts = [...productionWorkflow.matchAll(/node -e '((?:const|let) url[^']*)'/g)].map((m) => m[1]);
-  // Backup, migration login role, apply and (release door v1) the deploy grant step.
-  assert.equal(scripts.length, 4);
+  // Backup, migration login role, apply, (release door v1) the deploy grant step and the applied-history export.
+  assert.equal(scripts.length, 5);
   for (const script of scripts) {
     const run = (value) => spawnSync(process.execPath, ['-e', script], {
       env: { ...process.env, CLUED_ATTESTATION_DATABASE_URL: value, CLUED_MIGRATION_DATABASE_URL: value },
@@ -770,7 +770,8 @@ test('the G6 attestation runs after the rollback step, only when everything succ
   for (const mode of ['deploy', 'release']) {
     const ok = simulateRelease({ mode });
     assert.equal(ok.conclusion, 'success');
-    assert.equal(at(ok, G6_STEP), ok.ran.length - 2, 'only the evidence upload follows the attestation');
+    assert.deepEqual(ok.ran.slice(at(ok, G6_STEP) + 1), ['Preserve release evidence', ...APPLIED_EXPORT_STEPS],
+      'only the evidence upload and the read-only applied-history export follow the attestation');
     // A failed deploy, check, queue or grant: the G6 step never writes.
     for (const failAt of ['Consume the Owner Grant for this commit', QUEUE_STEP, ...DEPLOY_STEPS, ...VERIFY_STEPS]) {
       const failed = simulateRelease({ mode }, failAt);

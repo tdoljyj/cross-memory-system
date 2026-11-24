@@ -663,3 +663,40 @@ jobs:
             apps/clued-cloud/.sites-runtime/storage-client-source/registration.json
           if-no-files-found: ignore
           retention-days: ${{ inputs.mode == 'source-capture' && 1 || 30 }}
+      # Drill test project sync (Task 87d330d0; FABLE-drill-test-project-sync-20261124 §2.1).
+      # After a run that succeeded, in every mode: production's applied
+      # migration list (names, md5, order; the facts the committed ledger
+      # holds, no statement text, no secret), read in one read-only transaction
+      # with the attestation login. clued-drill-test-sync.yml brings the test
+      # project clued-auth-test to this list. Both steps continue on error: the
+      # export never fails a release; a missed one is caught up by the next.
+      # Its own artifact, apart from the release evidence and the encrypted backup.
+      - name: Export the applied production history
+        timeout-minutes: 3
+        continue-on-error: true
+        env:
+          CLUED_ATTESTATION_DATABASE_URL: ${{ secrets.CLUED_ATTESTATION_DATABASE_URL_V2 }}
+        run: |
+          set -euo pipefail
+          test -n "$CLUED_ATTESTATION_DATABASE_URL"
+          database_url=$(node -e 'const url = new URL(process.env.CLUED_ATTESTATION_DATABASE_URL); url.searchParams.delete("uselibpqcompat"); if (url.searchParams.get("sslmode") === "no-verify") url.searchParams.set("sslmode", "require"); process.stdout.write(url.toString())')
+          out=.sites-runtime/production-applied
+          mkdir -p "$out"
+          docker run --rm -i --user "$(id -u):$(id -g)" \
+            -v "$PWD/supabase/production-schema:/work/supabase/production-schema:ro" -w /work \
+            postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929 \
+            psql "$database_url" -v ON_ERROR_STOP=1 -X -q -tA -c 'begin read only' -f supabase/production-schema/applied.sql -c 'commit' \
+            > "$out/applied.rows" \
+            || { echo "::warning::Could not read the applied production history; the drill test project is not brought up to date by this run"; exit 1; }
+          node -e 'const fs = require("node:fs"); const [from, to] = process.argv.slice(1); const applied = JSON.parse(fs.readFileSync(from, "utf8")); if (!Array.isArray(applied) || applied.length === 0) throw new Error("the applied production history is empty"); fs.writeFileSync(to, JSON.stringify({ contract: "clued.production-applied.v1", source_commit: process.env.GITHUB_SHA, run_id: process.env.GITHUB_RUN_ID, applied }) + "\n"); console.log("Applied production history: " + applied.length + " rows through " + applied.at(-1).version + "_" + applied.at(-1).name);' \
+            "$out/applied.rows" "$out/production-applied.json"
+          rm -f "$out/applied.rows"
+      - name: Publish the applied production history
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: clued-production-applied-${{ github.run_id }}
+          path: apps/clued-cloud/.sites-runtime/production-applied/production-applied.json
+          if-no-files-found: ignore
+          retention-days: 30
