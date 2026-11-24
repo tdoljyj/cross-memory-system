@@ -3,8 +3,10 @@
 // DRILL_SERVER_SYNC_TOOL_MISSING: the sync script needed apps/clued-cloud/node_modules. What the host runs before a boot may import
 // only node: modules and files the repository tracks.
 //
-// The fresh worktree here is a copy of the tracked files of apps/clued-cloud and work (byte for byte, uncommitted edits included;
-// not git worktree add, which writes the shared .git and holds only HEAD). The real Sync-DrillServer of the copy's drill-vm.ps1
+// The fresh worktree here is a copy of the tracked files of apps/clued-cloud, work and scripts/ci (byte for byte, uncommitted edits
+// included; not git worktree add, which writes the shared .git and holds only HEAD). scripts/ci: drill-server-check.mjs reaches
+// scripts/ci/clued-merge-train-native.mjs through work/actions-hosted-migration. A tracked file missing here can only make a test
+// fail, never pass: add its directory to COPIED. The real Sync-DrillServer of the copy's drill-vm.ps1
 // runs the copy's own sync script with a fixture password; production's list is this test's file (GitHub is not this test's
 // business) and the copy's drill-server.json names no pooler host, so the script stops there: after its client is loaded, before
 // the password is read or anything is connected to.
@@ -27,11 +29,13 @@ const ENTRIES = ['work/independent-ci-resident-v1/rollout/fleet/universal.mjs', 
   'work/independent-ci-resident-v1/drill/make-drill-kit.mjs', 'work/independent-ci-resident-v1/drill/drill-server-check.mjs',
   'apps/clued-cloud/scripts/drill-test-sync.mjs'];
 
+const COPIED = ['apps/clued-cloud', 'work', 'scripts/ci'];
+
 let fresh = null;
 function freshCheckout() {
   if (fresh !== null) return fresh;
   const root = path.join(tmp, 'fresh');
-  const listed = spawnSync('git', ['ls-files', '-z', '--', 'apps/clued-cloud', 'work'], { cwd: repository, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const listed = spawnSync('git', ['ls-files', '-z', '--', ...COPIED], { cwd: repository, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   assert.equal(listed.status, 0, listed.stderr);
   for (const file of listed.stdout.split('\0').filter(Boolean)) {
     const from = path.join(repository, file);
