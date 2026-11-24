@@ -352,3 +352,11 @@ test('Assert-DrillServerReady stops the drill on the server\'s answer, each with
   assert.equal(psCode(`${main}; ${answering(1, 'DRILL_BINDING_ON_DUTY')}; Invoke-DrillMain`), 'DRILL_BINDING_ON_DUTY');
   assert.equal(psCode(`${main}; ${answering(1, 'DRILL_SERVER_NOT_IN_SYNC:diverged')}; Invoke-DrillMain`), 'DRILL_SERVER_NOT_IN_SYNC');
 });
+
+// Section 5 of the sync design: what the stand-in rests on is registered where the stand-in is (the kit's step, the decision table).
+test('the registered stand-in says what it rests on: the parking role the sync job seeds, and the token\'s 90 days', () => {
+  assert.match(kitModule.SERVER_STAND_IN_STEP, /parking/); assert.match(kitModule.SERVER_STAND_IN_STEP, /同步作业/); assert.match(kitModule.SERVER_STAND_IN_STEP, /90 天/);
+  const source = JSON.parse(fs.readFileSync(new URL('../drill/credential-decisions.json', import.meta.url), 'utf8')).decisions?.['ci-admission.token']?.source
+    ?? JSON.stringify(JSON.parse(fs.readFileSync(new URL('../drill/credential-decisions.json', import.meta.url), 'utf8')));
+  assert.match(source, /parking/); assert.match(source, /90 days/);
+});
