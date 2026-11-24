@@ -83,7 +83,9 @@ test('1: a test that never settles, its file kept alive, fails the command at it
   assert.match(text, /quick one/);
 });
 
-test('2: a test whose spawnSync never returns blocks its file; the command fails at its limit, the file named, with the tests before it', (t) => {
+// A file blocked in a synchronous call: the entry guarantees only the file's own line (the parent sends its begin), not the
+// tests that ended before the block; what the blocked process had not written to its pipe never reaches the entry.
+test('2: a test whose spawnSync never returns blocks its file; the command fails at its limit, the file named', (t) => {
   const root = fixture(t, {
     [`${SOURCE_DIR}/blocked.test.mjs`]: "import test from 'node:test';\nimport { spawnSync } from 'node:child_process';\nimport os from 'node:os';\n"
       + "test('first done', () => {});\ntest('second done', () => {});\n"
@@ -92,8 +94,6 @@ test('2: a test whose spawnSync never returns blocks its file; the command fails
   const { status, text, elapsed } = guarded(root, 'source-v2-node', TEST_MS);
   assert.equal(status, 1, text);
   assert.match(text, /::error title=source-v2-node 开始了没结束::.*blocked\.test\.mjs/);
-  assert.match(text, /first done/);
-  assert.match(text, /second done/);
   assert.ok(elapsed < TEST_MS + 20_000, `returned after ${Math.round(elapsed)} ms`);
 });
 
