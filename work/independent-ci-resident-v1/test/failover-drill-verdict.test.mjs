@@ -166,6 +166,19 @@ test('drill 复审 B9: a snapshot in the B9 window without an exclusion field is
   assert.equal(drill(still).checks.B9.ok, false, JSON.stringify(drill(still).checks.B9));
 });
 
+test('drill 复审 B8: a snapshot in the B8 window without an exclusion field is undetermined, not a FAIL', () => {
+  const d = drillParts();
+  delete d.snapshots[0].exclusion;      // T0+15: inside the B8 window
+  const r = drill(d);
+  assert.equal(r.checks.B8.ok, null, JSON.stringify(r.checks.B8));
+  assert.equal(r.verdict, 'UNDETERMINED');
+  const back = drillParts();           // a missing one next to one already rejoined inside the window is a FAIL
+  delete back.snapshots[0].exclusion;
+  back.snapshots.push(snapshot(plus(STEADY, 20 * 60), { ...back.snapshots[1], page: { ...back.snapshots[1].page, observed_at: plus(STEADY, 20 * 60) },
+    steady: STEADY, receipts: back.snapshots[1].receipts, duty: back.snapshots[1].duty_answers, exclusion: null }));
+  assert.equal(drill(back).checks.B8.ok, false, JSON.stringify(drill(back).checks.B8));
+});
+
 test('drill 复审 B10: a cut shorter than 540 s is a FAIL', () => {
   for (const seconds of [300, 539]) {
     const d = drillParts(); d.cut.restoredAt = plus(d.cut.t0, seconds);
