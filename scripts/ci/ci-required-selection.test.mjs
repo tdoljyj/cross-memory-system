@@ -2149,15 +2149,11 @@ for (const [file, id] of BASELINE_JOBS) {
   });
   const baseSuites = BASE_SUITES_OF_JOB[id];
   if (!baseSuites) continue;
-  // The consumer, end to end: what the step wrote to GITHUB_ENV (the suite step sets no CI_BASE_SHA of its own, which
-  // would override it), then the selector expanding every command of the four suites that take {base}. Before the
+  // The consumer, end to end: what the step wrote to GITHUB_ENV (that no step sets CI_BASE_SHA itself is checked once, in
+  // ci-base.test.mjs), then the selector expanding every command of the job's suites that take {base}. Before the
   // dispatch fix this threw 'CI_BASE_SHA is required for this suite', as in the run's log.
   test(`lost-run dispatch, ${label}: the suites that compare with a base get the merge-base commit`, { skip }, (t) => {
     const repo = dispatchCheckout(t);
-    const text = readFileSync(file, 'utf8');
-    const job = text.slice(text.indexOf(`\n  ${id}:\n`) + 1);
-    const suitesStep = job.slice(job.indexOf('- name: Run the selected suites\n'));
-    assert.doesNotMatch(suitesStep.slice(0, suitesStep.indexOf('\n      - ')), /^ +CI_BASE_SHA:/m);
     for (const [head, expected] of [[repo.caughtUp, repo.M2], [repo.behind, repo.T]]) {
       const r = runBaseline(t, step, repo.dir, { ...DISPATCH, STAGING_SHA: head });
       assert.equal(r.status, 0, r.log);
