@@ -236,6 +236,34 @@ test('a listed helper does not lend its debt: an unlisted test that waits throug
   assert.deepEqual(old.record.debt.map((entry) => `${entry.file}:${entry.line} ${entry.entry}`), ['test/helpers.mjs:2 test/old.test.mjs']);
 });
 
+test('an aggregate test that imports a listed test runs that test\'s debt; an unlisted test, imported or importing a listed helper, is refused', () => {
+  const root = checkout({
+    [DEBT_FILE]: 'test/helpers.mjs\ntest/listed.test.mjs\n',
+    'test/helpers.mjs': 'export const stamp = () => Date.now();\n',
+    'test/listed.test.mjs': `${header}import { stamp } from './helpers.mjs';\ntest('listed', () => {\n  assert.ok(stamp() > 0);\n  assert.ok(Date.now() > 0);\n});\n`,
+    'test/unlisted.test.mjs': `${header}test('unlisted', () => {\n  assert.ok(Date.now() > 0);\n});\n`,
+    'test/aggregate.test.mjs': "import './listed.test.mjs';\n",
+    'test/aggregate-unlisted.test.mjs': "import './listed.test.mjs';\nimport './unlisted.test.mjs';\n",
+    'test/borrow.test.mjs': `${header}import { stamp } from './helpers.mjs';\ntest('borrows', () => {\n  assert.ok(stamp() > 0);\n});\n`,
+  });
+  // The aggregate is not listed, but the listed test it imports is the one reading the clock (itself and through its helper).
+  const aggregate = runGuarded(root, 'test/aggregate.test.mjs');
+  assert.equal(aggregate.status, 0, aggregate.output);
+  assert.deepEqual(aggregate.record.refused, []);
+  assert.deepEqual(aggregate.record.debt.map((entry) => `${entry.file} ${entry.entry}`).sort(),
+    ['test/helpers.mjs test/aggregate.test.mjs', 'test/listed.test.mjs test/aggregate.test.mjs']);
+  rmSync(path.join(root, 'clock-record.jsonl'));
+  // An unlisted test imported by an aggregate: neither the aggregate nor that test is listed, so it is refused.
+  const mixed = runGuarded(root, 'test/aggregate-unlisted.test.mjs');
+  assert.notEqual(mixed.status, 0, mixed.output);
+  assert.deepEqual(mixed.record.refused.map((entry) => `${entry.file} ${entry.entry}`), ['test/unlisted.test.mjs test/aggregate-unlisted.test.mjs']);
+  rmSync(path.join(root, 'clock-record.jsonl'));
+  // Reaching a listed helper is not reaching a listed test: an unlisted test that imports the helper still borrows nothing.
+  const borrow = runGuarded(root, 'test/borrow.test.mjs');
+  assert.notEqual(borrow.status, 0, borrow.output);
+  assert.deepEqual(borrow.record.refused.map((entry) => `${entry.file} ${entry.entry}`), ['test/helpers.mjs test/borrow.test.mjs']);
+});
+
 test('a promisified exec or execFile with a timeout fails through the guard and the static scan', () => {
   // The texts are split so this file does not carry them.
   const limit = `{ time${''}out: 10000 }`;
