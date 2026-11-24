@@ -494,7 +494,7 @@ function processAlive(pid) {
 // A run that has to wait says its position.
 export const RUN_NEEDS = { memGb: 6, cores: 4, dataGb: 3, systemGb: 3 }; // one more run: Windows and Linux side, embedded PostgreSQL, builds
 export const HOST_KEEPS = { memGb: 10, cores: 4, dataGb: 10 }; // what the CI runners and the user keep (the watchdog resumes at 10 GB of memory)
-// In the Linux distribution (one VM with the CI runners' distribution, 28 GB here) the watchdog stops the runners at 6 GB free memory.
+// In the Linux distribution (one VM with the CI runners' distribution, its memory the host's capacity profile in node-profiles.json) the watchdog stops the runners at 6 GB free memory.
 export const VM_KEEPS = { memGb: 6, cores: 4, dataGb: 5 };
 const RAMP_MS = 120_000; // a run just started has not yet taken what it will take
 const QUEUE_POLL_MS = 1000;

@@ -970,22 +970,25 @@ export function planFiles(id, { root, files, env = process.env }) {
   return { steps, named };
 }
 
-// Where the files a suite refused run instead: the suites whose commands take each one, read as the coverage check reads
-// them (check-tests-covered.mjs), or why none does (its table). Only a hint: it says nothing when it cannot be read.
+// Where the files a suite refused run instead, read as the coverage check reads them (check-tests-covered.mjs): the suite
+// whose command takes each one, directly or through the running test that imports it, or why none does (its table). Only a
+// hint, given after the refusal: when it cannot be read it says why.
 async function whereFilesRun(files, root) {
-  if (!files?.length) return '';
+  if (!files?.length) return [];
   try {
-    const { TABLE_PATH, readTable, suiteFiles } = await import('./check-tests-covered.mjs');
-    const { runs } = suiteFiles(root, { tracked: files });
+    const { TABLE_PATH, readTable, whereTestsRun } = await import('./check-tests-covered.mjs');
+    const where = whereTestsRun(root, files);
     const listed = new Map((readTable(root).tests ?? []).map((entry) => [entry.path, entry]));
     return files.map((file) => {
-      const suites = [...new Set(runs.get(file) ?? [])];
-      if (suites.length > 0) return `\n${file} runs in ${suites.join(', ')}: --run-files ${suites[0]} ${file}`;
+      const runs = where.get(file);
+      if (runs) {
+        return `${file} runs in ${runs.suites.join(', ')}${runs.through === file ? '' : ` imported by ${runs.through}`}: --run-files ${runs.suites[0]} ${runs.through}`;
+      }
       const entry = listed.get(file);
-      return `\n${file}: no required suite runs it${entry ? ` (${TABLE_PATH}: ${entry.kind}, ${entry.reason})` : ''}`;
-    }).join('');
-  } catch {
-    return '';
+      return `${file}: no required suite runs it${entry ? ` (${TABLE_PATH}: ${entry.kind}, ${entry.reason})` : ''}`;
+    });
+  } catch (error) {
+    return [`(where ${files.join(', ')} run could not be read: ${error.message})`];
   }
 }
 
@@ -1003,7 +1006,8 @@ export async function runSuite(id, { root, env = process.env, log = console.log,
       planFiles(id, { root, files, env });
     } catch (error) {
       if (!(error instanceof RunFilesError)) throw error;
-      log(`run-files ${id}: ${error.message}${await whereFilesRun(error.unmatched, root)}`);
+      log(`run-files ${id}: ${error.message}`);
+      for (const line of await whereFilesRun(error.unmatched, root)) log(line);
       return 2;
     }
   }
@@ -1525,11 +1529,23 @@ async function main(argv, env = process.env) {
   return status !== 0 ? status : error ? 1 : 0;
 }
 
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  try {
-    process.exitCode = await main(process.argv.slice(2));
-  } catch (error) {
+// The entry runs main without a top-level await (task 0d2fb345). A module main loads that imports this one (check-tests-
+// covered.mjs, for a refused file) waits for this module to finish evaluating; under a top-level await of main that never
+// came, and Node ended the process with exit 13 and nothing said. A run that still never settles leaves the event loop
+// empty: that is said, with exit 1.
+export function runEntry(run) {
+  let settled = false;
+  process.once('beforeExit', () => {
+    if (settled) return;
+    console.error('ci-required-selection: ended before the run finished: a step it awaited never settled (nothing was left to settle it)');
+    process.exitCode = 1;
+  });
+  return Promise.resolve().then(run).then((code) => { process.exitCode = code; }, (error) => {
     console.error(`ci-required-selection: ${error.message}`);
     process.exitCode = 1;
-  }
+  }).finally(() => { settled = true; });
+}
+
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  runEntry(() => main(process.argv.slice(2)));
 }
