@@ -10,7 +10,6 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HOST_KEY_FILE, SERVER_KEY, readDrillServer, serverKeyRecord, verifyKitServer } from './make-drill-kit.mjs';
 // the request the guest's launcher sends and the one reading of its answer (the node's own role probe)
@@ -151,7 +150,7 @@ export async function serverReady({ kit, from, version, token, fetch, pause }) {
   return verified;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (import.meta.main) {
   try {
     const { values } = parseArgs({ options: { ...Object.fromEntries(['store-key', 'key-file', 'ready', 'from', 'version', 'cache'].map(n => [n, { type: 'string' }])),
       'production-list': { type: 'boolean' } } });
