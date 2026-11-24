@@ -1665,7 +1665,7 @@ test('a known-failure command adds the trusted reporter, warns on known failures
 test('the application suite gates lint, ledger, typecheck and build before the unit tests', () => {
   const calls = [];
   const spawn = (command, args) => { calls.push(args.join(' ')); return { status: args.includes('typecheck') ? 2 : 0 }; };
-  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: {}, spawn, log, platform: 'linux' }), 2);
+  assert.equal(executeSuite('clued-cloud', { root: ROOT, env: { CI_BASE_SHA: 'b' }, spawn, log, platform: 'linux' }), 2);
   assert.deepEqual(calls, ['run lint', 'run ledger:verify', 'run typecheck']);
 });
 
@@ -1685,7 +1685,7 @@ test('on Windows the entry starts npm and npx through node, not the .cmd shim; e
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, exists: () => false }), ['npm', 'run', 'lint']);
   assert.deepEqual(resolveCommand(['npm', 'run', 'lint'], { ...win, platform: 'linux' }), ['npm', 'run', 'lint']);
   const calls = [];
-  executeSuite('clued-cloud', { root: ROOT, env: {}, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
+  executeSuite('clued-cloud', { root: ROOT, env: { CI_BASE_SHA: 'b' }, platform: 'win32', log, spawn: (command, args) => { calls.push([command, ...args]); return { status: 1 }; } });
   assert.equal(calls.length, 1);
   if (process.platform === 'win32') {
     assert.equal(calls[0][0], process.execPath, 'the first step starts npm via node');
