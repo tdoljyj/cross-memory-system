@@ -239,7 +239,7 @@ test('M1: the backstop action removes its task only once every adapter reads bac
 
 test('M1: the backstop time trigger repeats every 2 minutes for a day, and there is a boot trigger', opts, () => {
   const r = ps(`@(New-DrillBackstopTriggers -At ([datetime]'2026-11-25T03:12:00Z') | ForEach-Object {
-      @{ kind = $_.CimClass.CimClassName; interval = $_.Repetition.Interval; duration = $_.Repetition.Duration } })`);
+      @{ kind = $_.CimClass.CimClassName; interval = (Get-DrillProp $_.Repetition 'Interval'); duration = (Get-DrillProp $_.Repetition 'Duration') } })`);
   const list = Array.isArray(r) ? r : [r];
   const time = list.filter(t => t.kind === 'MSFT_TaskTimeTrigger');
   assert.equal(time.length, 1, JSON.stringify(list));

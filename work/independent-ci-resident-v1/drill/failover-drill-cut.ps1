@@ -1,11 +1,16 @@
-﻿# 第 18 代故障转移演练：在 TURING 上断网（任务 04f9b91b，D:/w/tmp/PLAN-failover-drill-gen18-20261124.md 第 1、5、8 节）。
-# 一个提权进程从头到尾：
+﻿# 第 18 代故障转移演练：在 TURING 上断网（任务 04f9b91b；方案 D:/w/tmp/PLAN-failover-drill-gen18-20261124.md 第 1、5、8 节，
+# 定案 D:/w/tmp/PLAN-failover-drill-gen18-addendum-20261124.md 第 1 节第 1、3、5 条，独立复核 D:/w/tmp/claude-review-failover-drill-gen18-fable.md M1、M2、S1）。
+# 一个提权进程从头到尾，只碰 TURING 本机路径（共享目录那份结果文件尽力写）：
+#   0. 放行文件所在目录探针写一次，写不进就退出（不空等）；放行文件事先就在（上一次留下的、或待命前就写的）就删掉，删不掉就退出。
 #   1. 记下状态为 Up 的物理网卡，写状态文件。
-#   2. 注册一次性兜底任务（SYSTEM；触发：到点、开机；动作：启用记下的网卡并删掉自己），读回确认。没注册成就退出，不断网。
-#   3. 待命：每 15 秒看一次放行文件（内容只有演练编号），最长 8 小时；到时不做任何事退出并删兜底任务。
-#   4. 放行到了：读本机 status.json 核一次（ACTIVE、无在途批次、非 PAUSED、无 HALT、无暂停收单），不满足就删任务退出。
-#   5. 把兜底任务的到点触发改成此刻 + 12 分钟并读回（不成就不断网），禁用网卡记 T0，睡 540 秒，finally 里启用网卡。
-#   6. 等连通（github.com:443，最多 2 分钟）；网卡全部启用成才删兜底任务（否则留给它到点或开机再启用）；
+#   2. 注册兜底任务（SYSTEM；触发：到点起每 2 分钟重复一天、开机；动作：启用记下的网卡，读回都不是 Disabled 才删掉自己），读回确认。
+#      没注册成就退出，不断网。
+#   3. 待命：每 15 秒看一次放行文件（内容只有演练编号；只认待命之后写的，第 0 步已清掉旧的），最长 8 小时；到时删兜底任务退出。
+#      放行到了先读本机 status.json 核一次（ACTIVE、无在途批次、非 PAUSED、无 HALT、无暂停收单）：不满足就删掉这份放行文件、
+#      把原因写进状态文件、回到待命；放行文件删不掉才退出。满足就删掉放行文件（用过即删）往下走。
+#   4. 重列在用网卡，与第 1 步的取并集；把兜底任务按并集、到点改成此刻 + 12 分钟重注册并读回（不成就不断网），
+#      按并集禁用网卡记 T0，睡 540 秒，finally 里按并集启用网卡并读回。
+#   5. 等连通（github.com:443，最多 2 分钟）；网卡全部读回已启用才删兜底任务（否则留给它重复触发或开机再启用）；
 #      写结果文件（本机 WorkDir 与共享目录各一份）。
 # 真正动系统的动作收在 Get-DrillUpAdapters、Disable-DrillAdapters、Enable-DrillAdapters、Register-DrillBackstop、
 # Remove-DrillBackstop 里；测试（test/failover-drill-cut.test.mjs）dot-source 本文件后换成桩。dot-source 只定义函数，不执行。
@@ -23,6 +28,8 @@ $ErrorActionPreference = 'Stop'
 
 $script:CutSeconds = 540              # 失联 9 分钟（第 2 节）
 $script:BackstopMinutes = 12          # 兜底任务到点：断网后 12 分钟
+$script:BackstopRepeatMinutes = 2     # 到点之后每 2 分钟再触发一次，持续 1 天（复核 M1）
+$script:BackstopTries = 5             # 每次触发里启用并读回最多 5 遍，间隔 10 秒
 $script:StandbyLimitSeconds = 8 * 3600
 $script:PollSeconds = 15
 $script:ReconnectSeconds = 120
@@ -36,24 +43,41 @@ function Get-DrillUpAdapters {
 function Disable-DrillAdapters([string[]]$Names) {
   foreach ($n in $Names) { Disable-NetAdapter -Name $n -Confirm:$false }
 }
-# 逐块启用，一块失败不影响其余；输出没启用成的网卡名（调用方用 @() 收）。
+# 逐块启用，一块失败不影响其余；启用后读回，仍是 Disabled 或读不到的也算没启用成（复核 M1）。输出没启用成的网卡名（调用方用 @() 收）。
 function Enable-DrillAdapters([string[]]$Names) {
   $failed = New-Object System.Collections.ArrayList
   foreach ($n in $Names) {
-    try { Enable-NetAdapter -Name $n -Confirm:$false } catch { [void]$failed.Add($n) }
+    try { Enable-NetAdapter -Name $n -Confirm:$false -ErrorAction Stop } catch { [void]$failed.Add($n); continue }
+    try { $back = [string](Get-NetAdapter -Name $n -ErrorAction Stop).Status } catch { $back = $null }
+    if ($null -eq $back -or $back -eq 'Disabled') { [void]$failed.Add($n) }
   }
   $failed
 }
-# 注册（或以同名覆盖）兜底任务：SYSTEM，触发为 $At 一次与开机时；动作启用 $Names 并删掉自己。读回任务与到点时刻，对得上才算成。
-function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$At) {
+# 兜底任务的动作（PowerShell 文本）：逐块启用，读回全部不是 Disabled 才删掉任务；否则隔 10 秒再来，几遍都不成就留着任务等下一次触发。
+function Get-DrillBackstopCommand([string]$TaskName, [string[]]$Names) {
   $quoted = @($Names | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ','
-  $body = "foreach (`$n in @($quoted)) { try { Enable-NetAdapter -Name `$n -Confirm:`$false } catch { } }; " +
-    "Unregister-ScheduledTask -TaskName '$TaskName' -Confirm:`$false"
+  $task = "'" + ($TaskName -replace "'", "''") + "'"
+  "`$names = @($quoted); " +
+  "for (`$i = 0; `$i -lt $($script:BackstopTries); `$i++) { " +
+    "foreach (`$n in `$names) { try { Enable-NetAdapter -Name `$n -Confirm:`$false -ErrorAction Stop } catch { } }; " +
+    "`$left = @(`$names | Where-Object { `$s = `$null; try { `$s = [string](Get-NetAdapter -Name `$_ -ErrorAction Stop).Status } catch { }; (`$null -eq `$s) -or (`$s -eq 'Disabled') }); " +
+    "if (`$left.Count -eq 0) { Unregister-ScheduledTask -TaskName $task -Confirm:`$false; break }; " +
+    "Start-Sleep -Seconds 10 }"
+}
+# 到点触发（起每 2 分钟重复，持续 1 天）与开机触发。
+function New-DrillBackstopTriggers([datetime]$At) {
+  $local = $At.ToLocalTime()
+  @((New-ScheduledTaskTrigger -Once -At $local -RepetitionInterval (New-TimeSpan -Minutes $script:BackstopRepeatMinutes) -RepetitionDuration (New-TimeSpan -Days 1)),
+    (New-ScheduledTaskTrigger -AtStartup))
+}
+# 注册（或以同名覆盖）兜底任务：SYSTEM，读回任务、到点时刻与重复间隔，对得上才算成。
+function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$At) {
+  $body = Get-DrillBackstopCommand $TaskName $Names
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($body))
   $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
   $local = $At.ToLocalTime()
-  $triggers = @((New-ScheduledTaskTrigger -Once -At $local), (New-ScheduledTaskTrigger -AtStartup))
+  $triggers = @(New-DrillBackstopTriggers $At)
   $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
   [void](Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Force)
@@ -61,6 +85,7 @@ function Register-DrillBackstop([string]$TaskName, [string[]]$Names, [datetime]$
   if ($null -eq $task) { return $false }
   $once = @($task.Triggers | Where-Object { $_.StartBoundary -and $_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' })
   if (@($once).Count -ne 1) { return $false }
+  if ([string]$once[0].Repetition.Interval -ne ('PT{0}M' -f $script:BackstopRepeatMinutes)) { return $false }
   [Math]::Abs(([datetime]$once[0].StartBoundary - $local).TotalSeconds) -lt 2
 }
 # 删兜底任务并读回；任务已不在也算删了。
@@ -104,6 +129,21 @@ function Test-DrillRelease([string]$File, [string]$Id) {
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return $false }
   try { return ((Get-Content -LiteralPath $File -Raw).Trim() -ceq $Id) } catch { return $false }
 }
+# 删放行文件并读回；本来就不在也算删了。
+function Remove-DrillRelease([string]$File) {
+  try { if (Test-Path -LiteralPath $File) { Remove-Item -LiteralPath $File -Force -ErrorAction Stop } } catch { }
+  -not (Test-Path -LiteralPath $File)
+}
+# 放行文件所在目录能不能写：建目录（没有的话）、写一个探针文件再删掉。
+function Test-DrillDirWritable([string]$Dir) {
+  try {
+    if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { [void](New-Item -ItemType Directory -Path $Dir -Force -ErrorAction Stop) }
+    $probe = Join-Path $Dir (".probe-{0}.tmp" -f [guid]::NewGuid().ToString('N'))
+    [IO.File]::WriteAllText($probe, 'probe')
+    Remove-Item -LiteralPath $probe -Force -ErrorAction Stop
+    return $true
+  } catch { return $false }
+}
 function Write-DrillJson([string]$File, $Value) {
   $dir = Split-Path -Parent $File
   if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Path $dir -Force) }
@@ -112,9 +152,18 @@ function Write-DrillJson([string]$File, $Value) {
 function Write-DrillLine([string]$Text) { Write-Host ("[{0}] {1}" -f (Format-DrillTime (Get-DrillNow)), $Text) }
 
 # --- 主流程 ------------------------------------------------------------------
-# 第 1–6 步；$r 是结果（有序字典，按引用改），任一步不满足就 return，外层照样写结果文件。
+# 第 0–5 步；$r 是结果（有序字典，按引用改），任一步不满足就 return，外层照样写结果文件。
 function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$StatusFile, [string]$ReleaseFile, [string]$taskName) {
   $stateFile = Join-Path $WorkDir "failover-drill-$DrillId.state.json"
+  # 0. 放行文件：目录写得进；旧的清掉（只认待命之后写的）
+  if (-not (Test-DrillDirWritable (Split-Path -Parent $ReleaseFile))) {
+    $r.outcome = 'RELEASE_DIR_NOT_WRITABLE'; $r.detail = "放行文件所在目录写不进：$ReleaseFile"; return
+  }
+  if (Test-Path -LiteralPath $ReleaseFile) {
+    if (-not (Remove-DrillRelease $ReleaseFile)) { $r.outcome = 'RELEASE_PREEXISTS'; $r.detail = "待命前就有放行文件且删不掉：$ReleaseFile"; return }
+    $r.staleReleaseRemoved = $true
+  }
+
   # 1. 记下在用的物理网卡
   $names = @(Get-DrillUpAdapters)
   $r.adapters = $names
@@ -128,12 +177,30 @@ function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$S
   catch { $r.error = "注册兜底任务：$($_.Exception.Message)" }
   if (-not $ok) { $r.outcome = 'BACKSTOP_NOT_REGISTERED'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return }
   $r.backstopRegistered = $true
+  $r.standbySince = Format-DrillTime (Get-DrillNow)
   Write-DrillJson $stateFile $r
 
-  # 3. 待命
+  # 3. 待命；放行到了本机状态不满足就删掉这份放行文件、回到待命
   Write-DrillLine "待命，等放行文件 $ReleaseFile"
   $deadline = (Get-DrillNow).AddSeconds($script:StandbyLimitSeconds)
-  while (-not (Test-DrillRelease $ReleaseFile $DrillId)) {
+  while ($true) {
+    if (Test-DrillRelease $ReleaseFile $DrillId) {
+      $problems = @(Get-DrillLocalProblems $StatusFile)
+      if (@($problems).Count -eq 0) {
+        if (-not (Remove-DrillRelease $ReleaseFile)) {
+          $r.outcome = 'RELEASE_NOT_REMOVED'; $r.detail = "放行文件用后删不掉：$ReleaseFile"; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
+        }
+        break
+      }
+      $r.localProblems = $problems
+      $r.releasesRefused = [int]$r.releasesRefused + 1
+      $r.lastRefusedAt = Format-DrillTime (Get-DrillNow)
+      if (-not (Remove-DrillRelease $ReleaseFile)) {
+        $r.outcome = 'LOCAL_STATUS_NOT_READY'; $r.detail = "本机状态不满足且放行文件删不掉：$ReleaseFile"; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
+      }
+      Write-DrillLine ("本机状态不满足（{0}），已删放行文件，回到待命" -f ($problems -join '、'))
+      Write-DrillJson $stateFile $r
+    }
     if ((Get-DrillNow) -ge $deadline) {
       $r.outcome = 'STANDBY_TIMEOUT'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
     }
@@ -141,13 +208,13 @@ function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$S
   }
   $r.releasedAt = Format-DrillTime (Get-DrillNow)
 
-  # 4. 本机状态再核一次
-  $problems = @(Get-DrillLocalProblems $StatusFile)
-  if (@($problems).Count -gt 0) {
-    $r.localProblems = $problems; $r.outcome = 'LOCAL_STATUS_NOT_READY'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return
-  }
-
-  # 5. 兜底到点改为此刻 + 12 分钟，读回对了才断
+  # 4. 重列网卡取并集（待命期间新连上的也要断）；兜底到点改为此刻 + 12 分钟，读回对了才断
+  $union = New-Object System.Collections.ArrayList
+  foreach ($n in @($names) + @(Get-DrillUpAdapters)) { if ($n -and -not $union.Contains($n)) { [void]$union.Add($n) } }
+  $names = @($union)
+  $r.adapters = $names
+  Write-DrillJson $stateFile $r
+  if (@($names).Count -eq 0) { $r.outcome = 'NO_ADAPTER'; $r.detail = '没有状态为 Up 的物理网卡'; $r.backstopRemoved = [bool](Remove-DrillBackstop $taskName); return }
   $ok = $false
   try { $ok = [bool](Register-DrillBackstop $taskName $names ((Get-DrillNow).AddMinutes($script:BackstopMinutes))) }
   catch { $r.error = "改兜底任务到点：$($_.Exception.Message)" }
@@ -168,7 +235,7 @@ function Invoke-DrillCutSteps($r, [string]$DrillId, [string]$WorkDir, [string]$S
   }
   Write-DrillLine '已复网，等连通'
 
-  # 6. 等连通、删兜底任务
+  # 5. 等连通、删兜底任务
   $until = (Get-DrillNow).AddSeconds($script:ReconnectSeconds)
   $r.connected = $false
   while ($true) {
@@ -186,7 +253,8 @@ function Invoke-FailoverDrillCut {
   if (-not $ReleaseFile) { $ReleaseFile = Join-Path $WorkDir "release-$DrillId.txt" }
   $taskName = "CluedFailoverDrillRestore-$DrillId"
   $r = [ordered]@{ drillId = $DrillId; outcome = $null; detail = $null; computer = $env:COMPUTERNAME; startedAt = (Format-DrillTime (Get-DrillNow))
-    adapters = @(); backstopTask = $taskName; backstopRegistered = $false; releasedAt = $null; localProblems = @(); t0 = $null; restoredAt = $null
+    releaseFile = $ReleaseFile; staleReleaseRemoved = $false; adapters = @(); backstopTask = $taskName; backstopRegistered = $false; standbySince = $null
+    releasesRefused = 0; lastRefusedAt = $null; localProblems = @(); releasedAt = $null; t0 = $null; restoredAt = $null
     enableFailed = @(); connected = $null; connectedAt = $null; backstopRemoved = $false; error = $null; sharedWritten = $null; finishedAt = $null }
   try {
     # 步骤里的杂散输出不进结果
@@ -195,6 +263,8 @@ function Invoke-FailoverDrillCut {
     if (-not $r.outcome) { $r.outcome = 'SCRIPT_ERROR' }
     $r.error = $_.Exception.Message
   } finally {
+    # 放行文件只用一次：任何结局都不留给下一次（尽力删；下一次启动第 0 步还会再清）
+    try { $null = Remove-DrillRelease $ReleaseFile } catch { }
     $r.finishedAt = Format-DrillTime (Get-DrillNow)
     $name = "failover-drill-$DrillId.result.json"
     try { Write-DrillJson (Join-Path $WorkDir $name) $r } catch { }
