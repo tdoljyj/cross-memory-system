@@ -201,6 +201,10 @@ jobs:
       - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
         run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
+      # start applies no migration ([db.migrations] enabled = false): the chain runs in production's shape.
+      - name: Apply the migration chain to the local database
+        run: node ../../scripts/ci/clued-local-migrate.mjs
+
       - name: Deny loopback proxy ports to the harness isolation guard
         run: |
           # Any loopback HTTP(S) proxy port is refused by the guard; "none" when
@@ -305,6 +309,10 @@ jobs:
 
       - name: Start the local Supabase stack (db, Kong, PostgREST, GoTrue)
         run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      # start applies no migration ([db.migrations] enabled = false): the chain runs in production's shape.
+      - name: Apply the migration chain to the local database
+        run: node ../../scripts/ci/clued-local-migrate.mjs
 
       - name: Deny loopback proxy ports to the harness isolation guard
         run: |

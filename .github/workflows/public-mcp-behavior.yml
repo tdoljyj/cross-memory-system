@@ -103,7 +103,8 @@ jobs:
           node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs
           node ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
-      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
+      # start applies no migration ([db.migrations] enabled = false): the chain runs in production's shape.
+      - run: node ../../scripts/ci/clued-local-migrate.mjs
       - run: npm run mcp:isolated:fixture
       - name: Allocate a behavior-only loopback port
         run: |
@@ -186,7 +187,8 @@ jobs:
           node --test ../../scripts/ci/public-mcp-supabase-isolation.test.mjs
           node ../../scripts/ci/public-mcp-supabase-isolation.mjs prepare
       - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
-      - run: npx --yes --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase db reset --local --no-seed
+      # start applies no migration ([db.migrations] enabled = false): the chain runs in production's shape.
+      - run: node ../../scripts/ci/clued-local-migrate.mjs
       - run: npm run mcp:isolated:fixture
       - name: Allocate a behavior-only loopback port
         run: |

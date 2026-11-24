@@ -189,7 +189,8 @@ jobs:
           export DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default
           node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
           npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
-          # start applies the full migration chain once to a proven empty project.
+          # start applies no migration; the full chain is applied once, as production runs it, to a proven empty project.
+          node ../../scripts/ci/clued-local-migrate.mjs
           node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
@@ -326,6 +327,7 @@ jobs:
           export DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default
           node ../../scripts/ci/clued-g4-fresh-start.mjs --prepare
           npx --yes --cache "$HOME/.npm" --prefer-offline --fetch-retries=5 --package=supabase@2.115.0 --package=@supabase/cli-linux-x64@2.115.0 supabase start
+          node ../../scripts/ci/clued-local-migrate.mjs
           node ../../scripts/ci/clued-g4-fresh-start.mjs --verify
 
       - name: Lint public and private database schemas
