@@ -295,8 +295,9 @@ function Write-EntryStageTimings([string]$Output, $Measurements) {
 # r9 follow-up (FABLE-drill-r9-followup 1.3 B): a first install that did not end FIRST_INSTALL_DONE leaves resident-failure-snapshot.json
 # in the entry's output directory, beside launcher-result.json, so it goes back with the stage files before any restore (r9's HALT.json
 # never left the guest). What it reads is one fixed list, drill/guest-failure-files.json (in the kit, beside this script): the resident's
-# HALT, PAUSED and status records, the launcher's progress records and verify's full answer. Plus the Service Control Manager's System
-# events since the entry started. Bounded: 64 KiB of each file, 1 MiB for the whole snapshot. Never a secret: a list that names a
+# HALT, PAUSED and status records, the launcher's progress records and verify's full answer. Plus the generic helper's refusal events
+# (Application log, its service name as source) and the Service Control Manager's System events since the entry started. Bounded:
+# 64 KiB of each file, 1 MiB for the whole snapshot. Never a secret: a list that names a
 # secrets or credentials directory, or a file that is not .json, is refused whole, and a wildcard that reaches one reads nothing there.
 $script:EntryFailureFilesContract = 'clued.drill.guest-failure-files/1'
 $script:EntryFailureSnapshotContract = 'clued.drill.resident-failure-snapshot/1'
@@ -307,7 +308,9 @@ $script:EntryFailureEventChars = 300
 $script:EntryFailureMatchMax = 200
 $script:EntryFailureSiblingMax = 50
 $script:EntryFailureSiblingChars = 120
-$script:EntryFailureRoots = @{ ci = 'C:\ProgramData\CluedIndependentCI'; work = $null }   # work: the bootstrap's work directory, known once it is made
+# users: the profiles, for the companion account's own supervisor.json (first-install-host.ps1 names the account clued-companion; a profile
+# directory may carry a suffix, so the list names it with a *).
+$script:EntryFailureRoots = @{ ci = 'C:\ProgramData\CluedIndependentCI'; work = $null; users = 'C:\Users' }   # work: the bootstrap's work directory, known once it is made
 
 function Test-EntryFailureSecretSegment([string]$Segment) { $Segment -match '^(secrets|credentials)$' }
 
@@ -322,7 +325,7 @@ function Read-EntryFailureFiles([string]$File) {
   $out = @()
   foreach ($f in $files) {
     $root = Get-EntryProperty $f 'root'; $path = Get-EntryProperty $f 'path'
-    if ($root -isnot [string] -or @('ci', 'work') -cnotcontains $root) { throw 'DRILL_FAILURE_FILES_REFUSED:root' }
+    if ($root -isnot [string] -or @('ci', 'work', 'users') -cnotcontains $root) { throw 'DRILL_FAILURE_FILES_REFUSED:root' }
     if ($path -isnot [string] -or $path -cnotmatch '^[A-Za-z0-9._*-]+(\\[A-Za-z0-9._*-]+)*$') { throw 'DRILL_FAILURE_FILES_REFUSED:path' }
     $segments = @($path.Split('\'))
     foreach ($segment in $segments) {
@@ -388,20 +391,141 @@ function Read-EntryFailureFile([string]$File) {
 }
 
 # The Service Control Manager's System events since $Since, newest first, at most $Max.
-$script:EntryFailureEventReader = {
-  param([DateTimeOffset]$Since, [int]$Max)
+function Read-EntryScmEvents([DateTimeOffset]$Since, [int]$Max) {
   try { @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = $Since.LocalDateTime } -MaxEvents $Max -ErrorAction Stop) }
   catch { if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() } else { throw } }
 }
 
+# The generic helper's refusal events since $Since (r13 PR-2, FABLE-r13-state-acl-fix section 3): a refusal before ready leaves no receipt,
+# only the SCM exit code, so the helper writes one Application event: the code, the path being opened, the stage. Its source is the
+# service name (first-install-host.ps1: the runner service, this prefix and the node's name), unregistered, so the event's text is its
+# insertion string, not a rendered message; it is named by its source. Newest first, at most $Max. Never throws: an Application log that
+# cannot be read is one record saying so, and the SCM events are read all the same.
+$script:EntryHelperEventSourcePrefix = 'actions.runner.tdoljyj-cross-memory-system.clued-ci-'
+function Read-EntryHelperEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName Application -FilterXPath $xpath -ErrorAction Stop }) {
+  $xpath = "*[System[TimeCreated[@SystemTime>='" + $Since.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture) + "']]]"
+  try {
+    @(& $Query $xpath | Where-Object { ([string]$_.ProviderName).StartsWith($script:EntryHelperEventSourcePrefix, [StringComparison]::OrdinalIgnoreCase) } | Select-Object -First $Max | ForEach-Object {
+      [pscustomobject]@{ TimeCreated = $_.TimeCreated; Id = $_.Id; LevelDisplayName = $(if ([string]$_.LevelDisplayName) { [string]$_.LevelDisplayName } else { (@{ 1 = 'Critical'; 2 = 'Error'; 3 = 'Warning'; 4 = 'Information' })[[int]$_.Level] }); Message = ([string]$_.ProviderName + ': ' + (@($_.Properties | ForEach-Object { [string]$_.Value }) -join ' ')) } })
+  } catch {
+    if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { @() }
+    else { [pscustomobject]@{ TimeCreated = [datetime]::UtcNow; Id = 0; LevelDisplayName = 'Error'; Message = ('Application log unreadable: ' + $_.Exception.Message) } }
+  }
+}
+
+# The snapshot's events: the helper's first (few, and the one that names a refusal), then the SCM's, at most $Max together.
+$script:EntryFailureEventReader = {
+  param([DateTimeOffset]$Since, [int]$Max)
+  @(@(Read-EntryHelperEvents $Since $Max) + @(Read-EntryScmEvents $Since $Max) | Select-Object -First $Max)
+}
+
+# 2026-11-24 (drill r10, companion-headless): the companion's password task stayed queued (state 2) for the whole qualification and the
+# snapshot could not say why. Beside the events, the snapshot now carries what the guest itself says about that, each part on its own
+# (one that cannot be read is named with its error, never taking the others with it), at most $Max items, texts of
+# $script:EntryFailureEventChars characters:
+#   taskSchedulerLog  whether the entry switched the Task Scheduler's Operational log on at its start (it is off on a clean Windows)
+#   taskEvents        that log's events for the companion's tasks since the entry started, newest first
+#   engineEvents      that log's task engine events since then, newest first: a logon that failed for a task (104), a task engine
+#                     that did not start (311), started (317) or stopped idle (314). They name no task (review of 36a20badc, M1), so
+#                     they are asked for by their ids, every account's, on their own 50.
+#   logons            the Security log's logons (4624) and refused logons (4625) of the companion account since then, newest first
+#   memory            the guest's memory now (KiB)
+#   processes         the WSL, Hyper-V worker, task host (taskhostw: the task engine), supervisor and node processes now: id, parent,
+#                     session, start, working set
+#   wslService        the WslService service's status now
+$script:EntryTaskSchedulerLogName = 'Microsoft-Windows-TaskScheduler/Operational'
+$script:EntryCompanionTaskNames = @('\Clued\CluedCIResidentCompanion', '\Clued\CluedCIResidentCompanionWslImport', '\Clued\CluedCIResidentCompanionFallback', '\Clued\CluedCIResidentNotifier')
+$script:EntryCompanionAccount = 'clued-companion'
+$script:EntryLogonFields = @('TargetUserSid', 'TargetUserName', 'TargetLogonId', 'LogonType', 'LogonProcessName', 'AuthenticationPackageName', 'ProcessName', 'Status', 'SubStatus', 'FailureReason')
+$script:EntryGuestProcessNames = @('wsl.exe', 'wslhost.exe', 'wslservice.exe', 'wslrelay.exe', 'vmmem', 'vmmemWSL', 'vmwp.exe', 'taskhostw.exe', 'CluedCompanionSupervisor.exe', 'node.exe')
+$script:EntryTaskEngineEventIds = @(104, 311, 314, 317)
+$script:EntryTaskLog = [ordered]@{ state = 'not-asked'; enabledBefore = $null; error = $null }
+
+# Switches the Task Scheduler's Operational log on, before the first install (the guest only). Never throws: the outcome is recorded.
+function Enable-EntryTaskSchedulerLog([scriptblock]$Config = { New-Object Diagnostics.Eventing.Reader.EventLogConfiguration $script:EntryTaskSchedulerLogName }) {
+  try {
+    $c = & $Config
+    $before = [bool]$c.IsEnabled
+    if (-not $before) { $c.IsEnabled = $true; $c.SaveChanges() }
+    [ordered]@{ state = 'enabled'; enabledBefore = $before; error = $null }
+  } catch { [ordered]@{ state = 'not-enabled'; enabledBefore = $null; error = (Get-EntryEventText $_.Exception.Message) } }
+}
+function Get-EntryEventSinceXPath([DateTimeOffset]$Since) { "TimeCreated[@SystemTime>='" + $Since.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture) + "']" }
+function Get-EntryEventText($Value) { $t = ([string]$Value -replace '\s+', ' ').Trim(); if ($t.Length -gt $script:EntryFailureEventChars) { $t.Substring(0, $script:EntryFailureEventChars) } else { $t } }
+function Get-EntryEventAt($Event) { try { ([DateTimeOffset]$Event.TimeCreated).ToUniversalTime().ToString('o') } catch { $null } }
+# A part of the guest's account: read, or the error that kept it from being read. NoMatchingEventsFound is an empty read.
+function Read-EntryGuestPart([scriptblock]$Read) {
+  try { [ordered]@{ state = 'read'; error = $null; items = @(& $Read) } }
+  catch {
+    if ([string]$_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { [ordered]@{ state = 'read'; error = $null; items = @() } }
+    else { [ordered]@{ state = 'unreadable'; error = (Get-EntryEventText $_.Exception.Message); items = @() } }
+  }
+}
+function Get-EntryTaskEventsXPath([DateTimeOffset]$Since) {
+  "*[System[" + (Get-EntryEventSinceXPath $Since) + "]] and *[EventData[" + ((@($script:EntryCompanionTaskNames) | ForEach-Object { "Data[@Name='TaskName']='" + $_ + "'" }) -join ' or ') + "]]"
+}
+# XPath: another query of the same log (the task engine's events); by default the companion's tasks'.
+function Read-EntryTaskEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName $script:EntryTaskSchedulerLogName -FilterXPath $xpath -ErrorAction Stop }, [string]$XPath = '') {
+  $xpath = if ($XPath) { $XPath } else { Get-EntryTaskEventsXPath $Since }
+  Read-EntryGuestPart { @(& $Query $xpath | Select-Object -First $Max | ForEach-Object {
+    [ordered]@{ at = (Get-EntryEventAt $_); id = [int]$_.Id; activityId = $(if ($null -ne $_.ActivityId) { [string]$_.ActivityId } else { $null }); message = (Get-EntryEventText $_.Message) } }) }
+}
+function Get-EntryTaskEngineEventsXPath([DateTimeOffset]$Since) {
+  "*[System[(" + ((@($script:EntryTaskEngineEventIds) | ForEach-Object { 'EventID=' + $_ }) -join ' or ') + ") and " + (Get-EntryEventSinceXPath $Since) + "]]"
+}
+function Read-EntryTaskEngineEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName $script:EntryTaskSchedulerLogName -FilterXPath $xpath -ErrorAction Stop }) {
+  Read-EntryTaskEvents $Since $Max $Query (Get-EntryTaskEngineEventsXPath $Since)
+}
+function Get-EntryLogonEventsXPath([DateTimeOffset]$Since) {
+  "*[System[(EventID=4624 or EventID=4625) and " + (Get-EntryEventSinceXPath $Since) + "]] and *[EventData[Data[@Name='TargetUserName']='" + $script:EntryCompanionAccount + "']]"
+}
+# The named fields of one logon event (its EventData, by name), nothing else of it.
+function ConvertFrom-EntryLogonEvent($Event) {
+  $x = [xml]$Event.ToXml()
+  $item = [ordered]@{ at = (Get-EntryEventAt $Event); id = [int]$Event.Id }
+  foreach ($d in @($x.GetElementsByTagName('Data'))) {
+    $name = [string]$d.GetAttribute('Name')
+    if (@($script:EntryLogonFields) -ccontains $name) { $item[$name] = Get-EntryEventText $d.InnerText }
+  }
+  $item
+}
+function Read-EntryLogonEvents([DateTimeOffset]$Since, [int]$Max, [scriptblock]$Query = { param($xpath) Get-WinEvent -LogName Security -FilterXPath $xpath -ErrorAction Stop }) {
+  $xpath = Get-EntryLogonEventsXPath $Since
+  Read-EntryGuestPart { @(& $Query $xpath | Select-Object -First $Max | ForEach-Object { ConvertFrom-EntryLogonEvent $_ }) }
+}
+function Read-EntryGuestMemory([scriptblock]$Query = { Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop }) {
+  try {
+    $os = & $Query
+    [ordered]@{ state = 'read'; error = $null; totalVisibleKb = [int64]$os.TotalVisibleMemorySize; freePhysicalKb = [int64]$os.FreePhysicalMemory; totalVirtualKb = [int64]$os.TotalVirtualMemorySize; freeVirtualKb = [int64]$os.FreeVirtualMemory }
+  } catch { [ordered]@{ state = 'unreadable'; error = (Get-EntryEventText $_.Exception.Message) } }
+}
+function Get-EntryGuestProcessFilter { (@($script:EntryGuestProcessNames) | ForEach-Object { "Name='" + $_ + "'" }) -join ' OR ' }
+function Read-EntryGuestProcesses([int]$Max, [scriptblock]$Query = { param($filter) Get-CimInstance -ClassName Win32_Process -Filter $filter -ErrorAction Stop }) {
+  $filter = Get-EntryGuestProcessFilter
+  Read-EntryGuestPart { @(& $Query $filter | Sort-Object { [string]$_.Name }, { [int]$_.ProcessId } | Select-Object -First $Max | ForEach-Object {
+    [ordered]@{ name = [string]$_.Name; pid = [int]$_.ProcessId; parentPid = [int]$_.ParentProcessId; sessionId = [int]$_.SessionId
+      created = $(try { ([DateTimeOffset][DateTime]$_.CreationDate).ToUniversalTime().ToString('o') } catch { $null }); workingSetKb = [int64]([int64]$_.WorkingSetSize / 1024) } }) }
+}
+function Read-EntryWslService([scriptblock]$Query = { Get-Service -Name WslService -ErrorAction Stop }) {
+  try { $s = & $Query; [ordered]@{ state = 'read'; error = $null; status = [string]$s.Status; startType = [string]$s.StartType } }
+  catch { [ordered]@{ state = 'unreadable'; error = (Get-EntryEventText $_.Exception.Message) } }
+}
+$script:EntryFailureGuestReader = {
+  param([DateTimeOffset]$Since, [int]$Max)
+  [ordered]@{ taskSchedulerLog = $script:EntryTaskLog; taskEvents = (Read-EntryTaskEvents $Since $Max); engineEvents = (Read-EntryTaskEngineEvents $Since $Max)
+    logons = (Read-EntryLogonEvents $Since $Max)
+    memory = (Read-EntryGuestMemory); processes = (Read-EntryGuestProcesses $Max); wslService = (Read-EntryWslService) }
+}
+
 # Writes the snapshot and returns it. Never throws and never changes the entry's result: what could not be read is named in its place.
-function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtable]$Roots, [DateTimeOffset]$Since, $Result, [scriptblock]$EventReader = $script:EntryFailureEventReader) {
+function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtable]$Roots, [DateTimeOffset]$Since, $Result, [scriptblock]$EventReader = $script:EntryFailureEventReader, [scriptblock]$GuestReader = $script:EntryFailureGuestReader) {
   $utf8 = New-Object Text.UTF8Encoding($false)
   $cost = { param($v) $utf8.GetByteCount((ConvertTo-Json -InputObject $v -Compress -Depth 6)) }
   $snapshot = [ordered]@{ contract = $script:EntryFailureSnapshotContract; at = [DateTimeOffset]::UtcNow.ToString('o'); since = $Since.ToString('o')
     entry = [ordered]@{ status = (Get-EntryProperty $Result 'status'); stopCode = (Get-EntryProperty $Result 'stopCode') }
     limits = [ordered]@{ fileBytes = [int]$script:EntryFailureFileBytes; totalBytes = [int]$script:EntryFailureTotalBytes; events = $script:EntryFailureEventMax; eventChars = $script:EntryFailureEventChars }
-    list = [ordered]@{ state = 'read'; code = $null }; files = @(); events = [ordered]@{ state = 'not-read'; error = $null; items = @() } }
+    list = [ordered]@{ state = 'read'; code = $null }; files = @(); events = [ordered]@{ state = 'not-read'; error = $null; items = @() }
+    guest = [ordered]@{ state = 'not-read'; error = $null } }
   try {
     $left = [long]$script:EntryFailureTotalBytes - 4KB   # the frame around the records
     $records = New-Object Collections.ArrayList
@@ -416,6 +540,9 @@ function Write-EntryFailureSnapshot([string]$Output, [string]$ListFile, [hashtab
       $snapshot.events = [ordered]@{ state = 'read'; error = $null; items = $items }
     } catch { $snapshot.events = [ordered]@{ state = 'unreadable'; error = [string]$_.Exception.Message; items = @() } }
     $left -= (& $cost $snapshot.events)
+    # then the guest's own account (bounded the same way), before any file
+    try { $snapshot.guest = & $GuestReader $Since $script:EntryFailureEventMax } catch { $snapshot.guest = [ordered]@{ state = 'unreadable'; error = [string]$_.Exception.Message } }
+    $left -= (& $cost $snapshot.guest)
     $list = @()
     try { $list = Read-EntryFailureFiles $ListFile } catch { $snapshot.list = [ordered]@{ state = 'refused'; code = [string]$_.Exception.Message } }
     foreach ($entry in @($list)) {
@@ -681,6 +808,8 @@ function Get-FirstInstallEntryResult {
   try {
     Assert-FirstInstallGuest
     $guest = $true
+    # the Task Scheduler's own account of the companion's tasks, for the failure snapshot (off on a clean Windows; drill r10)
+    $script:EntryTaskLog = Enable-EntryTaskSchedulerLog
     Assert-FirstInstallRelease
     [void](Set-EntryServerBlackhole)
     $result = Invoke-FirstInstallAccepted $From $Kit $Fake $Work $Version
