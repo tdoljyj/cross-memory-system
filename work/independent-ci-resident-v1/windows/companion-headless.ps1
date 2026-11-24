@@ -1173,7 +1173,7 @@ function Get-CompanionMonotonicMs { [double]([Diagnostics.Stopwatch]::GetTimesta
 # instance running or with an engine, and either seen started or a last result that is no Task Scheduler status: never 0, which a
 # queued instance shows; or, the instances unreadable, a last result that is $CompanionImportDoneExitCode): the last result, unsigned.
 # Never started within $CompanionImportStartSeconds: stopped, 'not-started'. Not ended within $CompanionImportRunSeconds: stopped, 'timeout'. A look
-# that cannot read the task: stopped, 'unreadable'. No task: 'not-registered'. The task is deleted on every way out. Whether the last
+# that cannot read the task: stopped, 'unreadable'. A RunEx that throws: 'run-failed:0x<HRESULT>'. No task: 'not-registered'. The task is deleted on every way out. Whether the last
 # result is an import is the caller's ($CompanionImportDoneExitCode), never this function's.
 function Invoke-CompanionWslImportTask([scriptblock]$Service = { $s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $s },
     [scriptblock]$Sleep = { Start-Sleep -Milliseconds 500 }, [scriptblock]$Now = { Get-CompanionMonotonicMs }) {
@@ -1186,7 +1186,15 @@ function Invoke-CompanionWslImportTask([scriptblock]$Service = { $s = New-Object
   $startedAt = $null; $endedAt = $null; $last = $null; $why = $null; $err = $null; $unreadable = 0
   try {
     $before = $task.LastRunTime
-    $run = $task.RunEx($null, 2, 0, $null)   # K3: ignore constraints, as Start-CompanionTask
+    # K3: ignore constraints, as Start-CompanionTask. A RunEx that throws (review of K3, 5a): 'run-failed:0x<HRESULT>', the task deleted
+    # (finally), never thrown out of the switch: WSL_IMPORT_FAILED and its fall-back as any failed import.
+    $run = $null
+    try { $run = $task.RunEx($null, 2, 0, $null) } catch {
+      $why = 'run-failed'
+      $hr = 0
+      $err = try { $x = $_.Exception; while ($null -ne $x.InnerException) { $x = $x.InnerException }; $hr = $x.HResult; $x.GetType().Name + ':0x' + $x.HResult.ToString('X8') } catch { $null }
+      return 'run-failed:0x' + ([int]$hr).ToString('X8')
+    }
     $t0 = [double](& $Now)
     try { if ($null -ne $run) { $watch.returned = [ordered]@{ instanceGuid = [string]$run.InstanceGuid; state = [int]$run.State; enginePid = [int]$run.EnginePID } } } catch { }
     while ($true) {
@@ -1369,12 +1377,6 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
       $result.failed = $result.registrar
       return $result
     }
-    try { Register-CompanionStartTask } catch {
-      $result.failed = 'COMPANION_START_TASK_REGISTER_FAILED'
-      if ($MaintenanceContextFile) { $result.manualRecovery = $true }
-      else { $null = Invoke-CompanionFallback $root $sid; $result.fellBack = $true }
-      return $result
-    }
     if ($needImport) {
       $result.importResult = Invoke-CompanionWslImportTask
       $result.importWatch = Get-CompanionImportWatch
@@ -1396,6 +1398,27 @@ function Invoke-CompanionAccountSwitch([string]$root, $node, [string]$vhdxDir, [
         return $result
       }
     }
+    # Review of K3, item 4: the start task only now, after the import and the Owner's key (it fires at boot and every quarter hour,
+    # ignoring constraints: registered earlier it could start the companion during the import, and IgnoreNew drop the start below).
+    # A failed registration falls back as a failed qualification. Whatever it (or the password task's own triggers) started ends before
+    # $since: stopped and waited for; a maintenance switch stops nothing, a supervisor up there is its own failure.
+    $quiet = $null
+    try { Register-CompanionStartTask } catch { $quiet = 'COMPANION_START_TASK_REGISTER_FAILED' }
+    if ($null -eq $quiet) {
+      if ($MaintenanceContextFile) {
+        if (@((Get-CompanionProcessTree $root).supervisors).Count) { $quiet = 'WSL_MAINTENANCE_SUPERVISOR_NOT_QUIET' }
+      } else {
+        Stop-CompanionTask
+        foreach ($p in @((Get-CompanionProcessTree $root).supervisors)) { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction SilentlyContinue }
+      }
+    }
+    if ($null -ne $quiet) {
+      $result.failed = $quiet
+      if ($MaintenanceContextFile) { $result.manualRecovery = $true }
+      else { $null = Invoke-CompanionStopAndFallback $root $sid; $result.fellBack = $true }
+      return $result
+    }
+    Wait-CompanionTaskNotRunning
     $since = [DateTimeOffset]::UtcNow
     $runWatch = Watch-CompanionTaskRun { Start-CompanionTask }
     if ($null -ne $runWatch.runError) { $result.runError = 'COMPANION_TASK_RUN_FAILED' }

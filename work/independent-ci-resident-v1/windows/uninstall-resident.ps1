@@ -112,7 +112,7 @@ while (ExecutorAlive) { if ((Get-Date) -gt $deadline) { throw 'EXECUTOR_STILL_RU
 & $Sc delete CluedCIResident | Out-Null
 & $Sc delete CluedCISwapBroker | Out-Null
 if ($plan.upgraderService) { & $Sc delete CluedCIUpgrader | Out-Null }
-# K3 (task 87d330d0): the SYSTEM start task (\Clued\CluedCIResidentCompanionStart, schtasks /Run /I every 15 minutes and on boot;
+# K3 (task 87d330d0): the SYSTEM start task (\Clued\CluedCIResidentCompanionStart, RunEx ignoring constraints every 15 minutes and on boot;
 # only beside the password definition) goes first, so nothing starts the companion again while it is stopped and deleted.
 if (Get-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionStart' -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskPath '\Clued\' -TaskName 'CluedCIResidentCompanionStart' -Confirm:$false }
 # M5: end the supervisor's instance first (its job object ends the companion), then delete both tasks; the companion task's stored

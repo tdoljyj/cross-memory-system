@@ -780,7 +780,7 @@ function Invoke-EntryProbes($Service = $null, [hashtable]$Accounts = $script:Ent
     $watching = New-Object Collections.ArrayList
     foreach ($it in $items) {
       $t = $tasks[$it.id]; if ($null -eq $t -or $result.timedOut) { continue }
-      try { if ($it.run -ceq 'run-ignore-constraints') { [void]$t.RunEx($null, 2, 0, '') } else { [void]$t.Run($null) }; [void]$watching.Add($it) }
+      try { if ($it.run -ceq 'run-ignore-constraints') { [void]$t.RunEx($null, 2, 0, $null) } else { [void]$t.Run($null) }; [void]$watching.Add($it) }
       catch {
         $it.hresult = Get-EntryHResult $_; $it.error = & $say ('run: ' + (Get-EntryErrorText $_))
         $it.outcome = $(if ($it.hresult -ceq $script:EntryProbeLogonRefused) { 'logon-refused' } else { 'failed:run' })

@@ -86,6 +86,8 @@ test('A7 (K3): under the password definition the companion up by itself after th
   assert.equal(all.pass, true, all.detail);
   assert.match(all.detail, /companionAfterBoot=complete/);
   const cab = e.reboot.companionAfterBoot;
+  const enginePidOnly = a7({ companionAfterBoot: { ...cab, companionState: 2, companionInstances: [{ state: 2, enginePid: 4120 }] } });
+  assert.equal(enginePidOnly.pass, true, 'an instance with an engine process is running, the task\'s State 2 notwithstanding: ' + enginePidOnly.detail);
   for (const [reason, value, named] of [
     ['the supervisor started before this boot (the boot before\'s)', { ...cab, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:44:00Z' }] }, /supervisorAfterBoot/],
     ['a supervisor of another account', { ...cab, supervisors: [{ pid: 4120, owner: 'drill', created: '2026-11-16T02:45:41Z' }] }, /supervisorAfterBoot/],
@@ -95,7 +97,10 @@ test('A7 (K3): under the password definition the companion up by itself after th
     ['the start task failed', { ...cab, startTask: { lastRun: '2026-11-16T02:45:40Z', lastResult: 1 } }, /startTaskResult=1/],
     ['someone logged on', { ...cab, interactiveSessions: 1 }, /interactiveSessions=1/],
     ['the sessions could not be read', { ...cab, interactiveSessions: null }, /interactiveSessions=unread/],
-    ['the companion task not running (queued)', { ...cab, companionState: 2 }, /companionState=2/],
+    // first review of K3, item 5: running is an instance running (4) or with an engine process; the task's State is not trusted
+    ['the companion task\'s only instance queued, whatever the task\'s State says', { ...cab, companionState: 4, companionInstances: [{ state: 2, enginePid: 0 }] }, /companionRunning/],
+    ['no instance of the companion task', { ...cab, companionInstances: [] }, /companionRunning/],
+    ['its instances could not be read', { ...cab, companionInstances: null }, /companionRunning/],
     ['the definition could not be read', { ...cab, definition: null }, /companionAfterBoot definition=unknown/],
   ]) {
     const item = a7({ companionAfterBoot: value });
@@ -117,7 +122,7 @@ test('A7 (K3): the wait goes on until the companion is up too, and the guest rea
   const boot = '2026-11-16T02:40:00.0000000Z';
   const st = { writtenAt: '2026-11-16T02:42:00Z', node: { mode: 'UNCERTAIN' }, versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:41:30Z' } } };
   const up = { ...COMPANION_AFTER_BOOT, boot, startTask: { lastRun: '2026-11-16T02:40:40Z', lastResult: 0 }, supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:40:41Z' }] };
-  const notYet = { status: st, readAt: '2026-11-16T02:42:10Z', boot, companionAfterBoot: { ...up, companionState: 2, supervisors: [] } };
+  const notYet = { status: st, readAt: '2026-11-16T02:42:10Z', boot, companionAfterBoot: { ...up, companionState: 2, companionInstances: [{ state: 2, enginePid: 0 }], supervisors: [] } };
   const later = { status: st, readAt: '2026-11-16T02:42:40Z', boot, companionAfterBoot: up };
   const got = ps(`
     $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify([notYet, later]))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
@@ -125,7 +130,7 @@ test('A7 (K3): the wait goes on until the companion is up too, and the guest rea
     function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) $script:reads++; if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
     function Start-Sleep { }
     $first = Get-DrillRebootSample (${q(JSON.stringify(notYet))} | ConvertFrom-Json) ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture))
-    $r = Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]::UtcNow.AddSeconds(30))
+    $r = Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]'2099-01-01T00:00:00Z')
     [ordered]@{ firstDone = $first.done; r = $r; reads = $script:reads }`);
   assert.equal(got.firstDone, false, 'the self-check passed but the companion is not up: not done');
   assert.equal(got.r.done, true);
@@ -136,8 +141,49 @@ test('A7 (K3): the wait goes on until the companion is up too, and the guest rea
   // the guest's read: the companion's definition, the interactive sessions, the start task, the companion's state, its supervisors
   const src = fs.readFileSync(script, 'utf8');
   const read = src.slice(src.indexOf('$script:GuestReadStatus = {'), src.indexOf('function Test-DrillCompanionAfterBoot'));
-  for (const needle of ["GetTask('CluedCIResidentCompanion')", "GetTask('CluedCIResidentCompanionStart')", 'Definition.Principal.LogonType', 'Win32_LogonSession',
-    "Name='CluedCompanionSupervisor.exe'", 'GetOwner', 'companionAfterBoot = $cab']) assert.ok(read.includes(needle), needle);
+  for (const needle of ["GetTask('CluedCIResidentCompanion')", "GetTask('CluedCIResidentCompanionStart')", 'Definition.Principal.LogonType', 'GetInstances(0)',
+    'WTSEnumerateSessions', "Name='CluedCompanionSupervisor.exe'", 'GetOwner', 'companionAfterBoot = $cab']) assert.ok(read.includes(needle), needle);
+});
+
+// First review of K3, item 1: the guest read itself comes over PowerShell Direct as the drill administrator, a type 2 logon session with
+// no window station; nobody logged on is the window-station sessions with a user name (as "query user"), so that session is not one.
+// The guest read run here with everything it reads stood in: the scheduler, WMI and the window-station sessions (a stand-in type of the
+// same name, so the real one is never built); this machine's tasks are not read.
+test('A7 (K3): the guest read counts the sessions with a user logged on, not the drill\'s own PowerShell Direct logon; running is an instance', opts, () => {
+  const read = users => ps(`
+    Add-Type -TypeDefinition 'public static class CluedDrillWts { public static string[] Users = new string[0]; public static string[] UserSessions() { return Users; } }'
+    [CluedDrillWts]::Users = [string[]]@(${users.map(q).join(', ')})
+    function Get-CimInstance { [CmdletBinding()] param([Parameter(Position = 0)][string]$ClassName, [string]$Filter)
+      switch ($ClassName) {
+        'Win32_OperatingSystem' { [pscustomobject]@{ LastBootUpTime = ([DateTimeOffset]'2026-11-16T02:45:00Z').LocalDateTime } }
+        'Win32_LogonSession' { @([pscustomobject]@{ LogonId = '7001'; LogonType = 2 }, [pscustomobject]@{ LogonId = '999'; LogonType = 0 }) }
+        'Win32_LoggedOnUser' { @([pscustomobject]@{ Antecedent = [pscustomobject]@{ Name = 'drill'; Domain = 'CLUED-DRILL' }; Dependent = [pscustomobject]@{ LogonId = '7001' } }) }
+        'Win32_Process' { @([pscustomobject]@{ ProcessId = 4120; CreationDate = ([DateTimeOffset]'2026-11-16T02:45:41Z').LocalDateTime }) }
+        default { throw ('not stood in: ' + $ClassName) } } }
+    function Invoke-CimMethod { [CmdletBinding()] param($InputObject, [string]$MethodName) [pscustomobject]@{ User = 'clued-companion' } }
+    function New-Object { [CmdletBinding()] param([Parameter(Position = 0)]$TypeName, [string]$ComObject)
+      if ($ComObject -cne 'Schedule.Service') { throw ('not stood in: ' + $ComObject) }
+      $companion = [pscustomobject]@{ State = 2; Definition = [pscustomobject]@{ Principal = [pscustomobject]@{ LogonType = 1 } } }
+      $companion | Add-Member -MemberType ScriptMethod -Name GetInstances -Value { param($f) ,@([pscustomobject]@{ State = 4; EnginePID = 4120 }) }
+      $start = [pscustomobject]@{ LastRunTime = ([DateTimeOffset]'2026-11-16T02:45:40Z').LocalDateTime; LastTaskResult = 0 }
+      $folder = [pscustomobject]@{ tasks = @{ CluedCIResidentCompanion = $companion; CluedCIResidentCompanionStart = $start } }
+      $folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($n) $this.tasks[$n] }
+      $svc = [pscustomobject]@{ folder = $folder }
+      $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
+      $svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($p) if ($p -cne '\\Clued') { throw $p }; $this.folder }
+      $svc }
+    (& $script:GuestReadStatus ${q(path.join(tmp, 'no-drill-root'))}).companionAfterBoot`);
+  const nobody = read([]);
+  assert.equal(nobody.interactiveSessions, 0, 'the drill\'s own type 2 logon (PowerShell Direct) with no window-station user is nobody: ' + JSON.stringify(nobody));
+  assert.deepEqual(nobody.errors, {});
+  assert.deepEqual(nobody.companionInstances, [{ state: 4, enginePid: 4120 }]);
+  const e = JSON.parse(evidence());
+  const a7 = cab => verdictOf(evidence({ reboot: { ...e.reboot, companionAfterBoot: cab } })).items.find(i => i.id === 'A7');
+  const passed = a7(nobody);
+  assert.equal(passed.pass, true, 'the companion task\'s State 2 beside its running instance: ' + passed.detail);
+  const someone = read(['1:someone']);
+  assert.equal(someone.interactiveSessions, 1);
+  assert.match(a7(someone).detail, /interactiveSessions=1/);
 });
 
 test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {

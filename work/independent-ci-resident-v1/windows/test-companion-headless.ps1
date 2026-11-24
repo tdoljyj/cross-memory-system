@@ -537,6 +537,11 @@ $i = [ordered]@{ pre = $as.IndexOf('Get-CompanionAccountPreflight'); fb = $as.In
   move = $as.IndexOf('Invoke-CompanionWslMove'); reg = $as.IndexOf('Invoke-CompanionRegistrar'); imp = $as.IndexOf('Invoke-CompanionWslImportTask'); run = $as.IndexOf('Start-CompanionTask')
   qual = $as.IndexOf('Wait-CompanionQualified'); rec = $as.LastIndexOf('Write-CompanionWslRecord'); done = $as.IndexOf('$result.qualified = $true') }
 Yes (@($i.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $i.pre -lt $i.fb -and $i.fb -lt $i.mark -and $i.mark -lt $i.stop -and $i.stop -lt $i.move -and $i.move -lt $i.reg -and $i.reg -lt $i.imp -and $i.imp -lt $i.run -and $i.run -lt $i.qual -and $i.qual -lt $i.rec -and $i.rec -lt $i.done) 'account-switch-order'
+# review of K3, item 4: the start task after the import and the Owner's key; stopped and waited for after it, then $since, then the start
+$k3 = [ordered]@{ start = $as.IndexOf('Register-CompanionStartTask'); forget = $as.IndexOf('Remove-CompanionOwnerRegistration'); since = $as.IndexOf('$since = [DateTimeOffset]::UtcNow') }
+$k3.stop = if ($k3.start -ge 0) { $as.IndexOf('Stop-CompanionTask', $k3.start) } else { -1 }
+$k3.wait = if ($k3.start -ge 0) { $as.IndexOf('Wait-CompanionTaskNotRunning', $k3.start) } else { -1 }
+Yes (@($k3.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $k3.start -gt $i.imp -and $k3.start -gt $k3.forget -and $k3.start -lt $k3.stop -and $k3.stop -lt $k3.wait -and $k3.wait -lt $k3.since -and $k3.since -lt $i.run) 'account-switch-start-task-after-import-stopped-before-start'
 Yes ($as.Contains("@('register-account', `$root, `$distro, `$vhdx, [string]`$uid)") -and $as.Contains("@('register-account', `$root)") -and $as.Contains('New-CompanionBuild $root') -and $as.Contains('Remove-CompanionBuild $build.directory')) 'account-switch-own-build-register-account-only'
 Yes ($as.IndexOf('Invoke-CompanionFallback $root $sid', $i.move) -gt $i.move -and $as.Contains('COMPANION_HEADLESS_QUALIFICATION_FAILED') -and $as.Contains('Invoke-CompanionStopAndFallback $root $sid')) 'account-switch-falls-back'
 Yes ($functions['companion-headless.ps1:Invoke-CompanionRootShell'].Contains("@('root-shell', `$root)")) 'root-shell-through-the-registrar'
@@ -813,7 +818,7 @@ R1 'M4-m1-import-failure-reported-key-kept' {
 R1 'import-0-or-not-started-is-no-import-key-kept' {
   if ([int64]$CompanionImportDoneExitCode -ne 0x434C4901 -or $texts['companion-headless.ps1'] -cnotmatch '(?m)^\$CompanionImportDoneExitCode = 0x434C4901\s*$' -or
       -not ([IO.File]::ReadAllText((Join-Path $here 'CompanionTaskRegistrar.cs'))).Contains('public const int ImportDoneExitCode = 0x434C4901;')) { throw 'DONE_CODE_NOT_ONE_VALUE' }
-  foreach ($case in @(@{ import = 0L; want = 'WSL_IMPORT_FAILED:0' }, @{ import = 'not-started'; want = 'WSL_IMPORT_FAILED:not-started' }, @{ import = 'unreadable'; want = 'WSL_IMPORT_FAILED:unreadable' })) {
+  foreach ($case in @(@{ import = 0L; want = 'WSL_IMPORT_FAILED:0' }, @{ import = 'not-started'; want = 'WSL_IMPORT_FAILED:not-started' }, @{ import = 'unreadable'; want = 'WSL_IMPORT_FAILED:unreadable' }, @{ import = 'run-failed:0x80070005'; want = 'WSL_IMPORT_FAILED:run-failed:0x80070005' })) {
     $sc = New-R1Scenario ('dq-' + $case.want.Length)
     $r = Invoke-R1Switch $sc @{ import = $case.import } $sc.targetDir
     if ($r.failed -cne $case.want -or @($sc.log) -contains 'remove-key:{g1}' -or -not (@($sc.log) -contains 'fallback')) { throw ('got:' + $r.failed + ':' + (@($sc.log) -join ',')) }

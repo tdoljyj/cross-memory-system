@@ -856,7 +856,8 @@ $lockout = Get-LockoutPolicy
 Record 'companion-lockout-margin' $(if ($companionTask.mode -ceq 'password') { Test-LockoutMargin $lockout } else { $true }) $(if ($null -eq $lockout) { 'unreadable' } else { 'threshold=' + $lockout.threshold + ';window=' + $lockout.windowMinutes + ';mode=' + $companionTask.mode })
 # K3 (task 87d330d0, FABLE-drill-companion-k3-20261124 section 2.1): a password-definition task can stay queued under a start constraint
 # outside its XML, its own boot and time triggers included; the SYSTEM start task \Clued\CluedCIResidentCompanionStart starts it ignoring
-# the constraints (schtasks /Run /I) on boot +30 s and every 15 minutes. It is registered by the switch (companion-headless.ps1
+# the constraints (companion-headless.ps1 $CompanionStartTaskAction: one fixed PowerShell line calling RunEx($null, 2, 0, $null)) on
+# boot +30 s and every 15 minutes. It is registered by the switch (companion-headless.ps1
 # Register-CompanionStartTask: no argument, idempotent, throws COMPANION_START_TASK_REGISTER_FAILED) and goes with a fall-back; the
 # interactive definition starts on log-on and needs none. A node switched before it existed gets it here: run as SYSTEM (the upgrade
 # channel's VERIFY) a missing or wrong one is registered first and read back (ok, detail ADDED:<what was wrong>); by hand only read.
@@ -902,8 +903,11 @@ function Get-CompanionStartTaskProblems($f) {
   if ($f.multipleInstances -ne 2) { $p += 'multiple-instances' }   # IgnoreNew: the companion already running drops the kick
   if ($f.disallowOnBatteries -or $f.stopOnBatteries) { $p += 'batteries' }
   if ([string]$f.executionTimeLimit -cne 'PT1M') { $p += 'time-limit' }
+  # The action is the one the switch registers, read from its one source (companion-headless.ps1 $CompanionStartTaskAction, dot-sourced
+  # above); never a copy here (review r1 item 2). Not defined: every action is wrong.
+  $want = $null; try { $want = $CompanionStartTaskAction } catch { }
   $ac = @($f.actions)
-  if ($ac.Count -ne 1 -or $ac[0].type -ne 0 -or [string]$ac[0].path -cne 'C:\Windows\System32\schtasks.exe' -or [string]$ac[0].arguments -cne '/Run /I /TN "\Clued\CluedCIResidentCompanion"') { $p += 'action' }
+  if ($null -eq $want -or $ac.Count -ne 1 -or $ac[0].type -ne 0 -or [string]$ac[0].path -cne [string]$want.path -or [string]$ac[0].arguments -cne [string]$want.arguments) { $p += 'action' }
   # The DACL as companion-headless.ps1 Test-CompanionTaskDacl compares the companion task's: protected, the same ACEs in binary form
   # (the text the Task Scheduler reads back may spell the rights differently).
   $daclOk = try {

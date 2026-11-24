@@ -568,7 +568,7 @@ export const WSL_COLD_START = JSON.stringify({ at: '2026-11-21T03:00:00Z', shutd
 
 // K3 (task 87d330d0): the companion up by itself after the reboot, nobody logged on -- all five, under the password definition
 export const COMPANION_AFTER_BOOT = { boot: '2026-11-16T02:45:00Z', definition: 'password', interactiveSessions: 0,
-  startTask: { lastRun: '2026-11-16T02:45:40Z', lastResult: 0 }, companionState: 4,
+  startTask: { lastRun: '2026-11-16T02:45:40Z', lastResult: 0 }, companionState: 4, companionInstances: [{ state: 4, enginePid: 4120 }],
   supervisors: [{ pid: 4120, owner: 'clued-companion', created: '2026-11-16T02:45:41Z' }], errors: {} };
 export function evidence(over = {}) {
   const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'STANDBY' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,

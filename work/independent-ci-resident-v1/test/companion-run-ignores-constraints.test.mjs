@@ -1,13 +1,15 @@
 // K3 (task 87d330d0, 2026-11-24; FABLE-drill-companion-k3-20261124 sections 1, 2.1, 9 T7-T9): on the drill guest a task whose principal
 // is not a service account is held by a start constraint outside its XML: a plain Run (and its own time trigger) leaves it queued
 // (325 -> 110 -> 325, state 2), while RunEx with TASK_RUN_IGNORE_CONSTRAINTS (2) starts it in 0.4 s. So every start of the companion's
-// tasks ignores the constraints, and a SYSTEM task (\Clued\CluedCIResidentCompanionStart, schtasks /Run /I) starts it on boot and every
-// 15 minutes. This file holds:
+// tasks ignores the constraints, and a SYSTEM task (\Clued\CluedCIResidentCompanionStart, one fixed PowerShell line calling the same
+// RunEx(2): companion-headless.ps1 $CompanionStartTaskAction) starts it on boot and every 15 minutes. This file holds:
 //   T7  no PowerShell file of the resident starts a task with a plain Run, Start-ScheduledTask or schtasks /Run without /I, except the
 //       listed places (each says why); every RunEx of a product file is RunEx($null, 2, 0, $null)
 //   T8  the reinstall launcher's Start-CompanionTask starts the companion task with RunEx($null, 2, 0, $null) and nothing else
 //   T9  the uninstall deletes the start task before it stops the companion; verify-resident.ps1 requires the start task (exact shape)
-//       only under the password definition, and run as SYSTEM (the upgrade channel's VERIFY) adds a missing or wrong one first
+//       only under the password definition, and run as SYSTEM (the upgrade channel's VERIFY) adds a missing or wrong one first; the
+//       action it expects is companion-headless.ps1's $CompanionStartTaskAction itself, and what Register-CompanionStartTask registers
+//       reads back with no problem (review r1 item 2: verify expected schtasks while the switch registered PowerShell)
 // T8 and T9 run the scripts' real functions (taken by name from the parsed file) in Windows PowerShell 5.1; the Task Scheduler is stood
 // in by a fake Schedule.Service whose Run always queues (the guest's sequence) and whose RunEx starts only with flags 2. Nothing is
 // started, stopped or registered on this machine.
@@ -65,7 +67,7 @@ const SITES = ps1Files(RES).flatMap(file => fs.readFileSync(file, 'utf8').split(
 test('T7: a task is started with a plain Run, Start-ScheduledTask or schtasks /Run without /I only at the listed places', () => {
   const stray = SITES.filter(s => !ALLOWED.some(a => a.file === s.file && s.text.includes(a.text)));
   assert.deepEqual(stray.map(s => `${s.file}:${s.line} ${s.kind}: ${s.text}`), [],
-    'K3: start the companion\'s tasks with RunEx($null, 2, 0, $null) (schtasks /Run /I); a place that is not a companion start goes on the list with why');
+    'K3: start the companion\'s tasks with RunEx($null, 2, 0, $null) (or schtasks /Run /I); a place that is not a companion start goes on the list with why');
   for (const a of ALLOWED) {
     const lines = fs.readFileSync(path.join(RES, a.file), 'utf8').split(/\r?\n/).filter(l => l.includes(a.text)).length;
     assert.equal(lines, a.count, `the allowed place ${a.file} "${a.text}" is still there exactly ${a.count} time(s) (else take it off the list)`);
@@ -80,22 +82,30 @@ test('T7: every RunEx of a product script ignores the constraints with no sessio
 });
 
 // ---- T8, T9: the real functions against stand-ins ----
-// Loads the named functions of a script by its parse tree (none of the script's body runs), then runs body; the last line of stdout is JSON.
-function ps(script, names, body) {
-  const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; $ErrorActionPreference = 'Stop'
-$ast = [Management.Automation.Language.Parser]::ParseFile(${q(script)}, [ref]$null, [ref]$null)
-foreach ($name in @(${names.map(q).join(', ')})) {
-  $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
-  if ($found.Count -ne 1) { [Console]::Out.WriteLine((ConvertTo-Json -Compress ([ordered]@{ missing = $name; found = $found.Count }))); exit 0 }
+// Loads the named functions (names) and top-level variable assignments (vars) of scripts by their parse trees (none of a script's body
+// runs), then runs body; the last line of stdout is JSON.
+function psLoad(loads, body) {
+  const load = ({ script, names = [], vars = [] }) => `$ast = [Management.Automation.Language.Parser]::ParseFile(${q(script)}, [ref]$null, [ref]$null)
+foreach ($v in @(${vars.map(q).join(', ')})) {
+  $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq ('$' + $v) }, $true))
+  if ($found.Count -ne 1) { [Console]::Out.WriteLine((ConvertTo-Json -Compress ([ordered]@{ missing = ('$' + $v); found = $found.Count; script = ${q(rel(script))} }))); exit 0 }
   . ([scriptblock]::Create($found[0].Extent.Text))
 }
+foreach ($name in @(${names.map(q).join(', ')})) {
+  $found = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))
+  if ($found.Count -ne 1) { [Console]::Out.WriteLine((ConvertTo-Json -Compress ([ordered]@{ missing = $name; found = $found.Count; script = ${q(rel(script))} }))); exit 0 }
+  . ([scriptblock]::Create($found[0].Extent.Text))
+}`;
+  const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; $ErrorActionPreference = 'Stop'
+${loads.map(load).join('\n')}
 ${body}`;
   const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 200_000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const got = JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
-  assert.equal(got.missing, undefined, `function ${got.missing} is defined exactly once in ${rel(script)} (found ${got.found})`);
+  assert.equal(got.missing, undefined, `${got.missing} is defined exactly once in ${got.script} (found ${got.found})`);
   return got;
 }
+const ps = (script, names, body) => psLoad([{ script, names }], body);
 // The fake Task Scheduler: Run always queues (state 2, engine 0, the guest's sequence); RunEx runs only with flags 2. Every call is logged,
 // RunEx with its arguments ($null shown as null). The cmdlets that would reach the real one are stood in and logged too.
 const FAKE_SCHEDULER = `
@@ -138,14 +148,17 @@ test('T9: the uninstall deletes the start task (when there is one) before it sto
 
 // verify-resident.ps1: the shape (pure), the reader (fake Schedule.Service) and the check (reader and Register-CompanionStartTask stood in).
 const VERIFY = path.join(RES, 'windows', 'verify-resident.ps1');
+const HEADLESS = path.join(RES, 'windows', 'companion-headless.ps1');
+// The start task's action has one source: companion-headless.ps1 $CompanionStartTaskAction (verify dot-sources that file).
+const ACTION = { script: HEADLESS, vars: ['CompanionStartTaskAction'] };
 const GOOD = `[ordered]@{ exists = $true; readable = $true; userSid = 'S-1-5-18'; logonType = 5; runLevel = 1; enabled = $true
   triggers = @([ordered]@{ type = 8; delay = 'PT30S'; interval = ''; duration = ''; enabled = $true }, [ordered]@{ type = 1; delay = ''; interval = 'PT15M'; duration = ''; enabled = $true })
   startWhenAvailable = $true; multipleInstances = 2; disallowOnBatteries = $false; stopOnBatteries = $false; executionTimeLimit = 'PT1M'
-  actions = @([ordered]@{ type = 0; path = 'C:\\Windows\\System32\\schtasks.exe'; arguments = '/Run /I /TN "\\Clued\\CluedCIResidentCompanion"' })
+  actions = @([ordered]@{ type = 0; path = [string]$CompanionStartTaskAction.path; arguments = [string]$CompanionStartTaskAction.arguments })
   dacl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)' }`;
 
-test('T9: the start task\'s shape: SYSTEM, highest, boot +30 s and every 15 minutes, IgnoreNew, one minute, schtasks /Run /I, SY and BA only', opts, () => {
-  const got = ps(VERIFY, ['Get-CompanionStartTaskProblems'], `
+test('T9: the start task\'s shape: SYSTEM, highest, boot +30 s and every 15 minutes, IgnoreNew, one minute, companion-headless.ps1\'s action, SY and BA only', opts, () => {
+  const got = psLoad([ACTION, { script: VERIFY, names: ['Get-CompanionStartTaskProblems'] }], `
 $good = ${GOOD}
 $cases = [ordered]@{}
 $cases.good = @(Get-CompanionStartTaskProblems $good)
@@ -159,8 +172,8 @@ $edits = [ordered]@{
   'triggers-off' = { param($f) $f.triggers[0].enabled = $false }
   'start-when-available' = { param($f) $f.startWhenAvailable = $false }; 'multiple-instances' = { param($f) $f.multipleInstances = 0 }
   batteries = { param($f) $f.stopOnBatteries = $true }; 'time-limit' = { param($f) $f.executionTimeLimit = 'PT0S' }
-  'action-plain-run' = { param($f) $f.actions[0].arguments = '/Run /TN "\\Clued\\CluedCIResidentCompanion"' }
-  'action-path' = { param($f) $f.actions[0].path = 'schtasks.exe' }; 'action-two' = { param($f) $f.actions += $f.actions[0] }
+  'action-arguments' = { param($f) $f.actions[0].arguments = '/Run /I /TN "\\Clued\\CluedCIResidentCompanion"' }
+  'action-path' = { param($f) $f.actions[0].path = 'C:\\Windows\\System32\\schtasks.exe' }; 'action-two' = { param($f) $f.actions += $f.actions[0] }
   sddl = { param($f) $f.dacl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)' }; 'sddl-unprotected' = { param($f) $f.dacl = 'D:(A;;FA;;;SY)(A;;FA;;;BA)' }
   'sddl-spelled' = { param($f) $f.dacl = 'D:P(A;;0x1f01ff;;;SY)(A;;0x1f01ff;;;BA)' }
 }
@@ -171,42 +184,84 @@ $cases | ConvertTo-Json -Depth 4 -Compress`);
   assert.deepEqual(got.unreadable, ['unreadable']);
   const expect = { principal: 'principal', 'logon-type': 'logon-type', 'run-level': 'run-level', disabled: 'disabled', 'triggers-boot-delay': 'triggers',
     'triggers-interval': 'triggers', 'triggers-duration': 'triggers', 'triggers-extra': 'triggers', 'triggers-off': 'triggers', 'start-when-available': 'start-when-available',
-    'multiple-instances': 'multiple-instances', batteries: 'batteries', 'time-limit': 'time-limit', 'action-plain-run': 'action', 'action-path': 'action',
+    'multiple-instances': 'multiple-instances', batteries: 'batteries', 'time-limit': 'time-limit', 'action-arguments': 'action', 'action-path': 'action',
     'action-two': 'action', sddl: 'sddl', 'sddl-unprotected': 'sddl' };
   for (const [k, v] of Object.entries(expect)) assert.deepEqual(got[k], [v], k);
   assert.deepEqual(got['sddl-spelled'], [], 'the same ACEs spelled as a mask (as the Task Scheduler may read them back) pass');
 });
 
 test('T9: the start task is read from \\Clued\\CluedCIResidentCompanionStart; not found is absent, access denied is unreadable', opts, () => {
-  const got = ps(VERIFY, ['Read-CompanionStartTaskFacts', 'Get-CompanionStartTaskProblems'], `
+  const got = psLoad([ACTION, { script: VERIFY, names: ['Read-CompanionStartTaskFacts', 'Get-CompanionStartTaskProblems'] }], `
 function New-Trigger($type, $delay, $interval) { $t = [pscustomobject]@{ Type = $type; Delay = $delay; Enabled = $true; Repetition = [pscustomobject]@{ Interval = $interval; Duration = '' } }; $t }
 $def = [pscustomobject]@{ Principal = [pscustomobject]@{ UserId = 'S-1-5-18'; LogonType = 5; RunLevel = 1 }
   Settings = [pscustomobject]@{ Enabled = $true; StartWhenAvailable = $true; MultipleInstances = 2; DisallowStartIfOnBatteries = $false; StopIfGoingOnBatteries = $false; ExecutionTimeLimit = 'PT1M' }
   Triggers = @((New-Trigger 8 'PT30S' ''), (New-Trigger 1 '' 'PT15M'))
-  Actions = @([pscustomobject]@{ Type = 0; Path = 'C:\\Windows\\System32\\schtasks.exe'; Arguments = '/Run /I /TN "\\Clued\\CluedCIResidentCompanion"' }) }
+  Actions = @([pscustomobject]@{ Type = 0; Path = [string]$CompanionStartTaskAction.path; Arguments = [string]$CompanionStartTaskAction.arguments }) }
 $task = [pscustomobject]@{ Definition = $def; Enabled = $true }
 $task | Add-Member -MemberType ScriptMethod -Name GetSecurityDescriptor -Value { param($i) 'O:BAG:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)' }
 $folder = [pscustomobject]@{}
 $folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($n) $script:asked = $n
-  if ($script:mode -ceq 'missing') { throw ([Runtime.InteropServices.COMException]::new('not found', -2147024894)) }
+  if ($script:mode -ceq 'notFound') { throw ([Runtime.InteropServices.COMException]::new('not found', -2147024894)) }
   if ($script:mode -ceq 'denied') { throw ([Runtime.InteropServices.COMException]::new('denied', -2147024891)) }
   $task }
 $svc = [pscustomobject]@{}; $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
 $svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($p) $script:folderAsked = $p; $folder }
 function New-Object { if ($args -contains '-ComObject') { $svc } else { Microsoft.PowerShell.Utility\\New-Object @args } }
 $r = [ordered]@{}
-foreach ($m in @('present', 'missing', 'denied')) { $script:mode = $m; $f = Read-CompanionStartTaskFacts; $r[$m] = @(Get-CompanionStartTaskProblems $f) }
+foreach ($m in @('present', 'notFound', 'denied')) { $script:mode = $m; $f = Read-CompanionStartTaskFacts; $r[$m] = @(Get-CompanionStartTaskProblems $f) }
 $r.folder = $script:folderAsked; $r.task = $script:asked
 $r | ConvertTo-Json -Depth 4 -Compress`);
   assert.equal(got.folder, '\\Clued');
   assert.equal(got.task, 'CluedCIResidentCompanionStart');
   assert.deepEqual(got.present, []);
-  assert.deepEqual(got.missing, ['absent']);
+  assert.deepEqual(got.notFound, ['absent']);
   assert.deepEqual(got.denied, ['unreadable']);
 });
 
+// Review r1 item 2: the definition companion-headless.ps1 Register-CompanionStartTask (its real function) registers, read back by verify's
+// reader, has no problem: else every switched node fails verify, and the SYSTEM VERIFY re-registers it and still fails (STILL:action).
+test('T9: what Register-CompanionStartTask registers passes verify\'s start-task check', opts, () => {
+  const got = psLoad([{ script: HEADLESS, names: ['Register-CompanionStartTask'], vars: ['CompanionStartTaskName', 'CompanionStartTaskAction'] },
+    { script: VERIFY, names: ['Read-CompanionStartTaskFacts', 'Get-CompanionStartTaskProblems'] }], `
+$script:registered = $null
+# A fresh task definition with the Task Scheduler's defaults; Triggers and Actions keep what Create made (Items).
+function New-FakeDefinition {
+  $tr = [pscustomobject]@{ Items = [Collections.ArrayList]::new() }
+  $tr | Add-Member -MemberType ScriptMethod -Name Create -Value { param($type) $t = [pscustomobject]@{ Type = $type; Delay = ''; Enabled = $true; StartBoundary = ''; Repetition = [pscustomobject]@{ Interval = ''; Duration = '' } }; [void]$this.Items.Add($t); $t }
+  $ac = [pscustomobject]@{ Items = [Collections.ArrayList]::new() }
+  $ac | Add-Member -MemberType ScriptMethod -Name Create -Value { param($type) $a = [pscustomobject]@{ Type = $type; Path = ''; Arguments = '' }; [void]$this.Items.Add($a); $a }
+  [pscustomobject]@{ Principal = [pscustomobject]@{ UserId = ''; LogonType = 0; RunLevel = 0 }
+    Settings = [pscustomobject]@{ Enabled = $true; StartWhenAvailable = $false; MultipleInstances = 2; DisallowStartIfOnBatteries = $true; StopIfGoingOnBatteries = $true; ExecutionTimeLimit = 'PT72H' }
+    Triggers = $tr; Actions = $ac }
+}
+$folder = [pscustomobject]@{}
+$folder | Add-Member -MemberType ScriptMethod -Name RegisterTaskDefinition -Value { param($name, $def, $flags, $user, $password, $logonType, $sddl)
+  $read = [pscustomobject]@{ Principal = $def.Principal; Settings = $def.Settings; Triggers = @($def.Triggers.Items); Actions = @($def.Actions.Items) }
+  $script:registered = [ordered]@{ name = $name; flags = $flags; logonType = $logonType; sddl = $sddl; definition = $read }
+  $null }
+$folder | Add-Member -MemberType ScriptMethod -Name GetTask -Value { param($n)
+  if ($null -eq $script:registered -or $n -cne $script:registered.name) { throw ([Runtime.InteropServices.COMException]::new('not found', -2147024894)) }
+  $t = [pscustomobject]@{ Definition = $script:registered.definition; Enabled = $true }
+  $t | Add-Member -MemberType ScriptMethod -Name GetSecurityDescriptor -Value { param($i) [string]$script:registered.sddl }
+  $t }
+$svc = [pscustomobject]@{}
+$svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
+$svc | Add-Member -MemberType ScriptMethod -Name GetFolder -Value { param($p) if ($p -cne '\\Clued') { throw 'UNEXPECTED_FOLDER' }; $folder }
+$svc | Add-Member -MemberType ScriptMethod -Name NewTask -Value { param($f) New-FakeDefinition }
+function New-Object { $svc }
+$before = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
+Register-CompanionStartTask
+$after = @(Get-CompanionStartTaskProblems (Read-CompanionStartTaskFacts))
+[ordered]@{ before = $before; after = $after; name = $script:registered.name; logonType = $script:registered.logonType
+  action = [ordered]@{ path = $script:registered.definition.Actions[0].Path; arguments = $script:registered.definition.Actions[0].Arguments } } | ConvertTo-Json -Depth 4 -Compress`);
+  assert.deepEqual(got.before, ['absent']);
+  assert.equal(got.name, 'CluedCIResidentCompanionStart');
+  assert.equal(got.logonType, 5);
+  assert.deepEqual(got.after, [], `verify reads what the switch registered (action ${JSON.stringify(got.action)}) with no problem`);
+});
+
 test('T9: verify requires the start task only under the password definition; as SYSTEM it adds a missing or wrong one first, by hand it only reports', opts, () => {
-  const got = ps(VERIFY, ['Test-CompanionStartTask', 'Get-CompanionStartTaskProblems'], `
+  const got = psLoad([ACTION, { script: VERIFY, names: ['Test-CompanionStartTask', 'Get-CompanionStartTaskProblems'] }], `
 $script:log = New-Object Collections.ArrayList
 $good = ${GOOD}
 function Read-CompanionStartTaskFacts { [void]$script:log.Add('read'); if ($script:reads.Count) { $f = $script:reads[0]; $script:reads = @($script:reads | Select-Object -Skip 1); $f } else { $good } }

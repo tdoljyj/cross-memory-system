@@ -32,9 +32,13 @@ after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const q = s => `'${String(s).replace(/'/g, "''")}'`;
 const write = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); };
 
+// The snippet goes in a file (UTF-8 with a BOM for 5.1), not on the command line: the stand-ins outgrow -EncodedCommand's 32K characters.
+let snippets = 0;
 function ps(expr) {
   const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(entryScript)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`;
-  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 200_000 });
+  const file = path.join(tmp, `snippet-${++snippets}.ps1`);
+  fs.writeFileSync(file, '﻿' + command, 'utf8');
+  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8', timeout: 200_000 });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
 }
@@ -54,7 +58,7 @@ const evidenceStandIns = `
   function Get-EntryWinEvents([string]$LogName, [string]$XPath, [int]$Max) { [void]$script:asked.Add(@('events', $LogName, $XPath, $Max))
     if ($script:eventsBroken) { throw (New-Object UnauthorizedAccessException 'events denied') }
     $n = $(if ($null -ne $script:eventCount) { $script:eventCount } else { 2 })
-    @(if ($n -gt 0) { 1..$n } | ForEach-Object { New-FakeEvent (100 + $_) $LogName $(if ($script:eventText) { $script:eventText } else { 'event ' + $_ + ' of ' + $LogName }) } | Select-Object -First $Max) }
+    @($(if ($n -gt 0) { 1..$n }) | ForEach-Object { New-FakeEvent (100 + $_) $LogName $(if ($script:eventText) { $script:eventText } else { 'event ' + $_ + ' of ' + $LogName }) } | Select-Object -First $Max) }
   function Get-EntryHiveNames { [void]$script:asked.Add(@('hives')); @('.DEFAULT', 'S-1-5-18', 'S-1-5-21-1-2-3-1002', 'clued-p1-0123456789abcdef0123456789abcdef') }
   function Get-EntryAccountSid([string]$Name) { [void]$script:asked.Add(@('sid', $Name)); 'S-1-5-21-1-2-3-1002' }
   function Get-EntryRegistryValues([string]$SubKey, [string[]]$Names) { [void]$script:asked.Add(@('registry', $SubKey, ($Names -join ',')))
@@ -164,7 +168,7 @@ const fakeScheduler = ({ plan, companionXml = COMPANION_XML, failDelete = false,
     $t | Add-Member -MemberType ScriptMethod -Name GetInstances -Value { param($f) $p = Get-FakePhase $this
       if ($p -ceq 'queued') { ,@([pscustomobject]@{ State = 2; EnginePID = 0 }) } elseif ($p -ceq 'running') { ,@([pscustomobject]@{ State = 4; EnginePID = 4242 }) } else { ,@() } }
     $t | Add-Member -MemberType ScriptMethod -Name Run -Value { param($a) [void]$script:probeFake.log.Add('run ' + $this.name); $this.runAt = $script:probeFake.tick; [pscustomobject]@{} }
-    $t | Add-Member -MemberType ScriptMethod -Name RunEx -Value { param($a, $flags, $session, $user) [void]$script:probeFake.log.Add('runex ' + $this.name + ' flags=' + $flags); $this.runAt = $script:probeFake.tick; [pscustomobject]@{} }
+    $t | Add-Member -MemberType ScriptMethod -Name RunEx -Value { param($a, $flags, $session, $user) [void]$script:probeFake.log.Add('runex ' + $this.name + ' flags=' + $flags + $(if ($null -ne $user) { " user='" + $user + "'" })); $this.runAt = $script:probeFake.tick; [pscustomobject]@{} }
     $t | Add-Member -MemberType ScriptMethod -Name Stop -Value { param($f) [void]$script:probeFake.log.Add('stop ' + $this.name); $this.stopped = $true }
     $t }
   function New-FakeFolder($path) {
@@ -190,7 +194,7 @@ const fakeScheduler = ({ plan, companionXml = COMPANION_XML, failDelete = false,
     New-FakeFolder $p }
   $script:probeAccounts = @{ New = { param($n, $p) [void]$script:accounts.Add('new ' + $n + ' ' + $(if ($p -ceq ${q(SENTINEL)}) { 'sentinel' } else { 'other' })) }; Remove = { param($n) [void]$script:accounts.Add('remove ' + $n) } }
   $script:probeEvents = { param($taskPath, $since) [void]$script:probeFake.log.Add('events ' + $taskPath + ' ' + $since.ToString('o'))
-    switch ($taskPath) { '\\CluedDrillProbe\\P1' { @(100, 129, 102) } default { if ($script:probeFake.plan[$taskPath.Split('\\')[-1]] -ceq 'failed') { @(100, 101) } else { @() } } } }
+    switch ($taskPath) { '\\CluedDrillProbe\\P1' { if ($script:probeFake.plan['P1'] -ceq 'ran') { @(100, 129, 102) } else { @() } } default { if ($script:probeFake.plan[$taskPath.Split('\\')[-1]] -ceq 'failed') { @(100, 101) } else { @() } } } }
   ${guard ? 'function Test-EntryProbeHost { $true }' : '# the real Test-EntryProbeHost'}
   $script:EntryProbeRunner = { Invoke-EntryProbes -Service $script:service -Accounts $script:probeAccounts -Sleep { $script:probeFake.tick++; $script:clock = $script:clock.AddSeconds(${step}) } -Now { $script:clock } -NewPassword { ${q(SENTINEL)} } -Events $script:probeEvents -EntryUser 'CLUED-DRILL\\drill' }`;
 

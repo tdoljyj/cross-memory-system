@@ -3394,16 +3394,22 @@ $script:GuestReadStatus = {
   $s = if (Test-Path $p) { Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json } else { $null }
   $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
   # Task 87d330d0 K3 (FABLE-drill-companion-k3-20261124 section 4): whether the companion came up by itself after a reboot nobody logged on
-  # to -- the companion task's definition (its logon type), the interactive logon sessions (2, 10; Window Manager and Font Driver Host
-  # sessions are the system's own), the SYSTEM start task's last run and result, the companion task's state, the companion account's
-  # supervisor processes with their start. Each part read on its own: one that cannot be read is named in errors, never thrown.
-  $cab = [ordered]@{ boot = $boot; definition = $null; interactiveSessions = $null; startTask = $null; companionState = $null; supervisors = @(); errors = [ordered]@{} }
+  # to -- the companion task's definition (its logon type), the users logged on, the SYSTEM start task's last run and result, the
+  # companion task's running instances (and its State, kept but not judged: with a queued instance still there the task's State is not
+  # to be trusted, drill-queued-repro), the companion account's supervisor processes with their start. Each part read on its own: one that
+  # cannot be read is named in errors, never thrown.
+  # The users logged on are the window-station sessions that carry a user name (WTSEnumerateSessions, WTSUserName; as "query user"), not
+  # the LSA logon sessions of type 2 or 10: this read itself comes over PowerShell Direct as the drill administrator, a type 2 logon session
+  # with no window station (first review of K3, item 1).
+  $cab = [ordered]@{ boot = $boot; definition = $null; interactiveSessions = $null; interactiveUsers = @(); startTask = $null; companionState = $null
+    companionInstances = $null; supervisors = @(); errors = [ordered]@{} }
   $folder = $null
   try { $svc = New-Object -ComObject Schedule.Service; $svc.Connect(); $folder = $svc.GetFolder('\Clued') } catch { $cab.errors['scheduler'] = [string]$_.Exception.Message }
   if ($null -ne $folder) {
     try {
       $t = $folder.GetTask('CluedCIResidentCompanion'); $cab.companionState = [int]$t.State; $lt = [int]$t.Definition.Principal.LogonType
       $cab.definition = $(if ($lt -eq 1) { 'password' } elseif ($lt -eq 3) { 'interactive' } else { 'logon-type-' + $lt })
+      $cab.companionInstances = @(@($t.GetInstances(0)) | Where-Object { $null -ne $_ } | ForEach-Object { [ordered]@{ state = [int]$_.State; enginePid = [int]$_.EnginePID } })
     } catch { $cab.errors['companionTask'] = [string]$_.Exception.Message }
     try {
       $st = $folder.GetTask('CluedCIResidentCompanionStart'); $last = [DateTime]$st.LastRunTime
@@ -3411,9 +3417,43 @@ $script:GuestReadStatus = {
     } catch { $cab.errors['startTask'] = [string]$_.Exception.Message }
   }
   try {
-    $sessions = @(Get-CimInstance -ClassName Win32_LogonSession -ErrorAction Stop | Where-Object { @(2, 10) -contains [int]$_.LogonType } | ForEach-Object { [string]$_.LogonId })
-    $system = @(Get-CimInstance -ClassName Win32_LoggedOnUser -ErrorAction Stop | Where-Object { @('Window Manager', 'Font Driver Host') -contains [string]$_.Antecedent.Domain } | ForEach-Object { [string]$_.Dependent.LogonId })
-    $cab.interactiveSessions = @($sessions | Where-Object { $system -notcontains $_ }).Count
+    if (-not ('CluedDrillWts' -as [type])) {
+      Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class CluedDrillWts {
+  [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool WTSEnumerateSessions(IntPtr server, int reserved, int version, out IntPtr info, out int count);
+  [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool WTSQuerySessionInformation(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
+  [DllImport("wtsapi32.dll")]
+  static extern void WTSFreeMemory(IntPtr memory);
+  [StructLayout(LayoutKind.Sequential)]
+  struct SessionInfo { public int SessionId; public IntPtr WinStationName; public int State; }
+  // "<session id>:<user name>" of every session that carries a user name (WTSUserName = 5)
+  public static string[] UserSessions() {
+    IntPtr info; int count;
+    if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out info, out count)) throw new Win32Exception();
+    List<string> users = new List<string>();
+    try {
+      int size = Marshal.SizeOf(typeof(SessionInfo));
+      for (int i = 0; i < count; i++) {
+        SessionInfo s = (SessionInfo)Marshal.PtrToStructure(new IntPtr(info.ToInt64() + (long)i * size), typeof(SessionInfo));
+        IntPtr buffer; int bytes;
+        if (!WTSQuerySessionInformation(IntPtr.Zero, s.SessionId, 5, out buffer, out bytes)) throw new Win32Exception();
+        try { string name = Marshal.PtrToStringUni(buffer); if (!String.IsNullOrEmpty(name)) users.Add(s.SessionId + ":" + name); }
+        finally { WTSFreeMemory(buffer); }
+      }
+    } finally { WTSFreeMemory(info); }
+    return users.ToArray();
+  }
+}
+'@
+    }
+    $cab.interactiveUsers = @([CluedDrillWts]::UserSessions())
+    $cab.interactiveSessions = $cab.interactiveUsers.Count
   } catch { $cab.errors['sessions'] = [string]$_.Exception.Message }
   try {
     $cab.supervisors = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='CluedCompanionSupervisor.exe'" -ErrorAction Stop | ForEach-Object {
@@ -3424,8 +3464,8 @@ $script:GuestReadStatus = {
 }
 
 # A7's added condition (K3 section 4): under the companion's password definition the companion came up by itself after this boot, nobody
-# logged on -- all five: this boot's time; no interactive logon session; the start task ran after the boot and returned 0; the companion
-# task running (4); a supervisor of the companion account started after the boot. Any one missing: no pass, named in the detail. Under the
+# logged on -- all five: this boot's time; no session with a user logged on; the start task ran after the boot and returned 0; an instance
+# of the companion task running; a supervisor of the companion account started after the boot. Any one missing: no pass, named in the detail. Under the
 # interactive definition (a person logs on; -Interactive) it adds nothing. No read, or a definition that cannot be told: no pass.
 $script:DrillCompanionAccount = 'clued-companion'
 function Test-DrillCompanionAfterBoot($Cab, [string]$Boot) {
@@ -3442,8 +3482,10 @@ function Test-DrillCompanionAfterBoot($Cab, [string]$Boot) {
   if (-not (Test-DrillAfterBoot ([string](Get-Prop $start 'lastRun')) $Boot)) { $missing.Add('startTaskRanAfterBoot') }
   $result = Get-Prop $start 'lastResult'
   if ($null -eq $result -or [int64]$result -ne 0) { $missing.Add("startTaskResult=$(if ($null -eq $result) { 'unread' } else { $result })") }
-  $state = Get-Prop $Cab 'companionState'
-  if ($null -eq $state -or [int]$state -ne 4) { $missing.Add("companionState=$(if ($null -eq $state) { 'unread' } else { $state })") }
+  # running: an instance of the companion task running (4) or with an engine process, as the import's start is judged; the task's State
+  # is not, a queued instance beside it can leave it wrong (first review of K3, item 5)
+  $running = @(@(Get-Prop $Cab 'companionInstances') | Where-Object { $null -ne $_ -and ([int](Get-Prop $_ 'state') -eq 4 -or [int](Get-Prop $_ 'enginePid') -ne 0) })
+  if (-not $running.Count) { $missing.Add('companionRunning') }
   $mine = @(@(Get-Prop $Cab 'supervisors') | Where-Object { $null -ne $_ -and [string]::Equals([string](Get-Prop $_ 'owner'), $script:DrillCompanionAccount, [StringComparison]::OrdinalIgnoreCase) -and (Test-DrillAfterBoot ([string](Get-Prop $_ 'created')) $Boot) })
   if (-not $mine.Count) { $missing.Add('supervisorAfterBoot') }
   if ($missing.Count) { return @{ pass = $false; detail = ('companionAfterBoot missing=' + ($missing -join ',')) } }
