@@ -3,7 +3,7 @@
 // On Windows the cluster's files stay locked for a short while after the
 // postgres process exits, so an immediate recursive remove fails with EBUSY
 // (or EPERM / ENOTEMPTY) and node:test then fails the whole file although every
-// subtest passed. `embedded-postgres` itself removes a non-persistent cluster at
+// subtest passed. The library itself removes a non-persistent cluster at
 // the end of stop() with one unretried fs.rm, so stopping goes through here too.
 //
 // Cleanup is best effort and never throws: when a directory still cannot be
@@ -177,7 +177,7 @@ export async function stopCluster(server, overrides = {}) {
 }
 
 // A port nothing listens on at this moment. It is only a candidate: see startCluster.
-export async function freePort() {
+async function freePort() {
   const listener = net.createServer();
   await new Promise((resolve) => listener.listen(0, '127.0.0.1', resolve));
   const port = listener.address().port;
@@ -194,47 +194,48 @@ export const PORT_TAKEN = /could not create any TCP\/IP sockets|Address already 
 
 const fatalLines = (log) => log.split(/\r?\n/).filter((line) => /FATAL|PANIC/.test(line)).map((line) => line.trim()).join(' | ') || log;
 
-// Initialises the cluster and starts it on a port its postmaster can bind.
+// Starts a cluster built by newCluster (./pg-cluster-fixture.mjs) on a port it
+// picks itself, before every start including the first; read the port from
+// server.options.port once this returns. The data directory is initialised
+// once; a persistent cluster that is started again passes initialise: false.
 // Picking a free port and the postmaster binding it are two steps, and the
 // database suites start four files' clusters at once (--test-concurrency=4):
 // another cluster can bind the port in between, and the postmaster then exits
-// at once. embedded-postgres rejects an early exit with no reason, so the test
+// at once. The library rejects an early exit with no reason, so the test
 // failed with a bare `undefined` (migration-verify run 45380641278,
 // work-claims-owner-grants-db, 663 ms in).
 // Only an early exit whose log says the port is taken is retried, on a newly
-// picked port, and each retry and a start after retries leave one stderr line.
-// Any other early exit is thrown at once with the postmaster's log, and a start
-// error that has a reason is thrown as it is.
-export async function startCluster(server, overrides = {}) {
-  const o = { attempts: START_ATTEMPTS, pickPort: freePort, log: defaultLog, ...overrides };
-  await server.initialise();
+// picked port, and each retry leaves one stderr line. Any other early exit is
+// thrown at once with its port and the postmaster's log, and a start error that
+// has a reason is thrown as it is. pickPort is handed the default picker.
+export async function startCluster(server, { initialise = true, attempts = START_ATTEMPTS, pickPort = freePort, log = defaultLog } = {}) {
+  if (initialise) await server.initialise();
   const ownLog = server.options.onLog;
   const ports = [];
   let lines = [];
   server.options.onLog = (message) => { lines.push(String(message)); return ownLog?.(message); };
   try {
+    server.options.port = await pickPort(freePort);
     for (;;) {
       const port = server.options.port;
       ports.push(port);
       lines = [];
       try {
         await server.start();
+        return server;
       } catch (error) {
         if (error !== undefined) throw error;
-        const log = lines.join('').trim();
-        if (!PORT_TAKEN.test(log)) {
-          throw new Error(`embedded PostgreSQL exited during start on port ${port}, not for a taken port, so not retried; its log: ${log || '(empty)'}`);
+        const output = lines.join('').trim();
+        if (!PORT_TAKEN.test(output)) {
+          throw new Error(`embedded PostgreSQL exited during start on port ${port}, not for a taken port, so not retried; its log: ${output || '(empty)'}`);
         }
-        if (ports.length >= o.attempts) {
-          throw new Error(`embedded PostgreSQL found ports ${ports.join(', ')} taken; its last log: ${log}`);
+        if (ports.length >= attempts) {
+          throw new Error(`embedded PostgreSQL found ports ${ports.join(', ')} taken; its last log: ${output}`);
         }
-        const next = await o.pickPort();
-        o.log(`postmaster exited at start on port ${port} (port taken), retrying on port ${next}: ${fatalLines(log)}`);
+        const next = await pickPort(freePort);
+        log(`端口 ${port} 上 postmaster 启动即退出（端口冲突），改用端口 ${next}：${fatalLines(output)}`);
         server.options.port = next;
-        continue;
       }
-      if (ports.length > 1) o.log(`postmaster started on port ${port} after taken port(s) ${ports.slice(0, -1).join(', ')}`);
-      return server;
     }
   } finally {
     server.options.onLog = ownLog;
