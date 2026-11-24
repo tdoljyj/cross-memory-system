@@ -167,6 +167,8 @@ function drillFixture(t) {
   put('companion',{...row(profile.ownerSid),'ci-admission.token':'DENIED','ci-admission.connection.json':'DENIED'});
   put('probe',{at,code:'RENEW_IDENTITY_REFUSED'});
   put('record',{'ci-admission.connection.json':'PRESENT'});
+  // 宿主写的演练切断名单（drill-vm.ps1 Copy-DrillM5）：这组用例不切断网关主机，网关一项仍要求 403（切断时的规则见 drill-r13-a8-m5.test.mjs）
+  put('network',{blackholeHosts:['clued.pixelgrav.com']});
   const drill=()=>spawnSync(process.execPath,[path.join(resident,'test','renewal-drill.mjs'),dir],{encoding:'utf8'});
   return {drill, put, profile, row, dir};
 }

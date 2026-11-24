@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   script, powershell, tmp, sha, q, ps, psCode, opts, entryScript, entryPs, STEP_LOGS, m5DrillReceipt, RENEWAL_3BC571A6,
-  notTheDrillsSource, S, L, PAUSE_REQUEST, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize, COMPANION_AFTER_BOOT
+  notTheDrillsSource, S, L, PAUSE_REQUEST, FAKE_VERIFY, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize, COMPANION_AFTER_BOOT
 } from './drill-vm-fixtures.mjs';
 
 // Fable renew-key ruling, supplement "eight on the path", item 5: a successful launcher ends with its own pause confirmed, so A6 holds
@@ -186,14 +186,15 @@ test('A7 (K3): the guest read counts the sessions with a user logged on, not the
   assert.match(a7(someone).detail, /interactiveSessions=1/);
 });
 
-test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful terminal status despite passing reverify', opts, () => {
+test('A8 fails when either entry is not the same-package refusal, even with the other one right', opts, () => {
   const { reinstall } = JSON.parse(evidence());
-  const { launcherExit, launcherStatus, launcherVerdict, ...withoutLauncher } = reinstall;
+  const { prepareCode, ...withoutCode } = reinstall;
   for (const [reason, value] of [
-    ['missing command', withoutLauncher],
-    ['nonzero exit', { ...reinstall, launcherExit: 1 }],
-    ['launcher refused', { ...reinstall, launcherStatus: 'PAUSE_NOT_CONFIRMED', launcherVerdict: 'BOOTSTRAP_LAUNCHER_ENDED' }],
-    ['missing terminal status', { ...reinstall, launcherStatus: null, launcherVerdict: 'BOOTSTRAP_LAUNCHER_ENDED' }],
+    ['prepare code missing', withoutCode],
+    ['prepare refused for another reason', { ...reinstall, prepareCode: 'ARTIFACT_SHA_MISMATCH' }],
+    ['prepare let it through', { ...reinstall, prepareStatus: 'FLEET_NODE_INSTALL_PREPARED', prepareCode: null }],
+    ['upgrade staged it', { ...reinstall, upgradeStatus: 'FLEET_NODE_STAGED' }],
+    ['upgrade exit nonzero', { ...reinstall, upgradeExit: 1 }],
   ]) {
     const r = verdictOf(evidence({ reinstall: value }));
     assert.equal(pass(r).A8, false, reason);
@@ -201,36 +202,29 @@ test('A8 fails with a missing launcher, a nonzero exit, or an unsuccessful termi
   }
 });
 
-test('A8 captures the current launcher exit and indented terminal JSON from the prepare command', opts, () => {
+test('A8 reads each entry\'s status, the prepare code, exits and stderr apart from the real fleet tools\' output', opts, () => {
   const { tree, fleet } = mockFleetTree('a8-tree');
-  const good = "ConvertTo-Json @{ status = 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED' }";
-  const commands = [null, ' ', "ConvertTo-Json @{ status = 'PAUSE_NOT_CONFIRMED' }", `${good}; exit 4`, good];
+  const answers = [
+    { answer: { status: 'FLEET_NODE_INSTALL_REFUSED', code: 'NEW_SOURCE_IS_THE_INSTALLED_ONE' }, exit: 1 },
+    { answer: { status: 'FLEET_NODE_INSTALL_REFUSED' }, exit: 1 },
+    { answer: { status: 'FLEET_NODE_INSTALL_PREPARED', runCommand: 'x' }, exit: 0 },
+  ];
   const r = ps(`
     $ErrorActionPreference = 'Stop'
-    $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(commands.map(c => JSON.stringify(c))))}
+    $cases = ConvertFrom-Json -InputObject ${q(JSON.stringify(answers.map(a => JSON.stringify(a))))}
     @($cases | ForEach-Object {
-      [IO.File]::WriteAllText(${q(path.join(fleet, 'run-command.json'))}, $_)
+      [IO.File]::WriteAllText(${q(path.join(fleet, 'prepare-answer.json'))}, $_)
       $up = & $script:GuestReinstallUpgrade ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' $script:DrillNativeText
       $ri = & $script:GuestReinstall ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} '1.2.3' 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText $up
-      @{ exit = $ri.launcherExit; status = $ri.launcherStatus; verdict = $ri.launcherVerdict; pass = (Test-DrillReinstallLauncher $ri);
-        upgrade = $ri.upgradeStatus; prepare = $ri.prepareStatus; upgradeStderr = ([string]$ri.upgradeStderr).Trim(); prepareStderr = ([string]$ri.prepareStderr).Trim() }
+      [ordered]@{ upgrade = $ri.upgradeStatus; upgradeExit = $ri.upgradeExit; prepare = $ri.prepareStatus; code = $ri.prepareCode; prepareExit = $ri.prepareExit
+        upgradeStderr = ([string]$ri.upgradeStderr).Trim(); prepareStderr = ([string]$ri.prepareStderr).Trim() }
     })`);
-  const read = { upgrade: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepare: 'FLEET_NODE_INSTALL_PREPARED',
-    upgradeStderr: 'upgrade: a note on stderr', prepareStderr: 'prepare: a note on stderr' };
+  const read = { upgrade: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', upgradeExit: 0, upgradeStderr: 'upgrade: a note on stderr', prepareStderr: 'prepare: a note on stderr' };
   assert.deepEqual(r, [
-    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false, ...read },
-    { exit: null, status: null, verdict: 'NOT_RUN_MISSING_RUN_COMMAND', pass: false, ...read },
-    { exit: 0, status: 'PAUSE_NOT_CONFIRMED', verdict: 'BOOTSTRAP_LAUNCHER_ENDED', pass: false, ...read },
-    { exit: 4, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: false, ...read },
-    { exit: 0, status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', verdict: 'BOOTSTRAP_DONE', pass: true, ...read },
+    { ...read, prepare: 'FLEET_NODE_INSTALL_REFUSED', code: 'NEW_SOURCE_IS_THE_INSTALLED_ONE', prepareExit: 1 },
+    { ...read, prepare: 'FLEET_NODE_INSTALL_REFUSED', code: null, prepareExit: 1 },
+    { ...read, prepare: 'FLEET_NODE_INSTALL_PREPARED', code: null, prepareExit: 0 },
   ]);
-  // the second prepare after the reinstall, the same way: its status, exit code and stderr all come back (Codex review of 58136df61, low 4)
-  fs.writeFileSync(path.join(fleet, 'run-command.json'), 'null');
-  const again = ps(`$ErrorActionPreference = 'Stop'; $p = & $script:GuestPrepareAgain ${q(process.execPath)} ${q(tree)} ${q(tmp)} ${q(tmp)} 'package.tar' 'acceptance.json' 'sha' $script:DrillNativeText
-    [ordered]@{ status = $p.status; exit = $p.exit; stderr = ([string]$p.stderr).Trim() }`);
-  assert.deepEqual(again, { status: 'FLEET_NODE_INSTALL_PREPARED', exit: 0, stderr: 'prepare: a note on stderr' });
-  // and the run keeps them in reinstall.json beside the status
-  assert.match(fs.readFileSync(script, 'utf8'), /\$reinstall\.prepareAgainExit = \$p2\.exit; \$reinstall\.prepareAgainStderr = \$p2\.stderr/);
 });
 
 // The drill's own children (the kit entry, verify, the A8 tools, root in the prerequisite distribution) are read like the package's
@@ -730,9 +724,9 @@ test('the drill reads its children with stdout and stderr apart: a stderr line n
   put('state/status.json', JSON.stringify({ paused: true }));
   const pausedText = JSON.stringify({ source: { requestSha256: PAUSE_REQUEST, reason: 'any' } });
   put('state/PAUSED.json', pausedText);
-  put('resident/abc/windows/verify-resident.ps1', "param($ExpectedInstallReceiptSha256, $LinuxVersionFactsFile)\n" +
-    "[Console]::Error.WriteLine('verify: a note on stderr')\nWrite-Output 'RESIDENT_VERIFIED'\nexit 0\n");
-  const g = ps(`$ErrorActionPreference = 'Stop'; $g = & $script:GuestRead ${q(root)} $script:DrillNativeText
+  // the stand-in keeps the real rule on the pause (FAKE_VERIFY): the read passes the pause the launcher confirmed, so a paused node verifies
+  put('resident/abc/windows/verify-resident.ps1', FAKE_VERIFY);
+  const g = ps(`$ErrorActionPreference = 'Stop'; $g = & $script:GuestRead ${q(root)} $script:DrillNativeText ${q(sha(pausedText))}
     [ordered]@{ verify = $g.verify.status; exit = $g.verify.exit; stderr = ([string]$g.verify.stderr).Trim(); pause = $g.pause }`);
   assert.deepEqual(g, { verify: 'RESIDENT_VERIFIED', exit: 0, stderr: 'verify: a note on stderr',
     pause: { sha256: sha(pausedText), requestSha256: PAUSE_REQUEST } });
