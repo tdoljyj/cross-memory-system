@@ -320,7 +320,7 @@ test('E12 executor: the tick restamps only while the route is push, saves the qu
 // (poller.mjs batchBase), not main's tip, so another PR's base is no sign that main moved; and main moving sends no trigger at all
 // (deduplicated by PR:head:batchBase). There "main moved" is stage 10's own reading (hintParkedHead); the trigger keeps only the
 // PR-edited and parkEvent nudges. Under github-merge (batchBase = main's tip) the moved nudge is unchanged (the guard, green before too).
-test('266: under the push route other PRs' merge bases nudge no parked batch; under github-merge a new tip still does', async t => {
+test('266: under the push route the merge bases of other PRs nudge no parked batch; under github-merge a new tip still does', async t => {
   const KEY = batchKey({ repo: 'tdoljyj/cross-memory-system', pr: 884, headSha: HEAD, baseSha: BASE, sourceManifestSha256: SOURCE, attempt: 1 });
   const notReady = { ok: false, code: 'RESIDENT_MERGE_QUEUE_NOT_JOINED', proof: WINDOWS_CLEAN, brokerNoLaunch: false,
     outcome: { status: 'BLOCKED', reason: 'RESIDENT_MERGE_QUEUE_NOT_JOINED', sideEffects: 0, mayHavePublished: false, diagnostic: null,
@@ -341,7 +341,7 @@ test('266: under the push route other PRs' merge bases nudge no parked batch; un
     assert.equal(f.exec.batchRoute(), route);
     await f.exec.nudgeParked([poller(901, H(5)), poller(902, H(6)), poller(903, H(7))], f.clock());
     if (route === 'push') {
-      assert.equal(f.exec.parkNudges.has(KEY), false, 'push: the parked batch is not brought forward by other PRs' merge bases');
+      assert.equal(f.exec.parkNudges.has(KEY), false, 'push: the parked batch is not brought forward by the merge bases of other PRs');
       assert.equal(f.exec.parkNudgeBase.get(KEY), undefined, 'push: no merge base is taken for a main tip');
     } else {
       assert.equal(f.exec.parkNudges.has(KEY), true, 'github-merge: a new main tip still nudges');
