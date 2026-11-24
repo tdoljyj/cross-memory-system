@@ -150,7 +150,9 @@ Yes ($pm.pid -eq $PID -and $pm.processStart) 'pending-records-the-switch-process
 Yes ($sw.Contains("'COMPANION_HEADLESS_SWITCH_IN_PROGRESS'") -and $sw.Contains('Remove-Item -LiteralPath (Join-Path $root $CompanionPendingFile) -Force -ErrorAction SilentlyContinue')) 'switch-never-two-at-once-marker-removal-tolerant'
 foreach ($f in @('rearm-resident.ps1', 'verify-resident.ps1', 'companion-headless-fallback.ps1')) { Yes ($texts[$f].Contains('Invoke-CompanionStopAndFallback')) ('stop-before-fallback:' + $f) }
 # review B1: the time the qualification counts from is taken after the old instance ended, and the child's own start bounds the signals
-$iSince = $sw.IndexOf('$since = [DateTimeOffset]::UtcNow')
+# the line the switch takes its start time from (source text, looked up in two scripts below)
+$sinceLine = '$since = [DateTimeOffset]::UtcNow'
+$iSince = $sw.IndexOf($sinceLine)
 Yes ($iSince -gt $sw.IndexOf('Wait-CompanionTaskNotRunning') -and $iSince -lt $iRun) 'switch-counts-from-after-the-old-instance'
 Yes ($functions['companion-headless.ps1:Test-CompanionQualifiedOnce'].Contains("'companion-process-older-than-the-switch'") -and $functions['companion-headless.ps1:Test-CompanionQualifiedOnce'].Contains('$since = $childStart')) 'qualification-signals-after-the-child-started'
 # review M2: the registrar runs with a cleared environment; injection variables refuse the switch
@@ -538,7 +540,7 @@ $i = [ordered]@{ pre = $as.IndexOf('Get-CompanionAccountPreflight'); fb = $as.In
   qual = $as.IndexOf('Wait-CompanionQualified'); rec = $as.LastIndexOf('Write-CompanionWslRecord'); done = $as.IndexOf('$result.qualified = $true') }
 Yes (@($i.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $i.pre -lt $i.fb -and $i.fb -lt $i.mark -and $i.mark -lt $i.stop -and $i.stop -lt $i.move -and $i.move -lt $i.reg -and $i.reg -lt $i.imp -and $i.imp -lt $i.run -and $i.run -lt $i.qual -and $i.qual -lt $i.rec -and $i.rec -lt $i.done) 'account-switch-order'
 # review of K3, item 4: the start task after the import and the Owner's key; stopped and waited for after it, then $since, then the start
-$k3 = [ordered]@{ start = $as.IndexOf('Register-CompanionStartTask'); forget = $as.IndexOf('Remove-CompanionOwnerRegistration'); since = $as.IndexOf('$since = [DateTimeOffset]::UtcNow') }
+$k3 = [ordered]@{ start = $as.IndexOf('Register-CompanionStartTask'); forget = $as.IndexOf('Remove-CompanionOwnerRegistration'); since = $as.IndexOf($sinceLine) }
 $k3.stop = if ($k3.start -ge 0) { $as.IndexOf('Stop-CompanionTask', $k3.start) } else { -1 }
 $k3.wait = if ($k3.start -ge 0) { $as.IndexOf('Wait-CompanionTaskNotRunning', $k3.start) } else { -1 }
 Yes (@($k3.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $k3.start -gt $i.imp -and $k3.start -gt $k3.forget -and $k3.start -lt $k3.stop -and $k3.stop -lt $k3.wait -and $k3.wait -lt $k3.since -and $k3.since -lt $i.run) 'account-switch-start-task-after-import-stopped-before-start'

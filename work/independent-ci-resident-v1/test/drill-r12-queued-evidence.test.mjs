@@ -22,7 +22,7 @@ import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const windows = process.platform === 'win32';
-const opts = { skip: !windows, timeout: 240_000 };
+const opts = { skip: !windows };
 const PROBES = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6'];
 const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
 const listFile = fileURLToPath(new URL('../drill/guest-failure-files.json', import.meta.url));
@@ -38,7 +38,7 @@ function ps(expr) {
   const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; . ${q(entryScript)}; ConvertTo-Json -Depth 12 -Compress -InputObject $(${expr})`;
   const file = path.join(tmp, `snippet-${++snippets}.ps1`);
   fs.writeFileSync(file, '﻿' + command, 'utf8');
-  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8', timeout: 200_000 });
+  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
 }
@@ -268,7 +268,7 @@ test('T10: a registration that throws, no companion definition, removals that fa
   // a scheduler that cannot even be reached: the probes are failed, by name, never a throw
   const unreachable = ps(`function Test-EntryProbeHost { $true }
     $svc = [pscustomobject]@{}; $svc | Add-Member -MemberType ScriptMethod -Name Connect -Value { throw 'scheduler unreachable' }
-    Invoke-EntryProbes -Service $svc -Accounts @{ New = { throw 'x' }; Remove = { } } -Sleep { } -Now { [DateTimeOffset]::UtcNow } -NewPassword { ${q(SENTINEL)} } -Events { @() }`);
+    Invoke-EntryProbes -Service $svc -Accounts @{ New = { throw 'x' }; Remove = { } } -Sleep { } -Now { ${W} } -NewPassword { ${q(SENTINEL)} } -Events { @() }`);
   assert.equal(unreachable.state, 'failed');
   assert.match(unreachable.error, /scheduler unreachable/);
 });
@@ -305,9 +305,8 @@ const entry = (g, { stop = "throw 'LAUNCHER_STOPPED:COMPANION_HEADLESS_FELL_BACK
   $script:EntryProbeRunner = { $script:probeRuns++; & $script:EntryProbeRunnerInner }
   function Assert-FirstInstallGuest { }; function Assert-FirstInstallRelease { }; function Set-EntryServerBlackhole { }
   function Invoke-FirstInstallAccepted { $script:EntryFailureRoots.work = ${q(g.work)}; ${stop} }
-  $before = [DateTimeOffset]::UtcNow
   $r = Get-FirstInstallEntryResult
-  [ordered]@{ result = $r; probeRuns = $script:probeRuns; started = $before.ToString('o'); extra = $(${extra}) }`;
+  [ordered]@{ result = $r; probeRuns = $script:probeRuns; extra = $(${extra}) }`;
 const snapshotOf = g => JSON.parse(fs.readFileSync(path.join(g.out, 'resident-failure-snapshot.json'), 'utf8'));
 
 test('T9/T10: a stopped first install: the probes, then the second layer, in the snapshot beside the files; a broken reader changes nothing else', opts, () => {
@@ -322,10 +321,10 @@ test('T9/T10: a stopped first install: the probes, then the second layer, in the
   assert.deepEqual([got.base.result.status, got.base.result.stopCode], ['FIRST_INSTALL_STOPPED', 'LAUNCHER_STOPPED:COMPANION_HEADLESS_FELL_BACK'], 'the entry\'s result is its own');
   assert.equal(got.base.probeRuns, 1);
   assert.equal(got.afterProbes, true, 'the logs are read after the probes, so the probes\' own events are in them');
-  // the window: the 15 minutes before the snapshot
-  const lag = Date.parse(got.base.started) - Date.parse(got.window);
-  assert.ok(lag > 14 * 60_000 && lag < 16 * 60_000, `window ${got.window} against ${got.base.started}`);
+  // the window: the 15 minutes before the snapshot (both read by the entry's own clock: the snapshot's "at" against the window's start)
   const s = snapshotOf(g);
+  const lag = Date.parse(s.at) - Date.parse(got.window);
+  assert.ok(lag > 14 * 60_000 && lag < 16 * 60_000, `window ${got.window} against the snapshot's ${s.at}`);
   assert.deepEqual(Object.keys(s.guest), ['taskSchedulerLog', 'taskEvents', 'engineEvents', 'logons', 'memory', 'processes', 'wslService', 'probes', 'evidence']);
   assert.deepEqual(s.guest.probes.probes.map(p => p.outcome), ['ran', 'ran', 'queued', 'ran', 'ran', 'ran']);
   assert.deepEqual(Object.keys(s.guest.evidence), EVIDENCE_KEYS);

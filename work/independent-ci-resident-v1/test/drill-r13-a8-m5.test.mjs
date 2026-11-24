@@ -145,11 +145,14 @@ const serviceSid = 'S-1-5-80-' + Array.from({ length: 5 }, (_, i) => sidHash.rea
 const PROFILE = { ownerSid: 'S-1-5-21-1-2-3-101', controllerSid: 'S-1-5-21-1-2-3-102' };
 const routeHost = () => /const\s+string\s+Route\s*=\s*"https:\/\/([^/"]+)\//.exec(fs.readFileSync(path.join(resident, 'windows', 'SwapBroker.cs'), 'utf8'))[1];
 
+// The moment the observations were taken and the checker's "now" five minutes later: constants handed to the checker as its optional
+// second argument (on the host path, appended to what Get-DrillM5Verdict hands Invoke-DrillNode), never this process's clock.
+const AT = '2026-11-25T00:00:00.000Z', NOW = '2026-11-25T00:05:00.000Z';
 // The eight files of an M5 directory as a first install leaves them (no connection record), the probe's code given; network: the host's
 // m5/network.json, or undefined for none.
 function m5Dir(name, code, network) {
   const dir = path.join(tmp, name); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
-  const at = new Date().toISOString(), row = sid => ({ at, sid, tpm: 'DENIED', software: 'ABSENT' });
+  const at = AT, row = sid => ({ at, sid, tpm: 'DENIED', software: 'ABSENT' });
   const put = (n, v) => fs.writeFileSync(path.join(dir, n), JSON.stringify(v));
   put('profile.json', PROFILE);
   put('system.json', { at, sid: 'S-1-5-18', provider: 'Microsoft Platform Crypto Provider', code: null });
@@ -161,8 +164,8 @@ function m5Dir(name, code, network) {
   if (network !== undefined) put('network.json', network);
   return dir;
 }
-const check = (dir, checker = path.join(resident, 'test', 'renewal-drill.mjs')) => {
-  const r = spawnSync(process.execPath, [checker, dir], { encoding: 'utf8' });
+const check = (dir, checker = path.join(resident, 'test', 'renewal-drill.mjs'), now = NOW) => {
+  const r = spawnSync(process.execPath, [checker, dir, now], { encoding: 'utf8' });
   let out = null; try { out = JSON.parse(r.stdout); } catch { out = { unparsed: r.stdout, stderr: r.stderr }; }
   return { ...out, exit: r.status };
 };
@@ -187,6 +190,9 @@ test('M5 checker: the gateway host not cut off still requires the 403', () => {
     const refused = check(m5Dir('m5-open-403', 'RENEW_IDENTITY_REFUSED', network));
     assert.equal(refused.result, 'PASS', JSON.stringify(refused));
     assert.equal(refused.gateway, true);
+    // the same observations two days before the checker's "now" are stale: the 403 no longer counts
+    const stale = check(m5Dir('m5-open-403-stale', 'RENEW_IDENTITY_REFUSED', network), undefined, '2026-11-27T00:00:00.000Z');
+    assert.deepEqual({ result: stale.result, gateway: stale.gateway }, { result: 'FAIL', gateway: false });
     const unavailable = check(m5Dir('m5-open-unavailable', 'RENEW_GATEWAY_UNAVAILABLE', network));
     assert.equal(unavailable.result, 'FAIL');
     assert.equal(unavailable.gateway, false);
@@ -223,7 +229,7 @@ test('M5 checker: no network.json, or a gateway Route it cannot read, fails', ()
 function guestRoot(name, code) {
   const root = path.join(tmp, name, 'guest'), res = path.join(root, 'resident');
   fs.rmSync(path.join(tmp, name), { recursive: true, force: true });
-  const at = new Date().toISOString(), row = sid => ({ at, sid, tpm: 'DENIED', software: 'ABSENT' });
+  const at = AT, row = sid => ({ at, sid, tpm: 'DENIED', software: 'ABSENT' });
   const put = (file, data) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(data)); };
   put(path.join(res, 'record', 'acceptance.json'), { node: { ...PROFILE } });
   put(path.join(res, 'broker', 'renew-key.json'), { at, sid: 'S-1-5-18', provider: 'Microsoft Platform Crypto Provider', code: null });
@@ -238,6 +244,8 @@ const hostM5 = (name, code, hosts) => {
   const { res, runDir } = guestRoot(name, code);
   const r = ps(`$script:Drill.GuestRoot = ${q(res)}
     function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) & $Script $ArgumentList }
+    $script:realDrillNode = \${function:Invoke-DrillNode}
+    function Invoke-DrillNode { param($Node, $Arguments, $TimeoutSeconds) & $script:realDrillNode $Node (@($Arguments) + ${q(NOW)}) $TimeoutSeconds }
     $m5 = Copy-DrillM5 ${q(runDir)} $null @(${hosts.map(q).join(', ')})
     $v = Get-DrillM5Verdict ${q(runDir)} $m5
     [ordered]@{ result = $v.result; gateway = (Get-Prop $v.verdict 'gateway'); missing = @($m5.missing); files = @(Get-ChildItem -LiteralPath (Join-Path ${q(runDir)} 'm5') -File | ForEach-Object { $_.Name }) }`);

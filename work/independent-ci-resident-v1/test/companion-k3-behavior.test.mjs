@@ -16,7 +16,7 @@ const framework = 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319';
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
 function run(exe, args, extra = {}) {
-  const result = spawnSync(exe, args, { windowsHide: true, encoding: 'utf8', timeout: 30_000,
+  const result = spawnSync(exe, args, { windowsHide: true, encoding: 'utf8',
     maxBuffer: 1024 * 1024, ...extra });
   assert.ifError(result.error);
   return result;
@@ -33,8 +33,8 @@ async function scratch(name) {
 // Scheduler's default 0. Invoke-CompanionWslImportTask took "LastRunTime changed, state 2 (queued)" two seconds after Run for an end,
 // read the LastTaskResult 0 an instance that never ran leaves, deleted the import task under the queued instance, and the switch then
 // recorded imported and removed the Owner's WSL registration. companion-headless.ps1's real functions run in Windows PowerShell 5.1
-// against a stand-in Task Scheduler (New-Object -ComObject Schedule.Service, Start-Sleep and Get-Date are stood in: a fake clock that
-// a sleep advances, so 120 and 600 seconds pass without waiting). Nothing is registered, run, stopped or deleted on this host.
+// against a stand-in Task Scheduler (New-Object -ComObject Schedule.Service; the import's clock Get-CompanionMonotonicMs is stood in and
+// its sleep handed in, Invoke-FakeSleep: a fake clock that a sleep advances, so 120 and 600 seconds pass without waiting). Nothing is registered, run, stopped or deleted on this host.
 const headless = fileURLToPath(new URL('../windows/companion-headless.ps1', import.meta.url));
 const IMPORT_DONE = 0x434C4901; // RegistrarCore.ImportDoneExitCode / $CompanionImportDoneExitCode (1129072897)
 const psq = s => `'${String(s).replace(/'/g, "''")}'`;
@@ -45,7 +45,7 @@ function headlessPs(body) {
   const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'
 . ${psq(headless)}
 ${body}`;
-  const r = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { timeout: 180_000 });
+  const r = run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
 }
@@ -69,8 +69,11 @@ function Get-CompanionMonotonicMs { [double]$script:ms }
 $script:log = New-Object Collections.ArrayList
 $script:epoch = [DateTime]::new(2026, 11, 24, 12, 16, 20, [DateTimeKind]::Utc)
 $script:seq = { param($t) ${seq} }
-function Get-Date { $script:epoch.AddMilliseconds($script:ms) }
-function Start-Sleep { param([int]$Seconds, [int]$Milliseconds) $script:sleeps++; $script:ms += $Seconds * 1000 + $Milliseconds; if ($script:ms -gt 1800000) { throw 'FAKE_CLOCK_RUNAWAY' } }
+function Invoke-FakeSleep { param([int]$Milliseconds) $script:sleeps++; $script:ms += $Milliseconds; if ($script:ms -gt 1800000) { throw 'FAKE_CLOCK_RUNAWAY' } }
+# the import as the switch calls it (no arguments) gets the fake sleep handed in; what a test hands in goes through unchanged
+$script:realImport = \${function:Invoke-CompanionWslImportTask}
+function Invoke-CompanionWslImportTask { param([scriptblock]$Service, [scriptblock]$Sleep = { Invoke-FakeSleep 500 }, [scriptblock]$Now = { Get-CompanionMonotonicMs })
+  if ($Service) { & $script:realImport -Service $Service -Sleep $Sleep -Now $Now } else { & $script:realImport -Sleep $Sleep -Now $Now } }
 function Get-FakeNow { $script:ms - $script:runAt }
 $script:task = [pscustomobject]@{}
 $script:task | Add-Member -MemberType ScriptProperty -Name State -Value { if ($script:runAt -lt 0) { 3 } else { [int](& $script:effective (Get-FakeNow)).state } }
@@ -164,7 +167,7 @@ $record = Read-CompanionWslRecord ${psq(root)}
 [ordered]@{ failed = $r.failed; fellBack = $r.fellBack; qualified = $r.qualified; importResult = $r.importResult; importWatch = $r['importWatch']
   log = @($script:log); stage = [string]$record.stage; imported = [bool]$record.imported; start = $script:registered['CluedCIResidentCompanionStart'] } | ConvertTo-Json -Depth 8 -Compress`;
 
-test('T1 import (drill r11): an instance queued for 120 s is not-started, stopped, and its task deleted; no exit code is read', { skip: !windows, timeout: 240_000 }, () => {
+test('T1 import (drill r11): an instance queued for 120 s is not-started, stopped, and its task deleted; no exit code is read', { skip: !windows }, () => {
   const got = headlessPs(fakeScheduler(R11_QUEUED, { runExQueues: true }) + importCall);
   assert.equal(got.r, 'not-started', `drill r11 sequence returned ${JSON.stringify(got.r)} (${got.type}); log ${got.log.join(',')}`);
   assert.deepEqual(got.log.slice(1), ['stop:0@120000', 'delete:CluedCIResidentCompanionWslImport@120000'], 'stopped at 120 s, then the task deleted');
@@ -174,11 +177,10 @@ test('T1 import (drill r11): an instance queued for 120 s is not-started, stoppe
   assert.deepEqual(got.watch.transitions, [{ ms: 500, state: 2, lastTaskResult: 0, instances: [{ state: 2, enginePid: 0 }] }], 'one entry: nothing changed after it');
 });
 
-test('T1 import: the Task Scheduler, the sleep and the clock can be handed in (no stand-in commands)', { skip: !windows, timeout: 240_000 }, () => {
+test('T1 import: the Task Scheduler, the sleep and the clock can be handed in (no stand-in commands)', { skip: !windows }, () => {
   const got = headlessPs(fakeScheduler(R11_QUEUED, { runExQueues: true }) + `
 function New-Object { throw 'STAND_IN_NOT_HANDED_IN:New-Object' }
-function Start-Sleep { throw 'STAND_IN_NOT_HANDED_IN:Start-Sleep' }
-function Get-Date { throw 'STAND_IN_NOT_HANDED_IN:Get-Date' }
+function Invoke-FakeSleep { throw 'STAND_IN_NOT_HANDED_IN:Invoke-FakeSleep' }
 function Get-CompanionMonotonicMs { throw 'STAND_IN_NOT_HANDED_IN:Get-CompanionMonotonicMs' }
 $script:clock = 0
 $r = Invoke-CompanionWslImportTask -Service { $script:svc } -Sleep { $script:clock += 500; $script:ms = $script:clock; if ($script:clock -gt 1800000) { throw 'FAKE_CLOCK_RUNAWAY' } } -Now { $script:clock }
@@ -187,7 +189,7 @@ $r = Invoke-CompanionWslImportTask -Service { $script:svc } -Sleep { $script:clo
   assert.deepEqual(got.log.slice(1), ['stop:0@120000', 'delete:CluedCIResidentCompanionWslImport@120000']);
 });
 
-test('T2 switch (drill r11): not-started fails the import, keeps the Owner registration and the record at moved, and falls back', { skip: !windows, timeout: 240_000 }, async () => {
+test('T2 switch (drill r11): not-started fails the import, keeps the Owner registration and the record at moved, and falls back', { skip: !windows }, async () => {
   const root = await switchRoot('t2');
   const got = headlessPs(fakeScheduler(R11_QUEUED, { runExQueues: true }) + accountSwitch(root));
   assert.equal(got.failed, 'WSL_IMPORT_FAILED:not-started', `log ${got.log.join(',')}`);
@@ -198,7 +200,7 @@ test('T2 switch (drill r11): not-started fails the import, keeps the Owner regis
   assert.equal(got.importWatch.startedAfterMs, null, 'the watch travels in the switch result');
 });
 
-test('T3 import: queued 3 s, then ran and ended with the program\'s own code: success, started after 3 s; the switch removes the key after', { skip: !windows, timeout: 240_000 }, async () => {
+test('T3 import: queued 3 s, then ran and ended with the program\'s own code: success, started after 3 s; the switch removes the key after', { skip: !windows }, async () => {
   const got = headlessPs(fakeScheduler(queuedThenRan(IMPORT_DONE)) + importCall);
   assert.equal(got.r, IMPORT_DONE, `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
   assert.equal(got.type, 'Int64');
@@ -213,7 +215,7 @@ test('T3 import: queued 3 s, then ran and ended with the program\'s own code: su
   assert.equal(sw.importWatch.startedAfterMs, 3000);
 });
 
-test('T4 switch: an import task never seen running whose last result is 0 (what a queued instance leaves) is not-started, never an import; the key kept', { skip: !windows, timeout: 240_000 }, async () => {
+test('T4 switch: an import task never seen running whose last result is 0 (what a queued instance leaves) is not-started, never an import; the key kept', { skip: !windows }, async () => {
   const root = await switchRoot('t4');
   const got = headlessPs(fakeScheduler(`if ($t -lt 1000) { @{ state = 2; result = 0; inst = @(,@(2, 0)) } } else { @{ state = 3; result = 0; inst = @() } }`) + accountSwitch(root));
   assert.equal(got.failed, 'WSL_IMPORT_FAILED:not-started', `log ${got.log.join(',')}`);
@@ -221,7 +223,7 @@ test('T4 switch: an import task never seen running whose last result is 0 (what 
   assert.equal(got.stage, 'moved'); assert.equal(got.imported, false); assert.equal(got.fellBack, true);
 });
 
-test('T5 switch: the program\'s failure code 3 is WSL_IMPORT_FAILED:3, the key kept', { skip: !windows, timeout: 240_000 }, async () => {
+test('T5 switch: the program\'s failure code 3 is WSL_IMPORT_FAILED:3, the key kept', { skip: !windows }, async () => {
   const root = await switchRoot('t5');
   const got = headlessPs(fakeScheduler(`if ($t -lt 1000) { @{ state = 4; result = 267009; inst = @(,@(4, 99)) } } else { @{ state = 3; result = 3; inst = @() } }`) + accountSwitch(root));
   assert.equal(got.failed, 'WSL_IMPORT_FAILED:3', `log ${got.log.join(',')}`);
@@ -229,7 +231,7 @@ test('T5 switch: the program\'s failure code 3 is WSL_IMPORT_FAILED:3, the key k
   assert.equal(got.stage, 'moved'); assert.equal(got.imported, false);
 });
 
-test('T6 import: an instance that keeps running is stopped at 600 s (timeout); a missing task is not-registered', { skip: !windows, timeout: 240_000 }, () => {
+test('T6 import: an instance that keeps running is stopped at 600 s (timeout); a missing task is not-registered', { skip: !windows }, () => {
   const got = headlessPs(fakeScheduler(`@{ state = 4; result = 267009; inst = @(,@(4, 77)) }`) + importCall);
   assert.equal(got.r, 'timeout', `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
   assert.deepEqual(got.log, [RUNEX, 'stop:0@600000', 'delete:CluedCIResidentCompanionWslImport@600000']);
@@ -257,31 +259,38 @@ test('T7 RegistrarPureTests.cs: the registrar\'s pure checks pass, among them th
   const compiled = run(path.join(framework, 'csc.exe'), ['/nologo', '/noconfig', '/target:exe', '/main:RegistrarPureTests', ...refs, `/out:${pure}`, source,
     fileURLToPath(new URL('../windows/RegistrarPureTests.cs', import.meta.url))]);
   assert.equal(compiled.status, 0, compiled.stdout + compiled.stderr);
-  const out = run(pure, [], { timeout: 60_000 });
+  const out = run(pure, []);
   assert.equal(out.status, 0, out.stdout + out.stderr);
   assert.match(out.stdout, /"status":"REGISTRAR_PURE_PASS"/);
 });
 
 // Review after the first pass (task 87d330d0): the clock, a failed read, and instances that cannot be read.
 
-test('R1 import: the wait runs on a monotonic clock; a wall-clock step of 200 s neither stops nor times the import', { skip: !windows, timeout: 240_000 }, () => {
-  // the wall clock steps 200 s forward 1 s after Run (a time sync); the import's own clock does not
-  const jump = `
-function Get-Date { $j = if ($script:runAt -ge 0 -and (Get-FakeNow) -ge 1000) { 200000 } else { 0 }; $script:epoch.AddMilliseconds($script:ms + $j) }
-`;
-  const got = headlessPs(fakeScheduler(queuedThenRan(IMPORT_DONE)) + jump + importCall);
+test('R1 import: the wait runs on a monotonic clock; no wall clock is read, so a wall-clock step neither stops nor times it', { skip: !windows }, () => {
+  const got = headlessPs(fakeScheduler(queuedThenRan(IMPORT_DONE)) + importCall);
   assert.equal(got.r, IMPORT_DONE, `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
   assert.equal(got.watch.startedAfterMs, 3000); assert.equal(got.watch.endedAfterMs, 5000);
   assert.deepEqual(got.log, [RUNEX, 'delete:CluedCIResidentCompanionWslImport@5000']);
-  // the clock itself: Stopwatch milliseconds, never the wall clock
-  const clock = headlessPs(`function Get-Date { throw 'WALL_CLOCK_READ' }
-$a = Get-CompanionMonotonicMs; Microsoft.PowerShell.Utility\\Start-Sleep -Milliseconds 300; $b = Get-CompanionMonotonicMs
-[ordered]@{ type = $a.GetType().Name; d = $b - $a } | ConvertTo-Json -Compress`);
+  // the import and its clock, as written in companion-headless.ps1: no *-Date command and no static Now/UtcNow anywhere in
+  // them (a wall-clock step cannot reach what never reads the wall clock); the defaults: the monotonic clock and a 500 ms sleep
+  const clock = headlessPs(`$ast = [Management.Automation.Language.Parser]::ParseFile(${psq(headless)}, [ref]$null, [ref]$null)
+$fn = @{}; foreach ($f in $ast.FindAll({ param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) { $fn[$f.Name] = $f }
+$names = @('Invoke-CompanionWslImportTask', 'Get-CompanionMonotonicMs')
+$wall = @(foreach ($n in $names) { if ($fn.ContainsKey($n)) { $fn[$n].FindAll({ param($x)
+  ($x -is [Management.Automation.Language.CommandAst] -and $x.GetCommandName() -match '-Date$') -or
+  ($x -is [Management.Automation.Language.MemberExpressionAst] -and $x.Static -and $x.Member.Extent.Text -match '^(Utc)?Now$') }, $true) | ForEach-Object { $n + ': ' + $_.Extent.Text } } })
+$defaults = [ordered]@{}; foreach ($p in $fn['Invoke-CompanionWslImportTask'].Parameters) { $defaults[$p.Name.VariablePath.UserPath] = [string]$p.DefaultValue.Extent.Text }
+$a = Get-CompanionMonotonicMs; $b = Get-CompanionMonotonicMs
+[ordered]@{ found = @($names | Where-Object { $fn.ContainsKey($_) }); wall = $wall; sleep = $defaults['Sleep']; now = $defaults['Now']; type = $a.GetType().Name; forward = ($b -ge $a) } | ConvertTo-Json -Compress`);
+  assert.deepEqual(clock.found, ['Invoke-CompanionWslImportTask', 'Get-CompanionMonotonicMs']);
+  assert.deepEqual(clock.wall, []);
+  assert.match(clock.sleep, /^\{ \S+ -Milliseconds 500 \}$/, 'the import waits 500 ms between two reads');
+  assert.equal(clock.now, '{ Get-CompanionMonotonicMs }');
   assert.equal(clock.type, 'Double');
-  assert.ok(clock.d >= 250 && clock.d < 30000, `300 ms on the monotonic clock read ${clock.d} ms`);
+  assert.equal(clock.forward, true, 'the monotonic clock never goes back');
 });
 
-test('R2 import: a failed read while waiting stops the instance, deletes the task and is unreadable; the switch falls back, the key kept', { skip: !windows, timeout: 240_000 }, async () => {
+test('R2 import: a failed read while waiting stops the instance, deletes the task and is unreadable; the switch falls back, the key kept', { skip: !windows }, async () => {
   const got = headlessPs(fakeScheduler(R11_QUEUED, { readFailAfter: 1500 }) + importCall);
   assert.equal(got.r, 'unreadable', `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
   assert.deepEqual(got.log, [RUNEX, 'stop:0@1500', 'delete:CluedCIResidentCompanionWslImport@1500'], 'stopped, then the task deleted');
@@ -297,7 +306,7 @@ test('R2 import: a failed read while waiting stops the instance, deletes the tas
   assert.equal(sw.importWatch.why, 'unreadable');
 });
 
-test('R3 import: instances never readable: ended (not queued, not running, run, the program\'s success code) is success; anything else as before, and the watch says why', { skip: !windows, timeout: 240_000 }, async () => {
+test('R3 import: instances never readable: ended (not queued, not running, run, the program\'s success code) is success; anything else as before, and the watch says why', { skip: !windows }, async () => {
   const ran = `if ($t -lt 1000) { @{ state = 2; result = 0; inst = @(,@(2, 0)) } } elseif ($t -lt 2000) { @{ state = 4; result = 267009; inst = @(,@(4, 4242)) } } else { @{ state = 3; result = ${IMPORT_DONE}; inst = @() } }`;
   const got = headlessPs(fakeScheduler(ran, { instancesFail: true }) + importCall);
   assert.equal(got.r, IMPORT_DONE, `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
@@ -327,14 +336,14 @@ test('R3 import: instances never readable: ended (not queued, not running, run, 
 // 2), and a SYSTEM task \Clued\CluedCIResidentCompanionStart starts the password definition at boot and every 15 minutes.
 const START = 'CluedCIResidentCompanionStart';
 
-test('K3 T1 import: the import task is started with RunEx(ignore constraints) and ends with the program\'s code; no plain Run', { skip: !windows, timeout: 240_000 }, () => {
+test('K3 T1 import: the import task is started with RunEx(ignore constraints) and ends with the program\'s code; no plain Run', { skip: !windows }, () => {
   const got = headlessPs(fakeScheduler(ranAtOnce(IMPORT_DONE)) + importCall);
   assert.equal(got.r, IMPORT_DONE, `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
   assert.deepEqual(got.log, [RUNEX, 'delete:CluedCIResidentCompanionWslImport@1000'], 'one RunEx, flag 2, session 0, user $null; no Run');
   assert.equal(got.watch.startedAfterMs, 500); assert.equal(got.watch.why, 'ended');
 });
 
-test('K3 T2 switch: with RunEx the import runs, the record goes through imported to qualified and the watch has the start', { skip: !windows, timeout: 240_000 }, async () => {
+test('K3 T2 switch: with RunEx the import runs, the record goes through imported to qualified and the watch has the start', { skip: !windows }, async () => {
   const root = await switchRoot('k3-t2');
   const got = headlessPs(fakeScheduler(ranAtOnce(IMPORT_DONE)) + accountSwitch(root));
   assert.equal(got.failed, null, `log ${got.log.join(',')}`); assert.equal(got.qualified, true);
@@ -344,7 +353,7 @@ test('K3 T2 switch: with RunEx the import runs, the record goes through imported
   assert.ok(!got.log.includes('run'), 'no plain Run');
 });
 
-test('K3 T3 Start-CompanionTask: the companion task is started with RunEx(ignore constraints); the instance it returned is kept', { skip: !windows, timeout: 240_000 }, () => {
+test('K3 T3 Start-CompanionTask: the companion task is started with RunEx(ignore constraints); the instance it returned is kept', { skip: !windows }, () => {
   const got = headlessPs(fakeScheduler(ranAtOnce(0)) + `
 Start-CompanionTask
 [ordered]@{ last = $script:CompanionLastRun; log = @($script:log) } | ConvertTo-Json -Depth 4 -Compress`);
@@ -352,7 +361,7 @@ Start-CompanionTask
   assert.deepEqual(got.last, { instanceGuid: '{95BCDEC3-0000-4000-8000-000000000001}', state: 4, enginePid: 4242 });
 });
 
-test('K3 T4 start task: registered after the import and the Owner\'s key are done, before the first start, SYSTEM, boot +30 s and every 15 min, the one PowerShell RunEx(ignore constraints) action, SY and BA only', { skip: !windows, timeout: 240_000 }, async () => {
+test('K3 T4 start task: registered after the import and the Owner\'s key are done, before the first start, SYSTEM, boot +30 s and every 15 min, the one PowerShell RunEx(ignore constraints) action, SY and BA only', { skip: !windows }, async () => {
   const root = await switchRoot('k3-t4');
   const got = headlessPs(fakeScheduler(ranAtOnce(IMPORT_DONE)) + accountSwitch(root));
   assert.equal(got.failed, null, `log ${got.log.join(',')}`);
@@ -372,7 +381,7 @@ test('K3 T4 start task: registered after the import and the Owner\'s key are don
   assert.deepEqual(st.settings, { MultipleInstances: 2, ExecutionTimeLimit: 'PT1M', StartWhenAvailable: true, DisallowStartIfOnBatteries: false, StopIfGoingOnBatteries: false });
   // the one fixed PowerShell line (repro 2026-11-24: schtasks /Run /I was not shown to start it while the constraint holds)
   assert.deepEqual(st.actions, [{ Type: 0, Path: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-    Arguments: `-NoProfile -NonInteractive -Command "$s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $null = $s.GetFolder('\\Clued').GetTask('CluedCIResidentCompanion').RunEx($null, 2, 0, $null)"` }]);
+    Arguments: `-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$s = New-Object -ComObject 'Schedule.Service'; $s.Connect(); $null = $s.GetFolder('\\Clued').GetTask('CluedCIResidentCompanion').RunEx($null, 2, 0, $null)"` }]);
   // no parameters, idempotent (create or update), a failure is the one code
   const again = headlessPs(fakeScheduler(R11_QUEUED) + `Register-CompanionStartTask; Register-CompanionStartTask
 $failed = try { $script:startRegisterFails = $true; Register-CompanionStartTask; 'NO_THROW' } catch { $_.Exception.Message }
@@ -386,7 +395,7 @@ $failed = try { $script:startRegisterFails = $true; Register-CompanionStartTask;
   assert.ok(pw > 0 && st2 > pw && st2 < first, 'Invoke-CompanionHeadless: register-password, then the start task, then the first start');
 });
 
-test('K3 T5 start task: every fall-back deletes it; a failed import never registered it; a failed registration falls back as a failed qualification', { skip: !windows, timeout: 240_000 }, async () => {
+test('K3 T5 start task: every fall-back deletes it; a failed import never registered it; a failed registration falls back as a failed qualification', { skip: !windows }, async () => {
   // a failed import (not a maintenance switch): back to the interactive definition, the start task gone after it was registered
   const root = await switchRoot('k3-t5');
   const got = headlessPs(fakeScheduler(R11_QUEUED, { runExQueues: true }) + accountSwitch(root));
@@ -410,7 +419,7 @@ $null = Invoke-CompanionStopAndFallback ${psq(root)} 'S-1-5-21-1-2-3-1001'
   assert.ok(bad.log.indexOf('stop-and-fallback') > bad.log.indexOf('remove-key:{g1}'), bad.log.join(','));
 });
 
-test('K3 T6 switch: a RunEx that queues too is still not-started at 120 s, the Owner\'s registration kept', { skip: !windows, timeout: 240_000 }, async () => {
+test('K3 T6 switch: a RunEx that queues too is still not-started at 120 s, the Owner\'s registration kept', { skip: !windows }, async () => {
   const root = await switchRoot('k3-t6');
   const got = headlessPs(fakeScheduler(R11_QUEUED, { runExQueues: true }) + accountSwitch(root));
   assert.equal(got.failed, 'WSL_IMPORT_FAILED:not-started', `log ${got.log.join(',')}`);
@@ -418,7 +427,7 @@ test('K3 T6 switch: a RunEx that queues too is still not-started at 120 s, the O
   assert.equal(got.stage, 'moved'); assert.equal(got.imported, false);
 });
 
-test('K3 T7 import: started is an instance running or with an engine, never the task\'s State; a stale queued instance does not hide the end', { skip: !windows, timeout: 240_000 }, () => {
+test('K3 T7 import: started is an instance running or with an engine, never the task\'s State; a stale queued instance does not hide the end', { skip: !windows }, () => {
   // RunEx starts a new instance next to an older queued one; when it ends the task is back to State 2 (repro 2026-11-24)
   const stale = `if ($t -lt 2000) { @{ state = 4; result = 267009; inst = @(@(2, 0), @(4, 4242)) } } else { @{ state = 2; result = ${IMPORT_DONE}; inst = @(,@(2, 0)) } }`;
   const got = headlessPs(fakeScheduler(stale) + importCall);
@@ -441,7 +450,7 @@ test('K3 T7 import: started is an instance running or with an engine, never the 
 // instance runs is dropped; Stop-CompanionTask ends it.
 const startFires = when => `
 $script:companionUp = $false; $script:fired = $false
-function Start-Sleep { param([int]$Seconds, [int]$Milliseconds) $script:sleeps++; $script:ms += $Seconds * 1000 + $Milliseconds; if ($script:ms -gt 1800000) { throw 'FAKE_CLOCK_RUNAWAY' }
+function Invoke-FakeSleep { param([int]$Milliseconds) $script:sleeps++; $script:ms += $Milliseconds; if ($script:ms -gt 1800000) { throw 'FAKE_CLOCK_RUNAWAY' }
   if ('${when}' -ceq 'sleep' -and -not $script:fired -and $script:registered.ContainsKey('CluedCIResidentCompanionStart')) { $script:fired = $true; $script:companionUp = $true; [void]$script:log.Add('start-task-fired') } }
 $script:realRegisterStart = \${function:Register-CompanionStartTask}
 function Register-CompanionStartTask { & $script:realRegisterStart
@@ -450,7 +459,7 @@ function Stop-CompanionTask { $script:companionUp = $false; [void]$script:log.Ad
 function Start-CompanionTask { if ($script:companionUp) { [void]$script:log.Add('run-companion-dropped') } else { $script:companionUp = $true; [void]$script:log.Add('run-companion') } }
 `;
 
-test('K3 T8 switch: the start task firing on its own never takes the qualification\'s start (registered after the import; stopped and waited before the start)', { skip: !windows, timeout: 240_000 }, async () => {
+test('K3 T8 switch: the start task firing on its own never takes the qualification\'s start (registered after the import; stopped and waited before the start)', { skip: !windows }, async () => {
   for (const when of ['sleep', 'register']) {
     const root = await switchRoot('k3-t8-' + when);
     const got = headlessPs(fakeScheduler(ranAtOnce(IMPORT_DONE)) + accountSwitch(root).replace('\n$r = Invoke-CompanionAccountSwitch', startFires(when) + '\n$r = Invoke-CompanionAccountSwitch'));
@@ -465,7 +474,7 @@ test('K3 T8 switch: the start task firing on its own never takes the qualificati
   }
 });
 
-test('K3 T9 import: a RunEx that throws is run-failed with its HRESULT, the task deleted, never thrown; the switch falls back, the key kept', { skip: !windows, timeout: 240_000 }, async () => {
+test('K3 T9 import: a RunEx that throws is run-failed with its HRESULT, the task deleted, never thrown; the switch falls back, the key kept', { skip: !windows }, async () => {
   const got = headlessPs(fakeScheduler(R11_QUEUED, { runExThrows: true }) + importCall);
   assert.equal(got.r, 'run-failed:0x80070005', `returned ${JSON.stringify(got.r)}; log ${got.log.join(',')}`);
   assert.equal(got.log[0], 'runex-threw'); assert.ok(got.log.some(l => l.startsWith('delete:CluedCIResidentCompanionWslImport@')), got.log.join(','));

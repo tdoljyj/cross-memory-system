@@ -308,7 +308,7 @@ function Register-CompanionFallbackTask([string]$root, [string]$residentSha) {
 $CompanionStartTaskName = 'CluedCIResidentCompanionStart'
 $CompanionStartTaskSddl = 'D:P(A;;FA;;;SY)(A;;FA;;;BA)'
 $CompanionStartTaskAction = [ordered]@{ path = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-  arguments = '-NoProfile -NonInteractive -Command "$s = New-Object -ComObject ''Schedule.Service''; $s.Connect(); $null = $s.GetFolder(''\Clued'').GetTask(''CluedCIResidentCompanion'').RunEx($null, 2, 0, $null)"' }
+  arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$s = New-Object -ComObject ''Schedule.Service''; $s.Connect(); $null = $s.GetFolder(''\Clued'').GetTask(''CluedCIResidentCompanion'').RunEx($null, 2, 0, $null)"' }
 function Register-CompanionStartTask {
   try {
     $svc = New-Object -ComObject 'Schedule.Service'; $svc.Connect()

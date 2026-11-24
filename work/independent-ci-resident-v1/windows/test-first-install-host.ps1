@@ -416,14 +416,14 @@ try {
   Case 't3:step-never-throws-a-verdict-refuses-by-name' {
     $fi = Get-Item -LiteralPath $tmp
     $cycle = @{}; $cycle['self'] = $cycle
-    foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle, ([ordered]@{ ok = $jp; bad = $fi }))) {
+    foreach ($odd in @($fi, [DateTime]::new(2026, 11, 25, 0, 0, 0, [DateTimeKind]::Utc), [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle, ([ordered]@{ ok = $jp; bad = $fi }))) {
       $l = Step 'odd' $odd
       $b = $js.DeserializeObject($l)
       Yes ($l -is [string] -and $b['name'] -ceq 'odd' -and $b['result'] -ceq 'ok') ('t3:step-one-line ' + $odd.GetType().Name + ' ' + $l)
     }
     Yes ([string]$js.DeserializeObject((Step 'odd' $fi))['detail'] -clike '*DirectoryInfo*') 't3:step-names-the-type'
     Yes ($js.DeserializeObject((Step 'odd' ([ordered]@{ ok = $jp; bad = $fi })))['detail']['ok'] -ceq [string]$jp) 't3:step-keeps-the-plain-part'
-    foreach ($odd in @($fi, [DateTime]::UtcNow, [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle)) {
+    foreach ($odd in @($fi, [DateTime]::new(2026, 11, 25, 0, 0, 0, [DateTimeKind]::Utc), [IO.FileAttributes]::Directory, [pscustomobject]@{ a = 1 }, $cycle)) {
       Throws { ConvertTo-JsonLine ([ordered]@{ status = 'FIRST_INSTALL_HOST_READY'; facts = $odd }) } 'OUTPUT_NOT_PLAIN_DATA:$.facts*' ('t3:verdict-refused ' + $odd.GetType().Name)
     }
   }

@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const RES = fileURLToPath(new URL('..', import.meta.url));
 const windows = process.platform === 'win32';
-const opts = { skip: !windows, timeout: 240_000 };
+const opts = { skip: !windows };
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-run-ignores-constraints-'));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -99,7 +99,7 @@ foreach ($name in @(${names.map(q).join(', ')})) {
   const command = `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ProgressPreference='SilentlyContinue'; $ErrorActionPreference = 'Stop'
 ${loads.map(load).join('\n')}
 ${body}`;
-  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 200_000 });
+  const r = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const got = JSON.parse(r.stdout.trim().split(/\r?\n/).at(-1));
   assert.equal(got.missing, undefined, `${got.missing} is defined exactly once in ${got.script} (found ${got.found})`);

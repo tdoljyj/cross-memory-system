@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { keyCheck } from '../src/connection-renewal.mjs';
 
 const directory=process.argv[2];
-if (process.argv.length!==3) throw new Error('需要演练证据目录');
+// 可选第二个参数是“现在”（ISO 时刻）：测试传常量（测试代码不读真时钟）；演练只给目录，照旧读本机时钟。
+const nowArg=process.argv[3];
+if (process.argv.length!==3 && process.argv.length!==4) throw new Error('需要演练证据目录');
 async function load(name) {
   const file=path.join(directory,name);
   const stat=await fs.lstat(file);
@@ -29,7 +31,8 @@ if (host===null) {
     ['profile.json','system.json','resident.json','controller.json','companion.json','probe.json','record.json','network.json'].map(load));
   const hosts=network?.blackholeHosts;
   if (!Array.isArray(hosts) || !hosts.every(h=>typeof h==='string')) throw new Error('演练名单无效');
-  const now=Date.now();
+  const now=nowArg===undefined ? Date.now() : Date.parse(nowArg);
+  if (!Number.isFinite(now)) throw new Error('演练时刻无效');
   const validSid=s=>typeof s==='string' && /^S-1-5-21-(?:[0-9]+-){3}[0-9]+$/.test(s);
   const distinct=validSid(profile.controllerSid) && validSid(profile.ownerSid) && profile.ownerSid!==profile.controllerSid;
   const checks=keyCheck(system,resident,controller,companion,profile,now);

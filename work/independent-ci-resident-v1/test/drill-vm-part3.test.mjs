@@ -10,6 +10,9 @@ import {
   notTheDrillsSource, S, L, PAUSE_REQUEST, FAKE_VERIFY, evidence, verdictOf, pass, mockFleetTree, PROBE_FILES, bootBounds, finalize, COMPANION_AFTER_BOOT
 } from './drill-vm-fixtures.mjs';
 
+// Wait-DrillRebootRefresh's 30-second sleeps between guest reads, stood in by the tests that drive it (one stand-in, two users).
+const NO_SLEEP = 'function Start-Sleep { }';
+
 // Fable renew-key ruling, supplement "eight on the path", item 5: a successful launcher ends with its own pause confirmed, so A6 holds
 // THAT pause (the request the launcher's terminal names, which state\PAUSED.json must name) with UNCERTAIN, no current batch, live 0 and
 // no HALT. An idle executor is no longer a pass: the install did not keep its pause.
@@ -61,7 +64,7 @@ test('A7 judges each sample against the boot it was read in: a PASS left between
   const wait = samples => ps(`
     $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify(samples))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
     function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
-    function Start-Sleep { }
+    ${NO_SLEEP}
     Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot1}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]::UtcNow.AddSeconds(2))`);
   const stuck = wait([between]);
   assert.equal(stuck.boot, boot2);
@@ -128,7 +131,7 @@ test('A7 (K3): the wait goes on until the companion is up too, and the guest rea
     $script:samples = New-Object Collections.Queue; foreach ($s in (${q(JSON.stringify([notYet, later]))} | ConvertFrom-Json)) { $script:samples.Enqueue($s) }
     $script:reads = 0
     function Invoke-DrillGuest { param($Credential, $Script, $ArgumentList, $TimeoutMinutes, $Code, $Step, [switch]$Restartable) $script:reads++; if ($script:samples.Count -gt 1) { $script:samples.Dequeue() } else { $script:samples.Peek() } }
-    function Start-Sleep { }
+    ${NO_SLEEP}
     $first = Get-DrillRebootSample (${q(JSON.stringify(notYet))} | ConvertFrom-Json) ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture))
     $r = Wait-DrillRebootRefresh $null ([DateTimeOffset]::Parse('${boot}', [Globalization.CultureInfo]::InvariantCulture)) ([DateTimeOffset]'2099-01-01T00:00:00Z')
     [ordered]@{ firstDone = $first.done; r = $r; reads = $script:reads }`);
