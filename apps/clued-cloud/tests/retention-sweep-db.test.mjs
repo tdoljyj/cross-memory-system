@@ -19,6 +19,8 @@ import { MIGRATE_MODE_SQL, PLATFORM_SQL } from '../scripts/production-schema-dri
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SWEEP_MIGRATION = '20261124120000_retention_sweep_v1.sql';
 const KEEP_MIGRATION = '20261124130000_imprint_history_keep_v1.sql';
+// Replaces the run-history rule of SWEEP_MIGRATION in place; everything after it below runs on the new body.
+const RUN_HISTORY_MIGRATION = '20261125020000_retention_rule_cron_run_history_regclass_v1.sql';
 const SWEEP_JOB = 'clued-retention-sweep';
 const OLD_JOB = 'clued-cron-run-history-retention';
 const RULES = ['retention_rule_cron_run_history_v1', 'retention_rule_memory_audit_v1', 'retention_rule_session_payload_v1'];
@@ -138,6 +140,7 @@ test('retention sweep: stock cleanup in the migration transaction and the daily 
       assert.equal((await one('select count(*)::int n from public.clued_memory_audit where id=$1', [racedAudit])).n, 1);
     });
     await admin.query('delete from public.clued_memory_audit where id=$1', [racedAudit]);
+    await migrate(admin, await fs.readFile(path.join(migrations, RUN_HISTORY_MIGRATION), 'utf8'));
 
     await t.test('memory audit stock: only the last 30 days remain, unchanged, and the files shrink', async () => {
       const after = await auditRows();
