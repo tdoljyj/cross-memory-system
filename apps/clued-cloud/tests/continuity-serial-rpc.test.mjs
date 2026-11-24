@@ -24,20 +24,37 @@ const mcp = (token, name, args = {}) => new Request('https://clued.test/mcp', {
 const isSummary = ({ rpc, body }) => rpc === 'clued_agent_inbox_summary_v1' || body.p_tool === 'clued_agent_inbox_summary';
 const isClaims = ({ rpc, body }) => rpc === 'clued_work_claims_active_v1' || body.p_tool === 'clued_work_claims_active';
 
-// Every database call takes a macrotask to answer; `steps` counts serial steps:
-// a call that starts while none is in flight begins a new step.
-function measuredFetch(answer) {
+// A database call answers at once, except that the calls of one wave are held until the whole wave has started:
+// `waves` lists how many calls each wave has (resume: the tool, then both fold-in reads together). Concurrent code starts
+// the second call of a wave while the first is held, so both fall in one serial step; serial code never starts it, and
+// the held call is let go after `GIVE_UP_MS` to count it as a second step. Nothing here depends on how fast the host is:
+// the answer to "were they together" is whether the wave filled, not whether a timer beat a slow call. `steps` counts
+// serial steps: a call that starts while none is in flight begins a new step.
+const GIVE_UP_MS = 30_000;
+function measuredFetch(answer, waves) {
   const previous = globalThis.fetch;
   const calls = [];
   let inflight = 0;
   let steps = 0;
+  let wave = 0, filled = 0, release = null, held = null;
   globalThis.fetch = async (input, init = {}) => {
     const rpc = /\/rpc\/([^/?]+)$/.exec(String(input))?.[1];
     const call = { rpc, body: JSON.parse(init.body), authorization: new Headers(init.headers).get('authorization') };
     calls.push(call);
     if (inflight === 0) steps += 1;
     inflight += 1;
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    const size = waves[Math.min(wave, waves.length - 1)];
+    filled += 1;
+    if (filled >= size) {
+      filled = 0; wave += 1;
+      const open = release; release = null; held = null;
+      if (open) open();
+    } else {
+      held = new Promise((resolve) => { release = resolve; });
+      const timer = setTimeout(() => release?.(), GIVE_UP_MS);
+      await held; clearTimeout(timer);
+    }
+    await Promise.resolve();
     inflight -= 1;
     return Response.json(answer(call));
   };
@@ -53,7 +70,7 @@ const answerResume = (call) => (isSummary(call) ? summary : isClaims(call) ? cla
 test('resume reads claims and inbox concurrently: two serial steps, three calls, same result', async () => {
   const worker = await loadContinuityWorker();
   for (const token of [bindingToken, oauthToken]) {
-    const m = measuredFetch(answerResume);
+    const m = measuredFetch(answerResume, [1, 2]);
     try {
       const result = (await (await worker.fetch(mcp(token, 'clued_session_resume',
         { context_key: SCOPE, client_session_id: 'session-b' }), env, ctx)).json()).result.structuredContent;
@@ -76,7 +93,7 @@ test('resume reads claims and inbox concurrently: two serial steps, three calls,
 
 test('a refused or failed resume makes no fold-in read; a failing fold-in does not fail the resume', async () => {
   const worker = await loadContinuityWorker();
-  const refused = measuredFetch(() => ({ error: 'resume_failed' }));
+  const refused = measuredFetch(() => ({ error: 'resume_failed' }), [1]);
   try {
     const result = (await (await worker.fetch(mcp(bindingToken, 'clued_session_resume', {}), env, ctx)).json()).result.structuredContent;
     assert.deepEqual(result, { error: 'resume_failed' });
@@ -101,7 +118,7 @@ test('a refused or failed resume makes no fold-in read; a failing fold-in does n
 
 test('renew is two serial steps and checkpoint one', async () => {
   const worker = await loadContinuityWorker();
-  const renew = measuredFetch((call) => (isSummary(call) ? { ...summary, claim_id: CLAIM } : renewed));
+  const renew = measuredFetch((call) => (isSummary(call) ? { ...summary, claim_id: CLAIM } : renewed), [1]);
   try {
     await worker.fetch(mcp(bindingToken, 'clued_work_renew',
       { scope: SCOPE, claim_id: CLAIM, fence: 1, lease_version: 1, progress_ref: 'sha-2' }), env, ctx);
@@ -110,7 +127,7 @@ test('renew is two serial steps and checkpoint one', async () => {
     assert.deepEqual(renew.calls.find(isSummary).body.p_input, { scope: SCOPE, claim_id: CLAIM });
   } finally { renew.restore(); }
 
-  const checkpoint = measuredFetch(() => ({ status: 'committed', session_renewal: { session_token: 'session-next' } }));
+  const checkpoint = measuredFetch(() => ({ status: 'committed', session_renewal: { session_token: 'session-next' } }), [1]);
   try {
     await worker.fetch(mcp(bindingToken, 'clued_session_checkpoint', { context_key: SCOPE }), env, ctx);
     assert.equal(checkpoint.calls.length, 1);
