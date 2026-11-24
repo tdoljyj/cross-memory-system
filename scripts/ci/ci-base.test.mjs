@@ -162,12 +162,23 @@ test('#1292 shape: every job that runs suites gets the candidate\'s own main par
   const shape = prShape(t, { checkout: true });
   const reregister = await import(pathToFileURL(path.join(ROOT, 'scripts', 'ci', 'merge-admission-r9-reregister.mjs')).href);
   const seen = new Map();
-  for (const job of consumerJobs()) {
+  const jobs = consumerJobs();
+  // The parser finds every suite job of the three workflows (three self-hosted Linux, one self-hosted Windows, four hosted).
+  assert.ok(jobs.length >= 8, jobs.map((j) => `${j.file} ${j.id}`).join(', '));
+  // Every job runs here, except a PowerShell step off Windows: this suite (clued-cloud) runs on Linux only, where the two
+  // Windows jobs' steps cannot run (run 45383169074); they run wherever this file runs on Windows. Nothing else may be skipped.
+  const unrunnable = [];
+  for (const job of jobs) {
     const trainBase = job.steps.find((s) => s.id === 'train-base');
-    if (!shellCommand(trainBase?.shell ?? 'bash')) { t.diagnostic(`${job.file} ${job.id}: no ${trainBase.shell} here`); continue; }
+    const shell = trainBase?.shell ?? 'bash';
+    if (!shellCommand(shell)) {
+      t.diagnostic(`${job.file} ${job.id}: no ${shell} here`);
+      if (!(shell === 'powershell' && process.platform !== 'win32')) unrunnable.push(`${job.file} ${job.id}: no ${shell} here`);
+      continue;
+    }
     for (const base of baseSeenBy(job, { cwd: shape.repo, github: shape.pr, temp: shape.temp })) seen.set(`${job.file} ${job.id}`, base);
   }
-  assert.ok(seen.size >= 7, [...seen.keys()].join(', '));
+  assert.deepEqual(unrunnable, []);
   // Every job's outcome first, then one assertion: the failure lists them all (before the fix: ci-suites refused with
   // #1292's own R9_REREGISTER_BASE_BEHIND at base.sha, the jobs without a CI_BASE_SHA expression with no base at all).
   const problems = [];
