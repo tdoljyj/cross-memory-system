@@ -279,7 +279,8 @@ test('the guard environment and what counts as test code', () => {
 });
 
 test('the repository as it is: the debt list, the allowlist and the static rules hold', () => {
-  const { problems, debt } = debtVerdict({ root: REPO });
+  // Tracked files only: what other tests of the same run write into the checkout is not the repository.
+  const { problems, debt } = debtVerdict({ root: REPO, untracked: false });
   assert.deepEqual(problems, []);
   assert.ok(debt.length > 0);
 });

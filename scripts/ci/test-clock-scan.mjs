@@ -100,9 +100,10 @@ export function scanSource(text, kind) {
 }
 export const debtHits = (found) => DEBT_KINDS.reduce((sum, kind) => sum + (found[kind]?.length ?? 0), 0);
 
-// The test files of a checkout: tracked, and untracked ones git does not ignore.
-export function testFiles(root, { git = spawnSync } = {}) {
-  const listed = git('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+// The test files of a checkout: tracked, and (unless untracked is false) untracked ones git does not ignore.
+export function testFiles(root, { git = spawnSync, untracked = true } = {}) {
+  const listed = git('git', ['-C', root, 'ls-files', '-z', '--cached', ...(untracked ? ['--others', '--exclude-standard'] : [])],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   if (listed.status !== 0) throw new Error(`git ls-files in ${root}: ${(listed.stderr || listed.error?.message || '').trim()}`);
   return [...new Set(listed.stdout.split('\0').filter(Boolean))].filter((file) => testFileKind(file) && existsSync(path.join(root, file))).sort();
 }
@@ -187,7 +188,7 @@ export function allowProblems(entries, scanOf) {
 
 // Every problem of the list, the allowlist and the static rules in the checkout at root, against the base commit's list
 // when base is given (none when it is not: a local run).
-export function debtVerdict({ root, base = null, git = spawnSync } = {}) {
+export function debtVerdict({ root, base = null, git = spawnSync, untracked = true } = {}) {
   const problems = [];
   const read = (file) => {
     try {
@@ -252,7 +253,7 @@ export function debtVerdict({ root, base = null, git = spawnSync } = {}) {
   }
   problems.push(...allow.problems);
   const allowKind = { ps: 'ps', py: 'py' };
-  for (const file of testFiles(root, { git })) {
+  for (const file of testFiles(root, { git, untracked })) {
     if (listed.has(file)) continue;
     const found = scanOf(file);
     for (const kind of STATIC_KINDS) {
