@@ -61,6 +61,14 @@ export const activeHostStatus = (hold, { writtenAt = T0, executor = 'IDLE', reas
 export const entryScript = fileURLToPath(new URL('../drill/first-install-entry.ps1', import.meta.url));
 export const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
 
+// The drill's server stand-in (drill/drill-server.json in a real run) and the fixtures' "production": what a Release kit names, what the
+// drill kit names instead, and the Owner's drill binding as drill-vm.ps1 reads it (a PSCredential: connection id, token). Fixture values,
+// registered nowhere.
+export const PRODUCTION_SERVER = { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' };
+export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest' };
+export const BINDING_ID = '11111111-2222-4333-8444-555555555555';
+export const BINDING_TOKEN = 'clued_bnd_DRILLFIXTUREdrillfixture';
+export const bindingPs = `(New-Object System.Management.Automation.PSCredential ${"'" + BINDING_ID + "'"}, (ConvertTo-SecureString ${"'" + BINDING_TOKEN + "'"} -AsPlainText -Force))`;
 // dropManifest: prerequisite item names left out of the package's prereq-manifest.json (Codex review of f33fc33e5, medium 3)
 // credentialFiles: the archive's windows/credential-files.json as text, or null for a package without one
 export function firstInstallAssets(label, { candidate = false, credentialFiles = credentialFilesJson(), dropManifest = [] } = {}) {
@@ -68,7 +76,9 @@ export function firstInstallAssets(label, { candidate = false, credentialFiles =
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
   const image = `role-image-${id}.tar.gz`;
-  const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] } }));
+  // record: the two public server fields a real kit carries (prepare-record.mjs), here the stand-in for production (PRODUCTION_SERVER)
+  const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] },
+    record: { ...PRODUCTION_SERVER, node: 'fixture' } }));
   const archive = writeTar([...['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
     path: `tree/work/independent-ci-resident-v1/rollout/fleet/${n}`,
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
@@ -90,7 +100,7 @@ export function firstInstallAssets(label, { candidate = false, credentialFiles =
     debs: [{ path: 'docker.deb', sha256: sha('deb') }], tools: [{ path: 'gh.msi', sha256: sha('gh') }, { path: 'git.exe', sha256: sha('git') }] }));
   for (const [name, bytes] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['docker.deb', 'deb'], ['gh.msi', 'gh'], ['git.exe', 'git']]) fs.writeFileSync(path.join(root, name), bytes);
   return { root, build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq,
-    from: path.join(root, 'from'), out: path.join(root, 'kit') };
+    from: path.join(root, 'from'), out: path.join(root, 'kit'), server: DRILL_SERVER };
 }
 
 export const gateNow = '2026-11-19T02:00:00Z';
@@ -522,12 +532,12 @@ export const WSL_COLD_START = JSON.stringify({ at: '2026-11-21T03:00:00Z', shutd
   runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } });
 
 export function evidence(over = {}) {
-  const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'UNCERTAIN' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,
+  const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'STANDBY' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,
     versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:50:00Z' } } };
   const e = { now: NOW, entry: { exitCode: 0, status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe', parsed: true },
     verify: { status: 'RESIDENT_VERIFIED' }, status, current: { generation: 1, ciSourceManifestSha256: S, linux: { manifestSha256: L } },
     facts: { generation: 1, staged: null, pinsOk: true, ciSourceManifestSha256: S, manifestSha256: L }, acceptanceSource: S,
-    launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
+    launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', role: 'not-held', completed: ['pause-confirmed', 'first-train-not-applicable'], pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
     firstInstallSteps: { missing: false, incomplete: false, incompleteStages: [] },
     pause: { sha256: '4'.repeat(64), requestSha256: PAUSE_REQUEST },
     reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z' }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',
