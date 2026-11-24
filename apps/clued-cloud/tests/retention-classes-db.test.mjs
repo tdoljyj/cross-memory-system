@@ -82,6 +82,8 @@ function retentionErrors(registry, { tables, rules }, today = shanghaiToday()) {
       case 'state':
       case 'ledger':
         if (!nonEmpty(entry.reason)) errors.push(`${label}: needs a reason`);
+        // §14.4: a class the author is not sure of is pending (owner, expiry), never state or ledger.
+        else if (entry.reason.includes('低把握')) errors.push(`${label}: a reason with 低把握 must be pending`);
         break;
       case 'pending':
         if (!nonEmpty(entry.owner)) errors.push(`${label}: needs an owner`);

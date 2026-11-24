@@ -17,8 +17,8 @@
       "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
     },
     "clued_private.agent_messages_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "state",
+      "reason": "在途消息：发送时删除该用户已过期的行，每小时限额，行数有界"
     },
     "clued_private.authorization_audit_v12": {
       "class": "ledger",
@@ -86,11 +86,11 @@
     },
     "clued_private.ci_connection_renewals_v1": {
       "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "reason": "连接续期留档：每个被换下的 Binding 一行，不可变，引用回执"
     },
     "clued_private.ci_duty_answers_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "state",
+      "reason": "巡检删除一天前的应答，每个 Binding 保留最新一条"
     },
     "clued_private.ci_exec_keys_v1": {
       "class": "state",
@@ -109,12 +109,14 @@
       "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
     },
     "clued_private.ci_green_ledger_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "pending",
+      "owner": "规划：CI 运行痕迹封顶，与 ci_jobs_v1 同批定",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.ci_green_mirror_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "pending",
+      "owner": "规划：CI 运行痕迹封顶，与 ci_jobs_v1 同批定",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.ci_heartbeat_token_salt_v1": {
       "class": "state",
@@ -138,8 +140,9 @@
       "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
     },
     "clued_private.ci_node_commands_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "pending",
+      "owner": "规划：CI 运行痕迹封顶，与 ci_jobs_v1 同批定",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.ci_node_heartbeat_link_v1": {
       "class": "state",
@@ -158,8 +161,9 @@
       "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
     },
     "clued_private.ci_nonce_ledger_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "pending",
+      "owner": "规划：CI 运行痕迹封顶，与 ci_jobs_v1 同批定",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.ci_publish_keys_v1": {
       "class": "state",
@@ -174,8 +178,9 @@
       "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
     },
     "clued_private.ci_result_index_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "pending",
+      "owner": "规划：CI 运行痕迹封顶，与 ci_jobs_v1 同批定",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.ci_scan_start_keys_v1": {
       "class": "state",
@@ -186,8 +191,9 @@
       "reason": "配置或策略：每个对象（用户、项目、节点、连接）一行，原地更新，随对象数有界"
     },
     "clued_private.ci_sealed_drop_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "pending",
+      "owner": "规划：CI 运行痕迹封顶，与 ci_jobs_v1 同批定",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.ci_sweep_watermark_v1": {
       "class": "state",
@@ -331,8 +337,8 @@
       "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
     },
     "clued_private.integration_derivation_diagnostics_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "state",
+      "reason": "每个（集成、合同、事实摘要）一行，重复只累加次数"
     },
     "clued_private.integration_facts_v1": {
       "class": "state",
@@ -433,8 +439,9 @@
       "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
     },
     "clued_private.merge_clock_samples_candidate_v1": {
-      "class": "ledger",
-      "reason": "CI 运行记录：每次作业或运行一行，只增；现在没有清理规则（低把握：CI 运行痕迹封顶另有计划）"
+      "class": "pending",
+      "owner": "规划：与 merge_measurement_events_v1 同批定",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.merge_measurement_clock_registration_v1": {
       "class": "state",
@@ -542,8 +549,9 @@
       "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
     },
     "clued_private.projection_refresh_attempts": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "pending",
+      "owner": "规划：B1a 上线满 7 天逐表读数后定 rule 或 ledger",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.projection_refresh_heartbeat": {
       "class": "state",
@@ -628,8 +636,8 @@
       "reason": "成员与权限关系：随用户、项目、工作区数有界"
     },
     "clued_private.storage_automatic_reconcile_checks_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "state",
+      "reason": "与 storage_conflict_isolations_v1 一对一（主键 intent_id），不独立增长"
     },
     "clued_private.storage_budgets_v1": {
       "class": "state",
@@ -668,8 +676,9 @@
       "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
     },
     "clued_private.storage_conflict_observations_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "pending",
+      "owner": "规划：B1a 上线满 7 天逐表读数后定 rule 或 ledger",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.storage_conflict_scan_v1": {
       "class": "state",
@@ -688,8 +697,9 @@
       "reason": "每条记录或每个实体一行的派生状态，原地更新，随实体数有界"
     },
     "clued_private.storage_directory_probes_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "pending",
+      "owner": "规划：B1a 上线满 7 天逐表读数后定 rule 或 ledger",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.storage_jobs_v1": {
       "class": "ledger",
@@ -704,8 +714,9 @@
       "reason": "登记表或词表：随定义数有界，只在迁移或管理操作时增加"
     },
     "clued_private.storage_oauth_attempts_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "pending",
+      "owner": "规划：B1a 上线满 7 天逐表读数后定 rule 或 ledger",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.storage_onboard_allowlist_v1": {
       "class": "state",
@@ -713,7 +724,7 @@
     },
     "clued_private.storage_onboard_attempts_v1": {
       "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "reason": "用户入驻的同意留档（披露原文与摘要），每次人工入驻一行"
     },
     "clued_private.storage_owner_connection_hidden_v1": {
       "class": "state",
@@ -753,23 +764,24 @@
     },
     "clued_private.storage_recovery_diagnostics_v1": {
       "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "reason": "每个存储作业至多一行（主键引用 storage_jobs_v1），随它保留"
     },
     "clued_private.storage_refresh_activity_v1": {
       "class": "state",
       "reason": "当前指针、水位、心跳或计数：每个键一行，原地更新"
     },
     "clued_private.storage_refresh_attempts_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "pending",
+      "owner": "规划：B1a 上线满 7 天逐表读数后定 rule 或 ledger",
+      "expiresOn": "2026-12-15"
     },
     "clued_private.storage_refresh_delegations_v1": {
       "class": "state",
       "reason": "绑定、凭据或身份：每个被绑定的对象一行，吊销即更新，随对象数有界"
     },
     "clued_private.storage_refresh_demand_proofs_v1": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "state",
+      "reason": "在途凭证：写入时删除过期行，每个连接至多 32 行"
     },
     "clued_private.storage_refresh_token_issuance_v1": {
       "class": "ledger",
@@ -781,7 +793,7 @@
     },
     "clued_private.storage_registration_checks_v1": {
       "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "reason": "每个存储作业至多一行（主键 job_id），原地更新，随 storage_jobs_v1 保留"
     },
     "clued_private.storage_revision_pins_v1": {
       "class": "state",
@@ -793,7 +805,7 @@
     },
     "clued_private.storage_semantic_attempts_v1": {
       "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "reason": "每条资料中心变更至多一行（主键引用 resource_center_mutations_v1），随它保留"
     },
     "clued_private.storage_semantic_verifications_v1": {
       "class": "ledger",
@@ -995,12 +1007,14 @@
       "reason": "业务事件或决定（授权、交接、发布、结果）：每件事一行，只增，作为账本保留"
     },
     "public.clued_p5_gateway_attempts": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "pending",
+      "owner": "规划：与回执保留设计（第 6 节）同批定",
+      "expiresOn": "2026-12-15"
     },
     "public.clued_p5_idempotency": {
-      "class": "ledger",
-      "reason": "尝试、检查或诊断记录：每次操作一行，只增；现在没有清理规则（低把握：可能该有 rule）"
+      "class": "pending",
+      "owner": "规划：与回执保留设计（第 6 节）同批定",
+      "expiresOn": "2026-12-15"
     },
     "public.clued_p5_receipts": {
       "class": "ledger",

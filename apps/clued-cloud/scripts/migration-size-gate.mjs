@@ -18,8 +18,13 @@
 // judged; function bodies are not (they run when called, not when the file is
 // applied). A DO body that EXECUTEs anything but one literal is judged by every
 // string literal of that body instead (§12): a literal that holds an adding
-// statement at its start or after a semicolon refuses the file; a literal the
-// tokenizer cannot read counts as an addition. SELECT ... INTO counts only in the
+// statement at its start or after a semicolon refuses the file. A literal is read
+// as a fragment: an unclosed $tag$ or /* in it is one word and the text after it is
+// judged (§14.3). In such a body a literal that starts with `add` continues an
+// `alter table` literal of the body, one that starts with a code word continues a
+// `create` literal (§14.1, §14.2), and in text from a literal a placeholder where
+// the created object's type belongs (`create %s ...`) is an addition, `create ?`,
+// that no shrink declaration covers (§14.2). SELECT ... INTO counts only in the
 // file's top-level SQL, never in text from a literal (§13): EXECUTE refuses it
 // (0A000, tests/migration-size-gate-db.test.mjs) and in a function body it assigns
 // variables. A file the tokenizer cannot read is refused at or above the
@@ -78,7 +83,7 @@ function render(tokens) {
     : token.kind === 'identifier' ? `"${token.value}"` : "'…'")).join(' ').replace(/ \. /g, '.');
 }
 
-function createKind(statement) {
+function createKind(statement, fromLiteral = false) {
   let index = 1;
   if (isCode(statement[index], 'or') && isCode(statement[index + 1], 'replace')) index += 2;
   if (isCode(statement[index], 'global', 'local')) index += 1;
@@ -88,6 +93,7 @@ function createKind(statement) {
   if (isCode(statement[index], 'materialized') && isCode(statement[index + 1], 'view')) return 'materialized view';
   if (isCode(statement[index], 'unique')) index += 1;
   if (isCode(statement[index], 'index')) return 'index';
+  if (fromLiteral && isCode(statement[index], '%')) return 'create ?';
   return null;
 }
 
@@ -140,28 +146,40 @@ function literalText(token) {
   });
 }
 
-// A string literal judged as the SQL it holds. A literal the tokenizer cannot read
-// cannot be judged and counts as an addition, as an unreadable file does.
+// A string literal judged as the SQL it holds, read as a fragment (§14.3); its
+// tokens are returned for the continuation rule of scanDo.
 function scanLiteral(token, additions) {
-  let tokens;
-  try {
-    tokens = sqlTokens(literalText(token), token.line);
-  } catch (error) {
-    additions.push({ kind: 'unreadable literal', line: token.line, statement: `${render([token])} (${error.message})` });
-    return;
-  }
+  const tokens = sqlTokens(literalText(token), token.line, true);
   scan(tokens, false, additions, null, true);
+  return tokens;
 }
+const opens = (tokens, ...words) => tokens.some((token, index) => atStatementStart(tokens, index)
+  && words.every((word, at) => isCode(tokens[index + at], word)));
 
 // A DO body: its statements, and, when it executes anything but one literal, every
 // string literal of the body (FABLE-prod-db-shrink-v2-20261124 §12): the statement
 // it builds is written in one of them (a constant, a format or replace argument).
+// A statement built from several of them is judged by continuation (§14.1, §14.2):
+// when one literal opens `alter table`, a literal starting with `add`, up to its
+// first semicolon, is judged as the rest of an alter table; when one opens
+// `create`, a literal starting with a code word is judged as the rest of a create.
 function scanDo(tokens, additions) {
   const body = { dynamic: false, judged: new Set() };
   scan(tokens, true, additions, body);
   if (!body.dynamic) return;
-  for (const token of tokens) {
-    if (isLiteral(token) && !body.judged.has(token)) scanLiteral(token, additions);
+  const pieces = tokens.filter((token) => isLiteral(token) && !body.judged.has(token))
+    .map((token) => scanLiteral(token, additions));
+  const create = pieces.filter((piece) => opens(piece, 'create'));
+  const alter = pieces.filter((piece) => opens(piece, 'alter', 'table'));
+  for (const piece of pieces) {
+    if (!isCode(piece[0])) continue;
+    const head = piece.slice(0, statementEnd(piece, 0));
+    const add = (kind) => additions.push({ kind, line: piece[0].line, statement: `… ${render(head)}` });
+    if (create.some((other) => other !== piece)) {
+      const kind = createKind([piece[0], ...head]);
+      if (kind) add(kind);
+    }
+    if (isCode(piece[0], 'add') && alter.some((other) => other !== piece)) alterTableKinds(head).forEach(add);
   }
 }
 
@@ -177,7 +195,7 @@ function scan(tokens, plpgsql, additions, body = null, fromLiteral = false) {
     const statement = tokens.slice(index, end);
     const add = (kind) => additions.push({ kind, line: token.line, statement: render(statement) });
     if (token.value === 'create') {
-      const kind = createKind(statement);
+      const kind = createKind(statement, fromLiteral);
       if (kind) add(kind);
     } else if (token.value === 'alter' && isCode(statement[1], 'table')) {
       alterTableKinds(statement).forEach(add);

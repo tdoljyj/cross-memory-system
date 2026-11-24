@@ -6,7 +6,10 @@
 // caller decides which literals it reads again as SQL (check-cron-budget.mjs:
 // DO and routine bodies and literal EXECUTE; the capacity gate: DO bodies and
 // literal EXECUTE). Every token carries the line it starts on.
-export function sqlTokens(source, firstLine = 1) {
+// An unclosed comment or dollar quote is an error, except in a fragment (the gate
+// reads the text of a literal, which may hold half of a body or a comment): there
+// its opening is one code token and the text after it is read on.
+export function sqlTokens(source, firstLine = 1, fragment = false) {
   const tokens = [];
   const pattern = /\s+|--[^\r\n]*|\/\*|[eE]'(?:''|\\[\s\S]|[^'\\])*'|'(?:''|[^'])*'|"(?:""|[^"])*"|\$(?:[A-Za-z_][A-Za-z_0-9]*)?\$|[A-Za-z_][\w$]*|[^\s]/gy;
   let line = firstLine;
@@ -20,16 +23,22 @@ export function sqlTokens(source, firstLine = 1) {
       comments.lastIndex = content;
       let depth = 1;
       for (let part; depth && (part = comments.exec(source));) depth += part[0] === '/*' ? 1 : -1;
-      if (depth) throw new Error(`unclosed SQL comment at line ${line}`);
-      pattern.lastIndex = comments.lastIndex;
-      raw = source.slice(content, pattern.lastIndex);
+      if (depth && !fragment) throw new Error(`unclosed SQL comment at line ${line}`);
+      if (depth) token = { kind: 'code', value: start, line };
+      else {
+        pattern.lastIndex = comments.lastIndex;
+        raw = source.slice(content, pattern.lastIndex);
+      }
     } else if (start.startsWith('$') && start.length > 1) {
       const content = pattern.lastIndex;
       const end = source.indexOf(start, content);
-      if (end < 0) throw new Error(`unclosed dollar quote at line ${line}`);
-      token = { kind: 'literal', value: source.slice(content, end), line };
-      pattern.lastIndex = end + start.length;
-      raw = source.slice(content, end);
+      if (end < 0 && !fragment) throw new Error(`unclosed dollar quote at line ${line}`);
+      if (end < 0) token = { kind: 'code', value: start, line };
+      else {
+        token = { kind: 'literal', value: source.slice(content, end), line };
+        pattern.lastIndex = end + start.length;
+        raw = source.slice(content, end);
+      }
     } else if (start.startsWith("'")) {
       token = { kind: 'literal', value: start.slice(1, -1).replaceAll("''", "'"), line };
     } else if (/^e'/i.test(start)) {
