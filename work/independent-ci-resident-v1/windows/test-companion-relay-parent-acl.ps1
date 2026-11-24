@@ -21,7 +21,7 @@ foreach($name in @('install-resident.ps1','companion-headless.ps1','verify-resid
 }
 Yes ($defs['install-resident.ps1:Get-RelayParentAclPresence'] -ceq $defs['companion-headless.ps1:Get-RelayParentAclPresence']) 'one-byte-identical-pure-rule'
 foreach($n in @('Get-DaclPart','Get-DaclShape','Get-ParentAce','Get-AceKeys','Get-ParentAclState','Add-ParentAce','Get-RelayParentAclPresence','Assert-CompanionRelayParentPlan','Add-CompanionRelayParentAce','Get-CompanionRelayParentsPlan')){Yes ($defs.ContainsKey('install-resident.ps1:'+$n)) ('installer-defines-'+$n);. ([scriptblock]::Create($defs['install-resident.ps1:'+$n]))}
-foreach($n in @('Get-CompanionRelayParentPaths','Get-CompanionRelayParentsProblem','Invoke-CompanionAccountSwitch')){. ([scriptblock]::Create($defs['companion-headless.ps1:'+$n]))}
+foreach($n in @('Get-CompanionRelayParentPaths','Get-CompanionRelayParentsProblem','Invoke-CompanionAccountSwitch','Get-CompanionQualifyEvidence','Watch-CompanionTaskRun')){. ([scriptblock]::Create($defs['companion-headless.ps1:'+$n]))}
 . ([scriptblock]::Create($defs['first-install-host.ps1:Get-CiRootSddl']))
 function Get-StepBody([string]$step){
  $s=@($asts['install-resident.ps1'].FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -ceq 'Step' -and $n.CommandElements.Count -gt 2 -and $n.CommandElements[1].Extent.Text -ceq ("'"+$step+"'")},$true))

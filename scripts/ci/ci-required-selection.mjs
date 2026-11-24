@@ -27,6 +27,9 @@
 //     reads GITHUB_EVENT_PATH and lists the pull request's files through the
 //     API (GITHUB_TOKEN, pull-requests: read); a push, a listing it cannot
 //     read or a listing at GitHub's 3000-file limit selects everything.
+//     In hosted-required, a pull request head behind its base branch's live
+//     tip selects nothing and says so (behindMain); a compare it cannot read
+//     selects as above.
 //     Writes suites=<json>, app_deps=<json> (SUITE_APP_DEPENDENCIES) and
 //     run_<suite>=true|false to GITHUB_OUTPUT. Only
 //     the suites declared for the host's platform (SUITE_PLATFORMS) are listed. With --root, the suites the
@@ -506,6 +509,34 @@ export async function shardChangedFiles({ event, env, fetchImpl = fetch }) {
     return null;
   }
 }
+
+// Task 3435f8bf (FABLE-ci-one-round-20261124 3.1): a pull request head that lacks its base branch's tip cannot merge while
+// the ruleset's strict rule is on (V2), and main only moves forward, so a green on it is never used; the head the merge
+// bot makes runs everything. Returns how many commits the head is behind, only for a clear behind_by above 0; anything it
+// cannot read (an error, a timeout, a reply it does not recognise) is null, and the selection runs as before. The tip is
+// read live, by the branch name in the same request, never the event's base.sha, which may be old (80b9382). Only
+// hosted-required for now: shadow-compare.mjs cannot yet tell such a skip from a run (3.1 step 7, stop-loss).
+export const BEHIND_MAIN_WORKFLOW = 'hosted-required';
+export async function behindMain({ event, env, fetchImpl = fetch, timeoutMs = 20_000 }) {
+  if (env.GITHUB_EVENT_NAME !== 'pull_request' || env.GITHUB_WORKFLOW !== BEHIND_MAIN_WORKFLOW) return null;
+  const head = event?.pull_request?.head?.sha;
+  const base = event?.pull_request?.base?.ref;
+  if (typeof head !== 'string' || !/^[0-9a-f]{40}$/.test(head) || typeof base !== 'string' || !base) return null;
+  if (!env.GITHUB_TOKEN || !env.GITHUB_REPOSITORY) return null;
+  try {
+    const response = await fetchImpl(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/compare/${encodeURIComponent(base)}...${head}`, {
+      headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${env.GITHUB_TOKEN}`, 'x-github-api-version': '2022-11-28' },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return null;
+    const behind = (await response.json())?.behind_by;
+    return Number.isSafeInteger(behind) && behind > 0 ? behind : null;
+  } catch {
+    return null;
+  }
+}
+
+export const behindMainReason = (base, behind) => `head 落后 ${base} ${behind} 个提交：strict 下合不进去，不跑；合入 ${base} 后的 head 会跑`;
 
 export function outputLines(check, selection) {
   const apps = [...appDependencies(selection.suites), ...(selection.added ?? []).map(({ app }) => app).filter(Boolean)];
@@ -1789,11 +1820,15 @@ async function main(argv, env = process.env) {
     return 2;
   }
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
+  const behind = await behindMain({ event, env });
   const files = env.GITHUB_EVENT_NAME === 'pull_request' ? await (shard ? shardChangedFiles : changedFiles)({ event, env }) : null;
   const platform = hostPlatform();
   const rootIndex = argv.indexOf('--root');
   const root = rootIndex >= 0 ? path.resolve(argv[rootIndex + 1]) : ROOT;
-  const { selection, error } = selectWithCandidate(check, files, platform, root);
+  // Behind: nothing, the candidate's added suites included; each job takes its not-affected path.
+  const { selection, error } = behind !== null
+    ? { selection: { suites: [], reason: behindMainReason(event.pull_request.base.ref, behind) }, error: null }
+    : selectWithCandidate(check, files, platform, root);
   if (error) console.log(`::error title=${check} candidate suites::${error.message}`);
   console.log(`${check}: ${selection.reason}; suites: ${selection.suites.join(', ') || 'none'}`);
   console.log(`platform: ${platform} (suites declared for another platform only are not selected here)`);

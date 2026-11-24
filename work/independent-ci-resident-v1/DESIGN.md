@@ -3396,7 +3396,7 @@ Owner 要做的全部事情：① 授权服务端迁移（发布流程：备份 
 - **谁调用、用哪个令牌**：都由通用助手以 clued-control 运行 Source B 的入口，用节点自己的 CI Binding 令牌（`controllerPrincipal`）；每次调用之前，同一次运行里先读 holders，要求不是 `admission_binding_required`，并且（保活以外）这个认领是位置 1、`bound_pr` 是这个 PR：
   - `touch running`：两次。第一次在开车头批次的那一次第 10 段（上一条“硬上限”）；第二次在车头批次的第 1 段（`formal-work-admission-check-v2/startup.mjs:14`），它的检查 settled 之后，刷新 running 时钟；`hard_cap_minutes` 都取 `train.slotHardCapMinutes`（60–180）。第 2–7 段没有令牌，不再刷新：批次从第 1 段起超过 90 分钟时（第 2–7 段上限合计 130 分钟，`layout.mjs:83-88`），位子在第 8 段之前过期，这一批以没就绪结束、不发绿。实际批次约 20 分钟（v0.2 §5），接受这个残余。
   - `touch green`：第 8 段 settled 之后（41.2）。两次 touch running 的第二次和 touch green 认持有者与第 8 段的绿同一个投影（`train-rules.mjs#projectedHolderForJob`）：一个 Task 绑了多个 PR 时 holders 没有单一 `pr`，按 CI head 认这个 PR（ADR 0028 §6）。
-  - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报，但依据是执行器自己的账本，不是 GitHub 上的检查：train-run 作业（合同升 `/2`，C# 边界同步）带上 `frontOutcome`（PR、H、S、attempt、终局码）。执行器只在这一批是车头批次、账本说它已最终失败（不会再有 attempt 2）、失败属于 PR 本身（失败表 `deterministic-pr`，不是基础设施）时才填。第 10 段再核 holders 里这个认领仍是位置 1、PR 当前 head 仍是 H，才报 failed；服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
+  - `touch failed`：第 3、5、7 段没有令牌，所以由批次结束后的第一次第 10 段报，但依据是执行器自己的账本，不是 GitHub 上的检查：train-run 作业（合同升 `/2`，C# 边界同步）带上 `frontOutcome`（PR、H、S、attempt、终局码；第 10 段只按 PR、H、S 认它指哪一批，§85 第 5 项）。执行器只在这一批是车头批次、账本说它已最终失败（不会再有 attempt 2）、失败属于 PR 本身（失败表 `deterministic-pr`，不是基础设施）时才填。第 10 段再核 holders 里这个认领仍是位置 1、PR 当前 head 仍是 H，才报 failed；服务端退位并发 CI 失败通知（迁移 `20261010112852` 的 failed 分支）。在此之前位子按 running 时钟占着，最多多占一个 `maintenanceEveryMs`。
   - adopt：第 10 段看到车头 PR 已合入、合并提交恰好 [T, H]、树等于 S 的树，调 `clued_work_claim_adopt_v1`（`pr_ref`、`merge_sha`）。树不同：`TRAIN_LANDED_TREE_MISMATCH`，写 PAUSE 请求、通知 Owner、不 adopt（v0.2 §3.3 第 2 条）。
   - return：第 10 段看到车头 PR 关闭未合入，调 `clued_work_merge_slot_return_v1`。车头换了 head 不 return：新 head 原位当车头，旧绿撤销。
   - 结束已关闭的绑定（ADR 0028 §6）：持有者绑了多个 PR 时，第 10 段逐个读这些 PR 选车头；其中 GitHub 已合入的调 adopt（`merge_sha` 取 GitHub 的合并提交），已关闭未合入的调 return，本轮落地刚答过的不再问。Native 只在 adopt、return 时把 PR→Task 绑定结束，持有者自己合入就释放认领，没有这一步绑定会一直“进行中”；Task 还有别的打开的 PR 时服务端不还位（`20261108161615`:283）。选车头：CI head 所在的 PR；没有 PR 在这个 head（作者推了新提交）就取最小 PR 号，与没有 CI head 时一样；多于一个才不选。
@@ -5245,7 +5245,7 @@ GitHub 的 `mergeStateStatus` 为 `BEHIND` 时，strict 不会合入车头；需
 
 **修法（只改常驻层 `executor.mjs`）。**
 - `resumeParked`：被新提交取代的 B 点停车批次，先于接管门的过滤就判（`supersededParked`：队列有更新的提交 + 一次实时读确认，`SUPERSEDED_AT_SAFE_POINT`，旧 head 烧掉、rename-only 归档）。结束一个被取代的批次不发布任何东西，所以不受列车门约束。
-- `enqueueFront` → `endSupersededForFront`：该 PR 的行正在跑**别的 head** 的、停在 B 的批次时，一次实时读确认 PR 的当前 head 就是车头的 head，就在安全点以同样的 `SUPERSEDED_AT_SAFE_POINT` 结束它（回执 `train-front-supersedes`），然后照常 `offerFront`。实时读不到或 PR 仍在旧 head：什么都不结束，与以前相同。
+- `enqueueFront` → `endSupersededForFront`（§85 起并入 `endRestingForFront`）：该 PR 的行正在跑**别的 head** 的、停在 B 的批次时，一次实时读确认 PR 的当前 head 就是车头的 head，就在安全点以同样的 `SUPERSEDED_AT_SAFE_POINT` 结束它（回执 `train-front-supersedes`），然后照常 `offerFront`。实时读不到或 PR 仍在旧 head：什么都不结束，与以前相同。
 - `frontRetry`：`offerFront` 只因行忙被拒的车头批次记下来；之后某次第 10 段对同一 PR、同一 head、同一 main 仍说 `TRAIN_FRONT_BATCH_RUNNING` 时（它刚刷新了这个 head 的 strict 观察），再提交一次（回执 `train-front-reoffered`）。成功入队、职责结束时清掉。
 - 第 8 段的实时检查一条没变；停在 A 的旧批次（只在 relay 开时出现）不在本修法内，仍由原路径处理。
 
@@ -5711,7 +5711,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 |---|---|
 | 停在 A（`waiting`）或 B（`parked`）的批次 | 每个 tick 一次（`endNotStanding` → `endParkedIfNotStanding`），在崩溃恢复、Owner 请求、HALT 与未归档现场检查、回填之后。不暂停时在读完本拍触发之后、任何停靠批次被尝试或继续之前；**PAUSE 期间也判**（在 tick 停在 PAUSED 之前）。一拍结束一个 |
 | 在途批次 | 原来的两个安全点 `before-relay-plan`、`before-workspace`（`endIfNotStanding`，先读一次收件箱）。独占区（ws-prep 到最后一个 Linux 段）内照旧不判 |
-| 第 10 段车头指向别的 head（§65.9） | `endSupersededForFront` 只把车头的 head 作为提示交给 `endParkedIfNotStanding`，结束了就写 `train-front-supersedes`，然后照常 `offerFront` |
+| 第 10 段车头指向别的 head（§65.9） | `endRestingForFront`（原 `endSupersededForFront`，§85）只把车头的 head 作为提示交给 `endParkedIfNotStanding`，结束了就写 `train-front-supersedes`，然后照常 `offerFront` |
 | 第 1 段之前 | 不变：按到达顺序释放（`supersededBeforeStart`，`SUPERSEDED`，不烧号）。那是预留的撤回，什么都没跑，判错可以恢复，所以不需要实时读 |
 | attempt 2（还不是批次） | 预检之后一次实时读：PR 已关闭 → `ATTEMPT2_PR_CLOSED`（并 `closePr`）；head 已变 → `ATTEMPT2_SUPERSEDED`；head 未变且排队表有更新提交 → `keepCurrent` 退回；读不到 → 照常跑，第 1 段决定 |
 
@@ -5725,7 +5725,7 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 
 ### 72.5 保留的兜底：`park.maxMs`
 
-`park.maxMs`（24 小时，`endParkedB`，按上次没就绪的码结束）不能被规则覆盖：规则只回答“还该不该存在”，而一个仍然成立的批次（PR 开着、head 没变、本节点当班，只是作者一直不入队），或一个一直读不到 PR 的批次，不能无限占着停靠名额（`park.maxParked` 满了就 `PARKING_FULL`，不开新批次），也不能在每天的第 8 段重试额度用完后永远停着。它是资源上限，不是存在条件。`endParkedB` 的另一个用途 `TRAIN_FRONT_TAKES_OVER`（§62.5：同一 head 的车头批次接手普通批次）三者都成立，也不在规则内，不动。
+`park.maxMs`（24 小时，`endParkedB`，按上次没就绪的码结束）不能被规则覆盖：规则只回答“还该不该存在”，而一个仍然成立的批次（PR 开着、head 没变、本节点当班，只是作者一直不入队），或一个一直读不到 PR 的批次，不能无限占着停靠名额（`park.maxParked` 满了就 `PARKING_FULL`，不开新批次），也不能在每天的第 8 段重试额度用完后永远停着。它是资源上限，不是存在条件。`endParkedB` 的另一个用途 `TRAIN_FRONT_TAKES_OVER`（§62.5：同一 head 的车头批次接手普通批次；§85 起也结束同一 head 另一个 S 的车头批）三者都成立，也不在规则内，不动。
 
 ### 72.6 重装前置
 
@@ -6086,3 +6086,24 @@ GitHub 推荐 ephemeral / JIT runner，针对的是 job 步骤直接在 runner �
 - `reinstall/test/test_launcher_first_train.py`：带通知的 uncertain 一次轮询结束、`first-train-role-unauthorized`、`role=unauthorized`，通知早于本步但不早于 `failingSince` 也一样；普通 uncertain 等满、`role=unconfirmed`；反例（通知早于 `failingSince`、探测早于本步、别的通知种类或码、模式不是 UNCERTAIN、别的节点或 Source、执行器不空闲、队列有在跑、状态过期或合同未知）不提前结束；“不适用”`role=not-held`，ACTIVE+held `role=held`。
 - `test/first-install-switch.test.mjs`（Windows 必需检查会跑）：真实 `Step-WaitFirstTrain` 与进度处理（真实 `Wait-Until`）下令牌被拒几秒结束、步骤行 failed 带拒绝码、开始行在前；通知早于本步但属于当前这段失败也几秒结束；反例（上一段失败的旧通知、探测早于本步、`failingSince` 为 null 或不是时刻、码是 `ROLE_PROBE_UNCERTAIN`）不提前结束；`Get-LauncherVerdict` 与演练入口的判定表，含换账户 FELL_BACK 时角色未确认仍以 `FIRST_INSTALL_ROLE_*` 停下；终态带 `role`。
 - 端到端：下一代候选包用假令牌演练一次，first-train 步骤 `seconds` 小于 120，入口以 `FIRST_INSTALL_ROLE_UNAUTHORIZED` 结束（修复前：回执 20261123T201433Z-2026.11.24-74bc5ef0-52d496e7，1505 秒，`DRILL_RUN_TIMEOUT`）。
+
+## 85. 停放的车头批被新 S 取代：第 10 段一个定义，车头批每种结束都回报（bc982192，分支 `claude/parked-front-v2`，设计 FABLE-parked-front-vs-frontfailed-20261123，按 main 的 `frontFailed` 重做）
+
+**根因**：第 10 段判“车头批还在跑”有两处定义（`frontBatchPlan` 与 `renewFrontSlot`），前者还拿 S 与 GitHub 上车头单独的试合并比（多成员批永远不等），于是多成员批每轮重开一个新 S；常驻这边旧 S 停在 B，`offerFront` 答 busy，新 S 进不来，行一直跑被替换的 S。R3 第 2 批的 `frontFailed`（train-run /4）只覆盖了回报的一部分。
+
+**修法**：
+1. Source `train-maintenance.mjs#liveFrontBatch` 是唯一定义：本节点本 head 最新的车头批，未被执行器回报结束（frontOutcome 指名它，不论 `frontFailed`）、未被第 10 段二分（landing state 的 `handled` 含其 S）、同一认领、Native 的 CI 时钟在本 head 上走、合并位未过期。不再与 GitHub 的试合并比；批的内容是否仍成立由第 8 段判（`TRAIN_BATCH_CHANGED`、`TRAIN_TEST_COMMIT_GONE`），它结束批，执行器回报。
+2. 车头批（带 S）的每一种最终结束（无 attempt 2）只回报一次（`noteFrontOutcome`），由它走的那一条路报：
+   - 经过 `afterBatch` 的结束一律由 `afterBatch` 报：判据是本机不再持有这个 (H, S)（`holdsFront`：行不再以活状态持有这个 head 与 S、不是 `frontRetry`、也没有它的待跑 attempt 2），成功、HALT（FAILED_UNKNOWN）除外。含烧号（`fail()`、`abandonScannerStage` 不再自己报）、停掉了行的释放、第 1 段前成员移动而删出队列的 S（`TRAIN_BATCH_MEMBER_MOVED`）、取代、`TRAIN_FRONT_TAKES_OVER`；安全点重新准入、仍跑同一 S 的释放不算结束。
+   - 不经过 `afterBatch` 的四处自己报：车头行的预检忽略（`runRow` 的 `pre.ignore`，R3 第 2 批已有）；`restartedUnpublished`，且重启收尾前先从 `train-front-enqueued` 回执恢复车头账（`frontBookRecover`：尝试次数、绑定），否则取不到次数、也会多排一个车头批；`enqueueFront` 没接下第 10 段已计数的批（同一 (S, 号) 已在、次数用完、队列满），且本机不再持有 (H, S)（`holdsFront`，见 5.C；busy 由 `frontRetry` 持有，不报）；attempt 2 不跑就关掉（`closeAttempt2Unrun`：另一个 Source、预检忽略、PR 已关、head 已变，见 5.E）。
+   - `frontFailed` 只在失败类 deterministic-pr 时为真（touch failed / 二分，与以前相同），其余为假：第 10 段只把批记为已结束、下一轮重开。回执类型沿用 `train-front-outcome`（失败）与 `train-front-ended`（只结束）。`TRAIN_FRONT_TAKES_OVER` 与 `enqueueFront` 的答复不置 urgent；只结束的回报在同 head 下一个车头批进队时丢掉（见 5.B）。
+3. `endOrdinaryForFront` 与 `endSupersededForFront` 合为 `endRestingForFront`：第 10 段点名 (H, S) 时，这个 PR 停在 A 或 B、又不是 (H, S) 的批一律结束——同 head 的普通批与同 head 另一个 S 的车头批以 `TRAIN_FRONT_TAKES_OVER`（不实时读：开车头批的只有第 10 段），别的 head 的 B 点批照旧先实时读。正在执行第 8 段尝试的批（`stage8Try` 先跑一次第 10 段，`stage8Trying`）不结束，仍答 busy，留给 `frontRetry`；busy 不回报结束（回报会让第 10 段再计一次尝试）。
+4. `train-landing-e2e.test.mjs` 的 `residentOver` 第 8 段结果码一律由 `stage-fact.mjs#outcomeFailureCode(outcome, 8)` 生成。
+5. v2 返工（独审判 6bb436177 不可合；设计 FABLE-parked-front-attempt2-number-20261123）。根因：执行器自动 attempt 2 结束时按 2 号回报，第 10 段记的是自己开的 1 号，`liveFrontBatch` 还比车头号，于是一直当“在跑”到 running 时钟耗尽；单成员批第 10 段又会对同一 S 开 2 号，旧回报若留着就会把它误判结束。
+   - A. 第 10 段 `liveFrontBatch` 只按 (PR, head, S) 认“已回报”，不再比车头号。
+   - B. 执行器 `enqueueFront` 接下同 head 的下一个车头批时丢掉该 head 未失败的旧回报（不论 S）；失败的回报保留（touch failed 还欠着，第 10 段带着它不开新批）。重启时 `trainFrontRecover` 同规则：其后有同 PR、同 head、非自动的 `train-front-enqueued` 就不恢复。代替原来的 moot。
+   - C. `enqueueFront` 只有一个出口：没接下这个批、且本机不再持有 (H, S) 的运行（`holdsFront`：行以活状态持有该 head 与 S、是 `frontRetry`、或有该 (H, S) 的待跑 attempt 2）时报结束（不失败、不 urgent）：同一 (S, 号) 已在（自动 attempt 2 已跑过：`TRAIN_FRONT_ATTEMPTS_USED`）、次数用完、队列满。原来同 (S, 号) 去重是无声返回。`afterBatch` 的“没离开运行队列”与“还有 attempt 2”也并为 `holdsFront`。
+   - D. 车头号只取 subject 自己的 attempt，删掉第二份记录 `frontKeys`。
+   - E. attempt 2 不跑就关掉的四条路（另一个 Source：`ATTEMPT2_SOURCE_CHANGED`、预检忽略、PR 已关、head 已变）统一走 `closeAttempt2Unrun`，并回报车头批结束（不失败）：attempt 1 带着这次 attempt 2，`afterBatch` 没报它。
+
+合同层不动：train-run /4、C# 边界、`train-run-cases.json` 都不改。
