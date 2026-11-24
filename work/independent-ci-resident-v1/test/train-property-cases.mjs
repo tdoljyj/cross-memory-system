@@ -60,8 +60,11 @@ const POINTS = Object.freeze({
 const TWINS = Object.freeze(['proof', 'full-on', 'strict-front-proof']);
 
 const ADMISSION = { verdict: 'burned', why: "board (DESK to add, decisions §派活 看板): one failed read burns the PR. Stage 1 here: STOPPED NATIVE_NOT_ADMITTED, the node idle; the code is the fixture's (stage 1 answers NATIVE_NOT_ADMITTED with no reason code for every answer but ADMITTED, e2e:1957), re-judged after decisions §5 (the fixture as a module, stage 1 through outcomeFailureCode)" };
-const B163 = { verdict: 'stall', why: "board 搁163 (to be renamed, decisions §7): two records of one millisecond (proof, full-on, strict-front-proof and every strict-read kind), the train stays TRAIN_SWEEP_INCOMPLETE for ever; the twin is written through TrainSweepStore.write(), so it holds again once write() keeps the stamps strictly increasing" };
 const STAGE8 = { verdict: 'stall', why: "board P0 (DESK to add, decisions §6): a stage 8 that cannot read its batch file stops the PR before it joins the merge queue (PR_NOT_OPEN_OR_CHANGED); stage 10 still picks it as a rider (maint:1141-1162), each front batch of the PR behind ends TRAIN_BATCH_CHANGED (pub:645-646) and is never bisected (maint:622) until DAILY_BATCH_LIMIT defers every tick; after the fix of maint:622 it is burned" };
+// The three twin cases (store:proof, store:strict-front-proof, store:full-on, every stage of one round) were known reds of 搁163 (stall,
+// TRAIN_SWEEP_INCOMPLETE for ever) until d05108d15 (#1314): TrainSweepStore.write() now writes max(writtenAt, newest stamp + 1)
+// (train-sweep-store.mjs:177-187), so the twin the driver writes through write() with the same writtenAt lands one millisecond later
+// and the train lands (decisions §7 item 2). They run as plain cases now, the guard of that fix.
 const KNOWN_RED = Object.freeze({
   "github.readChangedPaths | stage 1 | empty | after the first landing": ADMISSION,
   "github.readChangedPaths | every stage of one round | empty | after the first landing": ADMISSION,
@@ -73,9 +76,6 @@ const KNOWN_RED = Object.freeze({
   "stage-file.batch-route | every stage of one round | error | after the first landing": ADMISSION,
   "stage-file.batch-route | stage 1 | empty | after the first landing": ADMISSION,
   "stage-file.batch-route | every stage of one round | empty | after the first landing": ADMISSION,
-  "store:proof | every stage of one round | twin | after the first landing": B163,
-  "store:strict-front-proof | every stage of one round | twin | after the first landing": B163,
-  "store:full-on | every stage of one round | twin | after the first landing": B163,
   "stage-file.batch-route | stage 8 | error | after the first landing": STAGE8,
   "stage-file.batch-route | stage 8 | empty | after the first landing": STAGE8,
 });
