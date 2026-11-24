@@ -89,9 +89,16 @@ ledger with the live history.
   Owner chose to keep for now (the `mtpe_m0_test` and `mtpe_m0_work` schemas,
   the apply-time versioning).
 
-CI's `db reset` still applies every file in `supabase/migrations/` in file
+Local and CI databases still get every file in `supabase/migrations/` in file
 order, repository-only and pending files included; the ledger records that
-difference, it does not change it. Retiring or applying the never-applied
+difference, it does not change it. The Supabase CLI applies none of them
+(`[db.migrations] enabled = false`): `scripts/ci/clued-local-migrate.mjs` does,
+after `supabase start`, each file in one transaction with its history row —
+files after the release baseline as `migrate` mode runs them (one plpgsql
+`EXECUTE`), earlier files as one simple query. A file that `migrate` mode
+would refuse (transaction control) is refused locally too, and one it accepts
+(a top-level `LOCK TABLE`) is accepted. `tests/migration-ledger.test.mjs`
+fails a workflow or package script that lets the CLI apply migrations. Retiring or applying the never-applied
 files is a separate decision (P1-5), as is removing the test schema (P0-4).
 
 ## Checks
