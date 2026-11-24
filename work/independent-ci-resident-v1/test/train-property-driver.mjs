@@ -6,51 +6,85 @@
 //     green ledger, the stage's batch-route file, the status file the poller reads.
 //   an injection: every call of one read point, from one stage (or from every stage: scope 'tick'), fails during one round, the first
 //     round after the arm in which that stage calls it. error: the read throws; empty: it answers with nothing in it; twin: a second
-//     record of the same millisecond with another meaning lies beside the newest one (a state on disk: it stays until someone removes it).
-//   the property: within N rounds after the injection every PR has landed, or the node stands in an explicit final state: HALT with a
-//     code of the failure table, or PAUSE with a reason. Neither: a silent stall.
+//     record of the kind written through the store's own write() with the newest record's writtenAt and another meaning.
+//   the property: within N rounds after the injection every PR has landed, or the node stands in an explicit final state. The verdict
+//     has four classes (FABLE-train-property-decisions-20261124 §2); only the first two hold:
+//       landed    every PR merged;
+//       terminal  HALT with the code of a failure-table row whose disposition is halt, or PAUSE with a reason;
+//       burned    every PR not landed is STOPPED with a code of the failure table and the node is idle (the last tick IDLE, no DEFERRED
+//                 in the last rounds): only a new commit runs the PR again, but the node is not blocked;
+//       stall     everything else: a HALT whose code no halt row names, a DEFERRED every round, a row QUEUED or PARKED for ever.
 // A round is what the service does in a minute: one poller pass, one executor tick, the clock a minute on.
 // Where the scene is the fixture's and not the product's (the verdict of a case that ends there is the fixture's, and the table says so):
 //   - the fixture runs a stage in this process, with no stage entry around it. A stage that throws is answered here as the real entry
 //     answers a throw (entry-runtime.mjs#runEntry: BLOCKED, reason safeReason(error), no side effects; stage 10 after a write, by
-//     settleTrain: UNCERTAIN with the count), and the engine hands that reason over as the stage's code, with a clean proof.
+//     settleTrain: UNCERTAIN with the count), and its code is the one the real engine makes of that outcome (stage-fact.mjs: a failed
+//     stage, 1, 8 and 10 alike, ends in outcomeFailureCode(boundOutcome, stage)), with a clean proof.
 //   - a stage that answers without throwing hands over the code the fixture makes of it: stage 1 says NATIVE_NOT_ADMITTED with no reason
-//     code for every answer but ADMITTED, stage 8 the publisher's own reason.
-//   - HALT codes are the executor's own (TRAIN_STAGE_OUTCOME_UNCONFIRMED, ...), most of them no row of failure-table.json: a HALT with a
-//     code is a final state here, and the verdict says whether the table has the code.
+//     code for every answer but ADMITTED; stage 8 maps the publisher's own reason with outcomeFailureCode.
+//   - an "empty" answer is only one the real read can give (EMPTY below, read off each real read); a read that answers its thing or
+//     throws, never nothing, has no empty case (NO_EMPTY).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { trainLandingWorld } from './train-landing-world.mjs';
-import { canonical } from '../../actions-hosted-migration/independent-ci-v1/src/proof.mjs';
 import { safeReason } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/entry-runtime.mjs';
-import { TrainSweepStore } from '../../actions-hosted-migration/independent-ci-v1/src/independent-control-checks-v2/train-sweep-store.mjs';
+import { outcomeFailureCode } from '../../actions-hosted-migration/independent-ci-v1/src/resident-v2/stage-fact.mjs';
 
 export const ROUNDS = 60; // §3.8 step 1: N starts at the 60 of the existing cases (train-landing-e2e E9)
+// A known red runs this many rounds (decisions §4: a case that lands does so within 11 rounds; a known red only waits for a known end).
+export const KNOWN_RED_ROUNDS = 20;
 const TABLE = JSON.parse(await fs.readFile(fileURLToPath(new URL('../src/failure-table.json', import.meta.url)), 'utf8'));
 const TABLE_CODES = new Set(TABLE.rows.map(r => r.code));
+const HALT_CODES = new Set(TABLE.rows.filter(r => r.disposition === 'halt').map(r => r.code));
+export const holds = v => v.verdict === 'landed' || v.verdict === 'terminal';
+// "the node is idle": the last tick IDLE and no DEFERRED among the last ten (a PR behind may have landed only a few rounds ago)
+const IDLE_ROUNDS = 10;
 const PROOF = Object.freeze({ windowsTreeZero: true, serviceOriginalStopped: true });
-// The fixture's stage threw: what the real stage entry and engine make of it (see above).
-function thrownStage(error, train) {
-  const reason = safeReason(error), wrote = train && Number.isSafeInteger(error?.sideEffects) && error.sideEffects > 0;
-  return { ok: false, code: reason, proof: PROOF, ...(train ? { train: null, runId: null } : {}),
-    outcome: { status: wrote ? 'UNCERTAIN' : 'BLOCKED', reason, sideEffects: wrote ? error.sideEffects : 0, mayHavePublished: wrote, diagnostic: null, scheduling: null, safeToRerun: false } };
+// The fixture's stage threw: what the real stage entry and engine make of it (see above). stage: 1, 8 or 10.
+function thrownStage(error, stage) {
+  const train = stage === 10, reason = safeReason(error), wrote = train && Number.isSafeInteger(error?.sideEffects) && error.sideEffects > 0;
+  const outcome = { status: wrote ? 'UNCERTAIN' : 'BLOCKED', reason, sideEffects: wrote ? error.sideEffects : 0, mayHavePublished: wrote, diagnostic: null, scheduling: null, safeToRerun: false };
+  return { ok: false, code: outcomeFailureCode(outcome, stage), proof: PROOF, ...(train ? { train: null, runId: null } : {}), outcome };
 }
 const http502 = () => Object.assign(new Error('github_http_502'), { code: 'github_http_502' });
 
-// What "empty" is for a read whose answer is a list; every other read answers null.
+// What "empty" is at each read point: the answer the real read gives when there is nothing (decisions §3), read off the real reads:
+// src/github.mjs; independent-control-checks-v2/train-sweep-store.mjs, green-ledger.mjs, merge-slot-native.mjs#holders;
+// scripts/ci/clued-merge-train-native.mjs#nodesStatus; the resident's src/poller.mjs and status.mjs#pollerLandingOf.
+// (args, call): call() is the real answer, for the parts the real read always fills. PASS: this call has no empty answer (it is
+// neither injected nor counted as a hit).
+const PASS = Symbol('no empty answer for this call');
 const EMPTY = {
   'github.readBranchRules': () => ({ complete: true, branch: 'main', rules: [] }),
   'github.readChecks': () => ({ complete: true, checks: [] }),
+  'github.readOwnChecksByName': () => ({ complete: true, checks: [] }),
   'github.readPullsPage': ([o]) => ({ complete: true, page: o?.page ?? 1, pulls: [], last: true }),
   'github.readChangedPaths': ([j]) => ({ complete: true, pr: j.pr, headSha: j.headSha, baseSha: j.baseSha, paths: [] }),
-  'github.readPullCommitsBounded': () => ({ complete: true, tooMany: false, count: 0, headSha: null, commits: [] }),
+  // the only answer without commits: the page bound reached (a PR has at least one commit; its snapshot is kept)
+  'github.readPullCommitsBounded': async (a, call) => ({ ...(await call()), complete: false, tooMany: false, commits: [] }),
+  // the ruleset names no bypass for this App (current_user_can_bypass absent)
+  'github.readRuleset': ([id]) => ({ id, currentUserCanBypass: null }),
   'native.holders': () => ({ onDuty: true, holders: [] }),
-  'native.nodesStatus': () => ({ deployed: true, onDuty: true, dropped: 0, nodes: [] }),
+  'native.nodesStatus': async (a, call) => ({ ...(await call()), onDuty: true, deployed: true, watchdog: null, nodes: [], dropped: 0, sweepWatermark: null }),
+  'ledger.list': () => ({ entries: [], refused: [] }),
   'store.landingBatches': () => [],
+  // no landing-state record: the empty state, never null
+  'store.readLandingState': () => ({ bad: [], suspect: null, adopted: [], handled: [] }),
+  // the poller: only the open pulls have an empty answer (no open pull); the main ref and a compare answer their thing or fail
+  'poller.gh': ([argv]) => (argv.some(a => /\/pulls\?state=open/.test(a)) ? { code: 0, stdout: 'HTTP/1.1 200 OK\n\n[]' } : PASS),
+  // a status file not read in time or unreadable is github-merge (status.mjs#pollerLandingOf(null))
+  'poller.status': () => 'github-merge',
 };
+// The store's other reads answer null when there is no record (train-sweep-store.mjs: `[0] ?? null`, `p`).
+for (const point of ['store.landingBatchByTest', 'store.latestProof', 'store.latestProofStrict', 'store.latestStrictFrontProof', 'store.latestStrictProof',
+  'store.readFrontSeen', 'store.readFullSweep', 'store.readFullSweepStrict', 'store.readPendingRevocations', 'store.readScanProgress', 'store.readSlotGreen',
+  'store.readStrictRound']) EMPTY[point] = () => null;
 // The fixture's own answer is already empty: an empty answer is no injection there.
 export const ALREADY_EMPTY = new Set(['github.readPullsUpdatedSince', 'github.readForcePushes']);
+// The real read answers its thing or throws, never nothing (github.mjs: a reply that is not the thing is refused; readPullRequest hands
+// on GitHub's body of a 200 for /pulls/<n>, never null): no empty case.
+export const NO_EMPTY = new Set(['github.readBranchHead', 'github.readCompare', 'github.readGitCommit', 'github.readPullRequest']);
 // The sweep store's record kinds read "newest, and every record of its millisecond must mean the same" (train-sweep-store.mjs).
 export const TWIN_KINDS = Object.freeze(['proof', 'pending-revocations', 'full-on', 'strict-round', 'strict-proof', 'strict-front-proof', 'scan-on']);
 
@@ -61,12 +95,16 @@ const methodsOf = o => {
 };
 const isRead = name => /^(read|latest|landingBatch|list|load|find|has|get)/.test(name) && name !== 'read';
 
-// A second valid record in the newest record's millisecond, with another meaning; null when the kind has no record yet or none can be made.
-async function writeTwin(directory, kind) {
-  const names = (await fs.readdir(directory)).filter(n => n.startsWith(`${kind}-`) && /^\d{13}-/.test(n.slice(kind.length + 1)) && n.endsWith('.json')).sort();
+// A second record of the kind through the store's own write() (train-sweep-store.mjs#write, the one door of every kind; decisions §7),
+// with the newest record's writtenAt and another meaning: while the store takes the stamp as given it lies in the newest record's
+// millisecond; once the store keeps its stamps strictly increasing it is moved on. -> { name, sameMs }, or null when the kind has no
+// record yet or no variant is a valid record (write() refuses one before it writes anything).
+async function writeTwin(store, kind) {
+  const ms = name => name.slice(kind.length + 1, kind.length + 14);
+  const names = (await fs.readdir(store.directory)).filter(n => n.startsWith(`${kind}-`) && /^\d{13}-/.test(n.slice(kind.length + 1)) && n.endsWith('.json')).sort();
   const newest = names.at(-1);
   if (!newest) return null;
-  const record = JSON.parse(await fs.readFile(path.join(directory, newest), 'utf8'));
+  const record = JSON.parse(await fs.readFile(path.join(store.directory, newest), 'utf8'));
   const variants = [];
   for (const [k, v] of Object.entries(record)) {
     if (['writtenAt', 'runId', 'contract'].includes(k)) continue;
@@ -75,12 +113,10 @@ async function writeTwin(directory, kind) {
     if (typeof v === 'string' && /^[0-9a-f]{40}$/.test(v)) variants.push({ ...record, [k]: `${v.slice(0, 39)}${v.endsWith('0') ? '1' : '0'}` });
     if (Array.isArray(v) && v.length) variants.push({ ...record, [k]: v.slice(0, -1) });
   }
-  for (const [i, twin] of variants.entries()) {
-    const name = newest.replace(/-[0-9a-f]{8}\.json$/, `-${(0xfab1e000 + i).toString(16)}.json`), file = path.join(directory, name);
-    await fs.writeFile(file, canonical(twin), { flag: 'wx' });
-    const fresh = await TrainSweepStore.open(directory), read = await fresh.read(kind, 1, () => true, true);
-    if (fresh.torn === 0 && read.length >= 2 && new Set(read.map(r => fresh.strictMeaning(r))).size >= 2) return name;
-    await fs.rm(file);
+  for (const twin of variants) {
+    let name;
+    try { name = await store.write(kind, twin); } catch { continue; }
+    return { name, sameMs: ms(name) === ms(newest) };
   }
   return null;
 }
@@ -99,9 +135,15 @@ export async function scene(t, { prs = [1441, 1442, 1443], stage8Code = null } =
     count(point, ctx.stage);
     const j = ctx.injection;
     if (!j || !j.armed || j.done || j.point !== point || !inScope(j)) return call();
+    if (j.mode === 'error') {
+      j.hits += 1; j.stages.add(ctx.stage);
+      return Promise.reject(point.startsWith('github.') ? http502() : new Error(`injected: ${point} unreadable`));
+    }
+    if (!EMPTY[point]) return Promise.reject(new Error(`train property: no empty answer is known for ${point}`));
+    const empty = EMPTY[point](args, call);
+    if (empty === PASS) return call();
     j.hits += 1; j.stages.add(ctx.stage);
-    if (j.mode === 'error') return Promise.reject(point.startsWith('github.') ? http502() : new Error(`injected: ${point} unreadable`));
-    return Promise.resolve((EMPTY[point] ?? (() => null))(args));
+    return Promise.resolve(empty);
   };
   const wrap = (object, prefix, names) => {
     for (const name of names) { const original = object[name].bind(object), point = `${prefix}.${name}`; object[name] = (...a) => hit(point, a, () => original(...a)); }
@@ -110,11 +152,16 @@ export async function scene(t, { prs = [1441, 1442, 1443], stage8Code = null } =
   wrap(e.native.port, 'native', ['holders', 'nodesStatus']);
   wrap(e.store, 'store', methodsOf(e.store).filter(isRead));
   wrap(e.ledger, 'ledger', methodsOf(e.ledger).filter(isRead));
-  // the stage's batch-route file (stage 1 and 8 read it from their stage directory): error removes it, empty leaves it with no bytes
+  // the stage's batch-route file (stage 1 and 8 read it from their stage directory), a state of the file: error removes it, empty
+  // leaves it with no bytes
   const tamper = async (number, dir) => {
     const file = path.join(dir, 'batch-route.json');
     if (!(await fs.stat(file).then(() => true, () => false))) return;
-    await hit('stage-file.batch-route', [], async () => 'kept').then(async v => { if (v === null) await fs.writeFile(file, ''); }, async () => { await fs.rm(file); });
+    const j = ctx.injection, inject = j && j.armed && !j.done && j.point === 'stage-file.batch-route' && inScope(j);
+    count('stage-file.batch-route', ctx.stage);
+    if (!inject) return;
+    j.hits += 1; j.stages.add(ctx.stage);
+    if (j.mode === 'error') await fs.rm(file); else await fs.writeFile(file, '');
   };
   const r = await w.residentOver(t, e, { queueFacts: true, tamper });
   const { engine } = r;
@@ -124,14 +171,14 @@ export async function scene(t, { prs = [1441, 1442, 1443], stage8Code = null } =
       const before = ctx.stage;
       ctx.stage = name === 'runTrainStage' ? '10' : String(b.number);
       try {
-        const x = await original(a, b).catch(error => { ctx.thrown.push([ctx.round, ctx.stage, safeReason(error)]); return thrownStage(error, name === 'runTrainStage'); });
+        const x = await original(a, b).catch(error => { ctx.thrown.push([ctx.round, ctx.stage, safeReason(error)]); return thrownStage(error, Number(ctx.stage)); });
         return stage8Code && ctx.stage === '8' && x.ok === false ? { ...x, code: stage8Code, outcome: { ...x.outcome, reason: stage8Code } } : x;
       } finally { ctx.stage = before; }
     };
   }
   // the poller's own reads: GitHub through gh (the main ref, the open pulls, compare) and the status file the executor writes
   const run = r.poller.run, landing = r.poller.landing;
-  r.poller.run = argv => hit('poller.gh', argv, () => run(argv)).then(v => v ?? { code: 0, stdout: 'HTTP/1.1 200 OK\n\n[]' });
+  r.poller.run = (argv, o) => hit('poller.gh', [argv, o], () => run(argv, o));
   r.poller.landing = () => hit('poller.status', [], () => landing());
   const landedCount = () => prs.filter(pr => e.W.pulls.get(pr).merged).length;
   const s = { w, e, r, ctx, prs, landed: () => landedCount() === prs.length, landedCount, ticks: [] };
@@ -160,15 +207,15 @@ export async function census(t) {
 }
 
 // c: { point, scope: '1'|'8'|'10'|'tick'|'poller', mode: 'error'|'empty'|'twin', arm: 'start'|'mid' } (twin: point is 'store:<kind>';
-// arm mid: after the first front batch landed). Returns { verdict: 'landed'|'terminal'|'stall'|'not-reached', detail }.
+// arm mid: after the first front batch landed). Returns { verdict: 'landed'|'terminal'|'burned'|'stall'|'not-reached', detail }.
 export async function inject(t, c, { rounds = ROUNDS } = {}) {
   const s = await scene(t, { stage8Code: c.stage8Code ?? null }), { r, ctx } = s;
   const armed = () => (typeof c.arm === 'number' ? ctx.round + 1 >= c.arm : c.arm === 'start' || s.firstLanded());
-  let injectedAt = null, first = null;
+  let injectedAt = null, first = null, twin = null;
   if (c.mode === 'twin') {
     const kind = c.point.slice('store:'.length);
     for (let i = 0; i < rounds && injectedAt === null && !s.landed(); i++) {
-      if (armed() && await writeTwin(s.e.store.directory, kind)) injectedAt = ctx.round; else await s.round();
+      if (armed() && (twin = await writeTwin(s.e.store, kind))) injectedAt = ctx.round; else await s.round();
     }
   } else {
     const j = ctx.injection = { ...c, armed: false, done: false, hits: 0, stages: new Set() };
@@ -186,19 +233,27 @@ export async function inject(t, c, { rounds = ROUNDS } = {}) {
     halt = await r.f.ledger.halted();
     paused = x?.state === 'PAUSED' ? (x.reason ?? 'no reason') : null;
   }
-  const after = ctx.round - injectedAt, hits = ctx.injection ? `${ctx.injection.hits} call(s) in ${[...ctx.injection.stages].join('+')}` : 'a record on disk';
+  const after = ctx.round - injectedAt;
+  const hits = ctx.injection ? `${ctx.injection.hits} call(s) in ${[...ctx.injection.stages].join('+')}` : `a record written ${twin.sameMs ? 'in the newest record\'s millisecond' : 'after the newest record\'s millisecond'}`;
   const head = `injected in round ${first !== null && first !== injectedAt ? `${first}-` : ''}${injectedAt} (${hits})`, part = `landed ${s.landedCount()}/${s.prs.length}`;
   if (s.landed()) return { verdict: 'landed', detail: `${head}; all landed ${after} rounds later` };
   halt ??= await r.f.ledger.halted();
   const code = halt?.value?.code ?? halt?.code ?? null;
   const thrown = ctx.thrown.length ? `; stage threw (answered as the entry does): ${[...new Set(ctx.thrown.map(x => `${x[1]}:${x[2]}`))].join(', ')}` : '';
-  if (halt && typeof code === 'string') return { verdict: 'terminal', detail: `${head}; HALT ${code}${TABLE_CODES.has(code) ? '' : ' (no row of the failure table)'} ${after} rounds later; ${part}${thrown}` };
+  if (halt && HALT_CODES.has(code)) return { verdict: 'terminal', detail: `${head}; HALT ${code} ${after} rounds later; ${part}${thrown}` };
   if (!halt && paused && paused !== 'no reason') return { verdict: 'terminal', detail: `${head}; PAUSE ${paused}; ${part}` };
   const last = r.engine.trainRuns.at(-1);
-  const rows = s.w.rowsOf(r.f).map(x => `${x.pr}:${x.state}${r.f.queue.row(x.pr)?.reason ? `(${r.f.queue.row(x.pr).reason})` : ''}`).join(' ');
+  const rowsOf = s.w.rowsOf(r.f), reasonOf = pr => r.f.queue.row(pr)?.reason ?? null;
+  const rows = rowsOf.map(x => `${x.pr}:${x.state}${reasonOf(x.pr) ? `(${reasonOf(x.pr)})` : ''}`).join(' ');
   const tail = [...new Set(s.ticks.slice(-10).map(x => `${x[1]}${x[2] ? `:${x[2]}` : ''}`))].join(', ');
   const stage8 = [...new Set(r.engine.stage8.slice(-6).map(x => `${x.pr}${x.front ? 'F' : ''}:${x.status}${x.reason ? `:${x.reason}` : ''}`))].join(', ');
-  const why = halt ? 'HALT without a code' : paused ? 'PAUSE without a reason' : 'no HALT, no PAUSE';
-  return { verdict: 'stall', detail: `${head}; ${after} rounds later ${part}; ${why}; stage 10 says ${last?.decision ?? null}${last?.landing?.error ? ` (${last.landing.error})` : ''}`
-    + `; rows ${rows || 'none'}; last ticks ${tail}; last stage 8 ${stage8 || 'none'}${thrown}` };
+  const why = halt ? (typeof code === 'string' ? `HALT ${code}, which no halt row of the failure table names` : 'HALT without a code') : paused ? 'PAUSE without a reason' : 'no HALT, no PAUSE';
+  const state = `${after} rounds later ${part}; ${why}; stage 10 says ${last?.decision ?? null}${last?.landing?.error ? ` (${last.landing.error})` : ''}`
+    + `; rows ${rows || 'none'}; last ticks ${tail}; last stage 8 ${stage8 || 'none'}${thrown}`;
+  // burned: no HALT or PAUSE, each PR not landed STOPPED with a code of the table, and the node idle
+  const open = s.prs.filter(pr => !s.e.W.pulls.get(pr).merged);
+  const stopped = open.every(pr => rowsOf.some(x => x.pr === pr && x.state === 'STOPPED') && TABLE_CODES.has(reasonOf(pr)));
+  const idle = s.ticks.at(-1)?.[1] === 'IDLE' && !s.ticks.slice(-IDLE_ROUNDS).some(x => String(x[1]).startsWith('DEFERRED'));
+  if (!halt && !paused && stopped && idle) return { verdict: 'burned', detail: `${head}; ${state}` };
+  return { verdict: 'stall', detail: `${head}; ${state}` };
 }
