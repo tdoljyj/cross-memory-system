@@ -231,3 +231,11 @@ test('the last migration-verify pattern of the selector is refused, however far 
   const pattern=SUITES['migration-verify']['production-schema'].at(-1);
   await selectedAndRefused([{filename:pattern.replaceAll('**','x/y').replaceAll('*','x'),status:'modified'}],pattern);
 });
+
+// The selector is imported where it is used, never statically: a selector that cannot load only withholds the evidence
+// and never stops the runtimes that import this module (board line 251, supplementary ruling).
+test('the module never imports the selector statically',()=>{
+  const source=fs.readFileSync(new URL('./clued-required-applicability.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/\bimport\b[^;'"()]*\bfrom\s*['"]\.\/ci-required-selection\.mjs['"]/);
+  assert.doesNotMatch(source,/^\s*import\s*['"]\.\/ci-required-selection\.mjs['"]/m);
+});

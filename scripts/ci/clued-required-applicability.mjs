@@ -4,9 +4,6 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {performance} from 'node:perf_hooks';
 import {REQUIRED_TESTS_SOURCE} from './clued-workflow-profile.mjs';
-// Which changes need the migration verification is the selector's own answer (board line 251); its base bytes are
-// checked against these below, so the selection used is the reviewed one.
-import {SELECT_ALL,SUITES,selectSuites} from './ci-required-selection.mjs';
 
 export const COMPONENT_VERSION='1.0.16';
 const tokens=new WeakMap(),SHA=/^[a-f0-9]{40}$/,REPO=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -31,7 +28,6 @@ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const positive=n=>Number.isSafeInteger(n)&&n>0;
 const safePath=p=>typeof p==='string'&&p.length>0&&p.length<=4096&&!/[\u0000-\u001f\u007f\u0085\u2028\u2029\\]/.test(p)&&
   !p.startsWith('/')&&!p.split('/').some(x=>!x||x==='.'||x==='..');
-const policySha=digest({migration:SUITES['migration-verify'],select_all:SELECT_ALL});
 function pull(pr,{repository,prNumber,head,base}) {
   if(pr?.number!==prNumber||pr.state!=='open'||pr.head?.sha!==head||pr.base?.sha!==base||
     pr.base?.repo?.full_name!==repository||!REPO.test(pr.head?.repo?.full_name??'')||
@@ -88,6 +84,11 @@ export async function readRequiredApplicability(options) {
   let active=true,timer,externalAbort,externalSignal;const abort=new AbortController();
   const refused=new Error('REQUIRED_APPLICABILITY_UNCONFIRMED');
   try {
+    // Which changes need the migration verification is the selector's own answer (board line 251). It is loaded here, not
+    // statically: a selector that cannot load only withholds the evidence (the catch below) and never stops the runtimes
+    // that import this module. Its base bytes are checked against the local ones below, so the selection is the reviewed one.
+    const {SELECT_ALL,SUITES,selectSuites}=await import('./ci-required-selection.mjs');
+    const policySha=digest({migration:SUITES['migration-verify'],select_all:SELECT_ALL});
     const allowed=new Set(['read','readLog','repository','prNumber','head','base','runId','runAttempt','requestKey','trustedGateBlob','signal']);
     if(!options||typeof options!=='object'||Object.keys(options).some(k=>!allowed.has(k)))return null;
     const {read,readLog,requestKey,signal,...subject}=options;
