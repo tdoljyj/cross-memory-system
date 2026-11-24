@@ -23,7 +23,7 @@ function checkout(t){
 }
 function run(file,cwd,extra={}){
   const env={...process.env,...extra};
-  for(const name of ['CLUED_R9_TEST_DEPENDENCY_ROOT','CLUED_R9_CHECKOUT_CHILD','NODE_TEST_CONTEXT'])delete env[name];
+  for(const name of ['CLUED_R9_TEST_DEPENDENCY_ROOT','NODE_TEST_CONTEXT'])delete env[name];
   if(!extra.CLUED_R9_TEST_REPO_ROOT)delete env.CLUED_R9_TEST_REPO_ROOT;
   return spawnSync(process.execPath,['--test','--test-reporter=tap',file],{cwd,env,encoding:'utf8'});
 }
