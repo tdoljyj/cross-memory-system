@@ -2039,8 +2039,16 @@ function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutS
     $child.StartInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
     foreach ($name in $RemoveEnvironment) { $child.StartInfo.EnvironmentVariables.Remove($name) }
     foreach ($name in $Environment.Keys) { $child.StartInfo.EnvironmentVariables[$name] = $Environment[$name] }
-    if ($null -ne $StandardInput) { $child.StartInfo.RedirectStandardInput = $true }
-    [void]$child.Start()
+    # Standard input as UTF-8 without a byte order mark: Windows PowerShell's .NET writes it in the console's input encoding, which on a
+    # UTF-8 console (hosted runners) starts with a BOM, and the child would read the BOM as the password's first character.
+    $inputWas = $null
+    if ($null -ne $StandardInput) {
+      $child.StartInfo.RedirectStandardInput = $true
+      $plain = New-Object Text.UTF8Encoding $false
+      if ($child.StartInfo.PSObject.Properties['StandardInputEncoding']) { $child.StartInfo.StandardInputEncoding = $plain }
+      elseif ([Console]::InputEncoding.GetPreamble().Length -gt 0) { $inputWas = [Console]::InputEncoding; [Console]::InputEncoding = $plain }
+    }
+    try { [void]$child.Start() } finally { if ($null -ne $inputWas) { [Console]::InputEncoding = $inputWas } }
     $stdout = $child.StandardOutput.ReadToEndAsync()
     $stderr = $child.StandardError.ReadToEndAsync()
     # a child that ends before it reads its standard input (it refused first) closes the pipe: its exit and output say why

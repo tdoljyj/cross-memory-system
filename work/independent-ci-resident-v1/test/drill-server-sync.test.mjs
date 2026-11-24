@@ -222,6 +222,10 @@ test('the sync script is given the list, the Release\'s first-install kit and th
   assert.equal(seen.argv[4], '--server'); assert.equal(path.basename(seen.argv[5]), 'drill-server.json');
   assert.equal(seen.argv.includes('--rebuild'), false, 'never a rebuild unless asked for');
   assert.doesNotMatch(JSON.stringify(seen.argv) + JSON.stringify(seen.env), new RegExp(DB_PASSWORD), 'in no argument and no environment variable');
+  // a UTF-8 console (hosted runners): Windows PowerShell's .NET would put a BOM before the password; the child gets the password alone
+  const bom = fakeSyncTool('in-sync-utf8-console', inSync());
+  ps(`${w.setup}; $script:Drill.SyncTool = ${q(bom.tool)}; [Console]::InputEncoding = New-Object Text.UTF8Encoding $true; Sync-DrillServer ${q(w.from)} '1.2.3' | Out-Null; 'done'`);
+  assert.equal(bom.seen().stdin, DB_PASSWORD, 'no byte order mark before the password on a UTF-8 console');
   assert.doesNotMatch(JSON.stringify(r), new RegExp(DB_PASSWORD));
   // asked for, a rebuild
   ps(`${w.setup}; $script:Drill.SyncTool = ${q(t.tool)}; Sync-DrillServer ${q(w.from)} '1.2.3' -Rebuild`);
