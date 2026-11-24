@@ -965,6 +965,10 @@ test('P6 窗口内也不放过：合入后 9 分钟，能确定没有结论或�
     ['merged_at 读不到（不可解析）', { mergedAt: 'not-a-date' }, 'ci-suites-windows', '框架未完成（in_progress）'],
     ['托管一项缺', { headRuns: hostedOverride(undefined) }, 'trivy', '托管缺检查'],
     ['托管一项 in_progress', { headRuns: hostedOverride([run('hosted-trivy', 15368, null, { status: 'in_progress', started: t })]) }, 'trivy', '托管未完成（in_progress）'],
+    // §9 补一条：M 上 trivy 整项缺（其余同 P1），托管 trivy 未完成，不算框架结论未出。
+    ['M 缺一项、托管这一项 in_progress', { mRuns: frameworkOnly(t, check => check === 'trivy' ? undefined
+      : check === 'ci-suites-windows' ? [run(check, FRAMEWORK_PINS[check], null, { status: 'in_progress', started: t })] : null),
+    headRuns: hostedOverride([run('hosted-trivy', 15368, null, { status: 'in_progress', started: t })]) }, 'trivy', '框架缺检查'],
     ['now 早于 merged_at', { minutes: -5 }, 'ci-suites-windows', '框架未完成（in_progress）'],
   ];
   for (const [label, options, check, reason] of cases) {
