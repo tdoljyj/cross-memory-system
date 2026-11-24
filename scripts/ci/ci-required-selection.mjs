@@ -112,8 +112,7 @@ const AUTHORIZATION_DB_TESTS = [
   'owner-grants-resident-upgrade-door-db', 'owner-grants-scope-db', 'owner-request-bundles-db', 'priority-projection-db', 'production-release-door-flow-db',
   'project-invitations-db',
   'project-list-authorization-db', 'projection-refresh-pipeline-db', 'record-update-field-merge-db', 'resource-center-authority-db',
-  'retention-sweep-db',
-  'resume-constraint-index-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
+  'migration-size-gate-db', 'resume-constraint-index-db', 'retention-classes-db', 'retention-sweep-db', 'search-context-cross-scope-db', 'search-context-rereview-db', 'session-context-from-token-db',
   'task-dependency-guard-db', 'work-claim-exemptions-db', 'work-claims-acceptance-db', 'work-claims-binding-roles-db', 'work-claims-ci-metering-db',
   'work-claims-continuation-db', 'work-claims-hardening-db', 'work-claims-main-merge-db', 'work-claims-multi-copy-db', 'work-claims-reject-receipts-db', 'work-claims-owner-grants-db', 'work-claims-rate-buckets-db',
   'work-claims-resource-kinds-db', 'worker-gateway-db', 'worker-gateway-request-context-db',
@@ -184,7 +183,8 @@ export const SUITES = {
     'pinned-registries': PINNED_REGISTRY_PATHS,
     'mechanical-outputs': GENERATED_OUTPUTS,
     'powershell-count': ['**/*.ps1', 'scripts/ci/check-powershell-count.mjs', 'scripts/ci/check-powershell-count.test.mjs'],
-    'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/cron-budget-allowlist.json'],
+    'cron-budget': ['**/wrangler*.jsonc', '**/migrations/*.sql', 'scripts/ci/check-cron-budget*.mjs', 'scripts/ci/sql-tokens.mjs',
+      'scripts/ci/cron-budget-allowlist.json'],
     // Every CI dependency install goes through scripts/ci/ci-deps.mjs (offline; preparing its store is the one networked step).
     'ci-deps-entry': ['.github/workflows/**', '.github/actions/**', 'scripts/ci/**', 'scripts/runner/**'],
     // Its tests read the database tests of apps/clued-cloud/tests and what they import, so a new or changed test there, or
