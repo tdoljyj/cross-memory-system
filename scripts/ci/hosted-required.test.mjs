@@ -190,7 +190,7 @@ const SHARDED = [
   { id: 'ci-suites', check: 'ci-suites', name: 'hosted-ci-suites', shards: 3, step: 'Every Linux suite shard succeeded' },
   { id: 'ci-suites-windows', check: 'ci-suites', name: 'hosted-ci-suites-windows', shards: 6, step: 'Every Windows suite shard succeeded' },
 ];
-const SHARD_RUN = check => new RegExp(`ci-required-selection\\.mjs --run-selected ${check} --root candidate --shard \\$\\{\\{ matrix\\.shard \\}\\}/\\$\\{\\{ strategy\\.job-total \\}\\}\\n`);
+const SHARD_RUN = check => new RegExp(`ci-required-selection\\.mjs --run-selected ${check} --root candidate --shard \\$\\{\\{ matrix\\.shard \\}\\}/\\$\\{\\{ strategy\\.job-total \\}\\}(?:\\n|$)`);
 test('件甲：三个分片作业跑 --run-selected <检查名> --shard i/n，片号正好 1..n，片数 4、3、6 只写在矩阵列表', () => {
   for (const { id, check, name, shards } of SHARDED) {
     const block = jobs(text).get(`${id}-shard`) ?? '';
@@ -288,7 +288,7 @@ test('hosted-gitleaks 的三步与自托管 R1 gitleaks 作业逐字一致，受
   }
   const want = trustedRef(jobs(text).get('clued-cloud-tests'));
   assert.ok(want, 'clued-cloud-tests 的受信检出没有 ref');
-  for (const id of ['ci-suites', 'migration-verify']) assert.equal(trustedRef(jobs(text).get(id)), want, id);
+  for (const id of ['ci-suites-shard', 'migration-verify-shard']) assert.equal(trustedRef(jobs(text).get(id)), want, id);
   assert.equal(trustedRef(hosted), want, 'hosted-gitleaks 的受信检出 ref 与其他托管作业不同');
   assert.match(hosted, /\n {6}- name: Check out the candidate\n[\s\S]*?\n {10}fetch-depth: 0\n {10}path: candidate\n/, '候选检出要全历史');
   assert.match(hosted, /\n {8}id: train-base\n/, '没有 train-base 步骤');
