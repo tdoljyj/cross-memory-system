@@ -138,7 +138,8 @@ function install() {
   // The test file this process runs: node --test starts one process a file (no suite uses --test-isolation=none), so it
   // is process.argv[1]; null when that is not test code (a script under test, node -e).
   let entry;
-  const entryFile = () => (entry === undefined ? (entry = process.argv[1] ? testFile(process.argv[1]) : null) : entry);
+  const launched = process.argv[1];
+  const entryFile = () => (entry === undefined ? (entry = launched ? testFile(launched) : null) : entry);
   // Whether a listed test of this process runs `file`: the entry when it is listed; else a listed *.test.* file the entry
   // imports (an aggregate test such as apps/clued-cloud/tests/local-dev-tools.test.mjs), when it is `file` or imports it.
   // A listed helper the entry imports is not such a test: an unlisted test that imports helpers.mjs borrows nothing.

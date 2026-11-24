@@ -379,4 +379,4 @@ function main(argv, env = process.env) {
   console.error('usage: node scripts/ci/test-clock-scan.mjs --check [--root <checkout>] [--base <commit>] | --write-debt [--root <checkout>]');
   return 2;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main(process.argv.slice(2));
+if (import.meta.main) process.exitCode = main(process.argv.slice(2));
