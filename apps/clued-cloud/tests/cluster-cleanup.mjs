@@ -208,8 +208,12 @@ const fatalLines = (log) => log.split(/\r?\n/).filter((line) => /FATAL|PANIC/.te
 // picked port, and each retry leaves one stderr line. Any other early exit is
 // thrown at once with its port and the postmaster's log, and a start error that
 // has a reason is thrown as it is. pickPort is handed the default picker.
-export async function startCluster(server, { initialise = true, attempts = START_ATTEMPTS, pickPort = freePort, log = defaultLog } = {}) {
-  if (initialise) await server.initialise();
+// mark(name, event) is told of each real library call as stopCluster's is:
+// 'initialise' once and 'start' for every start, retries too, each with
+// 'start' and 'end'; picking a port is in neither. A throwing mark is ignored.
+export async function startCluster(server, { initialise = true, attempts = START_ATTEMPTS, pickPort = freePort, log = defaultLog, mark } = {}) {
+  const step = { mark };
+  if (initialise) await cleanupStep(step, 'initialise', () => server.initialise());
   const ownLog = server.options.onLog;
   const ports = [];
   let lines = [];
@@ -221,7 +225,7 @@ export async function startCluster(server, { initialise = true, attempts = START
       ports.push(port);
       lines = [];
       try {
-        await server.start();
+        await cleanupStep(step, 'start', () => server.start());
         return server;
       } catch (error) {
         if (error !== undefined) throw error;
