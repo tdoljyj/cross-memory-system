@@ -329,14 +329,11 @@ legacy/local-memory-engine-vnext2/tests/test_truth_integration.py
 legacy/local-memory-engine-vnext2/tests/test_truth_provider.py
 legacy/local-memory-engine-vnext2/tests/test_truth_receipt_gate.py
 legacy/local-memory-engine-vnext2/tests/test_truth_state_conformance.py
-scripts/ci/ci-deps.test.mjs
 scripts/ci/ci-required-selection-flaky.test.mjs
 scripts/ci/ci-required-selection-lanes.test.mjs
 scripts/ci/ci-required-selection.test.mjs
 scripts/ci/clued-g4-fresh-start.test.mjs
-scripts/ci/clued-work-admission.test.mjs
 scripts/ci/local-verify-concurrency.test.mjs
-scripts/ci/local-verify.test.mjs
 scripts/ci/self-hosted/node-governance/governance.test.mjs
 scripts/ci/self-hosted/resource-maintenance/test_maintenance.py
 scripts/ci/self-hosted/resource-maintenance/test_producer.py

@@ -124,6 +124,8 @@ test('install is offline; only a missing or damaged package prepares the store, 
 });
 
 test('runners preparing one lockfile take turns; a dead holder is replaced; a long wait goes ahead without the lock', (t) => {
+  const NOW = Date.parse('2026-11-01T00:00:00Z');
+  t.mock.timers.enable({ apis: ['Date'], now: NOW }); // the lock age is read from Date.now() inside withKeyLock
   const cache = tempDir(t);
   const lock = path.join(cache, '_clued-ci-deps', 'locks', 'k');
   fs.mkdirSync(path.dirname(lock), { recursive: true });
@@ -139,11 +141,11 @@ test('runners preparing one lockfile take turns; a dead holder is replaced; a lo
   assert.equal(withKeyLock(cache, 'k', () => 'alongside', { log: quiet, sleep: () => { clock += 60_000; }, now: () => clock, waitMs: 120_000 }), 'alongside');
   assert.equal(fs.readFileSync(lock, 'utf8'), other, 'a lock it never held is left to its holder');
   // a lock older than any prepare (its pid may be reused), or left empty by a writer that died, is taken over
-  const old = (Date.now() - 31 * 60_000) / 1000;
+  const old = (NOW - 31 * 60_000) / 1000;
   fs.utimesSync(lock, old, old);
   assert.equal(withKeyLock(cache, 'k', () => 'took over', { log: quiet, sleep: () => assert.fail('no wait') }), 'took over');
   fs.writeFileSync(lock, '');
-  const minuteAgo = (Date.now() - 2 * 60_000) / 1000;
+  const minuteAgo = (NOW - 2 * 60_000) / 1000;
   fs.utimesSync(lock, minuteAgo, minuteAgo);
   assert.equal(withKeyLock(cache, 'k', () => 'took over', { log: quiet, sleep: () => assert.fail('no wait') }), 'took over');
   assert.equal(fs.existsSync(lock), false);
