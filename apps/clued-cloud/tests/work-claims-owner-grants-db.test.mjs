@@ -2,6 +2,7 @@ import { stopCluster, startCluster, EPHEMERAL_POSTGRES_FLAGS, EPHEMERAL_INITDB_F
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,6 +59,37 @@ test('a cluster whose port another cluster already holds still starts', { timeou
     try { assert.equal((await client.query('select 1 as v')).rows[0].v, 1); } finally { await client.end(); }
   } finally {
     for (const server of servers.reverse()) await stopCluster(server);
+  }
+});
+
+// One address family taken is not a taken port to a postmaster that listens on both: it comes up on the
+// other and the test would talk to whoever holds this one. newCluster listens on 127.0.0.1 only, so this
+// is the same retry as above. Without ::1 on the machine the case cannot tell the two apart.
+test('a port held on 127.0.0.1 alone is still a taken port', { timeout: 120000 }, async () => {
+  const holder = net.createServer();
+  await new Promise((resolve, reject) => { holder.once('error', reject); holder.listen(0, '127.0.0.1', resolve); });
+  const held = holder.address().port;
+  const servers = [];
+  try {
+    const late = await ephemeralCluster();
+    servers.push(late);
+    const retries = [];
+    let picks = 0;
+    await startCluster(late, {
+      pickPort: (pick) => (picks++ === 0 ? held : pick()),
+      log: (line) => { retries.push(line); process.stderr.write(`cluster-cleanup: ${line}
+`); },
+    });
+    assert.notEqual(late.options.port, held);
+    assert.equal(retries.length, 1);
+    assert.match(retries[0], /could not create any TCP\/IP sockets/);
+    const client = late.getPgClient();
+    client.host = '127.0.0.1';
+    await client.connect();
+    try { assert.equal((await client.query('select 1 as v')).rows[0].v, 1); } finally { await client.end(); }
+  } finally {
+    for (const server of servers.reverse()) await stopCluster(server);
+    await new Promise((resolve) => holder.close(resolve));
   }
 });
 

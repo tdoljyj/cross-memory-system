@@ -187,10 +187,12 @@ async function freePort() {
 
 export const START_ATTEMPTS = 5;
 
-// The postmaster's own words for "this port is taken": no TCP socket could be
-// bound, or another postmaster holds the port's socket lock file. The library
-// pins LC_MESSAGES to an English locale, so these are the English messages.
-export const PORT_TAKEN = /could not create any TCP\/IP sockets|Address already in use|Is another postmaster|lock file "[^"]*\.s\.PGSQL\.\d+\.lock" already exists/;
+// The postmaster's own words for "this port is taken", as whole FATAL lines: no TCP address could be
+// bound, or another postmaster holds the port's socket lock file (Linux). The library pins LC_MESSAGES
+// to an English locale, so these are the English messages. Other lines that mention a postmaster or an
+// address in use (the data directory held by another postmaster, one address family failing to bind)
+// are not a taken port.
+export const PORT_TAKEN = /FATAL: +(?:could not create any TCP\/IP sockets|lock file "[^"\r\n]*\.s\.PGSQL\.\d+\.lock" already exists)[ \t]*\r?$/m;
 
 const fatalLines = (log) => log.split(/\r?\n/).filter((line) => /FATAL|PANIC/.test(line)).map((line) => line.trim()).join(' | ') || log;
 

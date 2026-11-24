@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { CLEANUP_DEFAULTS, HOST_HARNESS_ROOT, removeTestDirectory, startCluster, stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
+import { CLEANUP_DEFAULTS, HOST_HARNESS_ROOT, PORT_TAKEN, removeTestDirectory, startCluster, stopCluster, waitForPidExit } from './cluster-cleanup.mjs';
 
 // No real waiting: every injected sleep only counts.
 const harness = (overrides = {}) => {
@@ -206,8 +206,9 @@ const portBoundServer = (taken) => {
       const at = server.options.port;
       server.starts.push(at);
       if (!taken.includes(at)) return Promise.resolve();
-      server.options.onLog(`LOG:  could not bind IPv4 address "127.0.0.1": Address already in use\n`);
-      server.options.onLog(`FATAL:  could not create any TCP/IP sockets (port ${at})\n`);
+      server.options.onLog(`2026-11-25 02:00:00.000 UTC [100] LOG:  could not bind IPv4 address "127.0.0.1": Address already in use\n`);
+      server.options.onLog(`2026-11-25 02:00:00.000 UTC [100] HINT:  Is another postmaster already running on port ${at}? If not, wait a few seconds and retry.\n`);
+      server.options.onLog(`2026-11-25 02:00:00.001 UTC [100] FATAL:  could not create any TCP/IP sockets\n`);
       return Promise.reject();
     },
   };
@@ -237,7 +238,7 @@ test('a postmaster that exits at start because its port was taken starts again o
   assert.equal(server.initialised, 1, 'the data directory is initialised once');
   assert.equal(server.options.port, 5002, 'clients connect to the port the postmaster holds');
   assert.equal(server.options.onLog, ownLog, 'the caller\'s log handler is back in place');
-  assert.deepEqual(lines, ['端口 5001 上 postmaster 启动即退出（端口冲突），改用端口 5002：FATAL:  could not create any TCP/IP sockets (port 5001)']);
+  assert.deepEqual(lines, ['端口 5001 上 postmaster 启动即退出（端口冲突），改用端口 5002：2026-11-25 02:00:00.001 UTC [100] FATAL:  could not create any TCP/IP sockets']);
 });
 
 test('a persistent cluster restarted with initialise: false is not initialised again', async () => {
@@ -253,7 +254,7 @@ test('when every start finds its port taken the error names the ports and carrie
   await assert.rejects(startCluster(server, { attempts: 3, pickPort: portsFrom([5001, 5002, 5003]), log }), (error) => {
     assert.ok(error instanceof Error);
     assert.match(error.message, /ports 5001, 5002, 5003 taken/);
-    assert.match(error.message, /could not create any TCP\/IP sockets \(port 5003\)/);
+    assert.match(error.message, /FATAL: {2}could not create any TCP\/IP sockets/);
     return true;
   });
   assert.deepEqual(server.starts, [5001, 5002, 5003]);
@@ -276,6 +277,48 @@ test('an early exit for anything but a taken port is not retried and carries the
   });
   assert.deepEqual(server.starts, [5001]);
   assert.deepEqual(lines, []);
+});
+
+const notTakenSamples = {
+  'the data directory is held by another postmaster': [
+    '2026-11-25 02:17:50.595 CST [67428] FATAL:  lock file "postmaster.pid" already exists\n',
+    '2026-11-25 02:17:50.595 CST [67428] HINT:  Is another postmaster (PID 60404) running in data directory "D:/t/pg-data"?\n',
+  ],
+  'one address failed to bind and the postmaster then exited for another reason': [
+    '2026-11-25 02:00:00.000 UTC [100] LOG:  could not bind IPv4 address "127.0.0.1": Address already in use\n',
+    '2026-11-25 02:00:00.000 UTC [100] HINT:  Is another postmaster already running on port 5001? If not, wait a few seconds and retry.\n',
+    '2026-11-25 02:00:00.001 UTC [100] LOG:  listening on IPv6 address "::1", port 5001\n',
+    '2026-11-25 02:00:00.001 UTC [100] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5001"\n',
+    '2026-11-25 02:00:00.002 UTC [100] FATAL:  could not load /tmp/pg-data/pg_hba.conf\n',
+    '2026-11-25 02:00:00.003 UTC [100] LOG:  database system is shut down\n',
+  ],
+};
+for (const [name, sample] of Object.entries(notTakenSamples)) {
+  for (const [how, chunks] of [['at once', [sample.join('')]], ['line by line', sample]]) {
+    test(`an early exit where ${name} is not a taken port and is not retried (${how})`, async () => {
+      const server = portBoundServer([]);
+      server.start = () => {
+        server.starts.push(server.options.port);
+        for (const chunk of chunks) server.options.onLog(chunk);
+        return Promise.reject();
+      };
+      const { lines, log } = startLog();
+      await assert.rejects(startCluster(server, { pickPort: portsFrom([5001, 5002]), log }), (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /on port 5001, not for a taken port, so not retried/);
+        assert.match(error.message, /FATAL: {2}(lock file "postmaster\.pid" already exists|could not load)/);
+        return true;
+      });
+      assert.deepEqual(server.starts, [5001]);
+      assert.deepEqual(lines, []);
+    });
+  }
+}
+
+test('a real TCP bind failure or an existing port lock file is a taken port, anything else on those lines is not', () => {
+  assert.ok(PORT_TAKEN.test('2026-11-25 02:00:00.001 UTC [100] FATAL:  could not create any TCP/IP sockets\r\n'));
+  assert.ok(PORT_TAKEN.test('x FATAL:  lock file "/tmp/.s.PGSQL.5001.lock" already exists\n'));
+  assert.ok(!PORT_TAKEN.test('LOG:  note: FATAL:  could not create any TCP/IP sockets (port 5001)\n'));
 });
 
 test('an early exit with an empty log is not retried either', async () => {
