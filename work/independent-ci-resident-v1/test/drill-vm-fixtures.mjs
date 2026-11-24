@@ -14,7 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
+import { acceptanceOf, prepare, requestLineOf, seal } from '../rollout/fleet/publish.mjs';
 import { FAKE_GH } from '../rollout/fleet/test/fleet-fixtures.mjs';
 import { writeTar } from '../rollout/fleet/tar.mjs';
 
@@ -32,10 +32,43 @@ export const PACKAGE_CREDENTIALS = { required: { appKey: 'app-private-key.pem', 
 export const CREDENTIAL_FILES_CONTRACT = 'clued.independent-ci.credential-files/1';
 export const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({ contract: CREDENTIAL_FILES_CONTRACT, ...c }, null, 2) + '\n';
 
+// The drill's server stand-in (drill/drill-server.json in a real run) and the fixtures' "production": what a Release kit names, what the
+// drill kit names instead, and the Owner's drill binding as drill-vm.ps1 reads it (a PSCredential: connection id, token). Fixture values,
+// registered nowhere.
+export const PRODUCTION_SERVER = { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' };
+// The production gateway a package's own code names (windows/SwapBroker.cs Route: the renew probe every service start sends), here a fixture.
+export const PRODUCTION_GATEWAY = 'gateway.prodfixture.example';
+// What the Release record names besides its server, sent with the role probe (scope, repository): the drill kit keeps them as they are.
+export const RECORD_NAMES = { scope: 'project:fixture-scope', repository: 'fixture-owner/fixture-repo' };
+export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest',
+  // every https host the package's archive names is one or the other, or no kit (review M1): the service's own beyond the record's
+  // database (cut off in the guest), and the others (not Clued's)
+  blackholeHosts: [PRODUCTION_GATEWAY], allowedHosts: ['api.github.com'],
+  // the session pooler the host's sync connects through (never in the kit: the guest does not use it)
+  poolerHost: 'aws-0-fixture-region-1.pooler.supabase.com' };
+export const BINDING_ID = '11111111-2222-4333-8444-555555555555';
+export const BINDING_TOKEN = 'clued_bnd_DRILLFIXTUREdrillfixture';
+export const bindingPs = `(New-Object System.Management.Automation.PSCredential ${"'" + BINDING_ID + "'"}, (ConvertTo-SecureString ${"'" + BINDING_TOKEN + "'"} -AsPlainText -Force))`;
+
 // The drill's named mutexes are machine-wide (Global\): a fixture holding them would refuse a real drill on this host and fail while one
 // runs. Every fixture that loads drill-vm.ps1 swaps in names of this test run's own right after loading it; the PowerShell processes one
 // test starts (a host and the watchdog it launches) load the same fixture, so they still share them.
-export const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}`;
+// (The same for the host's cache of the drill server's public key, drill-vm.ps1 -ServerKey: no fixture writes the host's own.)
+// The Owner's drill binding is read from the host (D:\\clued-drill, Get-DrillCredential -Binding): a fixture never reads that one. Every
+// fixture that loads drill-vm.ps1 points the script at this test run's own, a fixture binding written on first use.
+// Before any boot the host asks the drill's server itself (Assert-DrillServerReady: the sync receipt, the role probe). No fixture reaches
+// a server: every fixture's call is the offline half of that tool (the kit against its Release), unless a test gives its own answer.
+const offlineServer = `function Invoke-DrillServerReadyNode([string]$Node, [string]$KitDir, [string]$From, [string]$Version, $Binding) {
+    Invoke-DrillNode $Node @((Join-Path (Split-Path -Parent $script:DrillScriptPath) 'make-drill-kit.mjs'), '--server-of', $KitDir, '--from', $From, '--version', $Version) 60 }`;
+// Before the probe the host brings the test project to production's applied list (Sync-DrillServer: the release run's list, the sync
+// script with the database password on its standard input). No fixture reaches GitHub or a database: every fixture's sync answers "in
+// sync" (SYNCED) from here, and never reads the host's own password; a test that needs the real one takes $script:RealSyncDrillServer.
+export const SYNCED = { state: 'in-sync', releaseRun: 9001, productionLast: '20261124140000_context_archive_structure_v1', productionRows: 329, applied: 0, projectAccount: 'q***@qq.com' };
+const offlineSync = `$script:Drill.ServerDatabaseCredential = ${q(path.join(tmp, 'fixture-no-server-database.clixml'))}; $script:Drill.ProductionListCache = ${q(path.join(tmp, 'fixture-production-applied'))}
+  $script:RealSyncDrillServer = \${function:Sync-DrillServer}
+  function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) { ${q(JSON.stringify(SYNCED))} | ConvertFrom-Json }`;
+const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }; $script:Drill.ServerKeyFile = ${q(path.join(tmp, 'fixture-drill-server.local.json'))}; ${offlineServer}; ${offlineSync}`;
+export const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}; ${fixtureBinding}`;
 // The fixtures' one time (task ce2e5c1a step 2): a host status is written at T0, and Get-DrillTime answers T0 in every ps() snippet
 // that does not define its own, so what a fixture writes reads the same whenever the snippet runs. A snippet that needs time to pass
 // defines Get-DrillTime itself.
@@ -63,12 +96,15 @@ export const entryPs = expr => ps(`. ${q(entryScript)}; ${expr}`);
 
 // dropManifest: prerequisite item names left out of the package's prereq-manifest.json (Codex review of f33fc33e5, medium 3)
 // credentialFiles: the archive's windows/credential-files.json as text, or null for a package without one
-export function firstInstallAssets(label, { candidate = false, credentialFiles = credentialFilesJson(), dropManifest = [] } = {}) {
+// tarExtra: more entries of the archive ({ path, data })
+export function firstInstallAssets(label, { candidate = false, credentialFiles = credentialFilesJson(), dropManifest = [], tarExtra = [] } = {}) {
   const root = path.join(tmp, label); fs.mkdirSync(root);
   for (const d of ['build', 'final', 'images']) fs.mkdirSync(path.join(root, d));
   const version = '1.2.3', tag = `fleet-node-${version}`, id = 'b'.repeat(64);
   const image = `role-image-${id}.tar.gz`;
-  const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] } }));
+  // record: the two public server fields a real kit carries (prepare-record.mjs), here the stand-in for production (PRODUCTION_SERVER)
+  const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] },
+    record: { ...PRODUCTION_SERVER, node: 'fixture', ...RECORD_NAMES } }));
   const archive = writeTar([...['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
     path: `tree/work/independent-ci-resident-v1/rollout/fleet/${n}`,
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
@@ -76,13 +112,21 @@ export function firstInstallAssets(label, { candidate = false, credentialFiles =
       { name: 'gh', fileName: 'gh.msi', sha256: sha('gh'), bytes: 2 }, { name: 'git-for-windows', fileName: 'git.exe', sha256: sha('git'), bytes: 3 }
     ].filter(i => !dropManifest.includes(i.name)), debs: [{ fileName: 'docker.deb', sha256: sha('deb'), bytes: 3 }] })) })),
     ...(credentialFiles === null ? [] : [{ path: 'tree/work/independent-ci-resident-v1/windows/credential-files.json', data: Buffer.isBuffer(credentialFiles) ? credentialFiles : Buffer.from(credentialFiles) }]),
+    // the package's own code names the production gateway and a host that is not Clued's (SwapBroker.cs Route; any case)
+    { path: 'tree/work/independent-ci-resident-v1/windows/SwapBroker.cs', data: Buffer.from(`const string Route = "https://${PRODUCTION_GATEWAY}/v1/ci/node/renew"; // HTTPS://API.GitHub.com/x\n`) },
+    ...tarExtra,
     { path: 'universal-manifest.json', data: Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-universal/1', version, commit: 'c'.repeat(40), files: [] })) }]);
   fs.writeFileSync(path.join(root, 'build', `${tag}.tar`), archive);
   fs.writeFileSync(path.join(root, 'build', `${tag}.release.json`), '{}');
   fs.writeFileSync(path.join(root, 'build', 'SHA256SUMS'), `${sha(archive)}  ${tag}.tar\n${sha('{}')}  ${tag}.release.json\n`);
   fs.writeFileSync(path.join(root, 'final', `${tag}.first-install-kit.json`), kit);
-  if (!candidate) fs.writeFileSync(path.join(root, 'final', `${tag}.acceptance.json`), JSON.stringify({
-    contract: 'clued.independent-ci.fleet-node-acceptance/1', version, archive_sha256: sha(archive), firstInstallKitSha256: sha(kit), ciSourceManifestSha256: 'a'.repeat(64) }));
+  // an Owner's acceptance in full (publish.mjs acceptanceOf): the drill kit's stand-in acceptance is made from its fields
+  const U = n => `${String(n).repeat(8)}-1111-4111-8111-111111111111`;
+  if (!candidate) fs.writeFileSync(path.join(root, 'final', `${tag}.acceptance.json`), JSON.stringify(acceptanceOf({
+    version, archive_sha256: sha(archive), commit: 'c'.repeat(40), repository: 'tdoljyj/cross-memory-system', firstInstallKitSha256: sha(kit), ciSourceManifestSha256: 'a'.repeat(64),
+    fleetRefs: { sourceAcceptanceRef: U(5), hostQualificationRef: U(6), ownerAuthorizationRef: U(5), publisherQualificationRef: U(5), ownerPackageAcceptanceRef: U(5),
+      formalRoles: { gitleaks: { image: 'g' }, trivy: { image: 't' }, 'contract-placement': { image: 'c' } } } },
+  { decision: U(7), receipt: U(8), acceptedAt: '2026-01-01T00:00:00Z' })));
   fs.writeFileSync(path.join(root, 'images', image), 'fake image fixture');
   const prereq = path.join(root, 'prereq.json');
   fs.writeFileSync(prereq, JSON.stringify({ contract: 'clued.drill.prereq/1',
@@ -90,7 +134,7 @@ export function firstInstallAssets(label, { candidate = false, credentialFiles =
     debs: [{ path: 'docker.deb', sha256: sha('deb') }], tools: [{ path: 'gh.msi', sha256: sha('gh') }, { path: 'git.exe', sha256: sha('git') }] }));
   for (const [name, bytes] of [['wsl.msi', 'wsl'], ['ubuntu.wsl', 'rootfs'], ['docker.deb', 'deb'], ['gh.msi', 'gh'], ['git.exe', 'git']]) fs.writeFileSync(path.join(root, name), bytes);
   return { root, build: path.join(root, 'build'), final: path.join(root, 'final'), images: path.join(root, 'images'), version, prereq,
-    from: path.join(root, 'from'), out: path.join(root, 'kit') };
+    from: path.join(root, 'from'), out: path.join(root, 'kit'), server: DRILL_SERVER };
 }
 
 export const gateNow = '2026-11-19T02:00:00Z';
@@ -335,6 +379,7 @@ export const candidateStubs = `
     function Invoke-DrillWithHostHold { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
     function Get-DrillIntakeTool { throw (New-DrillError 'TEST_REACHED_HOST_HOLD') }
     function Assert-DrillKitCredentialsBound { }
+    function Assert-DrillServerReady { }
     function Assert-DrillKitToolsBound { }`;
 
 // One world for the WSL side: this host's runner distribution Fixture-CI (registered, running), a probe answering `probe` (exit, stderr,
@@ -522,12 +567,12 @@ export const WSL_COLD_START = JSON.stringify({ at: '2026-11-21T03:00:00Z', shutd
   runningAfter: { exit: 0, timedOut: false, stdout: '', stderr: '' } });
 
 export function evidence(over = {}) {
-  const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'UNCERTAIN' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,
+  const status = { writtenAt: '2026-11-16T02:59:50Z', node: { mode: 'STANDBY' }, executor: { state: 'PAUSED' }, paused: true, current: null, queue: { live: 0 }, halt: null,
     versions: { selfcheck: { result: 'PASS', observedAt: '2026-11-16T02:50:00Z' } } };
   const e = { now: NOW, entry: { exitCode: 0, status: 'FIRST_INSTALL_DONE', stopCode: null, tree: 'C:\\t', node: 'C:\\n.exe', parsed: true },
     verify: { status: 'RESIDENT_VERIFIED' }, status, current: { generation: 1, ciSourceManifestSha256: S, linux: { manifestSha256: L } },
     facts: { generation: 1, staged: null, pinsOk: true, ciSourceManifestSha256: S, manifestSha256: L }, acceptanceSource: S,
-    launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
+    launcher: { status: 'R4_WINDOWS_REINSTALLED_VERIFIED_PAUSED', role: 'not-held', completed: ['pause-confirmed', 'first-train-not-applicable'], pause: { confirmed: true, requestSha256: PAUSE_REQUEST, paused: { sha256: '4'.repeat(64) } } },
     firstInstallSteps: { missing: false, incomplete: false, incompleteStages: [] },
     pause: { sha256: '4'.repeat(64), requestSha256: PAUSE_REQUEST },
     reboot: { ok: true, status, readAt: NOW, boot: '2026-11-16T02:45:00Z' }, reinstall: { skipped: false, upgradeStatus: 'FLEET_NODE_ALREADY_AT_THIS_PACKAGE', prepareStatus: 'FLEET_NODE_INSTALL_PREPARED',

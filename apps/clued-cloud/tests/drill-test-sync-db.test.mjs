@@ -340,6 +340,128 @@ test('two accounts and no project: the kit\'s project goes to the account that s
   });
 });
 
+// PLAN-drill-test-platform-acl-20261124 section 3. The hosted platform image newer than production's gives PUBLIC
+// SELECT on pg_cron's own sequences (granted by supabase_admin); the worker gateway migrations refuse any effective
+// privilege on any sequence, so their replay stopped there. On the hosted platform the executed text of that one
+// predicate differs; the recorded text and its md5 stay production's.
+const GATEWAY_FILES = ['migrations/20261009070002_worker_gateway_transition_v1.sql', 'migrations/20261010161848_worker_gateway_closeout_v1.sql'];
+const PRODUCTION_PREDICATE = `pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE') else false end)`;
+const HOSTED_PREDICATE = `pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,UPDATE')`;
+const ledgerApplied = (repository) => repository.ledger.rows.map(({ version, name, statements_md5, statements_length }) =>
+  ({ version, name, statements_md5, statements_length })).sort((a, b) => a.version.localeCompare(b.version));
+
+test('hosted platform: only the two worker gateway rows run another sequence predicate; what is recorded is production\'s text', async () => {
+  const { resolveSteps } = await sync();
+  const repository = await readRepository();
+  const snapshot = await readSnapshot();
+  const applied = ledgerApplied(repository);
+  const hosted = resolveSteps({ applied, repository, snapshot, platform: 'hosted' }).steps;
+  const embedded = resolveSteps({ applied, repository, snapshot, platform: 'embedded' }).steps;
+  assert.deepEqual(embedded.filter((step) => step.statements.includes(PRODUCTION_PREDICATE)).map((step) => step.file), GATEWAY_FILES,
+    'the rows that carry the predicate');
+  assert.deepEqual(hosted.filter((step) => step.run !== null && step.run.includes(HOSTED_PREDICATE)).map((step) => step.file), GATEWAY_FILES);
+  for (const file of GATEWAY_FILES) {
+    const [there, here] = [hosted, embedded].map((steps) => steps.find((step) => step.file === file));
+    const source = repository.migrations[file.slice('migrations/'.length)];
+    // Recorded: the text production stores, on both platforms.
+    assert.equal(there.statements, here.statements, file);
+    assert.equal(there.statements_md5, here.statements_md5, file);
+    assert.equal(crypto.createHash('md5').update(there.statements).digest('hex'), there.statements_md5, file);
+    assert.ok(!there.statements.includes(HOSTED_PREDICATE), file);
+    // Executed: the embedded replay runs the file as it is; the hosted one differs in that predicate and nowhere else.
+    assert.equal(here.run, source, file);
+    assert.ok(!there.run.includes(PRODUCTION_PREDICATE), file);
+    const [before, after] = source.split(PRODUCTION_PREDICATE);
+    assert.ok(there.run.startsWith(before) && there.run.endsWith(after), file);
+    const replaced = there.run.slice(before.length, there.run.length - after.length);
+    // Membership and existence tests, never a comparison with to_regnamespace('cron'): without a cron schema that is
+    // NULL and no sequence's SELECT would be refused.
+    assert.ok(replaced.includes(`c.relnamespace in (select n.oid from pg_catalog.pg_namespace n where n.nspname='cron')`), file);
+    assert.ok(replaced.includes('exists(select 1 from pg_catalog.pg_roles r where r.oid=c.relowner and r.rolsuper)'), file);
+    assert.ok(!replaced.includes('to_regnamespace'), file);
+    // The diagnostic keeps production's predicate (it ends the line there, without the closing parenthesis).
+    assert.equal(there.run.split(`pg_catalog.has_sequence_privilege('clued_worker_gateway',c.oid,'USAGE,SELECT,UPDATE')`).length, 2, file);
+  }
+  // Every other row runs the same text on both platforms, the rows the embedded replay stands pg_cron in for aside.
+  const other = hosted.filter((step, index) => step.run !== embedded[index].run).map((step) => step.file).filter((file) => !GATEWAY_FILES.includes(file));
+  for (const file of other) {
+    assert.ok((snapshot.replay_substitutions ?? []).some((entry) => entry.file === file && /^create\s+extension\b/i.test(entry.find)), file);
+  }
+});
+
+test('hosted platform on a database: PUBLIC SELECT on the platform\'s cron sequence does not stop the replay, anything wider does',
+  { timeout: 1_500_000 }, async () => {
+  const { syncDatabase, resolveSteps, applyStep, readTestHistory } = await sync();
+  const repository = await readRepository();
+  const snapshot = await readSnapshot();
+  const production = ledgerApplied(repository);
+  const identity = (rows) => rows.map(({ version, name, statements_md5 }) => `${version} ${name} ${statements_md5}`);
+  const hosted = resolveSteps({ applied: production, repository, snapshot, platform: 'hosted' }).steps;
+  const gatewayAt = hosted.findIndex((step) => step.file === GATEWAY_FILES[0]);
+  const gateway = hosted[gatewayAt];
+  assert.ok(gatewayAt > 0 && production[gatewayAt].version === gateway.version);
+
+  await withCluster('drill-sync-acl', async (admin) => {
+    // The hosted auth.users has created_at; the embedded stand-in does not.
+    await admin.query('alter table auth.users add column created_at timestamptz default clock_timestamp()');
+    // 1. Everything before the first worker gateway row, as the embedded replay runs it. Row by row: the fixtures
+    //    syncDatabase ends with need tables of later rows.
+    const before = production.slice(0, gatewayAt);
+    const embedded = resolveSteps({ applied: production, repository, snapshot, platform: 'embedded' });
+    for (const [index, step] of embedded.steps.slice(0, gatewayAt).entries()) await applyStep(admin, step, index === 0 ? embedded.prehistory : []);
+    assert.deepEqual(identity(await readTestHistory(admin)), identity(before));
+    // 2. The test project's platform: PUBLIC reads the cron sequence, a superuser owns it, nobody else enters the schema.
+    await admin.query('grant select on sequence cron.job_jobid_seq to public');
+    assert.deepEqual((await admin.query(`select r.rolsuper, pg_catalog.has_schema_privilege('authenticator', 'cron', 'USAGE') as enters,
+        exists(select 1 from pg_catalog.aclexplode(c.relacl) a where a.grantee = 0 and a.privilege_type = 'SELECT') as public_select
+      from pg_catalog.pg_class c join pg_catalog.pg_roles r on r.oid = c.relowner where c.oid = 'cron.job_jobid_seq'::regclass`)).rows,
+      [{ rolsuper: true, enters: false, public_select: true }]);
+
+    // 3. The narrowness, before the replay goes on. The gateway row as the hosted platform runs it; a refused row is
+    //    rolled back (applyStep), so the same database serves every case.
+    const refused = async (label, { arrange, restore, kind, object }) => {
+      await admin.query(arrange);
+      try {
+        await assert.rejects(applyStep(admin, gateway), (error) => {
+          assert.equal(error.code, `DRILL_SERVER_SYNC_FAILED:${GATEWAY_FILES[0]}`, `${label}: ${error.message}`);
+          assert.ok(error.detail.startsWith('worker_gateway_role_unexpected_privileges {'), `${label}: ${error.detail}`);
+          const found = JSON.parse(error.detail.slice(error.detail.indexOf('{'))).violations;
+          assert.ok(found.some((v) => v.kind === kind && v.object === object), `${label}: ${JSON.stringify(found)}`);
+          return true;
+        }, label);
+      } finally { await admin.query(restore); }
+      assert.equal((await readTestHistory(admin)).length, before.length, `${label}: nothing was recorded`);
+    };
+    await refused('PUBLIC USAGE on the cron sequence', { kind: 'sequence_permission', object: 'cron.job_jobid_seq',
+      arrange: 'grant usage on sequence cron.job_jobid_seq to public', restore: 'revoke usage on sequence cron.job_jobid_seq from public' });
+    await refused('PUBLIC UPDATE on the cron sequence', { kind: 'sequence_permission', object: 'cron.job_jobid_seq',
+      arrange: 'grant update on sequence cron.job_jobid_seq to public', restore: 'revoke update on sequence cron.job_jobid_seq from public' });
+    await refused('a cron sequence no superuser owns', { kind: 'sequence_permission', object: 'cron.drill_acl_seq',
+      arrange: `create role drill_acl_owner nologin; create sequence cron.drill_acl_seq; alter sequence cron.drill_acl_seq owner to drill_acl_owner;
+        grant select on sequence cron.drill_acl_seq to public`,
+      restore: 'drop sequence cron.drill_acl_seq; drop role drill_acl_owner' });
+    await refused('a sequence of another schema', { kind: 'sequence_permission', object: 'drill_acl_other.readable_seq',
+      arrange: 'create schema drill_acl_other; create sequence drill_acl_other.readable_seq; grant select on sequence drill_acl_other.readable_seq to public',
+      restore: 'drop schema drill_acl_other cascade' });
+    await refused('SELECT granted to the role itself', { kind: 'sequence_permission', object: 'cron.job_jobid_seq',
+      arrange: `create role clued_worker_gateway nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+        grant select on sequence cron.job_jobid_seq to clued_worker_gateway`,
+      restore: 'drop owned by clued_worker_gateway; drop role clued_worker_gateway' });
+    await refused('PUBLIC enters the cron schema', { kind: 'schema_permission', object: 'cron',
+      arrange: 'grant usage on schema cron to public', restore: 'revoke usage on schema cron from public' });
+
+    // 4. With the platform's grant alone, the hosted replay catches up to production's whole list, both worker
+    //    gateway rows included. (Before the hosted predicate: DRILL_SERVER_SYNC_FAILED at the first of them, its
+    //    detail a sequence_permission on cron.job_jobid_seq, the error of 2026-11-24.)
+    const caught = await syncDatabase(admin, { applied: production, repository, snapshot, platform: 'hosted', scope: 'global' });
+    assert.equal(caught.state, 'in-sync');
+    assert.deepEqual(caught.applied, production.slice(gatewayAt).map((r) => `${r.version}_${r.name}`));
+    assert.deepEqual(identity(await readTestHistory(admin)), identity(production));
+    assert.equal((await admin.query(`select pg_catalog.has_sequence_privilege('clued_worker_gateway', 'cron.job_jobid_seq', 'SELECT') as reads`)).rows[0].reads, true,
+      'the platform\'s grant is still there: the row was not let through by removing it');
+  });
+});
+
 test('the host\'s call: password from standard input only, pooler host from drill-server.json, scope from the kit, an answer in codes', async () => {
   const { runSync, readPoolerHost, readKitScope, loadPg, connected, applyStep, connectionConfig, CODES, DRILL_TEST_REF, PRODUCTION_REF, RESULT_CONTRACT } = await sync();
   assert.deepEqual([...CODES].sort(), ['DRILL_SERVER_DATABASE_CREDENTIAL_MISSING', 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED', 'DRILL_SERVER_DIVERGED',

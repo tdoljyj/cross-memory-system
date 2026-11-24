@@ -16,6 +16,7 @@ import {
   readbackRow, readbackFor, finalize, EARLY_ENTRY_LOG, earlyHostLine, earlyStopRun, LADDER_VERSION, LADDER_KIT, ladderStubs,
   ladderReceipt, foregroundStop, ladderMain, entryAccepted, timelineOf, stoppedResult, rows, hostScript
 } from './drill-vm-fixtures.mjs';
+import { BINDING_ID, BINDING_TOKEN, bindingPs } from './drill-vm-fixtures.mjs';
 
 test('guest-boot\'s own bounds, kill grace included, end by 90 s, well inside its 120-second wsl bound', opts, () => {
   const b = bootBounds();
@@ -104,16 +105,18 @@ test('the drill without its inputs stops before touching anything', opts, () => 
 
 test('the guest-side fake credentials match the package fingerprint formulas and print no secret', opts, () => {
   const out = path.join(tmp, 'fake');
-  const pub = ps(`New-DrillFakeCredentials ${q(out)} @('app-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json', 'companion-github.token')`);
+  const pub = ps(`New-DrillFakeCredentials ${q(out)} @('app-key.pem', 'ci-admission.token', 'resident-upgrade.token', 'public.json', 'companion-github.token') ${bindingPs}`);
   const ci = fs.readFileSync(path.join(out, 'ci-admission.token'), 'utf8');
   const up = fs.readFileSync(path.join(out, 'resident-upgrade.token'), 'utf8');
   const pem = fs.readFileSync(path.join(out, 'app-key.pem'), 'utf8');
-  assert.match(ci, /^clued_bnd_[A-Za-z0-9_-]{43}$/);
+  // the CI token is the drill binding handed in (never made up: drill-server-stand-in.test.mjs); the upgrade token is made here
+  assert.equal(ci, BINDING_TOKEN);
+  assert.match(up, /^clued_bnd_[A-Za-z0-9_-]{43}$/);
   assert.notEqual(ci, up);
   assert.equal(pub.ciTokenPinSha256, fingerprintCiToken(ci));
   assert.equal(pub.upgradeTokenFingerprint, fingerprintCiToken(up));
   assert.equal(pub.appPublicKeySha256Base64, fingerprintAppKey(pem));
-  assert.match(pub.ciPrincipalBindingId, /^[0-9a-f-]{36}$/);
+  assert.equal(pub.ciPrincipalBindingId, BINDING_ID);
   const hostPublic = entryPs(`ConvertTo-FirstInstallPublic (${q(JSON.stringify(pub))} | ConvertFrom-Json)`);
   assert.equal(hostPublic.ciPrincipalBindingId, pub.ciPrincipalBindingId);
   assert.equal(hostPublic.ciPrincipalRoleRef, pub.ciPrincipalRoleRef);
@@ -129,7 +132,7 @@ test('the guest-side fake credentials match the package fingerprint formulas and
   assert.equal(psCode(`New-DrillFakeCredentials ${q(out)} @('public.json')`), 'DRILL_UNEXPECTED', 'never reuses a directory');
   // only the files asked for (the names the package declares and the drill gives); no list, nothing made; no companion token unless asked
   const some = path.join(tmp, 'fake-some');
-  ps(`New-DrillFakeCredentials ${q(some)} @('ci-admission.token', 'public.json')`);
+  ps(`New-DrillFakeCredentials ${q(some)} @('ci-admission.token', 'public.json') ${bindingPs}`);
   assert.deepEqual(fs.readdirSync(some).sort(), ['ci-admission.token', 'public.json']);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(some, 'public.json'), 'utf8')).files, { ciToken: 'ci-admission.token' });
   assert.equal(psCode(`New-DrillFakeCredentials ${q(path.join(tmp, 'fake-none'))}`), 'DRILL_UNEXPECTED');

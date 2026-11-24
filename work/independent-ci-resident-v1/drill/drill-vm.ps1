@@ -5,6 +5,11 @@
 #   pwsh -NoProfile -File drill-vm.ps1 -Version <v> -From <dir with tar/acceptance/SHA256SUMS> -Kit <first-install kit dir> [-SkipReinstall] [-RunTimeoutMinutes 70 | -Ladder]
 #     (a candidate: -From without an acceptance; the kit carries a drill-only one, see Test-DrillPackageDir and FIRST-INSTALL-KIT.md)
 #   pwsh -NoProfile -File drill-vm.ps1 -Finalize <receipt.json> -ProductionReadback <readback.json>
+#   pwsh -NoProfile -File drill-vm.ps1 -ServerKey <key>     (DESK stores the test project's public key on the host once the project answers it)
+#   pwsh -NoProfile -File drill-vm.ps1 -BindingCredential   (the Owner hands over the drill binding once, in the Windows credential dialog)
+#   pwsh -NoProfile -File drill-vm.ps1 -ServerDatabaseCredential   (the Owner hands over the test project's database password once, the same way)
+#   pwsh -NoProfile -File drill-vm.ps1 -SyncServer [-Rebuild] -From <Release dir> -Version <v>   (the test project brought to production's
+#     applied list on its own, as before every drill; -Rebuild: from empty, the first time and after DRILL_SERVER_DIVERGED only)
 #
 # Inputs on the host: D:\clued-drill\iso (the Windows 11 ISO and expected-sha256.txt), D:\clued-drill\prereq\prereq.json (the
 # pinned WSL package, Ubuntu image and docker .debs, see Read-DrillPrereq), and the kit's kit.json:
@@ -14,9 +19,13 @@
 # No node parameter. Every state is read from the scene (does the VM exist, is the checkpoint there); there is no state file.
 # Prints one JSON line: { status, code, receipt, ... }.
 #
-# The drill machine is NOT a node to the service: it holds no production credential (the CI token, upgrade token and App key are
-# generated inside the VM at every drill and die with the checkpoint restore), it is never registered, has no heartbeat link
-# and is never in the failover list. Its role probe can only answer "unauthorized", so it stays UNCERTAIN, which starts nothing.
+# The drill machine is NOT a node to the service: it holds no production credential and never reaches production. Its kit names the
+# drill's server (the test project, drill/drill-server.json) in place of production in the first-install kit's two public fields, and
+# its entry cuts the production host off in the guest (FABLE-drill-role-probe-20261124.md, PR-3). The upgrade token and App key are made
+# inside the VM at every drill and die with the checkpoint restore; the CI token is the Owner's drill binding in the test project, one
+# with no ci-admission role, kept beside the guest credential (Get-DrillCredential -Binding) and handed to the guest for the run only.
+# The machine is never registered, has no heartbeat link and is never in the failover list. Its role probe is answered "holds no role":
+# it rests STANDBY, which starts nothing, and its first train is not applicable (A6).
 #
 # Host boundary: writes only under D:\clued-drill\; touches only the VM whose name AND notes are ours; never touches the
 # host services, scheduled tasks, switches, or any process by name. Read the public host status and installed generation pointer.
@@ -40,7 +49,13 @@ param(
   [ValidateRange(5, 240)][int]$RunTimeoutMinutes = 70,
   [switch]$Ladder,
   [string]$Finalize,
-  [string]$ProductionReadback
+  [string]$ProductionReadback,
+  [switch]$BindingCredential,
+  [string]$BindingConnection,   # with -BindingCredential: the connection id, filled in so only the token is pasted
+  [string]$ServerKey,
+  [switch]$ServerDatabaseCredential,
+  [switch]$SyncServer,
+  [switch]$Rebuild
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
@@ -81,6 +96,22 @@ $script:Drill = [ordered]@{
   AnswerDir = 'D:\clued-drill\vm\answer'
   AnswerIso = 'D:\clued-drill\vm\answer.iso'
   Credential = 'D:\clued-drill\guest-admin.clixml'
+  # the Owner's drill binding in the test project (connection id, token), beside the guest credential and read by the same function
+  BindingCredential = 'D:\clued-drill\drill-binding.clixml'
+  # the host's copy of the drill server's public key: where drill-server-check.mjs keeps it (make-drill-kit.mjs HOST_KEY_FILE) unless a
+  # test names its own
+  ServerKeyFile = ''
+  # the test project's database password (user postgres.<the project's ref>), handed over by the Owner once (-ServerDatabaseCredential):
+  # beside the binding, read by the same function; given to the sync script on its standard input only (Sync-DrillServer)
+  ServerDatabaseCredential = 'D:\clued-drill\drill-server-database.clixml'
+  # production's applied list as the newest successful release run on main exported it, one run's copy (drill-server-check.mjs --production-list)
+  ProductionListCache = 'D:\clued-drill\production-applied'
+  # the sync script: this checkout's own (apps/clued-cloud/scripts/drill-test-sync.mjs) unless a test names its own
+  SyncTool = ''
+  # a rebuild replays production's ~330 rows (6-10 minutes by the design's estimate, not yet measured on the hosted project); a sync
+  # already in step is a list comparison
+  SyncTimeoutSeconds = 1800
+  ProductionListTimeoutSeconds = 900
   Runs = 'D:\clued-drill\runs'
   GuestUser = 'drill'
   ComputerName = 'CLUED-DRILL'
@@ -586,10 +617,22 @@ function Test-DrillPackageDir([string]$Dir, [string]$Version, $KitInfo = $null) 
   if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z.\-]{0,63}$') { throw (New-DrillError 'DRILL_VERSION_REFUSED') }
   $tag = "fleet-node-$Version"
   $tar = Join-Path $Dir "$tag.tar"; $acc = Join-Path $Dir "$tag.acceptance.json"; $sums = Join-Path $Dir 'SHA256SUMS'
-  $candidate = Get-Prop $KitInfo 'candidate'
+  $candidate = Get-Prop $KitInfo 'candidate'; $server = Get-Prop $KitInfo 'server'
   if ($null -ne $candidate) {
     if (Test-Path -LiteralPath $acc) { throw (New-DrillError 'DRILL_CANDIDATE_KIT_BUT_FROM_HAS_AN_ACCEPTANCE' ([IO.Path]::GetFileName($acc))) }
     $acc = [string](Get-Prop $candidate 'acceptance')
+  }
+  # A kit with the server stand-in (make-drill-kit.mjs serverStandIn) carries the acceptance the guest installs on, for an accepted
+  # version too: it names the drill's first-install kit. The Owner's own in From is still read first and held to the Release's kit.
+  $ownersKitSha = $null
+  if ($null -ne $server -and $null -eq $candidate) {
+    if (-not (Test-Path -LiteralPath $acc -PathType Leaf)) { throw (New-DrillError 'DRILL_PACKAGE_FILE_MISSING' ([IO.Path]::GetFileName($acc))) }
+    $owners = Read-DrillJson $acc
+    if ([string](Get-Prop $owners 'contract') -cne 'clued.independent-ci.fleet-node-acceptance/1' -or [string](Get-Prop $owners 'version') -cne $Version) { throw (New-DrillError 'DRILL_ACCEPTANCE_REFUSED') }
+    if ([string](Get-Prop $owners 'archive_sha256') -cne (Get-Sha256Hex $tar)) { throw (New-DrillError 'DRILL_TAR_NOT_THE_ACCEPTED_ONE') }
+    $ownersKitSha = [string](Get-Prop $owners 'firstInstallKitSha256'); $ownersSource = [string](Get-Prop $owners 'ciSourceManifestSha256')
+    if ($ownersKitSha -cne [string]$server.releaseFirstInstallKitSha256) { throw (New-DrillError 'DRILL_KIT_SERVER_NOT_THIS_RELEASE' 'acceptance') }
+    $acc = [string]$server.overrides[[IO.Path]::GetFileName($acc)]
   }
   foreach ($f in @($tar, $acc, $sums)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw (New-DrillError 'DRILL_PACKAGE_FILE_MISSING' ([IO.Path]::GetFileName($f))) } }
   $sha = Get-Sha256Hex $tar
@@ -601,10 +644,18 @@ function Test-DrillPackageDir([string]$Dir, [string]$Version, $KitInfo = $null) 
   $source = [string](Get-Prop $acceptance 'ciSourceManifestSha256')
   if ($source -notmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_ACCEPTANCE_REFUSED' 'ciSourceManifestSha256') }
   $kitSha = [string](Get-Prop $acceptance 'firstInstallKitSha256')
+  # with the server stand-in the kit's acceptance names the drill's first-install kit; the hash this run is held to and its receipt
+  # carries (what the Owner accepts, what seal compares) stays the Release's
+  $drillKitSha = $null
+  if ($null -ne $server) {
+    if ($kitSha -cne [string]$server.firstInstallKitSha256) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' 'acceptance') }
+    if ($null -ne $ownersKitSha -and $source -cne $ownersSource) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' 'acceptance source') }
+    $drillKitSha = $kitSha; $kitSha = [string]$server.releaseFirstInstallKitSha256
+  }
   if ($null -ne $candidate -and ($sha -cne [string](Get-Prop $candidate 'tarSha256') -or $source -cne [string](Get-Prop $candidate 'ciSourceManifestSha256') -or
       $kitSha -cne [string](Get-Prop $candidate 'firstInstallKitSha256'))) { throw (New-DrillError 'DRILL_CANDIDATE_NOT_THE_KITS') }
   return [ordered]@{ version = $Version; tar = $tar; acceptance = $acc; sums = $sums; tarSha256 = $sha; ciSourceManifestSha256 = $source
-    firstInstallKitSha256 = $kitSha; candidate = ($null -ne $candidate) }
+    firstInstallKitSha256 = $kitSha; drillFirstInstallKitSha256 = $drillKitSha; candidate = ($null -ne $candidate) }
 }
 
 # The first-install kit (kit.json, contract clued.drill.first-install-kit/1): every file pinned by sha256; one entry run in the
@@ -657,7 +708,26 @@ function Read-DrillKit([string]$Dir) {
       $candidate[$k] = $v
     }
   }
-  return [ordered]@{ dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials'); credentialFilesSha256 = (Get-Prop $kit 'credentialFilesSha256') }
+  # the server stand-in (make-drill-kit.mjs serverStandIn): the drill's server, the two hashes of the first-install kit (the Release's and
+  # the drill's) and the three files the kit carries in place of the Release's, each one of the kit's pinned files
+  $server = $null; $sv = Get-Prop $kit 'server'
+  if ($null -ne $sv) {
+    if ([string](Get-Prop $sv 'contract') -cne 'clued.drill.server-stand-in/1') { throw (New-DrillError 'DRILL_KIT_REFUSED' 'server.contract') }
+    $server = [ordered]@{ project = [string](Get-Prop $sv 'project'); supabaseUrl = [string](Get-Prop $sv 'supabaseUrl'); replaced = @(Get-Prop $sv 'replaced' | ForEach-Object { [string]$_ })
+      blackholeHosts = @(Get-Prop $sv 'blackholeHosts' | ForEach-Object { [string]$_ }); overrides = @{} }
+    if ($server.supabaseUrl -cnotmatch '^https://[a-z0-9]+\.supabase\.co$' -or $server.blackholeHosts.Count -lt 1) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'server') }
+    foreach ($k in @('releaseFirstInstallKitSha256', 'firstInstallKitSha256')) {
+      $v = [string](Get-Prop $sv $k); if ($v -cnotmatch '^[0-9a-f]{64}$') { throw (New-DrillError 'DRILL_KIT_REFUSED' "server.$k") }
+      $server[$k] = $v
+    }
+    foreach ($k in @('firstInstallKit', 'firstInstallSums', 'acceptance')) {
+      $name = [string](Get-Prop $sv "files.$k")
+      if ($name -cnotmatch '^fleet-node-[0-9A-Za-z][0-9A-Za-z.\-]{0,63}\.(first-install-kit\.json|first-install\.SHA256SUMS|acceptance\.json)$' -or -not $seen.ContainsKey($name.ToLowerInvariant())) { throw (New-DrillError 'DRILL_KIT_REFUSED' "server.files.$k") }
+      $server.overrides[$name] = (Join-Path $Dir $name)
+    }
+    if ($server.overrides.Count -ne 3) { throw (New-DrillError 'DRILL_KIT_REFUSED' 'server.files') }
+  }
+  return [ordered]@{ server = $server; dir = $Dir; sha256 = (Get-Sha256Hex $file); entryFile = $entryFile; arguments = @($kitArgs | ForEach-Object { [string]$_ }); timeoutMinutes = [int]$timeout; perNodeSteps = $perNode; prereqSha256 = $prereqSha; prerequisiteMode = $mode; executionBlocker = $blocker; candidate = $candidate; credentials = (Get-Prop $kit 'credentials'); credentialFilesSha256 = (Get-Prop $kit 'credentialFilesSha256') }
 }
 
 # The drill's decision for each credential file name a package may declare (Fable renew-key ruling, supplements "merge order" and
@@ -695,6 +765,105 @@ function Assert-DrillKitCredentialsBound($KitInfo, [string]$Tar) {
   # the recorded hash a lowercase hex digest, compared ordinally (9th review round, low 2: -cne is culture-aware and ignores some characters)
   $hashSame = ($recorded -cmatch '^[0-9a-f]{64}$') -and [string]::Equals($bytes, $recorded, [StringComparison]::Ordinal)
   if (-not $same -or -not $hashSame) { throw (New-DrillError 'DRILL_KIT_CREDENTIALS_NOT_THE_PACKAGES' @{ groupsEqual = $same; packageSha256 = $bytes; kitSha256 = $recorded }) }
+}
+
+# The drill's server and binding, before the host gate, the hold or any boot (FABLE-drill-role-probe-20261124.md, PR-3). A kit without
+# the server stand-in would install against the Release's own address, production: refused, nothing falls back to it. The stand-in is
+# held again to the Release directory by its one reader (make-drill-kit.mjs --server-of: the Release's first-install kit is the one the
+# kit was made from, the drill's differs in the two server fields only and is not production's, the production host is in the list the
+# guest cuts off). And the Owner's drill binding must be there, in its shape: without it the drill does not start.
+# Then the test project is brought to production's applied list (Sync-DrillServer; FABLE-drill-test-project-sync-20261124.md, the
+# ruling on the PR-A report, section 1: the host does it, no workflow), and the server itself is asked (section 2.2;
+# drill-server-check.mjs --ready): the role probe the guest is about to send, sent from here with the binding's token, must be answered
+# "holds no role". No list, no password or a refused one, a project that is not a prefix of production, a rotated key, an expired token,
+# a binding the server would let through: each stops the drill here with its own code (Sync-DrillServer's, then DRILL_SERVER_KEY_REFUSED,
+# DRILL_SERVER_UNREACHABLE, DRILL_SERVER_PROBE_FUNCTION_MISSING, DRILL_BINDING_REFUSED_BY_SERVER, DRILL_BINDING_ON_DUTY). What the sync
+# followed (the release run, production's last row and row count, the rows applied now) is kept for the drill's receipt (server.sync).
+function Assert-DrillServerReady($KitInfo, $Package) {
+  $server = Get-Prop $KitInfo 'server'
+  if ($null -eq $server) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_MISSING' 'the kit names no drill server: make it again with make-drill-kit.mjs') }
+  $binding = Get-DrillCredential -Binding
+  # never a rebuild here: that is DESK's, once (-SyncServer -Rebuild)
+  $sync = Sync-DrillServer ([string](Split-Path -Parent ([string]$Package.tar))) ([string]$Package.version)
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $run = Invoke-DrillServerReadyNode $node ([string]$KitInfo.dir) ([string](Split-Path -Parent ([string]$Package.tar))) ([string]$Package.version) $binding
+  $derived = $null
+  if ($run.exit -eq 0) { try { $derived = $run.stdout | ConvertFrom-Json } catch { $derived = $null } }
+  if ($null -eq $derived) { throw (New-DrillServerError $run 'DRILL_KIT_SERVER_STAND_IN_REFUSED') }
+  foreach ($k in @('supabaseUrl', 'releaseFirstInstallKitSha256', 'firstInstallKitSha256')) {
+    if (-not [string]::Equals([string](Get-Prop $derived $k), [string]$server[$k], [StringComparison]::Ordinal)) { throw (New-DrillError 'DRILL_KIT_SERVER_STAND_IN_REFUSED' $k) }
+  }
+  $server['sync'] = $sync
+}
+
+# The test project brought to production's applied list (the ruling on the PR-A report, sections 1 and 5): the database password first
+# (none: nothing is asked of anyone), the sync script there (a checkout without it cannot sync), production's list from the newest
+# successful release run on main (drill-server-check.mjs --production-list), then the sync script with the list, the Release's
+# first-install kit (its record.scope: the project the drill's token is issued for) and drill-server.json (the pooler host) as arguments
+# and the password on its standard input only. Its last line is its result (clued.drill-test-sync.result/1). Anything but in-sync stops
+# here with the script's code (DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED, DRILL_SERVER_DIVERGED, DRILL_SERVER_SYNC_FAILED:<file or stage>,
+# DRILL_SERVER_SYNC_TOOL_MISSING, DRILL_SERVER_UNREACHABLE, DRILL_SERVER_POOLER_HOST_NOT_SET, ...); stale (the test project holds rows the
+# newest production list does not: written past the sync) is DRILL_SERVER_DIVERGED:stale. Nothing the script prints is shown with the
+# password in it. Returns what the drill's receipt keeps (server.sync).
+function Sync-DrillServer([string]$From, [string]$Version, [switch]$Rebuild) {
+  $credential = Get-DrillCredential -ServerDatabase
+  $tool = Get-DrillSyncTool
+  if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw (New-DrillError 'DRILL_SERVER_SYNC_TOOL_MISSING' $tool) }
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  $listRun = Invoke-DrillProductionListNode $node
+  $list = $null
+  if ($listRun.exit -eq 0) { try { $list = $listRun.stdout | ConvertFrom-Json } catch { $list = $null } }
+  if ($null -eq $list -or [string](Get-Prop $list 'file') -eq '' -or -not ((Get-Prop $list 'run') -is [ValueType])) { throw (New-DrillServerError $listRun 'DRILL_SERVER_PRODUCTION_LIST_MISSING') }
+  $arguments = @($tool, '--applied', [string]$list.file, '--kit', (Join-Path $From "fleet-node-$Version.first-install-kit.json"),
+    '--server', (Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server.json'))
+  if ($Rebuild) { $arguments += '--rebuild' }
+  $run = Invoke-DrillSyncNode $node $arguments $credential
+  $secret = $credential.GetNetworkCredential().Password
+  $clean = { param($t) ([string]$t).Replace($secret, '***') }
+  $last = @(@(([string]$run.stdout) -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -Last 1)
+  $result = $null
+  if ($last.Count -eq 1) { try { $result = (& $clean $last[0]) | ConvertFrom-Json } catch { $result = $null } }
+  $why = { param($t) $c = & $clean $t; $c.Substring(0, [Math]::Min(1500, $c.Length)) }
+  if ($null -eq $result -or [string](Get-Prop $result 'contract') -cne 'clued.drill-test-sync.result/1') {
+    throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result (exit $($run.exit)): $(& $why $run.stderr)")
+  }
+  $state = [string](Get-Prop $result 'state')
+  if ($state -ceq 'failed') {
+    if ([string](Get-Prop $result 'code') -cmatch '^(DRILL_SERVER_[A-Z_]+)(?::(.{1,400}))?$') {
+      # The database's own message is on the script's standard error after its code (password masked): without it a failed row
+      # names no cause. Only what follows the code is added, so a code alone stays exactly the script's code.
+      $where = & $clean $Matches[2]; $echo = 'drill-test-sync: ' + [string](Get-Prop $result 'code'); $err = [string]$run.stderr; $pos = $err.IndexOf($echo)
+      $cause = if ($pos -ge 0) { (& $why $err.Substring($pos + $echo.Length)).Trim() } else { '' }
+      throw (New-DrillError $Matches[1] "$where $cause".Trim())
+    }
+    throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result: $(& $why $run.stderr)")
+  }
+  if ($state -ceq 'stale') { throw (New-DrillError 'DRILL_SERVER_DIVERGED' 'stale') }
+  if ($state -cne 'in-sync' -or $run.exit -ne 0) { throw (New-DrillError 'DRILL_SERVER_SYNC_FAILED' "no-result: state $(& $why $state), exit $($run.exit)") }
+  $at = Get-Prop $result 'production_last'
+  return [ordered]@{ state = 'in-sync'; releaseRun = (Get-Prop $list 'run'); productionLast = "$(Get-Prop $at 'version')_$(Get-Prop $at 'name')"
+    productionRows = (Get-Prop $result 'production_rows'); applied = (Get-Prop $result 'applied'); projectAccount = (Get-Prop $result 'fixtures.project_account') }
+}
+function Get-DrillSyncTool {
+  if ($script:Drill.SyncTool) { return [string]$script:Drill.SyncTool }
+  [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $script:DrillScriptPath) '..\..\..\apps\clued-cloud\scripts\drill-test-sync.mjs'))
+}
+# The two calls Sync-DrillServer makes, each its own function (a test answers in their place): production's list (gh, three tries a
+# call, the host's copy for the same run), and the sync script with the password on its standard input (in no argument, no environment
+# variable, no file).
+function Invoke-DrillProductionListNode([string]$Node) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  Invoke-DrillNode $Node @($tool, '--production-list', '--cache', [string]$script:Drill.ProductionListCache) $script:Drill.ProductionListTimeoutSeconds
+}
+function Invoke-DrillSyncNode([string]$Node, [string[]]$Arguments, $Credential) {
+  Invoke-DrillProcess $Node $Arguments $script:Drill.SyncTimeoutSeconds @{} @('NODE_OPTIONS', 'NODE_PATH') $Credential.GetNetworkCredential().Password
+}
+
+# The one call of the server tool for a run: the kit, its Release and version as arguments, the binding's token on the tool's standard
+# input (in no argument, no environment variable, no file).
+function Invoke-DrillServerReadyNode([string]$Node, [string]$KitDir, [string]$From, [string]$Version, $Binding) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  Invoke-DrillProcess $Node @($tool, '--ready', $KitDir, '--from', $From, '--version', $Version) 120 @{} @('NODE_OPTIONS', 'NODE_PATH') $Binding.GetNetworkCredential().Password
 }
 
 # A credential group's members as written: each key with its value (a dictionary or a parsed JSON object).
@@ -769,11 +938,14 @@ function Get-DrillReleaseFiles($Package, $KitInfo) {
   $root = Split-Path -Parent $Package.tar; $seen = @{}; $files = @(); $inRoot = 0
   # a candidate's acceptance is the kit's (Test-DrillPackageDir), every other asset is From's
   $candidateAcceptance = if ($Package['candidate']) { [IO.Path]::GetFileName($Package.acceptance) } else { $null }
+  # the server stand-in's three files are the kit's too (Read-DrillKit .server.overrides); From's own of those names stay where they are
+  $overrides = Get-Prop (Get-Prop $KitInfo 'server') 'overrides'
   foreach ($f in @(Get-Prop $pins 'files')) {
     $name = [string](Get-Prop $f 'path'); $hash = [string](Get-Prop $f 'sha256')
     if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,200}$' -or $hash -cnotmatch '^[0-9a-f]{64}$' -or $seen.ContainsKey($name)) { throw (New-DrillError 'DRILL_RELEASE_PINS_REFUSED') }
     $seen[$name] = $true
-    $file = if ($name -ceq $candidateAcceptance) { $Package.acceptance } else { $inRoot++; Join-Path $root $name }
+    $file = if ($null -ne $overrides -and $overrides.ContainsKey($name)) { if (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf) { $inRoot++ }; [string]$overrides[$name] }
+      elseif ($name -ceq $candidateAcceptance) { $Package.acceptance } else { $inRoot++; Join-Path $root $name }
     if (-not (Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Sha256Hex $file) -cne $hash) { throw (New-DrillError 'DRILL_RELEASE_ASSET_CHANGED' $name) }
     $files += $file
   }
@@ -1113,13 +1285,18 @@ function Get-DrillVerdict($E) {
   else { [void]$items.Add((New-DrillItem 'A5' $(if ($a5) { $null } else { $false }) "local=$local acceptance=$($E.acceptanceSource); production half by -Finalize")) }
   # A6 (Fable renew-key ruling, supplement "eight on the path", item 5): a successful launcher ends with its own pause confirmed, so the
   # node holds THAT pause: the request the launcher's terminal confirmed (pause.requestSha256, the one source) is the one state\PAUSED.json
-  # names, the status says paused and the executor rests PAUSED, with UNCERTAIN, no current batch, live 0 and no HALT. Idle is no pass.
+  # names, the status says paused and the executor rests PAUSED, with no current batch, live 0 and no HALT. Idle is no pass.
   $s = $E.status
   $want = [string](Get-Prop $E.launcher 'pause.requestSha256'); $held = [string](Get-Prop $E.pause 'requestSha256')
   $ownPause = ((Get-Prop $E.launcher 'pause.confirmed') -eq $true) -and ($want -cmatch '^[0-9a-f]{64}$') -and ($held -ceq $want)
-  $a6 = $ownPause -and ((Get-Prop $s 'paused') -eq $true) -and ([string](Get-Prop $s 'executor.state') -ceq 'PAUSED') -and ([string](Get-Prop $s 'node.mode') -ceq 'UNCERTAIN') `
+  # The role is a confirmed one (FABLE-drill-role-probe-20261124.md, PR-3): the drill binding holds no role in the drill's server, so the
+  # launcher's probe is answered not-held, its first train is not applicable, and the node rests STANDBY. UNCERTAIN (the probe refused or
+  # unanswered: the drill would be talking to a server that does not know its token) is no pass, and neither is holding the slot.
+  $role = [string](Get-Prop $E.launcher 'role'); $done = @(Get-Prop $E.launcher 'completed' | ForEach-Object { [string]$_ })
+  $noRole = ($role -ceq 'not-held') -and ($done -ccontains 'first-train-not-applicable') -and ([string](Get-Prop $s 'node.mode') -ceq 'STANDBY')
+  $a6 = $ownPause -and $noRole -and ((Get-Prop $s 'paused') -eq $true) -and ([string](Get-Prop $s 'executor.state') -ceq 'PAUSED') `
     -and ($null -eq (Get-Prop $s 'current')) -and ((Get-Prop $s 'queue.live') -eq 0) -and ($null -eq (Get-Prop $s 'halt'))
-  [void]$items.Add((New-DrillItem 'A6' $a6 "pause=$held confirmedByLauncher=$want paused=$(Get-Prop $s 'paused') executor=$(Get-Prop $s 'executor.state') mode=$(Get-Prop $s 'node.mode') current=$($null -ne (Get-Prop $s 'current')) live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
+  [void]$items.Add((New-DrillItem 'A6' $a6 "pause=$held confirmedByLauncher=$want paused=$(Get-Prop $s 'paused') executor=$(Get-Prop $s 'executor.state') mode=$(Get-Prop $s 'node.mode') role=$role firstTrainNotApplicable=$($done -ccontains 'first-train-not-applicable') current=$($null -ne (Get-Prop $s 'current')) live=$(Get-Prop $s 'queue.live') halt=$(Get-Prop $s 'halt.code')"))
   # A7: the status rewritten after this boot, and a self-check that passed, is fresh AND was observed after this boot (never the boot before's).
   $r = $E.reboot
   if ($null -eq $r) { [void]$items.Add((New-DrillItem 'A7' $false 'not run')) }
@@ -1301,13 +1478,17 @@ function Get-DrillProductionVerdict($Receipt, $Readback) {
 }
 
 # ---------------------------------------------------------------- guest-side fake credentials (Windows PowerShell 5.1 in the VM)
-# Generates, inside the VM, the CI token, upgrade token and an RSA App key nobody registered, and prints only public values.
+# Generates, inside the VM, the upgrade token and an RSA App key nobody registered, and prints only public values. The CI token is not
+# made up: it is the Owner's drill binding in the drill's server ($Binding, a PSCredential: the connection id and the token, from
+# Get-DrillCredential -Binding over the PowerShell Direct session), written as it is; asked for without one, nothing is written in its
+# place (a made-up token is one no server knows: the 17th candidate's drill).
 # Fingerprints use the package's formulas (tools/secret-fingerprint.mjs; the offline test cross-checks them).
 function New-DrillFakeCredentials {
   # $Make: the fake files to write (Get-DrillCredentialPlan .fake): none other is made
-  param([string]$OutDir, [string[]]$Make)   # in the body: the guest receives this function as a script block, which keeps only the body
+  param([string]$OutDir, [string[]]$Make, $Binding)   # in the body: the guest receives this function as a script block, which keeps only the body
   $ErrorActionPreference = 'Stop'
   if ($null -eq $Make) { throw 'FAKE_CREDENTIALS_NAMES_REQUIRED' }
+  if ($Make -contains 'ci-admission.token' -and $Binding -isnot [System.Management.Automation.PSCredential]) { throw 'FAKE_CREDENTIALS_BINDING_REQUIRED' }
   if (Test-Path -LiteralPath $OutDir) { throw 'FAKE_CREDENTIALS_DIR_EXISTS' }
   New-Item -ItemType Directory -Path $OutDir | Out-Null
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -1331,7 +1512,9 @@ function New-DrillFakeCredentials {
   $pemLabel = 'RSA PRIVATE KEY'
   $pemBody = ($b64 -split '(.{64})' | Where-Object { $_ }) -join "`n"
   $pem = "{0}BEGIN {1}{0}`n{2}`n{0}END {1}{0}`n" -f $pemFence, $pemLabel, $pemBody
-  $ci = & $token; $up = & $token
+  $up = & $token
+  # with no binding (a package that names no CI token) the public record's pin and id are of a token written nowhere
+  $ci = if ($null -ne $Binding) { $Binding.GetNetworkCredential().Password } else { & $token }
   $enc = New-Object System.Text.UTF8Encoding $false
   if ($Make -contains 'ci-admission.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'ci-admission.token'), $ci, $enc) }
   if ($Make -contains 'resident-upgrade.token') { [IO.File]::WriteAllText((Join-Path $OutDir 'resident-upgrade.token'), $up, $enc) }
@@ -1348,8 +1531,8 @@ function New-DrillFakeCredentials {
   }
   $public = [ordered]@{
     contract = 'clued.drill.fake-credentials/1'
-    note = 'generated inside the drill VM; registered nowhere; the service refuses them'
-    ciPrincipalBindingId = [guid]::NewGuid().ToString()
+    note = 'the upgrade token and the App key are generated inside the drill VM and registered nowhere; the CI token is the drill binding of the drill server (no role there)'
+    ciPrincipalBindingId = $(if ($null -ne $Binding) { [string]$Binding.UserName } else { [guid]::NewGuid().ToString() })
     ciPrincipalRoleRef = [guid]::NewGuid().ToString()
     ciPrincipalQualificationRef = [guid]::NewGuid().ToString()
     ciTokenPinSha256 = (& $pin $ci)
@@ -1842,7 +2025,8 @@ function Invoke-DrillNode([string]$Node, [string[]]$Arguments, [int]$TimeoutSeco
 }
 
 # One bounded child process, no shell; on a timeout it kills only the child it started.
-function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds, [hashtable]$Environment = @{}, [string[]]$RemoveEnvironment = @()) {
+# $StandardInput: text the child reads from its standard input (a secret that must be in no argument and no environment variable).
+function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds, [hashtable]$Environment = @{}, [string[]]$RemoveEnvironment = @(), $StandardInput = $null) {
   $child = [Diagnostics.Process]::new()
   try {
     $child.StartInfo.FileName = $File
@@ -1855,9 +2039,20 @@ function Invoke-DrillProcess([string]$File, [string[]]$Arguments, [int]$TimeoutS
     $child.StartInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
     foreach ($name in $RemoveEnvironment) { $child.StartInfo.EnvironmentVariables.Remove($name) }
     foreach ($name in $Environment.Keys) { $child.StartInfo.EnvironmentVariables[$name] = $Environment[$name] }
-    [void]$child.Start()
+    # Standard input as UTF-8 without a byte order mark: Windows PowerShell's .NET writes it in the console's input encoding, which on a
+    # UTF-8 console (hosted runners) starts with a BOM, and the child would read the BOM as the password's first character.
+    $inputWas = $null
+    if ($null -ne $StandardInput) {
+      $child.StartInfo.RedirectStandardInput = $true
+      $plain = New-Object Text.UTF8Encoding $false
+      if ($child.StartInfo.PSObject.Properties['StandardInputEncoding']) { $child.StartInfo.StandardInputEncoding = $plain }
+      elseif ([Console]::InputEncoding.GetPreamble().Length -gt 0) { $inputWas = [Console]::InputEncoding; [Console]::InputEncoding = $plain }
+    }
+    try { [void]$child.Start() } finally { if ($null -ne $inputWas) { [Console]::InputEncoding = $inputWas } }
     $stdout = $child.StandardOutput.ReadToEndAsync()
     $stderr = $child.StandardError.ReadToEndAsync()
+    # a child that ends before it reads its standard input (it refused first) closes the pipe: its exit and output say why
+    if ($null -ne $StandardInput) { try { $child.StandardInput.Write([string]$StandardInput); $child.StandardInput.Close() } catch [IO.IOException] { } }
     if (-not $child.WaitForExit($TimeoutSeconds * 1000)) {
       if (-not $child.HasExited) { $child.Kill() }
       throw "$([IO.Path]::GetFileName($File)) timed out"
@@ -2249,9 +2444,126 @@ function Assert-DrillHost([DateTimeOffset]$HoldUntil = [DateTimeOffset]::MinValu
   return $mem
 }
 
-function Get-DrillCredential {
+# The drill's two credentials, one place (D:\clued-drill, DPAPI, this Windows user only) and one reader: the guest's administrator (made
+# by the baseline) and, with -Binding, the Owner's drill binding in the drill's server (handed over once: Save-DrillBindingCredential).
+# The binding: user name = the connection id, password = the clued_bnd_ token (the shape first-install-host.ps1 takes). Missing or of
+# another shape, the drill refuses before any boot; nothing is made in its place.
+function Test-DrillBindingCredential($Credential) {
+  if ($Credential -isnot [System.Management.Automation.PSCredential]) { return $false }
+  $g = [guid]::Empty
+  if ([string]$Credential.UserName -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or -not [guid]::TryParse([string]$Credential.UserName, [ref]$g) -or $g -eq [guid]::Empty) { return $false }
+  return ($Credential.GetNetworkCredential().Password -cmatch '^clued_bnd_[A-Za-z0-9_-]{8,480}\z')
+}
+# The test project's database password (-ServerDatabaseCredential; the ruling on the PR-A report, section 1: the sync runs on this host
+# and its password is kept where the binding is). User name: postgres.<the project's ref>, the one the session pooler routes by, from
+# drill-server.json's address (its one place); password: printable ASCII on one line (standard input carries it as it is in any code
+# page). Another user name -- another project's, production's -- is not this credential.
+function Get-DrillServerDatabaseUser {
+  $url = [string](Get-Prop (Read-DrillJson (Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server.json')) 'supabaseUrl')
+  if ($url -cnotmatch '^https://([a-z0-9]{20})\.supabase\.co$') { throw (New-DrillError 'DRILL_SERVER_REFUSED' 'drill-server.json supabaseUrl') }
+  "postgres.$($Matches[1])"
+}
+function Test-DrillServerDatabaseCredential($Credential) {
+  if ($Credential -isnot [System.Management.Automation.PSCredential]) { return $false }
+  if (-not [string]::Equals([string]$Credential.UserName, (Get-DrillServerDatabaseUser), [StringComparison]::Ordinal)) { return $false }
+  return ($Credential.GetNetworkCredential().Password -cmatch '^[\x21-\x7e](?:[\x20-\x7e]{0,510}[\x21-\x7e])?\z')
+}
+function Get-DrillCredential([switch]$Binding, [switch]$ServerDatabase) {
+  if ($ServerDatabase) {
+    if (-not (Test-Path -LiteralPath $script:Drill.ServerDatabaseCredential -PathType Leaf)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_CREDENTIAL_MISSING' 'hand the test project''s database password over once: drill-vm.ps1 -ServerDatabaseCredential') }
+    $d = try { Import-Clixml -LiteralPath $script:Drill.ServerDatabaseCredential } catch { $null }
+    if (-not (Test-DrillServerDatabaseCredential $d)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED' 'not the test project''s database user with a password, or not readable by this Windows user: hand it over again') }
+    return $d
+  }
+  if ($Binding) {
+    if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential -PathType Leaf)) { throw (New-DrillError 'DRILL_BINDING_CREDENTIAL_MISSING' 'hand the drill binding over once: drill-vm.ps1 -BindingCredential') }
+    $b = try { Import-Clixml -LiteralPath $script:Drill.BindingCredential } catch { $null }
+    if (-not (Test-DrillBindingCredential $b)) { throw (New-DrillError 'DRILL_BINDING_CREDENTIAL_REFUSED' 'not a connection id with a clued_bnd_ token, or not readable by this Windows user') }
+    return $b
+  }
   if (-not (Test-Path -LiteralPath $script:Drill.Credential)) { throw (New-DrillError 'DRILL_GUEST_CREDENTIAL_MISSING') }
   Import-Clixml -LiteralPath $script:Drill.Credential   # DPAPI, this Windows user only
+}
+
+# The Owner hands the drill binding over, once (-BindingCredential): the Windows credential dialog itself (credui.dll
+# CredUIPromptForCredentialsW, as first-install-host.ps1 Read-TokenFromDialog: generic credentials, always shown, never saved by Windows),
+# never the console's prompt. User name: the connection id; password: the token. Held to its shape, then written where the guest
+# credential is (DPAPI, this Windows user only). The token is never printed, logged or passed on a command line.
+function Read-DrillBindingFromDialog {
+  Read-DrillCredentialFromDialog 'Clued drill binding' 'Clued drill binding (clued-auth-test)' 'User name: the connection id of the drill binding in the TEST project (no ci-admission role). Password: its clued_bnd_ token. Stored for this Windows user only; never shown.' ([string]$BindingConnection).Trim().ToLowerInvariant() 'DRILL_BINDING_DIALOG'
+}
+# The test project's database password, the same dialog: the user name is filled in (an emptied box falls back to it),
+# the Owner pastes the password reset in the Supabase dashboard (clued-auth-test, Database, reset password).
+function Read-DrillServerDatabaseFromDialog {
+  Read-DrillCredentialFromDialog 'Clued drill test database' 'Clued drill test database (clued-auth-test)' 'User name: leave it as it is (empty is fine). Password: the database password of the TEST project clued-auth-test (Supabase dashboard, Database, reset password). Never production. Stored for this Windows user only; never shown.' (Get-DrillServerDatabaseUser) 'DRILL_SERVER_DATABASE_DIALOG'
+}
+# $User: filled in (editable; an emptied box falls back to it); empty: the person types it. $Codes: the prefix of the two stops (_CANCELLED, _FAILED).
+function Read-DrillCredentialFromDialog([string]$Target, [string]$Caption, [string]$Message, [string]$User, [string]$Codes) {
+  if (-not ('CluedDrillCredUiV2' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class CluedDrillCredUiV2 {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct Info { public int cbSize; public IntPtr hwndParent; public string pszMessageText; public string pszCaptionText; public IntPtr hbmBanner; }
+  [DllImport("credui.dll", CharSet = CharSet.Unicode)]
+  static extern int CredUIPromptForCredentialsW(ref Info info, string target, IntPtr reserved, int authError, StringBuilder user, int userMax, IntPtr password, int passwordMax, ref bool save, int flags);
+  [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+  public const int PasswordChars = 513;
+  // GENERIC_CREDENTIALS 0x40000 | ALWAYS_SHOW_UI 0x80 | EXCLUDE_CERTIFICATES 0x8 | DO_NOT_PERSIST 0x2
+  public const int Flags = 0x40000 | 0x80 | 0x8 | 0x2;
+  // No KEEP_USERNAME (0x100000): with it CredUIPromptForCredentialsW answered 87 (ERROR_INVALID_PARAMETER) on the Owner's
+  // DESK 11-24. The user name is filled in and stays editable; the caller checks it is exactly the expected one.
+  public static int Prompt(StringBuilder user, string target, string caption, string message, IntPtr password, bool keepUser) {
+    Info i = new Info(); i.cbSize = Marshal.SizeOf(typeof(Info)); i.hwndParent = GetConsoleWindow(); i.pszCaptionText = caption; i.pszMessageText = message;
+    bool save = false;
+    return CredUIPromptForCredentialsW(ref i, target, IntPtr.Zero, 0, user, user.Capacity, password, PasswordChars, ref save, Flags);
+  }
+}
+'@
+  }
+  $size = [CluedDrillCredUiV2]::PasswordChars * 2; $zero = New-Object byte[] $size
+  $buf = [Runtime.InteropServices.Marshal]::AllocHGlobal($size)
+  try {
+    [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size)
+    # Not $user: PowerShell names are case-insensitive, and it would overwrite the parameter $User.
+    $nameBuf = New-Object Text.StringBuilder 514
+    if ($User) { [void]$nameBuf.Append($User) }
+    $rc = [CluedDrillCredUiV2]::Prompt($nameBuf, $Target, $Caption, $Message, $buf, [bool]$User)
+    if ($rc -eq 1223) { throw (New-DrillError "$($Codes)_CANCELLED") }
+    if ($rc -ne 0) { throw (New-DrillError "$($Codes)_FAILED" $rc) }
+    $secure = New-Object Security.SecureString
+    for ($n = 0; $n -lt [CluedDrillCredUiV2]::PasswordChars; $n++) {
+      $c = [Runtime.InteropServices.Marshal]::ReadInt16($buf, $n * 2); if ($c -eq 0) { break }
+      $secure.AppendChar([char]$c)
+    }
+    $secure.MakeReadOnly()
+    # An emptied field means the expected name.
+    $name = $nameBuf.ToString().Trim(); if (-not $name) { $name = $User }
+    New-Object System.Management.Automation.PSCredential ($name.ToLowerInvariant()), $secure
+  } finally { [Runtime.InteropServices.Marshal]::Copy($zero, 0, $buf, $size); [Runtime.InteropServices.Marshal]::FreeHGlobal($buf) }
+}
+# $Read: where the credential comes from (the dialog; a test gives its own).
+function Save-DrillBindingCredential([scriptblock]$Read = { Read-DrillBindingFromDialog }) {
+  $b = & $Read
+  if (-not (Test-DrillBindingCredential $b)) { throw (New-DrillError 'DRILL_BINDING_CREDENTIAL_REFUSED' 'not a connection id with a clued_bnd_ token; nothing was stored') }
+  $dir = Split-Path -Parent $script:Drill.BindingCredential
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw (New-DrillError 'DRILL_BINDING_DIRECTORY_MISSING' $dir) }
+  $b | Export-Clixml -LiteralPath $script:Drill.BindingCredential -Force
+  [void](Get-DrillCredential -Binding)   # read back through the one reader
+  return [ordered]@{ status = 'DRILL_BINDING_STORED'; connection = [string]$b.UserName; file = $script:Drill.BindingCredential }
+}
+
+# -ServerDatabaseCredential: the Owner hands over the test project's database password, once (and again only after another reset).
+# $Read: where the credential comes from (the dialog; a test gives its own). Held to its shape, written where the binding is (DPAPI, this
+# Windows user only) and read back through the one reader; what is printed carries the user name and the file, never the password.
+function Save-DrillServerDatabaseCredential([scriptblock]$Read = { Read-DrillServerDatabaseFromDialog }) {
+  $d = & $Read
+  if (-not (Test-DrillServerDatabaseCredential $d)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_CREDENTIAL_REFUSED' 'not the test project''s database user with a one-line printable password; nothing was stored') }
+  $dir = Split-Path -Parent $script:Drill.ServerDatabaseCredential
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw (New-DrillError 'DRILL_SERVER_DATABASE_DIRECTORY_MISSING' $dir) }
+  $d | Export-Clixml -LiteralPath $script:Drill.ServerDatabaseCredential -Force
+  [void](Get-DrillCredential -ServerDatabase)   # read back through the one reader
+  return [ordered]@{ status = 'DRILL_SERVER_DATABASE_CREDENTIAL_STORED'; user = [string]$d.UserName; file = $script:Drill.ServerDatabaseCredential }
 }
 
 # Send Enter through the VM's synthetic keyboard for a few seconds: "Press any key to boot from CD or DVD".
@@ -3480,7 +3792,10 @@ function Invoke-DrillRun([string]$RunDir, $Package, $KitInfo, $Prereq, [pscreden
     $tarInGuest = Invoke-Command -Session $session -ScriptBlock { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() } -ArgumentList (Join-Path $paths.from ([IO.Path]::GetFileName($Package.tar)))
     if ($tarInGuest -cne $Package.tarSha256) { throw (New-DrillError 'DRILL_TAR_CHANGED_IN_COPY') }
     # only the files of the names this package declares and the drill gives (Get-DrillCredentialPlan)
-    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake, ([string[]]@((Get-DrillCredentialPlan $KitInfo).fake))
+    # the CI token is the Owner's drill binding (read here, handed over the PowerShell Direct session, written in the guest only)
+    $fakeNames = [string[]]@((Get-DrillCredentialPlan $KitInfo).fake)
+    $binding = if ($fakeNames -ccontains 'ci-admission.token') { Get-DrillCredential -Binding } else { $null }
+    $fake = Invoke-Command -Session $session -ScriptBlock ([scriptblock]::Create(${function:New-DrillFakeCredentials}.ToString())) -ArgumentList $paths.fake, $fakeNames, $binding
     Write-DrillJson (Join-Path $RunDir 'fake-credentials.public.json') $fake
   } finally { Remove-PSSession -Session $session }
   } catch { Write-DrillHostStep $RunDir 'copy-in' 'end' 'failed' (Get-DrillCode $_).code; throw }
@@ -3865,7 +4180,54 @@ function Get-DrillLadderStep([string]$RunsDir, [string]$Version, [string]$KitSha
   return (& $step ([Math]::Min($previous, $ceiling)) 'not-longer')
 }
 
+# -ServerKey <key>: the test project's public key, as DESK read it from the project (it is in no repository file:
+# FABLE-drill-test-project-sync-20261124.md section 3). The one checker (drill-server-check.mjs --store-key) holds its shape, asks the
+# project with it and stores it on the host only when the project answers; make-drill-kit.mjs reads that copy.
+function Save-DrillServerKey([string]$Key) {
+  $tool = Join-Path (Split-Path -Parent $script:DrillScriptPath) 'drill-server-check.mjs'
+  $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  if ($Key -cnotmatch '^[A-Za-z0-9_-]{1,200}$') { throw (New-DrillError 'DRILL_SERVER_KEY_REFUSED' 'not a public key') }
+  $arguments = @($tool, '--store-key', $Key)
+  if ($script:Drill.ServerKeyFile) { $arguments += @('--key-file', [string]$script:Drill.ServerKeyFile) }
+  $run = Invoke-DrillNode $node $arguments 90
+  $stored = $null
+  if ($run.exit -eq 0) { try { $stored = $run.stdout | ConvertFrom-Json } catch { $stored = $null } }
+  if ($null -eq $stored) { throw (New-DrillServerError $run 'DRILL_SERVER_KEY_REFUSED') }
+  return [ordered]@{ status = [string]$stored.status; project = [string]$stored.project; file = [string]$stored.file }
+}
+
+# The code a server tool ended on (its first stderr line that is one: DRILL_X or DRILL_X:detail), as this script's error.
+function New-DrillServerError($Run, [string]$Otherwise) {
+  $code = [string](@(([string]$Run.stderr) -split "`r?`n" | Where-Object { $_ -cmatch '^DRILL_[A-Z0-9_]+' }) | Select-Object -First 1)
+  if ($code -cmatch '^(DRILL_[A-Z0-9_]+)(?::(.*))?$') { return (New-DrillError $Matches[1] $Matches[2]) }
+  return (New-DrillError $Otherwise ([string]$Run.stderr))
+}
+
 function Invoke-DrillMain {
+  if ($Rebuild -and -not $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-Rebuild goes with -SyncServer only') }
+  if ($ServerKey) {
+    if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive -or $BindingCredential -or $ServerDatabaseCredential -or $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-ServerKey is given alone') }
+    return (Save-DrillServerKey $ServerKey)
+  }
+  if ($BindingCredential) {
+    if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive -or $ServerDatabaseCredential -or $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-BindingCredential is given alone') }
+    return (Save-DrillBindingCredential)
+  }
+  if ($ServerDatabaseCredential) {
+    if ($Version -or $From -or $Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive -or $SyncServer) { throw (New-DrillError 'DRILL_USAGE' '-ServerDatabaseCredential is given alone') }
+    return (Save-DrillServerDatabaseCredential)
+  }
+  # -SyncServer [-Rebuild] -From <Release dir> -Version <v>: the sync a drill runs before its boot, on its own (the first rebuild, a
+  # rebuild after DRILL_SERVER_DIVERGED, or a check). The Release gives the scope the fixtures follow; no VM, no host hold.
+  if ($SyncServer) {
+    if ($Kit -or $BaselineOnly -or $PrereqOnly -or $Finalize -or $Interactive) { throw (New-DrillError 'DRILL_USAGE' '-SyncServer takes -From, -Version and -Rebuild only') }
+    if (-not $From -or -not $Version) { throw (New-DrillError 'DRILL_USAGE' 'give -SyncServer -From <Release dir> -Version <v>') }
+    if (-not (Test-Path -LiteralPath (Join-Path $From "fleet-node-$Version.first-install-kit.json") -PathType Leaf)) { throw (New-DrillError 'DRILL_USAGE' "no fleet-node-$Version.first-install-kit.json in -From") }
+    $synced = Sync-DrillServer $From $Version -Rebuild:$Rebuild
+    $out = [ordered]@{ status = 'DRILL_SERVER_SYNCED'; rebuilt = [bool]$Rebuild }
+    foreach ($k in $synced.Keys) { $out[$k] = $synced[$k] }
+    return $out
+  }
   if ($Interactive -and ($BaselineOnly -or $PrereqOnly -or $Finalize)) { throw (New-DrillError 'DRILL_USAGE' '-Interactive is a full first-install run only') }
   # Fable renew-key ruling, supplements "interactive mode A1" and "branch two, two points" 2: A1's step record has one parser
   # (Read-DrillFirstInstallSteps); its source depends on the mode. In interactive mode the operator's window does not hold it: bootstrap.ps1
@@ -3903,6 +4265,8 @@ function Invoke-DrillMain {
     if ($kitInfo.prereqSha256 -cne $prereq.sha256) { throw (New-DrillError 'DRILL_KIT_PREREQ_NOT_THESE' @{ kit = $kitInfo.prereqSha256; prereq = $prereq.sha256 }) }
     $package.files = @(Get-DrillReleaseFiles $package $kitInfo)
     if ($kitInfo.executionBlocker) { throw (New-DrillError 'DRILL_FIRST_INSTALL_ENTRY_NOT_READY' $kitInfo.executionBlocker) }
+    # the drill's server (never production) and the Owner's drill binding, before the host gate, the hold or any boot
+    Assert-DrillServerReady $kitInfo $package
     # the package's credential names against the drill's decisions, before the host gate, the hold or any boot; the kit's names first bound
     # again to the package's verified tar
     Assert-DrillKitCredentialsBound $kitInfo (Get-Prop $package 'tar')
@@ -4015,6 +4379,11 @@ function Invoke-DrillPreparedRun($Window, $Package, $KitInfo, $Prereq) {
     version = $package.version; tarSha256 = $package.tarSha256; ciSourceManifestSha256 = $package.ciSourceManifestSha256
     # the three hashes an acceptance names; candidate: the drill ran before the Owner's acceptance, on the kit's drill-only acceptance
     firstInstallKitSha256 = $package['firstInstallKitSha256']; candidate = [bool]$package['candidate']
+    # the server the guest installed against (never production) and the first-install kit it read: the Release's with the two fields replaced
+    server = $(if ($null -ne (Get-Prop $kitInfo 'server')) { [ordered]@{ project = $kitInfo.server.project; supabaseUrl = $kitInfo.server.supabaseUrl; replaced = @($kitInfo.server.replaced)
+        drillFirstInstallKitSha256 = $kitInfo.server.firstInstallKitSha256; blackholeHosts = @($kitInfo.server.blackholeHosts)
+        # the test project's sync receipt read before the boot: which production state this drill's server stood in for
+        sync = $kitInfo.server['sync'] } } else { $null })
     kitSha256 = $kitInfo.sha256; prereqSha256 = $prereq.sha256; baseline = [ordered]@{ checkpoint = $script:Drill.Checkpoint; build = $baseline }
     startedAt = $startedAt; endedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'); hostFreeGBAtStart = (Get-Prop (Get-Prop $o 'preBoot') 'bootGate.freeGB')
     failure = $failure; restoredToCheckpoint = $restored

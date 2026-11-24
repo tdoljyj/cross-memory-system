@@ -31,7 +31,9 @@ test('A6 holds the pause this install confirmed, read from the launcher result; 
     ['a current batch', { status: { ...e.status, current: { batch: 'b1' } } }],
     ['a live queue', { status: { ...e.status, queue: { live: 1 } } }],
     ['a HALT', { status: { ...e.status, halt: { code: 'X' } } }],
-    ['another mode', { status: { ...e.status, node: { mode: 'STANDBY' } } }],
+    // the role is a confirmed "holds none" (drill-server-stand-in.test.mjs): the probe unanswered, or the slot held, is no pass
+    ['another mode', { status: { ...e.status, node: { mode: 'UNCERTAIN' } } }],
+    ['the launcher\'s probe refused', { launcher: { ...e.launcher, role: 'unauthorized', completed: ['pause-confirmed', 'first-train-role-unauthorized'] } }],
   ]) assert.equal(a6(over).pass, false, reason);
 });
 
