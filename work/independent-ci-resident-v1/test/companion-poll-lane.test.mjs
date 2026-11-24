@@ -152,6 +152,9 @@ test('a status read that never returns: the poll goes on after 5 s with the gene
   c.pulls.push(pull(1304, head));
   await ft.runUntil(ft.clock() + 15_000 + 5_000);
   assert.deepEqual((await c.triggers()).map(v => [v.pr, v.headSha]), [[1304, head]]);
-  assert.equal(c.statusReads.n, 1, 'a read still outstanding is waited on again, never a second one on top of it');
+  // The advisory lane's own read (the PR page) hangs too, once; the poll lane waits on its one outstanding read again each pass.
+  const reads = c.statusReads.n;
+  await ft.runUntil(ft.clock() + 2 * (15_000 + 5_000));
+  assert.equal(c.statusReads.n, reads, 'a read still outstanding is waited on again, never a second one on top of it');
   run.stop();
 });
