@@ -330,19 +330,24 @@ OWNER_DECISION_HOSTED_JOBS = {
 # scaffold job can carry starts with "hosted-", so none can stand in for a
 # check of the independent CI. The hosted copy of the front-merge-main workflow
 # (clued-front-main-merge-hosted.yml) belongs to the same scaffold under the same
-# rule: its two jobs carry hosted- names. Temporary: at the switch back (stage S8) the
+# rule: its two jobs carry hosted- names. hosted-ci-suites-windows runs as four Windows
+# shards, a summary job of that name and a non-required duration job (task 3435f8bf
+# block 4); a matrix job's name is a format() whose literal starts with "hosted-",
+# the one quoted branch job_check_names reads. Temporary: at the switch back (stage S8) the
 # workflows and these entries are deleted in one change; a stale entry fails.
 HOSTED_SCAFFOLD_SOURCE = "61b65d61"
 HOSTED_SCAFFOLD_PREFIX = "hosted-"
 HOSTED_SCAFFOLD_JOBS = {
     "hosted-required.yml": {
-        "control_sha256": "623f3e7945af830898e3a730d209d020c6b53f316410d401542ea1ec837155e2",
+        "control_sha256": "9a057883ee2ed3562058c81812778c539a19dda2afc1571c5cf1d50ae1c6ac76",
         "jobs": {
-            "clued-cloud-tests": "160df4a5660ec26b48d406507aab5f42d5153597bba28fda35ce7e640ed66a09",
-            "ci-suites": "5bcfffd67e214013b9edff9ab2636709ac52d38d67d68ca48531bea009865476",
-            "migration-verify": "b5c25479376be9eb07294e380043fdaa0c89df3d156d9a233ca091467172b889",
-            "ci-suites-windows": "e701e85162c93401f4357e38a7ca4c9ad78ada37746ae8f4f4f9f2e87052cfd3",
-            "gitleaks": "7cc1a410d14a6bd8fc140ac5a86ce1f65365f33f23e72fa15f0aa6a0b49d0022",
+            "clued-cloud-tests": "6cbe5548054ab7718475ae8cfb85ce095ea7761526f2b184bdf01b7696fa0bcb",
+            "ci-suites": "f76d702d186df8db2a7877dcb4bac03c6202775740f16667027193c33bfcab95",
+            "migration-verify": "99c0769279ea8f6c0b5a485b2d80e2ef163642e4c5f191cbb3dd493487714da1",
+            "ci-suites-windows-shard": "b4fcbce1fd84783fbfc90448fe28b1123230d866efb04b46b0ea500360877953",
+            "ci-suites-windows": "5071b13bdf66b49332eb45beefc7b4941f9666a6f4d5659606d232ce61e901a4",
+            "ci-suites-windows-duration": "9cfd47298e34cea4eca39a7ad78e5a4b4dfd08c356ee42ccd511066b73a99653",
+            "gitleaks": "4d532d733482aa3d94c2f83c33954b9af8e420c387cf1cd8b473e8f92aae45f6",
             "trivy": "7a5b2fee28fb2304c03a4d70c35832b64cbac60d70dc0a8c6f26eafc04bbb18a",
             "contract-placement": "a07add60bcd9ec6caee62f0e86213c48ce3d16700894dc71e38b75a9493334df"
         }

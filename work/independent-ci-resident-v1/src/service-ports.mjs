@@ -71,7 +71,7 @@ export function mailboxCompanion(mailbox, sleep, { abandon = null } = {}) {
     async prHead(pr, batch = null) {
       const r = await ask('pr-head', { batchId: batch?.batchId ?? NO_BATCH, pr });
       const p = r?.ok === true ? r.pull : null;
-      return p ? { number: p.number, state: p.state, headSha: p.headSha, ...(p.mergeSha ? { mergeSha: p.mergeSha } : {}) } : null;
+      return p ? { number: p.number, state: p.state, headSha: p.headSha, ...(p.mergeSha ? { mergeSha: p.mergeSha } : {}), ...(typeof p.draft === 'boolean' ? { draft: p.draft } : {}) } : null;
     },
     async archiveLinux(batch, reason) {
       const r = await ask('archive-linux', { batchId: batch.batchId, reason });

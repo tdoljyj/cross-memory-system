@@ -141,6 +141,9 @@ test('V1: verify not passed: its step line says failed and carries the verdict; 
 test('V2: verify passed: its step line is ok with no reject code, as before', { skip, timeout: 300_000 }, () => {
   const passed = JSON.stringify({ status: 'RESIDENT_VERIFIED', checks: { 'install-receipt': { ok: true }, 'not-halted': { ok: true } } });
   const lines = ps(verifyScript({ exit: 0, stdout: passed }));
-  assert.deepEqual(lines.filter(l => l.name === 'verify'), [{ name: 'verify', result: 'ok', rejectCode: null, detail: null }]);
+  // each line also carries when it was printed (task 87d330d0); the step's own fields are as before
+  const verify = lines.filter(l => l.name === 'verify');
+  assert.ok(verify.every(l => /^\d{4}-\d\d-\d\dT[\d:.]+\+00:00$/.test(l.at) && 'ms' in l), JSON.stringify(verify));
+  assert.deepEqual(verify.map(({ at, ms, ...rest }) => rest), [{ name: 'verify', result: 'ok', rejectCode: null, detail: null }]);
   assert.deepEqual(lines.at(-1).done, ['verify']);
 });

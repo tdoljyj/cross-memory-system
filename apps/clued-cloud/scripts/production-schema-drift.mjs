@@ -26,6 +26,7 @@
 // against production by whoever refreshes the snapshot) into catalog.json.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
@@ -481,19 +482,31 @@ function argument(args, name) {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-// Migration file names the base has: the trusted base checkout that
-// migration-verify puts next to the candidate checkout (workspace/trusted), else
-// the base commit tree (CI_BASE_SHA, local-verify); undefined when neither is known.
-export async function readBaseMigrations(env = process.env,
-  trusted = path.join(appDirectory, '..', '..', '..', 'trusted', 'apps', 'clued-cloud', 'supabase', 'migrations')) {
-  const sibling = await readdir(trusted).catch(() => null);
-  if (sibling) return new Set(sibling);
+// Migration file names the base has. In migration-verify the trusted base is
+// checked out next to the candidate (workspace/trusted) with only the directories
+// the selector reads (sparse, blob:none), so the migrations directory is usually
+// not on disk there: its commit tree still is, and ls-tree reads the names from it
+// without fetching a blob. A full trusted checkout is listed directly; without a
+// trusted checkout the base commit tree is read (CI_BASE_SHA, local-verify).
+// Neither known is an error: an unknown base would judge no pending migration,
+// which passes a change that breaks the previous Worker.
+const MIGRATIONS_PATH = 'apps/clued-cloud/supabase/migrations';
+export async function readBaseMigrations(env = process.env, trustedRoot = path.join(appDirectory, '..', '..', '..', 'trusted')) {
+  const listed = await readdir(path.join(trustedRoot, ...MIGRATIONS_PATH.split('/'))).catch(() => null);
+  if (listed) return new Set(listed);
+  const names = (args, cwd) => {
+    const run = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const files = run.status === 0 ? run.stdout.split(String.fromCharCode(10)).map((file) => path.basename(file.trim())).filter(Boolean) : [];
+    return files.length > 0 ? new Set(files) : null;
+  };
+  // Only the trusted checkout's own repository: a plain directory inside another repository would answer for that one.
+  const sparse = existsSync(path.join(trustedRoot, '.git')) && names(['-C', trustedRoot, 'ls-tree', '--name-only', 'HEAD', `${MIGRATIONS_PATH}/`]);
+  if (sparse) return sparse;
   if (env.CI_BASE_SHA && !/^0+$/.test(env.CI_BASE_SHA)) {
-    const run = spawnSync('git', ['ls-tree', '--name-only', '-r', env.CI_BASE_SHA, '--', 'supabase/migrations'],
-      { cwd: appDirectory, encoding: 'utf8' });
-    if (run.status === 0) { const names = run.stdout.split(String.fromCharCode(10)).map((file) => path.basename(file.trim())).filter(Boolean); if (names.length > 0) return new Set(names); }
+    const base = names(['ls-tree', '--name-only', '-r', env.CI_BASE_SHA, '--', 'supabase/migrations'], appDirectory);
+    if (base) return base;
   }
-  return undefined;
+  throw new Error(`the base migrations are unknown: no ${MIGRATIONS_PATH} in the trusted checkout ${trustedRoot} (directory or HEAD tree) and no readable CI_BASE_SHA tree`);
 }
 
 async function main(argv) {

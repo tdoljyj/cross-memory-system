@@ -153,7 +153,7 @@ def post_install_start(done, read, terminal):
     companion = terminal.get('companion') if isinstance(terminal, dict) else None
     need(not ('companion-headless' in done and 'companion' not in done) and not (isinstance(companion, dict) and companion.get('maintenanceDeferred')),
          'PRIOR_LAUNCH_RAN_COMPANION_MAINTENANCE_NOT_CONTINUED')
-    trained = bool(done & {'first-train', 'first-train-not-applicable', 'first-train-not-observed'})
+    trained = bool(done & {'first-train', 'first-train-not-applicable', 'first-train-not-observed', 'first-train-role-unauthorized'})
     need(not trained or field('first-train-report.json', 'runnerQuiet') is True, 'PRIOR_POST_INSTALL_RECORDS_INCONSISTENT', 'first-train-report.json')
     need(trained or 'verify' not in done, 'PRIOR_POST_INSTALL_RECORDS_INCONSISTENT', 'verify')
     verified = 'verify' in done and field('verify.stdout.json', 'status') == 'RESIDENT_VERIFIED'

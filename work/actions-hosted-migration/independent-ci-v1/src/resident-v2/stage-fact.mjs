@@ -219,7 +219,9 @@ export function outcomeFacts(o) {
     // Generation 28 (resident docs/adr/0015): the check publisher's own republishSafe, only on a REVOKED ending (stage-inputs.mjs#writeOutcome).
     ...(o.republishSafe === true && o.status === 'REVOKED' ? { republishSafe: true } : {}),
     // Rule 41ab823a (resident DESIGN §75): stage 1's report of the scans H already carries (stage-inputs.mjs#writeOutcome), validated again.
-    ...(o.status === 'SETTLED' && validHeadScans(o.headScans)?.length ? { headScans: validHeadScans(o.headScans) } : {}) };
+    ...(o.status === 'SETTLED' && validHeadScans(o.headScans)?.length ? { headScans: validHeadScans(o.headScans) } : {}),
+    // Stage 1 settled on a PR that merged meanwhile (stage-inputs.mjs#writeOutcome): only the boolean, only on SETTLED.
+    ...(o.status === 'SETTLED' && o.settledMerged === true ? { settledMerged: true } : {}) };
 }
 // The broker's refusals that it gives before any start, with the runner re-read as the original (no launch, state
 // restored): the second way a stage may be released (v0.6 §9 phase 1, item 2). BROKER_BUSY and BROKER_UNCONFIRMED

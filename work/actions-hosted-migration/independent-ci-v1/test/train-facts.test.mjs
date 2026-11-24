@@ -209,6 +209,14 @@ test('shadow records are create-only and validated; the stage-10 outcome carries
   for (const rules of [{ strict: true, mergeOnly: true, appScans: ['trivy', 'gitleaks'] }, { strict: true, mergeOnly: true, appScans: ['other'] },
     { strict: true, mergeOnly: true, appScans: ['trivy', 'trivy'] }, { strict: true, mergeOnly: true, appScans: 'trivy' }, { strict: true, mergeOnly: true, extra: 1 }])
     assert.throws(() => validateTrainFacts({ ...f, rules }), e => e.code === 'invalid_train_facts', JSON.stringify(rules));
+  // Task 04f9b91b (admission p90): the top-level appScans, also next to rules null (the scaffold ruleset alone), same shape
+  for (const appScans of [[], ['trivy'], ['gitleaks', 'trivy', 'contract-placement']]) {
+    assert.deepEqual(validateTrainFacts({ ...f, rules: null, appScans }).appScans, appScans);
+    assert.deepEqual(trainFacts({ mode: 'shadow', at: f.at, onDuty: true, holders: [], mainSha: T, rules: null, rulesReason: 'RULESET_UNREADABLE', appScans, front: null, revoke: [], ledger: null }).appScans, appScans);
+  }
+  assert.equal(Object.hasOwn(trainFacts({ mode: 'shadow', at: f.at, onDuty: true, holders: [], mainSha: T, rules: null, front: null, revoke: [], ledger: null }), 'appScans'), false);
+  for (const appScans of [['trivy', 'gitleaks'], ['other'], ['trivy', 'trivy'], 'trivy', null, {}])
+    assert.throws(() => validateTrainFacts({ ...f, appScans }), e => e.code === 'invalid_train_facts', JSON.stringify(appScans));
   const receipts = path.join(await tempDir(t), 'receipts');
   const plan = { stage: 10, entryRole: 'train-maintenance' };
   const good = await writeOutcome({ receiptsRoot: receipts, nonce: 'a'.repeat(32), plan, jobIds: [job.id], result: { status: 'TRAIN_FACTS', sideEffects: 0, train: f } });
