@@ -39,7 +39,7 @@
 //                 the head made from it runs everything. Not when an admission
 //                 failed: main does not change that. A red head the App brought up
 //                 is a candidate again (第二轮规划 A, 任务 2fb32dc7, #1298), after
-//                 every candidate that is not red, when it was admitted, the red is
+//                 every other candidate, when it was admitted, the red is
 //                 not the admission and its first parent is not one the App brought
 //                 (REBRING_RED_MAX in a row): main may have fixed that red since.
 // Every run without inputs also names, once per head, a pull request on the train
@@ -241,11 +241,12 @@ const admissionRed = (records, admitters) => records.failed.some(context => admi
 const redBrought = (records, admitters) => records.failed.length > 0 && records.brought && records.admitted && !admissionRed(records, admitters);
 
 // How many heads in a row, this one first, the App brought up (this one is): its first parents read while each carries the App's
-// kooyumi-main-merge success, at most REBRING_RED_MAX deep. Throws when GitHub cannot be read (then nothing is decided).
+// kooyumi-main-merge success, at most REBRING_RED_MAX deep. The parent is read from the git commit object (parents only, no diff
+// against a merge of all of main). Throws when GitHub cannot be read: then that head is not brought again, the rest goes on.
 async function broughtInARow({ env, fetchImpl, repository, head }) {
   let count = 1;
   for (let at = head; count < REBRING_RED_MAX;) {
-    const parent = (await githubJson(fetchImpl, env, `/repos/${repository}/commits/${at}`))?.parents?.[0]?.sha;
+    const parent = (await githubJson(fetchImpl, env, `/repos/${repository}/git/commits/${at}`))?.parents?.[0]?.sha;
     if (!SHA.test(parent ?? '')) throw new Error(`the first parent of ${at} could not be read`);
     if (!succeeded(await githubPaged(fetchImpl, env, `/repos/${repository}/commits/${parent}/check-runs`, 'check_runs'), MAIN_MERGE_CHECK, ADMISSION_APP_ID)) break;
     count++; at = parent;
@@ -256,7 +257,8 @@ async function broughtInARow({ env, fetchImpl, repository, head }) {
 // What the train does with a head behind main, one rule for choosing the front and for naming the stalled: a candidate is brought
 // up to main once there is no front; anything else stays where it is. §3.1: a failed admission is not something main changes; a
 // head the App brought that is not admitted is not brought again. A red head the App brought is brought again (last) while
-// records.inARow (read by chooseFront for such a head only) is below REBRING_RED_MAX; unread, it is not.
+// records.inARow (read by chooseFront for such a head only) is below REBRING_RED_MAX; unread, it is not (red, not a candidate)
+// and every other member is decided as before.
 function behindVerdict(member, records, admitters) {
   if (member.mergeable === 'CONFLICTING') return { state: 'conflict', candidate: false };
   if (redBrought(records, admitters) && (records.inARow ?? REBRING_RED_MAX) < REBRING_RED_MAX)
@@ -318,9 +320,16 @@ export async function chooseFront({ env, fetchImpl, now = () => Date.now() }) {
   // Without a front every member's head is read, a conflict's too: each one the App brought up and not admitted counts.
   if (nofront) for (const member of train.filter(member => member.behind > 0)) {
     const records = member.records = await headRecords({ env, fetchImpl, repository, head: member.head, required, admitters });
-    if (member.mergeable !== 'CONFLICTING' && redBrought(records, admitters)) records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
+    let unread = null;
+    if (member.mergeable !== 'CONFLICTING' && redBrought(records, admitters)) {
+      try {
+        records.inARow = await broughtInARow({ env, fetchImpl, repository, head: member.head });
+      } catch (error) {
+        unread = error instanceof Error ? error.message : String(error);
+      }
+    }
     const verdict = behindVerdict(member, records, admitters);
-    member.state = verdict.state;
+    member.state = unread ? `${verdict.state}; 连带次数未读到 (${unread}): not brought again this run` : verdict.state;
     if (verdict.candidate) (verdict.last ? last : candidates).push(member);
   }
   candidates.push(...last);
