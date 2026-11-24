@@ -130,13 +130,13 @@ function plainCommits(files) {
 const stubCommand = (dir) => [NODE, fwd(STUB), 'git', fwd(dir)];
 const realCommand = (dir) => [fwd(GITLEAKS), 'git', fwd(dir), '--config', fwd(path.join(ROOT, '.gitleaks.toml')), '--redact', '--no-banner', '--exit-code', '1'];
 function range({ dir, base, head }, command, env = {}) {
-  const r = spawnSync(BASH, [fwd(SCRIPT), fwd(dir), base, head, '--', ...command], { encoding: 'utf8', env: { ...ENV, ...env }, timeout: 240000 });
+  const r = spawnSync(BASH, [fwd(SCRIPT), fwd(dir), base, head, '--', ...command], { encoding: 'utf8', env: { ...ENV, ...env } });
   return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
 // The pre-R1 command: gitleaks over the range's log, without --remerge-diff and without reading its output.
 function plainGitleaks({ dir, base, head }, command, env = {}) {
   const [bin, ...args] = command;
-  return spawnSync(bin, [...args, `--log-opts=${base}..${head}`], { encoding: 'utf8', env: { ...ENV, ...env }, timeout: 240000 }).status;
+  return spawnSync(bin, [...args, `--log-opts=${base}..${head}`], { encoding: 'utf8', env: { ...ENV, ...env } }).status;
 }
 const BOGUS_LOG = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'log.date', GIT_CONFIG_VALUE_0: 'bogus' };
 
@@ -265,7 +265,7 @@ test('the gitleaks job runs the trusted range script over the change, from a fre
 // stand-in docker that runs the stub on the mounted copy.
 // MSYS_NO_PATHCONV: Git for Windows' bash would rewrite the container path /repo into a Windows path for the stand-in.
 function bashStep(script, { cwd, env }) {
-  const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...ENV, MSYS_NO_PATHCONV: '1', ...env }, timeout: 240000 });
+  const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...ENV, MSYS_NO_PATHCONV: '1', ...env } });
   return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
 function pullRequestWorkspace(resolution) {

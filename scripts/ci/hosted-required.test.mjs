@@ -341,7 +341,7 @@ function staleBaseRun(headFiles) {
     const shared = { ...env, MSYS_NO_PATHCONV: '1', GITHUB_WORKSPACE: fwd(ws), RUNNER_TEMP: fwd(temp), GITHUB_SHA: M,
       GITHUB_OUTPUT: fwd(output), PATH: `${bin}${path.delimiter}${process.env.PATH}` };
     const run = (script, cwd, extra) => {
-      const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...shared, ...extra }, timeout: 240000 });
+      const r = spawnSync(BASH, ['-e', '-c', script], { cwd, encoding: 'utf8', env: { ...shared, ...extra } });
       return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
     };
     const block = jobs(text).get('gitleaks');
