@@ -77,6 +77,7 @@ apps/clued-cloud/tests/delegated-consent-ui.test.mjs
 apps/clued-cloud/tests/delegated-oauth-transport.test.mjs
 apps/clued-cloud/tests/development-contexts-ui.test.mjs
 apps/clued-cloud/tests/drill-test-sync-db.test.mjs
+apps/clued-cloud/tests/drill-test-sync-standalone.test.mjs
 apps/clued-cloud/tests/event-carrier-block-reasons-db.test.mjs
 apps/clued-cloud/tests/event-continuity-manifest-db.test.mjs
 apps/clued-cloud/tests/existing-release-v3-host.test.mjs
@@ -329,6 +330,7 @@ legacy/local-memory-engine-vnext2/tests/test_truth_receipt_gate.py
 legacy/local-memory-engine-vnext2/tests/test_truth_state_conformance.py
 scripts/ci/ci-deps.test.mjs
 scripts/ci/ci-required-selection-flaky.test.mjs
+scripts/ci/ci-required-selection-lanes.test.mjs
 scripts/ci/ci-required-selection.test.mjs
 scripts/ci/ci-usage-report.test.mjs
 scripts/ci/clued-g4-fresh-start.test.mjs
@@ -338,6 +340,7 @@ scripts/ci/clued-independent-publication-port.test.mjs
 scripts/ci/clued-independent-revocation-controller.test.mjs
 scripts/ci/clued-independent-revoker.test.mjs
 scripts/ci/clued-independent-supervisor.test.mjs
+scripts/ci/clued-local-migrate.test.mjs
 scripts/ci/clued-scan-start.test.mjs
 scripts/ci/clued-work-admission.test.mjs
 scripts/ci/gitleaks-range.test.mjs
@@ -487,6 +490,7 @@ work/independent-ci-resident-v1/test/companion-qualify-evidence.test.mjs
 work/independent-ci-resident-v1/test/companion-token.test.mjs
 work/independent-ci-resident-v1/test/core.test.mjs
 work/independent-ci-resident-v1/test/dependency-cuts.test.mjs
+work/independent-ci-resident-v1/test/drill-fresh-checkout.test.mjs
 work/independent-ci-resident-v1/test/drill-guest-probe.test.mjs
 work/independent-ci-resident-v1/test/drill-r10-companion-evidence.test.mjs
 work/independent-ci-resident-v1/test/drill-r4-defects.test.mjs
@@ -503,7 +507,6 @@ work/independent-ci-resident-v1/test/execution-retry.test.mjs
 work/independent-ci-resident-v1/test/executor.test.mjs
 work/independent-ci-resident-v1/test/failover-stranded-head.test.mjs
 work/independent-ci-resident-v1/test/first-install-chain.test.mjs
-work/independent-ci-resident-v1/test/first-install-fixture.mjs
 work/independent-ci-resident-v1/test/first-install-r5-defects.test.mjs
 work/independent-ci-resident-v1/test/first-install-r5-host-prep.test.mjs
 work/independent-ci-resident-v1/test/first-install-r5-launcher.test.mjs
@@ -558,7 +561,6 @@ work/independent-ci-resident-v1/test/train-takeover-front.test.mjs
 work/independent-ci-resident-v1/windows/test-companion-headless.ps1
 work/independent-ci-resident-v1/windows/test-companion-maintenance.ps1
 work/independent-ci-resident-v1/windows/test-first-install-host.ps1
-work/independent-ci-resident-v1/windows/test-m5b-wsl-release.ps1
 work/independent-ci-resident-v1/windows/test-resident-windows.ps1
 work/independent-ci-resident-v1/windows/test-upgrade-system.ps1
 work/successor-reviewer/verify-issued-documents.test.mjs
