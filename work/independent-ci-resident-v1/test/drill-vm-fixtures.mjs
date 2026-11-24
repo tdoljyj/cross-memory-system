@@ -38,6 +38,8 @@ export const credentialFilesJson = (c = PACKAGE_CREDENTIALS) => JSON.stringify({
 export const PRODUCTION_SERVER = { supabaseUrl: 'https://prodfixture0000000000.supabase.co', publishableKey: 'sb_publishable_prodfix' };
 // The production gateway a package's own code names (windows/SwapBroker.cs Route: the renew probe every service start sends), here a fixture.
 export const PRODUCTION_GATEWAY = 'gateway.prodfixture.example';
+// What the Release record names besides its server, sent with the role probe (scope, repository): the drill kit keeps them as they are.
+export const RECORD_NAMES = { scope: 'project:fixture-scope', repository: 'fixture-owner/fixture-repo' };
 export const DRILL_SERVER = { contract: 'clued.drill.server/1', project: 'fixture-drill-project', supabaseUrl: 'https://drillfixture000000000.supabase.co', publishableKey: 'sb_publishable_drilltest',
   // every https host the package's archive names is one or the other, or no kit (review M1): the service's own beyond the record's
   // database (cut off in the guest), and the others (not Clued's)
@@ -52,7 +54,11 @@ export const bindingPs = `(New-Object System.Management.Automation.PSCredential 
 // (The same for the host's cache of the drill server's public key, drill-vm.ps1 -ServerKey: no fixture writes the host's own.)
 // The Owner's drill binding is read from the host (D:\\clued-drill, Get-DrillCredential -Binding): a fixture never reads that one. Every
 // fixture that loads drill-vm.ps1 points the script at this test run's own, a fixture binding written on first use.
-const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }; $script:Drill.ServerKeyFile = ${q(path.join(tmp, 'fixture-drill-server.local.json'))}`;
+// Before any boot the host asks the drill's server itself (Assert-DrillServerReady: the sync receipt, the role probe). No fixture reaches
+// a server: every fixture's call is the offline half of that tool (the kit against its Release), unless a test gives its own answer.
+const offlineServer = `function Invoke-DrillServerReadyNode([string]$Node, [string]$KitDir, [string]$From, [string]$Version, $Binding) {
+    Invoke-DrillNode $Node @((Join-Path (Split-Path -Parent $script:DrillScriptPath) 'make-drill-kit.mjs'), '--server-of', $KitDir, '--from', $From, '--version', $Version) 60 }`;
+const fixtureBinding = `$script:Drill.BindingCredential = ${q(path.join(tmp, 'fixture-drill-binding.clixml'))}; if (-not (Test-Path -LiteralPath $script:Drill.BindingCredential)) { ${bindingPs} | Export-Clixml -LiteralPath $script:Drill.BindingCredential }; $script:Drill.ServerKeyFile = ${q(path.join(tmp, 'fixture-drill-server.local.json'))}; ${offlineServer}`;
 export const ownMutexes = `$script:Drill.HostMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-host`)}; $script:Drill.BootMutex = ${q(`Local\\CluedDrillTest-${path.basename(tmp)}-boot`)}; ${fixtureBinding}`;
 // The fixtures' one time (task ce2e5c1a step 2): a host status is written at T0, and Get-DrillTime answers T0 in every ps() snippet
 // that does not define its own, so what a fixture writes reads the same whenever the snippet runs. A snippet that needs time to pass
@@ -89,7 +95,7 @@ export function firstInstallAssets(label, { candidate = false, credentialFiles =
   const image = `role-image-${id}.tar.gz`;
   // record: the two public server fields a real kit carries (prepare-record.mjs), here the stand-in for production (PRODUCTION_SERVER)
   const kit = Buffer.from(JSON.stringify({ contract: 'clued.independent-ci.fleet-node-first-install-kit/1', images: { local: [{ id, asset: image }] },
-    record: { ...PRODUCTION_SERVER, node: 'fixture' } }));
+    record: { ...PRODUCTION_SERVER, node: 'fixture', ...RECORD_NAMES } }));
   const archive = writeTar([...['bootstrap.ps1', 'prereq-manifest.json'].map(n => ({
     path: `tree/work/independent-ci-resident-v1/rollout/fleet/${n}`,
     data: Buffer.from(n.endsWith('.ps1') ? '# accepted bootstrap\r\n' : JSON.stringify({ items: [
