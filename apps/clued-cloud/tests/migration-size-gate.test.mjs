@@ -199,6 +199,29 @@ test('a DO body that executes a built statement is judged by the literals of tha
   assert.match(later.stderr, /_fixture_0\.sql:3: create unique index/);
 });
 
+// FABLE-prod-db-shrink-v2-20261124 §13: SELECT ... INTO adds a table only in the file's top-level SQL. Text tokenized from
+// a string literal is either run by EXECUTE, where PostgreSQL refuses SELECT ... INTO (0A000,
+// migration-size-gate-db.test.mjs), or part of a function body, where it assigns variables; CREATE TABLE ... AS in a
+// literal is still refused.
+test('select into counts only in top-level SQL; create table as in a literal is still refused', () => {
+  for (const sql of [
+    `do $$\ndeclare r record;\nbegin\n  for r in select pg_get_functiondef(p.oid) as definition from pg_proc p where p.proname = 'f' loop\n    execute replace(r.definition, $a$select * into v from public.t where id=1;$a$, $r$select * into v from public.t where id=2;$r$);\n  end loop;\nend $$;`,
+    `do $$\ndeclare\n  anchor text := '  select count(*) into n from public.t';\n  r record;\nbegin\n  for r in select pg_get_functiondef(p.oid) as definition from pg_proc p where p.proname = 'f' loop\n    execute replace(r.definition, anchor, anchor || ' where true');\n  end loop;\nend $$;`,
+  ]) {
+    const result = verdict(AT, `${sql}\n`);
+    assert.equal(result.status, 0, `${sql}\n${result.stdout}${result.stderr}`);
+  }
+  for (const [sql, line, text] of [
+    ['select * into public.c from public.t;', 1, /select \* into public\.c/],
+    [`do $$\ndeclare q text := 'create table public.c as select * from public.t';\nbegin\n  execute q;\nend $$;`, 2, /create table public\.c as/],
+    [`do $$\ndeclare r record;\nbegin\n  for r in select pg_get_functiondef(p.oid) as d from pg_proc p where p.proname = 'f' loop\n    execute replace(r.d, 'x', 'begin create table public.c as select 1; end');\n  end loop;\nend $$;`, 5, /create table public\.c as/],
+  ]) {
+    const result = verdict(AT, `${sql}\n`);
+    assert.equal(result.status, 1, `${sql}\n${result.stdout}${result.stderr}`);
+    assert.match(result.stderr, new RegExp(`_fixture_0\\.sql:${line}: ${text.source}`), sql);
+  }
+});
+
 test('every committed migration is read by the tokenizer, and the run-history cleanup passes at the threshold', async () => {
   const { judgeMigration } = await import('../scripts/migration-size-gate.mjs');
   const { readFileSync } = await import('node:fs');
