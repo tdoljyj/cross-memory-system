@@ -1391,6 +1391,47 @@ test('backup failures stop migrate mode before any grant or production mutation'
   }
 });
 
+// Capacity gate (FABLE-prod-db-shrink-v2-20261124 §8, B3): migrate mode reads the database size with the migration login
+// and hands it to scripts/migration-size-gate.mjs before the backup, so a refused migration makes no full backup. The
+// threshold is the script's constant: the step passes the size and the files and nothing else.
+const SIZE_GATE_STEP = 'Refuse additions while the database is near its size limit';
+test('the capacity gate runs only in migrate mode, before the backup, with the size and the files as its only arguments', () => {
+  const steps = productionWorkflow.split(/\n      - /).slice(1);
+  const index = (name) => steps.findIndex((step) => step.startsWith(`name: ${name}\n`));
+  const gate = index(SIZE_GATE_STEP);
+  assert.ok(gate >= 0, 'the capacity gate step exists');
+  assert.ok(index('Verify backup and migration database identity') < gate);
+  assert.ok(gate < index('Create and verify encrypted pre-migration backup'));
+  const step = steps[gate];
+  assert.match(step, /\n {8}if: \$\{\{ inputs\.mode == 'migrate' \}\}\n/);
+  assert.match(step, /\n {8}timeout-minutes: 2\n/);
+  assert.match(step, /CLUED_MIGRATION_DATABASE_URL: \$\{\{ secrets\.CLUED_MIGRATION_DATABASE_URL \}\}/);
+  assert.match(step, /MIGRATIONS: \$\{\{ inputs\.migrations \}\}/);
+  // The size is read once with ON_ERROR_STOP; a failed read fails the step.
+  assert.match(step, /psql "\$database_url" -v ON_ERROR_STOP=1 -X -tA[^\n]*\n/);
+  assert.match(step, /size_bytes=\$\(psql_read 'select pg_database_size\(current_database\(\)\)'\) \\\n\s+\|\| \{ echo "::error::[^"]+"; exit 1; \}/);
+  const calls = [...step.matchAll(/node scripts\/migration-size-gate\.mjs([^\n]*)/g)].map((match) => match[1].trim());
+  assert.deepEqual(calls, ['--size-bytes "$size_bytes" --files "$files"']);
+  // The sweep reminder never decides the step: its read may fail and it only warns.
+  assert.match(step, /clued-retention-sweep/);
+  assert.match(step, /\|\| sweep=''/);
+  assert.match(step, /::warning::/);
+  assert.ok(step.indexOf("|| sweep=''") < step.indexOf('node scripts/migration-size-gate.mjs'));
+
+  for (const mode of ['preflight', 'backup', 'deploy', 'release', 'source-capture']) {
+    const inputs = { mode, source_request_id: mode === 'source-capture' ? 'r' : '', source_request_digest: mode === 'source-capture' ? 'd' : '' };
+    assert.ok(!simulateRelease(inputs).ran.includes(SIZE_GATE_STEP), mode);
+  }
+  assert.ok(simulateRelease({ mode: 'migrate', migrations: MIGRATION }).ran.includes(SIZE_GATE_STEP));
+  const refused = simulateRelease({ mode: 'migrate', migrations: MIGRATION }, SIZE_GATE_STEP);
+  assert.equal(refused.conclusion, 'failure');
+  assert.deepEqual(grantSteps(refused), []);
+  for (const name of ['Create and verify encrypted pre-migration backup', 'Require verified backup before migration',
+    'Record migration database login role', 'Apply the named migrations']) {
+    assert.ok(!refused.ran.includes(name), name);
+  }
+});
+
 // Round-3 review, medium 1: a kill while the progress file is being written
 // must not lose the progress already on disk (write to a temporary file, then
 // rename over the old one).
