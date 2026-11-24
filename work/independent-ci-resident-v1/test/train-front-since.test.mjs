@@ -17,7 +17,8 @@ async function world(t) {
   e.now = Date.parse('2026-11-17T01:21:38.528Z');
   e.native.port.nodesStatus = async () => ({ deployed: true, onDuty: true, dropped: 0,
     nodes: [{ node: { name: 'turing', sourceManifestSha256: SOURCE, state: 'ACTIVE', lastHeartbeatAt: iso(e.now) } }] });
-  e.round = () => e.run(jobOf({ createdAt: iso(e.now), onSince: '2026-11-17T01:00:00.000Z' }));
+  // Board 269: a round ends no earlier than the newest record it wrote (train-strict-fixtures.mjs#settle).
+  e.round = async () => { const r = await e.run(jobOf({ createdAt: iso(e.now), onSince: '2026-11-17T01:00:00.000Z' })); await e.settle(); return r; };
   return e;
 }
 async function publish(t, e, { generation = false, testSha = S } = {}) {

@@ -1,5 +1,6 @@
 // Offline ports shared by the strict coverage and scheduler-to-publisher integration tests. No production access.
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { runTrain } from '../src/independent-control-checks-v2/train-maintenance.mjs';
 import { TrainSweepStore } from '../src/independent-control-checks-v2/train-sweep-store.mjs';
@@ -156,8 +157,20 @@ async function setup(t, o = {}) {
   e.publications = { async heads() { if (e.streamDown) throw new Error('down'); return { complete: true, heads: e.stream }; } };
   if (o.fullDone !== false) await e.store.writeFullSweep({ writtenAt: iso(NOW - 1000), runId: RUN, mode: 'on', incrementalCursor: CURSOR, inMain: [],
     full: { ...FULL0, state: 'complete', via: 'sweep', startedAt: iso(NOW - 1_800_000), completedAt: iso(NOW - 1_200_000), onSince: ON_SINCE, mainSha: T } });
+  // Board 269: the store stamps every record after the newest one (train-sweep-store.mjs#write), so a burst of writes in one
+  // millisecond of this standing clock lands ahead of it. A real run ends no earlier than its last write: settle() moves the clock
+  // up to the newest stamp, for a reader that comes after the run (stage 8, the next stage-10 run).
+  e.settle = async () => { e.now = Math.max(e.now, await newestStamp(e.store.directory)); };
   e.run = (job = jobOf(o.job)) => runTrain({ job, github: e.gh, native: e.native.port, ledger: e.ledger, sweepStore: e.store, publications: e.publications, clock: e.clock, sleep: e.sleep });
   return e;
+}
+async function newestStamp(directory) {
+  let newest = -Infinity;
+  for (const name of await fs.readdir(directory)) {
+    const m = /-(\d{13})-[0-9a-f]{16}-[0-9a-f]{12}-[0-9a-f]{8}\.json$/.exec(name);
+    if (m) newest = Math.max(newest, Number(m[1]));
+  }
+  return newest;
 }
 const FULL0 = { state: 'none', via: null, startedAt: null, completedAt: null, onSince: null, mainSha: null, nextPage: 1, nextIndex: 0, prs: 0, commits: 0, heads: 0,
   revoked: 0, unconfirmed: 0, wouldRevoke: 0, calls: 0, ms: 0, reason: null };
@@ -170,4 +183,4 @@ async function ledgered(ledger, { pr = 900, headSha, baseSha = T, checkRunId, ph
 }
 
 
-export { setup, jobOf, holderOf, ledgered, fakeGithub, fakeNative, sha, iso, T, H, S, TREE, OLD_T, CLAIM, RUN, SOURCE, REPO, APP, SLOT, NOW, ON_SINCE, CURSOR, FULL0 };
+export { setup, newestStamp, jobOf, holderOf, ledgered, fakeGithub, fakeNative, sha, iso, T, H, S, TREE, OLD_T, CLAIM, RUN, SOURCE, REPO, APP, SLOT, NOW, ON_SINCE, CURSOR, FULL0 };
